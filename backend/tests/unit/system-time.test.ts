@@ -714,6 +714,84 @@ describe('buildSetNtpEnabledCommands', () => {
 	});
 });
 
+describe('setSystemNtpEnabled', () => {
+	/** Run `body` with `process.platform` reporting the given host. */
+	async function onPlatform(platform: string, body: () => Promise<void>): Promise<void> {
+		const original = Object.getOwnPropertyDescriptor(process, 'platform');
+		Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+		try {
+			await body();
+		} finally {
+			if (original) Object.defineProperty(process, 'platform', original);
+		}
+	}
+
+	const capable = async (): Promise<SystemTimeStatus> => statusFixture();
+
+	it('reports success once every step has succeeded', async () => {
+		await onPlatform('linux', async () => {
+			const { exec, calls } = fakeRunner([]);
+			expect(await setSystemNtpEnabled(true, capable, exec)).toEqual({ success: true, outcome: 'ok', message: null });
+			expect(calls).toEqual(['timedatectl set-ntp true']);
+		});
+	});
+
+	/**
+	 * The masking this used to do. A re-read afterwards saw `ntpEnabled` matching the
+	 * request and rewrote the whole thing to `ok`, so a step that genuinely refused —
+	 * here the one that carries the change — was reported to the user as saved.
+	 */
+	it('does not turn a refused step into a success because the state happens to match', async () => {
+		await onPlatform('linux', async () => {
+			const { exec } = fakeRunner([{ kind: 'failed', code: 1, output: 'Failed to set ntp: something went wrong\n' }]);
+			// The host reads back exactly as requested, which is what used to erase the error.
+			const readsAsEnabled = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: true });
+			const r = await setSystemNtpEnabled(true, readsAsEnabled, exec);
+			expect(r.success).toBe(false);
+			expect(r.outcome).toBe('error');
+			expect(r.message).toBe('Failed to set ntp: something went wrong');
+		});
+	});
+
+	it('keeps a failed windows resync visible even though the service did start', async () => {
+		await onPlatform('win32', async () => {
+			// Keyed on the command rather than on a queue: the exact step list depends on
+			// the mode this host's registry reports, and only the resync matters here.
+			const calls: string[] = [];
+			const exec: CommandRunner = async (cmd, args) => {
+				const line = [cmd, ...args].join(' ');
+				calls.push(line);
+				return line === 'w32tm /resync' ? { kind: 'ok', output: 'The computer did not resync because no time data was available. (0x800705B4)\r\n' } : { kind: 'ok', output: '' };
+			};
+			const r = await setSystemNtpEnabled(true, capable, exec);
+			expect(r.success).toBe(false);
+			expect(r.outcome).toBe('error');
+			expect(calls).toContain('w32tm /resync');
+			expect(calls[0]).toBe('sc config w32time start= auto');
+		});
+	});
+
+	/** Still tolerated, but at the source: `sc` exits 1056 when the service is already up. */
+	it('still carries on past a service that was already in the requested state', async () => {
+		await onPlatform('win32', async () => {
+			const { exec } = fakeRunner([
+				{ kind: 'ok', output: '' },
+				{ kind: 'failed', code: 1056, output: '[SC] StartService FAILED 1056:\r\n' },
+			]);
+			expect((await setSystemNtpEnabled(true, capable, exec)).success).toBe(true);
+		});
+	});
+
+	it('refuses without running anything when the host does not allow the change', async () => {
+		await onPlatform('win32', async () => {
+			const { exec, calls } = fakeRunner([]);
+			const managed = async (): Promise<SystemTimeStatus> => statusFixture({ capabilities: { setClock: true, setTimezone: true, setNtpServer: false, setNtpEnabled: false } });
+			expect((await setSystemNtpEnabled(true, managed, exec)).outcome).toBe('unsupported');
+			expect(calls).toEqual([]);
+		});
+	});
+});
+
 describe('windowsSyncIsOurs', () => {
 	it('allows a change only where this application configured the source itself', () => {
 		expect(windowsSyncIsOurs('manual')).toBe(true);

@@ -929,21 +929,27 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
 /**
  * Switch automatic time synchronisation on or off.
  *
- * A step can fail benignly — starting an already-running Windows Time service exits
- * non-zero — so a plain error is re-checked against the live state before being
- * reported. A permission or support problem is never re-checked away: those are the
- * answers the operator needs.
+ * A failed step stays failed. This used to re-read the host afterwards and report `ok`
+ * whenever the single `ntpEnabled` boolean matched the request — which erased precisely
+ * the failures worth reporting: a `/resync` that never reached a peer, or a start-mode
+ * change that was refused while the service happened to stop anyway. One boolean cannot
+ * confirm every dimension a sequence touched (source mode, start mode, peer list, the
+ * sync itself), so it must not be allowed to overrule any of them.
+ *
+ * The one thing that reconciliation legitimately covered — a service already in the
+ * requested run state making `sc` exit non-zero — is handled at the source instead, by
+ * {@link SystemCommand.benignCodes} on exactly those two steps.
+ *
+ * `readStatus` and `exec` are injectable so the sequencing and the outcome mapping can
+ * be exercised without touching the host's time service.
  */
-export async function setSystemNtpEnabled(enabled: boolean): Promise<SystemTimeResult> {
+export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = run): Promise<SystemTimeResult> {
 	const platform = process.platform;
 	if (!isSupportedPlatform(platform)) return result('unsupported', `time synchronisation cannot be switched on ${platform}`);
-	const status = await getSystemTimeStatus();
+	const status = await readStatus();
 	if (!status.capabilities.setNtpEnabled) return result('unsupported', 'time synchronisation here is not ours to switch: this host has no such service, or its time source is managed by a domain or by group policy');
 	// Windows needs its CURRENT time source to decide whether it may be rewritten; every
 	// other platform has a single switch that changes nothing else.
 	const mode = platform === 'win32' ? (await readWindowsMode()).mode : 'unknown';
-	const r = await runAll(platform, buildSetNtpEnabledCommands(platform, enabled, mode));
-	if (r.success || r.outcome !== 'error') return r;
-	const after = await getSystemTimeStatus();
-	return after.ntpEnabled === enabled ? result('ok') : r;
+	return runAll(platform, buildSetNtpEnabledCommands(platform, enabled, mode), exec);
 }
