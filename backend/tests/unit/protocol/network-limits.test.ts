@@ -1,8 +1,8 @@
 import { describe, it, expect, afterAll } from 'bun:test';
 import { applyNetworkLimits } from '../../../src/protocol/network-limits.ts';
-import { getMaxMessageSize } from '../../../src/protocol/lish-protocol.ts';
+import { getMaxMessageSize, getMaxChunkSize } from '../../../src/protocol/lish-protocol.ts';
 import { downloadLimiter, uploadLimiter } from '../../../src/protocol/speed-limiter.ts';
-import { DEFAULT_MAX_MESSAGE_SIZE, type SettingsData } from '../../../src/settings.ts';
+import { DEFAULT_MAX_MESSAGE_SIZE, DEFAULT_MAX_CHUNK_SIZE, type SettingsData } from '../../../src/settings.ts';
 
 /** Minimal network settings slice — only the fields applyNetworkLimits reads. */
 function netSlice(overrides: Partial<SettingsData['network']>): SettingsData['network'] {
@@ -12,6 +12,7 @@ function netSlice(overrides: Partial<SettingsData['network']>): SettingsData['ne
 		maxDownloadPeersPerLISH: 30,
 		maxUploadPeersPerLISH: 30,
 		maxMessageSize: DEFAULT_MAX_MESSAGE_SIZE,
+		maxChunkSize: DEFAULT_MAX_CHUNK_SIZE,
 		...overrides,
 	} as SettingsData['network'];
 }
@@ -23,10 +24,24 @@ describe('applyNetworkLimits', () => {
 	});
 
 	it('pushes every limit from the settings snapshot into protocol module state', () => {
-		applyNetworkLimits(netSlice({ maxDownloadSpeed: 256, maxUploadSpeed: 128, maxMessageSize: 4 * 1024 * 1024 }));
+		applyNetworkLimits(netSlice({ maxDownloadSpeed: 256, maxUploadSpeed: 128, maxMessageSize: 4 * 1024 * 1024, maxChunkSize: 2 * 1024 * 1024 }));
 		expect(downloadLimiter.getLimit()).toBe(256 * 1024);
 		expect(uploadLimiter.getLimit()).toBe(128 * 1024);
 		expect(getMaxMessageSize()).toBe(4 * 1024 * 1024);
+		expect(getMaxChunkSize()).toBe(2 * 1024 * 1024);
+	});
+
+	it('lifts a message limit that would be too small to carry one chunk', () => {
+		// A chunk is delivered as a single message: a message limit at or below the chunk
+		// limit would reject every chunk on arrival, so the chunk limit must win.
+		applyNetworkLimits(netSlice({ maxChunkSize: 8 * 1024 * 1024, maxMessageSize: 1024 }));
+		expect(getMaxChunkSize()).toBe(8 * 1024 * 1024);
+		expect(getMaxMessageSize()).toBeGreaterThan(8 * 1024 * 1024);
+	});
+
+	it('leaves a message limit that already clears the chunk limit alone', () => {
+		applyNetworkLimits(netSlice({ maxChunkSize: 2 * 1024 * 1024, maxMessageSize: 64 * 1024 * 1024 }));
+		expect(getMaxMessageSize()).toBe(64 * 1024 * 1024);
 	});
 
 	it('is idempotent — re-applying the same snapshot keeps the same values', () => {
