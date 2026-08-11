@@ -45,6 +45,29 @@ export interface SystemCommand {
 	 * which a plain abort would skip (see {@link buildSetNtpEnabledCommands}).
 	 */
 	benignCodes?: number[];
+	/**
+	 * Output that means the step failed even though it exited 0. `w32tm` routinely
+	 * refuses a request, prints the reason and still returns a zero exit code, so an
+	 * exit status alone would report a refused `/resync` or `/config` as saved.
+	 */
+	failOnOutput?: RegExp;
+}
+
+/**
+ * A failure HRESULT in command output: `0x8` followed by seven hex digits
+ * (`0x80070005` access denied, `0x80070522` privilege not held, `0x800706B5` the
+ * service is not running).
+ *
+ * Matched on the code, never on the sentence around it — `w32tm` localizes its
+ * messages, so a Czech or German host prints a translated reason next to the same
+ * number. Success output cannot collide: it carries no HRESULT, and the identifiers it
+ * does print (`ReferenceId: 0xC0000210`) are not in the `0x8` failure range.
+ */
+export const W32TM_ERROR_RE: RegExp = /0x8[0-9A-Fa-f]{7}/;
+
+/** A `w32tm` step, with the output check that its zero exit code makes necessary. */
+function w32tm(...args: string[]): SystemCommand {
+	return { cmd: 'w32tm', args, failOnOutput: W32TM_ERROR_RE };
 }
 
 /** ERROR_SERVICE_ALREADY_RUNNING — `sc start` against a service that is already up. */
@@ -408,8 +431,8 @@ export function buildSetNtpServerCommands(platform: SystemPlatform, server: stri
 	// 0x8 is the plain client flag. 0x9 would add 0x1 (SpecialInterval), which makes the
 	// peer poll at SpecialPollInterval — a standalone host defaults that to 604800s, so
 	// the peer would be contacted weekly instead of on the normal poll interval.
-	const config: SystemCommand = { cmd: 'w32tm', args: ['/config', `/manualpeerlist:${server},0x8`, '/syncfromflags:manual', '/update'] };
-	return syncRunning ? [config, { cmd: 'w32tm', args: ['/resync'] }] : [config];
+	const config: SystemCommand = w32tm('/config', `/manualpeerlist:${server},0x8`, '/syncfromflags:manual', '/update');
+	return syncRunning ? [config, w32tm('/resync')] : [config];
 }
 
 /**
@@ -439,8 +462,8 @@ export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: bo
 			// touch. Without it, a host left on NoSync (domain policy, or set outside
 			// this app) reports synchronisation as still off right after we turned it
 			// on, and the toggle looks like it did not stick.
-			{ cmd: 'w32tm', args: ['/config', '/syncfromflags:manual', '/update'] },
-			{ cmd: 'w32tm', args: ['/resync'] },
+			w32tm('/config', '/syncfromflags:manual', '/update'),
+			w32tm('/resync'),
 		];
 	}
 	return [
@@ -543,7 +566,12 @@ export async function runAll(platform: SystemPlatform, commands: SystemCommand[]
 	if (commands.length === 0) return result('unsupported', 'no command available for this platform');
 	for (const command of commands) {
 		const r = await exec(command.cmd, command.args);
-		if (r.kind === 'ok') continue;
+		if (r.kind === 'ok') {
+			// Exit 0 is not the whole story for w32tm: it prints the HRESULT of a refusal
+			// and returns zero anyway, so the output has to be read before believing it.
+			if (!command.failOnOutput?.test(r.output)) continue;
+			return result(classifyFailure(platform, 0, r.output), firstLine(r.output) ?? `${command.cmd} reported a failure`);
+		}
 		if (r.kind === 'failed' && r.code !== null && command.benignCodes?.includes(r.code)) continue;
 		if (r.kind === 'missing') return result('unsupported', `${command.cmd} is not installed`);
 		if (r.kind === 'timeout') return result('error', `${command.cmd} timed out`);

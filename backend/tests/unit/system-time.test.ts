@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseServiceRunning, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseUnitInstalled, parseWindowsNtpServer, parseWindowsSyncStatus, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, TIMESYNCD_DROPIN_PATH, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseServiceRunning, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseUnitInstalled, parseWindowsNtpServer, parseWindowsSyncStatus, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -540,8 +540,8 @@ describe('buildSetNtpServerCommands', () => {
 
 	it('configures the peer and resyncs on windows while synchronisation is on', () => {
 		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', true)).toEqual([
-			{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8', '/syncfromflags:manual', '/update'] },
-			{ cmd: 'w32tm', args: ['/resync'] },
+			{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8', '/syncfromflags:manual', '/update'], failOnOutput: W32TM_ERROR_RE },
+			{ cmd: 'w32tm', args: ['/resync'], failOnOutput: W32TM_ERROR_RE },
 		]);
 	});
 
@@ -551,7 +551,7 @@ describe('buildSetNtpServerCommands', () => {
 	 * off before writing a server. Configuring the peer list is the whole change then.
 	 */
 	it('skips the resync on windows while synchronisation is off', () => {
-		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', false)).toEqual([{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8', '/syncfromflags:manual', '/update'] }]);
+		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', false)).toEqual([{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8', '/syncfromflags:manual', '/update'], failOnOutput: W32TM_ERROR_RE }]);
 	});
 
 	it('sets the single supported server on macOS', () => {
@@ -594,8 +594,8 @@ describe('buildSetNtpEnabledCommands', () => {
 		expect(buildSetNtpEnabledCommands('win32', true)).toEqual([
 			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'auto'] },
 			{ cmd: 'sc', args: ['start', 'w32time'], benignCodes: [1056] },
-			{ cmd: 'w32tm', args: ['/config', '/syncfromflags:manual', '/update'] },
-			{ cmd: 'w32tm', args: ['/resync'] },
+			{ cmd: 'w32tm', args: ['/config', '/syncfromflags:manual', '/update'], failOnOutput: W32TM_ERROR_RE },
+			{ cmd: 'w32tm', args: ['/resync'], failOnOutput: W32TM_ERROR_RE },
 		]);
 		expect(buildSetNtpEnabledCommands('win32', false)).toEqual([
 			{ cmd: 'sc', args: ['stop', 'w32time'], benignCodes: [1062] },
@@ -679,6 +679,41 @@ describe('runAll', () => {
 	it('falls back to the exit code when the command said nothing', async () => {
 		const { exec } = fakeRunner([{ kind: 'failed', code: 9009, output: '   \n' }]);
 		expect(await runAll('win32', [{ cmd: 'w32tm', args: ['/resync'] }], exec)).toEqual({ success: false, outcome: 'error', message: 'w32tm exited with 9009' });
+	});
+
+	/**
+	 * The case an exit-code check alone gets wrong. `w32tm` prints the HRESULT of a
+	 * refusal and returns zero anyway, so without reading the output a refused `/resync`
+	 * is reported to the user as a saved setting.
+	 */
+	it('fails a w32tm step that printed an HRESULT and still exited 0', async () => {
+		const { exec, calls } = fakeRunner([
+			{ kind: 'ok', output: '' },
+			{ kind: 'ok', output: 'The computer did not resync because no time data was available.\r\n0x80070005\r\n' },
+		]);
+		const r = await runAll('win32', buildSetNtpServerCommands('win32', 'ntp.example.org', true), exec);
+		expect(r.success).toBe(false);
+		expect(r.outcome).toBe('permission-denied');
+		expect(r.message).toBe('The computer did not resync because no time data was available.');
+		expect(calls).toHaveLength(2);
+	});
+
+	it('reads the HRESULT rather than the localized sentence around it', async () => {
+		const { exec } = fakeRunner([{ kind: 'ok', output: 'Pocitac se nesynchronizoval, protoze nebyla k dispozici zadna data. (0x800705B4)\r\n' }]);
+		const r = await runAll('win32', [{ cmd: 'w32tm', args: ['/resync'], failOnOutput: W32TM_ERROR_RE }], exec);
+		expect(r.success).toBe(false);
+		expect(r.outcome).toBe('error');
+	});
+
+	it('does not mistake the identifiers a healthy w32tm prints for a failure', async () => {
+		// ReferenceId and the poll interval carry hex and digits but no 0x8 HRESULT.
+		const { exec } = fakeRunner([{ kind: 'ok', output: W32TM_STATUS }]);
+		expect((await runAll('win32', [{ cmd: 'w32tm', args: ['/resync'], failOnOutput: W32TM_ERROR_RE }], exec)).success).toBe(true);
+	});
+
+	it('leaves a command without an output check judged on its exit code alone', async () => {
+		const { exec } = fakeRunner([{ kind: 'ok', output: 'mentions 0x80070005 but is not checked' }]);
+		expect((await runAll('win32', [{ cmd: 'sc', args: ['query', 'w32time'] }], exec)).success).toBe(true);
 	});
 
 	it('runs nothing and reports unsupported when the platform yields no command', async () => {
