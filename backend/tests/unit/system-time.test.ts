@@ -1382,6 +1382,21 @@ describe('applyTimesyncdDropIn', () => {
 		expect(calls).toEqual(['systemctl restart systemd-timesyncd', 'systemctl restart systemd-timesyncd']);
 	});
 
+	/**
+	 * The file went back and the daemon did not. Swallowing that second restart reported an
+	 * undo that only half happened — the drop-in on disk is the old one, and the daemon is
+	 * either down or still running the withdrawn configuration.
+	 */
+	it('says so when the daemon could not be restarted onto the restored drop-in', async () => {
+		await writeFile(path, '[Time]\nNTP=\nNTP=old.example.org\n', 'utf8');
+		const failure: RunOutcome = { kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' };
+		const { exec } = fakeRunner([failure, failure]);
+		const r = await applyTimesyncdDropIn('new.example.org', true, path, exec);
+		expect(r.success).toBe(false);
+		expect(await readFile(path, 'utf8')).toBe('[Time]\nNTP=\nNTP=old.example.org\n');
+		expect(r.message).toContain('could not be restarted onto it');
+	});
+
 	it('removes a drop-in it created when the restart fails', async () => {
 		const { exec } = fakeRunner([{ kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' }]);
 		expect((await applyTimesyncdDropIn('new.example.org', true, path, exec)).success).toBe(false);
