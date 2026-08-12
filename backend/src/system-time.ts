@@ -53,8 +53,24 @@ const W32TIME_SERVICE_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time'
  */
 const W32TIME_POLICY_KEY = 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time';
 
-/** `reg query` exit code for a key that is simply not there, as opposed to one it could not read. */
+/**
+ * `reg query` exit code for a key that is not there. It is also what a key this process
+ * may not read exits with, which is why an exit of 1 is only believed alongside
+ * {@link POLICY_CONTROL_KEY}.
+ */
 const REG_KEY_NOT_FOUND = 1;
+
+/**
+ * A key present on every Windows install, one level above the policy root and reachable
+ * by the same permissions. It is the control for a "not found" answer: `reg query` cannot
+ * say whether exit 1 means the key is absent or merely unreadable, and the difference is
+ * the whole question — an unreadable policy branch is a policy that may well be there.
+ *
+ * When the control answers, the absence of the W32Time branch is a real absence. When the
+ * control does not answer either, this process cannot see that part of the registry and
+ * nothing about a policy may be concluded from it, so the host counts as managed.
+ */
+const POLICY_CONTROL_KEY = 'HKLM\\SOFTWARE\\Policies';
 
 /** Platforms with an implemented time backend. Anything else is reported as unsupported. */
 export type SystemPlatform = 'win32' | 'linux' | 'darwin';
@@ -929,7 +945,11 @@ export function policyBranchState(outcome: RunOutcome): 'present' | 'absent' | '
  * UI shows the controls as somebody else's to change.
  */
 export async function readWindowsPolicyManaged(exec: CommandRunner = run): Promise<boolean> {
-	return policyBranchState(await exec('reg', ['query', W32TIME_POLICY_KEY])) !== 'absent';
+	if (policyBranchState(await exec('reg', ['query', W32TIME_POLICY_KEY])) !== 'absent') return true;
+	// "Not there" is only believable from a process that can read that part of the registry
+	// at all — see POLICY_CONTROL_KEY. Anything short of a definite `present` here leaves
+	// the branch's absence unproven, which is a managed host.
+	return policyBranchState(await exec('reg', ['query', POLICY_CONTROL_KEY])) !== 'present';
 }
 
 /** The Windows time source and service start type, as read from the registry. */

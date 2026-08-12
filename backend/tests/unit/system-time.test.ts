@@ -959,13 +959,21 @@ describe('setSystemNtpServer', () => {
 });
 
 describe('readWindowsPolicyManaged', () => {
-	/** Answer each `reg query <key>` from a map; anything not listed is a key that is not there. */
+	/** What `reg query` prints for both a missing key and a denied one — the exit code is 1 either way. */
+	const NOT_FOUND: RunOutcome = { kind: 'failed', code: 1, output: 'ERROR: The system was unable to find the specified registry key or value.\r\n' };
+
+	/**
+	 * Answer each `reg query <key>` from a map; anything not listed is a key that is not
+	 * there. `HKLM\SOFTWARE\Policies` reads by default, as it does on a real host — the
+	 * control that makes a "not found" on the W32Time branch believable.
+	 */
 	function registry(present: Record<string, RunOutcome>): { exec: CommandRunner; keys: string[] } {
 		const keys: string[] = [];
+		const answers: Record<string, RunOutcome> = { 'HKLM\\SOFTWARE\\Policies': { kind: 'ok', output: '\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\r\n' }, ...present };
 		const exec: CommandRunner = async (_cmd, args) => {
 			const key = args[args.length - 1] ?? '';
 			keys.push(key);
-			return present[key] ?? { kind: 'failed', code: 1, output: 'ERROR: The system was unable to find the specified registry key or value.\r\n' };
+			return answers[key] ?? NOT_FOUND;
 		};
 		return { exec, keys };
 	}
@@ -1000,6 +1008,24 @@ describe('readWindowsPolicyManaged', () => {
 			const { exec } = registry({ [POLICY_ROOT]: outcome });
 			expect(await readWindowsPolicyManaged(exec)).toBe(true);
 		}
+	});
+
+	/**
+	 * The route the exit code cannot close on its own: `reg query` exits 1 for a key it
+	 * may not read exactly as it does for one that is not there, so a denied policy branch
+	 * arrives here spelled "absent". Only the control key tells the two apart — when it is
+	 * denied too, the registry is what is unreadable, not the branch that is empty.
+	 */
+	it('treats a denied read of the policy branch as managed', async () => {
+		const denied: RunOutcome = { kind: 'failed', code: 1, output: 'ERROR: Access is denied.\r\n' };
+		const { exec } = registry({ [POLICY_ROOT]: denied, 'HKLM\\SOFTWARE\\Policies': denied });
+		expect(await readWindowsPolicyManaged(exec)).toBe(true);
+	});
+
+	it('believes an absent branch only once the control key has answered', async () => {
+		const { exec, keys } = registry({});
+		expect(await readWindowsPolicyManaged(exec)).toBe(false);
+		expect(keys).toEqual([POLICY_ROOT, 'HKLM\\SOFTWARE\\Policies']);
 	});
 });
 
