@@ -1124,6 +1124,14 @@ const lockHeld = new AsyncLocalStorage<true>();
  * calls take it again for their own sake (they are exported and used directly). A nested
  * acquisition runs inline instead of waiting for a lock this very call stack is holding.
  *
+ * "The writers" is all four of them — {@link setSystemClock}, {@link setSystemTimezone},
+ * {@link setSystemNtpServer} and {@link setSystemNtpEnabled} — plus
+ * {@link applyTimesyncdDropIn}. The clock and the timezone were left out while this text
+ * already claimed them, and they are the two that need it most: the clock decides whether
+ * it may be written from a status read a moment earlier, and the zone is what that clock
+ * reading is interpreted against. Anything added here takes the lock or this comment
+ * stops being true.
+ *
  * ponytail: one process-wide lock, not one per resource. System-time writes are rare,
  * human-driven and already seconds long; split it per path only if that ever changes.
  */
@@ -1188,18 +1196,33 @@ export function hostDateParts(nowMs: number, utcOffsetMinutes: number): Pick<Loc
 	return { year: local.getUTCFullYear(), month: local.getUTCMonth() + 1, day: local.getUTCDate() };
 }
 
-/** Set the wall clock to `hours:minutes:seconds`, keeping the host's current date. */
-export async function setSystemClock(hours: number, minutes: number, seconds: number): Promise<SystemTimeResult> {
+/**
+ * Set the wall clock to `hours:minutes:seconds`, keeping the host's current date.
+ *
+ * Under {@link withSystemTimeLock} from the status read onwards, not merely around the
+ * command: the whole point of the read is the refusal decided from it, and a
+ * `setNtpEnabled(true)` landing between the two turns "synchronisation is off, the clock
+ * is the user's to set" into a clock the daemon steps back seconds later.
+ *
+ * The validation stays outside the lock — a rejected value never touches the host, so
+ * queueing it behind another write would only make it slower.
+ *
+ * `readStatus` and `exec` are injectable so the ordering can be exercised without setting
+ * the clock of the machine running the tests.
+ */
+export async function setSystemClock(hours: number, minutes: number, seconds: number, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = run): Promise<SystemTimeResult> {
 	const invalid = validateClockParts(hours, minutes, seconds);
 	if (invalid) return result('invalid-input', invalid);
 	const platform = process.platform;
 	if (!isSupportedPlatform(platform)) return result('unsupported', `setting the clock is not implemented on ${platform}`);
-	const status = await getSystemTimeStatus();
-	const refusal = clockWriteRefusal(status);
-	if (refusal) return refusal;
-	// The same status the refusal was decided from carries the host's zone offset, so the
-	// date comes from the host rather than from this process.
-	return runAll(platform, buildSetClockCommands(platform, { ...hostDateParts(status.nowMs, status.utcOffsetMinutes), hours, minutes, seconds }));
+	return withSystemTimeLock(async () => {
+		const status = await readStatus();
+		const refusal = clockWriteRefusal(status);
+		if (refusal) return refusal;
+		// The same status the refusal was decided from carries the host's zone offset, so the
+		// date comes from the host rather than from this process.
+		return runAll(platform, buildSetClockCommands(platform, { ...hostDateParts(status.nowMs, status.utcOffsetMinutes), hours, minutes, seconds }), exec);
+	});
 }
 
 /**
@@ -1210,8 +1233,14 @@ export async function setSystemClock(hours: number, minutes: number, seconds: nu
  * On success `process.env.TZ` is updated: writing the OS timezone does not
  * invalidate the running process's ICU cache, so without this the backend would keep
  * formatting in the old zone until it restarts.
+ *
+ * Under {@link withSystemTimeLock} like every other write. The zone is what turns the
+ * host's clock reading into a wall-clock time, so a change to it running alongside a
+ * clock set has that set land on a date and hour decided under the other zone.
+ *
+ * `exec` is injectable so the ordering can be exercised without moving the host's zone.
  */
-export async function setSystemTimezone(timezone: string): Promise<SystemTimeResult> {
+export async function setSystemTimezone(timezone: string, exec: CommandRunner = run): Promise<SystemTimeResult> {
 	const known = listSystemTimezones();
 	if (known.length === 0) return result('unsupported', 'this runtime has no timezone database');
 	if (!known.includes(timezone)) return result('invalid-input', `unknown timezone: ${timezone}`);
@@ -1225,17 +1254,19 @@ export async function setSystemTimezone(timezone: string): Promise<SystemTimeRes
 		if (!windowsId) return result('error', `no Windows timezone matches ${timezone}`);
 	}
 
-	const r = await runAll(platform, buildSetTimezoneCommands(platform, timezone, windowsId));
-	// Only so this process FORMATS in the new zone: writing the OS timezone does not
-	// invalidate a running process's ICU cache. What the status reports is read back
-	// from the OS, so an inherited or stale TZ can no longer misrepresent the host.
-	if (r.success) {
-		process.env['TZ'] = timezone;
-		// The next status read maps the host's Windows identifier back to IANA through a
-		// cache keyed on that identifier — which this change need not have altered.
-		if (windowsId) rememberWindowsZone(windowsId, timezone);
-	}
-	return r;
+	return withSystemTimeLock(async () => {
+		const r = await runAll(platform, buildSetTimezoneCommands(platform, timezone, windowsId), exec);
+		// Only so this process FORMATS in the new zone: writing the OS timezone does not
+		// invalidate a running process's ICU cache. What the status reports is read back
+		// from the OS, so an inherited or stale TZ can no longer misrepresent the host.
+		if (r.success) {
+			process.env['TZ'] = timezone;
+			// The next status read maps the host's Windows identifier back to IANA through a
+			// cache keyed on that identifier — which this change need not have altered.
+			if (windowsId) rememberWindowsZone(windowsId, timezone);
+		}
+		return r;
+	});
 }
 
 /**

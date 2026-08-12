@@ -1473,6 +1473,57 @@ function statusFixture(overrides: Partial<SystemTimeStatus> = {}): SystemTimeSta
 	};
 }
 
+describe('the write lock covers every writer', () => {
+	/**
+	 * Start `write` while another system-time write holds the lock and report whether it
+	 * waited. A writer that never takes the lock settles straight away.
+	 */
+	async function waitsForTheLock(write: () => Promise<unknown>): Promise<boolean> {
+		let release = (): void => {};
+		const held = new Promise<void>(resolve => {
+			release = resolve;
+		});
+		let settled = false;
+		const holder = withSystemTimeLock(() => held);
+		const pending = write().then(() => {
+			settled = true;
+		});
+		await new Promise(resolve => setTimeout(resolve, 20));
+		const waited = !settled;
+		release();
+		await holder;
+		await pending;
+		return waited;
+	}
+
+	/**
+	 * The clock decides whether it may be written at all from a status read a moment
+	 * earlier, so a `setNtpEnabled(true)` landing between that read and the command turns
+	 * "synchronisation is off, this is the user's to set" into a clock the daemon steps
+	 * back seconds later. It was the one writer whose read-then-decide-then-write was not
+	 * a critical section, while the lock's own comment said it was.
+	 */
+	it('holds a clock set behind another write', async () => {
+		const syncing = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: true });
+		const { exec } = fakeRunner([]);
+		expect(await waitsForTheLock(() => setSystemClock(1, 2, 3, syncing, exec))).toBe(true);
+	});
+
+	/** The zone is what a clock reading is interpreted against, so it belongs in the same queue. */
+	it('holds a timezone set behind another write', async () => {
+		const refused: CommandRunner = async () => ({ kind: 'failed', code: 1, output: 'refused' });
+		expect(await waitsForTheLock(() => setSystemTimezone(listSystemTimezones()[0]!, refused))).toBe(true);
+	});
+
+	/** Both still run: waiting for the lock must not mean waiting forever. */
+	it('lets a clock set through once the lock is free', async () => {
+		const syncing = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: true });
+		const { exec, calls } = fakeRunner([]);
+		expect((await setSystemClock(1, 2, 3, syncing, exec)).outcome).toBe('auto-sync-enabled');
+		expect(calls).toEqual([]);
+	});
+});
+
 describe('clockWriteRefusal', () => {
 	it('lets the write through when nothing else owns the clock', () => {
 		expect(clockWriteRefusal(statusFixture())).toBeNull();
