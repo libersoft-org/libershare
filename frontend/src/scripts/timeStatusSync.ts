@@ -52,3 +52,22 @@ export function createStatusGate(): StatusGate {
 export function writeFailureMessage(reason: string, reloadFailure: string): string {
 	return reloadFailure ? `${reason}: ${reloadFailure}` : reason;
 }
+
+/**
+ * Whether the automatic-synchronisation switch has something to write.
+ *
+ * Normally that is simply "it differs from what the host reported". On a host whose sync
+ * state could not be read it cannot be, and that is the whole problem: the form shows the
+ * switch off and takes off as its baseline, so the two agree by construction, the save
+ * button never comes alive, and the one state the screen asks the user to resolve — by
+ * switching synchronisation either way — is the one they cannot resolve. On is reachable
+ * (on differs from the off it defaulted to), off is not.
+ *
+ * So with `reported` null the switch is dirty as soon as the user has deliberately used
+ * it. They are not editing a known value there, they are asserting one, and asserting the
+ * value it happens to be showing is a real request: it writes the state the host would not
+ * admit to.
+ */
+export function syncSwitchIsDirty(shown: boolean, reported: boolean | null, touched: boolean): boolean {
+	return reported === null ? touched : shown !== reported;
+}

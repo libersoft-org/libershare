@@ -7,7 +7,7 @@
  * so it runs under `bun test` without the Svelte runtime.
  */
 import { test, expect } from 'bun:test';
-import { createStatusGate, writeFailureMessage } from '../../src/scripts/timeStatusSync.ts';
+import { createStatusGate, syncSwitchIsDirty, writeFailureMessage } from '../../src/scripts/timeStatusSync.ts';
 
 test('a read that nothing overtook is applied', () => {
 	const gate = createStatusGate();
@@ -41,4 +41,24 @@ test('a write failure keeps its own reason when the reload also failed', () => {
 
 test('a write failure reads unchanged when the reload succeeded', () => {
 	expect(writeFailureMessage('automatic synchronisation is enabled', '')).toBe('automatic synchronisation is enabled');
+});
+
+test('the sync switch is dirty exactly when it differs from what the host reported', () => {
+	expect(syncSwitchIsDirty(true, false, false)).toBe(true);
+	expect(syncSwitchIsDirty(false, true, false)).toBe(true);
+	expect(syncSwitchIsDirty(true, true, true)).toBe(false);
+	expect(syncSwitchIsDirty(false, false, true)).toBe(false);
+});
+
+/**
+ * The state with no baseline to differ from. The switch defaults to off there, so "off"
+ * matched the baseline and could never be saved — the user could assert that
+ * synchronisation is on, never that it is off, on the one screen telling them to resolve
+ * the state by switching it either way.
+ */
+test('an unreadable sync state can be asserted off, not only on', () => {
+	expect(syncSwitchIsDirty(false, null, true)).toBe(true);
+	expect(syncSwitchIsDirty(true, null, true)).toBe(true);
+	// Until the user actually touches it, though: opening the page writes nothing.
+	expect(syncSwitchIsDirty(false, null, false)).toBe(false);
 });

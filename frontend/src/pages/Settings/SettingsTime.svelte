@@ -7,7 +7,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { api } from '../../scripts/api.ts';
 	import { connected } from '../../scripts/ws-client.ts';
-	import { createStatusGate, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
+	import { createStatusGate, syncSwitchIsDirty, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
 	import { type SystemTimeOutcome, type SystemTimeResult, type SystemTimeStatus } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -36,7 +36,11 @@
 	// What the host reported when the form was last filled. Only fields the user
 	// actually changed get written — otherwise saving a timezone change alone would
 	// also rewind the clock to whatever it was when the page opened.
-	let loaded = $state({ autoSync: false, ntpServer: '', timezone: '', clock: '' });
+	let loaded = $state<{ autoSync: boolean; syncReported: boolean | null; ntpServer: string; timezone: string; clock: string }>({ autoSync: false, syncReported: false, ntpServer: '', timezone: '', clock: '' });
+	// Set once the user has deliberately worked the synchronisation switch. It is the only
+	// thing that can make that switch dirty on a host that would not say what its sync
+	// state is — see syncSwitchIsDirty.
+	let autoSyncTouched = $state(false);
 	// Decides which of several in-flight status answers is allowed to fill the form.
 	const statusGate = createStatusGate();
 
@@ -70,7 +74,10 @@
 		autoSync = next.ntpEnabled ?? false;
 		ntpServer = next.ntpServer ?? '';
 		timezone = next.timezone;
-		loaded = { autoSync, ntpServer, timezone, clock: `${hours}:${minutes}:${seconds}` };
+		// `syncReported` keeps the host's answer including the null one: the switch's own
+		// baseline had to flatten that to false to have something to show.
+		autoSyncTouched = false;
+		loaded = { autoSync, syncReported: next.ntpEnabled, ntpServer, timezone, clock: `${hours}:${minutes}:${seconds}` };
 	}
 
 	/**
@@ -184,6 +191,7 @@
 			addNotification(tt('settings.time.clockEditDiscarded'), 'info');
 		}
 		autoSync = !autoSync;
+		autoSyncTouched = true;
 	}
 
 	/** Localized reason a write was refused, with the OS text appended when there is one. */
@@ -245,11 +253,11 @@
 			// Order matters: automatic synchronisation goes off before a manual clock set
 			// (the OS refuses one while NTP owns the clock) and back on only at the end,
 			// so a clock set in the same save is not immediately overwritten by a sync.
-			if (!autoSync && loaded.autoSync && !(await apply(api.call<SystemTimeResult>('system.setNtpEnabled', { enabled: false })))) return;
+			if (!autoSync && syncDirty && !(await apply(api.call<SystemTimeResult>('system.setNtpEnabled', { enabled: false })))) return;
 			if (ntpServer.trim() !== loaded.ntpServer && !(await apply(api.call<SystemTimeResult>('system.setNtpServer', { server: ntpServer.trim() })))) return;
 			if (timezone !== loaded.timezone && !(await apply(api.call<SystemTimeResult>('system.setTimezone', { timezone })))) return;
 			if (clock && !(await apply(api.call<SystemTimeResult>('system.setClock', clock)))) return;
-			if (autoSync && !loaded.autoSync && !(await apply(api.call<SystemTimeResult>('system.setNtpEnabled', { enabled: true })))) return;
+			if (autoSync && syncDirty && !(await apply(api.call<SystemTimeResult>('system.setNtpEnabled', { enabled: true })))) return;
 			addNotification(tt('settings.time.saved'), 'success');
 			onBack?.();
 		} catch (e) {
@@ -285,7 +293,8 @@
 	let clockDisabled = $derived(busy || autoSync || syncUnknown || !status?.capabilities.setClock);
 	// Nothing to write means nothing to report: without this the button runs no request
 	// at all and still announces the settings as saved.
-	let hasChanges = $derived(autoSync !== loaded.autoSync || ntpServer.trim() !== loaded.ntpServer || timezone !== loaded.timezone || (clockEdited && !autoSync));
+	let syncDirty = $derived(syncSwitchIsDirty(autoSync, loaded.syncReported, autoSyncTouched));
+	let hasChanges = $derived(syncDirty || ntpServer.trim() !== loaded.ntpServer || timezone !== loaded.timezone || (clockEdited && !autoSync));
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));
 </script>
