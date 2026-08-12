@@ -39,18 +39,19 @@ const W32TIME_PARAMS_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\
 const W32TIME_SERVICE_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time';
 
 /**
- * Group policy's own W32Time configuration. When ANY of these keys exists, an
+ * Root of group policy's own W32Time configuration. When this key exists, an
  * administrator's policy owns the settings and the values under
  * {@link W32TIME_PARAMS_KEY} need not be the ones in effect — policy values override the
  * local W32Time configuration.
  *
- * All three branches matter and checking only the first one misses the common case: the
- * "Configure Windows NTP Client" policy writes `TimeProviders\NtpClient` (the peer list,
- * the sync type and the poll interval), "Global Configuration Settings" writes `Config`,
- * and `Parameters` is only where a couple of the older values land. A machine managed
- * through the usual policy was therefore classified as locally writable.
+ * The ROOT rather than the individual branches under it. Policy lands in several of
+ * them — "Configure Windows NTP Client" writes `TimeProviders\NtpClient`, "Global
+ * Configuration Settings" writes `Config`, a couple of older values land in
+ * `Parameters` — and enumerating a hand-picked set answers "unmanaged" for every branch
+ * not on the list, `TimeProviders\NtpServer` included. A subkey cannot exist without its
+ * parent, so the parent is the one question that covers all of them, present and future.
  */
-const W32TIME_POLICY_KEYS: string[] = ['HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time\\Parameters', 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time\\TimeProviders\\NtpClient', 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time\\Config'];
+const W32TIME_POLICY_KEY = 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time';
 
 /** `reg query` exit code for a key that is simply not there, as opposed to one it could not read. */
 const REG_KEY_NOT_FOUND = 1;
@@ -928,10 +929,7 @@ export function policyBranchState(outcome: RunOutcome): 'present' | 'absent' | '
  * UI shows the controls as somebody else's to change.
  */
 export async function readWindowsPolicyManaged(exec: CommandRunner = run): Promise<boolean> {
-	for (const key of W32TIME_POLICY_KEYS) {
-		if (policyBranchState(await exec('reg', ['query', key])) !== 'absent') return true;
-	}
-	return false;
+	return policyBranchState(await exec('reg', ['query', W32TIME_POLICY_KEY])) !== 'absent';
 }
 
 /** The Windows time source and service start type, as read from the registry. */

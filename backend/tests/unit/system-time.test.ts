@@ -970,28 +970,34 @@ describe('readWindowsPolicyManaged', () => {
 		return { exec, keys };
 	}
 
-	it('reports an unmanaged host when no policy branch exists', async () => {
+	/** The root of the branch, which is the one question that cannot miss a subkey. */
+	const POLICY_ROOT = 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time';
+
+	it('reports an unmanaged host when the policy branch does not exist', async () => {
 		const { exec, keys } = registry({});
 		expect(await readWindowsPolicyManaged(exec)).toBe(false);
-		// Every branch a policy can land in, not just Parameters.
-		expect(keys.map(k => k.split('\\').slice(4).join('\\'))).toEqual(['W32Time\\Parameters', 'W32Time\\TimeProviders\\NtpClient', 'W32Time\\Config']);
+		expect(keys).toContain(POLICY_ROOT);
 	});
 
-	/** Where "Configure Windows NTP Client" actually writes. Checking Parameters alone missed it. */
-	it('reports a managed host from the NtpClient policy branch', async () => {
-		const { exec } = registry({ 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time\\TimeProviders\\NtpClient': { kind: 'ok', output: '    NtpServer    REG_SZ    policy.example.org,0x9\r\n' } });
+	/**
+	 * Every subkey a policy can land in reports through its parent. Enumerating a chosen
+	 * few answered "unmanaged" for the rest — `TimeProviders\NtpServer` here, which the
+	 * old list did not name.
+	 */
+	it('reports a managed host from a policy branch nobody enumerated', async () => {
+		const { exec } = registry({ [POLICY_ROOT]: { kind: 'ok', output: `\r\n${POLICY_ROOT}\\TimeProviders\\NtpServer\r\n` } });
 		expect(await readWindowsPolicyManaged(exec)).toBe(true);
 	});
 
-	it('reports a managed host from the global Config policy branch', async () => {
-		const { exec } = registry({ 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time\\Config': { kind: 'ok', output: '    MaxPollInterval    REG_DWORD    0xa\r\n' } });
+	it('reports a managed host from values on the branch itself', async () => {
+		const { exec } = registry({ [POLICY_ROOT]: { kind: 'ok', output: '    MaxPollInterval    REG_DWORD    0xa\r\n' } });
 		expect(await readWindowsPolicyManaged(exec)).toBe(true);
 	});
 
 	/** Fail closed: a branch that could not be read may be the policy about to be overridden. */
 	it('treats an unreadable branch as managed', async () => {
 		for (const outcome of [{ kind: 'failed', code: 5, output: 'ERROR: Access is denied.\r\n' }, { kind: 'missing' }, { kind: 'timeout' }] as RunOutcome[]) {
-			const { exec } = registry({ 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time\\Parameters': outcome });
+			const { exec } = registry({ [POLICY_ROOT]: outcome });
 			expect(await readWindowsPolicyManaged(exec)).toBe(true);
 		}
 	});
