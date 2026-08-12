@@ -419,6 +419,19 @@ describe('isValidNtpServer', () => {
 		expect(isValidNtpServer('::1')).toBe(true);
 	});
 
+	/**
+	 * The way round the check above: `net.isIP()` rejects a scope suffix, so a scoped
+	 * address takes the zone-index branch instead — which only ever asked whether the part
+	 * before the `%` parses, never whether it is usable.
+	 */
+	it('rejects the unspecified address with a scope index on it', () => {
+		expect(isValidNtpServer('::%eth0')).toBe(false);
+		expect(isValidNtpServer('0:0:0:0:0:0:0:0%eth0')).toBe(false);
+		expect(isValidNtpServer('0000:0000:0000:0000:0000:0000:0000:0000%1')).toBe(false);
+		// A scope on an address that IS a peer stays valid.
+		expect(isValidNtpServer('fe80::1%eth0')).toBe(true);
+	});
+
 	it('rejects whitespace and shell metacharacters', () => {
 		expect(isValidNtpServer('ntp.example.org; rm -rf /')).toBe(false);
 		expect(isValidNtpServer('ntp.example.org two.example.org')).toBe(false);

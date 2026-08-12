@@ -194,8 +194,12 @@ export function isValidNtpServer(server: string): boolean {
 	// or a drop-in line through this branch.
 	const percent = server.indexOf('%');
 	if (percent >= 0) {
+		const base = server.slice(0, percent);
 		const zone = server.slice(percent + 1);
-		return isIP(server.slice(0, percent)) === 6 && zone.length > 0 && /^[A-Za-z0-9._-]+$/.test(zone);
+		// The same usability test as above, on the ADDRESS rather than on the whole string.
+		// `net.isIP()` rejects a scope suffix, so `::%eth0` never reached the check that
+		// `::` fails and was saved as the host's time source with an interface pinned to it.
+		return isIP(base) === 6 && !isUnusableNtpAddress(base) && zone.length > 0 && /^[A-Za-z0-9._-]+$/.test(zone);
 	}
 	return isValidDnsName(server);
 }
