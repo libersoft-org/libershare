@@ -175,8 +175,15 @@ function isValidDnsName(name: string): boolean {
  * `0:0:0:0:0:0:0:0` and `0000:...`.
  */
 function isUnusableNtpAddress(address: string): boolean {
-	if (isIP(address) === 4) return address === '0.0.0.0' || address === '255.255.255.255';
-	return /^[0:]+$/.test(address);
+	// The scope index comes off before anything is matched. Whether a scoped address even
+	// reaches here as one string is a RUNTIME difference: Bun's `net.isIP()` answers 6 for
+	// `::%eth0`, Node's answers 0 and sends it down the zone-index branch instead. On Bun
+	// the digits-only match below therefore saw `::%eth0`, did not match it, and the
+	// unspecified address was accepted as a peer with an interface pinned to it.
+	const percent = address.indexOf('%');
+	const bare = percent >= 0 ? address.slice(0, percent) : address;
+	if (isIP(bare) === 4) return bare === '0.0.0.0' || bare === '255.255.255.255';
+	return /^[0:]+$/.test(bare);
 }
 
 /**

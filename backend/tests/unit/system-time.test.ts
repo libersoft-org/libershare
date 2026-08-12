@@ -420,9 +420,10 @@ describe('isValidNtpServer', () => {
 	});
 
 	/**
-	 * The way round the check above: `net.isIP()` rejects a scope suffix, so a scoped
-	 * address takes the zone-index branch instead — which only ever asked whether the part
-	 * before the `%` parses, never whether it is usable.
+	 * The way round the check above, by either of the two routes a scoped address can take.
+	 * Node's `net.isIP()` rejects the scope and sends the value down the zone-index branch,
+	 * which only asked whether the part before the `%` parses; Bun's accepts it and hands
+	 * the whole string, suffix and all, to a match that only knew about digits and colons.
 	 */
 	it('rejects the unspecified address with a scope index on it', () => {
 		expect(isValidNtpServer('::%eth0')).toBe(false);
