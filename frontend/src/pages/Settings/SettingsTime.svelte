@@ -7,6 +7,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { api } from '../../scripts/api.ts';
 	import { connected } from '../../scripts/ws-client.ts';
+	import { writeFailureMessage } from '../../scripts/timeStatusSync.ts';
 	import { type SystemTimeOutcome, type SystemTimeResult, type SystemTimeStatus } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -67,17 +68,32 @@
 		loaded = { autoSync, ntpServer, timezone, clock: `${hours}:${minutes}:${seconds}` };
 	}
 
-	// Settled, not all: a host that cannot list its timezones still has a clock and an
-	// NTP state worth showing, and failing the whole screen over the picker would hide
-	// them behind a bare error.
-	async function load(): Promise<void> {
+	/**
+	 * Re-fill the form from the host. RETURNS the reason the status could not be read
+	 * rather than showing it: every caller but the first already has something to say, and
+	 * a reload triggered BY a failed save used to overwrite that message with its own —
+	 * so a save that was refused, or one that stopped half-way, ended up reported as
+	 * nothing worse than "could not read the time". The caller decides which survives.
+	 *
+	 * Settled, not all: a host that cannot list its timezones still has a clock and an
+	 * NTP state worth showing, and failing the whole screen over the picker would hide
+	 * them behind a bare error.
+	 */
+	async function load(): Promise<string> {
 		const [statusResult, zonesResult] = await Promise.allSettled([api.call<SystemTimeStatus>('system.getTime'), api.call<string[]>('system.listTimezones')]);
 		timezones = zonesResult.status === 'fulfilled' ? zonesResult.value : [];
-		if (statusResult.status === 'fulfilled') applyStatus(statusResult.value);
-		else errorMessage = translateError(statusResult.reason);
+		if (statusResult.status === 'rejected') return translateError(statusResult.reason);
+		applyStatus(statusResult.value);
+		return '';
 	}
 
-	void load();
+	/** Load with nothing to preserve: whatever went wrong IS the message. */
+	async function reload(): Promise<void> {
+		const failure = await load();
+		if (failure) errorMessage = failure;
+	}
+
+	void reload();
 
 	let offTimeChanged: (() => void) | void;
 
@@ -116,7 +132,7 @@
 			}
 			if (!isConnected) return;
 			api.subscribe('system:timeChanged').catch(() => {});
-			if (!busy && !hasChanges) void load();
+			if (!busy && !hasChanges) void reload();
 		});
 		return () => {
 			clearInterval(tick);
@@ -172,8 +188,10 @@
 	async function apply(write: Promise<SystemTimeResult>): Promise<boolean> {
 		const res = await write;
 		if (res.success) return true;
-		errorMessage = outcomeMessage(res);
-		await load();
+		// The refusal is the news; a re-read that also failed is a detail appended to it,
+		// never a replacement. Losing the refusal here left the user with a message about
+		// reading the time and no idea why their save had not gone through.
+		errorMessage = writeFailureMessage(outcomeMessage(res), await load());
 		return false;
 	}
 
@@ -222,8 +240,11 @@
 			// shows is then a mixture of what was written and what was not — re-read the
 			// host and say so, instead of leaving the user looking at values that are only
 			// half true.
-			errorMessage = withDetail(tt('settings.time.errorPartial'), translateError(e));
-			await load();
+			// The partial-save warning outlives the reload. It used to be assigned first and
+			// then overwritten whenever the re-read it triggers failed too — so the one thing
+			// the user had to be told, that part of the save may already be on the host, was
+			// replaced by a message about the read.
+			errorMessage = writeFailureMessage(withDetail(tt('settings.time.errorPartial'), translateError(e)), await load());
 		} finally {
 			busy = false;
 		}
