@@ -1235,6 +1235,30 @@ describe('writeFileAtomically', () => {
 		await rollback();
 		expect(await readdir(dir)).toEqual([]);
 	});
+
+	/**
+	 * The unknown case, which is neither of the two above: the original is there and could
+	 * not be read. Taking that for "there was nothing here" gives the rollback a null
+	 * previous, and null means delete — so an unreadable live configuration would be
+	 * REMOVED by the undo of a write that was reported as failed.
+	 */
+	it('refuses the write when the original could not be read', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await writeFile(path, 'original\n', 'utf8');
+		const denied = (): Promise<string> => Promise.reject(Object.assign(new Error('permission denied'), { code: 'EACCES' }));
+		await expect(writeFileAtomically(path, 'replacement\n', denied)).rejects.toMatchObject({ code: 'EACCES' });
+		// Nothing was touched: no staging file left behind and the original still stands.
+		expect(await readFile(path, 'utf8')).toBe('original\n');
+		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
+	});
+
+	it('still treats a genuinely absent original as nothing to restore', async () => {
+		const path = join(dir, '90-libershare.conf');
+		const missing = (): Promise<string> => Promise.reject(Object.assign(new Error('no such file'), { code: 'ENOENT' }));
+		const rollback = await writeFileAtomically(path, 'new\n', missing);
+		expect(await rollback()).toBe(true);
+		expect(await readdir(dir)).toEqual([]);
+	});
 });
 
 describe('applyTimesyncdDropIn', () => {

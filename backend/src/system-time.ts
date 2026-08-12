@@ -1223,13 +1223,24 @@ export async function setSystemNtpServer(server: string, readStatus: () => Promi
  * rename only guarantees the *name* change, so without it a power loss can leave the
  * new name pointing at an empty file.
  *
+ * `readOriginal` is injectable so the unreadable-original case can be exercised: a real
+ * EACCES on the live file is not something a test can arrange on every platform.
+ *
  * The temporary name is unique per call and created with `wx` (fail if it exists). A
  * name shared by every call — a bare pid suffix is shared by every call in one process —
  * lets a second write truncate the first one's staging file and then rename it away, so
  * the first write publishes the second's content and the second fails with ENOENT.
  */
-export async function writeFileAtomically(path: string, content: string): Promise<() => Promise<boolean>> {
-	const previous = await readFile(path, 'utf8').catch(() => null);
+export async function writeFileAtomically(path: string, content: string, readOriginal: (p: string) => Promise<string> = p => readFile(p, 'utf8')): Promise<() => Promise<boolean>> {
+	// ENOENT is the ONLY error that means "there was nothing here". Reading every other
+	// one — EACCES, EIO, EISDIR — as absence hands the rollback a `previous` of null, and
+	// null makes it DELETE the file: a permission fault on a live configuration would
+	// have the rollback remove it rather than restore it. An unknown original means the
+	// write cannot be undone, so it does not happen at all.
+	const previous = await readOriginal(path).catch((err: { code?: string }) => {
+		if (err.code === 'ENOENT') return null;
+		throw err;
+	});
 	await mkdir(dirname(path), { recursive: true });
 	// Same directory, or the rename would cross a filesystem boundary and stop being atomic.
 	const temp = `${path}.libershare-${process.pid}-${randomUUID()}.tmp`;
