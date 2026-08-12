@@ -1259,6 +1259,19 @@ describe('writeFileAtomically', () => {
 		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
 	});
 
+	/**
+	 * The directory fsync that makes the rename itself durable. Whether it can happen at
+	 * all is a platform question — Windows has no directory handle to open and journals the
+	 * metadata instead — so what is asserted here is that a platform which refuses it does
+	 * not lose the write over it. The durability itself is only observable across a crash.
+	 */
+	it('publishes the file whether or not the directory can be flushed', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await writeFileAtomically(path, 'durable\n');
+		expect(await readFile(path, 'utf8')).toBe('durable\n');
+		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
+	});
+
 	it('creates a missing parent directory', async () => {
 		const path = join(dir, 'timesyncd.conf.d', '90-libershare.conf');
 		await writeFileAtomically(path, 'x\n');

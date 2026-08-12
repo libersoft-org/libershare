@@ -1299,15 +1299,40 @@ export async function setSystemNtpServer(server: string, readStatus: () => Promi
 }
 
 /**
+ * Flush a directory's own contents so a name created in it survives a power loss.
+ *
+ * `fsync` on the FILE only commits its data; the entry that gives it its name lives in the
+ * directory and is buffered just like everything else. Without this a crash moments after
+ * the rename can come back to the old file, or to no file at all — the one outcome the
+ * atomic swap exists to rule out.
+ *
+ * A platform with no directory handle to open (Windows) refuses here, and that is not a
+ * failure: it journals the metadata itself, which is the same guarantee by other means.
+ */
+async function syncDirectory(dir: string): Promise<void> {
+	try {
+		const handle = await open(dir, 'r');
+		try {
+			await handle.sync();
+		} finally {
+			await handle.close();
+		}
+	} catch {
+		// See above: no directory handle on this platform, and nothing to do about it here.
+	}
+}
+
+/**
  * Replace `path` with `content` so a reader never observes a partial file, and return
  * a rollback that restores whatever was there before (deleting the file when there was
  * nothing).
  *
  * A plain `writeFile` to the final path truncates it first, so a crash or a full disk
  * mid-write leaves the live configuration truncated. Writing a sibling temporary file,
- * flushing it and renaming makes the swap atomic — and the `fsync` is not optional: a
- * rename only guarantees the *name* change, so without it a power loss can leave the
- * new name pointing at an empty file.
+ * flushing it and renaming makes the swap atomic — and BOTH `fsync`s are needed: the one
+ * on the file, or a power loss leaves the new name pointing at an empty file, and the one
+ * on the directory afterwards ({@link syncDirectory}), or the name itself may never have
+ * been written.
  *
  * `readOriginal` is injectable so the unreadable-original case can be exercised: a real
  * EACCES on the live file is not something a test can arrange on every platform.
@@ -1340,6 +1365,7 @@ export async function writeFileAtomically(path: string, content: string, readOri
 			await handle.close();
 		}
 		await rename(temp, path);
+		await syncDirectory(dirname(path));
 	} catch (err) {
 		await unlink(temp).catch(() => {});
 		throw err;
