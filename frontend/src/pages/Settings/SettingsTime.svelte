@@ -7,7 +7,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { api } from '../../scripts/api.ts';
 	import { connected } from '../../scripts/ws-client.ts';
-	import { writeFailureMessage } from '../../scripts/timeStatusSync.ts';
+	import { createStatusGate, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
 	import { type SystemTimeOutcome, type SystemTimeResult, type SystemTimeStatus } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -37,6 +37,8 @@
 	// actually changed get written — otherwise saving a timezone change alone would
 	// also rewind the clock to whatever it was when the page opened.
 	let loaded = $state({ autoSync: false, ntpServer: '', timezone: '', clock: '' });
+	// Decides which of several in-flight status answers is allowed to fill the form.
+	const statusGate = createStatusGate();
 
 	function pad(value: number): string {
 		return String(value).padStart(2, '0');
@@ -51,6 +53,9 @@
 
 	/** Fill the form from a host status snapshot and remember it as the comparison baseline. */
 	function applyStatus(next: SystemTimeStatus): void {
+		// Whatever is adopted here is the newest state the form knows about, so every status
+		// read still in flight is now answering an older question.
+		statusGate.supersede();
 		status = next;
 		readAt = performance.now();
 		// The backend may run on a different machine (or in a different zone) than the
@@ -80,10 +85,14 @@
 	 * them behind a bare error.
 	 */
 	async function load(): Promise<string> {
+		const current = statusGate.begin();
 		const [statusResult, zonesResult] = await Promise.allSettled([api.call<SystemTimeStatus>('system.getTime'), api.call<string[]>('system.listTimezones')]);
 		timezones = zonesResult.status === 'fulfilled' ? zonesResult.value : [];
 		if (statusResult.status === 'rejected') return translateError(statusResult.reason);
-		applyStatus(statusResult.value);
+		// A broadcast, or a later read, may have landed while this one was out. Its state is
+		// the fresher one and this answer predates it — applying it anyway would rewind the
+		// form to what the host looked like before the change it has already been told about.
+		if (current()) applyStatus(statusResult.value);
 		return '';
 	}
 
@@ -131,8 +140,17 @@
 				return;
 			}
 			if (!isConnected) return;
-			api.subscribe('system:timeChanged').catch(() => {});
-			if (!busy && !hasChanges) void reload();
+			// Subscribe BEFORE reading, and wait for it. Fired side by side, the read can be
+			// answered while the subscription is still being registered — and a change made in
+			// exactly that window is broadcast to nobody and is already absent from the answer
+			// that arrives, so the form sits on a state the host has left with nothing left to
+			// correct it.
+			void api
+				.subscribe('system:timeChanged')
+				.catch(() => {})
+				.then(() => {
+					if (!busy && !hasChanges) void reload();
+				});
 		});
 		return () => {
 			clearInterval(tick);
