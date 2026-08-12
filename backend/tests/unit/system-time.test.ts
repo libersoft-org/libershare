@@ -603,6 +603,21 @@ describe('canConfigureTimesyncdServer', () => {
 		expect(canConfigureTimesyncdServer([], ABSENT, NONE_ACTIVE)).toBe(false);
 	});
 
+	/**
+	 * The unknown states, which are neither "no competitor" nor "no ordering". A read that
+	 * failed used to be indistinguishable from one that came back empty, and empty is the
+	 * permissive answer: the drop-in lands and is reported as saved while chrony — running,
+	 * or ordered ahead of timesyncd in a list we could not read — keeps the clock.
+	 */
+	it('refuses when the competing-daemon state could not be read', () => {
+		expect(canConfigureTimesyncdServer(TIMESYNCD_FIRST, INSTALLED, null)).toBe(false);
+		expect(canConfigureTimesyncdServer([], INSTALLED, null)).toBe(false);
+	});
+
+	it('refuses when the provider ordering could not be read', () => {
+		expect(canConfigureTimesyncdServer(null, INSTALLED, NONE_ACTIVE)).toBe(false);
+	});
+
 	it('names every implementation timedated can hand the clock to', () => {
 		expect(COMPETING_NTP_UNITS).toContain('chronyd.service');
 		expect(COMPETING_NTP_UNITS).toContain('ntpd.service');
@@ -656,6 +671,25 @@ describe('readNtpUnitsList', () => {
 
 	it('reports no ordering at all on a host without the directories', async () => {
 		expect(await readNtpUnitsList([join(root, 'nowhere')], {})).toEqual([]);
+	});
+
+	/**
+	 * A directory that is not there is the ordinary case and stays an empty ordering. A
+	 * directory that IS there and could not be listed is a different answer: the entry that
+	 * would have put another daemon ahead of timesyncd may be exactly the one not read, so
+	 * the ordering is reported as unknown rather than as absent.
+	 */
+	it('reports an unknown ordering when a directory cannot be listed', async () => {
+		const lib = await dir('lib', { '80-systemd-timesync.list': 'systemd-timesyncd.service\n' });
+		const notADirectory = join(root, 'blocked');
+		await writeFile(notADirectory, 'in the way', 'utf8');
+		expect(await readNtpUnitsList([notADirectory, lib], {})).toBeNull();
+	});
+
+	it('reports an unknown ordering when a list file cannot be read', async () => {
+		const lib = await dir('lib', {});
+		await mkdir(join(lib, '50-chronyd.list'));
+		expect(await readNtpUnitsList([lib], {})).toBeNull();
 	});
 });
 

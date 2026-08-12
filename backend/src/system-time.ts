@@ -525,9 +525,14 @@ const NTP_SERVICES_ENV = 'SYSTEMD_TIMEDATED_NTP_SERVICES';
  * chrony, which never reads that file. Checking only which daemons are currently ACTIVE
  * misses exactly that case.
  *
+ * Returns null when the ordering could not be read — which is NOT the empty list. An
+ * empty list is a host that ships no ordering at all and is handled by its own rule
+ * ({@link canConfigureTimesyncdServer}); null is a host whose ordering exists and is
+ * unknown to us, where nothing about who owns the clock may be concluded.
+ *
  * `dirs` and `env` are injectable so the ordering rules can be exercised off a systemd host.
  */
-export async function readNtpUnitsList(dirs: string[] = NTP_UNITS_DIRS, env: NodeJS.ProcessEnv = process.env): Promise<string[]> {
+export async function readNtpUnitsList(dirs: string[] = NTP_UNITS_DIRS, env: NodeJS.ProcessEnv = process.env): Promise<string[] | null> {
 	const override = env[NTP_SERVICES_ENV];
 	if (override !== undefined)
 		return override
@@ -538,13 +543,27 @@ export async function readNtpUnitsList(dirs: string[] = NTP_UNITS_DIRS, env: Nod
 	// directory set follows.
 	const files = new Map<string, string>();
 	for (const dir of dirs) {
-		for (const name of await readdir(dir).catch(() => [] as string[])) {
+		let names: string[];
+		try {
+			names = await readdir(dir);
+		} catch (err) {
+			// A directory that is not there is the ordinary case — hardly any host ships all
+			// four. Every other error means part of the ordering stayed unread, and a partial
+			// ordering is not one: the very entry that would have put chrony ahead of
+			// timesyncd is the one that could be missing. Null says "cannot be determined".
+			if ((err as { code?: string }).code === 'ENOENT') continue;
+			return null;
+		}
+		for (const name of names) {
 			if (name.endsWith('.list') && !files.has(name)) files.set(name, join(dir, name));
 		}
 	}
 	const units: string[] = [];
 	for (const name of [...files.keys()].sort()) {
-		const content = await readFile(files.get(name)!, 'utf8').catch(() => '');
+		// Same rule for the file itself: a list that was there a moment ago and cannot be
+		// read now leaves the ordering incomplete, which is not the same as empty.
+		const content = await readFile(files.get(name)!, 'utf8').catch(() => null);
+		if (content === null) return null;
 		for (const line of content.split('\n')) {
 			const unit = line.trim();
 			if (unit.length > 0 && !unit.startsWith('#') && !units.includes(unit)) units.push(unit);
@@ -573,11 +592,18 @@ export function firstUsableNtpUnit(ordered: string[], unitOutput: string | null)
  * ordering at all, so `set-ntp` has nothing to hand the clock to and restarting timesyncd
  * ourselves is the whole mechanism. There the older test stands: timesyncd installed, and
  * no other NTP daemon currently running.
+ *
+ * A NULL `ordered` or `competingOutput` is neither of those: it is a state that could not
+ * be read. Both used to resolve to "nothing in the way", which is the permissive answer to
+ * a question nobody answered — the drop-in would be written and reported as saved while
+ * the daemon that actually holds the clock never reads it. Unknown refuses.
  */
-export function canConfigureTimesyncdServer(ordered: string[], unitOutput: string | null, competingOutput: string | null): boolean {
+export function canConfigureTimesyncdServer(ordered: string[] | null, unitOutput: string | null, competingOutput: string | null): boolean {
 	// Belt to the ordered list's braces: a daemon someone started outside timedated's
-	// ordering owns the clock just as effectively.
-	if (competingOutput !== null && parseAnyUnitActive(competingOutput)) return false;
+	// ordering owns the clock just as effectively — and one we could not ask about may be
+	// running just as well as one that answered.
+	if (competingOutput === null || parseAnyUnitActive(competingOutput)) return false;
+	if (ordered === null) return false;
 	if (ordered.length > 0) return firstUsableNtpUnit(ordered, unitOutput) === TIMESYNCD_UNIT;
 	return unitOutput !== null && parseUnitInstalled(unitOutput, TIMESYNCD_UNIT);
 }
@@ -908,7 +934,7 @@ async function readLinuxStatus(): Promise<PlatformStatus> {
 	// unit catalogue: `show-timesync` would only answer while the daemon runs, and the UI
 	// turns synchronisation off before writing a server.
 	const ordered = canNtp ? await readNtpUnitsList() : [];
-	const unit = canNtp ? await tryRead('systemctl', ['list-unit-files', ...(ordered.length > 0 ? ordered : [TIMESYNCD_UNIT])]) : null;
+	const unit = canNtp ? await tryRead('systemctl', ['list-unit-files', ...(ordered !== null && ordered.length > 0 ? ordered : [TIMESYNCD_UNIT])]) : null;
 	// timedated manages several NTP implementations; a host where chrony is the active
 	// one would ignore our drop-in entirely (see canConfigureTimesyncdServer).
 	const competing = canNtp ? await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', ...COMPETING_NTP_UNITS]) : null;
