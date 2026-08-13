@@ -1,3 +1,7 @@
+import { CodedError, ErrorCodes } from './errors.ts';
+import { MAX_API_MESSAGE_SIZE } from './product.ts';
+import { formatBytes } from './utils.ts';
+
 type EventCallback = (data: any) => void;
 
 interface PendingRequest {
@@ -139,10 +143,17 @@ export class WsClient {
 	async call<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
 		await this.ensureConnected();
 		const id = crypto.randomUUID();
-		const request = { id, method, params };
+		const request = JSON.stringify({ id, method, params });
+		// The server closes the socket outright on an oversized frame, and the
+		// caller only ever sees "disconnected" — so refuse here and hand back a
+		// real error code. The server counts UTF-8 bytes, so the string length is
+		// only a cheap pre-filter: one UTF-16 unit is at most three UTF-8 bytes,
+		// so anything under a third of the limit provably fits and skips the copy
+		// that measuring the real byte length costs.
+		if (request.length * 3 > MAX_API_MESSAGE_SIZE && new Blob([request]).size > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.MESSAGE_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
 		return new Promise<T>((resolve, reject) => {
 			this.pendingRequests.set(id, { resolve, reject });
-			this.ws!.send(JSON.stringify(request));
+			this.ws!.send(request);
 		});
 	}
 

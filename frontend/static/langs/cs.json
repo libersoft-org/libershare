@@ -61,6 +61,8 @@
 		"errorMissingParameter": "Chybí povinný parametr: {detail}",
 		"errorUnsupportedCompression": "Nepodporovaný kompresní algoritmus: {detail}",
 		"errorUnsupportedDecompression": "Nepodporovaný dekompresní algoritmus: {detail}",
+		"errorDecompressedTooLarge": "Rozbalený soubor přesahuje maximální velikost {detail}",
+		"errorMessageTooLarge": "Data přesahují maximální velikost zprávy {detail}",
 		"errorHTTP": "HTTP chyba: {detail}",
 		"errorInvalidSizeFormat": "Neplatný formát velikosti. Použijte číslo s volitelnou příponou: K, M, G, T, P, E, Z, Y",
 		"errorParseError": "Neplatný formát požadavku",
@@ -292,7 +294,8 @@
 		"uploadFromLocal": "Nahrát z lokálního počítače",
 		"selectLocalFile": "Vybrat lokální soubor",
 		"uploadRequired": "Vyberte soubor k nahrání",
-		"importing": "Importuji ..."
+		"importing": "Importuji ...",
+		"uploading": "Nahrávám soubor ..."
 	},
 	"settings": {
 		"title": "Nastavení",

@@ -21,10 +21,6 @@
 		return api.lishs.parseFromFile(path);
 	}
 
-	function parseJSON(content: string): Promise<ILISH[]> {
-		return api.lishs.parseFromJSON(content);
-	}
-
 	function handleConfirmDone(): void {
 		if (onImport) onImport();
 		else {
@@ -34,7 +30,7 @@
 	}
 </script>
 
-<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageLISHPath} fileFilter={withCompressionExtensions(['*.lish', '*.lishs', '*.json'])} fileFilterName={'LISH ' + $t('common.extensions')} filePathLabel={$t('lish.import.filePath')} {parseFile} {parseJSON} bind:downloadPath downloadPathLabel={$t('lish.import.downloadPath')} onConfirmDone={handleConfirmDone}>
+<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageLISHPath} fileFilter={withCompressionExtensions(['*.lish', '*.lishs', '*.json'])} fileFilterName={'LISH ' + $t('common.extensions')} filePathLabel={$t('lish.import.filePath')} {parseFile} bind:downloadPath downloadPathLabel={$t('lish.import.downloadPath')} onConfirmDone={handleConfirmDone}>
 	{#snippet confirm({ data, onDone })}
 		<ImportOverwrite lishs={data as ILISH[]} {downloadPath} {position} enableSharing={$autoStartSharing} enableDownloading={$autoStartDownloading} {onDone} />
 	{/snippet}

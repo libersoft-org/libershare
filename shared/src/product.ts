@@ -9,3 +9,14 @@ export const productNetworkList: string = product.networkList;
 export const productEnvPrefix: string = product.name.toUpperCase().replace(/[^A-Z0-9]/g, '');
 export const DEFAULT_API_PORT: number = 1158;
 export const DEFAULT_API_URL: string = `ws://localhost:${DEFAULT_API_PORT}`;
+
+/**
+ * Largest single WebSocket message the API accepts, in bytes. Bun defaults to
+ * 16 MiB and drops the whole connection on a bigger frame without telling the
+ * caller why, so the backend sets this explicitly and the client refuses to send
+ * anything larger with a real error instead.
+ *
+ * It doubles as the decompression output cap: a payload that could never travel
+ * back over the API is not worth expanding in memory first.
+ */
+export const MAX_API_MESSAGE_SIZE: number = 128 * 1024 * 1024;

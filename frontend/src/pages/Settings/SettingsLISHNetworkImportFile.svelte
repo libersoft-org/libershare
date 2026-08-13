@@ -19,10 +19,6 @@
 		return api.lishnets.parseFromFile(path);
 	}
 
-	function parseJSON(content: string): Promise<LISHNetworkDefinition[]> {
-		return api.lishnets.parseFromJSON(content);
-	}
-
 	function handleConfirmDone(): void {
 		onImport?.();
 		onBack?.();
@@ -30,7 +26,7 @@
 	}
 </script>
 
-<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageLISHnetPath} fileFilter={withCompressionExtensions(['*.lishnet', '*.lishnets', '*.json'])} fileFilterName={'LISHNET ' + $t('common.extensions')} filePathLabel={$t('settings.lishNetworkImport.filePath')} {parseFile} {parseJSON} onConfirmDone={handleConfirmDone}>
+<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageLISHnetPath} fileFilter={withCompressionExtensions(['*.lishnet', '*.lishnets', '*.json'])} fileFilterName={'LISHNET ' + $t('common.extensions')} filePathLabel={$t('settings.lishNetworkImport.filePath')} {parseFile} onConfirmDone={handleConfirmDone}>
 	{#snippet confirm({ data, onDone })}
 		<ImportOverwrite networks={data as LISHNetworkDefinition[]} {position} {onDone} />
 	{/snippet}

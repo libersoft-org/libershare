@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import product from './product.json';
+import { productName, MAX_API_MESSAGE_SIZE } from './product.ts';
 
 const root = '/app/build';
 const port = Number(process.env['PORT'] ?? 6003);
@@ -57,6 +57,19 @@ type ClientData = {
 function buildUpstreamUrl(clientUrl: URL): string {
 	const upstream = new URL(backendWsUrl!);
 	for (const [k, v] of clientUrl.searchParams) upstream.searchParams.set(k, v);
+	return upstream.toString();
+}
+
+/**
+ * Same URL rewrite as {@link buildUpstreamUrl} but for a plain HTTP call, used to
+ * forward the import file upload. This proxy is the only thing a browser can
+ * reach in a container deployment — the backend port is bound to the host's
+ * loopback — so an HTTP route that is not forwarded here does not exist.
+ */
+function buildUpstreamHttpUrl(clientUrl: URL): string {
+	const upstream = new URL(buildUpstreamUrl(clientUrl));
+	upstream.protocol = upstream.protocol === 'wss:' ? 'https:' : 'http:';
+	upstream.pathname = clientUrl.pathname;
 	return upstream.toString();
 }
 
@@ -120,6 +133,12 @@ Bun.serve({
 			return new Response('Expected WebSocket', { status: 400 });
 		}
 
+		// Import file upload — streamed straight through so a multi-hundred-MB
+		// file never has to be held in this container's memory.
+		if (url.pathname === '/upload') {
+			return fetch(buildUpstreamHttpUrl(url), { method: request.method, body: request.body, headers: request.headers, duplex: 'half' } as RequestInit);
+		}
+
 		const filePath = fileForPath(url.pathname);
 		let file = Bun.file(filePath);
 
@@ -132,6 +151,9 @@ Bun.serve({
 		});
 	},
 	websocket: {
+		// Match the backend's limit — otherwise this proxy is the one that quietly
+		// drops the connection on a large frame, before the backend ever sees it.
+		maxPayloadLength: MAX_API_MESSAGE_SIZE,
 		open(ws) {
 			connectUpstream(ws);
 		},
@@ -167,4 +189,4 @@ Bun.serve({
 });
 
 const protocol = tlsEnabled ? 'https' : 'http';
-console.log(`${product.name} frontend listening on ${protocol}://0.0.0.0:${port}`);
+console.log(`${productName} frontend listening on ${protocol}://0.0.0.0:${port}`);

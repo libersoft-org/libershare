@@ -1,5 +1,5 @@
 import { get, writable } from 'svelte/store';
-import { WsClient } from '@shared';
+import { WsClient, CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, formatBytes } from '@shared';
 import { addNotification } from './notifications.ts';
 import { tt } from './language.ts';
 import { getAPIURL } from './api-url.ts';
@@ -35,6 +35,39 @@ function getStatusURL(): string {
 	parsed.search = '';
 	if (backendToken) parsed.searchParams.set('token', backendToken);
 	return parsed.toString();
+}
+
+function getUploadURL(name: string): string {
+	const parsed = new URL(apiURL);
+	parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:';
+	parsed.pathname = '/upload';
+	parsed.search = '';
+	parsed.searchParams.set('name', name);
+	if (backendToken) parsed.searchParams.set('token', backendToken);
+	return parsed.toString();
+}
+
+/**
+ * Send a locally picked file to the backend over plain HTTP and return the temp
+ * path it landed in. The bytes cross the wire once and raw; pushing them through
+ * the WebSocket instead would mean base64 inside a single frame, which caps an
+ * import at a fraction of the file sizes this handles.
+ */
+export async function uploadImportFile(file: File): Promise<string> {
+	// Checked before sending: the backend rejects an oversized body by resetting
+	// the connection, which surfaces as an unreadable network error rather than
+	// as the size problem it actually is.
+	if (file.size > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.MESSAGE_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
+	const response = await fetch(getUploadURL(file.name), { method: 'POST', body: file });
+	const data = await response.json().catch(() => undefined);
+	if (response.ok && data?.path) return data.path as string;
+	if (response.status === 413) throw new CodedError(ErrorCodes.MESSAGE_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
+	// Keep the shape translateError() expects, so an upload failure reads like
+	// any other backend error instead of a raw HTTP status.
+	const error = new Error(data?.error ?? `HTTP ${response.status}`);
+	(error as any).code = data?.error ?? 'HTTP_ERROR';
+	(error as any).detail = data?.errorDetail ?? String(response.status);
+	throw error;
 }
 
 export const apiURL = getAPIURL();

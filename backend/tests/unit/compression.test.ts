@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { Utils } from '../../src/utils.ts';
 import { initFsHandlers } from '../../src/api/fs.ts';
-import { COMPRESSION_ALGORITHMS, compressionExtension, detectCompression, stripCompressionExtension, withCompressionExtensions, isCompressed, ErrorCodes } from '@shared';
+import { COMPRESSION_ALGORITHMS, compressionExtension, detectCompression, stripCompressionExtension, withCompressionExtensions, isCompressed, ErrorCodes, MAX_API_MESSAGE_SIZE } from '@shared';
 
 /** Mixed binary + UTF-8 payload — catches encoding-sensitive round-trip bugs. */
 function samplePayload(): Uint8Array<ArrayBuffer> {
@@ -55,6 +55,21 @@ describe('Utils.compress / Utils.decompress', () => {
 		expect(Array.from(Utils.decompress(compressed, 'brotli'))).toEqual(Array.from(raw));
 	});
 
+	for (const algorithm of COMPRESSION_ALGORITHMS) {
+		it(`${algorithm}: refuses to expand past the output cap`, () => {
+			// A few hundred bytes of compressed zeroes expand past the cap. Without
+			// the guard this allocation is what kills the process instead of the call.
+			const bomb = Utils.compress(new Uint8Array(MAX_API_MESSAGE_SIZE + 1024 * 1024) as Uint8Array<ArrayBuffer>, algorithm);
+			expect(bomb.length).toBeLessThan(1024 * 1024);
+			expect(() => Utils.decompress(bomb, algorithm)).toThrow(ErrorCodes.DECOMPRESSED_TOO_LARGE);
+		});
+
+		it(`${algorithm}: still decompresses a payload that fits`, () => {
+			const raw = new Uint8Array(4 * 1024 * 1024).fill(7) as Uint8Array<ArrayBuffer>;
+			expect(Utils.decompress(Utils.compress(raw, algorithm), algorithm).length).toBe(raw.length);
+		});
+	}
+
 	it('rejects an unsupported algorithm instead of silently passing data through', () => {
 		const data = samplePayload();
 		expect(() => Utils.compress(data, 'bzip2' as any)).toThrow(ErrorCodes.UNSUPPORTED_COMPRESSION);
@@ -89,29 +104,27 @@ describe('Utils.writeJSONToFile / Utils.readFileCompressed', () => {
 	});
 });
 
-describe('fs.decompressText / fs.readCompressed handlers', () => {
+describe('fs.readCompressed handler', () => {
 	const fs = initFsHandlers();
 
 	for (const algorithm of COMPRESSION_ALGORITHMS) {
-		it(`${algorithm}: decompresses a base64 upload using the file name alone`, async () => {
+		it(`${algorithm}: reads an uploaded file using its name alone`, async () => {
+			// This is the path an upload takes now: it lands in a temp file and is
+			// read back, so the algorithm has to come from the extension.
 			const json = '{"name":"Kompresní test"}';
-			const compressed = Utils.compress(new TextEncoder().encode(json) as Uint8Array<ArrayBuffer>, algorithm);
-			const base64 = Buffer.from(compressed).toString('base64');
-			const result = await fs.decompressText({ data: base64, fileName: `backup.lishset${compressionExtension(algorithm)}` });
-			expect(result.content).toBe(json);
+			const path = tempFile(`upload.lishset${compressionExtension(algorithm)}`);
+			await Bun.write(path, Utils.compress(new TextEncoder().encode(json) as Uint8Array<ArrayBuffer>, algorithm));
+			expect((await fs.readCompressed({ path })).content).toBe(json);
 		});
 	}
 
-	it('returns an uncompressed upload unchanged', async () => {
-		const base64 = Buffer.from('plain text', 'utf-8').toString('base64');
-		expect((await fs.decompressText({ data: base64, fileName: 'notes.json' })).content).toBe('plain text');
-	});
-
 	it('pretty-prints JSON on request and leaves non-JSON alone', async () => {
-		const base64 = Buffer.from('{"a":1}', 'utf-8').toString('base64');
-		expect((await fs.decompressText({ data: base64, fileName: 'a.json', prettyJSON: true })).content).toBe('{\n\t"a": 1\n}');
-		const notJSON = Buffer.from('hello', 'utf-8').toString('base64');
-		expect((await fs.decompressText({ data: notJSON, fileName: 'a.txt', prettyJSON: true })).content).toBe('hello');
+		const jsonPath = tempFile('pretty.json');
+		const textPath = tempFile('plain.txt');
+		await Bun.write(jsonPath, '{"a":1}');
+		await Bun.write(textPath, 'hello');
+		expect((await fs.readCompressed({ path: jsonPath, prettyJSON: true })).content).toBe('{\n\t"a": 1\n}');
+		expect((await fs.readCompressed({ path: textPath, prettyJSON: true })).content).toBe('hello');
 	});
 
 	it('reads a compressed file and an uncompressed one through the same handler', async () => {
