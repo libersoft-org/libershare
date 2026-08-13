@@ -21,7 +21,7 @@
 	import TableHeader from '../../components/Table/TableHeader.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
 	import TableCell from '../../components/Table/TableCell.svelte';
-	import LISHNetworkBootstrapPeer from './SettingsLISHNetworkBootstrapPeer.svelte';
+	import LISHNetworkBootstrapPeer from './SettingsLISHNetworkPeersPeer.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
