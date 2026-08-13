@@ -241,12 +241,15 @@ export class LISHClient {
 			}
 			// Emitted only after validation passes — a rejected manifest must not flash a full bar.
 			if (total > 0) safeEmit(total, total);
-			return response.manifest;
+			// Sanitize the peer-supplied manifest: a malicious or outdated peer could embed
+			// responder-local fields (`finalDirectory` → post-download move to an attacker-chosen
+			// path; `chunks` → chunks flagged have=1 and never fetched). We own the local paths and
+			// chunk state, so strip them at the trust boundary before the value reaches the DB.
+			return toManifest(response.manifest);
 		} finally {
 			this.lengthSink = null;
 			this.byteSink = null;
-		}
-	}
+		}	}
 
 	// Request list of shared LISHs from peer. `query` is an optional
 	// case-insensitive substring filter the peer applies server-side; omit it
@@ -425,6 +428,19 @@ export function clearAllUploads(): void {
 
 const IO_ERROR_THRESHOLD = 3; // consecutive I/O errors before auto-disabling upload
 
+/**
+ * Strip node-local state from a LISH so only the LISH data format structure remains.
+ * Local filesystem paths (`directory`, `finalDirectory`) and per-chunk possession
+ * (`chunks`) are node-owned and must never cross the wire — in EITHER direction:
+ * outbound (serving getLish) they must not leak; inbound (consuming a peer's manifest)
+ * they must not be trusted, or a hostile peer could redirect the post-download move or
+ * pre-flag chunks as already downloaded.
+ */
+export function toManifest(lish: import('@shared').IStoredLISH): import('@shared').IStoredLISH {
+	const { directory, finalDirectory, chunks, ...exportData } = lish;
+	return exportData as import('@shared').IStoredLISH;
+}
+
 export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType): Promise<void> {
 	const servedLishIDs = new Set<string>();
 	const ioErrorCounts = new Map<string, number>(); // per-LISH consecutive I/O error counter
@@ -498,9 +514,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 						const response: LISHGetLishResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 						sendLengthPrefixed(stream, codecEncode(response));
 					} else {
-						const { directory, chunks, ...exportData } = lish;
-						const manifest = exportData as import('@shared').IStoredLISH;
-						const response: LISHGetLishResponse = { manifest };
+						const response: LISHGetLishResponse = { manifest: toManifest(lish) };
 						sendLengthPrefixed(stream, codecEncode(response));
 					}
 				}
