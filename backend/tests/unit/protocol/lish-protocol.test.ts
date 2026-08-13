@@ -1,8 +1,24 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, LISHClient, setMaxChunkSize, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, LISHClient, toManifest, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
 import { encode as codecEncode, decode as codecDecode } from '../../../src/protocol/codec.ts';
 import { encode as lpEncode } from 'it-length-prefixed';
-import { DEFAULT_MAX_CHUNK_SIZE } from '../../../src/settings.ts';
+import { DEFAULT_MAX_CHUNK_SIZE, DEFAULT_MAX_MESSAGE_SIZE, useNetworkSettings, type SettingsData } from '../../../src/settings.ts';
+
+/** The chunk limit is read live from settings, so a test sets it by moving this. */
+let chunkLimit = DEFAULT_MAX_CHUNK_SIZE;
+useNetworkSettings(
+	() =>
+		({
+			maxDownloadSpeed: 0,
+			maxUploadSpeed: 0,
+			maxDownloadPeersPerLISH: 30,
+			maxUploadPeersPerLISH: 30,
+			maxMessageSize: DEFAULT_MAX_MESSAGE_SIZE,
+			maxChunkSize: chunkLimit,
+		}) as SettingsData['network']
+);
 import { ErrorCodes, type IStoredLISH } from '@shared';
 
 // ---------------------------------------------------------------------------
@@ -274,6 +290,56 @@ describe('lish-protocol – upload state', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Manifest sanitization (getLish response)
+// ---------------------------------------------------------------------------
+
+describe('lish-protocol – toManifest', () => {
+	const stored: IStoredLISH = {
+		id: 'lish-manifest-test',
+		name: 'Test LISH',
+		created: '2025-10-24T00:00:00.000Z',
+		chunkSize: 1024 * 1024,
+		checksumAlgo: 'sha256',
+		files: [{ path: 'a.bin', size: 1, checksums: ['ab'] }],
+		directory: '/local/temp/lish-manifest-test',
+		finalDirectory: '/local/final/lish-manifest-test',
+		chunks: ['ab'],
+	};
+
+	it('strips all responder-local fields (directory, finalDirectory, chunks)', () => {
+		const manifest = toManifest(stored);
+		expect('directory' in manifest).toBe(false);
+		expect('finalDirectory' in manifest).toBe(false);
+		expect('chunks' in manifest).toBe(false);
+	});
+
+	it('keeps the LISH data format fields intact', () => {
+		const manifest = toManifest(stored);
+		expect(manifest.id).toBe('lish-manifest-test');
+		expect(manifest.name).toBe('Test LISH');
+		expect(manifest.chunkSize).toBe(1024 * 1024);
+		expect(manifest.checksumAlgo).toBe('sha256');
+		expect(manifest.files).toHaveLength(1);
+	});
+
+	it('does not mutate the stored LISH', () => {
+		toManifest(stored);
+		expect(stored.directory).toBe('/local/temp/lish-manifest-test');
+		expect(stored.finalDirectory).toBe('/local/final/lish-manifest-test');
+		expect(stored.chunks).toEqual(['ab']);
+	});
+
+	// The cases above pin the helper, not the wiring: drop either call site and they all
+	// still pass while the stripped fields silently cross the wire again. Both directions
+	// sit on lines other work also touches, so guard them at the source surface.
+	it('routes both wire directions through the helper', () => {
+		const source = readFileSync(join(__dirname, '../../../src/protocol/lish-protocol.ts'), 'utf-8');
+		expect(source).toContain('return toManifest(response.manifest)'); // inbound: peer manifest
+		expect(source).toContain('{ manifest: toManifest(lish) }'); // outbound: served manifest
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Msgpack chunk encoding (LISH protocol /lish/0.0.2)
 // ---------------------------------------------------------------------------
 
@@ -397,17 +463,17 @@ describe('LISHClient.requestManifest – manifest validation', () => {
 	}
 
 	afterEach(() => {
-		setMaxChunkSize(DEFAULT_MAX_CHUNK_SIZE);
+		chunkLimit = DEFAULT_MAX_CHUNK_SIZE;
 	});
 
 	it('rejects a manifest whose chunkSize exceeds the configured maximum', async () => {
-		setMaxChunkSize(1024 * 1024);
+		chunkLimit = 1024 * 1024;
 		const client = new LISHClient(fakeStream(makeManifest(2 * 1024 * 1024)));
 		await expect(client.requestManifest('lish-manifest-test')).rejects.toMatchObject({ code: ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE });
 	});
 
 	it('accepts a manifest whose chunkSize is within the maximum', async () => {
-		setMaxChunkSize(1024 * 1024);
+		chunkLimit = 1024 * 1024;
 		const client = new LISHClient(fakeStream(makeManifest(1024)));
 		const manifest = await client.requestManifest('lish-manifest-test');
 		expect(manifest.chunkSize).toBe(1024);
