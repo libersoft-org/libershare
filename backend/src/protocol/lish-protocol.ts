@@ -1,8 +1,8 @@
 import { decode as lpDecode } from 'it-length-prefixed';
 import { encode as lpEncode } from 'it-length-prefixed';
 import { type Stream } from '@libp2p/interface';
-import { type LISHid, type ChunkID, type ErrorCode, ErrorCodes, CodedError } from '@shared';
-import { DEFAULT_MAX_MESSAGE_SIZE } from '../settings.ts';
+import { type LISHid, type ChunkID, type ErrorCode, ErrorCodes, CodedError, validateLISHStructure, minMessageSizeFor } from '@shared';
+import { DEFAULT_MAX_MESSAGE_SIZE, DEFAULT_MAX_CHUNK_SIZE, networkSetting } from '../settings.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { Uint8ArrayList } from 'uint8arraylist';
 import { uploadLimiter } from './speed-limiter.ts';
@@ -13,17 +13,29 @@ import { encode as codecEncode, decode as codecDecode } from './codec.ts';
 export const LISH_PROTOCOL = '/lish/0.0.1';
 
 /**
- * Hard upper bound on a single P2P msgpack message size, in bytes.
- * Configurable via settings (`network.maxMessageSize`); read live on every new stream so
- * settings changes take effect immediately for subsequent requests — no peer restart needed.
+ * Hard upper bound on a single P2P msgpack message size, in bytes. Read from
+ * settings (`network.maxMessageSize`) at each use, so a settings change applies
+ * to the next stream without a restart. A non-positive stored value would
+ * reject every message, so the default stands in for it.
  */
-let maxMessageSize: number = DEFAULT_MAX_MESSAGE_SIZE;
-export function setMaxMessageSize(size: number): void {
-	if (typeof size === 'number' && Number.isFinite(size) && size > 0) maxMessageSize = size;
+export function getMaxMessageSize(): number {
+	const size = networkSetting('maxMessageSize');
+	const configured = typeof size === 'number' && Number.isFinite(size) && size > 0 ? size : DEFAULT_MAX_MESSAGE_SIZE;
+	// A message limit at or below the chunk limit would reject every chunk on arrival,
+	// so the chunk limit wins and the message limit is lifted over it. Applied on the
+	// read now that both are read live — there is no longer a write path to clamp.
+	return Math.max(configured, minMessageSizeFor(getMaxChunkSize()));
 }
 
-export function getMaxMessageSize(): number {
-	return maxMessageSize;
+/**
+ * Maximum chunk size accepted in a manifest received from a peer, in bytes.
+ * Mirrors the `network.maxChunkSize` bound enforced on locally created/imported LISHs so a
+ * malicious or malformed manifest can't push an oversized chunk size into the app. Read live
+ * on every manifest so settings changes take effect without a peer restart.
+ */
+export function getMaxChunkSize(): number {
+	const size = networkSetting('maxChunkSize');
+	return typeof size === 'number' && Number.isFinite(size) && size > 0 ? size : DEFAULT_MAX_CHUNK_SIZE;
 }
 
 export type LISHRequest = LISHGetChunkRequest | LISHGetLishRequest | LISHGetLishsRequest | LISHAnnounceHaveRequest | LISHSearchResultRequest;
@@ -144,7 +156,7 @@ export class LISHClient {
 		this.stream = stream;
 		// Chunk response ≈ chunkSize + small msgpack overhead; manifest can be large for many-file LISHs.
 		// Counting passthrough + onLength feed the per-call progress sinks (byteSink/lengthSink).
-		this.decoder = lpDecode(this.countingSource(stream), { maxDataLength: maxMessageSize, onLength: len => this.lengthSink?.(len) });
+		this.decoder = lpDecode(this.countingSource(stream), { maxDataLength: getMaxMessageSize(), onLength: len => this.lengthSink?.(len) });
 	}
 
 	/** Passthrough over the raw stream that reports each chunk's byte length to the active byteSink. */
@@ -211,13 +223,33 @@ export class LISHClient {
 			const response = this.parseResponse<LISHGetLishResponse>(responseData, `getLish ${lishID}`);
 			if ('error' in response) throw new CodedError(response.error, lishID);
 			if (!('manifest' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: missing manifest`);
+			// The manifest must be for the LISH we asked for — a peer returning a different id
+			// would let a spoofing peer win the fallback loop and could import the wrong LISH
+			// under the requested id. Treat a mismatch as this peer's fault so fallback tries the next.
+			if (response.manifest?.id !== lishID) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: manifest id mismatch (${String(response.manifest?.id)})`);
+			// A manifest from the network is untrusted input — validate chunk-size bounds and
+			// manifest consistency before it can reach any caller (DB persist / import / probe).
+			try {
+				validateLISHStructure(response.manifest, getMaxChunkSize());
+			} catch (e) {
+				// A structurally malformed manifest is this peer's fault — surface it as a peer
+				// protocol error so fallback loops move on to the next peer. An over-limit
+				// chunkSize is a property of the LISH itself (every honest peer serves the same
+				// manifest), so it stays a terminal local error.
+				if (e instanceof CodedError && e.code !== ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: ${e.message}`);
+				throw e;
+			}
+			// Emitted only after validation passes — a rejected manifest must not flash a full bar.
 			if (total > 0) safeEmit(total, total);
-			return response.manifest;
+			// Sanitize the peer-supplied manifest: a malicious or outdated peer could embed
+			// responder-local fields (`finalDirectory` → post-download move to an attacker-chosen
+			// path; `chunks` → chunks flagged have=1 and never fetched). We own the local paths and
+			// chunk state, so strip them at the trust boundary before the value reaches the DB.
+			return toManifest(response.manifest);
 		} finally {
 			this.lengthSink = null;
 			this.byteSink = null;
-		}
-	}
+		}	}
 
 	// Request list of shared LISHs from peer. `query` is an optional
 	// case-insensitive substring filter the peer applies server-side; omit it
@@ -237,6 +269,11 @@ export class LISHClient {
 	}
 
 	// Request a single chunk (can be called multiple times on same stream)
+	// TODO(out of scope): thread an AbortSignal through requestChunk so a
+	// download disabled mid-flight (e.g. by leaving its last lishnet) can cancel
+	// an in-progress chunk read immediately instead of waiting for the stream
+	// read to complete or time out. Requires plumbing the downloader's
+	// abortController.signal down through ChunkDownloader → LISHClient.
 	async requestChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array> {
 		// Bail early if stream is already closed/aborted — treat as transient (peer unreachable),
 		// not as a reason to permanently ban the peer.
@@ -304,15 +341,13 @@ export function setMaxUploadSpeed(kbPerSec: number): void {
 }
 
 /**
- * Global per-LISH upload peer cap. 0 = unlimited. Enforced on the first chunk
- * request for a given LISH on a stream — if already at cap, the request is
- * rejected with PEER_BUSY (transient; client retries later via its own
- * peer-discovery cycle).
+ * Global per-LISH upload peer cap from settings. 0 = unlimited. Enforced on the
+ * first chunk request for a given LISH on a stream — if already at cap, the
+ * request is rejected with PEER_BUSY (transient; client retries later via its
+ * own peer-discovery cycle).
  */
-let maxUploadPeersPerLISH = 30;
-
-export function setMaxUploadPeersPerLISH(n: number): void {
-	maxUploadPeersPerLISH = Math.max(0, Math.floor(n));
+function maxUploadPeersPerLISH(): number {
+	return Math.max(0, Math.floor(networkSetting('maxUploadPeersPerLISH')));
 }
 
 type BroadcastFn = (event: string, data: any) => void;
@@ -336,7 +371,6 @@ export function resetUploadState(): void {
 	uploadEnabled.clear();
 	uploadLimiter.setLimit(0);
 	uploadLimiter.reset();
-	maxUploadPeersPerLISH = 30;
 	broadcastFn = null;
 }
 
@@ -399,7 +433,34 @@ export function clearAllUploads(): void {
 
 const IO_ERROR_THRESHOLD = 3; // consecutive I/O errors before auto-disabling upload
 
-export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType): Promise<void> {
+/**
+ * Serve-gate predicate for the unicast LISH protocol. Returns true when a served
+ * response (LISH list / manifest / chunk) must be withheld because we do not share
+ * a joined lishnet with the remote peer. Fail CLOSED: when the gate is active
+ * (`sharesNetworkWith` provided) but the stream could not be mapped to a peer id
+ * (`remotePeerID` absent), block exactly like a not-shared peer — a bare or
+ * unauthenticated transport connection must never be served. Mirrors handleWant,
+ * which drops a WANT that has no verified sender peerID.
+ */
+export function serveGateBlocks(sharesNetworkWith: ((peerID: string) => boolean) | undefined, remotePeerID: string | undefined): boolean {
+	if (!sharesNetworkWith) return false;
+	return !remotePeerID || !sharesNetworkWith(remotePeerID);
+}
+
+/**
+ * Strip node-local state from a LISH so only the LISH data format structure remains.
+ * Local filesystem paths (`directory`, `finalDirectory`) and per-chunk possession
+ * (`chunks`) are node-owned and must never cross the wire — in EITHER direction:
+ * outbound (serving getLish) they must not leak; inbound (consuming a peer's manifest)
+ * they must not be trusted, or a hostile peer could redirect the post-download move or
+ * pre-flag chunks as already downloaded.
+ */
+export function toManifest(lish: import('@shared').IStoredLISH): import('@shared').IStoredLISH {
+	const { directory, finalDirectory, chunks, ...exportData } = lish;
+	return exportData as import('@shared').IStoredLISH;
+}
+
+export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType, sharesNetworkWith?: (peerID: string) => boolean, canListShares?: (peerID: string) => boolean): Promise<void> {
 	const servedLishIDs = new Set<string>();
 	const ioErrorCounts = new Map<string, number>(); // per-LISH consecutive I/O error counter
 	const remotePeer = remotePeerID?.slice(0, 12) ?? 'unknown';
@@ -410,7 +471,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 	try {
 		// Wrap the stream with length-prefixed decoder for multiple messages
 		// requests are small (<200 bytes); maxMessageSize covers chunks + large manifests
-		const decoder = lpDecode(stream, { maxDataLength: maxMessageSize });
+		const decoder = lpDecode(stream, { maxDataLength: getMaxMessageSize() });
 		// Handle multiple requests on the same stream
 		for await (const msg of decoder) {
 			// Peer may disconnect between decoder.next() and our response send. Bail out if
@@ -438,6 +499,17 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			}
 
 			if (request.type === 'getLishs') {
+				// Serve the shared-LISH LISTING under the softer list-gate (canListShares):
+				// unlike the strict data gate it does not require a synced gossipsub
+				// SUBSCRIBE, so the unicast search fallback reaches freshly-connected peers.
+				// Still fail-closed on an unknown peer id and still refuses peers we left.
+				// Falls back to the strict gate when no list-gate was supplied.
+				if (serveGateBlocks(canListShares ?? sharesNetworkWith, remotePeerID)) {
+					trace(`[PROTO] getLishs from ${remotePeer} refused: no shared joined lishnet`);
+					const gated: LISHGetLishsResponse = { type: 'getLishs-result', lishs: [] };
+					sendLengthPrefixed(stream, codecEncode(gated));
+					continue;
+				}
 				// Return list of all shared (upload_enabled) LISHs — id and name only.
 				// Newest first — matches the order shown locally in "Download and Sharing".
 				const allLishs = dataServer.list();
@@ -460,8 +532,9 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				};
 				sendLengthPrefixed(stream, codecEncode(response));
 			} else if (request.type === 'getLish') {
-				// Only return manifest for LISHs with upload enabled
-				if (!isUploadAdvertisable(request.lishID)) {
+				// Only return manifest for LISHs with upload enabled — and only to
+				// peers we share a joined lishnet with (same gate as getLishs).
+				if (serveGateBlocks(sharesNetworkWith, remotePeerID) || !isUploadAdvertisable(request.lishID)) {
 					const response: LISHGetLishResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 					sendLengthPrefixed(stream, codecEncode(response));
 				} else {
@@ -472,15 +545,23 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 						const response: LISHGetLishResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 						sendLengthPrefixed(stream, codecEncode(response));
 					} else {
-						const { directory, chunks, ...exportData } = lish;
-						const manifest = exportData as import('@shared').IStoredLISH;
-						const response: LISHGetLishResponse = { manifest };
+						const response: LISHGetLishResponse = { manifest: toManifest(lish) };
 						sendLengthPrefixed(stream, codecEncode(response));
 					}
 				}
 			} else if (request.type === 'getChunk' || request.type === undefined) {
 				// Chunk request (type may be omitted for legacy compatibility)
 				const chunkReq = request as LISHGetChunkRequest;
+				// Stop serving chunks to peers we no longer share a joined
+				// lishnet with. Without this a downloader re-dials our stored
+				// address after we left its network and the transfer silently
+				// continues over the fresh transport connection.
+				if (serveGateBlocks(sharesNetworkWith, remotePeerID)) {
+					trace(`[PROTO] getChunk from ${remotePeer} refused: no shared joined lishnet`);
+					const gatedResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
+					sendLengthPrefixed(stream, codecEncode(gatedResponse));
+					continue;
+				}
 				if (!uploadEnabled.has(chunkReq.lishID)) {
 					const blockedResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 					sendLengthPrefixed(stream, codecEncode(blockedResponse));
@@ -494,7 +575,8 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				}
 				// Per-LISH upload peer cap — check BEFORE the disk read so a cap-reached stream
 				// doesn't fan out into expensive I/O. Transient PEER_BUSY so the remote retries later.
-				if (!servedLishIDs.has(chunkReq.lishID) && maxUploadPeersPerLISH > 0 && (activeStreamCount.get(chunkReq.lishID) ?? 0) >= maxUploadPeersPerLISH) {
+				const uploadPeerCap = maxUploadPeersPerLISH();
+				if (!servedLishIDs.has(chunkReq.lishID) && uploadPeerCap > 0 && (activeStreamCount.get(chunkReq.lishID) ?? 0) >= uploadPeerCap) {
 					const busyResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_BUSY };
 					sendLengthPrefixed(stream, codecEncode(busyResponse));
 					continue;
@@ -667,6 +749,6 @@ function sendLengthPrefixed(stream: Stream, data: Uint8Array): boolean {
 	// limit, it-length-prefixed caps a single frame at its 4 MB default, so large manifests
 	// and large chunks (both bounded by maxMessageSize on receive) would throw on send and
 	// reset the stream, surfacing as PEER_UNREACHABLE.
-	stream.send(lpEncode.single(data, { maxDataLength: maxMessageSize }));
+	stream.send(lpEncode.single(data, { maxDataLength: getMaxMessageSize() }));
 	return true;
 }

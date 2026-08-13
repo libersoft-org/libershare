@@ -21,6 +21,8 @@ interface ChunkVerifyResult {
 class MockLISHClient {
 	requestChunkResult: ChunkResult = new Uint8Array(1024).fill(0xff);
 	requestManifestResult: ManifestResult = null;
+	requestManifestError: Error | null = null;
+	requestManifestCalls = 0;
 	closeCalled = false;
 	haveChunks: 'all' | ChunkID[] = 'all';
 
@@ -30,6 +32,8 @@ class MockLISHClient {
 	}
 
 	async requestManifest(_lishID: LISHid): Promise<IStoredLISH | null> {
+		this.requestManifestCalls++;
+		if (this.requestManifestError) throw this.requestManifestError;
 		return this.requestManifestResult;
 	}
 
@@ -1293,5 +1297,267 @@ describe('Downloader — inline ENOSPC retry', () => {
 		await Promise.all(promises);
 		expect(pc.writePaused).toBe(false);
 		expect(pc.writeResolvers.length).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Network peer:disconnect handling
+// ---------------------------------------------------------------------------
+
+describe('Downloader – network peer:disconnect handling', () => {
+	type PeerManagerView = {
+		tryAdd: (peerID: string, client: unknown, connectionType: 'DIRECT' | 'RELAY' | 'DCUtR') => boolean;
+		has: (peerID: string) => boolean;
+		isDropped: (peerID: string) => boolean;
+		isBanned: (peerID: string) => boolean;
+		canDial: (peerID: string) => boolean;
+	};
+
+	let net: MockNetwork;
+	let downloader: Downloader;
+
+	const pm = (): PeerManagerView => priv(downloader)['peerManager'] as PeerManagerView;
+
+	beforeEach(async () => {
+		net = new MockNetwork();
+		const ds = new MockDataServer();
+		ds.missingChunks = [];
+		downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
+		await downloader.initFromManifest(makeLISH());
+	});
+
+	afterEach(async () => {
+		await downloader.destroy();
+	});
+
+	it('initFromManifest subscribes exactly one peer:disconnect handler', () => {
+		expect(net.peerDisconnectHandlers.size).toBe(1);
+	});
+
+	it('a disconnected peer is removed from the peer manager', () => {
+		pm().tryAdd('peer-gone', new MockLISHClient() as never, 'DIRECT');
+		pm().tryAdd('peer-stays', new MockLISHClient() as never, 'DIRECT');
+		net.emitPeerDisconnect('peer-gone');
+		expect(pm().has('peer-gone')).toBe(false);
+		expect(pm().has('peer-stays')).toBe(true);
+	});
+
+	it('disconnect removal is plain — peer is neither dropped nor banned and may re-dial', () => {
+		pm().tryAdd('peer-flap', new MockLISHClient() as never, 'DIRECT');
+		net.emitPeerDisconnect('peer-flap');
+		expect(pm().isDropped('peer-flap')).toBe(false);
+		expect(pm().isBanned('peer-flap')).toBe(false);
+		expect(pm().canDial('peer-flap')).toBe(true);
+	});
+
+	it('disconnect of a peer not in the peer manager is a no-op', () => {
+		pm().tryAdd('peer-a', new MockLISHClient() as never, 'DIRECT');
+		expect(() => net.emitPeerDisconnect('peer-unknown')).not.toThrow();
+		expect(pm().has('peer-a')).toBe(true);
+	});
+
+	it('destroy() disposes the peer:disconnect subscription', async () => {
+		await downloader.destroy();
+		expect(net.peerDisconnectHandlers.size).toBe(0);
+	});
+
+	it('successful completion disposes the peer:disconnect subscription', async () => {
+		expect(net.peerDisconnectHandlers.size).toBe(1);
+		// needsManifest path parks download() on its internal completion promise
+		// without touching the filesystem; resolve it to simulate a finished download.
+		const done = downloader.download();
+		while (!priv(downloader)['downloadResolve']) await new Promise(r => setTimeout(r, 0));
+		priv(downloader)['state'] = 'downloaded';
+		(priv(downloader)['downloadResolve'] as () => void)();
+		await done;
+		expect(net.peerDisconnectHandlers.size).toBe(0);
+	});
+});
+
+describe('Downloader – lishnet membership across leave and rejoin', () => {
+	function make(networkIDs: string[]): Downloader {
+		return new Downloader('/tmp/dl', new MockNetwork() as never, new MockDataServer() as never, networkIDs);
+	}
+
+	it('drops a left lishnet from the set it broadcasts on', () => {
+		const dl = make(['net-a', 'net-b']);
+		dl.removeNetwork('net-a');
+		expect(dl.getNetworkIDs()).toEqual(['net-b']);
+	});
+
+	it('ignores a lishnet this download was never bound to', () => {
+		const dl = make(['net-a']);
+		dl.removeNetwork('net-z');
+		expect(dl.getNetworkIDs()).toEqual(['net-a']);
+	});
+
+	it('drops the last lishnet too, leaving nothing to broadcast on', () => {
+		// It used to keep the last one, on the grounds that the caller disables the
+		// download — but a disabled download can still be resumed by a rejoin.
+		const dl = make(['net-a']);
+		dl.removeNetwork('net-a');
+		expect(dl.getNetworkIDs()).toEqual([]);
+	});
+
+	it('does not resurrect a left lishnet when a different one is rejoined', () => {
+		// The reported defect, end to end: bound to A and B, leave both, rejoin only
+		// A. Before the fix B survived the second leave and addNetwork appended A
+		// beside it, so the resumed download broadcast WANTs on B — a topic the node
+		// had left.
+		const dl = make(['net-a', 'net-b']);
+		dl.removeNetwork('net-a');
+		dl.removeNetwork('net-b');
+		dl.addNetwork('net-a');
+		expect(dl.getNetworkIDs()).toEqual(['net-a']);
+		expect(dl.getNetworkIDs()).not.toContain('net-b');
+	});
+
+	it('rejoining restores only lishnets the download actually belongs to', () => {
+		const dl = make(['net-a']);
+		dl.removeNetwork('net-a');
+		dl.addNetwork('net-stranger');
+		expect(dl.getNetworkIDs()).toEqual([]);
+	});
+
+	it('keeps the original binding so a rejoin can still resume the download', () => {
+		// removeNetwork must not touch the original set — that is what the resume
+		// path matches a rejoined lishnet against.
+		const dl = make(['net-a', 'net-b']);
+		dl.removeNetwork('net-a');
+		dl.removeNetwork('net-b');
+		expect(dl.getOriginalNetworkIDs().sort()).toEqual(['net-a', 'net-b']);
+	});
+
+	it('adding a lishnet twice does not duplicate it', () => {
+		const dl = make(['net-a']);
+		dl.removeNetwork('net-a');
+		dl.addNetwork('net-a');
+		dl.addNetwork('net-a');
+		expect(dl.getNetworkIDs()).toEqual(['net-a']);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// doWork Phase 1 — over-limit manifest handling across multiple peers
+// ---------------------------------------------------------------------------
+
+describe('Downloader – oversized manifest across peers', () => {
+	function awaitingManifestDownloader(ds: MockDataServer): Downloader {
+		const dl = new Downloader('/tmp/dl-oversized', new MockNetwork() as never, ds as never, 'net-001');
+		const p = priv(dl);
+		p['state'] = 'awaiting-manifest';
+		p['needsManifest'] = true;
+		p['lish'] = null;
+		p['lishID'] = 'test-oversized-lish';
+		return dl;
+	}
+
+	function oversizedClient(): MockLISHClient {
+		const c = new MockLISHClient();
+		c.requestManifestError = new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, '4.00 MB > 1.00 MB');
+		return c;
+	}
+
+	it('stops at the first over-limit manifest without asking the remaining peers', async () => {
+		const ds = new MockDataServer();
+		const dl = awaitingManifestDownloader(ds);
+		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
+		const second = new MockLISHClient();
+		second.requestManifestResult = makeLISH();
+		peers.set('peer-oversized-1', oversizedClient()); // first peer answers: chunk size over limit
+		peers.set('peer-valid-00001', second); // must never be asked
+
+		await dl.doWork();
+
+		expect(priv(dl)['state']).toBe('error');
+		expect(priv(dl)['errorCode']).toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
+		expect(ds.addedLishs.length).toBe(0); // nothing imported
+		expect(peers.has('peer-oversized-1')).toBe(false); // the answering peer was dropped
+		expect(second.requestManifestCalls ?? 0).toBe(0); // the rest were left alone
+	});
+
+	it('surfaces the terminal error when the only peer returns an over-limit manifest', async () => {
+		const ds = new MockDataServer();
+		const dl = awaitingManifestDownloader(ds);
+		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
+		peers.set('peer-oversized-1', oversizedClient());
+
+		await dl.doWork();
+
+		expect(ds.addedLishs.length).toBe(0); // nothing imported
+		expect(peers.size).toBe(0); // the over-limit peer dropped
+		expect(priv(dl)['state']).toBe('error');
+		expect(priv(dl)['errorCode']).toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
+	});
+});
+
+describe('Downloader – malformed manifest peer handling', () => {
+	it('drops a peer whose manifest is malformed and imports from the next peer', async () => {
+		const ds = new MockDataServer();
+		const dl = new Downloader('/tmp/dl-malformed', new MockNetwork() as never, ds as never, 'net-001');
+		const p = priv(dl);
+		p['state'] = 'awaiting-manifest';
+		p['needsManifest'] = true;
+		p['lish'] = null;
+		p['lishID'] = 'test-malformed-lish';
+		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
+		const bad = new MockLISHClient();
+		bad.requestManifestError = new CodedError(ErrorCodes.PEER_INVALID_REQUEST, 'getLish: LISH_INVALID_MANIFEST');
+		const good = new MockLISHClient();
+		good.requestManifestResult = makeLISH();
+		peers.set('peer-malformed-1', bad);
+		peers.set('peer-valid-00001', good);
+
+		await dl.doWork();
+
+		expect(ds.addedLishs.length).toBe(1); // imported from the valid peer
+		expect(peers.has('peer-malformed-1')).toBe(false); // bad peer dropped, not stuck
+	});
+});
+
+describe('Downloader – peer-fault manifest failures are not terminal', () => {
+	function awaitingDl(ds: MockDataServer): Downloader {
+		const dl = new Downloader('/tmp/dl-mixed', new MockNetwork() as never, ds as never, 'net-001');
+		const p = priv(dl);
+		p['state'] = 'awaiting-manifest';
+		p['needsManifest'] = true;
+		p['lish'] = null;
+		p['lishID'] = 'test-mixed-lish';
+		return dl;
+	}
+
+	it('malformed and unreachable peers keep the download awaiting discovery', async () => {
+		const ds = new MockDataServer();
+		const dl = awaitingDl(ds);
+		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
+		const malformed = new MockLISHClient();
+		malformed.requestManifestError = new CodedError(ErrorCodes.PEER_INVALID_REQUEST, 'getLish: malformed');
+		const unreachable = new MockLISHClient();
+		unreachable.requestManifestError = new CodedError(ErrorCodes.PEER_UNREACHABLE, 'test-mixed-lish');
+		peers.set('peer-malformed-1', malformed);
+		peers.set('peer-unreach-001', unreachable);
+
+		await dl.doWork();
+
+		// Neither failure says anything about the LISH itself — keep awaiting discovery.
+		expect(priv(dl)['state']).toBe('awaiting-manifest');
+		expect(priv(dl)['errorCode']).toBeUndefined();
+	});
+
+	it('an over-limit peer is terminal even when another peer failed for its own reason first', async () => {
+		const ds = new MockDataServer();
+		const dl = awaitingDl(ds);
+		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
+		const malformed = new MockLISHClient();
+		malformed.requestManifestError = new CodedError(ErrorCodes.PEER_INVALID_REQUEST, 'getLish: malformed');
+		const oversized = new MockLISHClient();
+		oversized.requestManifestError = new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, '4.00 MB > 1.00 MB');
+		peers.set('peer-malformed-1', malformed);
+		peers.set('peer-oversized-1', oversized);
+
+		await dl.doWork();
+
+		expect(priv(dl)['state']).toBe('error');
+		expect(priv(dl)['errorCode']).toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
 	});
 });

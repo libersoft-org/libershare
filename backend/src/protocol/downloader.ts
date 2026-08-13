@@ -57,7 +57,11 @@ export class Downloader {
 	private readonly dataServer: DataServer;
 	private network: Network;
 	private readonly downloadDir: string;
-	private readonly networkIDs: string[];
+	private networkIDs: string[];
+	// Immutable snapshot of the networks this download was created with. removeNetwork
+	// mutates networkIDs when a lishnet is left; addNetwork consults this to re-attach
+	// only networks the download was originally bound to when they are re-joined.
+	private readonly originalNetworkIDs: string[];
 	private lishID!: LISHid;
 	private state: State = 'added';
 	private workMutex = new Mutex();
@@ -77,6 +81,8 @@ export class Downloader {
 	 */
 	private peerDiscoveryTimer: ReturnType<typeof setTimeout> | undefined;
 	private retryTimer: ReturnType<typeof setTimeout> | undefined;
+	// Disposer for the network `peer:disconnect` subscription; called in destroy().
+	private peerDisconnectDisposer: (() => void) | undefined;
 	private needsManifest = false;
 	private disabled = false;
 	private destroyed = false;
@@ -106,6 +112,54 @@ export class Downloader {
 
 	getLISHID(): string {
 		return this.lishID;
+	}
+
+	/**
+	 * The lishnet network IDs this download is bound to (the networks across
+	 * which it searches for and dials peers). Returned as a defensive copy so
+	 * callers cannot mutate the downloader's internal list.
+	 */
+	getNetworkIDs(): string[] {
+		return [...this.networkIDs];
+	}
+
+	/**
+	 * The lishnets this download was originally created with, before any
+	 * {@link removeNetwork} shrank the active set. Used to decide which lishnet
+	 * re-joins may resume a suspended download. Defensive copy.
+	 */
+	getOriginalNetworkIDs(): string[] {
+		return [...this.originalNetworkIDs];
+	}
+
+	/**
+	 * Stop sourcing this download from a lishnet the node just left. Removes the
+	 * network from the set so subsequent WANT broadcasts and topic-peer probes no
+	 * longer reach the left lishnet; peers exclusive to it are hung up separately
+	 * by the leave path. No-op if it was not one of this download's networks.
+	 *
+	 * The LAST network is removable too, leaving the set empty. It used to be kept
+	 * on the grounds that the caller disables the download anyway — but a disabled
+	 * download is not a discarded one: rejoining a DIFFERENT lishnet resumes it and
+	 * {@link addNetwork} appends to whatever survived, so the stale entry came back
+	 * with it and the download resumed broadcasting WANTs on a lishnet we had left.
+	 * An empty set is harmless: every peer-facing loop iterates it.
+	 */
+	removeNetwork(networkID: string): void {
+		if (!this.networkIDs.includes(networkID)) return;
+		this.networkIDs = this.networkIDs.filter(id => id !== networkID);
+	}
+
+	/**
+	 * Re-attach a lishnet dropped by {@link removeNetwork} when it was left, now that
+	 * it is joined again — so WANT broadcasts and topic probes reach it once more on
+	 * the next discovery cycle. No-op if the download was never bound to it (not in
+	 * the original set) or it is already active.
+	 */
+	addNetwork(networkID: string): void {
+		if (!this.originalNetworkIDs.includes(networkID)) return;
+		if (this.networkIDs.includes(networkID)) return;
+		this.networkIDs = [...this.networkIDs, networkID];
 	}
 
 	/**
@@ -169,7 +223,7 @@ export class Downloader {
 		this.errorDetail = detail;
 		this.clearRetryTimer();
 		this.clearPeerDiscoveryTimer();
-		if (this.lishID) unregisterHaveAnnouncementHandler(this.lishID);
+		this.disposeNetworkHandlers();
 		// Fire-and-forget close — stream may already be reset/aborted, which is benign.
 		// Log at trace so real bugs (e.g. TypeError) can still be spotted in debug logs.
 		this.peerManager.closeAll('setError');
@@ -257,6 +311,19 @@ export class Downloader {
 		return this.disabled;
 	}
 
+	/**
+	 * Idempotently release network-level subscriptions: the peer:disconnect handler
+	 * and the unicast HAVE announcement handler. Called from every terminal path
+	 * (downloaded / error / destroy); a second call is a no-op. Without this a
+	 * completed/errored downloader dropped from the transfer map (never destroyed)
+	 * would pin itself and its peer/handler closures for the process lifetime.
+	 */
+	private disposeNetworkHandlers(): void {
+		this.peerDisconnectDisposer?.();
+		this.peerDisconnectDisposer = undefined;
+		if (this.lishID) unregisterHaveAnnouncementHandler(this.lishID);
+	}
+
 	async destroy(): Promise<void> {
 		console.debug(`[DL] destroy ${this.lishID.slice(0, 8)}, state=${this.state}, peers=${this.peerManager.size()}`);
 		this.disabled = true;
@@ -264,7 +331,7 @@ export class Downloader {
 		this.abortController.abort();
 		this.clearRetryTimer();
 		this.clearPeerDiscoveryTimer();
-		if (this.lishID) unregisterHaveAnnouncementHandler(this.lishID);
+		this.disposeNetworkHandlers();
 		await this.peerManager.closeAllAwait('destroy');
 		// Notify frontend to reset peers/speed immediately
 		const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
@@ -288,11 +355,37 @@ export class Downloader {
 		});
 	}
 
+	/**
+	 * Subscribe to network-wide peer disconnects so a vanished peer is removed
+	 * from our per-LISH peer manager immediately, rather than lingering until the
+	 * next probe/dial fails. Idempotent — a stale subscription is disposed first.
+	 * The disposer is released in {@link destroy}.
+	 */
+	private registerPeerDisconnectHandler(): void {
+		this.peerDisconnectDisposer?.();
+		this.peerDisconnectDisposer = this.network.onPeerDisconnect(peerID => this.dropPeer(peerID));
+	}
+
+	/**
+	 * Remove a peer from this download's peer manager because the underlying
+	 * libp2p connection dropped. Plain 'disconnect' disposition (not a punitive
+	 * drop/ban) — the peer may reconnect and be re-discovered normally. No-op if
+	 * the peer is not currently a member.
+	 */
+	dropPeer(peerID: string): void {
+		if (this.destroyed) return;
+		if (!this.peerManager.has(peerID)) return;
+		trace(`[DL] ${this.lishID?.slice(0, 8) ?? '?'}: dropping disconnected peer ${peerID.slice(0, 12)}`);
+		this.peerManager.remove(peerID, 'disconnect');
+	}
+
 	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkIDs: string | string[]) {
 		this.downloadDir = downloadDir;
 		this.network = network;
 		this.dataServer = dataServer;
-		this.networkIDs = Array.isArray(networkIDs) ? networkIDs : [networkIDs];
+		const ids = Array.isArray(networkIDs) ? [...networkIDs] : [networkIDs];
+		this.networkIDs = ids;
+		this.originalNetworkIDs = [...ids];
 		this.fileAllocator = new FileAllocator(downloadDir);
 	}
 
@@ -307,6 +400,7 @@ export class Downloader {
 		console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), ${this.dataServer.getMissingChunks(this.lishID).length} chunks to download`);
 		this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 		this.registerAnnouncementHandler();
+		this.registerPeerDisconnectHandler();
 		this.transitionTo('initialized', 'init() done');
 	}
 
@@ -326,6 +420,7 @@ export class Downloader {
 			console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), awaiting manifest from peer`);
 		}
 		this.registerAnnouncementHandler();
+		this.registerPeerDisconnectHandler();
 		this.transitionTo('initialized', 'initFromManifest() done');
 	}
 
@@ -370,6 +465,10 @@ export class Downloader {
 				this.downloadReject = reject;
 			});
 		}
+		// Terminal success: release network subscriptions. The transfer layer drops a
+		// completed downloader from its map without calling destroy(), so this is the
+		// only place the handlers get torn down on the happy path.
+		this.disposeNetworkHandlers();
 	}
 
 	async doWork(): Promise<void> {
@@ -390,15 +489,39 @@ export class Downloader {
 			// Phase 1: fetch manifest from a peer if needed
 			if (this.state === 'awaiting-manifest') {
 				if (this.peerManager.size() === 0) return;
-				for (const [, client] of this.peerManager.entries()) {
+				// LIVE iteration on purpose (Map iterators tolerate deletes and visit entries
+				// added mid-loop): a peer joining via HAVE while we await another's manifest
+				// gets its turn in THIS pass — its doWork() trigger no-ops on the locked mutex.
+				for (const [peerID, client] of this.peerManager.entries()) {
 					let manifest: import('@shared').IStoredLISH | null = null;
 					try {
 						manifest = await client.requestManifest(this.lishID);
 					} catch (error: any) {
+						if (error instanceof CodedError && error.code === ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) {
+							// The peer delivered a well-formed manifest for the LISH we asked for and it
+							// declares a chunk size above our limit. Chunk size is a property of the LISH
+							// itself, so every honest peer serves the same value — asking the rest only
+							// makes the user watch each peer fail in turn before the same error appears.
+							// Surface it now and stop — unless the download was torn down while we
+							// awaited the manifest, in which case there is no state left to fail.
+							this.peerManager.remove(peerID, 'drop');
+							if (!this.destroyed) this.setError(error.code, error.detail);
+							return;
+						}
+						// A structurally malformed manifest (mapped to PEER_INVALID_REQUEST) is this
+						// peer's fault — keeping it would leave the download stuck asking the same
+						// bad peer forever while discovery skips it as "connected".
+						if (error instanceof CodedError && error.code === ErrorCodes.PEER_INVALID_REQUEST) {
+							this.peerManager.remove(peerID, 'drop');
+							continue;
+						}
 						console.warn(`[DL] Manifest request failed: ${error.message?.slice(0, 120) ?? error}`);
 					}
 					if (manifest && manifest.files && manifest.files.length > 0) {
-						this.lish = { ...manifest, directory: this.downloadDir };
+						// The manifest is sanitized (no peer-supplied local paths). Keep our own
+						// local state: the download directory, and any post-download move target
+						// the LISH was created with — the incoming manifest never carries it.
+						this.lish = { ...manifest, directory: this.downloadDir, ...(this.lish?.finalDirectory ? { finalDirectory: this.lish.finalDirectory } : {}) };
 						this.dataServer.add(this.lish);
 						this.onManifestImported?.(this.lishID);
 						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
@@ -571,6 +694,22 @@ export class Downloader {
 				try {
 					manifest = await probeClient.requestManifest(this.lishID);
 				} catch (error: any) {
+					// Any manifest error (unreachable, malformed) → drop this peer and let another
+					// serve it, except over-limit which is terminal for the whole LISH — but only
+					// while we are still looking for a manifest. Probing also runs mid-download
+					// purely to find more peers, and there requestManifest is just a "do you have
+					// this LISH?" test whose answer is discarded; failing the transfer on it would
+					// hand any peer on the topic a way to kill a healthy download.
+					if (this.needsManifest && error instanceof CodedError && error.code === ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) {
+						// Same reasoning as the connected-peer loop: a delivered manifest that is over
+						// the limit answers the question for the whole LISH, so stop probing the rest.
+						// close() must not throw past this point — the outer catch would swallow the
+						// verdict, log it as an unreachable peer and let the probe loop carry on.
+						this.peerManager.remove(peerID, 'drop');
+						await probeClient.close().catch(() => {});
+						if (!this.destroyed) this.setError(error.code, error.detail);
+						return;
+					}
 					console.debug(`[DL] probe ${peerID.slice(0, 12)}: manifest error ${error.code ?? error.message?.slice(0, 60) ?? error}`);
 					this.peerManager.remove(peerID, 'drop');
 				}
@@ -586,7 +725,10 @@ export class Downloader {
 					// Protect manifest import with workMutex to prevent race with doWork()
 					await this.workMutex.runExclusive(async () => {
 						if (!this.needsManifest) return; // double-check after acquiring lock
-						this.lish = { ...manifest, directory: this.downloadDir };
+						// The manifest is sanitized (no peer-supplied local paths). Keep our own
+						// local state: the download directory, and any post-download move target
+						// the LISH was created with — the incoming manifest never carries it.
+						this.lish = { ...manifest, directory: this.downloadDir, ...(this.lish?.finalDirectory ? { finalDirectory: this.lish.finalDirectory } : {}) };
 						this.dataServer.add(this.lish);
 						this.onManifestImported?.(this.lishID);
 						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
