@@ -18,6 +18,7 @@ import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
 import { CodedError, ErrorCodes, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
+import { type MeshPeer } from '@chainsafe/libp2p-gossipsub';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
 import { applyGossipsubPatches } from './gossipsub-patches.ts';
 import { BootstrapStatusTracker } from './bootstrap-status.ts';
@@ -503,21 +504,15 @@ export class Network {
 
 		// DHT removed; only bootstrap + gossipsub for discovery
 
-		this.addListener(this.pubsub, 'gossipsub:graft', (evt: any) => {
-			trace(`[NET] GRAFT: ${evt.detail.peerID} joined ${evt.detail.topic}`);
+		this.addListener(this.pubsub, 'gossipsub:graft', (evt: CustomEvent<MeshPeer>) => {
+			trace(`[NET] GRAFT: ${evt.detail.peerId} joined ${evt.detail.topic}`);
 			this.lastMeshChange.set(evt.detail.topic, Date.now());
-			// GRAFT is the earliest proof a peer is on this topic — before its SUBSCRIBE
-			// shows up in getSubscribers, and regardless of announce cadence. Recording it
-			// here is what lets leave-network hang up a peer it would otherwise never see
-			// on a small network.
-			if (evt.detail.topic?.startsWith(LISH_TOPIC_PREFIX) && evt.detail.peerID) {
-				this.peerAnnounce.noteMember(String(evt.detail.topic), String(evt.detail.peerID));
-			}
+			this.noteMeshGraft(evt.detail);
 			this.schedulePeerCountCheck();
 		});
 
-		this.addListener(this.pubsub, 'gossipsub:prune', (evt: any) => {
-			trace(`[NET] PRUNE: ${evt.detail.peerID} left ${evt.detail.topic}`);
+		this.addListener(this.pubsub, 'gossipsub:prune', (evt: CustomEvent<MeshPeer>) => {
+			trace(`[NET] PRUNE: ${evt.detail.peerId} left ${evt.detail.topic}`);
 			this.lastMeshChange.set(evt.detail.topic, Date.now());
 			this.schedulePeerCountCheck();
 		});
@@ -1213,6 +1208,22 @@ export class Network {
 		} catch {
 			return false;
 		}
+	}
+
+	/**
+	 * Record a mesh GRAFT as topic membership. GRAFT is the earliest proof a peer is on
+	 * a topic — it precedes the peer showing up in getSubscribers and does not wait for
+	 * the announce cadence — so this is what lets leave-network hang up a peer the live
+	 * snapshot would still be blind to.
+	 *
+	 * Split out of the listener so a test can feed it a real gossipsub payload: the
+	 * event carries `peerId`, and reading it as `peerID` silently records nothing.
+	 */
+	private noteMeshGraft(detail: MeshPeer | undefined): void {
+		const topic = detail?.topic;
+		const peerId = detail?.peerId;
+		if (!topic?.startsWith(LISH_TOPIC_PREFIX) || !peerId) return;
+		this.peerAnnounce.noteMember(topic, peerId);
 	}
 
 	/** Recently-seen subscribers of a lishnet's topic (TTL union, not just the live snapshot). */

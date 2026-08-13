@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
 import { PeerAnnounceManager } from '../../../src/protocol/peer-announce.ts';
+import { Network } from '../../../src/protocol/network.ts';
 import { lishTopic } from '../../../src/protocol/constants.ts';
 
 /**
@@ -77,6 +78,31 @@ describe('PeerAnnounceManager topic membership', () => {
 		mgr.noteMember(TOPIC, 'peer-grafted');
 		await tick(mgr);
 		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-grafted']);
+	});
+
+	/**
+	 * The gossipsub GRAFT payload is `{ peerId, topic, direction }`. Reading it as
+	 * `peerID` type-checks against an `any` event and silently records nothing, so the
+	 * membership fast-path has to be driven with the real payload to be worth anything.
+	 */
+	it('records a member from a real gossipsub GRAFT payload', () => {
+		const { mgr } = makeManager([], 2);
+		const net = Object.create(Network.prototype) as Network;
+		(net as any).peerAnnounce = mgr;
+
+		(net as any).noteMeshGraft({ peerId: 'peer-grafted', topic: TOPIC, direction: 'inbound' });
+
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-grafted']);
+	});
+
+	it('ignores a GRAFT for a topic that is not a lishnet', () => {
+		const { mgr } = makeManager([], 2);
+		const net = Object.create(Network.prototype) as Network;
+		(net as any).peerAnnounce = mgr;
+
+		(net as any).noteMeshGraft({ peerId: 'peer-x', topic: 'other/topic', direction: 'inbound' });
+
+		expect(mgr.getRecentMembers('other/topic')).toEqual([]);
 	});
 
 	it('drops membership for a topic we are no longer subscribed to', async () => {
