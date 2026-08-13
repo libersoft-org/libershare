@@ -499,6 +499,13 @@ export class Network {
 		this.addListener(this.pubsub, 'gossipsub:graft', (evt: any) => {
 			trace(`[NET] GRAFT: ${evt.detail.peerID} joined ${evt.detail.topic}`);
 			this.lastMeshChange.set(evt.detail.topic, Date.now());
+			// GRAFT is the earliest proof a peer is on this topic — before its SUBSCRIBE
+			// shows up in getSubscribers, and regardless of announce cadence. Recording it
+			// here is what lets leave-network hang up a peer it would otherwise never see
+			// on a small network.
+			if (evt.detail.topic?.startsWith(LISH_TOPIC_PREFIX) && evt.detail.peerID) {
+				this.peerAnnounce.noteMember(String(evt.detail.topic), String(evt.detail.peerID));
+			}
 			this.schedulePeerCountCheck();
 		});
 
