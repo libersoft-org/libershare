@@ -10,12 +10,24 @@
 import { test, expect, afterEach } from 'bun:test';
 import { encode as lpEncode } from 'it-length-prefixed';
 import { Downloader } from '../../../src/protocol/downloader.ts';
-import { setMaxChunkSize } from '../../../src/protocol/lish-protocol.ts';
 import { encode as codecEncode } from '../../../src/protocol/codec.ts';
-import { DEFAULT_MAX_CHUNK_SIZE } from '../../../src/settings.ts';
+import { DEFAULT_MAX_CHUNK_SIZE, DEFAULT_MAX_MESSAGE_SIZE, useNetworkSettings, type SettingsData } from '../../../src/settings.ts';
 import { ErrorCodes, type IStoredLISH } from '@shared';
 
 const CHUNK_LIMIT = 1024 * 1024;
+/** The chunk limit is read live from settings, so a test sets it by moving this. */
+let chunkLimit = DEFAULT_MAX_CHUNK_SIZE;
+useNetworkSettings(
+	() =>
+		({
+			maxDownloadSpeed: 0,
+			maxUploadSpeed: 0,
+			maxDownloadPeersPerLISH: 30,
+			maxUploadPeersPerLISH: 30,
+			maxMessageSize: DEFAULT_MAX_MESSAGE_SIZE,
+			maxChunkSize: chunkLimit,
+		}) as SettingsData['network']
+);
 const priv = (o: unknown): Record<string, any> => o as unknown as Record<string, any>;
 
 /** Manifest declaring a chunk size well past the limit set below. */
@@ -68,11 +80,11 @@ function makeDownloader(): any {
 }
 
 afterEach(() => {
-	setMaxChunkSize(DEFAULT_MAX_CHUNK_SIZE);
+	chunkLimit = DEFAULT_MAX_CHUNK_SIZE;
 });
 
 test('a probe answered with an over-limit manifest does not fail a running download', async () => {
-	setMaxChunkSize(CHUNK_LIMIT);
+	chunkLimit = CHUNK_LIMIT;
 	const dl = makeDownloader();
 	// Manifest already fetched and validated — the probe only looks for more peers here.
 	priv(dl)['state'] = 'downloading';
@@ -86,7 +98,7 @@ test('a probe answered with an over-limit manifest does not fail a running downl
 });
 
 test('the same answer is terminal while the manifest is still missing', async () => {
-	setMaxChunkSize(CHUNK_LIMIT);
+	chunkLimit = CHUNK_LIMIT;
 	const dl = makeDownloader();
 	priv(dl)['state'] = 'awaiting-manifest';
 	priv(dl)['needsManifest'] = true;
