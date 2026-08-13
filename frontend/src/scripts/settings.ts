@@ -1,5 +1,5 @@
 import { get, writable, type Writable } from 'svelte/store';
-import { minMessageSizeFor } from '@shared';
+import { minMessageSizeFor, type CompressionAlgorithm } from '@shared';
 import { api } from './api.ts';
 import { defaultWidgetVisibility, type FooterPosition, type FooterWidget } from './footerWidgets.ts';
 import { currentLanguage, languages } from './language.ts';
@@ -60,7 +60,7 @@ export const minimizeToTray = writable(true);
 export const notificationTimeout = writable(5);
 export const defaultMinifyJSON = writable(false);
 export const defaultCompress = writable(false);
-export const defaultCompressionAlgorithm = writable('gzip');
+export const defaultCompressionAlgorithm = writable<CompressionAlgorithm>('gzip');
 
 /**
  * Master switch for mouse support. When false, MouseManager skips listener
@@ -335,7 +335,7 @@ export function setDefaultCompress(enabled: boolean): void {
 	updateSetting(defaultCompress, 'export.compress', enabled);
 }
 
-export function setDefaultCompressionAlgorithm(algorithm: string): void {
+export function setDefaultCompressionAlgorithm(algorithm: CompressionAlgorithm): void {
 	updateSetting(defaultCompressionAlgorithm, 'export.compressionAlgorithm', algorithm);
 }
 

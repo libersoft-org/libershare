@@ -95,8 +95,22 @@ class FsAPI {
 		return result.content;
 	}
 
-	async readCompressed(path: string, algorithm: CompressionAlgorithm = 'gzip'): Promise<string> {
-		const result = await this.client.call<{ content: string }>('fs.readCompressed', { path, algorithm });
+	/**
+	 * Read a file through the backend, which decompresses it when the extension
+	 * (or `algorithm`) says so. With `prettyJSON` the backend also re-indents the
+	 * JSON, so the caller never parses or re-serialises it.
+	 */
+	async readCompressed(path: string, algorithm?: CompressionAlgorithm, prettyJSON?: boolean): Promise<string> {
+		const result = await this.client.call<{ content: string }>('fs.readCompressed', { path, algorithm, prettyJSON });
+		return result.content;
+	}
+
+	/**
+	 * Hand a locally-picked file to the backend for decompression. `dataBase64`
+	 * is the raw file content; the algorithm is detected from `fileName`.
+	 */
+	async decompressText(dataBase64: string, fileName?: string, algorithm?: CompressionAlgorithm, prettyJSON?: boolean): Promise<string> {
+		const result = await this.client.call<{ content: string }>('fs.decompressText', { data: dataBase64, fileName, algorithm, prettyJSON });
 		return result.content;
 	}
 
