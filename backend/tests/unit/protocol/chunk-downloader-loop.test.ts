@@ -90,6 +90,7 @@ class ScriptedClient {
 		return reply;
 	}
 	async close(): Promise<void> {}
+	abort(): void {}
 }
 
 function makeDownloader(ds: FakeDataServer, pm: PeerManager, chunkCount: number): ChunkDownloader {

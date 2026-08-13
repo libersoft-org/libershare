@@ -332,7 +332,7 @@ export class Downloader {
 		this.clearRetryTimer();
 		this.clearPeerDiscoveryTimer();
 		this.disposeNetworkHandlers();
-		await this.peerManager.closeAllAwait('destroy');
+		await this.peerManager.closeAllAwait('destroy', true);
 		// Notify frontend to reset peers/speed immediately
 		const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
 		this.progressReporter.emit({ downloadedChunks: 0, totalChunks: total, peers: 0, bytesPerSecond: 0 });
