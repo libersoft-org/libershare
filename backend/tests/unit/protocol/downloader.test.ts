@@ -40,6 +40,11 @@ class MockLISHClient {
 	async close(): Promise<void> {
 		this.closeCalled = true;
 	}
+
+	/** Immediate teardown — records the same flag; tests assert the client was released. */
+	abort(): void {
+		this.closeCalled = true;
+	}
 }
 
 // ---------------------------------------------------------------------------

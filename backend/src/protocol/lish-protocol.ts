@@ -249,7 +249,8 @@ export class LISHClient {
 		} finally {
 			this.lengthSink = null;
 			this.byteSink = null;
-		}	}
+		}
+	}
 
 	// Request list of shared LISHs from peer. `query` is an optional
 	// case-insensitive substring filter the peer applies server-side; omit it
@@ -302,6 +303,21 @@ export class LISHClient {
 			await this.stream.close();
 		} catch (error) {
 			// Ignore errors on close
+		}
+	}
+
+	/**
+	 * Tear the stream down immediately instead of half-closing it. `close()` ends
+	 * only our write side; the stream stays readable until the remote closes its
+	 * own, so a chunk already in flight keeps arriving. When the reason we are
+	 * closing is that the peer must stop serving us right now — leaving a lishnet,
+	 * disabling a download — waiting on the remote is exactly wrong.
+	 */
+	abort(reason?: Error): void {
+		try {
+			this.stream.abort(reason ?? new Error('client aborted'));
+		} catch {
+			// Stream may already be closed/reset — nothing left to tear down.
 		}
 	}
 
