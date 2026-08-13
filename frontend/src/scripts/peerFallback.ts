@@ -23,11 +23,16 @@ export const FALLBACK_DEADLINE_MS = 5 * 60 * 1000;
  * (`PEER_*` code — unreachable, stopped sharing, busy, I/O trouble) or an error the
  * caller explicitly flagged `tryNextPeer`. Local errors (e.g. LISH already added)
  * are not retryable — they would fail identically on every peer.
+ *
+ * `LISH_CHUNK_SIZE_TOO_LARGE` counts as local: the chunk size is written in the LISH
+ * itself, so every honest peer answers with the same value. Walking the whole peer list
+ * only makes the user watch each row fail before the identical error appears at the end.
  */
 export function isRetryablePeerError(error: unknown): boolean {
 	if ((error as { tryNextPeer?: boolean } | null)?.tryNextPeer) return true;
 	const code = (error as { code?: unknown } | null)?.code;
-	return typeof code === 'string' && code.startsWith('PEER_');
+	if (typeof code !== 'string') return false;
+	return code.startsWith('PEER_');
 }
 
 /**

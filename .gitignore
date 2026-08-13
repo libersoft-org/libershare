@@ -49,3 +49,5 @@ nul/
 
 # Temp screenshots
 *.png
+# hunkwise
+.vscode/hunkwise/
