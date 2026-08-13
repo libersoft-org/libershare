@@ -158,7 +158,7 @@
 				<TableCell>{$t('network.lishID')}</TableCell>
 				<TableCell>{$t('common.name')}</TableCell>
 				<TableCell align="center">{$t('network.totalSize')}</TableCell>
-				<TableCell align="center">{$t('network.peerCount')}</TableCell>
+				<TableCell align="center">{$t('common.peers')}</TableCell>
 			</TableHeader>
 			{#each search.results as row, i (row.id)}
 				<TableRow position={[0, baseY + 1 + i]} onConfirm={makeOpenHandler(row)}>

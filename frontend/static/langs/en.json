@@ -32,6 +32,7 @@
 		"uploads": "Uploads",
 		"files": "Files",
 		"connections": "Connections",
+		"peers": "Peers",
 		"speed": "Speed",
 		"transferred": "Transferred",
 		"newDirectory": "New directory",
@@ -85,7 +86,6 @@
 	"network": {
 		"title": "Browse network",
 		"tabLishs": "LISHs",
-		"tabPeers": "Peers",
 		"searchPlaceholder": "Search by peer ID ...",
 		"searchLishsPlaceholder": "Search LISHs by name or ID ...",
 		"searching": "Searching network ...",
@@ -98,7 +98,6 @@
 		"openPeer": "Open peer",
 		"allNetworks": "All networks",
 		"peerID": "Peer ID",
-		"peerCount": "Peers",
 		"network": "Network",
 		"connections": "Connections",
 		"direct": "{count} direct",
@@ -278,7 +277,7 @@
 		"errorMissingCreated": "Invalid LISH: missing or empty created timestamp",
 		"errorInvalidChunkSize": "Invalid LISH: missing or invalid chunk size",
 		"errorChunkSizeTooLarge": "LISH rejected: chunk size exceeds the configured limit ({detail})",
-		"errorInvalidManifest": "Invalid LISH: number of checksums does not match declared file size ({detail})",
+		"errorInvalidManifest": "Invalid LISH manifest: {detail}",
 		"errorUnsupportedChecksum": "Invalid LISH: unsupported checksum algorithm: {detail}",
 		"errorUnexpectedArray": "Expected a single LISH object, got an array",
 		"errorPathAccessDenied": "Cannot access path: {detail}",
@@ -377,7 +376,6 @@
 				"stable": "Mesh is stable — broadcasts will reach the fleet"
 			},
 			"bootstrap": {
-				"title": "Bootstrap peers",
 				"discoveredShort": "gossip",
 				"discoveredHelp": "Learned at runtime from gossip. Auto-removed when stale.",
 				"originConfigured": "saved",
