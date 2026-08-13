@@ -20,7 +20,7 @@ export function isCompressed(filePath: string): boolean {
 export * from './lish.ts';
 
 // API client
-export { API, type IWsClient } from './api.ts';
+export { API, type IWsClient, type CatalogEntryResponse, type CatalogACLResponse } from './api.ts';
 export type { IdentityBackup } from './api.ts';
 
 // WebSocket client
@@ -123,6 +123,7 @@ export interface LISHNetworkDefinition {
 	description: string;
 	bootstrapPeers: string[];
 	created: string;
+	ownerPeerID?: string | undefined;
 }
 
 // LISH Network config (stored network with enabled state)
@@ -297,6 +298,7 @@ export interface ILISHNetwork {
 	description?: string;
 	bootstrapPeers: string[];
 	created?: string;
+	ownerPeerID?: string | undefined;
 }
 
 // System metrics

@@ -27,8 +27,9 @@ function defaultTestLISH(): IStoredLISH {
  * Create a test IStoredLISH by merging defaults with the provided overrides.
  * Accepts either an overrides object (with required id) or a plain LISHid string.
  */
-export function createTestLISH(overrides: (Partial<IStoredLISH> & { id: LISHid }) | LISHid): IStoredLISH {
+export function createTestLISH(overrides?: (Partial<IStoredLISH> & { id: LISHid }) | LISHid): IStoredLISH {
 	const base = defaultTestLISH();
+	if (!overrides) return base;
 	if (typeof overrides === 'string') {
 		return { ...base, id: overrides };
 	}
@@ -44,6 +45,6 @@ export function createTestDB(): Database {
 }
 
 /** Insert TEST_LISH_ID with 2 files and 3 chunks into the database. */
-export function populateTestDB(db: Database): void {
-	addLISH(db, defaultTestLISH());
+export function populateTestDB(db: Database, lish?: IStoredLISH): void {
+	addLISH(db, lish ?? defaultTestLISH());
 }
