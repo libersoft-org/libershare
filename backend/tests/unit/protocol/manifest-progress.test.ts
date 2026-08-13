@@ -28,10 +28,16 @@ function buildManifestFrame(manifest: unknown): { frame: Uint8Array; dataLen: nu
 	return { frame, dataLen: data.length };
 }
 
+// Structurally valid manifest — requestManifest now runs validateLISHStructure on
+// every received manifest, so the fixture must satisfy it (chunkSize, matching
+// checksum counts) or the progress path under test would never be reached.
 const MANIFEST = {
 	id: 'lish-progress-test',
 	name: 'progress',
-	files: Array.from({ length: 20 }, (_, i) => ({ path: `dir/file-${i}.bin`, size: 1000 + i })),
+	created: '2026-01-01T00:00:00Z',
+	chunkSize: 1024,
+	checksumAlgo: 'sha256',
+	files: Array.from({ length: 20 }, (_, i) => ({ path: `dir/file-${i}.bin`, size: 1000 + i, checksums: [`checksum-${i}`] })),
 };
 
 // ---------------------------------------------------------------------------
