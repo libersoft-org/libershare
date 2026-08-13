@@ -278,3 +278,29 @@ export class Settings {
 		}
 	}
 }
+
+/**
+ * Live reader for the `network` settings group, registered once at startup.
+ * Null until then — module-level code (tests, imports evaluated before the
+ * settings file is loaded) falls back to the defaults.
+ */
+let liveNetwork: (() => SettingsData['network']) | null = null;
+
+/**
+ * Point {@link networkSetting} at the running Settings instance. Called once from
+ * the entry point; every later settings write is picked up automatically because
+ * the reader hits the live object rather than a copy.
+ */
+export function useNetworkSettings(read: () => SettingsData['network']): void {
+	liveNetwork = read;
+}
+
+/**
+ * Current value of one `network.*` limit, read straight from settings on every
+ * call. Consumers must not cache it in module state: a stale copy is exactly the
+ * bug this replaces — a limit applied in one code path and silently forgotten in
+ * another. Falls back to the built-in default before registration.
+ */
+export function networkSetting<K extends keyof SettingsData['network']>(key: K): SettingsData['network'][K] {
+	return (liveNetwork?.() ?? DEFAULT_SETTINGS.network)[key];
+}
