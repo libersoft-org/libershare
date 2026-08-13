@@ -30,12 +30,17 @@ describe('serveGateBlocks', () => {
 });
 
 /**
- * canListSharesTo is the softer LISTING gate: allow any peer while we hold a joined
- * lishnet topic (so unicast search works before SUBSCRIBE syncs), except peers we
- * deliberately left (still redial-suppressed) and except when we hold no lishnet.
+ * canListSharesTo is the softer LISTING gate: a peer sharing a joined topic is always
+ * served; a peer that is not may still be served, but only inside the SUBSCRIBE
+ * propagation window measured from when its connection opened (so unicast search works
+ * before SUBSCRIBE syncs). Excluded regardless: peers we deliberately left (still
+ * redial-suppressed), infrastructure peers off our topics, and holding no lishnet.
+ *
+ * `connectionAgeSec` models how long ago the peer's connection opened; null means no
+ * connection at all (not undefined — that would just re-select the default).
  */
 describe('Network.canListSharesTo', () => {
-	function bareNetwork(suppressed: string[], topics: string[], infra: string[] = [], subscribers: string[] = []) {
+	function bareNetwork(suppressed: string[], topics: string[], infra: string[] = [], subscribers: string[] = [], connectionAgeSec: number | null = 0) {
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
 		(network as any).pubsub = {
@@ -43,12 +48,32 @@ describe('Network.canListSharesTo', () => {
 			getSubscribers: () => subscribers.map(p => ({ toString: () => p })),
 		};
 		(network as any).isBootstrapOrRelayPeer = (pid: string) => infra.includes(pid);
+		(network as any).node = {
+			getConnections: () => (connectionAgeSec === null ? [] : [{ remotePeer: { toString: () => 'peer-a' }, timeline: { open: Date.now() - connectionAgeSec * 1000 } }]),
+		};
 		return network;
 	}
 
 	it('allows a fresh peer while we hold a joined lishnet topic (subscribe may lag)', () => {
 		const net = bareNetwork([], [lishTopic('net-a')]);
 		expect((net as any).canListSharesTo('peer-a')).toBe(true);
+	});
+
+	it('refuses a long-connected peer that shares no joined topic', () => {
+		// The leave-network hole: we stay in another lishnet, the leave-time disconnect
+		// missed this peer, so nothing but the grace window stops it listing our shares.
+		const net = bareNetwork([], [lishTopic('net-a')], [], [], 600);
+		expect((net as any).canListSharesTo('peer-a')).toBe(false);
+	});
+
+	it('allows a long-connected peer that does share a joined topic', () => {
+		const net = bareNetwork([], [lishTopic('net-a')], [], ['peer-a'], 600);
+		expect((net as any).canListSharesTo('peer-a')).toBe(true);
+	});
+
+	it('refuses a peer with no open connection', () => {
+		const net = bareNetwork([], [lishTopic('net-a')], [], [], null);
+		expect((net as any).canListSharesTo('peer-a')).toBe(false);
 	});
 
 	it('refuses a peer we deliberately left (still suppressed)', () => {
