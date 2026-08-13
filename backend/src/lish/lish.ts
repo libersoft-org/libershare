@@ -381,7 +381,9 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 
 export async function exportLISHToFile(lish: IStoredLISH, outputFilePath: string, minifyJSON: boolean = false, compress: boolean = false, compressionAlgorithm: CompressionAlgorithm = 'gzip'): Promise<void> {
 	await fsPromises.mkdir(dirname(outputFilePath), { recursive: true });
-	const { directory, chunks, ...exportData } = lish;
+	// `finalDirectory` is node-local like `directory` — an absolute path on this machine,
+	// carrying the OS user name, meaningless to whoever opens the exported file.
+	const { directory, finalDirectory, chunks, ...exportData } = lish;
 	await Utils.writeJSONToFile(exportData, outputFilePath, minifyJSON, compress, compressionAlgorithm);
 	console.log(`✓ LISH exported to: ${outputFilePath}`);
 }
