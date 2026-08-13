@@ -32,6 +32,7 @@
 		"uploads": "Odesílání",
 		"files": "Soubory",
 		"connections": "Spojení",
+		"peers": "Účastníci",
 		"speed": "Rychlost",
 		"transferred": "Přeneseno",
 		"newDirectory": "Nový adresář",
@@ -91,7 +92,6 @@
 	"network": {
 		"title": "Procházet síť",
 		"tabLishs": "LISHe",
-		"tabPeers": "Účastníci",
 		"searchPlaceholder": "Hledat podle ID účastníka ...",
 		"searchLishsPlaceholder": "Hledat LISH podle názvu nebo ID ...",
 		"searching": "Prohledávám síť ...",
@@ -104,7 +104,6 @@
 		"openPeer": "Otevřít účastníka",
 		"allNetworks": "Všechny sítě",
 		"peerID": "ID účastníka",
-		"peerCount": "Účastníků",
 		"network": "Síť",
 		"connections": "Připojení",
 		"direct": "{count} přímé",
@@ -284,7 +283,7 @@
 		"errorMissingCreated": "Neplatný LISH: chybí nebo prázdný časový údaj vytvoření",
 		"errorInvalidChunkSize": "Neplatný LISH: chybí nebo neplatná velikost části",
 		"errorChunkSizeTooLarge": "LISH odmítnut: velikost části přesahuje povolený limit ({detail})",
-		"errorInvalidManifest": "Neplatný LISH: počet kontrolních součtů neodpovídá deklarované velikosti souboru ({detail})",
+		"errorInvalidManifest": "Neplatný manifest LISHe: {detail}",
 		"errorUnsupportedChecksum": "Neplatný LISH: nepodporovaný hashovací algoritmus: {detail}",
 		"errorUnexpectedArray": "Očekáván jeden LISH objekt, obdrženo pole",
 		"errorPathAccessDenied": "Nelze přistoupit k cestě: {detail}",
@@ -383,7 +382,6 @@
 				"stable": "Síť je stabilní - broadcasty dorazí k fleetu"
 			},
 			"bootstrap": {
-				"title": "Bootstrap účastníci",
 				"discoveredShort": "z gossipu",
 				"discoveredHelp": "Získáni za běhu přes gossip. Automaticky odstraněni při neplatné identitě.",
 				"originConfigured": "uložený",
