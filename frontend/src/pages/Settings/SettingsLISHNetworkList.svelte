@@ -21,7 +21,7 @@
 	import LISHNetworkExport from './SettingsLISHNetworkExport.svelte';
 	import LISHNetworkExportAll from './SettingsLISHNetworkExportAll.svelte';
 	import LISHNetworkPublic from './SettingsLISHNetworkPublic.svelte';
-	import LISHNetworkBootstrap from './SettingsLISHNetworkBootstrap.svelte';
+	import LISHNetworkBootstrap from './SettingsLISHNetworkPeers.svelte';
 	import NodeInfoRow from '../../components/NodeInfo/NodeInfoRow.svelte';
 	interface Props {
 		areaID: string;
@@ -61,7 +61,7 @@
 
 	function openBootstrap(network: LISHNetworkConfig): void {
 		bootstrapNetwork = network;
-		bootstrapSubPage.enter(`${network.name} - ${$t('settings.lishNetwork.bootstrap.title')}`, () => void closeBootstrap());
+		bootstrapSubPage.enter(`${network.name} - ${$t('common.peers')}`, () => void closeBootstrap());
 	}
 	async function closeBootstrap(): Promise<void> {
 		bootstrapNetwork = null;
