@@ -341,15 +341,20 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			finalDirectory = finalBaseDir;
 		} else directory = finalBaseDir; // Share-only / metadata-only import → files already live at the target location.
 		await mkdir(directory, { recursive: true });
-		// Drop any `finalDirectory` that rode in with the imported data before merging: it is
-		// node-local state we own, and `validateImportedLISH` is a cast, so a hostile .lish /
-		// JSON / URL can carry one. Share-only imports take no finalDirectory of their own, so
-		// without this the attacker's value would survive — and deleteLISHData() treats a set
-		// finalDirectory as "still in temp" and recursively wipes the LISH directory, which for
-		// a share-only import is the user's own folder with files the LISH never listed.
-		// The cast spells out the hazard: `ILISH` has no such field, yet the value can be there
-		// at runtime because the import validator only checks the fields it knows.
-		const { finalDirectory: _importedFinalDirectory, ...manifest } = lish as ILISH & { finalDirectory?: string };
+		// Drop the node-local fields that rode in with the imported data before merging: we own
+		// them, and `validateImportedLISH` is a cast, so a hostile .lish / JSON / URL / peer
+		// manifest can carry them. The cast spells out the hazard: `ILISH` has neither field,
+		// yet both can be there at runtime because the import validator only checks the fields
+		// it knows, and `exportToFile` already strips both on the way out.
+		//  - finalDirectory: share-only imports take none of their own, so the attacker's value
+		//    would survive — and deleteLISHData() treats a set finalDirectory as "still in temp"
+		//    and recursively wipes the LISH directory, which for a share-only import is the
+		//    user's own folder with files the LISH never listed.
+		//  - chunks: addLISH() persists `have = TRUE` for every listed checksum, so a manifest
+		//    listing its own checksums makes us claim data we never received — the downloader
+		//    finds nothing missing, isComplete() reports done, and getHaveChunks() advertises
+		//    'all' to peers that then request bytes we cannot serve.
+		const { finalDirectory: _importedFinalDirectory, chunks: _importedChunks, ...manifest } = lish as ILISH & { finalDirectory?: string; chunks?: string[] };
 		const storedLISH: IStoredLISH = {
 			...manifest,
 			directory,

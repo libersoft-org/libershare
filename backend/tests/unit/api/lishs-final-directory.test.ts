@@ -1,12 +1,16 @@
 /**
- * `finalDirectory` is node-local state this machine owns — an absolute path carrying the OS
- * user name, and the flag that decides what happens to the folder: deleteLISHData() wipes a
- * LISH with a set finalDirectory recursively, finalizeDownload() renames the directory to it.
+ * `finalDirectory` and `chunks` are node-local state this machine owns:
+ *  - finalDirectory is an absolute path carrying the OS user name, and the flag that decides
+ *    what happens to the folder — deleteLISHData() wipes a LISH with a set finalDirectory
+ *    recursively, finalizeDownload() renames the directory to it.
+ *  - chunks is the have-set this node earned by downloading and verifying bytes; addLISH()
+ *    persists `have = TRUE` for every checksum listed there.
  *
- * So it must not travel in either direction through the `lishs` API:
- *  - out: the exported .lish must not carry this machine's paths to whoever opens the file
- *  - in:  an imported finalDirectory must not survive, because `validateImportedLISH` is a
- *         pass-through cast and a share-only import points at the user's own folder
+ * So neither may travel in either direction through the `lishs` API:
+ *  - out: the exported .lish must not carry this machine's paths or progress to whoever opens it
+ *  - in:  an imported value must not survive, because `validateImportedLISH` is a pass-through
+ *         cast — a share-only import points finalDirectory at the user's own folder, and an
+ *         imported have-set makes the node claim data it never received
  *
  * All import routes (file, JSON, URL, peer manifest) funnel through the same importCommon,
  * so exercising importFromJSON pins the strip for all of them. The file-writer underneath
@@ -24,6 +28,7 @@ import { initLISHsHandlers } from '../../../src/api/lishs.ts';
 import type { IStoredLISH } from '@shared';
 
 const IMPORT_ID = 'import-strip-test';
+const CHUNK_IMPORT_ID = 'import-chunk-strip-test';
 const EXPORT_ID = 'export-strip-test';
 const LOCAL_MARKER = 'somebody';
 
@@ -33,6 +38,12 @@ let outDir: string;
 let db: ReturnType<typeof openDatabase>;
 let dataServer: DataServer;
 let handlers: ReturnType<typeof initLISHsHandlers>;
+/**
+ * Every broadcast the handlers emit. `lishs:add` is emitted synchronously right after the
+ * DB insert and before verification is queued, so it is the only observation of the stored
+ * state that cannot race the verification pass that would later correct a poisoned have-set.
+ */
+const broadcasts: Array<{ event: string; data: any }> = [];
 
 beforeAll(async () => {
 	dataDir = await mkdtemp(join(tmpdir(), 'lish-api-data-'));
@@ -44,7 +55,9 @@ beforeAll(async () => {
 	handlers = initLISHsHandlers(
 		dataServer,
 		() => {},
-		() => {},
+		(event, data) => {
+			broadcasts.push({ event, data });
+		},
 		settings
 	);
 });
@@ -83,6 +96,19 @@ function downloadingLISH(): IStoredLISH {
 	};
 }
 
+/** The same trick applied to progress: a manifest that pre-claims its own chunks as downloaded. */
+function preClaimedChunksJSON(): string {
+	return JSON.stringify({
+		id: CHUNK_IMPORT_ID,
+		created: '2026-01-01T00:00:00.000Z',
+		chunkSize: 1024,
+		checksumAlgo: 'sha256',
+		name: 'Chunk strip test',
+		files: [{ path: 'a.bin', size: 2048, checksums: ['aaaa', 'bbbb'] }],
+		chunks: ['aaaa', 'bbbb'],
+	});
+}
+
 describe('lishs.importFromJSON', () => {
 	it('drops an imported finalDirectory on a share-only import', async () => {
 		await handlers.importFromJSON({ json: hostileManifestJSON(), downloadPath: downloadDir, enableSharing: true });
@@ -91,6 +117,16 @@ describe('lishs.importFromJSON', () => {
 		expect(stored!.finalDirectory).toBeUndefined();
 		// The directory we allocated ourselves must win over the imported one.
 		expect(stored!.directory).toBe(join(downloadDir, 'Import strip test'));
+	});
+
+	it('does not let an imported chunk list pre-flag chunks as downloaded', async () => {
+		await handlers.importFromJSON({ json: preClaimedChunksJSON(), downloadPath: downloadDir, enableSharing: true });
+		const added = broadcasts.find(b => b.event === 'lishs:add' && b.data?.id === CHUNK_IMPORT_ID);
+		expect(added).toBeDefined();
+		expect(added!.data.totalChunks).toBe(2);
+		// Nothing has been received or verified, so the have-set must be empty — otherwise the
+		// downloader finds nothing missing and we advertise bytes we cannot serve.
+		expect(added!.data.verifiedChunks).toBe(0);
 	});
 });
 
