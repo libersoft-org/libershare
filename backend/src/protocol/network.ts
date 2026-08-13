@@ -506,6 +506,13 @@ export class Network {
 		this.addListener(this.pubsub, 'gossipsub:graft', (evt: any) => {
 			trace(`[NET] GRAFT: ${evt.detail.peerID} joined ${evt.detail.topic}`);
 			this.lastMeshChange.set(evt.detail.topic, Date.now());
+			// GRAFT is the earliest proof a peer is on this topic — before its SUBSCRIBE
+			// shows up in getSubscribers, and regardless of announce cadence. Recording it
+			// here is what lets leave-network hang up a peer it would otherwise never see
+			// on a small network.
+			if (evt.detail.topic?.startsWith(LISH_TOPIC_PREFIX) && evt.detail.peerID) {
+				this.peerAnnounce.noteMember(String(evt.detail.topic), String(evt.detail.peerID));
+			}
 			this.schedulePeerCountCheck();
 		});
 
@@ -1265,17 +1272,26 @@ export class Network {
 	 * data requests (getLish/getChunk) stay on the strict {@link sharesJoinedTopicWith}
 	 * fail-closed gate, which needs a synced gossipsub SUBSCRIBE.
 	 *
-	 * The listing is scoped to peers of a lishnet we are in, but accepts the wider
+	 * An unbounded soft gate collapses to "am I in ANY lishnet?", which means a peer of
+	 * a lishnet we left keeps listing our shares for as long as we stay in some other
+	 * lishnet — redial suppression is then the only thing standing in the way, so any
+	 * peer the leave-time disconnect missed still sees everything we share.
+	 *
+	 * Membership is therefore what authorizes the listing. It accepts the wider
 	 * {@link sharesJoinedOrRecentTopicWith} evidence so the unicast search fallback
 	 * still reaches a member whose subscription is momentarily missing from the live
-	 * snapshot. Membership is what authorizes the listing: a bare transport connection
-	 * — a relay client, a bootstrap dial, a peer of a lishnet we are not in, or one we
-	 * deliberately left before a restart dropped the in-memory redial suppression —
-	 * carries no such evidence and learns nothing about what we share.
+	 * snapshot. A bare transport connection — a relay client, a bootstrap dial, a peer
+	 * of a lishnet we are not in, or one we deliberately left before a restart dropped
+	 * the in-memory redial suppression — carries no such evidence and learns nothing
+	 * about what we share.
 	 */
 	canListSharesTo(peerID: string): boolean {
 		if (this.isRedialSuppressed(peerID)) return false;
 		if (!this.pubsub) return false;
+		// Not in any lishnet → nothing to list, regardless of who is asking.
+		if (!this.pubsub.getTopics().some((t: string) => t.startsWith(LISH_TOPIC_PREFIX))) return false;
+		// A shared joined topic is the real authorization — no time limit on it.
+		if (this.sharesJoinedTopicWith(peerID)) return true;
 		// Infrastructure peers (active relay / bootstrap) are kept connected across a
 		// leave without being redial-suppressed, and peer-announce may still list one
 		// as a recent member of a topic it serves. Hold them to the live snapshot so a

@@ -114,6 +114,22 @@ export class PeerAnnounceManager {
 	}
 
 	/**
+	 * Record a peer as a member of a topic outside the emit cycle. Fed by the
+	 * gossipsub GRAFT event, which fires the moment a peer joins our mesh for the
+	 * topic — earlier than its SUBSCRIBE reaches getSubscribers, and independently of
+	 * the announce cadence. Both leave-network and the listing gate read this cache,
+	 * so it must be populated even on a node that never emits an announce at all.
+	 */
+	noteMember(topic: string, peerID: string): void {
+		let members = this.topicMembers.get(topic);
+		if (!members) {
+			members = new Map<string, number>();
+			this.topicMembers.set(topic, members);
+		}
+		members.set(peerID, Date.now());
+	}
+
+	/**
 	 * Record the current subscribers of each joined topic and drop entries older than
 	 * {@link PEER_ANNOUNCE_MEMBER_TTL_MS}. Split out of the announce broadcast so it
 	 * still runs on a node too small to advertise itself — readers of the membership
