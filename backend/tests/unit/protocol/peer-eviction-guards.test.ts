@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { Network, isSameDialEndpoint } from '../../../src/protocol/network.ts';
+import { Network, isSameDialEndpoint, normalizeMultiaddrForCompare } from '../../../src/protocol/network.ts';
 
 /**
  * Guards on the DESTRUCTIVE peer-eviction paths. The pure decision helpers are covered
@@ -239,6 +239,40 @@ describe('isSameDialEndpoint', () => {
 
 	it('treats a missing connection address as no proof', () => {
 		expect(isSameDialEndpoint('', `/ip4/203.0.113.4/tcp/9090/p2p/${PEER_A}`)).toBe(false);
+	});
+
+	it('rejects a relay whose identity differs only in case', () => {
+		// Only the trailing /p2p/<id> is stripped, so a circuit address is compared with
+		// the RELAY's peer id still in the middle. Folding the whole string would make two
+		// distinct relays look like one endpoint.
+		const relay = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+		const otherRelay = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrnGS17fo';
+		expect(isSameDialEndpoint(`/ip4/198.51.100.1/tcp/4001/p2p/${relay}/p2p-circuit/p2p/${PEER_A}`, `/ip4/198.51.100.1/tcp/4001/p2p/${otherRelay}/p2p-circuit/p2p/${PEER_A}`)).toBe(false);
+	});
+});
+
+/**
+ * Case folding is a hostname question, not an identifier question. DNS is defined as
+ * case-insensitive; a base58 peer id is not, and the two live in the same string.
+ */
+describe('normalizeMultiaddrForCompare', () => {
+	it('folds DNS host case and drops the FQDN root dot', () => {
+		expect(normalizeMultiaddrForCompare('/dns4/EXAMPLE.COM./tcp/443')).toBe('/dns4/example.com/tcp/443');
+	});
+
+	it('folds every DNS protocol variant', () => {
+		expect(normalizeMultiaddrForCompare('/dnsaddr/Bootstrap.Example.COM/tcp/443')).toBe('/dnsaddr/bootstrap.example.com/tcp/443');
+		expect(normalizeMultiaddrForCompare('/dns6/Example.COM/tcp/443')).toBe('/dns6/example.com/tcp/443');
+	});
+
+	it('leaves a peer id untouched', () => {
+		const peer = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+		expect(normalizeMultiaddrForCompare(`/dns4/EXAMPLE.COM/tcp/443/p2p/${peer}`)).toBe(`/dns4/example.com/tcp/443/p2p/${peer}`);
+	});
+
+	it('leaves an address with no DNS component completely alone', () => {
+		const addr = '/ip4/203.0.113.4/tcp/9090/p2p/12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+		expect(normalizeMultiaddrForCompare(addr)).toBe(addr);
 	});
 });
 

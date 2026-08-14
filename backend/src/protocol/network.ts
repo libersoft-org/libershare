@@ -2148,14 +2148,17 @@ export class Network {
 
 /**
  * Normalize a multiaddr STRING for equality comparison. Multiaddr.toString()
- * already compresses IPv6, but leaves DNS host case and trailing dots intact —
+ * already compresses IPv6, but leaves DNS host case and the FQDN root dot intact —
  * `/dns4/EXAMPLE.COM./tcp/...` and `/dns4/example.com/tcp/...` address the same
- * endpoint. Lowercasing is safe here because callers only ever compare addresses
- * of the SAME peer, so a case-folded base58 peer-ID collision cannot drop a
- * different peer's address.
+ * endpoint.
+ *
+ * Only the HOST of a DNS component is folded, never the whole address. A circuit
+ * multiaddr carries `/p2p/<relay>` in the middle, and a base58 peer ID is
+ * case-significant — case-folding an identifier is a different question from
+ * case-folding a hostname, and this function is only entitled to the second.
  */
 export function normalizeMultiaddrForCompare(s: string): string {
-	return s.toLowerCase().replace(/\.(?=\/|$)/g, '');
+	return s.replace(/\/(dns|dns4|dns6|dnsaddr)\/([^/]+)/gi, (_match, protocol: string, host: string) => `/${protocol.toLowerCase()}/${host.toLowerCase().replace(/\.+$/, '')}`);
 }
 
 /**
