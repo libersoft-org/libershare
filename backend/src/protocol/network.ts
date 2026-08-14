@@ -103,6 +103,51 @@ const SEARCH_DEDUP_TTL_MS = 5 * 60_000;
 const MAX_PUBSUB_PAYLOAD_BYTES = 256 * 1024;
 
 /**
+ * Lifetime of a gossip-DISCOVERED bootstrap entry, matched to the libp2p
+ * peerStore `maxPeerAge` (2h, see network-config.ts). Past that age libp2p has
+ * itself forgotten the peer, so re-dial maintenance — which iterates the
+ * peerStore — can no longer produce or evict the entry. Keeping the address
+ * around any longer only creates an orphan that zero-connection recovery
+ * re-dials forever. Configured entries are user data and never expire.
+ */
+const DISCOVERED_BOOTSTRAP_TTL_MS = 7_200_000;
+
+/**
+ * Hard cap on gossip-DISCOVERED bootstrap entries; the newest are kept. Sized
+ * a little above the largest fleet the gossipsub mesh is designed for (partial
+ * mesh, D=6..12, a few hundred peers), so a healthy node never hits the cap,
+ * while a node fed a flood of peer-announce addresses cannot grow the array
+ * without bound. Configured entries do not count towards it and are never
+ * dropped.
+ */
+const MAX_DISCOVERED_BOOTSTRAP_ENTRIES = 200;
+
+/** Base re-dial backoff: doubles per consecutive failure, capped by {@link REDIAL_BACKOFF_MAX_MS}. */
+const REDIAL_BACKOFF_BASE_MS = 30_000;
+
+/** Ceiling for the exponential re-dial backoff. */
+const REDIAL_BACKOFF_MAX_MS = 600_000;
+
+/**
+ * A bootstrap address we may dial, plus the provenance needed to age it out.
+ *
+ * `configured` entries come from network config (startup config or a manual
+ * bootstrap edit) and are user data: they are always tried first and are never
+ * dropped by the bound or the TTL. `discovered` entries are only what some
+ * other peer claimed over peer-announce gossip, and expire.
+ */
+interface IBootstrapEntry {
+	/** Multiaddr to dial. */
+	readonly ma: any;
+	/** Destination peer ID (last `/p2p` component), or null when the address carries none. */
+	readonly peerID: string | null;
+	/** True when the entry originates from explicit network config. */
+	readonly configured: boolean;
+	/** Epoch ms the entry was added; drives {@link DISCOVERED_BOOTSTRAP_TTL_MS}. */
+	readonly addedAt: number;
+}
+
+/**
  * Single shared libp2p node.
  * LISH networks are logical groups represented as pubsub topics on this one node.
  */
@@ -138,7 +183,14 @@ export class Network {
 	 */
 	private configuredBootstrapPeerIDs: Set<string> = new Set();
 	private dcutrPeers: Set<string> = new Set();
-	private bootstrapMultiaddrs: any[] = [];
+	/**
+	 * Addresses zero-connection recovery may dial, newest last. Bounded and
+	 * aged by {@link pruneBootstrapEntries}: without that, gossip-discovered
+	 * entries whose peer has since aged out of the libp2p peerStore stay here
+	 * forever (re-dial maintenance walks the peerStore, so it can never evict
+	 * them) and every recovery tick burns its whole budget on dead addresses.
+	 */
+	private bootstrapEntries: IBootstrapEntry[] = [];
 
 	// Topic handlers: topic -> Set of handler functions
 	private topicHandlers: Map<string, Set<TopicHandler>> = new Map();
@@ -411,7 +463,9 @@ export class Network {
 		this.bootstrapPeerIDs = bootstrapPeerIDs;
 		// Config-time bootstrap entries are by definition 'configured'.
 		this.configuredBootstrapPeerIDs = new Set(bootstrapPeerIDs);
-		this.bootstrapMultiaddrs = bootstrapMultiaddrs;
+		// Config-time entries are 'configured' — recovery prefers them and never ages them out.
+		const startedAt = Date.now();
+		this.bootstrapEntries = bootstrapMultiaddrs.map(ma => ({ ma, peerID: extractDestinationPeerID(ma), configured: true, addedAt: startedAt }));
 
 		console.log('Creating libp2p node...');
 		try {
@@ -722,7 +776,7 @@ export class Network {
 	}
 
 	private setupBootstrapWorkaround(): void {
-		if (!AUTODIAL_WORKAROUND || this.bootstrapMultiaddrs.length === 0) return;
+		if (!AUTODIAL_WORKAROUND || this.bootstrapEntries.length === 0) return;
 		// setTimeout discards the Promise returned by async callbacks, so throws escape
 		// as unhandledRejection. Plus this.node can be null if stop() fires within 2s.
 		// Null-check at entry, wrap inner async work, attach .catch() to surface errors.
@@ -730,7 +784,7 @@ export class Network {
 			if (!this.node || this.node.getPeers().length > 0) return;
 			(async () => {
 				console.log('⚠️  Bootstrap module failed - dialing directly...');
-				for (const ma of this.bootstrapMultiaddrs) {
+				for (const { ma } of this.bootstrapEntries) {
 					if (!this.node) break;
 					try {
 						await this.node.dial(ma);
@@ -754,7 +808,7 @@ export class Network {
 				// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
 				this.checkPeerCounts();
 				await this.runRedialMaintenance(connectedPeers, allPeers);
-				await this.runZeroConnectionRecovery(connectedPeers);
+				await this.runZeroConnectionRecovery();
 				await this.maybePromotePeers();
 			} catch (err: any) {
 				trace(`[NET] statusInterval error: ${err?.message ?? err}`);
@@ -880,11 +934,9 @@ export class Network {
 						/* non-fatal */
 					}
 				} catch (err: any) {
-					// Exponential backoff: 30s × 2^failCount, capped at 10 min.
-					const nextFailCount = c.failCount + 1;
-					const delayMs = Math.min(30_000 * 2 ** c.failCount, 600_000);
-					this.redialBackoff.set(c.pid, { nextAttempt: Date.now() + delayMs, failCount: nextFailCount });
-					console.debug(`   ✗ Re-dial peer=${c.pid} failed: ${err.message ?? err} (tried: ${c.addrSummary}, next in ${Math.round(delayMs / 1000)}s)`);
+					const bo = nextRedialBackoff(c.failCount, Date.now());
+					this.redialBackoff.set(c.pid, bo);
+					console.debug(`   ✗ Re-dial peer=${c.pid} failed: ${err.message ?? err} (tried: ${c.addrSummary}, next in ${Math.round((bo.nextAttempt - Date.now()) / 1000)}s)`);
 				}
 			}
 		};
@@ -898,13 +950,31 @@ export class Network {
 		// peerStore, so pruning against it would drop the suppression and let mDNS
 		// rediscovery reconnect the left peer within a tick. Suppression is instead
 		// bounded by clear-on-rejoin / clear-on-reconnect / stop().
+		// Bootstrap-entry peers are exempt: zero-connection recovery still dials
+		// them after they age out of the peerStore, and dropping their backoff
+		// here would hand that loop a clean slate every single tick — the pacing
+		// would never take effect for exactly the orphaned entries that need it.
 		const storeSet = new Set(allPeers.map(p => p.id.toString()));
-		for (const pid of this.redialBackoff.keys()) if (!storeSet.has(pid)) this.redialBackoff.delete(pid);
+		const entryIDs = new Set(this.bootstrapEntries.map(e => e.peerID).filter((p): p is string => p !== null));
+		for (const pid of this.redialBackoff.keys()) if (!storeSet.has(pid) && !entryIDs.has(pid)) this.redialBackoff.delete(pid);
 	}
 
-	private async runZeroConnectionRecovery(connectedPeers: any[]): Promise<void> {
-		if (!AUTODIAL_WORKAROUND || connectedPeers.length !== 0 || this.bootstrapMultiaddrs.length === 0) return;
-		console.log(`   ⚠️  No connections - dialing ${this.bootstrapMultiaddrs.length} bootstrap peer(s) directly...`);
+	/**
+	 * Last-resort recovery when the node holds no connections at all: walk the
+	 * bootstrap entries and dial until one succeeds.
+	 *
+	 * Deliberately takes NO connected-peer snapshot. The status tick snapshots
+	 * the peer list before running re-dial maintenance, and that pass may have
+	 * connected a peer in the meantime — acting on the snapshot would fire a
+	 * full recovery sweep against a node that is no longer isolated.
+	 */
+	private async runZeroConnectionRecovery(): Promise<void> {
+		if (!AUTODIAL_WORKAROUND) return;
+		this.pruneBootstrapEntries();
+		if (this.bootstrapEntries.length === 0) return;
+		// Re-read live connection state rather than trusting a caller snapshot.
+		if ((this.node?.getPeers().length ?? 0) !== 0) return;
+		console.log(`   ⚠️  No connections - dialing ${this.bootstrapEntries.length} bootstrap peer(s) directly...`);
 		// [NET-CHURN] dump: who left in the run-up to this zero-connection
 		// state, and what each configured bootstrap entry's last dial outcome
 		// was. Without this we only ever see the recovery dial — never the cause.
@@ -923,20 +993,58 @@ export class Network {
 				.join(' ');
 			console.log(`   [NET-CHURN] bootstrap stats net=${networkID.slice(0, 8)}: ${parts}`);
 		}
-		for (const ma of this.bootstrapMultiaddrs) {
-			const p2pComponents = ma.getComponents().filter((c: { code: number; value?: string }) => c.code === 421);
-			const pid: string | undefined = p2pComponents.length > 0 ? p2pComponents[p2pComponents.length - 1].value : undefined;
-			if (pid && this.isRedialSuppressed(pid)) continue; // deliberately left — don't resurrect it here
+		const isSuppressed = (pid: string): boolean => this.isRedialSuppressed(pid);
+		for (const entry of orderBootstrapEntriesForRecovery(this.bootstrapEntries)) {
+			const { ma, peerID } = entry;
+			if (!this.node) break; // stopped while we awaited an earlier dial
+			// A peer we deliberately left stays down; a gossip-discovered peer inside
+			// its backoff window waits for it to expire. Backoff is a delay, never a
+			// permanent ban, and it does not apply to configured entries.
+			if (!isRecoveryDialEligible(entry, Date.now(), isSuppressed, this.redialBackoff)) continue;
 			const maStr = ma?.toString?.() ?? String(ma);
 			try {
 				console.log(`   → Dialing ${maStr}`);
-				await this.node!.dial(ma, { signal: AbortSignal.timeout(10000) });
+				await this.node.dial(ma, { signal: AbortSignal.timeout(10000) });
 				console.log(`   ✓ Connected via ${maStr}`);
+				if (peerID) this.redialBackoff.delete(peerID);
 				break;
 			} catch (err: any) {
 				console.log(`   ✗ Failed ${maStr}: ${err.message ?? err}`);
+				// Record the failure so the next tick paces this address instead of
+				// re-dialing it at full 10s cost. Re-dial maintenance cannot do this
+				// for us: a peer aged out of the peerStore never becomes a candidate
+				// there, which is exactly how these entries get orphaned.
+				if (peerID) this.redialBackoff.set(peerID, nextRedialBackoff(this.redialBackoff.get(peerID)?.failCount ?? 0, Date.now()));
 			}
 		}
+	}
+
+	/**
+	 * Drop gossip-discovered bootstrap entries that aged past
+	 * {@link DISCOVERED_BOOTSTRAP_TTL_MS} or overflow
+	 * {@link MAX_DISCOVERED_BOOTSTRAP_ENTRIES}, and forget their peer IDs so a
+	 * later announce of the same address can re-enter the list. Configured
+	 * entries are never touched.
+	 */
+	private pruneBootstrapEntries(): void {
+		// Peers we are talking to right now are pinned — see pruneBootstrapEntries.
+		// Collected once per prune rather than probed per entry: getPeers() is a
+		// live array read, and this runs on every announce as well as every tick.
+		const connected = new Set((this.node?.getPeers() ?? []).map(p => p.toString()));
+		const kept = pruneBootstrapEntries(this.bootstrapEntries, Date.now(), DISCOVERED_BOOTSTRAP_TTL_MS, MAX_DISCOVERED_BOOTSTRAP_ENTRIES, pid => connected.has(pid));
+		if (kept.length === this.bootstrapEntries.length) return;
+		const keptSet = new Set(kept);
+		const keptIDs = new Set(kept.map(e => e.peerID).filter((p): p is string => p !== null));
+		let dropped = 0;
+		for (const entry of this.bootstrapEntries) {
+			if (keptSet.has(entry)) continue;
+			dropped++;
+			// Dedup set must forget it too, otherwise addBootstrapPeers treats a
+			// re-announce as alreadyKnown and the entry can never come back.
+			if (entry.peerID && !keptIDs.has(entry.peerID)) this.bootstrapPeerIDs.delete(entry.peerID);
+		}
+		this.bootstrapEntries = kept;
+		trace(`[NET] bootstrap entries pruned: dropped ${dropped}, kept ${kept.length}`);
 	}
 
 	private async maybePromotePeers(): Promise<void> {
@@ -1054,12 +1162,7 @@ export class Network {
 					trace(`[NET] addBootstrapPeers skip non-routable: ${peer}`);
 					continue;
 				}
-				// A relayed bootstrap multiaddr (.../p2p/<relay>/p2p-circuit/p2p/<target>)
-				// carries two /p2p components; the peer we actually connect to — and must
-				// exempt from leave-network disconnect — is the FINAL one (the target), not
-				// the relay. Take the last /p2p component, never the first.
-				const p2pComponents = ma.getComponents().filter(c => c.code === 421);
-				const peerID = (p2pComponents.length > 0 ? p2pComponents[p2pComponents.length - 1]!.value : null) ?? null;
+				const peerID = extractDestinationPeerID(ma);
 				if (peerID && origin === 'configured') {
 					this.configuredBootstrapPeerIDs.add(peerID);
 					// A re-configured bootstrap peer means its network was (re-)joined — it
@@ -1071,7 +1174,11 @@ export class Network {
 				const alreadyKnown = !!peerID && this.bootstrapPeerIDs.has(peerID);
 				if (peerID && !alreadyKnown) {
 					this.bootstrapPeerIDs.add(peerID);
-					this.bootstrapMultiaddrs.push(ma);
+					this.bootstrapEntries.push({ ma, peerID, configured: origin === 'configured', addedAt: Date.now() });
+					// Bound the list at the source: peer-announce gossip is the only
+					// unbounded producer, and a node can stay connected for days
+					// without ever reaching the recovery path that also prunes.
+					this.pruneBootstrapEntries();
 				}
 				console.debug('Adding bootstrap peer:', peer);
 				this.bootstrapTracker.markPending(networkID, peer, peerID, origin);
@@ -1761,7 +1868,7 @@ export class Network {
 		this.dcutrPeers.clear();
 		this.bootstrapPeerIDs.clear();
 		this.bootstrapTracker.clear();
-		this.bootstrapMultiaddrs = [];
+		this.bootstrapEntries = [];
 		this._lastPeerCounts.clear();
 		this._lastScores.clear();
 		this.redialBackoff.clear();
@@ -1830,4 +1937,99 @@ export function classifyBootstrapError(message: string): BootstrapPeerDialStatus
 export function extractActualPeerID(message: string): string | null {
 	const m = message.match(/Payload identity key (\S+) does not match expected remote identity key /);
 	return m ? m[1]! : null;
+}
+
+/** Multiaddr component code of a `/p2p/<peer-id>` segment. */
+const MULTIADDR_P2P_CODE = 421;
+
+/**
+ * Peer ID we would actually connect to when dialing a multiaddr, or null when
+ * the address carries no `/p2p` component.
+ *
+ * A relayed address (`.../p2p/<relay>/p2p-circuit/p2p/<target>`) carries two
+ * `/p2p` components; the destination — the peer whose identity the Noise
+ * handshake verifies, and the one leave-network suppression applies to — is the
+ * LAST one, never the relay in front of it.
+ */
+export function extractDestinationPeerID(ma: any): string | null {
+	try {
+		const components = ma.getComponents().filter((c: { code: number }) => c.code === MULTIADDR_P2P_CODE);
+		return components.length > 0 ? (components[components.length - 1].value ?? null) : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Next backoff state after a failed dial: 30s doubled per consecutive failure,
+ * capped at 10 min. Shared by re-dial maintenance and zero-connection recovery
+ * so a peer cannot be paced by one loop and hammered by the other.
+ */
+export function nextRedialBackoff(failCount: number, now: number): { nextAttempt: number; failCount: number } {
+	const delayMs = Math.min(REDIAL_BACKOFF_BASE_MS * 2 ** failCount, REDIAL_BACKOFF_MAX_MS);
+	return { nextAttempt: now + delayMs, failCount: failCount + 1 };
+}
+
+/**
+ * Whether zero-connection recovery may dial an entry this tick.
+ *
+ * An address with no peer ID cannot be paced or suppressed — there is no
+ * identity to key either on — so it is always eligible. A peer that
+ * leave-network hung up always stays down.
+ *
+ * Backoff pacing applies to DISCOVERED entries only. This loop is the last
+ * resort of a node with no connections at all, and a configured address is the
+ * user's designated way back in: pacing it would turn a recovered uplink into a
+ * wait of up to the backoff ceiling, to save a handful of dials on a list the
+ * user wrote by hand and that never grows on its own. The unbounded gossip-fed
+ * entries are the ones that need pacing, and they get it. For those the window
+ * only delays a retry, never bans one.
+ */
+export function isRecoveryDialEligible(entry: { readonly peerID: string | null; readonly configured: boolean }, now: number, isSuppressed: (peerID: string) => boolean, redialBackoff: ReadonlyMap<string, { nextAttempt: number }>): boolean {
+	const { peerID, configured } = entry;
+	if (peerID === null) return true;
+	if (isSuppressed(peerID)) return false;
+	if (configured) return true;
+	const bo = redialBackoff.get(peerID);
+	return bo === undefined || bo.nextAttempt <= now;
+}
+
+/**
+ * Bootstrap entries in the order recovery should dial them: configured entries
+ * (user data, and the reliable way back into the network) before gossip-
+ * discovered ones (merely what another peer claimed). Relative order within
+ * each group is preserved, so the oldest — and therefore longest-known —
+ * configured entry is still tried first.
+ */
+export function orderBootstrapEntriesForRecovery<T extends { configured: boolean }>(entries: readonly T[]): T[] {
+	return [...entries.filter(e => e.configured), ...entries.filter(e => !e.configured)];
+}
+
+/**
+ * Entries surviving the discovered-entry TTL and cap, in their original order.
+ *
+ * An entry is PINNED — never expired, never counted against the cap, never
+ * dropped — when it is either configured (user data) or belongs to a peer that
+ * is connected right now. The liveness half matters because membership of this
+ * list also decides whether a peer is re-tagged KEEP_ALIVE on connect, which is
+ * what drives libp2p's reconnect queue: ageing out a peer that has simply been
+ * up longer than the TTL would quietly demote a healthy long-lived connection.
+ *
+ * Everything else is a gossip claim about a peer we are not talking to: dropped
+ * once older than `ttlMs`, and if more than `maxDiscovered` remain the oldest go
+ * first.
+ */
+export function pruneBootstrapEntries<T extends { configured: boolean; addedAt: number; peerID: string | null }>(entries: readonly T[], now: number, ttlMs: number, maxDiscovered: number, isConnected: (peerID: string) => boolean = () => false): T[] {
+	const pinned = (e: T): boolean => e.configured || (e.peerID !== null && isConnected(e.peerID));
+	const fresh = entries.filter(e => pinned(e) || now - e.addedAt < ttlMs);
+	const droppableCount = fresh.reduce((n, e) => (pinned(e) ? n : n + 1), 0);
+	if (droppableCount <= maxDiscovered) return fresh;
+	// Drop the oldest droppable entries first: `entries` is append-ordered, so
+	// skipping the leading overflow keeps the newest.
+	let toDrop = droppableCount - maxDiscovered;
+	return fresh.filter(e => {
+		if (pinned(e) || toDrop === 0) return true;
+		toDrop--;
+		return false;
+	});
 }
