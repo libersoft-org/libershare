@@ -135,6 +135,21 @@ export function nextEvictionWindowStart(reachable: boolean, previous: number | u
 }
 
 /**
+ * How many failures count TOWARDS EVICTION after another one.
+ *
+ * Counted separately from the backoff's failCount, which must keep growing through a
+ * local outage so we stop hammering the dialer. Eviction asks a different question —
+ * "has the PEER failed us N times?" — and a dial attempted while we had no connectivity
+ * answers nothing, so the run resets. Without this, two hours offline bank enough
+ * failures that the peer is evicted after the window even though only a couple of
+ * genuine failures happened once we were back: the backoff caps at 10 minutes, so a
+ * 30-minute window holds barely three attempts.
+ */
+export function nextEvictionFailCount(reachable: boolean, previous: number | undefined): number {
+	return reachable ? (previous ?? 0) + 1 : 0;
+}
+
+/**
  * Whether a run of re-dial failures has earned an eviction.
  *
  * Eviction is destructive — it purges the peerStore entry, drops the status row
@@ -285,7 +300,7 @@ export class Network {
 	 * capped at 10 min), so a persistently-unreachable peer does not saturate the
 	 * re-dial pool every 30s. Successful dial clears the entry.
 	 */
-	private readonly redialBackoff = new Map<string, { nextAttempt: number; failCount: number; firstFailure: number }>();
+	private readonly redialBackoff = new Map<string, { nextAttempt: number; failCount: number; firstFailure: number; evictionFails: number }>();
 	/** peerID → eviction time. Blocks re-adding a just-evicted unreachable peer from gossip for UNREACHABLE_QUARANTINE_MS. */
 	private readonly unreachableQuarantine = new Map<string, number>();
 	/**
@@ -1037,8 +1052,10 @@ export class Network {
 					const nextFailCount = c.failCount + 1;
 					const delayMs = Math.min(30_000 * 2 ** c.failCount, 600_000);
 					const reachable = this.hasConnectionOtherThan(c.peer.id);
-					const firstFailure = nextEvictionWindowStart(reachable, this.redialBackoff.get(c.pid)?.firstFailure, Date.now());
-					this.redialBackoff.set(c.pid, { nextAttempt: Date.now() + delayMs, failCount: nextFailCount, firstFailure });
+					const previous = this.redialBackoff.get(c.pid);
+					const firstFailure = nextEvictionWindowStart(reachable, previous?.firstFailure, Date.now());
+					const evictionFails = nextEvictionFailCount(reachable, previous?.evictionFails);
+					this.redialBackoff.set(c.pid, { nextAttempt: Date.now() + delayMs, failCount: nextFailCount, firstFailure, evictionFails });
 					console.debug(`   ✗ Re-dial peer=${c.pid} failed: ${err.message ?? err} (tried: ${c.addrSummary}, next in ${Math.round(delayMs / 1000)}s)`);
 					// Enough consecutive failures over enough time ⇒ the peer is gone, not
 					// flaky. The dial above went by peer ID, so libp2p tried EVERY known
@@ -1047,7 +1064,7 @@ export class Network {
 					// quarantine the ID so gossip mentions don't immediately re-add it.
 					// Configured bootstrap peers are exempt — user data, they must survive
 					// any outage and keep their red status row instead.
-					if (shouldEvictUnreachablePeer({ reachable, failCount: nextFailCount, unreachableForMs: Date.now() - firstFailure, configured: this.configuredBootstrapPeerIDs.has(c.pid) })) {
+					if (shouldEvictUnreachablePeer({ reachable, failCount: evictionFails, unreachableForMs: Date.now() - firstFailure, configured: this.configuredBootstrapPeerIDs.has(c.pid) })) {
 						// Last-moment liveness check: the peer may have connected (inbound
 						// dial, another async path) while this worker was failing on stale
 						// state. purgeStalePeer closes connections, so evicting here would
@@ -1059,7 +1076,7 @@ export class Network {
 						this.unreachableQuarantine.set(c.pid, Date.now());
 						this.redialBackoff.delete(c.pid);
 						this.bootstrapTracker.deleteDiscoveredByPeerID(c.pid);
-						await this.purgeStalePeer(c.pid, `unreachable after ${nextFailCount} re-dial failures over ${Math.round((Date.now() - firstFailure) / 60_000)} min`, epoch);
+						await this.purgeStalePeer(c.pid, `unreachable after ${evictionFails} re-dial failures over ${Math.round((Date.now() - firstFailure) / 60_000)} min`, epoch);
 					}
 				}
 			}
