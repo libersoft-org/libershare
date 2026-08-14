@@ -152,6 +152,7 @@ describe('runRedialMaintenance — eviction with no reachable address', () => {
 describe('addBootstrapPeers — only a verified address enters the peerStore', () => {
 	function bareNetwork(remoteAddrOfReturnedConn: string) {
 		const merges: Array<Record<string, unknown>> = [];
+		const forced: boolean[] = [];
 		const dialled: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
@@ -165,8 +166,9 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
 			getConnections: () => [],
-			async dial(ma: { toString(): string }): Promise<unknown> {
+			async dial(ma: { toString(): string }, opts?: { force?: boolean }): Promise<unknown> {
 				dialled.push(ma.toString());
+				forced.push(opts?.force === true);
 				return { remoteAddr: { toString: () => remoteAddrOfReturnedConn } };
 			},
 			peerStore: {
@@ -175,7 +177,7 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 				},
 			},
 		};
-		return { network, merges, dialled };
+		return { network, merges, dialled, forced };
 	}
 
 	const ADDR = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
@@ -238,5 +240,50 @@ describe('isSameDialEndpoint', () => {
 
 	it('treats a missing connection address as no proof', () => {
 		expect(isSameDialEndpoint('', `/ip4/203.0.113.4/tcp/9090/p2p/${PEER_A}`)).toBe(false);
+	});
+});
+
+/**
+ * A configured bootstrap address is the user's own claim and its status row is how they
+ * debug it, so it must be probed for real rather than satisfied by any connection that
+ * happens to exist to the same peer. Gossiped addresses must not force: a peer naming
+ * many of them could otherwise make us open a connection per address.
+ */
+describe('addBootstrapPeers — forced probe only for configured addresses', () => {
+	function bareNetwork() {
+		const forced: boolean[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredPeerIDs = new Set<string>();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
+		(network as any).node = {
+			peerId: { toString: () => 'selfID' },
+			getConnections: () => [{}], // already connected to this peer some other way
+			async dial(ma: { toString(): string }, opts?: { force?: boolean }): Promise<unknown> {
+				forced.push(opts?.force === true);
+				return { remoteAddr: { toString: () => ma.toString() } };
+			},
+			peerStore: { async merge(): Promise<void> {} },
+		};
+		return { network, forced };
+	}
+
+	const ADDR = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+
+	it('forces the dial for a configured address', async () => {
+		const { network, forced } = bareNetwork();
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+		expect(forced).toEqual([true]);
+	});
+
+	it('does not force the dial for a discovered address', async () => {
+		const { network, forced } = bareNetwork();
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect(forced).toEqual([false]);
 	});
 });

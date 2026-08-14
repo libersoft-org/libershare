@@ -1312,8 +1312,18 @@ export class Network {
 					// peer's addresses with entries that later feed re-dials and eviction.
 					// Verification is now read off the RESULT: the connection libp2p handed
 					// back is proof for `ma` only if that is the address it is actually on.
+					// A configured address is the user's own claim and its status row is how
+					// they debug it, so it gets a real probe: `force` makes libp2p contact
+					// THIS address instead of handing back a connection it already holds to
+					// the same peer, which is what let a broken configured entry sit there
+					// showing "connected" — and kept its identity mismatch undiscovered —
+					// merely because the peer was reachable some other way.
+					//
+					// Discovered addresses never force: they arrive from gossip, and a peer
+					// that names many of them could otherwise make us open a connection per
+					// address. For those, libp2p's own reuse is the desired behaviour.
 					const pidObj = peerID ? peerIDFromString(peerID) : null;
-					const conn = await this.node.dial(ma);
+					const conn = await this.node.dial(ma, origin === 'configured' ? { force: true } : {});
 					const verifiedThisAddr = isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString());
 					if (epoch !== this.runEpoch) return;
 					if (pidObj) {
