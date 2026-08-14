@@ -12,6 +12,7 @@
 	import Clock from './FooterClock.svelte';
 	import { gamepadConnected } from '../../scripts/input/gamepad.ts';
 	import { ramInfo, storageInfo, cpuInfo } from '../../scripts/systemStats.ts';
+	import { connectionStatus } from '../../scripts/networkState.ts';
 	import { formatSize, splitPeerID } from '../../scripts/utils.ts';
 	import { transferStats } from '../../scripts/downloads.ts';
 	import { relayStats } from '../../scripts/relayStats.ts';
@@ -143,11 +144,7 @@
 			id: 'connection',
 			component: Connection,
 			props(): Record<string, any> {
-				return {
-					type: 'wifi',
-					connected: true,
-					signal: 70,
-				};
+				return { ...$connectionStatus };
 			},
 		},
 		{
