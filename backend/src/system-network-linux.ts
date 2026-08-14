@@ -65,6 +65,12 @@ export interface LinuxNetworkSources {
 	resolvers?: string[];
 	/** Per-interface resolvers as NetworkManager sees them. Preferred over {@link resolvers} when present. */
 	nmDns?: Map<string, string[]> | undefined;
+	/**
+	 * Devices NetworkManager owns. Undefined when it could not be asked, in which
+	 * case no interface is marked unconfigurable — an unavailable answer is not
+	 * evidence that a device is unmanaged.
+	 */
+	managed?: Set<string> | undefined;
 }
 
 /**
@@ -167,10 +173,17 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 	for (const entry of linkEntries) linkByName.set(entry.ifname, entry);
 
 	// Lowest-metric default route wins; an absent metric means 0 (kernel default).
+	// Kept per device as well: only one interface carries the host's default route,
+	// but a multi-homed host gives several of them a gateway of their own. Reporting
+	// those as null would seed the edit form with an empty gateway field, and saving
+	// any other change on that interface would then clear the gateway it really has.
 	let best: IpRouteEntry | null = null;
+	const bestByDev = new Map<string, IpRouteEntry>();
 	for (const route of routeEntries) {
 		if (!route.dev) continue;
 		if (!best || (route.metric ?? 0) < (best.metric ?? 0)) best = route;
+		const previous = bestByDev.get(route.dev);
+		if (!previous || (route.metric ?? 0) < (previous.metric ?? 0)) bestByDev.set(route.dev, route);
 	}
 	const defaultDev = best?.dev ?? null;
 
@@ -199,7 +212,10 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 			mac: entry.address ?? link?.address ?? null,
 			addresses,
 			ipv4Mode,
-			gateway: entry.ifname === defaultDev ? (best?.gateway ?? null) : null,
+			gateway: bestByDev.get(entry.ifname)?.gateway ?? null,
+			// Only claimed when NetworkManager answered: without its device list we
+			// cannot tell an unmanaged device from one it simply did not mention.
+			...(sources.managed ? { configurable: sources.managed.has(entry.ifname) } : {}),
 			// NetworkManager knows the resolvers PER LINK, which is the only correct
 			// answer on a systemd-resolved host: there /etc/resolv.conf holds the
 			// 127.0.0.53 stub, so reporting it would show every machine the same
@@ -280,7 +296,7 @@ export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
 			// rather than being guessed from anything else.
 		}
 	}
-	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: await readNetworkManagerDns() });
+	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: await readNetworkManagerDns(), managed: await readManagedDevices() });
 }
 
 /**
@@ -370,6 +386,35 @@ export async function isLinuxWritable(): Promise<boolean> {
  * so the caller can tell "NM says this link has no resolvers" apart from "there
  * is no NM to ask" and fall back to /etc/resolv.conf only in the latter case.
  */
+/**
+ * Devices NetworkManager actually owns, or undefined when it cannot be asked.
+ *
+ * The interface list comes from the kernel and includes devices another stack
+ * manages — a networkd NIC, a container bridge. Offering an edit for those shows
+ * the user an action that can only end in an error, because the apply needs an
+ * active NetworkManager profile on the device.
+ */
+async function readManagedDevices(): Promise<Set<string> | undefined> {
+	try {
+		return parseNmcliManagedDevices(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'DEVICE,STATE', 'device', 'status']));
+	} catch {
+		return undefined;
+	}
+}
+
+/** Devices from `nmcli -t -f DEVICE,STATE device status` that NetworkManager is not ignoring. */
+export function parseNmcliManagedDevices(text: string): Set<string> {
+	const managed = new Set<string>();
+	for (const line of text.split(/\r?\n/)) {
+		if (!line.trim()) continue;
+		const [device, state] = splitNmcliFields(line);
+		// "unmanaged" is NetworkManager saying the device belongs to something else;
+		// every other state (connected, disconnected, unavailable) is still its own.
+		if (device && state && state !== 'unmanaged') managed.add(device);
+	}
+	return managed;
+}
+
 async function readNetworkManagerDns(): Promise<Map<string, string[]> | undefined> {
 	try {
 		return parseNmcliDns(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'GENERAL.DEVICE,IP4.DNS', 'device', 'show']));
@@ -410,8 +455,16 @@ export function parseNmcliDns(text: string): Map<string, string[]> {
  * edit idempotent: applying twice leaves one profile, not two competing ones.
  */
 async function activeConnection(device: string): Promise<string | null> {
-	const out = await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'NAME,DEVICE', 'connection', 'show', '--active']);
-	for (const line of out.split('\n')) {
+	// Asked for by UUID, not NAME: profile names are not unique, so a host with two
+	// profiles of the same name would leave `connection modify` free to pick either
+	// — and the one it picks may not be the one on this device.
+	const out = await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'UUID,DEVICE', 'connection', 'show', '--active']);
+	return parseNmcliActiveUUID(out, device);
+}
+
+/** Pick the UUID of the profile active on `device` out of `nmcli -t -f UUID,DEVICE` output. */
+export function parseNmcliActiveUUID(text: string, device: string): string | null {
+	for (const line of text.split(/\r?\n/)) {
 		if (!line.trim()) continue;
 		const fields = splitNmcliFields(line);
 		if (fields[1] === device) return fields[0] ?? null;
@@ -426,8 +479,11 @@ async function activeConnection(device: string): Promise<string | null> {
  * stale `ipv4.addresses` on a profile whose method changed, and that address
  * comes back the moment the user switches to static again.
  */
-export function nmcliModifyArgs(connection: string, config: NetIPv4Config): string[] {
-	const base = ['connection', 'modify', connection];
+export function nmcliModifyArgs(uuid: string, config: NetIPv4Config): string[] {
+	// `uuid <UUID>` rather than a bare argument: nmcli would otherwise match the
+	// value against names first, and a profile named like another one's UUID — or
+	// simply two profiles sharing a name — makes the target ambiguous.
+	const base = ['connection', 'modify', 'uuid', uuid];
 	if (config.mode === 'dhcp') return [...base, 'ipv4.method', 'auto', 'ipv4.addresses', '', 'ipv4.gateway', '', 'ipv4.dns', '', 'ipv4.ignore-auto-dns', 'no'];
 	const dns = config.dns ?? [];
 	return [
@@ -454,7 +510,7 @@ export async function applyLinuxIPv4(device: string, config: NetIPv4Config): Pro
 	await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connection, config), APPLY_TIMEOUT_MS);
 	// `connection up` re-applies the edited profile in place. The device drops for
 	// a moment either way — that is inherent to changing an address, not to this.
-	await runFirst(NMCLI_CANDIDATES, ['connection', 'up', connection], APPLY_TIMEOUT_MS);
+	await runFirst(NMCLI_CANDIDATES, ['connection', 'up', 'uuid', connection], APPLY_TIMEOUT_MS);
 }
 
 /**
@@ -480,7 +536,12 @@ export function parseNmcliWifiList(text: string): NetWifiNetwork[] {
 			active: inUse?.trim() === '*',
 		};
 		const previous = best.get(ssid);
-		if (!previous || (entry.signal ?? -1) > (previous.signal ?? -1)) best.set(ssid, previous ? { ...entry, active: previous.active || entry.active } : entry);
+		if (!previous) best.set(ssid, entry);
+		// The strongest access point wins the signal, but IN-USE belongs to the
+		// network, not to that row: on a roaming network the host is regularly
+		// associated with the weaker of two access points, and dropping the marker
+		// with the losing row stops the UI showing which network it is on.
+		else best.set(ssid, { ...((entry.signal ?? -1) > (previous.signal ?? -1) ? entry : previous), active: previous.active || entry.active });
 	}
 	return [...best.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
 }

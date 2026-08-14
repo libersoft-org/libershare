@@ -50,6 +50,21 @@ export function handleHealthProbe(req: globalThis.Request): Response | null {
 	return null;
 }
 
+/**
+ * Parameter names whose value must never reach the log. The log is a file that
+ * outlives the call and gets copied into bug reports, so a Wi-Fi passphrase typed
+ * into the network screen would otherwise sit there in plain text.
+ */
+const SECRET_PARAM_KEYS = new Set(['password', 'passphrase', 'token', 'secret']);
+
+/**
+ * Serialise request params for the log with secret values replaced. The key is
+ * kept so the call is still recognisable; only the value is withheld.
+ */
+export function formatParamsForLog(params: unknown): string {
+	return JSON.stringify(params, (key, value) => (SECRET_PARAM_KEYS.has(key) && typeof value === 'string' ? '<redacted>' : value));
+}
+
 export class APIServer {
 	private clients: Set<ClientSocket> = new Set();
 	private server: ReturnType<typeof Bun.serve<ClientData>> | null = null;
@@ -376,7 +391,7 @@ export class APIServer {
 			const result = await this.execute(client, req.method, req.params || {});
 			client.send(JSON.stringify({ id: req.id, result }));
 		} catch (err: any) {
-			console.error(`[API] Error executing ${req.method}, params=${JSON.stringify(req.params)}: ${err.message}`);
+			console.error(`[API] Error executing ${req.method}, params=${formatParamsForLog(req.params)}: ${err.message}`);
 			if (err instanceof CodedError) client.send(JSON.stringify({ id: req.id, error: err.code, ...(err.detail !== undefined && { errorDetail: err.detail }) }));
 			else client.send(JSON.stringify({ id: req.id, error: ErrorCodes.INTERNAL_ERROR, errorDetail: err.message }));
 		}
@@ -386,7 +401,7 @@ export class APIServer {
 	private handlers!: Record<string, (params: any, client: ClientSocket) => any>;
 
 	private async execute(client: ClientSocket, method: string, params: Record<string, any>): Promise<any> {
-		console.log(`[API] Executing method: ${method}, params: ${JSON.stringify(params)}`);
+		console.log(`[API] Executing method: ${method}, params: ${formatParamsForLog(params)}`);
 		const handler = this.handlers[method];
 		if (!handler) throw new CodedError(ErrorCodes.UNKNOWN_METHOD, method);
 		return handler.call(this, params, client);

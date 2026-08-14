@@ -1,6 +1,7 @@
 import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { Mutex } from 'async-mutex';
 import { CodedError, ErrorCodes, isValidSSID, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
 import { isWindowsInterfaceID, parseElevation, parseWindowsNetworkState, readWindowsWifi, windowsApplyIPv4Command, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
 import { applyLinuxIPv4, connectLinuxWifi, isLinuxWritable, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
@@ -58,6 +59,24 @@ const APPLY_TIMEOUT_MS = 45000;
 
 let cached: { at: number; interfaces: NetInterfaceInfo[]; detail: NetworkStateInfo['detail'] } | null = null;
 let inFlight: Promise<NetInterfaceInfo[]> | null = null;
+/**
+ * Bumped by {@link resetNetworkStateCache}. A read carries the generation it
+ * started under, so a read still in flight when a configuration change lands
+ * publishes nothing — its answer describes the host as it was before the change.
+ */
+let cacheGeneration = 0;
+
+/**
+ * Serializes every host reconfiguration.
+ *
+ * An apply is several destructive steps — flush the address, set the new one,
+ * rewrite the route, bring the profile back up — and two clients running them at
+ * once interleave those steps and leave the interface with both configurations
+ * stacked. One lock for the whole host rather than one per interface: a Wi-Fi
+ * join and an IPv4 apply on different interfaces still contend over the default
+ * route and the resolver list.
+ */
+const applyLock = new Mutex();
 
 /**
  * Addresses and MACs from the Node/Bun runtime — everything every platform can
@@ -116,30 +135,48 @@ async function readWindows(): Promise<NetInterfaceInfo[]> {
  * rather than throwing — a settings screen showing addresses beats an error.
  */
 export async function readNetworkState(primaryInterface: string = ''): Promise<NetworkStateInfo> {
-	const now = Date.now();
-	if (!cached || now - cached.at >= CACHE_TTL_MS) {
-		if (!inFlight) {
-			const detail: NetworkStateInfo['detail'] = process.platform === 'win32' || process.platform === 'linux' || process.platform === 'darwin' ? 'full' : 'addressesOnly';
-			inFlight = readPlatform()
-				.then(assertReadProducedSomething)
-				.then(interfaces => {
-					cached = { at: Date.now(), interfaces, detail };
-					return interfaces;
-				})
-				.catch(err => {
-					console.warn('[system-network] Platform read failed, falling back to addresses only:', (err as Error).message);
-					const interfaces = readGenericInterfaces();
-					cached = { at: Date.now(), interfaces, detail: 'addressesOnly' };
-					return interfaces;
-				})
-				.finally(() => {
-					inFlight = null;
-				});
-		}
-		await inFlight;
-	}
+	// Two attempts at most. An apply landing mid-read invalidates that read — its
+	// answer describes the host before the change — which leaves the cache empty,
+	// and the caller deserves the state after the change rather than "unknown".
+	for (let attempt = 0; attempt < 2 && isCacheStale(); attempt++) await startOrJoinRead();
 	const interfaces = cached?.interfaces ?? [];
 	return { interfaces, primaryID: resolvePrimaryID(interfaces, primaryInterface), detail: cached?.detail ?? 'addressesOnly', known: cached !== null, capabilities: await readCapabilities() };
+}
+
+function isCacheStale(): boolean {
+	return !cached || Date.now() - cached.at >= CACHE_TTL_MS;
+}
+
+/** Start a platform read, or join the one already running. Never rejects. */
+function startOrJoinRead(): Promise<NetInterfaceInfo[]> {
+	if (!inFlight) {
+		const generation = cacheGeneration;
+		const detail: NetworkStateInfo['detail'] = process.platform === 'win32' || process.platform === 'linux' || process.platform === 'darwin' ? 'full' : 'addressesOnly';
+		inFlight = readPlatform()
+			.then(assertReadProducedSomething)
+			.then(interfaces => {
+				publish(generation, interfaces, detail);
+				return interfaces;
+			})
+			.catch(err => {
+				console.warn('[system-network] Platform read failed, falling back to addresses only:', (err as Error).message);
+				const interfaces = readGenericInterfaces();
+				publish(generation, interfaces, 'addressesOnly');
+				return interfaces;
+			})
+			.finally(() => {
+				// Only clear the slot we own: after an invalidation it has already been
+				// cleared, and a newer read may be sitting in it.
+				if (cacheGeneration === generation) inFlight = null;
+			});
+	}
+	return inFlight;
+}
+
+/** Store a completed read, unless a configuration change has since invalidated it. */
+function publish(generation: number, interfaces: NetInterfaceInfo[], detail: NetworkStateInfo['detail']): void {
+	if (generation !== cacheGeneration) return;
+	cached = { at: Date.now(), interfaces, detail };
 }
 
 function readPlatform(): Promise<NetInterfaceInfo[]> {
@@ -172,10 +209,15 @@ export function resolvePrimaryID(interfaces: NetInterfaceInfo[], primaryInterfac
 	return interfaces.find(i => i.defaultRoute)?.id ?? null;
 }
 
-/** Drop the cached reading — used by tests so a stale entry cannot leak between cases. */
+/**
+ * Drop the cached reading — after an apply, and in tests so a stale entry cannot
+ * leak between cases. A read already in flight cannot be cancelled, so instead the
+ * generation is bumped and that read is left to finish and publish nothing.
+ */
 export function resetNetworkStateCache(): void {
 	cached = null;
 	inFlight = null;
+	cacheGeneration++;
 }
 
 /**
@@ -226,17 +268,19 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Pro
 	if (invalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${invalid}`);
 	const supported = await readCapabilities();
 	if (!supported.ipv4) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host does not expose a writable network configuration');
-	await run(async () => {
-		if (process.platform === 'win32') {
-			if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
-			await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, config)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
-		} else if (process.platform === 'darwin') {
-			await applyMacIPv4(assertDeviceName(interfaceID), config);
-		} else {
-			await applyLinuxIPv4(assertDeviceName(interfaceID), config);
-		}
+	await applyLock.runExclusive(async () => {
+		await run(async () => {
+			if (process.platform === 'win32') {
+				if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+				await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, config)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
+			} else if (process.platform === 'darwin') {
+				await applyMacIPv4(assertDeviceName(interfaceID), config);
+			} else {
+				await applyLinuxIPv4(assertDeviceName(interfaceID), config);
+			}
+		});
+		resetNetworkStateCache();
 	});
-	resetNetworkStateCache();
 }
 
 /** Scan for joinable Wi-Fi networks on one interface. */
@@ -249,8 +293,10 @@ export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 export async function connectWifi(interfaceID: string, ssid: string, password: string): Promise<void> {
 	await assertWirelessInterface(interfaceID);
 	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
-	await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password));
-	resetNetworkStateCache();
+	await applyLock.runExclusive(async () => {
+		await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password));
+		resetNetworkStateCache();
+	});
 }
 
 /**

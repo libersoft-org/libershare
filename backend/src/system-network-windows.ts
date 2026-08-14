@@ -191,8 +191,17 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 	// RouteMetric 0 and InterfaceMetric 5 against a NIC's 25, and comparing route
 	// metrics alone would pick the wrong adapter on any multi-homed host.
 	const effectiveMetric = (row: WindowsRouteRow): number => row.RouteMetric + (row.InterfaceMetric ?? 0);
+	// Kept per interface as well: only one of them carries the host's default route,
+	// but on a multi-homed machine several have a gateway of their own. Reporting
+	// those as null would seed the edit form with an empty gateway field, and saving
+	// any other change on that interface would then clear the gateway it really has.
 	let best: WindowsRouteRow | null = null;
-	for (const row of routes) if (!best || effectiveMetric(row) < effectiveMetric(best)) best = row;
+	const bestByIndex = new Map<number, WindowsRouteRow>();
+	for (const row of routes) {
+		if (!best || effectiveMetric(row) < effectiveMetric(best)) best = row;
+		const previous = bestByIndex.get(row.ifIndex);
+		if (!previous || effectiveMetric(row) < effectiveMetric(previous)) bestByIndex.set(row.ifIndex, row);
+	}
 	const defaultIndex = best?.ifIndex ?? null;
 
 	const dnsByIndex = new Map<number, string[]>();
@@ -231,7 +240,7 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 			mac: mac && mac.length > 0 ? mac : null,
 			addresses: addressesByIndex.get(ifIndex) ?? [],
 			ipv4Mode: dhcpByIndex.get(ifIndex) ?? 'unknown',
-			gateway: ifIndex === defaultIndex ? (best?.NextHop ?? null) : null,
+			gateway: bestByIndex.get(ifIndex)?.NextHop ?? null,
 			dns: dnsByIndex.get(ifIndex) ?? [],
 		};
 		// Wi-Fi Direct virtual adapters also report medium 9 but have no WLAN

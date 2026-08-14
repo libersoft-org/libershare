@@ -170,6 +170,20 @@ export function parseServiceInfo(text: string): NetInterfaceInfo['ipv4Mode'] {
 }
 
 /**
+ * Router of one service, from the same `networksetup -getinfo <service>` output.
+ *
+ * `route -n get default` answers only for the interface that won the default
+ * route, but a multi-homed Mac gives several services a router of their own.
+ * Reporting those as null would seed the edit form with an empty gateway field,
+ * and saving any other change on that service would then clear its real router.
+ * macOS prints the literal "none" when a service has no router configured.
+ */
+export function parseServiceRouter(text: string): string | null {
+	const router = text.match(/^\s*Router:\s*(\S+)/m)?.[1] ?? null;
+	return router && router !== 'none' ? router : null;
+}
+
+/**
  * Resolvers from `networksetup -getdnsservers <service>`.
  *
  * This reports only servers the USER set. When addressing is left on DHCP macOS
@@ -272,7 +286,9 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 			mac: entry.mac,
 			addresses: entry.addresses,
 			ipv4Mode: sources.serviceInfo?.has(device) ? parseServiceInfo(sources.serviceInfo.get(device) as string) : 'unknown',
-			gateway: defaultRoute ? route.gateway : null,
+			// The service's own router, falling back to the default route for a device
+			// networksetup does not manage (and so reports nothing about).
+			gateway: (sources.serviceInfo?.has(device) ? parseServiceRouter(sources.serviceInfo.get(device) as string) : null) ?? (defaultRoute ? route.gateway : null),
 			// Manually set servers win; otherwise fall back to what the DHCP lease
 			// handed out, so a DHCP link reports the resolvers it actually uses.
 			dns: pickDns(sources, device),

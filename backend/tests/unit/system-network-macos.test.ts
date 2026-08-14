@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { macApplyArgs, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceDns, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { macApplyArgs, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceDns, parseServiceInfo, parseServiceOrder, parseServiceRouter, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -143,6 +143,22 @@ describe('parseDefaultRoute', () => {
 
 	it('yields nulls when there is no default route', () => {
 		expect(parseDefaultRoute('route: writing to routing socket: not in table')).toEqual({ device: null, gateway: null });
+	});
+});
+
+describe('parseServiceRouter', () => {
+	it('reads the router of the service, so a secondary one keeps its gateway', () => {
+		expect(parseServiceRouter('Manual Configuration\nIP address: 198.51.100.2\nRouter: 198.51.100.1\n')).toBe('198.51.100.1');
+	});
+
+	it('treats the literal "none" as no router', () => {
+		// macOS prints this for a service with no gateway configured; taking it
+		// verbatim would put the word into the edit form gateway field.
+		expect(parseServiceRouter('Manual Configuration\nRouter: none\n')).toBeNull();
+	});
+
+	it('reports nothing when the output carries no router at all', () => {
+		expect(parseServiceRouter('** Error: The parameters were not valid.')).toBeNull();
 	});
 });
 
