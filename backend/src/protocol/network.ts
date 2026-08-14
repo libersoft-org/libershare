@@ -857,9 +857,9 @@ export class Network {
 				this.checkPeerCounts();
 				await this.runRedialMaintenance(connectedPeers, allPeers, epoch);
 				if (epoch !== this.runEpoch) return;
-				await this.runZeroConnectionRecovery(connectedPeers);
+				await this.runZeroConnectionRecovery(connectedPeers, epoch);
 				if (epoch !== this.runEpoch) return;
-				await this.maybePromotePeers();
+				await this.maybePromotePeers(epoch);
 				if (epoch !== this.runEpoch) return;
 				// Sweep by per-network membership (topic subscribers), not global
 				// connectivity: a peer that left this network but stays connected via
@@ -1055,7 +1055,7 @@ export class Network {
 						this.unreachableQuarantine.set(c.pid, Date.now());
 						this.redialBackoff.delete(c.pid);
 						this.bootstrapTracker.deleteDiscoveredByPeerID(c.pid);
-						await this.purgeStalePeer(c.pid, `unreachable after ${nextFailCount} re-dial failures over ${Math.round((Date.now() - firstFailure) / 60_000)} min`);
+						await this.purgeStalePeer(c.pid, `unreachable after ${nextFailCount} re-dial failures over ${Math.round((Date.now() - firstFailure) / 60_000)} min`, epoch);
 					}
 				}
 			}
@@ -1079,7 +1079,9 @@ export class Network {
 		for (const [pid, ts] of this.unreachableQuarantine) if (ts < quarantineCutoff) this.unreachableQuarantine.delete(pid);
 	}
 
-	private async runZeroConnectionRecovery(connectedPeers: any[]): Promise<void> {
+	private async runZeroConnectionRecovery(connectedPeers: any[], epoch: number = this.runEpoch): Promise<void> {
+		const node = this.node;
+		if (!node || epoch !== this.runEpoch) return;
 		if (!AUTODIAL_WORKAROUND || connectedPeers.length !== 0 || this.bootstrapMultiaddrs.length === 0) return;
 		console.log(`   ⚠️  No connections - dialing ${this.bootstrapMultiaddrs.length} bootstrap peer(s) directly...`);
 		// [NET-CHURN] dump: who left in the run-up to this zero-connection
@@ -1105,9 +1107,12 @@ export class Network {
 			const pid: string | undefined = p2pComponents.length > 0 ? p2pComponents[p2pComponents.length - 1].value : undefined;
 			if (pid && this.isRedialSuppressed(pid)) continue; // deliberately left — don't resurrect it here
 			const maStr = ma?.toString?.() ?? String(ma);
+			// Each dial awaits for up to 10s, so a stop() can land mid-loop; the
+			// remaining dials belong to a node this run no longer owns.
+			if (epoch !== this.runEpoch) return;
 			try {
 				console.log(`   → Dialing ${maStr}`);
-				await this.node!.dial(ma, { signal: AbortSignal.timeout(10000) });
+				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
 				console.log(`   ✓ Connected via ${maStr}`);
 				break;
 			} catch (err: any) {
@@ -1351,7 +1356,7 @@ export class Network {
 							}
 							console.log(`[NET] dropped stale addr of connected peer ${peerID.slice(0, 16)}: ${ma.toString()}`);
 						} else {
-							await this.purgeStalePeer(peerID, `${origin} dial identity mismatch`);
+							await this.purgeStalePeer(peerID, `${origin} dial identity mismatch`, epoch);
 						}
 						// For DISCOVERED entries (peer-announce gossip), also drop the
 						// status entry — there's no saved config row to "fix" and leaving
@@ -1400,9 +1405,17 @@ export class Network {
 	 *
 	 * Best-effort: a peerStore.delete failure is logged at debug but does not throw —
 	 * the same peer will be re-purged next cycle if libp2p keeps trying it.
+	 *
+	 * `epoch` binds the call to the node instance it was started for. This is the most
+	 * destructive path there is — it closes connections and deletes peerStore entries —
+	 * and it awaits in the middle, so a stop()/start() landing between those awaits
+	 * would otherwise let it finish against the NEXT node and evict a peer that
+	 * instance never had a problem with. The node reference is captured once for the
+	 * same reason: re-reading `this.node` after an await can hand back a different node.
 	 */
-	async purgeStalePeer(peerID: string, reason: string): Promise<void> {
-		if (!this.node) return;
+	async purgeStalePeer(peerID: string, reason: string, epoch: number = this.runEpoch): Promise<void> {
+		const node = this.node;
+		if (!node || epoch !== this.runEpoch) return;
 		this.bootstrapPeerIDs.delete(peerID);
 		// Drop the peer's addrs from the autodial list too — this array is otherwise
 		// push-only, so the zero-connection recovery loop would keep dialing addrs
@@ -1416,7 +1429,7 @@ export class Network {
 		try {
 			const pid = peerIDFromString(peerID);
 			// Drop existing connections so libp2p considers the entry fully gone.
-			const conns = this.node.getConnections(pid);
+			const conns = node.getConnections(pid);
 			for (const c of conns) {
 				try {
 					await c.close();
@@ -1424,7 +1437,10 @@ export class Network {
 					/* connection may already be closing */
 				}
 			}
-			await this.node.peerStore.delete(pid);
+			// Closing connections yields; bail before the irreversible delete if this
+			// run no longer owns the node.
+			if (epoch !== this.runEpoch) return;
+			await node.peerStore.delete(pid);
 			console.log(`[NET] purged stale peerStore entry ${peerID.slice(0, 16)}… (reason: ${reason})`);
 			// TOCTOU healing: an inbound connection can land between the caller's
 			// liveness check and the delete above. The peer:connect handler resets
@@ -1432,11 +1448,12 @@ export class Network {
 			// purge just removed — so if the peer is connected NOW, rebuild its dial
 			// state from the live connections; otherwise reconnect would silently die
 			// with the first drop.
-			const after = this.node.getConnections(pid);
+			if (epoch !== this.runEpoch) return;
+			const after = node.getConnections(pid);
 			if (after.length > 0) {
 				this.bootstrapPeerIDs.add(peerID);
 				this.unreachableQuarantine.delete(peerID);
-				await this.node.peerStore.merge(pid, {
+				await node.peerStore.merge(pid, {
 					multiaddrs: after.map(c => c.remoteAddr),
 					tags: { [KEEP_ALIVE]: { value: 1 } },
 				});
