@@ -972,15 +972,24 @@ export class Network {
 				// No dialable address ⇒ the failure counter can never fire for this
 				// peer. Track how long it has been in this state; a disconnected peer
 				// with zero reachable addrs for the whole eviction window is as gone
-				// as one that failed every dial. Same exemptions as the dial path.
-				const since = this.noReachableSince.get(pid) ?? now;
-				if (!this.noReachableSince.has(pid)) this.noReachableSince.set(pid, now);
-				if (now - since >= REDIAL_EVICT_MIN_MS && !this.configuredPeerIDs.has(pid)) {
+				// as one that failed every dial.
+				//
+				// "Unreachable" here means the dial gater rejects every stored address
+				// from where WE stand, which is not the same as the peer being gone: a
+				// peer reachable only over a LAN or VPN subnet stops passing the filter
+				// the moment that interface drops, through no fault of its own. So this
+				// path takes the same two safeguards as the dial-failure path below —
+				// evidence that we are online at all, and a liveness re-check right
+				// before acting — on top of the configured-peer exemption.
+				const weAreOnline = this.hasConnectionOtherThan(peer.id);
+				const since = nextEvictionWindowStart(weAreOnline, this.noReachableSince.get(pid), now);
+				this.noReachableSince.set(pid, since);
+				if (weAreOnline && now - since >= REDIAL_EVICT_MIN_MS && !this.configuredPeerIDs.has(pid) && this.node?.getConnections(peer.id).length === 0) {
 					this.noReachableSince.delete(pid);
 					this.unreachableQuarantine.set(pid, now);
 					this.redialBackoff.delete(pid);
 					this.bootstrapTracker.deleteDiscoveredByPeerID(pid);
-					await this.purgeStalePeer(pid, `no reachable addresses for ${Math.round((now - since) / 60_000)} min`);
+					await this.purgeStalePeer(pid, `no reachable addresses for ${Math.round((now - since) / 60_000)} min`, epoch);
 				}
 				continue;
 			}
