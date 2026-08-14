@@ -1298,19 +1298,26 @@ export class Network {
 				console.debug('Adding bootstrap peer:', peer);
 				this.bootstrapTracker.markPending(networkID, peer, peerID, origin);
 				try {
-					// libp2p reuses an existing connection for dial(ma) WITHOUT contacting
-					// ma unless force:true. So a merge of ma is only "Noise-verified" when
-					// this call actually established a NEW connection — i.e. the peer had
-					// no connection before. If it was already connected (whether or not we
-					// tracked it as bootstrap), ma is unverified and must not enter the
-					// address book, or a topic subscriber could poison a connected peer's
-					// addresses with entries that later feed re-dials and cause eviction.
+					// Always hand the address to libp2p and let IT decide whether a dial is
+					// needed. Skipping the call whenever any connection to the peer existed
+					// was too coarse: libp2p reuses only a DIRECT, unlimited connection, and
+					// deliberately dials when it holds a relayed one and the new address
+					// would upgrade it to direct. Pre-empting that cost us the upgrade, and
+					// left a bad configured address permanently untested — its identity
+					// mismatch undiscovered — whenever the peer happened to be reachable
+					// some other way.
+					//
+					// The address may still enter the address book only when it is
+					// Noise-verified, otherwise a topic subscriber could poison a connected
+					// peer's addresses with entries that later feed re-dials and eviction.
+					// Verification is now read off the RESULT: the connection libp2p handed
+					// back is proof for `ma` only if that is the address it is actually on.
 					const pidObj = peerID ? peerIDFromString(peerID) : null;
-					const hadConnection = !!pidObj && this.node.getConnections(pidObj).length > 0;
-					if (!hadConnection) await this.node.dial(ma);
+					const conn = await this.node.dial(ma);
+					const verifiedThisAddr = normalizeMultiaddrForCompare(String(conn?.remoteAddr ?? '')).startsWith(normalizeMultiaddrForCompare(ma.toString().replace(/\/p2p\/[^/]+$/, '')));
 					if (epoch !== this.runEpoch) return;
 					if (pidObj) {
-						await this.node.peerStore.merge(pidObj, hadConnection ? { tags: { [KEEP_ALIVE]: { value: 1 } } } : { multiaddrs: [ma], tags: { [KEEP_ALIVE]: { value: 1 } } });
+						await this.node.peerStore.merge(pidObj, verifiedThisAddr ? { multiaddrs: [ma], tags: { [KEEP_ALIVE]: { value: 1 } } } : { tags: { [KEEP_ALIVE]: { value: 1 } } });
 					}
 					// Re-check after the merge await too: stop() may have cleared the
 					// tracker while it was pending, and recordOutcome would otherwise

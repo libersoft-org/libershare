@@ -142,3 +142,66 @@ describe('runRedialMaintenance — eviction with no reachable address', () => {
 		expect(purged).toEqual([]);
 	});
 });
+
+/**
+ * An address may enter the address book only once libp2p has actually connected over
+ * it. Deciding that up-front from "do we have any connection to this peer" was too
+ * coarse — it skipped relay→direct upgrades and left bad addresses untested — so the
+ * answer is now read off the connection libp2p returns.
+ */
+describe('addBootstrapPeers — only a verified address enters the peerStore', () => {
+	function bareNetwork(remoteAddrOfReturnedConn: string) {
+		const merges: Array<Record<string, unknown>> = [];
+		const dialled: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredPeerIDs = new Set<string>();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
+		(network as any).node = {
+			peerId: { toString: () => 'selfID' },
+			getConnections: () => [],
+			async dial(ma: { toString(): string }): Promise<unknown> {
+				dialled.push(ma.toString());
+				return { remoteAddr: { toString: () => remoteAddrOfReturnedConn } };
+			},
+			peerStore: {
+				async merge(_pid: unknown, patch: Record<string, unknown>): Promise<void> {
+					merges.push(patch);
+				},
+			},
+		};
+		return { network, merges, dialled };
+	}
+
+	const ADDR = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+
+	it('dials the address even when the peer is already connected', async () => {
+		// libp2p reuses a suitable connection by itself and dials when the new address
+		// would upgrade a relayed one; pre-empting that lost the upgrade.
+		const { network, dialled } = bareNetwork(`/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`);
+		(network as any).node.getConnections = () => [{}];
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+		expect(dialled).toEqual([ADDR]);
+	});
+
+	it('stores the address when the connection is actually on it', async () => {
+		const { network, merges } = bareNetwork(`/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`);
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+		expect(merges).toHaveLength(1);
+		expect(merges[0]).toHaveProperty('multiaddrs');
+	});
+
+	it('withholds the address when libp2p answered over a different one', async () => {
+		// Reused/relayed connection: this address was never contacted, so it is not
+		// Noise-verified and must not be poisonable into the address book.
+		const { network, merges } = bareNetwork(`/ip4/198.51.100.1/tcp/4001/p2p-circuit/p2p/${PEER_ID}`);
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+		expect(merges).toHaveLength(1);
+		expect(merges[0]).not.toHaveProperty('multiaddrs');
+	});
+});
