@@ -177,7 +177,7 @@ export class Network {
 	 * Lifecycle epoch, bumped by stop(). A status tick captures the epoch at
 	 * entry and refuses to write per-peer state once it differs — an in-flight
 	 * tick otherwise survives stop() and would repopulate freshly-cleared maps
-	 * or purge peers of the NEXT node instance (whose configuredPeerIDs are not
+	 * or purge peers of the NEXT node instance (whose configured peers are not
 	 * loaded yet) after a quick stop/start such as a factory reset.
 	 */
 	private runEpoch = 0;
@@ -200,6 +200,15 @@ export class Network {
 	 * separate from bootstrapPeerIDs, which also collects peer-announce
 	 * discoveries: those are plain content peers and must remain
 	 * disconnectable by lishnet leave (isBootstrapOrRelayPeer).
+	 *
+	 * This is also what exempts a peer from unreachable-eviction: configured
+	 * entries are user data, so a bootstrap hub that is down for half an hour must
+	 * keep its peerStore entry and its addrs instead of being purged. Both
+	 * questions — "is this infrastructure?" and "may we evict it?" — are the same
+	 * question about the same fact, so they read the same set. Keeping two sets for
+	 * it meant they could disagree, and they did: only one of them was ever pruned,
+	 * so a peer the user had already removed from the config stayed eviction-exempt
+	 * until restart.
 	 */
 	private configuredBootstrapPeerIDs: Set<string> = new Set();
 	private dcutrPeers: Set<string> = new Set();
@@ -286,20 +295,6 @@ export class Network {
 	 * peerStore/bootstrap sets until maxPeerAge while every tick re-scans them.
 	 */
 	private readonly noReachableSince = new Map<string, number>();
-	/**
-	 * Peer IDs that appear in at least one network's CONFIGURED bootstrap list.
-	 * These are user data — the unreachable-eviction path must never purge them,
-	 * or a bootstrap hub that is down for half an hour would lose its peerStore
-	 * entry and its addrs in bootstrapMultiaddrs until the next restart.
-	 *
-	 * Grow-only by design: entries are not removed when a bootstrap row is
-	 * deleted or its network disabled, so a formerly-configured peer stays
-	 * eviction-exempt until restart. That errs on the safe side (a peer is
-	 * merely redialed longer than necessary); per-network refcounting would be
-	 * required to shrink it correctly and is not worth the bookkeeping.
-	 */
-	private readonly configuredPeerIDs = new Set<string>();
-
 	/**
 	 * Peers deliberately hung up by {@link disconnectPeer} (leave-network), keyed by
 	 * the lishnet they were left with. Redial maintenance / discovery must NOT
@@ -984,7 +979,7 @@ export class Network {
 				const weAreOnline = this.hasConnectionOtherThan(peer.id);
 				const since = nextEvictionWindowStart(weAreOnline, this.noReachableSince.get(pid), now);
 				this.noReachableSince.set(pid, since);
-				if (weAreOnline && now - since >= REDIAL_EVICT_MIN_MS && !this.configuredPeerIDs.has(pid) && this.node?.getConnections(peer.id).length === 0) {
+				if (weAreOnline && now - since >= REDIAL_EVICT_MIN_MS && !this.configuredBootstrapPeerIDs.has(pid) && this.node?.getConnections(peer.id).length === 0) {
 					this.noReachableSince.delete(pid);
 					this.unreachableQuarantine.set(pid, now);
 					this.redialBackoff.delete(pid);
@@ -1052,7 +1047,7 @@ export class Network {
 					// quarantine the ID so gossip mentions don't immediately re-add it.
 					// Configured bootstrap peers are exempt — user data, they must survive
 					// any outage and keep their red status row instead.
-					if (shouldEvictUnreachablePeer({ reachable, failCount: nextFailCount, unreachableForMs: Date.now() - firstFailure, configured: this.configuredPeerIDs.has(c.pid) })) {
+					if (shouldEvictUnreachablePeer({ reachable, failCount: nextFailCount, unreachableForMs: Date.now() - firstFailure, configured: this.configuredBootstrapPeerIDs.has(c.pid) })) {
 						// Last-moment liveness check: the peer may have connected (inbound
 						// dial, another async path) while this worker was failing on stale
 						// state. purgeStalePeer closes connections, so evicting here would
@@ -1268,7 +1263,6 @@ export class Network {
 				// relay hop yet targets a remote peer and must not be dropped as self.
 				if (peerID === myPeerID) continue;
 				if (peerID && origin === 'configured') {
-					this.configuredPeerIDs.add(peerID);
 					this.configuredBootstrapPeerIDs.add(peerID);
 					// A re-configured bootstrap peer means its network was (re-)joined — it
 					// is no longer "left", so lift any redial suppression left by a prior
@@ -1510,7 +1504,11 @@ export class Network {
 	 * lishnet layer when a bootstrap entry is removed from config or belongs only
 	 * to a lishnet being left, so `isBootstrapOrRelayPeer` stops treating a peer
 	 * that is no longer configured (nor shared with another joined network) as
-	 * infrastructure that leave-network must keep connected.
+	 * infrastructure that leave-network must keep connected — and so the
+	 * unreachable-eviction exemption ends with it.
+	 *
+	 * Both callers already establish that the peer is configured in NO joined
+	 * network before calling, so this needs no refcount of its own.
 	 */
 	pruneConfiguredBootstrapPeer(peerID: string): void {
 		this.configuredBootstrapPeerIDs.delete(peerID);
@@ -2094,7 +2092,7 @@ export class Network {
 		this.redialBackoff.clear();
 		this.unreachableQuarantine.clear();
 		this.noReachableSince.clear();
-		this.configuredPeerIDs.clear();
+		this.configuredBootstrapPeerIDs.clear();
 		this.redialSuppressedByNet.clear();
 		this.pxIngressLogKeys.clear();
 		if (this.node) {

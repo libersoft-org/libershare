@@ -125,7 +125,7 @@ describe('Network.runRedialMaintenance — leave-peer suppression', () => {
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).noReachableSince = new Map();
-		(network as any).configuredPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		// A reconnected peer's suppression is lifted only if it currently shares a joined
 		// topic — model that via a pubsub whose subscribers list the "back on topic" peers.
 		(network as any).pubsub = {
@@ -217,7 +217,6 @@ describe('Network.addBootstrapPeers — rejoin clears suppression', () => {
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set<string>(suppressed)]]);
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
-		(network as any).configuredPeerIDs = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];

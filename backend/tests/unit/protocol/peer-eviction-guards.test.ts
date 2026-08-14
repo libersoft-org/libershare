@@ -92,7 +92,7 @@ describe('runRedialMaintenance — eviction with no reachable address', () => {
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).noReachableSince = new Map([[PEER_ID, Date.now() - opts.sinceMsAgo]]);
-		(network as any).configuredPeerIDs = new Set(opts.configured ? [PEER_ID] : []);
+		(network as any).configuredBootstrapPeerIDs = new Set(opts.configured ? [PEER_ID] : []);
 		(network as any).bootstrapTracker = { deleteDiscoveredByPeerID() {} };
 		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
 		(network as any).node = { getConnections: () => [] };
@@ -158,7 +158,6 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
-		(network as any).configuredPeerIDs = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
@@ -256,7 +255,6 @@ describe('addBootstrapPeers — forced probe only for configured addresses', () 
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
-		(network as any).configuredPeerIDs = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
@@ -285,5 +283,56 @@ describe('addBootstrapPeers — forced probe only for configured addresses', () 
 		const { network, forced } = bareNetwork();
 		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
 		expect(forced).toEqual([false]);
+	});
+});
+
+/**
+ * "Is this configured infrastructure?" and "may we auto-evict it?" are the same
+ * question about the same fact. They used to be answered from two separate sets and
+ * only one of them was ever pruned, so a peer the user had already deleted from the
+ * bootstrap config kept its eviction exemption until the process restarted.
+ */
+describe('configured exemption ends when the peer leaves the config', () => {
+	function bareNetwork() {
+		const purged: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialBackoff = new Map();
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).noReachableSince = new Map([[PEER_ID, Date.now() - 45 * 60_000]]);
+		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).bootstrapTracker = { deleteDiscoveredByPeerID() {} };
+		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
+		(network as any).node = { getConnections: () => [] };
+		(network as any).hasConnectionOtherThan = () => true;
+		(network as any).purgeStalePeer = async (pid: string): Promise<void> => {
+			purged.push(pid);
+		};
+		return { network, purged };
+	}
+
+	const undialable = { id: peerIdLike(PEER_ID), addresses: NO_ADDRESSES };
+	const run = (network: Network): Promise<void> => (network as any).runRedialMaintenance([], [undialable], 1);
+
+	it('protects the peer while it is still configured', async () => {
+		const { network, purged } = bareNetwork();
+		await run(network);
+		expect(purged).toEqual([]);
+	});
+
+	it('stops protecting it once the config entry is gone', async () => {
+		const { network, purged } = bareNetwork();
+		network.pruneConfiguredBootstrapPeer(PEER_ID);
+		await run(network);
+		expect(purged).toEqual([PEER_ID]);
+	});
+
+	it('drops the infrastructure status in the same step', async () => {
+		// The two used to be able to disagree; pruning must settle both at once.
+		const { network } = bareNetwork();
+		expect(network.isBootstrapOrRelayPeer(PEER_ID)).toBe(true);
+		network.pruneConfiguredBootstrapPeer(PEER_ID);
+		expect(network.isBootstrapOrRelayPeer(PEER_ID)).toBe(false);
 	});
 });
