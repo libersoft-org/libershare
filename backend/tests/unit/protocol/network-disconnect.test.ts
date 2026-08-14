@@ -13,13 +13,30 @@ import { Network } from '../../../src/protocol/network.ts';
 const PEER_ID = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
 const NET = 'net-a';
 
+/**
+ * Populate the per-peer maps every dial path touches. Leave-network suppression
+ * and unreachable-eviction share the same call sites, so a fixture that stubs
+ * only one of them makes production code throw on the other's map instead of
+ * exercising the behaviour under test.
+ */
+export function stubSuppressionState(network: Network): void {
+	(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+	(network as any).unreachableQuarantine = new Map<string, number>();
+	(network as any).noReachableSince = new Map<string, number>();
+	(network as any).redialBackoff = new Map();
+	(network as any).configuredPeerIDs = new Set<string>();
+	(network as any).configuredBootstrapPeerIDs = new Set<string>();
+	(network as any).bootstrapPeerIDs = new Set<string>();
+	(network as any).bootstrapMultiaddrs = [];
+	(network as any).runEpoch = 0;
+}
+
 function makeNetwork() {
 	const merges: Array<{ tags: Record<string, unknown> }> = [];
 	const hungUp: string[] = [];
 	const deleted: string[] = [];
 	const network = Object.create(Network.prototype) as Network;
-	(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
-	(network as any).bootstrapPeerIDs = new Set<string>();
+	stubSuppressionState(network);
 	(network as any).node = {
 		getConnections: () => [],
 		peerStore: {
@@ -87,7 +104,7 @@ describe('Network.disconnectPeer — keep-alive tag removal', () => {
 describe('Network per-network redial suppression', () => {
 	function bareNetwork() {
 		const network = Object.create(Network.prototype) as Network;
-		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+		stubSuppressionState(network);
 		return network;
 	}
 
@@ -119,7 +136,7 @@ describe('Network.runRedialMaintenance — leave-peer suppression', () => {
 	function bareNetwork(suppressed: string[], sharedTopicPeers: string[] = []) {
 		const dialed: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
-		(network as any).redialBackoff = new Map();
+		stubSuppressionState(network);
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
 		// A reconnected peer's suppression is lifted only if it currently shares a joined
 		// topic — model that via a pubsub whose subscribers list the "back on topic" peers.
@@ -173,6 +190,7 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 	function bareNetwork(suppressed: string[], bootstrapMaStrs: string[]) {
 		const dialed: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
+		stubSuppressionState(network);
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
 		(network as any).bootstrapMultiaddrs = bootstrapMaStrs.map(s => multiaddr(s));
 		(network as any).recentDisconnects = [];
@@ -210,10 +228,8 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 describe('Network.addBootstrapPeers — rejoin clears suppression', () => {
 	function bareNetwork(suppressed: string[]) {
 		const network = Object.create(Network.prototype) as Network;
+		stubSuppressionState(network);
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set<string>(suppressed)]]);
-		(network as any).configuredBootstrapPeerIDs = new Set<string>();
-		(network as any).bootstrapPeerIDs = new Set<string>();
-		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
