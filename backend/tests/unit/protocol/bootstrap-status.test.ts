@@ -204,3 +204,50 @@ describe('BootstrapStatusTracker discovered-row cap', () => {
 		expect(configured).toBe(1);
 	});
 });
+
+/**
+ * pruneEntries is fed the network's CONFIGURED bootstrap list after the user edits it.
+ * Since this tracker also holds gossip-discovered rows, judging every row by that list
+ * would empty the participant view on a bootstrap edit — including a "refresh from
+ * public list" — leaving it blank until gossip mentions each peer again.
+ */
+describe('BootstrapStatusTracker.pruneEntries', () => {
+	const NET = 'netAAAA';
+	const CONF_KEPT = '/ip4/192.0.2.1/tcp/9090/p2p/12D3KooWConfKeptKeptKeptKeptKeptKeptKeptKeptKeptK';
+	const CONF_DROPPED = '/ip4/192.0.2.2/tcp/9090/p2p/12D3KooWConfGoneGoneGoneGoneGoneGoneGoneGoneGone';
+	const DISCOVERED = '/ip4/192.0.2.3/tcp/9090/p2p/12D3KooWDiscDiscDiscDiscDiscDiscDiscDiscDiscDis';
+
+	function seeded(): BootstrapStatusTracker {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, CONF_KEPT, null, 'connected', null, null, 'configured');
+		tracker.recordOutcome(NET, CONF_DROPPED, null, 'connected', null, null, 'configured');
+		tracker.recordOutcome(NET, DISCOVERED, null, 'connected', null, null, 'discovered');
+		return tracker;
+	}
+
+	const addresses = (tracker: BootstrapStatusTracker): string[] => (tracker.getStatus(NET)?.peers ?? []).map(p => p.multiaddr);
+
+	it('drops a configured row that left the config', () => {
+		const tracker = seeded();
+		tracker.pruneEntries(NET, [CONF_KEPT]);
+		expect(addresses(tracker)).not.toContain(CONF_DROPPED);
+	});
+
+	it('keeps a configured row that is still in the config', () => {
+		const tracker = seeded();
+		tracker.pruneEntries(NET, [CONF_KEPT]);
+		expect(addresses(tracker)).toContain(CONF_KEPT);
+	});
+
+	it('keeps discovered rows, which the configured list never mentions', () => {
+		const tracker = seeded();
+		tracker.pruneEntries(NET, [CONF_KEPT]);
+		expect(addresses(tracker)).toContain(DISCOVERED);
+	});
+
+	it('keeps discovered rows even when the whole config is cleared', () => {
+		const tracker = seeded();
+		tracker.pruneEntries(NET, []);
+		expect(addresses(tracker)).toEqual([DISCOVERED]);
+	});
+});

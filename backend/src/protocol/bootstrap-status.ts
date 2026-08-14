@@ -143,13 +143,22 @@ export class BootstrapStatusTracker {
 		}
 	}
 
-	/** Drop bootstrap status entries no longer in the configured peer list (after an update). */
+	/**
+	 * Drop bootstrap status entries no longer in the configured peer list (after an update).
+	 *
+	 * `keepMultiaddrs` is the network's CONFIGURED list, so only configured rows may be
+	 * judged by it. Discovered rows are not in it and never will be — deleting them here
+	 * would clear the participant list of everything gossip has found, on nothing more
+	 * than a bootstrap edit or a "refresh from public list", until gossip happens to
+	 * mention each peer again. Discovered rows leave via their own paths: the staleness
+	 * sweep, the per-network cap, or eviction of the peer ID.
+	 */
 	pruneEntries(networkID: string, keepMultiaddrs: string[]): void {
 		const peers = this.stats.get(networkID);
 		if (!peers) return;
 		const keep = new Set(keepMultiaddrs);
-		for (const addr of [...peers.keys()]) {
-			if (!keep.has(addr)) peers.delete(addr);
+		for (const [addr, peer] of [...peers.entries()]) {
+			if (peer.origin === 'configured' && !keep.has(addr)) peers.delete(addr);
 		}
 		if (peers.size === 0) this.stats.delete(networkID);
 		const snapshot = this.buildStatus(networkID);
