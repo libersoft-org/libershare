@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { Network } from '../../../src/protocol/network.ts';
+import { Network, isSameDialEndpoint } from '../../../src/protocol/network.ts';
 
 /**
  * Guards on the DESTRUCTIVE peer-eviction paths. The pure decision helpers are covered
@@ -203,5 +203,40 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
 		expect(merges).toHaveLength(1);
 		expect(merges[0]).not.toHaveProperty('multiaddrs');
+	});
+});
+
+/**
+ * The address-equality test behind "was THIS address verified". It decides whether an
+ * unverified address may enter the peerStore, so a false positive is a security bug,
+ * not a cosmetic one.
+ */
+describe('isSameDialEndpoint', () => {
+	const PEER_A = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+
+	it('accepts the same endpoint with and without the peer id suffix', () => {
+		expect(isSameDialEndpoint('/ip4/203.0.113.4/tcp/9090', `/ip4/203.0.113.4/tcp/9090/p2p/${PEER_A}`)).toBe(true);
+	});
+
+	it('rejects a different port that merely shares a prefix', () => {
+		// /tcp/80 is a string prefix of /tcp/8080 — prefix matching would call a
+		// connection on 8080 proof that the claimed port 80 works.
+		expect(isSameDialEndpoint(`/ip4/203.0.113.4/tcp/8080/p2p/${PEER_A}`, `/ip4/203.0.113.4/tcp/80/p2p/${PEER_A}`)).toBe(false);
+	});
+
+	it('rejects a different host', () => {
+		expect(isSameDialEndpoint(`/ip4/203.0.113.5/tcp/9090/p2p/${PEER_A}`, `/ip4/203.0.113.4/tcp/9090/p2p/${PEER_A}`)).toBe(false);
+	});
+
+	it('rejects a relayed connection as proof of a direct address', () => {
+		expect(isSameDialEndpoint(`/ip4/198.51.100.1/tcp/4001/p2p/${PEER_A}/p2p-circuit/p2p/${PEER_A}`, `/ip4/203.0.113.4/tcp/9090/p2p/${PEER_A}`)).toBe(false);
+	});
+
+	it('ignores DNS case and a trailing dot', () => {
+		expect(isSameDialEndpoint('/dns4/EXAMPLE.COM./tcp/443', '/dns4/example.com/tcp/443')).toBe(true);
+	});
+
+	it('treats a missing connection address as no proof', () => {
+		expect(isSameDialEndpoint('', `/ip4/203.0.113.4/tcp/9090/p2p/${PEER_A}`)).toBe(false);
 	});
 });

@@ -1314,7 +1314,7 @@ export class Network {
 					// back is proof for `ma` only if that is the address it is actually on.
 					const pidObj = peerID ? peerIDFromString(peerID) : null;
 					const conn = await this.node.dial(ma);
-					const verifiedThisAddr = normalizeMultiaddrForCompare(String(conn?.remoteAddr ?? '')).startsWith(normalizeMultiaddrForCompare(ma.toString().replace(/\/p2p\/[^/]+$/, '')));
+					const verifiedThisAddr = isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString());
 					if (epoch !== this.runEpoch) return;
 					if (pidObj) {
 						await this.node.peerStore.merge(pidObj, verifiedThisAddr ? { multiaddrs: [ma], tags: { [KEEP_ALIVE]: { value: 1 } } } : { tags: { [KEEP_ALIVE]: { value: 1 } } });
@@ -2131,6 +2131,21 @@ export class Network {
  */
 export function normalizeMultiaddrForCompare(s: string): string {
 	return s.toLowerCase().replace(/\.(?=\/|$)/g, '');
+}
+
+/**
+ * Whether two multiaddrs denote the same transport endpoint, ignoring a trailing
+ * `/p2p/<id>` (a dial target usually carries it, `Connection.remoteAddr` may not).
+ *
+ * Compares the WHOLE remaining address, never a prefix: `/ip4/x/tcp/80` is a string
+ * prefix of `/ip4/x/tcp/8080`, so prefix matching would accept a connection on one
+ * port as proof for another — exactly the unverified-address case this is used to
+ * reject.
+ */
+export function isSameDialEndpoint(a: string, b: string): boolean {
+	const strip = (s: string): string => normalizeMultiaddrForCompare(s).replace(/\/p2p\/[^/]+$/, '');
+	const left = strip(a);
+	return left.length > 0 && left === strip(b);
 }
 
 /**
