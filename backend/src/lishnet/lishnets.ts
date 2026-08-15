@@ -208,6 +208,10 @@ export class Networks {
 
 		this.network.unsubscribeTopic(id);
 		this.joinedNetworks.delete(id);
+		// Abandon any bootstrap job still walking this network's list. Left half-way
+		// through, it would keep dialing peers of a network we just left and clear the
+		// redial suppression the loop below is about to apply.
+		this.network.bumpBootstrapGeneration(id);
 
 		// Subscribers of any OTHER joined lishnet must stay connected (shared
 		// infrastructure). Compute this set BEFORE the bootstrap cleanup so that loop

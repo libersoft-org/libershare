@@ -228,6 +228,12 @@ export class Network {
 	private configuredBootstrapPeerIDs: Set<string> = new Set();
 	private dcutrPeers: Set<string> = new Set();
 	private bootstrapMultiaddrs: any[] = [];
+	/**
+	 * Per-network bootstrap-config version, bumped on every replace / reset / leave.
+	 * Read by {@link addBootstrapPeers} so a job started for a superseded list stops
+	 * instead of re-adding entries that are no longer configured.
+	 */
+	private readonly bootstrapGeneration: Map<string, number> = new Map();
 
 	// Topic handlers: topic -> Set of handler functions
 	private topicHandlers: Map<string, Set<TopicHandler>> = new Map();
@@ -1260,9 +1266,19 @@ export class Network {
 		// the status-tick epoch guard. Capture the epoch so a dial that settles after
 		// a stop()/restart cannot record outcomes on the cleared tracker or write
 		// peerStore state for the NEXT node instance.
+		//
+		// The generation covers the other axis: the node stays up but THIS network's
+		// bootstrap list is replaced, reset or left while we are part-way down it. The
+		// loop dials sequentially and one dial can take seconds, so an old job would
+		// otherwise keep walking the old list — re-adding entries the user has just
+		// removed and re-marking them configured, which exempts them from the stale
+		// sweep until restart. Exactly the resurrection this eviction work exists to
+		// prevent.
 		const epoch = this.runEpoch;
+		const generation = this.bootstrapGenerationOf(networkID);
+		const superseded = (): boolean => epoch !== this.runEpoch || generation !== this.bootstrapGenerationOf(networkID);
 		for (const peer of peers) {
-			if (epoch !== this.runEpoch) return;
+			if (superseded()) return;
 			try {
 				const ma = Multiaddr(peer);
 				// Safety net: refuse to add loopback / unreachable-private bootstrap
@@ -1336,18 +1352,30 @@ export class Network {
 					const pidObj = peerID ? peerIDFromString(peerID) : null;
 					const conn = await this.node.dial(ma, origin === 'configured' ? { force: true } : {});
 					const verifiedThisAddr = isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString());
-					if (epoch !== this.runEpoch) return;
+					if (superseded()) return;
 					if (pidObj) {
 						await this.node.peerStore.merge(pidObj, verifiedThisAddr ? { multiaddrs: [ma], tags: { [KEEP_ALIVE]: { value: 1 } } } : { tags: { [KEEP_ALIVE]: { value: 1 } } });
 					}
 					// Re-check after the merge await too: stop() may have cleared the
 					// tracker while it was pending, and recordOutcome would otherwise
 					// resurrect a network row for the old (or next) node instance.
-					if (epoch !== this.runEpoch) return;
+					if (superseded()) return;
+					// `force: true` defeats connection REUSE, but not a dial to the same peer
+					// ID already in libp2p's queue: this call joins that job and can be handed
+					// the connection its other address won. For a CONFIGURED entry the row
+					// means "this address works", so an unverified dial must leave it pending
+					// rather than turn it green — a wrong address that the peer happens to
+					// survive through another route is exactly what the row exists to expose.
+					// Discovered rows carry the weaker "the peer answered" meaning and are
+					// recorded either way.
+					if (origin === 'configured' && !verifiedThisAddr) {
+						trace(`[NET] bootstrap addr unverified (connection came back on another address), left pending: ${peer}`);
+						continue;
+					}
 					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, null, origin);
 					console.log('✓ Connected to new bootstrap peer');
 				} catch (err: any) {
-					if (epoch !== this.runEpoch) return;
+					if (superseded()) return;
 					const message = err?.message ?? String(err);
 					const kind = classifyBootstrapError(message);
 					const actualPeerID = kind === 'identity-mismatch' ? extractActualPeerID(message) : null;
@@ -1716,12 +1744,32 @@ export class Network {
 
 	/** Drop bootstrap status entries no longer in the configured peer list (after an update). */
 	pruneBootstrapStatus(networkID: string, keepMultiaddrs: string[]): void {
+		this.bumpBootstrapGeneration(networkID);
 		this.bootstrapTracker.pruneEntries(networkID, keepMultiaddrs);
 	}
 
 	/** Reset the bootstrap status for a single network (used when re-joining). */
 	resetBootstrapStatus(networkID: string): void {
+		this.bumpBootstrapGeneration(networkID);
 		this.bootstrapTracker.resetNetwork(networkID);
+	}
+
+	/**
+	 * Current bootstrap-config version of a network. Entries with no network (the
+	 * startup catalog dial) share version 0 and are only bound by the run epoch.
+	 */
+	private bootstrapGenerationOf(networkID: string | null): number {
+		return networkID === null ? 0 : (this.bootstrapGeneration.get(networkID) ?? 0);
+	}
+
+	/**
+	 * Declare a network's configured bootstrap list superseded, abandoning any
+	 * `addBootstrapPeers` job still walking the previous one. Called whenever that
+	 * list is replaced, reset or left — see the generation comment in
+	 * {@link addBootstrapPeers} for what an unabandoned job would resurrect.
+	 */
+	bumpBootstrapGeneration(networkID: string): void {
+		this.bootstrapGeneration.set(networkID, this.bootstrapGenerationOf(networkID) + 1);
 	}
 
 	// =========================================================================
@@ -2104,6 +2152,7 @@ export class Network {
 		this.bootstrapPeerIDs.clear();
 		this.bootstrapTracker.clear();
 		this.bootstrapMultiaddrs = [];
+		this.bootstrapGeneration.clear();
 		this._lastPeerCounts.clear();
 		this._lastScores.clear();
 		this.redialBackoff.clear();
