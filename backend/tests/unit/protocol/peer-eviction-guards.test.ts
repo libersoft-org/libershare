@@ -161,7 +161,14 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
-		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
+		(network as any).bootstrapGeneration = new Map();
+		const outcomes: string[] = [];
+		(network as any).bootstrapTracker = {
+			markPending() {},
+			recordOutcome(_net: unknown, _addr: unknown, _pid: unknown, status: string) {
+				outcomes.push(status);
+			},
+		};
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
 			getConnections: () => [],
@@ -176,7 +183,7 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 				},
 			},
 		};
-		return { network, merges, dialled, forced };
+		return { network, merges, dialled, forced, outcomes };
 	}
 
 	const ADDR = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
@@ -195,6 +202,30 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
 		expect(merges).toHaveLength(1);
 		expect(merges[0]).toHaveProperty('multiaddrs');
+	});
+
+	/**
+	 * `force: true` defeats connection reuse but not a dial to the same peer id already
+	 * in libp2p's queue — this call joins that job and can be handed the connection its
+	 * OTHER address won. A configured row means "this address works", so it must not go
+	 * green on a connection that never touched it.
+	 */
+	it('leaves a configured row pending when the connection came back on another address', async () => {
+		const { network, outcomes } = bareNetwork(`/ip4/198.51.100.1/tcp/4001/p2p/${PEER_ID}`);
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+		expect(outcomes).toEqual([]);
+	});
+
+	it('still records a discovered row, whose status only claims the peer answered', async () => {
+		const { network, outcomes } = bareNetwork(`/ip4/198.51.100.1/tcp/4001/p2p/${PEER_ID}`);
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect(outcomes).toEqual(['connected']);
+	});
+
+	it('records the configured row once the connection is on the address itself', async () => {
+		const { network, outcomes } = bareNetwork(ADDR);
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+		expect(outcomes).toEqual(['connected']);
 	});
 
 	it('withholds the address when libp2p answered over a different one', async () => {
@@ -292,6 +323,7 @@ describe('addBootstrapPeers — forced probe only for configured addresses', () 
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
+		(network as any).bootstrapGeneration = new Map();
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
@@ -368,5 +400,70 @@ describe('configured exemption ends when the peer leaves the config', () => {
 		expect(network.isBootstrapOrRelayPeer(PEER_ID)).toBe(true);
 		network.pruneConfiguredBootstrapPeer(PEER_ID);
 		expect(network.isBootstrapOrRelayPeer(PEER_ID)).toBe(false);
+	});
+});
+
+/**
+ * The bootstrap list is walked one peer at a time and a single dial can take seconds.
+ * If the user edits that list — or leaves the network — mid-walk, the job started for
+ * the OLD list must stop: carrying on would re-add entries that are no longer
+ * configured AND re-mark them configured, which exempts them from the stale sweep for
+ * the rest of the process's life. That is precisely the resurrection this work exists
+ * to prevent, so the guard is checked here against a real second list entry.
+ */
+describe('addBootstrapPeers — superseded bootstrap configuration', () => {
+	const PEER_B = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fp';
+	const ADDR_A = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+	const ADDR_B = `/ip4/203.0.113.10/tcp/9090/p2p/${PEER_B}`;
+
+	function bareNetwork(onFirstDial?: (network: Network) => void) {
+		const dialled: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).bootstrapGeneration = new Map();
+		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
+		(network as any).node = {
+			peerId: { toString: () => 'selfID' },
+			getConnections: () => [],
+			async dial(ma: { toString(): string }): Promise<unknown> {
+				dialled.push(ma.toString());
+				// Model the edit landing while the FIRST dial is still in flight.
+				if (dialled.length === 1) onFirstDial?.(network);
+				return { remoteAddr: { toString: () => ma.toString() } };
+			},
+			peerStore: {
+				async merge(): Promise<void> {},
+			},
+		};
+		return { network, dialled };
+	}
+
+	it('abandons the rest of the list when the network configuration is superseded', async () => {
+		const { network, dialled } = bareNetwork(n => n.bumpBootstrapGeneration('net-a'));
+		await (network as any).addBootstrapPeers([ADDR_A, ADDR_B], 'net-a', 'configured');
+		expect(dialled).toEqual([ADDR_A]);
+	});
+
+	it('does not re-mark the abandoned entry as configured', async () => {
+		const { network } = bareNetwork(n => n.bumpBootstrapGeneration('net-a'));
+		await (network as any).addBootstrapPeers([ADDR_A, ADDR_B], 'net-a', 'configured');
+		expect((network as any).configuredBootstrapPeerIDs.has(PEER_B)).toBe(false);
+	});
+
+	it('walks the whole list when nothing supersedes it', async () => {
+		const { network, dialled } = bareNetwork();
+		await (network as any).addBootstrapPeers([ADDR_A, ADDR_B], 'net-a', 'configured');
+		expect(dialled).toEqual([ADDR_A, ADDR_B]);
+	});
+
+	it('is not disturbed by an edit to a DIFFERENT network', async () => {
+		const { network, dialled } = bareNetwork(n => n.bumpBootstrapGeneration('net-other'));
+		await (network as any).addBootstrapPeers([ADDR_A, ADDR_B], 'net-a', 'configured');
+		expect(dialled).toEqual([ADDR_A, ADDR_B]);
 	});
 });

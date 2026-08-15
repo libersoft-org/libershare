@@ -250,4 +250,27 @@ describe('BootstrapStatusTracker.pruneEntries', () => {
 		tracker.pruneEntries(NET, []);
 		expect(addresses(tracker)).toEqual([DISCOVERED]);
 	});
+
+	/**
+	 * Removing the last row drops the whole network from the tracker, at which point
+	 * buildStatus has nothing to return. Staying silent there would leave the UI
+	 * rendering the very row that was just deleted, so the empty list is emitted
+	 * explicitly — the same fallback the other removal paths use.
+	 */
+	it('emits an empty list when the last remaining row is removed', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, CONF_KEPT, null, 'connected', null, null, 'configured');
+		const seen: Array<{ networkID: string; peers: unknown[] }> = [];
+		tracker.setOnChange((networkID, status) => seen.push({ networkID, peers: status.peers }));
+		tracker.pruneEntries(NET, []);
+		expect(seen).toEqual([{ networkID: NET, peers: [] }]);
+	});
+
+	it('still emits the surviving rows when only some are removed', () => {
+		const tracker = seeded();
+		const seen: string[][] = [];
+		tracker.setOnChange((_networkID, status) => seen.push(status.peers.map(p => p.multiaddr)));
+		tracker.pruneEntries(NET, [CONF_KEPT]);
+		expect(seen).toEqual([[CONF_KEPT, DISCOVERED]]);
+	});
 });

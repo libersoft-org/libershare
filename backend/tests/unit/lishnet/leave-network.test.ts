@@ -24,6 +24,8 @@ interface MockNet {
 	isBootstrapOrRelayPeer(pid: string): boolean;
 	disconnectPeer(pid: string, networkID: string): Promise<void>;
 	pruneConfiguredBootstrapPeer(pid: string): void;
+	bumpBootstrapGeneration(networkID: string): void;
+	generationBumps: string[];
 	clearRedialSuppressionForNetwork(networkID: string): void;
 	suppressionClearedFor: string[];
 }
@@ -38,6 +40,7 @@ function makeMockNet(): MockNet {
 		bootstrapOrRelay: new Set(),
 		prunedBootstrap: [],
 		suppressionClearedFor: [],
+		generationBumps: [],
 		getTopicPeers(id) {
 			return this.topicPeers.get(id) ?? [];
 		},
@@ -60,6 +63,9 @@ function makeMockNet(): MockNet {
 		},
 		pruneConfiguredBootstrapPeer(pid) {
 			this.prunedBootstrap.push(pid);
+		},
+		bumpBootstrapGeneration(networkID) {
+			this.generationBumps.push(networkID);
 		},
 		clearRedialSuppressionForNetwork(networkID) {
 			this.suppressionClearedFor.push(networkID);
