@@ -161,8 +161,11 @@ export class BootstrapStatusTracker {
 			if (peer.origin === 'configured' && !keep.has(addr)) peers.delete(addr);
 		}
 		if (peers.size === 0) this.stats.delete(networkID);
-		const snapshot = this.buildStatus(networkID);
-		if (snapshot) this.onStatusChange?.(networkID, snapshot);
+		// Emit the empty list rather than nothing when the last row goes: buildStatus
+		// returns null for a dropped network, and skipping the callback would leave the
+		// UI showing the very row that was just removed. Same fallback the other
+		// removal paths use.
+		this.onStatusChange?.(networkID, this.buildStatus(networkID) ?? { networkID, peers: [] });
 	}
 
 	/** Reset the bootstrap status for a single network (used when re-joining). */
