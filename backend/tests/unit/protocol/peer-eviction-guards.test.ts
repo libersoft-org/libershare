@@ -467,3 +467,54 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		expect(dialled).toEqual([ADDR_A, ADDR_B]);
 	});
 });
+
+/**
+ * A dial already handed to libp2p cannot be recalled: hangUp closes connections that
+ * already exist, so a leave-network landing mid-dial finds nothing to close and the
+ * connection appears a moment after the cleanup finished. Abandoning the loop is not
+ * enough — the connection has to be closed too.
+ */
+describe('addBootstrapPeers — a dial that lands after leave-network', () => {
+	const ADDR = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork(suppressed: string[]) {
+		const disconnected: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map([['net-a', new Set(suppressed)]]);
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).bootstrapGeneration = new Map();
+		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
+		(network as any).disconnectPeer = async (peerID: string): Promise<void> => {
+			disconnected.push(peerID);
+		};
+		(network as any).node = {
+			peerId: { toString: () => 'selfID' },
+			getConnections: () => [],
+			async dial(ma: { toString(): string }): Promise<unknown> {
+				// The leave happens while this dial is in flight.
+				(network as any).redialSuppressedByNet.get('net-a').add(PEER_ID);
+				return { remoteAddr: { toString: () => ma.toString() } };
+			},
+			peerStore: { async merge(): Promise<void> {} },
+		};
+		return { network, disconnected };
+	}
+
+	it('closes a connection that arrived after the peer was left', async () => {
+		const { network, disconnected } = bareNetwork([]);
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+		expect(disconnected).toEqual([PEER_ID]);
+	});
+
+	it('leaves an ordinary dial connected', async () => {
+		const { network, disconnected } = bareNetwork([]);
+		// No leave lands this time: the dial does not add the peer to the suppression set.
+		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => ({ remoteAddr: { toString: () => ma.toString() } });
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+		expect(disconnected).toEqual([]);
+	});
+});
