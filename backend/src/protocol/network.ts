@@ -1352,6 +1352,16 @@ export class Network {
 					const pidObj = peerID ? peerIDFromString(peerID) : null;
 					const conn = await this.node.dial(ma, origin === 'configured' ? { force: true } : {});
 					const verifiedThisAddr = isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString());
+					// A dial already in flight cannot be called back: hangUp only closes
+					// connections that ALREADY exist, so a leave-network landing mid-dial finds
+					// nothing to close and this connection surfaces a moment after the cleanup
+					// finished. Abandoning the loop would leave it open, so close it here — the
+					// suppression set is what says the user deliberately left this peer.
+					if (peerID && networkID && this.isRedialSuppressed(peerID)) {
+						trace(`[NET] bootstrap dial landed after leave, disconnecting: ${peerID.slice(0, 16)}`);
+						await this.disconnectPeer(peerID, networkID);
+						return;
+					}
 					if (superseded()) return;
 					if (pidObj) {
 						await this.node.peerStore.merge(pidObj, verifiedThisAddr ? { multiaddrs: [ma], tags: { [KEEP_ALIVE]: { value: 1 } } } : { tags: { [KEEP_ALIVE]: { value: 1 } } });
