@@ -196,6 +196,33 @@ describe('runRedialMaintenance — a left peer is not an unreachable peer', () =
 	}
 });
 
+describe('addBootstrapPeers — configuring a peer by hand is a clean slate', () => {
+	it('clears the quarantine, the failure history and the no-address clock', async () => {
+		// The user just re-added a peer we had evicted. If the explicit dial below
+		// fails and any of that evidence survives, maintenance, discovery and
+		// zero-connection recovery all keep skipping the peer for another half hour.
+		const h = makeHarness();
+		const now = Date.now();
+		suppress(h.network, NET, DEAD_PEER);
+		(h.network as any).unreachableQuarantine.set(DEAD_PEER, now);
+		(h.network as any).redialBackoff.set(DEAD_PEER, { nextAttempt: now + 600_000, failCount: 9, firstFailure: now - EVICT_MIN_MS });
+		(h.network as any).noReachableSince.set(DEAD_PEER, now - EVICT_MIN_MS);
+
+		await h.network.addBootstrapPeers([`${ROUTABLE_ADDR}/p2p/${DEAD_PEER}`], NET, 'configured');
+
+		expect((h.network as any).dialSuppressionReason(DEAD_PEER)).toBe(null);
+		expect((h.network as any).redialBackoff.has(DEAD_PEER)).toBe(false);
+		expect((h.network as any).noReachableSince.has(DEAD_PEER)).toBe(false);
+	});
+
+	it('leaves a discovered mention of the same peer quarantined', () => {
+		// Only the operator's own edit is consent; gossip restating the peer is not.
+		const h = makeHarness();
+		(h.network as any).unreachableQuarantine.set(DEAD_PEER, Date.now());
+		expect((h.network as any).dialSuppressionReason(DEAD_PEER)).toBe('unreachable');
+	});
+});
+
 describe('promoteKnownPeersToBootstrap — connected is not consent', () => {
 	/**
 	 * A left peer that dialled US back on its own keep-alive: connected, but still

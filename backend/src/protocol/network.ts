@@ -1302,11 +1302,17 @@ export class Network {
 				if (peerID === myPeerID) continue;
 				if (peerID && origin === 'configured') {
 					this.configuredBootstrapPeerIDs.add(peerID);
-					// A re-configured bootstrap peer means its network was (re-)joined — it
-					// is no longer "left", so lift any redial suppression left by a prior
-					// leaveNetwork, otherwise maintenance would skip it forever if this one
-					// explicit dial fails or the connection drops before the next tick.
+					// Configuring a peer by hand means "try this one, from scratch". Every
+					// piece of accumulated evidence against it therefore goes: the leave
+					// decision, the unreachable quarantine, the failure history and the
+					// no-address clock. Keeping any of them would let a single transient
+					// failure of this one explicit dial hide the peer from maintenance,
+					// discovery and zero-connection recovery for another half hour, with
+					// nothing in the UI explaining why the user's edit did nothing.
 					this.clearRedialSuppressionForPeer(peerID);
+					this.unreachableQuarantine.delete(peerID);
+					this.redialBackoff.delete(peerID);
+					this.noReachableSince.delete(peerID);
 				}
 				// Gossip is the one dial path that can name a peer we never chose: it
 				// reaches both peers we deliberately left and peers we just evicted as
