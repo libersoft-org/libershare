@@ -6,6 +6,7 @@ import { isBusy } from '../api/busy.ts';
 import { type WantMessage } from './downloader.ts';
 import { type IDialResult } from './network.ts';
 import { type Libp2p } from 'libp2p';
+import { MAX_SEARCH_ID_LENGTH } from './constants.ts';
 
 /**
  * Pubsub query: "Find LISHs whose name or ID matches `query`".
@@ -147,6 +148,9 @@ export class LISHServingHandlers {
 			return;
 		}
 		if (typeof data.searchID !== 'string' || typeof data.query !== 'string') return;
+		// The searchID becomes a key in seenSearchIDs and is echoed back in the response,
+		// so an unbounded one is attacker-controlled memory we hold for the dedup window.
+		if (data.searchID.length === 0 || data.searchID.length > MAX_SEARCH_ID_LENGTH) return;
 		// Empty / overly long queries are dropped — a defensive bound; UI input is much shorter.
 		if (data.query.length === 0 || data.query.length > 256) return;
 		// Don't reply to our own broadcast (we're a subscriber to the topic too).

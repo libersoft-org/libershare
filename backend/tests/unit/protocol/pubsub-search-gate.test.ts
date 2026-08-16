@@ -103,6 +103,33 @@ describe('pubsub searchLishs membership gate', () => {
 		expect(dialed).toEqual(['peer-far']);
 	});
 
+	it('drops a query whose searchID is longer than the bound', async () => {
+		// A pubsub payload may be a quarter of a megabyte; every byte of the searchID
+		// would be retained as a dedup key for the whole dedup window, and a fresh ID per
+		// request is exactly what makes deduplication no defence at all.
+		initUploadState(new Set([SHARED_LISH_ID]), () => {});
+		const seenSearchIDs = new Map<string, number>();
+		const network = gateNetwork({ connected: ['peer-member'], subscribers: ['peer-member'] });
+		const dialed: string[] = [];
+		const handlers = new LISHServingHandlers({
+			dataServer: { list: () => [{ id: SHARED_LISH_ID, name: 'Shared', files: [{ size: 10 }] }] } as any,
+			lastWantResponseTime: new Map(),
+			seenSearchIDs,
+			wantResponseCooldownMs: 60_000,
+			getNode: () => (network as any).node,
+			dialByPeerId: async (peerID: string) => {
+				dialed.push(peerID);
+				throw new Error('dial not available in test');
+			},
+			canServePubsubRequestTo: (peerID: string) => network.canServePubsubRequestTo(peerID),
+		});
+
+		await handlers.handleSearchLishs({ ...search, searchID: 'x'.repeat(4096) }, NETWORK_ID, 'peer-member');
+
+		expect(dialed).toEqual([]);
+		expect(seenSearchIDs.size).toBe(0);
+	});
+
 	it('does not burn the searchID dedup slot on a refused query', async () => {
 		// Recording a refused searchID would let a bare peer poison the dedup map so the
 		// same query from a legitimate member is silently dropped.
