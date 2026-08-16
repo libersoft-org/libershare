@@ -173,13 +173,21 @@ export class PeerAnnounceManager {
 		});
 	}
 
-	/** Stop the emitter. Idempotent. Any in-flight tick will not reschedule. */
+	/**
+	 * Stop the emitter and forget every recorded membership. Idempotent; any in-flight
+	 * tick will not reschedule.
+	 *
+	 * The same manager instance is reused across a stop/start cycle, so keeping the map
+	 * would let a peer recorded before the restart satisfy the listing gate afterwards —
+	 * on a fresh node with no connections, let alone a subscription from that peer.
+	 */
 	stop(): void {
 		this.stopped = true;
 		if (this.timer) {
 			clearTimeout(this.timer);
 			this.timer = null;
 		}
+		this.topicMembers.clear();
 	}
 
 	/** Handle an inbound peer-announce pubsub message. */

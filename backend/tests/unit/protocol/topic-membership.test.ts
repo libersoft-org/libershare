@@ -177,6 +177,18 @@ describe('PeerAnnounceManager topic membership', () => {
 		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-b']);
 	});
 
+	it('forgets every membership on stop', async () => {
+		// Network reuses the same manager across stop/start, so a membership carried over
+		// would authorize a peer on a node that has not even reconnected to it yet.
+		const { mgr } = makeManager(['peer-b'], 2);
+		await tick(mgr);
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-b']);
+
+		mgr.stop();
+
+		expect(mgr.getRecentMembers(TOPIC)).toEqual([]);
+	});
+
 	it('reports nothing for an unknown topic', () => {
 		const { mgr } = makeManager(['peer-b'], 2);
 		expect(mgr.getRecentMembers(lishTopic('never-joined'))).toEqual([]);
