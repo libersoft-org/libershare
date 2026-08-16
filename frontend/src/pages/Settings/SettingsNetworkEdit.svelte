@@ -273,7 +273,11 @@
 			<div class="message" class:failed>{message}</div>
 		{/if}
 	</div>
+	<!-- Back is held shut while an apply or a join is in flight. Leaving mid-operation
+	     did not cancel anything — the host kept reconfiguring — but it did take away
+	     the only screen that would report the outcome, so the user was left with a
+	     changed machine and no result. -->
 	<ButtonBar justify="center" basePosition={[0, buttonsY + 1]}>
-		<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
+		<Button icon="/img/back.svg" label={$t('common.back')} disabled={busy || scanning} onConfirm={onBack} />
 	</ButtonBar>
 </div>
