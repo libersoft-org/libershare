@@ -96,6 +96,27 @@ describe('isValidSSID', () => {
 	it('rejects an empty name', () => {
 		expect(isValidSSID('')).toBe(false);
 	});
+
+	// A NUL is not merely unusual, it silently changes which network is joined:
+	// utf16z writes it through and a Win32 LPCWSTR ends there, so "Home\0Evil"
+	// becomes a profile for "Home". It also makes the profile XML malformed, and
+	// on Linux the runtime throws a bare TypeError out of execFile before nmcli
+	// even starts. Measured: all three.
+	it('rejects a name carrying a NUL', () => {
+		expect(isValidSSID(`Home${String.fromCharCode(0)}Evil`)).toBe(false);
+	});
+
+	it('rejects the control characters XML 1.0 cannot carry', () => {
+		for (const code of [0x01, 0x07, 0x08, 0x0b, 0x0c, 0x0e, 0x1f]) expect(isValidSSID(`Home${String.fromCharCode(code)}Net`)).toBe(false);
+	});
+
+	it('still accepts the whitespace XML does allow', () => {
+		for (const code of [0x09, 0x0a, 0x0d]) expect(isValidSSID(`Home${String.fromCharCode(code)}Net`)).toBe(true);
+	});
+
+	it('rejects a non-string rather than throwing', () => {
+		for (const bogus of [null, undefined, 42, {}]) expect(isValidSSID(bogus as unknown as string)).toBe(false);
+	});
 });
 
 describe('splitNmcliFields', () => {

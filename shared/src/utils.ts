@@ -115,11 +115,31 @@ export function validateIPv4Config(config: NetIPv4Config): string | null {
 }
 
 /**
- * True for an SSID the 802.11 standard can actually carry: 1-32 octets once
- * encoded as UTF-8. Length is counted in bytes, not characters, because a
+ * Characters no join path can carry: NUL and the C0 controls XML 1.0 forbids.
+ *
+ * Tab, LF and CR are legal in XML and so are left alone; everything else below
+ * U+0020 is not, and NUL is worse than merely invalid on every platform:
+ *
+ *  - Windows: `utf16z()` writes it verbatim, and a Win32 `LPCWSTR` stops there,
+ *    so a profile asked for as "Home\0Evil" is created for "Home" instead.
+ *  - Windows: the profile document is XML, and a raw NUL in it is not
+ *    well-formed, so `WlanSetProfile` refuses it with an opaque reason code.
+ *  - Linux: the runtime throws a bare `TypeError` out of `execFile` before
+ *    nmcli ever starts, which surfaces as an internal error, not a bad request.
+ *
+ * This gate is for an SSID a USER supplied. Names coming back from a native scan
+ * are not passed through it — they are what the radio actually saw.
+ */
+const SSID_FORBIDDEN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/;
+
+/**
+ * True for an SSID the 802.11 standard can actually carry AND every join path
+ * can express: 1-32 octets once encoded as UTF-8, and no forbidden control
+ * character. Length is counted in bytes, not characters, because a
  * 20-character name with accents already exceeds the field.
  */
 export function isValidSSID(ssid: string): boolean {
+	if (typeof ssid !== 'string' || SSID_FORBIDDEN.test(ssid)) return false;
 	const length = new TextEncoder().encode(ssid).length;
 	return length >= 1 && length <= 32;
 }
