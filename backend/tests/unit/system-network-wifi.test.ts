@@ -243,6 +243,21 @@ describe('windowsWifiProfileXml', () => {
 		expect(xml).not.toContain('WPA2PSK');
 	});
 
+	it('declares a 64-hex credential as a raw network key, not a passphrase', () => {
+		// Announced as passPhrase, Windows hashes an already-hashed key a second
+		// time: the profile is accepted and then never authenticates.
+		const xml = windowsWifiProfileXml('Modern Net', 'a'.repeat(64));
+		expect(xml).toContain('<keyType>networkKey</keyType>');
+		expect(xml).not.toContain('passPhrase');
+	});
+
+	it('still declares an ordinary credential as a passphrase', () => {
+		// 64 characters that are NOT all hex are a passphrase — but they are also
+		// past the 63-character limit, so the ordinary case is a normal-length one.
+		expect(windowsWifiProfileXml('Coffee Bar', 'hunter2000')).toContain('<keyType>passPhrase</keyType>');
+		expect(windowsWifiProfileXml('Coffee Bar', `${'a'.repeat(63)}z`)).toContain('<keyType>passPhrase</keyType>');
+	});
+
 	it('builds an open profile with no key when there is no password', () => {
 		const xml = windowsWifiProfileXml('Open Guest Net', '');
 		expect(xml).toContain('<authentication>open</authentication><encryption>none</encryption>');

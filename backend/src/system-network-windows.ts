@@ -1,5 +1,5 @@
 import { dlopen, FFIType, ptr, read, toArrayBuffer, type Pointer } from 'bun:ffi';
-import type { NetAddress, NetInterfaceInfo, NetIPv4Config, NetMedium, NetLink, NetAddressMode, NetWifiInfo, NetWifiNetwork } from '@shared';
+import { isWifiHexKey, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetMedium, type NetLink, type NetAddressMode, type NetWifiInfo, type NetWifiNetwork } from '@shared';
 
 /**
  * Windows host network state.
@@ -739,7 +739,11 @@ function escapeXml(text: string): string {
  */
 export function windowsWifiProfileXml(ssid: string, password: string, sae: boolean = false): string {
 	const name = escapeXml(ssid);
-	const security = password ? `<authEncryption><authentication>${sae ? 'WPA3SAE' : 'WPA2PSK'}</authentication><encryption>AES</encryption><useOneX>false</useOneX></authEncryption><sharedKey><keyType>passPhrase</keyType><protected>false</protected><keyMaterial>${escapeXml(password)}</keyMaterial></sharedKey>` : `<authEncryption><authentication>open</authentication><encryption>none</encryption><useOneX>false</useOneX></authEncryption>`;
+	// A 64-hex credential is a raw 256-bit PSK, not a passphrase, and the profile
+	// has to say so: announced as `passPhrase` Windows hashes it a second time, so
+	// the profile is written, accepted, and then simply never authenticates.
+	const keyType = isWifiHexKey(password) ? 'networkKey' : 'passPhrase';
+	const security = password ? `<authEncryption><authentication>${sae ? 'WPA3SAE' : 'WPA2PSK'}</authentication><encryption>AES</encryption><useOneX>false</useOneX></authEncryption><sharedKey><keyType>${keyType}</keyType><protected>false</protected><keyMaterial>${escapeXml(password)}</keyMaterial></sharedKey>` : `<authEncryption><authentication>open</authentication><encryption>none</encryption><useOneX>false</useOneX></authEncryption>`;
 	return `<?xml version="1.0"?><WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1"><name>${name}</name><SSIDConfig><SSID><name>${name}</name></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>auto</connectionMode><MSM><security>${security}</security></MSM></WLANProfile>`;
 }
 

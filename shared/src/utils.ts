@@ -144,6 +144,35 @@ export function isValidSSID(ssid: string): boolean {
 	return length >= 1 && length <= 32;
 }
 
+/**
+ * True when a Wi-Fi credential is a raw 256-bit pre-shared key rather than a
+ * passphrase: exactly 64 hexadecimal digits.
+ *
+ * The distinction is not cosmetic. A WLAN profile has to declare which of the
+ * two it carries — `<keyType>networkKey</keyType>` for this form and
+ * `passPhrase` for the other — and a raw key announced as a passphrase is
+ * hashed a second time, so it silently fails to authenticate.
+ */
+export function isWifiHexKey(key: string): boolean {
+	return typeof key === 'string' && /^[0-9a-fA-F]{64}$/.test(key);
+}
+
+/**
+ * True for a credential a WPA2/WPA3 personal network can actually accept.
+ *
+ * IEEE 802.11i, and the Microsoft WLAN profile schema with it, allow either a
+ * passphrase of 8 to 63 characters or the 64-hex raw key above. Anything
+ * shorter, longer or in between is refused here rather than by the supplicant:
+ * on Windows the profile is written to disk BEFORE the association is
+ * attempted, so a credential that could never work would replace a saved
+ * network's real one on its way to failing.
+ */
+export function isValidWifiKey(key: string): boolean {
+	if (typeof key !== 'string') return false;
+	if (isWifiHexKey(key)) return true;
+	return key.length >= 8 && key.length <= 63;
+}
+
 // Sanitize filename - remove invalid characters and normalize spaces
 export function sanitizeFilename(filename: string): string {
 	return filename

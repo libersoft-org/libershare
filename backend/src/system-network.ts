@@ -2,7 +2,7 @@ import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
-import { CodedError, ErrorCodes, isValidSSID, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
+import { CodedError, ErrorCodes, isValidSSID, isValidWifiKey, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
 import { connectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, windowsApplyIPv4Command, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
 import { applyLinuxIPv4, connectLinuxWifi, isLinuxWritable, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
 import { applyMacIPv4, isMacWifiConfigurable, isMacWritable, readMacNetworkState } from './system-network-macos.ts';
@@ -294,6 +294,10 @@ export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 export async function connectWifi(interfaceID: string, ssid: string, password: string): Promise<void> {
 	await assertWirelessInterface(interfaceID);
 	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
+	// Checked before anything is written. On Windows the profile lands on disk
+	// ahead of the association attempt, so a credential no WPA2/WPA3 network could
+	// ever accept would overwrite a working saved one purely in order to fail.
+	if (password && !isValidWifiKey(password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
 	await applyLock.runExclusive(async () => {
 		// The passphrase reaches nmcli as an argv entry, so every text derived from a
 		// failure of that child process has to be scrubbed of it before it is logged

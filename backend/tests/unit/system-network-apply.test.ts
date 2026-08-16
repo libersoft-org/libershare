@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { isIPv4, isValidSSID, validateIPv4Config, type NetIPv4Config } from '@shared';
+import { isIPv4, isValidSSID, isValidWifiKey, isWifiHexKey, validateIPv4Config, type NetIPv4Config } from '@shared';
 import { nmcliModifyArgs, parseNmcliActiveUUID, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { firstLine } from '../../src/system-network.ts';
@@ -116,6 +116,47 @@ describe('isValidSSID', () => {
 
 	it('rejects a non-string rather than throwing', () => {
 		for (const bogus of [null, undefined, 42, {}]) expect(isValidSSID(bogus as unknown as string)).toBe(false);
+	});
+});
+
+describe('isValidWifiKey', () => {
+	// IEEE 802.11i allows a passphrase of 8-63 characters or a 64-hex raw key.
+	// On Windows the profile is written to disk BEFORE the association is tried,
+	// so a credential that could never work would replace a saved network's real
+	// one purely on its way to failing.
+	it('accepts a passphrase at both ends of the allowed range', () => {
+		expect(isValidWifiKey('8charsxx')).toBe(true);
+		expect(isValidWifiKey('x'.repeat(63))).toBe(true);
+	});
+
+	it('rejects a passphrase too short for WPA2', () => {
+		for (const key of ['', 'a', '7chars!']) expect(isValidWifiKey(key)).toBe(false);
+	});
+
+	it('rejects a passphrase past 63 characters that is not a hex key', () => {
+		expect(isValidWifiKey(`${'x'.repeat(63)}y`)).toBe(false);
+		expect(isValidWifiKey('x'.repeat(200))).toBe(false);
+	});
+
+	it('accepts exactly 64 hex digits as a raw pre-shared key', () => {
+		expect(isValidWifiKey('0123456789abcdef'.repeat(4))).toBe(true);
+		expect(isValidWifiKey('0123456789ABCDEF'.repeat(4))).toBe(true);
+	});
+
+	it('rejects a non-string rather than throwing', () => {
+		for (const bogus of [null, undefined, 42, ['secret']]) expect(isValidWifiKey(bogus as unknown as string)).toBe(false);
+	});
+});
+
+describe('isWifiHexKey', () => {
+	it('is true only for exactly 64 hex digits', () => {
+		expect(isWifiHexKey('0123456789abcdef'.repeat(4))).toBe(true);
+		expect(isWifiHexKey('0123456789abcdef'.repeat(3))).toBe(false);
+		expect(isWifiHexKey(`${'0123456789abcdef'.repeat(4)}0`)).toBe(false);
+	});
+
+	it('is false for 64 characters that are not all hex', () => {
+		expect(isWifiHexKey(`${'a'.repeat(63)}z`)).toBe(false);
 	});
 });
 

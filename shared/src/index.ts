@@ -2,7 +2,7 @@
 export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL } from './product.ts';
 
 // Utils
-export { formatBytes, parseBytes, sanitizeFilename, deriveConnectionStatus, isSelectableInterface, isIPv4, isValidSSID, validateIPv4Config } from './utils.ts';
+export { formatBytes, parseBytes, sanitizeFilename, deriveConnectionStatus, isSelectableInterface, isIPv4, isValidSSID, isValidWifiKey, isWifiHexKey, validateIPv4Config } from './utils.ts';
 
 // Compression
 export type CompressionAlgorithm = 'gzip';
