@@ -41,10 +41,52 @@ export interface GossipsubPatchDeps {
  * mitigation only; replace it with an upstream @chainsafe/libp2p-gossipsub fix
  * once sendRpc/push handles rejected async writes and evicts dead streams itself.
  */
+/**
+ * The gossipsub instance the shared-prototype wrapper currently serves.
+ *
+ * The wrapper is installed on the SHARED OutboundStream prototype, so it outlives
+ * the instance that installed it. Capturing that instance in the closure meant that
+ * after a node restart every eviction went to the DEAD instance's stream map — a
+ * silent no-op that disabled the mitigation — while the closure also pinned the dead
+ * instance in memory. Tracking the latest patched instance instead fixes both.
+ *
+ * ponytail: one live node per process, so "latest wins" is the whole ownership
+ * model. If several nodes ever run side by side this needs a per-stream owner map.
+ */
+let activePubsub: any = null;
+
+/** One warn line per peer per 5 s, module-level so a restart does not reset the window. */
+const pushFailLogged = new Map<string, number>();
+
+/**
+ * Evict a dead outbound stream from the gossipsub instance that owns it. Returns a
+ * short peer-id label for logging, or '' when the stream has no known owner.
+ */
+function evictFailedStream(failedStream: any): string {
+	const gs = activePubsub;
+	if (!(gs?.streamsOutbound instanceof Map)) return '';
+	for (const [pid, stream] of gs.streamsOutbound) {
+		if (stream !== failedStream) continue;
+		try {
+			stream.close?.().catch?.(() => {});
+		} catch {
+			/* ignore */
+		}
+		gs.streamsOutbound.delete(pid);
+		return pid.toString().slice(0, 12);
+	}
+	return '';
+}
+
 export function applyGossipsubOutboundPushPatch(pubsub: any): void {
+	if (!pubsub) return;
+	// Adopt before the idempotency guard: a restart reuses the already-patched
+	// prototype and returns early, so this is the only chance to point the wrapper at
+	// the new instance.
+	activePubsub = pubsub;
 	// Idempotency guard: the push() wrap is installed on the shared OutboundStream
 	// prototype, so re-running this must be a no-op once the marker is set.
-	if (!pubsub || pubsub.__p2pfsOutboundPatched) return;
+	if (pubsub.__p2pfsOutboundPatched) return;
 	const trySetup = (): boolean => {
 		try {
 			const streamsOutbound: Map<any, any> | undefined = pubsub.streamsOutbound;
@@ -70,32 +112,16 @@ export function applyGossipsubOutboundPushPatch(pubsub: any): void {
 				if (result && typeof (result as Promise<unknown>).catch === 'function') {
 					const failedStream = this; // OutboundStream instance
 					(result as Promise<unknown>).catch((e: any) => {
-						// Reverse lookup: find which peerId owns this dead stream and evict it
-						// from streamsOutbound so the next sendRpc call sees null and gossipsub
-						// will reattach a fresh stream when libp2p reconnects to that peer.
-						const gs: any = pubsub;
-						let evicted = '';
-						if (gs?.streamsOutbound instanceof Map) {
-							for (const [pid, stream] of gs.streamsOutbound) {
-								if (stream === failedStream) {
-									try {
-										stream.close?.().catch?.(() => {});
-									} catch {
-										/* ignore */
-									}
-									gs.streamsOutbound.delete(pid);
-									evicted = pid.toString().slice(0, 12);
-									break;
-								}
-							}
-						}
+						// Reverse lookup across every live instance: find which peerId owns this
+						// dead stream and evict it from streamsOutbound so the next sendRpc call
+						// sees null and gossipsub reattaches a fresh stream on reconnect.
+						const evicted = evictFailedStream(failedStream);
 						// Rate-limit so a flapping peer (NAT churn / Wi-Fi roam) cannot fill the log
 						// with thousands of identical lines per hour. One warn line per peer per 5 s.
-						const lastLog: Map<string, number> = ((gs as any).__p2pfsGsPushFailLogged ??= new Map());
 						const now = Date.now();
 						const key = evicted || 'unknown';
-						if ((lastLog.get(key) ?? 0) + 5000 < now) {
-							lastLog.set(key, now);
+						if ((pushFailLogged.get(key) ?? 0) + 5000 < now) {
+							pushFailLogged.set(key, now);
 							console.warn('[GS-PUSH-FAIL] async push rejected to', key, ':', e?.code ?? e?.name ?? '', e?.message ?? String(e), '— evicted stream');
 						}
 					});
