@@ -8,7 +8,19 @@ import { deriveConnectionStatus, type ConnectionStatus, type NetIPv4Config, type
  * `known: false` until the first read arrives, so consumers can render an
  * honest "unknown" instead of a placeholder that looks like real data.
  */
-export const networkState = writable<NetworkStateInfo>({ interfaces: [], primaryID: null, detail: 'full', known: false, capabilities: { ipv4: false, wifi: false } });
+/**
+ * What the frontend knows before, and after, it knows anything.
+ *
+ * No interfaces, no capabilities, `known: false`. Used both as the initial value
+ * and as what a failed read falls back to, so "we have not asked yet" and "the
+ * answer we had is no longer trustworthy" are represented by the same state
+ * rather than by a stale snapshot with a flag turned off.
+ */
+export function unknownNetworkState(): NetworkStateInfo {
+	return { interfaces: [], primaryID: null, detail: 'full', known: false, capabilities: { ipv4: false, wifi: false } };
+}
+
+export const networkState = writable<NetworkStateInfo>(unknownNetworkState());
 
 /** The footer connection widget's input, projected from {@link networkState}. */
 export const connectionStatus: Readable<ConnectionStatus> = derived(networkState, deriveConnectionStatus);
@@ -31,9 +43,12 @@ export async function initNetworkState(): Promise<void> {
 	} catch (error) {
 		console.error('[NetworkState] Error loading network state:', error);
 		// The snapshot we still hold predates a backend restart or a failed read, so
-		// it may describe a machine state that no longer exists. Fall back to
-		// "unknown" rather than keep presenting it as current.
-		networkState.update(state => ({ ...state, known: false }));
+		// it may describe a machine state that no longer exists. The whole of it goes,
+		// not just the `known` flag: the interface list and the CAPABILITIES were the
+		// live parts, and the settings screen gates its Configure buttons on those.
+		// Keeping them while flagging the state unknown left buttons active that
+		// referred to a host state nobody could still vouch for.
+		networkState.set(unknownNetworkState());
 	}
 }
 
