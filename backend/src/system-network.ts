@@ -295,8 +295,12 @@ export async function connectWifi(interfaceID: string, ssid: string, password: s
 	await assertWirelessInterface(interfaceID);
 	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
 	await applyLock.runExclusive(async () => {
-		if (process.platform === 'win32') await run(() => connectWindowsWifi(assertWindowsGuid(interfaceID), ssid, password));
-		else await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password));
+		// The passphrase reaches nmcli as an argv entry, so every text derived from a
+		// failure of that child process has to be scrubbed of it before it is logged
+		// or sent back — including the timeout case, where the only text available is
+		// the message execFile assembled out of the whole command line.
+		if (process.platform === 'win32') await run(() => connectWindowsWifi(assertWindowsGuid(interfaceID), ssid, password), [password]);
+		else await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password), [password]);
 		resetNetworkStateCache();
 	});
 }
@@ -366,13 +370,72 @@ export function firstLine(text: string | undefined): string {
 	);
 }
 
-async function run<T>(action: () => Promise<T>): Promise<T> {
+/** Replace every occurrence of each secret with `<redacted>`. Empty secrets are ignored. */
+export function redactSecrets(text: string, secrets: readonly string[]): string {
+	let result = text;
+	for (const secret of secrets) if (secret.length > 0) result = result.split(secret).join('<redacted>');
+	return result;
+}
+
+/** The string-valued fields of a child-process failure that can carry the argv. */
+const SCRUBBED_ERROR_FIELDS = ['message', 'cmd', 'command', 'stdout', 'stderr'] as const;
+/** How far down a `cause` chain to keep scrubbing. Deep enough for any wrapper, bounded against a cycle. */
+const SCRUB_MAX_DEPTH = 4;
+
+/**
+ * Strip secret values out of a failed child process's error, in place.
+ *
+ * `execFile` builds both `message` and `cmd` out of the whole argv, so a
+ * passphrase passed as an argument sits in both — and on a TIMEOUT `stderr` is
+ * empty, which is precisely when {@link run} falls back to `message`. Measured
+ * against a real failing child: the secret appeared verbatim in `message` and
+ * `cmd` on a non-zero exit and on a timeout alike.
+ *
+ * The object is mutated rather than only read so that a later log of the raw
+ * error, or a `JSON.stringify` of it in a bug report, cannot leak what the
+ * returned detail no longer carries.
+ */
+export function scrubChildError<T>(err: T, secrets: readonly string[]): T {
+	const usable = secrets.filter(secret => secret.length > 0);
+	if (usable.length === 0) return err;
+	let node: any = err;
+	for (let depth = 0; node && typeof node === 'object' && depth < SCRUB_MAX_DEPTH; depth++) {
+		for (const field of SCRUBBED_ERROR_FIELDS) if (typeof node[field] === 'string') assignQuietly(node, field, redactSecrets(node[field], usable));
+		if (Array.isArray(node.spawnargs))
+			assignQuietly(
+				node,
+				'spawnargs',
+				node.spawnargs.map((arg: unknown) => (typeof arg === 'string' ? redactSecrets(arg, usable) : arg))
+			);
+		node = node.cause;
+	}
+	return err;
+}
+
+/** Assign, tolerating a getter-only or frozen property — a failed scrub of one field must not abort the rest. */
+function assignQuietly(target: Record<string, unknown>, key: string, value: unknown): void {
+	try {
+		target[key] = value;
+	} catch {
+		// Read-only property. What it holds still reaches nobody: the detail below is
+		// built by redacting a copy, never by reading the object back.
+	}
+}
+
+/**
+ * Run a configuration command, turning any failure into one coded error.
+ *
+ * `secrets` are values the caller handed to a child process that must never
+ * reach the log or the client — see {@link scrubChildError}.
+ */
+export async function run<T>(action: () => Promise<T>, secrets: readonly string[] = []): Promise<T> {
 	try {
 		return await action();
 	} catch (err) {
 		if (err instanceof CodedError) throw err;
+		scrubChildError(err, secrets);
 		const failure = err as { stderr?: string | Buffer; stdout?: string | Buffer };
 		const detail = failure.stderr?.toString().trim() || failure.stdout?.toString().trim();
-		throw new CodedError(ErrorCodes.NETCONFIG_FAILED, firstLine(detail) || (err as Error).message || 'command failed');
+		throw new CodedError(ErrorCodes.NETCONFIG_FAILED, redactSecrets(firstLine(detail) || (err as Error).message || 'command failed', secrets));
 	}
 }
