@@ -189,6 +189,40 @@ describe('Network.runZeroConnectionRecovery — registry walk', () => {
 	});
 });
 
+describe('Network.runZeroConnectionRecovery — liveness and budget', () => {
+	/** Distinct dead addresses of one peer, enough to overrun the per-pass budget. */
+	const deadAddresses = (count: number): IRegistrySeed[] => Array.from({ length: count }, (_unused, i) => ({ address: `/ip4/192.0.2.${i + 10}/tcp/9090/p2p/${PEER_A}` }));
+
+	it('does not run at all when a live connection exists despite a stale zero snapshot', async () => {
+		// The status tick snapshots connected peers BEFORE re-dial maintenance; that pass
+		// can connect a peer, making the snapshot a zero that is no longer true.
+		const { dialed, run } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }], livePeers: [PEER_B] });
+		await run();
+		expect(dialed).toEqual([]);
+	});
+
+	it('stops mid-pass as soon as a connection appears', async () => {
+		// An inbound connection lands while the pass is between dials. Continuing would
+		// keep hammering bootstrap addresses for a node that is no longer isolated.
+		const holder: { livePeers: string[]; dialed: string[]; run: () => Promise<void> } = bareNetwork({
+			seeds: deadAddresses(5),
+			failDial: true,
+			onDial: () => {
+				holder.livePeers.push(PEER_B);
+			},
+		});
+		await holder.run();
+		expect(holder.dialed.length).toBe(1);
+	});
+
+	it('honours its per-pass attempt budget', async () => {
+		// 20 dead addresses at 10 s apiece would occupy the status tick for minutes.
+		const { dialed, run } = bareNetwork({ seeds: deadAddresses(20), failDial: true });
+		await run();
+		expect(dialed.length).toBe(8);
+	});
+});
+
 describe('bootstrapEntryLastActivity', () => {
 	const base = { firstSeenAt: 100, lastVerifiedAt: null, lastDisconnectedAt: null };
 

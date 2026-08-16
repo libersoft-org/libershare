@@ -230,6 +230,15 @@ const RECOVERY_BACKOFF_MAX_MS = 600_000;
 const CONFIGURED_RECOVERY_BACKOFF_MAX_MS = 120_000;
 
 /**
+ * Dials one zero-connection recovery pass may attempt. Each costs up to 10 s, so an
+ * uncapped pass over a few hundred entries could occupy the status tick for half an
+ * hour — during which nothing else in the tick runs. The pass is cheap to repeat:
+ * ordering puts configured entries first, and address-level backoff makes the next
+ * pass start where this one stopped rather than re-trying the same dead prefix.
+ */
+const RECOVERY_DIALS_PER_TICK = 8;
+
+/**
  * `configuredBy` owner recorded for addresses handed straight to {@link Network.start}.
  *
  * Those come from saved config — they are user data and must not expire — but at that
@@ -1303,6 +1312,13 @@ export class Network {
 	/**
 	 * Last-resort recovery when the node holds no connections at all: walk the bootstrap
 	 * registry, configured entries first, and dial until one succeeds.
+	 *
+	 * Deliberately re-reads the live connection count instead of trusting
+	 * `connectedPeers`. The status tick snapshots the peer list before running re-dial
+	 * maintenance, and that pass — which can run for minutes — may well have connected
+	 * somebody; acting on the snapshot fires a full recovery sweep against a node that
+	 * is no longer isolated. The same re-read happens before every single dial, so a
+	 * pass does not keep hammering bootstraps once a connection lands mid-way.
 	 */
 	private async runZeroConnectionRecovery(connectedPeers: any[], epoch: number = this.runEpoch): Promise<void> {
 		const node = this.node;
@@ -1310,6 +1326,7 @@ export class Network {
 		if (!AUTODIAL_WORKAROUND || connectedPeers.length !== 0) return;
 		this.pruneBootstrapRegistry();
 		if (this.bootstrapByAddress.size === 0) return;
+		if (node.getPeers().length !== 0) return;
 		console.log(`   ⚠️  No connections - dialing ${this.bootstrapByAddress.size} bootstrap address(es) directly...`);
 		// [NET-CHURN] dump: who left in the run-up to this zero-connection
 		// state, and what each configured bootstrap entry's last dial outcome
@@ -1330,23 +1347,44 @@ export class Network {
 			console.log(`   [NET-CHURN] bootstrap stats net=${networkID.slice(0, 8)}: ${parts}`);
 		}
 		const localCidrs = getLocalCidrs();
+		let attempted = 0;
+		let suppressed = 0;
+		let backedOff = 0;
+		let unroutable = 0;
+		let eligible = 0;
 		for (const entry of orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values())) {
 			const { ma, peerID, key } = entry;
 			const configured = entry.configuredBy.size > 0;
-			if (peerID && this.isRedialSuppressed(peerID)) continue; // deliberately left — don't resurrect it here
+			if (peerID && this.isRedialSuppressed(peerID)) {
+				suppressed++; // deliberately left — don't resurrect it here
+				continue;
+			}
 			// A CONFIGURED entry is the user's way back in, so it gets priority and a much
 			// shorter backoff ceiling — but not a blanket exemption: a handful of dead
-			// configured addresses would otherwise be re-timed out at 10 s apiece on every
-			// pass and never let the discovered ones be tried at all.
-			if (!isRecoveryDialDue(key, peerID, Date.now(), this.recoveryBackoff, this.unreachableQuarantine)) continue;
+			// configured addresses would otherwise eat the whole budget at 10 s apiece,
+			// every pass, and never let the discovered ones be tried at all.
+			if (!isRecoveryDialDue(key, peerID, Date.now(), this.recoveryBackoff, this.unreachableQuarantine)) {
+				backedOff++;
+				continue;
+			}
 			// Routability is re-checked here, not just at configure time: a LAN or VPN
 			// bootstrap is on this list while its interface is down, and becomes dialable
 			// again the moment it returns.
-			if (shouldDenyDial(ma, localCidrs)) continue;
+			if (shouldDenyDial(ma, localCidrs)) {
+				unroutable++;
+				continue;
+			}
+			eligible++;
+			if (attempted >= RECOVERY_DIALS_PER_TICK) continue; // counted, but out of budget this pass
 			const maStr = ma?.toString?.() ?? String(ma);
 			// Each dial awaits for up to 10s, so a stop() can land mid-loop; the
 			// remaining dials belong to a node this run no longer owns.
 			if (epoch !== this.runEpoch) return;
+			// Re-read liveness before EVERY dial, not just at entry: an inbound
+			// connection or a dial started elsewhere can land between two attempts, and
+			// once we are connected the whole point of this loop is gone.
+			if (node.getPeers().length !== 0) break;
+			attempted++;
 			try {
 				console.log(`   → Dialing ${maStr}`);
 				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
@@ -1362,6 +1400,10 @@ export class Network {
 				this.recoveryBackoff.set(key, nextRecoveryBackoff(this.recoveryBackoff.get(key)?.failCount ?? 0, Date.now(), configured));
 			}
 		}
+		// Report the shape of the registry, not its raw length: "dialing 200 bootstrap
+		// peers" said nothing about how many were actually tried, and a pass that
+		// skipped every entry looked identical to one that tried them all.
+		console.log(`   Recovery: ${attempted} dialed of ${eligible} eligible (${backedOff} backoff, ${suppressed} left-peer, ${unroutable} unroutable)`);
 	}
 
 	/**
