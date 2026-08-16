@@ -280,16 +280,28 @@ const ASSOC_SIGNAL_QUALITY_OFFSET = CONN_ASSOCIATION_OFFSET + 56;
 /** DOT11_SSID caps the SSID at 32 octets — a longer value means we read the wrong offset. */
 const MAX_SSID_LENGTH = 32;
 
+/**
+ * A WLAN client handle.
+ *
+ * Kept as a `bigint` rather than a {@link Pointer} for the whole of its life.
+ * Bun represents a pointer as a JavaScript number because a virtual address
+ * fits in 53 bits, but its FFI documentation states outright that the Windows
+ * `HANDLE` type is NOT a virtual address and must be declared `u64` instead of
+ * `ptr`. Rounding one through `Number()` is therefore a conversion the ABI does
+ * not sanction, whatever the values a given WLAN service happens to hand out.
+ */
+type WlanHandle = bigint;
+
 interface WlanApi {
 	WlanOpenHandle: (version: number, reserved: null, negotiated: Pointer, handle: Pointer) => number;
-	WlanCloseHandle: (handle: Pointer, reserved: null) => number;
-	WlanEnumInterfaces: (handle: Pointer, reserved: null, list: Pointer) => number;
-	WlanQueryInterface: (handle: Pointer, guid: Pointer, opcode: number, reserved: null, size: Pointer, data: Pointer, valueType: Pointer) => number;
-	WlanScan: (handle: Pointer, guid: Pointer, ssid: null, ieData: null, reserved: null) => number;
-	WlanGetAvailableNetworkList: (handle: Pointer, guid: Pointer, flags: number, reserved: null, list: Pointer) => number;
-	WlanSetProfile: (handle: Pointer, guid: Pointer, flags: number, xml: Pointer, security: null, overwrite: number, reserved: null, reasonCode: Pointer) => number;
-	WlanGetProfile: (handle: Pointer, guid: Pointer, name: Pointer, reserved: null, xml: Pointer, flags: Pointer, access: null) => number;
-	WlanConnect: (handle: Pointer, guid: Pointer, parameters: Pointer, reserved: null) => number;
+	WlanCloseHandle: (handle: WlanHandle, reserved: null) => number;
+	WlanEnumInterfaces: (handle: WlanHandle, reserved: null, list: Pointer) => number;
+	WlanQueryInterface: (handle: WlanHandle, guid: Pointer, opcode: number, reserved: null, size: Pointer, data: Pointer, valueType: Pointer) => number;
+	WlanScan: (handle: WlanHandle, guid: Pointer, ssid: null, ieData: null, reserved: null) => number;
+	WlanGetAvailableNetworkList: (handle: WlanHandle, guid: Pointer, flags: number, reserved: null, list: Pointer) => number;
+	WlanSetProfile: (handle: WlanHandle, guid: Pointer, flags: number, xml: Pointer, security: null, overwrite: number, reserved: null, reasonCode: Pointer) => number;
+	WlanGetProfile: (handle: WlanHandle, guid: Pointer, name: Pointer, reserved: null, xml: Pointer, flags: Pointer, access: null) => number;
+	WlanConnect: (handle: WlanHandle, guid: Pointer, parameters: Pointer, reserved: null) => number;
 	WlanFreeMemory: (memory: Pointer) => void;
 }
 
@@ -304,17 +316,21 @@ export interface WlanSymbol {
  *
  * Lifted out of {@link getWlanApi} so the declared ABI of each parameter is a
  * value a test can assert rather than a literal buried inside a lazy loader.
+ *
+ * Every leading `HANDLE` is {@link FFIType.u64}, never `ptr` — see
+ * {@link WlanHandle}. `WlanOpenHandle`'s fourth argument is the exception that
+ * proves it: that one really is a pointer, to the caller's output buffer.
  */
 export const WLAN_SYMBOLS: Record<keyof WlanApi, WlanSymbol> = {
 	WlanOpenHandle: { args: [FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-	WlanCloseHandle: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-	WlanEnumInterfaces: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-	WlanQueryInterface: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-	WlanScan: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-	WlanGetAvailableNetworkList: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-	WlanSetProfile: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-	WlanGetProfile: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-	WlanConnect: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanCloseHandle: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.u32 },
+	WlanEnumInterfaces: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanQueryInterface: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanScan: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanGetAvailableNetworkList: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanSetProfile: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanGetProfile: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanConnect: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 	WlanFreeMemory: { args: [FFIType.ptr], returns: FFIType.void },
 };
 
@@ -464,14 +480,16 @@ export function readWindowsWifi(): Map<string, NetWifiInfo> {
  * service for the life of the process. Client version 2 is Vista and later, which
  * every supported Windows negotiates.
  */
-function withWlanHandle<T>(fn: (api: WlanApi, handle: Pointer) => T): T {
+function withWlanHandle<T>(fn: (api: WlanApi, handle: WlanHandle) => T): T {
 	const api = getWlanApi();
 	if (!api) throw new Error('the Windows WLAN service is not available on this host');
 	const negotiated = new Uint32Array(1);
 	const handleOut = new BigUint64Array(1);
 	const rc = api.WlanOpenHandle(2, null, ptr(negotiated), ptr(handleOut));
 	if (rc !== 0) throw new Error(wlanErrorMessage(rc));
-	const handle = Number(handleOut[0]) as Pointer;
+	// Straight out of the output buffer as a bigint. Never through `Number()`: a
+	// HANDLE is an opaque 64-bit value, not an address that is guaranteed to fit.
+	const handle = handleOut[0] as WlanHandle;
 	try {
 		return fn(api, handle);
 	} finally {
@@ -891,7 +909,7 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
  * needs: the same user on the same machine can hand that ciphertext straight
  * back, so the saved key survives without ever being seen.
  */
-function readStoredProfile(api: WlanApi, handle: Pointer, guidBytes: Uint8Array, ssid: string): string | null {
+function readStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, ssid: string): string | null {
 	const name = utf16z(ssid);
 	const xmlOut = new BigUint64Array(1);
 	// In/out: zero asks for the profile as stored, without the plaintext key.
@@ -935,7 +953,7 @@ function restoreStoredProfile(guidBytes: Uint8Array, profileXml: string): void {
  * false, which is the right default: WPA2 is what the transition mode most access
  * points run advertises, and it is also what an out-of-date list would have said.
  */
-function usesSae(api: WlanApi, handle: Pointer, guidBytes: Uint8Array, ssid: string): boolean {
+function usesSae(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, ssid: string): boolean {
 	const listOut = new BigUint64Array(1);
 	if (api.WlanGetAvailableNetworkList(handle, ptr(guidBytes), 0, null, ptr(listOut)) !== 0) return false;
 	const list = Number(listOut[0]) as Pointer;
