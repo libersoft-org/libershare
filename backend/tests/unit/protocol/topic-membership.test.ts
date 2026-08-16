@@ -22,6 +22,7 @@ function tinyPeerStore(n: number) {
 function makeManager(subscribers: string[], peerStoreSize: number, topics: string[] = [TOPIC]) {
 	const broadcasts: string[] = [];
 	const node: any = {
+		// Mutable so a test can make the peerStore start failing mid-life.
 		peerStore: tinyPeerStore(peerStoreSize),
 		peerId: { toString: () => 'self' },
 		// A routable self address, or the announce would carry nothing and be skipped
@@ -40,7 +41,7 @@ function makeManager(subscribers: string[], peerStoreSize: number, topics: strin
 		},
 		async addBootstrapPeers(): Promise<void> {},
 	});
-	return { mgr, broadcasts, pubsub };
+	return { mgr, broadcasts, pubsub, node, topics };
 }
 
 /** emit() is private; the tick is what a running node would perform. */
@@ -136,12 +137,44 @@ describe('PeerAnnounceManager topic membership', () => {
 	});
 
 	it('drops membership for a topic we are no longer subscribed to', async () => {
-		const { mgr } = makeManager(['peer-b'], 2);
+		// Must be the SAME manager that recorded the members — a fresh one starts empty
+		// and would pass no matter whether the eviction runs at all.
+		const { mgr, topics } = makeManager(['peer-b'], 2);
 		await tick(mgr);
 		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-b']);
-		const gone = makeManager(['peer-b'], 2, []);
-		await tick(gone.mgr);
-		expect(gone.mgr.getRecentMembers(TOPIC)).toEqual([]);
+
+		topics.length = 0; // left the lishnet — and it was our only one
+		await tick(mgr);
+
+		expect(mgr.getRecentMembers(TOPIC)).toEqual([]);
+	});
+
+	it('still evicts a left topic when it was the last one', async () => {
+		// The eviction lives inside the membership refresh, so bailing out of the tick on
+		// an empty topic list before running it strands the members of the lishnet we
+		// just left — and a quick rejoin would find them still inside the auth window.
+		const { mgr, topics } = makeManager(['peer-b'], 2, [TOPIC]);
+		await tick(mgr);
+		topics.length = 0;
+
+		await tick(mgr);
+
+		expect(mgr.getRecentMembers(TOPIC)).toEqual([]);
+	});
+
+	it('refreshes membership even when the peerStore read fails', async () => {
+		// The peerStore is only needed to decide whether to ADVERTISE. Reading it first
+		// let a failing or stalled store take the membership tracker down with it.
+		const { mgr, node } = makeManager(['peer-b'], 2);
+		node.peerStore = {
+			all: async () => {
+				throw new Error('peerStore unavailable');
+			},
+		};
+
+		await tick(mgr).catch(() => {});
+
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-b']);
 	});
 
 	it('reports nothing for an unknown topic', () => {

@@ -283,14 +283,17 @@ export class PeerAnnounceManager {
 		const node = this.deps.getNode();
 		const pubsub = this.deps.getPubsub();
 		if (!node || !pubsub) return;
-		const allPeers = await node.peerStore.all();
 		const lishTopics = pubsub.getTopics().filter((t: string) => t.startsWith(LISH_TOPIC_PREFIX));
-		if (lishTopics.length === 0) return;
-		// Recording who we have seen subscribed is local bookkeeping, and readers of it
-		// (leave-network, the listing gate) need it most on a small node. Whether we are
-		// worth ADVERTISING is a separate question, so refresh membership first and let
-		// the peerStore threshold gate only the broadcast below.
+		// Membership bookkeeping is purely local and its readers (leave-network, the
+		// listing gate) must never be blinded by something that only concerns the
+		// broadcast, so nothing that can fail or bail out may run ahead of it. Both
+		// orderings below are load-bearing: refreshTopicMembers is also what evicts
+		// topics we have left, so returning early on an empty list would strand the last
+		// lishnet's members in the map, and a peerStore read that throws or stalls would
+		// otherwise skip the refresh entirely despite being irrelevant to it.
 		this.refreshTopicMembers(pubsub, lishTopics);
+		if (lishTopics.length === 0) return;
+		const allPeers = await node.peerStore.all();
 		if (allPeers.length < PEER_ANNOUNCE_MIN_PEER_STORE) return;
 		const localCidrs = getLocalCidrs();
 		const myID = node.peerId.toString();
