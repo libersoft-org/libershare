@@ -389,14 +389,17 @@ export class Networks {
 
 	update(network: LISHNetworkConfig): boolean {
 		const existing = this.get(network.networkID);
-		const ok = updateLISHnet(this.db, network);
+		// Store the cleaned list, not the raw one: blank rows from the form would
+		// otherwise be persisted while the runtime worked from the filtered copy, and
+		// the two would disagree about what this network's bootstrap list even is.
+		const cleaned = Networks.cleanBootstrapList(network.bootstrapPeers ?? []);
+		const ok = updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned });
 		// The general edit form carries the bootstrap list as well, so this path can
 		// change it just like updateBootstrapPeers does. Without the same runtime
 		// synchronisation the edit would reach only the database and the live node
 		// would keep dialing the previous list until restart.
 		if (!ok || !existing) return ok;
 		const previous = Networks.cleanBootstrapList(existing.bootstrapPeers);
-		const cleaned = Networks.cleanBootstrapList(network.bootstrapPeers ?? []);
 		if (previous.join('\n') !== cleaned.join('\n')) this.syncBootstrapRuntime(network.networkID, existing.bootstrapPeers, cleaned);
 		return ok;
 	}
