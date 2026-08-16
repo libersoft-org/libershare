@@ -1226,6 +1226,25 @@ export class Network {
 		if (this.unreachableQuarantine.has(peerID)) this.unreachableQuarantine.set(peerID, now);
 	}
 
+	/**
+	 * Whether some open connection already terminates on the exact endpoint an address
+	 * names.
+	 *
+	 * The peer-level question — "are we connected to them at all" — is the wrong one for a
+	 * per-address probe: a peer reachable through a second address would mask a broken
+	 * configured entry for as long as that other route held, which is precisely the case
+	 * the probe exists to expose.
+	 */
+	private hasConnectionOnEndpoint(ma: any): boolean {
+		if (!this.node) return false;
+		const target = ma.toString();
+		try {
+			return this.node.getConnections().some(c => isSameDialEndpoint(String(c.remoteAddr ?? ''), target));
+		} catch {
+			return false;
+		}
+	}
+
 	private async runZeroConnectionRecovery(epoch: number = this.runEpoch): Promise<void> {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return;
@@ -1306,44 +1325,38 @@ export class Network {
 	 * recovery would pick it up, but only while the node has NO connections at all, so a
 	 * node happily talking to someone else would never notice the tunnel came back.
 	 *
-	 * Runs on the slow promote cadence and honours the same pacing as every other loop,
-	 * so a permanently broken entry costs one dial per window, not one per tick.
+	 * Runs on the slow promote cadence and paces itself per ADDRESS, so a permanently
+	 * broken entry costs one dial per window and cannot starve a sibling address of the
+	 * same peer that does work.
 	 */
 	private async probeParkedConfiguredBootstraps(epoch: number = this.runEpoch): Promise<void> {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return;
 		const localCidrs = getLocalCidrs();
-		const now = Date.now();
 		for (const ma of [...this.bootstrapMultiaddrs]) {
 			if (epoch !== this.runEpoch) return;
+			const canonical = normalizeMultiaddrForCompare(ma.toString());
+			if (!this.configuredBootstrapAddresses.has(canonical)) continue;
 			const pid = extractDestinationPeerID(ma);
-			if (!pid || !this.configuredBootstrapAddresses.has(normalizeMultiaddrForCompare(ma.toString()))) continue;
-			if (this.isRedialSuppressed(pid)) continue;
+			if (pid && this.isRedialSuppressed(pid)) continue;
 			// Still unreachable from here — leave it parked for a later pass.
 			if (shouldDenyDial(ma, localCidrs)) continue;
-			if (!isRecoveryDialDue(pid, now, this.redialBackoff, this.unreachableQuarantine)) continue;
+			if (!this.isAddressProbeDue(canonical, Date.now())) continue;
+			// Only a connection ON THIS ENDPOINT answers the question the probe asks. A
+			// connection to the same peer over some other address used to skip it, which
+			// is exactly how a broken configured entry kept looking fine.
+			if (this.hasConnectionOnEndpoint(ma)) continue;
 			try {
-				if (node.getConnections(peerIDFromString(pid)).length > 0) continue;
-			} catch {
-				continue; // unparseable id — nothing sane to probe
-			}
-			try {
-				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
+				// Forced for the same reason the configured branch of addBootstrapPeers
+				// forces: without it libp2p hands back whatever connection it already holds
+				// to this peer and the probe proves nothing about the address.
+				await node.dial(ma, { signal: AbortSignal.timeout(10000), force: true });
 				if (epoch !== this.runEpoch) return;
-				this.redialBackoff.delete(pid);
+				this.addressProbeBackoff.delete(canonical);
 				console.log(`[NET] parked configured bootstrap reachable again: ${ma.toString()}`);
 			} catch (err: any) {
 				if (epoch !== this.runEpoch) return;
-				const previous = this.redialBackoff.get(pid);
-				const failCount = previous?.failCount ?? 0;
-				// Paces itself and nothing more: a configured peer is exempt from eviction,
-				// so this probe must never become the evidence that evicts one.
-				this.redialBackoff.set(pid, {
-					nextAttempt: Date.now() + Math.min(30_000 * 2 ** failCount, 600_000),
-					failCount: failCount + 1,
-					firstFailure: previous?.firstFailure ?? Date.now(),
-					evictionFails: previous?.evictionFails ?? 0,
-				});
+				this.noteAddressProbeFailure(canonical);
 				trace(`[NET] parked configured bootstrap still failing: ${ma.toString()} — ${err?.message ?? err}`);
 			}
 		}

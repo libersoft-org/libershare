@@ -911,20 +911,26 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 describe('probeParkedConfiguredBootstraps', () => {
 	const PARKED = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
 
-	function bareNetwork(opts: { configured?: boolean; connections?: number } = {}) {
+	/** A second configured address of the SAME peer — the sibling finding 4 is about. */
+	const SIBLING = `/ip4/198.51.100.7/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork(opts: { configured?: boolean; addresses?: string[]; connectionAddrs?: string[]; failAddresses?: string[] } = {}) {
 		const dialed: string[] = [];
+		const addresses = opts.addresses ?? [PARKED];
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set(opts.configured === false ? [] : [PEER_ID]);
-		(network as any).configuredBootstrapAddresses = new Set(opts.configured === false ? [] : [normalizeMultiaddrForCompare(PARKED)]);
+		(network as any).configuredBootstrapAddresses = new Set(opts.configured === false ? [] : addresses.map(a => normalizeMultiaddrForCompare(a)));
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
-		(network as any).bootstrapMultiaddrs = [multiaddr(PARKED)];
+		(network as any).addressProbeBackoff = new Map();
+		(network as any).bootstrapMultiaddrs = addresses.map(a => multiaddr(a));
 		(network as any).node = {
-			getConnections: () => Array.from({ length: opts.connections ?? 0 }, () => ({})),
+			getConnections: () => (opts.connectionAddrs ?? []).map(a => ({ remoteAddr: { toString: () => a } })),
 			async dial(ma: { toString(): string }): Promise<void> {
 				dialed.push(ma.toString());
+				if (opts.failAddresses?.includes(ma.toString())) throw new Error('dial timeout');
 			},
 		};
 		return { network, dialed };
@@ -933,7 +939,7 @@ describe('probeParkedConfiguredBootstraps', () => {
 	const run = (network: Network): Promise<void> => (network as any).probeParkedConfiguredBootstraps(1);
 
 	it('probes a configured address even though we hold other connections', async () => {
-		const { network, dialed } = bareNetwork();
+		const { network, dialed } = bareNetwork({ connectionAddrs: [`/ip4/198.51.100.200/tcp/9090/p2p/${PEER_ID}`] });
 		await run(network);
 		expect(dialed).toEqual([multiaddr(PARKED).toString()]);
 	});
@@ -944,15 +950,20 @@ describe('probeParkedConfiguredBootstraps', () => {
 		expect(dialed).toEqual([]);
 	});
 
-	it('does not re-probe a peer that is already connected', async () => {
-		const { network, dialed } = bareNetwork({ connections: 1 });
+	/**
+	 * Only a connection ON THIS ENDPOINT answers what the probe asks. A connection to the
+	 * same peer over another address used to skip it — which is how a broken configured
+	 * entry kept looking fine for as long as the peer was reachable some other way.
+	 */
+	it('skips only when the existing connection is on this very address', async () => {
+		const { network, dialed } = bareNetwork({ connectionAddrs: [PARKED] });
 		await run(network);
 		expect(dialed).toEqual([]);
 	});
 
 	it('respects the backoff so a broken entry costs one dial per window', async () => {
 		const { network, dialed } = bareNetwork();
-		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000, failCount: 1, firstFailure: Date.now(), evictionFails: 0 }]]);
+		(network as any).addressProbeBackoff = new Map([[normalizeMultiaddrForCompare(PARKED), { nextAttempt: Date.now() + 60_000, failCount: 1 }]]);
 		await run(network);
 		expect(dialed).toEqual([]);
 	});
@@ -963,8 +974,41 @@ describe('probeParkedConfiguredBootstraps', () => {
 		await run(network);
 		expect(dialed).toEqual([]);
 	});
-});
 
+	/**
+	 * The backoff used to be keyed by PEER while the loop iterates by ADDRESS: the dead
+	 * address failed, the whole peer went into backoff, its working sibling was skipped
+	 * for the rest of the pass — and the next pass started at the dead one again, so the
+	 * sibling could go untried indefinitely.
+	 */
+	it('tries the sibling address of a peer whose other address just failed', async () => {
+		const { network, dialed } = bareNetwork({ addresses: [PARKED, SIBLING], failAddresses: [multiaddr(PARKED).toString()] });
+		await run(network);
+		expect(dialed).toEqual([multiaddr(PARKED).toString(), multiaddr(SIBLING).toString()]);
+	});
+
+	it('paces each address on its own record', async () => {
+		const { network } = bareNetwork({ addresses: [PARKED, SIBLING], failAddresses: [multiaddr(PARKED).toString()] });
+		await run(network);
+		const backoff = (network as any).addressProbeBackoff as Map<string, { failCount: number }>;
+		expect(backoff.has(normalizeMultiaddrForCompare(PARKED))).toBe(true);
+		expect(backoff.has(normalizeMultiaddrForCompare(SIBLING))).toBe(false);
+	});
+
+	/**
+	 * Without `force` libp2p hands back whatever connection it already holds to the peer,
+	 * so the probe would resolve without ever touching the address it is asking about.
+	 */
+	it('forces the dial so the address itself is contacted', async () => {
+		const forced: boolean[] = [];
+		const { network } = bareNetwork();
+		(network as any).node.dial = async (_ma: unknown, opts?: { force?: boolean }): Promise<void> => {
+			forced.push(opts?.force === true);
+		};
+		await run(network);
+		expect(forced).toEqual([true]);
+	});
+});
 /**
  * One peer can hold a configured address AND a gossip-learned one at the same time.
  * Deciding "is this configured" from the peer id let the gossip-learned sibling
