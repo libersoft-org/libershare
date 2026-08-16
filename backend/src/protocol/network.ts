@@ -642,6 +642,11 @@ export class Network {
 			this.recentDisconnects.push({ ts: Date.now(), peerID, remaining, wasBootstrap });
 			if (this.recentDisconnects.length > Network.NET_CHURN_BUFFER) this.recentDisconnects.shift();
 			trace(`[NET-DISC] peer=${peerID.slice(0, 16)} remaining=${remaining} bootstrap=${wasBootstrap}`);
+			// Start the reconnect grace here rather than leaving it on whatever the last
+			// announce tick happened to stamp — at saturation that tick is further apart
+			// than the grace itself, so a peer subscribed the whole time could drop
+			// already outside it. Only peers a topic already lists are touched.
+			this.peerAnnounce.touchKnownMember(peerID);
 			// Fix C: clear per-peer state on disconnect to prevent unbounded growth
 			this.dcutrPeers.delete(peerID);
 			// `@chainsafe/libp2p-gossipsub` v14 removes the peer from `this.mesh`

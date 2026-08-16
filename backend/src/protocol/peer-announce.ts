@@ -155,6 +155,23 @@ export class PeerAnnounceManager {
 	}
 
 	/**
+	 * Re-stamp a peer in every topic that already lists it — never adding it to one.
+	 *
+	 * Called when the peer disconnects, which is exactly when the reconnect grace the
+	 * listing gate reads from these stamps has to start. Otherwise the stamps only
+	 * advance on the announce tick, whose interval scales with peerStore size and at
+	 * saturation runs longer than that grace window: a peer subscribed continuously for
+	 * hours could drop carrying a stamp already too old to be of any use. Restricting
+	 * this to peers a topic already lists keeps the grace to subscriptions we saw.
+	 */
+	touchKnownMember(peerID: string): void {
+		const now = monotonicNow();
+		for (const members of this.topicMembers.values()) {
+			if (members.has(peerID)) members.set(peerID, now);
+		}
+	}
+
+	/**
 	 * Record the current subscribers of each joined topic and drop entries older than
 	 * {@link PEER_ANNOUNCE_MEMBER_TTL_MS}. Split out of the announce broadcast so it
 	 * still runs on a node too small to advertise itself — readers of the membership

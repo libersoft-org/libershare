@@ -205,6 +205,36 @@ describe('PeerAnnounceManager topic membership', () => {
 		}
 	});
 
+	it('restarts the grace window at disconnect for a known member', async () => {
+		// The announce tick is what otherwise advances these stamps, and at saturation it
+		// runs 135-225s apart — longer than the 60s window the listing gate reads, so a
+		// continuously-subscribed peer could drop with a stamp already too old to help.
+		const realPerfNow = performance.now.bind(performance);
+		try {
+			let mono = 5_000;
+			performance.now = () => mono;
+			const { mgr } = makeManager(['peer-b'], 2);
+			await tick(mgr);
+			mono += 300_000; // one saturated announce gap and then some
+			expect(mgr.getRecentMembers(TOPIC, 60_000)).toEqual([]);
+
+			mgr.touchKnownMember('peer-b');
+
+			expect(mgr.getRecentMembers(TOPIC, 60_000)).toEqual(['peer-b']);
+		} finally {
+			performance.now = realPerfNow;
+		}
+	});
+
+	it('does not make a stranger a member on disconnect', async () => {
+		const { mgr } = makeManager(['peer-b'], 2);
+		await tick(mgr);
+
+		mgr.touchKnownMember('peer-stranger');
+
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-b']);
+	});
+
 	it('forgets every membership on stop', async () => {
 		// Network reuses the same manager across stop/start, so a membership carried over
 		// would authorize a peer on a node that has not even reconnected to it yet.
