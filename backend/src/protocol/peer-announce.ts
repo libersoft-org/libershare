@@ -85,6 +85,14 @@ export class PeerAnnounceManager {
 	private timer: NodeJS.Timeout | null = null;
 	private stopped = false;
 	/**
+	 * Bumped by every start() and stop(). A scheduling pass captures it and drops out
+	 * once it no longer matches: `stopped` alone cannot tell an old pass apart from a
+	 * new one, so a pass suspended on peerStore.all() across a stop()/start() would
+	 * wake up believing it is still current and install a SECOND timer over
+	 * {@link timer} — leaving the first one running and unreachable by stop().
+	 */
+	private generation = 0;
+	/**
 	 * Per-topic recently-seen subscribers (peerID → last-seen ms). Lets a
 	 * momentarily-disconnected same-network peer stay an eligible transitive-announce
 	 * target (see PEER_ANNOUNCE_MEMBER_TTL_MS) without ever admitting a peer of
@@ -157,18 +165,27 @@ export class PeerAnnounceManager {
 	/** Start the periodic emitter. Safe to call only once per start/stop cycle. */
 	start(): void {
 		this.stopped = false;
-		this.scheduleNext().catch(() => {
+		const generation = ++this.generation;
+		this.scheduleNext(generation).catch(() => {
 			/* first-tick scheduling failure would leave emitter stopped — acceptable fallback */
 		});
 	}
 
-	/** Stop the emitter. Idempotent. Any in-flight tick will not reschedule. */
+	/**
+	 * Stop the emitter. Idempotent. Any in-flight tick will not reschedule, including
+	 * one suspended mid-await when a new start() follows immediately.
+	 *
+	 * Also drops the membership cache: it describes who was on our topics during the
+	 * lifetime that just ended, and leave-network reads it to decide whom to hang up.
+	 */
 	stop(): void {
 		this.stopped = true;
+		this.generation++;
 		if (this.timer) {
 			clearTimeout(this.timer);
 			this.timer = null;
 		}
+		this.topicMembers.clear();
 	}
 
 	/** Handle an inbound peer-announce pubsub message. */
@@ -220,8 +237,8 @@ export class PeerAnnounceManager {
 		await this.deps.addBootstrapPeers(filtered, networkID, 'discovered');
 	}
 
-	private async scheduleNext(): Promise<void> {
-		if (this.stopped) return;
+	private async scheduleNext(generation: number): Promise<void> {
+		if (this.stopped || generation !== this.generation) return;
 		const node = this.deps.getNode();
 		const pubsub = this.deps.getPubsub();
 		if (!node || !pubsub) return;
@@ -235,20 +252,20 @@ export class PeerAnnounceManager {
 		} catch {
 			base = PEER_ANNOUNCE_INTERVAL_STEADY_MS;
 		}
-		if (this.stopped) return;
+		if (this.stopped || generation !== this.generation) return;
 		const jitter = Math.floor((Math.random() * 2 - 1) * base * PEER_ANNOUNCE_JITTER_RATIO);
 		const delay = Math.max(5_000, base + jitter);
 		this.timer = setTimeout(async () => {
-			// Guard: stop() may have been called while we were sleeping.
-			if (this.stopped) return;
+			// Guard: stop() (and possibly a new start()) may have landed while we slept.
+			if (this.stopped || generation !== this.generation) return;
 			try {
 				await this.emit();
 			} catch (err: any) {
 				trace(`[NET] peer-announce emit error: ${err?.message ?? err}`);
 			}
 			// Guard again before scheduling the next tick.
-			if (this.stopped) return;
-			this.scheduleNext().catch(() => {
+			if (this.stopped || generation !== this.generation) return;
+			this.scheduleNext(generation).catch(() => {
 				/* schedule is async but errors handled inline */
 			});
 		}, delay);

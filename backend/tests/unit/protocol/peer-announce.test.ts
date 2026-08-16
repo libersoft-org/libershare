@@ -229,3 +229,64 @@ describe('PeerAnnounceManager.emit recently-seen membership', () => {
 		}
 	});
 });
+
+/**
+ * Fast stop/start must not leave a second, unreachable timer behind.
+ *
+ * The scheduling pass suspends on `peerStore.all()`. A stop() during that await
+ * followed immediately by a start() (identity import, factory reset) used to let
+ * the OLD pass resume, see `stopped === false` again and install its timer over the
+ * new pass's — the overwritten one keeps firing and no stop() can ever clear it.
+ */
+describe('PeerAnnounceManager stop/start', () => {
+	it('leaves exactly one live timer after a stop/start across a pending await', async () => {
+		let releaseAll: (() => void) | null = null;
+		const gate = new Promise<void>(resolve => {
+			releaseAll = resolve;
+		});
+		const node = {
+			peerId: { toString: () => SELF_ID },
+			getMultiaddrs: () => [],
+			peerStore: {
+				all: async () => {
+					await gate;
+					return [];
+				},
+			},
+		};
+		const { mgr } = buildManager(node, { getTopics: () => [], getSubscribers: () => [] });
+
+		const realSetTimeout = globalThis.setTimeout;
+		const scheduled: object[] = [];
+		globalThis.setTimeout = ((): any => {
+			const handle = {};
+			scheduled.push(handle);
+			return handle;
+		}) as any;
+		try {
+			mgr.start(); // pass A suspends on peerStore.all()
+			mgr.stop();
+			mgr.start(); // pass B suspends on the same gate
+			releaseAll!();
+			// Two microtask drains: one per suspended pass.
+			await Promise.resolve();
+			await Promise.resolve();
+			await Promise.resolve();
+		} finally {
+			globalThis.setTimeout = realSetTimeout;
+		}
+
+		expect(scheduled).toHaveLength(1);
+		expect((mgr as any).timer).toBe(scheduled[0]);
+	});
+
+	it('forgets topic membership of the lifetime that ended', () => {
+		const { mgr } = buildManager(null, null);
+		mgr.noteMember(TOPIC_A, PA_ID);
+		expect(mgr.getRecentMembers(TOPIC_A)).toEqual([PA_ID]);
+
+		mgr.stop();
+
+		expect(mgr.getRecentMembers(TOPIC_A)).toEqual([]);
+	});
+});
