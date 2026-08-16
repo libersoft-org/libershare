@@ -447,9 +447,13 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			const stillJoined = joinedNetworks.filter(id => networks.isJoined(id));
 			if (stillJoined.length === 0) {
 				console.log(`[Transfer] ${p.lishID.slice(0, 8)}: lishnet left while starting, suspending download`);
-				await downloader.destroy();
+				// File the resume claim BEFORE tearing the downloader down. destroy()
+				// yields, and a re-join landing in that window walks networkSuspended to
+				// decide what to resume — an entry inserted afterwards misses the event
+				// entirely and the download stays suspended until the next toggle.
 				downloadEnabledLishs.delete(p.lishID);
 				networkSuspended.set(p.lishID, new Set(joinedNetworks));
+				await downloader.destroy();
 				return { success: false };
 			}
 			for (const id of joinedNetworks) if (!stillJoined.includes(id)) downloader.removeNetwork?.(id);
