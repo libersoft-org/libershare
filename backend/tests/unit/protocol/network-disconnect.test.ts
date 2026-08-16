@@ -189,6 +189,8 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		(network as any).recentDisconnects = [];
 		(network as any).bootstrapTracker = { entries: () => [] };
 		(network as any).node = {
+			// Recovery reads connectivity itself rather than trusting the tick's snapshot.
+			getPeers: () => [],
 			async dial(ma: { toString(): string }): Promise<void> {
 				dialed.push(ma.toString());
 			},
@@ -196,12 +198,12 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		return { network, dialed };
 	}
 
-	const run = (network: Network, connected: any[]): Promise<void> => (network as any).runZeroConnectionRecovery(connected);
+	const run = (network: Network): Promise<void> => (network as any).runZeroConnectionRecovery();
 
 	it('does not dial a bootstrap peer suppressed by leave-network', async () => {
 		const ma = `/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`;
 		const { network, dialed } = bareNetwork([PEER_ID], [ma]);
-		await run(network, []);
+		await run(network);
 		expect(dialed).toEqual([]);
 	});
 
@@ -215,7 +217,7 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		const ma = `/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`;
 		const { network, dialed } = bareNetwork([], [ma]);
 		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000 }]]);
-		await run(network, []);
+		await run(network);
 		expect(dialed).toEqual([]);
 	});
 
@@ -225,7 +227,7 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000 }]]);
 		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
 		(network as any).configuredBootstrapAddresses = new Set([normalizeMultiaddrForCompare(multiaddr(ma).toString())]);
-		await run(network, []);
+		await run(network);
 		expect(dialed).toEqual([multiaddr(ma).toString()]);
 	});
 
@@ -233,14 +235,14 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		const ma = `/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`;
 		const { network, dialed } = bareNetwork([], [ma]);
 		(network as any).unreachableQuarantine = new Map([[PEER_ID, Date.now() - 60_000]]);
-		await run(network, []);
+		await run(network);
 		expect(dialed).toEqual([]);
 	});
 
 	it('still dials a non-suppressed bootstrap peer', async () => {
 		const ma = `/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`;
 		const { network, dialed } = bareNetwork([], [ma]);
-		await run(network, []);
+		await run(network);
 		expect(dialed).toEqual([multiaddr(ma).toString()]);
 	});
 });

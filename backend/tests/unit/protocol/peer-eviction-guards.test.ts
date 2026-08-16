@@ -1006,7 +1006,7 @@ describe('configured origin is a property of the address, not the peer', () => {
 		const { network, dialed } = bareNetwork();
 		(network as any).bootstrapMultiaddrs = [multiaddr(DISCOVERED)];
 		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000, failCount: 1, firstFailure: Date.now(), evictionFails: 0 }]]);
-		await (network as any).runZeroConnectionRecovery([]);
+		await (network as any).runZeroConnectionRecovery();
 		expect(dialed).toEqual([]);
 	});
 
@@ -1014,7 +1014,7 @@ describe('configured origin is a property of the address, not the peer', () => {
 		const { network, dialed } = bareNetwork();
 		(network as any).bootstrapMultiaddrs = [multiaddr(CONFIGURED)];
 		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000, failCount: 1, firstFailure: Date.now(), evictionFails: 0 }]]);
-		await (network as any).runZeroConnectionRecovery([]);
+		await (network as any).runZeroConnectionRecovery();
 		expect(dialed).toEqual([multiaddr(CONFIGURED).toString()]);
 	});
 
@@ -1086,5 +1086,68 @@ describe('Network.stop — per-run state really is per run', () => {
 
 		for (const timer of armed) expect(cleared).toContain(timer);
 		expect((network as any).delayedPeerCountTimers.size).toBe(0);
+	});
+});
+
+describe('runZeroConnectionRecovery — connectivity is read, not remembered', () => {
+	const ADDR_A = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+	const PEER_B = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fp';
+	const ADDR_B = `/ip4/203.0.113.10/tcp/9090/p2p/${PEER_B}`;
+
+	function bareNetwork(opts: { addresses?: string[]; peers?: () => unknown[]; onDial?: (address: string) => void } = {}) {
+		const dialed: string[] = [];
+		// The churn dump is the first thing the loop does, so it witnesses whether the
+		// isolation check at the top of the function ran at all — a later check inside the
+		// loop would already have let the misleading "No connections" report out.
+		let churnDumps = 0;
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).addressProbeBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).bootstrapMultiaddrs = (opts.addresses ?? [ADDR_A]).map(a => multiaddr(a));
+		(network as any).recentDisconnects = [];
+		(network as any).bootstrapTracker = {
+			entries: () => {
+				churnDumps++;
+				return [];
+			},
+		};
+		(network as any).node = {
+			getPeers: opts.peers ?? ((): unknown[] => []),
+			async dial(ma: { toString(): string }): Promise<void> {
+				dialed.push(ma.toString());
+				opts.onDial?.(ma.toString());
+			},
+		};
+		return { network, dialed, churn: () => churnDumps };
+	}
+
+	const run = (network: Network): Promise<void> => (network as any).runZeroConnectionRecovery(1);
+
+	it('does not dial at all when a peer connected since the tick began', async () => {
+		const { network, dialed, churn } = bareNetwork({ peers: () => [{ toString: () => PEER_B }] });
+		await run(network);
+		expect(dialed).toEqual([]);
+		expect(churn()).toBe(0);
+	});
+
+	it('stops the pass as soon as a connection exists', async () => {
+		// The first dial fails, but an inbound connection lands during it; the second
+		// address must not be tried, because the node is no longer isolated.
+		let connected = false;
+		const { network, dialed } = bareNetwork({
+			addresses: [ADDR_A, ADDR_B],
+			peers: (): unknown[] => (connected ? [{ toString: () => PEER_B }] : []),
+			onDial: () => {
+				connected = true;
+				throw new Error('dial timeout');
+			},
+		});
+		await run(network);
+		expect(dialed).toEqual([multiaddr(ADDR_A).toString()]);
 	});
 });

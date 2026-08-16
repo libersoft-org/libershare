@@ -917,7 +917,7 @@ export class Network {
 				this.checkPeerCounts();
 				await this.runRedialMaintenance(connectedPeers, allPeers, epoch);
 				if (epoch !== this.runEpoch) return;
-				await this.runZeroConnectionRecovery(connectedPeers, epoch);
+				await this.runZeroConnectionRecovery(epoch);
 				if (epoch !== this.runEpoch) return;
 				await this.maybePromotePeers(epoch);
 				if (epoch !== this.runEpoch) return;
@@ -1150,10 +1150,13 @@ export class Network {
 		for (const [pid, ts] of this.unreachableQuarantine) if (ts < quarantineCutoff) this.unreachableQuarantine.delete(pid);
 	}
 
-	private async runZeroConnectionRecovery(connectedPeers: any[], epoch: number = this.runEpoch): Promise<void> {
+	private async runZeroConnectionRecovery(epoch: number = this.runEpoch): Promise<void> {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return;
-		if (!AUTODIAL_WORKAROUND || connectedPeers.length !== 0 || this.bootstrapMultiaddrs.length === 0) return;
+		// Read connectivity here rather than trusting the snapshot the status tick opened
+		// with: re-dial maintenance runs in between and may already have reconnected us,
+		// in which case the node is not isolated and every dial below is pure churn.
+		if (!AUTODIAL_WORKAROUND || node.getPeers().length !== 0 || this.bootstrapMultiaddrs.length === 0) return;
 		console.log(`   ⚠️  No connections - dialing ${this.bootstrapMultiaddrs.length} bootstrap peer(s) directly...`);
 		// [NET-CHURN] dump: who left in the run-up to this zero-connection
 		// state, and what each configured bootstrap entry's last dial outcome
@@ -1192,6 +1195,10 @@ export class Network {
 			// Each dial awaits for up to 10s, so a stop() can land mid-loop; the
 			// remaining dials belong to a node this run no longer owns.
 			if (epoch !== this.runEpoch) return;
+			// The whole point of this loop is isolation. A dial from an earlier pass that
+			// resolved late, or an inbound connection, ends it — carrying on would open
+			// connections the node no longer needs.
+			if (node.getPeers().length > 0) return;
 			try {
 				console.log(`   → Dialing ${maStr}`);
 				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
