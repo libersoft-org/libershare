@@ -12,8 +12,13 @@
  */
 import { test, expect } from 'bun:test';
 import { get } from 'svelte/store';
-import { networkState, unknownNetworkState } from '../../src/scripts/networkState.ts';
-import type { NetworkStateInfo } from '@shared';
+import { isJoinable, networkState, unknownNetworkState } from '../../src/scripts/networkState.ts';
+import type { NetworkStateInfo, NetWifiNetwork } from '@shared';
+
+/** One row of a Wi-Fi scan result. */
+function wifi(overrides: Partial<NetWifiNetwork> = {}): NetWifiNetwork {
+	return { ssid: 'Example Net', signal: 70, secured: true, active: false, ...overrides };
+}
 
 /** A settled snapshot of a host that can be reconfigured. */
 function liveState(): NetworkStateInfo {
@@ -52,6 +57,21 @@ test('resetting to unknown drops the capabilities a failed read can no longer vo
 	expect(after.capabilities).toEqual({ ipv4: false, wifi: false });
 	expect(after.interfaces).toEqual([]);
 	expect(after.known).toBe(false);
+});
+
+test('a scanned network is joinable when nothing else is running', () => {
+	expect(isJoinable(wifi(), { busy: false, scanning: false })).toBe(true);
+});
+
+test('a scanned network is not joinable while a scan is running', () => {
+	// The scan button was disabled during a sweep but the result rows were not, so
+	// a join could be started on the radio that was mid-scan — and the backend
+	// does not serialise the two either, the scan being outside the apply lock.
+	expect(isJoinable(wifi(), { busy: false, scanning: true })).toBe(false);
+});
+
+test('a scanned network is not joinable while an apply or join is in flight', () => {
+	expect(isJoinable(wifi(), { busy: true, scanning: false })).toBe(false);
 });
 
 test('merely clearing known would have left the stale list and capabilities behind', () => {

@@ -63,6 +63,19 @@ export async function applyInterfaceConfig(interfaceID: string, config: NetIPv4C
 	networkState.set(await api.call<NetworkStateInfo>('system.networkApply', { interfaceID, config }));
 }
 
+/**
+ * Whether a scanned Wi-Fi row may be acted on right now.
+ *
+ * `busy` covers an apply or a join already in flight. `scanning` matters just as
+ * much and used to be missed: the scan button was disabled during a sweep but
+ * the result rows were not, so a user could start a join on the same radio that
+ * was mid-scan — and the backend does not serialise the two either, because the
+ * scan is outside the apply lock.
+ */
+export function isJoinable(_network: NetWifiNetwork, state: { busy: boolean; scanning: boolean }): boolean {
+	return !state.busy && !state.scanning;
+}
+
 /** Scan for Wi-Fi networks reachable from one interface. */
 export function scanWifiNetworks(interfaceID: string): Promise<NetWifiNetwork[]> {
 	return api.call<NetWifiNetwork[]>('system.wifiScan', { interfaceID });
