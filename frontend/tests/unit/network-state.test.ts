@@ -74,6 +74,13 @@ test('a scanned network is not joinable while an apply or join is in flight', ()
 	expect(isJoinable(wifi(), { busy: true, scanning: false })).toBe(false);
 });
 
+test('the network already in use is not joinable again', () => {
+	// A join rewrites the stored profile before it associates, so re-selecting the
+	// row that already carries the check mark would replace a working saved
+	// network's configuration to end up exactly where it started.
+	expect(isJoinable(wifi({ active: true }), { busy: false, scanning: false })).toBe(false);
+});
+
 test('merely clearing known would have left the stale list and capabilities behind', () => {
 	// The shape of the old bug, kept as a negative control: this is what the
 	// screen used to be handed after a backend restart.

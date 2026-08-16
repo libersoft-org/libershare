@@ -71,9 +71,15 @@ export async function applyInterfaceConfig(interfaceID: string, config: NetIPv4C
  * the result rows were not, so a user could start a join on the same radio that
  * was mid-scan — and the backend does not serialise the two either, because the
  * scan is outside the apply lock.
+ *
+ * The network the interface is already ON is not joinable either. Re-selecting
+ * it has nothing to gain and a great deal to lose: on Windows a join rewrites
+ * the stored profile before it associates, so pressing the row the check mark is
+ * already against would replace a working saved network's configuration in order
+ * to arrive back where it started.
  */
-export function isJoinable(_network: NetWifiNetwork, state: { busy: boolean; scanning: boolean }): boolean {
-	return !state.busy && !state.scanning;
+export function isJoinable(network: NetWifiNetwork, state: { busy: boolean; scanning: boolean }): boolean {
+	return !state.busy && !state.scanning && !network.active;
 }
 
 /** Scan for Wi-Fi networks reachable from one interface. */
