@@ -27,6 +27,17 @@ import { getLocalCidrs, shouldDenyDial, extractFirstIPv4 } from './address-filte
 import { peerIdFromString } from '@libp2p/peer-id';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 
+/**
+ * How long libp2p keeps a peer in its peerStore without hearing from it.
+ *
+ * Exported because the bootstrap registry has to age its own entries out on the
+ * same clock: past this point libp2p has itself forgotten the peer, so re-dial
+ * maintenance — which walks the peerStore — can no longer produce or evict an
+ * entry for it, and anything still on the recovery list is an orphan nothing
+ * else will ever clean up.
+ */
+export const PEERSTORE_MAX_PEER_AGE_MS = 7_200_000;
+
 /** A gossipsub direct-peer entry: a peer id and its multiaddrs. */
 export interface DirectPeer {
 	id: any;
@@ -239,7 +250,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			// writing to closed streams (100+/h), which in turn prevented
 			// SUBSCRIBE RPC propagation → fragmented pubsub mesh.
 			maxAddressAge: 1_800_000, // 30 min (default 3_600_000 = 1h)
-			maxPeerAge: 7_200_000, // 2h (default 21_600_000 = 6h)
+			maxPeerAge: PEERSTORE_MAX_PEER_AGE_MS, // 2h (default 21_600_000 = 6h)
 		},
 		services: {
 			identify: identify(),
