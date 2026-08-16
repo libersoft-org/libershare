@@ -195,6 +195,19 @@ describe('BootstrapStatusTracker.sweepStale', () => {
 	// The short sleep only guarantees a measurable gap between the two writes.
 	const clockOf = (tracker: BootstrapStatusTracker): string => tracker.getStatus(NET)!.peers[0]!.updatedAt;
 
+	it('does not let a re-mention refresh the staleness clock', async () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
+		const outcomeAt = clockOf(tracker);
+		await Bun.sleep(5);
+
+		tracker.markPending(NET, DEAD_ADDR, DEAD_ID, 'discovered'); // gossip mentions it again
+
+		expect(clockOf(tracker)).toBe(outcomeAt); // clock untouched by the mention
+		tracker.sweepStale(TTL, () => false, Date.parse(outcomeAt) + TTL + 2);
+		expect(tracker.getStatus(NET)).toBe(null); // ages out from the last real outcome
+	});
+
 	it('lets a real dial outcome refresh the clock', async () => {
 		const tracker = new BootstrapStatusTracker();
 		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');

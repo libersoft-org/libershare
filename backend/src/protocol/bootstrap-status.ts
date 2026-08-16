@@ -132,7 +132,14 @@ export class BootstrapStatusTracker {
 		// the same multiaddr must not downgrade it to 'discovered'.
 		const previous = net.get(multiaddr);
 		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
-		net.set(multiaddr, { multiaddr, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: null, lastError: null, updatedAt: new Date().toISOString() });
+		// Keep the existing staleness clock (see sweepStale). Reaching this point means
+		// someone MENTIONED the peer again — gossip repeating an address it still
+		// remembers — which is evidence about the announcer, not about the peer. Letting
+		// a mention move the clock made a dead peer's row immortal: every announce cycle
+		// is far shorter than the sweep TTL, so the row was refreshed long before it
+		// could expire, no matter how many dials to it had already failed. Only a dial
+		// that actually produced an outcome advances it, in recordOutcome below.
+		net.set(multiaddr, { multiaddr, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: null, lastError: null, updatedAt: previous?.updatedAt ?? new Date().toISOString() });
 		this.capDiscovered(net);
 		this.notify(networkID);
 	}
