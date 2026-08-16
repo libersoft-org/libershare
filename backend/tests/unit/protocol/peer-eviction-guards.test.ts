@@ -821,21 +821,33 @@ describe('addBootstrapPeers — quarantine after the probe it allowed', () => {
  */
 describe('isRecoveryDialDue', () => {
 	const now = 1_000_000;
+	const KEY = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+	const SIBLING = `/ip4/198.51.100.7/tcp/9090/p2p/${PEER_ID}`;
 	const none = new Map<string, number>();
 	const noBackoff = new Map<string, { nextAttempt: number }>();
 
-	it('allows a peer with no backoff and no quarantine', () => {
-		expect(isRecoveryDialDue(PEER_ID, now, noBackoff, none)).toBe(true);
+	it('allows an address with no backoff and no quarantine', () => {
+		expect(isRecoveryDialDue(KEY, PEER_ID, now, noBackoff, none)).toBe(true);
 	});
 
-	it('holds a peer back inside its backoff window and releases it after', () => {
-		expect(isRecoveryDialDue(PEER_ID, now, new Map([[PEER_ID, { nextAttempt: now + 1 }]]), none)).toBe(false);
-		expect(isRecoveryDialDue(PEER_ID, now, new Map([[PEER_ID, { nextAttempt: now }]]), none)).toBe(true);
+	it('holds an address back inside its backoff window and releases it after', () => {
+		expect(isRecoveryDialDue(KEY, PEER_ID, now, new Map([[KEY, { nextAttempt: now + 1 }]]), none)).toBe(false);
+		expect(isRecoveryDialDue(KEY, PEER_ID, now, new Map([[KEY, { nextAttempt: now }]]), none)).toBe(true);
+	});
+
+	it('paces the failing address only, not a sibling address of the same peer', () => {
+		const backoff = new Map([[KEY, { nextAttempt: now + 60_000 }]]);
+		expect(isRecoveryDialDue(KEY, PEER_ID, now, backoff, none)).toBe(false);
+		expect(isRecoveryDialDue(SIBLING, PEER_ID, now, backoff, none)).toBe(true);
 	});
 
 	it('holds a quarantined peer back until the window passes', () => {
-		expect(isRecoveryDialDue(PEER_ID, now, noBackoff, new Map([[PEER_ID, now - 60_000]]))).toBe(false);
-		expect(isRecoveryDialDue(PEER_ID, now, noBackoff, new Map([[PEER_ID, now - 10 * 60 * 60_000]]))).toBe(true);
+		expect(isRecoveryDialDue(KEY, PEER_ID, now, noBackoff, new Map([[PEER_ID, now - 60_000]]))).toBe(false);
+		expect(isRecoveryDialDue(KEY, PEER_ID, now, noBackoff, new Map([[PEER_ID, now - 10 * 60 * 60_000]]))).toBe(true);
+	});
+
+	it('cannot quarantine an address that carries no peer id', () => {
+		expect(isRecoveryDialDue('/ip4/203.0.113.9/tcp/9090', null, now, noBackoff, new Map([[PEER_ID, now]]))).toBe(true);
 	});
 });
 
@@ -955,7 +967,7 @@ describe('probeParkedConfiguredBootstraps', () => {
 
 	it('respects the backoff so a broken entry costs one dial per window', async () => {
 		const { network, dialed } = bareNetwork();
-		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000, failCount: 1, firstFailure: Date.now(), evictionFails: 0 }]]);
+		(network as any).recoveryBackoff = new Map([[normalizeMultiaddrForCompare(PARKED), { nextAttempt: Date.now() + 60_000, failCount: 1 }]]);
 		await run(network);
 		expect(dialed).toEqual([]);
 	});
@@ -1007,15 +1019,16 @@ describe('configured origin is a property of the address, not the peer', () => {
 		// the configured exemption its sibling address owns.
 		const { network, dialed } = bareNetwork();
 		installBootstrapRegistry(network, [{ address: DISCOVERED }]);
-		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000, failCount: 1, firstFailure: Date.now(), evictionFails: 0 }]]);
+		(network as any).recoveryBackoff = new Map([[normalizeMultiaddrForCompare(DISCOVERED), { nextAttempt: Date.now() + 60_000, failCount: 1 }]]);
 		await (network as any).runZeroConnectionRecovery([]);
 		expect(dialed).toEqual([]);
 	});
 
-	it('still lets the configured address through the same backoff', async () => {
+	it('does not let a dead address pace out its working sibling', async () => {
+		// The peer's discovered address failed and is backed off; the configured one has
+		// never failed. Keying the pacing per peer would silence both.
 		const { network, dialed } = bareNetwork();
-		installBootstrapRegistry(network, [{ address: CONFIGURED, configuredBy: ['net-a'] }]);
-		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000, failCount: 1, firstFailure: Date.now(), evictionFails: 0 }]]);
+		(network as any).recoveryBackoff = new Map([[normalizeMultiaddrForCompare(DISCOVERED), { nextAttempt: Date.now() + 60_000, failCount: 1 }]]);
 		await (network as any).runZeroConnectionRecovery([]);
 		expect(dialed).toEqual([multiaddr(CONFIGURED).toString()]);
 	});

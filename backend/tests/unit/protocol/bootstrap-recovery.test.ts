@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
-import { Network, bootstrapEntryLastActivity, normalizeMultiaddrForCompare, orderBootstrapEntriesForRecovery, pruneBootstrapEntries, type IBootstrapEntry } from '../../../src/protocol/network.ts';
+import { Network, bootstrapEntryLastActivity, nextRecoveryBackoff, normalizeMultiaddrForCompare, orderBootstrapEntriesForRecovery, pruneBootstrapEntries, type IBootstrapEntry } from '../../../src/protocol/network.ts';
 import { installBootstrapRegistry, registryAddresses, type IRegistrySeed } from '../helpers/bootstrap-registry.ts';
 
 /**
@@ -33,6 +33,7 @@ function bareNetwork(opts: { seeds?: IRegistrySeed[]; suppressed?: string[]; liv
 	const network = Object.create(Network.prototype) as Network;
 	(network as any).runEpoch = 1;
 	(network as any).redialBackoff = new Map();
+	(network as any).recoveryBackoff = new Map();
 	(network as any).unreachableQuarantine = new Map();
 	(network as any).configuredBootstrapPeerIDs = new Set<string>();
 	(network as any).bootstrapGeneration = new Map();
@@ -142,6 +143,34 @@ describe('bootstrap registry — identity mismatch', () => {
 		dialed.length = 0;
 		await (network as any).runZeroConnectionRecovery([]);
 		expect(dialed).toEqual([]);
+	});
+});
+
+describe('Network.runZeroConnectionRecovery — per-address pacing', () => {
+	it('paces the address that failed, not its working sibling', async () => {
+		const { network, dialed, run } = bareNetwork({ seeds: [{ address: ADDR_A }, { address: ADDR_A2 }], failDial: true });
+		(network as any).recoveryBackoff.set(key(ADDR_A), { nextAttempt: Date.now() + 60_000, failCount: 1 });
+		await run();
+		expect(dialed).toEqual([multiaddr(ADDR_A2).toString()]);
+	});
+
+	it('records an address backoff after a failed dial so the next pass skips it', async () => {
+		const { network, dialed, run } = bareNetwork({ seeds: [{ address: ADDR_A }], failDial: true });
+		await run();
+		expect(dialed.length).toBe(1);
+		const backoff = (network as any).recoveryBackoff.get(key(ADDR_A));
+		expect(backoff.failCount).toBe(1);
+		expect(backoff.nextAttempt).toBeGreaterThan(Date.now());
+		dialed.length = 0;
+		await run();
+		expect(dialed).toEqual([]);
+	});
+
+	it('clears the address backoff after a successful dial', async () => {
+		const { network, run } = bareNetwork({ seeds: [{ address: ADDR_A }] });
+		(network as any).recoveryBackoff.set(key(ADDR_A), { nextAttempt: Date.now() - 1, failCount: 3 });
+		await run();
+		expect((network as any).recoveryBackoff.has(key(ADDR_A))).toBe(false);
 	});
 });
 
@@ -265,5 +294,26 @@ describe('orderBootstrapEntriesForRecovery', () => {
 			{ configuredBy: new Set(['net-b']), tag: 'c2' },
 		];
 		expect(orderBootstrapEntriesForRecovery(entries).map(e => e.tag)).toEqual(['c1', 'c2', 'd1', 'd2']);
+	});
+});
+
+describe('nextRecoveryBackoff', () => {
+	it('doubles the delay per consecutive failure of the same address', () => {
+		expect(nextRecoveryBackoff(0, 0, false)).toEqual({ nextAttempt: 30_000, failCount: 1 });
+		expect(nextRecoveryBackoff(1, 0, false)).toEqual({ nextAttempt: 60_000, failCount: 2 });
+		expect(nextRecoveryBackoff(2, 0, false)).toEqual({ nextAttempt: 120_000, failCount: 3 });
+	});
+
+	it('caps a discovered address at 10 minutes', () => {
+		expect(nextRecoveryBackoff(20, 0, false).nextAttempt).toBe(600_000);
+	});
+
+	/**
+	 * A configured address is the user's designated way back in, so it is retried far
+	 * more briskly than a gossip claim — but it is still paced, or a handful of dead
+	 * configured entries would eat every recovery pass at 10 s apiece.
+	 */
+	it('caps a configured address at 2 minutes instead', () => {
+		expect(nextRecoveryBackoff(20, 0, true).nextAttempt).toBe(120_000);
 	});
 });

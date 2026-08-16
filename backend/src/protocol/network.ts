@@ -131,17 +131,24 @@ const UNREACHABLE_QUARANTINE_MS = 30 * 60_000;
  * connection came back.
  */
 /**
- * Whether zero-connection recovery may dial a DISCOVERED address this tick.
+ * Whether a bootstrap ADDRESS may be dialed this tick by one of the address-level
+ * loops (zero-connection recovery, parked-configured probe).
  *
- * It answers with the two records re-dial maintenance already keeps: a peer inside its
- * backoff window waits for it to expire, and one still inside its unreachable
- * quarantine stays down. Both are delays, never permanent bans — the point is only
- * that the recovery loop must not undo the pacing the other loop just applied.
+ * Two records answer it, and they are deliberately keyed differently. The
+ * unreachable quarantine is a statement about the PEER — it was evicted, and
+ * nothing it owns should be dialed until the window lapses. The backoff is a
+ * statement about this ENDPOINT: keying it per peer would let one dead address
+ * of a multi-homed peer pace out a sibling address that answers perfectly well.
+ *
+ * Both are delays, never permanent bans — the point is only that these loops must
+ * not undo the pacing an earlier failure just applied.
  */
-export function isRecoveryDialDue(peerID: string, now: number, redialBackoff: ReadonlyMap<string, { nextAttempt: number }>, quarantine: ReadonlyMap<string, number>): boolean {
-	const quarantinedAt = quarantine.get(peerID);
-	if (quarantinedAt !== undefined && now - quarantinedAt < UNREACHABLE_QUARANTINE_MS) return false;
-	const backoff = redialBackoff.get(peerID);
+export function isRecoveryDialDue(addressKey: string, peerID: string | null, now: number, addressBackoff: ReadonlyMap<string, { nextAttempt: number }>, quarantine: ReadonlyMap<string, number>): boolean {
+	if (peerID !== null) {
+		const quarantinedAt = quarantine.get(peerID);
+		if (quarantinedAt !== undefined && now - quarantinedAt < UNREACHABLE_QUARANTINE_MS) return false;
+	}
+	const backoff = addressBackoff.get(addressKey);
 	return backoff === undefined || backoff.nextAttempt <= now;
 }
 
@@ -207,6 +214,21 @@ const DISCOVERED_BOOTSTRAP_TTL_MS = PEERSTORE_MAX_PEER_AGE_MS;
  */
 const MAX_DISCOVERED_BOOTSTRAP_ENTRIES = 200;
 
+/** Base address-level recovery backoff: doubles per consecutive failure of that address. */
+const RECOVERY_BACKOFF_BASE_MS = 30_000;
+
+/** Backoff ceiling for a gossip-discovered address. */
+const RECOVERY_BACKOFF_MAX_MS = 600_000;
+
+/**
+ * Backoff ceiling for a CONFIGURED address. Lower than the discovered ceiling rather
+ * than absent: a configured address is the user's designated way back in, so it must
+ * be retried briskly, but exempting it from pacing entirely meant an isolated node
+ * with a handful of dead configured entries spent every recovery pass re-timing them
+ * out at 10 s apiece.
+ */
+const CONFIGURED_RECOVERY_BACKOFF_MAX_MS = 120_000;
+
 /**
  * `configuredBy` owner recorded for addresses handed straight to {@link Network.start}.
  *
@@ -260,6 +282,15 @@ export interface IBootstrapEntry {
  */
 export function bootstrapEntryLastActivity(entry: Pick<IBootstrapEntry, 'firstSeenAt' | 'lastVerifiedAt' | 'lastDisconnectedAt'>): number {
 	return Math.max(entry.firstSeenAt, entry.lastVerifiedAt ?? 0, entry.lastDisconnectedAt ?? 0);
+}
+
+/**
+ * Backoff state after a failed address-level dial: 30 s doubled per consecutive
+ * failure of THAT address, capped by whether the address is configured.
+ */
+export function nextRecoveryBackoff(failCount: number, now: number, configured: boolean): { nextAttempt: number; failCount: number } {
+	const ceiling = configured ? CONFIGURED_RECOVERY_BACKOFF_MAX_MS : RECOVERY_BACKOFF_MAX_MS;
+	return { nextAttempt: now + Math.min(RECOVERY_BACKOFF_BASE_MS * 2 ** failCount, ceiling), failCount: failCount + 1 };
 }
 
 /**
@@ -371,6 +402,15 @@ export class Network {
 	private readonly bootstrapByAddress: Map<string, IBootstrapEntry> = new Map();
 	/** Reverse index peerID → its canonical addresses in {@link bootstrapByAddress}. */
 	private readonly addressesByPeer: Map<string, Set<string>> = new Map();
+	/**
+	 * Per-ADDRESS dial pacing for the recovery loops, keyed the same way as the registry.
+	 *
+	 * Separate from {@link redialBackoff}, which paces dials made BY PEER ID and feeds
+	 * eviction. A peer-id dial hands libp2p every known address at once, so one failure
+	 * genuinely indicts the peer; an address dial indicts only that endpoint, and mixing
+	 * the two let a dead address of a multi-homed peer pace out its working sibling.
+	 */
+	private readonly recoveryBackoff: Map<string, { nextAttempt: number; failCount: number }> = new Map();
 	/**
 	 * Per-network bootstrap-config version, bumped on every replace / reset / leave.
 	 * Read by {@link addBootstrapPeers} so a job started for a superseded list stops
@@ -1291,13 +1331,14 @@ export class Network {
 		}
 		const localCidrs = getLocalCidrs();
 		for (const entry of orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values())) {
-			const { ma, peerID } = entry;
+			const { ma, peerID, key } = entry;
 			const configured = entry.configuredBy.size > 0;
 			if (peerID && this.isRedialSuppressed(peerID)) continue; // deliberately left — don't resurrect it here
-			// A CONFIGURED entry is the user's way back in and is always tried; a
-			// DISCOVERED one earned its place here by answering once, but that is no
-			// reason to bypass the pacing re-dial maintenance applies to it.
-			if (peerID && !configured && !isRecoveryDialDue(peerID, Date.now(), this.redialBackoff, this.unreachableQuarantine)) continue;
+			// A CONFIGURED entry is the user's way back in, so it gets priority and a much
+			// shorter backoff ceiling — but not a blanket exemption: a handful of dead
+			// configured addresses would otherwise be re-timed out at 10 s apiece on every
+			// pass and never let the discovered ones be tried at all.
+			if (!isRecoveryDialDue(key, peerID, Date.now(), this.recoveryBackoff, this.unreachableQuarantine)) continue;
 			// Routability is re-checked here, not just at configure time: a LAN or VPN
 			// bootstrap is on this list while its interface is down, and becomes dialable
 			// again the moment it returns.
@@ -1314,6 +1355,11 @@ export class Network {
 				break;
 			} catch (err: any) {
 				console.log(`   ✗ Failed ${maStr}: ${err.message ?? err}`);
+				// Pace this ADDRESS. Re-dial maintenance cannot do it for us: it walks the
+				// peerStore, and a peer that aged out of it never becomes a candidate there
+				// — which is exactly how a registry entry gets orphaned in the first place.
+				if (epoch !== this.runEpoch) return;
+				this.recoveryBackoff.set(key, nextRecoveryBackoff(this.recoveryBackoff.get(key)?.failCount ?? 0, Date.now(), configured));
 			}
 		}
 	}
@@ -1337,12 +1383,17 @@ export class Network {
 		const now = Date.now();
 		for (const entry of [...this.bootstrapByAddress.values()]) {
 			if (epoch !== this.runEpoch) return;
-			const { ma, peerID: pid } = entry;
+			const { ma, peerID: pid, key } = entry;
 			if (!pid || entry.configuredBy.size === 0) continue;
 			if (this.isRedialSuppressed(pid)) continue;
 			// Still unreachable from here — leave it parked for a later pass.
 			if (shouldDenyDial(ma, localCidrs)) continue;
-			if (!isRecoveryDialDue(pid, now, this.redialBackoff, this.unreachableQuarantine)) continue;
+			// Paced per ADDRESS, like recovery: a peer with one parked address and one
+			// working one must not have the working one held back by its sibling. The
+			// peer-level redialBackoff is left untouched on purpose — a configured peer is
+			// exempt from eviction, so this probe must never become the evidence that
+			// evicts one.
+			if (!isRecoveryDialDue(key, pid, now, this.recoveryBackoff, this.unreachableQuarantine)) continue;
 			try {
 				if (node.getConnections(peerIDFromString(pid)).length > 0) continue;
 			} catch {
@@ -1355,16 +1406,7 @@ export class Network {
 				console.log(`[NET] parked configured bootstrap reachable again: ${ma.toString()}`);
 			} catch (err: any) {
 				if (epoch !== this.runEpoch) return;
-				const previous = this.redialBackoff.get(pid);
-				const failCount = previous?.failCount ?? 0;
-				// Paces itself and nothing more: a configured peer is exempt from eviction,
-				// so this probe must never become the evidence that evicts one.
-				this.redialBackoff.set(pid, {
-					nextAttempt: Date.now() + Math.min(30_000 * 2 ** failCount, 600_000),
-					failCount: failCount + 1,
-					firstFailure: previous?.firstFailure ?? Date.now(),
-					evictionFails: previous?.evictionFails ?? 0,
-				});
+				this.recoveryBackoff.set(key, nextRecoveryBackoff(this.recoveryBackoff.get(key)?.failCount ?? 0, Date.now(), true));
 				trace(`[NET] parked configured bootstrap still failing: ${ma.toString()} — ${err?.message ?? err}`);
 			}
 		}
@@ -1892,6 +1934,7 @@ export class Network {
 		const entry = this.bootstrapByAddress.get(normalizeMultiaddrForCompare(ma.toString()));
 		if (!entry) return;
 		entry.lastVerifiedAt = Date.now();
+		this.recoveryBackoff.delete(entry.key);
 	}
 
 	/** Remove one address from the registry, its reverse index and its pacing state. */
@@ -1899,6 +1942,7 @@ export class Network {
 		const entry = this.bootstrapByAddress.get(key);
 		if (!entry) return;
 		this.bootstrapByAddress.delete(key);
+		this.recoveryBackoff.delete(key);
 		if (!entry.peerID) return;
 		const keys = this.addressesByPeer.get(entry.peerID);
 		if (!keys) return;
@@ -2620,6 +2664,7 @@ export class Network {
 		this.bootstrapTracker.clear();
 		this.bootstrapByAddress.clear();
 		this.addressesByPeer.clear();
+		this.recoveryBackoff.clear();
 		this.bootstrapGeneration.clear();
 		this._lastPeerCounts.clear();
 		this._lastScores.clear();

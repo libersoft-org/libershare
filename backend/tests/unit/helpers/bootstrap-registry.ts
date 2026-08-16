@@ -50,6 +50,7 @@ export function installBootstrapRegistry(network: unknown, seeds: readonly IRegi
 	}
 	(network as any).bootstrapByAddress = byAddress;
 	(network as any).addressesByPeer = byPeer;
+	(network as any).recoveryBackoff ??= new Map();
 	return byAddress;
 }
 
