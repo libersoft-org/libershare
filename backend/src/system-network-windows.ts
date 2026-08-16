@@ -293,6 +293,31 @@ interface WlanApi {
 	WlanFreeMemory: (memory: Pointer) => void;
 }
 
+/** One FFI symbol declaration: the ABI of each parameter, and of the result. */
+export interface WlanSymbol {
+	readonly args: readonly FFIType[];
+	readonly returns: FFIType;
+}
+
+/**
+ * The wlanapi.dll symbol table handed to `dlopen`.
+ *
+ * Lifted out of {@link getWlanApi} so the declared ABI of each parameter is a
+ * value a test can assert rather than a literal buried inside a lazy loader.
+ */
+export const WLAN_SYMBOLS: Record<keyof WlanApi, WlanSymbol> = {
+	WlanOpenHandle: { args: [FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanCloseHandle: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanEnumInterfaces: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanQueryInterface: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanScan: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanGetAvailableNetworkList: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanSetProfile: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanGetProfile: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanConnect: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanFreeMemory: { args: [FFIType.ptr], returns: FFIType.void },
+};
+
 let wlanApi: WlanApi | null = null;
 let wlanUnavailable = false;
 
@@ -301,19 +326,7 @@ function getWlanApi(): WlanApi | null {
 	if (wlanUnavailable) return null;
 	if (!wlanApi) {
 		try {
-			const lib = dlopen('wlanapi.dll', {
-				WlanOpenHandle: { args: [FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanCloseHandle: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanEnumInterfaces: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanQueryInterface: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanScan: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanGetAvailableNetworkList: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanSetProfile: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanGetProfile: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanConnect: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanFreeMemory: { args: [FFIType.ptr], returns: FFIType.void },
-			});
-			wlanApi = lib.symbols as unknown as WlanApi;
+			wlanApi = dlopen('wlanapi.dll', WLAN_SYMBOLS).symbols as unknown as WlanApi;
 		} catch {
 			wlanUnavailable = true;
 			return null;
