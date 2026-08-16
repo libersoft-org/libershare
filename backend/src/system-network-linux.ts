@@ -238,12 +238,28 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 	return result;
 }
 
+/**
+ * The environment every child process in this module runs under.
+ *
+ * The C locale is not a preference, it is what makes the parsing correct. This
+ * module matches literal English tokens — `running` from `nmcli general`,
+ * `unmanaged` from `nmcli device status`, `Not connected.` from `iw` — and
+ * nmcli's own documentation recommends the C locale for machine parsing
+ * precisely because those strings are translated otherwise. On a localised host
+ * the effect is not a parse error but a wrong answer: `isLinuxWritable()`
+ * returns false on a perfectly writable machine, and a device NetworkManager
+ * refuses to touch is offered to the user as configurable.
+ */
+export function cLocaleEnv(): NodeJS.ProcessEnv {
+	return { ...process.env, LC_ALL: 'C', LANG: 'C' };
+}
+
 /** Run the first candidate binary that exists, returning stdout. Throws when every candidate is missing or exits non-zero. */
 async function runFirst(candidates: string[], args: string[], timeoutMs: number = EXEC_TIMEOUT_MS): Promise<string> {
 	let lastError: unknown = new Error(`no candidate found for ${args.join(' ')}`);
 	for (const bin of candidates) {
 		try {
-			const { stdout } = await execFileAsync(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 });
+			const { stdout } = await execFileAsync(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: cLocaleEnv() });
 			return stdout;
 		} catch (err) {
 			lastError = err;
