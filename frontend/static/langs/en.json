@@ -603,6 +603,22 @@
 			"volumeDown": "Decrease volume",
 			"reload": "Reload page",
 			"typeAhead": "Type-ahead search in lists"
+		},
+		"footerWidgets": {
+			"title": "Footer widgets",
+			"version": "Version of the running application.",
+			"peerId": "Your peer ID. The top line is its first 11 characters, the bottom line the last 11.",
+			"download": "Top: number of peers you are downloading from. Bottom: total download speed of all downloads.",
+			"upload": "Top: number of peers downloading from you. Bottom: total upload speed of all uploads.",
+			"relay": "Traffic of other peers passing through your node. Top: open tunnels / reserved slots. Bottom: relayed speed in both directions together.",
+			"cpu": "Processor load of this computer. A full bar means 100%.",
+			"ram": "Used and total memory of this computer, with a bar showing how much is taken.",
+			"storage": "Used and total space on the disk holding your download folder, with a bar showing how much is taken.",
+			"lishStatus": "Top: LISH networks with at least one peer / all joined networks. Bottom: total number of peers across them. The colour of the network icon shows the mesh state, hover it for the exact name.",
+			"gamepad": "A green dot means a gamepad is connected, a red one means none is.",
+			"connection": "Signal bars of the network connection with its strength below, or Connected / Disconnected for a cable.",
+			"volume": "System volume in percent. A dash means the volume is not known yet or no audio device is available.",
+			"clock": "Current time, shown in the 12 or 24-hour format and with or without seconds according to the application settings."
 		}
 	},
 	"about": {
