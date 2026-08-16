@@ -289,6 +289,12 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 			// Manually set servers win; otherwise fall back to what the DHCP lease
 			// handed out, so a DHCP link reports the resolvers it actually uses.
 			dns: pickDns(sources, device),
+			// Every `networksetup` write is addressed by SERVICE name, and
+			// `serviceForDevice` throws for a device no ENABLED service covers. A
+			// record is created here for every non-loopback device the kernel reports,
+			// including plenty with no service at all, so without this the UI offers
+			// an edit that fails only once the user presses Save.
+			configurable: services.has(device),
 		};
 		if (medium === 'wireless' && airport) {
 			info.wifi = {

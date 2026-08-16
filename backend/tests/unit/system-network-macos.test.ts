@@ -254,6 +254,17 @@ describe('parseMacNetworkState', () => {
 	it('leaves wifi undefined on a wired interface', () => {
 		expect(parseMacNetworkState(sources).find(i => i.id === 'bridge0')?.wifi).toBeUndefined();
 	});
+
+	it('marks a device no enabled service covers as unconfigurable', () => {
+		// en4 is present in the service order but DISABLED (the `*3` entry), so
+		// parseServiceOrder skips it and every networksetup write for that device
+		// would fail in serviceForDevice. A record is still created for it, because
+		// the kernel reports the interface — it just must not be offered for editing.
+		const withDisabled = { ...sources, ifconfig: `${IFCONFIG}en4: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500\n\tether 02:00:5e:30:00:04\n\tstatus: inactive\n` };
+		const parsed = parseMacNetworkState(withDisabled);
+		expect(parsed.find(i => i.id === 'en4')?.configurable).toBe(false);
+		expect(parsed.find(i => i.id === 'en0')?.configurable).toBe(true);
+	});
 });
 
 describe('macApplyArgs', () => {
