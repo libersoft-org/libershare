@@ -38,6 +38,9 @@
 	let networks = $state<NetWifiNetwork[]>([]);
 	let scanning = $state(false);
 	let joinSSID = $state('');
+	// Whether the armed network needs a key. Decides between the password field and
+	// the open-network warning; both end at the same explicit Connect button.
+	let joinSecured = $state(true);
 	let password = $state('');
 
 	// Seed the form from the live state once, when the screen opens. Re-seeding on
@@ -123,10 +126,14 @@
 
 	function selectNetwork(network: NetWifiNetwork): void {
 		joinSSID = network.ssid;
+		joinSecured = network.secured;
 		// An open network takes no key, and asking for one would invite the user to
-		// type a password that cannot be used.
+		// type a password that cannot be used. It still gets a confirmation step
+		// rather than joining on the single click that selected it: a join drops the
+		// current connection — possibly the very one this screen is being driven
+		// over — and attaches the machine to an unencrypted network it may only have
+		// been looking at.
 		password = '';
-		if (!network.secured) void join();
 	}
 
 	async function join(): Promise<void> {
@@ -151,7 +158,10 @@
 	// ...and with the addressing half being absent altogether on a host that cannot
 	// change an address, in which case the Wi-Fi section starts at the top.
 	let wifiBaseY = $derived(canEditIPv4 ? 1 + staticRows + 1 : 0);
-	let buttonsY = $derived(canEditWifi ? wifiBaseY + 2 + networks.length + (joinSSID ? 1 : 0) : wifiBaseY);
+	// The armed network contributes a focusable row only when it needs a key — the
+	// open-network warning is text, so it takes no navigation position.
+	let joinRows = $derived(joinSSID && joinSecured ? 1 : 0);
+	let buttonsY = $derived(canEditWifi ? wifiBaseY + 1 + networks.length + joinRows + (joinSSID ? 1 : 0) : wifiBaseY);
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));
 </script>
@@ -243,10 +253,17 @@
 				</div>
 			{/each}
 			{#if joinSSID}
-				<div role="group" data-mouse-activate-area={areaID}>
-					<Input bind:value={password} label={$t('settings.network.passwordFor', { ssid: joinSSID })} type="password" position={[0, wifiBaseY + 1 + networks.length]} flex />
-				</div>
-				<ButtonBar justify="center" basePosition={[0, wifiBaseY + 2 + networks.length]}>
+				{#if joinSecured}
+					<div role="group" data-mouse-activate-area={areaID}>
+						<Input bind:value={password} label={$t('settings.network.passwordFor', { ssid: joinSSID })} type="password" position={[0, wifiBaseY + 1 + networks.length]} flex />
+					</div>
+				{:else}
+					<!-- An open network has no key to type, so this is the whole of the
+					     confirmation: what is being joined, that it is unencrypted, and
+					     that the current connection may go down with it. -->
+					<div class="note">{$t('settings.network.confirmOpenJoin', { ssid: joinSSID })}</div>
+				{/if}
+				<ButtonBar justify="center" basePosition={[0, wifiBaseY + 1 + networks.length + joinRows]}>
 					<Button icon="/img/check.svg" label={$t('settings.network.join')} disabled={busy} onConfirm={join} />
 				</ButtonBar>
 			{/if}

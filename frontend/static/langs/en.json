@@ -344,6 +344,7 @@
 			"open": "Open",
 			"connected": "Connected",
 			"passwordFor": "Password for {ssid}",
+			"confirmOpenJoin": "Connect to {ssid}? This is an open network with no encryption, and connecting may drop the current connection.",
 			"join": "Connect",
 			"joined": "Connected to {ssid}.",
 			"errorInvalid": "The network configuration is not valid: {detail}",

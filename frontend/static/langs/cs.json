@@ -344,6 +344,7 @@
 			"open": "Otevřená",
 			"connected": "Připojeno",
 			"passwordFor": "Heslo pro síť {ssid}",
+			"confirmOpenJoin": "Připojit k síti {ssid}? Jde o otevřenou síť bez šifrování a připojení může přerušit stávající spojení.",
 			"join": "Připojit",
 			"joined": "Připojeno k síti {ssid}.",
 			"errorInvalid": "Nastavení sítě není platné: {detail}",
