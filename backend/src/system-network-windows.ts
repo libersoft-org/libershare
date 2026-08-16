@@ -240,6 +240,11 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 			ipv4Mode: dhcpByIndex.get(ifIndex) ?? 'unknown',
 			gateway: bestByIndex.get(ifIndex)?.NextHop ?? null,
 			dns: dnsByIndex.get(ifIndex) ?? [],
+			// An addressed stack with no adapter row (RAS, VPN, Teredo) gets an
+			// `ifIndex:N` id, and the apply path resolves an adapter by GUID — so
+			// `assertWindowsGuid` rejects that id every time. Saying so here keeps the
+			// UI from offering a Configure button whose Save could only ever fail.
+			configurable: guid !== null,
 		};
 		// Wi-Fi Direct virtual adapters also report medium 9 but have no WLAN
 		// interface of their own, so an absent entry leaves `wifi` undefined.

@@ -110,6 +110,14 @@ describe('parseWindowsNetworkState', () => {
 		expect(ras.addresses).toContainEqual({ family: 'ipv4', address: '203.0.113.200', prefixLength: 32 });
 	});
 
+	it('marks an adapterless stack unconfigurable, since the apply resolves by GUID', () => {
+		// `ifIndex:69` is not a GUID, so assertWindowsGuid rejects it on every save.
+		// Offering Configure for it puts a button in front of the user that cannot
+		// do anything but fail.
+		expect(byID(result, 'ifIndex:69').configurable).toBe(false);
+		expect(byID(result, ID.ethernet).configurable).toBe(true);
+	});
+
 	it('drops tentative APIPA, deprecated link-local and loopback addresses', () => {
 		const every = result.flatMap(i => i.addresses.map(a => a.address));
 		expect(every.some(a => a.startsWith('169.254.'))).toBe(false);
