@@ -98,6 +98,63 @@ export class PeerAnnounceManager {
 		this.deps = deps;
 	}
 
+	/**
+	 * Recently-seen subscribers of a topic (union of getSubscribers over the last
+	 * {@link PEER_ANNOUNCE_MEMBER_TTL_MS}), so a same-network peer that is momentarily
+	 * disconnected at query time is still reported. Used by leave-network to suppress
+	 * offline content peers that a live subscriber snapshot would miss.
+	 */
+	getRecentMembers(topic: string): string[] {
+		const members = this.topicMembers.get(topic);
+		if (!members) return [];
+		const now = Date.now();
+		const out: string[] = [];
+		for (const [pid, seen] of members) if (now - seen <= PEER_ANNOUNCE_MEMBER_TTL_MS) out.push(pid);
+		return out;
+	}
+
+	/**
+	 * Record a peer as a member of a topic outside the emit cycle. Fed by the
+	 * gossipsub GRAFT event, which fires the moment a peer joins our mesh for the
+	 * topic — earlier and independently of both the announce cadence and the
+	 * {@link PEER_ANNOUNCE_MIN_PEER_STORE} broadcast threshold. leave-network reads
+	 * this cache to decide who to hang up, so it must be populated on a two-node
+	 * network that never emits an announce at all.
+	 */
+	noteMember(topic: string, peerID: string): void {
+		let members = this.topicMembers.get(topic);
+		if (!members) {
+			members = new Map<string, number>();
+			this.topicMembers.set(topic, members);
+		}
+		members.set(peerID, Date.now());
+	}
+
+	/**
+	 * Refresh every topic's membership from the live subscriber snapshot and drop
+	 * entries past the TTL. Split out of {@link emit} so membership tracking never
+	 * depends on whether this tick actually broadcasts — a small network stays below
+	 * the announce threshold forever, and leave-network still needs to know who was
+	 * on the topic.
+	 */
+	refreshMembers(lishTopics: string[], pubsub: any): void {
+		const now = Date.now();
+		for (const t of this.topicMembers.keys()) if (!lishTopics.includes(t)) this.topicMembers.delete(t);
+		for (const topic of lishTopics) {
+			let members = this.topicMembers.get(topic);
+			if (!members) {
+				members = new Map<string, number>();
+				this.topicMembers.set(topic, members);
+			}
+			try {
+				for (const p of pubsub.getSubscribers(topic)) members.set(p.toString(), now);
+			} catch {
+				/* pubsub may be mid-teardown — keep whatever we already know */
+			}
+			for (const [pid, seen] of members) if (now - seen > PEER_ANNOUNCE_MEMBER_TTL_MS) members.delete(pid);
+		}
+	}
+
 	/** Start the periodic emitter. Safe to call only once per start/stop cycle. */
 	start(): void {
 		this.stopped = false;
@@ -216,9 +273,13 @@ export class PeerAnnounceManager {
 		const node = this.deps.getNode();
 		const pubsub = this.deps.getPubsub();
 		if (!node || !pubsub) return;
+		const lishTopics = pubsub.getTopics().filter((t: string) => t.startsWith(LISH_TOPIC_PREFIX));
+		// Membership first, and unconditionally: it feeds leave-network's disconnect
+		// set, which must work on a network too small to ever clear the announce
+		// threshold below. Broadcasting is what the threshold gates, not tracking.
+		this.refreshMembers(lishTopics, pubsub);
 		const allPeers = await node.peerStore.all();
 		if (allPeers.length < PEER_ANNOUNCE_MIN_PEER_STORE) return;
-		const lishTopics = pubsub.getTopics().filter((t: string) => t.startsWith(LISH_TOPIC_PREFIX));
 		if (lishTopics.length === 0) return;
 		const localCidrs = getLocalCidrs();
 		const myID = node.peerId.toString();
@@ -249,22 +310,14 @@ export class PeerAnnounceManager {
 		// dropped is still re-advertised so others can re-dial it, while a peer of
 		// another network never enters this topic's set. Edge-of-mesh peers thus learn
 		// the rest of their OWN network in one hop, without cross-network leak.
-		const now = Date.now();
-		for (const t of this.topicMembers.keys()) if (!lishTopics.includes(t)) this.topicMembers.delete(t);
 		let skippedTransitive = 0;
 		for (const topic of lishTopics) {
 			const current = new Set<string>();
 			try {
 				for (const p of pubsub.getSubscribers(topic)) current.add(p.toString());
 			} catch {}
-			// Refresh recently-seen membership from the live snapshot, then prune stale.
-			let members = this.topicMembers.get(topic);
-			if (!members) {
-				members = new Map<string, number>();
-				this.topicMembers.set(topic, members);
-			}
-			for (const pid of current) members.set(pid, now);
-			for (const [pid, seen] of members) if (now - seen > PEER_ANNOUNCE_MEMBER_TTL_MS) members.delete(pid);
+			// Membership was already refreshed above; read the resulting set.
+			const members = this.topicMembers.get(topic) ?? new Map<string, number>();
 			// No one currently subscribed → the broadcast would reach nobody, skip it.
 			if (current.size === 0) continue;
 			const collected = new Set<string>(selfAddrs);
