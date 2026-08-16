@@ -298,6 +298,15 @@
 		"title": "Settings",
 		"system": {
 			"title": "System",
+			"programMode": "Program mode",
+			"programModes": {
+				"system": "System (dedicated device)",
+				"app": "Application (computer / phone)"
+			},
+			"programModeInfo": {
+				"system": "LiberShare is the whole device — a dedicated box that boots straight into the application (Linux with a browser in kiosk mode). Device settings such as the network connection or the display therefore belong to the application.",
+				"app": "LiberShare runs as an ordinary application next to your other programs on a computer or a phone. The device itself — network connection, display — is managed by the operating system."
+			},
 			"autoStartOnBoot": "Start application on system startup",
 			"showInTray": "Show in system tray",
 			"minimizeToTray": "Minimize to system tray",

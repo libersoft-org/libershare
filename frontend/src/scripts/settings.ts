@@ -5,6 +5,8 @@ import { defaultWidgetVisibility, type FooterPosition, type FooterWidget } from 
 import { currentLanguage, languages } from './language.ts';
 // Types
 export type CursorSize = 'small' | 'medium' | 'large';
+/** Which distribution this instance is: a dedicated device (kiosk) or an ordinary application. */
+export type ProgramMode = 'system' | 'app';
 export const cursorSizes: Record<CursorSize, string> = {
 	small: '2.5vh',
 	medium: '5vh',
@@ -54,6 +56,7 @@ export const mdnsEnabled = writable(true);
 export const mdnsInterval = writable(10000);
 export const upnpEnabled = writable(true);
 export const searchTimeout = writable(30000);
+export const programMode = writable<ProgramMode>('app');
 export const autoStartOnBoot = writable(true);
 export const showInTray = writable(true);
 export const minimizeToTray = writable(true);
@@ -147,6 +150,7 @@ export async function loadSettings(): Promise<void> {
 		searchTimeout.set(settings.network.searchTimeout ?? 30000);
 
 		// System
+		programMode.set(settings.system.programMode ?? 'app');
 		autoStartOnBoot.set(settings.system.autoStartOnBoot);
 		showInTray.set(settings.system.showInTray);
 		minimizeToTray.set(settings.system.minimizeToTray);
@@ -307,6 +311,10 @@ export function setMdnsInterval(value: number): void {
 
 export function setUpnpEnabled(enabled: boolean): void {
 	updateSetting(upnpEnabled, 'network.upnpEnabled', enabled);
+}
+
+export function setProgramMode(mode: ProgramMode): void {
+	updateSetting(programMode, 'system.programMode', mode);
 }
 
 export function setAutoStartOnBoot(enabled: boolean): void {

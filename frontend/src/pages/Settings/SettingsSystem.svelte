@@ -3,7 +3,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea, type NavPos } from '../../scripts/navArea.svelte.ts';
-	import { autoStartOnBoot, showInTray, minimizeToTray, defaultMinifyJSON, defaultCompress, defaultCompressionAlgorithm, notificationTimeout, setAutoStartOnBoot, setShowInTray, setMinimizeToTray, setDefaultMinifyJSON, setDefaultCompress, setDefaultCompressionAlgorithm, setNotificationTimeout } from '../../scripts/settings.ts';
+	import { programMode, autoStartOnBoot, showInTray, minimizeToTray, defaultMinifyJSON, defaultCompress, defaultCompressionAlgorithm, notificationTimeout, setProgramMode, setAutoStartOnBoot, setShowInTray, setMinimizeToTray, setDefaultMinifyJSON, setDefaultCompress, setDefaultCompressionAlgorithm, setNotificationTimeout, type ProgramMode } from '../../scripts/settings.ts';
 	import { type CompressionAlgorithm } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -17,6 +17,12 @@
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 	// Local state
+	let mode = $state<ProgramMode>($programMode);
+	// Same switch every other row on this page uses. A native <select> was wrong here:
+	// its dropdown is painted by the OS, so it ignores the app's styling entirely.
+	function toggleMode(): void {
+		mode = mode === 'system' ? 'app' : 'system';
+	}
 	let autoStart = $state($autoStartOnBoot);
 	let trayVisible = $state($showInTray);
 	let trayMinimize = $state($minimizeToTray);
@@ -47,6 +53,7 @@
 	}
 
 	function saveSettings(): void {
+		setProgramMode(mode);
 		setAutoStartOnBoot(autoStart);
 		setShowInTray(trayVisible);
 		setMinimizeToTray(trayMinimize);
@@ -58,10 +65,12 @@
 		onBack?.();
 	}
 
-	// Reactive positions accounting for the hidden minimizeToTray row
-	let minifyPos = $derived<NavPos>([0, trayVisible ? 3 : 2]);
-	let compressPos = $derived<NavPos>([0, trayVisible ? 4 : 3]);
-	let algorithmRow = $derived(trayVisible ? 5 : 4);
+	// Reactive positions accounting for the hidden minimizeToTray row. Both the
+	// program-mode row above and the compression-algorithm row below shift what
+	// follows them, so every position is derived rather than written out.
+	let minifyPos = $derived<NavPos>([0, trayVisible ? 4 : 3]);
+	let compressPos = $derived<NavPos>([0, trayVisible ? 5 : 4]);
+	let algorithmRow = $derived(trayVisible ? 6 : 5);
 	let timeoutPos = $derived<NavPos>([0, algorithmRow + 1]);
 	let buttonsY = $derived(algorithmRow + 2);
 
@@ -86,19 +95,30 @@
 		width: 1000px;
 		max-width: 100%;
 	}
+
+	.hint {
+		font-size: 2vh;
+		color: var(--secondary-foreground);
+		line-height: 1.6;
+		margin-top: 0.5vh;
+	}
 </style>
 
 <div class="settings">
 	<div class="container">
 		<div role="group" data-mouse-activate-area={areaID}>
-			<SwitchRow label={$t('settings.system.autoStartOnBoot') + ':'} checked={autoStart} position={[0, 0]} onToggle={toggleAutoStart} />
+			<SwitchRow label={$t('settings.system.programModes.system') + ':'} checked={mode === 'system'} position={[0, 0]} onToggle={toggleMode} />
+			<div class="hint">{$t('settings.system.programModeInfo.' + mode)}</div>
 		</div>
 		<div role="group" data-mouse-activate-area={areaID}>
-			<SwitchRow label={$t('settings.system.showInTray') + ':'} checked={trayVisible} position={[0, 1]} onToggle={toggleShowInTray} />
+			<SwitchRow label={$t('settings.system.autoStartOnBoot') + ':'} checked={autoStart} position={[0, 1]} onToggle={toggleAutoStart} />
+		</div>
+		<div role="group" data-mouse-activate-area={areaID}>
+			<SwitchRow label={$t('settings.system.showInTray') + ':'} checked={trayVisible} position={[0, 2]} onToggle={toggleShowInTray} />
 		</div>
 		{#if trayVisible}
 			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.system.minimizeToTray') + ':'} checked={trayMinimize} position={[0, 2]} onToggle={toggleMinimizeToTray} />
+				<SwitchRow label={$t('settings.system.minimizeToTray') + ':'} checked={trayMinimize} position={[0, 3]} onToggle={toggleMinimizeToTray} />
 			</div>
 		{/if}
 		<div role="group" data-mouse-activate-area={areaID}>
