@@ -58,7 +58,6 @@ function makeHarness(): Harness {
 	(network as any).unreachableQuarantine = new Map<string, number>();
 	(network as any).noReachableSince = new Map<string, number>();
 	(network as any).redialBackoff = new Map();
-	(network as any).configuredPeerIDs = new Set<string>();
 	(network as any).configuredBootstrapPeerIDs = new Set<string>();
 	(network as any).bootstrapPeerIDs = new Set<string>();
 	(network as any).bootstrapMultiaddrs = [];
@@ -158,6 +157,21 @@ describe('runRedialMaintenance — a left peer is not an unreachable peer', () =
 		expect((h.network as any).unreachableQuarantine.has(DEAD_PEER)).toBe(true);
 	});
 
+	it('exempts a configured bootstrap peer for exactly as long as it is configured', async () => {
+		// The exemption is the configuration, not a memory of it: a hub the operator
+		// removed must become evictable again without waiting for a restart.
+		const h = makeHarness();
+		(h.network as any).configuredBootstrapPeerIDs.add(DEAD_PEER);
+		(h.network as any).noReachableSince.set(DEAD_PEER, Date.now() - EVICT_MIN_MS - 1);
+		await runRedial(h.network, [], [peerEntry(DEAD_PEER, UNREACHABLE_ADDR)]);
+		expect(h.purged).toEqual([]);
+
+		h.network.pruneConfiguredBootstrapPeer(DEAD_PEER);
+		(h.network as any).noReachableSince.set(DEAD_PEER, Date.now() - EVICT_MIN_MS - 1);
+		await runRedial(h.network, [], [peerEntry(DEAD_PEER, UNREACHABLE_ADDR)]);
+		expect(h.purged).toEqual([DEAD_PEER]);
+	});
+
 	it('negative control: gating after the eviction branch evicts the left peer', async () => {
 		// The pre-reconciliation ordering — 442's no-reachable eviction ran first and
 		// 428's suppression skip came after it. Reimplemented here over the same
@@ -178,7 +192,7 @@ describe('runRedialMaintenance — a left peer is not an unreachable peer', () =
 	function evictLikeOldOrdering(network: Network, peer: { id: { toString(): string }; addresses: unknown[] }): boolean {
 		const pid = peer.id.toString();
 		const since = (network as any).noReachableSince.get(pid) ?? Date.now();
-		return Date.now() - since >= EVICT_MIN_MS && !(network as any).configuredPeerIDs.has(pid);
+		return Date.now() - since >= EVICT_MIN_MS && !(network as any).configuredBootstrapPeerIDs.has(pid);
 	}
 });
 

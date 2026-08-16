@@ -24,7 +24,6 @@ export function stubSuppressionState(network: Network): void {
 	(network as any).unreachableQuarantine = new Map<string, number>();
 	(network as any).noReachableSince = new Map<string, number>();
 	(network as any).redialBackoff = new Map();
-	(network as any).configuredPeerIDs = new Set<string>();
 	(network as any).configuredBootstrapPeerIDs = new Set<string>();
 	(network as any).bootstrapPeerIDs = new Set<string>();
 	(network as any).bootstrapMultiaddrs = [];

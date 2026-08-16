@@ -178,7 +178,7 @@ export class Network {
 	 * Lifecycle epoch, bumped by stop(). A status tick captures the epoch at
 	 * entry and refuses to write per-peer state once it differs — an in-flight
 	 * tick otherwise survives stop() and would repopulate freshly-cleared maps
-	 * or purge peers of the NEXT node instance (whose configuredPeerIDs are not
+	 * or purge peers of the NEXT node instance (whose configured bootstrap set is not
 	 * loaded yet) after a quick stop/start such as a factory reset.
 	 */
 	private runEpoch = 0;
@@ -206,6 +206,12 @@ export class Network {
 	 * exact set into the dial-gater bypass and the PX appSpecificScore, and the PX
 	 * ingress filter reads it too. Anything that can be entered by a peer's own
 	 * claim — gossip discovery, periodic promotion — must therefore stay out of it.
+	 *
+	 * It doubles as the unreachable-eviction exemption: a configured bootstrap hub
+	 * that is down for half an hour is user data and must keep its peerStore entry
+	 * and its addrs in bootstrapMultiaddrs. The exemption is therefore exactly as
+	 * long-lived as the configuration — {@link pruneConfiguredBootstrapPeer} ends it
+	 * the moment the operator removes the entry.
 	 */
 	private configuredBootstrapPeerIDs: Set<string> = new Set();
 	private dcutrPeers: Set<string> = new Set();
@@ -292,20 +298,6 @@ export class Network {
 	 * peerStore/bootstrap sets until maxPeerAge while every tick re-scans them.
 	 */
 	private readonly noReachableSince = new Map<string, number>();
-	/**
-	 * Peer IDs that appear in at least one network's CONFIGURED bootstrap list.
-	 * These are user data — the unreachable-eviction path must never purge them,
-	 * or a bootstrap hub that is down for half an hour would lose its peerStore
-	 * entry and its addrs in bootstrapMultiaddrs until the next restart.
-	 *
-	 * Grow-only by design: entries are not removed when a bootstrap row is
-	 * deleted or its network disabled, so a formerly-configured peer stays
-	 * eviction-exempt until restart. That errs on the safe side (a peer is
-	 * merely redialed longer than necessary); per-network refcounting would be
-	 * required to shrink it correctly and is not worth the bookkeeping.
-	 */
-	private readonly configuredPeerIDs = new Set<string>();
-
 	/**
 	 * Peers deliberately hung up by {@link disconnectPeer} (leave-network), keyed by
 	 * the lishnet they were left with. Redial maintenance / discovery must NOT
@@ -1027,7 +1019,7 @@ export class Network {
 				// as one that failed every dial. Same exemptions as the dial path.
 				const since = this.noReachableSince.get(pid) ?? now;
 				if (!this.noReachableSince.has(pid)) this.noReachableSince.set(pid, now);
-				if (now - since >= REDIAL_EVICT_MIN_MS && !this.configuredPeerIDs.has(pid)) {
+				if (now - since >= REDIAL_EVICT_MIN_MS && !this.configuredBootstrapPeerIDs.has(pid)) {
 					this.noReachableSince.delete(pid);
 					this.unreachableQuarantine.set(pid, now);
 					this.redialBackoff.delete(pid);
@@ -1095,7 +1087,7 @@ export class Network {
 					// quarantine the ID so gossip mentions don't immediately re-add it.
 					// Configured bootstrap peers are exempt — user data, they must survive
 					// any outage and keep their red status row instead.
-					if (shouldEvictUnreachablePeer({ reachable, failCount: nextFailCount, unreachableForMs: Date.now() - firstFailure, configured: this.configuredPeerIDs.has(c.pid) })) {
+					if (shouldEvictUnreachablePeer({ reachable, failCount: nextFailCount, unreachableForMs: Date.now() - firstFailure, configured: this.configuredBootstrapPeerIDs.has(c.pid) })) {
 						// Last-moment liveness check: the peer may have connected (inbound
 						// dial, another async path) while this worker was failing on stale
 						// state. purgeStalePeer closes connections, so evicting here would
@@ -1309,7 +1301,6 @@ export class Network {
 				// relay hop yet targets a remote peer and must not be dropped as self.
 				if (peerID === myPeerID) continue;
 				if (peerID && origin === 'configured') {
-					this.configuredPeerIDs.add(peerID);
 					this.configuredBootstrapPeerIDs.add(peerID);
 					// A re-configured bootstrap peer means its network was (re-)joined — it
 					// is no longer "left", so lift any redial suppression left by a prior
@@ -2119,7 +2110,6 @@ export class Network {
 		this.redialBackoff.clear();
 		this.unreachableQuarantine.clear();
 		this.noReachableSince.clear();
-		this.configuredPeerIDs.clear();
 		this.redialSuppressedByNet.clear();
 		this.pxIngressLogKeys.clear();
 		if (this.node) {
