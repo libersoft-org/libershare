@@ -1347,3 +1347,58 @@ describe('runRedialMaintenance — quarantined peers are not candidates', () => 
 		expect(dialed).toEqual([PEER_ID]);
 	});
 });
+
+describe('addBootstrapPeers — a gossip announce of a configured address', () => {
+	const CONFIGURED_A = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+	const WORKING_B = `/ip4/198.51.100.7/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork(knownConfigured: string[]) {
+		const outcomes: string[] = [];
+		const forced: boolean[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set(knownConfigured.length > 0 ? [PEER_ID] : []);
+		(network as any).configuredBootstrapAddresses = new Set(knownConfigured.map(a => normalizeMultiaddrForCompare(a)));
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).bootstrapGeneration = new Map();
+		(network as any).bootstrapTracker = {
+			markPending() {},
+			recordOutcome(_net: unknown, _addr: unknown, _pid: unknown, status: string) {
+				outcomes.push(status);
+			},
+		};
+		(network as any).node = {
+			peerId: { toString: () => 'selfID' },
+			getConnections: () => [{}], // the peer was reachable via WORKING_B all along
+			async dial(_ma: unknown, opts?: { force?: boolean }): Promise<unknown> {
+				forced.push(opts?.force === true);
+				// libp2p answers with the connection its OTHER address won.
+				return { remoteAddr: { toString: () => WORKING_B } };
+			},
+			peerStore: { async merge(): Promise<void> {} },
+		};
+		return { network, outcomes, forced };
+	}
+
+	it('does not turn the configured row green off an unverified dial', async () => {
+		const { network, outcomes } = bareNetwork([CONFIGURED_A]);
+		await (network as any).addBootstrapPeers([CONFIGURED_A], 'net-a', 'discovered');
+		expect(outcomes).toEqual([]);
+	});
+
+	it('probes the address for real, as the configured branch would', async () => {
+		const { network, forced } = bareNetwork([CONFIGURED_A]);
+		await (network as any).addBootstrapPeers([CONFIGURED_A], 'net-a', 'discovered');
+		expect(forced).toEqual([true]);
+	});
+
+	it('still treats a genuinely unknown address as discovered', async () => {
+		const { network, outcomes, forced } = bareNetwork([]);
+		await (network as any).addBootstrapPeers([CONFIGURED_A], 'net-a', 'discovered');
+		expect(forced).toEqual([false]);
+		expect(outcomes).toEqual(['connected']);
+	});
+});

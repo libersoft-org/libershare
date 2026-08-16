@@ -1526,6 +1526,19 @@ export class Network {
 				// string: `/p2p/<us>/p2p-circuit/p2p/<remote>` contains our ID as the
 				// relay hop yet targets a remote peer and must not be dropped as self.
 				if (peerID === myPeerID) continue;
+				// What this address IS outranks what this caller calls it. The status tracker
+				// already keeps the stronger classification when a row is overwritten, so a
+				// gossip re-announcement of an address the user configured lands on a
+				// CONFIGURED row — and the dial has to follow the same rule or the two
+				// disagree. They did: the announce dialed without `force`, libp2p handed back
+				// the connection the peer happened to hold on a DIFFERENT address, and the
+				// discovered branch recorded 'connected' on a configured row whose address had
+				// never been contacted. The user then saw a green light on a broken entry.
+				const canonicalAddress = normalizeMultiaddrForCompare(ma.toString());
+				const effectiveOrigin: BootstrapPeerOrigin = origin === 'configured' || this.configuredBootstrapAddresses.has(canonicalAddress) ? 'configured' : 'discovered';
+				// Claiming the peer as configured stays keyed on what the CALLER declared:
+				// this branch also lifts leave-network suppression, which is the user's
+				// decision to reverse, never gossip's.
 				if (peerID && origin === 'configured') {
 					this.configuredBootstrapPeerIDs.add(peerID);
 					// A re-configured bootstrap peer means its network was (re-)joined — it
@@ -1546,7 +1559,7 @@ export class Network {
 				// it here left every unreachable address a gossip flood could invent on the
 				// list for good, since an ordinary timeout has nothing that takes it off.
 				if (origin === 'configured') {
-					this.configuredBootstrapAddresses.add(normalizeMultiaddrForCompare(ma.toString()));
+					this.configuredBootstrapAddresses.add(canonicalAddress);
 					this.rememberBootstrapAddress(ma);
 				}
 				// Safety net: refuse to dial loopback / unreachable-private bootstrap entries
@@ -1556,14 +1569,14 @@ export class Network {
 				// row instead: the user wrote it down and needs to see why nothing happens with it.
 				if (shouldDenyDial(ma, localCidrs)) {
 					trace(`[NET] addBootstrapPeers skip non-routable: ${peer}`);
-					if (origin === 'configured') this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'error', 'address is not routable from this host', null, origin);
+					if (effectiveOrigin === 'configured') this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'error', 'address is not routable from this host', null, effectiveOrigin);
 					continue;
 				}
 				// Skip peers recently evicted as unreachable — nodes that still remember
 				// them keep gossiping their addrs, and without this window every mention
 				// would re-create the status row and burn a dial. Configured entries are
 				// exempt: the user asked for them explicitly.
-				if (peerID && origin === 'discovered') {
+				if (peerID && effectiveOrigin === 'discovered') {
 					const quarantinedAt = this.unreachableQuarantine.get(peerID);
 					if (quarantinedAt !== undefined) {
 						if (Date.now() - quarantinedAt < UNREACHABLE_QUARANTINE_MS) {
@@ -1582,7 +1595,7 @@ export class Network {
 				// peer from costing another dial, so it is claimed up front either way.
 				if (peerID) this.bootstrapPeerIDs.add(peerID);
 				console.debug('Adding bootstrap peer:', peer);
-				this.bootstrapTracker.markPending(networkID, peer, peerID, origin);
+				this.bootstrapTracker.markPending(networkID, peer, peerID, effectiveOrigin);
 				try {
 					// Always hand the address to libp2p and let IT decide whether a dial is
 					// needed. Skipping the call whenever any connection to the peer existed
@@ -1609,7 +1622,7 @@ export class Network {
 					// that names many of them could otherwise make us open a connection per
 					// address. For those, libp2p's own reuse is the desired behaviour.
 					const pidObj = peerID ? peerIDFromString(peerID) : null;
-					const conn = await this.node.dial(ma, origin === 'configured' ? { force: true } : {});
+					const conn = await this.node.dial(ma, effectiveOrigin === 'configured' ? { force: true } : {});
 					const verifiedThisAddr = isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString());
 					// A dial already in flight cannot be called back: hangUp only closes
 					// connections that ALREADY exist, so a leave-network landing mid-dial finds
@@ -1641,15 +1654,15 @@ export class Network {
 					// survive through another route is exactly what the row exists to expose.
 					// Discovered rows carry the weaker "the peer answered" meaning and are
 					// recorded either way.
-					if (origin === 'configured' && !verifiedThisAddr) {
+					if (effectiveOrigin === 'configured' && !verifiedThisAddr) {
 						trace(`[NET] bootstrap addr unverified (connection came back on another address), left pending: ${peer}`);
 						continue;
 					}
 					// A gossip-learned address has now answered on the endpoint it claimed, so
 					// it has earned its place in the autodial list. Unverified ones never get
 					// there, which is what keeps a flood of invented addresses off it.
-					if (origin === 'discovered' && verifiedThisAddr) this.rememberBootstrapAddress(ma);
-					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, null, origin);
+					if (effectiveOrigin === 'discovered' && verifiedThisAddr) this.rememberBootstrapAddress(ma);
+					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, null, effectiveOrigin);
 					console.log('✓ Connected to new bootstrap peer');
 				} catch (err: any) {
 					if (superseded()) return;
@@ -1659,14 +1672,14 @@ export class Network {
 					// again rather than letting the next announce buy another dial.
 					if (probeAfterQuarantine && peerID) this.unreachableQuarantine.set(peerID, Date.now());
 					const actualPeerID = kind === 'identity-mismatch' ? extractActualPeerID(message) : null;
-					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, kind, message, actualPeerID, origin);
+					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, kind, message, actualPeerID, effectiveOrigin);
 					// [NET-MISMATCH] richer log for identity-mismatch — single line containing
 					// origin (configured / discovered from peer-announce), multiaddr,
 					// expected peerID and the actual peerID Noise reported. Makes it
 					// trivial to grep `[NET-MISMATCH]` and diff what the catalog has
 					// vs reality, even before the UI shows the same data.
 					if (kind === 'identity-mismatch') {
-						console.log(`[NET-MISMATCH] origin=${origin} net=${networkID?.slice(0, 8) ?? 'none'} addr=${peer} expected=${peerID ?? 'none'} actual=${actualPeerID ?? 'unparsed'}`);
+						console.log(`[NET-MISMATCH] origin=${effectiveOrigin} net=${networkID?.slice(0, 8) ?? 'none'} addr=${peer} expected=${peerID ?? 'none'} actual=${actualPeerID ?? 'unparsed'}`);
 					} else {
 						console.log(`⚠️  Could not connect to bootstrap peer (${kind}): ${peer} — ${message}`);
 					}
@@ -1709,7 +1722,7 @@ export class Network {
 						// Only once the peer has neither a live connection nor a single address we
 						// have not disproved is there anything left to purge.
 						if (this.node.getConnections(pid).length === 0 && remainingAddresses === 0) {
-							await this.purgeStalePeer(peerID, `${origin} dial identity mismatch, no usable address left`, epoch);
+							await this.purgeStalePeer(peerID, `${effectiveOrigin} dial identity mismatch, no usable address left`, epoch);
 						} else {
 							console.log(`[NET] dropped stale addr of peer ${peerID.slice(0, 16)}: ${ma.toString()}`);
 						}
@@ -1717,7 +1730,7 @@ export class Network {
 						// status entry — there's no saved config row to "fix" and leaving
 						// it visible just adds UI noise. For CONFIGURED entries, keep
 						// it so the user can decide to update or remove the saved row.
-						if (origin === 'discovered' && networkID) {
+						if (effectiveOrigin === 'discovered' && networkID) {
 							this.bootstrapTracker.deletePeer(networkID, peer);
 						}
 					}
