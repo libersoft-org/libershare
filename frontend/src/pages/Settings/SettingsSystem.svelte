@@ -8,8 +8,6 @@
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
-	import Select from '../../components/Input/Select.svelte';
-	import SelectOption from '../../components/Input/SelectOption.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
 	import CompressionAlgorithmRow from '../../components/Export/CompressionAlgorithmRow.svelte';
 	interface Props {
@@ -20,6 +18,11 @@
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 	// Local state
 	let mode = $state<ProgramMode>($programMode);
+	// Same switch every other row on this page uses. A native <select> was wrong here:
+	// its dropdown is painted by the OS, so it ignores the app's styling entirely.
+	function toggleMode(): void {
+		mode = mode === 'system' ? 'app' : 'system';
+	}
 	let autoStart = $state($autoStartOnBoot);
 	let trayVisible = $state($showInTray);
 	let trayMinimize = $state($minimizeToTray);
@@ -104,10 +107,7 @@
 <div class="settings">
 	<div class="container">
 		<div role="group" data-mouse-activate-area={areaID}>
-			<Select bind:value={mode} label={$t('settings.system.programMode')} position={[0, 0]} flex>
-				<SelectOption value="system" label={$t('settings.system.programModes.system')} />
-				<SelectOption value="app" label={$t('settings.system.programModes.app')} />
-			</Select>
+			<SwitchRow label={$t('settings.system.programModes.system') + ':'} checked={mode === 'system'} position={[0, 0]} onToggle={toggleMode} />
 			<div class="hint">{$t('settings.system.programModeInfo.' + mode)}</div>
 		</div>
 		<div role="group" data-mouse-activate-area={areaID}>
