@@ -1678,6 +1678,12 @@ export class Network {
 			trace(`[NET] disconnectPeer: invalid peerID ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 			return;
 		}
+		// Claim the peer as left BEFORE the first await. Everything below yields, and
+		// during those yields peer:discovery, redial maintenance and the promotion loop
+		// all consult the suppression set — an empty set there means they re-tag the
+		// peer with keep-alive and hand it straight back to the ReconnectQueue, so the
+		// hangUp below disconnects a peer that is already being dialed again.
+		this.addRedialSuppression(networkID, peerID);
 		// Remove the keep-alive tags FIRST so the imminent hangUp does not race
 		// the ReconnectQueue back into a re-dial. Both tags matter: the custom
 		// 'keep-alive-fleet' tag (peer-announce intake) and the native KEEP_ALIVE
@@ -1699,10 +1705,6 @@ export class Network {
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: hangUp failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
-		// Keep redial maintenance from re-dialing this just-left peer on the next
-		// status tick. Keyed by the left lishnet so rejoin lifts exactly its peers;
-		// cleared automatically once it reconnects legitimately.
-		this.addRedialSuppression(networkID, peerID);
 		// Forget the persisted peerStore entry so the disconnect survives a restart —
 		// suppression is in-memory only, but the peerStore is on disk.
 		await this.purgeStalePeer(peerID, 'left-network exclusive peer');

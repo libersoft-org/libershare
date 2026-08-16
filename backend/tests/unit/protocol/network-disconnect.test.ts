@@ -89,6 +89,24 @@ describe('Network.disconnectPeer — keep-alive tag removal', () => {
 		expect(suppressed(PEER_ID)).toBe(true);
 	});
 
+	it('suppresses it before the first await, not after the hangUp', async () => {
+		// Every yield in disconnectPeer is a window in which peer:discovery / redial
+		// maintenance read the suppression set. If the claim is only filed at the end,
+		// they see an ordinary peer and re-tag it for the ReconnectQueue.
+		const { network, suppressed } = makeNetwork();
+		const suppressedDuring: boolean[] = [];
+		(network as any).node.peerStore.merge = async (): Promise<void> => {
+			suppressedDuring.push(suppressed(PEER_ID));
+		};
+		(network as any).node.hangUp = async (): Promise<void> => {
+			suppressedDuring.push(suppressed(PEER_ID));
+		};
+
+		await network.disconnectPeer(PEER_ID, NET);
+
+		expect(suppressedDuring).toEqual([true, true]);
+	});
+
 	it('forgets the peerStore entry so the disconnect survives a restart', async () => {
 		const { network, deleted } = makeNetwork();
 		await network.disconnectPeer(PEER_ID, NET);
