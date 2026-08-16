@@ -68,6 +68,16 @@ describe('scrubChildError', () => {
 		expect(inner.message).not.toContain(SECRET);
 	});
 
+	it('clears the secret out of an already-rendered stack', () => {
+		// A stack is lazy, but anything that logged the error before us has already
+		// forced it — and it keeps the message it was rendered with, so scrubbing
+		// `message` on its own would leave the secret in the trace.
+		const err = new Error(`Command failed: nmcli password ${SECRET}`);
+		expect(err.stack).toContain(SECRET);
+		scrubChildError(err, [SECRET]);
+		expect(err.stack).not.toContain(SECRET);
+	});
+
 	it('clears the secret out of spawnargs', () => {
 		const err = Object.assign(new Error('boom'), { spawnargs: ['nmcli', 'password', SECRET] });
 		scrubChildError(err, [SECRET]);

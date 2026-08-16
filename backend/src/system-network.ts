@@ -377,8 +377,14 @@ export function redactSecrets(text: string, secrets: readonly string[]): string 
 	return result;
 }
 
-/** The string-valued fields of a child-process failure that can carry the argv. */
-const SCRUBBED_ERROR_FIELDS = ['message', 'cmd', 'command', 'stdout', 'stderr'] as const;
+/**
+ * The string-valued fields of a child-process failure that can carry the argv.
+ *
+ * `stack` is in the list because an already-materialized stack keeps the message
+ * it was rendered with, so scrubbing `message` alone leaves the secret in the
+ * trace a logger would print.
+ */
+const SCRUBBED_ERROR_FIELDS = ['message', 'stack', 'cmd', 'command', 'stdout', 'stderr'] as const;
 /** How far down a `cause` chain to keep scrubbing. Deep enough for any wrapper, bounded against a cycle. */
 const SCRUB_MAX_DEPTH = 4;
 
