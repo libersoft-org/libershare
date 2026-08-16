@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { CodedError, ErrorCodes } from '@shared';
 import { macApplyArgs, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceDns, parseServiceInfo, parseServiceOrder, parseServiceRouter, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
@@ -263,10 +264,25 @@ describe('macApplyArgs', () => {
 		]);
 	});
 
-	it('omits the router argument when there is no gateway', () => {
-		// networksetup takes the router as an optional trailing argument; an empty
-		// string is a parameter error, not a no-op.
-		expect(macApplyArgs('Wi-Fi', { mode: 'static', address: '192.0.2.10', prefixLength: 24 })[0]).toEqual(['-setmanual', 'Wi-Fi', '192.0.2.10', '255.255.255.0']);
+	it('refuses a static configuration with no gateway rather than building a short command', () => {
+		// `-setmanual` is documented as taking four mandatory values: service,
+		// address, subnet mask and router. Emitting only three produced a command
+		// networksetup rejects, and it did so only after the user had been told the
+		// configuration was valid. A gateway-less static address is legitimate on an
+		// isolated segment — macOS simply has no networksetup spelling for it, so the
+		// refusal is explicit and carries the code the UI can translate.
+		let thrown: CodedError | null = null;
+		try {
+			macApplyArgs('Wi-Fi', { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
+		} catch (err) {
+			thrown = err as CodedError;
+		}
+		expect(thrown).toBeInstanceOf(CodedError);
+		expect(thrown?.code).toBe(ErrorCodes.NETCONFIG_UNSUPPORTED);
+	});
+
+	it('places the router as the fourth mandatory value, never as an optional extra', () => {
+		expect(macApplyArgs('Wi-Fi', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' })[0]).toHaveLength(5);
 	});
 
 	it('clears the resolvers with the Empty sentinel when switching to DHCP', () => {

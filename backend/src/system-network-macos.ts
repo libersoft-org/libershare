@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { NetAddress, NetInterfaceInfo, NetIPv4Config, NetLink, NetMedium } from '@shared';
+import { CodedError, ErrorCodes, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetLink, type NetMedium } from '@shared';
 
 const execFileAsync = promisify(execFile);
 
@@ -437,11 +437,16 @@ export function macApplyArgs(service: string, config: NetIPv4Config): string[][]
 	const dns = config.dns ?? [];
 	const dnsArgs = ['-setdnsservers', service, ...(dns.length > 0 ? dns : ['Empty'])];
 	if (config.mode === 'dhcp') return [['-setdhcp', service], dnsArgs];
-	const address = ['-setmanual', service, config.address as string, netmaskFromPrefix(config.prefixLength as number)];
-	// An interface on an isolated segment has no gateway, and networksetup takes
-	// the router as an optional trailing argument rather than an empty string.
-	if (config.gateway) address.push(config.gateway);
-	return [address, dnsArgs];
+	// `networksetup -setmanual` is documented as taking FOUR mandatory values —
+	// service, address, subnet mask and router — not three with an optional
+	// trailing one. Building the short form produces a command networksetup
+	// rejects as invalid parameters, and it would be rejected AFTER the caller had
+	// been told the configuration was acceptable. A gateway-less static address is
+	// legitimate on an isolated segment and the shared validator rightly allows it
+	// for the other platforms, so the refusal belongs here, where the limitation
+	// actually is: macOS has no `networksetup` spelling for it.
+	if (!config.gateway) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'macOS requires a gateway for a static address');
+	return [['-setmanual', service, config.address as string, netmaskFromPrefix(config.prefixLength as number), config.gateway], dnsArgs];
 }
 
 /** Resolve the service name a device belongs to. Throws when the device is not part of an enabled service. */
