@@ -1631,7 +1631,11 @@ export class Network {
 	 */
 	private connectionAgeMs(peerID: string): number {
 		if (!this.node) return Infinity;
-		let age = Infinity;
+		// -1 means "no connection seen yet", which Infinity cannot express here:
+		// Infinity is also the age of an UNDATED connection, and treating the two the
+		// same let a later dated connection overwrite it with a finite (fresh-looking)
+		// age — handing the grace window to a peer we have no freshness evidence for.
+		let age = -1;
 		try {
 			const now = Date.now();
 			for (const c of this.node.getConnections()) {
@@ -1639,12 +1643,12 @@ export class Network {
 				const opened = c.timeline?.open;
 				// A connection with no open timestamp is not evidence of freshness.
 				const candidate = typeof opened === 'number' ? now - opened : Infinity;
-				if (age === Infinity || candidate > age) age = candidate;
+				if (candidate > age) age = candidate;
 			}
 		} catch {
 			return Infinity;
 		}
-		return age;
+		return age < 0 ? Infinity : age;
 	}
 
 	/**

@@ -76,6 +76,25 @@ describe('Network.canListSharesTo', () => {
 		expect((net as any).canListSharesTo('peer-a')).toBe(false);
 	});
 
+	it('refuses a peer whose oldest connection carries no open timestamp', () => {
+		// An undated connection is not evidence of freshness, and it must stay that way
+		// however many dated connections the peer opens alongside it — the grace window
+		// is bought by the OLDEST connection, so a second dial cannot renew it.
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+		(network as any).pubsub = { getTopics: () => [lishTopic('net-a')], getSubscribers: () => [] };
+		(network as any).isBootstrapOrRelayPeer = (): boolean => false;
+		(network as any).node = {
+			getConnections: () => [
+				{ remotePeer: { toString: () => 'peer-a' }, timeline: {} },
+				{ remotePeer: { toString: () => 'peer-a' }, timeline: { open: Date.now() } },
+			],
+		};
+
+		expect((network as any).connectionAgeMs('peer-a')).toBe(Infinity);
+		expect((network as any).canListSharesTo('peer-a')).toBe(false);
+	});
+
 	it('refuses a peer we deliberately left (still suppressed)', () => {
 		const net = bareNetwork(['peer-left'], [lishTopic('net-a')]);
 		expect((net as any).canListSharesTo('peer-left')).toBe(false);
