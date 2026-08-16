@@ -97,7 +97,9 @@ describe('network-config.ts — PX trust policy', () => {
 	it('grants PX trust to bootstrap peers and configured trusted peers', () => {
 		const scoreBlock = CONFIG_TS.slice(CONFIG_TS.indexOf('appSpecificScore'), CONFIG_TS.indexOf('IPColocationFactorWeight'));
 		expect(scoreBlock).toContain('isConfiguredTrustedPXPeer');
-		expect(scoreBlock).toContain('bootstrapPeerIDs.has');
+		// Configured bootstrap only — see px-trust-boundary.test.ts for why the wider
+		// autodial set must never reach a trust decision.
+		expect(scoreBlock).toContain('configuredBootstrapPeerIDs.has');
 		expect(scoreBlock).toContain('pxEnabled && (isConfiguredTrustedPXPeer || isBootstrapPeer)');
 	});
 
@@ -124,7 +126,7 @@ describe('network-config.ts — PX trust policy', () => {
 		// must union the bootstrap peers into the trusted Set so the ingress filter
 		// decides the same way as the score callback in network-config.ts.
 		const filterSurface = GOSSIPSUB_PATCHES_TS.slice(GOSSIPSUB_PATCHES_TS.indexOf('applyGossipsubPXIngressPatch'), GOSSIPSUB_PATCHES_TS.indexOf('export function applyGossipsubPatches'));
-		expect(filterSurface).toContain('getBootstrapPeerIDs');
+		expect(filterSurface).toContain('getConfiguredBootstrapPeerIDs');
 		expect(filterSurface).toContain('trusted.add');
 	});
 });

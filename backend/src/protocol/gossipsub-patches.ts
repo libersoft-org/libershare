@@ -7,8 +7,15 @@ import { trace } from '../logger.ts';
  */
 export interface GossipsubPatchDeps {
 	readonly settings: Settings;
-	/** Returns the current set of known bootstrap peer IDs. Called at filter time, not cached. */
-	getBootstrapPeerIDs(): Set<string>;
+	/**
+	 * Returns the peer IDs the operator configured as bootstrap peers. Called at
+	 * filter time, not cached.
+	 *
+	 * Must NOT be the wider autodial set: that one also holds gossip-discovered and
+	 * auto-promoted peers, so any topic subscriber could announce itself into PX
+	 * trust and then feed us its own PX peer lists.
+	 */
+	getConfiguredBootstrapPeerIDs(): Set<string>;
 	/**
 	 * Per-Network-instance set for PX ingress log-key dedup (one-time log per sender+topic+action).
 	 * Owned and reset by the caller (Network); passed here to avoid module-global shared state
@@ -129,11 +136,11 @@ export function applyGossipsubPXIngressPatch(pubsub: any, deps: GossipsubPatchDe
 		if (!peerExchange?.ingressFilterEnabled || !rpc?.control?.prune?.length) return original(from, rpc);
 
 		const sender = from?.toString?.() ?? '';
-		// Trust union: explicit operator-configured peers + bootstrap peers from the
-		// lishnets the operator has joined (both represent "operator deliberately chose
-		// to trust this peer", see appSpecificScore in network-config.ts for rationale).
+		// Trust union: explicit operator-configured peers + CONFIGURED bootstrap peers of
+		// the lishnets the operator has joined (both represent "operator deliberately
+		// chose to trust this peer", see appSpecificScore in network-config.ts).
 		const trusted = normalizeTrustedPeerIds(peerExchange.trustedPeerIds);
-		for (const bp of deps.getBootstrapPeerIDs()) trusted.add(bp);
+		for (const bp of deps.getConfiguredBootstrapPeerIDs()) trusted.add(bp);
 		let allowed = 0;
 		let stripped = 0;
 

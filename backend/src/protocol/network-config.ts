@@ -65,12 +65,24 @@ export interface BuildConfigResult {
 	config: any;
 	port: number;
 	bootstrapPeerIDs: Set<string>;
+	/**
+	 * Peer IDs the OPERATOR chose: startup bootstrap config plus, at runtime, every
+	 * manual bootstrap edit. Aliased by {@link Network} so its dynamic additions and
+	 * removals reach the closures below.
+	 *
+	 * Every security decision in this config reads this set and never
+	 * `bootstrapPeerIDs`: the latter doubles as the autodial dedup set and collects
+	 * gossip-discovered and auto-promoted peers, so wiring trust to it would let any
+	 * topic subscriber talk itself into PX trust and a dial-filter bypass.
+	 */
+	configuredBootstrapPeerIDs: Set<string>;
 	bootstrapMultiaddrs: any[];
 }
 
 export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult {
 	const { privateKey, datastore, allSettings, bootstrapPeers, myPeerID: myPeerID } = params;
 	const bootstrapPeerIDs = new Set<string>();
+	const configuredBootstrapPeerIDs = new Set<string>();
 	const bootstrapMultiaddrs: any[] = [];
 	// Unique bootstrap peers computed up-front so gossipsub config below can
 	// pre-populate directPeers from them.
@@ -205,14 +217,18 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		// VPN up/down is picked up within 10 s via the CIDR cache TTL.
 		connectionGater: {
 			denyDialMultiaddr: async (ma: any): Promise<boolean> => {
-				// Bypass gater for trusted peers (bootstrap set ∪ configured trustedPeerIds).
+				// Bypass gater for trusted peers (configured bootstrap ∪ configured trustedPeerIds).
 				// Multi-subnet fleets (e.g. 192.168.10.x + 192.168.20.x) would otherwise have
 				// trusted peers blocked when their advertised addr lives on a LAN segment
 				// different from our own. Trusted peers are by policy known-good
 				// destinations, so dial them regardless of CIDR match.
+				//
+				// Deliberately NOT the full bootstrapPeerIDs set: that one also holds
+				// gossip-discovered and auto-promoted peers, and a bypass they can enter by
+				// announcing themselves turns the address filter into an opt-out.
 				const pidComponent = ma?.getComponents?.()?.find?.((c: any) => c.code === 421);
 				const pid = pidComponent?.value ?? null;
-				if (pid && (bootstrapPeerIDs.has(pid) || trustedPXPeerIDs.has(pid))) return false;
+				if (pid && (configuredBootstrapPeerIDs.has(pid) || trustedPXPeerIDs.has(pid))) return false;
 				const deny = shouldDenyDial(ma, getLocalCidrs());
 				if (deny) {
 					// Bounded debug sample so denied-dial flood does not overwhelm logs.
@@ -301,7 +317,9 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 					appSpecificScore: (peerId: any): number => {
 						const pid = typeof peerId === 'string' ? peerId : (peerId?.toString?.() ?? '');
 						const isConfiguredTrustedPXPeer = trustedPXPeerIDs.has(pid);
-						const isBootstrapPeer = bootstrapPeerIDs.has(pid);
+						// Configured bootstrap only — a peer that merely announced itself into
+						// the autodial set has no operator mandate and must not score as one.
+						const isBootstrapPeer = configuredBootstrapPeerIDs.has(pid);
 						const isTrustedPXPeer = pxEnabled && (isConfiguredTrustedPXPeer || isBootstrapPeer);
 						// Optional bounded trace of score callbacks. Off by default to keep production
 						// memory footprint clean — the `seen`/`trustedLogged` Sets would otherwise
@@ -311,7 +329,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 							const dbg = ((globalThis as any).__p2pfsPXScoreDbg ??= { seen: new Set<string>(), trustedLogged: new Set<string>() });
 							if (!dbg.seen.has(pid) && dbg.seen.size < 20) {
 								dbg.seen.add(pid);
-								trace(`[NET] PX trust score check peer=${pid.slice(0, 16)} enabled=${pxEnabled} configuredTrusted=${isConfiguredTrustedPXPeer} bootstrap=${isBootstrapPeer} trustedSetSize=${trustedPXPeerIDs.size} bootstrapSetSize=${bootstrapPeerIDs.size}`);
+								trace(`[NET] PX trust score check peer=${pid.slice(0, 16)} enabled=${pxEnabled} configuredTrusted=${isConfiguredTrustedPXPeer} bootstrap=${isBootstrapPeer} trustedSetSize=${trustedPXPeerIDs.size} bootstrapSetSize=${configuredBootstrapPeerIDs.size}`);
 							}
 							if (isTrustedPXPeer && !dbg.trustedLogged.has(pid)) {
 								dbg.trustedLogged.add(pid);
@@ -413,6 +431,8 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				const peerID = ma.getComponents().find(c => c.code === 421)?.value ?? null;
 				if (peerID) {
 					bootstrapPeerIDs.add(peerID);
+					// Config-time entries are operator data by definition.
+					configuredBootstrapPeerIDs.add(peerID);
 					bootstrapMultiaddrs.push(ma);
 				}
 				validBootstrapPeers.push(peer);
@@ -452,5 +472,5 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		config.peerDiscovery = peerDiscovery;
 	}
 
-	return { config, port, bootstrapPeerIDs: bootstrapPeerIDs, bootstrapMultiaddrs };
+	return { config, port, bootstrapPeerIDs: bootstrapPeerIDs, configuredBootstrapPeerIDs, bootstrapMultiaddrs };
 }

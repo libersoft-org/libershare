@@ -200,6 +200,11 @@ export class Network {
 	 * separate from bootstrapPeerIDs, which also collects peer-announce
 	 * discoveries: those are plain content peers and must remain
 	 * disconnectable by lishnet leave (isBootstrapOrRelayPeer).
+	 *
+	 * This is also the node's trust boundary: {@link buildLibp2pConfig} aliases this
+	 * exact set into the dial-gater bypass and the PX appSpecificScore, and the PX
+	 * ingress filter reads it too. Anything that can be entered by a peer's own
+	 * claim — gossip discovery, periodic promotion — must therefore stay out of it.
 	 */
 	private configuredBootstrapPeerIDs: Set<string> = new Set();
 	private dcutrPeers: Set<string> = new Set();
@@ -487,6 +492,7 @@ export class Network {
 			config,
 			port,
 			bootstrapPeerIDs: bootstrapPeerIDs,
+			configuredBootstrapPeerIDs,
 			bootstrapMultiaddrs,
 		} = buildLibp2pConfig({
 			privateKey,
@@ -496,8 +502,10 @@ export class Network {
 			myPeerID: privateKey.publicKey.toString(),
 		});
 		this.bootstrapPeerIDs = bootstrapPeerIDs;
-		// Config-time bootstrap entries are by definition 'configured'.
-		this.configuredBootstrapPeerIDs = new Set(bootstrapPeerIDs);
+		// Aliased, not copied: the config closures (dial gater bypass, PX
+		// appSpecificScore) read this exact set, so a bootstrap peer added or removed
+		// at runtime must gain and lose its trust there too.
+		this.configuredBootstrapPeerIDs = configuredBootstrapPeerIDs;
 		this.bootstrapMultiaddrs = bootstrapMultiaddrs;
 
 		console.log('Creating libp2p node...');
@@ -542,7 +550,7 @@ export class Network {
 		// returned by push() at every call site — intercept via prototype override
 		// on the first OutboundStream instance we observe (all instances share one
 		// prototype).
-		applyGossipsubPatches(this.pubsub, { settings: this.settings, getBootstrapPeerIDs: (): Set<string> => this.bootstrapPeerIDs, pxIngressLogKeys: this.pxIngressLogKeys }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
+		applyGossipsubPatches(this.pubsub, { settings: this.settings, getConfiguredBootstrapPeerIDs: (): Set<string> => this.configuredBootstrapPeerIDs, pxIngressLogKeys: this.pxIngressLogKeys }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
 
 		// Register lish protocol handler
 		await this.node.handle(
@@ -2102,6 +2110,7 @@ export class Network {
 		// Fix C: clear accumulated per-peer/bootstrap state on stop
 		this.dcutrPeers.clear();
 		this.bootstrapPeerIDs.clear();
+		this.configuredBootstrapPeerIDs.clear();
 		this.bootstrapTracker.clear();
 		this.bootstrapMultiaddrs = [];
 		this._lastPeerCounts.clear();
