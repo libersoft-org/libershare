@@ -1174,8 +1174,7 @@ export class Network {
 			console.log(`   [NET-CHURN] bootstrap stats net=${networkID.slice(0, 8)}: ${parts}`);
 		}
 		for (const ma of this.bootstrapMultiaddrs) {
-			const p2pComponents = ma.getComponents().filter((c: { code: number; value?: string }) => c.code === 421);
-			const pid: string | undefined = p2pComponents.length > 0 ? p2pComponents[p2pComponents.length - 1].value : undefined;
+			const pid = extractDestinationPeerID(ma);
 			if (pid && this.isRedialSuppressed(pid)) continue; // deliberately left — don't resurrect it here
 			// A CONFIGURED entry is the user's way back in and is always tried; a
 			// DISCOVERED one earned its place here by answering once, but that is no
