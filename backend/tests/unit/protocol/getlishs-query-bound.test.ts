@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { Uint8ArrayList } from 'uint8arraylist';
 import { handleLISHProtocol, initUploadState, resetUploadState, type LISHGetLishsResponse } from '../../../src/protocol/lish-protocol.ts';
-import { encode as codecEncode, decode as codecDecode } from '../../../src/protocol/codec.ts';
 import { MAX_SEARCH_QUERY_LENGTH } from '../../../src/protocol/constants.ts';
-import { decode as lpDecode, encode as lpEncode } from 'it-length-prefixed';
+import { decodeLISHResponses as responses, fakeLISHStream as fakeStream } from '../helpers/lish-stream.ts';
 
 /**
  * The unicast `getLishs` query and the pubsub `searchLishs` query end up doing the same
@@ -16,42 +14,6 @@ import { decode as lpDecode, encode as lpEncode } from 'it-length-prefixed';
 
 const SHARED_LISH_ID = 'bbbbbbbb-2222-4333-8444-555555555555';
 const PEER = 'peer-member';
-
-/** Minimal Stream stand-in: yields the given requests, collects every frame sent back. */
-function fakeStream(requests: unknown[]) {
-	const sent: Uint8Array[] = [];
-	const aborts: Error[] = [];
-	const stream = {
-		id: 'test-stream',
-		status: 'open',
-		send(data: any): void {
-			// it-length-prefixed hands back a Uint8ArrayList; keep only the payload.
-			const list = data instanceof Uint8ArrayList ? data : new Uint8ArrayList(data);
-			sent.push(list.subarray());
-		},
-		async close(): Promise<void> {},
-		abort(err: Error): void {
-			aborts.push(err);
-		},
-		async *[Symbol.asyncIterator]() {
-			// The handler wraps us in a length-prefixed decoder, so frame each request.
-			for (const req of requests) yield lpEncode.single(codecEncode(req));
-		},
-	};
-	return { stream, sent, aborts };
-}
-
-/** Decode the length-prefixed frames the handler wrote back. */
-async function responses(sent: Uint8Array[]): Promise<any[]> {
-	const out: any[] = [];
-	for (const frame of sent) {
-		const source = (async function* () {
-			yield new Uint8ArrayList(frame);
-		})();
-		for await (const msg of lpDecode(source)) out.push(codecDecode(msg.subarray()));
-	}
-	return out;
-}
 
 /**
  * Counts catalog scans. An oversized query yields no matches either way, so an empty
