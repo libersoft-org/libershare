@@ -241,6 +241,16 @@ export class Network {
 	 * until restart.
 	 */
 	private configuredBootstrapPeerIDs: Set<string> = new Set();
+	/**
+	 * Canonical bootstrap ADDRESSES that came from saved config, as opposed to gossip.
+	 *
+	 * Kept alongside the peer-ID set because the two answer different questions. Whether
+	 * a PEER may be auto-evicted is about identity — configured anywhere means exempt.
+	 * Whether an ADDRESS gets the configured treatment in recovery is about that address:
+	 * one peer can have a configured address and a gossip-learned one at the same time,
+	 * and the gossip-learned one must not inherit the exemption from its sibling.
+	 */
+	private readonly configuredBootstrapAddresses: Set<string> = new Set();
 	private dcutrPeers: Set<string> = new Set();
 	private bootstrapMultiaddrs: any[] = [];
 	/**
@@ -1154,7 +1164,7 @@ export class Network {
 			// this, an isolated node re-dialed a dead discovered peer every 30s
 			// forever, since maintenance stops counting failures the moment we have no
 			// other connection to prove we are online.
-			const configured = !!pid && this.configuredBootstrapPeerIDs.has(pid);
+			const configured = this.configuredBootstrapAddresses.has(normalizeMultiaddrForCompare(ma.toString()));
 			if (pid && !configured && !isRecoveryDialDue(pid, Date.now(), this.redialBackoff, this.unreachableQuarantine)) continue;
 			// Routability is re-checked here, not just at configure time: a LAN or VPN
 			// bootstrap is on this list while its interface is down, and becomes dialable
@@ -1195,7 +1205,7 @@ export class Network {
 		for (const ma of [...this.bootstrapMultiaddrs]) {
 			if (epoch !== this.runEpoch) return;
 			const pid = extractDestinationPeerID(ma);
-			if (!pid || !this.configuredBootstrapPeerIDs.has(pid)) continue;
+			if (!pid || !this.configuredBootstrapAddresses.has(normalizeMultiaddrForCompare(ma.toString()))) continue;
 			if (this.isRedialSuppressed(pid)) continue;
 			// Still unreachable from here — leave it parked for a later pass.
 			if (shouldDenyDial(ma, localCidrs)) continue;
@@ -1398,7 +1408,10 @@ export class Network {
 				// its place by answering; it is added after a verified dial, below. Adding
 				// it here left every unreachable address a gossip flood could invent on the
 				// list for good, since an ordinary timeout has nothing that takes it off.
-				if (origin === 'configured') this.rememberBootstrapAddress(ma);
+				if (origin === 'configured') {
+					this.configuredBootstrapAddresses.add(normalizeMultiaddrForCompare(ma.toString()));
+					this.rememberBootstrapAddress(ma);
+				}
 				// Safety net: refuse to dial loopback / unreachable-private bootstrap entries
 				// even if the upstream (catalog or peer-announce intake) failed to filter them.
 				// A discovered address is dropped silently — the call site iterates many
@@ -1721,6 +1734,7 @@ export class Network {
 		if (addresses.length === 0) return;
 		const drop = new Set(addresses.map(a => normalizeMultiaddrForCompare(a)));
 		this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(ma => !drop.has(normalizeMultiaddrForCompare(ma.toString())));
+		for (const address of drop) this.configuredBootstrapAddresses.delete(address);
 	}
 
 	pruneConfiguredBootstrapPeer(peerID: string): void {
@@ -1732,7 +1746,17 @@ export class Network {
 		// churn this work removes. The dedup set has to let go as well, or a later
 		// re-add would be treated as already known and the address could never come back.
 		this.bootstrapPeerIDs.delete(peerID);
-		this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(ma => extractDestinationPeerID(ma) !== peerID);
+		// Only the addresses that came from the config. The same peer may also have a
+		// gossip-learned address that earned its place by answering a dial — that one
+		// belongs to the discovered lifecycle (TTL, backoff) and is not the user's to lose
+		// just because they deleted a different address of the same peer.
+		this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(ma => {
+			if (extractDestinationPeerID(ma) !== peerID) return true;
+			const canonical = normalizeMultiaddrForCompare(ma.toString());
+			if (!this.configuredBootstrapAddresses.has(canonical)) return true;
+			this.configuredBootstrapAddresses.delete(canonical);
+			return false;
+		});
 	}
 
 	isBootstrapOrRelayPeer(peerID: string): boolean {
@@ -2369,6 +2393,7 @@ export class Network {
 		this.unreachableQuarantine.clear();
 		this.noReachableSince.clear();
 		this.configuredBootstrapPeerIDs.clear();
+		this.configuredBootstrapAddresses.clear();
 		this.redialSuppressedByNet.clear();
 		this.pxIngressLogKeys.clear();
 		if (this.node) {
