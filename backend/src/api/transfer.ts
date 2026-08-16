@@ -457,6 +457,17 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				return { success: false };
 			}
 			for (const id of joinedNetworks) if (!stillJoined.includes(id)) downloader.removeNetwork?.(id);
+			// Until the line below this downloader is unreachable: removeDownloadState()
+			// (LISH deleted), disableDownload() and clearAllTransfers() (factory reset)
+			// can only tear down downloaders already in the map, so one that arrives
+			// afterwards outlives the very state that was supposed to remove it — and
+			// starts transferring a LISH the user deleted. All three clear the runtime
+			// enabled flag we set at entry, so its absence is the proof they ran.
+			if (!downloadEnabledLishs.has(p.lishID)) {
+				console.log(`[Transfer] ${p.lishID.slice(0, 8)}: download withdrawn while starting, discarding downloader`);
+				await downloader.destroy();
+				return { success: false };
+			}
 			activeDownloaders.set(p.lishID, downloader);
 			const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
 			downloader.setProgressCallback?.((info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => {
