@@ -68,6 +68,20 @@ describe('dial-gater trust boundary', () => {
 		expect(await config.connectionGater.denyDialMultiaddr(multiaddr(`${LOOPBACK}/p2p/${DISCOVERED_PEER}`))).toBe(true);
 	});
 
+	it('trusts the destination of a circuit bootstrap address, not the relay', async () => {
+		const privateKey = await generateKeyPair('Ed25519');
+		const { configuredBootstrapPeerIDs } = buildLibp2pConfig({
+			privateKey,
+			datastore: {},
+			allSettings: settingsData(),
+			bootstrapPeers: [`${LOOPBACK}/p2p/${DISCOVERED_PEER}/p2p-circuit/p2p/${CONFIGURED_PEER}`],
+			myPeerID: privateKey.publicKey.toString(),
+		});
+
+		expect(configuredBootstrapPeerIDs.has(CONFIGURED_PEER)).toBe(true);
+		expect(configuredBootstrapPeerIDs.has(DISCOVERED_PEER)).toBe(false);
+	});
+
 	it('drops the bypass again when the peer leaves the configuration', async () => {
 		const privateKey = await generateKeyPair('Ed25519');
 		const { config, configuredBootstrapPeerIDs } = buildLibp2pConfig({

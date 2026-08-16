@@ -23,7 +23,7 @@ import { type PrivateKey } from '@libp2p/interface';
 import { type SettingsData } from '../settings.ts';
 import { trace } from '../logger.ts';
 import { normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
-import { getLocalCidrs, shouldDenyDial, extractFirstIPv4 } from './address-filter.ts';
+import { getLocalCidrs, shouldDenyDial, extractFirstIPv4, extractDestinationPeerID } from './address-filter.ts';
 import { peerIdFromString } from '@libp2p/peer-id';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 
@@ -45,7 +45,7 @@ function buildDirectPeersFromBootstrap(uniquePeers: string[]): DirectPeer[] {
 	for (const ma of uniquePeers) {
 		try {
 			const parsed = Multiaddr(ma);
-			const pid = parsed.getComponents().find((c: any) => c.code === 421)?.value;
+			const pid = extractDestinationPeerID(parsed);
 			if (!pid) continue;
 			direct.push({ id: peerIdFromString(pid), addrs: [parsed] });
 		} catch {
@@ -428,7 +428,10 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			console.log('  -', peer);
 			try {
 				const ma = Multiaddr(peer);
-				const peerID = ma.getComponents().find(c => c.code === 421)?.value ?? null;
+				// Destination, not the first hop: for `/p2p/<relay>/p2p-circuit/p2p/<target>`
+				// the relay would otherwise be recorded as the bootstrap peer, while the
+				// runtime paths (addBootstrapPeers, purge, eviction) all key on the target.
+				const peerID = extractDestinationPeerID(ma);
 				if (peerID) {
 					bootstrapPeerIDs.add(peerID);
 					// Config-time entries are operator data by definition.
