@@ -69,8 +69,15 @@ export function isSelectableInterface(iface: NetInterfaceInfo): boolean {
 	return iface.addresses.some(a => !a.address.toLowerCase().startsWith('fe80') && !a.address.startsWith('169.254.'));
 }
 
-/** True for a dotted-quad IPv4 literal: four octets, 0-255, no leading zeros. */
+/**
+ * True for a dotted-quad IPv4 literal: four octets, 0-255, no leading zeros.
+ *
+ * The type says `string`, but the values reaching this come from an RPC client,
+ * so a non-string is answered with `false` rather than a `TypeError` thrown from
+ * `.split` — the caller's job is to reject a bad address, not to crash on one.
+ */
 export function isIPv4(value: string): boolean {
+	if (typeof value !== 'string') return false;
 	const parts = value.split('.');
 	if (parts.length !== 4) return false;
 	return parts.every(part => /^(0|[1-9]\d{0,2})$/.test(part) && Number(part) <= 255);
@@ -86,8 +93,18 @@ export function isIPv4(value: string): boolean {
  * every platform validate before touching a child process.
  */
 export function validateIPv4Config(config: NetIPv4Config): string | null {
+	// The parameter is typed, but it arrives from an RPC client, so nothing about
+	// its runtime SHAPE is guaranteed either. `null` used to reach the field reads
+	// below and throw a TypeError out of the API dispatcher instead of being
+	// answered as the bad request it is; an array has no usable mode, which is the
+	// first thing missing from it and so what the user is pointed at.
+	if (typeof config !== 'object' || config === null || Array.isArray(config)) return 'mode';
 	if (config.mode !== 'dhcp' && config.mode !== 'static') return 'mode';
-	for (const server of config.dns ?? []) if (!isIPv4(server)) return 'dns';
+	const dns = config.dns ?? [];
+	// A `dns` that is not a list would otherwise be iterated character by character
+	// when it is a string, and throw when it is an object.
+	if (!Array.isArray(dns)) return 'dns';
+	for (const server of dns) if (!isIPv4(server)) return 'dns';
 	if (config.mode === 'dhcp') return null;
 	if (!config.address || !isIPv4(config.address)) return 'address';
 	if (!Number.isInteger(config.prefixLength) || (config.prefixLength as number) < 1 || (config.prefixLength as number) > 32) return 'prefixLength';

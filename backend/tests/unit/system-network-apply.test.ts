@@ -17,6 +17,10 @@ describe('isIPv4', () => {
 		expect(isIPv4('192.0.2.01')).toBe(false);
 		expect(isIPv4('010.0.0.1')).toBe(false);
 	});
+
+	it('answers false for a non-string rather than throwing', () => {
+		for (const bogus of [null, undefined, 42, {}, ['192.0.2.1']]) expect(isIPv4(bogus as unknown as string)).toBe(false);
+	});
 });
 
 describe('validateIPv4Config', () => {
@@ -45,6 +49,27 @@ describe('validateIPv4Config', () => {
 		// The servers are still applied in DHCP mode on some stacks, so they cannot
 		// be waved through just because the address is not being set.
 		expect(validateIPv4Config({ mode: 'dhcp', dns: ['not an address'] })).toBe('dns');
+	});
+
+	// The config arrives from an RPC client, so its runtime shape is whatever was
+	// sent. Every one of these used to throw a TypeError out of the dispatcher
+	// instead of naming the offending field.
+	it('names a field rather than throwing on a config that is not an object', () => {
+		for (const bogus of [null, undefined, [], 'static', 42]) expect(validateIPv4Config(bogus as unknown as NetIPv4Config)).toBe('mode');
+	});
+
+	it('names a field rather than throwing on a non-string address', () => {
+		for (const bogus of [{}, [], 42, null]) expect(validateIPv4Config({ mode: 'static', address: bogus, prefixLength: 24 } as unknown as NetIPv4Config)).toBe('address');
+	});
+
+	it('names a field rather than throwing on a dns list that is not a list', () => {
+		expect(validateIPv4Config({ mode: 'dhcp', dns: '192.0.2.1' } as unknown as NetIPv4Config)).toBe('dns');
+		expect(validateIPv4Config({ mode: 'dhcp', dns: { 0: '192.0.2.1' } } as unknown as NetIPv4Config)).toBe('dns');
+	});
+
+	it('names a field rather than throwing on a dns entry that is not a string', () => {
+		expect(validateIPv4Config({ mode: 'dhcp', dns: [{}] } as unknown as NetIPv4Config)).toBe('dns');
+		expect(validateIPv4Config({ mode: 'dhcp', dns: [null] } as unknown as NetIPv4Config)).toBe('dns');
 	});
 
 	it('refuses anything carrying shell or PowerShell syntax', () => {
