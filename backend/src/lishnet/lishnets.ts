@@ -1,5 +1,5 @@
 import { type Database } from 'bun:sqlite';
-import { Network } from '../protocol/network.ts';
+import { Network, normalizeMultiaddrForCompare } from '../protocol/network.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
@@ -185,12 +185,12 @@ export class Networks {
 	}
 
 	/** Configured-bootstrap peer IDs of every joined network except `exceptID`. */
-	/** Bootstrap ADDRESSES configured for every joined network except `exceptID`. */
+	/** Canonical bootstrap ADDRESSES configured for every joined network except `exceptID`. */
 	private configuredBootstrapAddressesElsewhere(exceptID: string): Set<string> {
 		const out = new Set<string>();
 		for (const nid of this.joinedNetworks) {
 			if (nid === exceptID) continue;
-			for (const address of Networks.cleanBootstrapList(this.get(nid)?.bootstrapPeers ?? [])) out.add(address);
+			for (const address of Networks.cleanBootstrapList(this.get(nid)?.bootstrapPeers ?? [])) out.add(normalizeMultiaddrForCompare(address));
 		}
 		return out;
 	}
@@ -492,9 +492,12 @@ export class Networks {
 		// Addresses that left the list while their peer ID stayed — the user edited a
 		// host or port. The identity-level prune above cannot see those, so recovery
 		// would go on dialing the address that was replaced.
-		const keptAddresses = new Set(cleaned);
+		// Compare canonically, the same way the autodial list itself does. Raw string
+		// equality would treat two spellings of one address (DNS case, IPv6 form) as
+		// different entries here and as the same one during the prune below.
+		const keptAddresses = new Set(cleaned.map(normalizeMultiaddrForCompare));
 		const elsewhereAddresses = this.configuredBootstrapAddressesElsewhere(id);
-		const dropped = Networks.cleanBootstrapList(previousPeers).filter(a => !keptAddresses.has(a) && !elsewhereAddresses.has(a));
+		const dropped = Networks.cleanBootstrapList(previousPeers).filter(a => !keptAddresses.has(normalizeMultiaddrForCompare(a)) && !elsewhereAddresses.has(normalizeMultiaddrForCompare(a)));
 		this.network.pruneBootstrapAddresses(dropped);
 		this.network.pruneBootstrapStatus(id, cleaned);
 		if (this.joinedNetworks.has(id) && cleaned.length > 0) {
