@@ -94,6 +94,7 @@ describe('runRedialMaintenance — eviction with no reachable address', () => {
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).noReachableSince = new Map([[PEER_ID, Date.now() - opts.sinceMsAgo]]);
 		(network as any).configuredBootstrapPeerIDs = new Set(opts.configured ? [PEER_ID] : []);
+		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).bootstrapTracker = { deleteDiscoveredByPeerID() {} };
 		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
 		(network as any).node = { getConnections: () => [] };
@@ -159,6 +160,7 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
@@ -321,6 +323,7 @@ describe('addBootstrapPeers — forced probe only for configured addresses', () 
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
@@ -369,8 +372,10 @@ describe('configured exemption ends when the peer leaves the config', () => {
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).noReachableSince = new Map([[PEER_ID, Date.now() - 45 * 60_000]]);
 		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
 		(network as any).bootstrapMultiaddrs = [multiaddr(`/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`)];
+		(network as any).configuredBootstrapAddresses = new Set([normalizeMultiaddrForCompare(`/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`)]);
 		(network as any).bootstrapTracker = { deleteDiscoveredByPeerID() {} };
 		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
 		(network as any).node = { getConnections: () => [] };
@@ -450,6 +455,7 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
@@ -511,6 +517,7 @@ describe('addBootstrapPeers — a dial that lands after leave-network', () => {
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set(suppressed)]]);
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
@@ -547,6 +554,7 @@ describe('addBootstrapPeers — a dial that lands after leave-network', () => {
 	it('keeps a connection to a peer another joined network still needs', async () => {
 		const { network, disconnected } = bareNetwork([]);
 		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).configuredBootstrapAddresses = new Set<string>();
 		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
 		expect(disconnected).toEqual([]);
 	});
@@ -602,6 +610,7 @@ describe('addBootstrapPeers — only a working discovered address joins the auto
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
@@ -688,6 +697,7 @@ describe('addBootstrapPeers — a non-routable configured entry is still configu
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
@@ -759,6 +769,7 @@ describe('addBootstrapPeers — quarantine after the probe it allowed', () => {
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map([[PEER_ID, quarantinedAt]]);
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
@@ -842,6 +853,7 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [multiaddr(BAD)];
@@ -904,6 +916,7 @@ describe('probeParkedConfiguredBootstraps', () => {
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set(opts.configured === false ? [] : [PEER_ID]);
+		(network as any).configuredBootstrapAddresses = new Set(opts.configured === false ? [] : [normalizeMultiaddrForCompare(PARKED)]);
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapMultiaddrs = [multiaddr(PARKED)];
@@ -948,5 +961,66 @@ describe('probeParkedConfiguredBootstraps', () => {
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set([PEER_ID])]]);
 		await run(network);
 		expect(dialed).toEqual([]);
+	});
+});
+
+/**
+ * One peer can hold a configured address AND a gossip-learned one at the same time.
+ * Deciding "is this configured" from the peer id let the gossip-learned sibling
+ * inherit the configured exemption — no backoff, no quarantine, and it survived the
+ * user deleting the configured entry it had nothing to do with.
+ */
+describe('configured origin is a property of the address, not the peer', () => {
+	const CONFIGURED = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+	const DISCOVERED = `/ip4/198.51.100.7/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork() {
+		const dialed: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).configuredBootstrapAddresses = new Set([normalizeMultiaddrForCompare(CONFIGURED)]);
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).bootstrapMultiaddrs = [multiaddr(CONFIGURED), multiaddr(DISCOVERED)];
+		(network as any).recentDisconnects = [];
+		(network as any).bootstrapTracker = { entries: () => [] };
+		(network as any).node = {
+			getPeers: () => [],
+			getConnections: () => [],
+			async dial(ma: { toString(): string }): Promise<void> {
+				dialed.push(ma.toString());
+			},
+		};
+		return { network, dialed };
+	}
+
+	const addresses = (network: Network): string[] => (network as any).bootstrapMultiaddrs.map((m: { toString(): string }) => m.toString());
+
+	it('paces a discovered address whose peer is configured under a DIFFERENT address', async () => {
+		// Only the discovered address is on the list, so nothing else can satisfy the
+		// loop: if it gets dialed while inside its backoff window, it was wrongly given
+		// the configured exemption its sibling address owns.
+		const { network, dialed } = bareNetwork();
+		(network as any).bootstrapMultiaddrs = [multiaddr(DISCOVERED)];
+		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000, failCount: 1, firstFailure: Date.now(), evictionFails: 0 }]]);
+		await (network as any).runZeroConnectionRecovery([]);
+		expect(dialed).toEqual([]);
+	});
+
+	it('still lets the configured address through the same backoff', async () => {
+		const { network, dialed } = bareNetwork();
+		(network as any).bootstrapMultiaddrs = [multiaddr(CONFIGURED)];
+		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000, failCount: 1, firstFailure: Date.now(), evictionFails: 0 }]]);
+		await (network as any).runZeroConnectionRecovery([]);
+		expect(dialed).toEqual([multiaddr(CONFIGURED).toString()]);
+	});
+
+	it('keeps the discovered address when the configured one is deleted', () => {
+		const { network } = bareNetwork();
+		network.pruneConfiguredBootstrapPeer(PEER_ID);
+		expect(addresses(network)).toEqual([multiaddr(DISCOVERED).toString()]);
 	});
 });
