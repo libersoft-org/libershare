@@ -298,12 +298,26 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		return { success: true };
 	}
 
-	const pendingDownloads = new Set<string>();
+	/**
+	 * In-flight enable attempts, keyed by LISH. Holds the PROMISE, not just the id:
+	 * callers that arrive while one is running must receive its real outcome. A
+	 * synthetic `{ success: true }` is read by onNetworkJoined as a completed resume,
+	 * so it drops the suspension claim — and if the attempt it did not wait for then
+	 * fails, nothing is left to resume the download from.
+	 */
+	const pendingDownloads = new Map<string, Promise<{ success: boolean }>>();
 
 	async function enableDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
 		assert(p, ['lishID']);
-		if (pendingDownloads.has(p.lishID)) return { success: true };
-		return startEnableDownload(p, client);
+		const inFlight = pendingDownloads.get(p.lishID);
+		if (inFlight) return inFlight;
+		const attempt = startEnableDownload(p, client);
+		pendingDownloads.set(p.lishID, attempt);
+		try {
+			return await attempt;
+		} finally {
+			pendingDownloads.delete(p.lishID);
+		}
 	}
 
 	/**
@@ -388,7 +402,6 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				return { success: true };
 			}
 		}
-		pendingDownloads.add(p.lishID);
 		try {
 			const network = networks.getRunningNetwork();
 			const joinedNetworks = networks.getEnabled().map(n => n.networkID);
@@ -488,8 +501,6 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			send('transfer.download:error', { error: code, errorDetail: detail, lishID: p.lishID });
 			startRecoveryIfEnabled(p.lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(p.lishID) });
 			return { success: false };
-		} finally {
-			pendingDownloads.delete(p.lishID);
 		}
 	}
 
