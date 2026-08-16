@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
 import { Network, isRecoveryDialDue, isSameDialEndpoint, normalizeMultiaddrForCompare } from '../../../src/protocol/network.ts';
+import { installBootstrapRegistry, registryAddresses } from '../helpers/bootstrap-registry.ts';
 
 /**
  * Guards on the DESTRUCTIVE peer-eviction paths. The pure decision helpers are covered
@@ -27,7 +28,7 @@ describe('purgeStalePeer — epoch guard', () => {
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
 		(network as any).bootstrapPeerIDs = new Set<string>();
-		(network as any).bootstrapMultiaddrs = [];
+		installBootstrapRegistry(network, []);
 		(network as any).redialBackoff = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).node = {
@@ -94,7 +95,6 @@ describe('runRedialMaintenance — eviction with no reachable address', () => {
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).noReachableSince = new Map([[PEER_ID, Date.now() - opts.sinceMsAgo]]);
 		(network as any).configuredBootstrapPeerIDs = new Set(opts.configured ? [PEER_ID] : []);
-		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).bootstrapTracker = { deleteDiscoveredByPeerID() {} };
 		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
 		(network as any).node = { getConnections: () => [] };
@@ -160,10 +160,9 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
-		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
-		(network as any).bootstrapMultiaddrs = [];
+		installBootstrapRegistry(network, []);
 		(network as any).bootstrapGeneration = new Map();
 		const outcomes: string[] = [];
 		(network as any).bootstrapTracker = {
@@ -174,6 +173,7 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 		};
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
+			getPeers: () => [],
 			getConnections: () => [],
 			async dial(ma: { toString(): string }, opts?: { force?: boolean }): Promise<unknown> {
 				dialled.push(ma.toString());
@@ -323,14 +323,14 @@ describe('addBootstrapPeers — forced probe only for configured addresses', () 
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
-		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
-		(network as any).bootstrapMultiaddrs = [];
+		installBootstrapRegistry(network, []);
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
+			getPeers: () => [],
 			getConnections: () => [{}], // already connected to this peer some other way
 			async dial(ma: { toString(): string }, opts?: { force?: boolean }): Promise<unknown> {
 				forced.push(opts?.force === true);
@@ -363,6 +363,8 @@ describe('addBootstrapPeers — forced probe only for configured addresses', () 
  * bootstrap config kept its eviction exemption until the process restarted.
  */
 describe('configured exemption ends when the peer leaves the config', () => {
+	const CONFIGURED_ADDR = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+
 	function bareNetwork() {
 		const purged: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
@@ -372,10 +374,8 @@ describe('configured exemption ends when the peer leaves the config', () => {
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).noReachableSince = new Map([[PEER_ID, Date.now() - 45 * 60_000]]);
 		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
-		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
-		(network as any).bootstrapMultiaddrs = [multiaddr(`/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`)];
-		(network as any).configuredBootstrapAddresses = new Set([normalizeMultiaddrForCompare(`/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`)]);
+		installBootstrapRegistry(network, [{ address: CONFIGURED_ADDR, configuredBy: ['net-a'] }]);
 		(network as any).bootstrapTracker = { deleteDiscoveredByPeerID() {} };
 		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
 		(network as any).node = { getConnections: () => [] };
@@ -397,7 +397,7 @@ describe('configured exemption ends when the peer leaves the config', () => {
 
 	it('stops protecting it once the config entry is gone', async () => {
 		const { network, purged } = bareNetwork();
-		network.pruneConfiguredBootstrapPeer(PEER_ID);
+		network.pruneConfiguredBootstrapPeer(PEER_ID, 'net-a');
 		await run(network);
 		expect(purged).toEqual([PEER_ID]);
 	});
@@ -406,33 +406,37 @@ describe('configured exemption ends when the peer leaves the config', () => {
 		// The two used to be able to disagree; pruning must settle both at once.
 		const { network } = bareNetwork();
 		expect(network.isBootstrapOrRelayPeer(PEER_ID)).toBe(true);
-		network.pruneConfiguredBootstrapPeer(PEER_ID);
+		network.pruneConfiguredBootstrapPeer(PEER_ID, 'net-a');
 		expect(network.isBootstrapOrRelayPeer(PEER_ID)).toBe(false);
 	});
 	/**
-	 * The autodial list is what zero-connection recovery walks. A bootstrap the user
-	 * has deleted must leave it too, or the node keeps dialing that address every time
-	 * it runs out of connections — the churn this work is supposed to end.
+	 * The registry is what zero-connection recovery walks. A bootstrap the user has
+	 * deleted must leave it too, or the node keeps dialing that address every time it
+	 * runs out of connections — the churn this work is supposed to end.
 	 */
 	it('forgets the deleted bootstrap address, so recovery stops dialing it', () => {
 		const { network } = bareNetwork();
-		expect((network as any).bootstrapMultiaddrs).toHaveLength(1);
-		network.pruneConfiguredBootstrapPeer(PEER_ID);
-		expect((network as any).bootstrapMultiaddrs).toEqual([]);
+		expect(registryAddresses(network)).toEqual([normalizeMultiaddrForCompare(CONFIGURED_ADDR)]);
+		network.pruneConfiguredBootstrapPeer(PEER_ID, 'net-a');
+		expect(registryAddresses(network)).toEqual([]);
 	});
 
 	it('also forgets it in the dedup set, so a later re-add can restore the address', () => {
 		const { network } = bareNetwork();
-		network.pruneConfiguredBootstrapPeer(PEER_ID);
+		network.pruneConfiguredBootstrapPeer(PEER_ID, 'net-a');
 		expect((network as any).bootstrapPeerIDs.has(PEER_ID)).toBe(false);
 	});
 
 	it('leaves the addresses of other peers alone', () => {
 		const other = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fp';
+		const otherAddr = `/ip4/203.0.113.10/tcp/9090/p2p/${other}`;
 		const { network } = bareNetwork();
-		(network as any).bootstrapMultiaddrs.push(multiaddr(`/ip4/203.0.113.10/tcp/9090/p2p/${other}`));
-		network.pruneConfiguredBootstrapPeer(PEER_ID);
-		expect((network as any).bootstrapMultiaddrs.map((m: { toString(): string }) => m.toString())).toEqual([`/ip4/203.0.113.10/tcp/9090/p2p/${other}`]);
+		installBootstrapRegistry(network, [
+			{ address: CONFIGURED_ADDR, configuredBy: ['net-a'] },
+			{ address: otherAddr, configuredBy: ['net-a'] },
+		]);
+		network.pruneConfiguredBootstrapPeer(PEER_ID, 'net-a');
+		expect(registryAddresses(network)).toEqual([normalizeMultiaddrForCompare(otherAddr)]);
 	});
 });
 
@@ -455,14 +459,14 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
-		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
-		(network as any).bootstrapMultiaddrs = [];
+		installBootstrapRegistry(network, []);
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
+			getPeers: () => [],
 			getConnections: () => [],
 			async dial(ma: { toString(): string }): Promise<unknown> {
 				dialled.push(ma.toString());
@@ -517,10 +521,9 @@ describe('addBootstrapPeers — a dial that lands after leave-network', () => {
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set(suppressed)]]);
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
-		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
-		(network as any).bootstrapMultiaddrs = [];
+		installBootstrapRegistry(network, []);
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
 		(network as any).disconnectPeer = async (peerID: string): Promise<void> => {
@@ -528,6 +531,7 @@ describe('addBootstrapPeers — a dial that lands after leave-network', () => {
 		};
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
+			getPeers: () => [],
 			getConnections: () => [],
 			async dial(ma: { toString(): string }): Promise<unknown> {
 				// The leave happens while this dial is in flight.
@@ -554,7 +558,6 @@ describe('addBootstrapPeers — a dial that lands after leave-network', () => {
 	it('keeps a connection to a peer another joined network still needs', async () => {
 		const { network, disconnected } = bareNetwork([]);
 		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
-		(network as any).configuredBootstrapAddresses = new Set<string>();
 		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
 		expect(disconnected).toEqual([]);
 	});
@@ -610,14 +613,14 @@ describe('addBootstrapPeers — only a working discovered address joins the auto
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
-		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
-		(network as any).bootstrapMultiaddrs = [];
+		installBootstrapRegistry(network, []);
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
+			getPeers: () => [],
 			getConnections: () => [],
 			async dial(ma: { toString(): string }): Promise<unknown> {
 				if (opts.fail) throw new Error('dial timeout');
@@ -628,7 +631,7 @@ describe('addBootstrapPeers — only a working discovered address joins the auto
 		return network;
 	}
 
-	const addresses = (network: Network): string[] => (network as any).bootstrapMultiaddrs.map((m: { toString(): string }) => m.toString());
+	const addresses = registryAddresses;
 
 	it('keeps a failed discovered address off the list', async () => {
 		const network = bareNetwork({ fail: true });
@@ -697,10 +700,9 @@ describe('addBootstrapPeers — a non-routable configured entry is still configu
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
-		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
-		(network as any).bootstrapMultiaddrs = [];
+		installBootstrapRegistry(network, []);
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).bootstrapTracker = {
 			markPending() {},
@@ -710,6 +712,7 @@ describe('addBootstrapPeers — a non-routable configured entry is still configu
 		};
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
+			getPeers: () => [],
 			getConnections: () => [],
 			async dial(ma: { toString(): string }): Promise<unknown> {
 				dialled.push(ma.toString());
@@ -745,7 +748,7 @@ describe('addBootstrapPeers — a non-routable configured entry is still configu
 	it('still puts the unroutable configured address on the recovery list', async () => {
 		const { network } = bareNetwork();
 		await (network as any).addBootstrapPeers([OFF_VPN], 'net-a', 'configured');
-		expect((network as any).bootstrapMultiaddrs.map((m: { toString(): string }) => m.toString())).toEqual([OFF_VPN]);
+		expect(registryAddresses(network)).toEqual([OFF_VPN]);
 	});
 
 	it('says nothing about a discovered address the filter rejected', async () => {
@@ -769,14 +772,14 @@ describe('addBootstrapPeers — quarantine after the probe it allowed', () => {
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
-		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map([[PEER_ID, quarantinedAt]]);
 		(network as any).bootstrapPeerIDs = new Set<string>();
-		(network as any).bootstrapMultiaddrs = [];
+		installBootstrapRegistry(network, []);
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
+			getPeers: () => [],
 			getConnections: () => [],
 			async dial(ma: { toString(): string }): Promise<unknown> {
 				if (fail) throw new Error('dial timeout');
@@ -853,10 +856,10 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
-		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
-		(network as any).bootstrapMultiaddrs = [multiaddr(BAD)];
+		(network as any).recoveryBackoff = new Map();
+		installBootstrapRegistry(network, [{ address: BAD, configuredBy: ['net-a'] }]);
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {}, deletePeer() {} };
 		(network as any).purgeStalePeer = async (id: string): Promise<void> => {
@@ -864,6 +867,7 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 		};
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
+			getPeers: () => [],
 			getConnections: () => [],
 			async dial(): Promise<unknown> {
 				throw new Error(`Payload identity key 12D3KooWSomeoneElseSomeoneElseSomeoneElseSomeoneEls does not match expected remote identity key ${PEER_ID}`);
@@ -894,10 +898,10 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 		expect(purged).toEqual([PEER_ID]);
 	});
 
-	it('drops the disproved address from the autodial list either way', async () => {
+	it('drops the disproved address from the registry either way', async () => {
 		const { network } = bareNetwork([BAD, GOOD]);
 		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
-		expect((network as any).bootstrapMultiaddrs).toEqual([]);
+		expect(registryAddresses(network)).toEqual([]);
 	});
 });
 
@@ -916,10 +920,10 @@ describe('probeParkedConfiguredBootstraps', () => {
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set(opts.configured === false ? [] : [PEER_ID]);
-		(network as any).configuredBootstrapAddresses = new Set(opts.configured === false ? [] : [normalizeMultiaddrForCompare(PARKED)]);
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
-		(network as any).bootstrapMultiaddrs = [multiaddr(PARKED)];
+		(network as any).recoveryBackoff = new Map();
+		installBootstrapRegistry(network, [{ address: PARKED, configuredBy: opts.configured === false ? [] : ['net-a'] }]);
 		(network as any).node = {
 			getConnections: () => Array.from({ length: opts.connections ?? 0 }, () => ({})),
 			async dial(ma: { toString(): string }): Promise<void> {
@@ -980,11 +984,11 @@ describe('configured origin is a property of the address, not the peer', () => {
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
-		(network as any).configuredBootstrapAddresses = new Set([normalizeMultiaddrForCompare(CONFIGURED)]);
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
+		(network as any).recoveryBackoff = new Map();
 		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
-		(network as any).bootstrapMultiaddrs = [multiaddr(CONFIGURED), multiaddr(DISCOVERED)];
+		installBootstrapRegistry(network, [{ address: CONFIGURED, configuredBy: ['net-a'] }, { address: DISCOVERED }]);
 		(network as any).recentDisconnects = [];
 		(network as any).bootstrapTracker = { entries: () => [] };
 		(network as any).node = {
@@ -997,14 +1001,12 @@ describe('configured origin is a property of the address, not the peer', () => {
 		return { network, dialed };
 	}
 
-	const addresses = (network: Network): string[] => (network as any).bootstrapMultiaddrs.map((m: { toString(): string }) => m.toString());
-
 	it('paces a discovered address whose peer is configured under a DIFFERENT address', async () => {
-		// Only the discovered address is on the list, so nothing else can satisfy the
+		// Only the discovered address is in the registry, so nothing else can satisfy the
 		// loop: if it gets dialed while inside its backoff window, it was wrongly given
 		// the configured exemption its sibling address owns.
 		const { network, dialed } = bareNetwork();
-		(network as any).bootstrapMultiaddrs = [multiaddr(DISCOVERED)];
+		installBootstrapRegistry(network, [{ address: DISCOVERED }]);
 		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000, failCount: 1, firstFailure: Date.now(), evictionFails: 0 }]]);
 		await (network as any).runZeroConnectionRecovery([]);
 		expect(dialed).toEqual([]);
@@ -1012,7 +1014,7 @@ describe('configured origin is a property of the address, not the peer', () => {
 
 	it('still lets the configured address through the same backoff', async () => {
 		const { network, dialed } = bareNetwork();
-		(network as any).bootstrapMultiaddrs = [multiaddr(CONFIGURED)];
+		installBootstrapRegistry(network, [{ address: CONFIGURED, configuredBy: ['net-a'] }]);
 		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000, failCount: 1, firstFailure: Date.now(), evictionFails: 0 }]]);
 		await (network as any).runZeroConnectionRecovery([]);
 		expect(dialed).toEqual([multiaddr(CONFIGURED).toString()]);
@@ -1020,7 +1022,7 @@ describe('configured origin is a property of the address, not the peer', () => {
 
 	it('keeps the discovered address when the configured one is deleted', () => {
 		const { network } = bareNetwork();
-		network.pruneConfiguredBootstrapPeer(PEER_ID);
-		expect(addresses(network)).toEqual([multiaddr(DISCOVERED).toString()]);
+		network.pruneConfiguredBootstrapPeer(PEER_ID, 'net-a');
+		expect(registryAddresses(network)).toEqual([normalizeMultiaddrForCompare(DISCOVERED)]);
 	});
 });

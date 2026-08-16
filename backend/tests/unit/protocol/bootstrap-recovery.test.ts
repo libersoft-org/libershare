@@ -1,0 +1,269 @@
+import { describe, it, expect } from 'bun:test';
+import { multiaddr } from '@multiformats/multiaddr';
+import { Network, bootstrapEntryLastActivity, normalizeMultiaddrForCompare, orderBootstrapEntriesForRecovery, pruneBootstrapEntries, type IBootstrapEntry } from '../../../src/protocol/network.ts';
+import { installBootstrapRegistry, registryAddresses, type IRegistrySeed } from '../helpers/bootstrap-registry.ts';
+
+/**
+ * The bootstrap registry is what zero-connection recovery walks. It is keyed by the
+ * canonical ADDRESS rather than by the peer behind it, because one peer legitimately
+ * has several addresses and a user can move a bootstrap to a new host while its
+ * identity stays the same — an identity-keyed registry collapsed the first case and
+ * treated the second as "already known", so the replaced address went on being dialed.
+ *
+ * Peer IDs are fake placeholders and addresses use RFC5737 documentation ranges.
+ */
+
+const PEER_A = '12D3KooWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+const PEER_B = '12D3KooWBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+const ADDR_A = `/ip4/192.0.2.1/tcp/9090/p2p/${PEER_A}`;
+const ADDR_A2 = `/ip4/192.0.2.2/tcp/9090/p2p/${PEER_A}`;
+const ADDR_B = `/ip4/198.51.100.7/tcp/9090/p2p/${PEER_B}`;
+
+const key = (address: string): string => normalizeMultiaddrForCompare(multiaddr(address).toString());
+
+/**
+ * A Network carrying only the fields the bootstrap paths touch, plus a fake node
+ * recording dials. `livePeers` models what `node.getPeers()` reports at the moment the
+ * loop runs — deliberately independent of the snapshot the status tick took earlier —
+ * and is re-read on every call, so a test can make a connection appear mid-pass.
+ */
+function bareNetwork(opts: { seeds?: IRegistrySeed[]; suppressed?: string[]; livePeers?: string[]; failDial?: boolean; onDial?: (address: string) => void } = {}) {
+	const dialed: string[] = [];
+	const livePeers = [...(opts.livePeers ?? [])];
+	const network = Object.create(Network.prototype) as Network;
+	(network as any).runEpoch = 1;
+	(network as any).redialBackoff = new Map();
+	(network as any).unreachableQuarantine = new Map();
+	(network as any).configuredBootstrapPeerIDs = new Set<string>();
+	(network as any).bootstrapGeneration = new Map();
+	(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(opts.suppressed ?? [])]]);
+	installBootstrapRegistry(network, opts.seeds ?? []);
+	(network as any).bootstrapPeerIDs = new Set([...(network as any).addressesByPeer.keys()]);
+	(network as any).recentDisconnects = [];
+	(network as any).bootstrapTracker = { entries: () => [], markPending() {}, recordOutcome() {}, deletePeer() {} };
+	(network as any).node = {
+		peerId: { toString: () => 'selfID' },
+		getPeers: () => livePeers.map(p => ({ toString: () => p })),
+		getConnections: () => [],
+		peerStore: {
+			async merge(): Promise<void> {},
+			async get(): Promise<unknown> {
+				return { addresses: [] };
+			},
+			async patch(): Promise<void> {},
+		},
+		async dial(ma: { toString(): string }): Promise<unknown> {
+			dialed.push(ma.toString());
+			opts.onDial?.(ma.toString());
+			if (opts.failDial) throw new Error('dial failed');
+			return { remoteAddr: ma };
+		},
+	};
+	const run = (): Promise<void> => (network as any).runZeroConnectionRecovery([]);
+	return { network, dialed, livePeers, run };
+}
+
+describe('bootstrap registry — address identity', () => {
+	it('stores a second address of a peer it already knows', async () => {
+		// Peer-id dedup used to swallow this: the peer was "already a bootstrap peer",
+		// so its other endpoint never entered the list and could never be recovered on.
+		const { network } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }] });
+		await (network as any).addBootstrapPeers([ADDR_A2], 'net-a', 'configured');
+		expect(registryAddresses(network)).toEqual([key(ADDR_A), key(ADDR_A2)]);
+	});
+
+	it('upgrades a discovered entry in place when the user configures that address', async () => {
+		const { network } = bareNetwork({ seeds: [{ address: ADDR_A, lastVerifiedAt: 1_000 }] });
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
+		const entry = (network as any).bootstrapByAddress.get(key(ADDR_A)) as IBootstrapEntry;
+		expect([...entry.configuredBy]).toEqual(['net-a']);
+		// Upgraded, not replaced: the verification it already earned must survive, or the
+		// TTL clock silently restarts every time the config is re-applied.
+		expect(entry.lastVerifiedAt).not.toBe(null);
+		expect(registryAddresses(network)).toEqual([key(ADDR_A)]);
+	});
+});
+
+describe('bootstrap registry — per-network ownership', () => {
+	it('keeps an address one network drops while another still configures it', () => {
+		const { network } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a', 'net-b'] }] });
+		network.pruneBootstrapAddresses([ADDR_A], 'net-a');
+		expect(registryAddresses(network)).toEqual([key(ADDR_A)]);
+		expect([...((network as any).bootstrapByAddress.get(key(ADDR_A)) as IBootstrapEntry).configuredBy]).toEqual(['net-b']);
+	});
+
+	it('removes it once the last network drops it', () => {
+		const { network } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a', 'net-b'] }] });
+		network.pruneBootstrapAddresses([ADDR_A], 'net-a');
+		network.pruneBootstrapAddresses([ADDR_A], 'net-b');
+		expect(registryAddresses(network)).toEqual([]);
+	});
+
+	it('never recovery-dials a removed configured address again', async () => {
+		const { network, dialed, run } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }] });
+		network.pruneBootstrapAddresses([ADDR_A], 'net-a');
+		await run();
+		expect(dialed).toEqual([]);
+	});
+
+	it('leaves a purely discovered entry alone when an unrelated config edit lands', () => {
+		const { network } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }, { address: ADDR_B }] });
+		network.pruneConfiguredBootstrapPeer(PEER_A, 'net-a');
+		expect(registryAddresses(network)).toEqual([key(ADDR_B)]);
+	});
+});
+
+describe('bootstrap registry — identity mismatch', () => {
+	const MISMATCH = `Payload identity key ${PEER_B} does not match expected remote identity key ${PEER_A}`;
+
+	it('removes the disproved address from the registry', async () => {
+		const { network } = bareNetwork({
+			seeds: [
+				{ address: ADDR_A, configuredBy: ['net-a'] },
+				{ address: ADDR_A2, configuredBy: ['net-a'] },
+			],
+		});
+		(network as any).purgeStalePeer = async (): Promise<void> => {};
+		(network as any).node.dial = async (): Promise<never> => {
+			throw new Error(MISMATCH);
+		};
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
+		// Only the address Noise disproved goes; the sibling was never tested.
+		expect(registryAddresses(network)).toEqual([key(ADDR_A2)]);
+	});
+
+	it('stops recovery dialing a disproved CONFIGURED address', async () => {
+		const { network, dialed } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }] });
+		(network as any).purgeStalePeer = async (): Promise<void> => {};
+		(network as any).node.dial = async (): Promise<never> => {
+			throw new Error(MISMATCH);
+		};
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
+		dialed.length = 0;
+		await (network as any).runZeroConnectionRecovery([]);
+		expect(dialed).toEqual([]);
+	});
+});
+
+describe('Network.runZeroConnectionRecovery — registry walk', () => {
+	it('dials configured entries before gossip-discovered ones', async () => {
+		// The discovered entry is seeded first, so plain insertion order would dial it first.
+		const { dialed, run } = bareNetwork({ seeds: [{ address: ADDR_B }, { address: ADDR_A, configuredBy: ['net-a'] }], failDial: true });
+		await run();
+		expect(dialed).toEqual([multiaddr(ADDR_A).toString(), multiaddr(ADDR_B).toString()]);
+	});
+
+	it('still skips a peer suppressed by leave-network', async () => {
+		const { dialed, run } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }], suppressed: [PEER_A] });
+		await run();
+		expect(dialed).toEqual([]);
+	});
+});
+
+describe('bootstrapEntryLastActivity', () => {
+	const base = { firstSeenAt: 100, lastVerifiedAt: null, lastDisconnectedAt: null };
+
+	it('falls back to the insertion time while nothing else has happened', () => {
+		expect(bootstrapEntryLastActivity(base)).toBe(100);
+	});
+
+	it('prefers a later verification', () => {
+		expect(bootstrapEntryLastActivity({ ...base, lastVerifiedAt: 500 })).toBe(500);
+	});
+
+	it('counts a disconnect as activity too', () => {
+		expect(bootstrapEntryLastActivity({ ...base, lastVerifiedAt: 500, lastDisconnectedAt: 900 })).toBe(900);
+	});
+});
+
+describe('pruneBootstrapEntries', () => {
+	const now = 1_000_000_000;
+
+	const discovered = (overrides: Partial<Pick<IBootstrapEntry, 'firstSeenAt' | 'lastVerifiedAt' | 'lastDisconnectedAt' | 'peerID'>> = {}) => ({
+		firstSeenAt: now,
+		lastVerifiedAt: null,
+		lastDisconnectedAt: null,
+		peerID: null,
+		configuredBy: new Set<string>(),
+		...overrides,
+	});
+
+	it('keeps discovered entries inside the TTL', () => {
+		const entries = [discovered({ firstSeenAt: now - 10 })];
+		expect(pruneBootstrapEntries(entries, now, 100, 10)).toEqual(entries);
+	});
+
+	it('drops discovered entries past the TTL', () => {
+		expect(pruneBootstrapEntries([discovered({ firstSeenAt: now - 101 })], now, 100, 10)).toEqual([]);
+	});
+
+	/**
+	 * The TTL used to run from insertion. A bootstrap that answered ten hours ago and
+	 * has been serving us ever since would lose its registry entry while it was at its
+	 * most useful, leaving nothing to dial the moment the connection dropped.
+	 */
+	it('measures the TTL from the last verification, not from first insert', () => {
+		const verified = discovered({ firstSeenAt: now - 10_000, lastVerifiedAt: now - 10 });
+		expect(pruneBootstrapEntries([verified], now, 100, 10)).toEqual([verified]);
+	});
+
+	it('measures it from the last disconnect too', () => {
+		const dropped = discovered({ firstSeenAt: now - 10_000, lastVerifiedAt: now - 9_000, lastDisconnectedAt: now - 10 });
+		expect(pruneBootstrapEntries([dropped], now, 100, 10)).toEqual([dropped]);
+	});
+
+	it('expires an entry whose last verification is itself past the TTL', () => {
+		expect(pruneBootstrapEntries([discovered({ firstSeenAt: now - 10_000, lastVerifiedAt: now - 101 })], now, 100, 10)).toEqual([]);
+	});
+
+	it('keeps configured entries past the TTL', () => {
+		const entries = [{ ...discovered({ firstSeenAt: now - 10_000 }), configuredBy: new Set(['net-a']) }];
+		expect(pruneBootstrapEntries(entries, now, 100, 10)).toEqual(entries);
+	});
+
+	it('caps discovered entries at the bound, keeping the newest', () => {
+		const entries = [
+			{ ...discovered({ firstSeenAt: now - 3 }), tag: 'oldest' },
+			{ ...discovered({ firstSeenAt: now - 2 }), tag: 'mid' },
+			{ ...discovered({ firstSeenAt: now - 1 }), tag: 'newest' },
+		];
+		expect(pruneBootstrapEntries(entries, now, 100, 2).map(e => e.tag)).toEqual(['mid', 'newest']);
+	});
+
+	it('does not count configured entries against the bound nor drop them', () => {
+		const entries = [
+			{ ...discovered({ firstSeenAt: now - 9 }), configuredBy: new Set(['net-a']), tag: 'cfg1' },
+			{ ...discovered({ firstSeenAt: now - 8 }), configuredBy: new Set(['net-a']), tag: 'cfg2' },
+			{ ...discovered({ firstSeenAt: now - 2 }), tag: 'disc1' },
+			{ ...discovered({ firstSeenAt: now - 1 }), tag: 'disc2' },
+		];
+		expect(pruneBootstrapEntries(entries, now, 100, 2).map(e => e.tag)).toEqual(['cfg1', 'cfg2', 'disc1', 'disc2']);
+	});
+
+	/**
+	 * Registry membership also decides whether a peer is re-tagged KEEP_ALIVE when it
+	 * connects, and that tag drives libp2p's reconnect queue. Ageing out a peer purely
+	 * because the connection has been up longer than the TTL would silently demote the
+	 * healthiest peers we have.
+	 */
+	it('never expires a discovered entry whose peer is connected right now', () => {
+		const entries = [discovered({ firstSeenAt: now - 10_000, peerID: PEER_A })];
+		expect(pruneBootstrapEntries(entries, now, 100, 10, pid => pid === PEER_A)).toEqual(entries);
+	});
+
+	it('expires that same entry once the peer is no longer connected', () => {
+		expect(pruneBootstrapEntries([discovered({ firstSeenAt: now - 10_000, peerID: PEER_A })], now, 100, 10, () => false)).toEqual([]);
+	});
+});
+
+describe('orderBootstrapEntriesForRecovery', () => {
+	it('puts configured entries first and preserves order inside each group', () => {
+		const entries = [
+			{ configuredBy: new Set<string>(), tag: 'd1' },
+			{ configuredBy: new Set(['net-a']), tag: 'c1' },
+			{ configuredBy: new Set<string>(), tag: 'd2' },
+			{ configuredBy: new Set(['net-b']), tag: 'c2' },
+		];
+		expect(orderBootstrapEntriesForRecovery(entries).map(e => e.tag)).toEqual(['c1', 'c2', 'd1', 'd2']);
+	});
+});
