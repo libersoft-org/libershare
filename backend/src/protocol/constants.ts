@@ -26,6 +26,17 @@ export const DEFAULT_ACCEPT_PX_THRESHOLD = 5;
 export const MAX_SEARCH_ID_LENGTH = 64;
 
 /**
+ * Longest search query we accept, on EVERY path that takes one.
+ *
+ * A query is lowercased once and then substring-matched against the id and the name of
+ * every advertised LISH, so its length is multiplied by the size of the catalog. The
+ * bound lived only on the pubsub path, which left the unicast `getLishs` request free to
+ * carry a string up to the whole protocol frame limit for the same work. The UI never
+ * sends anything remotely this long.
+ */
+export const MAX_SEARCH_QUERY_LENGTH = 256;
+
+/**
  * Returns the pubsub topic name for a given lishnet/network ID.
  */
 export function lishTopic(networkID: string): string {

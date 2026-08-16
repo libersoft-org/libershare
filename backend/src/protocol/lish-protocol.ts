@@ -10,6 +10,7 @@ import { isBusy } from '../api/busy.ts';
 import { trace } from '../logger.ts';
 import { registerUploadPeer, unregisterUploadPeer, recordUploadBytes, type ConnectionType } from './peer-tracker.ts';
 import { encode as codecEncode, decode as codecDecode } from './codec.ts';
+import { MAX_SEARCH_QUERY_LENGTH } from './constants.ts';
 export const LISH_PROTOCOL = '/lish/0.0.1';
 
 /**
@@ -526,6 +527,15 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					trace(`[PROTO] getLishs from ${remotePeer} refused: no shared joined lishnet`);
 					const gated: LISHGetLishsResponse = { type: 'getLishs-result', lishs: [] };
 					sendLengthPrefixed(stream, codecEncode(gated));
+					continue;
+				}
+				// Same bound as the pubsub search path: both lowercase the query and then
+				// substring-match it against the id and name of every advertised LISH, so
+				// a query the pubsub path refuses must not buy that work over unicast.
+				if (typeof request.query === 'string' && request.query.length > MAX_SEARCH_QUERY_LENGTH) {
+					trace(`[PROTO] getLishs from ${remotePeer} refused: query too long (${request.query.length})`);
+					const rejected: LISHGetLishsResponse = { type: 'getLishs-result', lishs: [] };
+					sendLengthPrefixed(stream, codecEncode(rejected));
 					continue;
 				}
 				// Return list of all shared (upload_enabled) LISHs — id and name only.
