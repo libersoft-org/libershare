@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { initLISHnetsTables, addLISHnet, getLISHnet } from '../../../src/db/lishnets.ts';
 import { Networks } from '../../../src/lishnet/lishnets.ts';
 
 /**
@@ -24,6 +26,14 @@ interface MockNet {
 	isBootstrapOrRelayPeer(pid: string): boolean;
 	disconnectPeer(pid: string, networkID: string): Promise<void>;
 	pruneConfiguredBootstrapPeer(pid: string): void;
+	bumpBootstrapGeneration(networkID: string): void;
+	generationBumps: string[];
+	pruneBootstrapAddresses(addresses: string[]): void;
+	prunedAddresses: string[][];
+	pruneBootstrapStatus(networkID: string, keep: string[]): void;
+	prunedStatus: Array<{ networkID: string; keep: string[] }>;
+	addBootstrapPeers(peers: string[], networkID: string, origin: string): Promise<void>;
+	dialledLists: Array<{ networkID: string; peers: string[]; origin: string }>;
 	clearRedialSuppressionForNetwork(networkID: string): void;
 	suppressionClearedFor: string[];
 }
@@ -38,6 +48,10 @@ function makeMockNet(): MockNet {
 		bootstrapOrRelay: new Set(),
 		prunedBootstrap: [],
 		suppressionClearedFor: [],
+		generationBumps: [],
+		prunedAddresses: [],
+		prunedStatus: [],
+		dialledLists: [],
 		getTopicPeers(id) {
 			return this.topicPeers.get(id) ?? [];
 		},
@@ -60,6 +74,18 @@ function makeMockNet(): MockNet {
 		},
 		pruneConfiguredBootstrapPeer(pid) {
 			this.prunedBootstrap.push(pid);
+		},
+		bumpBootstrapGeneration(networkID) {
+			this.generationBumps.push(networkID);
+		},
+		pruneBootstrapAddresses(addresses) {
+			this.prunedAddresses.push(addresses);
+		},
+		pruneBootstrapStatus(networkID, keep) {
+			this.prunedStatus.push({ networkID, keep });
+		},
+		async addBootstrapPeers(peers, networkID, origin) {
+			this.dialledLists.push({ networkID, peers, origin });
 		},
 		clearRedialSuppressionForNetwork(networkID) {
 			this.suppressionClearedFor.push(networkID);
@@ -270,5 +296,108 @@ describe('Networks.joinNetwork — onNetworkJoined notification', () => {
 		const networks = makeNetworks(net, []);
 		await join(networks, 'net-a');
 		expect(net.suppressionClearedFor).toEqual(['net-a']);
+	});
+});
+
+/**
+ * The bootstrap list can be edited from two screens: the participants view, which
+ * calls updateBootstrapPeers, and the ordinary "edit network" form, which calls
+ * update. Only the first used to reach the running node, so a list changed through
+ * the form was written to the database and then ignored until restart — the node
+ * kept dialing the peers the user had just removed.
+ */
+describe('Networks.update — a changed bootstrap list reaches the running node', () => {
+	const NET = 'net-a';
+	const PEER_A = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+	const PEER_B = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fp';
+	const ADDR_A = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_A}`;
+	const ADDR_B = `/ip4/203.0.113.10/tcp/9090/p2p/${PEER_B}`;
+
+	function seeded(bootstrapPeers: string[]) {
+		const db = new Database(':memory:');
+		initLISHnetsTables(db);
+		addLISHnet(db, { networkID: NET, name: 'A', description: '', bootstrapPeers, enabled: true, created: '2026-01-01T00:00:00.000Z' });
+		const mock = makeMockNet();
+		const networks = Object.create(Networks.prototype) as Networks;
+		(networks as any).network = mock;
+		(networks as any).db = db;
+		(networks as any).joinedNetworks = new Set([NET]);
+		return { networks, mock, db };
+	}
+
+	const edit = (networks: Networks, bootstrapPeers: string[]): boolean => (networks as any).update({ networkID: NET, name: 'A', description: '', bootstrapPeers, enabled: true, created: '2026-01-01T00:00:00.000Z' });
+
+	it('prunes the status and dials the new list when the entries change', () => {
+		const { networks, mock } = seeded([ADDR_A]);
+		edit(networks, [ADDR_B]);
+		expect(mock.prunedStatus).toEqual([{ networkID: NET, keep: [ADDR_B] }]);
+		expect(mock.dialledLists).toEqual([{ networkID: NET, peers: [ADDR_B], origin: 'configured' }]);
+	});
+
+	it('drops the bootstrap exemption of a peer removed through the form', () => {
+		const { networks, mock } = seeded([ADDR_A, ADDR_B]);
+		edit(networks, [ADDR_A]);
+		expect(mock.prunedBootstrap).toEqual([PEER_B]);
+	});
+
+	it('leaves the running node alone when only the name changed', () => {
+		const { networks, mock } = seeded([ADDR_A]);
+		edit(networks, [ADDR_A]);
+		expect(mock.prunedStatus).toEqual([]);
+		expect(mock.dialledLists).toEqual([]);
+		expect(mock.prunedBootstrap).toEqual([]);
+	});
+
+	/**
+	 * The form can submit blank rows. Persisting them raw while the runtime worked from
+	 * the filtered copy left the database and the live node disagreeing about what the
+	 * network's bootstrap list actually is.
+	 */
+	it('persists the cleaned list, not the blank rows the form submitted', () => {
+		const { networks, db } = seeded([ADDR_A]);
+		edit(networks, ['', ADDR_B, '   ']);
+		expect(getLISHnet(db, NET)?.bootstrapPeers).toEqual([ADDR_B]);
+	});
+
+	/**
+	 * Editing only the host or port keeps the peer ID, so the identity-level prune sees
+	 * nothing to do. Without an address-level prune the replaced address stays on the
+	 * autodial list and recovery keeps dialing it.
+	 */
+	it('drops the replaced address when only the host changed', () => {
+		const moved = `/ip4/203.0.113.99/tcp/9090/p2p/${PEER_A}`;
+		const { networks, mock } = seeded([ADDR_A]);
+		edit(networks, [moved]);
+		expect(mock.prunedAddresses).toEqual([[ADDR_A]]);
+		expect(mock.prunedBootstrap).toEqual([]);
+	});
+
+	it('keeps an address that is still configured for another joined network', () => {
+		const { networks, mock } = seeded([ADDR_A]);
+		(networks as any).get = (nid: string) => (nid === 'net-other' ? { networkID: nid, bootstrapPeers: [ADDR_A] } : { networkID: NET, bootstrapPeers: [ADDR_A] });
+		(networks as any).joinedNetworks = new Set([NET, 'net-other']);
+		edit(networks, [ADDR_B]);
+		expect(mock.prunedAddresses).toEqual([[]]);
+	});
+
+	/**
+	 * The autodial prune compares addresses canonically, so the "did this entry leave
+	 * the list" check has to as well — otherwise one spelling of an address counts as a
+	 * removal here and as the same entry there.
+	 */
+	it('treats two spellings of one address as the same entry', () => {
+		const upper = `/dns4/BOOTSTRAP.EXAMPLE.ORG./tcp/9090/p2p/${PEER_A}`;
+		const lower = `/dns4/bootstrap.example.org/tcp/9090/p2p/${PEER_A}`;
+		const { networks, mock } = seeded([upper]);
+		edit(networks, [lower]);
+		expect(mock.prunedAddresses).toEqual([[]]);
+	});
+
+	it('does not dial for a network that is not joined', () => {
+		const { networks, mock } = seeded([ADDR_A]);
+		(networks as any).joinedNetworks = new Set<string>();
+		edit(networks, [ADDR_B]);
+		expect(mock.dialledLists).toEqual([]);
+		expect(mock.prunedStatus).toHaveLength(1);
 	});
 });

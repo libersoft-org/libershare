@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { KEEP_ALIVE } from '@libp2p/interface';
 import { multiaddr } from '@multiformats/multiaddr';
-import { Network, extractDestinationPeerID } from '../../../src/protocol/network.ts';
+import { Network, normalizeMultiaddrForCompare } from '../../../src/protocol/network.ts';
 
 /**
  * Unit tests for Network.disconnectPeer tag hygiene: hanging up a peer must
@@ -19,7 +19,10 @@ function makeNetwork() {
 	const deleted: string[] = [];
 	const network = Object.create(Network.prototype) as Network;
 	(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+	(network as any).bootstrapGeneration = new Map();
 	(network as any).bootstrapPeerIDs = new Set<string>();
+	(network as any).bootstrapMultiaddrs = [];
+	(network as any).redialBackoff = new Map();
 	(network as any).node = {
 		getConnections: () => [],
 		peerStore: {
@@ -120,8 +123,11 @@ describe('Network.runRedialMaintenance — leave-peer suppression', () => {
 		const dialed: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).redialBackoff = new Map();
-		(network as any).bootstrapEntries = [];
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).noReachableSince = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
 		// A reconnected peer's suppression is lifted only if it currently shares a joined
 		// topic — model that via a pubsub whose subscribers list the "back on topic" peers.
 		(network as any).pubsub = {
@@ -166,7 +172,7 @@ describe('Network.runRedialMaintenance — leave-peer suppression', () => {
 });
 
 /**
- * Zero-connection recovery dials bootstrap entries when the node has no
+ * Zero-connection recovery dials bootstrapMultiaddrs when the node has no
  * connections. It must skip peers leave-network deliberately hung up, or a left
  * bootstrap comes straight back the moment connections briefly hit zero.
  */
@@ -175,13 +181,14 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		const dialed: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
-		(network as any).bootstrapEntries = bootstrapMaStrs.map(s => ({ ma: multiaddr(s), peerID: extractDestinationPeerID(multiaddr(s)), configured: true, addedAt: Date.now() }));
-		(network as any).bootstrapPeerIDs = new Set<string>();
-		(network as any).redialBackoff = new Map<string, { nextAttempt: number; failCount: number }>();
+		(network as any).redialBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).bootstrapMultiaddrs = bootstrapMaStrs.map(s => multiaddr(s));
 		(network as any).recentDisconnects = [];
 		(network as any).bootstrapTracker = { entries: () => [] };
 		(network as any).node = {
-			getPeers: () => [],
 			async dial(ma: { toString(): string }): Promise<void> {
 				dialed.push(ma.toString());
 			},
@@ -189,19 +196,51 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		return { network, dialed };
 	}
 
-	const run = (network: Network): Promise<void> => (network as any).runZeroConnectionRecovery();
+	const run = (network: Network, connected: any[]): Promise<void> => (network as any).runZeroConnectionRecovery(connected);
 
 	it('does not dial a bootstrap peer suppressed by leave-network', async () => {
 		const ma = `/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`;
 		const { network, dialed } = bareNetwork([PEER_ID], [ma]);
-		await run(network);
+		await run(network, []);
+		expect(dialed).toEqual([]);
+	});
+
+	/**
+	 * Recovery shares the pacing records with re-dial maintenance. Without that an
+	 * isolated node re-dialed a dead discovered peer every tick forever: maintenance
+	 * stops counting its failures once there is no other connection to prove we are
+	 * online, so nothing else was slowing it down.
+	 */
+	it('skips a discovered bootstrap peer inside its backoff window', async () => {
+		const ma = `/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`;
+		const { network, dialed } = bareNetwork([], [ma]);
+		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000 }]]);
+		await run(network, []);
+		expect(dialed).toEqual([]);
+	});
+
+	it('still dials a CONFIGURED peer inside a backoff window — it is the way back in', async () => {
+		const ma = `/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`;
+		const { network, dialed } = bareNetwork([], [ma]);
+		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000 }]]);
+		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).configuredBootstrapAddresses = new Set([normalizeMultiaddrForCompare(multiaddr(ma).toString())]);
+		await run(network, []);
+		expect(dialed).toEqual([multiaddr(ma).toString()]);
+	});
+
+	it('skips a discovered bootstrap peer still inside its unreachable quarantine', async () => {
+		const ma = `/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`;
+		const { network, dialed } = bareNetwork([], [ma]);
+		(network as any).unreachableQuarantine = new Map([[PEER_ID, Date.now() - 60_000]]);
+		await run(network, []);
 		expect(dialed).toEqual([]);
 	});
 
 	it('still dials a non-suppressed bootstrap peer', async () => {
 		const ma = `/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`;
 		const { network, dialed } = bareNetwork([], [ma]);
-		await run(network);
+		await run(network, []);
 		expect(dialed).toEqual([multiaddr(ma).toString()]);
 	});
 });
@@ -216,8 +255,11 @@ describe('Network.addBootstrapPeers — rejoin clears suppression', () => {
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set<string>(suppressed)]]);
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).bootstrapGeneration = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
-		(network as any).bootstrapEntries = [];
+		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },

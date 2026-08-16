@@ -1,5 +1,5 @@
 import { type Database } from 'bun:sqlite';
-import { Network } from '../protocol/network.ts';
+import { Network, normalizeMultiaddrForCompare } from '../protocol/network.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
@@ -185,6 +185,16 @@ export class Networks {
 	}
 
 	/** Configured-bootstrap peer IDs of every joined network except `exceptID`. */
+	/** Canonical bootstrap ADDRESSES configured for every joined network except `exceptID`. */
+	private configuredBootstrapAddressesElsewhere(exceptID: string): Set<string> {
+		const out = new Set<string>();
+		for (const nid of this.joinedNetworks) {
+			if (nid === exceptID) continue;
+			for (const address of Networks.cleanBootstrapList(this.get(nid)?.bootstrapPeers ?? [])) out.add(normalizeMultiaddrForCompare(address));
+		}
+		return out;
+	}
+
 	private configuredBootstrapPeerIDsElsewhere(exceptID: string): Set<string> {
 		const out = new Set<string>();
 		for (const nid of this.joinedNetworks) {
@@ -208,6 +218,10 @@ export class Networks {
 
 		this.network.unsubscribeTopic(id);
 		this.joinedNetworks.delete(id);
+		// Abandon any bootstrap job still walking this network's list. Left half-way
+		// through, it would keep dialing peers of a network we just left and clear the
+		// redial suppression the loop below is about to apply.
+		this.network.bumpBootstrapGeneration(id);
 
 		// Subscribers of any OTHER joined lishnet must stay connected (shared
 		// infrastructure). Compute this set BEFORE the bootstrap cleanup so that loop
@@ -384,7 +398,20 @@ export class Networks {
 	}
 
 	update(network: LISHNetworkConfig): boolean {
-		return updateLISHnet(this.db, network);
+		const existing = this.get(network.networkID);
+		// Store the cleaned list, not the raw one: blank rows from the form would
+		// otherwise be persisted while the runtime worked from the filtered copy, and
+		// the two would disagree about what this network's bootstrap list even is.
+		const cleaned = Networks.cleanBootstrapList(network.bootstrapPeers ?? []);
+		const ok = updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned });
+		// The general edit form carries the bootstrap list as well, so this path can
+		// change it just like updateBootstrapPeers does. Without the same runtime
+		// synchronisation the edit would reach only the database and the live node
+		// would keep dialing the previous list until restart.
+		if (!ok || !existing) return ok;
+		const previous = Networks.cleanBootstrapList(existing.bootstrapPeers);
+		if (previous.join('\n') !== cleaned.join('\n')) this.syncBootstrapRuntime(network.networkID, existing.bootstrapPeers, cleaned);
+		return ok;
 	}
 
 	async delete(id: string): Promise<boolean> {
@@ -431,24 +458,52 @@ export class Networks {
 	async updateBootstrapPeers(id: string, bootstrapPeers: string[]): Promise<LISHNetworkConfig | null> {
 		const existing = this.get(id);
 		if (!existing) return null;
-		const cleaned = bootstrapPeers.filter(p => typeof p === 'string' && p.trim().length > 0);
-		// Drop the bootstrap-exemption for peer IDs removed from this network's
-		// config, unless still configured for another joined network. Prevents a
-		// removed bootstrap entry from lingering as infrastructure that a later
-		// leave-network would refuse to disconnect.
-		const nextIDs = new Set(Networks.bootstrapPeerIDsOf(cleaned));
-		const elsewhere = this.configuredBootstrapPeerIDsElsewhere(id);
-		for (const pid of Networks.bootstrapPeerIDsOf(existing.bootstrapPeers)) {
-			if (!nextIDs.has(pid) && !elsewhere.has(pid)) this.network.pruneConfiguredBootstrapPeer(pid);
-		}
+		const cleaned = Networks.cleanBootstrapList(bootstrapPeers);
 		const next: LISHNetworkConfig = { ...existing, bootstrapPeers: cleaned };
 		updateLISHnet(this.db, next);
+		this.syncBootstrapRuntime(id, existing.bootstrapPeers, cleaned);
+		return next;
+	}
+
+	/** Drop blank entries from a user-supplied bootstrap list. */
+	private static cleanBootstrapList(peers: string[]): string[] {
+		return peers.filter(p => typeof p === 'string' && p.trim().length > 0);
+	}
+
+	/**
+	 * Bring the running node in line with a network's new configured bootstrap list.
+	 *
+	 * Shared by the bootstrap-only editor and the general network edit form, because
+	 * both can change that list and a change that reaches only the database leaves the
+	 * live node working from the previous one until restart.
+	 *
+	 * Three things have to happen: peer IDs that left the list lose their
+	 * bootstrap-exemption (unless another joined network still configures them, else a
+	 * removed entry lingers as infrastructure a later leave refuses to disconnect),
+	 * the status rows are pruned — which also invalidates any bootstrap job still
+	 * walking the old list — and the new entries are dialed.
+	 */
+	private syncBootstrapRuntime(id: string, previousPeers: string[], cleaned: string[]): void {
+		const nextIDs = new Set(Networks.bootstrapPeerIDsOf(cleaned));
+		const elsewhere = this.configuredBootstrapPeerIDsElsewhere(id);
+		for (const pid of Networks.bootstrapPeerIDsOf(previousPeers)) {
+			if (!nextIDs.has(pid) && !elsewhere.has(pid)) this.network.pruneConfiguredBootstrapPeer(pid);
+		}
+		// Addresses that left the list while their peer ID stayed — the user edited a
+		// host or port. The identity-level prune above cannot see those, so recovery
+		// would go on dialing the address that was replaced.
+		// Compare canonically, the same way the autodial list itself does. Raw string
+		// equality would treat two spellings of one address (DNS case, IPv6 form) as
+		// different entries here and as the same one during the prune below.
+		const keptAddresses = new Set(cleaned.map(normalizeMultiaddrForCompare));
+		const elsewhereAddresses = this.configuredBootstrapAddressesElsewhere(id);
+		const dropped = Networks.cleanBootstrapList(previousPeers).filter(a => !keptAddresses.has(normalizeMultiaddrForCompare(a)) && !elsewhereAddresses.has(normalizeMultiaddrForCompare(a)));
+		this.network.pruneBootstrapAddresses(dropped);
 		this.network.pruneBootstrapStatus(id, cleaned);
 		if (this.joinedNetworks.has(id) && cleaned.length > 0) {
 			this.network.addBootstrapPeers(cleaned, id, 'configured').catch(err => {
-				console.error(`[Networks] re-dial after updateBootstrapPeers failed:`, err?.message ?? err);
+				console.error(`[Networks] bootstrap re-dial after config change failed:`, err?.message ?? err);
 			});
 		}
-		return next;
 	}
 }
