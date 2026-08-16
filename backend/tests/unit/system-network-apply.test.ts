@@ -85,6 +85,12 @@ describe('validateIPv4Config', () => {
 	it('rejects the unspecified and limited-broadcast addresses', () => {
 		expect(validateIPv4Config({ mode: 'static', address: '0.0.0.0', prefixLength: 24 })).toBe('address');
 		expect(validateIPv4Config({ mode: 'static', address: '255.255.255.255', prefixLength: 24 })).toBe('address');
+		// At /31 and /32 the network/broadcast rule below does not apply, so these
+		// two are the only thing standing between the user and an interface
+		// configured with no address at all.
+		expect(validateIPv4Config({ mode: 'static', address: '0.0.0.0', prefixLength: 32 })).toBe('address');
+		expect(validateIPv4Config({ mode: 'static', address: '255.255.255.255', prefixLength: 32 })).toBe('address');
+		expect(validateIPv4Config({ mode: 'static', address: '0.0.0.0', prefixLength: 31 })).toBe('address');
 	});
 
 	it('rejects the network and broadcast addresses of the prefix', () => {
