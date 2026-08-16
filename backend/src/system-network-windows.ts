@@ -820,7 +820,14 @@ type AvailableNetwork = NetWifiNetwork & { auth: number };
 
 /** Walk the entries of a WLAN_AVAILABLE_NETWORK_LIST, skipping the ones that cannot be offered. */
 function* availableNetworks(list: Pointer): Generator<AvailableNetwork> {
-	const count = Math.min(read.u32(list, 0), MAX_AVAILABLE_NETWORKS);
+	const count = read.u32(list, 0);
+	// A count past the cap is not a long list to be trimmed, it is evidence that
+	// this buffer is not the structure we think it is — a wrong header offset, a
+	// stale pointer, a layout change. Clamping and walking anyway read whatever
+	// followed the allocation and reported it as networks; the only safe reading
+	// of a corrupt structure is to refuse it. Windows' own list does not approach
+	// this many entries even in the densest environment.
+	if (count > MAX_AVAILABLE_NETWORKS) throw new Error(`the WLAN network list declares ${count} entries, which is not a plausible scan result`);
 	const decoder = new TextDecoder();
 	for (let i = 0; i < count; i++) {
 		const base = AVAILABLE_LIST_HEADER + i * AVAILABLE_NETWORK_SIZE;

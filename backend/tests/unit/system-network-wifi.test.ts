@@ -123,11 +123,19 @@ describe('parseAvailableNetworks', () => {
 		expect(parseAvailableNetworks(list).map(n => n.ssid)).toEqual(['Sane']);
 	});
 
-	it('refuses to walk past the entries the buffer actually holds', () => {
-		// A count of one million is what a wrong header offset would produce; the cap
-		// keeps the walk bounded instead of reading unrelated memory.
+	it('rejects a list whose declared count cannot be a scan result', () => {
+		// A count of one million is what a wrong header offset or a stale pointer
+		// produces. Clamping it to the cap and walking anyway read whatever followed
+		// the allocation and reported it as networks; a structure that describes
+		// itself impossibly is refused instead.
 		const list = buildList([{ ssid: 'Only One', signal: 50 }], 1000000);
-		expect(() => parseAvailableNetworks(list)).not.toThrow();
+		expect(() => parseAvailableNetworks(list)).toThrow();
+	});
+
+	it('still accepts a count at the plausible limit', () => {
+		// The refusal must be aimed at corruption, not at a merely busy radio.
+		const list = buildList([{ ssid: 'Only One', signal: 50 }], 1);
+		expect(parseAvailableNetworks(list).map(n => n.ssid)).toEqual(['Only One']);
 	});
 
 	it('returns nothing for an empty list', () => {
