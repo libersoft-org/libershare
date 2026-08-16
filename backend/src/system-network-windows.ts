@@ -510,6 +510,22 @@ export function isWindowsInterfaceID(id: string): boolean {
 }
 
 /**
+ * Wrap a removal step so that "there was nothing to remove" passes and every
+ * other failure still stops the script.
+ *
+ * `-ErrorAction SilentlyContinue` swallowed all of them alike: an adapter that
+ * is already on DHCP has no address to delete, but so does one where the delete
+ * was refused with access-denied or failed in the CIM provider — and the steps
+ * that follow then ran on top of an unknown partial state. Measured on Windows
+ * 11: a removal that matches nothing raises `CategoryInfo.Category` of
+ * `ObjectNotFound`, while a genuine failure raises anything but, so that one
+ * category is the whole of what may be ignored.
+ */
+function tolerateMissing(command: string): string {
+	return `try { ${command} -ErrorAction Stop } catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw } }`;
+}
+
+/**
  * Build the PowerShell one-shot that applies an IPv4 configuration.
  *
  * The interface is resolved by GUID rather than by name because `netsh` and the
@@ -526,7 +542,7 @@ export function isWindowsInterfaceID(id: string): boolean {
  * this string — the validation does.
  */
 export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): string {
-	const steps = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', `$adapter = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq '${guid}' }`, 'if (-not $adapter) { throw "interface not found" }', '$i = $adapter.ifIndex', 'Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue', "Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false -ErrorAction SilentlyContinue"];
+	const steps = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', `$adapter = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq '${guid}' }`, 'if (-not $adapter) { throw "interface not found" }', '$i = $adapter.ifIndex', tolerateMissing('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false'), tolerateMissing("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false")];
 	if (config.mode === 'dhcp') {
 		steps.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses');
 	} else {

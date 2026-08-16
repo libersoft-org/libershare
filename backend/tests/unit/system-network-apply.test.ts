@@ -298,6 +298,18 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('-ResetServerAddresses');
 	});
 
+	it('ignores only a not-found removal, never a real failure', () => {
+		// `-ErrorAction SilentlyContinue` treated "already on DHCP, nothing to
+		// delete" and "access denied" as the same thing, and the steps after it then
+		// ran on an unknown partial state. Verified on Windows 11: a removal that
+		// matches nothing reports CategoryInfo.Category of ObjectNotFound, and a
+		// genuine failure reports anything but.
+		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
+		expect(command).not.toContain('SilentlyContinue');
+		expect(command).toContain("catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw } }");
+		for (const step of ['Remove-NetIPAddress', 'Remove-NetRoute']) expect(command).toContain(`try { ${step}`);
+	});
+
 	it('stops on the first failing step', () => {
 		// Without this a failed Set-NetIPInterface would be followed by a
 		// New-NetIPAddress that silently lands on the wrong configuration.
