@@ -1294,3 +1294,56 @@ describe('runZeroConnectionRecovery — a failed dial paces the next one', () =>
 		expect((network as any).redialBackoff.size).toBe(0);
 	});
 });
+
+describe('runRedialMaintenance — quarantined peers are not candidates', () => {
+	function bareNetwork(quarantinedAt: number | null, configured = false) {
+		const dialed: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialBackoff = new Map();
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).unreachableQuarantine = quarantinedAt === null ? new Map() : new Map([[PEER_ID, quarantinedAt]]);
+		(network as any).noReachableSince = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set(configured ? [PEER_ID] : []);
+		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).bootstrapTracker = { deleteDiscoveredByPeerID() {} };
+		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
+		(network as any).node = {
+			getConnections: () => [],
+			async dial(id: { toString(): string }): Promise<void> {
+				dialed.push(id.toString());
+			},
+			peerStore: { async merge(): Promise<void> {} },
+		};
+		return { network, dialed };
+	}
+
+	// A documentation-range public address, so the dial gater lets it through wherever
+	// this test happens to run.
+	const peer = { id: peerIdLike(PEER_ID), addresses: [{ multiaddr: multiaddr('/ip4/203.0.113.5/tcp/9090') }] };
+	const run = (network: Network): Promise<void> => (network as any).runRedialMaintenance([], [peer], 1);
+
+	it('skips a peer still inside its unreachable quarantine', async () => {
+		const { network, dialed } = bareNetwork(Date.now() - 60_000);
+		await run(network);
+		expect(dialed).toEqual([]);
+	});
+
+	it('dials it again once the quarantine window has passed', async () => {
+		const { network, dialed } = bareNetwork(Date.now() - 10 * 60 * 60_000);
+		await run(network);
+		expect(dialed).toEqual([PEER_ID]);
+	});
+
+	it('never holds a configured peer back', async () => {
+		const { network, dialed } = bareNetwork(Date.now() - 60_000, true);
+		await run(network);
+		expect(dialed).toEqual([PEER_ID]);
+	});
+
+	it('dials a peer that was never quarantined', async () => {
+		const { network, dialed } = bareNetwork(null);
+		await run(network);
+		expect(dialed).toEqual([PEER_ID]);
+	});
+});

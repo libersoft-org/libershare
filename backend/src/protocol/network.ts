@@ -1020,6 +1020,7 @@ export class Network {
 		let skippedBackoff = 0;
 		let skippedNoReachable = 0;
 		let skippedSuppressed = 0;
+		let skippedQuarantined = 0;
 		const localCidrs = getLocalCidrs(now);
 		for (const peer of allPeers) {
 			if (epoch !== this.runEpoch) return; // stop() hit — this run's state is gone
@@ -1035,6 +1036,17 @@ export class Network {
 			// silently re-dial them; cleared above once they reconnect on their own.
 			if (this.isRedialSuppressed(pid)) {
 				skippedSuppressed++;
+				continue;
+			}
+			// A peer evicted as unreachable is normally gone from the peerStore and so
+			// cannot be a candidate at all — but that delete is best-effort, and mDNS,
+			// identify and peer-announce can all put the entry back. Honour the quarantine
+			// here too, or the very next tick dials the peer we just wrote off. Configured
+			// peers are never quarantined; the check is stated anyway so no future writer
+			// can hold user data back by adding one.
+			const quarantinedAt = this.unreachableQuarantine.get(pid);
+			if (quarantinedAt !== undefined && now - quarantinedAt < UNREACHABLE_QUARANTINE_MS && !this.configuredBootstrapPeerIDs.has(pid)) {
+				skippedQuarantined++;
 				continue;
 			}
 			const bo = this.redialBackoff.get(pid);
@@ -1159,8 +1171,8 @@ export class Network {
 		};
 		const workers = Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, () => worker());
 		await Promise.all(workers);
-		if (candidates.length > 0 || skippedBackoff > 0 || skippedNoReachable > 0 || skippedSuppressed > 0) {
-			console.debug(`   Re-dial: ${redialSuccess}/${candidates.length} succeeded (${skippedBackoff} skipped by backoff, ${skippedNoReachable} skipped no-reachable-addrs, ${skippedSuppressed} skipped left-peer)`);
+		if (candidates.length > 0 || skippedBackoff > 0 || skippedNoReachable > 0 || skippedSuppressed > 0 || skippedQuarantined > 0) {
+			console.debug(`   Re-dial: ${redialSuccess}/${candidates.length} succeeded (${skippedBackoff} skipped by backoff, ${skippedNoReachable} skipped no-reachable-addrs, ${skippedSuppressed} skipped left-peer, ${skippedQuarantined} skipped quarantined)`);
 		}
 		// Prune backoff entries for peers no longer in peerStore to prevent unbounded growth.
 		// Suppression is NOT pruned this way: leave-network purges the peer from the
