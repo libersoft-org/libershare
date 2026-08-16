@@ -1317,11 +1317,17 @@ export class Network {
 						this.unreachableQuarantine.delete(peerID);
 					}
 				}
-				const alreadyKnown = !!peerID && this.bootstrapPeerIDs.has(peerID);
-				if (peerID && !alreadyKnown) {
-					this.bootstrapPeerIDs.add(peerID);
-					this.bootstrapMultiaddrs.push(ma);
-				}
+				// The identity set is the dedup that stops every gossip mention of the same
+				// peer from costing another dial, so it is claimed up front either way.
+				if (peerID) this.bootstrapPeerIDs.add(peerID);
+				// The autodial list is a different promise: zero-connection recovery walks
+				// it and dials everything on it. A CONFIGURED address belongs there at once
+				// — it is user data and recovery must keep trying it precisely while it is
+				// down. A DISCOVERED address is only a claim some peer made, so it earns
+				// its place by answering; it is added after a verified dial, below. Adding
+				// it here left every unreachable address a gossip flood could invent on the
+				// list for good, since an ordinary timeout has nothing that takes it off.
+				if (origin === 'configured') this.rememberBootstrapAddress(ma);
 				console.debug('Adding bootstrap peer:', peer);
 				this.bootstrapTracker.markPending(networkID, peer, peerID, origin);
 				try {
@@ -1382,6 +1388,10 @@ export class Network {
 						trace(`[NET] bootstrap addr unverified (connection came back on another address), left pending: ${peer}`);
 						continue;
 					}
+					// A gossip-learned address has now answered on the endpoint it claimed, so
+					// it has earned its place in the autodial list. Unverified ones never get
+					// there, which is what keeps a flood of invented addresses off it.
+					if (origin === 'discovered' && verifiedThisAddr) this.rememberBootstrapAddress(ma);
 					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, null, origin);
 					console.log('✓ Connected to new bootstrap peer');
 				} catch (err: any) {
@@ -1565,6 +1575,34 @@ export class Network {
 	 * Both callers already establish that the peer is configured in NO joined
 	 * network before calling, so this needs no refcount of its own.
 	 */
+	/**
+	 * Put an address on the autodial list that zero-connection recovery walks, unless
+	 * it is already there.
+	 *
+	 * Membership is decided by the ADDRESS, not by the peer ID behind it: a bootstrap
+	 * whose host or port the user edited keeps its identity, and an identity-keyed
+	 * check would treat the new address as already known and never add it — leaving
+	 * recovery dialing the address that was replaced.
+	 */
+	private rememberBootstrapAddress(ma: any): void {
+		const canonical = normalizeMultiaddrForCompare(ma.toString());
+		if (this.bootstrapMultiaddrs.some(m => normalizeMultiaddrForCompare(m.toString()) === canonical)) return;
+		this.bootstrapMultiaddrs.push(ma);
+	}
+
+	/**
+	 * Take specific addresses off the autodial list. Used when a network's configured
+	 * list changes: an entry that is gone must stop being dialed, and that includes
+	 * the case where the peer ID stays and only its address moved, which
+	 * {@link pruneConfiguredBootstrapPeer} cannot see because the identity is still
+	 * configured.
+	 */
+	pruneBootstrapAddresses(addresses: string[]): void {
+		if (addresses.length === 0) return;
+		const drop = new Set(addresses.map(a => normalizeMultiaddrForCompare(a)));
+		this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(ma => !drop.has(normalizeMultiaddrForCompare(ma.toString())));
+	}
+
 	pruneConfiguredBootstrapPeer(peerID: string): void {
 		this.configuredBootstrapPeerIDs.delete(peerID);
 		// Forget its addresses too. They were pushed into the autodial list when the
