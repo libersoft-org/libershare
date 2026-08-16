@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
-import { Network, isSameDialEndpoint, normalizeMultiaddrForCompare } from '../../../src/protocol/network.ts';
+import { Network, isRecoveryDialDue, isSameDialEndpoint, normalizeMultiaddrForCompare } from '../../../src/protocol/network.ts';
 
 /**
  * Guards on the DESTRUCTIVE peer-eviction paths. The pure decision helpers are covered
@@ -534,8 +534,28 @@ describe('addBootstrapPeers — a dial that lands after leave-network', () => {
 
 	it('closes a connection that arrived after the peer was left', async () => {
 		const { network, disconnected } = bareNetwork([]);
-		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
 		expect(disconnected).toEqual([PEER_ID]);
+	});
+
+	/**
+	 * Tearing the peer down is destructive — disconnectPeer suppresses re-dials and
+	 * drops the peerStore entry — so leaving ONE network must not do it to a peer
+	 * another joined network still has a claim on. Here the peer is configured
+	 * infrastructure, which is claim enough.
+	 */
+	it('keeps a connection to a peer another joined network still needs', async () => {
+		const { network, disconnected } = bareNetwork([]);
+		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect(disconnected).toEqual([]);
+	});
+
+	it('keeps a connection to a peer that still subscribes another joined topic', async () => {
+		const { network, disconnected } = bareNetwork([]);
+		(network as any).pubsub = { getTopics: () => ['lish/net-b'], getSubscribers: () => [{ toString: () => PEER_ID }] };
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect(disconnected).toEqual([]);
 	});
 
 	/**
@@ -708,6 +728,16 @@ describe('addBootstrapPeers — a non-routable configured entry is still configu
 		expect(outcomes).toEqual([{ status: 'error', message: 'address is not routable from this host' }]);
 	});
 
+	/**
+	 * It has to be on the recovery list even while unroutable, or nothing retries it
+	 * when the interface comes back. Recovery re-checks routability before dialing.
+	 */
+	it('still puts the unroutable configured address on the recovery list', async () => {
+		const { network } = bareNetwork();
+		await (network as any).addBootstrapPeers([OFF_VPN], 'net-a', 'configured');
+		expect((network as any).bootstrapMultiaddrs.map((m: { toString(): string }) => m.toString())).toEqual([OFF_VPN]);
+	});
+
 	it('says nothing about a discovered address the filter rejected', async () => {
 		const { network, outcomes } = bareNetwork();
 		await (network as any).addBootstrapPeers([OFF_VPN], 'net-a', 'discovered');
@@ -766,5 +796,31 @@ describe('addBootstrapPeers — quarantine after the probe it allowed', () => {
 		(network as any).unreachableQuarantine = new Map();
 		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
 		expect((network as any).unreachableQuarantine.has(PEER_ID)).toBe(false);
+	});
+});
+
+/**
+ * Zero-connection recovery used to dial every address it held, ignoring the pacing
+ * re-dial maintenance had just applied. On an isolated node that meant a dead
+ * discovered peer was re-dialed every tick forever, because maintenance stops
+ * counting failures the moment there is no other connection to prove we are online.
+ */
+describe('isRecoveryDialDue', () => {
+	const now = 1_000_000;
+	const none = new Map<string, number>();
+	const noBackoff = new Map<string, { nextAttempt: number }>();
+
+	it('allows a peer with no backoff and no quarantine', () => {
+		expect(isRecoveryDialDue(PEER_ID, now, noBackoff, none)).toBe(true);
+	});
+
+	it('holds a peer back inside its backoff window and releases it after', () => {
+		expect(isRecoveryDialDue(PEER_ID, now, new Map([[PEER_ID, { nextAttempt: now + 1 }]]), none)).toBe(false);
+		expect(isRecoveryDialDue(PEER_ID, now, new Map([[PEER_ID, { nextAttempt: now }]]), none)).toBe(true);
+	});
+
+	it('holds a quarantined peer back until the window passes', () => {
+		expect(isRecoveryDialDue(PEER_ID, now, noBackoff, new Map([[PEER_ID, now - 60_000]]))).toBe(false);
+		expect(isRecoveryDialDue(PEER_ID, now, noBackoff, new Map([[PEER_ID, now - 10 * 60 * 60_000]]))).toBe(true);
 	});
 });
