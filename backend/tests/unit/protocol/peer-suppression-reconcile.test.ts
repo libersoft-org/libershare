@@ -419,6 +419,18 @@ describe('Networks.delete — suppression entries outlive the lishnet that keyed
 		expect(lishnetExists(db, NET)).toBe(false);
 	});
 
+	it('keeps the suppression when the row was not deleted', async () => {
+		// A delete that finds nothing to remove has changed nothing, so the peers stay
+		// left: their suppression is still the only thing refusing them a share listing
+		// through the grace window if they re-dial us.
+		const clearedFor: string[] = [];
+		const { networks } = makeNetworksWithDB(clearedFor);
+
+		expect(await networks.delete('net-that-does-not-exist')).toBe(false);
+
+		expect(clearedFor).toEqual([]);
+	});
+
 	it('negative control: rejoin-only release strands the peers forever', () => {
 		// Suppression is keyed by lishnet ID and only a join of THAT lishnet cleared
 		// it. Deleting the lishnet destroys the only key that could ever be presented,

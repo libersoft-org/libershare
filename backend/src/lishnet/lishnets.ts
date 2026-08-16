@@ -398,11 +398,17 @@ export class Networks {
 	 * lishnets that have nothing to do with this one. Releasing is safe: the leave
 	 * has already hung the peers up, stripped their keep-alive tags and forgotten
 	 * their peerStore entries.
+	 *
+	 * Released only once the row is actually gone. While it still exists a rejoin is
+	 * the normal release path, and until then the suppression is also what keeps a
+	 * left peer that re-dialled us inbound from walking through the listing gate's
+	 * grace window — a failed delete must not hand that away.
 	 */
 	async delete(id: string): Promise<boolean> {
 		await this.setEnabled(id, false);
-		this.network.clearRedialSuppressionForNetwork(id);
-		return deleteLISHnet(this.db, id);
+		const deleted = deleteLISHnet(this.db, id);
+		if (deleted) this.network.clearRedialSuppressionForNetwork(id);
+		return deleted;
 	}
 
 	exists(id: string): boolean {
