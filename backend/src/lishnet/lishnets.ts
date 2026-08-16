@@ -185,6 +185,16 @@ export class Networks {
 	}
 
 	/** Configured-bootstrap peer IDs of every joined network except `exceptID`. */
+	/** Bootstrap ADDRESSES configured for every joined network except `exceptID`. */
+	private configuredBootstrapAddressesElsewhere(exceptID: string): Set<string> {
+		const out = new Set<string>();
+		for (const nid of this.joinedNetworks) {
+			if (nid === exceptID) continue;
+			for (const address of Networks.cleanBootstrapList(this.get(nid)?.bootstrapPeers ?? [])) out.add(address);
+		}
+		return out;
+	}
+
 	private configuredBootstrapPeerIDsElsewhere(exceptID: string): Set<string> {
 		const out = new Set<string>();
 		for (const nid of this.joinedNetworks) {
@@ -479,6 +489,13 @@ export class Networks {
 		for (const pid of Networks.bootstrapPeerIDsOf(previousPeers)) {
 			if (!nextIDs.has(pid) && !elsewhere.has(pid)) this.network.pruneConfiguredBootstrapPeer(pid);
 		}
+		// Addresses that left the list while their peer ID stayed — the user edited a
+		// host or port. The identity-level prune above cannot see those, so recovery
+		// would go on dialing the address that was replaced.
+		const keptAddresses = new Set(cleaned);
+		const elsewhereAddresses = this.configuredBootstrapAddressesElsewhere(id);
+		const dropped = Networks.cleanBootstrapList(previousPeers).filter(a => !keptAddresses.has(a) && !elsewhereAddresses.has(a));
+		this.network.pruneBootstrapAddresses(dropped);
 		this.network.pruneBootstrapStatus(id, cleaned);
 		if (this.joinedNetworks.has(id) && cleaned.length > 0) {
 			this.network.addBootstrapPeers(cleaned, id, 'configured').catch(err => {
