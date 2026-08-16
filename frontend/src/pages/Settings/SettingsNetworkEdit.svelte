@@ -3,7 +3,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { applyInterfaceConfig, canApplyMode, isJoinable, joinWifiNetwork, networkState, scanWifiNetworks } from '../../scripts/networkState.ts';
+	import { applyInterfaceConfig, canApplyMode, canEditInterfaceIPv4, canEditInterfaceWifi, isJoinable, joinWifiNetwork, networkState, scanWifiNetworks } from '../../scripts/networkState.ts';
 	import { isIPv4, validateIPv4Config, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -19,13 +19,18 @@
 	let { areaID, interfaceID, position = LAYOUT.content, onBack }: Props = $props();
 
 	let iface = $derived($networkState.interfaces.find(i => i.id === interfaceID));
-	// Independent capabilities: Windows lets any user join a Wi-Fi network but only
-	// an elevated one change an address, so this screen can legitimately offer the
-	// Wi-Fi half and not the addressing half.
-	let canEditIPv4 = $derived($networkState.capabilities.ipv4);
-	// `wifi` present means the platform reader found a real radio, which is what
-	// separates a Wi-Fi adapter from a Wi-Fi Direct virtual one that cannot scan.
-	let canEditWifi = $derived(!!iface?.wifi && $networkState.capabilities.wifi);
+	// The SAME rules the list applied before it offered Configure, re-evaluated
+	// here against the live snapshot rather than trusted from the moment the screen
+	// opened. State keeps arriving while the editor is up: a read can degrade to
+	// the address-only fallback, an interface can gain a second IPv4 address, be
+	// taken over by another stack, or disappear altogether. Checking only the
+	// host-wide capability meant Save stayed available through all of those.
+	//
+	// Independent of each other: Windows lets any user join a Wi-Fi network but
+	// only an elevated one change an address, so this screen can legitimately offer
+	// the Wi-Fi half and not the addressing half.
+	let canEditIPv4 = $derived(canEditInterfaceIPv4(iface, $networkState));
+	let canEditWifi = $derived(canEditInterfaceWifi(iface, $networkState));
 
 	// Seeded from what the host actually reports, `unknown` included. Collapsing an
 	// unknown reading to DHCP made the form claim the interface was on DHCP and let
@@ -82,6 +87,13 @@
 	}
 
 	async function save(): Promise<void> {
+		// Re-checked at the instant of the click, not only when the button rendered:
+		// a broadcast can land between the two and take the interface away.
+		if (!canEditIPv4) {
+			failed = true;
+			message = $t('settings.network.readOnlyNote');
+			return;
+		}
 		// Guarded in the markup as well; repeated here because Save is the step that
 		// rewrites the host's addressing and must never act on a mode nobody chose.
 		if (!canApplyMode(mode)) {
@@ -147,7 +159,7 @@
 	}
 
 	async function join(): Promise<void> {
-		if (!joinSSID) return;
+		if (!joinSSID || !canEditWifi) return;
 		busy = true;
 		message = '';
 		try {
