@@ -100,6 +100,13 @@
 	async function scan(): Promise<void> {
 		scanning = true;
 		message = '';
+		// The moment a new scan starts, what is on screen is the PREVIOUS sweep. If
+		// this one fails the user is shown an error, and leaving the old rows there
+		// left them able to click a network the radio can no longer see — joining
+		// something the error had just told them nothing was known about.
+		networks = [];
+		joinSSID = '';
+		password = '';
 		try {
 			networks = await scanWifiNetworks(interfaceID);
 			if (networks.length === 0) {
