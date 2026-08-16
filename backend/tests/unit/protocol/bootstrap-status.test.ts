@@ -184,6 +184,160 @@ describe('BootstrapStatusTracker.sweepStale', () => {
 
 		expect(tracker.getStatus(NET)?.peers.length).toBe(1);
 	});
+
+	/**
+	 * markPending fires whenever gossip names an address again, which happens on every
+	 * announce cycle — far more often than the sweep TTL. Treating that as activity kept
+	 * a dead peer's row alive forever. Only a dial that produced an outcome counts.
+	 */
+	// Rows are stamped with `new Date()`, which no Date.now stub can steer, so these
+	// read the real timestamp the tracker wrote and drive sweepStale relative to it.
+	// The short sleep only guarantees a measurable gap between the two writes.
+	const clockOf = (tracker: BootstrapStatusTracker): string => tracker.getStatus(NET)!.peers[0]!.updatedAt;
+
+	it('lets a real dial outcome refresh the clock', async () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
+		const firstAt = clockOf(tracker);
+		await Bun.sleep(5);
+
+		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
+
+		expect(Date.parse(clockOf(tracker))).toBeGreaterThan(Date.parse(firstAt));
+		tracker.sweepStale(TTL, () => false, Date.parse(firstAt) + TTL + 2);
+		expect(tracker.getStatus(NET)?.peers.length).toBe(1); // survives — clock moved
+	});
+
+	it('starts the clock on a first mention that has no prior row', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.markPending(NET, DEAD_ADDR, DEAD_ID, 'discovered');
+		const mentionAt = clockOf(tracker);
+
+		tracker.sweepStale(TTL, () => false, Date.parse(mentionAt) + TTL - 60_000);
+		expect(tracker.getStatus(NET)?.peers.length).toBe(1); // inside the TTL
+
+		tracker.sweepStale(TTL, () => false, Date.parse(mentionAt) + TTL + 2);
+		expect(tracker.getStatus(NET)).toBe(null); // and expires once past it
+	});
+});
+
+/**
+ * Every mutation rebuilds and emits the whole peer list, and intake of one announce
+ * performs two per address. batch() groups them so the UI receives one snapshot for
+ * the run instead of one per row per address.
+ */
+describe('BootstrapStatusTracker.batch', () => {
+	const NET = 'netAAAA';
+	const PID = '12D3KooWBatchBatchBatchBatchBatchBatchBatchBatchBB';
+	const addr = (i: number): string => `/ip4/192.0.2.${i}/tcp/9090/p2p/${PID}`;
+
+	function tracked() {
+		const tracker = new BootstrapStatusTracker();
+		const seen: string[][] = [];
+		tracker.setOnChange((_networkID, status) => seen.push(status.peers.map(p => p.multiaddr)));
+		return { tracker, seen };
+	}
+
+	it('emits exactly one snapshot for many mutations', () => {
+		const { tracker, seen } = tracked();
+
+		tracker.batch(NET, () => {
+			for (let i = 1; i <= 10; i++) {
+				tracker.markPending(NET, addr(i), PID, 'discovered');
+				tracker.recordOutcome(NET, addr(i), PID, 'connected', null, null, 'discovered');
+			}
+		});
+
+		expect(seen.length).toBe(1);
+		expect(seen[0]!.length).toBe(10); // the one snapshot holds every row
+	});
+
+	it('still emits when the body throws', () => {
+		const { tracker, seen } = tracked();
+
+		expect(() =>
+			tracker.batch(NET, () => {
+				tracker.recordOutcome(NET, addr(1), PID, 'connected', null, null, 'discovered');
+				throw new Error('dial loop blew up');
+			})
+		).toThrow('dial loop blew up');
+
+		expect(seen).toEqual([[addr(1)]]);
+	});
+
+	it('holds the frame open across awaits and emits once the promise settles', async () => {
+		const { tracker, seen } = tracked();
+
+		const done = tracker.batch(NET, async () => {
+			tracker.recordOutcome(NET, addr(1), PID, 'connected', null, null, 'discovered');
+			await Promise.resolve();
+			tracker.recordOutcome(NET, addr(2), PID, 'connected', null, null, 'discovered');
+		});
+		expect(seen).toEqual([]); // nothing emitted while the body is still running
+		await done;
+
+		expect(seen).toEqual([[addr(1), addr(2)]]);
+	});
+
+	it('emits once when a rejected async body settles', async () => {
+		const { tracker, seen } = tracked();
+
+		const done = tracker.batch(NET, async () => {
+			tracker.recordOutcome(NET, addr(1), PID, 'connected', null, null, 'discovered');
+			throw new Error('dial rejected');
+		});
+
+		await expect(done).rejects.toThrow('dial rejected');
+		expect(seen).toEqual([[addr(1)]]);
+	});
+
+	it('emits nothing when the body changed nothing', () => {
+		const { tracker, seen } = tracked();
+
+		tracker.batch(NET, () => {});
+
+		expect(seen).toEqual([]);
+	});
+
+	it('collapses nested batches of the same network into one snapshot', () => {
+		const { tracker, seen } = tracked();
+
+		tracker.batch(NET, () => {
+			tracker.recordOutcome(NET, addr(1), PID, 'connected', null, null, 'discovered');
+			tracker.batch(NET, () => {
+				tracker.recordOutcome(NET, addr(2), PID, 'connected', null, null, 'discovered');
+			});
+			expect(seen).toEqual([]); // inner exit must not publish a half-built run
+		});
+
+		expect(seen).toEqual([[addr(1), addr(2)]]);
+	});
+
+	it('leaves single-mutation callers emitting per mutation', () => {
+		const { tracker, seen } = tracked();
+
+		tracker.recordOutcome(NET, addr(1), PID, 'connected', null, null, 'discovered');
+		tracker.recordOutcome(NET, addr(2), PID, 'connected', null, null, 'discovered');
+
+		expect(seen.length).toBe(2);
+	});
+
+	it('does not defer mutations of a different network', () => {
+		const { tracker, seen } = tracked();
+		const OTHER = 'netBBBB';
+
+		tracker.batch(NET, () => {
+			tracker.recordOutcome(OTHER, addr(1), PID, 'connected', null, null, 'discovered');
+			expect(seen.length).toBe(1); // the other network is not part of this batch
+		});
+
+		expect(seen.length).toBe(1); // NET itself changed nothing → no second emit
+	});
+
+	it('returns the body value unchanged', () => {
+		const { tracker } = tracked();
+		expect(tracker.batch(NET, () => 42)).toBe(42);
+	});
 });
 
 describe('BootstrapStatusTracker discovered-row cap', () => {

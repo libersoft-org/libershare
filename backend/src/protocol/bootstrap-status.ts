@@ -26,10 +26,86 @@ const MAX_DISCOVERED_PER_NETWORK = 256;
 export class BootstrapStatusTracker {
 	private readonly stats: Map<string, Map<string, BootstrapPeerStatus>> = new Map();
 	private onStatusChange: ((networkID: string, status: BootstrapStatus) => void) | null = null;
+	/** Open {@link batch} frames, keyed by networkID. See that method for why. */
+	private readonly batches: Map<string, { depth: number; dirty: boolean }> = new Map();
 
 	/** Register a callback that fires on every status mutation. */
 	setOnChange(cb: ((networkID: string, status: BootstrapStatus) => void) | null): void {
 		this.onStatusChange = cb;
+	}
+
+	/**
+	 * Group many mutations of one network into a SINGLE status emission.
+	 *
+	 * Every mutation otherwise rebuilds and emits the whole peer list, and a caller
+	 * that walks a list of addresses performs two of them per address (pending, then
+	 * outcome) — so intake of one large announce costs a snapshot per row per address,
+	 * each copying every row, all but the last of which is thrown away by the UI.
+	 *
+	 * The frame closes on every exit path, throw included, so a body that fails still
+	 * publishes what it managed to change — the tracker is already mutated by then and
+	 * silence would leave the UI showing pre-batch state indefinitely. An async body is
+	 * held open until its promise settles, because the caller this exists for awaits a
+	 * dial between mutations; the return value keeps the body's own type either way.
+	 * Nested calls for the same network collapse into the outermost frame, and a batch
+	 * in which nothing actually changed emits nothing.
+	 */
+	batch<T>(networkID: string, fn: () => T): T {
+		let frame = this.batches.get(networkID);
+		if (!frame) {
+			frame = { depth: 0, dirty: false };
+			this.batches.set(networkID, frame);
+		}
+		frame.depth++;
+		const open = frame;
+		let result: T;
+		try {
+			result = fn();
+		} catch (err) {
+			this.closeBatch(networkID, open);
+			throw err;
+		}
+		if (result instanceof Promise) {
+			return result.then(
+				value => {
+					this.closeBatch(networkID, open);
+					return value;
+				},
+				err => {
+					this.closeBatch(networkID, open);
+					throw err;
+				}
+			) as T;
+		}
+		this.closeBatch(networkID, open);
+		return result;
+	}
+
+	/** Leave one {@link batch} frame, emitting the grouped snapshot when the last one exits. */
+	private closeBatch(networkID: string, frame: { depth: number; dirty: boolean }): void {
+		frame.depth--;
+		if (frame.depth > 0) return;
+		// clear() drops open frames on teardown; a pending emission from before it
+		// belongs to the run that was torn down, not to whatever comes next.
+		if (this.batches.get(networkID) !== frame) return;
+		this.batches.delete(networkID);
+		if (frame.dirty) this.onStatusChange?.(networkID, this.buildStatus(networkID) ?? { networkID, peers: [] });
+	}
+
+	/**
+	 * Publish one network's current status, or defer to the end of the open batch.
+	 *
+	 * Deferring skips {@link buildStatus} as well as the callback — building the
+	 * snapshot is the part that copies every row, so suppressing only the callback
+	 * would leave the cost in place.
+	 */
+	private notify(networkID: string): void {
+		const frame = this.batches.get(networkID);
+		if (frame) {
+			frame.dirty = true;
+			return;
+		}
+		this.onStatusChange?.(networkID, this.buildStatus(networkID) ?? { networkID, peers: [] });
 	}
 
 	/** Iterate over all tracked network IDs and their peer maps. Used for NET-CHURN dump. */
@@ -58,8 +134,7 @@ export class BootstrapStatusTracker {
 		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
 		net.set(multiaddr, { multiaddr, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: null, lastError: null, updatedAt: new Date().toISOString() });
 		this.capDiscovered(net);
-		const snapshot = this.buildStatus(networkID);
-		if (snapshot) this.onStatusChange?.(networkID, snapshot);
+		this.notify(networkID);
 	}
 
 	/** Record a dial outcome (connected, timeout, error, identity-mismatch). */
@@ -71,8 +146,7 @@ export class BootstrapStatusTracker {
 		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
 		net.set(multiaddr, { multiaddr, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString() });
 		this.capDiscovered(net);
-		const snapshot = this.buildStatus(networkID);
-		if (snapshot) this.onStatusChange?.(networkID, snapshot);
+		this.notify(networkID);
 	}
 
 	/** Bound discovered rows per network (drop the oldest) — see MAX_DISCOVERED_PER_NETWORK. */
@@ -90,8 +164,7 @@ export class BootstrapStatusTracker {
 		if (!net) return;
 		net.delete(multiaddr);
 		if (net.size === 0) this.stats.delete(networkID);
-		const snap = this.buildStatus(networkID) ?? { networkID, peers: [] };
-		this.onStatusChange?.(networkID, snap);
+		this.notify(networkID);
 	}
 
 	/**
@@ -111,7 +184,7 @@ export class BootstrapStatusTracker {
 			}
 			if (!changed) continue;
 			if (peers.size === 0) this.stats.delete(networkID);
-			this.onStatusChange?.(networkID, this.buildStatus(networkID) ?? { networkID, peers: [] });
+			this.notify(networkID);
 		}
 	}
 
@@ -139,7 +212,7 @@ export class BootstrapStatusTracker {
 			}
 			if (!changed) continue;
 			if (peers.size === 0) this.stats.delete(networkID);
-			this.onStatusChange?.(networkID, this.buildStatus(networkID) ?? { networkID, peers: [] });
+			this.notify(networkID);
 		}
 	}
 
@@ -165,18 +238,21 @@ export class BootstrapStatusTracker {
 		// returns null for a dropped network, and skipping the callback would leave the
 		// UI showing the very row that was just removed. Same fallback the other
 		// removal paths use.
-		this.onStatusChange?.(networkID, this.buildStatus(networkID) ?? { networkID, peers: [] });
+		this.notify(networkID);
 	}
 
 	/** Reset the bootstrap status for a single network (used when re-joining). */
 	resetNetwork(networkID: string): void {
 		this.stats.delete(networkID);
-		this.onStatusChange?.(networkID, { networkID, peers: [] });
+		this.notify(networkID);
 	}
 
 	/** Clear all tracked state (called from Network.stop()). */
 	clear(): void {
 		this.stats.clear();
+		// An in-flight batch belongs to the run being torn down; its pending emission
+		// would publish the next run's (empty) state under the old run's networkID.
+		this.batches.clear();
 	}
 
 	private ensureNetwork(networkID: string): Map<string, BootstrapPeerStatus> {
