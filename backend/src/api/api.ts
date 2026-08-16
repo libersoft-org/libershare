@@ -60,9 +60,14 @@ const SECRET_PARAM_KEYS = new Set(['password', 'passphrase', 'token', 'secret'])
 /**
  * Serialise request params for the log with secret values replaced. The key is
  * kept so the call is still recognisable; only the value is withheld.
+ *
+ * The key alone decides, never the type of what it holds. Restricting the
+ * redaction to strings meant a client could put its passphrase in an array or an
+ * object and have the whole thing logged verbatim — a request that is malformed
+ * for the handler is not malformed for the logger, which runs first.
  */
 export function formatParamsForLog(params: unknown): string {
-	return JSON.stringify(params, (key, value) => (SECRET_PARAM_KEYS.has(key) && typeof value === 'string' ? '<redacted>' : value));
+	return JSON.stringify(params, (key, value) => (SECRET_PARAM_KEYS.has(key) ? '<redacted>' : value));
 }
 
 export class APIServer {
