@@ -14,7 +14,8 @@ import { LISH_PROTOCOL, handleLISHProtocol } from './lish-protocol.ts';
 import { buildLibp2pConfig } from './network-config.ts';
 import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX } from './constants.ts';
-import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
+import { getLocalCidrs, shouldDenyDial, extractDestinationPeerID } from './address-filter.ts';
+export { extractDestinationPeerID } from './address-filter.ts';
 import { CodedError, ErrorCodes, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
@@ -2165,26 +2166,6 @@ export class Network {
  */
 export function normalizeMultiaddrForCompare(s: string): string {
 	return s.toLowerCase().replace(/\.(?=\/|$)/g, '');
-}
-
-/**
- * Extract the DESTINATION peer ID from a multiaddr. A circuit-relay address has
- * the shape `/.../p2p/<relay>/p2p-circuit/p2p/<destination>` — taking the FIRST
- * /p2p/ component would return the relay's identity, so eviction and configured
- * protection would target the wrong peer. The last /p2p/ component is always
- * the dial target. Returns null when the multiaddr carries no peer ID at all.
- */
-export function extractDestinationPeerID(ma: any): string | null {
-	try {
-		const components: Array<{ code: number; value?: string }> = ma?.getComponents?.() ?? [];
-		for (let i = components.length - 1; i >= 0; i--) {
-			const c = components[i]!;
-			if (c.code === 421 && typeof c.value === 'string') return c.value;
-		}
-	} catch {
-		/* unparseable multiaddr — no ID */
-	}
-	return null;
 }
 
 /**
