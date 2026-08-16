@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'bun:test';
+import { multiaddr } from '@multiformats/multiaddr';
 import { Network, isSameDialEndpoint, normalizeMultiaddrForCompare } from '../../../src/protocol/network.ts';
 
 /**
@@ -368,6 +369,8 @@ describe('configured exemption ends when the peer leaves the config', () => {
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).noReachableSince = new Map([[PEER_ID, Date.now() - 45 * 60_000]]);
 		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).bootstrapMultiaddrs = [multiaddr(`/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`)];
 		(network as any).bootstrapTracker = { deleteDiscoveredByPeerID() {} };
 		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
 		(network as any).node = { getConnections: () => [] };
@@ -400,6 +403,31 @@ describe('configured exemption ends when the peer leaves the config', () => {
 		expect(network.isBootstrapOrRelayPeer(PEER_ID)).toBe(true);
 		network.pruneConfiguredBootstrapPeer(PEER_ID);
 		expect(network.isBootstrapOrRelayPeer(PEER_ID)).toBe(false);
+	});
+	/**
+	 * The autodial list is what zero-connection recovery walks. A bootstrap the user
+	 * has deleted must leave it too, or the node keeps dialing that address every time
+	 * it runs out of connections — the churn this work is supposed to end.
+	 */
+	it('forgets the deleted bootstrap address, so recovery stops dialing it', () => {
+		const { network } = bareNetwork();
+		expect((network as any).bootstrapMultiaddrs).toHaveLength(1);
+		network.pruneConfiguredBootstrapPeer(PEER_ID);
+		expect((network as any).bootstrapMultiaddrs).toEqual([]);
+	});
+
+	it('also forgets it in the dedup set, so a later re-add can restore the address', () => {
+		const { network } = bareNetwork();
+		network.pruneConfiguredBootstrapPeer(PEER_ID);
+		expect((network as any).bootstrapPeerIDs.has(PEER_ID)).toBe(false);
+	});
+
+	it('leaves the addresses of other peers alone', () => {
+		const other = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fp';
+		const { network } = bareNetwork();
+		(network as any).bootstrapMultiaddrs.push(multiaddr(`/ip4/203.0.113.10/tcp/9090/p2p/${other}`));
+		network.pruneConfiguredBootstrapPeer(PEER_ID);
+		expect((network as any).bootstrapMultiaddrs.map((m: { toString(): string }) => m.toString())).toEqual([`/ip4/203.0.113.10/tcp/9090/p2p/${other}`]);
 	});
 });
 

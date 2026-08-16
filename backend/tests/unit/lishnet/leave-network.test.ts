@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { initLISHnetsTables, addLISHnet } from '../../../src/db/lishnets.ts';
+import { initLISHnetsTables, addLISHnet, getLISHnet } from '../../../src/db/lishnets.ts';
 import { Networks } from '../../../src/lishnet/lishnets.ts';
 
 /**
@@ -316,7 +316,7 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		(networks as any).network = mock;
 		(networks as any).db = db;
 		(networks as any).joinedNetworks = new Set([NET]);
-		return { networks, mock };
+		return { networks, mock, db };
 	}
 
 	const edit = (networks: Networks, bootstrapPeers: string[]): boolean => (networks as any).update({ networkID: NET, name: 'A', description: '', bootstrapPeers, enabled: true, created: '2026-01-01T00:00:00.000Z' });
@@ -340,6 +340,17 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		expect(mock.prunedStatus).toEqual([]);
 		expect(mock.dialledLists).toEqual([]);
 		expect(mock.prunedBootstrap).toEqual([]);
+	});
+
+	/**
+	 * The form can submit blank rows. Persisting them raw while the runtime worked from
+	 * the filtered copy left the database and the live node disagreeing about what the
+	 * network's bootstrap list actually is.
+	 */
+	it('persists the cleaned list, not the blank rows the form submitted', () => {
+		const { networks, db } = seeded([ADDR_A]);
+		edit(networks, ['', ADDR_B, '   ']);
+		expect(getLISHnet(db, NET)?.bootstrapPeers).toEqual([ADDR_B]);
 	});
 
 	it('does not dial for a network that is not joined', () => {
