@@ -1279,17 +1279,15 @@ export class Network {
 		const superseded = (): boolean => epoch !== this.runEpoch || generation !== this.bootstrapGenerationOf(networkID);
 		for (const peer of peers) {
 			if (superseded()) return;
+			let probeAfterQuarantine = false;
 			try {
 				const ma = Multiaddr(peer);
-				// Safety net: refuse to add loopback / unreachable-private bootstrap
-				// entries even if the upstream (catalog or peer-announce intake)
-				// failed to filter them. Failing here is silent because the call
-				// site iterates many candidates and we shouldn't spam INFO for
-				// every drop; trace-level keeps it greppable when debugging.
-				if (shouldDenyDial(ma, localCidrs)) {
-					trace(`[NET] addBootstrapPeers skip non-routable: ${peer}`);
-					continue;
-				}
+				// Claim the configured status BEFORE the routability filter. Whether an address
+				// is dialable is a property of THIS HOST right now — a LAN or VPN bootstrap stops
+				// passing the filter the moment that interface drops — while "the user configured
+				// this peer" is a fact about the saved config. Deriving the second from the first
+				// left a VPN bootstrap unregistered whenever the tunnel was down at startup, so the
+				// exemption that makes configured peers un-evictable never applied to it.
 				const peerID = extractDestinationPeerID(ma);
 				// Skip our own address — compare the DESTINATION identity, not the raw
 				// string: `/p2p/<us>/p2p-circuit/p2p/<remote>` contains our ID as the
@@ -1303,6 +1301,16 @@ export class Network {
 					// explicit dial fails or the connection drops before the next tick.
 					this.clearRedialSuppressionForPeer(peerID);
 				}
+				// Safety net: refuse to dial loopback / unreachable-private bootstrap entries
+				// even if the upstream (catalog or peer-announce intake) failed to filter them.
+				// A discovered address is dropped silently — the call site iterates many
+				// candidates and should not spam INFO for each. A configured one gets a status
+				// row instead: the user wrote it down and needs to see why nothing happens with it.
+				if (shouldDenyDial(ma, localCidrs)) {
+					trace(`[NET] addBootstrapPeers skip non-routable: ${peer}`);
+					if (origin === 'configured') this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'error', 'address is not routable from this host', null, origin);
+					continue;
+				}
 				// Skip peers recently evicted as unreachable — nodes that still remember
 				// them keep gossiping their addrs, and without this window every mention
 				// would re-create the status row and burn a dial. Configured entries are
@@ -1315,6 +1323,11 @@ export class Network {
 							continue;
 						}
 						this.unreachableQuarantine.delete(peerID);
+						// This dial is the ONE probe an expired quarantine buys. If it fails the
+						// window has to close again — otherwise every later gossip mention spends
+						// another dial and refreshes the status row, which is exactly the churn
+						// the quarantine exists to stop.
+						probeAfterQuarantine = true;
 					}
 				}
 				// The identity set is the dedup that stops every gossip mention of the same
@@ -1363,7 +1376,11 @@ export class Network {
 					// nothing to close and this connection surfaces a moment after the cleanup
 					// finished. Abandoning the loop would leave it open, so close it here — the
 					// suppression set is what says the user deliberately left this peer.
-					if (peerID && networkID && this.isRedialSuppressed(peerID)) {
+					// Two ways this connection can already be unwanted: the peer was hung up
+					// by leave-network and sits in the suppression set, or we left the network
+					// this dial belonged to before ever seeing the peer as one of its members,
+					// in which case it never entered that set at all.
+					if (peerID && networkID && (this.isRedialSuppressed(peerID) || !this.isTopicSubscribed(networkID))) {
 						trace(`[NET] bootstrap dial landed after leave, disconnecting: ${peerID.slice(0, 16)}`);
 						await this.disconnectPeer(peerID, networkID);
 						return;
@@ -1398,6 +1415,9 @@ export class Network {
 					if (superseded()) return;
 					const message = err?.message ?? String(err);
 					const kind = classifyBootstrapError(message);
+					// The probe the expired quarantine allowed has failed, so close the window
+					// again rather than letting the next announce buy another dial.
+					if (probeAfterQuarantine && peerID) this.unreachableQuarantine.set(peerID, Date.now());
 					const actualPeerID = kind === 'identity-mismatch' ? extractActualPeerID(message) : null;
 					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, kind, message, actualPeerID, origin);
 					// [NET-MISMATCH] richer log for identity-mismatch — single line containing
@@ -1918,6 +1938,18 @@ export class Network {
 	unsubscribeHandler(topic: string, handler: TopicHandler): void {
 		const handlers = this.topicHandlers.get(topic);
 		if (handlers) handlers.delete(handler);
+	}
+
+	/**
+	 * Whether this node is still subscribed to a lishnet's topic, i.e. has not left it.
+	 *
+	 * Without pubsub there is no answer to give, and the caller uses this to decide
+	 * whether to tear a connection down — so the unknown case reports "still joined",
+	 * which is the harmless one.
+	 */
+	isTopicSubscribed(networkID: string): boolean {
+		if (!this.pubsub) return true;
+		return this.pubsub.getTopics().includes(lishTopic(networkID));
 	}
 
 	unsubscribeTopic(networkID: string): void {
