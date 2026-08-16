@@ -29,6 +29,7 @@ describe('purgeStalePeer — epoch guard', () => {
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).redialBackoff = new Map();
+		(network as any).addressProbeBackoff = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).node = {
 			getConnections: () => [
@@ -983,6 +984,7 @@ describe('configured origin is a property of the address, not the peer', () => {
 		(network as any).configuredBootstrapAddresses = new Set([normalizeMultiaddrForCompare(CONFIGURED)]);
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
+		(network as any).addressProbeBackoff = new Map();
 		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
 		(network as any).bootstrapMultiaddrs = [multiaddr(CONFIGURED), multiaddr(DISCOVERED)];
 		(network as any).recentDisconnects = [];
@@ -1035,7 +1037,7 @@ describe('configured origin is a property of the address, not the peer', () => {
 describe('Network.stop — per-run state really is per run', () => {
 	function bareNetwork() {
 		const network = Object.create(Network.prototype) as Network;
-		for (const field of ['lastWantResponseTime', 'seenSearchIDs', 'topicHandlers', 'dcutrPeers', 'bootstrapPeerIDs', 'bootstrapGeneration', '_lastPeerCounts', '_lastScores', 'redialBackoff', 'unreachableQuarantine', 'noReachableSince', 'configuredBootstrapPeerIDs', 'configuredBootstrapAddresses', 'redialSuppressedByNet', 'pxIngressLogKeys']) {
+		for (const field of ['lastWantResponseTime', 'seenSearchIDs', 'topicHandlers', 'dcutrPeers', 'bootstrapPeerIDs', 'bootstrapGeneration', '_lastPeerCounts', '_lastScores', 'redialBackoff', 'unreachableQuarantine', 'addressProbeBackoff', 'noReachableSince', 'configuredBootstrapPeerIDs', 'configuredBootstrapAddresses', 'redialSuppressedByNet', 'pxIngressLogKeys']) {
 			(network as any)[field] = field === 'seenSearchIDs' || field === 'dcutrPeers' || field === 'bootstrapPeerIDs' || field === 'configuredBootstrapPeerIDs' || field === 'configuredBootstrapAddresses' ? new Set() : new Map();
 		}
 		(network as any).runEpoch = 1;
@@ -1154,6 +1156,7 @@ describe('runZeroConnectionRecovery — connectivity is read, not remembered', (
 
 describe('runZeroConnectionRecovery — a failed dial paces the next one', () => {
 	const DISCOVERED = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+	const CONFIGURED = `/ip4/198.51.100.7/tcp/9090/p2p/${PEER_ID}`;
 
 	function bareNetwork(opts: { address: string; configured: boolean }) {
 		const dialed: string[] = [];
@@ -1222,4 +1225,28 @@ describe('runZeroConnectionRecovery — a failed dial paces the next one', () =>
 	 * not unlimited: several dead ones at a 10 s timeout each turn every tick into
 	 * minutes of back-to-back dialing.
 	 */
+
+	it('paces a configured address too, on its own record', async () => {
+		const { network, dialed } = bareNetwork({ address: CONFIGURED, configured: true });
+		await run(network);
+		await run(network);
+		expect(dialed).toEqual([multiaddr(CONFIGURED).toString()]);
+	});
+
+	it('keeps the configured wait well under the general re-dial ceiling', async () => {
+		const { network } = bareNetwork({ address: CONFIGURED, configured: true });
+		const key = normalizeMultiaddrForCompare(CONFIGURED);
+		for (let failCount = 0; failCount < 12; failCount++) {
+			(network as any).addressProbeBackoff.set(key, { nextAttempt: 0, failCount });
+			await run(network);
+		}
+		const entry = (network as any).addressProbeBackoff.get(key) as { nextAttempt: number };
+		expect(entry.nextAttempt - Date.now()).toBeLessThanOrEqual(5 * 60_000);
+	});
+
+	it('leaves the per-peer eviction record untouched for a configured address', async () => {
+		const { network } = bareNetwork({ address: CONFIGURED, configured: true });
+		await run(network);
+		expect((network as any).redialBackoff.size).toBe(0);
+	});
 });

@@ -122,6 +122,21 @@ const BOOTSTRAP_STATUS_STALE_MS = 30 * 60_000;
 const UNREACHABLE_QUARANTINE_MS = 30 * 60_000;
 
 /**
+ * Backoff ceiling for the loops that probe ONE CONFIGURED ADDRESS.
+ *
+ * A configured entry is exempt from eviction and from quarantine — it is user data and
+ * the way back into the network — but "never given up on" is not "dialed without limit".
+ * Each attempt spends a 10 s dial timeout, so a handful of dead configured addresses
+ * could occupy a status tick end to end, every tick, forever.
+ *
+ * Half the general re-dial ceiling (10 min) deliberately: a configured address deserves
+ * to be retried more often than a gossip-learned one, so a bootstrap that comes back is
+ * picked up within five minutes without the operator touching anything, while a
+ * permanently dead one costs one dial per five minutes instead of one per 30 s tick.
+ */
+const CONFIGURED_PROBE_BACKOFF_MAX_MS = 5 * 60_000;
+
+/**
  * Where the eviction window should run from after a re-dial failure.
  *
  * A failure only says something about the PEER when this node can reach anyone
@@ -342,6 +357,17 @@ export class Network {
 	private readonly redialBackoff = new Map<string, { nextAttempt: number; failCount: number; firstFailure: number; evictionFails: number }>();
 	/** peerID → eviction time. Blocks re-adding a just-evicted unreachable peer from gossip for UNREACHABLE_QUARANTINE_MS. */
 	private readonly unreachableQuarantine = new Map<string, number>();
+	/**
+	 * Canonical multiaddr → pacing record for the loops that probe ONE CONFIGURED ADDRESS
+	 * (zero-connection recovery and the parked-bootstrap probe).
+	 *
+	 * Keyed by ADDRESS, not by peer, because those loops ask an address-level question.
+	 * One peer can hold a dead configured address and a working one at the same time;
+	 * with a peer-keyed record the dead address's failure puts the whole peer into
+	 * backoff, the working address is skipped for the rest of the pass, and the next pass
+	 * starts at the dead one again — so the working address could go untried indefinitely.
+	 */
+	private readonly addressProbeBackoff = new Map<string, { nextAttempt: number; failCount: number }>();
 	/**
 	 * peerID → time we first saw the peer disconnected with ZERO reachable
 	 * addresses. Such peers never enter the re-dial path (nothing to dial), so
@@ -1151,6 +1177,29 @@ export class Network {
 	}
 
 	/**
+	 * Whether a per-ADDRESS probe of a configured entry is due.
+	 *
+	 * An address nothing has failed on yet is always due; one that failed waits out the
+	 * window {@link noteAddressProbeFailure} set for it.
+	 */
+	private isAddressProbeDue(canonicalAddress: string, now: number): boolean {
+		const entry = this.addressProbeBackoff.get(canonicalAddress);
+		return entry === undefined || entry.nextAttempt <= now;
+	}
+
+	/**
+	 * Record a failed probe of a configured ADDRESS: 30 s × 2^fails, capped at
+	 * {@link CONFIGURED_PROBE_BACKOFF_MAX_MS}.
+	 *
+	 * Paces and nothing more — a configured entry is exempt from eviction and from
+	 * quarantine, so this record must never become the evidence that removes one.
+	 */
+	private noteAddressProbeFailure(canonicalAddress: string): void {
+		const failCount = (this.addressProbeBackoff.get(canonicalAddress)?.failCount ?? 0) + 1;
+		this.addressProbeBackoff.set(canonicalAddress, { nextAttempt: Date.now() + Math.min(30_000 * 2 ** (failCount - 1), CONFIGURED_PROBE_BACKOFF_MAX_MS), failCount });
+	}
+
+	/**
 	 * Record a failed recovery dial of a DISCOVERED address against the shared per-peer
 	 * backoff, in the same four-field shape every other writer uses.
 	 *
@@ -1212,8 +1261,13 @@ export class Network {
 			// this, an isolated node re-dialed a dead discovered peer every 30s
 			// forever, since maintenance stops counting failures the moment we have no
 			// other connection to prove we are online.
-			const configured = this.configuredBootstrapAddresses.has(normalizeMultiaddrForCompare(ma.toString()));
-			if (pid && !configured && !isRecoveryDialDue(pid, Date.now(), this.redialBackoff, this.unreachableQuarantine)) continue;
+			const canonical = normalizeMultiaddrForCompare(ma.toString());
+			const configured = this.configuredBootstrapAddresses.has(canonical);
+			if (configured) {
+				if (!this.isAddressProbeDue(canonical, Date.now())) continue;
+			} else if (pid && !isRecoveryDialDue(pid, Date.now(), this.redialBackoff, this.unreachableQuarantine)) {
+				continue;
+			}
 			// Routability is re-checked here, not just at configure time: a LAN or VPN
 			// bootstrap is on this list while its interface is down, and becomes dialable
 			// again the moment it returns.
@@ -1230,12 +1284,14 @@ export class Network {
 				console.log(`   → Dialing ${maStr}`);
 				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
 				if (epoch !== this.runEpoch) return;
-				if (pid) this.redialBackoff.delete(pid);
+				if (configured) this.addressProbeBackoff.delete(canonical);
+				else if (pid) this.redialBackoff.delete(pid);
 				console.log(`   ✓ Connected via ${maStr}`);
 				break;
 			} catch (err: any) {
 				if (epoch !== this.runEpoch) return;
-				if (pid) this.noteRecoveryDialFailure(pid);
+				if (configured) this.noteAddressProbeFailure(canonical);
+				else if (pid) this.noteRecoveryDialFailure(pid);
 				console.log(`   ✗ Failed ${maStr}: ${err.message ?? err}`);
 			}
 		}
@@ -2445,6 +2501,7 @@ export class Network {
 		this._lastScores.clear();
 		this.redialBackoff.clear();
 		this.unreachableQuarantine.clear();
+		this.addressProbeBackoff.clear();
 		this.noReachableSince.clear();
 		this.configuredBootstrapPeerIDs.clear();
 		this.configuredBootstrapAddresses.clear();

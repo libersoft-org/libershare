@@ -182,6 +182,7 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
 		(network as any).redialBackoff = new Map();
+		(network as any).addressProbeBackoff = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
