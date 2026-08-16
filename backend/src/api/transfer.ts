@@ -302,8 +302,16 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	async function enableDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
 		assert(p, ['lishID']);
-		if (isBusy(p.lishID)) return { success: false };
 		if (pendingDownloads.has(p.lishID)) return { success: true };
+		return startEnableDownload(p, client);
+	}
+
+	/**
+	 * The body of {@link enableDownload}: everything from the busy check to starting
+	 * the downloader. Split out so the caller can own the in-flight bookkeeping.
+	 */
+	async function startEnableDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
+		if (isBusy(p.lishID)) return { success: false };
 		dataServer.clearError(p.lishID);
 		downloadEnabledLishs.add(p.lishID);
 		persistDownloadEnabled?.(p.lishID, true);
