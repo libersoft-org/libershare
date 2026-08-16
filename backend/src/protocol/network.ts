@@ -243,6 +243,7 @@ export class Network {
 			wantResponseCooldownMs: WANT_RESPONSE_COOLDOWN_MS,
 			getNode: (): Libp2p | null => this.node,
 			dialByPeerId: (peerID, protocol): Promise<IDialResult> => this.dialProtocolByPeerId(peerID, protocol),
+			canServePubsubRequestTo: (peerID): boolean => this.canServePubsubRequestTo(peerID),
 		});
 		this.peerAnnounce = new PeerAnnounceManager({
 			getNode: (): Libp2p | null => this.node,
@@ -1309,6 +1310,35 @@ export class Network {
 		// relay of a network we just left cannot browse our shares.
 		if (this.isBootstrapOrRelayPeer(peerID)) return this.sharesJoinedTopicWith(peerID);
 		return this.sharesJoinedOrRecentTopicWith(peerID);
+	}
+
+	/**
+	 * Membership gate for a catalog request that arrived over pubsub instead of a
+	 * unicast dial. gossipsub hands a topic message to the application because WE are
+	 * subscribed to the topic — it never checks the publisher against it — and it
+	 * pushes our whole subscription list down every freshly attached stream, so a peer
+	 * that only opened a transport connection learns our topic IDs and can publish on
+	 * them. Without this, the pubsub `searchLishs` path returns the very catalog rows
+	 * {@link canListSharesTo} withholds over unicast.
+	 *
+	 * Only a publisher we are DIRECTLY connected to can be judged. gossipsub builds its
+	 * subscriber view purely from the subscription lists of direct neighbours and never
+	 * relays them, so a legitimate member two hops away carries no local membership
+	 * evidence and refusing it would break multi-hop search for honest peers. This
+	 * therefore closes the bare-neighbour bypass and nothing more: an ACL that also
+	 * covers the multi-hop case needs a verifiable membership proof carried in the
+	 * request, not a local view of who is subscribed.
+	 */
+	canServePubsubRequestTo(peerID: string): boolean {
+		if (!this.node) return false;
+		let direct: boolean;
+		try {
+			direct = this.node.getPeers().some(p => p.toString() === peerID);
+		} catch {
+			return false;
+		}
+		if (!direct) return true;
+		return this.canListSharesTo(peerID);
 	}
 
 	/**

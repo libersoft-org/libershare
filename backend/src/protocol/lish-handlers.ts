@@ -37,6 +37,12 @@ export interface LISHHandlersDeps {
 	getNode(): Libp2p | null;
 	/** Dial a peer by peerID and open the given protocol stream. */
 	dialByPeerId(peerID: string, protocol: string): Promise<IDialResult>;
+	/**
+	 * Membership gate for a request that reached us over pubsub. gossipsub delivers a
+	 * topic message because WE are subscribed, never because the publisher is, so the
+	 * pubsub path needs the same lishnet-membership check the unicast path applies.
+	 */
+	canServePubsubRequestTo(peerID: string): boolean;
 }
 
 /**
@@ -125,6 +131,10 @@ export class LISHServingHandlers {
 	 *
 	 * `seenSearchIDs` deduplicates queries arriving multiple times via the gossipsub mesh
 	 * (same query can hit the same node from several peering paths).
+	 *
+	 * Answering requires the same lishnet membership the unicast `getLishs` gate demands:
+	 * this returns the very same catalog rows, so leaving it ungated would make that gate
+	 * decorative for anyone willing to publish on the topic instead of dialing us.
 	 */
 	async handleSearchLishs(data: SearchLishsMessage, networkID: string, fromPeerID?: string): Promise<void> {
 		// TODO(out of scope): scope search results to LISHs actually shared
@@ -142,6 +152,10 @@ export class LISHServingHandlers {
 		// Don't reply to our own broadcast (we're a subscriber to the topic too).
 		const node = this.deps.getNode();
 		if (node && fromPeerID === node.peerId.toString()) return;
+		if (!this.deps.canServePubsubRequestTo(fromPeerID)) {
+			trace(`[NET] searchLishs from ${fromPeerID.slice(0, 12)} refused: no shared joined lishnet`);
+			return;
+		}
 		// Dedup: same searchID arriving multiple times from gossipsub mesh — answer at most once.
 		const lastSeen = this.deps.seenSearchIDs.get(data.searchID);
 		if (lastSeen !== undefined) return;
