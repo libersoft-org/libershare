@@ -189,10 +189,13 @@ describe('parseLinuxNetworkState', () => {
 		expect(byID(parsed, 'docker0').configurable).toBe(false);
 	});
 
-	it('claims nothing about configurability when NetworkManager could not be asked', () => {
-		// An unavailable answer is not evidence that a device is unmanaged.
+	it('withholds configurability when NetworkManager could not be asked', () => {
+		// An unavailable answer is not a permission. Leaving the flag absent made the
+		// frontend fall back to "probably allow" for a destructive operation; the
+		// apply needs an active NetworkManager profile, and a host that cannot even
+		// be asked has already reported itself read-only through isLinuxWritable.
 		const parsed = parseLinuxNetworkState(sources);
-		expect(byID(parsed, 'eth0').configurable).toBeUndefined();
+		expect(byID(parsed, 'eth0').configurable).toBe(false);
 	});
 
 	it('keeps a secondary interface own gateway, not just the default route one', () => {

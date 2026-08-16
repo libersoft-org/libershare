@@ -94,7 +94,10 @@ export function readGenericInterfaces(): NetInterfaceInfo[] {
 			prefixLength: prefixFromNetmask(e.netmask, e.family === 'IPv4'),
 		}));
 		const mac = usable.find(e => e.mac && e.mac !== '00:00:00:00:00:00')?.mac ?? null;
-		result.push({ id: name, name, medium: 'other', link: 'unknown', defaultRoute: false, mac, addresses, ipv4Mode: 'unknown', gateway: null, dns: [] });
+		// This reader is the fallback for a platform with no configuration backend at
+		// all, and its ids are runtime device names rather than the identifiers an
+		// apply resolves. Nothing it reports can be edited.
+		result.push({ id: name, name, medium: 'other', link: 'unknown', defaultRoute: false, mac, addresses, ipv4Mode: 'unknown', gateway: null, dns: [], configurable: false });
 	}
 	return result;
 }

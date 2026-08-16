@@ -213,9 +213,12 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 			addresses,
 			ipv4Mode,
 			gateway: bestByDev.get(entry.ifname)?.gateway ?? null,
-			// Only claimed when NetworkManager answered: without its device list we
-			// cannot tell an unmanaged device from one it simply did not mention.
-			...(sources.managed ? { configurable: sources.managed.has(entry.ifname) } : {}),
+			// Always stated, never left absent. NetworkManager is the only stack the
+			// apply path can drive, so a device it does not own cannot be edited — and
+			// when it could not be asked at all, the honest answer is still "no": an
+			// unknown permission is not a permission, and `isLinuxWritable()` has
+			// already reported the host read-only in that case anyway.
+			configurable: sources.managed?.has(entry.ifname) ?? false,
 			// NetworkManager knows the resolvers PER LINK, which is the only correct
 			// answer on a systemd-resolved host: there /etc/resolv.conf holds the
 			// 127.0.0.53 stub, so reporting it would show every machine the same
