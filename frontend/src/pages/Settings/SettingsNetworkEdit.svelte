@@ -3,8 +3,8 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { applyInterfaceConfig, isJoinable, joinWifiNetwork, networkState, scanWifiNetworks } from '../../scripts/networkState.ts';
-	import { isIPv4, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork } from '@shared';
+	import { applyInterfaceConfig, canApplyMode, isJoinable, joinWifiNetwork, networkState, scanWifiNetworks } from '../../scripts/networkState.ts';
+	import { isIPv4, validateIPv4Config, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -27,7 +27,10 @@
 	// separates a Wi-Fi adapter from a Wi-Fi Direct virtual one that cannot scan.
 	let canEditWifi = $derived(!!iface?.wifi && $networkState.capabilities.wifi);
 
-	let mode = $state<'dhcp' | 'static'>('dhcp');
+	// Seeded from what the host actually reports, `unknown` included. Collapsing an
+	// unknown reading to DHCP made the form claim the interface was on DHCP and let
+	// Save convert it to exactly that.
+	let mode = $state<NetAddressMode>('unknown');
 	let address = $state('');
 	let prefix = $state('24');
 	let gateway = $state('');
@@ -53,7 +56,7 @@
 	});
 
 	function seedFrom(source: NetInterfaceInfo): void {
-		mode = source.ipv4Mode === 'static' ? 'static' : 'dhcp';
+		mode = source.ipv4Mode;
 		const ipv4 = source.addresses.find(a => a.family === 'ipv4');
 		address = ipv4?.address ?? '';
 		prefix = String(ipv4?.prefixLength ?? 24);
@@ -79,6 +82,13 @@
 	}
 
 	async function save(): Promise<void> {
+		// Guarded in the markup as well; repeated here because Save is the step that
+		// rewrites the host's addressing and must never act on a mode nobody chose.
+		if (!canApplyMode(mode)) {
+			failed = true;
+			message = $t('settings.network.invalidField', { field: $t('settings.network.field.mode') });
+			return;
+		}
 		const config = buildConfig();
 		const invalid = validateIPv4Config(config);
 		if (invalid) {
@@ -219,10 +229,16 @@
 		{#if canEditIPv4}
 			<div role="group" data-mouse-activate-area={areaID}>
 				<Select bind:value={mode} label={$t('settings.network.addressing')} position={[0, 0]} flex>
+					<!-- Offered only while it is what the host reported, so the form can
+					     show the truth without inviting the user to select it back. -->
+					{#if mode === 'unknown'}<SelectOption value="unknown" label={$t('settings.network.modeUnknown')} />{/if}
 					<SelectOption value="dhcp" label={$t('settings.network.dhcp')} />
 					<SelectOption value="static" label={$t('settings.network.static')} />
 				</Select>
 			</div>
+			{#if mode === 'unknown'}
+				<div class="note">{$t('settings.network.invalidField', { field: $t('settings.network.field.mode') })}</div>
+			{/if}
 
 			{#if mode === 'static'}
 				<div role="group" data-mouse-activate-area={areaID}>
@@ -234,7 +250,7 @@
 			{/if}
 
 			<ButtonBar justify="center" basePosition={[0, 1 + staticRows]}>
-				<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy} onConfirm={save} />
+				<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy || !canApplyMode(mode)} onConfirm={save} />
 			</ButtonBar>
 		{/if}
 

@@ -12,7 +12,7 @@
  */
 import { test, expect } from 'bun:test';
 import { get } from 'svelte/store';
-import { isJoinable, networkState, unknownNetworkState } from '../../src/scripts/networkState.ts';
+import { canApplyMode, isJoinable, networkState, unknownNetworkState } from '../../src/scripts/networkState.ts';
 import type { NetworkStateInfo, NetWifiNetwork } from '@shared';
 
 /** One row of a Wi-Fi scan result. */
@@ -79,6 +79,18 @@ test('the network already in use is not joinable again', () => {
 	// row that already carries the check mark would replace a working saved
 	// network's configuration to end up exactly where it started.
 	expect(isJoinable(wifi({ active: true }), { busy: false, scanning: false })).toBe(false);
+});
+
+test('an addressing mode the host could not name is not applicable', () => {
+	// The editor used to seed `unknown` as DHCP, so opening a partially-read
+	// interface and pressing Save converted it to DHCP without the user ever
+	// choosing that. Save now waits for an explicit pick.
+	expect(canApplyMode('unknown')).toBe(false);
+});
+
+test('the two modes the user can actually choose are applicable', () => {
+	expect(canApplyMode('dhcp')).toBe(true);
+	expect(canApplyMode('static')).toBe(true);
 });
 
 test('merely clearing known would have left the stale list and capabilities behind', () => {

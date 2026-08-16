@@ -1,6 +1,6 @@
 import { derived, writable, type Readable } from 'svelte/store';
 import { api } from './api.ts';
-import { deriveConnectionStatus, type ConnectionStatus, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
+import { deriveConnectionStatus, type ConnectionStatus, type NetAddressMode, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
 
 /**
  * Host network state as reported by the backend.
@@ -80,6 +80,19 @@ export async function applyInterfaceConfig(interfaceID: string, config: NetIPv4C
  */
 export function isJoinable(network: NetWifiNetwork, state: { busy: boolean; scanning: boolean }): boolean {
 	return !state.busy && !state.scanning && !network.active;
+}
+
+/**
+ * True when the addressing form holds a mode that can actually be applied.
+ *
+ * `unknown` is a real reading — a partially-read interface, an addressing scheme
+ * the platform could not name (macOS BOOTP, a device with no service). The
+ * editor used to collapse it to DHCP when seeding, so opening such an interface
+ * and pressing Save, or changing some unrelated field, silently converted it to
+ * DHCP. It is now shown as itself and Save waits for the user to choose.
+ */
+export function canApplyMode(mode: NetAddressMode): boolean {
+	return mode === 'dhcp' || mode === 'static';
 }
 
 /** Scan for Wi-Fi networks reachable from one interface. */
