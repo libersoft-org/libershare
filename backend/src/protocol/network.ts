@@ -130,6 +130,21 @@ const UNREACHABLE_QUARANTINE_MS = 30 * 60_000;
  * would evict the whole non-configured peerStore on the first dial after the
  * connection came back.
  */
+/**
+ * Whether zero-connection recovery may dial a DISCOVERED address this tick.
+ *
+ * It answers with the two records re-dial maintenance already keeps: a peer inside its
+ * backoff window waits for it to expire, and one still inside its unreachable
+ * quarantine stays down. Both are delays, never permanent bans — the point is only
+ * that the recovery loop must not undo the pacing the other loop just applied.
+ */
+export function isRecoveryDialDue(peerID: string, now: number, redialBackoff: ReadonlyMap<string, { nextAttempt: number }>, quarantine: ReadonlyMap<string, number>): boolean {
+	const quarantinedAt = quarantine.get(peerID);
+	if (quarantinedAt !== undefined && now - quarantinedAt < UNREACHABLE_QUARANTINE_MS) return false;
+	const backoff = redialBackoff.get(peerID);
+	return backoff === undefined || backoff.nextAttempt <= now;
+}
+
 export function nextEvictionWindowStart(reachable: boolean, previous: number | undefined, now: number): number {
 	return reachable ? (previous ?? now) : now;
 }
@@ -1133,6 +1148,18 @@ export class Network {
 			const p2pComponents = ma.getComponents().filter((c: { code: number; value?: string }) => c.code === 421);
 			const pid: string | undefined = p2pComponents.length > 0 ? p2pComponents[p2pComponents.length - 1].value : undefined;
 			if (pid && this.isRedialSuppressed(pid)) continue; // deliberately left — don't resurrect it here
+			// A CONFIGURED entry is the user's way back in and is always tried; a
+			// DISCOVERED one earned its place here by answering once, but that is no
+			// reason to bypass the pacing re-dial maintenance applies to it. Without
+			// this, an isolated node re-dialed a dead discovered peer every 30s
+			// forever, since maintenance stops counting failures the moment we have no
+			// other connection to prove we are online.
+			const configured = !!pid && this.configuredBootstrapPeerIDs.has(pid);
+			if (pid && !configured && !isRecoveryDialDue(pid, Date.now(), this.redialBackoff, this.unreachableQuarantine)) continue;
+			// Routability is re-checked here, not just at configure time: a LAN or VPN
+			// bootstrap is on this list while its interface is down, and becomes dialable
+			// again the moment it returns.
+			if (shouldDenyDial(ma, getLocalCidrs())) continue;
 			const maStr = ma?.toString?.() ?? String(ma);
 			// Each dial awaits for up to 10s, so a stop() can land mid-loop; the
 			// remaining dials belong to a node this run no longer owns.
@@ -1301,6 +1328,18 @@ export class Network {
 					// explicit dial fails or the connection drops before the next tick.
 					this.clearRedialSuppressionForPeer(peerID);
 				}
+				// Also before the routability filter: a LAN or VPN bootstrap is unroutable only
+				// while its interface is down, and keeping it off the recovery list until then
+				// means nothing retries it when the tunnel returns. Recovery re-checks
+				// routability itself before dialing.
+				// The autodial list is a different promise: zero-connection recovery walks
+				// it and dials everything on it. A CONFIGURED address belongs there at once
+				// — it is user data and recovery must keep trying it precisely while it is
+				// down. A DISCOVERED address is only a claim some peer made, so it earns
+				// its place by answering; it is added after a verified dial, below. Adding
+				// it here left every unreachable address a gossip flood could invent on the
+				// list for good, since an ordinary timeout has nothing that takes it off.
+				if (origin === 'configured') this.rememberBootstrapAddress(ma);
 				// Safety net: refuse to dial loopback / unreachable-private bootstrap entries
 				// even if the upstream (catalog or peer-announce intake) failed to filter them.
 				// A discovered address is dropped silently — the call site iterates many
@@ -1333,14 +1372,6 @@ export class Network {
 				// The identity set is the dedup that stops every gossip mention of the same
 				// peer from costing another dial, so it is claimed up front either way.
 				if (peerID) this.bootstrapPeerIDs.add(peerID);
-				// The autodial list is a different promise: zero-connection recovery walks
-				// it and dials everything on it. A CONFIGURED address belongs there at once
-				// — it is user data and recovery must keep trying it precisely while it is
-				// down. A DISCOVERED address is only a claim some peer made, so it earns
-				// its place by answering; it is added after a verified dial, below. Adding
-				// it here left every unreachable address a gossip flood could invent on the
-				// list for good, since an ordinary timeout has nothing that takes it off.
-				if (origin === 'configured') this.rememberBootstrapAddress(ma);
 				console.debug('Adding bootstrap peer:', peer);
 				this.bootstrapTracker.markPending(networkID, peer, peerID, origin);
 				try {
@@ -1380,7 +1411,7 @@ export class Network {
 					// by leave-network and sits in the suppression set, or we left the network
 					// this dial belonged to before ever seeing the peer as one of its members,
 					// in which case it never entered that set at all.
-					if (peerID && networkID && (this.isRedialSuppressed(peerID) || !this.isTopicSubscribed(networkID))) {
+					if (peerID && networkID && (this.isRedialSuppressed(peerID) || !this.isTopicSubscribed(networkID)) && !this.isPeerNeededByJoinedNetwork(peerID)) {
 						trace(`[NET] bootstrap dial landed after leave, disconnecting: ${peerID.slice(0, 16)}`);
 						await this.disconnectPeer(peerID, networkID);
 						return;
@@ -1683,6 +1714,28 @@ export class Network {
 	 * LISHs just because a transport connection exists (e.g. the peer's
 	 * keep-alive re-dialed us right after we left its network).
 	 */
+	/**
+	 * Whether a lishnet we are STILL in has any claim on this peer.
+	 *
+	 * Leaving one network says nothing about the others — the same peer can be a member
+	 * of a second lishnet or its configured bootstrap. Tearing it down is destructive
+	 * (disconnectPeer suppresses re-dials AND drops the peerStore entry), so that is
+	 * reserved for a peer no joined network has a use for. It is the same question
+	 * leaveNetwork asks before it hangs anyone up.
+	 */
+	private isPeerNeededByJoinedNetwork(peerID: string): boolean {
+		if (this.isBootstrapOrRelayPeer(peerID)) return true;
+		if (this.sharesJoinedTopicWith(peerID)) return true;
+		if (!this.pubsub) return false;
+		for (const topic of this.pubsub.getTopics()) {
+			if (!topic.startsWith(LISH_TOPIC_PREFIX)) continue;
+			// Recently-seen counts as well: a member that is momentarily disconnected is
+			// still a member, and leaveNetwork widens its own snapshot the same way.
+			if (this.peerAnnounce.getRecentMembers(topic).includes(peerID)) return true;
+		}
+		return false;
+	}
+
 	sharesJoinedTopicWith(peerID: string): boolean {
 		if (!this.pubsub) return false;
 		for (const topic of this.pubsub.getTopics()) {
