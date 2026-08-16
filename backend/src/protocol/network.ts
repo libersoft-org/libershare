@@ -1567,6 +1567,14 @@ export class Network {
 	 */
 	pruneConfiguredBootstrapPeer(peerID: string): void {
 		this.configuredBootstrapPeerIDs.delete(peerID);
+		// Forget its addresses too. They were pushed into the autodial list when the
+		// entry was first configured, and that list is what zero-connection recovery
+		// walks — leaving them there means a bootstrap the user has just deleted keeps
+		// being dialed whenever the node runs out of connections, which is exactly the
+		// churn this work removes. The dedup set has to let go as well, or a later
+		// re-add would be treated as already known and the address could never come back.
+		this.bootstrapPeerIDs.delete(peerID);
+		this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(ma => extractDestinationPeerID(ma) !== peerID);
 	}
 
 	isBootstrapOrRelayPeer(peerID: string): boolean {
