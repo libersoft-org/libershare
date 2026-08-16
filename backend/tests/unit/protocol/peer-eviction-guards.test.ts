@@ -546,3 +546,84 @@ describe('addBootstrapPeers — a dial that lands after leave-network', () => {
 		expect(disconnected).toEqual([]);
 	});
 });
+
+/**
+ * The autodial list is what zero-connection recovery dials. A gossip mention is only
+ * a claim, so an address that never answered must not end up on it — otherwise a peer
+ * naming many unreachable addresses parks them all there permanently, since an
+ * ordinary timeout has no cleanup path (only identity-mismatch does).
+ */
+describe('addBootstrapPeers — only a working discovered address joins the autodial list', () => {
+	const ADDR = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork(opts: { fail?: boolean; remoteAddr?: string }) {
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).bootstrapGeneration = new Map();
+		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
+		(network as any).node = {
+			peerId: { toString: () => 'selfID' },
+			getConnections: () => [],
+			async dial(ma: { toString(): string }): Promise<unknown> {
+				if (opts.fail) throw new Error('dial timeout');
+				return { remoteAddr: { toString: () => opts.remoteAddr ?? ma.toString() } };
+			},
+			peerStore: { async merge(): Promise<void> {} },
+		};
+		return network;
+	}
+
+	const addresses = (network: Network): string[] => (network as any).bootstrapMultiaddrs.map((m: { toString(): string }) => m.toString());
+
+	it('keeps a failed discovered address off the list', async () => {
+		const network = bareNetwork({ fail: true });
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect(addresses(network)).toEqual([]);
+	});
+
+	it('adds a discovered address that answered on the endpoint it claimed', async () => {
+		const network = bareNetwork({});
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect(addresses(network)).toEqual([ADDR]);
+	});
+
+	it('keeps a discovered address off the list when the connection came back on another one', async () => {
+		const network = bareNetwork({ remoteAddr: `/ip4/198.51.100.1/tcp/4001/p2p/${PEER_ID}` });
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect(addresses(network)).toEqual([]);
+	});
+
+	/**
+	 * A configured entry is user data: recovery has to keep trying it precisely while
+	 * it is down, so it joins the list before the dial and stays even when that fails.
+	 */
+	it('keeps a failed configured address on the list', async () => {
+		const network = bareNetwork({ fail: true });
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+		expect(addresses(network)).toEqual([ADDR]);
+	});
+
+	it('does not add the same address twice', async () => {
+		const network = bareNetwork({});
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+		expect(addresses(network)).toEqual([ADDR]);
+	});
+
+	/**
+	 * The dedup used to be keyed on the peer id, so a bootstrap whose host the user
+	 * edited was treated as already known and its new address never reached the list.
+	 */
+	it('adds a new address of a peer it already knows', async () => {
+		const moved = `/ip4/203.0.113.99/tcp/9090/p2p/${PEER_ID}`;
+		const network = bareNetwork({});
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+		await (network as any).addBootstrapPeers([moved], 'net-a', 'configured');
+		expect(addresses(network)).toEqual([ADDR, moved]);
+	});
+});

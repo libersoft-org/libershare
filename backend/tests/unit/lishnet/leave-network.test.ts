@@ -28,6 +28,8 @@ interface MockNet {
 	pruneConfiguredBootstrapPeer(pid: string): void;
 	bumpBootstrapGeneration(networkID: string): void;
 	generationBumps: string[];
+	pruneBootstrapAddresses(addresses: string[]): void;
+	prunedAddresses: string[][];
 	pruneBootstrapStatus(networkID: string, keep: string[]): void;
 	prunedStatus: Array<{ networkID: string; keep: string[] }>;
 	addBootstrapPeers(peers: string[], networkID: string, origin: string): Promise<void>;
@@ -47,6 +49,7 @@ function makeMockNet(): MockNet {
 		prunedBootstrap: [],
 		suppressionClearedFor: [],
 		generationBumps: [],
+		prunedAddresses: [],
 		prunedStatus: [],
 		dialledLists: [],
 		getTopicPeers(id) {
@@ -74,6 +77,9 @@ function makeMockNet(): MockNet {
 		},
 		bumpBootstrapGeneration(networkID) {
 			this.generationBumps.push(networkID);
+		},
+		pruneBootstrapAddresses(addresses) {
+			this.prunedAddresses.push(addresses);
 		},
 		pruneBootstrapStatus(networkID, keep) {
 			this.prunedStatus.push({ networkID, keep });
@@ -351,6 +357,27 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		const { networks, db } = seeded([ADDR_A]);
 		edit(networks, ['', ADDR_B, '   ']);
 		expect(getLISHnet(db, NET)?.bootstrapPeers).toEqual([ADDR_B]);
+	});
+
+	/**
+	 * Editing only the host or port keeps the peer ID, so the identity-level prune sees
+	 * nothing to do. Without an address-level prune the replaced address stays on the
+	 * autodial list and recovery keeps dialing it.
+	 */
+	it('drops the replaced address when only the host changed', () => {
+		const moved = `/ip4/203.0.113.99/tcp/9090/p2p/${PEER_A}`;
+		const { networks, mock } = seeded([ADDR_A]);
+		edit(networks, [moved]);
+		expect(mock.prunedAddresses).toEqual([[ADDR_A]]);
+		expect(mock.prunedBootstrap).toEqual([]);
+	});
+
+	it('keeps an address that is still configured for another joined network', () => {
+		const { networks, mock } = seeded([ADDR_A]);
+		(networks as any).get = (nid: string) => (nid === 'net-other' ? { networkID: nid, bootstrapPeers: [ADDR_A] } : { networkID: NET, bootstrapPeers: [ADDR_A] });
+		(networks as any).joinedNetworks = new Set([NET, 'net-other']);
+		edit(networks, [ADDR_B]);
+		expect(mock.prunedAddresses).toEqual([[]]);
 	});
 
 	it('does not dial for a network that is not joined', () => {
