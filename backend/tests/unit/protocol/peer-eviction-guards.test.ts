@@ -1151,3 +1151,75 @@ describe('runZeroConnectionRecovery — connectivity is read, not remembered', (
 		expect(dialed).toEqual([multiaddr(ADDR_A).toString()]);
 	});
 });
+
+describe('runZeroConnectionRecovery — a failed dial paces the next one', () => {
+	const DISCOVERED = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork(opts: { address: string; configured: boolean }) {
+		const dialed: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).addressProbeBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set(opts.configured ? [PEER_ID] : []);
+		(network as any).configuredBootstrapAddresses = new Set(opts.configured ? [normalizeMultiaddrForCompare(opts.address)] : []);
+		(network as any).bootstrapMultiaddrs = [multiaddr(opts.address)];
+		(network as any).recentDisconnects = [];
+		(network as any).bootstrapTracker = { entries: () => [] };
+		(network as any).node = {
+			getPeers: (): unknown[] => [],
+			async dial(ma: { toString(): string }): Promise<void> {
+				dialed.push(ma.toString());
+				throw new Error('dial timeout');
+			},
+		};
+		return { network, dialed };
+	}
+
+	const run = (network: Network): Promise<void> => (network as any).runZeroConnectionRecovery(1);
+
+	it('writes the full four-field backoff record for a discovered address', async () => {
+		const { network } = bareNetwork({ address: DISCOVERED, configured: false });
+		await run(network);
+		const entry = (network as any).redialBackoff.get(PEER_ID) as { nextAttempt: number; failCount: number; firstFailure: number; evictionFails: number } | undefined;
+		expect(entry).toBeDefined();
+		expect(Object.keys(entry!).sort()).toEqual(['evictionFails', 'failCount', 'firstFailure', 'nextAttempt']);
+		expect(entry!.failCount).toBe(1);
+		expect(entry!.nextAttempt).toBeGreaterThan(Date.now());
+	});
+
+	it('skips the same address on the very next pass', async () => {
+		const { network, dialed } = bareNetwork({ address: DISCOVERED, configured: false });
+		await run(network);
+		await run(network);
+		expect(dialed).toEqual([multiaddr(DISCOVERED).toString()]);
+	});
+
+	/**
+	 * At zero connections we cannot tell the remote apart from our own outage, which is
+	 * the exact condition nextEvictionFailCount resets on — so a recovery failure must
+	 * never become evidence against the peer.
+	 */
+	it('does not count the failure towards eviction', async () => {
+		const { network } = bareNetwork({ address: DISCOVERED, configured: false });
+		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() - 1, failCount: 2, firstFailure: Date.now() - 60_000, evictionFails: 3 }]]);
+		await run(network);
+		expect(((network as any).redialBackoff.get(PEER_ID) as { evictionFails: number }).evictionFails).toBe(3);
+	});
+
+	it('re-arms an expired quarantine that let the dial through', async () => {
+		const longAgo = Date.now() - 10 * 60 * 60_000;
+		const { network } = bareNetwork({ address: DISCOVERED, configured: false });
+		(network as any).unreachableQuarantine = new Map([[PEER_ID, longAgo]]);
+		await run(network);
+		expect((network as any).unreachableQuarantine.get(PEER_ID)).toBeGreaterThan(longAgo);
+	});
+
+	/**
+	 * Configured entries stay exempt from eviction and from quarantine — but exempt is
+	 * not unlimited: several dead ones at a 10 s timeout each turn every tick into
+	 * minutes of back-to-back dialing.
+	 */
+});

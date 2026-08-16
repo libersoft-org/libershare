@@ -1150,6 +1150,33 @@ export class Network {
 		for (const [pid, ts] of this.unreachableQuarantine) if (ts < quarantineCutoff) this.unreachableQuarantine.delete(pid);
 	}
 
+	/**
+	 * Record a failed recovery dial of a DISCOVERED address against the shared per-peer
+	 * backoff, in the same four-field shape every other writer uses.
+	 *
+	 * Without this the recovery loop was the one dial path that paced nothing: for an
+	 * address whose peer is not in the peerStore, re-dial maintenance never sees the peer
+	 * either, so a dead entry was re-dialed on every tick for as long as the node stayed
+	 * isolated. `evictionFails` deliberately does not grow — at zero connections there is
+	 * no evidence the remote is the broken side, which is exactly what
+	 * {@link nextEvictionFailCount} resets on.
+	 */
+	private noteRecoveryDialFailure(peerID: string): void {
+		const now = Date.now();
+		const previous = this.redialBackoff.get(peerID);
+		const failCount = previous?.failCount ?? 0;
+		this.redialBackoff.set(peerID, {
+			nextAttempt: now + Math.min(30_000 * 2 ** failCount, 600_000),
+			failCount: failCount + 1,
+			firstFailure: previous?.firstFailure ?? now,
+			evictionFails: previous?.evictionFails ?? 0,
+		});
+		// An expired quarantine is what let this dial through, and it buys exactly one
+		// probe: re-arm it on failure or every later pass spends another dial on a peer
+		// that has already been written off once.
+		if (this.unreachableQuarantine.has(peerID)) this.unreachableQuarantine.set(peerID, now);
+	}
+
 	private async runZeroConnectionRecovery(epoch: number = this.runEpoch): Promise<void> {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return;
@@ -1202,9 +1229,13 @@ export class Network {
 			try {
 				console.log(`   → Dialing ${maStr}`);
 				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
+				if (epoch !== this.runEpoch) return;
+				if (pid) this.redialBackoff.delete(pid);
 				console.log(`   ✓ Connected via ${maStr}`);
 				break;
 			} catch (err: any) {
+				if (epoch !== this.runEpoch) return;
+				if (pid) this.noteRecoveryDialFailure(pid);
 				console.log(`   ✗ Failed ${maStr}: ${err.message ?? err}`);
 			}
 		}
