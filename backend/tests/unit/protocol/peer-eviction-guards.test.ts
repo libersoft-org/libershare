@@ -824,3 +824,129 @@ describe('isRecoveryDialDue', () => {
 		expect(isRecoveryDialDue(PEER_ID, now, noBackoff, new Map([[PEER_ID, now - 10 * 60 * 60_000]]))).toBe(true);
 	});
 });
+
+/**
+ * Noise proves one thing only: THIS address no longer leads to the peer we expected.
+ * Purging the whole peer because it happened to be disconnected threw away addresses
+ * that were never disproved — a peer reachable tomorrow on its other address was
+ * forgotten because one stale entry answered with the wrong identity today.
+ */
+describe('addBootstrapPeers — identity mismatch trims the address, not the peer', () => {
+	const BAD = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+	const GOOD = `/ip4/198.51.100.7/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork(storedAddresses: string[]) {
+		const purged: string[] = [];
+		const patched: string[][] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [multiaddr(BAD)];
+		(network as any).bootstrapGeneration = new Map();
+		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {}, deletePeer() {} };
+		(network as any).purgeStalePeer = async (id: string): Promise<void> => {
+			purged.push(id);
+		};
+		(network as any).node = {
+			peerId: { toString: () => 'selfID' },
+			getConnections: () => [],
+			async dial(): Promise<unknown> {
+				throw new Error(`Payload identity key 12D3KooWSomeoneElseSomeoneElseSomeoneElseSomeoneEls does not match expected remote identity key ${PEER_ID}`);
+			},
+			peerStore: {
+				async get(): Promise<unknown> {
+					return { addresses: storedAddresses.map(a => ({ multiaddr: multiaddr(a) })) };
+				},
+				async patch(_pid: unknown, data: { multiaddrs: Array<{ toString(): string }> }): Promise<void> {
+					patched.push(data.multiaddrs.map(m => m.toString()));
+				},
+				async merge(): Promise<void> {},
+			},
+		};
+		return { network, purged, patched };
+	}
+
+	it('keeps a disconnected peer that still has an undisproved address', async () => {
+		const { network, purged, patched } = bareNetwork([BAD, GOOD]);
+		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
+		expect(purged).toEqual([]);
+		expect(patched).toEqual([[GOOD]]);
+	});
+
+	it('purges only once nothing usable is left', async () => {
+		const { network, purged } = bareNetwork([BAD]);
+		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
+		expect(purged).toEqual([PEER_ID]);
+	});
+
+	it('drops the disproved address from the autodial list either way', async () => {
+		const { network } = bareNetwork([BAD, GOOD]);
+		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
+		expect((network as any).bootstrapMultiaddrs).toEqual([]);
+	});
+});
+
+/**
+ * An address the routability filter rejected never reaches the peerStore, so re-dial
+ * maintenance has no candidate for it, and zero-connection recovery only runs with NO
+ * connections at all. Without this slow pass a node talking to someone else would
+ * never notice a VPN bootstrap became reachable again.
+ */
+describe('probeParkedConfiguredBootstraps', () => {
+	const PARKED = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork(opts: { configured?: boolean; connections?: number } = {}) {
+		const dialed: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set(opts.configured === false ? [] : [PEER_ID]);
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).bootstrapMultiaddrs = [multiaddr(PARKED)];
+		(network as any).node = {
+			getConnections: () => Array.from({ length: opts.connections ?? 0 }, () => ({})),
+			async dial(ma: { toString(): string }): Promise<void> {
+				dialed.push(ma.toString());
+			},
+		};
+		return { network, dialed };
+	}
+
+	const run = (network: Network): Promise<void> => (network as any).probeParkedConfiguredBootstraps(1);
+
+	it('probes a configured address even though we hold other connections', async () => {
+		const { network, dialed } = bareNetwork();
+		await run(network);
+		expect(dialed).toEqual([multiaddr(PARKED).toString()]);
+	});
+
+	it('leaves a discovered address to the loops that own it', async () => {
+		const { network, dialed } = bareNetwork({ configured: false });
+		await run(network);
+		expect(dialed).toEqual([]);
+	});
+
+	it('does not re-probe a peer that is already connected', async () => {
+		const { network, dialed } = bareNetwork({ connections: 1 });
+		await run(network);
+		expect(dialed).toEqual([]);
+	});
+
+	it('respects the backoff so a broken entry costs one dial per window', async () => {
+		const { network, dialed } = bareNetwork();
+		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000, failCount: 1, firstFailure: Date.now(), evictionFails: 0 }]]);
+		await run(network);
+		expect(dialed).toEqual([]);
+	});
+
+	it('skips a peer the user left', async () => {
+		const { network, dialed } = bareNetwork();
+		(network as any).redialSuppressedByNet = new Map([['net-a', new Set([PEER_ID])]]);
+		await run(network);
+		expect(dialed).toEqual([]);
+	});
+});
