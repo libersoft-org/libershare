@@ -15,6 +15,7 @@ import { buildLibp2pConfig } from './network-config.ts';
 import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
+import { canonicalMultiaddr, extractDestinationPeerID } from './multiaddr-utils.ts';
 import { CodedError, ErrorCodes, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
@@ -201,6 +202,13 @@ export class Network {
 	private statusInterval: NodeJS.Timeout | null = null;
 	/** Monotonic counter for status-interval ticks. Used by the periodic autodial promotion. */
 	private statusTickCount = 0;
+	/**
+	 * Delayed peer-count probes armed by subscribeTopic. Tracked so stop() can cancel
+	 * them: without that they keep a closure on this instance alive and can fire against
+	 * a node the run no longer owns, which is exactly the ownership the epoch guards
+	 * elsewhere are there to enforce.
+	 */
+	private readonly delayedPeerCountTimers: Set<ReturnType<typeof setTimeout>> = new Set();
 	/** Guards against overlapping status ticks — see setupStatusInterval. */
 	private statusTickInFlight = false;
 	/**
@@ -454,6 +462,17 @@ export class Network {
 	/**
 	 * Schedule a debounced check of peer counts for all subscribed topics.
 	 */
+	/** Arm a one-shot peer-count probe that stop() can still cancel. */
+	private armDelayedPeerCountCheck(delayMs: number): void {
+		const epoch = this.runEpoch;
+		const timer = setTimeout(() => {
+			this.delayedPeerCountTimers.delete(timer);
+			if (epoch !== this.runEpoch) return;
+			this.schedulePeerCountCheck();
+		}, delayMs);
+		this.delayedPeerCountTimers.add(timer);
+	}
+
 	private schedulePeerCountCheck(): void {
 		if (this._peerCountDebounceTimer) clearTimeout(this._peerCountDebounceTimer);
 		this._peerCountDebounceTimer = setTimeout(() => {
@@ -2073,9 +2092,7 @@ export class Network {
 		this.topicHandlers.get(topic)!.add(handler);
 		console.log(`✓ Subscribed to lishnet topic: ${topic}`);
 		// GossipSub mesh needs time to rebuild after subscribe — schedule delayed peer count checks
-		setTimeout(() => this.schedulePeerCountCheck(), 2000);
-		setTimeout(() => this.schedulePeerCountCheck(), 5000);
-		setTimeout(() => this.schedulePeerCountCheck(), 15000);
+		for (const delay of [2000, 5000, 15000]) this.armDelayedPeerCountCheck(delay);
 	}
 
 	/**
@@ -2394,6 +2411,11 @@ export class Network {
 		this.noReachableSince.clear();
 		this.configuredBootstrapPeerIDs.clear();
 		this.configuredBootstrapAddresses.clear();
+		// Per-run like the rest of this state: a fresh node must not inherit a count that
+		// makes its very first tick the slow-cadence one.
+		this.statusTickCount = 0;
+		for (const timer of this.delayedPeerCountTimers) clearTimeout(timer);
+		this.delayedPeerCountTimers.clear();
 		this.redialSuppressedByNet.clear();
 		this.pxIngressLogKeys.clear();
 		if (this.node) {
@@ -2430,19 +2452,22 @@ export class Network {
 	}
 }
 
+// Re-exported so callers and tests that already reach for this here keep working; the
+// implementation lives in multiaddr-utils so network-config can share it without
+// importing this module.
+export { extractDestinationPeerID };
+
 /**
- * Normalize a multiaddr STRING for equality comparison. Multiaddr.toString()
- * already compresses IPv6, but leaves DNS host case and the FQDN root dot intact —
- * `/dns4/EXAMPLE.COM./tcp/...` and `/dns4/example.com/tcp/...` address the same
- * endpoint.
+ * Normalize a multiaddr STRING for equality comparison.
  *
- * Only the HOST of a DNS component is folded, never the whole address. A circuit
- * multiaddr carries `/p2p/<relay>` in the middle, and a base58 peer ID is
- * case-significant — case-folding an identifier is a different question from
- * case-folding a hostname, and this function is only entitled to the second.
+ * Delegates to {@link canonicalMultiaddr}, which parses the address first — that is
+ * what folds an expanded IPv6 literal into its compressed form. Doing it with a regex
+ * over the raw text, as this used to, left `/ip6/2001:0db8:0000:...:0001` and
+ * `/ip6/2001:db8::1` looking like two different addresses even though they are one,
+ * so a configuration edit could leave the old spelling behind in the autodial list.
  */
 export function normalizeMultiaddrForCompare(s: string): string {
-	return s.replace(/\/(dns|dns4|dns6|dnsaddr)\/([^/]+)/gi, (_match, protocol: string, host: string) => `/${protocol.toLowerCase()}/${host.toLowerCase().replace(/\.+$/, '')}`);
+	return canonicalMultiaddr(s);
 }
 
 /**
@@ -2458,26 +2483,6 @@ export function isSameDialEndpoint(a: string, b: string): boolean {
 	const strip = (s: string): string => normalizeMultiaddrForCompare(s).replace(/\/p2p\/[^/]+$/, '');
 	const left = strip(a);
 	return left.length > 0 && left === strip(b);
-}
-
-/**
- * Extract the DESTINATION peer ID from a multiaddr. A circuit-relay address has
- * the shape `/.../p2p/<relay>/p2p-circuit/p2p/<destination>` — taking the FIRST
- * /p2p/ component would return the relay's identity, so eviction and configured
- * protection would target the wrong peer. The last /p2p/ component is always
- * the dial target. Returns null when the multiaddr carries no peer ID at all.
- */
-export function extractDestinationPeerID(ma: any): string | null {
-	try {
-		const components: Array<{ code: number; value?: string }> = ma?.getComponents?.() ?? [];
-		for (let i = components.length - 1; i >= 0; i--) {
-			const c = components[i]!;
-			if (c.code === 421 && typeof c.value === 'string') return c.value;
-		}
-	} catch {
-		/* unparseable multiaddr — no ID */
-	}
-	return null;
 }
 
 /**
