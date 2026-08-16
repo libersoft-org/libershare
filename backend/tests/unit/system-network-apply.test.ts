@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { isIPv4, isValidSSID, isValidWifiKey, isWifiHexKey, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { nmcliModifyArgs, parseNmcliActiveUUID, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
+import { nmcliActivateArgs, nmcliModifyArgs, parseNmcliActiveUUID, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { firstLine } from '../../src/system-network.ts';
 
@@ -249,6 +249,23 @@ describe('nmcliModifyArgs', () => {
 		const args = nmcliModifyArgs('4b8a1f2c-0000-4000-8000-000000000001', { mode: 'dhcp' });
 		expect(args[2]).toBe('uuid');
 		expect(args[3]).toBe('4b8a1f2c-0000-4000-8000-000000000001');
+	});
+});
+
+describe('nmcliActivateArgs', () => {
+	const uuid = '4b8a1f2c-0000-4000-8000-000000000001';
+
+	it('binds the activation to the device that was edited', () => {
+		// Without `ifname`, NetworkManager may bring a generic profile up on any
+		// compatible adapter — reconfiguring one interface while leaving the one the
+		// user actually edited down.
+		expect(nmcliActivateArgs(uuid, 'eth0')).toEqual(['connection', 'up', 'uuid', uuid, 'ifname', 'eth0']);
+	});
+
+	it('still addresses the profile by uuid rather than by name', () => {
+		const args = nmcliActivateArgs(uuid, 'wlan0');
+		expect(args[2]).toBe('uuid');
+		expect(args[3]).toBe(uuid);
 	});
 });
 

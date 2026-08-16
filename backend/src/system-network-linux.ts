@@ -519,6 +519,19 @@ export function nmcliModifyArgs(uuid: string, config: NetIPv4Config): string[] {
 	];
 }
 
+/**
+ * Build the `nmcli connection up` arguments that re-apply an edited profile.
+ *
+ * `ifname <device>` is not optional here. Without it NetworkManager is free to
+ * pick any device the profile is compatible with, and a profile that is not
+ * hard-bound to one interface (no `connection.interface-name`, a generic wired
+ * profile) can then come up on a DIFFERENT adapter from the one the user edited
+ * — leaving the edited interface down and reconfiguring another.
+ */
+export function nmcliActivateArgs(uuid: string, device: string): string[] {
+	return ['connection', 'up', 'uuid', uuid, 'ifname', device];
+}
+
 /** Apply an IPv4 configuration to one device and bring the profile back up. Throws when NetworkManager does not own the device. */
 export async function applyLinuxIPv4(device: string, config: NetIPv4Config): Promise<void> {
 	const connection = await activeConnection(device);
@@ -526,7 +539,7 @@ export async function applyLinuxIPv4(device: string, config: NetIPv4Config): Pro
 	await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connection, config), APPLY_TIMEOUT_MS);
 	// `connection up` re-applies the edited profile in place. The device drops for
 	// a moment either way — that is inherent to changing an address, not to this.
-	await runFirst(NMCLI_CANDIDATES, ['connection', 'up', 'uuid', connection], APPLY_TIMEOUT_MS);
+	await runFirst(NMCLI_CANDIDATES, nmcliActivateArgs(connection, device), APPLY_TIMEOUT_MS);
 }
 
 /**
