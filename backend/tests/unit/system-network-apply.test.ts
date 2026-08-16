@@ -4,6 +4,13 @@ import { nmcliActivateArgs, nmcliModifyArgs, parseNmcliActiveUUID, parseNmcliMan
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { firstLine } from '../../src/system-network.ts';
 
+/**
+ * `isIPv4` is deliberately LEXICAL: it answers whether a string is shaped like a
+ * dotted quad, nothing more. Whether such a literal can be a host's address is a
+ * separate, semantic question, answered by `validateIPv4Config` below — so
+ * `0.0.0.0` being accepted here and rejected there is the intended split, not a
+ * contradiction.
+ */
 describe('isIPv4', () => {
 	it('accepts ordinary dotted quads', () => {
 		for (const value of ['192.0.2.1', '0.0.0.0', '255.255.255.255', '198.51.100.42']) expect(isIPv4(value)).toBe(true);
@@ -70,6 +77,43 @@ describe('validateIPv4Config', () => {
 	it('names a field rather than throwing on a dns entry that is not a string', () => {
 		expect(validateIPv4Config({ mode: 'dhcp', dns: [{}] } as unknown as NetIPv4Config)).toBe('dns');
 		expect(validateIPv4Config({ mode: 'dhcp', dns: [null] } as unknown as NetIPv4Config)).toBe('dns');
+	});
+
+	// Semantic layer: a literal that is shaped like an address but cannot be a
+	// host's. Windows deletes the previous address BEFORE setting the new one, so
+	// letting the OS be the one to notice leaves the interface with neither.
+	it('rejects the unspecified and limited-broadcast addresses', () => {
+		expect(validateIPv4Config({ mode: 'static', address: '0.0.0.0', prefixLength: 24 })).toBe('address');
+		expect(validateIPv4Config({ mode: 'static', address: '255.255.255.255', prefixLength: 24 })).toBe('address');
+	});
+
+	it('rejects the network and broadcast addresses of the prefix', () => {
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.0', prefixLength: 24 })).toBe('address');
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.255', prefixLength: 24 })).toBe('address');
+		// The same host in a wider prefix is a perfectly ordinary address.
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.255', prefixLength: 23 })).toBeNull();
+	});
+
+	it('allows both addresses of a point-to-point /31 and a lone /32', () => {
+		// RFC 3021: a /31 has no network or broadcast address, both are usable.
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.0', prefixLength: 31 })).toBeNull();
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.1', prefixLength: 31 })).toBeNull();
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.0', prefixLength: 32 })).toBeNull();
+	});
+
+	it('rejects a gateway that is the interface itself, or unspecified', () => {
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.10' })).toBe('gateway');
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '0.0.0.0' })).toBe('gateway');
+	});
+
+	it('rejects a gateway the interface has no route to', () => {
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '198.51.100.1' })).toBe('gateway');
+		// ...and accepts one inside the prefix.
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' })).toBeNull();
+	});
+
+	it('allows an off-link gateway on a /32, where nothing is on-link', () => {
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 32, gateway: '198.51.100.1' })).toBeNull();
 	});
 
 	it('refuses anything carrying shell or PowerShell syntax', () => {

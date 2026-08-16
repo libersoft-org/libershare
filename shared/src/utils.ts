@@ -108,10 +108,46 @@ export function validateIPv4Config(config: NetIPv4Config): string | null {
 	if (config.mode === 'dhcp') return null;
 	if (!config.address || !isIPv4(config.address)) return 'address';
 	if (!Number.isInteger(config.prefixLength) || (config.prefixLength as number) < 1 || (config.prefixLength as number) > 32) return 'prefixLength';
+	// Everything above is LEXICAL — the value is shaped like an address. What
+	// follows is SEMANTIC: whether it can be a host's address at all. The two are
+	// separate because a configurator that deletes the previous address before
+	// setting the new one must not discover the answer from the OS afterwards.
+	const prefix = config.prefixLength as number;
+	const mask = maskFor(prefix);
+	const host = ipv4ToInt(config.address);
+	// The unspecified address and the limited broadcast are never a host.
+	if (host === 0 || host === 0xffffffff) return 'address';
+	// The all-zero and all-ones host parts belong to the subnet itself. A /31 is a
+	// point-to-point link where RFC 3021 makes both usable, and a /32 has no host
+	// part at all, so neither has a network or broadcast address to collide with.
+	if (prefix <= 30) {
+		const network = (host & mask) >>> 0;
+		if (host === network || host === (network | (~mask >>> 0)) >>> 0) return 'address';
+	}
 	// An interface on an isolated segment legitimately has no gateway, so only a
-	// present-but-malformed value is an error.
-	if (config.gateway && !isIPv4(config.gateway)) return 'gateway';
+	// present-but-unusable value is an error.
+	if (config.gateway) {
+		if (!isIPv4(config.gateway)) return 'gateway';
+		const gateway = ipv4ToInt(config.gateway);
+		// A gateway of 0.0.0.0, or one that is the interface's own address, is a
+		// routing loop rather than a route.
+		if (gateway === 0 || gateway === host) return 'gateway';
+		// A gateway has to be reachable without already having a route to it. The
+		// exception is a /32, where nothing at all is on-link and an off-link
+		// gateway is the normal arrangement.
+		if (prefix <= 31 && (gateway & mask) >>> 0 !== (host & mask) >>> 0) return 'gateway';
+	}
 	return null;
+}
+
+/** The 32-bit value of a dotted quad {@link isIPv4} has already accepted. */
+function ipv4ToInt(address: string): number {
+	return address.split('.').reduce((acc, part) => acc * 256 + Number(part), 0) >>> 0;
+}
+
+/** The netmask of a prefix length, as a 32-bit value. */
+function maskFor(prefixLength: number): number {
+	return prefixLength === 0 ? 0 : (0xffffffff << (32 - prefixLength)) >>> 0;
 }
 
 /**
