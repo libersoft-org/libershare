@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
-import { PeerAnnounceManager, type PeerAnnounceMessage } from '../../../src/protocol/peer-announce.ts';
+import { AnnounceRateLimiter, PeerAnnounceManager, type PeerAnnounceMessage } from '../../../src/protocol/peer-announce.ts';
 import { LISH_TOPIC_PREFIX } from '../../../src/protocol/constants.ts';
 
 // Topic-scoping guard for peer-announce emit(): the transitive peer list broadcast
@@ -236,6 +236,7 @@ describe('PeerAnnounceManager.emit recently-seen membership', () => {
 // are asserted here rather than left to the receivers further down the chain.
 
 const SRC_ID = '12D3KooWSourceSourceSourceSourceSourceSourceSourceSS';
+const OTHER_SRC_ID = '12D3KooWOtherOtherOtherOtherOtherOtherOtherOtherOO';
 
 /** A manager wired only for handle(): captures the address lists it forwards. */
 function intakeManager() {
@@ -302,5 +303,71 @@ describe('PeerAnnounceManager.handle address dedup', () => {
 		await mgr.handle({ type: 'peer-announce', multiaddrs: ['/ip4/127.0.0.1/tcp/9090', '/ip4/127.0.0.1/tcp/9090', 'not-a-multiaddr'] }, 'netAAAA', SRC_ID);
 
 		expect(forwarded).toEqual([]);
+	});
+});
+
+describe('PeerAnnounceManager.handle per-source rate limit', () => {
+	it('lets a burst through, then throttles the same source', async () => {
+		// Budget is 384 addresses (3 × the 128 cap); a fourth full announce from the
+		// same source within the same second has nothing left to spend.
+		const { mgr, forwarded } = intakeManager();
+		const addrs = distinctAddrs(128);
+
+		for (let i = 0; i < 4; i++) await mgr.handle({ type: 'peer-announce', multiaddrs: addrs }, 'netAAAA', SRC_ID);
+
+		expect(forwarded.map(f => f.length)).toEqual([128, 128, 128]); // 4th announce dropped entirely
+	});
+
+	it('throttles one source without starving another', async () => {
+		const { mgr, forwarded } = intakeManager();
+		const addrs = distinctAddrs(128);
+
+		for (let i = 0; i < 4; i++) await mgr.handle({ type: 'peer-announce', multiaddrs: addrs }, 'netAAAA', SRC_ID);
+		forwarded.length = 0;
+		await mgr.handle({ type: 'peer-announce', multiaddrs: addrs }, 'netAAAA', OTHER_SRC_ID);
+
+		expect(forwarded.map(f => f.length)).toEqual([128]);
+	});
+});
+
+describe('AnnounceRateLimiter', () => {
+	it('grants a full burst to an unseen source and nothing more', () => {
+		const limiter = new AnnounceRateLimiter(384, 256, 1024);
+		expect(limiter.take('a', 384, 0)).toBe(384);
+		expect(limiter.take('a', 1, 0)).toBe(0);
+	});
+
+	it('grants partially rather than refusing outright when over budget', () => {
+		const limiter = new AnnounceRateLimiter(384, 256, 1024);
+		expect(limiter.take('a', 500, 0)).toBe(384);
+	});
+
+	it('recovers over time at the configured rate', () => {
+		const limiter = new AnnounceRateLimiter(384, 256, 1024);
+		limiter.take('a', 384, 0);
+		expect(limiter.take('a', 200, 30_000)).toBe(128); // half a minute → half the per-minute rate
+		expect(limiter.take('a', 200, 60_000)).toBe(128); // another 30s worth
+	});
+
+	it('never refills past the burst ceiling', () => {
+		const limiter = new AnnounceRateLimiter(384, 256, 1024);
+		limiter.take('a', 384, 0);
+		expect(limiter.take('a', 1000, 600_000)).toBe(384); // ten idle minutes still caps at burst
+	});
+
+	it('keeps one source spending from starving another', () => {
+		const limiter = new AnnounceRateLimiter(384, 256, 1024);
+		limiter.take('a', 384, 0);
+		expect(limiter.take('b', 384, 0)).toBe(384);
+	});
+
+	it('bounds the bucket table, evicting the least recently heard-from source', () => {
+		const limiter = new AnnounceRateLimiter(10, 10, 2);
+		limiter.take('a', 10, 0); // 'a' exhausted, then pushed out by 'c'
+		limiter.take('b', 10, 0);
+		limiter.take('c', 10, 0);
+
+		expect(limiter.take('a', 10, 0)).toBe(10); // evicted → fresh bucket
+		expect(limiter.take('c', 1, 0)).toBe(0); // recently used → still exhausted
 	});
 });

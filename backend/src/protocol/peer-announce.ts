@@ -61,6 +61,80 @@ const PEER_ANNOUNCE_MAX_ADDRS_PER_PEER = 3;
  */
 const PEER_ANNOUNCE_MEMBER_TTL_MS = PEER_ANNOUNCE_INTERVAL_SATURATED_MS * 3;
 
+/**
+ * Per-source announce budget, in unique addresses admitted per minute.
+ *
+ * Every address that survives intake costs a dial, a status row and a snapshot, and
+ * nothing about gossipsub stops one topic subscriber from announcing as fast as it
+ * likes — so the cost of a single hostile (or merely broken) emitter is otherwise
+ * unbounded. The budget is spent per announcing peer ID, so throttling one source
+ * never starves the rest of the topic.
+ *
+ * Sizing: the worst LEGITIMATE emitter is a mid-convergence peer (peerStore 20..80,
+ * {@link PEER_ANNOUNCE_INTERVAL_STEADY_MS} cadence) sending the full
+ * {@link PEER_ANNOUNCE_MAX_TOTAL_ADDRS} list twice a minute — 256 addresses. The
+ * sustained rate matches that exactly, and the bucket holds one and a half cycles'
+ * worth so downward jitter, a topic re-join or a cold-start burst still pass intact.
+ * A source that exceeds it is not a shape we emit.
+ */
+const PEER_ANNOUNCE_RATE_PER_MINUTE = PEER_ANNOUNCE_MAX_TOTAL_ADDRS * 2;
+/** Bucket depth — burst allowance on top of {@link PEER_ANNOUNCE_RATE_PER_MINUTE}. */
+const PEER_ANNOUNCE_RATE_BURST = PEER_ANNOUNCE_MAX_TOTAL_ADDRS * 3;
+/**
+ * Cap on tracked sources. Buckets are keyed by peer ID, which is unbounded input, so
+ * the map is an LRU: the least recently heard-from source is evicted first. Eviction
+ * hands that source a fresh budget if it ever returns, which is acceptable — refilling
+ * the table costs an attacker a distinct peer ID per slot, and 1024 is far above any
+ * real topic's subscriber count.
+ */
+const PEER_ANNOUNCE_RATE_MAX_SOURCES = 1024;
+/** Bucket key for an announce that arrived without an attributable sender. */
+const PEER_ANNOUNCE_UNKNOWN_SOURCE = '<unknown>';
+
+/**
+ * Token bucket keyed by announcing peer ID, bounding how many addresses one source
+ * can push through peer-announce intake per unit of time.
+ *
+ * Partial grants are deliberate: a source over budget is trimmed rather than silenced,
+ * so a legitimate peer that overshoots still makes discovery progress. `now` is a
+ * parameter rather than a read of the clock so the refill curve is testable.
+ */
+export class AnnounceRateLimiter {
+	private readonly buckets = new Map<string, { tokens: number; seenAt: number }>();
+	private readonly burst: number;
+	private readonly perMinute: number;
+	private readonly maxSources: number;
+
+	constructor(burst: number = PEER_ANNOUNCE_RATE_BURST, perMinute: number = PEER_ANNOUNCE_RATE_PER_MINUTE, maxSources: number = PEER_ANNOUNCE_RATE_MAX_SOURCES) {
+		this.burst = burst;
+		this.perMinute = perMinute;
+		this.maxSources = maxSources;
+	}
+
+	/**
+	 * Spend up to `wanted` tokens on behalf of `source` and return how many were
+	 * granted (0..wanted). An unknown source starts with a full bucket.
+	 */
+	take(source: string, wanted: number, now: number = Date.now()): number {
+		if (wanted <= 0) return 0;
+		const existing = this.buckets.get(source);
+		let tokens = this.burst;
+		if (existing) {
+			// Re-insert below so Map iteration order stays least-recently-used first.
+			this.buckets.delete(source);
+			tokens = Math.min(this.burst, existing.tokens + (Math.max(0, now - existing.seenAt) * this.perMinute) / 60_000);
+		}
+		const granted = Math.min(wanted, Math.floor(tokens));
+		this.buckets.set(source, { tokens: tokens - granted, seenAt: now });
+		while (this.buckets.size > this.maxSources) {
+			const oldest = this.buckets.keys().next();
+			if (oldest.done) break;
+			this.buckets.delete(oldest.value);
+		}
+		return granted;
+	}
+}
+
 /** Dependencies for PeerAnnounceManager. */
 export interface PeerAnnounceManagerDeps {
 	/** Returns the current libp2p node (may be null if not started or already stopped). */
@@ -93,6 +167,8 @@ export class PeerAnnounceManager {
 	 * getSubscribers, so the cross-network leak stays closed. Pruned each emit().
 	 */
 	private readonly topicMembers = new Map<string, Map<string, number>>();
+	/** Per-announcing-peer intake budget — see {@link AnnounceRateLimiter}. */
+	private readonly rateLimiter = new AnnounceRateLimiter();
 
 	constructor(deps: PeerAnnounceManagerDeps) {
 		this.deps = deps;
@@ -220,8 +296,17 @@ export class PeerAnnounceManager {
 			if (droppedNonRoutable > 0 || droppedDuplicate > 0) trace(`[NET] peer-announce from ${fromPeerID?.slice(0, 16) ?? 'unknown'}: dropped all ${rawCount} addrs (${droppedNonRoutable} non-routable, ${droppedDuplicate} duplicate)`);
 			return;
 		}
-		const filtered = [...unique.values()];
-		trace(`[NET] peer-announce from ${fromPeerID?.slice(0, 16) ?? 'unknown'}: ${filtered.length}/${rawCount} addrs (dropped ${droppedNonRoutable} non-routable, ${droppedDuplicate} duplicate, network ${networkID.slice(0, 8)})`);
+		// Rate-limit AFTER dedup: a duplicate flood must not be able to drain the
+		// sender's budget and starve the addresses it announced legitimately.
+		const source = fromPeerID ?? PEER_ANNOUNCE_UNKNOWN_SOURCE;
+		const admitted = this.rateLimiter.take(source, unique.size);
+		if (admitted === 0) {
+			trace(`[NET] peer-announce from ${source.slice(0, 16)}: rate limited, dropped all ${unique.size} addrs`);
+			return;
+		}
+		const filtered = admitted < unique.size ? [...unique.values()].slice(0, admitted) : [...unique.values()];
+		if (admitted < unique.size) trace(`[NET] peer-announce from ${source.slice(0, 16)}: rate limited to ${admitted}/${unique.size} addrs`);
+		trace(`[NET] peer-announce from ${source.slice(0, 16)}: ${filtered.length}/${rawCount} addrs (dropped ${droppedNonRoutable} non-routable, ${droppedDuplicate} duplicate, network ${networkID.slice(0, 8)})`);
 		// Pass networkID so per-peer outcomes from gossiped entries surface in the
 		// UI under the network through which they arrived. Identity-mismatch
 		// outcomes inside addBootstrapPeers also trigger purgeStalePeer.
