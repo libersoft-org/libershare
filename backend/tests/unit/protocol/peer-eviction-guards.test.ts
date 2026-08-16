@@ -1024,3 +1024,67 @@ describe('configured origin is a property of the address, not the peer', () => {
 		expect(addresses(network)).toEqual([multiaddr(DISCOVERED).toString()]);
 	});
 });
+
+/**
+ * stop() clears the per-run state so a restart starts clean. The slow-cadence counter
+ * was left out, so a fresh node could inherit a count that made its very first tick the
+ * slow one — the opposite of the ownership the epoch guards enforce everywhere else.
+ * The delayed peer-count probes were likewise untracked and kept firing at a node the
+ * run no longer owned.
+ */
+describe('Network.stop — per-run state really is per run', () => {
+	function bareNetwork() {
+		const network = Object.create(Network.prototype) as Network;
+		for (const field of ['lastWantResponseTime', 'seenSearchIDs', 'topicHandlers', 'dcutrPeers', 'bootstrapPeerIDs', 'bootstrapGeneration', '_lastPeerCounts', '_lastScores', 'redialBackoff', 'unreachableQuarantine', 'noReachableSince', 'configuredBootstrapPeerIDs', 'configuredBootstrapAddresses', 'redialSuppressedByNet', 'pxIngressLogKeys']) {
+			(network as any)[field] = field === 'seenSearchIDs' || field === 'dcutrPeers' || field === 'bootstrapPeerIDs' || field === 'configuredBootstrapPeerIDs' || field === 'configuredBootstrapAddresses' ? new Set() : new Map();
+		}
+		(network as any).runEpoch = 1;
+		(network as any).statusInterval = null;
+		(network as any).wantResponseCleanupInterval = null;
+		(network as any)._peerCountDebounceTimer = null;
+		(network as any).listeners = [];
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).delayedPeerCountTimers = new Set();
+		(network as any).peerAnnounce = { stop() {} };
+		(network as any).bootstrapTracker = { clear() {} };
+		(network as any).node = null;
+		(network as any).datastore = null;
+		return network;
+	}
+
+	it('resets the slow-cadence tick counter', async () => {
+		const network = bareNetwork();
+		(network as any).statusTickCount = 4; // one short of the slow tick
+		await network.stop();
+		expect((network as any).statusTickCount).toBe(0);
+	});
+
+	/**
+	 * The epoch guard already stops a late probe from DOING anything, so observing the
+	 * callback proves nothing about cancellation. What has to be asserted is that the
+	 * handle is actually released — otherwise a pending timer keeps a closure on the old
+	 * instance alive until it fires.
+	 */
+	it('cancels the delayed peer-count probes it armed', async () => {
+		const network = bareNetwork();
+		(network as any).armDelayedPeerCountCheck(60_000);
+		(network as any).armDelayedPeerCountCheck(60_000);
+		const armed = [...(network as any).delayedPeerCountTimers];
+		expect(armed).toHaveLength(2);
+
+		const realClearTimeout = globalThis.clearTimeout;
+		const cleared: unknown[] = [];
+		globalThis.clearTimeout = ((timer: unknown) => {
+			cleared.push(timer);
+			return realClearTimeout(timer as Parameters<typeof realClearTimeout>[0]);
+		}) as typeof globalThis.clearTimeout;
+		try {
+			await network.stop();
+		} finally {
+			globalThis.clearTimeout = realClearTimeout;
+		}
+
+		for (const timer of armed) expect(cleared).toContain(timer);
+		expect((network as any).delayedPeerCountTimers.size).toBe(0);
+	});
+});
