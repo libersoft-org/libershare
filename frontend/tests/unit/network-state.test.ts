@@ -12,8 +12,18 @@
  */
 import { test, expect } from 'bun:test';
 import { get } from 'svelte/store';
-import { canApplyMode, isJoinable, networkState, unknownNetworkState } from '../../src/scripts/networkState.ts';
-import type { NetworkStateInfo, NetWifiNetwork } from '@shared';
+import { canApplyMode, canEditInterfaceIPv4, canEditInterfaceWifi, isJoinable, networkState, unknownNetworkState } from '../../src/scripts/networkState.ts';
+import type { NetInterfaceInfo, NetworkStateInfo, NetWifiNetwork } from '@shared';
+
+/** One interface of a settled, writable host. */
+function iface(overrides: Partial<NetInterfaceInfo> = {}): NetInterfaceInfo {
+	return { id: 'eth0', name: 'eth0', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [{ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 }], ipv4Mode: 'static', gateway: '192.0.2.1', dns: [], configurable: true, ...overrides };
+}
+
+/** A settled snapshot whose host can be reconfigured. */
+function snapshot(overrides: Partial<NetworkStateInfo> = {}): NetworkStateInfo {
+	return { interfaces: [], primaryID: null, detail: 'full', known: true, capabilities: { ipv4: true, wifi: true }, ...overrides };
+}
 
 /** One row of a Wi-Fi scan result. */
 function wifi(overrides: Partial<NetWifiNetwork> = {}): NetWifiNetwork {
@@ -79,6 +89,50 @@ test('the network already in use is not joinable again', () => {
 	// row that already carries the check mark would replace a working saved
 	// network's configuration to end up exactly where it started.
 	expect(isJoinable(wifi({ active: true }), { busy: false, scanning: false })).toBe(false);
+});
+
+test('addressing is editable on a settled, writable, single-address interface', () => {
+	expect(canEditInterfaceIPv4(iface(), snapshot())).toBe(true);
+});
+
+test('addressing is not editable when the host cannot write it', () => {
+	expect(canEditInterfaceIPv4(iface(), snapshot({ capabilities: { ipv4: false, wifi: true } }))).toBe(false);
+});
+
+test('addressing is not editable from an address-only read', () => {
+	// That fallback reports device names where the apply path expects adapter
+	// GUIDs, so every save from it is rejected by the backend.
+	expect(canEditInterfaceIPv4(iface(), snapshot({ detail: 'addressesOnly' }))).toBe(false);
+});
+
+test('addressing is not editable on an interface the tooling cannot reach', () => {
+	expect(canEditInterfaceIPv4(iface({ configurable: false }), snapshot())).toBe(false);
+});
+
+test('addressing is not editable on an interface carrying IPv4 aliases', () => {
+	// The form holds one address and applying it replaces every address there was.
+	const aliased = iface({
+		addresses: [
+			{ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 },
+			{ family: 'ipv4', address: '192.0.2.11', prefixLength: 24 },
+		],
+	});
+	expect(canEditInterfaceIPv4(aliased, snapshot())).toBe(false);
+});
+
+test('a missing interface is never editable', () => {
+	expect(canEditInterfaceIPv4(undefined, snapshot())).toBe(false);
+	expect(canEditInterfaceWifi(undefined, snapshot())).toBe(false);
+});
+
+test('wi-fi is driveable only on an interface with a real radio', () => {
+	expect(canEditInterfaceWifi(iface(), snapshot())).toBe(false);
+	expect(canEditInterfaceWifi(iface({ medium: 'wireless', wifi: { ssid: null, signal: null, radio: 'on' } }), snapshot())).toBe(true);
+});
+
+test('wi-fi is not driveable on an interface the tooling cannot reach', () => {
+	const radio = iface({ medium: 'wireless', configurable: false, wifi: { ssid: null, signal: null, radio: 'on' } });
+	expect(canEditInterfaceWifi(radio, snapshot())).toBe(false);
 });
 
 test('an addressing mode the host could not name is not applicable', () => {

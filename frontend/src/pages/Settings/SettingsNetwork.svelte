@@ -3,7 +3,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { networkState } from '../../scripts/networkState.ts';
+	import { canEditInterfaceIPv4, canEditInterfaceWifi, networkState } from '../../scripts/networkState.ts';
 	import { primaryInterface, setPrimaryInterface } from '../../scripts/settings.ts';
 	import { isSelectableInterface, type NetInterfaceInfo } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -40,25 +40,10 @@
 	// the interface, which is what keeps out the Wi-Fi Direct virtual adapters that
 	// call themselves wireless and cannot scan.
 	let canEditIPv4 = $derived($networkState.capabilities.ipv4 && $networkState.detail === 'full');
-	let canEditWifi = $derived($networkState.capabilities.wifi && $networkState.detail === 'full');
-	/**
-	 * The addressing form holds ONE IPv4 address, and applying it replaces every
-	 * address the interface had. An interface carrying aliases would therefore lose
-	 * the rest the moment it was opened and saved, so its addressing is left alone —
-	 * a radio on the same interface is still offered, as joining a network touches
-	 * no address.
-	 */
-	function ipv4Representable(iface: NetInterfaceInfo): boolean {
-		return iface.addresses.filter(a => a.family === 'ipv4').length <= 1;
-	}
+	// The same two rules the editor itself applies, so the list cannot offer a
+	// Configure button the next screen would then have to refuse.
 	function isConfigurable(iface: NetInterfaceInfo): boolean {
-		// The host-wide capability only says the tooling is usable; the interface has
-		// to be reachable by that tooling too. Only an explicit `true` counts —
-		// anything else, including a value an older or partial backend did not send,
-		// is read as "no". Editing an address can take the machine off the network,
-		// which is not something to do on an assumption.
-		if (iface.configurable !== true) return false;
-		return (canEditIPv4 && ipv4Representable(iface)) || (canEditWifi && !!iface.wifi);
+		return canEditInterfaceIPv4(iface, $networkState) || canEditInterfaceWifi(iface, $networkState);
 	}
 	let editing = $state<string | null>(null);
 

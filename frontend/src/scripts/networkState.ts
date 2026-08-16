@@ -1,13 +1,7 @@
 import { derived, writable, type Readable } from 'svelte/store';
 import { api } from './api.ts';
-import { deriveConnectionStatus, type ConnectionStatus, type NetAddressMode, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
+import { deriveConnectionStatus, type ConnectionStatus, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
 
-/**
- * Host network state as reported by the backend.
- *
- * `known: false` until the first read arrives, so consumers can render an
- * honest "unknown" instead of a placeholder that looks like real data.
- */
 /**
  * What the frontend knows before, and after, it knows anything.
  *
@@ -20,6 +14,12 @@ export function unknownNetworkState(): NetworkStateInfo {
 	return { interfaces: [], primaryID: null, detail: 'full', known: false, capabilities: { ipv4: false, wifi: false } };
 }
 
+/**
+ * Host network state as reported by the backend.
+ *
+ * `known: false` until the first read arrives, so consumers can render an
+ * honest "unknown" instead of a placeholder that looks like real data.
+ */
 export const networkState = writable<NetworkStateInfo>(unknownNetworkState());
 
 /** The footer connection widget's input, projected from {@link networkState}. */
@@ -61,6 +61,34 @@ export async function initNetworkState(): Promise<void> {
  */
 export async function applyInterfaceConfig(interfaceID: string, config: NetIPv4Config): Promise<void> {
 	networkState.set(await api.call<NetworkStateInfo>('system.networkApply', { interfaceID, config }));
+}
+
+/**
+ * Whether the addressing of one interface may be edited.
+ *
+ * Four conditions, and all of them are about the SNAPSHOT rather than about the
+ * user: the host must expose a writable configuration, the read must be a full
+ * one (the address-only fallback reports device names where the apply path
+ * expects adapter GUIDs, so every save from it is rejected), the interface must
+ * be reachable by that tooling, and it must hold at most one IPv4 address —
+ * because the form holds one and applying it replaces every address there was.
+ */
+export function canEditInterfaceIPv4(iface: NetInterfaceInfo | undefined, state: NetworkStateInfo): boolean {
+	if (!iface || !state.capabilities.ipv4 || state.detail !== 'full') return false;
+	if (iface.configurable !== true) return false;
+	return iface.addresses.filter(a => a.family === 'ipv4').length <= 1;
+}
+
+/**
+ * Whether the Wi-Fi of one interface may be driven.
+ *
+ * Independent of the addressing answer: Windows lets any user join a network but
+ * only an elevated one change an address. `wifi` present is what separates a real
+ * radio from a Wi-Fi Direct virtual adapter that calls itself wireless.
+ */
+export function canEditInterfaceWifi(iface: NetInterfaceInfo | undefined, state: NetworkStateInfo): boolean {
+	if (!iface || !state.capabilities.wifi || state.detail !== 'full') return false;
+	return iface.configurable === true && !!iface.wifi;
 }
 
 /**
