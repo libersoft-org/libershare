@@ -89,8 +89,9 @@ export class PeerAnnounceManager {
 	 * Per-topic recently-seen subscribers (peerID → last-seen ms). Lets a
 	 * momentarily-disconnected same-network peer stay an eligible transitive-announce
 	 * target (see PEER_ANNOUNCE_MEMBER_TTL_MS) without ever admitting a peer of
-	 * another network — a peerID only enters a topic's map via that topic's own
-	 * getSubscribers, so the cross-network leak stays closed. Pruned each emit().
+	 * another network — a peerID only enters a topic's map through a subscription to
+	 * THAT topic (its own getSubscribers snapshot, or a `subscription-change` naming
+	 * it), so the cross-network leak stays closed. Pruned each emit().
 	 */
 	private readonly topicMembers = new Map<string, Map<string, number>>();
 
@@ -114,11 +115,11 @@ export class PeerAnnounceManager {
 	}
 
 	/**
-	 * Record a peer as a member of a topic outside the emit cycle. Fed by the
-	 * gossipsub GRAFT event, which fires the moment a peer joins our mesh for the
-	 * topic — earlier than its SUBSCRIBE reaches getSubscribers, and independently of
-	 * the announce cadence. Both leave-network and the listing gate read this cache,
-	 * so it must be populated even on a node that never emits an announce at all.
+	 * Record a peer as a member of a topic outside the emit cycle. Fed by gossipsub's
+	 * `subscription-change` event, so a peer is recorded the moment its SUBSCRIBE is
+	 * processed rather than whenever the next announce tick happens to run. Both
+	 * leave-network and the listing gate read this cache, so it must be populated even
+	 * on a node that never emits an announce at all.
 	 */
 	noteMember(topic: string, peerID: string): void {
 		let members = this.topicMembers.get(topic);
@@ -127,6 +128,17 @@ export class PeerAnnounceManager {
 			this.topicMembers.set(topic, members);
 		}
 		members.set(peerID, Date.now());
+	}
+
+	/**
+	 * Drop a peer from a topic's membership. Fed by `subscription-change` with
+	 * `subscribe: false` — an explicit UNSUBSCRIBE is the peer stating it has left, and
+	 * gossipsub drops it from the live subscriber view immediately. Letting the recent
+	 * union outlive that would keep the peer authorized for the rest of the window on
+	 * the strength of a claim it has just withdrawn.
+	 */
+	forgetMember(topic: string, peerID: string): void {
+		this.topicMembers.get(topic)?.delete(peerID);
 	}
 
 	/**

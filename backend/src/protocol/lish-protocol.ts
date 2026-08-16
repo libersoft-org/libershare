@@ -517,8 +517,8 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			if (request.type === 'getLishs') {
 				// Serve the shared-LISH LISTING under the softer list-gate (canListShares).
 				// Soft means it accepts wider EVIDENCE of lishnet membership than the strict
-				// data gate — a recently-seen subscriber counts even while the gossipsub
-				// SUBSCRIBE is missing from the live snapshot, which is what keeps the
+				// data gate — a peer that subscribed shortly before still counts while the
+				// live snapshot is missing it across a reconnect, which is what keeps the
 				// unicast search fallback working — not that membership stops being
 				// required. Still fail-closed on an unknown peer id and still refuses peers
 				// we left. Falls back to the strict gate when no list-gate was supplied.

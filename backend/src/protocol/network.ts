@@ -18,7 +18,7 @@ import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
 import { CodedError, ErrorCodes, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
-import { type MeshPeer } from '@chainsafe/libp2p-gossipsub';
+import { type MeshPeer, type SubscriptionChangeData } from '@chainsafe/libp2p-gossipsub';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
 import { applyGossipsubPatches } from './gossipsub-patches.ts';
 import { BootstrapStatusTracker } from './bootstrap-status.ts';
@@ -84,9 +84,11 @@ const WANT_RESPONSE_CLEANUP_INTERVAL_MS = 5 * 60_000;
 const SEARCH_DEDUP_TTL_MS = 5 * 60_000;
 /**
  * How far back a recently-seen subscription may be used as evidence that a peer is
- * still a lishnet member. Covers a SUBSCRIBE that has not propagated to our snapshot
- * yet; deliberately far shorter than peer-announce's re-advertising TTL, which is a
- * discovery aid and would keep a remotely-unsubscribed peer authorized for minutes.
+ * still a lishnet member. gossipsub drops a peer from the subscriber view the instant
+ * the connection goes, so this covers the reconnect gap before the peer re-sends its
+ * subscriptions on the new stream. Deliberately far shorter than peer-announce's
+ * re-advertising TTL, which is a discovery aid and would keep a peer authorized for
+ * minutes after it stopped being a member.
  */
 const RECENT_MEMBERSHIP_AUTH_MS = 60_000;
 /**
@@ -508,8 +510,11 @@ export class Network {
 		this.addListener(this.pubsub, 'gossipsub:graft', (evt: CustomEvent<MeshPeer>) => {
 			trace(`[NET] GRAFT: ${evt.detail.peerId} joined ${evt.detail.topic}`);
 			this.lastMeshChange.set(evt.detail.topic, Date.now());
-			this.noteMeshGraft(evt.detail);
 			this.schedulePeerCountCheck();
+		});
+
+		this.addListener(this.pubsub, 'subscription-change', (evt: CustomEvent<SubscriptionChangeData>) => {
+			this.noteSubscriptionChange(evt.detail);
 		});
 
 		this.addListener(this.pubsub, 'gossipsub:prune', (evt: CustomEvent<MeshPeer>) => {
@@ -1212,19 +1217,34 @@ export class Network {
 	}
 
 	/**
-	 * Record a mesh GRAFT as topic membership. GRAFT is the earliest proof a peer is on
-	 * a topic — it precedes the peer showing up in getSubscribers and does not wait for
-	 * the announce cadence — so this is what lets leave-network hang up a peer the live
-	 * snapshot would still be blind to.
+	 * Track lishnet topic membership from gossipsub's subscription updates.
+	 *
+	 * A mesh GRAFT deliberately does NOT feed this. In the gossipsub build we pin,
+	 * `handleGraft` never checks that the peer has subscribed, and the `gossipsub:graft`
+	 * event is dispatched after the accept/reject decision for BOTH outcomes — a GRAFT
+	 * refused for backoff, a negative score or a full mesh still fires it. Recording
+	 * that as membership let a peer mint evidence it had never even claimed.
+	 * `subscription-change` is the peer's own statement about the topic, which is
+	 * exactly what the live subscriber view is built from, so the two agree by
+	 * construction — and it arrives the moment the RPC is processed, so leave-network
+	 * and the listing gate still see a peer the announce cadence has not caught up with.
+	 *
+	 * A withdrawal is honoured immediately: gossipsub drops the peer from its subscriber
+	 * map on `subscribe: false`, and a recent-membership union that outlived it would
+	 * keep authorizing a claim the peer has just retracted.
 	 *
 	 * Split out of the listener so a test can feed it a real gossipsub payload: the
 	 * event carries `peerId`, and reading it as `peerID` silently records nothing.
 	 */
-	private noteMeshGraft(detail: MeshPeer | undefined): void {
-		const topic = detail?.topic;
-		const peerId = detail?.peerId;
-		if (!topic?.startsWith(LISH_TOPIC_PREFIX) || !peerId) return;
-		this.peerAnnounce.noteMember(topic, peerId);
+	private noteSubscriptionChange(detail: SubscriptionChangeData | undefined): void {
+		const peerId = detail?.peerId?.toString();
+		if (!peerId) return;
+		for (const sub of detail?.subscriptions ?? []) {
+			const topic = sub?.topic;
+			if (!topic?.startsWith(LISH_TOPIC_PREFIX)) continue;
+			if (sub.subscribe) this.peerAnnounce.noteMember(topic, peerId);
+			else this.peerAnnounce.forgetMember(topic, peerId);
+		}
 	}
 
 	/** Recently-seen subscribers of a lishnet's topic (TTL union, not just the live snapshot). */
@@ -1261,10 +1281,12 @@ export class Network {
 	 * peer-announce's recently-seen subscriber union for the same topic.
 	 *
 	 * The union is read with a much shorter window than the one peer-announce keeps for
-	 * re-advertising. The gap this has to cover is a SUBSCRIBE that has not propagated
-	 * yet — seconds — whereas the discovery TTL is minutes, and a discovery cache read
-	 * that far back is not evidence of present membership: a peer that unsubscribed
-	 * remotely would keep its access for the rest of that window.
+	 * re-advertising. The gap this has to cover is a peer that dropped and is dialing
+	 * back — gossipsub clears its subscriber entry on disconnect and only relearns it
+	 * once the new stream carries its subscriptions — which is seconds, whereas the
+	 * discovery TTL is minutes and a read that far back is not evidence of present
+	 * membership. An explicit unsubscribe revokes the entry outright, so the window
+	 * never outlives a claim the peer has withdrawn.
 	 *
 	 * Only topics we are currently subscribed to are consulted, so a lishnet we left
 	 * can never grant membership.
@@ -1292,7 +1314,7 @@ export class Network {
 	 * Membership is therefore what authorizes the listing. It accepts the wider
 	 * {@link sharesJoinedOrRecentTopicWith} evidence so the unicast search fallback
 	 * still reaches a member whose subscription is momentarily missing from the live
-	 * snapshot. A bare transport connection — a relay client, a bootstrap dial, a peer
+	 * snapshot because it just reconnected. A bare transport connection — a relay client, a bootstrap dial, a peer
 	 * of a lishnet we are not in, or one we deliberately left before a restart dropped
 	 * the in-memory redial suppression — carries no such evidence and learns nothing
 	 * about what we share.

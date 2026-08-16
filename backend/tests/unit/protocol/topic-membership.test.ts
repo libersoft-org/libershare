@@ -64,43 +64,73 @@ describe('PeerAnnounceManager topic membership', () => {
 		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-b']);
 	});
 
-	it('records a GRAFT member without any announce tick at all', async () => {
-		// GRAFT fires before the peer's SUBSCRIBE is visible in getSubscribers, so this
-		// is the only source that covers the propagation window.
+	it('records a subscriber without any announce tick at all', async () => {
+		// subscription-change lands the moment the RPC is processed, well before the
+		// next announce cadence would refresh the map from getSubscribers.
 		const { mgr } = makeManager([], 2);
 		expect(mgr.getRecentMembers(TOPIC)).toEqual([]);
-		mgr.noteMember(TOPIC, 'peer-grafted');
-		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-grafted']);
+		mgr.noteMember(TOPIC, 'peer-sub');
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-sub']);
 	});
 
-	it('keeps a GRAFT member that the live subscriber snapshot does not list', async () => {
+	it('keeps a noted subscriber that the live snapshot does not list', async () => {
 		const { mgr } = makeManager([], 2);
-		mgr.noteMember(TOPIC, 'peer-grafted');
+		mgr.noteMember(TOPIC, 'peer-sub');
 		await tick(mgr);
-		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-grafted']);
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-sub']);
 	});
 
 	/**
-	 * The gossipsub GRAFT payload is `{ peerId, topic, direction }`. Reading it as
-	 * `peerID` type-checks against an `any` event and silently records nothing, so the
-	 * membership fast-path has to be driven with the real payload to be worth anything.
+	 * The gossipsub payload is `{ peerId, subscriptions: [{ topic, subscribe }] }`, with
+	 * `peerId` a PeerId object rather than a string. Reading either field under the wrong
+	 * name type-checks against an `any` event and silently records nothing, so the
+	 * membership feed has to be driven with the real shape to be worth anything.
 	 */
-	it('records a member from a real gossipsub GRAFT payload', () => {
+	it('records a member from a real gossipsub subscription-change payload', () => {
 		const { mgr } = makeManager([], 2);
 		const net = Object.create(Network.prototype) as Network;
 		(net as any).peerAnnounce = mgr;
 
-		(net as any).noteMeshGraft({ peerId: 'peer-grafted', topic: TOPIC, direction: 'inbound' });
+		(net as any).noteSubscriptionChange({ peerId: { toString: () => 'peer-sub' }, subscriptions: [{ topic: TOPIC, subscribe: true }] });
 
-		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-grafted']);
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-sub']);
 	});
 
-	it('ignores a GRAFT for a topic that is not a lishnet', () => {
+	it('revokes membership as soon as the peer unsubscribes', () => {
+		// gossipsub removes the peer from its subscriber map on subscribe:false. A recent
+		// union that outlived that would keep authorizing a withdrawn claim for a minute.
+		const { mgr } = makeManager([], 2);
+		const net = Object.create(Network.prototype) as Network;
+		(net as any).peerAnnounce = mgr;
+		const peerId = { toString: () => 'peer-sub' };
+
+		(net as any).noteSubscriptionChange({ peerId, subscriptions: [{ topic: TOPIC, subscribe: true }] });
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-sub']);
+
+		(net as any).noteSubscriptionChange({ peerId, subscriptions: [{ topic: TOPIC, subscribe: false }] });
+		expect(mgr.getRecentMembers(TOPIC)).toEqual([]);
+	});
+
+	it('records nothing from a mesh GRAFT', () => {
+		// The pinned gossipsub emits gossipsub:graft for REJECTED grafts too (backoff,
+		// negative score, full mesh) and never requires a prior SUBSCRIBE, so a GRAFT is
+		// not a claim of membership at all — let alone an accepted one.
 		const { mgr } = makeManager([], 2);
 		const net = Object.create(Network.prototype) as Network;
 		(net as any).peerAnnounce = mgr;
 
-		(net as any).noteMeshGraft({ peerId: 'peer-x', topic: 'other/topic', direction: 'inbound' });
+		expect((net as any).noteMeshGraft).toBeUndefined();
+		(net as any).noteSubscriptionChange({ peerId: { toString: () => 'peer-graft' }, subscriptions: [] });
+
+		expect(mgr.getRecentMembers(TOPIC)).toEqual([]);
+	});
+
+	it('ignores a subscription to a topic that is not a lishnet', () => {
+		const { mgr } = makeManager([], 2);
+		const net = Object.create(Network.prototype) as Network;
+		(net as any).peerAnnounce = mgr;
+
+		(net as any).noteSubscriptionChange({ peerId: { toString: () => 'peer-x' }, subscriptions: [{ topic: 'other/topic', subscribe: true }] });
 
 		expect(mgr.getRecentMembers('other/topic')).toEqual([]);
 	});
