@@ -1024,7 +1024,7 @@ export class Network {
 					this.unreachableQuarantine.set(pid, now);
 					this.redialBackoff.delete(pid);
 					this.bootstrapTracker.deleteDiscoveredByPeerID(pid);
-					await this.purgeStalePeer(pid, `no reachable addresses for ${Math.round((now - since) / 60_000)} min`);
+					await this.purgeStalePeer(pid, `no reachable addresses for ${Math.round((now - since) / 60_000)} min`, epoch);
 				}
 				continue;
 			}
@@ -1099,7 +1099,7 @@ export class Network {
 						this.unreachableQuarantine.set(c.pid, Date.now());
 						this.redialBackoff.delete(c.pid);
 						this.bootstrapTracker.deleteDiscoveredByPeerID(c.pid);
-						await this.purgeStalePeer(c.pid, `unreachable after ${nextFailCount} re-dial failures over ${Math.round((Date.now() - firstFailure) / 60_000)} min`);
+						await this.purgeStalePeer(c.pid, `unreachable after ${nextFailCount} re-dial failures over ${Math.round((Date.now() - firstFailure) / 60_000)} min`, epoch);
 					}
 				}
 			}
@@ -1451,8 +1451,12 @@ export class Network {
 	 * Best-effort: a peerStore.delete failure is logged at debug but does not throw —
 	 * the same peer will be re-purged next cycle if libp2p keeps trying it.
 	 */
-	async purgeStalePeer(peerID: string, reason: string): Promise<void> {
-		if (!this.node) return;
+	async purgeStalePeer(peerID: string, reason: string, epoch: number = this.runEpoch): Promise<void> {
+		// Capture the node once. Every `await` below is a point at which stop() can
+		// null it and a restart can install a different one — re-reading `this.node`
+		// afterwards would aim the rest of an OLD purge at the NEW node's peerStore.
+		const node = this.node;
+		if (!node || epoch !== this.runEpoch) return;
 		this.bootstrapPeerIDs.delete(peerID);
 		// Drop the peer's addrs from the autodial list too — this array is otherwise
 		// push-only, so the zero-connection recovery loop would keep dialing addrs
@@ -1471,7 +1475,7 @@ export class Network {
 		try {
 			const pid = peerIDFromString(peerID);
 			// Drop existing connections so libp2p considers the entry fully gone.
-			const conns = this.node.getConnections(pid);
+			const conns = node.getConnections(pid);
 			for (const c of conns) {
 				try {
 					await c.close();
@@ -1479,7 +1483,10 @@ export class Network {
 					/* connection may already be closing */
 				}
 			}
-			await this.node.peerStore.delete(pid);
+			// Closing connections yields; the delete is irreversible, so bail if this
+			// run no longer owns the node.
+			if (epoch !== this.runEpoch) return;
+			await node.peerStore.delete(pid);
 			console.log(`[NET] purged stale peerStore entry ${peerID.slice(0, 16)}… (reason: ${reason})`);
 			// TOCTOU healing: an inbound connection can land between the caller's
 			// liveness check and the delete above. The peer:connect handler resets
@@ -1496,11 +1503,12 @@ export class Network {
 			// connection itself is left alone (fighting the remote's retry loop buys
 			// nothing); it stays untagged and unserved — canListSharesTo and
 			// sharesJoinedTopicWith both refuse a suppressed peer.
-			const after = this.isRedialSuppressed(peerID) ? [] : this.node.getConnections(pid);
+			if (epoch !== this.runEpoch) return;
+			const after = this.isRedialSuppressed(peerID) ? [] : node.getConnections(pid);
 			if (after.length > 0) {
 				this.bootstrapPeerIDs.add(peerID);
 				this.unreachableQuarantine.delete(peerID);
-				await this.node.peerStore.merge(pid, {
+				await node.peerStore.merge(pid, {
 					multiaddrs: after.map(c => c.remoteAddr),
 					tags: { [KEEP_ALIVE]: { value: 1 } },
 				});

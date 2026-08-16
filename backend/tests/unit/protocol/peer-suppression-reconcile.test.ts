@@ -196,6 +196,36 @@ describe('runRedialMaintenance — a left peer is not an unreachable peer', () =
 	}
 });
 
+describe('purgeStalePeer — a purge does not outlive its node', () => {
+	it('abandons the delete when stop() lands while connections are closing', async () => {
+		// Closing a connection yields. stop()/start() in that window swaps the node
+		// underneath, and an old purge that keeps reading this.node would delete the
+		// peer from the NEW node's peerStore — a peer the new run may well want.
+		const h = makeHarness();
+		const epoch = (h.network as any).runEpoch;
+		(h.network as any).node.getConnections = (pid?: { toString(): string }) => {
+			if (pid === undefined) return [];
+			return [
+				{
+					async close(): Promise<void> {
+						(h.network as any).runEpoch++; // stop() during the close
+					},
+				},
+			];
+		};
+
+		await h.network.purgeStalePeer(DEAD_PEER, 'test', epoch);
+
+		expect(h.purged).toEqual([]);
+	});
+
+	it('deletes normally while the run still owns the node', async () => {
+		const h = makeHarness();
+		await h.network.purgeStalePeer(DEAD_PEER, 'test');
+		expect(h.purged).toEqual([DEAD_PEER]);
+	});
+});
+
 describe('addBootstrapPeers — configuring a peer by hand is a clean slate', () => {
 	it('clears the quarantine, the failure history and the no-address clock', async () => {
 		// The user just re-added a peer we had evicted. If the explicit dial below
