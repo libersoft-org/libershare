@@ -199,6 +199,13 @@ export class Network {
 	 */
 	private readonly peerDisconnectHandlers = new Set<(peerID: string) => void>();
 
+	/**
+	 * Handlers subscribed via {@link onPeerSubscribe}. Held at Network level for the
+	 * same reason as {@link peerDisconnectHandlers} — the gossipsub listener that feeds
+	 * them is reinstalled per node, the subscriptions are not.
+	 */
+	private readonly peerSubscribeHandlers = new Set<(peerID: string, topic: string) => void>();
+
 	/** Handles incoming LISH-serving pubsub messages (want, searchLishs). */
 	private readonly lishHandlers: LISHServingHandlers;
 
@@ -319,6 +326,20 @@ export class Network {
 	 * their per-LISH peer manager immediately, instead of waiting for the next
 	 * failed dial/probe to notice the dead connection.
 	 */
+	/**
+	 * Subscribe to "a peer joined one of our lishnet topics" for the duration of the
+	 * returned disposer. The handler receives the peer ID and the topic it subscribed to.
+	 *
+	 * A peer becomes servable at this moment and not before: until its SUBSCRIBE lands,
+	 * the membership gates have nothing to go on and refuse it. Anything that asked the
+	 * peer for something on `peer:connect` alone therefore asked too early, and this is
+	 * the event that says when asking again is worth it.
+	 */
+	onPeerSubscribe(handler: (peerID: string, topic: string) => void): () => void {
+		this.peerSubscribeHandlers.add(handler);
+		return () => this.peerSubscribeHandlers.delete(handler);
+	}
+
 	onPeerDisconnect(handler: (peerID: string) => void): () => void {
 		this.peerDisconnectHandlers.add(handler);
 		return () => this.peerDisconnectHandlers.delete(handler);
@@ -1242,8 +1263,18 @@ export class Network {
 		for (const sub of detail?.subscriptions ?? []) {
 			const topic = sub?.topic;
 			if (!topic?.startsWith(LISH_TOPIC_PREFIX)) continue;
-			if (sub.subscribe) this.peerAnnounce.noteMember(topic, peerId);
-			else this.peerAnnounce.forgetMember(topic, peerId);
+			if (!sub.subscribe) {
+				this.peerAnnounce.forgetMember(topic, peerId);
+				continue;
+			}
+			this.peerAnnounce.noteMember(topic, peerId);
+			for (const h of this.peerSubscribeHandlers) {
+				try {
+					h(peerId, topic);
+				} catch (err: any) {
+					trace(`[NET] onPeerSubscribe handler error: ${err?.message ?? err}`);
+				}
+			}
 		}
 	}
 

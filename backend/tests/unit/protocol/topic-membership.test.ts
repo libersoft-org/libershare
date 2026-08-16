@@ -91,6 +91,7 @@ describe('PeerAnnounceManager topic membership', () => {
 		const { mgr } = makeManager([], 2);
 		const net = Object.create(Network.prototype) as Network;
 		(net as any).peerAnnounce = mgr;
+		(net as any).peerSubscribeHandlers = new Set();
 
 		(net as any).noteSubscriptionChange({ peerId: { toString: () => 'peer-sub' }, subscriptions: [{ topic: TOPIC, subscribe: true }] });
 
@@ -103,6 +104,7 @@ describe('PeerAnnounceManager topic membership', () => {
 		const { mgr } = makeManager([], 2);
 		const net = Object.create(Network.prototype) as Network;
 		(net as any).peerAnnounce = mgr;
+		(net as any).peerSubscribeHandlers = new Set();
 		const peerId = { toString: () => 'peer-sub' };
 
 		(net as any).noteSubscriptionChange({ peerId, subscriptions: [{ topic: TOPIC, subscribe: true }] });
@@ -119,6 +121,7 @@ describe('PeerAnnounceManager topic membership', () => {
 		const { mgr } = makeManager([], 2);
 		const net = Object.create(Network.prototype) as Network;
 		(net as any).peerAnnounce = mgr;
+		(net as any).peerSubscribeHandlers = new Set();
 
 		expect((net as any).noteMeshGraft).toBeUndefined();
 		(net as any).noteSubscriptionChange({ peerId: { toString: () => 'peer-graft' }, subscriptions: [] });
@@ -130,6 +133,7 @@ describe('PeerAnnounceManager topic membership', () => {
 		const { mgr } = makeManager([], 2);
 		const net = Object.create(Network.prototype) as Network;
 		(net as any).peerAnnounce = mgr;
+		(net as any).peerSubscribeHandlers = new Set();
 
 		(net as any).noteSubscriptionChange({ peerId: { toString: () => 'peer-x' }, subscriptions: [{ topic: 'other/topic', subscribe: true }] });
 
