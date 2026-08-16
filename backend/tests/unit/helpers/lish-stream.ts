@@ -10,8 +10,15 @@ import { encode as codecEncode, decode as codecDecode } from '../../../src/proto
  * dispatch — rather than grep the source for a guard — needs both sides framed.
  */
 
+/** A fake Stream plus the frames the handler wrote back and the errors it aborted with. */
+export interface IFakeLISHStream {
+	stream: unknown;
+	sent: Uint8Array[];
+	aborts: Error[];
+}
+
 /** A fake Stream that replays `requests` to the handler and captures what it writes back. */
-export function fakeLISHStream(requests: unknown[]) {
+export function fakeLISHStream(requests: unknown[]): IFakeLISHStream {
 	const sent: Uint8Array[] = [];
 	const aborts: Error[] = [];
 	const stream = {
