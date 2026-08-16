@@ -29,7 +29,6 @@ describe('purgeStalePeer — epoch guard', () => {
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).redialBackoff = new Map();
-		(network as any).addressProbeBackoff = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).node = {
 			getConnections: () => [
@@ -1009,6 +1008,7 @@ describe('probeParkedConfiguredBootstraps', () => {
 		expect(forced).toEqual([true]);
 	});
 });
+
 /**
  * One peer can hold a configured address AND a gossip-learned one at the same time.
  * Deciding "is this configured" from the peer id let the gossip-learned sibling
@@ -1135,6 +1135,11 @@ describe('Network.stop — per-run state really is per run', () => {
 	});
 });
 
+/**
+ * Zero-connection recovery used to work off the peer list the status tick snapshotted at
+ * its start — BEFORE re-dial maintenance ran. Maintenance reconnecting a peer in the
+ * meantime left recovery still believing it was isolated, so it dialed anyway.
+ */
 describe('runZeroConnectionRecovery — connectivity is read, not remembered', () => {
 	const ADDR_A = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
 	const PEER_B = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fp';
@@ -1198,6 +1203,11 @@ describe('runZeroConnectionRecovery — connectivity is read, not remembered', (
 	});
 });
 
+/**
+ * The recovery loop used to only LOG its failures. For an address whose peer is not in
+ * the peerStore, re-dial maintenance never sees the peer either — so nothing anywhere
+ * paced it and an isolated node re-dialed a dead entry on every 30 s tick, forever.
+ */
 describe('runZeroConnectionRecovery — a failed dial paces the next one', () => {
 	const DISCOVERED = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
 	const CONFIGURED = `/ip4/198.51.100.7/tcp/9090/p2p/${PEER_ID}`;
@@ -1269,7 +1279,6 @@ describe('runZeroConnectionRecovery — a failed dial paces the next one', () =>
 	 * not unlimited: several dead ones at a 10 s timeout each turn every tick into
 	 * minutes of back-to-back dialing.
 	 */
-
 	it('paces a configured address too, on its own record', async () => {
 		const { network, dialed } = bareNetwork({ address: CONFIGURED, configured: true });
 		await run(network);
@@ -1295,6 +1304,12 @@ describe('runZeroConnectionRecovery — a failed dial paces the next one', () =>
 	});
 });
 
+/**
+ * An evicted peer is normally gone from the peerStore, so it cannot become a re-dial
+ * candidate at all — but that delete is best-effort and mDNS, identify and peer-announce
+ * can all put the entry straight back. Without a quarantine check here, the peer we just
+ * wrote off is dialed again on the very next tick.
+ */
 describe('runRedialMaintenance — quarantined peers are not candidates', () => {
 	function bareNetwork(quarantinedAt: number | null, configured = false) {
 		const dialed: string[] = [];
@@ -1348,6 +1363,13 @@ describe('runRedialMaintenance — quarantined peers are not candidates', () => 
 	});
 });
 
+/**
+ * The status tracker keeps the STRONGER origin when a row is overwritten, so a gossip
+ * re-announcement of an address the user configured lands on a configured row. The dial
+ * followed the caller's origin instead: it went unforced, libp2p handed back the
+ * connection the peer held on a DIFFERENT address, and the discovered branch recorded
+ * 'connected' — a green light on a configured address that was never contacted.
+ */
 describe('addBootstrapPeers — a gossip announce of a configured address', () => {
 	const CONFIGURED_A = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
 	const WORKING_B = `/ip4/198.51.100.7/tcp/9090/p2p/${PEER_ID}`;
@@ -1400,5 +1422,103 @@ describe('addBootstrapPeers — a gossip announce of a configured address', () =
 		await (network as any).addBootstrapPeers([CONFIGURED_A], 'net-a', 'discovered');
 		expect(forced).toEqual([false]);
 		expect(outcomes).toEqual(['connected']);
+	});
+});
+
+/**
+ * purgeStalePeer takes four things away — the bootstrap dedup entry, the peer's
+ * addresses on the autodial list, its gossipsub direct entry and its keep-alive tag.
+ * The TOCTOU healing branch put only some of them back, and periodic promotion then
+ * skipped the peer precisely BECAUSE it was in bootstrapPeerIDs again, so the missing
+ * pieces were never filled in.
+ */
+describe('purgeStalePeer — healing an inbound race restores the whole dial state', () => {
+	const REMOTE = '/ip4/203.0.113.9/tcp/9090';
+
+	function bareNetwork(suppressed: string[] = []) {
+		const flagDuringDirectAdd: boolean[] = [];
+		const merges: Array<Record<string, unknown>> = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).redialBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map([[PEER_ID, Date.now()]]);
+		(network as any).redialSuppressedByNet = new Map(suppressed.length > 0 ? [['net-a', new Set(suppressed)]] : []);
+		const direct = new Set<string>();
+		(network as any).pubsub = {
+			direct: {
+				add(id: string) {
+					// Ordering probe: bootstrapPeerIDs is the flag other paths read as
+					// "this peer is handled", so it must still be unset here.
+					flagDuringDirectAdd.push((network as any).bootstrapPeerIDs.has(PEER_ID));
+					direct.add(id);
+				},
+				delete: (id: string): boolean => direct.delete(id),
+				has: (id: string): boolean => direct.has(id),
+			},
+		};
+		(network as any).node = {
+			// The inbound connection that raced the purge is present throughout.
+			getConnections: () => [{ remoteAddr: multiaddr(REMOTE), async close(): Promise<void> {} }],
+			peerStore: {
+				async delete(): Promise<void> {},
+				async merge(_pid: unknown, patch: Record<string, unknown>): Promise<void> {
+					merges.push(patch);
+				},
+			},
+		};
+		return { network, direct, merges, flagDuringDirectAdd };
+	}
+
+	const run = (network: Network): Promise<void> => (network as any).purgeStalePeer(PEER_ID, 'test', 1);
+
+	it('puts the peer back in the bootstrap dedup set', async () => {
+		const { network } = bareNetwork();
+		await run(network);
+		expect((network as any).bootstrapPeerIDs.has(PEER_ID)).toBe(true);
+	});
+
+	it('puts its address back on the autodial list, carrying the peer identity', async () => {
+		const { network } = bareNetwork();
+		await run(network);
+		expect((network as any).bootstrapMultiaddrs.map((m: { toString(): string }) => m.toString())).toEqual([`${REMOTE}/p2p/${PEER_ID}`]);
+	});
+
+	it('puts it back in the gossipsub fast-reconnect set', async () => {
+		const { network, direct } = bareNetwork();
+		await run(network);
+		expect(direct.has(PEER_ID)).toBe(true);
+	});
+
+	it('re-stamps the keep-alive tag', async () => {
+		const { network, merges } = bareNetwork();
+		await run(network);
+		expect(merges).toHaveLength(1);
+		expect(merges[0]).toHaveProperty('tags');
+	});
+
+	it('sets the bootstrap dedup flag last, so nothing can observe a half-healed peer', async () => {
+		const { network, flagDuringDirectAdd } = bareNetwork();
+		await run(network);
+		expect(flagDuringDirectAdd).toEqual([false]);
+	});
+
+	it('lifts the unreachable quarantine', async () => {
+		const { network } = bareNetwork();
+		await run(network);
+		expect((network as any).unreachableQuarantine.has(PEER_ID)).toBe(false);
+	});
+
+	/**
+	 * A peer hung up by leave-network is meant to be forgotten. A connection racing the
+	 * purge is not a reason to rebuild the dial state the leave deliberately tore down.
+	 */
+	it('does not heal a peer the user left', async () => {
+		const { network, direct } = bareNetwork([PEER_ID]);
+		await run(network);
+		expect((network as any).bootstrapPeerIDs.has(PEER_ID)).toBe(false);
+		expect((network as any).bootstrapMultiaddrs).toEqual([]);
+		expect(direct.has(PEER_ID)).toBe(false);
 	});
 });

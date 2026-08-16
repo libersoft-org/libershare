@@ -1286,12 +1286,17 @@ export class Network {
 		for (const ma of this.bootstrapMultiaddrs) {
 			const pid = extractDestinationPeerID(ma);
 			if (pid && this.isRedialSuppressed(pid)) continue; // deliberately left — don't resurrect it here
-			// A CONFIGURED entry is the user's way back in and is always tried; a
-			// DISCOVERED one earned its place here by answering once, but that is no
-			// reason to bypass the pacing re-dial maintenance applies to it. Without
-			// this, an isolated node re-dialed a dead discovered peer every 30s
-			// forever, since maintenance stops counting failures the moment we have no
-			// other connection to prove we are online.
+			// A CONFIGURED entry is the user's way back in, so it is never held back by the
+			// quarantine or by the per-peer eviction backoff — but it is still paced, on its
+			// own much shorter ADDRESS-level window. Without any pacing, several dead
+			// configured entries at a 10 s timeout each turn one tick into minutes of
+			// back-to-back dialing, every tick.
+			//
+			// A DISCOVERED entry earned its place here by answering once, which is no reason
+			// to bypass the pacing re-dial maintenance applies to it. Without that, an
+			// isolated node re-dialed a dead discovered peer every 30 s forever, since
+			// maintenance stops counting failures the moment we have no other connection to
+			// prove we are online.
 			const canonical = normalizeMultiaddrForCompare(ma.toString());
 			const configured = this.configuredBootstrapAddresses.has(canonical);
 			if (configured) {
@@ -1816,20 +1821,58 @@ export class Network {
 			// purge just removed — so if the peer is connected NOW, rebuild its dial
 			// state from the live connections; otherwise reconnect would silently die
 			// with the first drop.
+			//
+			// Not for a peer leave-network hung up: it is meant to be forgotten, and a
+			// connection racing the purge is not a reason to rebuild what the leave
+			// deliberately tore down.
 			if (epoch !== this.runEpoch) return;
 			const after = node.getConnections(pid);
-			if (after.length > 0) {
-				this.bootstrapPeerIDs.add(peerID);
-				this.unreachableQuarantine.delete(peerID);
-				await node.peerStore.merge(pid, {
-					multiaddrs: after.map(c => c.remoteAddr),
-					tags: { [KEEP_ALIVE]: { value: 1 } },
-				});
-				console.log(`[NET] purge raced an inbound connection — restored ${peerID.slice(0, 16)}…`);
+			if (after.length > 0 && !this.isRedialSuppressed(peerID)) {
+				await this.restorePurgedPeerState(node, pid, after, epoch);
 			}
 		} catch (err: any) {
 			trace(`[NET] purgeStalePeer ${peerID.slice(0, 16)} failed: ${err?.message ?? err}`);
 		}
+	}
+
+	/**
+	 * Put back everything {@link purgeStalePeer} took away, for a peer that turns out to
+	 * be connected after all.
+	 *
+	 * The purge removes four things — the bootstrap dedup entry, the peer's addresses
+	 * from the autodial list, its gossipsub direct entry and its keep-alive tag — and
+	 * restoring only some of them left a state nothing else repairs: periodic promotion
+	 * skips any peer already in `bootstrapPeerIDs`, so the missing address and direct
+	 * entry would stay missing for as long as the peer stayed connected, and the next
+	 * drop would find no way back.
+	 *
+	 * `bootstrapPeerIDs` is therefore filled in LAST. It is the flag the other paths read
+	 * as "this peer is handled"; setting it first is what let promotion observe a
+	 * half-restored peer and walk away from it.
+	 */
+	private async restorePurgedPeerState(node: Libp2p, pid: PeerID, connections: Array<{ remoteAddr: any }>, epoch: number): Promise<void> {
+		const peerID = pid.toString();
+		this.unreachableQuarantine.delete(peerID);
+		await node.peerStore.merge(pid, {
+			multiaddrs: connections.map(c => c.remoteAddr),
+			tags: { [KEEP_ALIVE]: { value: 1 } },
+		});
+		if (epoch !== this.runEpoch) return;
+		for (const c of connections) {
+			// The autodial list is walked by peer ID, so an address that does not already
+			// end in this peer's identity gets the suffix — the same shape promotion builds.
+			const remote = c.remoteAddr;
+			if (!remote) continue;
+			try {
+				this.rememberBootstrapAddress(extractDestinationPeerID(remote) === peerID ? remote : Multiaddr(`${remote.toString()}/p2p/${peerID}`));
+			} catch {
+				// Unparseable remote address — nothing to put back on the list for it.
+			}
+		}
+		const gossipsub: any = this.pubsub;
+		if (gossipsub?.direct && typeof gossipsub.direct.add === 'function') gossipsub.direct.add(peerID);
+		this.bootstrapPeerIDs.add(peerID);
+		console.log(`[NET] purge raced an inbound connection — restored ${peerID.slice(0, 16)}…`);
 	}
 
 	/**
