@@ -30,15 +30,6 @@ export { isSearchAdvertisableLish } from './lish-handlers.ts';
 import { PeerAnnounceManager, type PeerAnnounceMessage } from './peer-announce.ts';
 type PubSub = any; // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 
-/**
- * How long after a connection opens a peer may still read our shared-LISH listing
- * without appearing as a subscriber of a joined topic. Covers gossipsub SUBSCRIBE
- * propagation for a freshly-dialed peer (the unicast search fallback's window);
- * past it, absence from every joined topic is treated as "not ours to serve".
- * See {@link Network.canListSharesTo}.
- */
-const SUBSCRIBE_PROPAGATION_GRACE_MS = 30_000;
-
 /** Result of dialing a protocol stream: the opened stream plus how the underlying connection is routed. */
 export interface IDialResult {
 	stream: Stream;
@@ -91,6 +82,13 @@ const WANT_RESPONSE_COOLDOWN_MS = 60_000;
 const WANT_RESPONSE_CLEANUP_INTERVAL_MS = 5 * 60_000;
 /** Search query dedup window — same `searchID` arriving via mesh within this period is ignored. */
 const SEARCH_DEDUP_TTL_MS = 5 * 60_000;
+/**
+ * How far back a recently-seen subscription may be used as evidence that a peer is
+ * still a lishnet member. Covers a SUBSCRIBE that has not propagated to our snapshot
+ * yet; deliberately far shorter than peer-announce's re-advertising TTL, which is a
+ * discovery aid and would keep a remotely-unsubscribed peer authorized for minutes.
+ */
+const RECENT_MEMBERSHIP_AUTH_MS = 60_000;
 /**
  * Maximum size (bytes) of an incoming pubsub payload we are willing to decode.
  * Our own control messages ride pubsub (WANT — tiny JSON), but older/foreign peers
@@ -1257,21 +1255,46 @@ export class Network {
 	}
 
 	/**
+	 * Membership evidence for a lishnet WE are joined to, tolerant of the gossipsub
+	 * subscriber view lagging: the live snapshot ({@link sharesJoinedTopicWith}), or
+	 * peer-announce's recently-seen subscriber union for the same topic.
+	 *
+	 * The union is read with a much shorter window than the one peer-announce keeps for
+	 * re-advertising. The gap this has to cover is a SUBSCRIBE that has not propagated
+	 * yet — seconds — whereas the discovery TTL is minutes, and a discovery cache read
+	 * that far back is not evidence of present membership: a peer that unsubscribed
+	 * remotely would keep its access for the rest of that window.
+	 *
+	 * Only topics we are currently subscribed to are consulted, so a lishnet we left
+	 * can never grant membership.
+	 */
+	private sharesJoinedOrRecentTopicWith(peerID: string): boolean {
+		if (this.sharesJoinedTopicWith(peerID)) return true;
+		if (!this.pubsub) return false;
+		for (const topic of this.pubsub.getTopics()) {
+			if (!topic.startsWith(LISH_TOPIC_PREFIX)) continue;
+			if (this.peerAnnounce.getRecentMembers(topic, RECENT_MEMBERSHIP_AUTH_MS).includes(peerID)) return true;
+		}
+		return false;
+	}
+
+	/**
 	 * Softer gate for the low-sensitivity shared-LISH LISTING (getLishs) only —
 	 * data requests (getLish/getChunk) stay on the strict {@link sharesJoinedTopicWith}
-	 * fail-closed gate. {@link sharesJoinedTopicWith} relies on gossipsub's subscriber
-	 * view, which lags for a freshly-connected peer whose SUBSCRIBE has not propagated
-	 * yet — the exact window the unicast search fallback targets, so the listing must
-	 * not be withheld there.
+	 * fail-closed gate, which needs a synced gossipsub SUBSCRIBE.
 	 *
-	 * The soft path is therefore bounded to that window instead of lasting forever.
-	 * An unbounded soft gate collapses to "am I in ANY lishnet?", which means a peer
-	 * of a lishnet we left keeps listing our shares for as long as we stay in some
-	 * other lishnet — redial suppression is then the only thing standing in the way,
-	 * so any peer the leave-time disconnect missed still sees everything we share.
-	 * Connection age is the discriminator: a peer that has been connected longer than
-	 * the propagation window and still shares no joined topic is not a lagging
-	 * SUBSCRIBE, it is a peer with no business reading our listing.
+	 * An unbounded soft gate collapses to "am I in ANY lishnet?", which means a peer of
+	 * a lishnet we left keeps listing our shares for as long as we stay in some other
+	 * lishnet — redial suppression is then the only thing standing in the way, so any
+	 * peer the leave-time disconnect missed still sees everything we share.
+	 *
+	 * Membership is therefore what authorizes the listing. It accepts the wider
+	 * {@link sharesJoinedOrRecentTopicWith} evidence so the unicast search fallback
+	 * still reaches a member whose subscription is momentarily missing from the live
+	 * snapshot. A bare transport connection — a relay client, a bootstrap dial, a peer
+	 * of a lishnet we are not in, or one we deliberately left before a restart dropped
+	 * the in-memory redial suppression — carries no such evidence and learns nothing
+	 * about what we share.
 	 */
 	canListSharesTo(peerID: string): boolean {
 		if (this.isRedialSuppressed(peerID)) return false;
@@ -1281,34 +1304,11 @@ export class Network {
 		// A shared joined topic is the real authorization — no time limit on it.
 		if (this.sharesJoinedTopicWith(peerID)) return true;
 		// Infrastructure peers (active relay / bootstrap) are kept connected across a
-		// leave without being redial-suppressed, so they never get the soft path — a
-		// relay of a network we just left would otherwise browse our shares.
-		if (this.isBootstrapOrRelayPeer(peerID)) return false;
-		return this.connectionAgeMs(peerID) <= SUBSCRIBE_PROPAGATION_GRACE_MS;
-	}
-
-	/**
-	 * Age of the longest-lived open connection to a peer, in ms; Infinity when we
-	 * have none. The OLDEST connection wins deliberately: a peer that reconnects
-	 * while an earlier connection is still open must not buy itself a fresh grace
-	 * window, which would reopen the hole the window exists to close.
-	 */
-	private connectionAgeMs(peerID: string): number {
-		if (!this.node) return Infinity;
-		let age = Infinity;
-		try {
-			const now = Date.now();
-			for (const c of this.node.getConnections()) {
-				if (c.remotePeer.toString() !== peerID) continue;
-				const opened = c.timeline?.open;
-				// A connection with no open timestamp is not evidence of freshness.
-				const candidate = typeof opened === 'number' ? now - opened : Infinity;
-				if (age === Infinity || candidate > age) age = candidate;
-			}
-		} catch {
-			return Infinity;
-		}
-		return age;
+		// leave without being redial-suppressed, and peer-announce may still list one
+		// as a recent member of a topic it serves. Hold them to the live snapshot so a
+		// relay of a network we just left cannot browse our shares.
+		if (this.isBootstrapOrRelayPeer(peerID)) return this.sharesJoinedTopicWith(peerID);
+		return this.sharesJoinedOrRecentTopicWith(peerID);
 	}
 
 	/**

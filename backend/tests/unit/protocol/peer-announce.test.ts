@@ -228,4 +228,41 @@ describe('PeerAnnounceManager.emit recently-seen membership', () => {
 			Date.now = realNow;
 		}
 	});
+
+	it('records membership on a node too small to advertise itself', async () => {
+		// The peerStore threshold decides whether we BROADCAST, not whether we remember
+		// who we saw. Gating both together left getRecentMembers permanently empty on
+		// small nodes — where the readers of it (the listing gate) need it most.
+		const allPeers = [fakePeer(PA_ID, PA_ADDR)]; // 1 peer — below PEER_ANNOUNCE_MIN_PEER_STORE
+		const node = { peerId: { toString: () => SELF_ID }, getMultiaddrs: () => [Multiaddr(SELF_ADDR)], peerStore: { all: async () => allPeers } };
+		const pubsub = { getTopics: () => [TOPIC_A], getSubscribers: (t: string) => (t === TOPIC_A ? [fakeSubscriber(PA_ID)] : []) };
+		const { mgr, broadcasts } = buildManager(node, pubsub);
+
+		await (mgr as any).emit();
+
+		expect(broadcasts).toHaveLength(0); // still too small to announce
+		expect(mgr.getRecentMembers(TOPIC_A)).toEqual([PA_ID]); // but membership was recorded
+	});
+
+	it('honours a shorter max age than the advertising TTL', async () => {
+		// The listing gate reads this union with a much shorter window, so a peer last
+		// seen minutes ago is still re-advertised but no longer counts as present.
+		const realNow = Date.now;
+		try {
+			let clock = 1_000_000;
+			Date.now = () => clock;
+			const allPeers = peersWithFillers(fakePeer(PA_ID, PA_ADDR));
+			const node = { peerId: { toString: () => SELF_ID }, getMultiaddrs: () => [Multiaddr(SELF_ADDR)], peerStore: { all: async () => allPeers } };
+			const pubsub = { getTopics: () => [TOPIC_A], getSubscribers: (t: string) => (t === TOPIC_A ? [fakeSubscriber(PA_ID)] : []) };
+			const { mgr } = buildManager(node, pubsub);
+
+			await (mgr as any).emit();
+			clock += 120_000; // 2 min: inside the advertising TTL, outside a 60s auth window
+
+			expect(mgr.getRecentMembers(TOPIC_A)).toEqual([PA_ID]);
+			expect(mgr.getRecentMembers(TOPIC_A, 60_000)).toEqual([]);
+		} finally {
+			Date.now = realNow;
+		}
+	});
 });
