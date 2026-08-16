@@ -61,6 +61,19 @@ const PEER_ANNOUNCE_MAX_ADDRS_PER_PEER = 3;
  */
 const PEER_ANNOUNCE_MEMBER_TTL_MS = PEER_ANNOUNCE_INTERVAL_SATURATED_MS * 3;
 
+/**
+ * Monotonic millisecond clock for membership timestamps.
+ *
+ * The listing gate reads these ages as an authorization window, so they must not be
+ * steerable from outside. `Date.now()` follows the wall clock: an NTP correction or a
+ * user moving the system time backwards stretches every window by however far it
+ * moved, which on a security TTL means an expired membership becoming valid again.
+ * `performance.now()` counts from process start and no one can push it around.
+ */
+function monotonicNow(): number {
+	return performance.now();
+}
+
 /** Dependencies for PeerAnnounceManager. */
 export interface PeerAnnounceManagerDeps {
 	/** Returns the current libp2p node (may be null if not started or already stopped). */
@@ -108,7 +121,7 @@ export class PeerAnnounceManager {
 	getRecentMembers(topic: string, maxAgeMs: number = PEER_ANNOUNCE_MEMBER_TTL_MS): string[] {
 		const members = this.topicMembers.get(topic);
 		if (!members) return [];
-		const now = Date.now();
+		const now = monotonicNow();
 		const out: string[] = [];
 		for (const [pid, seen] of members) if (now - seen <= maxAgeMs) out.push(pid);
 		return out;
@@ -127,7 +140,7 @@ export class PeerAnnounceManager {
 			members = new Map<string, number>();
 			this.topicMembers.set(topic, members);
 		}
-		members.set(peerID, Date.now());
+		members.set(peerID, monotonicNow());
 	}
 
 	/**
@@ -148,7 +161,7 @@ export class PeerAnnounceManager {
 	 * map must not go blind exactly on the nodes with the fewest peers.
 	 */
 	private refreshTopicMembers(pubsub: any, lishTopics: string[]): void {
-		const now = Date.now();
+		const now = monotonicNow();
 		for (const t of this.topicMembers.keys()) if (!lishTopics.includes(t)) this.topicMembers.delete(t);
 		for (const topic of lishTopics) {
 			let members = this.topicMembers.get(topic);

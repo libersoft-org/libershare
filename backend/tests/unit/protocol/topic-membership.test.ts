@@ -177,6 +177,30 @@ describe('PeerAnnounceManager topic membership', () => {
 		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-b']);
 	});
 
+	it('does not let the wall clock stretch the authorization window', () => {
+		// The listing gate reads these ages as an authorization TTL. On Date.now() an NTP
+		// step or a user moving the system clock backwards makes every recorded member
+		// look freshly seen again — the one direction a security window must not move.
+		const realDateNow = Date.now;
+		const realPerfNow = performance.now.bind(performance);
+		try {
+			let wall = 1_000_000;
+			let mono = 5_000;
+			Date.now = () => wall;
+			performance.now = () => mono;
+			const { mgr } = makeManager([], 2);
+			mgr.noteMember(TOPIC, 'peer-b');
+
+			wall -= 600_000; // clock stepped back 10 minutes
+			mono += 120_000; // 2 minutes of actual elapsed time
+
+			expect(mgr.getRecentMembers(TOPIC, 60_000)).toEqual([]);
+		} finally {
+			Date.now = realDateNow;
+			performance.now = realPerfNow;
+		}
+	});
+
 	it('forgets every membership on stop', async () => {
 		// Network reuses the same manager across stop/start, so a membership carried over
 		// would authorize a peer on a node that has not even reconnected to it yet.
