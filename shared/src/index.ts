@@ -370,15 +370,22 @@ export interface NetInterfaceInfo {
 	gateway: string | null;
 	dns: string[];
 	/**
-	 * False when this interface cannot be reconfigured even though the host can be.
+	 * Whether this interface can be reconfigured, given that the host can be.
 	 *
 	 * The host-wide {@link NetCapabilities} answer only says the tooling is present
-	 * and we may use it. On Linux that tooling is NetworkManager, while the list of
-	 * interfaces comes from the kernel — so it also contains devices NetworkManager
-	 * does not own (networkd NICs, container bridges), whose edit would be offered
-	 * and then fail. Absent means "no per-interface objection".
+	 * and we may use it. Each interface still has to be reachable BY that tooling:
+	 * on Linux the interface list comes from the kernel and includes devices
+	 * NetworkManager does not own, on Windows an addressed stack may have no
+	 * adapter GUID for the apply to resolve, on macOS a device may belong to no
+	 * enabled network service.
+	 *
+	 * REQUIRED, and deliberately so. While it was optional, an absent value meant
+	 * "no per-interface objection" and the frontend read that as permission — a
+	 * fail-open default in front of an operation that can take the host off the
+	 * network. Every reader now states it outright, so only `true` is permission
+	 * and a reader that forgets is a compile error rather than an open door.
 	 */
-	configurable?: boolean;
+	configurable: boolean;
 	/** Present only when medium === 'wireless'. */
 	wifi?: NetWifiInfo;
 }

@@ -374,8 +374,8 @@ describe('prefixFromNetmask', () => {
 
 describe('resolvePrimaryID', () => {
 	const list: NetInterfaceInfo[] = [
-		{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [] },
-		{ id: 'b', name: 'b', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [] },
+		{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [], configurable: false },
+		{ id: 'b', name: 'b', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [], configurable: false },
 	];
 
 	it('honours a pick that still exists', () => {
@@ -396,7 +396,7 @@ describe('resolvePrimaryID', () => {
 });
 
 describe('assertReadProducedSomething', () => {
-	const list: NetInterfaceInfo[] = [{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [] }];
+	const list: NetInterfaceInfo[] = [{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [], configurable: false }];
 
 	it('passes a non-empty read straight through', () => {
 		expect(assertReadProducedSomething(list)).toBe(list);

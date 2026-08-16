@@ -52,11 +52,12 @@
 		return iface.addresses.filter(a => a.family === 'ipv4').length <= 1;
 	}
 	function isConfigurable(iface: NetInterfaceInfo): boolean {
-		// The host-wide capability only says the tooling is usable. An interface owned
-		// by another stack is refused outright: both the addressing apply and the Wi-Fi
-		// join go through NetworkManager, so neither would land on a device it does not
-		// manage.
-		if (iface.configurable === false) return false;
+		// The host-wide capability only says the tooling is usable; the interface has
+		// to be reachable by that tooling too. Only an explicit `true` counts —
+		// anything else, including a value an older or partial backend did not send,
+		// is read as "no". Editing an address can take the machine off the network,
+		// which is not something to do on an assumption.
+		if (iface.configurable !== true) return false;
 		return (canEditIPv4 && ipv4Representable(iface)) || (canEditWifi && !!iface.wifi);
 	}
 	let editing = $state<string | null>(null);
