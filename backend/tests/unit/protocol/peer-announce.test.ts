@@ -229,3 +229,78 @@ describe('PeerAnnounceManager.emit recently-seen membership', () => {
 		}
 	});
 });
+
+// Inbound-intake guards. Every address that survives handle() costs a dial, a status
+// row and a snapshot downstream, so the two things that bound that cost — collapsing
+// addresses that mean the same thing, and capping what one announcing peer can spend —
+// are asserted here rather than left to the receivers further down the chain.
+
+const SRC_ID = '12D3KooWSourceSourceSourceSourceSourceSourceSourceSS';
+
+/** A manager wired only for handle(): captures the address lists it forwards. */
+function intakeManager() {
+	const forwarded: string[][] = [];
+	const mgr = new PeerAnnounceManager({
+		getNode: () => null,
+		getPubsub: () => null,
+		broadcast: async () => {},
+		addBootstrapPeers: async multiaddrs => {
+			forwarded.push(multiaddrs);
+		},
+	});
+	return { mgr, forwarded };
+}
+
+/** N distinct routable addresses in RFC5737 TEST-NET-3. */
+function distinctAddrs(count: number): string[] {
+	return Array.from({ length: count }, (_v, i) => `/ip4/203.0.113.${i % 254}/tcp/${9000 + i}`);
+}
+
+describe('PeerAnnounceManager.handle address dedup', () => {
+	it('collapses one address repeated many times into a single entry', async () => {
+		const { mgr, forwarded } = intakeManager();
+		const addr = '/ip4/198.51.100.7/tcp/9090';
+
+		await mgr.handle({ type: 'peer-announce', multiaddrs: Array(300).fill(addr) }, 'netAAAA', SRC_ID);
+
+		expect(forwarded).toEqual([[addr]]);
+	});
+
+	it('collapses two spellings of one address (DNS case, expanded vs compressed IPv6)', async () => {
+		const { mgr, forwarded } = intakeManager();
+		const multiaddrs = [`/dns4/Peer.Example.COM/tcp/9090/p2p/${SELF_ID}`, `/dns4/peer.example.com/tcp/9090/p2p/${SELF_ID}`, '/ip6/2001:0db8:0000:0000:0000:0000:0000:0001/tcp/9090', '/ip6/2001:db8::1/tcp/9090'];
+
+		await mgr.handle({ type: 'peer-announce', multiaddrs }, 'netAAAA', SRC_ID);
+
+		// One DNS entry + one IPv6 entry, each keeping the spelling it arrived in.
+		expect(forwarded[0]).toEqual([multiaddrs[0]!, multiaddrs[2]!]);
+	});
+
+	it('counts UNIQUE addresses against the total cap, not raw entries', async () => {
+		// 300 copies of one address plus 5 distinct ones is 6 unique — the duplicates
+		// must not consume the 128-address budget the distinct ones need.
+		const { mgr, forwarded } = intakeManager();
+		const dup = '/ip4/198.51.100.7/tcp/9090';
+		const rest = distinctAddrs(5);
+
+		await mgr.handle({ type: 'peer-announce', multiaddrs: [...Array(300).fill(dup), ...rest] }, 'netAAAA', SRC_ID);
+
+		expect(forwarded[0]).toEqual([dup, ...rest]);
+	});
+
+	it('still caps a flood of genuinely distinct addresses at 128', async () => {
+		const { mgr, forwarded } = intakeManager();
+
+		await mgr.handle({ type: 'peer-announce', multiaddrs: distinctAddrs(200) }, 'netAAAA', SRC_ID);
+
+		expect(forwarded[0]!.length).toBe(128);
+	});
+
+	it('drops non-routable addresses before deduping', async () => {
+		const { mgr, forwarded } = intakeManager();
+
+		await mgr.handle({ type: 'peer-announce', multiaddrs: ['/ip4/127.0.0.1/tcp/9090', '/ip4/127.0.0.1/tcp/9090', 'not-a-multiaddr'] }, 'netAAAA', SRC_ID);
+
+		expect(forwarded).toEqual([]);
+	});
+});

@@ -1,6 +1,7 @@
 import { trace } from '../logger.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
+import { canonicalMultiaddr } from './multiaddr-utils.ts';
 import { LISH_TOPIC_PREFIX } from './constants.ts';
 import { type Libp2p } from 'libp2p';
 import { type BootstrapPeerOrigin } from '@shared';
@@ -183,11 +184,19 @@ export class PeerAnnounceManager {
 		// do the same — every receiver must be defensive.
 		const localCidrs = getLocalCidrs();
 		const rawCount = data.multiaddrs.length;
-		const filtered: string[] = [];
+		// Third stage: collapse addresses that mean the same thing. The cap counts
+		// UNIQUE addresses, so a message repeating one address 128 times no longer
+		// consumes the whole budget — and, more to the point, no longer turns into
+		// 128 markPending + dial + recordOutcome rounds downstream, since every stage
+		// after this one keys off the address string. Canonicalisation (not raw string
+		// equality) is what makes two spellings of one address — DNS case, expanded vs
+		// compressed IPv6 — count once.
+		const unique = new Map<string, string>();
 		let droppedNonRoutable = 0;
+		let droppedDuplicate = 0;
 		for (const a of data.multiaddrs) {
 			if (typeof a !== 'string' || a.length === 0) continue;
-			if (filtered.length >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
+			if (unique.size >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
 			try {
 				if (shouldDenyDial(Multiaddr(a), localCidrs)) {
 					droppedNonRoutable++;
@@ -198,13 +207,21 @@ export class PeerAnnounceManager {
 				droppedNonRoutable++;
 				continue;
 			}
-			filtered.push(a);
+			const canonical = canonicalMultiaddr(a);
+			if (unique.has(canonical)) {
+				droppedDuplicate++;
+				continue;
+			}
+			// Keep the spelling as announced: downstream keys status rows by this exact
+			// string, and rewriting it here would split one peer's row in two.
+			unique.set(canonical, a);
 		}
-		if (filtered.length === 0) {
-			if (droppedNonRoutable > 0) trace(`[NET] peer-announce from ${fromPeerID?.slice(0, 16) ?? 'unknown'}: dropped all ${droppedNonRoutable}/${rawCount} addrs as non-routable`);
+		if (unique.size === 0) {
+			if (droppedNonRoutable > 0 || droppedDuplicate > 0) trace(`[NET] peer-announce from ${fromPeerID?.slice(0, 16) ?? 'unknown'}: dropped all ${rawCount} addrs (${droppedNonRoutable} non-routable, ${droppedDuplicate} duplicate)`);
 			return;
 		}
-		trace(`[NET] peer-announce from ${fromPeerID?.slice(0, 16) ?? 'unknown'}: ${filtered.length}/${rawCount} addrs (dropped ${droppedNonRoutable} non-routable, network ${networkID.slice(0, 8)})`);
+		const filtered = [...unique.values()];
+		trace(`[NET] peer-announce from ${fromPeerID?.slice(0, 16) ?? 'unknown'}: ${filtered.length}/${rawCount} addrs (dropped ${droppedNonRoutable} non-routable, ${droppedDuplicate} duplicate, network ${networkID.slice(0, 8)})`);
 		// Pass networkID so per-peer outcomes from gossiped entries surface in the
 		// UI under the network through which they arrived. Identity-mismatch
 		// outcomes inside addBootstrapPeers also trigger purgeStalePeer.
