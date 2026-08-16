@@ -11,7 +11,7 @@ import { trace } from '../logger.ts';
 import { DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { LISH_PROTOCOL, handleLISHProtocol } from './lish-protocol.ts';
-import { buildLibp2pConfig } from './network-config.ts';
+import { buildLibp2pConfig, PEERSTORE_MAX_PEER_AGE_MS } from './network-config.ts';
 import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
@@ -131,17 +131,24 @@ const UNREACHABLE_QUARANTINE_MS = 30 * 60_000;
  * connection came back.
  */
 /**
- * Whether zero-connection recovery may dial a DISCOVERED address this tick.
+ * Whether a bootstrap ADDRESS may be dialed this tick by one of the address-level
+ * loops (zero-connection recovery, parked-configured probe).
  *
- * It answers with the two records re-dial maintenance already keeps: a peer inside its
- * backoff window waits for it to expire, and one still inside its unreachable
- * quarantine stays down. Both are delays, never permanent bans — the point is only
- * that the recovery loop must not undo the pacing the other loop just applied.
+ * Two records answer it, and they are deliberately keyed differently. The
+ * unreachable quarantine is a statement about the PEER — it was evicted, and
+ * nothing it owns should be dialed until the window lapses. The backoff is a
+ * statement about this ENDPOINT: keying it per peer would let one dead address
+ * of a multi-homed peer pace out a sibling address that answers perfectly well.
+ *
+ * Both are delays, never permanent bans — the point is only that these loops must
+ * not undo the pacing an earlier failure just applied.
  */
-export function isRecoveryDialDue(peerID: string, now: number, redialBackoff: ReadonlyMap<string, { nextAttempt: number }>, quarantine: ReadonlyMap<string, number>): boolean {
-	const quarantinedAt = quarantine.get(peerID);
-	if (quarantinedAt !== undefined && now - quarantinedAt < UNREACHABLE_QUARANTINE_MS) return false;
-	const backoff = redialBackoff.get(peerID);
+export function isRecoveryDialDue(addressKey: string, peerID: string | null, now: number, addressBackoff: ReadonlyMap<string, { nextAttempt: number }>, quarantine: ReadonlyMap<string, number>): boolean {
+	if (peerID !== null) {
+		const quarantinedAt = quarantine.get(peerID);
+		if (quarantinedAt !== undefined && now - quarantinedAt < UNREACHABLE_QUARANTINE_MS) return false;
+	}
+	const backoff = addressBackoff.get(addressKey);
 	return backoff === undefined || backoff.nextAttempt <= now;
 }
 
@@ -186,6 +193,200 @@ export function shouldEvictUnreachablePeer(input: { reachable: boolean; failCoun
  * frames while still bounding the damage a malicious publisher can do per message.
  */
 const MAX_PUBSUB_PAYLOAD_BYTES = 256 * 1024;
+
+/**
+ * Lifetime of a bootstrap entry no network configures, measured from the last time
+ * the entry was of any use — see {@link bootstrapEntryLastActivity}.
+ *
+ * Tied to the libp2p peerStore's own retention so the two forget a peer together:
+ * past that age libp2p has dropped it, re-dial maintenance (which walks the
+ * peerStore) can no longer produce or evict a candidate for it, and whatever is
+ * left on the recovery list is an orphan nothing else will ever clean up.
+ */
+const DISCOVERED_BOOTSTRAP_TTL_MS = PEERSTORE_MAX_PEER_AGE_MS;
+
+/**
+ * Hard cap on bootstrap entries no network configures; the newest are kept. Sized a
+ * little above the largest fleet the gossipsub mesh is designed for (partial mesh,
+ * D=6..12, a few hundred peers), so a healthy node never reaches it, while a node
+ * fed a flood of peer-announce addresses cannot grow the registry without bound.
+ * Configured entries do not count towards it and are never dropped.
+ */
+const MAX_DISCOVERED_BOOTSTRAP_ENTRIES = 200;
+
+/** Base address-level recovery backoff: doubles per consecutive failure of that address. */
+const RECOVERY_BACKOFF_BASE_MS = 30_000;
+
+/** Backoff ceiling for a gossip-discovered address. */
+const RECOVERY_BACKOFF_MAX_MS = 600_000;
+
+/**
+ * Backoff ceiling for a CONFIGURED address. Lower than the discovered ceiling rather
+ * than absent: a configured address is the user's designated way back in, so it must
+ * be retried briskly, but exempting it from pacing entirely meant an isolated node
+ * with a handful of dead configured entries spent every recovery pass re-timing them
+ * out at 10 s apiece.
+ */
+const CONFIGURED_RECOVERY_BACKOFF_MAX_MS = 120_000;
+
+/**
+ * Dials one zero-connection recovery pass may attempt. Each costs up to 10 s, so an
+ * uncapped pass over a few hundred entries could occupy the status tick for half an
+ * hour — during which nothing else in the tick runs. The pass is cheap to repeat:
+ * ordering puts configured entries first, and address-level backoff makes the next
+ * pass start where this one stopped rather than re-trying the same dead prefix.
+ */
+const RECOVERY_DIALS_PER_TICK = 8;
+
+/**
+ * `configuredBy` owner recorded for addresses handed straight to {@link Network.start}.
+ *
+ * Those come from saved config — they are user data and must not expire — but at that
+ * point no lishnet has been joined, so there is no real owner to attribute them to.
+ * Both config-change paths ({@link Network.pruneBootstrapAddresses},
+ * {@link Network.pruneConfiguredBootstrapPeer}) clear this owner alongside the real
+ * one, so a startup entry the user later deletes still leaves the registry.
+ */
+const STARTUP_BOOTSTRAP_OWNER = '@startup';
+
+/**
+ * One dialable bootstrap address, keyed by the address rather than by the peer behind it.
+ *
+ * Peer-keyed was wrong in both directions: one peer legitimately has several addresses
+ * (direct plus relayed, IPv4 plus IPv6), and a user can move a bootstrap to a new host
+ * or port while its identity stays the same. Keying by identity made the first case
+ * collapse into a single arbitrary address and the second look "already known", so the
+ * replaced address went on being dialed and the new one never entered the list.
+ */
+export interface IBootstrapEntry {
+	/** Canonical multiaddr string — the registry key, see {@link normalizeMultiaddrForCompare}. */
+	readonly key: string;
+	/** Multiaddr to dial. */
+	readonly ma: any;
+	/** Destination peer ID, or null when the address carries no `/p2p` component. */
+	readonly peerID: string | null;
+	/**
+	 * Network IDs that configure this exact address. Empty means gossip-discovered:
+	 * a non-empty set is what makes the entry user data — never expired, never capped,
+	 * dialed first — and ownership is per network so one network dropping the address
+	 * cannot take it away from another that still lists it.
+	 */
+	readonly configuredBy: Set<string>;
+	/** Epoch ms the entry first entered the registry. */
+	firstSeenAt: number;
+	/** Epoch ms a dial last proved THIS endpoint, or null if it never has. */
+	lastVerifiedAt: number | null;
+	/** Epoch ms the peer behind this address was last seen disconnecting, or null. */
+	lastDisconnectedAt: number | null;
+}
+
+/**
+ * Epoch ms of the last thing that happened to an entry worth counting as activity.
+ *
+ * Expiry runs from here, not from `firstSeenAt`. A peer that answered on this address
+ * and then stayed connected for ten hours would otherwise lose its recovery entry to
+ * the TTL while it was healthiest — and the moment it dropped there would be nothing
+ * left to dial it back with. A disconnect counts too: it is fresh evidence the address
+ * was real, and the entry is at its most useful right after one.
+ */
+export function bootstrapEntryLastActivity(entry: Pick<IBootstrapEntry, 'firstSeenAt' | 'lastVerifiedAt' | 'lastDisconnectedAt'>): number {
+	return Math.max(entry.firstSeenAt, entry.lastVerifiedAt ?? 0, entry.lastDisconnectedAt ?? 0);
+}
+
+/**
+ * Backoff state after a failed address-level dial: 30 s doubled per consecutive
+ * failure of THAT address, capped by whether the address is configured.
+ */
+export function nextRecoveryBackoff(failCount: number, now: number, configured: boolean): { nextAttempt: number; failCount: number } {
+	const ceiling = configured ? CONFIGURED_RECOVERY_BACKOFF_MAX_MS : RECOVERY_BACKOFF_MAX_MS;
+	return { nextAttempt: now + Math.min(RECOVERY_BACKOFF_BASE_MS * 2 ** failCount, ceiling), failCount: failCount + 1 };
+}
+
+/**
+ * Where the previous recovery pass stopped, one canonical key per priority group.
+ *
+ * Two cursors rather than one because the groups must not compete: resuming the whole
+ * list from a single position would eventually start a pass in the middle of the
+ * discovered entries and leave a configured bootstrap — the user's way back in —
+ * behind a queue of gossip claims.
+ */
+export interface IRecoveryCursors {
+	/** Canonical key of the last configured entry attempted, or null to start at the front. */
+	configured: string | null;
+	/** Canonical key of the last discovered entry attempted, or null to start at the front. */
+	discovered: string | null;
+}
+
+/** Rotate a group so the walk resumes just after `cursor`, or leave it alone if it is gone. */
+function resumeRecoveryGroupAfter<T extends { key: string }>(group: readonly T[], cursor: string | null): T[] {
+	if (cursor === null) return [...group];
+	const at = group.findIndex(entry => entry.key === cursor);
+	if (at < 0) return [...group];
+	return [...group.slice(at + 1), ...group.slice(0, at + 1)];
+}
+
+/**
+ * Bootstrap entries in the order recovery should dial them: configured ones (user
+ * data, and the reliable way back into the network) before gossip-discovered ones
+ * (merely what another peer claimed).
+ *
+ * Within each group the list resumes after the entry the previous pass stopped on.
+ * A pass can afford only a handful of dials and each timeout costs ten seconds, so
+ * always restarting from the front let the same leading addresses consume the budget
+ * every time — their backoff had long expired again by the time the pass ended — while
+ * the tail was never reached at all. Rotating is what turns the budget into a fair
+ * round robin instead of a repeated prefix.
+ */
+export function orderBootstrapEntriesForRecovery<T extends { key: string; configuredBy: ReadonlySet<string> }>(entries: Iterable<T>, cursors: IRecoveryCursors = { configured: null, discovered: null }): T[] {
+	const all = [...entries];
+	return [
+		...resumeRecoveryGroupAfter(
+			all.filter(e => e.configuredBy.size > 0),
+			cursors.configured
+		),
+		...resumeRecoveryGroupAfter(
+			all.filter(e => e.configuredBy.size === 0),
+			cursors.discovered
+		),
+	];
+}
+
+/**
+ * Entries surviving the discovered-entry TTL and cap, in their original order.
+ *
+ * An entry is PINNED — never expired, never counted against the cap — when it is
+ * either configured or belongs to a peer connected right now. The liveness half
+ * matters because registry membership also decides whether a peer is re-tagged
+ * KEEP_ALIVE, which is what drives libp2p's reconnect queue: ageing out a peer that
+ * has simply been up longer than the TTL would quietly demote a healthy connection.
+ *
+ * Everything else is a gossip claim about a peer we are not talking to: dropped once
+ * its last activity is older than `ttlMs`, and if more than `maxDiscovered` remain the
+ * oldest go first.
+ */
+export function pruneBootstrapEntries<T extends Pick<IBootstrapEntry, 'firstSeenAt' | 'lastVerifiedAt' | 'lastDisconnectedAt' | 'peerID'> & { configuredBy: ReadonlySet<string> }>(entries: readonly T[], now: number, ttlMs: number, maxDiscovered: number, isConnected: (peerID: string) => boolean = () => false): T[] {
+	const pinned = (e: T): boolean => e.configuredBy.size > 0 || (e.peerID !== null && isConnected(e.peerID));
+	const fresh = entries.filter(e => pinned(e) || now - bootstrapEntryLastActivity(e) < ttlMs);
+	const toDrop = fresh.reduce((n, e) => (pinned(e) ? n : n + 1), 0) - maxDiscovered;
+	if (toDrop <= 0) return fresh;
+	// Drop the LEAST RECENTLY ACTIVE droppable entries, not simply the ones inserted
+	// first. Insertion order records when we first heard an address named; the TTL
+	// above already measures from last activity, and the cap has to agree with it.
+	// Ranking by insertion dropped an entry whose peer had just disconnected — the
+	// moment its recovery address matters most — ahead of a newer one that nothing
+	// had touched for hours. Ties fall back to position so the result is stable.
+	const doomed = new Set(
+		fresh
+			.map((entry, index) => ({ entry, index }))
+			.filter(({ entry }) => !pinned(entry))
+			.sort((a, b) => bootstrapEntryLastActivity(a.entry) - bootstrapEntryLastActivity(b.entry) || a.index - b.index)
+			.slice(0, toDrop)
+			.map(({ index }) => index)
+	);
+	// Survivors keep their original order — the registry's insertion order is what
+	// recovery walks within each priority group.
+	return fresh.filter((_entry, index) => !doomed.has(index));
+}
 
 /**
  * Single shared libp2p node.
@@ -241,18 +442,38 @@ export class Network {
 	 * until restart.
 	 */
 	private configuredBootstrapPeerIDs: Set<string> = new Set();
-	/**
-	 * Canonical bootstrap ADDRESSES that came from saved config, as opposed to gossip.
-	 *
-	 * Kept alongside the peer-ID set because the two answer different questions. Whether
-	 * a PEER may be auto-evicted is about identity — configured anywhere means exempt.
-	 * Whether an ADDRESS gets the configured treatment in recovery is about that address:
-	 * one peer can have a configured address and a gossip-learned one at the same time,
-	 * and the gossip-learned one must not inherit the exemption from its sibling.
-	 */
-	private readonly configuredBootstrapAddresses: Set<string> = new Set();
 	private dcutrPeers: Set<string> = new Set();
-	private bootstrapMultiaddrs: any[] = [];
+	/**
+	 * The autodial registry: every address zero-connection recovery may dial, keyed by
+	 * its canonical form and in insertion order.
+	 *
+	 * Address-keyed rather than peer-keyed for the reasons on {@link IBootstrapEntry},
+	 * and provenance lives on the entry so the two lifecycles cannot drift apart: a
+	 * configured address is user data that never expires, a discovered one is a claim
+	 * that has to earn its place with a verified dial and ages out again afterwards.
+	 * Bounded and aged by {@link pruneBootstrapRegistry} — without it, discovered
+	 * entries whose peer has since left the libp2p peerStore stay here forever (re-dial
+	 * maintenance walks the peerStore, so it can never evict them) and every recovery
+	 * pass burns its whole budget on dead addresses.
+	 */
+	private readonly bootstrapByAddress: Map<string, IBootstrapEntry> = new Map();
+	/** Reverse index peerID → its canonical addresses in {@link bootstrapByAddress}. */
+	private readonly addressesByPeer: Map<string, Set<string>> = new Map();
+	/**
+	 * Where the last recovery pass stopped in each priority group, so the next one
+	 * resumes after it rather than replaying the same prefix. See
+	 * {@link orderBootstrapEntriesForRecovery}.
+	 */
+	private readonly recoveryCursors: IRecoveryCursors = { configured: null, discovered: null };
+	/**
+	 * Per-ADDRESS dial pacing for the recovery loops, keyed the same way as the registry.
+	 *
+	 * Separate from {@link redialBackoff}, which paces dials made BY PEER ID and feeds
+	 * eviction. A peer-id dial hands libp2p every known address at once, so one failure
+	 * genuinely indicts the peer; an address dial indicts only that endpoint, and mixing
+	 * the two let a dead address of a multi-homed peer pace out its working sibling.
+	 */
+	private readonly recoveryBackoff: Map<string, { nextAttempt: number; failCount: number }> = new Map();
 	/**
 	 * Per-network bootstrap-config version, bumped on every replace / reset / leave.
 	 * Read by {@link addBootstrapPeers} so a job started for a superseded list stops
@@ -537,9 +758,11 @@ export class Network {
 			myPeerID: privateKey.publicKey.toString(),
 		});
 		this.bootstrapPeerIDs = bootstrapPeerIDs;
-		// Config-time bootstrap entries are by definition 'configured'.
+		// Config-time bootstrap entries are by definition 'configured'. No lishnet is
+		// joined yet, so there is no owning network to attribute them to — see
+		// STARTUP_BOOTSTRAP_OWNER.
 		this.configuredBootstrapPeerIDs = new Set(bootstrapPeerIDs);
-		this.bootstrapMultiaddrs = bootstrapMultiaddrs;
+		for (const ma of bootstrapMultiaddrs) this.rememberBootstrapAddress(ma, STARTUP_BOOTSTRAP_OWNER);
 
 		console.log('Creating libp2p node...');
 		try {
@@ -755,6 +978,15 @@ export class Network {
 			trace(`[NET-DISC] peer=${peerID.slice(0, 16)} remaining=${remaining} bootstrap=${wasBootstrap}`);
 			// Fix C: clear per-peer state on disconnect to prevent unbounded growth
 			this.dcutrPeers.delete(peerID);
+			// Stamp the peer's registry addresses: a disconnect is fresh evidence they
+			// were real, and it is the moment the entry becomes most useful. The TTL runs
+			// from here (see bootstrapEntryLastActivity), so a peer that was up for hours
+			// does not lose its way back the instant it drops.
+			const disconnectedAt = Date.now();
+			for (const key of this.addressesByPeer.get(peerID) ?? []) {
+				const entry = this.bootstrapByAddress.get(key);
+				if (entry) entry.lastDisconnectedAt = disconnectedAt;
+			}
 			// `@chainsafe/libp2p-gossipsub` v14 removes the peer from `this.mesh`
 			// directly inside `removePeer()` on disconnect — without emitting a
 			// `gossipsub:prune` event (verified in node_modules/.../gossipsub.js:
@@ -858,7 +1090,7 @@ export class Network {
 	}
 
 	private setupBootstrapWorkaround(): void {
-		if (!AUTODIAL_WORKAROUND || this.bootstrapMultiaddrs.length === 0) return;
+		if (!AUTODIAL_WORKAROUND || this.bootstrapByAddress.size === 0) return;
 		// setTimeout discards the Promise returned by async callbacks, so throws escape
 		// as unhandledRejection. Plus this.node can be null if stop() fires within 2s.
 		// Null-check at entry, wrap inner async work, attach .catch() to surface errors.
@@ -866,7 +1098,7 @@ export class Network {
 			if (!this.node || this.node.getPeers().length > 0) return;
 			(async () => {
 				console.log('⚠️  Bootstrap module failed - dialing directly...');
-				for (const ma of this.bootstrapMultiaddrs) {
+				for (const { ma } of orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values())) {
 					if (!this.node) break;
 					try {
 						await this.node.dial(ma);
@@ -1131,11 +1363,25 @@ export class Network {
 		for (const [pid, ts] of this.unreachableQuarantine) if (ts < quarantineCutoff) this.unreachableQuarantine.delete(pid);
 	}
 
+	/**
+	 * Last-resort recovery when the node holds no connections at all: walk the bootstrap
+	 * registry, configured entries first, and dial until one succeeds.
+	 *
+	 * Deliberately re-reads the live connection count instead of trusting
+	 * `connectedPeers`. The status tick snapshots the peer list before running re-dial
+	 * maintenance, and that pass — which can run for minutes — may well have connected
+	 * somebody; acting on the snapshot fires a full recovery sweep against a node that
+	 * is no longer isolated. The same re-read happens before every single dial, so a
+	 * pass does not keep hammering bootstraps once a connection lands mid-way.
+	 */
 	private async runZeroConnectionRecovery(connectedPeers: any[], epoch: number = this.runEpoch): Promise<void> {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return;
-		if (!AUTODIAL_WORKAROUND || connectedPeers.length !== 0 || this.bootstrapMultiaddrs.length === 0) return;
-		console.log(`   ⚠️  No connections - dialing ${this.bootstrapMultiaddrs.length} bootstrap peer(s) directly...`);
+		if (!AUTODIAL_WORKAROUND || connectedPeers.length !== 0) return;
+		this.pruneBootstrapRegistry();
+		if (this.bootstrapByAddress.size === 0) return;
+		if (node.getPeers().length !== 0) return;
+		console.log(`   ⚠️  No connections - dialing ${this.bootstrapByAddress.size} bootstrap address(es) directly...`);
 		// [NET-CHURN] dump: who left in the run-up to this zero-connection
 		// state, and what each configured bootstrap entry's last dial outcome
 		// was. Without this we only ever see the recovery dial — never the cause.
@@ -1154,35 +1400,81 @@ export class Network {
 				.join(' ');
 			console.log(`   [NET-CHURN] bootstrap stats net=${networkID.slice(0, 8)}: ${parts}`);
 		}
-		for (const ma of this.bootstrapMultiaddrs) {
-			const p2pComponents = ma.getComponents().filter((c: { code: number; value?: string }) => c.code === 421);
-			const pid: string | undefined = p2pComponents.length > 0 ? p2pComponents[p2pComponents.length - 1].value : undefined;
-			if (pid && this.isRedialSuppressed(pid)) continue; // deliberately left — don't resurrect it here
-			// A CONFIGURED entry is the user's way back in and is always tried; a
-			// DISCOVERED one earned its place here by answering once, but that is no
-			// reason to bypass the pacing re-dial maintenance applies to it. Without
-			// this, an isolated node re-dialed a dead discovered peer every 30s
-			// forever, since maintenance stops counting failures the moment we have no
-			// other connection to prove we are online.
-			const configured = this.configuredBootstrapAddresses.has(normalizeMultiaddrForCompare(ma.toString()));
-			if (pid && !configured && !isRecoveryDialDue(pid, Date.now(), this.redialBackoff, this.unreachableQuarantine)) continue;
+		const localCidrs = getLocalCidrs();
+		let attempted = 0;
+		let suppressed = 0;
+		let backedOff = 0;
+		let unroutable = 0;
+		let eligible = 0;
+		for (const entry of orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values(), this.recoveryCursors)) {
+			const { ma, peerID, key } = entry;
+			const configured = entry.configuredBy.size > 0;
+			if (peerID && this.isRedialSuppressed(peerID)) {
+				suppressed++; // deliberately left — don't resurrect it here
+				continue;
+			}
+			// A CONFIGURED entry is the user's way back in, so it gets priority and a much
+			// shorter backoff ceiling — but not a blanket exemption: a handful of dead
+			// configured addresses would otherwise eat the whole budget at 10 s apiece,
+			// every pass, and never let the discovered ones be tried at all.
+			if (!isRecoveryDialDue(key, peerID, Date.now(), this.recoveryBackoff, this.unreachableQuarantine)) {
+				backedOff++;
+				continue;
+			}
 			// Routability is re-checked here, not just at configure time: a LAN or VPN
 			// bootstrap is on this list while its interface is down, and becomes dialable
 			// again the moment it returns.
-			if (shouldDenyDial(ma, getLocalCidrs())) continue;
+			if (shouldDenyDial(ma, localCidrs)) {
+				unroutable++;
+				continue;
+			}
+			eligible++;
+			if (attempted >= RECOVERY_DIALS_PER_TICK) continue; // counted, but out of budget this pass
 			const maStr = ma?.toString?.() ?? String(ma);
 			// Each dial awaits for up to 10s, so a stop() can land mid-loop; the
 			// remaining dials belong to a node this run no longer owns.
 			if (epoch !== this.runEpoch) return;
+			// Re-read liveness before EVERY dial, not just at entry: an inbound
+			// connection or a dial started elsewhere can land between two attempts, and
+			// once we are connected the whole point of this loop is gone.
+			if (node.getPeers().length !== 0) break;
+			attempted++;
+			// Advance the cursor BEFORE the dial, not after it: an attempt that ends in a
+			// return (a stop mid-flight) still consumed this pass's budget, and leaving the
+			// cursor behind would make the next pass replay the same address.
+			this.recoveryCursors[configured ? 'configured' : 'discovered'] = key;
 			try {
 				console.log(`   → Dialing ${maStr}`);
-				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
+				const conn = await node.dial(ma, { signal: AbortSignal.timeout(10000) });
 				console.log(`   ✓ Connected via ${maStr}`);
+				// Same fence the failure branch already had. A dial owns the node for up
+				// to ten seconds, and a stop()/start() inside that window makes this the
+				// old run's result: the canonical key is stable across runs, so writing it
+				// would refresh the TTL and clear the backoff of the NEW run's entry.
+				if (epoch !== this.runEpoch || node !== this.node) return;
+				// libp2p coalesces dials by peer ID, so this call can be handed the
+				// connection a SIBLING address won — which is why addBootstrapPeers reads
+				// verification off the result rather than off the dial resolving. Recovery
+				// took any resolved dial as proof and so refreshed the TTL and cleared the
+				// backoff of an endpoint nothing had ever answered on. We are connected
+				// either way, which is the whole point of this loop, so it still stops
+				// here; only the claim about THIS address is withheld.
+				if (isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString())) this.markBootstrapAddressVerified(ma);
+				else trace(`[NET] recovery connected on another address of the same peer — ${maStr} left unverified`);
 				break;
 			} catch (err: any) {
 				console.log(`   ✗ Failed ${maStr}: ${err.message ?? err}`);
+				// Pace this ADDRESS. Re-dial maintenance cannot do it for us: it walks the
+				// peerStore, and a peer that aged out of it never becomes a candidate there
+				// — which is exactly how a registry entry gets orphaned in the first place.
+				if (epoch !== this.runEpoch) return;
+				this.recoveryBackoff.set(key, nextRecoveryBackoff(this.recoveryBackoff.get(key)?.failCount ?? 0, Date.now(), configured));
 			}
 		}
+		// Report the shape of the registry, not its raw length: "dialing 200 bootstrap
+		// peers" said nothing about how many were actually tried, and a pass that
+		// skipped every entry looked identical to one that tried them all.
+		console.log(`   Recovery: ${attempted} dialed of ${eligible} eligible (${backedOff} backoff, ${suppressed} left-peer, ${unroutable} unroutable)`);
 	}
 
 	/**
@@ -1202,36 +1494,53 @@ export class Network {
 		if (!node || epoch !== this.runEpoch) return;
 		const localCidrs = getLocalCidrs();
 		const now = Date.now();
-		for (const ma of [...this.bootstrapMultiaddrs]) {
+		for (const entry of [...this.bootstrapByAddress.values()]) {
 			if (epoch !== this.runEpoch) return;
-			const pid = extractDestinationPeerID(ma);
-			if (!pid || !this.configuredBootstrapAddresses.has(normalizeMultiaddrForCompare(ma.toString()))) continue;
+			const { ma, peerID: pid, key } = entry;
+			if (!pid || entry.configuredBy.size === 0) continue;
 			if (this.isRedialSuppressed(pid)) continue;
 			// Still unreachable from here — leave it parked for a later pass.
 			if (shouldDenyDial(ma, localCidrs)) continue;
-			if (!isRecoveryDialDue(pid, now, this.redialBackoff, this.unreachableQuarantine)) continue;
+			// Paced per ADDRESS, like recovery: a peer with one parked address and one
+			// working one must not have the working one held back by its sibling. The
+			// peer-level redialBackoff is left untouched on purpose — a configured peer is
+			// exempt from eviction, so this probe must never become the evidence that
+			// evicts one.
+			if (!isRecoveryDialDue(key, pid, now, this.recoveryBackoff, this.unreachableQuarantine)) continue;
 			try {
 				if (node.getConnections(peerIDFromString(pid)).length > 0) continue;
 			} catch {
 				continue; // unparseable id — nothing sane to probe
 			}
 			try {
-				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
-				if (epoch !== this.runEpoch) return;
-				this.redialBackoff.delete(pid);
+				// `force` for the reason a configured entry forces in addBootstrapPeers: the
+				// question this probe asks is whether THIS endpoint works, and without it
+				// libp2p may answer with a connection it already holds to the same peer.
+				const conn = await node.dial(ma, { force: true, signal: AbortSignal.timeout(10000) });
+				if (epoch !== this.runEpoch || node !== this.node) return;
+				// A configuration edit or a leave-network landing inside a ten-second dial
+				// bumps neither the epoch nor the generation, so the fence above is blind to
+				// it — and the loop is walking a snapshot, so `entry` may already have been
+				// dropped from the registry. Left unchecked, a bootstrap the user has just
+				// removed keeps the connection this probe opened, and the verification below
+				// lands on an entry nobody owns any more.
+				if (this.bootstrapByAddress.get(key) !== entry || entry.configuredBy.size === 0 || this.isRedialSuppressed(pid)) {
+					trace(`[NET] parked probe result no longer wanted, closing: ${ma.toString()}`);
+					await conn?.close?.();
+					continue;
+				}
+				if (!isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString())) {
+					// A sibling address answered. Nothing about this one is proved, so it keeps
+					// its pacing instead of quietly going green and having its TTL refreshed.
+					this.recoveryBackoff.set(key, nextRecoveryBackoff(this.recoveryBackoff.get(key)?.failCount ?? 0, Date.now(), true));
+					trace(`[NET] parked configured bootstrap answered on another address: ${ma.toString()}`);
+					continue;
+				}
+				this.markBootstrapAddressVerified(ma);
 				console.log(`[NET] parked configured bootstrap reachable again: ${ma.toString()}`);
 			} catch (err: any) {
 				if (epoch !== this.runEpoch) return;
-				const previous = this.redialBackoff.get(pid);
-				const failCount = previous?.failCount ?? 0;
-				// Paces itself and nothing more: a configured peer is exempt from eviction,
-				// so this probe must never become the evidence that evicts one.
-				this.redialBackoff.set(pid, {
-					nextAttempt: Date.now() + Math.min(30_000 * 2 ** failCount, 600_000),
-					failCount: failCount + 1,
-					firstFailure: previous?.firstFailure ?? Date.now(),
-					evictionFails: previous?.evictionFails ?? 0,
-				});
+				this.recoveryBackoff.set(key, nextRecoveryBackoff(this.recoveryBackoff.get(key)?.failCount ?? 0, Date.now(), true));
 				trace(`[NET] parked configured bootstrap still failing: ${ma.toString()} — ${err?.message ?? err}`);
 			}
 		}
@@ -1408,10 +1717,7 @@ export class Network {
 				// its place by answering; it is added after a verified dial, below. Adding
 				// it here left every unreachable address a gossip flood could invent on the
 				// list for good, since an ordinary timeout has nothing that takes it off.
-				if (origin === 'configured') {
-					this.configuredBootstrapAddresses.add(normalizeMultiaddrForCompare(ma.toString()));
-					this.rememberBootstrapAddress(ma);
-				}
+				if (origin === 'configured') this.rememberBootstrapAddress(ma, networkID ?? STARTUP_BOOTSTRAP_OWNER);
 				// Safety net: refuse to dial loopback / unreachable-private bootstrap entries
 				// even if the upstream (catalog or peer-announce intake) failed to filter them.
 				// A discovered address is dropped silently — the call site iterates many
@@ -1509,9 +1815,16 @@ export class Network {
 						continue;
 					}
 					// A gossip-learned address has now answered on the endpoint it claimed, so
-					// it has earned its place in the autodial list. Unverified ones never get
-					// there, which is what keeps a flood of invented addresses off it.
-					if (origin === 'discovered' && verifiedThisAddr) this.rememberBootstrapAddress(ma);
+					// it has earned its place in the autodial registry. Unverified ones never
+					// get there, which is what keeps a flood of invented addresses off it.
+					// The registry is bounded at the source too: peer-announce gossip is its
+					// only unbounded producer, and a node can stay connected for days without
+					// ever reaching the recovery path that also prunes.
+					if (origin === 'discovered' && verifiedThisAddr) {
+						this.rememberBootstrapAddress(ma, null);
+						this.pruneBootstrapRegistry();
+					}
+					if (verifiedThisAddr) this.markBootstrapAddressVerified(ma);
 					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, null, origin);
 					console.log('✓ Connected to new bootstrap peer');
 				} catch (err: any) {
@@ -1556,19 +1869,34 @@ export class Network {
 						// one goes first and unconditionally — whether or not the peer happens to be
 						// connected right this moment. Purging on "not currently connected" threw
 						// away addresses that were never disproved.
-						// Restrict the autodial-list filter to entries of THIS peer so a
+						// Restrict the registry removal to entries of THIS peer so a
 						// case-insensitive compare can never drop a different peer's addr.
-						this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(m => extractDestinationPeerID(m) !== peerID || !matches(m.toString()));
-						let remainingAddresses = 0;
+						// Removed outright rather than merely un-configured: leaving a
+						// disproved CONFIGURED address behind meant recovery went on dialing
+						// an endpoint Noise had already shown belongs to somebody else, for
+						// as long as the node ran. The saved config row stays, so the user
+						// still sees the mismatch and a corrected entry re-enters normally.
+						for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) {
+							if (matches(key)) this.forgetBootstrapAddress(key);
+						}
+						let remainingInStore = 0;
 						try {
 							const rec = await this.node.peerStore.get(pid);
 							const keep = rec.addresses.filter((a: any) => !matches(a.multiaddr.toString()));
 							if (keep.length < rec.addresses.length) await this.node.peerStore.patch(pid, { multiaddrs: keep.map((a: any) => a.multiaddr) });
-							remainingAddresses = keep.length;
+							remainingInStore = keep.length;
 						} catch {
-							/* peer not in store — nothing to trim, and nothing left either */
+							/* peer not in store — nothing to trim there */
 						}
 						if (superseded()) return;
+						// Survivors are counted across BOTH stores. A configured LAN or VPN
+						// bootstrap deliberately sits in the registry alone while its interface
+						// is down — it never reaches the peerStore — so a peerStore-only count
+						// read "no usable address left" and let a mismatch on an address any
+						// topic subscriber cared to announce purge an address Noise had never
+						// touched. The loop above has already dropped the disproved keys, so
+						// what is left in the reverse index is exactly the undisproved set.
+						const remainingAddresses = remainingInStore + (this.addressesByPeer.get(peerID)?.size ?? 0);
 						// Only once the peer has neither a live connection nor a single address we
 						// have not disproved is there anything left to purge.
 						if (this.node.getConnections(pid).length === 0 && remainingAddresses === 0) {
@@ -1635,10 +1963,10 @@ export class Network {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return;
 		this.bootstrapPeerIDs.delete(peerID);
-		// Drop the peer's addrs from the autodial list too — this array is otherwise
-		// push-only, so the zero-connection recovery loop would keep dialing addrs
-		// of an identity we just proved dead, and the array would grow until stop().
-		this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(ma => extractDestinationPeerID(ma) !== peerID);
+		// Drop the peer's addrs from the autodial registry too — otherwise the
+		// zero-connection recovery loop would keep dialing addrs of an identity we just
+		// proved dead, and the registry would grow until stop().
+		for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) this.forgetBootstrapAddress(key);
 		// Remove from the gossipsub never-PRUNE direct set, or gossipsub keeps
 		// attempting a direct stream to the dead peer every directConnectTicks.
 		const gossipsub: any = this.pubsub;
@@ -1709,54 +2037,145 @@ export class Network {
 	 * network before calling, so this needs no refcount of its own.
 	 */
 	/**
-	 * Put an address on the autodial list that zero-connection recovery walks, unless
-	 * it is already there.
+	 * Put an address into the autodial registry, or update the entry already there.
 	 *
 	 * Membership is decided by the ADDRESS, not by the peer ID behind it: a bootstrap
 	 * whose host or port the user edited keeps its identity, and an identity-keyed
 	 * check would treat the new address as already known and never add it — leaving
-	 * recovery dialing the address that was replaced.
+	 * recovery dialing the address that was replaced. By the same token, a second
+	 * address of a peer we already know is a new entry, not a duplicate.
+	 *
+	 * `configuredBy` names the network that lists this address in its saved config, or
+	 * null for a gossip-discovered one. Ownership accumulates: a discovered address the
+	 * user then configures is upgraded in place, keeping the verification it earned.
 	 */
-	private rememberBootstrapAddress(ma: any): void {
-		const canonical = normalizeMultiaddrForCompare(ma.toString());
-		if (this.bootstrapMultiaddrs.some(m => normalizeMultiaddrForCompare(m.toString()) === canonical)) return;
-		this.bootstrapMultiaddrs.push(ma);
+	private rememberBootstrapAddress(ma: any, configuredBy: string | null): IBootstrapEntry {
+		const key = normalizeMultiaddrForCompare(ma.toString());
+		let entry = this.bootstrapByAddress.get(key);
+		if (!entry) {
+			entry = { key, ma, peerID: extractDestinationPeerID(ma), configuredBy: new Set<string>(), firstSeenAt: Date.now(), lastVerifiedAt: null, lastDisconnectedAt: null };
+			this.bootstrapByAddress.set(key, entry);
+			if (entry.peerID) {
+				let keys = this.addressesByPeer.get(entry.peerID);
+				if (!keys) {
+					keys = new Set<string>();
+					this.addressesByPeer.set(entry.peerID, keys);
+				}
+				keys.add(key);
+			}
+		}
+		if (configuredBy !== null) entry.configuredBy.add(configuredBy);
+		return entry;
 	}
 
 	/**
-	 * Take specific addresses off the autodial list. Used when a network's configured
+	 * Record that a dial just proved THIS endpoint. Drives both the TTL (which runs
+	 * from the last verification, not from insertion) and the backoff reset.
+	 */
+	private markBootstrapAddressVerified(ma: any): void {
+		const entry = this.bootstrapByAddress.get(normalizeMultiaddrForCompare(ma.toString()));
+		if (!entry) return;
+		entry.lastVerifiedAt = Date.now();
+		this.recoveryBackoff.delete(entry.key);
+	}
+
+	/** Remove one address from the registry, its reverse index and its pacing state. */
+	private forgetBootstrapAddress(key: string): void {
+		const entry = this.bootstrapByAddress.get(key);
+		if (!entry) return;
+		this.bootstrapByAddress.delete(key);
+		this.recoveryBackoff.delete(key);
+		if (!entry.peerID) return;
+		const keys = this.addressesByPeer.get(entry.peerID);
+		if (!keys) return;
+		keys.delete(key);
+		if (keys.size === 0) this.addressesByPeer.delete(entry.peerID);
+	}
+
+	/**
+	 * Drop one network's claim on an address, and the address itself once no network
+	 * claims it any more.
+	 *
+	 * A discovered entry (nobody claims it) is left alone: it belongs to the
+	 * discovered lifecycle — TTL and backoff — and is not the user's to lose because
+	 * they edited an unrelated configured address.
+	 */
+	private dropConfiguredOwnership(key: string, networkID: string): void {
+		const entry = this.bootstrapByAddress.get(key);
+		if (!entry?.configuredBy.has(networkID)) return;
+		entry.configuredBy.delete(networkID);
+		if (entry.configuredBy.size === 0) this.forgetBootstrapAddress(key);
+	}
+
+	/** Apply the TTL and the discovered-entry cap to the registry. */
+	private pruneBootstrapRegistry(): void {
+		// Peers we are talking to right now are pinned. Collected once per prune rather
+		// than probed per entry: getPeers() is a live array read and this runs on every
+		// announce as well as every tick.
+		const connected = new Set((this.node?.getPeers() ?? []).map(p => p.toString()));
+		const entries = [...this.bootstrapByAddress.values()];
+		const kept = pruneBootstrapEntries(entries, Date.now(), DISCOVERED_BOOTSTRAP_TTL_MS, MAX_DISCOVERED_BOOTSTRAP_ENTRIES, pid => connected.has(pid));
+		if (kept.length === entries.length) return;
+		const keptKeys = new Set(kept.map(e => e.key));
+		let dropped = 0;
+		for (const entry of entries) {
+			if (keptKeys.has(entry.key)) continue;
+			this.forgetBootstrapAddress(entry.key);
+			dropped++;
+			// The peer-ID dedup set must let go too, otherwise addBootstrapPeers treats a
+			// later announce of the same peer as already known and it can never come back.
+			if (entry.peerID && !this.addressesByPeer.has(entry.peerID)) this.bootstrapPeerIDs.delete(entry.peerID);
+		}
+		trace(`[NET] bootstrap registry pruned: dropped ${dropped}, kept ${kept.length}`);
+	}
+
+	/**
+	 * Take specific addresses out of one network's configured list. Used when that
 	 * list changes: an entry that is gone must stop being dialed, and that includes
 	 * the case where the peer ID stays and only its address moved, which
 	 * {@link pruneConfiguredBootstrapPeer} cannot see because the identity is still
 	 * configured.
+	 *
+	 * The address survives if another joined network still configures it — ownership
+	 * is per network, so this is a claim being released, not an unconditional delete.
 	 */
-	pruneBootstrapAddresses(addresses: string[]): void {
+	pruneBootstrapAddresses(addresses: string[], networkID: string): void {
 		if (addresses.length === 0) return;
-		const drop = new Set(addresses.map(a => normalizeMultiaddrForCompare(a)));
-		this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(ma => !drop.has(normalizeMultiaddrForCompare(ma.toString())));
-		for (const address of drop) this.configuredBootstrapAddresses.delete(address);
+		for (const address of addresses) {
+			const key = normalizeMultiaddrForCompare(address);
+			this.dropConfiguredOwnership(key, networkID);
+			this.dropConfiguredOwnership(key, STARTUP_BOOTSTRAP_OWNER);
+		}
 	}
 
-	pruneConfiguredBootstrapPeer(peerID: string): void {
+	/**
+	 * Drop a peer from the configured-bootstrap exemption set. Called by the lishnet
+	 * layer when a bootstrap entry is removed from config or belongs only to a lishnet
+	 * being left, so `isBootstrapOrRelayPeer` stops treating a peer that is no longer
+	 * configured (nor shared with another joined network) as infrastructure that
+	 * leave-network must keep connected — and so the unreachable-eviction exemption
+	 * ends with it.
+	 *
+	 * Both callers already establish that the peer is configured in NO joined network
+	 * before calling, so the identity-level part needs no refcount of its own. The
+	 * ADDRESS-level part still does: `networkID` names the claim being released, and
+	 * each of the peer's addresses survives until its last claimant is gone.
+	 */
+	pruneConfiguredBootstrapPeer(peerID: string, networkID: string): void {
 		this.configuredBootstrapPeerIDs.delete(peerID);
-		// Forget its addresses too. They were pushed into the autodial list when the
-		// entry was first configured, and that list is what zero-connection recovery
-		// walks — leaving them there means a bootstrap the user has just deleted keeps
-		// being dialed whenever the node runs out of connections, which is exactly the
-		// churn this work removes. The dedup set has to let go as well, or a later
-		// re-add would be treated as already known and the address could never come back.
-		this.bootstrapPeerIDs.delete(peerID);
-		// Only the addresses that came from the config. The same peer may also have a
-		// gossip-learned address that earned its place by answering a dial — that one
-		// belongs to the discovered lifecycle (TTL, backoff) and is not the user's to lose
-		// just because they deleted a different address of the same peer.
-		this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(ma => {
-			if (extractDestinationPeerID(ma) !== peerID) return true;
-			const canonical = normalizeMultiaddrForCompare(ma.toString());
-			if (!this.configuredBootstrapAddresses.has(canonical)) return true;
-			this.configuredBootstrapAddresses.delete(canonical);
-			return false;
-		});
+		// Forget its addresses too. They entered the registry when the entry was first
+		// configured, and that registry is what zero-connection recovery walks — leaving
+		// them means a bootstrap the user has just deleted keeps being dialed whenever
+		// the node runs out of connections, which is exactly the churn this work removes.
+		for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) {
+			this.dropConfiguredOwnership(key, networkID);
+			this.dropConfiguredOwnership(key, STARTUP_BOOTSTRAP_OWNER);
+		}
+		// The dedup set has to let go as well, or a later re-add would be treated as
+		// already known and the peer could never come back. Only once nothing of it is
+		// left in the registry: a gossip-learned address that earned its place by
+		// answering a dial still needs the peer to be dialable.
+		if (!this.addressesByPeer.has(peerID)) this.bootstrapPeerIDs.delete(peerID);
 	}
 
 	isBootstrapOrRelayPeer(peerID: string): boolean {
@@ -2385,7 +2804,9 @@ export class Network {
 		this.dcutrPeers.clear();
 		this.bootstrapPeerIDs.clear();
 		this.bootstrapTracker.clear();
-		this.bootstrapMultiaddrs = [];
+		this.bootstrapByAddress.clear();
+		this.addressesByPeer.clear();
+		this.recoveryBackoff.clear();
 		this.bootstrapGeneration.clear();
 		this._lastPeerCounts.clear();
 		this._lastScores.clear();
@@ -2393,7 +2814,6 @@ export class Network {
 		this.unreachableQuarantine.clear();
 		this.noReachableSince.clear();
 		this.configuredBootstrapPeerIDs.clear();
-		this.configuredBootstrapAddresses.clear();
 		this.redialSuppressedByNet.clear();
 		this.pxIngressLogKeys.clear();
 		if (this.node) {

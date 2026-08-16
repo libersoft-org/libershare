@@ -251,7 +251,7 @@ export class Networks {
 		const stillConfigured = this.configuredBootstrapPeerIDsElsewhere(id);
 		for (const pid of this.configuredBootstrapPeerIDsOf(id)) {
 			if (stillConfigured.has(pid)) continue;
-			this.network.pruneConfiguredBootstrapPeer(pid);
+			this.network.pruneConfiguredBootstrapPeer(pid, id);
 			if (stillJoinedPeers.has(pid)) continue;
 			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
 			await this.network.disconnectPeer(pid, id);
@@ -487,7 +487,7 @@ export class Networks {
 		const nextIDs = new Set(Networks.bootstrapPeerIDsOf(cleaned));
 		const elsewhere = this.configuredBootstrapPeerIDsElsewhere(id);
 		for (const pid of Networks.bootstrapPeerIDsOf(previousPeers)) {
-			if (!nextIDs.has(pid) && !elsewhere.has(pid)) this.network.pruneConfiguredBootstrapPeer(pid);
+			if (!nextIDs.has(pid) && !elsewhere.has(pid)) this.network.pruneConfiguredBootstrapPeer(pid, id);
 		}
 		// Addresses that left the list while their peer ID stayed — the user edited a
 		// host or port. The identity-level prune above cannot see those, so recovery
@@ -498,7 +498,7 @@ export class Networks {
 		const keptAddresses = new Set(cleaned.map(normalizeMultiaddrForCompare));
 		const elsewhereAddresses = this.configuredBootstrapAddressesElsewhere(id);
 		const dropped = Networks.cleanBootstrapList(previousPeers).filter(a => !keptAddresses.has(normalizeMultiaddrForCompare(a)) && !elsewhereAddresses.has(normalizeMultiaddrForCompare(a)));
-		this.network.pruneBootstrapAddresses(dropped);
+		this.network.pruneBootstrapAddresses(dropped, id);
 		this.network.pruneBootstrapStatus(id, cleaned);
 		if (this.joinedNetworks.has(id) && cleaned.length > 0) {
 			this.network.addBootstrapPeers(cleaned, id, 'configured').catch(err => {
