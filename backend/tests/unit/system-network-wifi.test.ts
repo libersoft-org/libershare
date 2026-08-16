@@ -186,9 +186,24 @@ describe('readUtf16z', () => {
 		expect(readUtf16z(widePointer('abc'))).toBe('abc');
 	});
 
-	it('stops at the cap when there is no terminator at all', () => {
+	it('fails loudly when there is no terminator at all', () => {
+		// Silently returning the first `maxChars` was the dangerous outcome: the
+		// document exists to be handed straight back to WlanSetProfile, and a
+		// truncated profile is not a smaller profile but a malformed one — which
+		// would then replace a working network's saved configuration.
 		const buffer = new Uint16Array(4).fill(0x41);
-		expect(readUtf16z(ptr(buffer), 4)).toBe('AAAA');
+		expect(() => readUtf16z(ptr(buffer), 4)).toThrow();
+	});
+
+	it('reads a document longer than the first mapped block', () => {
+		// The reader maps in growing blocks so the ordinary case never maps far past
+		// the allocation; a profile past the first block must still come back whole.
+		const long = `<WLANProfile>${'x'.repeat(3000)}</WLANProfile>`;
+		expect(readUtf16z(ptr(utf16z(long)))).toBe(long);
+	});
+
+	it('reads an empty document as an empty string', () => {
+		expect(readUtf16z(ptr(utf16z('')))).toBe('');
 	});
 });
 

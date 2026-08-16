@@ -692,20 +692,38 @@ export function utf16z(text: string): Uint16Array {
 	return out;
 }
 
+/** First block of characters mapped by {@link readUtf16z}; comfortably larger than any real profile. */
+const INITIAL_UTF16_BLOCK = 1024;
+
 /**
  * Read a NUL-terminated UTF-16LE string back out of a pointer the WLAN API
  * allocated. The counterpart of {@link utf16z}, for the profile document
  * WlanGetProfile hands back.
  *
- * The length is not known up front, so the buffer is walked to the terminator; the
- * cap is a safety stop for a pointer that is not the string we think it is, well
- * above any real profile (a WLAN profile is a few hundred characters).
+ * The length is not known up front, so the buffer is walked to the terminator;
+ * the cap is a safety stop for a pointer that is not the string we think it is,
+ * well above any real profile (a WLAN profile is a few hundred characters).
+ * Reaching that cap without finding a terminator is an ERROR, never a shorter
+ * string — see the throw below.
  */
 export function readUtf16z(pointer: Pointer, maxChars: number = 65536): string {
-	const view = new Uint16Array(toArrayBuffer(pointer, 0, maxChars * 2));
-	let length = 0;
-	while (length < view.length && view[length] !== 0) length++;
-	return String.fromCharCode(...view.subarray(0, length));
+	// Mapped in growing blocks rather than as one 128 KiB view. The length of the
+	// allocation is not knowable from here, so every character mapped beyond the
+	// terminator is a read of memory that may not belong to this buffer; a real
+	// profile is a few hundred characters, and starting small means the usual case
+	// never maps more than the first block.
+	for (let mapped = Math.min(INITIAL_UTF16_BLOCK, maxChars); ; mapped = Math.min(mapped * 2, maxChars)) {
+		const view = new Uint16Array(toArrayBuffer(pointer, 0, mapped * 2));
+		const end = view.indexOf(0);
+		if (end !== -1) return String.fromCharCode(...view.subarray(0, end));
+		// No terminator yet. Growing is only worthwhile while there is room left.
+		if (mapped >= maxChars) break;
+	}
+	// Returning the first `maxChars` here would be a silent truncation, and the
+	// caller's whole purpose is to hand this document back to WlanSetProfile — a
+	// truncated profile is not a smaller profile, it is a malformed one that would
+	// replace a working network's saved configuration.
+	throw new Error('the WLAN profile document is not NUL-terminated within its expected length');
 }
 
 /**
