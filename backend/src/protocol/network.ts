@@ -1175,12 +1175,71 @@ export class Network {
 		}
 	}
 
+	/**
+	 * Slowly re-probe CONFIGURED bootstrap addresses that nothing else will reach.
+	 *
+	 * An address the routability filter rejected at configure time — a LAN or VPN
+	 * bootstrap whose interface was down — never entered the peerStore, so re-dial
+	 * maintenance (which walks the peerStore) has no candidate for it. Zero-connection
+	 * recovery would pick it up, but only while the node has NO connections at all, so a
+	 * node happily talking to someone else would never notice the tunnel came back.
+	 *
+	 * Runs on the slow promote cadence and honours the same pacing as every other loop,
+	 * so a permanently broken entry costs one dial per window, not one per tick.
+	 */
+	private async probeParkedConfiguredBootstraps(epoch: number = this.runEpoch): Promise<void> {
+		const node = this.node;
+		if (!node || epoch !== this.runEpoch) return;
+		const localCidrs = getLocalCidrs();
+		const now = Date.now();
+		for (const ma of [...this.bootstrapMultiaddrs]) {
+			if (epoch !== this.runEpoch) return;
+			const pid = extractDestinationPeerID(ma);
+			if (!pid || !this.configuredBootstrapPeerIDs.has(pid)) continue;
+			if (this.isRedialSuppressed(pid)) continue;
+			// Still unreachable from here — leave it parked for a later pass.
+			if (shouldDenyDial(ma, localCidrs)) continue;
+			if (!isRecoveryDialDue(pid, now, this.redialBackoff, this.unreachableQuarantine)) continue;
+			try {
+				if (node.getConnections(peerIDFromString(pid)).length > 0) continue;
+			} catch {
+				continue; // unparseable id — nothing sane to probe
+			}
+			try {
+				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
+				if (epoch !== this.runEpoch) return;
+				this.redialBackoff.delete(pid);
+				console.log(`[NET] parked configured bootstrap reachable again: ${ma.toString()}`);
+			} catch (err: any) {
+				if (epoch !== this.runEpoch) return;
+				const previous = this.redialBackoff.get(pid);
+				const failCount = previous?.failCount ?? 0;
+				// Paces itself and nothing more: a configured peer is exempt from eviction,
+				// so this probe must never become the evidence that evicts one.
+				this.redialBackoff.set(pid, {
+					nextAttempt: Date.now() + Math.min(30_000 * 2 ** failCount, 600_000),
+					failCount: failCount + 1,
+					firstFailure: previous?.firstFailure ?? Date.now(),
+					evictionFails: previous?.evictionFails ?? 0,
+				});
+				trace(`[NET] parked configured bootstrap still failing: ${ma.toString()} — ${err?.message ?? err}`);
+			}
+		}
+	}
+
 	private async maybePromotePeers(epoch: number = this.runEpoch): Promise<void> {
 		// Every 5th status tick (~150 s at 30 s status cadence) promote every
 		// CONNECTED peer back to bootstrap priority (KEEP_ALIVE re-stamp + gossipsub
 		// direct set). Disconnected peers are handled by runRedialMaintenance.
 		this.statusTickCount++;
 		if (this.statusTickCount % 5 === 0) {
+			try {
+				// Same slow cadence: an address parked as unroutable has no other loop
+				// that would ever notice its interface came back.
+				await this.probeParkedConfiguredBootstraps(epoch);
+			} catch (err: any) {
+				trace(`[NET] probeParkedConfiguredBootstraps failed: ${err?.message ?? err}`);
+			}
 			try {
 				await this.promoteKnownPeersToBootstrap(epoch);
 			} catch (err: any) {
@@ -1469,30 +1528,40 @@ export class Network {
 					// address; peer with no connections → full purge as before.
 					if (kind === 'identity-mismatch' && peerID) {
 						const pid = peerIDFromString(peerID);
-						if (this.node.getConnections(pid).length > 0) {
-							// Compare in a form that survives both multiaddr normalization
-							// (expanded → compressed IPv6) and DNS case / trailing-dot
-							// differences — otherwise a filter that fails to match silently
-							// keeps the poisoned address while logging that it was dropped.
-							const canonical = normalizeMultiaddrForCompare(ma.toString());
-							const canonicalBare = canonical.replace(/\/p2p\/[^/]+$/, '');
-							const matches = (s: string): boolean => {
-								const n = normalizeMultiaddrForCompare(s);
-								return n === canonical || n === canonicalBare;
-							};
-							// Restrict the autodial-list filter to entries of THIS peer so a
-							// case-insensitive compare can never drop a different peer's addr.
-							this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(m => extractDestinationPeerID(m) !== peerID || !matches(m.toString()));
-							try {
-								const rec = await this.node.peerStore.get(pid);
-								const keep = rec.addresses.filter((a: any) => !matches(a.multiaddr.toString()));
-								if (keep.length < rec.addresses.length) await this.node.peerStore.patch(pid, { multiaddrs: keep.map((a: any) => a.multiaddr) });
-							} catch {
-								/* peer not in store — nothing to trim */
-							}
-							console.log(`[NET] dropped stale addr of connected peer ${peerID.slice(0, 16)}: ${ma.toString()}`);
+						// Compare in a form that survives both multiaddr normalization (expanded →
+						// compressed IPv6) and DNS case / trailing-dot differences — otherwise a
+						// filter that fails to match silently keeps the poisoned address while
+						// logging that it was dropped.
+						const canonical = normalizeMultiaddrForCompare(ma.toString());
+						const canonicalBare = canonical.replace(/\/p2p\/[^/]+$/, '');
+						const matches = (str: string): boolean => {
+							const n = normalizeMultiaddrForCompare(str);
+							return n === canonical || n === canonicalBare;
+						};
+						// Noise proves exactly one thing: THIS address no longer leads to the peer
+						// we expected. It says nothing about the peer's other addresses, so the bad
+						// one goes first and unconditionally — whether or not the peer happens to be
+						// connected right this moment. Purging on "not currently connected" threw
+						// away addresses that were never disproved.
+						// Restrict the autodial-list filter to entries of THIS peer so a
+						// case-insensitive compare can never drop a different peer's addr.
+						this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(m => extractDestinationPeerID(m) !== peerID || !matches(m.toString()));
+						let remainingAddresses = 0;
+						try {
+							const rec = await this.node.peerStore.get(pid);
+							const keep = rec.addresses.filter((a: any) => !matches(a.multiaddr.toString()));
+							if (keep.length < rec.addresses.length) await this.node.peerStore.patch(pid, { multiaddrs: keep.map((a: any) => a.multiaddr) });
+							remainingAddresses = keep.length;
+						} catch {
+							/* peer not in store — nothing to trim, and nothing left either */
+						}
+						if (superseded()) return;
+						// Only once the peer has neither a live connection nor a single address we
+						// have not disproved is there anything left to purge.
+						if (this.node.getConnections(pid).length === 0 && remainingAddresses === 0) {
+							await this.purgeStalePeer(peerID, `${origin} dial identity mismatch, no usable address left`, epoch);
 						} else {
-							await this.purgeStalePeer(peerID, `${origin} dial identity mismatch`, epoch);
+							console.log(`[NET] dropped stale addr of peer ${peerID.slice(0, 16)}: ${ma.toString()}`);
 						}
 						// For DISCOVERED entries (peer-announce gossip), also drop the
 						// status entry — there's no saved config row to "fix" and leaving
