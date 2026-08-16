@@ -380,6 +380,19 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		expect(mock.prunedAddresses).toEqual([[]]);
 	});
 
+	/**
+	 * The autodial prune compares addresses canonically, so the "did this entry leave
+	 * the list" check has to as well — otherwise one spelling of an address counts as a
+	 * removal here and as the same entry there.
+	 */
+	it('treats two spellings of one address as the same entry', () => {
+		const upper = `/dns4/BOOTSTRAP.EXAMPLE.ORG./tcp/9090/p2p/${PEER_A}`;
+		const lower = `/dns4/bootstrap.example.org/tcp/9090/p2p/${PEER_A}`;
+		const { networks, mock } = seeded([upper]);
+		edit(networks, [lower]);
+		expect(mock.prunedAddresses).toEqual([[]]);
+	});
+
 	it('does not dial for a network that is not joined', () => {
 		const { networks, mock } = seeded([ADDR_A]);
 		(networks as any).joinedNetworks = new Set<string>();

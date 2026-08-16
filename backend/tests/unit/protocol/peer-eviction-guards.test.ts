@@ -538,6 +538,27 @@ describe('addBootstrapPeers — a dial that lands after leave-network', () => {
 		expect(disconnected).toEqual([PEER_ID]);
 	});
 
+	/**
+	 * The peer we were dialing may never have been seen as a member of the network, so
+	 * leave-network had nothing to hang up and never put it in the suppression set.
+	 * Leaving the topic is the fact that decides it, not the suppression bookkeeping.
+	 */
+	it('closes a connection to a peer we never saw as a member of the network we left', async () => {
+		const { network, disconnected } = bareNetwork([]);
+		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => ({ remoteAddr: { toString: () => ma.toString() } });
+		(network as any).pubsub = { getTopics: () => [] };
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect(disconnected).toEqual([PEER_ID]);
+	});
+
+	it('keeps the connection while the network is still joined', async () => {
+		const { network, disconnected } = bareNetwork([]);
+		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => ({ remoteAddr: { toString: () => ma.toString() } });
+		(network as any).pubsub = { getTopics: () => ['lish/net-a'] };
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect(disconnected).toEqual([]);
+	});
+
 	it('leaves an ordinary dial connected', async () => {
 		const { network, disconnected } = bareNetwork([]);
 		// No leave lands this time: the dial does not add the peer to the suppression set.
@@ -625,5 +646,125 @@ describe('addBootstrapPeers — only a working discovered address joins the auto
 		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
 		await (network as any).addBootstrapPeers([moved], 'net-a', 'configured');
 		expect(addresses(network)).toEqual([ADDR, moved]);
+	});
+});
+
+/**
+ * Whether an address is dialable is a fact about THIS HOST right now — a LAN or VPN
+ * bootstrap stops passing the routability filter the moment that interface drops.
+ * Whether the user configured a peer is a fact about the saved config. Deriving the
+ * second from the first left a VPN bootstrap unregistered whenever the tunnel was
+ * down at startup, and an unregistered configured peer loses the exemption that is
+ * supposed to make it un-evictable.
+ */
+describe('addBootstrapPeers — a non-routable configured entry is still configured', () => {
+	// A private address in a subnet this host is not on: the filter rejects it.
+	const OFF_VPN = `/ip4/10.201.0.5/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork() {
+		const outcomes: Array<{ status: string; message: string | null }> = [];
+		const dialled: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).bootstrapGeneration = new Map();
+		(network as any).bootstrapTracker = {
+			markPending() {},
+			recordOutcome(_n: unknown, _a: unknown, _p: unknown, status: string, message: string | null) {
+				outcomes.push({ status, message });
+			},
+		};
+		(network as any).node = {
+			peerId: { toString: () => 'selfID' },
+			getConnections: () => [],
+			async dial(ma: { toString(): string }): Promise<unknown> {
+				dialled.push(ma.toString());
+				return { remoteAddr: { toString: () => ma.toString() } };
+			},
+			peerStore: { async merge(): Promise<void> {} },
+		};
+		return { network, outcomes, dialled };
+	}
+
+	it('registers the peer as configured even though the address is not routable', async () => {
+		const { network } = bareNetwork();
+		await (network as any).addBootstrapPeers([OFF_VPN], 'net-a', 'configured');
+		expect((network as any).configuredBootstrapPeerIDs.has(PEER_ID)).toBe(true);
+	});
+
+	it('still does not dial an address the filter rejected', async () => {
+		const { network, dialled } = bareNetwork();
+		await (network as any).addBootstrapPeers([OFF_VPN], 'net-a', 'configured');
+		expect(dialled).toEqual([]);
+	});
+
+	it('tells the user why the configured entry is doing nothing', async () => {
+		const { network, outcomes } = bareNetwork();
+		await (network as any).addBootstrapPeers([OFF_VPN], 'net-a', 'configured');
+		expect(outcomes).toEqual([{ status: 'error', message: 'address is not routable from this host' }]);
+	});
+
+	it('says nothing about a discovered address the filter rejected', async () => {
+		const { network, outcomes } = bareNetwork();
+		await (network as any).addBootstrapPeers([OFF_VPN], 'net-a', 'discovered');
+		expect(outcomes).toEqual([]);
+		expect((network as any).configuredBootstrapPeerIDs.has(PEER_ID)).toBe(false);
+	});
+});
+
+/**
+ * An expired quarantine buys exactly one probe. Letting a failed probe pass without
+ * closing the window again means every later gossip mention spends another dial and
+ * refreshes the status row — the churn the quarantine exists to stop.
+ */
+describe('addBootstrapPeers — quarantine after the probe it allowed', () => {
+	const ADDR = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork(fail: boolean, quarantinedAt: number) {
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).unreachableQuarantine = new Map([[PEER_ID, quarantinedAt]]);
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).bootstrapGeneration = new Map();
+		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
+		(network as any).node = {
+			peerId: { toString: () => 'selfID' },
+			getConnections: () => [],
+			async dial(ma: { toString(): string }): Promise<unknown> {
+				if (fail) throw new Error('dial timeout');
+				return { remoteAddr: { toString: () => ma.toString() } };
+			},
+			peerStore: { async merge(): Promise<void> {} },
+		};
+		return network;
+	}
+
+	const LONG_AGO = Date.now() - 10 * 60 * 60_000;
+
+	it('re-arms the quarantine when the allowed probe fails', async () => {
+		const network = bareNetwork(true, LONG_AGO);
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		const at = (network as any).unreachableQuarantine.get(PEER_ID);
+		expect(at).toBeGreaterThan(LONG_AGO);
+	});
+
+	it('leaves the quarantine lifted when the probe succeeds', async () => {
+		const network = bareNetwork(false, LONG_AGO);
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect((network as any).unreachableQuarantine.has(PEER_ID)).toBe(false);
+	});
+
+	it('does not quarantine a plain failure that was never in one', async () => {
+		const network = bareNetwork(true, LONG_AGO);
+		(network as any).unreachableQuarantine = new Map();
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect((network as any).unreachableQuarantine.has(PEER_ID)).toBe(false);
 	});
 });
