@@ -5,15 +5,72 @@ export { productName, productVersion, productIdentifier, productWebsite, product
 export { formatBytes, parseBytes, sanitizeFilename } from './utils.ts';
 
 // Compression
-export type CompressionAlgorithm = 'gzip';
+
+/**
+ * Compression algorithms the backend can really compress and decompress with.
+ * Order matters — the UI renders the selector in this order.
+ */
+export const COMPRESSION_ALGORITHMS = ['gzip', 'brotli', 'zstd'] as const;
+
+/** One of the algorithms listed in {@link COMPRESSION_ALGORITHMS}. */
+export type CompressionAlgorithm = (typeof COMPRESSION_ALGORITHMS)[number];
+
+/** Canonical file extension appended when exporting with a given algorithm. */
+export const COMPRESSION_EXTENSIONS: Record<CompressionAlgorithm, string> = {
+	gzip: '.gz',
+	brotli: '.br',
+	zstd: '.zst',
+};
+
+/**
+ * Every extension recognised on import, mapped to its algorithm. Includes the
+ * long aliases (.gzip, .zstd) so files produced elsewhere still open.
+ */
+const EXTENSION_ALGORITHMS: Record<string, CompressionAlgorithm> = {
+	'.gz': 'gzip',
+	'.gzip': 'gzip',
+	'.br': 'brotli',
+	'.zst': 'zstd',
+	'.zstd': 'zstd',
+};
+
+/** File extension (with leading dot) written for the given algorithm. */
+export function compressionExtension(algorithm: CompressionAlgorithm): string {
+	return COMPRESSION_EXTENSIONS[algorithm] ?? COMPRESSION_EXTENSIONS.gzip;
+}
+
+/**
+ * Detect the compression algorithm of a file path or URL from its extension.
+ * Returns null when the path carries no known compression extension.
+ */
+export function detectCompression(filePath: string): CompressionAlgorithm | null {
+	const lower = filePath.toLowerCase();
+	for (const [ext, algorithm] of Object.entries(EXTENSION_ALGORITHMS)) if (lower.endsWith(ext)) return algorithm;
+	return null;
+}
+
+/** Remove a trailing compression extension, if any. Leaves other paths untouched. */
+export function stripCompressionExtension(filePath: string): string {
+	const lower = filePath.toLowerCase();
+	for (const ext of Object.keys(EXTENSION_ALGORITHMS)) if (lower.endsWith(ext)) return filePath.slice(0, -ext.length);
+	return filePath;
+}
+
+/**
+ * Expand file patterns/suffixes with every recognised compression extension,
+ * so a picker offering `*.lish` also offers `*.lish.gz`, `*.lish.br`, …
+ */
+export function withCompressionExtensions(patterns: string[]): string[] {
+	const extensions = Object.keys(EXTENSION_ALGORITHMS);
+	return patterns.flatMap(pattern => [pattern, ...extensions.map(ext => pattern + ext)]);
+}
 
 /**
  * Check if a file path has a compressed file extension.
- * Returns true for known compression extensions (.gz, .gzip, etc.).
+ * Returns true for known compression extensions (.gz, .br, .zst, …).
  */
 export function isCompressed(filePath: string): boolean {
-	const lower = filePath.toLowerCase();
-	return lower.endsWith('.gz') || lower.endsWith('.gzip');
+	return detectCompression(filePath) !== null;
 }
 
 // LISH types
