@@ -1,5 +1,6 @@
 import { type Database } from 'bun:sqlite';
 import { Network, normalizeMultiaddrForCompare } from '../protocol/network.ts';
+import { canonicalMultiaddr } from '../protocol/multiaddr-utils.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
@@ -460,14 +461,37 @@ export class Networks {
 		if (!existing) return null;
 		const cleaned = Networks.cleanBootstrapList(bootstrapPeers);
 		const next: LISHNetworkConfig = { ...existing, bootstrapPeers: cleaned };
-		updateLISHnet(this.db, next);
+		// Persist first and believe the answer. Switching the runtime over after a failed
+		// write would leave the node dialing a list the database never accepted, and the
+		// old one would come back at the next restart with nothing to explain the change.
+		if (!updateLISHnet(this.db, next)) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, id);
 		this.syncBootstrapRuntime(id, existing.bootstrapPeers, cleaned);
 		return next;
 	}
 
-	/** Drop blank entries from a user-supplied bootstrap list. */
+	/**
+	 * Normalise a user-supplied bootstrap list: drop blanks, trim, and keep one entry per
+	 * canonical address.
+	 *
+	 * Trimming matters because the list came from a text field — a value with stray
+	 * whitespace passed the old blank check and then failed to parse at dial time.
+	 * Deduplicating matters because two spellings of one address (DNS case, expanded vs
+	 * compressed IPv6) would otherwise each get their own forced probe and their own
+	 * status row for the same endpoint.
+	 */
 	private static cleanBootstrapList(peers: string[]): string[] {
-		return peers.filter(p => typeof p === 'string' && p.trim().length > 0);
+		const seen = new Set<string>();
+		const out: string[] = [];
+		for (const raw of peers) {
+			if (typeof raw !== 'string') continue;
+			const trimmed = raw.trim();
+			if (trimmed.length === 0) continue;
+			const key = canonicalMultiaddr(trimmed);
+			if (seen.has(key)) continue;
+			seen.add(key);
+			out.push(trimmed);
+		}
+		return out;
 	}
 
 	/**
