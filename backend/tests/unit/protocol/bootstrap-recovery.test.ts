@@ -403,6 +403,48 @@ describe('Network.runZeroConnectionRecovery — liveness and budget', () => {
 	});
 });
 
+/**
+ * The startup workaround is a one-shot timer scheduled two seconds into a run. It used
+ * to store no handle, be cleared by nothing, and re-read `this.node` in its callback —
+ * so after a fast stop/start the old run's timer dialed on the new node's behalf,
+ * alongside the fresh timer that instance had scheduled for itself.
+ */
+describe('Network.runBootstrapWorkaround — lifecycle fence', () => {
+	const run = (network: Network, node: unknown, epoch: number): Promise<void> => (network as any).runBootstrapWorkaround(node, epoch);
+
+	it('dials the registry when the run it belongs to is still current', async () => {
+		const { network, dialed } = bareNetwork({ seeds: [{ address: ADDR_A }], failDial: true });
+		await run(network, (network as any).node, 1);
+		expect(dialed).toEqual([multiaddr(ADDR_A).toString()]);
+	});
+
+	it('does nothing once the epoch has moved on', async () => {
+		const { network, dialed } = bareNetwork({ seeds: [{ address: ADDR_A }], failDial: true });
+		await run(network, (network as any).node, 0);
+		expect(dialed).toEqual([]);
+	});
+
+	it('does nothing when the node it captured is no longer the current one', async () => {
+		const { network, dialed } = bareNetwork({ seeds: [{ address: ADDR_A }], failDial: true });
+		await run(network, { getPeers: () => [], async dial(): Promise<void> {} }, 1);
+		expect(dialed).toEqual([]);
+	});
+
+	it('stops walking the registry when a stop lands mid-pass', async () => {
+		let net: any;
+		const { network, dialed } = bareNetwork({
+			seeds: [{ address: ADDR_A }, { address: ADDR_A2 }],
+			failDial: true,
+			onDial: () => {
+				net.runEpoch = 2;
+			},
+		});
+		net = network;
+		await run(network, (network as any).node, 1);
+		expect(dialed.length).toBe(1);
+	});
+});
+
 describe('bootstrapEntryLastActivity', () => {
 	const base = { firstSeenAt: 100, lastVerifiedAt: null, lastDisconnectedAt: null };
 

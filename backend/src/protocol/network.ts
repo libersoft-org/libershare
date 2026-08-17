@@ -86,6 +86,8 @@ interface PubsubEvent {
  */
 type TopicHandler = (data: Record<string, any>, from?: string) => void;
 const AUTODIAL_WORKAROUND = true;
+/** Grace period before the startup bootstrap workaround decides the bootstrap module failed. */
+const BOOTSTRAP_WORKAROUND_DELAY_MS = 2000;
 /** Minimum interval between two `have` responses sent to the same peer for the same LISH. */
 const WANT_RESPONSE_COOLDOWN_MS = 60_000;
 /** Periodic cleanup of stale entries in lastWantResponseTime (entries older than the cooldown are useless). */
@@ -401,6 +403,8 @@ export class Network {
 	private readonly dataServer: DataServer;
 	private readonly dataDir: string;
 	private statusInterval: NodeJS.Timeout | null = null;
+	/** Handle of the one-shot startup bootstrap workaround, so stop() can cancel it. */
+	private bootstrapWorkaroundTimer: NodeJS.Timeout | null = null;
 	/** Monotonic counter for status-interval ticks. Used by the periodic autodial promotion. */
 	private statusTickCount = 0;
 	/** Guards against overlapping status ticks — see setupStatusInterval. */
@@ -1101,22 +1105,43 @@ export class Network {
 		// setTimeout discards the Promise returned by async callbacks, so throws escape
 		// as unhandledRejection. Plus this.node can be null if stop() fires within 2s.
 		// Null-check at entry, wrap inner async work, attach .catch() to surface errors.
-		setTimeout(() => {
-			if (!this.node || this.node.getPeers().length > 0) return;
-			(async () => {
-				console.log('⚠️  Bootstrap module failed - dialing directly...');
-				for (const { ma } of orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values())) {
-					if (!this.node) break;
-					try {
-						await this.node.dial(ma);
-						console.log('✓ Connected to bootstrap peer via direct dial');
-						break;
-					} catch (err: any) {
-						console.log('✗ Direct dial failed:', err.message);
-					}
-				}
-			})().catch(err => trace(`[NET] bootstrapWorkaround error: ${err?.message ?? err}`));
-		}, 2000);
+		//
+		// Node and epoch are captured here rather than re-read in the callback: a
+		// stop()/start() inside the two-second window would otherwise have this run's
+		// timer dial on behalf of the NEXT node, alongside the fresh timer that instance
+		// scheduled for itself. The handle is stored so stop() can cancel it outright.
+		const node = this.node;
+		const epoch = this.runEpoch;
+		this.bootstrapWorkaroundTimer = setTimeout(() => {
+			this.bootstrapWorkaroundTimer = null;
+			this.runBootstrapWorkaround(node, epoch).catch(err => trace(`[NET] bootstrapWorkaround error: ${err?.message ?? err}`));
+		}, BOOTSTRAP_WORKAROUND_DELAY_MS);
+	}
+
+	/**
+	 * The bootstrap module occasionally fails to dial anything at startup; this walks the
+	 * registry once and takes the first address that answers.
+	 *
+	 * Split out of the timer so the lifecycle guards are reachable from a test: `node`
+	 * and `epoch` are the ones captured when the timer was scheduled, and every await
+	 * re-checks both, because each dial can outlive a stop().
+	 */
+	private async runBootstrapWorkaround(node: Libp2p | null, epoch: number): Promise<void> {
+		if (!node || node !== this.node || epoch !== this.runEpoch) return;
+		if (node.getPeers().length > 0) return;
+		console.log('⚠️  Bootstrap module failed - dialing directly...');
+		for (const { ma } of orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values())) {
+			if (node !== this.node || epoch !== this.runEpoch) break;
+			try {
+				// An explicit deadline, like every other dial path: without one this loop
+				// inherits libp2p's default and can sit on a single dead address.
+				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
+				console.log('✓ Connected to bootstrap peer via direct dial');
+				break;
+			} catch (err: any) {
+				console.log('✗ Direct dial failed:', err.message);
+			}
+		}
 	}
 
 	private setupStatusInterval(): void {
@@ -2803,6 +2828,12 @@ export class Network {
 
 	async stop(): Promise<void> {
 		this.runEpoch++; // invalidate any in-flight status tick before touching state
+		// The startup workaround is a one-shot timer that can still be pending: left
+		// armed, it fires two seconds into the NEXT run and dials on the old node's behalf.
+		if (this.bootstrapWorkaroundTimer) {
+			clearTimeout(this.bootstrapWorkaroundTimer);
+			this.bootstrapWorkaroundTimer = null;
+		}
 		if (this.statusInterval) {
 			clearInterval(this.statusInterval);
 			this.statusInterval = null;
