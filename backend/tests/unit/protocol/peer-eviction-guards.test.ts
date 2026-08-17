@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
+import { Mutex } from 'async-mutex';
 import { Network, isRecoveryDialDue, isSameDialEndpoint, normalizeMultiaddrForCompare } from '../../../src/protocol/network.ts';
 import { BootstrapStatusTracker } from '../../../src/protocol/bootstrap-status.ts';
 
@@ -1203,6 +1204,10 @@ describe('Network.stop — per-run state really is per run', () => {
 		};
 		(network as any).node = null;
 		(network as any).datastore = null;
+		// stop() runs under the lifecycle mutex; a prototype-only instance has no field
+		// initializers, so it has to be supplied here.
+		(network as any).lifecycle = 'running';
+		(network as any).lifecycleMutex = new Mutex();
 		return network;
 	}
 

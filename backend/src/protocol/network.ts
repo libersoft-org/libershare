@@ -1,4 +1,5 @@
 import { createLibp2p } from 'libp2p';
+import { Mutex } from 'async-mutex';
 import { KEEP_ALIVE } from '@libp2p/interface';
 import { SqliteDatastore } from './datastore.ts';
 import { privateKeyToProtobuf } from '@libp2p/crypto/keys';
@@ -216,10 +217,29 @@ export function shouldEvictUnreachablePeer(input: { reachable: boolean; failCoun
 const MAX_PUBSUB_PAYLOAD_BYTES = 256 * 1024;
 
 /**
+ * Where the node is in its start/stop cycle.
+ *
+ * `this.node` alone cannot express this: it is set half-way through {@link Network.start}
+ * and stays set for the whole of {@link Network.stop}, so a failed start left a node
+ * object that never started looking exactly like a running one, and a caller starting
+ * during a stop was told "already running" and then had its node torn down under it.
+ * Only a fully successful start reaches `running`.
+ */
+export type NetworkLifecycle = 'stopped' | 'starting' | 'running' | 'stopping';
+
+/**
  * Single shared libp2p node.
  * LISH networks are logical groups represented as pubsub topics on this one node.
  */
 export class Network {
+	private lifecycle: NetworkLifecycle = 'stopped';
+	/**
+	 * Serialises start() against stop(). Both mutate the same fields across several
+	 * awaits, and without this two concurrent start() calls could both pass the
+	 * "already running" check before either created a node — two libp2p instances over
+	 * one identity and one SQLite datastore.
+	 */
+	private readonly lifecycleMutex = new Mutex();
 	private node: Libp2p | null = null;
 	private pubsub: PubSub | null = null;
 	private datastore: SqliteDatastore | null = null;
@@ -574,11 +594,33 @@ export class Network {
 	 * @param bootstrapPeers - merged list of bootstrap peers from all enabled lishnets
 	 */
 	async start(bootstrapPeers: string[] = []): Promise<void> {
-		if (this.node) {
-			console.log('Network node is already running');
-			return;
-		}
+		// Serialised against stop() and against another start(): every field below is
+		// touched across awaits by both, so overlapping runs would interleave into two
+		// nodes over one datastore, or into a start whose node a concurrent stop tears
+		// down while its caller is told the start succeeded.
+		await this.lifecycleMutex.runExclusive(async () => {
+			if (this.lifecycle !== 'stopped') {
+				console.log('Network node is already running');
+				return;
+			}
+			this.lifecycle = 'starting';
+			try {
+				await this.startLocked(bootstrapPeers);
+				this.lifecycle = 'running';
+			} catch (err) {
+				// A half-built start owns a datastore handle and possibly a libp2p node.
+				// Leaving either behind is what made a failed start unrecoverable without
+				// restarting the process: the SQLite file stayed locked and `this.node`
+				// stayed set, so the next start reported "already running" forever.
+				await this.teardown();
+				this.lifecycle = 'stopped';
+				throw err;
+			}
+		});
+	}
 
+	/** The body of {@link start}, run under the lifecycle mutex. */
+	private async startLocked(bootstrapPeers: string[]): Promise<void> {
 		// Read settings
 		const allSettings = this.settings.list();
 
@@ -1540,7 +1582,12 @@ export class Network {
 	 * Whether the node is running.
 	 */
 	isRunning(): boolean {
-		return this.node !== null;
+		return this.lifecycle === 'running';
+	}
+
+	/** Current start/stop phase. Exposed for tests and diagnostics. */
+	getLifecycle(): NetworkLifecycle {
+		return this.lifecycle;
 	}
 
 	/**
@@ -2684,6 +2731,28 @@ export class Network {
 	}
 
 	async stop(): Promise<void> {
+		// Same mutex as start(): a stop that overlapped a start used to tear down a node
+		// the start had just handed back to its caller as successfully started.
+		await this.lifecycleMutex.runExclusive(async () => {
+			this.lifecycle = 'stopping';
+			try {
+				await this.teardown();
+			} finally {
+				this.lifecycle = 'stopped';
+			}
+		});
+	}
+
+	/**
+	 * Release everything a run owns. Shared by {@link stop} and by the failure path of
+	 * {@link start}, because a half-built start holds the same resources a finished one
+	 * does — and leaving them behind is what made a failed start unrecoverable.
+	 *
+	 * Every step is best-effort and the field nulling happens in a `finally`: a node that
+	 * refuses to stop must not also cost us the datastore handle and leave the instance
+	 * permanently wedged in "running".
+	 */
+	private async teardown(): Promise<void> {
 		this.runEpoch++; // invalidate any in-flight status tick before touching state
 		if (this.statusInterval) {
 			clearInterval(this.statusInterval);
@@ -2741,18 +2810,27 @@ export class Network {
 		this.delayedPeerCountTimers.clear();
 		this.redialSuppressedByNet.clear();
 		this.pxIngressLogKeys.clear();
-		if (this.node) {
-			await this.node.stop();
-			console.log('Network stopped');
+		try {
+			if (this.node) {
+				await this.node.stop();
+				console.log('Network stopped');
+			}
+		} catch (err: any) {
+			trace(`[NET] node.stop() failed: ${err?.message ?? err}`);
+		} finally {
+			try {
+				if (this.datastore) {
+					await this.datastore.close();
+					console.log('Datastore closed');
+				}
+			} catch (err: any) {
+				trace(`[NET] datastore.close() failed: ${err?.message ?? err}`);
+			}
+			this.node = null;
+			this.pubsub = null;
+			this.datastore = null;
+			this.currentPrivateKey = null;
 		}
-		if (this.datastore) {
-			await this.datastore.close();
-			console.log('Datastore closed');
-		}
-		this.node = null;
-		this.pubsub = null;
-		this.datastore = null;
-		this.currentPrivateKey = null;
 	}
 
 	async cliFindPeer(peerID: string): Promise<void> {
