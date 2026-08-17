@@ -2603,15 +2603,15 @@ export class Network {
 				onDisk = true;
 			}
 			// Whichever of the two places wrote the record, it asked before the write rather
-			// than after it. Ask again here — and nothing below awaits, so this answer still
-			// holds for every write it authorises.
+			// than after it. Ask again here — the in-memory rebuild below runs straight
+			// through with no await, so for that half this answer is the final one.
 			if (node !== this.node || epoch !== this.runEpoch) return;
 			const live = node.getConnections(pid);
 			if (live.length === 0 || this.isRedialSuppressed(peerID)) {
 				// The purge was right after all: the connection that contradicted it has ended,
 				// or a leave-network has claimed the peer since. Either way the record that went
 				// back is the older intent and goes again — through the inner delete, because
-				// the public one takes the read lock this call already holds the write half of.
+				// the public one takes the peer's read lock and this call holds its write lock.
 				if (onDisk) {
 					trace(`[NET] purge healing outlived its connection, dropping the restored entry: ${peerID.slice(0, 16)}`);
 					try {
