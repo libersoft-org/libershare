@@ -1235,6 +1235,12 @@ const ERROR_ALREADY_EXISTS = 183;
  * backup and then deleted by the rollback.
  */
 const ERROR_NOT_FOUND = 1168;
+/**
+ * ERROR_FILE_NOT_FOUND — the only `WlanGetProfileCustomUserData` result that means
+ * "this profile has no custom data". Measured on Windows 11 both for a profile that
+ * never had any and for one whose data a rewrite discarded.
+ */
+const ERROR_FILE_NOT_FOUND = 2;
 /** DOT11_AUTH_ALGO_WPA3_SAE — WPA3-Personal, which needs a different profile than WPA2. */
 const AUTH_ALGO_WPA3_SAE = 9;
 /** WLAN_PROFILE_GROUP_POLICY — pushed by policy. Not this app's to replace, and not restorable if it were. */
@@ -1746,6 +1752,11 @@ export type StoredProfileResult = { readonly kind: 'found'; readonly profile: St
  * Only ERROR_NOT_FOUND is absence. A success that hands back a null document is
  * an error too: there is then nothing to restore from, which is exactly the
  * situation the caller must not proceed into.
+ *
+ * A custom-data blob that could not be READ makes the whole reading an error, for
+ * the same reason. Every caller of this either overwrites the profile or decides
+ * whether the profile is still its own, and both need a snapshot they can hand
+ * back; "the document, and no idea about the blob beside it" is not one.
  */
 export function readStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string): StoredProfileResult {
 	const name = utf16z(profileName);
@@ -1758,7 +1769,9 @@ export function readStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: U
 	if (xmlOut[0] === 0n) return { kind: 'error', message: 'the WLAN service reported a saved profile but returned no document for it' };
 	const xmlPointer = Number(xmlOut[0]) as Pointer;
 	try {
-		return { kind: 'found', profile: { xml: readUtf16z(xmlPointer), flags: flags[0] ?? 0, customUserData: readProfileCustomUserData(api, handle, guidBytes, name) } };
+		const custom = readProfileCustomUserData(api, handle, guidBytes, name);
+		if (custom.kind === 'error') return { kind: 'error', message: `the data another program stores with this network could not be read (${custom.message})` };
+		return { kind: 'found', profile: { xml: readUtf16z(xmlPointer), flags: flags[0] ?? 0, customUserData: custom.kind === 'found' ? custom.data : null } };
 	} catch (err) {
 		// A document that cannot be read back is a document that cannot be restored.
 		return { kind: 'error', message: (err as Error).message };
@@ -1768,29 +1781,40 @@ export function readStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: U
 }
 
 /**
- * The custom user data stored against one profile, or null when there is none.
+ * What reading a profile's custom user data established: the blob, its PROVABLE
+ * absence, or a failure that is neither.
  *
- * Every non-zero result is null, absence and failure alike, and deliberately so —
- * unlike {@link readStoredProfile}, which must tell them apart because it decides
- * whether a profile may be overwritten. Absence is by far the common answer
- * (ERROR_FILE_NOT_FOUND, measured on Windows 11 both for a profile that never had
- * custom data and for one whose data a rewrite discarded), and a blob that could
- * not be read for any other reason is equally one this attempt cannot promise to
- * hand back. Failing a join over somebody else's metadata would be a worse answer
- * than the join.
+ * A union for the same reason {@link StoredProfileResult} is one. Every non-zero
+ * code used to read as "there is none", so `ERROR_INVALID_HANDLE`,
+ * `ERROR_INVALID_PARAMETER`, an access denial and an RPC failure all reported the
+ * same thing an empty profile does. The consequence was not symmetrical with the
+ * profile document's: on the overwrite path the caller then wrote its own profile,
+ * destroying a blob it had no copy of, and reported the join a success; on the
+ * rollback path it reported the data restored when it had never been read.
+ */
+type CustomDataResult = { readonly kind: 'none' } | { readonly kind: 'found'; readonly data: Uint8Array } | { readonly kind: 'error'; readonly message: string };
+
+/**
+ * The custom user data stored against one profile.
+ *
+ * Only ERROR_FILE_NOT_FOUND is an absence — see {@link ERROR_FILE_NOT_FOUND}. A
+ * clean read that hands back nothing is one too: there is then provably no blob to
+ * lose.
  *
  * `name` is the already-encoded profile name, because every caller has one.
  */
-function readProfileCustomUserData(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, name: Uint16Array): Uint8Array | null {
+function readProfileCustomUserData(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, name: Uint16Array): CustomDataResult {
 	const size = new Uint32Array(1);
 	const dataOut = new BigUint64Array(1);
-	if (api.WlanGetProfileCustomUserData(handle, ptr(guidBytes), ptr(name), null, ptr(size), ptr(dataOut)) !== 0) return null;
+	const rc = api.WlanGetProfileCustomUserData(handle, ptr(guidBytes), ptr(name), null, ptr(size), ptr(dataOut));
+	if (rc === ERROR_FILE_NOT_FOUND) return { kind: 'none' };
+	if (rc !== 0) return { kind: 'error', message: wlanErrorMessage(rc) };
 	const length = size[0] ?? 0;
-	if (dataOut[0] === 0n || length === 0) return null;
+	if (dataOut[0] === 0n || length === 0) return { kind: 'none' };
 	const pointer = Number(dataOut[0]) as Pointer;
 	try {
 		// Copied out before the buffer is freed — a view over freed memory is not data.
-		return new Uint8Array(toArrayBuffer(pointer, 0, length)).slice();
+		return { kind: 'found', data: new Uint8Array(toArrayBuffer(pointer, 0, length)).slice() };
 	} finally {
 		api.WlanFreeMemory(pointer);
 	}
@@ -1798,17 +1822,24 @@ function readProfileCustomUserData(api: WlanApi, handle: WlanHandle, guidBytes: 
 
 /**
  * Put somebody else's custom user data back after this attempt rewrote the profile
- * out from under it.
+ * out from under it, and say whether that worked.
  *
- * Best effort by design. The write that lost the data has already happened, so
- * failing here would report a failure for a join that worked, and the caller has
- * nothing better to do about it either. Nothing is written when the snapshot found
- * no data: there is then nothing to lose, and a zero-length write is a clear
- * rather than a no-op.
+ * The return code used to be discarded on the grounds that the write which lost the
+ * data had already happened, so failing here would report a failure for a join that
+ * worked. That holds on the ROLLBACK path and nowhere else. On the overwrite path
+ * this runs inside {@link writeJoinProfile}, before the association is even
+ * attempted — so a failure there can be reported honestly, the original profile put
+ * back, and no connection made. `WlanSetProfileCustomUserData` has its own ways to
+ * fail (a removed USB adapter, a handle that has gone stale), and silently losing
+ * another program's data is not something to report as success.
+ *
+ * Nothing is written when the snapshot found no data: there is then nothing to
+ * lose, and a zero-length write is a clear rather than a no-op.
  */
-function restoreProfileCustomUserData(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, name: Uint16Array, data: Uint8Array | null): void {
-	if (!data || data.length === 0) return;
-	api.WlanSetProfileCustomUserData(handle, ptr(guidBytes), ptr(name), data.length, ptr(data), null);
+function restoreProfileCustomUserData(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, name: Uint16Array, data: Uint8Array | null): string | null {
+	if (!data || data.length === 0) return null;
+	const rc = api.WlanSetProfileCustomUserData(handle, ptr(guidBytes), ptr(name), data.length, ptr(data), null);
+	return rc === 0 ? null : wlanErrorMessage(rc);
 }
 
 /** What one attempt did to the stored profiles, so the rollback knows what to undo. */
@@ -1884,7 +1915,12 @@ export function writeJoinProfile(api: WlanApi, handle: WlanHandle, guidBytes: Ui
 		// profile — see StoredProfile.customUserData. Replacing the credentials is
 		// what the user asked for; destroying somebody else's metadata is not, so it
 		// goes straight back, before the fingerprint is taken.
-		restoreProfileCustomUserData(api, handle, guidBytes, utf16z(profileName), existing.customUserData);
+		const lost = restoreProfileCustomUserData(api, handle, guidBytes, utf16z(profileName), existing.customUserData);
+		// Nothing has been connected yet, so this failure is one that can still be
+		// answered honestly: put the document back as it was and stop. Carrying on
+		// would associate successfully and report a join that had quietly destroyed
+		// another program's data.
+		if (lost) throw new Error(`the data another program stores with this network could not be put back, so this network was not joined (${lost})${describeRestore(writeStoredProfile(api, handle, guidBytes, profileName, existing))}`);
 		return { replaced: existing, created: false, written: readWrittenProfile(api, handle, guidBytes, profileName) };
 	}
 }
@@ -1902,6 +1938,33 @@ export function writeJoinProfile(api: WlanApi, handle: WlanHandle, guidBytes: Ui
 function readWrittenProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string): StoredProfile | null {
 	const stored = readStoredProfile(api, handle, guidBytes, profileName);
 	return stored.kind === 'found' ? stored.profile : null;
+}
+
+/**
+ * Put a snapshotted profile back exactly as it was, document, scope and the data
+ * another program stores beside it, and report what went wrong rather than throwing.
+ *
+ * Shared by the two paths that undo a write — the overwrite giving up because the
+ * custom data could not be handed back, and the rollback after a failed
+ * association — because "restore this profile" means the same thing in both, and
+ * restoring only the document leaves half the object behind.
+ */
+function writeStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string, profile: StoredProfile): string | null {
+	const name = utf16z(profileName);
+	const document = utf16z(profile.xml);
+	const reason = new Uint32Array(1);
+	const rc = api.WlanSetProfile(handle, ptr(guidBytes), profile.flags, ptr(document), null, 1, null, ptr(reason));
+	if (rc !== 0) return `the previous profile could not be restored (${describeProfileFailure(api, rc, reason[0] ?? 0)})`;
+	// That WlanSetProfile discarded the custom data again, exactly as the write being
+	// undone did, so it goes back too — and a failure here is reported rather than
+	// swallowed, because the restore is then only partly done.
+	const lost = restoreProfileCustomUserData(api, handle, guidBytes, name, profile.customUserData);
+	return lost ? `the previous profile was restored but the data another program stores with it was not (${lost})` : null;
+}
+
+/** A restore outcome as a clause to append to an error, or nothing when it worked. */
+function describeRestore(failure: string | null): string {
+	return failure ? ` — and ${failure}` : '';
 }
 
 /**
@@ -1962,15 +2025,7 @@ export function undoProfileChange(api: WlanApi, handle: WlanHandle, guidBytes: U
 		const rc = api.WlanDeleteProfile(handle, ptr(guidBytes), ptr(name), null);
 		return rc === 0 ? null : `the profile this attempt created could not be deleted (${wlanErrorMessage(rc)})`;
 	}
-	const previous = change.replaced as StoredProfile;
-	const document = utf16z(previous.xml);
-	const reason = new Uint32Array(1);
-	const rc = api.WlanSetProfile(handle, ptr(guidBytes), previous.flags, ptr(document), null, 1, null, ptr(reason));
-	if (rc !== 0) return `the previous profile could not be restored (${describeProfileFailure(api, rc, reason[0] ?? 0)})`;
-	// Undoing the document is only half of undoing the write: that WlanSetProfile
-	// discarded the custom user data again, exactly as the failed attempt's own did.
-	restoreProfileCustomUserData(api, handle, guidBytes, name, previous.customUserData);
-	return null;
+	return writeStoredProfile(api, handle, guidBytes, profileName, change.replaced as StoredProfile);
 }
 
 /** {@link undoProfileChange} on a handle of its own — the one used for the join is long closed by the time an association times out. */

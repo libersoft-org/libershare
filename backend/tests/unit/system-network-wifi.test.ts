@@ -448,7 +448,7 @@ describe('wlanScanErrorMessage', () => {
  * {@link readStoredProfile} uses are provided; anything else reaching this stub
  * would be a call the function has no business making.
  */
-function getProfileApi(rc: number, xml: string | null, flags: number = 0, custom: string | null = null): Parameters<typeof readStoredProfile>[0] {
+function getProfileApi(rc: number, xml: string | null, flags: number = 0, custom: string | null = null, customRc: number | null = null): Parameters<typeof readStoredProfile>[0] {
 	const document = xml === null ? null : utf16z(xml);
 	if (document) retainedProfiles.push(document);
 	return {
@@ -458,6 +458,7 @@ function getProfileApi(rc: number, xml: string | null, flags: number = 0, custom
 			return rc;
 		},
 		WlanGetProfileCustomUserData: (_handle: bigint, _guid: Pointer, _name: Pointer, _reserved: null, sizeOut: Pointer, dataOut: Pointer) => {
+			if (customRc !== null) return customRc;
 			// ERROR_FILE_NOT_FOUND — what a profile with no custom data answers.
 			if (custom === null) return 2;
 			const blob = new TextEncoder().encode(custom);
@@ -500,6 +501,23 @@ describe('readStoredProfile', () => {
 		expect(readStoredProfile(getProfileApi(1168, null), 1n, ANY_GUID, 'Example')).toEqual({ kind: 'notFound' });
 	});
 
+	// ERROR_FILE_NOT_FOUND is the only code that means the profile HAS no custom data.
+	it('reports no custom data for ERROR_FILE_NOT_FOUND', () => {
+		expect(readStoredProfile(getProfileApi(0, '<WLANProfile/>', 2, null, 2), 1n, ANY_GUID, 'Example')).toEqual({ kind: 'found', profile: { xml: '<WLANProfile/>', flags: 2, customUserData: null } });
+	});
+
+	// Every other code used to read as "there is none", so the caller overwrote the
+	// profile and destroyed a blob it had no copy of, then called the join a success.
+	it.each([
+		[6, 'an invalid handle'],
+		[87, 'an invalid parameter'],
+		[1727, 'an RPC failure'],
+	])('refuses the whole reading when custom data fails with code %i (%s)', code => {
+		const result = readStoredProfile(getProfileApi(0, '<WLANProfile/>', 2, null, code), 1n, ANY_GUID, 'Example');
+		expect(result.kind).toBe('error');
+		expect((result as { message: string }).message).toContain('another program stores with this network');
+	});
+
 	// The regression this union exists for: every one of these used to read as
 	// "no profile existed", which let the join overwrite a profile with no backup
 	// and the rollback then delete it.
@@ -530,6 +548,9 @@ interface ScriptedRead {
 	custom?: string;
 }
 
+/** A Win32 code `WlanSetProfileCustomUserData` answers with, instead of succeeding. */
+const CUSTOM_DATA_WRITE_FAILED = 6;
+
 /** One recorded WlanSetProfile call. */
 interface RecordedWrite {
 	flags: number;
@@ -541,7 +562,7 @@ interface RecordedWrite {
  * order — and records every WlanSetProfile. `setResults` supplies the Win32 code
  * each write returns, so the ERROR_ALREADY_EXISTS race can be reproduced exactly.
  */
-function joinApi(reads: ScriptedRead[], setResults: number[] = []) {
+function joinApi(reads: ScriptedRead[], setResults: number[] = [], customSetResult: number = 0) {
 	const writes: RecordedWrite[] = [];
 	/** Every custom-user-data blob handed back, in order, as text. */
 	const restored: string[] = [];
@@ -572,7 +593,7 @@ function joinApi(reads: ScriptedRead[], setResults: number[] = []) {
 		},
 		WlanSetProfileCustomUserData: (_handle: bigint, _guid: Pointer, _name: Pointer, size: number, data: Pointer) => {
 			restored.push(new TextDecoder().decode(new Uint8Array(toArrayBuffer(data, 0, size))));
-			return 0;
+			return customSetResult;
 		},
 		WlanSetProfile: (_handle: bigint, _guid: Pointer, flags: number, _xml: Pointer, _security: null, overwrite: number) => {
 			writes.push({ flags, overwrite });
@@ -617,6 +638,27 @@ describe('writeJoinProfile', () => {
 		]);
 		writeJoinProfile(api, 1n, ANY_GUID, 'Example', '<WLANProfile>new</WLANProfile>');
 		expect(restored).toEqual(['vendor-metadata']);
+	});
+
+	// The setter's return code used to be discarded on the grounds that the write
+	// which lost the data had already happened. That reasoning holds on the rollback
+	// path and not here: this runs BEFORE the association is attempted, so the failure
+	// can be reported, the original profile put back, and no connection made.
+	it('refuses the join when the custom user data cannot be handed back', () => {
+		const { api, writes } = joinApi(
+			[
+				{ rc: 0, xml: '<WLANProfile>old</WLANProfile>', flags: USER_FLAGS, custom: 'vendor-metadata' },
+				{ rc: 0, xml: '<WLANProfile>normalized</WLANProfile>', flags: USER_FLAGS, custom: 'vendor-metadata' },
+			],
+			[],
+			CUSTOM_DATA_WRITE_FAILED
+		);
+		expect(() => writeJoinProfile(api, 1n, ANY_GUID, 'Example', '<WLANProfile>new</WLANProfile>')).toThrow(/could not be put back, so this network was not joined/);
+		// The overwrite, and then the write that puts the original document back.
+		expect(writes).toEqual([
+			{ flags: USER_FLAGS, overwrite: 1 },
+			{ flags: USER_FLAGS, overwrite: 1 },
+		]);
 	});
 
 	it('writes no custom user data for a profile that had none', () => {
@@ -705,7 +747,7 @@ describe('undoProfileChange', () => {
 	const PREVIOUS = { xml: '<WLANProfile>theirs</WLANProfile>', flags: USER_FLAGS, customUserData: null };
 
 	/** A WlanApi that answers one WlanGetProfile and records the delete and the write. */
-	function undoApi(read: ScriptedRead) {
+	function undoApi(read: ScriptedRead, customSetResult: number = 0) {
 		const deletes: number[] = [];
 		const writes: RecordedWrite[] = [];
 		const restored: string[] = [];
@@ -727,7 +769,7 @@ describe('undoProfileChange', () => {
 			},
 			WlanSetProfileCustomUserData: (_handle: bigint, _guid: Pointer, _name: Pointer, size: number, data: Pointer) => {
 				restored.push(new TextDecoder().decode(new Uint8Array(toArrayBuffer(data, 0, size))));
-				return 0;
+				return customSetResult;
 			},
 			WlanDeleteProfile: () => {
 				deletes.push(1);
@@ -777,6 +819,25 @@ describe('undoProfileChange', () => {
 		const { api, writes } = undoApi({ rc: 0, xml: '<WLANProfile>someone else</WLANProfile>', flags: USER_FLAGS });
 		expect(undoProfileChange(api, 1n, ANY_GUID, 'Example', { replaced: PREVIOUS, created: false, written: WRITTEN })).toContain('another process changed');
 		expect(writes).toEqual([]);
+	});
+
+	// A blob that cannot be READ is a conflict too: there is then no way to tell
+	// whether the profile is still this attempt's, and acting anyway is the guess the
+	// whole fingerprint exists to avoid.
+	it('will not act when the current custom data cannot be read', () => {
+		const { api, deletes, writes } = undoApi({ rc: 0, xml: WRITTEN.xml, flags: WRITTEN.flags });
+		const failing = { ...api, WlanGetProfileCustomUserData: () => 1727 } as typeof api;
+		expect(undoProfileChange(failing, 1n, ANY_GUID, 'Example', { replaced: PREVIOUS, created: false, written: WRITTEN })).toContain('could not be re-read');
+		expect(deletes).toEqual([]);
+		expect(writes).toEqual([]);
+	});
+
+	// The restore is only done when the blob is back with the document. Reporting null
+	// here claimed a restore that had left another program's data destroyed.
+	it('reports a custom data restore that failed alongside the document', () => {
+		const { api } = undoApi({ rc: 0, xml: WRITTEN.xml, flags: WRITTEN.flags }, CUSTOM_DATA_WRITE_FAILED);
+		const previous = { ...PREVIOUS, customUserData: new TextEncoder().encode('vendor-metadata') };
+		expect(undoProfileChange(api, 1n, ANY_GUID, 'Example', { replaced: previous, created: false, written: WRITTEN })).toContain('the data another program stores with it was not');
 	});
 
 	// The scope is as much a part of the object as the document: a profile
