@@ -2023,7 +2023,14 @@ export class Network {
 		if (addresses.length === 0) return;
 		const drop = new Set(addresses.map(a => normalizeMultiaddrForCompare(a)));
 		this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(ma => !drop.has(normalizeMultiaddrForCompare(ma.toString())));
-		for (const address of drop) this.configuredBootstrapAddresses.delete(address);
+		for (const address of drop) {
+			this.configuredBootstrapAddresses.delete(address);
+			// The pacing record goes with the address it paces. Left behind, it accumulates
+			// across every configuration change until stop(), and — worse — a re-added
+			// address inherits the old failCount and its multi-minute nextAttempt, so a user
+			// who deletes an entry and puts it back may see nothing dialed for minutes.
+			this.addressProbeBackoff.delete(address);
+		}
 	}
 
 	pruneConfiguredBootstrapPeer(peerID: string): void {
@@ -2044,6 +2051,9 @@ export class Network {
 			const canonical = normalizeMultiaddrForCompare(ma.toString());
 			if (!this.configuredBootstrapAddresses.has(canonical)) return true;
 			this.configuredBootstrapAddresses.delete(canonical);
+			// Same reason as in pruneBootstrapAddresses: the pacing record belongs to the
+			// address, so a re-add must not inherit the deleted entry's backoff.
+			this.addressProbeBackoff.delete(canonical);
 			return false;
 		});
 	}

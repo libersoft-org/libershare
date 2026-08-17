@@ -383,6 +383,7 @@ describe('configured exemption ends when the peer leaves the config', () => {
 		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
 		(network as any).bootstrapMultiaddrs = [multiaddr(`/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`)];
 		(network as any).configuredBootstrapAddresses = new Set([normalizeMultiaddrForCompare(`/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`)]);
+		(network as any).addressProbeBackoff = new Map();
 		(network as any).bootstrapTracker = { deleteDiscoveredByPeerID() {} };
 		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
 		(network as any).node = { getConnections: () => [] };
@@ -1758,5 +1759,62 @@ describe('addBootstrapPeers — an identity joins the bootstrap set only once it
 		const network = bareNetwork(true);
 		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
 		expect((network as any).bootstrapPeerIDs.has(PEER_ID)).toBe(true);
+	});
+});
+
+/**
+ * The configured-address probe backoff is keyed by address, so it has to be released
+ * with the address. Left behind it grows across every configuration change, and a
+ * re-added address inherits the deleted entry's failCount and its multi-minute
+ * nextAttempt — the user deletes an entry, adds it back, and nothing dials it.
+ */
+describe('configured bootstrap removal releases the address probe backoff', () => {
+	const ADDR = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+	const OTHER = `/ip4/203.0.113.10/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork() {
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).configuredBootstrapPeerIDs = new Set<string>([PEER_ID]);
+		(network as any).configuredBootstrapAddresses = new Set<string>([normalizeMultiaddrForCompare(ADDR), normalizeMultiaddrForCompare(OTHER)]);
+		(network as any).bootstrapPeerIDs = new Set<string>([PEER_ID]);
+		(network as any).bootstrapMultiaddrs = [multiaddr(ADDR), multiaddr(OTHER)];
+		(network as any).addressProbeBackoff = new Map([
+			[normalizeMultiaddrForCompare(ADDR), { nextAttempt: Date.now() + 300_000, failCount: 5 }],
+			[normalizeMultiaddrForCompare(OTHER), { nextAttempt: Date.now() + 300_000, failCount: 5 }],
+		]);
+		return network;
+	}
+
+	it('forgets the backoff of an address removed from the configuration', () => {
+		const network = bareNetwork();
+		network.pruneBootstrapAddresses([ADDR]);
+		expect((network as any).addressProbeBackoff.has(normalizeMultiaddrForCompare(ADDR))).toBe(false);
+	});
+
+	it('keeps the backoff of an address that stayed', () => {
+		const network = bareNetwork();
+		network.pruneBootstrapAddresses([ADDR]);
+		expect((network as any).addressProbeBackoff.has(normalizeMultiaddrForCompare(OTHER))).toBe(true);
+	});
+
+	it('forgets the backoff of every configured address of a removed peer', () => {
+		const network = bareNetwork();
+		network.pruneConfiguredBootstrapPeer(PEER_ID);
+		expect([...(network as any).addressProbeBackoff.keys()]).toEqual([]);
+	});
+
+	/** A gossip-learned address of the same peer is not the user's to lose — nor its pacing. */
+	it('leaves a discovered address of the removed peer alone', () => {
+		const network = bareNetwork();
+		(network as any).configuredBootstrapAddresses.delete(normalizeMultiaddrForCompare(OTHER));
+		network.pruneConfiguredBootstrapPeer(PEER_ID);
+		expect((network as any).addressProbeBackoff.has(normalizeMultiaddrForCompare(OTHER))).toBe(true);
+	});
+
+	/** The user deletes an entry and puts it straight back: it must be dialed at once. */
+	it('lets a re-added address be probed immediately', () => {
+		const network = bareNetwork();
+		network.pruneBootstrapAddresses([ADDR]);
+		expect((network as any).isAddressProbeDue(normalizeMultiaddrForCompare(ADDR), Date.now())).toBe(true);
 	});
 });
