@@ -51,6 +51,13 @@ export class Networks {
 	 */
 	private readonly announcedJoined = new Map<string, boolean>();
 
+	/**
+	 * True from the synchronous start of {@link stopAllNetworks} until the next
+	 * {@link startEnabledNetworks}. Startup joins consult it because the node's own
+	 * `isRunning()` cannot answer for the window before `stop()` has taken its mutex.
+	 */
+	private shuttingDown = false;
+
 	// Callback for peer count changes
 	private _onPeerCountChange: ((counts: { networkID: string; count: number }[]) => void) | null = null;
 	// Callback for bootstrap status changes
@@ -127,7 +134,7 @@ export class Networks {
 	 * The node always starts, even if no lishnets are enabled.
 	 */
 	async startEnabledNetworks(): Promise<void> {
-		const enabled = this.getEnabled();
+		this.shuttingDown = false;
 
 		// Start the node with no preset bootstrap list — bootstrap dials happen
 		// per-network below via addBootstrapPeers so per-network status tracking
@@ -135,21 +142,35 @@ export class Networks {
 		// (Previous behaviour used a flat preset list that bypassed our tracking.)
 		await this.network.start([]);
 
-		// Subscribe to topics for all enabled lishnets and dial their bootstrap peers
-		// with networkID context so bootstrap status counters get populated.
-		for (const net of enabled) {
-			this.network.subscribeTopic(net.networkID);
-			this.joinedNetworks.add(net.networkID);
-			// Startup itself announces nothing, but a later disable has to have a joined
-			// state to change away from — otherwise its leave looks like a no-op.
-			this.announcedJoined.set(net.networkID, true);
-			if (net.bootstrapPeers.length > 0) {
-				// Fire-and-forget so a slow / unreachable network does not delay startup of the others.
-				this.network.addBootstrapPeers(net.bootstrapPeers, net.networkID, 'configured').catch(err => {
-					console.error(`[Networks] addBootstrapPeers for ${net.networkID} failed:`, err?.message ?? err);
-				});
-			}
-			console.log(`✓ Joined lishnet: ${net.name} (${net.networkID})`);
+		// The enabled list is read AFTER the start, not before it. Reading it first meant
+		// startup worked from a snapshot taken before a long await: an API disable or
+		// delete arriving during the start reconciled against a runtime that had joined
+		// nothing yet — so it had nothing to leave — and then this loop subscribed the
+		// network anyway, from a copy of a row that no longer said what it used to.
+		for (const net of this.getEnabled()) {
+			await this.operationLock(net.networkID).runExclusive(() => {
+				// Re-read under the lock as well: an earlier network's turn is another await.
+				const row = this.get(net.networkID);
+				if (row?.enabled !== true) return;
+				// A stop between the start above and this subscribe leaves the call a no-op on
+				// a dead node, but `joinedNetworks` would still claim membership — the wrapper
+				// reporting a joined network whose node is not running and whose topic is not
+				// subscribed. Both conditions matter: `shuttingDown` is set synchronously, so
+				// it also covers the window before stop() has reached its own mutex.
+				if (this.shuttingDown || !this.network.isRunning()) return;
+				this.network.subscribeTopic(row.networkID);
+				this.joinedNetworks.add(row.networkID);
+				// Startup itself announces nothing, but a later disable has to have a joined
+				// state to change away from — otherwise its leave looks like a no-op.
+				this.announcedJoined.set(row.networkID, true);
+				if (row.bootstrapPeers.length > 0) {
+					// Fire-and-forget so a slow / unreachable network does not delay startup of the others.
+					this.network.addBootstrapPeers(row.bootstrapPeers, row.networkID, 'configured').catch(err => {
+						console.error(`[Networks] addBootstrapPeers for ${row.networkID} failed:`, err?.message ?? err);
+					});
+				}
+				console.log(`✓ Joined lishnet: ${row.name} (${row.networkID})`);
+			});
 		}
 	}
 
@@ -444,6 +465,10 @@ export class Networks {
 	 * Stop all networks and the shared node.
 	 */
 	async stopAllNetworks(): Promise<void> {
+		// Set before anything is awaited — `Network.stop()` does not reach its own mutex
+		// until the next microtask, so `isRunning()` alone still reads true for a moment
+		// and a startup loop in that moment would subscribe onto a node about to die.
+		this.shuttingDown = true;
 		this.joinedNetworks.clear();
 		await this.network.stop();
 		console.log('✓ All lishnets left and node stopped');
