@@ -721,9 +721,14 @@ export function extractWordsChecked(input: string, unquote: boolean, separators:
 }
 
 /**
- * The same words, for a caller that has nothing to do with a malformed value but read what
- * there was — which is also what timedated does with its provider list: it logs the syntax
- * error, keeps the entries it got to, and does not look at the files instead.
+ * The same words, for the callers that have nothing to do with a malformed value but read
+ * what there was.
+ *
+ * That is upstream's behaviour for the provider list: timedated logs the syntax error, keeps
+ * the entries it got to, and does not fall back to the list files. For the `Names` of a unit
+ * it is simply the safe direction — an alias lost to a malformed value leaves that unit ON
+ * the competitor list, which refuses a write rather than permitting one. Anywhere the answer
+ * would be trusted instead, use {@link extractWordsChecked} and refuse.
  */
 export function extractWords(input: string, unquote: boolean, separators: string = WHITESPACE): string[] {
 	return extractWordsChecked(input, unquote, separators).words;
