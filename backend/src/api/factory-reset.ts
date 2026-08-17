@@ -37,6 +37,7 @@ const REQUIRES_PREPARE: ReadonlySet<FactoryResetCategory> = new Set<FactoryReset
 
 const PREPARE_FAILED_SKIP = 'skipped: transfers and the node could not be stopped safely';
 const RESTART_SKIPPED = 'skipped: nothing was stopped, so nothing may be started';
+const PREPARE_MISSING = 'no prepare step was supplied, so nothing was stopped';
 
 function errMsg(e: unknown): string {
 	return e instanceof Error ? e.message : String(e);
@@ -53,6 +54,14 @@ function errMsg(e: unknown): string {
  * It used to be merely logged, which let the reset proceed to wipe and then bring up a
  * second node over whatever the first one still owned.
  *
+ * A caller that supplies no `prepare` at all gets the same treatment, because it has proved
+ * exactly as little: `prepared` starts false, and selecting any {@link REQUIRES_PREPARE}
+ * category without a barrier records a failed prepare phase and skips that category. The
+ * absence of a barrier used to count as a passed one, so this function would happily wipe
+ * downloads, networks, peers and the identity out from under a running node and report
+ * `success: true`. `prepare` stays optional only so a settings-only reset — which touches
+ * neither the node nor the transfers — need not stop anything.
+ *
  * Categories that DO run are independent of each other: a failure in one is recorded and
  * never stops the rest. Returns one {@link FactoryResetResult} per selected category, one
  * {@link FactoryResetPhaseResult} per phase, and an overall `success` that is true only
@@ -60,17 +69,20 @@ function errMsg(e: unknown): string {
  */
 export async function runFactoryReset(ops: FactoryResetOps): Promise<FactoryResetResponse> {
 	const phases: FactoryResetPhaseResult[] = [];
-	let prepared = true;
+	let prepared = false;
 	if (ops.prepare) {
 		try {
 			await ops.prepare();
+			prepared = true;
 			phases.push({ phase: 'prepare', ok: true });
 		} catch (e) {
 			const detail = errMsg(e);
 			console.error(`[factoryReset] prepare failed — destructive categories skipped: ${detail}`);
 			phases.push({ phase: 'prepare', ok: false, detail });
-			prepared = false;
 		}
+	} else if (CATEGORY_ORDER.some(category => ops[category] && REQUIRES_PREPARE.has(category))) {
+		console.error(`[factoryReset] ${PREPARE_MISSING} — destructive categories skipped`);
+		phases.push({ phase: 'prepare', ok: false, detail: PREPARE_MISSING });
 	}
 	const results: FactoryResetResult[] = [];
 	for (const category of CATEGORY_ORDER) {
@@ -91,8 +103,9 @@ export async function runFactoryReset(ops: FactoryResetOps): Promise<FactoryRese
 	}
 	if (ops.restart) {
 		if (!prepared) {
-			// The node was never proved down. Starting it again would put a second one over
-			// the identity, port and datastore the first may still hold.
+			// The node was never proved down — it was never even stopped, if no `prepare` was
+			// given. Starting it again would put a second one over the identity, port and
+			// datastore the first may still hold.
 			phases.push({ phase: 'restart', ok: false, detail: RESTART_SKIPPED });
 		} else {
 			try {

@@ -5,6 +5,7 @@ describe('runFactoryReset', () => {
 	it('runs EVERY selected category even when some fail — no category is skipped because a previous one threw', async () => {
 		const ran: string[] = [];
 		const res = await runFactoryReset({
+			prepare: (): void => {},
 			downloads: (): void => {
 				ran.push('downloads');
 			},
@@ -33,9 +34,51 @@ describe('runFactoryReset', () => {
 	});
 
 	it('only reports selected categories', async () => {
-		const res = await runFactoryReset({ downloads: (): void => {} });
+		const res = await runFactoryReset({ prepare: (): void => {}, downloads: (): void => {} });
 		expect(res.results).toEqual([{ category: 'downloads', ok: true }]);
 		expect(res.success).toBe(true);
+	});
+
+	/**
+	 * `prepare` is a barrier, so its ABSENCE proves exactly as little as its failure. Treating
+	 * a missing barrier as a passed one let this wipe the downloads, the networks, the
+	 * peerstore and the identity out from under a running node and report success.
+	 */
+	it('a destructive category selected without any prepare is skipped, not run', async () => {
+		const ran: string[] = [];
+		const res = await runFactoryReset({
+			downloads: (): void => {
+				ran.push('downloads');
+			},
+			networks: (): void => {
+				ran.push('networks');
+			},
+			peers: (): void => {
+				ran.push('peers');
+			},
+			identity: (): void => {
+				ran.push('identity');
+			},
+			settings: (): void => {
+				ran.push('settings');
+			},
+			restart: (): void => {
+				ran.push('restart');
+			},
+		});
+
+		expect(ran).toEqual(['settings']);
+		expect(res.success).toBe(false);
+		expect(res.results.filter(r => !r.ok).map(r => r.category)).toEqual(['downloads', 'networks', 'peers', 'identity']);
+		expect(res.phases[0]).toEqual({ phase: 'prepare', ok: false, detail: 'no prepare step was supplied, so nothing was stopped' });
+		expect(res.phases[1]?.ok).toBe(false);
+	});
+
+	it('a settings-only reset needs no barrier and reports no prepare phase', async () => {
+		const res = await runFactoryReset({ settings: (): void => {} });
+		expect(res.success).toBe(true);
+		expect(res.phases).toEqual([]);
+		expect(res.results).toEqual([{ category: 'settings', ok: true }]);
 	});
 
 	it('runs prepare before the wipes and restart after, reporting both as phases', async () => {
@@ -112,7 +155,7 @@ describe('runFactoryReset', () => {
 	});
 
 	it('reports success=true when every selected category passes', async () => {
-		const res = await runFactoryReset({ settings: (): void => {}, identity: (): void => {}, downloads: (): void => {}, networks: (): void => {} });
+		const res = await runFactoryReset({ prepare: (): void => {}, settings: (): void => {}, identity: (): void => {}, downloads: (): void => {}, networks: (): void => {} });
 		expect(res.success).toBe(true);
 		expect(res.results.map(r => r.category)).toEqual(['downloads', 'networks', 'identity', 'settings']);
 		expect(res.results.every(r => r.ok)).toBe(true);
