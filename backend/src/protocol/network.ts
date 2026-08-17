@@ -773,6 +773,19 @@ export class Network {
 				await this.node!.dial(evt.detail.multiaddrs);
 				// A dial that settles after stop() belongs to a node this run no longer owns.
 				if (epoch !== this.runEpoch) return;
+				// The suppression check at entry answered for the moment the event arrived,
+				// and a dial takes seconds. leave-network can land inside that window: its
+				// hangUp finds no connection yet, finishes, and this dial then completes into
+				// a connection nothing else will close. Whoever notices last closes it.
+				if (this.isRedialSuppressed(peerID) && !this.isPeerNeededByJoinedNetwork(peerID)) {
+					trace(`[NET] discovery dial landed after leave, hanging up: ${peerID.slice(0, 16)}`);
+					try {
+						await this.node!.hangUp(evt.detail.id);
+					} catch (err: any) {
+						trace(`[NET] hangUp of late discovery dial failed: ${err?.message ?? err}`);
+					}
+					return;
+				}
 				await tagAsFleetPeer();
 				trace(`[NET] Dialed discovered peer ${peerID.slice(0, 16)}`);
 			} catch (err: any) {
@@ -2190,6 +2203,13 @@ export class Network {
 			trace(`[NET] disconnectPeer: invalid peerID ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 			return;
 		}
+		// Suppression is claimed BEFORE the first await, not after the hangUp. The two
+		// awaits below yield, and a `peer:discovery` event landing in that window used to
+		// read "not suppressed", start a dial, and have it complete after the hangUp had
+		// already searched for connections and found none — leaving the peer connected
+		// with the leave apparently finished. Recording the intent up front makes the
+		// window harmless: the dial that lands late sees the suppression and closes itself.
+		this.addRedialSuppression(networkID, peerID);
 		// Remove the keep-alive tags FIRST so the imminent hangUp does not race
 		// the ReconnectQueue back into a re-dial. Both tags matter: the custom
 		// 'keep-alive-fleet' tag (peer-announce intake) and the native KEEP_ALIVE
@@ -2211,10 +2231,6 @@ export class Network {
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: hangUp failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
-		// Keep redial maintenance from re-dialing this just-left peer on the next
-		// status tick. Keyed by the left lishnet so rejoin lifts exactly its peers;
-		// cleared automatically once it reconnects legitimately.
-		this.addRedialSuppression(networkID, peerID);
 		// Forget the persisted peerStore entry so the disconnect survives a restart —
 		// suppression is in-memory only, but the peerStore is on disk.
 		await this.purgeStalePeer(peerID, 'left-network exclusive peer');

@@ -118,3 +118,119 @@ describe('peer:discovery — keep-alive tagging', () => {
 		expect(dialled).toEqual([]);
 	});
 });
+
+/**
+ * leave-network and discovery racing each other. `disconnectPeer` yields twice before it
+ * finishes, and a discovery event landing in that window used to read "not suppressed",
+ * start a dial, and complete it after the hangUp had already found nothing to close —
+ * leaving the peer connected with the leave apparently done.
+ */
+describe('peer:discovery — a dial that lands after leave-network', () => {
+	function racingNetwork(resumeDialInsideLeave = false) {
+		const hungUp: string[] = [];
+		const tagged: string[] = [];
+		const handlers = new Map<string, Handler>();
+		let releaseDial: () => void = () => {};
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).listeners = [];
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).dcutrPeers = new Set<string>();
+		(network as any).peerDisconnectHandlers = new Set();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).recentDisconnects = [];
+		(network as any).lastMeshChange = new Map();
+		(network as any).pubsub = { getTopics: () => [] };
+		(network as any).peerAnnounce = { getRecentMembers: () => [] };
+		(network as any).node = {
+			peerId: { toString: () => 'selfID' },
+			addEventListener(event: string, handler: Handler) {
+				handlers.set(event, handler);
+			},
+			getConnections: () => [],
+			getPeers: () => [],
+			async dial(): Promise<unknown> {
+				await new Promise<void>(resolve => {
+					releaseDial = resolve;
+				});
+				return {};
+			},
+			async hangUp(pid: { toString(): string }): Promise<void> {
+				hungUp.push(pid.toString());
+			},
+			peerStore: {
+				async merge(_pid: unknown, patch: { tags?: Record<string, unknown> }): Promise<void> {
+					// Only STAMPS count — leave-network merges the same keys with `undefined`
+					// to remove them, and that is the opposite of what these tests watch for.
+					const removing = Object.values(patch.tags ?? {}).some(value => value === undefined);
+					for (const [key, value] of Object.entries(patch.tags ?? {})) if (value !== undefined) tagged.push(key);
+					// This merge is disconnectPeer's first await. Letting the parked discovery
+					// dial finish HERE is the actual race: the handler resumes before hangUp
+					// has run, which is the window the ordering fix has to cover.
+					if (removing && resumeDialInsideLeave) {
+						releaseDial();
+						await Bun.sleep(0);
+					}
+				},
+				async delete(): Promise<void> {},
+			},
+		};
+		(network as any).setupEventListeners();
+		const fire = (): Promise<void> => handlers.get('peer:discovery')!({ detail: { id: { toString: () => PEER_ID }, multiaddrs: [ADDR] } }) as Promise<void>;
+		return { network, hungUp, tagged, fire, releaseDial: (): void => releaseDial() };
+	}
+
+	it('claims the suppression before disconnectPeer yields', async () => {
+		const { network } = racingNetwork();
+		const leaving = (network as any).disconnectPeer(PEER_ID, 'net-a');
+		expect((network as any).redialSuppressedByNet.get('net-a')?.has(PEER_ID)).toBe(true);
+		await leaving;
+	});
+
+	it('closes a discovery dial that completed after the peer was left', async () => {
+		const { network, hungUp, tagged, fire, releaseDial } = racingNetwork();
+		const discovering = fire(); // parks inside dial()
+		await Bun.sleep(1);
+		await (network as any).disconnectPeer(PEER_ID, 'net-a');
+		hungUp.length = 0; // the leave's own hangUp found nothing; watch what happens next
+		releaseDial();
+		await discovering;
+
+		expect(hungUp).toEqual([PEER_ID]);
+		expect(tagged).toEqual([]); // and never re-armed the re-dial instruction
+	});
+
+	it('keeps a late dial whose peer another joined network still needs', async () => {
+		const { network, hungUp, fire, releaseDial } = racingNetwork();
+		const discovering = fire();
+		await Bun.sleep(1);
+		await (network as any).disconnectPeer(PEER_ID, 'net-a');
+		(network as any).configuredBootstrapPeerIDs.add(PEER_ID); // infrastructure elsewhere
+		hungUp.length = 0;
+		releaseDial();
+		await discovering;
+
+		expect(hungUp).toEqual([]);
+	});
+
+	/**
+	 * The interleaving itself: the discovery dial completes DURING `disconnectPeer`, after
+	 * the tag removal and before the hangUp. Nothing later in the leave will close that
+	 * connection, so the handler has to see the suppression already recorded.
+	 */
+	it('closes a dial that completes inside the leave, before its hangUp runs', async () => {
+		const { network, hungUp, tagged, fire } = racingNetwork(true);
+		const discovering = fire();
+		await Bun.sleep(1);
+
+		await (network as any).disconnectPeer(PEER_ID, 'net-a');
+		await discovering;
+
+		expect(tagged).toEqual([]);
+		expect(hungUp).toContain(PEER_ID);
+	});
+});
