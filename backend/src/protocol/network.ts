@@ -2479,11 +2479,11 @@ export class Network {
 	 */
 	pruneBootstrapAddresses(addresses: string[], networkID: string): void {
 		if (addresses.length === 0) return;
-		for (const address of addresses) {
-			const key = normalizeMultiaddrForCompare(address);
-			this.dropConfiguredOwnership(key, networkID);
-			this.dropConfiguredOwnership(key, STARTUP_BOOTSTRAP_OWNER);
-		}
+		// Only THIS network's claim. STARTUP_BOOTSTRAP_OWNER is a separate owner — the
+		// app-level bootstrap list read at startup, which no lishnet edit speaks for.
+		// Releasing it here let a user removing an address from one lishnet silently
+		// delete the same address from the application's own bootstrap configuration.
+		for (const address of addresses) this.dropConfiguredOwnership(normalizeMultiaddrForCompare(address), networkID);
 	}
 
 	/**
@@ -2505,10 +2505,9 @@ export class Network {
 		// configured, and that registry is what zero-connection recovery walks — leaving
 		// them means a bootstrap the user has just deleted keeps being dialed whenever
 		// the node runs out of connections, which is exactly the churn this work removes.
-		for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) {
-			this.dropConfiguredOwnership(key, networkID);
-			this.dropConfiguredOwnership(key, STARTUP_BOOTSTRAP_OWNER);
-		}
+		// This network's claim only — the startup list is an owner of its own, see
+		// {@link pruneBootstrapAddresses}.
+		for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) this.dropConfiguredOwnership(key, networkID);
 		// The dedup set has to let go as well, or a later re-add would be treated as
 		// already known and the peer could never come back. Only once nothing of it is
 		// left in the registry: a gossip-learned address that earned its place by

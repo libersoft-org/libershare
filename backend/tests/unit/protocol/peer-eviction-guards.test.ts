@@ -1660,3 +1660,44 @@ describe('runRedialMaintenance — cleanup landing inside the keep-alive write',
 		expect(deleted).toEqual([]);
 	});
 });
+
+/**
+ * The application's own bootstrap list, read from settings at startup, is an owner in
+ * the registry like any lishnet — and no lishnet edit speaks for it. Releasing its
+ * claim alongside the editing network's deleted the user's application-level bootstrap
+ * configuration as a side effect of an unrelated change.
+ */
+describe('bootstrap ownership belongs to the network that claimed it', () => {
+	const SHARED = `/ip4/203.0.113.51/tcp/9090/p2p/${PEER_ID}`;
+	const CANON = normalizeMultiaddrForCompare(SHARED);
+
+	function bareNetwork() {
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
+		// Claimed by the startup list AND by one lishnet — the overlap a user creates by
+		// listing the same bootstrap in both places.
+		installBootstrapRegistry(network, [{ address: SHARED, configuredBy: ['@startup', 'net-a'], discovered: false }]);
+		return network;
+	}
+
+	it('leaves the startup claim when a lishnet drops the address', () => {
+		const network = bareNetwork();
+		network.pruneBootstrapAddresses([SHARED], 'net-a');
+		expect(registryAddresses(network)).toEqual([CANON]);
+		expect([...((network as any).bootstrapByAddress.get(CANON) as IBootstrapEntry).configuredBy]).toEqual(['@startup']);
+	});
+
+	it('leaves the startup claim when a lishnet drops the whole peer', () => {
+		const network = bareNetwork();
+		network.pruneConfiguredBootstrapPeer(PEER_ID, 'net-a');
+		expect(registryAddresses(network)).toEqual([CANON]);
+	});
+
+	it('forgets the address once its last owner is gone', () => {
+		const network = bareNetwork();
+		network.pruneBootstrapAddresses([SHARED], 'net-a');
+		network.pruneBootstrapAddresses([SHARED], '@startup');
+		expect(registryAddresses(network)).toEqual([]);
+	});
+});
