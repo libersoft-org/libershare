@@ -589,6 +589,24 @@ function ignoringMissing(statement: string): string {
 	return `try { ${statement} } catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw } }`;
 }
 
+/** The cmdlet that lists one interface's IPv4 addresses, minus the store to read. */
+const ADDRESS_QUERY = 'Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4';
+/** The same for its IPv4 default routes. */
+const ROUTE_QUERY = "Get-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0'";
+/** Everything a restored address has to carry, plus the origins the guard reads. */
+const ADDRESS_PROPERTIES = 'IPAddress, PrefixLength, PrefixOrigin, SuffixOrigin, SkipAsSource, ValidLifetime, PreferredLifetime';
+/** The same for a route. */
+const ROUTE_PROPERTIES = 'NextHop, RouteMetric, Protocol, Publish';
+
+/**
+ * Read one policy store's worth of objects into a variable, leaving it empty when
+ * the interface simply has none — and only then. See {@link windowsSnapshotSteps}
+ * for why a failed reading may not fall through as an empty list.
+ */
+function perStoreSnapshot(variable: string, store: string, query: string, properties: string): string[] {
+	return [`${variable} = @()`, ignoringMissing(`${variable} = @(${query} -PolicyStore ${store} -ErrorAction Stop | Select-Object ${properties})`)];
+}
+
 /**
  * Capture everything the apply below is about to overwrite.
  *
@@ -622,11 +640,23 @@ function ignoringMissing(statement: string): string {
  * cannot be written back at all — Windows decides them — so they are what
  * {@link WINDOWS_ORIGIN_GUARD} refuses on rather than what the restore replays.
  *
- * The one property still not round-tripped is store membership. Measured on
- * Windows 11, `New-NetIPAddress` writes to the active AND the persistent store
- * unless told otherwise, so an address that was persistent comes back persistent;
- * an address that had been active-only comes back persistent too, which is the
- * harmless direction of that difference.
+ * Both policy stores are read, because they are genuinely different sets and the
+ * apply touches both. `Get-NetIPAddress` and `Get-NetRoute` answer for the ACTIVE
+ * store unless told otherwise, while `New-NetIPAddress` and `New-NetRoute` write
+ * to the active AND the persistent store unless told otherwise. Reading one store
+ * and writing two is what made a rejected configuration outlive its own rollback:
+ * the new address went into both stores, the restore removed only the active copy,
+ * and the next boot loaded the rejected address back out of the persistent one.
+ * Measured on Windows 11, where the persistent store legitimately holds addresses
+ * the active store does not — a manual address on an adapter that is not currently
+ * present is persistent-only, and every DHCP address is active-only.
+ *
+ * The two readings are merged into `$oldAddresses` and `$oldRoutes` — the union,
+ * deduplicated on the identity the guards compare (the address, the next hop) and
+ * keeping the active copy of anything held twice, because that is the one carrying
+ * the origins. That union is what the guards count and what the comparison reads;
+ * the per-store arrays are what the restore replays, each into the store it came
+ * from.
  *
  * The resolver snapshot deliberately does NOT use `Get-DnsClientServerAddress`.
  * That cmdlet reports the EFFECTIVE list, which on a DHCP interface is the one
@@ -641,10 +671,12 @@ function ignoringMissing(statement: string): string {
 function windowsSnapshotSteps(): string[] {
 	return [
 		'$oldDhcp = (Get-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop).Dhcp',
-		'$oldAddresses = @()',
-		ignoringMissing('$oldAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop | Select-Object IPAddress, PrefixLength, PrefixOrigin, SuffixOrigin, SkipAsSource, ValidLifetime, PreferredLifetime)'),
-		'$oldRoutes = @()',
-		ignoringMissing("$oldRoutes = @(Get-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop | Select-Object NextHop, RouteMetric, Protocol, Publish)"),
+		...perStoreSnapshot('$oldActiveAddresses', 'ActiveStore', ADDRESS_QUERY, ADDRESS_PROPERTIES),
+		...perStoreSnapshot('$oldPersistentAddresses', 'PersistentStore', ADDRESS_QUERY, ADDRESS_PROPERTIES),
+		'$oldAddresses = @($oldActiveAddresses + @($oldPersistentAddresses | Where-Object { $oldActiveAddresses.IPAddress -notcontains $_.IPAddress }))',
+		...perStoreSnapshot('$oldActiveRoutes', 'ActiveStore', ROUTE_QUERY, ROUTE_PROPERTIES),
+		...perStoreSnapshot('$oldPersistentRoutes', 'PersistentStore', ROUTE_QUERY, ROUTE_PROPERTIES),
+		'$oldRoutes = @($oldActiveRoutes + @($oldPersistentRoutes | Where-Object { $oldActiveRoutes.NextHop -notcontains $_.NextHop }))',
 		// Empty for an interface on automatic DNS, and only then. Windows writes the
 		// value comma-separated but has historically also used spaces, so both split.
 		//
@@ -672,10 +704,47 @@ function windowsSnapshotSteps(): string[] {
  * `-ResetServerAddresses`. Writing an effective list back unconditionally would
  * convert a DHCP interface's resolvers into a static override it never had — see
  * {@link windowsSnapshotSteps}.
+ *
+ * Every object goes back into the store it was found in. An object held in BOTH
+ * stores is re-created with no `-PolicyStore` at all, which is how it came to be
+ * in both; one held in only one store names that store, so an active-only object
+ * is not silently promoted to a persistent one that outlives the next boot.
  */
 function windowsRestoreSteps(): string[] {
-	const restoreStatic = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', 'foreach ($a in $oldAddresses) { New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $a.IPAddress -PrefixLength $a.PrefixLength -SkipAsSource $a.SkipAsSource -ValidLifetime $a.ValidLifetime -PreferredLifetime $a.PreferredLifetime -ErrorAction Stop | Out-Null }', "foreach ($r in $oldRoutes) { New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop $r.NextHop -RouteMetric $r.RouteMetric -Protocol $r.Protocol -Publish $r.Publish -Confirm:$false -ErrorAction Stop | Out-Null }"].join('; ');
-	return [tolerateMissing('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false'), tolerateMissing("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false"), `if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled } else { ${restoreStatic} }`, 'if ($oldDnsManual.Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $oldDnsManual } else { Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses }'];
+	const restoreStatic = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', ...restorePerStore('$a', '$oldActiveAddresses', '$oldPersistentAddresses', 'IPAddress', NEW_ADDRESS), ...restorePerStore('$r', '$oldActiveRoutes', '$oldPersistentRoutes', 'NextHop', NEW_ROUTE)].join('; ');
+	return [...windowsRemovalSteps(), `if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled } else { ${restoreStatic} }`, WINDOWS_RESTORE_DNS];
+}
+
+/** Re-create an address out of the snapshot, minus the store it belongs in. */
+const NEW_ADDRESS = 'New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $a.IPAddress -PrefixLength $a.PrefixLength -SkipAsSource $a.SkipAsSource -ValidLifetime $a.ValidLifetime -PreferredLifetime $a.PreferredLifetime';
+/** The same for a default route. */
+const NEW_ROUTE = "New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop $r.NextHop -RouteMetric $r.RouteMetric -Protocol $r.Protocol -Publish $r.Publish -Confirm:$false";
+
+/** Put the resolvers back — a manual override as itself, anything else as automatic. */
+const WINDOWS_RESTORE_DNS = 'if ($oldDnsManual.Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $oldDnsManual } else { Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses }';
+
+/**
+ * Re-create one kind of snapshotted object, each into the store it came from.
+ *
+ * `identity` is the property the two stores are matched on — the address itself,
+ * or a route's next hop, both of which are unique per interface within one store.
+ */
+function restorePerStore(item: string, active: string, persistent: string, identity: string, create: string): string[] {
+	return [`foreach (${item} in ${active}) { if (${persistent}.${identity} -contains ${item}.${identity}) { ${create} -ErrorAction Stop | Out-Null } else { ${create} -PolicyStore ActiveStore -ErrorAction Stop | Out-Null } }`, `foreach (${item} in ${persistent}) { if (${active}.${identity} -notcontains ${item}.${identity}) { ${create} -PolicyStore PersistentStore -ErrorAction Stop | Out-Null } }`];
+}
+
+/**
+ * Clear the interface's IPv4 addresses and default routes, from BOTH stores.
+ *
+ * Removing from the active store alone left the persistent copy behind, so an
+ * apply that looked correct the moment it ran came back at the next boot as two
+ * addresses on one interface — which {@link WINDOWS_ALIAS_GUARD} then refuses to
+ * edit at all. The removals are shared by the apply and by its rollback, because
+ * the rollback has to clear whatever the failed attempt managed to write before it
+ * can put the snapshot back.
+ */
+function windowsRemovalSteps(): string[] {
+	return [tolerateMissing('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -PolicyStore ActiveStore -Confirm:$false'), tolerateMissing('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -PolicyStore PersistentStore -Confirm:$false'), tolerateMissing("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -PolicyStore ActiveStore -Confirm:$false"), tolerateMissing("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -PolicyStore PersistentStore -Confirm:$false")];
 }
 
 /**
@@ -859,7 +928,7 @@ export function windowsAddressStateWait(address: string): string {
  */
 export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): string {
 	const preamble = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', `$adapter = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq '${guid}' }`, 'if (-not $adapter) { throw "interface not found" }', '$i = $adapter.ifIndex'];
-	const removals = [tolerateMissing('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false'), tolerateMissing("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false")];
+	const removals = windowsRemovalSteps();
 	const mutation: string[] = [];
 	if (config.mode === 'dhcp') {
 		mutation.push(...removals, 'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses');

@@ -567,7 +567,7 @@ describe('windowsApplyIPv4Command', () => {
 		expect(snapshot).not.toContain('SilentlyContinue');
 		// Only "this adapter simply has none" is tolerated, and it aborts otherwise —
 		// the same one category the removals treat as an absence.
-		for (const variable of ['$oldAddresses', '$oldRoutes']) {
+		for (const variable of ['$oldActiveAddresses', '$oldPersistentAddresses', '$oldActiveRoutes', '$oldPersistentRoutes']) {
 			expect(snapshot).toContain(`try { ${variable} = @(`);
 			expect(snapshot).toContain(`${variable} = @();`);
 		}
@@ -615,6 +615,49 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command.indexOf('several IPv4 default routes')).toBeLessThan(command.indexOf('Remove-NetIPAddress'));
 	});
 
+	// `Get-NetIPAddress` and `Get-NetRoute` answer for the ACTIVE store, while
+	// `New-NetIPAddress` and `New-NetRoute` write to the active AND the persistent
+	// one. Reading a single store and writing two is how a rejected configuration
+	// survived its own rollback: the new address went into both stores, the restore
+	// deleted only the active copy, and the next boot loaded the rejected address
+	// back out of the persistent one.
+	it('snapshots, clears and restores both policy stores rather than only the active one', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
+		for (const store of ['ActiveStore', 'PersistentStore']) {
+			expect(command).toContain(`Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -PolicyStore ${store} -ErrorAction Stop`);
+			expect(command).toContain(`Get-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -PolicyStore ${store} -ErrorAction Stop`);
+		}
+		// Both stores are cleared before anything is written, so the new object cannot
+		// land beside a persistent copy of the one it replaces.
+		for (const store of ['ActiveStore', 'PersistentStore']) {
+			expect(command).toContain(`Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -PolicyStore ${store} -Confirm:$false`);
+			expect(command).toContain(`Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -PolicyStore ${store} -Confirm:$false`);
+		}
+		// The guards and the comparison read the UNION of the two stores, deduplicated
+		// on the identity they compare — an interface holding one address in both
+		// stores is not two addresses.
+		expect(command).toContain('$oldAddresses = @($oldActiveAddresses + @($oldPersistentAddresses | Where-Object { $oldActiveAddresses.IPAddress -notcontains $_.IPAddress }))');
+		expect(command).toContain('$oldRoutes = @($oldActiveRoutes + @($oldPersistentRoutes | Where-Object { $oldActiveRoutes.NextHop -notcontains $_.NextHop }))');
+	});
+
+	// An object held in both stores is re-created with no -PolicyStore, which is how
+	// it came to be in both. One held in only one store names that store, so an
+	// active-only address is not promoted to a persistent one that outlives the next
+	// boot — the very asymmetry that made the rollback dishonest.
+	it('puts every restored object back into the store it was found in', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
+		expect(command).toContain('foreach ($a in $oldActiveAddresses) { if ($oldPersistentAddresses.IPAddress -contains $a.IPAddress) {');
+		expect(command).toContain('foreach ($a in $oldPersistentAddresses) { if ($oldActiveAddresses.IPAddress -notcontains $a.IPAddress) {');
+		expect(command).toContain('foreach ($r in $oldActiveRoutes) { if ($oldPersistentRoutes.NextHop -contains $r.NextHop) {');
+		expect(command).toContain('foreach ($r in $oldPersistentRoutes) { if ($oldActiveRoutes.NextHop -notcontains $r.NextHop) {');
+		// The active-only branches say so; the both-stores branches say nothing, which
+		// is what writes both.
+		expect(command).toContain('-PreferredLifetime $a.PreferredLifetime -PolicyStore ActiveStore -ErrorAction Stop');
+		expect(command).toContain('-PreferredLifetime $a.PreferredLifetime -PolicyStore PersistentStore -ErrorAction Stop');
+		expect(command).toContain('-Publish $r.Publish -Confirm:$false -PolicyStore ActiveStore -ErrorAction Stop');
+		expect(command).toContain('-Publish $r.Publish -Confirm:$false -PolicyStore PersistentStore -ErrorAction Stop');
+	});
+
 	it('keeps the route metrics in the snapshot, not just the next hops', () => {
 		// A hand-set metric is what ranks competing default routes; restoring the
 		// route without it silently re-ranks every route on a multi-homed host.
@@ -651,8 +694,8 @@ describe('windowsApplyIPv4Command', () => {
 		// The mutation runs inside a guard, and the guard restores before rethrowing.
 		expect(command).toContain('catch { $applyError = $_;');
 		expect(command).toContain('throw $applyError');
-		expect(command).toContain('foreach ($a in $oldAddresses)');
-		expect(command).toContain('foreach ($r in $oldRoutes)');
+		expect(command).toContain('foreach ($a in $oldActiveAddresses)');
+		expect(command).toContain('foreach ($r in $oldActiveRoutes)');
 		expect(command).toContain('$oldDnsManual.Count -gt 0');
 		// The mutation must be inside the guard, not before it.
 		expect(command).toContain('try { $addressingUnchanged =');
@@ -719,10 +762,11 @@ describe('windowsApplyIPv4Command', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
 		expect(command).toContain('-Dhcp Enabled');
 		expect(command).toContain('-ResetServerAddresses');
-		// No address is SET. The rollback still carries a New-NetIPAddress, but that
-		// one re-adds `$a.IPAddress` out of the snapshot rather than a literal.
+		// No address is SET. The rollback still carries New-NetIPAddress — once per
+		// store an address could have come from — but each re-adds `$a.IPAddress` out
+		// of the snapshot rather than a literal.
 		expect(command).not.toContain('New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress 1');
-		expect(command.match(/New-NetIPAddress/g)).toEqual(['New-NetIPAddress']);
+		expect(command.match(/New-NetIPAddress -InterfaceIndex \$i -AddressFamily IPv4 -IPAddress \$a\.IPAddress/g)).toHaveLength(3);
 	});
 
 	it('sets the address, prefix and gateway for a static config', () => {
