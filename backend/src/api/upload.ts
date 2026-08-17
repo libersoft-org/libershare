@@ -137,7 +137,7 @@ interface Upload {
 }
 
 interface UploadHandlers {
-	begin: (p: { name?: string }, client: unknown) => Promise<{ uploadID: string }>;
+	begin: (p: { uploadID?: string; name?: string }, client: unknown) => Promise<{ uploadID: string }>;
 	chunk: (p: { uploadID: string; data: Uint8Array }, client: unknown) => Promise<{ received: number }>;
 	end: (p: { uploadID: string }, client: unknown) => Promise<{ uploadID: string }>;
 	abort: (p: { uploadID: string }, client: unknown) => Promise<void>;
