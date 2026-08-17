@@ -572,7 +572,14 @@ async function readLinuxActiveProfiles(): Promise<{ devices: Set<string>; method
 		try {
 			methods.set(device, nmcliMethodToMode(parseNmcliProperties(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'ipv4.method', 'connection', 'show', 'uuid', uuid])).get('ipv4.method') ?? ''));
 		} catch {
-			// This one profile could not be read; the kernel inference stands for it.
+			// This one profile could not be read. Falling back to the kernel here
+			// answers a DIFFERENT question: the kernel describes the address currently
+			// ON the interface, while the editor changes the mode the PROFILE stores.
+			// A DHCP profile whose lease has lapsed, or one carrying a manual secondary
+			// address, reads as static from the kernel — and the editor would then
+			// offer, and on save impose, a mode the user never chose. `unknown` is the
+			// honest answer, and the form declines to apply it.
+			methods.set(device, 'unknown');
 		}
 	}
 	return { devices: new Set(active.keys()), methods };

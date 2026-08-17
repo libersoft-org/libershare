@@ -316,6 +316,10 @@ describe('parseLinuxNetworkState', () => {
 		// `link-local`, `shared` and `disabled` have no counterpart. Letting the
 		// kernel answer instead would offer an editable mode for a profile that is
 		// not in one.
+		//
+		// A profile whose method could not be READ takes the same path: the reader
+		// records `unknown` for it rather than omitting it, because an omission falls
+		// through to the kernel — which answers a different question entirely.
 		const parsed = parseLinuxNetworkState({ ...sources, ipv4Methods: new Map([['eth0', 'unknown' as const]]) });
 		expect(byID(parsed, 'eth0').ipv4Mode).toBe('unknown');
 	});
