@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { ptr, toArrayBuffer, type Pointer } from 'bun:ffi';
-import { assertWindowsWifiKey, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readStoredProfile, readUtf16z, writeJoinProfile, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
+import { assertWindowsWifiKey, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readStoredProfile, readUtf16z, undoProfileChange, writeJoinProfile, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
 
 /**
  * The Windows Wi-Fi surface is FFI, so most of what can go wrong is a struct
@@ -551,17 +551,20 @@ const POLICY_FLAGS = 1;
 
 describe('writeJoinProfile', () => {
 	it('overwrites an existing profile keeping its scope, and marks it for restore', () => {
-		const { api, writes } = joinApi([{ rc: 0, xml: '<WLANProfile>old</WLANProfile>', flags: USER_FLAGS }]);
+		const { api, writes } = joinApi([
+			{ rc: 0, xml: '<WLANProfile>old</WLANProfile>', flags: USER_FLAGS },
+			{ rc: 0, xml: '<WLANProfile>normalized</WLANProfile>', flags: USER_FLAGS },
+		]);
 		const change = writeJoinProfile(api, 1n, ANY_GUID, 'Example', '<WLANProfile>new</WLANProfile>');
-		expect(change).toEqual({ replaced: { xml: '<WLANProfile>old</WLANProfile>', flags: USER_FLAGS }, created: false });
+		expect(change).toEqual({ replaced: { xml: '<WLANProfile>old</WLANProfile>', flags: USER_FLAGS }, created: false, written: { xml: '<WLANProfile>normalized</WLANProfile>', flags: USER_FLAGS } });
 		// Rewritten with the flags it already had — restoring a per-user profile as
 		// all-user would be a different object under the same name.
 		expect(writes).toEqual([{ flags: USER_FLAGS, overwrite: 1 }]);
 	});
 
 	it('creates a profile only when Windows confirms the name was free', () => {
-		const { api, writes } = joinApi([{ rc: NOT_FOUND }]);
-		expect(writeJoinProfile(api, 1n, ANY_GUID, 'Example', '<WLANProfile/>')).toEqual({ replaced: null, created: true });
+		const { api, writes } = joinApi([{ rc: NOT_FOUND }, { rc: 0, xml: '<WLANProfile>normalized</WLANProfile>', flags: USER_FLAGS }]);
+		expect(writeJoinProfile(api, 1n, ANY_GUID, 'Example', '<WLANProfile/>')).toEqual({ replaced: null, created: true, written: { xml: '<WLANProfile>normalized</WLANProfile>', flags: USER_FLAGS } });
 		// bOverwrite FALSE: the write is what CHECKS the absence, not just what acts on it.
 		expect(writes).toEqual([{ flags: USER_FLAGS, overwrite: 0 }]);
 	});
@@ -571,7 +574,7 @@ describe('writeJoinProfile', () => {
 	// it while this attempt believed it had CREATED it — and the rollback would
 	// then delete a network the user had just saved.
 	it('does not claim to have created a profile that appeared mid-attempt', () => {
-		const { api, writes } = joinApi([{ rc: NOT_FOUND }, { rc: 0, xml: '<WLANProfile>raced</WLANProfile>', flags: USER_FLAGS }], [ALREADY_EXISTS]);
+		const { api, writes } = joinApi([{ rc: NOT_FOUND }, { rc: 0, xml: '<WLANProfile>raced</WLANProfile>', flags: USER_FLAGS }, { rc: 0, xml: '<WLANProfile>normalized</WLANProfile>', flags: USER_FLAGS }], [ALREADY_EXISTS]);
 		const change = writeJoinProfile(api, 1n, ANY_GUID, 'Example', '<WLANProfile/>');
 		// created FALSE is the whole point: the rollback restores rather than deletes.
 		expect(change.created).toBe(false);
@@ -603,5 +606,121 @@ describe('writeJoinProfile', () => {
 		const raced = joinApi([{ rc: NOT_FOUND }, { rc: 0, xml: '<WLANProfile/>', flags: POLICY_FLAGS }], [ALREADY_EXISTS]);
 		expect(() => writeJoinProfile(raced.api, 1n, ANY_GUID, 'Example', '<WLANProfile/>')).toThrow(/group policy/);
 		expect(raced.writes).toEqual([{ flags: USER_FLAGS, overwrite: 0 }]);
+	});
+
+	// Windows normalizes the document it is given and stores the key material
+	// encrypted, so what comes back is never what was sent — which is exactly why
+	// the fingerprint is read rather than assumed.
+	it('fingerprints the profile as Windows stores it, not as it was written', () => {
+		const { api } = joinApi([{ rc: NOT_FOUND }, { rc: 0, xml: '<WLANProfile>as stored</WLANProfile>', flags: USER_FLAGS }]);
+		expect(writeJoinProfile(api, 1n, ANY_GUID, 'Example', '<WLANProfile>as written</WLANProfile>').written?.xml).toBe('<WLANProfile>as stored</WLANProfile>');
+	});
+
+	it('reports no fingerprint rather than failing when the read-back does not answer', () => {
+		// The write succeeded; failing the join over a fingerprint would report a
+		// failure that did not happen. What it costs is the rollback's proof.
+		const { api } = joinApi([{ rc: NOT_FOUND }, { rc: 5 }]);
+		expect(writeJoinProfile(api, 1n, ANY_GUID, 'Example', '<WLANProfile/>').written).toBeNull();
+	});
+});
+
+/**
+ * The other end of the same race the write path already refuses.
+ *
+ * Twenty seconds of waiting for an association sit between the write and the
+ * rollback, and the host mutex covers this process alone — the Windows UI,
+ * `netsh`, a policy refresh or a second instance of this app can all save a
+ * profile under that name inside the window. An unconditional undo then discards
+ * a change the user had just made.
+ */
+describe('undoProfileChange', () => {
+	const WRITTEN = { xml: '<WLANProfile>ours</WLANProfile>', flags: USER_FLAGS };
+	const PREVIOUS = { xml: '<WLANProfile>theirs</WLANProfile>', flags: USER_FLAGS };
+
+	/** A WlanApi that answers one WlanGetProfile and records the delete and the write. */
+	function undoApi(read: ScriptedRead) {
+		const deletes: number[] = [];
+		const writes: RecordedWrite[] = [];
+		const api = {
+			WlanGetProfile: (_handle: bigint, _guid: Pointer, _name: Pointer, _reserved: null, xmlOut: Pointer, flagsOut: Pointer) => {
+				const document = read.xml === undefined ? null : utf16z(read.xml);
+				if (document) retainedProfiles.push(document);
+				new BigUint64Array(toArrayBuffer(xmlOut, 0, 8))[0] = document ? BigInt(ptr(document)) : 0n;
+				new Uint32Array(toArrayBuffer(flagsOut, 0, 4))[0] = read.flags ?? 0;
+				return read.rc;
+			},
+			WlanDeleteProfile: () => {
+				deletes.push(1);
+				return 0;
+			},
+			WlanSetProfile: (_handle: bigint, _guid: Pointer, flags: number, _xml: Pointer, _security: null, overwrite: number) => {
+				writes.push({ flags, overwrite });
+				return 0;
+			},
+			WlanReasonCodeToString: () => 1,
+			WlanFreeMemory: () => {},
+		} as unknown as Parameters<typeof undoProfileChange>[0];
+		return { api, deletes, writes };
+	}
+
+	it('deletes a profile this attempt created and nobody has touched', () => {
+		const { api, deletes } = undoApi({ rc: 0, xml: WRITTEN.xml, flags: WRITTEN.flags });
+		expect(undoProfileChange(api, 1n, ANY_GUID, 'Example', { replaced: null, created: true, written: WRITTEN })).toBeNull();
+		expect(deletes).toEqual([1]);
+	});
+
+	it('restores a profile this attempt overwrote and nobody has touched', () => {
+		const { api, writes } = undoApi({ rc: 0, xml: WRITTEN.xml, flags: WRITTEN.flags });
+		expect(undoProfileChange(api, 1n, ANY_GUID, 'Example', { replaced: PREVIOUS, created: false, written: WRITTEN })).toBeNull();
+		// With the flags it had: a per-user profile put back as all-user is a
+		// different object under the same name.
+		expect(writes).toEqual([{ flags: USER_FLAGS, overwrite: 1 }]);
+	});
+
+	it('keeps a profile another process changed, rather than deleting it', () => {
+		const { api, deletes, writes } = undoApi({ rc: 0, xml: '<WLANProfile>someone else</WLANProfile>', flags: USER_FLAGS });
+		expect(undoProfileChange(api, 1n, ANY_GUID, 'Example', { replaced: null, created: true, written: WRITTEN })).toContain('another process changed');
+		expect(deletes).toEqual([]);
+		expect(writes).toEqual([]);
+	});
+
+	it('keeps a profile another process changed, rather than overwriting it back', () => {
+		const { api, writes } = undoApi({ rc: 0, xml: '<WLANProfile>someone else</WLANProfile>', flags: USER_FLAGS });
+		expect(undoProfileChange(api, 1n, ANY_GUID, 'Example', { replaced: PREVIOUS, created: false, written: WRITTEN })).toContain('another process changed');
+		expect(writes).toEqual([]);
+	});
+
+	// The scope is as much a part of the object as the document: a profile
+	// re-scoped by another process is not the one this attempt wrote.
+	it('treats a changed scope as a change like any other', () => {
+		const { api, deletes } = undoApi({ rc: 0, xml: WRITTEN.xml, flags: POLICY_FLAGS });
+		expect(undoProfileChange(api, 1n, ANY_GUID, 'Example', { replaced: null, created: true, written: WRITTEN })).toContain('another process changed');
+		expect(deletes).toEqual([]);
+	});
+
+	it('will not act at all when the write could not be fingerprinted', () => {
+		const { api, deletes, writes } = undoApi({ rc: 0, xml: WRITTEN.xml, flags: WRITTEN.flags });
+		expect(undoProfileChange(api, 1n, ANY_GUID, 'Example', { replaced: PREVIOUS, created: false, written: null })).toContain('could not be read back');
+		expect(deletes).toEqual([]);
+		expect(writes).toEqual([]);
+	});
+
+	it('will not act when the profile cannot be re-read', () => {
+		const { api, deletes } = undoApi({ rc: 5 });
+		expect(undoProfileChange(api, 1n, ANY_GUID, 'Example', { replaced: null, created: true, written: WRITTEN })).toContain('could not be re-read');
+		expect(deletes).toEqual([]);
+	});
+
+	// The undo's goal for a created profile was that it not exist, and it does not.
+	it('is satisfied when a profile it created has already been removed', () => {
+		const { api, deletes } = undoApi({ rc: NOT_FOUND });
+		expect(undoProfileChange(api, 1n, ANY_GUID, 'Example', { replaced: null, created: true, written: WRITTEN })).toBeNull();
+		expect(deletes).toEqual([]);
+	});
+
+	it('does not resurrect a profile another process removed', () => {
+		const { api, writes } = undoApi({ rc: NOT_FOUND });
+		expect(undoProfileChange(api, 1n, ANY_GUID, 'Example', { replaced: PREVIOUS, created: false, written: WRITTEN })).toContain('another process removed');
+		expect(writes).toEqual([]);
 	});
 });

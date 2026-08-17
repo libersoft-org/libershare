@@ -1361,16 +1361,12 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 	const profileNameW = utf16z(profileName);
 	const parameters = encodeConnectionParameters(BigInt(ptr(profileNameW)));
 	const profileXml = windowsWifiProfileXml(profileName, ssidBytes, password, sae);
-	/** What Windows held under this profile name before the attempt. Null when it held nothing. */
-	let replaced: StoredProfile | null = null;
-	/** True once this attempt has written a profile that did not exist before it. */
-	let created = false;
+	/** What this attempt did to the profile store, or null while it has done nothing. */
+	let change: ProfileChange | null = null;
 	try {
 		withWlanHandle((api, handle) => {
 			if (password) {
-				const change = writeJoinProfile(api, handle, guidBytes, profileName, profileXml);
-				replaced = change.replaced;
-				created = change.created;
+				change = writeJoinProfile(api, handle, guidBytes, profileName, profileXml);
 				connectByProfile(api, handle, guidBytes, parameters);
 				return;
 			}
@@ -1381,12 +1377,12 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 			// never in place of one it already holds. When one does already exist, the
 			// failed connect is the real story and its code is the one worth reporting.
 			if (writeProfile(api, handle, guidBytes, profileXml, WLAN_PROFILE_USER, 0) === ERROR_ALREADY_EXISTS) throw new Error(wlanErrorMessage(rc));
-			created = true;
+			change = { replaced: null, created: true, written: readWrittenProfile(api, handle, guidBytes, profileName) };
 			connectByProfile(api, handle, guidBytes, parameters);
 		});
 		await waitForAssociation(guid, ssid);
 	} catch (err) {
-		const rollback = undoWifiProfileChange(guidBytes, profileName, replaced, created);
+		const rollback = undoWifiProfileChange(guidBytes, profileName, change);
 		// Both errors, not just the first. A rollback that failed leaves the machine
 		// in a state neither error describes on its own, and reporting only the
 		// original one would claim the attempt had been undone.
@@ -1476,11 +1472,23 @@ export function readStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: U
 }
 
 /** What one attempt did to the stored profiles, so the rollback knows what to undo. */
-interface ProfileChange {
+export interface ProfileChange {
 	/** The profile this attempt overwrote, or null when it created one. */
 	readonly replaced: StoredProfile | null;
 	/** True when nothing was stored under this name before this attempt. */
 	readonly created: boolean;
+	/**
+	 * What Windows held under this name immediately AFTER the write — this
+	 * attempt's fingerprint on the profile store, and the only evidence the
+	 * rollback has that the profile it is about to touch is still its own.
+	 *
+	 * Not the document that was written: Windows normalizes what it is given and
+	 * stores the key material encrypted, so the two never match. Read back instead,
+	 * through the same call the rollback uses, so the comparison is like for like.
+	 * Null when that read-back failed, which leaves the rollback unable to prove
+	 * ownership and so unwilling to act.
+	 */
+	readonly written: StoredProfile | null;
 }
 
 /**
@@ -1513,7 +1521,7 @@ export function writeJoinProfile(api: WlanApi, handle: WlanHandle, guidBytes: Ui
 	// Believed absent — and asking not to overwrite is what makes that belief
 	// checkable rather than merely assumed. Anything but ERROR_ALREADY_EXISTS means
 	// the write landed on the empty name it was aimed at.
-	if (writeProfile(api, handle, guidBytes, profileXml, WLAN_PROFILE_USER, 0) !== ERROR_ALREADY_EXISTS) return { replaced: null, created: true };
+	if (writeProfile(api, handle, guidBytes, profileXml, WLAN_PROFILE_USER, 0) !== ERROR_ALREADY_EXISTS) return { replaced: null, created: true, written: readWrittenProfile(api, handle, guidBytes, profileName) };
 	const raced = readStoredProfile(api, handle, guidBytes, profileName);
 	// It existed a moment ago and cannot be read now: there is a profile here that
 	// this attempt cannot back up, so it does not touch it.
@@ -1532,8 +1540,23 @@ export function writeJoinProfile(api: WlanApi, handle: WlanHandle, guidBytes: Ui
 		// profile back afterwards.
 		if ((existing.flags & WLAN_PROFILE_GROUP_POLICY) !== 0) throw new Error('this network is managed by group policy and cannot be changed here');
 		writeProfile(api, handle, guidBytes, profileXml, existing.flags, 1);
-		return { replaced: existing, created: false };
+		return { replaced: existing, created: false, written: readWrittenProfile(api, handle, guidBytes, profileName) };
 	}
+}
+
+/**
+ * The profile as Windows holds it right after a write — see
+ * {@link ProfileChange.written}.
+ *
+ * Anything but a clean read yields null rather than an error: the write itself
+ * succeeded, so failing the join over a fingerprint that could not be taken would
+ * report a failure that did not happen. What it costs instead is the rollback's
+ * ability to prove the profile is still its own, which that path answers for
+ * itself.
+ */
+function readWrittenProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string): StoredProfile | null {
+	const stored = readStoredProfile(api, handle, guidBytes, profileName);
+	return stored.kind === 'found' ? stored.profile : null;
 }
 
 /**
@@ -1556,31 +1579,56 @@ function connectByProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Arra
 }
 
 /**
- * Undo whatever the failed attempt wrote. Returns a description of a rollback
- * that itself failed, or null when there was nothing to undo or it worked.
+ * Undo what the failed attempt wrote — but only while the profile is still the
+ * one it wrote.
  *
- * The two cases are different actions, not one with a null in it. A profile this
+ * The two undo actions are different, not one with a null in it. A profile this
  * attempt CREATED has to be deleted — "restoring what was there before" would
  * mean writing nothing and leaving the new one standing, which is how a failed
  * join used to leave a dead profile behind. A profile it OVERWROTE goes back with
  * the flags it had, so its scope is unchanged.
+ *
+ * What both share is that they are only correct if nobody else has touched the
+ * profile in the meantime, and up to twenty seconds pass between the write and
+ * the rollback while the adapter tries to associate. The host mutex covers this
+ * process and nothing else: the Windows network UI, `netsh`, a group policy
+ * refresh, the Network List Manager and a second instance of this app can all
+ * save a profile under that name inside that window. Deleting or overwriting
+ * unconditionally would then discard a change the user had just made — the same
+ * hazard the write path already refuses, arriving from the other end.
+ *
+ * So the profile is re-read and compared against {@link ProfileChange.written},
+ * the fingerprint taken right after the write. Equal means it is still ours and
+ * the undo runs. Anything else — changed, removed, or a fingerprint that could
+ * not be taken — means the third party's version stands and this reports the
+ * conflict instead of resolving it.
+ *
+ * The one exception is a profile this attempt created that has since been
+ * deleted: the undo's whole goal was for it not to exist, and it does not.
  */
-function undoWifiProfileChange(guidBytes: Uint8Array, profileName: string, replaced: StoredProfile | null, created: boolean): string | null {
-	if (!created && !replaced) return null;
+export function undoProfileChange(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string, change: ProfileChange): string | null {
+	if (!change.written) return 'what this attempt saved for this network could not be read back, so its configuration was left as it stands';
+	const current = readStoredProfile(api, handle, guidBytes, profileName);
+	if (current.kind === 'error') return `this network's saved configuration could not be re-read, so it was left as it stands (${current.message})`;
+	if (current.kind === 'notFound') return change.created ? null : 'another process removed this network while it was being joined, so the previous configuration was not put back';
+	if (current.profile.xml !== change.written.xml || current.profile.flags !== change.written.flags) return 'another process changed this network while it was being joined, so its configuration was left as it stands';
+	const name = utf16z(profileName);
+	if (change.created) {
+		const rc = api.WlanDeleteProfile(handle, ptr(guidBytes), ptr(name), null);
+		return rc === 0 ? null : `the profile this attempt created could not be deleted (${wlanErrorMessage(rc)})`;
+	}
+	const previous = change.replaced as StoredProfile;
+	const document = utf16z(previous.xml);
+	const reason = new Uint32Array(1);
+	const rc = api.WlanSetProfile(handle, ptr(guidBytes), previous.flags, ptr(document), null, 1, null, ptr(reason));
+	return rc === 0 ? null : `the previous profile could not be restored (${describeProfileFailure(api, rc, reason[0] ?? 0)})`;
+}
+
+/** {@link undoProfileChange} on a handle of its own — the one used for the join is long closed by the time an association times out. */
+function undoWifiProfileChange(guidBytes: Uint8Array, profileName: string, change: ProfileChange | null): string | null {
+	if (!change || (!change.created && !change.replaced)) return null;
 	try {
-		// Its own handle: the one used for the join is long closed by the time an
-		// association times out.
-		return withWlanHandle((api, handle) => {
-			const name = utf16z(profileName);
-			if (created) {
-				const rc = api.WlanDeleteProfile(handle, ptr(guidBytes), ptr(name), null);
-				return rc === 0 ? null : `the profile this attempt created could not be deleted (${wlanErrorMessage(rc)})`;
-			}
-			const document = utf16z((replaced as StoredProfile).xml);
-			const reason = new Uint32Array(1);
-			const rc = api.WlanSetProfile(handle, ptr(guidBytes), (replaced as StoredProfile).flags, ptr(document), null, 1, null, ptr(reason));
-			return rc === 0 ? null : `the previous profile could not be restored (${describeProfileFailure(api, rc, reason[0] ?? 0)})`;
-		});
+		return withWlanHandle((api, handle) => undoProfileChange(api, handle, guidBytes, profileName, change));
 	} catch (err) {
 		return `the WLAN service could not be reached to undo it (${(err as Error).message})`;
 	}
