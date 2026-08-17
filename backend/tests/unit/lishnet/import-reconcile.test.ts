@@ -40,8 +40,12 @@ function makeMockNet() {
 			this.prunedStatus.push({ networkID, keep });
 		},
 		clearRedialSuppressionForNetwork(): void {},
-		subscribeTopic(id: string): void {
+		isRunning(): boolean {
+			return true;
+		},
+		subscribeTopic(id: string): boolean {
 			this.subscribed.push(id);
+			return true;
 		},
 		unsubscribeTopic(id: string): void {
 			this.unsubscribed.push(id);

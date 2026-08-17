@@ -2514,11 +2514,16 @@ export class Network {
 
 	/**
 	 * Subscribe to a lishnet topic. The node will receive pubsub messages for this network.
+	 *
+	 * Returns whether the subscription actually happened. Reporting nothing let the caller
+	 * record a network as joined after a no-op on a stopped node: `joinedNetworks` claiming
+	 * membership of a topic nobody is subscribed to, which a later rejoin then treated as
+	 * "already joined" and skipped.
 	 */
-	subscribeTopic(networkID: string): void {
+	subscribeTopic(networkID: string): boolean {
 		if (!this.pubsub) {
 			console.error('Network not started - cannot subscribe to topic');
-			return;
+			return false;
 		}
 		const topic = lishTopic(networkID);
 		this.pubsub.subscribe(topic);
@@ -2588,6 +2593,7 @@ export class Network {
 		console.log(`✓ Subscribed to lishnet topic: ${topic}`);
 		// GossipSub mesh needs time to rebuild after subscribe — schedule delayed peer count checks
 		for (const delay of [2000, 5000, 15000]) this.armDelayedPeerCountCheck(delay);
+		return true;
 	}
 
 	/**

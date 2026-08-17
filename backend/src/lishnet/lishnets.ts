@@ -163,31 +163,46 @@ export class Networks {
 		// delete arriving during the start reconciled against a runtime that had joined
 		// nothing yet — so it had nothing to leave — and then this loop subscribed the
 		// network anyway, from a copy of a row that no longer said what it used to.
-		for (const net of this.getEnabled()) {
-			await this.operationLock(net.networkID).runExclusive(() => {
-				// Re-read under the lock as well: an earlier network's turn is another await.
-				const row = this.get(net.networkID);
-				if (row?.enabled !== true) return;
-				// A stop between the start above and this subscribe leaves the call a no-op on
-				// a dead node, but `joinedNetworks` would still claim membership — the wrapper
-				// reporting a joined network whose node is not running and whose topic is not
-				// subscribed. Both conditions matter: `shuttingDown` is set synchronously, so
-				// it also covers the window before stop() has reached its own mutex.
-				if (this.shuttingDown || !this.network.isRunning()) return;
-				this.network.subscribeTopic(row.networkID);
-				this.joinedNetworks.add(row.networkID);
-				// Startup itself announces nothing, but a later disable has to have a joined
-				// state to change away from — otherwise its leave looks like a no-op.
-				this.announcedJoined.set(row.networkID, true);
-				if (row.bootstrapPeers.length > 0) {
-					// Fire-and-forget so a slow / unreachable network does not delay startup of the others.
-					this.network.addBootstrapPeers(row.bootstrapPeers, row.networkID, 'configured').catch(err => {
-						console.error(`[Networks] addBootstrapPeers for ${row.networkID} failed:`, err?.message ?? err);
-					});
-				}
-				console.log(`✓ Joined lishnet: ${row.name} (${row.networkID})`);
-			});
-		}
+		// Under the catalog mutex for the whole loop, so no API write and no shutdown can
+		// interleave with the networks coming up — see {@link catalogMutex}.
+		await this.catalogMutex.runExclusive(async () => {
+			for (const net of this.getEnabled()) {
+				await this.operationLock(net.networkID).runExclusive(() => {
+					// Re-read under the lock as well: an earlier network's turn is another await.
+					const row = this.get(net.networkID);
+					if (row?.enabled !== true) return;
+					// A stop between the start above and this subscribe leaves the call a no-op on
+					// a dead node, but `joinedNetworks` would still claim membership — the wrapper
+					// reporting a joined network whose node is not running and whose topic is not
+					// subscribed.
+					if (!this.canJoin()) return;
+					if (!this.network.subscribeTopic(row.networkID)) return;
+					this.joinedNetworks.add(row.networkID);
+					// Startup itself announces nothing, but a later disable has to have a joined
+					// state to change away from — otherwise its leave looks like a no-op.
+					this.announcedJoined.set(row.networkID, true);
+					if (row.bootstrapPeers.length > 0) {
+						// Fire-and-forget so a slow / unreachable network does not delay startup of the others.
+						this.network.addBootstrapPeers(row.bootstrapPeers, row.networkID, 'configured').catch(err => {
+							console.error(`[Networks] addBootstrapPeers for ${row.networkID} failed:`, err?.message ?? err);
+						});
+					}
+					console.log(`✓ Joined lishnet: ${row.name} (${row.networkID})`);
+				});
+			}
+		});
+	}
+
+	/**
+	 * Whether a runtime join may go ahead right now.
+	 *
+	 * Both halves matter. `shuttingDown` is set synchronously by {@link stopAllNetworks},
+	 * so it covers the window before `Network.stop()` has even reached its own mutex, in
+	 * which `isRunning()` still answers true; `isRunning()` covers a node that is down for
+	 * any other reason, including a stop whose teardown failed.
+	 */
+	private canJoin(): boolean {
+		return !this.shuttingDown && this.network.isRunning();
 	}
 
 	/**
@@ -344,13 +359,25 @@ export class Networks {
 			return;
 		}
 
+		// A join queued behind a slow operation can reach this point after the node has been
+		// told to stop. subscribeTopic is then a logged no-op, and recording the ID anyway
+		// left `joinedNetworks` claiming a membership with no subscription behind it — which
+		// the next startup reads as "already joined" and skips.
+		if (!this.canJoin()) {
+			console.log(`Not joining lishnet ${id}: the node is not running`);
+			return;
+		}
+
 		// Subscribe to the topic first (register interest), then dial bootstrap peers.
 		// Note: the StreamStateError crash from gossipsub is caused by an internal
 		// race condition when peers connect and disconnect rapidly (flapping).
 		// Gossipsub reacts to peer:connect events and tries to send subscriptions
 		// on a stream that may already be closing. This cannot be fixed by call
 		// ordering — the process-level error handlers in app.ts are the safety net.
-		this.network.subscribeTopic(id);
+		if (!this.network.subscribeTopic(id)) {
+			console.log(`Not joining lishnet ${id}: the topic subscription was refused`);
+			return;
+		}
 		this.joinedNetworks.add(id);
 		// Rejoin is an explicit "I want peers back" — lift the redial suppression for
 		// THIS lishnet's left peers (bootstrap and content) so maintenance and discovery
@@ -359,6 +386,15 @@ export class Networks {
 
 		const net = this.get(id);
 		if (net && net.bootstrapPeers.length > 0) await this.network.addBootstrapPeers(net.bootstrapPeers, id, 'configured');
+
+		// The dials above take seconds. A node that went down during them owns neither the
+		// subscription nor the connections this join was building, so the membership claim
+		// has to go with it rather than survive into the next run.
+		if (!this.canJoin()) {
+			this.joinedNetworks.delete(id);
+			console.log(`Abandoning join of lishnet ${id}: the node went down during its bootstrap dials`);
+			return;
+		}
 
 		console.log(`✓ Joined lishnet: ${net?.name ?? id}`);
 	}
@@ -508,15 +544,28 @@ export class Networks {
 		// until the next microtask, so `isRunning()` alone still reads true for a moment
 		// and a startup loop in that moment would subscribe onto a node about to die.
 		this.shuttingDown = true;
-		this.joinedNetworks.clear();
-		// Per-run, like `joinedNetworks` itself. Surviving a stop left the map claiming
-		// networks were still announced as joined, so after a restart a network that came
-		// back disabled never produced the "left" event its subscribers were waiting for,
-		// and a rejoin of one that had been announced before the stop produced no event
-		// either — the runtime had changed and nobody was told.
-		this.announcedJoined.clear();
-		await this.network.stop();
-		console.log('✓ All lishnets left and node stopped');
+		// Every per-network runtime operation runs under the catalog mutex, so holding it
+		// here is what makes the stop exclusive with all of them: an enable already in
+		// flight finishes before the node goes down, and one that was merely queued finds
+		// `shuttingDown` set and joins nothing. Without this the node was stopped out from
+		// under a queued enable, which then subscribed a dead pubsub and recorded the
+		// network as joined regardless.
+		await this.catalogMutex.runExclusive(async () => {
+			this.joinedNetworks.clear();
+			// Per-run, like `joinedNetworks` itself. Surviving a stop left the map claiming
+			// networks were still announced as joined, so after a restart a network that came
+			// back disabled never produced the "left" event its subscribers were waiting for,
+			// and a rejoin of one that had been announced before the stop produced no event
+			// either — the runtime had changed and nobody was told.
+			this.announcedJoined.clear();
+			await this.network.stop();
+			// Cleared again once the stop has returned: the teardown itself fires disconnect
+			// events that higher layers react to, and nothing may leave an entry behind from
+			// a run that is over.
+			this.joinedNetworks.clear();
+			this.announcedJoined.clear();
+			console.log('✓ All lishnets left and node stopped');
+		});
 	}
 
 	/**

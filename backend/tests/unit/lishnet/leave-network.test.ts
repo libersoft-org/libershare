@@ -23,7 +23,8 @@ interface MockNet {
 	getTopicPeers(id: string): string[];
 	getRecentTopicMembers(id: string): string[];
 	unsubscribeTopic(id: string): void;
-	subscribeTopic(id: string): void;
+	isRunning(): boolean;
+	subscribeTopic(id: string): boolean;
 	isBootstrapOrRelayPeer(pid: string): boolean;
 	disconnectPeer(pid: string, networkID: string): Promise<void>;
 	pruneConfiguredBootstrapPeer(pid: string): void;
@@ -67,8 +68,12 @@ function makeMockNet(): MockNet {
 			// Mirror real pubsub: after unsubscribe the topic reports no peers.
 			this.topicPeers.delete(id);
 		},
+		isRunning() {
+			return true;
+		},
 		subscribeTopic(id) {
 			this.subscribed.push(id);
+			return true;
 		},
 		isBootstrapOrRelayPeer(pid) {
 			return this.bootstrapOrRelay.has(pid);

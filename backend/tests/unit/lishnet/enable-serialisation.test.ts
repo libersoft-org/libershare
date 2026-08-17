@@ -41,8 +41,12 @@ function makeMockNet() {
 		getRecentTopicMembers(): string[] {
 			return [];
 		},
-		subscribeTopic(id: string): void {
+		isRunning(): boolean {
+			return true;
+		},
+		subscribeTopic(id: string): boolean {
 			this.subscribed.push(id);
+			return true;
 		},
 		unsubscribeTopic(id: string): void {
 			this.unsubscribed.push(id);

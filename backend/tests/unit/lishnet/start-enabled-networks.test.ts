@@ -37,8 +37,9 @@ function makeMockNet(startGate: Promise<void>) {
 		isRunning(): boolean {
 			return this.running;
 		},
-		subscribeTopic(id: string): void {
+		subscribeTopic(id: string): boolean {
 			this.subscribed.push(id);
+			return true;
 		},
 		unsubscribeTopic(id: string): void {
 			this.unsubscribed.push(id);
@@ -149,8 +150,37 @@ describe('Networks.startEnabledNetworks — coordinated with concurrent changes'
 		// all — the runtime had gone down and come back and nobody was told.
 		expect((networks as any).announcedJoined.has(NET)).toBe(false);
 
+		// The node has to be back up before an enable can join anything at all, and it
+		// comes back with the network disabled — the case that used to be silent.
+		setLISHnetEnabled(db, NET, false);
+		await networks.startEnabledNetworks();
+		expect((networks as any).announcedJoined.has(NET)).toBe(false);
+
 		await networks.setEnabled(NET, true);
 		expect(events).toEqual([`joined:${NET}`]);
+	});
+
+	/**
+	 * stopAllNetworks used to set a flag and stop the node without waiting for, or blocking,
+	 * the per-network operations. An enable queued behind a slow one then woke up after the
+	 * stop, subscribed a dead pubsub (a logged no-op) and recorded the network as joined
+	 * anyway — a membership with no subscription that the next startup skips as "already
+	 * joined".
+	 */
+	it('an enable that arrives during a shutdown joins nothing', async () => {
+		const net = makeMockNet(Promise.resolve());
+		const networks = makeNetworks(net, db);
+		await networks.startEnabledNetworks();
+		await networks.setEnabled(NET, false);
+		const subscribedBefore = [...net.subscribed];
+
+		const stopping = networks.stopAllNetworks();
+		const enabling = networks.setEnabled(NET, true);
+		await Promise.all([stopping, enabling]);
+
+		expect(net.running).toBe(false);
+		expect(net.subscribed).toEqual(subscribedBefore);
+		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
 	});
 
 	it('an undisturbed startup still joins every enabled network', async () => {
