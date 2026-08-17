@@ -3,7 +3,7 @@ import { readdir, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { BinaryFrameError, MAX_BINARY_HEADER_SIZE, decodeBinaryRequest } from '../../../src/api/api.ts';
-import { initUploadHandlers, uploadFileName } from '../../../src/api/upload.ts';
+import { type UploadLimits, initUploadHandlers, uploadFileName } from '../../../src/api/upload.ts';
 import { Utils } from '../../../src/utils.ts';
 import { COMPRESSION_ALGORITHMS, CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, WsClient, compressionExtension, detectCompression } from '@shared';
 
@@ -138,10 +138,10 @@ describe('decodeBinaryRequest', () => {
  * handlers directly. The dispatch mirrors `APIServer.handleMessage`; wiring the
  * methods into the live server is covered by running the app itself.
  */
-function startUploadServer(maxUploadSize?: number): { url: string; dataDir: string; uploadDir: string; stop: () => void } {
+function startUploadServer(limits: UploadLimits = {}): { url: string; dataDir: string; uploadDir: string; stop: () => void } {
 	const dataDir = join(tmpdir(), `lish-upload-test-${crypto.randomUUID()}`);
 	tempDirs.push(dataDir);
-	const handlers = initUploadHandlers(dataDir, maxUploadSize);
+	const handlers = initUploadHandlers(dataDir, limits);
 	const table: Record<string, (p: any, client: unknown) => unknown> = {
 		'upload.begin': handlers.begin,
 		'upload.chunk': handlers.chunk,
@@ -361,7 +361,7 @@ describe('chunked upload over the websocket', () => {
 	});
 
 	it('refuses a transfer that grows past the ceiling and deletes what arrived', async () => {
-		const srv = startUploadServer(128 * 1024);
+		const srv = startUploadServer({ maxUploadSize: 128 * 1024 });
 		const client = new WsClient(srv.url, () => {});
 		try {
 			const { uploadID } = await client.call<{ uploadID: string }>('upload.begin', { name: 'huge.lish' });
@@ -375,7 +375,7 @@ describe('chunked upload over the websocket', () => {
 	});
 
 	it('rejects a text chunk instead of letting it poison the size counter', async () => {
-		const srv = startUploadServer(128 * 1024);
+		const srv = startUploadServer({ maxUploadSize: 128 * 1024 });
 		const client = new WsClient(srv.url, () => {});
 		try {
 			const { uploadID } = await client.call<{ uploadID: string }>('upload.begin', { name: 'text.lish' });
@@ -394,7 +394,7 @@ describe('chunked upload over the websocket', () => {
 
 	it('never writes past the ceiling once a text chunk has been sent', async () => {
 		const ceiling = 128 * 1024;
-		const srv = startUploadServer(ceiling);
+		const srv = startUploadServer({ maxUploadSize: ceiling });
 		const client = new WsClient(srv.url, () => {});
 		try {
 			const { uploadID } = await client.call<{ uploadID: string }>('upload.begin', { name: 'poison.lish' });
@@ -648,6 +648,75 @@ describe('chunked upload over the websocket', () => {
 			srv.stop();
 		}
 	});
+
+	it('caps total bytes across separate sockets, not just per socket', async () => {
+		// Each socket stays well inside its own per-upload ceiling; together they
+		// would still fill the disk, which the per-socket limits cannot see.
+		const srv = startUploadServer({ maxTotalBytes: 256 * 1024 });
+		const clients = [new WsClient(srv.url, () => {}), new WsClient(srv.url, () => {}), new WsClient(srv.url, () => {})];
+		try {
+			const codes: (string | undefined)[] = [];
+			for (const client of clients) {
+				const { uploadID } = await client.call<{ uploadID: string }>('upload.begin', { name: 'share.lish' });
+				try {
+					await client.callBinary('upload.chunk', { uploadID }, pattern(128 * 1024));
+					codes.push(undefined);
+				} catch (err: any) {
+					codes.push(err.code);
+				}
+			}
+			// Two fit in 256 KiB, the third must not.
+			expect(codes.slice(0, 2)).toEqual([undefined, undefined]);
+			expect(codes[2]).toBe(ErrorCodes.UPLOAD_QUOTA_EXCEEDED);
+		} finally {
+			for (const client of clients) client.stopReconnect();
+			srv.stop();
+		}
+	}, 30000);
+
+	it('frees global budget again once an upload is consumed', async () => {
+		const srv = startUploadServer({ maxTotalBytes: 256 * 1024 });
+		const client = new WsClient(srv.url, () => {});
+		try {
+			const first = await upload(client, 'a.lish', pattern(200 * 1024), 64 * 1024);
+			// Full: a second file of the same size does not fit alongside the first.
+			const { uploadID: second } = await client.call<{ uploadID: string }>('upload.begin', { name: 'b.lish' });
+			await expectRejection(client.callBinary('upload.chunk', { uploadID: second }, pattern(200 * 1024)), ErrorCodes.UPLOAD_QUOTA_EXCEEDED);
+			// Importing the first returns its bytes to the budget.
+			await client.call('upload.digest', { uploadID: first });
+			const { uploadID: third } = await client.call<{ uploadID: string }>('upload.begin', { name: 'c.lish' });
+			expect(await client.callBinary<{ received: number }>('upload.chunk', { uploadID: third }, pattern(200 * 1024))).toEqual({ received: 200 * 1024 });
+		} finally {
+			client.stopReconnect();
+			srv.stop();
+		}
+	}, 30000);
+
+	it('caps how many uploads exist at once across all sockets', async () => {
+		const srv = startUploadServer({ maxTotalUploads: 6 });
+		const clients = [new WsClient(srv.url, () => {}), new WsClient(srv.url, () => {})];
+		try {
+			// Four each is the per-socket cap; the global cap of six stops the eighth
+			// — and the seventh — regardless of how many sockets are opened.
+			let started = 0;
+			let rejected = 0;
+			for (const client of clients) {
+				for (let i = 0; i < 4; i++) {
+					try {
+						await client.call('upload.begin', { name: `g${i}.lish` });
+						started++;
+					} catch {
+						rejected++;
+					}
+				}
+			}
+			expect(started).toBe(6);
+			expect(rejected).toBe(2);
+		} finally {
+			for (const client of clients) client.stopReconnect();
+			srv.stop();
+		}
+	}, 30000);
 
 	it('reads a compressed upload back through the same path an import takes', async () => {
 		const srv = startUploadServer();

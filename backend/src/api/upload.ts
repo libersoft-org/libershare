@@ -20,6 +20,30 @@ const UPLOAD_MAX_AGE_MS = 60 * 60 * 1000;
 const MAX_CONCURRENT_UPLOADS = 4;
 
 /**
+ * Uploads that may exist across every socket at once. The per-socket cap alone
+ * bounds nothing, because the number of sockets is not bounded: four transfers
+ * each is unlimited disk once a client opens connections in a loop.
+ */
+const MAX_TOTAL_UPLOADS = 32;
+
+/**
+ * Disk every upload together may hold, in-progress and finished-but-unimported
+ * alike. Deliberately far below the per-upload ceiling times the upload count —
+ * that product is the worst case, not a budget anyone should be able to spend.
+ */
+const MAX_TOTAL_UPLOAD_BYTES = 1024 * 1024 * 1024;
+
+/** Ceilings the upload handlers enforce. Only ever overridden by tests. */
+export interface UploadLimits {
+	/** Largest single upload, counted from the bytes actually received. */
+	maxUploadSize?: number;
+	/** Disk every upload together may hold. */
+	maxTotalBytes?: number;
+	/** Uploads that may exist at once across all sockets. */
+	maxTotalUploads?: number;
+}
+
+/**
  * Temp file name for an uploaded import file. The random prefix keeps concurrent
  * uploads apart; the original name is appended verbatim because
  * `detectCompression()` reads the trailing extension — losing it would make a
@@ -71,12 +95,21 @@ interface UploadHandlers {
  * (see `decodeBinaryRequest`) rather than base64 in JSON, so they cost their own
  * size and nothing more.
  *
- * `maxUploadSize` is only ever overridden by tests, which would otherwise have to
- * write the real ceiling to disk to reach it.
+ * The limits are only ever overridden by tests, which would otherwise have to
+ * write the real ceilings to disk to reach them.
  */
-export function initUploadHandlers(dataDir: string, maxUploadSize: number = MAX_API_MESSAGE_SIZE): UploadHandlers {
+export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): UploadHandlers {
+	const maxUploadSize = limits.maxUploadSize ?? MAX_API_MESSAGE_SIZE;
+	const maxTotalBytes = limits.maxTotalBytes ?? MAX_TOTAL_UPLOAD_BYTES;
+	const maxTotalUploads = limits.maxTotalUploads ?? MAX_TOTAL_UPLOADS;
 	const uploadDir = join(dataDir, 'tmp');
 	const uploads = new Map<string, Upload>();
+	/**
+	 * Bytes currently on disk across every upload. Kept as a running total rather
+	 * than summed on demand, so the check that guards a write cannot itself become
+	 * the slow part of receiving a file.
+	 */
+	let totalBytes = 0;
 
 	/**
 	 * Drop uploads nobody ever imported. The client removes its own temp file once
@@ -163,6 +196,7 @@ export function initUploadHandlers(dataDir: string, maxUploadSize: number = MAX_
 		const upload = uploads.get(uploadID);
 		if (!upload) return;
 		uploads.delete(uploadID);
+		totalBytes -= upload.written;
 		// Ending the writer also releases the file handle, which Windows needs
 		// before the half-written file can be removed.
 		try {
@@ -176,6 +210,7 @@ export function initUploadHandlers(dataDir: string, maxUploadSize: number = MAX_
 			let open = 0;
 			for (const upload of uploads.values()) if (upload.client === client) open++;
 			if (open >= MAX_CONCURRENT_UPLOADS) throw new CodedError(ErrorCodes.TOO_MANY_UPLOADS, String(MAX_CONCURRENT_UPLOADS));
+			if (uploads.size >= maxTotalUploads) throw new CodedError(ErrorCodes.UPLOAD_QUOTA_EXCEEDED, String(maxTotalUploads));
 			await mkdir(uploadDir, { recursive: true });
 			await sweep();
 			// The socket can close while the two awaits above run, and `closeClient`
@@ -227,7 +262,15 @@ export function initUploadHandlers(dataDir: string, maxUploadSize: number = MAX_
 			console.error(`[API] Upload rejected: ${p.uploadID} exceeds ${maxUploadSize} bytes`);
 			throw new CodedError(ErrorCodes.UPLOAD_TOO_LARGE, formatBytes(maxUploadSize));
 		}
+		// The node's disk is shared by every socket, so one client staying inside
+		// its own ceiling says nothing about what all of them together are holding.
+		if (totalBytes + p.data.byteLength > maxTotalBytes) {
+			await discard(p.uploadID);
+			console.error(`[API] Upload rejected: ${p.uploadID} would exceed the ${maxTotalBytes} byte total`);
+			throw new CodedError(ErrorCodes.UPLOAD_QUOTA_EXCEEDED, formatBytes(maxTotalBytes));
+		}
 		upload.written = nextWritten;
+		totalBytes += p.data.byteLength;
 		await upload.writer.write(p.data);
 		// Flushed before the response goes out, so the ack the client waits on means
 		// the bytes are on disk. Without it the sink would buffer the whole file in
@@ -275,6 +318,7 @@ export function initUploadHandlers(dataDir: string, maxUploadSize: number = MAX_
 			const upload = owned(p.uploadID, client);
 			if (upload.state !== 'ready') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, p.uploadID);
 			uploads.delete(p.uploadID);
+			totalBytes -= upload.written;
 			try {
 				return await read(upload.path);
 			} finally {

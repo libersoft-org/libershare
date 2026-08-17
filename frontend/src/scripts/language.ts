@@ -166,6 +166,7 @@ const errorCodeKeys: Record<string, string> = {
 	UPLOAD_INVALID_CHUNK: 'common.errorUploadInvalidChunk',
 	UPLOAD_CHUNK_TOO_LARGE: 'common.errorUploadChunkTooLarge',
 	UPLOAD_BUSY: 'common.errorUploadBusy',
+	UPLOAD_QUOTA_EXCEEDED: 'common.errorUploadQuotaExceeded',
 	// Filesystem (FileBrowser) → fileBrowser
 	FS_NOT_FOUND: 'fileBrowser.errorNotFound',
 	FS_ACCESS_DENIED: 'fileBrowser.errorAccessDenied',

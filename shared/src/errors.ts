@@ -92,6 +92,7 @@ const errorCodes = [
 	'UPLOAD_INVALID_CHUNK',
 	'UPLOAD_CHUNK_TOO_LARGE',
 	'UPLOAD_BUSY',
+	'UPLOAD_QUOTA_EXCEEDED',
 
 	// Download events
 	'DOWNLOAD_ERROR',

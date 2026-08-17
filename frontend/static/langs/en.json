@@ -71,6 +71,7 @@
 		"errorUploadInvalidChunk": "The upload sent an invalid chunk of data",
 		"errorUploadChunkTooLarge": "A single upload chunk may not exceed {detail}",
 		"errorUploadBusy": "Another upload step is still running on this connection",
+		"errorUploadQuotaExceeded": "The server has no room for more uploads right now (limit {detail})",
 		"errorParseError": "Invalid request format",
 		"errorMethodRequired": "Method is required",
 		"errorUnknownMethod": "Unknown method: {detail}",

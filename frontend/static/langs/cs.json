@@ -71,6 +71,7 @@
 		"errorUploadInvalidChunk": "Nahrávání odeslalo neplatnou část dat",
 		"errorUploadChunkTooLarge": "Jedna část nahrávaného souboru nesmí přesáhnout {detail}",
 		"errorUploadBusy": "Na tomto spojení stále běží jiný krok nahrávání",
+		"errorUploadQuotaExceeded": "Server nemá momentálně místo pro další nahrávání (limit {detail})",
 		"errorParseError": "Neplatný formát požadavku",
 		"errorMethodRequired": "Metoda je povinná",
 		"errorUnknownMethod": "Neznámá metoda: {detail}",
