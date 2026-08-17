@@ -135,7 +135,9 @@ describe('Networks.setEnabled — serialised per lishnet', () => {
 		const { networks, events } = makeNetworks(net, db, [NET]);
 
 		const disabling = networks.setEnabled(NET, false);
-		await Promise.resolve();
+		// Enough turns for the leave to be genuinely mid-cleanup, parked on a peer disconnect,
+		// when the re-enable arrives.
+		for (let i = 0; i < 10; i++) await Promise.resolve();
 		const enabling = networks.setEnabled(NET, true);
 		gate.resolve();
 		await Promise.all([disabling, enabling]);
@@ -163,8 +165,12 @@ describe('Networks.setEnabled — serialised per lishnet', () => {
 
 		expect(getLISHnet(db, NET)!.enabled).toBe(true);
 		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
-		expect(events).toEqual([`joined:${NET}`, `left:${NET}`, `joined:${NET}`]);
-		expect(net.unsubscribed).toEqual([NET]);
+		// Three toggles still cost one join. The database phases are short and run first, so
+		// by the time the second and third reconciles get the lock the row already holds the
+		// final value and there is nothing left for them to change — the collapse falls out
+		// of converging on the row rather than out of cancelling anybody.
+		expect(events).toEqual([`joined:${NET}`]);
+		expect(net.unsubscribed).toEqual([]);
 	});
 
 	/**
@@ -277,7 +283,7 @@ describe('Networks.setEnabled — what the result claims', () => {
 		net = makeMockNet();
 	});
 
-	it('each queued request reports the transition it settled, in order', async () => {
+	it('a request whose state was already settled by then reports no transition', async () => {
 		net.topicPeers.set(NET, ['p-only-a']);
 		const gate = deferred();
 		net.disconnectGate = gate.promise;
@@ -290,9 +296,13 @@ describe('Networks.setEnabled — what the result claims', () => {
 		gate.resolve();
 		const [holdingResult, olderResult, newerResult] = await Promise.all([holding, older, newer]);
 
+		// The enable in the middle is the interesting one: the disable after it wrote the row
+		// before either reconcile ran, so by the enable's turn the desired state was already
+		// "disabled" and it had nothing to apply. `transitioned: false` with `joined: false`
+		// is what the API needs to hear — it must not broadcast a join that did not happen.
 		expect(holdingResult).toEqual({ found: true, transitioned: true, joined: false });
-		expect(olderResult).toEqual({ found: true, transitioned: true, joined: true });
-		expect(newerResult).toEqual({ found: true, transitioned: true, joined: false });
+		expect(olderResult).toEqual({ found: true, transitioned: false, joined: false });
+		expect(newerResult).toEqual({ found: true, transitioned: false, joined: false });
 		expect(getLISHnet(db, NET)!.enabled).toBe(false);
 	});
 
@@ -434,6 +444,30 @@ describe('Networks — operations that change the set of lishnets', () => {
 
 		expect(getLISHnet(db, NET)).toBeUndefined();
 		expect(net.disconnected).toContain('p-only-a');
+	});
+
+	/**
+	 * The global catalog lock used to be held for the whole of a join, bootstrap dials and
+	 * all — seconds per address, sequentially. Every unrelated lishnet's edit, add, delete
+	 * and import queued behind whichever single network happened to be dialing, and so did
+	 * the shutdown and the factory reset, which presented to the user as a frozen app.
+	 */
+	it('a slow join of one lishnet does not block writes to another', async () => {
+		const gate = deferred();
+		net.dialGate = gate.promise;
+		const { networks } = makeNetworks(net, db, []);
+
+		const joining = networks.setEnabled(NET, true);
+		await settle();
+
+		// net-b shares nothing with net-a — no bootstrap peers of its own, so it has no dial
+		// to wait on — and neither of these may wait on net-a's.
+		expect(await networks.add({ ...rowOf(NET_B), name: 'B', bootstrapPeers: [] })).toBe(true);
+		expect(await networks.setEnabled(NET_B, true)).toEqual({ found: true, transitioned: true, joined: true });
+		expect(getLISHnet(db, NET)!.enabled).toBe(true);
+
+		gate.resolve();
+		await joining;
 	});
 
 	it('a network added while replace waits is not wiped out behind its back', async () => {

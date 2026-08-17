@@ -47,17 +47,16 @@ export class Networks {
 	/**
 	 * Taken by EVERY public write, before any per-ID lock.
 	 *
-	 * Two things need it. A multi-network write has to know which IDs it touches before it
-	 * can lock them, so without this an ID created while it waited was reconciled with
-	 * nobody holding its lock — a join and a leave of one network at once, or a joined
-	 * network left with no row to explain it. And every writer must reach its database
-	 * write in the order the requests arrived: `Mutex` dispatches its waiters first come,
-	 * first served, and each public writer enqueues here before it awaits anything else, so
-	 * one gate for everyone makes arrival order and execution order the same.
+	 * Two things need it. A multi-network write has to see a stable set of IDs while it
+	 * decides what it is rewriting, so without this a network created between the snapshot
+	 * and the write was rewritten out of existence behind the back of the add that was still
+	 * joining it. And every writer must reach its database write in the order the requests
+	 * arrived: `Mutex` dispatches its waiters first come, first served, and each public
+	 * writer enqueues here before it awaits anything else, so one gate for everyone makes
+	 * arrival order and write order the same.
 	 *
-	 * Lock order is always this mutex, then the per-ID locks in sorted ID order. Nothing
-	 * acquires them the other way round, so no cycle is possible. Lishnet writes are rare
-	 * user actions, so serialising them globally costs nothing worth measuring.
+	 * Held for the DATABASE phase only — see {@link inCatalog} and {@link reconcile}. It is
+	 * never held while a per-ID lock is taken, so no cycle is possible.
 	 */
 	private readonly catalogMutex = new Mutex();
 	/**
@@ -214,22 +213,42 @@ export class Networks {
 	 * Enable/disable a lishnet. Starts the node if needed, subscribes/unsubscribes topics.
 	 */
 	async setEnabled(id: string, enabled: boolean): Promise<SetEnabledResult> {
-		return await this.withCatalog(id, async () => {
-			if (!lishnetExists(this.db, id)) return { found: false, transitioned: false, joined: false };
+		const staged = await this.inCatalog(() => {
+			if (!lishnetExists(this.db, id)) return undefined;
 			const previous = this.get(id);
 			setLISHnetEnabled(this.db, id, enabled);
-			const transitioned = await this.reconcileLocked(id, previous);
-			return { found: true, transitioned, joined: this.joinedNetworks.has(id) };
+			return { previous };
 		});
+		if (!staged) return { found: false, transitioned: false, joined: false };
+		const transitioned = await this.reconcile(id, staged.previous);
+		return { found: true, transitioned, joined: this.joinedNetworks.has(id) };
 	}
 
 	/**
-	 * The standard critical section for a write that touches ONE lishnet: the catalog
-	 * mutex, then that lishnet's own lock. See {@link catalogMutex} for why every writer
-	 * passes through the same two gates in the same order.
+	 * Phase one of every lishnet write: the DATABASE, under {@link catalogMutex} alone.
+	 *
+	 * `body` is synchronous and must not touch the network. The catalog used to be held for
+	 * the runtime phase as well, and that phase is slow — a join awaits a sequential dial of
+	 * every bootstrap address, seconds each, and a leave one hangUp per peer. Editing an
+	 * unrelated lishnet, an add, a delete, an import, another replace, a shutdown and a
+	 * factory reset all queued behind whichever single network happened to be dialing,
+	 * which presented as a frozen shutdown.
 	 */
-	private async withCatalog<T>(id: string, body: () => Promise<T>): Promise<T> {
-		return await this.catalogMutex.runExclusive(async () => await this.operationLock(id).runExclusive(body));
+	private async inCatalog<T>(body: () => T): Promise<T> {
+		return await this.catalogMutex.runExclusive(async () => body());
+	}
+
+	/**
+	 * Phase two: converge one lishnet's runtime on the row phase one left behind, under that
+	 * lishnet's own lock and nothing else.
+	 *
+	 * Safe outside the catalog precisely because {@link reconcileLocked} takes its desired
+	 * state from the database rather than from a value its caller captured: whichever
+	 * reconcile holds the lock last converges on the row that was written last, whatever
+	 * order the two finished their network work in.
+	 */
+	private async reconcile(id: string, previous: LISHNetworkConfig | undefined): Promise<boolean> {
+		return await this.operationLock(id).runExclusive(() => this.reconcileLocked(id, previous));
 	}
 
 	/** The lock guarding one lishnet's whole transition — see {@link networkOperations}. */
@@ -240,25 +259,6 @@ export class Networks {
 			this.networkOperations.set(id, lock);
 		}
 		return lock;
-	}
-
-	/**
-	 * Hold the operation lock of every lishnet a multi-network write touches.
-	 *
-	 * Acquired in sorted ID order, which is what stops two overlapping writes over
-	 * intersecting sets from deadlocking on each other.
-	 *
-	 * Callers must already hold {@link catalogMutex}: the set of IDs is read before the
-	 * locks are taken, so nothing may create a new one in between.
-	 */
-	private async withNetworks<T>(ids: Iterable<string>, body: () => Promise<T>): Promise<T> {
-		const releases: Array<() => void> = [];
-		for (const id of [...new Set(ids)].sort()) releases.push(await this.operationLock(id).acquire());
-		try {
-			return await body();
-		} finally {
-			for (const release of releases.reverse()) release();
-		}
 	}
 
 	/**
@@ -513,12 +513,13 @@ export class Networks {
 		// until the next microtask, so `isRunning()` alone still reads true for a moment
 		// and a startup loop in that moment would subscribe onto a node about to die.
 		this.shuttingDown = true;
-		// Every per-network runtime operation runs under the catalog mutex, so holding it
-		// here is what makes the stop exclusive with all of them: an enable already in
-		// flight finishes before the node goes down, and one that was merely queued finds
-		// `shuttingDown` set and joins nothing. Without this the node was stopped out from
-		// under a queued enable, which then subscribed a dead pubsub and recorded the
-		// network as joined regardless.
+		// The catalog mutex covers the DATABASE phase of every writer, not their network
+		// work, so it is `shuttingDown` — set above, before anything is awaited — that keeps
+		// a join out of the way: {@link canJoin} is consulted before the subscribe and again
+		// after the bootstrap dials, so a join running concurrently with this either never
+		// subscribes or drops the membership claim it was building. What the mutex adds is
+		// that no new row can be written, and no reconcile started, from the moment the node
+		// begins to go down.
 		await this.catalogMutex.runExclusive(async () => {
 			// Cleared only once the node is provably down. Discarding the membership first
 			// meant a stop that failed — leaving the node alive and the wrapper `failed` —
@@ -608,11 +609,12 @@ export class Networks {
 		const definition = this.validateNetwork(data);
 		const config: LISHNetworkConfig = { ...definition, enabled };
 		// An upsert can bring a network into existence — see {@link catalogMutex}.
-		await this.withCatalog(config.networkID, async () => {
-			const previous = this.get(config.networkID);
+		const previous = await this.inCatalog(() => {
+			const row = this.get(config.networkID);
 			upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
-			await this.reconcileLocked(config.networkID, previous);
+			return row;
 		});
+		await this.reconcile(config.networkID, previous);
 		return config;
 	}
 
@@ -653,56 +655,56 @@ export class Networks {
 	}
 
 	async add(network: LISHNetworkConfig): Promise<boolean> {
-		return await this.withCatalog(network.networkID, async () => {
-			const ok = addLISHnet(this.db, network);
-			// A network added as enabled has to be joined, not merely written down. An add of
-			// one that already exists writes nothing and reconciles nothing: it used to claim a
-			// revision anyway on the way in, which cancelled a queued enable of that very
-			// network — a request that changed nothing discarding one that meant something.
-			if (ok) await this.reconcileLocked(network.networkID, undefined);
-			return ok;
-		});
+		const ok = await this.inCatalog(() => addLISHnet(this.db, network));
+		// A network added as enabled has to be joined, not merely written down. An add of one
+		// that already exists writes nothing and reconciles nothing: it used to claim a
+		// revision anyway on the way in, which cancelled a queued enable of that very network
+		// — a request that changed nothing discarding one that meant something.
+		if (ok) await this.reconcile(network.networkID, undefined);
+		return ok;
 	}
 
 	async update(network: LISHNetworkConfig): Promise<boolean> {
-		// Row read, write and runtime reconciliation in ONE critical section. With the
-		// write outside it, a toggle could slip between the two halves and settle the
-		// runtime against a row this edit was about to replace.
-		return await this.withCatalog(network.networkID, async () => {
+		// Row read and write in ONE critical section. With the read outside it, a toggle
+		// could slip between the two and be overwritten by a row this edit had already read.
+		const staged = await this.inCatalog(() => {
 			const existing = this.get(network.networkID);
 			// Store the cleaned list, not the raw one: blank rows from the form would
 			// otherwise be persisted while the runtime worked from the filtered copy, and
 			// the two would disagree about what this network's bootstrap list even is.
 			const cleaned = Networks.cleanBootstrapList(network.bootstrapPeers ?? []);
-			const ok = updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned });
-			// The general edit form carries the bootstrap list AND the enabled flag, so this
-			// path can change either one. Without the runtime reconciliation the edit would
-			// reach only the database and the live node would keep dialing the previous list —
-			// or stay in a network the edit had just disabled — until restart.
-			if (!ok) return ok;
-			await this.reconcileLocked(network.networkID, existing);
-			return ok;
+			return updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned }) ? { existing } : undefined;
 		});
+		if (!staged) return false;
+		// The general edit form carries the bootstrap list AND the enabled flag, so this path
+		// can change either one. Without the runtime reconciliation the edit would reach only
+		// the database and the live node would keep dialing the previous list — or stay in a
+		// network the edit had just disabled — until restart.
+		await this.reconcile(network.networkID, staged.existing);
+		return true;
 	}
 
 	/**
-	 * Delete a lishnet: drop the row, then leave it — one critical section.
+	 * Delete a lishnet: drop the row, then leave it.
 	 *
-	 * Both halves used to be separate lock acquisitions, which let a concurrent enable
-	 * rejoin the topic between them and then watch the delete remove the row underneath it:
-	 * subscribed, in `joinedNetworks`, and with nothing in the database to explain either.
 	 * The row goes first so the reconcile converges on the only desired state a deleted
-	 * lishnet has — no row, therefore not joined — and an enable queued behind us finds no
-	 * row and answers "not found" instead of rejoining a deleted network.
+	 * lishnet has — no row, therefore not joined — and an enable arriving during the leave
+	 * finds no row and answers "not found" instead of rejoining a deleted network. Both
+	 * halves used to be separate lock acquisitions with the row write LAST, which let that
+	 * enable rejoin the topic between them and then watch the delete remove the row
+	 * underneath it: subscribed, in `joinedNetworks`, and nothing in the database to explain
+	 * either.
 	 */
 	async delete(id: string): Promise<boolean> {
-		return await this.withCatalog(id, async () => {
-			if (!lishnetExists(this.db, id)) return false;
+		const staged = await this.inCatalog(() => {
+			if (!lishnetExists(this.db, id)) return undefined;
 			const previous = this.get(id);
-			const removed = deleteLISHnet(this.db, id);
-			await this.reconcileLocked(id, previous);
-			return removed;
+			deleteLISHnet(this.db, id);
+			return { previous };
 		});
+		if (!staged) return false;
+		await this.reconcile(id, staged.previous);
+		return true;
 	}
 
 	exists(id: string): boolean {
@@ -729,18 +731,19 @@ export class Networks {
 	 * otherwise stay in its topic with no row left to explain it.
 	 */
 	async replace(networks: LISHNetworkConfig[]): Promise<void> {
-		// Under the catalog mutex the ID set cannot move underneath us, so the list read
-		// here is the list the per-ID locks below will actually cover. Reading it outside
-		// meant a network created while we waited was reconciled with nobody holding its
-		// lock, against the add that was still joining it.
-		await this.catalogMutex.runExclusive(async () => {
-			const before = new Map(this.list().map(n => [n.networkID, n]));
-			const affected = [...new Set([...before.keys(), ...networks.map(n => n.networkID)])];
-			await this.withNetworks(affected, async () => {
-				replaceLISHnets(this.db, networks);
-				for (const id of affected) await this.reconcileLocked(id, before.get(id));
-			});
+		// Snapshot and rewrite in one critical section, so the list this reconciles against
+		// is exactly the list it replaced. Reading it outside meant a network created while
+		// we waited was rewritten out of existence behind the back of the add that was still
+		// joining it.
+		const before = await this.inCatalog(() => {
+			const rows = new Map(this.list().map(n => [n.networkID, n]));
+			replaceLISHnets(this.db, networks);
+			return rows;
 		});
+		// One lishnet at a time, each under its own lock and none of them under the catalog.
+		// Reconciling the whole set under the global lock meant a rewrite of a long list held
+		// it across every affected network's dials and disconnects in turn.
+		for (const id of new Set([...before.keys(), ...networks.map(n => n.networkID)])) await this.reconcile(id, before.get(id));
 	}
 
 	/**
@@ -764,18 +767,19 @@ export class Networks {
 	 * recorded. Returns the updated config or null if the network is unknown.
 	 */
 	async updateBootstrapPeers(id: string, bootstrapPeers: string[]): Promise<LISHNetworkConfig | null> {
-		return await this.withCatalog(id, async () => {
+		const staged = await this.inCatalog(() => {
 			const existing = this.get(id);
-			if (!existing) return null;
-			const cleaned = Networks.cleanBootstrapList(bootstrapPeers);
-			const next: LISHNetworkConfig = { ...existing, bootstrapPeers: cleaned };
+			if (!existing) return undefined;
+			const next: LISHNetworkConfig = { ...existing, bootstrapPeers: Networks.cleanBootstrapList(bootstrapPeers) };
 			// Persist first and believe the answer. Switching the runtime over after a failed
 			// write would leave the node dialing a list the database never accepted, and the
 			// old one would come back at the next restart with nothing to explain the change.
 			if (!updateLISHnet(this.db, next)) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, id);
-			this.syncBootstrapRuntime(id, existing.bootstrapPeers, cleaned);
-			return next;
+			return { existing, next };
 		});
+		if (!staged) return null;
+		await this.reconcile(id, staged.existing);
+		return staged.next;
 	}
 
 	/**
