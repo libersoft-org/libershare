@@ -561,15 +561,20 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('this interface carries several IPv4 addresses');
 		// Out of the snapshot, which queries without an AddressState filter — so the
 		// count includes exactly the addresses the reader dropped.
-		expect(command).toContain('@($oldAddresses | Where-Object');
-		expect(command).not.toContain('AddressState');
+		expect(command).toContain('@($oldAddresses).Count -gt 1');
+		expect(command.slice(0, command.indexOf('several IPv4 addresses'))).not.toContain('AddressState');
 		// Before anything is removed, so the refusal costs nothing and undoes nothing.
 		expect(command.indexOf('several IPv4 addresses')).toBeLessThan(command.indexOf('try { try { Remove-NetIPAddress'));
 	});
 
-	it('does not count an APIPA address as an alias worth refusing', () => {
-		// 169.254.x is "DHCP did not answer", not a configuration to preserve.
-		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).toContain("$_.IPAddress -notlike '169.254.*'");
+	// A `169.254.*` address is not necessarily APIPA. Windows lets one be configured
+	// by hand, tells the two apart by PrefixOrigin rather than by the text of the
+	// address, and the removal takes both alike — so exempting the prefix from the
+	// count deleted a manual link-local alias that the reader does not even show.
+	it('exempts no address from the alias count, the link-local prefix included', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
+		expect(command).not.toContain('169.254.');
+		expect(command).toContain('if (@($oldAddresses).Count -gt 1) { throw');
 	});
 
 	it('keeps the route metrics in the snapshot, not just the next hops', () => {

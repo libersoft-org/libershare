@@ -669,12 +669,20 @@ function windowsRestoreSteps(): string[] {
  * been shown.
  *
  * Counted out of the snapshot, which is the same query with no state filter, so
- * this costs no extra call. APIPA is excluded: it exists only because DHCP did
- * not answer, and removing it is the point of the apply rather than a loss.
- * Placed after the snapshot and before the first removal — nothing has been
- * changed yet, so the refusal is free.
+ * this costs no extra call. Placed after the snapshot and before the first
+ * removal — nothing has been changed yet, so the refusal is free.
+ *
+ * NO address is exempt, and in particular not `169.254.*`. That prefix was
+ * excluded on the grounds that a link-local address only exists because DHCP did
+ * not answer — but the prefix does not say who created it. Windows distinguishes
+ * an automatic APIPA address (`PrefixOrigin` WellKnown, `SuffixOrigin`
+ * LinkLayerAddress) from one a user configured by hand (both `Manual`), and the
+ * text `169.254.` is identical in the two cases. The removal that follows takes
+ * every IPv4 address on the interface either way, so exempting the prefix let a
+ * manually configured link-local alias pass the count and then be deleted — an
+ * alias the reader also hides, so it was not even visible beforehand.
  */
-const WINDOWS_ALIAS_GUARD = `if (@($oldAddresses | Where-Object { $_.IPAddress -notlike '169.254.*' }).Count -gt 1) { throw "this interface carries several IPv4 addresses, which this app cannot preserve" }`;
+export const WINDOWS_ALIAS_GUARD: string = `if (@($oldAddresses).Count -gt 1) { throw "this interface carries several IPv4 addresses, which this app cannot preserve" }`;
 
 /**
  * Build the PowerShell one-shot that applies an IPv4 configuration.
