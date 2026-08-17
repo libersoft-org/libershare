@@ -1632,7 +1632,7 @@ describe('writeFileAtomically', () => {
 	 * back to no `timesyncd.conf.d` at all and a drop-in nothing can read.
 	 */
 	it('flushes the parent of a directory it had to create', async () => {
-		const path = join(dir, 'a', 'b', '90-libershare.conf');
+		const path = join(dir, 'a', '90-libershare.conf');
 		const flushed: string[] = [];
 		await writeFileAtomically(
 			path,
@@ -1640,10 +1640,38 @@ describe('writeFileAtomically', () => {
 			p => readFile(p, 'utf8'),
 			async d => void flushed.push(d)
 		);
-		// `mkdir` answers with an extended-length path on Windows (`\\?\C:\...`), which opens
-		// just the same — the prefix comes off so the assertion is about the directory.
-		// The first directory created is `a`, so its parent is the flush the rename would miss.
-		expect(flushed.map(d => d.replace(/^\\\\\?\\/, ''))).toEqual([dir, join(dir, 'a', 'b')]);
+		// The parent of `a` for the entry that names it, then `a` itself for the rename.
+		expect(flushed).toEqual([dir, join(dir, 'a')]);
+	});
+
+	/**
+	 * The rule applied to one level only. `mkdir(…, {recursive})` reports the FIRST path it
+	 * created, so with `a`, `b` and `c` all missing the entry naming `b` (which lives in `a`)
+	 * and the one naming `c` (which lives in `b`) were never flushed — a crash comes back to
+	 * a half-created path and a drop-in nothing can read.
+	 */
+	it('flushes every level of a path it had to create', async () => {
+		const path = join(dir, 'a', 'b', 'c', '90-libershare.conf');
+		const flushed: string[] = [];
+		await writeFileAtomically(
+			path,
+			'x\n',
+			p => readFile(p, 'utf8'),
+			async d => void flushed.push(d)
+		);
+		expect(flushed).toEqual([dir, join(dir, 'a'), join(dir, 'a', 'b'), join(dir, 'a', 'b', 'c')]);
+	});
+
+	it('flushes nothing extra when every level is already there', async () => {
+		const path = join(dir, '90-libershare.conf');
+		const flushed: string[] = [];
+		await writeFileAtomically(
+			path,
+			'x\n',
+			p => readFile(p, 'utf8'),
+			async d => void flushed.push(d)
+		);
+		expect(flushed).toEqual([dir]);
 	});
 
 	/**

@@ -1615,6 +1615,38 @@ export async function syncDirectory(dir: string): Promise<void> {
  * the first write publishes the second's content and the second fails with ENOENT.
  */
 /**
+ * Create `dir` and every missing level above it, flushing the parent of each one.
+ *
+ * A directory entry lives in its PARENT, so that is where its durability comes from — and
+ * the rule has to be applied to every level, not just the first. `mkdir(…, {recursive})`
+ * answers with the first path it had to create, so flushing that path's parent alone left
+ * `/root/a/b/c` with the entries for `b` and `c` unflushed: a crash comes back to a
+ * drop-in directory that is not there and a configuration nothing ever read.
+ *
+ * `dir` itself is deliberately not flushed here — it has no entry in it yet. The rename
+ * that follows puts one there and flushes it.
+ */
+async function makeDirectoryDurably(dir: string, syncDir: (d: string) => Promise<void>): Promise<void> {
+	const levels: string[] = [];
+	for (let current = dir; dirname(current) !== current; current = dirname(current)) levels.unshift(current);
+	for (const level of levels) {
+		// One level at a time instead of `{recursive: true}`, because the recursive call
+		// reports only the first path it created — and on Windows it reports it in
+		// extended-length form, so the rest of the chain cannot be derived from its answer.
+		// An `EEXIST` here means the level was already there and no entry was added to its
+		// parent; anything else (a file in the way, no permission) is a real failure.
+		const created = await mkdir(level).then(
+			() => true,
+			(err: { code?: string }) => {
+				if (err.code === 'EEXIST') return false;
+				throw err;
+			}
+		);
+		if (created) await syncDir(dirname(level));
+	}
+}
+
+/**
  * What a rollback actually achieved.
  *
  * A boolean could not say this. Restoring is a rename (or an unlink) followed by a directory
@@ -1635,12 +1667,7 @@ export async function writeFileAtomically(path: string, content: string, readOri
 		if (err.code === 'ENOENT') return null;
 		throw err;
 	});
-	const created = await mkdir(dirname(path), { recursive: true });
-	// `mkdir` answers with the FIRST directory it had to create, or undefined when they were
-	// all already there. Flushing the new directory would commit what is inside it; the entry
-	// that NAMES it lives in its parent and needs its own flush, or a crash comes back to a
-	// drop-in directory that is not there and a configuration that was never read.
-	if (created !== undefined) await syncDir(dirname(created));
+	await makeDirectoryDurably(dirname(path), syncDir);
 	// Same directory, or the rename would cross a filesystem boundary and stop being atomic.
 	const temp = `${path}.libershare-${process.pid}-${randomUUID()}.tmp`;
 	let renamed = false;
