@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, type PlatformStatusReader, readNtpUnitsList, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, syncDirectory, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, competingNtpUnits, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, type PlatformStatusReader, readNtpUnitsList, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, syncDirectory, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -655,6 +655,32 @@ describe('canConfigureTimesyncdServer', () => {
 		expect(COMPETING_NTP_UNITS).toContain('chronyd.service');
 		expect(COMPETING_NTP_UNITS).toContain('ntpd.service');
 		expect(COMPETING_NTP_UNITS.every(u => u.endsWith('.service'))).toBe(true);
+	});
+});
+
+describe('competingNtpUnits', () => {
+	it('keeps the known implementations when the host adds nothing', () => {
+		expect(competingNtpUnits([TIMESYNCD_UNIT]).sort()).toEqual([...COMPETING_NTP_UNITS].sort());
+		expect(competingNtpUnits(null).sort()).toEqual([...COMPETING_NTP_UNITS].sort());
+	});
+
+	/**
+	 * The gap the hardcoded five leave: timedated takes any unit name from its ordered list,
+	 * so a distribution's or an administrator's own provider is one it will happily hand the
+	 * clock to and one nothing here would have asked about.
+	 */
+	it('adds a provider from the host ordering that is on no list', () => {
+		expect(competingNtpUnits(['50-vendor-timed.service', TIMESYNCD_UNIT])).toContain('50-vendor-timed.service');
+	});
+
+	/** timesyncd is the daemon we configure, so it is never its own competitor. */
+	it('never asks about timesyncd itself', () => {
+		expect(competingNtpUnits(['chronyd.service', TIMESYNCD_UNIT])).not.toContain(TIMESYNCD_UNIT);
+	});
+
+	it('does not ask twice about a unit that is on both lists', () => {
+		const units = competingNtpUnits(['chronyd.service', TIMESYNCD_UNIT]);
+		expect(units.filter(u => u === 'chronyd.service')).toHaveLength(1);
 	});
 });
 

@@ -485,6 +485,21 @@ export function parseUnitInstalled(output: string, unit: string): boolean {
 export const COMPETING_NTP_UNITS: string[] = ['chronyd.service', 'chrony.service', 'ntpd.service', 'ntpsec.service', 'openntpd.service'];
 
 /**
+ * Every unit worth asking "is an NTP daemon other than timesyncd running here".
+ *
+ * The hardcoded five above are a floor, not the answer: timedated accepts ANY valid unit
+ * name from its ordered list, so a distribution or an administrator can put a provider
+ * there that is on nobody's list — and asking only about the five reported "nothing in the
+ * way" while that daemon held the clock. The host's own ordering is therefore folded in,
+ * minus timesyncd, which is the one daemon that is not a competitor.
+ */
+export function competingNtpUnits(ordered: string[] | null): string[] {
+	const units = new Set(COMPETING_NTP_UNITS);
+	for (const unit of ordered ?? []) if (unit !== TIMESYNCD_UNIT) units.add(unit);
+	return [...units];
+}
+
+/**
  * True when `systemctl show -p ActiveState --value <units...>` reports any of them as
  * running. A unit that does not exist on the host reports `inactive`, so an absent
  * chrony is indistinguishable from a stopped one — which is the correct answer here.
@@ -935,8 +950,10 @@ async function readLinuxStatus(): Promise<PlatformStatus> {
 	const ordered = canNtp ? await readNtpUnitsList() : [];
 	const unit = canNtp ? await tryRead('systemctl', ['list-unit-files', ...(ordered !== null && ordered.length > 0 ? ordered : [TIMESYNCD_UNIT])]) : null;
 	// timedated manages several NTP implementations; a host where chrony is the active
-	// one would ignore our drop-in entirely (see canConfigureTimesyncdServer).
-	const competing = canNtp ? await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', ...COMPETING_NTP_UNITS]) : null;
+	// one would ignore our drop-in entirely (see canConfigureTimesyncdServer). The units to
+	// ask about come from the host's own ordering as well as the known names, so a provider
+	// nobody hardcoded is still seen.
+	const competing = canNtp ? await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', ...competingNtpUnits(ordered)]) : null;
 	return {
 		// `timedatectl show` was read above and already carries it — no extra probe.
 		timezone: map['Timezone'] ?? null,
