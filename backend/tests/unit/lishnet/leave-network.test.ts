@@ -365,43 +365,46 @@ describe('Networks.joinNetwork — onNetworkJoined notification', () => {
  * the form was written to the database and then ignored until restart — the node
  * kept dialing the peers the user had just removed.
  */
-describe('Networks.update — a changed bootstrap list reaches the running node', () => {
+describe('Networks.update — a changed bootstrap list reaches the running node', async () => {
 	const NET = 'net-a';
 	const PEER_A = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
 	const PEER_B = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fp';
 	const ADDR_A = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_A}`;
 	const ADDR_B = `/ip4/203.0.113.10/tcp/9090/p2p/${PEER_B}`;
 
-	function seeded(bootstrapPeers: string[]) {
+	function seeded(bootstrapPeers: string[], enabled = true) {
 		const db = new Database(':memory:');
 		initLISHnetsTables(db);
-		addLISHnet(db, { networkID: NET, name: 'A', description: '', bootstrapPeers, enabled: true, created: '2026-01-01T00:00:00.000Z' });
+		addLISHnet(db, { networkID: NET, name: 'A', description: '', bootstrapPeers, enabled, created: '2026-01-01T00:00:00.000Z' });
 		const mock = makeMockNet();
 		const networks = Object.create(Networks.prototype) as Networks;
 		(networks as any).network = mock;
 		(networks as any).db = db;
-		(networks as any).joinedNetworks = new Set([NET]);
+		(networks as any).joinedNetworks = new Set(enabled ? [NET] : []);
+		(networks as any).networkOperations = new Map();
+		(networks as any).desiredRevisions = new Map();
+		(networks as any).announcedJoined = new Map(enabled ? [[NET, true]] : []);
 		return { networks, mock, db };
 	}
 
-	const edit = (networks: Networks, bootstrapPeers: string[]): boolean => (networks as any).update({ networkID: NET, name: 'A', description: '', bootstrapPeers, enabled: true, created: '2026-01-01T00:00:00.000Z' });
+	const edit = (networks: Networks, bootstrapPeers: string[], enabled = true): Promise<boolean> => (networks as any).update({ networkID: NET, name: 'A', description: '', bootstrapPeers, enabled, created: '2026-01-01T00:00:00.000Z' });
 
-	it('prunes the status and dials the new list when the entries change', () => {
+	it('prunes the status and dials the new list when the entries change', async () => {
 		const { networks, mock } = seeded([ADDR_A]);
-		edit(networks, [ADDR_B]);
+		await edit(networks, [ADDR_B]);
 		expect(mock.prunedStatus).toEqual([{ networkID: NET, keep: [ADDR_B] }]);
 		expect(mock.dialledLists).toEqual([{ networkID: NET, peers: [ADDR_B], origin: 'configured' }]);
 	});
 
-	it('drops the bootstrap exemption of a peer removed through the form', () => {
+	it('drops the bootstrap exemption of a peer removed through the form', async () => {
 		const { networks, mock } = seeded([ADDR_A, ADDR_B]);
-		edit(networks, [ADDR_A]);
+		await edit(networks, [ADDR_A]);
 		expect(mock.prunedBootstrap).toEqual([PEER_B]);
 	});
 
-	it('leaves the running node alone when only the name changed', () => {
+	it('leaves the running node alone when only the name changed', async () => {
 		const { networks, mock } = seeded([ADDR_A]);
-		edit(networks, [ADDR_A]);
+		await edit(networks, [ADDR_A]);
 		expect(mock.prunedStatus).toEqual([]);
 		expect(mock.dialledLists).toEqual([]);
 		expect(mock.prunedBootstrap).toEqual([]);
@@ -412,9 +415,9 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 	 * the filtered copy left the database and the live node disagreeing about what the
 	 * network's bootstrap list actually is.
 	 */
-	it('persists the cleaned list, not the blank rows the form submitted', () => {
+	it('persists the cleaned list, not the blank rows the form submitted', async () => {
 		const { networks, db } = seeded([ADDR_A]);
-		edit(networks, ['', ADDR_B, '   ']);
+		await edit(networks, ['', ADDR_B, '   ']);
 		expect(getLISHnet(db, NET)?.bootstrapPeers).toEqual([ADDR_B]);
 	});
 
@@ -423,19 +426,19 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 	 * nothing to do. Without an address-level prune the replaced address stays on the
 	 * autodial list and recovery keeps dialing it.
 	 */
-	it('drops the replaced address when only the host changed', () => {
+	it('drops the replaced address when only the host changed', async () => {
 		const moved = `/ip4/203.0.113.99/tcp/9090/p2p/${PEER_A}`;
 		const { networks, mock } = seeded([ADDR_A]);
-		edit(networks, [moved]);
+		await edit(networks, [moved]);
 		expect(mock.prunedAddresses).toEqual([[ADDR_A]]);
 		expect(mock.prunedBootstrap).toEqual([]);
 	});
 
-	it('keeps an address that is still configured for another joined network', () => {
+	it('keeps an address that is still configured for another joined network', async () => {
 		const { networks, mock } = seeded([ADDR_A]);
 		(networks as any).get = (nid: string) => (nid === 'net-other' ? { networkID: nid, bootstrapPeers: [ADDR_A] } : { networkID: NET, bootstrapPeers: [ADDR_A] });
 		(networks as any).joinedNetworks = new Set([NET, 'net-other']);
-		edit(networks, [ADDR_B]);
+		await edit(networks, [ADDR_B]);
 		expect(mock.prunedAddresses).toEqual([[]]);
 	});
 
@@ -444,19 +447,35 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 	 * the list" check has to as well — otherwise one spelling of an address counts as a
 	 * removal here and as the same entry there.
 	 */
-	it('treats two spellings of one address as the same entry', () => {
+	it('treats two spellings of one address as the same entry', async () => {
 		const upper = `/dns4/BOOTSTRAP.EXAMPLE.ORG./tcp/9090/p2p/${PEER_A}`;
 		const lower = `/dns4/bootstrap.example.org/tcp/9090/p2p/${PEER_A}`;
 		const { networks, mock } = seeded([upper]);
-		edit(networks, [lower]);
+		await edit(networks, [lower]);
 		expect(mock.prunedAddresses).toEqual([[]]);
 	});
 
-	it('does not dial for a network that is not joined', () => {
-		const { networks, mock } = seeded([ADDR_A]);
-		(networks as any).joinedNetworks = new Set<string>();
-		edit(networks, [ADDR_B]);
+	it('does not dial for a network that is not joined', async () => {
+		const { networks, mock } = seeded([ADDR_A], false);
+		await edit(networks, [ADDR_B], false);
 		expect(mock.dialledLists).toEqual([]);
 		expect(mock.prunedStatus).toHaveLength(1);
+	});
+
+	/**
+	 * The edit form carries the enabled flag too, so it can turn a network on or off —
+	 * and that has to reach the node, not just the database row.
+	 */
+	it('joins a network the edit enabled', async () => {
+		const { networks, mock } = seeded([ADDR_A], false);
+		await edit(networks, [ADDR_A], true);
+		expect(mock.subscribed).toEqual([NET]);
+		expect(mock.dialledLists).toEqual([{ networkID: NET, peers: [ADDR_A], origin: 'configured' }]);
+	});
+
+	it('leaves a network the edit disabled', async () => {
+		const { networks, mock } = seeded([ADDR_A], true);
+		await edit(networks, [ADDR_A], false);
+		expect(mock.unsubscribed).toEqual([NET]);
 	});
 });

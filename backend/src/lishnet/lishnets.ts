@@ -196,6 +196,31 @@ export class Networks {
 		});
 	}
 
+	/**
+	 * Bring the runtime in line with what the database now says about one lishnet.
+	 *
+	 * Every writer used to be responsible for this itself, and most of them simply were
+	 * not: importing an already-joined network rewrote its bootstrap list in the database
+	 * while the node went on dialing the old one, and importing an active network as
+	 * disabled left it joined until the next restart. The decision is made from the
+	 * RUNTIME state rather than the previous row, because that is what has to change.
+	 *
+	 * `previous` is the row as it was before the write, and is needed only to tell whether
+	 * the bootstrap list moved.
+	 */
+	private async reconcileStored(id: string, previous: LISHNetworkConfig | undefined): Promise<void> {
+		const next = this.get(id);
+		const wantJoined = next?.enabled === true;
+		const joined = this.joinedNetworks.has(id);
+		const before = Networks.cleanBootstrapList(previous?.bootstrapPeers ?? []);
+		const after = Networks.cleanBootstrapList(next?.bootstrapPeers ?? []);
+		// A list change is picked up first so a network that is about to be joined is
+		// joined against the pruned state — except when we are on our way OUT of it, where
+		// the leave resets the whole status anyway and a dial would be pure waste.
+		if (!(joined && !wantJoined) && before.join('\n') !== after.join('\n')) this.syncBootstrapRuntime(id, previous?.bootstrapPeers ?? [], after);
+		if (joined !== wantJoined) await this.reconcile(id, wantJoined);
+	}
+
 	/** True while `revision` is still the newest request for this lishnet. */
 	private isCurrentRevision(id: string, revision: number | undefined): boolean {
 		return revision === undefined || this.desiredRevisions.get(id) === revision;
@@ -449,8 +474,9 @@ export class Networks {
 	async importFromLISHnet(data: ILISHNetwork, enabled: boolean = false): Promise<LISHNetworkConfig> {
 		const definition = this.validateNetwork(data);
 		const config: LISHNetworkConfig = { ...definition, enabled };
+		const previous = this.get(config.networkID);
 		upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
-		if (enabled) await this.joinNetwork(config.networkID);
+		await this.reconcileStored(config.networkID, previous);
 		return config;
 	}
 
@@ -490,24 +516,26 @@ export class Networks {
 		return listEnabledLISHnets(this.db);
 	}
 
-	add(network: LISHNetworkConfig): boolean {
-		return addLISHnet(this.db, network);
+	async add(network: LISHNetworkConfig): Promise<boolean> {
+		const ok = addLISHnet(this.db, network);
+		// A network added as enabled has to be joined, not merely written down.
+		if (ok) await this.reconcileStored(network.networkID, undefined);
+		return ok;
 	}
 
-	update(network: LISHNetworkConfig): boolean {
+	async update(network: LISHNetworkConfig): Promise<boolean> {
 		const existing = this.get(network.networkID);
 		// Store the cleaned list, not the raw one: blank rows from the form would
 		// otherwise be persisted while the runtime worked from the filtered copy, and
 		// the two would disagree about what this network's bootstrap list even is.
 		const cleaned = Networks.cleanBootstrapList(network.bootstrapPeers ?? []);
 		const ok = updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned });
-		// The general edit form carries the bootstrap list as well, so this path can
-		// change it just like updateBootstrapPeers does. Without the same runtime
-		// synchronisation the edit would reach only the database and the live node
-		// would keep dialing the previous list until restart.
-		if (!ok || !existing) return ok;
-		const previous = Networks.cleanBootstrapList(existing.bootstrapPeers);
-		if (previous.join('\n') !== cleaned.join('\n')) this.syncBootstrapRuntime(network.networkID, existing.bootstrapPeers, cleaned);
+		// The general edit form carries the bootstrap list AND the enabled flag, so this
+		// path can change either one. Without the runtime reconciliation the edit would
+		// reach only the database and the live node would keep dialing the previous list —
+		// or stay in a network the edit had just disabled — until restart.
+		if (!ok) return ok;
+		await this.reconcileStored(network.networkID, existing);
 		return ok;
 	}
 
@@ -524,12 +552,25 @@ export class Networks {
 		return addLISHnetIfNotExists(this.db, network);
 	}
 
+	/**
+	 * Add every definition that does not exist yet. Nothing to reconcile: the underlying
+	 * writer skips networks that already exist and inserts new ones DISABLED, so no
+	 * network's runtime state can change here.
+	 */
 	importNetworks(networks: LISHNetworkDefinition[]): number {
 		return importLISHnets(this.db, networks);
 	}
 
-	replace(networks: LISHNetworkConfig[]): void {
+	/**
+	 * Replace the whole stored list (used for reordering). Every network the write touched
+	 * is reconciled afterwards, including ones it dropped: a wholesale rewrite can enable,
+	 * disable, re-list or delete anything, and a deleted network that is still joined would
+	 * otherwise stay in its topic with no row left to explain it.
+	 */
+	async replace(networks: LISHNetworkConfig[]): Promise<void> {
+		const before = new Map(this.list().map(n => [n.networkID, n]));
 		replaceLISHnets(this.db, networks);
+		for (const id of new Set([...before.keys(), ...networks.map(n => n.networkID)])) await this.reconcileStored(id, before.get(id));
 	}
 
 	/**

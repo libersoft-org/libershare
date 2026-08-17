@@ -10,11 +10,11 @@ interface LISHnetsHandlers {
 	get: (p: { networkID: string }) => LISHNetworkConfig | undefined;
 	exists: (p: { networkID: string }) => boolean;
 	add: (p: { network: LISHNetworkConfig }) => Promise<boolean>;
-	update: (p: { network: LISHNetworkConfig }) => boolean;
+	update: (p: { network: LISHNetworkConfig }) => Promise<boolean>;
 	delete: (p: { networkID: string }) => Promise<boolean>;
 	addIfNotExists: (p: { network: LISHNetworkDefinition }) => Promise<boolean>;
 	import: (p: { networks: LISHNetworkDefinition[] }) => number;
-	replace: (p: { networks: LISHNetworkConfig[] }) => boolean;
+	replace: (p: { networks: LISHNetworkConfig[] }) => Promise<boolean>;
 	exportToFile: (p: { networkID: string; filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 	exportAllToFile: (p: { filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 	importFromFile: (p: { path: string; enabled?: boolean }) => Promise<LISHNetworkConfig[]>;
@@ -54,7 +54,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['network']);
 		return networks.add(p.network);
 	}
-	function update(p: { network: LISHNetworkConfig }): boolean {
+	async function update(p: { network: LISHNetworkConfig }): Promise<boolean> {
 		assert(p, ['network']);
 		return networks.update(p.network);
 	}
@@ -70,9 +70,9 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['networks']);
 		return networks.importNetworks(p.networks);
 	}
-	function replace(p: { networks: LISHNetworkConfig[] }): boolean {
+	async function replace(p: { networks: LISHNetworkConfig[] }): Promise<boolean> {
 		assert(p, ['networks']);
-		networks.replace(p.networks);
+		await networks.replace(p.networks);
 		return true;
 	}
 	async function exportToFile(p: { networkID: string; filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }): Promise<SuccessResponse> {
