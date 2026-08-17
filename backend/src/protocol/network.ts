@@ -2163,15 +2163,7 @@ export class Network {
 						for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) {
 							if (matches(key)) this.forgetBootstrapAddress(key);
 						}
-						let remainingInStore = 0;
-						try {
-							const rec = await this.node.peerStore.get(pid);
-							const keep = rec.addresses.filter((a: any) => !matches(a.multiaddr.toString()));
-							if (keep.length < rec.addresses.length) await this.node.peerStore.patch(pid, { multiaddrs: keep.map((a: any) => a.multiaddr) });
-							remainingInStore = keep.length;
-						} catch {
-							/* peer not in store — nothing to trim there */
-						}
+						const remainingInStore = (await this.removePeerStoreAddresses(pid, matches)) ?? 0;
 						if (superseded()) return;
 						// Survivors are counted across BOTH stores. A configured LAN or VPN
 						// bootstrap deliberately sits in the registry alone while its interface
@@ -2424,6 +2416,33 @@ export class Network {
 		if (!entry) return;
 		entry.lastVerifiedAt = Date.now();
 		this.recoveryBackoff.delete(entry.key);
+	}
+
+	/**
+	 * Take matching addresses out of a peer's peerStore record, keeping everything
+	 * else about them. Returns how many addresses the record still holds, or null when
+	 * the peer is not in the store at all.
+	 *
+	 * The store has no "remove one address" call, so this reads and writes back — but
+	 * it patches `addresses`, the field it actually filtered, and puts back the very
+	 * objects it kept. Rebuilding them as a bare `multiaddrs` list dropped the
+	 * `isCertified` flag of every surviving address, downgrading signed peer records to
+	 * hearsay as a side effect of deleting an unrelated address.
+	 *
+	 * ponytail: read-modify-write, so an address added between the two calls is still
+	 * lost. Fixing that needs a peerStore that can remove an address in one operation —
+	 * libp2p has no such API today.
+	 */
+	private async removePeerStoreAddresses(pid: PeerID, matches: (address: string) => boolean): Promise<number | null> {
+		try {
+			const rec = await this.node!.peerStore.get(pid);
+			const keep = rec.addresses.filter(a => !matches(a.multiaddr.toString()));
+			if (keep.length < rec.addresses.length) await this.node!.peerStore.patch(pid, { addresses: keep });
+			return keep.length;
+		} catch {
+			// Not in the peerStore — there is nothing to trim.
+			return null;
+		}
 	}
 
 	/** Remove one address from the registry, its reverse index and its pacing state. */
@@ -2786,15 +2805,7 @@ export class Network {
 		// while the peerStore is not per network, so trimming it there would take away
 		// an address on behalf of an owner that never asked.
 		const removed = new Set(removedAddresses.filter(a => !this.bootstrapByAddress.has(normalizeMultiaddrForCompare(a))).map(bareDialEndpoint));
-		if (removed.size > 0) {
-			try {
-				const rec = await this.node.peerStore.get(pid);
-				const keep = rec.addresses.filter((a: any) => !removed.has(bareDialEndpoint(a.multiaddr.toString())));
-				if (keep.length < rec.addresses.length) await this.node.peerStore.patch(pid, { multiaddrs: keep.map((a: any) => a.multiaddr) });
-			} catch {
-				// Not in the peerStore — there is nothing to trim.
-			}
-		}
+		if (removed.size > 0) await this.removePeerStoreAddresses(pid, address => removed.has(bareDialEndpoint(address)));
 		// One address left the configuration; the peer may have others. The registry is
 		// where that question is settled — an address of this peer still in it is one
 		// another network claims, or one gossip announced and a dial verified, and it is

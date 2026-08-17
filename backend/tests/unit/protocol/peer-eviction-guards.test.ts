@@ -673,7 +673,7 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		(network as any).isPeerNeededByJoinedNetwork = (): boolean => true;
 		// The store holds it in its own shape — without the trailing /p2p/<id>.
 		(network as any).node.peerStore.get = async (): Promise<unknown> => ({ addresses: [{ multiaddr: multiaddr('/ip4/203.0.113.9/tcp/9090') }] });
-		(network as any).node.peerStore.patch = async (_pid: unknown, data: { multiaddrs: Array<{ toString(): string }> }): Promise<void> => void patched.push(data.multiaddrs.map(m => m.toString()));
+		(network as any).node.peerStore.patch = async (_pid: unknown, data: { addresses: Array<{ multiaddr: { toString(): string } }> }): Promise<void> => void patched.push(data.addresses.map(a => a.multiaddr.toString()));
 		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
 			(network as any).pruneBootstrapAddresses([ADDR_A], 'net-a');
 			(network as any).bumpBootstrapGeneration('net-a');
@@ -1079,8 +1079,8 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 				async get(): Promise<unknown> {
 					return { addresses: storedAddresses.map(a => ({ multiaddr: multiaddr(a) })) };
 				},
-				async patch(_pid: unknown, data: { multiaddrs: Array<{ toString(): string }> }): Promise<void> {
-					patched.push(data.multiaddrs.map(m => m.toString()));
+				async patch(_pid: unknown, data: { addresses: Array<{ multiaddr: { toString(): string } }> }): Promise<void> {
+					patched.push(data.addresses.map(a => a.multiaddr.toString()));
 				},
 				async merge(): Promise<void> {},
 			},
@@ -1304,8 +1304,8 @@ describe('reconcilePeerAfterBootstrapRemoval', () => {
 				async get(): Promise<unknown> {
 					return { addresses: stored.map(a => ({ multiaddr: multiaddr(a) })) };
 				},
-				async patch(_pid: unknown, data: { multiaddrs: Array<{ toString(): string }> }): Promise<void> {
-					patched.push(data.multiaddrs.map(m => m.toString()));
+				async patch(_pid: unknown, data: { addresses: Array<{ multiaddr: { toString(): string } }> }): Promise<void> {
+					patched.push(data.addresses.map(a => a.multiaddr.toString()));
 				},
 			},
 		};
@@ -1637,6 +1637,25 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 		const network = networkOver(store);
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [ADDR], 'net-a');
 		expect((await store.get(pid)).addresses.map(a => a.multiaddr.toString())).toEqual([]);
+	});
+
+	/**
+	 * A signed peer record is what marks an address certified, and the removal of an
+	 * UNRELATED address must not quietly demote it. Rebuilding the record from a bare
+	 * multiaddr list did exactly that — every survivor came back as hearsay.
+	 */
+	it('keeps the certification of the addresses it does not remove', async () => {
+		const { store, pid } = await realPeerStore();
+		const other = `/ip4/203.0.113.22/tcp/9090/p2p/${PEER_ID}`;
+		await store.patch(pid, {
+			addresses: [
+				{ multiaddr: multiaddr(ADDR), isCertified: true },
+				{ multiaddr: multiaddr(other), isCertified: false },
+			],
+		});
+		const network = networkOver(store);
+		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [other], 'net-a');
+		expect((await store.get(pid)).addresses).toEqual([{ multiaddr: multiaddr('/ip4/203.0.113.21/tcp/9090'), isCertified: true }]);
 	});
 
 	it('leaves an address the configuration kept', async () => {
