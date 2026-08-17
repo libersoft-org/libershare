@@ -1585,24 +1585,31 @@ export class Network {
 		// heartbeatInterval). KEEP_ALIVE handles the TCP layer; gossipsub.direct
 		// handles the gossipsub-stream layer. Evicted peers are removed from the
 		// set in purgeStalePeer, so it no longer grows monotonically.
-		const gossipsub: any = this.pubsub;
-		if (gossipsub?.direct && typeof gossipsub.direct.add === 'function') {
-			let added = 0;
-			for (const peer of allPeers) {
-				const pid = peer.id.toString();
-				if (pid === myID) continue;
-				if (!connectedIDs.has(pid)) continue;
-				// A left-network peer that lingers/reappears in the peerStore must not be
-				// added to the direct set either — its fast reconnect cadence would undo the
-				// leave-network disconnect (same guard as the bootstrap promotion above).
-				if (this.isRedialSuppressed(pid)) continue;
-				if (!gossipsub.direct.has(pid)) {
-					gossipsub.direct.add(pid);
-					added++;
-				}
-			}
-			if (added > 0) trace(`[NET] gossipsub direct: added ${added} connected peer(s) to fast-reconnect set`);
+		let added = 0;
+		for (const peer of allPeers) {
+			const pid = peer.id.toString();
+			if (pid === myID) continue;
+			if (!connectedIDs.has(pid)) continue;
+			if (this.addGossipsubDirectPeer(pid)) added++;
 		}
+		if (added > 0) trace(`[NET] gossipsub direct: added ${added} connected peer(s) to fast-reconnect set`);
+	}
+
+	/**
+	 * Put a peer into the gossipsub `direct` set — never PRUNEd, and reconnected on its
+	 * own fast cadence (directConnectTicks × heartbeatInterval). Removed again by
+	 * {@link purgeStalePeer}. Returns whether this call was the one that added it.
+	 *
+	 * A left-network peer that lingers or reappears in the peerStore is refused: the fast
+	 * reconnect cadence would undo the leave-network disconnect.
+	 */
+	private addGossipsubDirectPeer(peerID: string): boolean {
+		const gossipsub: any = this.pubsub;
+		if (!gossipsub?.direct || typeof gossipsub.direct.add !== 'function') return false;
+		if (this.isRedialSuppressed(peerID)) return false;
+		if (gossipsub.direct.has(peerID)) return false;
+		gossipsub.direct.add(peerID);
+		return true;
 	}
 
 	// =========================================================================
@@ -1846,6 +1853,12 @@ export class Network {
 					// wanted — the point at which a discovered ID has earned its place in
 					// the set (see the claim above for why it may not have it yet).
 					if (peerID) this.bootstrapPeerIDs.add(peerID);
+					// A CONFIGURED bootstrap joins the gossipsub direct set the moment it
+					// answers. Production starts the node with an empty list — the config-time
+					// `directPeers` seed never applies — so waiting for the periodic promotion
+					// left the peer the whole mesh depends on without a fast reconnect, and
+					// PRUNE-able, for the first ~150 s of every run.
+					if (peerID && effectiveOrigin === 'configured') this.addGossipsubDirectPeer(peerID);
 					if (pidObj) {
 						await this.node.peerStore.merge(pidObj, verifiedThisAddr ? { multiaddrs: [ma], tags: { [KEEP_ALIVE]: { value: 1 } } } : { tags: { [KEEP_ALIVE]: { value: 1 } } });
 					}

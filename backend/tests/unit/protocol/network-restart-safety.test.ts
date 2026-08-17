@@ -210,3 +210,60 @@ describe('Network.addBootstrapPeers — a dial that lands after a restart', () =
 		expect(disconnected).toEqual([PEER_ID]);
 	});
 });
+
+/**
+ * Production starts the node with an empty bootstrap list, so the config-time
+ * `directPeers` seed never applies. A configured bootstrap therefore has to enter the
+ * gossipsub direct set on acceptance — waiting for the periodic promotion left the peer
+ * the whole mesh depends on PRUNE-able and without a fast reconnect for ~150 s.
+ */
+describe('Network.addBootstrapPeers — configured bootstraps become direct peers at once', () => {
+	function harness(suppressed: string[] = []) {
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map([['net-a', new Set(suppressed)]]);
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).bootstrapGeneration = new Map();
+		(network as any).inFlightBootstrapDials = new Set<string>();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			markPending(): void {},
+			recordOutcome(): void {},
+		};
+		const direct = new Set<string>();
+		(network as any).pubsub = { direct };
+		(network as any).node = {
+			peerId: { toString: (): string => 'selfID' },
+			getConnections: (): unknown[] => [],
+			dial: async (): Promise<{ remoteAddr: string }> => ({ remoteAddr: ADDR }),
+			peerStore: { async merge(): Promise<void> {} },
+		};
+		(network as any).isPeerNeededByJoinedNetwork = (): boolean => false;
+		(network as any).isTopicSubscribed = (): boolean => true;
+		(network as any).rememberBootstrapAddress = (): void => {};
+		return { network, direct };
+	}
+
+	it('adds a configured bootstrap on the dial that accepts it', async () => {
+		const { network, direct } = harness();
+
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+
+		expect([...direct]).toEqual([PEER_ID]);
+	});
+
+	it('leaves a merely discovered peer to the periodic promotion', async () => {
+		const { network, direct } = harness();
+
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+
+		expect([...direct]).toEqual([]);
+	});
+});
