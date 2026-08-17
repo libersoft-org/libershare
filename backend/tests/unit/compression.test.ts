@@ -1,4 +1,5 @@
 import { describe, it, expect, afterAll } from 'bun:test';
+import { deflateRawSync, deflateSync } from 'node:zlib';
 import { rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -70,10 +71,47 @@ describe('Utils.compress / Utils.decompress', () => {
 		});
 	}
 
+	// HTTP `deflate` is zlib-wrapped (RFC 1950) on most servers and bare DEFLATE (RFC 1951)
+	// on the rest, and only the leading bytes say which. Both have to read, under the same cap.
+	for (const [variant, deflate] of [
+		['zlib-wrapped', deflateSync],
+		['raw', deflateRawSync],
+	] as const) {
+		it(`deflate (${variant}): round-trips the exact bytes`, () => {
+			const original = samplePayload();
+			const restored = Utils.decompress(deflate(original) as Uint8Array<ArrayBuffer>, 'deflate');
+			expect(Array.from(restored)).toEqual(Array.from(original));
+		});
+
+		it(`deflate (${variant}): refuses to expand past the output cap`, () => {
+			const bomb = deflate(new Uint8Array(MAX_API_MESSAGE_SIZE + 1024 * 1024)) as Uint8Array<ArrayBuffer>;
+			expect(bomb.byteLength).toBeLessThan(1024 * 1024);
+			expect(() => Utils.decompress(bomb, 'deflate')).toThrow(ErrorCodes.DECOMPRESSED_TOO_LARGE);
+		});
+	}
+
+	it('deflate: throws on a corrupt stream instead of returning what it managed to read', () => {
+		const whole = deflateSync(samplePayload());
+		// Truncated mid-stream, and pure garbage: neither fits either wire variant, so the
+		// raw retry has to fail too rather than hand back a partial or bogus decode. The
+		// failure has to come out of the decoder — reaching it at all is half the assertion.
+		for (const corrupt of [whole.subarray(0, whole.byteLength - 4), new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])]) {
+			let failure: any;
+			try {
+				Utils.decompress(corrupt as Uint8Array<ArrayBuffer>, 'deflate');
+			} catch (err) {
+				failure = err;
+			}
+			expect(failure?.code).toMatch(/^Z_/);
+		}
+	});
+
 	it('rejects an unsupported algorithm instead of silently passing data through', () => {
 		const data = samplePayload();
 		expect(() => Utils.compress(data, 'bzip2' as any)).toThrow(ErrorCodes.UNSUPPORTED_COMPRESSION);
 		expect(() => Utils.decompress(data, 'xz' as any)).toThrow(ErrorCodes.UNSUPPORTED_DECOMPRESSION);
+		// Decode-only: nothing may ever write deflate, so it stays out of the compressor.
+		expect(() => Utils.compress(data, 'deflate' as any)).toThrow(ErrorCodes.UNSUPPORTED_COMPRESSION);
 	});
 });
 
@@ -223,10 +261,61 @@ describe('Utils.fetchURL', () => {
 		}
 	});
 
-	it('rejects a transfer encoding it cannot decode instead of returning the bytes', async () => {
+	for (const [variant, deflate] of [
+		['zlib-wrapped', deflateSync],
+		['raw', deflateRawSync],
+	] as const) {
+		it(`decodes a ${variant} deflate transfer encoding`, async () => {
+			// The runtime decoded both variants for us until this path took the job over;
+			// a URL that worked before must not start failing because of which one arrives.
+			const json = '{"deflated":true}';
+			const server = Bun.serve({
+				port: 0,
+				fetch: (): Response => new Response(deflate(new TextEncoder().encode(json)), { headers: { 'content-encoding': 'deflate' } }),
+			});
+			try {
+				expect(await Utils.fetchURL(`http://localhost:${server.port}/settings.json`)).toBe(json);
+			} finally {
+				await server.stop(true);
+			}
+		});
+	}
+
+	it('undoes a deflate transfer encoding and the file extension underneath it', async () => {
+		// `deflate` is never a file extension, so the two layers can never collapse into one:
+		// the transport comes off first, and the .gz the URL names is still there afterwards.
+		const json = '{"both":true}';
+		const body = deflateSync(Utils.compress(new TextEncoder().encode(json) as Uint8Array<ArrayBuffer>, 'gzip'));
 		const server = Bun.serve({
 			port: 0,
-			fetch: (): Response => new Response(Utils.compress(new TextEncoder().encode('{"a":1}') as Uint8Array<ArrayBuffer>, 'gzip'), { headers: { 'content-encoding': 'deflate' } }),
+			fetch: (): Response => new Response(body, { headers: { 'content-encoding': 'deflate' } }),
+		});
+		try {
+			expect(await Utils.fetchURL(`http://localhost:${server.port}/settings.json.gz`)).toBe(json);
+		} finally {
+			await server.stop(true);
+		}
+	});
+
+	it('caps a deflate Content-Encoding bomb like any other', async () => {
+		const bomb = deflateSync(new Uint8Array(MAX_API_MESSAGE_SIZE + 1024 * 1024));
+		expect(bomb.byteLength).toBeLessThan(1024 * 1024);
+		const server = Bun.serve({
+			port: 0,
+			fetch: (): Response => new Response(bomb, { headers: { 'content-encoding': 'deflate' } }),
+		});
+		try {
+			await expect(Utils.fetchURL(`http://localhost:${server.port}/settings.json`)).rejects.toThrow(ErrorCodes.DECOMPRESSED_TOO_LARGE);
+		} finally {
+			await server.stop(true);
+		}
+	});
+
+	it('rejects a transfer encoding it cannot decode instead of returning the bytes', async () => {
+		// `compress` (LZW) is a real HTTP content coding that nothing here can read.
+		const server = Bun.serve({
+			port: 0,
+			fetch: (): Response => new Response(Utils.compress(new TextEncoder().encode('{"a":1}') as Uint8Array<ArrayBuffer>, 'gzip'), { headers: { 'content-encoding': 'compress' } }),
 		});
 		try {
 			await expect(Utils.fetchURL(`http://localhost:${server.port}/settings.json`)).rejects.toThrow(ErrorCodes.UNSUPPORTED_DECOMPRESSION);

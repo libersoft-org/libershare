@@ -1,4 +1,4 @@
-import { brotliCompressSync, brotliDecompressSync, gunzipSync, zstdDecompressSync, constants as zlibConstants } from 'node:zlib';
+import { brotliCompressSync, brotliDecompressSync, gunzipSync, inflateRawSync, inflateSync, zstdDecompressSync, type ZlibOptions, constants as zlibConstants } from 'node:zlib';
 import { type CompressionAlgorithm, detectCompression, formatBytes, CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE } from '@shared';
 
 /**
@@ -14,8 +14,35 @@ function asBytes(data: Uint8Array): Uint8Array<ArrayBuffer> {
 	return new Uint8Array(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength);
 }
 
+/**
+ * Everything {@link Utils.decompress} can read. `deflate` is decode-only: it arrives
+ * as an HTTP `Content-Encoding`, but nothing here ever writes it, so it stays out of
+ * {@link CompressionAlgorithm} and out of the file extensions and the UI selector.
+ */
+type DecompressAlgorithm = CompressionAlgorithm | 'deflate';
+
 /** Compression algorithm each HTTP `Content-Encoding` token names. */
-const CONTENT_ENCODING_ALGORITHMS: Record<string, CompressionAlgorithm> = { gzip: 'gzip', br: 'brotli', zstd: 'zstd' };
+const CONTENT_ENCODING_ALGORITHMS: Record<string, DecompressAlgorithm> = { gzip: 'gzip', br: 'brotli', zstd: 'zstd', deflate: 'deflate' };
+
+/**
+ * Inflate an HTTP `deflate` body. The name covers two wire formats: RFC 9110 asks for
+ * the zlib wrapper (RFC 1950) and most servers send it, while a long tail sends bare
+ * DEFLATE (RFC 1951). Only the leading bytes tell them apart, so read it as zlib and
+ * retry raw when that header turns out not to be there. Both variants decoded before
+ * this path stopped using the runtime's own decoder, so both keep working.
+ *
+ * A rejected zlib header is the only reason to retry: hitting the output cap says the
+ * wrapper was read just fine, and inflating a second time would double the work the
+ * cap just refused.
+ */
+function inflateDeflate(data: Uint8Array<ArrayBuffer>, options: ZlibOptions): Buffer {
+	try {
+		return inflateSync(data, options);
+	} catch (err: any) {
+		if (err?.code === 'ERR_BUFFER_TOO_LARGE') throw err;
+		return inflateRawSync(data, options);
+	}
+}
 
 export class Utils {
 	static expandHome(path: string): string {
@@ -71,10 +98,10 @@ export class Utils {
 	 * Output is capped at {@link MAX_API_MESSAGE_SIZE}: a small compressed file
 	 * can expand to gigabytes, and every caller here decompresses synchronously,
 	 * so an uncapped expansion is an out-of-memory kill rather than an error.
-	 * All three algorithms go through node:zlib because Bun's own
+	 * Every algorithm goes through node:zlib because Bun's own
 	 * `gunzipSync` / `zstdDecompressSync` accept no options.
 	 */
-	static decompress(data: Uint8Array<ArrayBuffer>, algorithm: CompressionAlgorithm = 'gzip'): Uint8Array<ArrayBuffer> {
+	static decompress(data: Uint8Array<ArrayBuffer>, algorithm: DecompressAlgorithm = 'gzip'): Uint8Array<ArrayBuffer> {
 		const options = { maxOutputLength: MAX_API_MESSAGE_SIZE };
 		try {
 			switch (algorithm) {
@@ -84,6 +111,8 @@ export class Utils {
 					return asBytes(brotliDecompressSync(data, options));
 				case 'zstd':
 					return asBytes(zstdDecompressSync(data, options));
+				case 'deflate':
+					return asBytes(inflateDeflate(data, options));
 				default:
 					throw new CodedError(ErrorCodes.UNSUPPORTED_DECOMPRESSION, algorithm);
 			}
@@ -170,7 +199,7 @@ export class Utils {
 	 * decompression off we are the only decoder in the path, so a codec we cannot read
 	 * has to be an error — decoding it as text would hand the caller binary garbage.
 	 */
-	private static contentEncodingAlgorithm(header: string | null): CompressionAlgorithm | null {
+	private static contentEncodingAlgorithm(header: string | null): DecompressAlgorithm | null {
 		const token = header?.trim().toLowerCase() ?? '';
 		if (token === '' || token === 'identity') return null;
 		const algorithm = CONTENT_ENCODING_ALGORITHMS[token];
