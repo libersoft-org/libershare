@@ -575,17 +575,19 @@ export class Networks {
 		// under a queued enable, which then subscribed a dead pubsub and recorded the
 		// network as joined regardless.
 		await this.catalogMutex.runExclusive(async () => {
-			this.joinedNetworks.clear();
+			// Cleared only once the node is provably down. Discarding the membership first
+			// meant a stop that failed — leaving the node alive and the wrapper `failed` —
+			// still left this layer claiming it was in no lishnet and had announced nothing.
+			// `leaveNetwork()` begins with "not joined, nothing to do", so disabling one of
+			// those networks afterwards wrote `enabled=false` and then unsubscribed nothing,
+			// disconnected nobody and dropped no keep-alive tag, while the node went on
+			// subscribed to the topic.
+			await this.network.stop();
 			// Per-run, like `joinedNetworks` itself. Surviving a stop left the map claiming
 			// networks were still announced as joined, so after a restart a network that came
 			// back disabled never produced the "left" event its subscribers were waiting for,
 			// and a rejoin of one that had been announced before the stop produced no event
 			// either — the runtime had changed and nobody was told.
-			this.announcedJoined.clear();
-			await this.network.stop();
-			// Cleared again once the stop has returned: the teardown itself fires disconnect
-			// events that higher layers react to, and nothing may leave an entry behind from
-			// a run that is over.
 			this.joinedNetworks.clear();
 			this.announcedJoined.clear();
 			console.log('✓ All lishnets left and node stopped');

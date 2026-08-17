@@ -183,6 +183,26 @@ describe('Networks.startEnabledNetworks — coordinated with concurrent changes'
 		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
 	});
 
+	it('a stop that fails keeps the membership it could not prove gone', async () => {
+		const net = makeMockNet(Promise.resolve());
+		const networks = makeNetworks(net, db);
+		await networks.startEnabledNetworks();
+		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
+
+		net.stop = async (): Promise<void> => {
+			throw new Error('node.stop failed');
+		};
+		await expect(networks.stopAllNetworks()).rejects.toThrow('node.stop failed');
+
+		// Discarding the membership before the node was proved down left `leaveNetwork()`
+		// with "not joined, nothing to do", so the disable below wrote `enabled=false` and
+		// then unsubscribed nothing on a node that is still alive and still in the topic.
+		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
+		await networks.setEnabled(NET, false);
+		expect(net.unsubscribed).toEqual([NET]);
+		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
+	});
+
 	it('an undisturbed startup still joins every enabled network', async () => {
 		const net = makeMockNet(Promise.resolve());
 		const networks = makeNetworks(net, db);
