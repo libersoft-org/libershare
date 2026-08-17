@@ -2725,12 +2725,28 @@ export class Network {
 	}
 
 	/**
+	 * Run a destructive identity/datastore operation with the run provably over.
+	 *
+	 * `if (this.node) throw` was not that check. For the whole first half of
+	 * {@link startLocked} the datastore file is already open and the identity already
+	 * read while `this.node` is still null, so the guard passed and the wipe landed
+	 * underneath an in-progress start — a deleted peerstore mid-open, or an identity
+	 * overwritten after it was read but before the node existed. Holding the same
+	 * lifecycle mutex and demanding `stopped` inside it covers every await of a start.
+	 */
+	private async runWhenStopped<T>(what: string, op: () => Promise<T>): Promise<T> {
+		return await this.lifecycleMutex.runExclusive(async () => {
+			if (this.lifecycle !== 'stopped') throw new CodedError(ErrorCodes.INTERNAL_ERROR, `Network must be stopped before ${what}`);
+			return await op();
+		});
+	}
+
+	/**
 	 * Write a new identity private key into the datastore. The network must be stopped.
 	 * Validates the protobuf bytes by attempting to decode them.
 	 */
 	async writeIdentityKey(privateKeyBytes: Uint8Array): Promise<void> {
-		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before writing identity key');
-		await writeIdentityKeyToDatastore(this.dataDir, privateKeyBytes);
+		await this.runWhenStopped('writing identity key', () => writeIdentityKeyToDatastore(this.dataDir, privateKeyBytes));
 	}
 
 	/**
@@ -2738,8 +2754,7 @@ export class Network {
 	 * Next start will generate a fresh key.
 	 */
 	async clearIdentityKey(): Promise<void> {
-		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before clearing identity key');
-		await clearIdentityKeyFromDatastore(this.dataDir);
+		await this.runWhenStopped('clearing identity key', () => clearIdentityKeyFromDatastore(this.dataDir));
 	}
 
 	/**
@@ -2748,8 +2763,7 @@ export class Network {
 	 * fresh identity and an empty peerstore. Used by the factory reset.
 	 */
 	async clearDatastore(): Promise<void> {
-		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before clearing datastore');
-		await clearDatastoreDir(this.dataDir);
+		await this.runWhenStopped('clearing datastore', () => clearDatastoreDir(this.dataDir));
 	}
 
 	/**
@@ -2758,8 +2772,7 @@ export class Network {
 	 * but discovers peers fresh. Used by the factory reset "peers" category.
 	 */
 	async clearPeerstore(): Promise<void> {
-		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before clearing peerstore');
-		await clearPeerstoreOnly(this.dataDir);
+		await this.runWhenStopped('clearing peerstore', () => clearPeerstoreOnly(this.dataDir));
 	}
 
 	/**

@@ -140,4 +140,74 @@ describe('Network lifecycle', () => {
 		expect(net.getLifecycle()).toBe('stopped');
 		expect(net.isRunning()).toBe(false);
 	});
+
+	it('a start() that arrives while stop() is inside node.stop() is not answered "already running"', async () => {
+		const net = bareNetwork();
+		const gate = deferred();
+		let started = 0;
+		(net as any).node = {
+			stop: async (): Promise<void> => {
+				// The window in which `this.node` is still set but the run is over.
+				await gate.promise;
+			},
+		};
+		(net as any).startLocked = async (): Promise<void> => {
+			started++;
+		};
+
+		const stopping = net.stop();
+		await Promise.resolve();
+		const starting = net.start([]);
+		gate.resolve();
+		await Promise.all([stopping, starting]);
+
+		// A pre-check on `this.node` outside the mutex would have logged "already
+		// running" and returned, leaving the caller with a stopped network.
+		expect(started).toBe(1);
+		expect(net.getLifecycle()).toBe('running');
+	});
+
+	it('a datastore wipe cannot land inside an in-progress start', async () => {
+		const net = bareNetwork();
+		const gate = deferred();
+		let wiped = 0;
+		(net as any).startLocked = async (): Promise<void> => {
+			// Mirrors the real start: the datastore is open and the identity read long
+			// before `this.node` is assigned.
+			await gate.promise;
+		};
+
+		const starting = net.start([]);
+		await Promise.resolve();
+		expect(net.getLifecycle()).toBe('starting');
+
+		let refusal: unknown = null;
+		const wiping = net.clearDatastore().then(
+			() => {
+				wiped++;
+			},
+			(err: unknown) => {
+				refusal = err;
+			}
+		);
+		gate.resolve();
+		await starting;
+		await wiping;
+
+		// The wipe must be refused for the right reason. Guarding on `this.node` let it
+		// through here, because a start has no node yet while it has a datastore.
+		expect(wiped).toBe(0);
+		expect(String((refusal as Error)?.message)).toContain('Network must be stopped');
+		expect(net.getLifecycle()).toBe('running');
+	});
+
+	it('identity and peerstore writes are refused unless the lifecycle is stopped', async () => {
+		const net = bareNetwork();
+		(net as any).startLocked = async (): Promise<void> => {};
+		await net.start([]);
+
+		await expect(net.clearPeerstore()).rejects.toThrow('Network must be stopped');
+		await expect(net.clearIdentityKey()).rejects.toThrow('Network must be stopped');
+		await expect(net.writeIdentityKey(new Uint8Array([1, 2, 3]))).rejects.toThrow('Network must be stopped');
+	});
 });
