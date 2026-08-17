@@ -114,9 +114,15 @@ function makeNetworks(net: MockNet, joined: string[], configs: Record<string, st
 	return networks;
 }
 
-// Both go through reconcile(), which is where the join/leave notifications live.
-const leave = (networks: Networks, id: string): Promise<void> => (networks as any).reconcile(id, false);
-const join = (networks: Networks, id: string): Promise<void> => (networks as any).reconcile(id, true);
+// Both go through reconcileLocked(), which is where the join/leave notifications live.
+// Same shape the real writers use: claim the revision synchronously, then take the lock.
+function transition(networks: Networks, id: string, enabled: boolean): Promise<void> {
+	const n = networks as any;
+	const revision = n.claimRevision(id);
+	return n.operationLock(id).runExclusive(() => n.reconcileLocked(id, enabled, undefined, revision));
+}
+const leave = (networks: Networks, id: string): Promise<void> => transition(networks, id, false);
+const join = (networks: Networks, id: string): Promise<void> => transition(networks, id, true);
 
 describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 	let net: MockNet;

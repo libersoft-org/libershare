@@ -174,3 +174,52 @@ describe('Networks.setEnabled — serialised per lishnet', () => {
 		expect(net.disconnected).toContain('p-only-a');
 	});
 });
+
+/**
+ * A delete is a row write AND a runtime change, and the two used to be separate lock
+ * acquisitions with an abortable leave in between. An enable arriving in that window
+ * superseded the leave, rejoined the topic, and then watched the delete remove the row:
+ * subscribed to a lishnet the database has never heard of.
+ */
+describe('Networks.delete — terminal against a concurrent enable', () => {
+	let db: Database;
+	let net: ReturnType<typeof makeMockNet>;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		initLISHnetsTables(db);
+		addLISHnet(db, { networkID: NET, name: 'A', description: '', bootstrapPeers: [BOOTSTRAP], enabled: true, created: new Date().toISOString() });
+		net = makeMockNet();
+	});
+
+	/** Let the parked operation actually reach its gate before the racer arrives. */
+	async function settle(): Promise<void> {
+		for (let i = 0; i < 10; i++) await Promise.resolve();
+	}
+
+	it('an enable that lands mid-delete gets "not found" instead of rejoining', async () => {
+		net.topicPeers.set(NET, ['p-only-a']);
+		const gate = deferred();
+		net.disconnectGate = gate.promise;
+		const { networks } = makeNetworks(net, db, [NET]);
+
+		const deleting = networks.delete(NET);
+		await settle();
+		const enabling = networks.setEnabled(NET, true);
+		gate.resolve();
+		const [deleted, enabled] = await Promise.all([deleting, enabling]);
+
+		expect(deleted).toBe(true);
+		expect(enabled).toBe(false);
+		expect(getLISHnet(db, NET)).toBeUndefined();
+		// The three things that must agree: no row, not joined, not subscribed.
+		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
+		expect(net.subscribed).toEqual([]);
+		expect(net.unsubscribed).toEqual([NET]);
+	});
+
+	it('deleting an unknown lishnet reports it rather than pretending', async () => {
+		const { networks } = makeNetworks(net, db, []);
+		expect(await networks.delete('no-such-net')).toBe(false);
+	});
+});
