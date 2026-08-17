@@ -418,9 +418,16 @@ export class Networks {
 	/**
 	 * The lishnet as it stands right now, for a convergence that was never run.
 	 *
-	 * Read without the per-lishnet lock, which is only sound where it is used: the single
-	 * caller holds the catalog with admission already closed, so the drain has finished and
-	 * nothing can reserve a convergence that would move `joinedNetworks` underneath it.
+	 * Read without the per-lishnet lock, and sound only under the invariant its single caller
+	 * satisfies: **the catalog is held AND admission is closed**. Admission closes inside the
+	 * stop's own catalog section, after the drain, so those two together mean no convergence
+	 * is running and none can be reserved — `joinedNetworks` cannot move under this read.
+	 *
+	 * Either half alone is not enough, so a second caller may not use this. Holding the
+	 * catalog while admission is OPEN says nothing: convergences run outside the catalog, on
+	 * per-lishnet locks. Closed admission without the catalog is no better: the stop that
+	 * closed it may still be inside its own section. Anything else that wants this answer has
+	 * to take {@link operationLock} for the lishnet and read it there.
 	 */
 	private currentState(id: string): ReconcileOutcome {
 		const row = this.get(id);

@@ -2530,6 +2530,15 @@ export class Network {
 	 * and pass it in, or the default re-reads the counter per peer and the later peers of a
 	 * leave that outlived a restart are torn off the node that replaced it.
 	 *
+	 * Cancelling either await is safe to do MID-CALL, which is the property that makes binding
+	 * them to a signal sound at all. `peerStore.merge` gates only its per-peer write lock and
+	 * its read of the existing record on the signal; the write itself is one whole-record
+	 * `datastore.put` that the peer store never passes options to, so an aborted merge has
+	 * either written the complete new record or written nothing — never half of one. And
+	 * `hangUp` funnels into `closeConnections`, which catches the abort and calls
+	 * `connection.abort()`, so a cancelled hangUp force-closes the connection rather than
+	 * leaving a half-open one for a later path to read as live.
+	 *
 	 * Every step is bound to this run's cancellation as well — see {@link cancelRunOperations}.
 	 * A shutdown waits for the leave that is running, and the peer teardown a leave is made of
 	 * has no deadline of its own: one `hangUp` on a peer that never acknowledges held the whole
@@ -2617,6 +2626,14 @@ export class Network {
 	 * `true` returned here told the caller to leave the rest of its teardown undone. Instead
 	 * of a shared peer being destroyed, a dead one survived. If the claim is gone by then the
 	 * restore is taken back — tag and suppression both — and the caller carries on.
+	 *
+	 * Taking it back has a window of its own: a THIRD owner can claim the peer while the
+	 * re-removal is in flight, and then the tag is stripped from a peer that is wanted again.
+	 * That one is self-healing rather than guarded, deliberately — the caller's next call here
+	 * (before the purge, and again after it) finds the claim and restores the tag. Guarding it
+	 * instead would need a fourth check with a window of its own, and so on; the recheck loop
+	 * has to terminate somewhere, and a keep-alive tag missing for the length of one hangUp is
+	 * a redial hint lost, not a connection dropped.
 	 *
 	 * Returns whether the disconnect should stop.
 	 */
