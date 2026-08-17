@@ -731,28 +731,55 @@ export class Network {
 			// re-dialed by discovery (mDNS/identify/PX) — that would beat the disconnect.
 			// Suppression lifts on a legitimate inbound reconnect or on network rejoin.
 			if (this.isRedialSuppressed(peerID)) return;
-			// Stamp `keep-alive-fleet` on every discovered peer, regardless of how they
+			// Stamp `keep-alive-fleet` on a peer we are actually CONNECTED to, however it
 			// surfaced (mDNS, bootstrap, autonat, identify, peer-announce). libp2p
 			// ReconnectQueue only acts on peers with a tag whose key starts with
 			// `keep-alive`; without it, fleet peers found via non-announce channels
 			// (e.g. identify push from a common neighbour) are not re-dialed when
 			// they drop. Value 50 sits between bootstrap (100) and idle (1) — protects
 			// from ConnectionPruner without taking precedence over true bootstraps.
-			try {
-				await this.node!.peerStore.merge(evt.detail.id, {
-					tags: { 'keep-alive-fleet': { value: 50 } },
-				});
-			} catch {
-				/* ignore */
-			}
+			//
+			// Never on a mere discovery event, though: the tag is a standing instruction
+			// to libp2p to keep re-dialing this identity, and a discovery event is only
+			// somebody's claim that the peer exists. Stamping it before any contact let a
+			// peer that had just been evicted as unreachable get its re-dial instruction
+			// back from a late mDNS or PX event, ReconnectQueue included.
+			const tagAsFleetPeer = async (): Promise<void> => {
+				try {
+					await this.node!.peerStore.merge(evt.detail.id, {
+						tags: { 'keep-alive-fleet': { value: 50 } },
+					});
+				} catch {
+					/* ignore */
+				}
+			};
 			const existing = this.node!.getConnections(evt.detail.id);
-			if (existing.length > 0) return;
+			if (existing.length > 0) {
+				await tagAsFleetPeer();
+				return;
+			}
 			if (!evt.detail.multiaddrs?.length) return;
+			// The same pacing every other dial path respects. Discovery is a firehose —
+			// mDNS, identify and PX all deliver events for peers we have already written
+			// off — and this handler used to answer each one with an immediate dial, which
+			// could undo an eviction the moment it happened.
+			if (!isRecoveryDialDue(peerID, Date.now(), this.redialBackoff, this.unreachableQuarantine)) {
+				trace(`[NET] discovery dial skipped (quarantined or in backoff): ${peerID.slice(0, 16)}`);
+				return;
+			}
+			const epoch = this.runEpoch;
 
 			try {
 				await this.node!.dial(evt.detail.multiaddrs);
+				// A dial that settles after stop() belongs to a node this run no longer owns.
+				if (epoch !== this.runEpoch) return;
+				await tagAsFleetPeer();
 				trace(`[NET] Dialed discovered peer ${peerID.slice(0, 16)}`);
 			} catch (err: any) {
+				if (epoch !== this.runEpoch) return;
+				// Pay the failure into the shared backoff the gate above reads, so a peer
+				// discovery keeps naming is paced like everything else.
+				this.noteRecoveryDialFailure(peerID);
 				trace(`[NET] Failed to dial discovered peer ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 			}
 		});
