@@ -1613,6 +1613,36 @@ export class Network {
 		return true;
 	}
 
+	/** Undo {@link addGossipsubDirectPeer}: no more never-PRUNE, no more fast redial. */
+	private removeGossipsubDirectPeer(peerID: string): void {
+		const gossipsub: any = this.pubsub;
+		if (gossipsub?.direct && typeof gossipsub.direct.delete === 'function') gossipsub.direct.delete(peerID);
+	}
+
+	/**
+	 * Drop the KEEP_ALIVE tag a bootstrap entry earned by answering a dial.
+	 *
+	 * libp2p re-dials anything carrying a keep-alive tag and the connection manager will
+	 * not evict it, so a configured entry the user has deleted stays pinned for the life
+	 * of the run unless the tag goes with it. Kept if a joined network still wants the
+	 * peer — the tag is then no longer the bootstrap lifecycle's to take away.
+	 *
+	 * The merge is bound to the node captured here rather than `this.node`, so a restart
+	 * landing in it cannot untag the same identity on the successor run.
+	 */
+	private clearBootstrapKeepAlive(peerID: string): void {
+		const node = this.node;
+		if (!node) return;
+		if (this.isPeerNeededByJoinedNetwork(peerID)) return;
+		void (async (): Promise<void> => {
+			try {
+				await node.peerStore.merge(peerIDFromString(peerID), { tags: { [KEEP_ALIVE]: undefined } });
+			} catch (err: any) {
+				trace(`[NET] clearBootstrapKeepAlive failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+			}
+		})();
+	}
+
 	// =========================================================================
 	// Runtime state
 	// =========================================================================
@@ -2024,8 +2054,7 @@ export class Network {
 		this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(ma => extractDestinationPeerID(ma) !== peerID);
 		// Remove from the gossipsub never-PRUNE direct set, or gossipsub keeps
 		// attempting a direct stream to the dead peer every directConnectTicks.
-		const gossipsub: any = this.pubsub;
-		if (gossipsub?.direct && typeof gossipsub.direct.delete === 'function') gossipsub.direct.delete(peerID);
+		this.removeGossipsubDirectPeer(peerID);
 		this.redialBackoff.delete(peerID);
 		try {
 			const pid = peerIDFromString(peerID);
@@ -2175,6 +2204,14 @@ export class Network {
 
 	pruneConfiguredBootstrapPeer(peerID: string): void {
 		this.configuredBootstrapPeerIDs.delete(peerID);
+		// Symmetric with what the configured lifecycle hands out on the way in — a direct-set
+		// entry and a KEEP_ALIVE tag, both granted the moment the entry answers a dial.
+		// Without the matching removal, a bootstrap edited out of the list kept its fast
+		// reconnect cadence and its eviction exemption for the rest of the run: gossipsub
+		// went on opening a direct stream to it every directConnectTicks and libp2p went on
+		// re-dialing it, so the peer the user deleted never actually went away.
+		this.removeGossipsubDirectPeer(peerID);
+		this.clearBootstrapKeepAlive(peerID);
 		// Forget its addresses too. They were pushed into the autodial list when the
 		// entry was first configured, and that list is what zero-connection recovery
 		// walks — leaving them there means a bootstrap the user has just deleted keeps

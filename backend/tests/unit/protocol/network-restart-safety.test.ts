@@ -267,3 +267,59 @@ describe('Network.addBootstrapPeers — configured bootstraps become direct peer
 		expect([...direct]).toEqual([]);
 	});
 });
+
+/**
+ * The configured-bootstrap lifecycle hands a peer two things when it answers a dial: a
+ * gossipsub `direct` entry (never PRUNEd, redialed every directConnectTicks) and a
+ * KEEP_ALIVE tag (libp2p redials it, the connection manager will not evict it). Removing
+ * the entry from the configuration used to take back neither, so the peer the user
+ * deleted went on being dialed for the rest of the run.
+ */
+describe('Network.pruneConfiguredBootstrapPeer — gives back what the entry was granted', () => {
+	function harness(neededByJoined: boolean) {
+		const network = Object.create(Network.prototype) as Network;
+		const direct = new Set<string>();
+		const merges: Array<Record<string, unknown>> = [];
+		(network as any).pubsub = { direct };
+		(network as any).node = {
+			peerStore: {
+				async merge(_pid: unknown, data: Record<string, unknown>): Promise<void> {
+					merges.push(data);
+				},
+			},
+		};
+		(network as any).configuredBootstrapPeerIDs = new Set<string>([PEER_ID]);
+		(network as any).bootstrapPeerIDs = new Set<string>([PEER_ID]);
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).addressProbeBackoff = new Map();
+		(network as any).isPeerNeededByJoinedNetwork = (): boolean => neededByJoined;
+		(network as any).isRedialSuppressed = (): boolean => false;
+		(network as any).addGossipsubDirectPeer(PEER_ID);
+		return { network, direct, merges };
+	}
+
+	it('takes the direct entry and the keep-alive tag back', async () => {
+		const { network, direct, merges } = harness(false);
+		expect(direct.has(PEER_ID)).toBe(true);
+
+		network.pruneConfiguredBootstrapPeer(PEER_ID);
+		// The tag removal is a fire-and-forget merge on the captured node.
+		for (let i = 0; i < 6; i++) await Promise.resolve();
+
+		expect(direct.has(PEER_ID)).toBe(false);
+		expect(merges).toEqual([{ tags: { 'keep-alive': undefined } }]);
+	});
+
+	it('leaves the keep-alive tag alone while a joined network still wants the peer', async () => {
+		const { network, direct, merges } = harness(true);
+
+		network.pruneConfiguredBootstrapPeer(PEER_ID);
+		for (let i = 0; i < 6; i++) await Promise.resolve();
+
+		// The direct entry belongs to the bootstrap lifecycle and goes; the tag is now the
+		// joined network's, and the periodic promotion re-adds the direct entry if wanted.
+		expect(direct.has(PEER_ID)).toBe(false);
+		expect(merges).toEqual([]);
+	});
+});
