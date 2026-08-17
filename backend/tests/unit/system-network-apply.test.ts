@@ -1159,6 +1159,24 @@ describe('connectLinuxWifi', () => {
 		expect(state.keys.get(SAVED)).toBe('set-by-another-tool');
 	});
 
+	it('loses a change another tool makes between the re-read and the restore', async () => {
+		// The window the check cannot cover, and the reason it is documented rather
+		// than closed: the restore re-reads, sees the failed attempt's password, and
+		// by the time `connection modify` runs the profile holds someone else's new
+		// one. There is no conditional modify to reject the write on, so it lands and
+		// the other change is gone. Asserting the loss pins the known cost — close the
+		// window and this test is what says so.
+		const state = hostWithSavedKey();
+		const run = nmcli(state);
+		await expect(
+			connectLinuxWifi(DEVICE, SSID, NEW_KEY, async args => {
+				if (args[1] === 'modify') state.keys.set(SAVED, 'set-by-another-tool');
+				return run(args);
+			})
+		).rejects.toThrow('Secrets were required');
+		expect(state.keys.get(SAVED)).toBe(OLD_KEY);
+	});
+
 	it('refuses the join when the saved networks cannot be listed', async () => {
 		// Not "there is no saved profile" — an unknown state, and joining on the
 		// assumption that it is empty is what destroys the profile that was there.
