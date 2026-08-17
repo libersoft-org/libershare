@@ -36,6 +36,42 @@ export function assertString(value: unknown, name: string, maxLength: number, mi
 	return value;
 }
 
+/**
+ * Run a host reconfiguration and publish the state it actually left behind,
+ * whether it succeeded or not.
+ *
+ * A platform apply is several commands and is not atomic: it can change the
+ * address and then fail on the route, or change it and roll back. An error tells
+ * the caller the request did not complete, but says nothing about what the
+ * machine now looks like — so on the failure path the client used to keep
+ * rendering the configuration from before the attempt, and every other connected
+ * client heard nothing at all. Reading and broadcasting on both paths is what
+ * makes the published state the real one.
+ *
+ * The read is uncached by construction: `runHostMutation` invalidates the cache
+ * in its own `finally`, so this reaches the platform rather than returning the
+ * reading the mutation displaced. A read that fails as well is swallowed when
+ * there is already a mutation error to report — replacing it would hide the
+ * reason the user actually needs.
+ */
+export async function applyAndPublish(mutate: () => Promise<void>, readState: () => Promise<NetworkStateInfo>, broadcast: BroadcastFn): Promise<NetworkStateInfo> {
+	let failure: unknown = null;
+	try {
+		await mutate();
+	} catch (err) {
+		failure = err;
+	}
+	let state: NetworkStateInfo | null = null;
+	try {
+		state = await readState();
+		broadcast('system:network', state);
+	} catch (readError) {
+		if (!failure) throw readError;
+	}
+	if (failure) throw failure;
+	return state as NetworkStateInfo;
+}
+
 /** A single CPU-times sample: accumulated idle ticks and total ticks across all cores. */
 interface ICpuSample {
 	idle: number;
@@ -277,12 +313,9 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	 * the caller has just changed the very interface it is watching and needs to
 	 * see the outcome — including the case where the address did not take.
 	 */
-	async function applyNetworkConfig(p: { interfaceID: string; config: NetIPv4Config }): Promise<NetworkStateInfo> {
+	function applyNetworkConfig(p: { interfaceID: string; config: NetIPv4Config }): Promise<NetworkStateInfo> {
 		assert(p, ['interfaceID', 'config']);
-		await applyIPv4(assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID), p.config);
-		const state = await getNetworkState();
-		broadcast('system:network', state);
-		return state;
+		return applyAndPublish(() => applyIPv4(assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID), p.config), getNetworkState, broadcast);
 	}
 
 	async function scanWifiNetworks(p: { interfaceID: string }): Promise<NetWifiNetwork[]> {
@@ -297,10 +330,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		// otherwise travel all the way into nmcli's argv, or into a WLAN profile
 		// document as "[object Object]".
 		const password = p.password === undefined ? '' : assertString(p.password, 'password', MAX_WIFI_PASSWORD, 0);
-		await connectWifi(assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID), assertString(p.ssid, 'ssid', MAX_SSID_PARAM), password);
-		const state = await getNetworkState();
-		broadcast('system:network', state);
-		return state;
+		return applyAndPublish(() => connectWifi(assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID), assertString(p.ssid, 'ssid', MAX_SSID_PARAM), password), getNetworkState, broadcast);
 	}
 
 	let networkTick = 0;
