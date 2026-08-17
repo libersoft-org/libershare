@@ -303,14 +303,52 @@ export function nextRecoveryBackoff(failCount: number, now: number, configured: 
 }
 
 /**
+ * Where the previous recovery pass stopped, one canonical key per priority group.
+ *
+ * Two cursors rather than one because the groups must not compete: resuming the whole
+ * list from a single position would eventually start a pass in the middle of the
+ * discovered entries and leave a configured bootstrap — the user's way back in —
+ * behind a queue of gossip claims.
+ */
+export interface IRecoveryCursors {
+	/** Canonical key of the last configured entry attempted, or null to start at the front. */
+	configured: string | null;
+	/** Canonical key of the last discovered entry attempted, or null to start at the front. */
+	discovered: string | null;
+}
+
+/** Rotate a group so the walk resumes just after `cursor`, or leave it alone if it is gone. */
+function resumeRecoveryGroupAfter<T extends { key: string }>(group: readonly T[], cursor: string | null): T[] {
+	if (cursor === null) return [...group];
+	const at = group.findIndex(entry => entry.key === cursor);
+	if (at < 0) return [...group];
+	return [...group.slice(at + 1), ...group.slice(0, at + 1)];
+}
+
+/**
  * Bootstrap entries in the order recovery should dial them: configured ones (user
  * data, and the reliable way back into the network) before gossip-discovered ones
- * (merely what another peer claimed). Insertion order is preserved within each group,
- * so the longest-known configured entry is still tried first.
+ * (merely what another peer claimed).
+ *
+ * Within each group the list resumes after the entry the previous pass stopped on.
+ * A pass can afford only a handful of dials and each timeout costs ten seconds, so
+ * always restarting from the front let the same leading addresses consume the budget
+ * every time — their backoff had long expired again by the time the pass ended — while
+ * the tail was never reached at all. Rotating is what turns the budget into a fair
+ * round robin instead of a repeated prefix.
  */
-export function orderBootstrapEntriesForRecovery<T extends { configuredBy: ReadonlySet<string> }>(entries: Iterable<T>): T[] {
+export function orderBootstrapEntriesForRecovery<T extends { key: string; configuredBy: ReadonlySet<string> }>(entries: Iterable<T>, cursors: IRecoveryCursors = { configured: null, discovered: null }): T[] {
 	const all = [...entries];
-	return [...all.filter(e => e.configuredBy.size > 0), ...all.filter(e => e.configuredBy.size === 0)];
+	return [
+		...resumeRecoveryGroupAfter(
+			all.filter(e => e.configuredBy.size > 0),
+			cursors.configured
+		),
+		...resumeRecoveryGroupAfter(
+			all.filter(e => e.configuredBy.size === 0),
+			cursors.discovered
+		),
+	];
 }
 
 /**
@@ -421,6 +459,12 @@ export class Network {
 	private readonly bootstrapByAddress: Map<string, IBootstrapEntry> = new Map();
 	/** Reverse index peerID → its canonical addresses in {@link bootstrapByAddress}. */
 	private readonly addressesByPeer: Map<string, Set<string>> = new Map();
+	/**
+	 * Where the last recovery pass stopped in each priority group, so the next one
+	 * resumes after it rather than replaying the same prefix. See
+	 * {@link orderBootstrapEntriesForRecovery}.
+	 */
+	private readonly recoveryCursors: IRecoveryCursors = { configured: null, discovered: null };
 	/**
 	 * Per-ADDRESS dial pacing for the recovery loops, keyed the same way as the registry.
 	 *
@@ -1362,7 +1406,7 @@ export class Network {
 		let backedOff = 0;
 		let unroutable = 0;
 		let eligible = 0;
-		for (const entry of orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values())) {
+		for (const entry of orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values(), this.recoveryCursors)) {
 			const { ma, peerID, key } = entry;
 			const configured = entry.configuredBy.size > 0;
 			if (peerID && this.isRedialSuppressed(peerID)) {
@@ -1395,6 +1439,10 @@ export class Network {
 			// once we are connected the whole point of this loop is gone.
 			if (node.getPeers().length !== 0) break;
 			attempted++;
+			// Advance the cursor BEFORE the dial, not after it: an attempt that ends in a
+			// return (a stop mid-flight) still consumed this pass's budget, and leaving the
+			// cursor behind would make the next pass replay the same address.
+			this.recoveryCursors[configured ? 'configured' : 'discovered'] = key;
 			try {
 				console.log(`   → Dialing ${maStr}`);
 				const conn = await node.dial(ma, { signal: AbortSignal.timeout(10000) });

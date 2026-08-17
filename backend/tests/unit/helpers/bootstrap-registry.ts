@@ -51,6 +51,9 @@ export function installBootstrapRegistry(network: unknown, seeds: readonly IRegi
 	(network as any).bootstrapByAddress = byAddress;
 	(network as any).addressesByPeer = byPeer;
 	(network as any).recoveryBackoff ??= new Map();
+	// Object.create(Network.prototype) never runs field initializers, so the walk state
+	// the registry loops read has to be seeded here alongside the registry itself.
+	(network as any).recoveryCursors ??= { configured: null, discovered: null };
 	return byAddress;
 }
 

@@ -278,6 +278,42 @@ describe('Network.runZeroConnectionRecovery — liveness and budget', () => {
 		await run();
 		expect(dialed.length).toBe(8);
 	});
+
+	/**
+	 * Eight timeouts take up to 80 s, by which time the 30 s backoff of the first eight
+	 * has expired again. Rebuilding the same order every pass therefore replayed the
+	 * same prefix indefinitely and never reached the tail at all.
+	 */
+	it('resumes the next pass where the previous one ran out of budget', async () => {
+		const seeds = deadAddresses(16);
+		const { network, dialed, run } = bareNetwork({ seeds, failDial: true });
+		await run();
+		const first = [...dialed];
+		expect(first.length).toBe(8);
+		// Clearing the backoff is the point of the test, not a shortcut around it: eight
+		// timeouts take up to 80 s and the backoff starts at 30 s, so by the time a pass
+		// ends its own pacing has expired. With the backoff gone, ONLY the cursor can
+		// keep the second pass off the addresses the first one already tried.
+		(network as any).recoveryBackoff.clear();
+		dialed.length = 0;
+		await run();
+		expect(dialed.length).toBe(8);
+		expect(dialed[0]).toBe(multiaddr(seeds[8]!.address).toString());
+		// Between them the two passes covered every address exactly once.
+		expect(new Set([...first, ...dialed]).size).toBe(16);
+	});
+
+	it('wraps back to the front once the tail has been covered', async () => {
+		const seeds = deadAddresses(12);
+		const { network, dialed, run } = bareNetwork({ seeds, failDial: true });
+		await run();
+		(network as any).recoveryBackoff.clear();
+		dialed.length = 0;
+		await run();
+		// 12 entries, 8 per pass: the second pass takes the last four then wraps.
+		expect(dialed[0]).toBe(multiaddr(seeds[8]!.address).toString());
+		expect(dialed[4]).toBe(multiaddr(seeds[0]!.address).toString());
+	});
 });
 
 describe('bootstrapEntryLastActivity', () => {
@@ -400,14 +436,29 @@ describe('pruneBootstrapEntries', () => {
 });
 
 describe('orderBootstrapEntriesForRecovery', () => {
+	const entries = [
+		{ key: 'd1', configuredBy: new Set<string>(), tag: 'd1' },
+		{ key: 'c1', configuredBy: new Set(['net-a']), tag: 'c1' },
+		{ key: 'd2', configuredBy: new Set<string>(), tag: 'd2' },
+		{ key: 'c2', configuredBy: new Set(['net-b']), tag: 'c2' },
+	];
+
 	it('puts configured entries first and preserves order inside each group', () => {
-		const entries = [
-			{ configuredBy: new Set<string>(), tag: 'd1' },
-			{ configuredBy: new Set(['net-a']), tag: 'c1' },
-			{ configuredBy: new Set<string>(), tag: 'd2' },
-			{ configuredBy: new Set(['net-b']), tag: 'c2' },
-		];
 		expect(orderBootstrapEntriesForRecovery(entries).map(e => e.tag)).toEqual(['c1', 'c2', 'd1', 'd2']);
+	});
+
+	it('resumes each group after the entry the last pass stopped on', () => {
+		expect(orderBootstrapEntriesForRecovery(entries, { configured: 'c1', discovered: 'd1' }).map(e => e.tag)).toEqual(['c2', 'c1', 'd2', 'd1']);
+	});
+
+	it('keeps configured entries ahead even when only they were rotated', () => {
+		// One cursor over the whole list would eventually start a pass among the
+		// discovered claims and leave the user's own bootstrap queued behind them.
+		expect(orderBootstrapEntriesForRecovery(entries, { configured: 'c2', discovered: null }).map(e => e.tag)).toEqual(['c1', 'c2', 'd1', 'd2']);
+	});
+
+	it('restarts a group whose cursor entry has gone', () => {
+		expect(orderBootstrapEntriesForRecovery(entries, { configured: 'removed', discovered: 'removed' }).map(e => e.tag)).toEqual(['c1', 'c2', 'd1', 'd2']);
 	});
 });
 
