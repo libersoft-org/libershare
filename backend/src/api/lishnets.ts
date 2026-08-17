@@ -10,7 +10,7 @@ interface LISHnetsHandlers {
 	get: (p: { networkID: string }) => LISHNetworkConfig | undefined;
 	exists: (p: { networkID: string }) => boolean;
 	add: (p: { network: LISHNetworkConfig }) => Promise<boolean>;
-	update: (p: { network: LISHNetworkConfig }) => boolean;
+	update: (p: { network: LISHNetworkConfig }) => Promise<boolean>;
 	delete: (p: { networkID: string }) => Promise<boolean>;
 	addIfNotExists: (p: { network: LISHNetworkDefinition }) => Promise<boolean>;
 	import: (p: { networks: LISHNetworkDefinition[] }) => number;
@@ -54,7 +54,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['network']);
 		return networks.add(p.network);
 	}
-	function update(p: { network: LISHNetworkConfig }): boolean {
+	async function update(p: { network: LISHNetworkConfig }): Promise<boolean> {
 		assert(p, ['network']);
 		return networks.update(p.network);
 	}

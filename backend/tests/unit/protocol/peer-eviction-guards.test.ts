@@ -1212,3 +1212,61 @@ describe('configured origin is a property of the address, not the peer', () => {
 		expect(registryAddresses(network)).toEqual([normalizeMultiaddrForCompare(DISCOVERED)]);
 	});
 });
+
+/**
+ * Removing a bootstrap entry only released the registry claim. The address stayed in
+ * the peerStore carrying its keep-alive tags, and redial maintenance builds its
+ * candidate list FROM the peerStore — so the next tick re-dialed and re-tagged the
+ * bootstrap the user had just deleted. This is the shared teardown that closes that
+ * hole without punishing a peer that is still wanted for some other reason.
+ */
+describe('reconcilePeerAfterBootstrapRemoval', () => {
+	const OLD = `/ip4/203.0.113.7/tcp/9090/p2p/${PEER_ID}`;
+	const OTHER = `/ip4/203.0.113.8/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork(needed: boolean, stored: string[] = [OLD, OTHER]) {
+		const patched: string[][] = [];
+		const disconnected: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).node = {
+			peerStore: {
+				async get(): Promise<unknown> {
+					return { addresses: stored.map(a => ({ multiaddr: multiaddr(a) })) };
+				},
+				async patch(_pid: unknown, data: { multiaddrs: Array<{ toString(): string }> }): Promise<void> {
+					patched.push(data.multiaddrs.map(m => m.toString()));
+				},
+			},
+		};
+		(network as any).isPeerNeededByJoinedNetwork = (): boolean => needed;
+		(network as any).disconnectPeer = async (pid: string): Promise<void> => void disconnected.push(pid);
+		return { network, patched, disconnected };
+	}
+
+	it('trims only the removed address from the peerStore', async () => {
+		const { network, patched } = bareNetwork(true);
+		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [OLD], 'net-a');
+		expect(patched).toEqual([[OTHER]]);
+	});
+
+	it('keeps a peer another joined network still needs', async () => {
+		const { network, disconnected } = bareNetwork(true);
+		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [OLD], 'net-a');
+		expect(disconnected).toEqual([]);
+	});
+
+	it('tears down a peer nothing needs any more', async () => {
+		const { network, disconnected } = bareNetwork(false, [OLD]);
+		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [OLD], 'net-a');
+		expect(disconnected).toEqual([PEER_ID]);
+	});
+
+	/** Canonically, so one spelling of an address is not left behind as another. */
+	it('matches the removed address canonically', async () => {
+		const upper = `/dns4/BOOTSTRAP.EXAMPLE.ORG./tcp/9090/p2p/${PEER_ID}`;
+		const lower = `/dns4/bootstrap.example.org/tcp/9090/p2p/${PEER_ID}`;
+		const { network, patched } = bareNetwork(true, [lower, OTHER]);
+		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [upper], 'net-a');
+		expect(patched).toEqual([[OTHER]]);
+	});
+});

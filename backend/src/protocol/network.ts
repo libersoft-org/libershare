@@ -2603,6 +2603,49 @@ export class Network {
 		await this.purgeStalePeer(peerID, 'left-network exclusive peer');
 	}
 
+	/**
+	 * Bring one peer's runtime state in line with a configuration that no longer lists
+	 * some of its addresses.
+	 *
+	 * Removing a bootstrap entry used to touch the registry and nothing else. The
+	 * address stayed in the peerStore carrying its keep-alive tags, and redial
+	 * maintenance picks its candidates FROM the peerStore: a bootstrap the user had
+	 * just deleted was re-dialed and re-tagged on the next tick, resurrecting itself
+	 * into the runtime. Only the genuinely dropped addresses leave the store, and only
+	 * a peer no joined lishnet has any remaining use for is torn down — a peer another
+	 * network configures, or that subscribes a topic we are still in, or that relays a
+	 * live circuit, keeps its connection and loses just the stale address.
+	 *
+	 * Caller contract: the registry and the configured sets must ALREADY reflect the
+	 * new configuration, because that is what the "is this peer still needed" question
+	 * is asked against.
+	 */
+	async reconcilePeerAfterBootstrapRemoval(peerID: string, removedAddresses: string[], networkID: string): Promise<void> {
+		if (!this.node) return;
+		let pid: PeerID;
+		try {
+			pid = peerIDFromString(peerID);
+		} catch (err: any) {
+			trace(`[NET] reconcile after removal: invalid peerID ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+			return;
+		}
+		const removed = new Set(removedAddresses.map(normalizeMultiaddrForCompare));
+		if (removed.size > 0) {
+			try {
+				const rec = await this.node.peerStore.get(pid);
+				const keep = rec.addresses.filter((a: any) => !removed.has(normalizeMultiaddrForCompare(a.multiaddr.toString())));
+				if (keep.length < rec.addresses.length) await this.node.peerStore.patch(pid, { multiaddrs: keep.map((a: any) => a.multiaddr) });
+			} catch {
+				// Not in the peerStore — there is nothing to trim.
+			}
+		}
+		if (this.isPeerNeededByJoinedNetwork(peerID)) return;
+		// Nothing left that wants this peer. disconnectPeer is the single entry point
+		// that suppresses re-dials, strips BOTH keep-alive tags, hangs up and deletes
+		// the peerStore entry — the same teardown leave-network performs.
+		await this.disconnectPeer(peerID, networkID);
+	}
+
 	/** Snapshot of all per-network bootstrap statuses. */
 	getAllBootstrapStatuses(): BootstrapStatus[] {
 		return this.bootstrapTracker.getAllStatuses();
