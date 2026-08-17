@@ -213,11 +213,15 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 		// cleanup starves every other client until it is retried.
 		for (const [uploadID, upload] of [...uploads]) {
 			if (upload.state !== 'cleanup') continue;
-			// A cleanup already running owns the writer. Unlinking underneath it can
-			// succeed on Unix and hand the bytes back while the open inode is still
-			// there to be written to, so join it instead of racing it.
-			if (upload.cleanup) await upload.cleanup;
-			else await release(uploadID, upload);
+			// Skipped rather than joined while a cleanup is in flight. Its writer is
+			// still being closed, and unlinking underneath that can succeed on Unix
+			// and hand the bytes back while the open inode is still there to be
+			// written to. Not awaited either: a `writer.end()` that never returns
+			// would hold this pass open forever and, with the single-flight guard
+			// above, mean no sweep ever runs again. A cleanup that failed leaves the
+			// record here with no promise on it, which is the case worth retrying.
+			if (upload.cleanup) continue;
+			await release(uploadID, upload);
 		}
 		// Idle transfers next, so their files become unowned and the pass below
 		// can see them rather than skipping them as active.
@@ -226,6 +230,11 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 			// across its write and its flush, so a filesystem that hangs for longer
 			// than the idle limit would otherwise have this pass close the writer and
 			// delete the file under the handler still writing to it.
+			//
+			// The ceiling that buys: an operation that never returns is never
+			// reclaimed here either. Deleting the file would not unhang the write —
+			// it would only hand the bytes back while a live handle still points at
+			// them — so the honest answer is that a wedged filesystem holds its slot.
 			if (upload.busy) continue;
 			if (!isIdleExpirable(upload.state)) continue;
 			if (now - upload.lastActivityAt < idleMs) continue;
@@ -544,8 +553,11 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 				// Answered from where the first call actually landed: `ready` is the
 				// same success it reported, and anything else means its close failed
 				// and took the upload with it.
+				// Compared by identity too: a failed close discards the record, and the
+				// id is the client's own, so by now it may name a different transfer
+				// entirely — which this call has certainly not finished.
 				const settled = owned(p.uploadID, client);
-				if (settled.state !== 'ready') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, p.uploadID);
+				if (settled !== upload || settled.state !== 'ready') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, p.uploadID);
 				return { uploadID: p.uploadID };
 			}
 			return exclusiveUpload(p.uploadID, upload, () => finish(p.uploadID, upload));
@@ -647,10 +659,18 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 			// to start against a disk and a quota this file has really left — which it
 			// has not while the operation holding it is still running.
 			if (upload.operation) await upload.operation;
+			// By identity, not by id. The operation's own exit may already have
+			// discarded this transfer, and the id — the client's own choice — is then
+			// free for the next `begin` to claim, from this socket or any other. No
+			// path today can slip a `begin` into that gap, because only microtasks
+			// separate the removal from this line and a request arrives as a task; the
+			// comparison is here so that stays true of the code rather than of the
+			// scheduler.
+			if (uploads.get(p.uploadID) !== upload) return;
 			await discard(p.uploadID);
 			// The unlink can fail, and a success reported over a file that is still
 			// there is what let the caller believe the quota was free when it was not.
-			if (uploads.has(p.uploadID)) throw new CodedError(ErrorCodes.UPLOAD_CLEANUP_PENDING, p.uploadID);
+			if (uploads.get(p.uploadID) === upload) throw new CodedError(ErrorCodes.UPLOAD_CLEANUP_PENDING, p.uploadID);
 		});
 	}
 

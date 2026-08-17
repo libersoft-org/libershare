@@ -1329,6 +1329,11 @@ describe('upload state machine exits', () => {
 		return { wait, open };
 	}
 
+	/** Whether something finished within a couple of seconds, rather than never. */
+	async function bounded(work: Promise<unknown>): Promise<string> {
+		return Promise.race([work.then(() => 'swept'), Bun.sleep(2000).then(() => 'never returned')]);
+	}
+
 	function handlersFor(limits: UploadLimits): { handlers: ReturnType<typeof initUploadHandlers>; uploadDir: string } {
 		const dataDir = join(tmpdir(), `lish-upload-state-${crypto.randomUUID()}`);
 		tempDirs.push(dataDir);
@@ -1447,6 +1452,43 @@ describe('upload state machine exits', () => {
 		// a finished upload, whichever call is asking.
 		expect(await retry).toBe(ErrorCodes.UPLOAD_NOT_FOUND);
 		expect(await readdir(uploadDir)).toEqual([]);
+		handlers.stop();
+	});
+
+	it('keeps sweeping when a cleanup never finishes closing its writer', async () => {
+		const { handlers, uploadDir } = handlersFor({ idleMs: 0, maxAgeMs: 0 });
+		const client = {};
+		const wedged = gate();
+		nextSink = sink =>
+			wrapSink(sink, {
+				end: async () => {
+					await wedged.wait;
+					return sink.end();
+				},
+			});
+		const { uploadID } = await handlers.begin({ name: 'wedged.lish' }, client);
+		await handlers.chunk({ uploadID, data: pattern(64) }, client);
+		// Moves the record into `cleanup` and leaves it there, because the close it
+		// is waiting on never returns.
+		const stuck = handlers.abort({ uploadID }, client).catch(() => 'stuck');
+		await Bun.sleep(20);
+
+		// Awaiting that cleanup would hold this pass open for good — and the
+		// single-flight guard would then mean no sweep ever ran again.
+		const orphan = join(uploadDir, 'orphan.lish');
+		await Bun.write(orphan, 'left behind');
+		const longAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+		await utimes(orphan, longAgo, longAgo);
+		// Raced against a deadline rather than simply awaited: without the fix this
+		// pass never returns, and a test that hangs the run says far less than one
+		// that fails it.
+		expect(await bounded(handlers.sweep())).toBe('swept');
+		expect(await Bun.file(orphan).exists()).toBe(false);
+		// And the next pass is not left blocked behind the first one either.
+		expect(await bounded(handlers.sweep())).toBe('swept');
+
+		wedged.open();
+		await stuck;
 		handlers.stop();
 	});
 
