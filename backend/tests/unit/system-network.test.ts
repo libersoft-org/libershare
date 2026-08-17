@@ -41,7 +41,7 @@ describe('WINDOWS_STATE_COMMAND', () => {
 	// form's gateway and DNS fields now report whether they SUCCEEDED, so an empty
 	// one can be told from an unknown one.
 	it('reports whether the optional sections could be read at all', () => {
-		for (const section of ['routes', 'dns']) {
+		for (const section of ['addresses', 'routes', 'dns']) {
 			expect(WINDOWS_STATE_COMMAND).toContain(`$${section}Ok = $true`);
 			expect(WINDOWS_STATE_COMMAND).toContain(`${section}Ok=$${section}Ok`);
 		}
@@ -137,12 +137,26 @@ describe('parseWindowsNetworkState', () => {
 	// A section that failed leaves the gateway or the resolvers UNKNOWN, not absent
 	// — and an apply replaces both. Reporting such a reading as configurable let the
 	// form show empty fields and a save write that emptiness back as fact.
-	it.each(['routesOk', 'dnsOk'])('refuses to call an interface configurable when %s is false', flag => {
+	it.each(['addressesOk', 'routesOk', 'dnsOk'])('refuses to call an interface configurable when %s is false', flag => {
 		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
 		doc[flag] = false;
 		const parsed = parseWindowsNetworkState(JSON.stringify(doc));
 		expect(parsed.length).toBeGreaterThan(0);
 		expect(parsed.some(i => i.ipv4Configurable)).toBe(false);
+	});
+
+	// The address section is the one with something irreversible behind it. An
+	// interface carrying aliases is refused by counting the addresses in this
+	// reading — so a section that failed counts zero, satisfies that count, and the
+	// apply then removes every address the reading never saw.
+	it('does not present an unread address section as an interface with no addresses', () => {
+		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
+		doc['addresses'] = [];
+		doc['addressesOk'] = false;
+		const parsed = parseWindowsNetworkState(JSON.stringify(doc));
+		const ethernet = byID(parsed, ID.ethernet);
+		expect(ethernet.addresses).toEqual([]);
+		expect(ethernet.ipv4Configurable).toBe(false);
 	});
 
 	it('still treats a document captured before those flags existed as complete', () => {
