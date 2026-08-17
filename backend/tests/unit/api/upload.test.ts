@@ -332,13 +332,31 @@ describe('upload lifecycle races', () => {
 	it('leaves no file behind when the socket closes during begin', async () => {
 		const { handlers, uploadDir } = directHandlers();
 		const client = {};
-		// Started but not awaited, so `closeClient` runs while `begin` is still
-		// inside its mkdir await — the window where the upload does not exist yet
-		// and the cleanup sweep therefore finds nothing to remove.
+		// Started but not awaited, so `closeClient` runs the moment `begin` returns
+		// — the record is in the map by then, and the close has to take it and its
+		// file with it rather than leaving either behind.
 		const started = handlers.begin({ name: 'orphan.lish' }, client).catch(() => null);
 		handlers.closeClient(client);
 		await started;
 		expect(await entriesAfterSettle(uploadDir)).toEqual([]);
+	});
+
+	it('registers an upload before an abort can pass it', async () => {
+		const { handlers, uploadDir } = directHandlers();
+		const client = {};
+		const uploadID = crypto.randomUUID();
+		// Not awaited. `begin` used to suspend in an awaited mkdir with nothing yet
+		// in the map, so a client that timed out and aborted was told the transfer
+		// was already gone — and it then appeared behind the abort, owned by a
+		// socket that had moved on, holding a slot and a file until the sweep.
+		const started = handlers.begin({ uploadID, name: 'raced.lish' }, client);
+		await handlers.abort({ uploadID }, client);
+		await started;
+
+		// The abort saw the record and took the file with it.
+		expect(await entriesAfterSettle(uploadDir)).toEqual([]);
+		await expect(handlers.chunk({ uploadID, data: pattern(16) }, client)).rejects.toThrow(ErrorCodes.UPLOAD_NOT_FOUND);
+		handlers.stop();
 	});
 
 	it('leaves no file behind when the socket closes mid-chunk', async () => {

@@ -1,5 +1,5 @@
-import { mkdir, readdir, rm, stat } from 'fs/promises';
-import { rmSync } from 'fs';
+import { readdir, rm, stat } from 'fs/promises';
+import { mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { Mutex } from 'async-mutex';
@@ -424,16 +424,23 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 			// noticing; with a server-chosen id that leaves a file on our disk the
 			// client cannot name, finish or abort, and only the sweep ever clears it.
 			if (p.uploadID !== undefined && !UPLOAD_ID_PATTERN.test(p.uploadID)) throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, 'malformed upload id');
-			await mkdir(uploadDir, { recursive: true });
-			// The socket can close while the await above runs, and `closeClient`
-			// would have found nothing to clean up. Registering the upload now would
-			// leave one owned by a dead socket that nobody can finish or abort.
+			// Synchronous on purpose, and the reason this call still creates the
+			// directory at all rather than trusting one made at startup: it keeps the
+			// self-healing while leaving no await between the client asking for a
+			// transfer and the record existing. With an await here the client could
+			// time out and abort — finding nothing, and being told so — and have the
+			// transfer appear behind it, owned by a socket that has moved on and
+			// holding a slot until the sweep.
+			mkdirSync(uploadDir, { recursive: true });
+			// The socket can close before a message already queued behind it is
+			// dispatched, and `closeClient` would then have found nothing to clean up.
+			// Registering the upload leaves one owned by a socket nobody can answer.
 			if (isGone(client)) throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, 'client disconnected');
-			// Nothing below may await. The ceilings used to be read before the mkdir
-			// above, and the per-socket gate does not reach across sockets: at one
-			// short of the global cap every concurrent begin passed the check, stalled
-			// on the mkdir together and then all inserted. Checking and inserting in
-			// one synchronous run is what makes the cap a cap.
+			// Nothing from here down may await, and nothing above it does either. The
+			// ceilings used to be read before an awaited mkdir, and the per-socket gate
+			// does not reach across sockets: at one short of the global cap every
+			// concurrent begin passed the check, stalled on the mkdir together and then
+			// all inserted. Checking and inserting in one synchronous run is the cap.
 			const uploadID = p.uploadID ?? randomUUID();
 			const existing = uploads.get(uploadID);
 			if (existing) {
