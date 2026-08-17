@@ -2463,9 +2463,20 @@ export class Network {
 	 * Also forgets the peerStore entry (via {@link purgeStalePeer}): in-memory redial
 	 * suppression is lost on restart, but the persisted peerStore is not, so a leave
 	 * followed by a restart before rejoin would otherwise let redial maintenance dial
-	 * the left peer straight back. The sole caller (leaveNetwork) only passes peers
-	 * with no remaining reason to stay, and rejoin re-acquires the entry via
-	 * bootstrap/discovery. Best-effort: failures are logged at trace, never thrown.
+	 * the left peer straight back. Rejoin re-acquires the entry via bootstrap/discovery.
+	 * Best-effort: failures are logged at trace, never thrown.
+	 *
+	 * Whether the peer may be torn down at all is decided HERE, and re-decided before every
+	 * destructive step. It used to rest on the caller's promise that it only passes peers no
+	 * joined lishnet wants, and that promise stopped holding once lishnets could join and
+	 * leave concurrently: `leaveNetwork` takes its snapshot once and then works through the
+	 * peers one await at a time, so a lishnet joined half-way through was invisible to it.
+	 * The claim it missed can also arrive from the other side entirely — a remote SUBSCRIBE
+	 * on a topic we are in makes the peer a member of it with nothing of ours involved, which
+	 * is why a lock over our own operations could not settle this and a fresh check before
+	 * each step can. A claim that appears mid-sequence undoes what has been done so far, and
+	 * one that appears after the purge at least lifts the suppression again, so maintenance
+	 * is free to dial the peer back.
 	 *
 	 * `networkID` is the lishnet the peer is being left with — the peer is suppressed
 	 * under it so rejoining that lishnet lifts exactly its peers.
@@ -2486,6 +2497,10 @@ export class Network {
 			pid = peerIDFromString(peerID);
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: invalid peerID ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+			return;
+		}
+		if (this.isPeerNeededByJoinedNetwork(peerID)) {
+			trace(`[NET] disconnectPeer: ${peerID.slice(0, 16)} is still claimed by a joined lishnet, leaving it alone`);
 			return;
 		}
 		// Suppression is claimed BEFORE the first await, not after the hangUp. The two
@@ -2511,15 +2526,45 @@ export class Network {
 			trace(`[NET] disconnectPeer: tag removal failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
 		if (epoch !== this.runEpoch) return;
+		if (await this.releaseIfClaimed(node, pid, peerID, networkID)) return;
 		try {
 			await node.hangUp(pid);
 			trace(`[NET] disconnectPeer: hung up ${peerID.slice(0, 16)}`);
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: hangUp failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
+		if (epoch !== this.runEpoch) return;
+		if (await this.releaseIfClaimed(node, pid, peerID, networkID)) return;
 		// Forget the persisted peerStore entry so the disconnect survives a restart —
 		// suppression is in-memory only, but the peerStore is on disk.
 		await this.purgeStalePeer(peerID, 'left-network exclusive peer', epoch);
+		// A claim can still land during the purge, and by then the record is gone. What must
+		// not survive is the suppression: it is global, so leaving it in place would make
+		// every maintenance path refuse to dial a peer a joined lishnet is now asking for.
+		if (epoch === this.runEpoch) await this.releaseIfClaimed(node, pid, peerID, networkID);
+	}
+
+	/**
+	 * Give a peer back if a joined lishnet has claimed it since the disconnect began.
+	 *
+	 * Undoes this disconnect's own two global effects: the redial suppression entry it added
+	 * (only its own — another lishnet's leave is not this one's to reverse) and the keep-alive
+	 * tag it removed. `keep-alive-fleet` is deliberately not re-synthesised: peer-announce
+	 * intake owns that tag and re-adds it on the next announce, and inventing it here would
+	 * claim a fleet membership nothing has observed.
+	 *
+	 * Returns whether the disconnect should stop.
+	 */
+	private async releaseIfClaimed(node: Libp2p, pid: PeerID, peerID: string, networkID: string): Promise<boolean> {
+		if (!this.isPeerNeededByJoinedNetwork(peerID)) return false;
+		this.redialSuppressedByNet.get(networkID)?.delete(peerID);
+		try {
+			await node.peerStore.merge(pid, { tags: { [KEEP_ALIVE]: { value: 1 } } });
+		} catch (err: any) {
+			trace(`[NET] disconnectPeer: keep-alive restore failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+		}
+		trace(`[NET] disconnectPeer: ${peerID.slice(0, 16)} was claimed by a joined lishnet mid-disconnect, released`);
+		return true;
 	}
 
 	/** Snapshot of all per-network bootstrap statuses. */
