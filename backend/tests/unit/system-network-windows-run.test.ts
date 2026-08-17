@@ -86,6 +86,35 @@ describe('windowsApplyIPv4Command, executed', () => {
 		expect(result.calls.filter(call => call.startsWith('New-') && call.includes('PersistentStore') && !call.includes('+'))).toEqual([]);
 	});
 
+	/** A persistent-only address on a static interface, whose apply then fails. */
+	function persistentOnlyHost(overrides: Partial<FakeHost> = {}): FakeHost {
+		return { guid: GUID, dhcp: 'Disabled', addresses: [{ Store: 'PersistentStore', IPAddress: '192.0.2.10', PrefixLength: 24, PrefixOrigin: 'Manual', SuffixOrigin: 'Manual', SkipAsSource: false, ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME, Type: 'Unicast' }], routes: [], nameServer: '', failOn: 'Set-DnsClientServerAddress', ...overrides };
+	}
+
+	// Create-both then remove-active is two provider writes with nothing binding them.
+	// A removal that reports success and leaves the object where it was — which no
+	// -ErrorAction can see — used to end the rollback with the address in BOTH stores
+	// while it reported having put everything back. Re-reading catches it, and one
+	// retry is usually the whole of the repair.
+	it.skipIf(windowsOnly)('retries a removal that reported success without removing', async () => {
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24 }), persistentOnlyHost({ removalsIgnored: 1 }));
+		expect(result.error).toContain('injected failure');
+		// Four: the bulk clear the apply starts with, the one the rollback starts with,
+		// the remove-active that reported success and did nothing, and the retry.
+		expect(result.calls.filter(call => call === 'Remove-NetIPAddress:ActiveStore')).toHaveLength(4);
+		expect(result.addresses.map(a => a.Store)).toEqual(['PersistentStore']);
+	});
+
+	// ...and when the retry does not help either, a rollback that cannot reach the
+	// state it claims must say so rather than return quietly. It reaches the caller
+	// beside the original failure, because the machine is then in a state neither
+	// error alone describes.
+	it.skipIf(windowsOnly)('reports a surplus active copy it could not remove', async () => {
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24 }), persistentOnlyHost({ removalsIgnored: 2 }));
+		expect(result.error).toContain('injected failure');
+		expect(result.error).toContain('a restored address could not be taken back out of the active store');
+	});
+
 	// The two stores are free to disagree about an object they both hold, because
 	// Set-NetIPAddress and Set-NetRoute can be pointed at the active store alone. A
 	// rollback that matched on identity and then restored both copies from the ACTIVE

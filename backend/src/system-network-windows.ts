@@ -804,12 +804,42 @@ interface RestorableKind {
 	readonly properties: readonly string[];
 	readonly create: string;
 	readonly removeActive: string;
+	/** The listing {@link activeCopyGone} re-reads, minus the store to read. */
+	readonly query: string;
+	/** What this kind is called in the message a failed removal ends with. */
+	readonly noun: string;
 }
 
 /** An IPv4 address, as the restore has to reproduce it. */
-const RESTORABLE_ADDRESS: RestorableKind = { item: '$a', identity: 'IPAddress', properties: ['PrefixLength', 'Type', 'SkipAsSource', 'ValidLifetime', 'PreferredLifetime'], create: NEW_ADDRESS, removeActive: REMOVE_ACTIVE_ADDRESS };
+const RESTORABLE_ADDRESS: RestorableKind = { item: '$a', identity: 'IPAddress', properties: ['PrefixLength', 'Type', 'SkipAsSource', 'ValidLifetime', 'PreferredLifetime'], create: NEW_ADDRESS, removeActive: REMOVE_ACTIVE_ADDRESS, query: ADDRESS_QUERY, noun: 'address' };
 /** An IPv4 default route, likewise. */
-const RESTORABLE_ROUTE: RestorableKind = { item: '$r', identity: 'NextHop', properties: ['RouteMetric', 'Protocol', 'Publish', 'ValidLifetime', 'PreferredLifetime'], create: NEW_ROUTE, removeActive: REMOVE_ACTIVE_ROUTE };
+const RESTORABLE_ROUTE: RestorableKind = { item: '$r', identity: 'NextHop', properties: ['RouteMetric', 'Protocol', 'Publish', 'ValidLifetime', 'PreferredLifetime'], create: NEW_ROUTE, removeActive: REMOVE_ACTIVE_ROUTE, query: ROUTE_QUERY, noun: 'default route' };
+
+/**
+ * Check that the ActiveStore half of a create-both really went away, and say so if
+ * it did not.
+ *
+ * The persistent-only reconstruction is two provider writes, and nothing binds them
+ * together: `New-*` can succeed and `Remove-*` can then fail, be refused, or never
+ * run because the process died — leaving the object in BOTH stores when the whole
+ * point was to reach the persistent one alone. A removal can also report success
+ * without the object leaving, which no `-ErrorAction` catches.
+ *
+ * This does not make the pair atomic; it makes a partial one visible. The store is
+ * re-read, the removal retried once if a surplus copy is still there, and a copy
+ * that survives both is thrown on — which reaches the caller as "the change failed
+ * and rolling it back also failed", rather than as a rollback quietly reporting
+ * that it had put things back.
+ *
+ * The re-read tolerates `ObjectNotFound` and nothing else, for the same reason
+ * {@link windowsSnapshotSteps} does: "the object is gone" and "the store could not
+ * be read" must not both answer "no surplus copy".
+ */
+function activeCopyGone(kind: RestorableKind): string {
+	const { item, identity, query, removeActive, noun } = kind;
+	const reread = `$surplus = @(); ${ignoringMissing(`$surplus = @(${query} -PolicyStore ActiveStore -ErrorAction Stop | Where-Object { $_.${identity} -eq ${item}.${identity} })`)}`;
+	return `${reread}; if ($surplus.Count -gt 0) { ${tolerateMissing(removeActive)}; ${reread}; if ($surplus.Count -gt 0) { throw "a restored ${noun} could not be taken back out of the active store" } }`;
+}
 
 /**
  * Re-create one kind of snapshotted object, each into the store it came from.
@@ -846,20 +876,26 @@ const RESTORABLE_ROUTE: RestorableKind = { item: '$r', identity: 'NextHop', prop
  * interface whose address was persistent-only came out of a failed apply with no
  * address in either. So the object is created into both stores and its active copy
  * taken away again, which leaves the persistent store holding it and the active
- * store as it was. The interface carries that address for the moment in between,
- * which is the whole of the difference and is not observable outside the rollback.
+ * store as it was.
+ *
+ * Those are two separate provider writes and the pair is not atomic. Between them
+ * the object really is in force on the interface — the network stack routes by it,
+ * a change notification carries it, and another process reading the active store
+ * sees it — and if the second write does not happen the object simply stays in both
+ * stores. Nothing here prevents either; {@link activeCopyGone} is what keeps the
+ * second case from passing for a completed rollback.
  */
 function restorePerStore(kind: RestorableKind, active: string, persistent: string, activeOnlyCondition: string = ''): string[] {
 	const { item, identity, create, removeActive } = kind;
 	const inBothStores = `${create} -ErrorAction Stop | Out-Null`;
 	const activeOnly = `${create} -PolicyStore ActiveStore -ErrorAction Stop | Out-Null`;
-	const persistentOnly = `${inBothStores}; ${tolerateMissing(removeActive)}`;
+	const persistentOnly = `${inBothStores}; ${tolerateMissing(removeActive)}; ${activeCopyGone(kind)}`;
 	// The loop variable is held apart from the one the templates read, so the
 	// differing case can point them at the persistent copy and then back again.
 	const activeCopy = `${item}Active`;
 	const twin = `${item}Twin`;
 	const alike = kind.properties.map(property => `${activeCopy}.${property} -eq ${twin}.${property}`).join(' -and ');
-	const diverged = `${item} = ${twin}; ${inBothStores}; ${item} = ${activeCopy}; ${tolerateMissing(removeActive)}; ${activeOnly}`;
+	const diverged = `${item} = ${twin}; ${inBothStores}; ${item} = ${activeCopy}; ${tolerateMissing(removeActive)}; ${activeCopyGone(kind)}; ${activeOnly}`;
 	// First, and so ahead of anything the twin decides: an active copy the caller will
 	// not write back is not written back whether or not a twin exists. What the twin
 	// then adds is that there is still something to restore — its own copy, and only
