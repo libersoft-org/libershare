@@ -376,9 +376,14 @@ async function assertWirelessInterface(interfaceID: string): Promise<void> {
  * and macOS. The check exists because the id crosses the API boundary from a
  * client, not because the tools would misparse it: arguments are passed as argv,
  * never through a shell.
+ *
+ * The limit is counted in BYTES, which is what IFNAMSIZ measures. `.length`
+ * counts UTF-16 code units, so a name of accented characters passed a
+ * 15-character check while being well over 15 octets — and the kernel then
+ * truncates or refuses a name the boundary had already accepted.
  */
-function assertDeviceName(interfaceID: string): string {
-	if (!interfaceID || interfaceID.length > 15 || /[/\0]/.test(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+export function assertDeviceName(interfaceID: string): string {
+	if (!interfaceID || Buffer.byteLength(interfaceID, 'utf8') > 15 || /[/\0]/.test(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
 	return interfaceID;
 }
 

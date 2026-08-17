@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { isIPv4, isValidSSID, isValidWifiKey, isWifiHexKey, validateIPv4Config, type NetIPv4Config } from '@shared';
 import { nmcliActivateArgs, nmcliModifyArgs, nmcliRestoreArgs, parseNmcliProperties, parseNmcliActiveUUID, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
-import { firstLine } from '../../src/system-network.ts';
+import { assertDeviceName, firstLine } from '../../src/system-network.ts';
 
 /**
  * `isIPv4` is deliberately LEXICAL: it answers whether a string is shaped like a
@@ -351,6 +351,27 @@ describe('nmcliActivateArgs', () => {
  * used to leave that rewrite standing — and since the connection already running
  * often keeps working, the damage surfaced only at the next reboot.
  */
+describe('assertDeviceName', () => {
+	it('accepts the device names a kernel actually hands out', () => {
+		for (const name of ['eth0', 'wlan0', 'enp6s18', 'br-1a2b3c4d5e6f']) expect(assertDeviceName(name)).toBe(name);
+	});
+
+	it('refuses an empty name, a path separator or a NUL', () => {
+		for (const bad of ['', '../etc', 'eth0/x', `eth0${String.fromCharCode(0)}`]) expect(() => assertDeviceName(bad)).toThrow();
+	});
+
+	// IFNAMSIZ is a byte count. `.length` counts UTF-16 code units, so a name of
+	// accented characters passed a 15-character check while being well over 15
+	// octets — and the kernel then truncates or refuses what we had accepted.
+	it('counts the kernel limit in bytes rather than in code units', () => {
+		expect(assertDeviceName('e'.repeat(15))).toBe('e'.repeat(15));
+		expect(() => assertDeviceName('e'.repeat(16))).toThrow();
+		// Eight two-byte characters are 16 octets, one past IFNAMSIZ-1.
+		expect(() => assertDeviceName('ě'.repeat(8))).toThrow();
+		expect(assertDeviceName('ě'.repeat(7))).toBe('ě'.repeat(7));
+	});
+});
+
 describe('parseNmcliProperties', () => {
 	const SHOW = 'ipv4.method:manual\nipv4.addresses:192.0.2.10/24\nipv4.gateway:192.0.2.1\nipv4.dns:192.0.2.1,198.51.100.1\nipv4.ignore-auto-dns:yes\n';
 
