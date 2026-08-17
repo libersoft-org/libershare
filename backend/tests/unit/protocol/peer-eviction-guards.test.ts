@@ -38,7 +38,11 @@ describe('purgeStalePeer — epoch guard', () => {
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
 		(network as any).bootstrapPeerIDs = new Set<string>();
-		(network as any).redialSuppressedByNet = new Map();
+		// Suppressed, because the epoch guard being tested sits after the close loop and only
+		// a COMMANDED purge ever gets there: an opportunistic one is dropped by the liveness
+		// re-check the moment it sees a connection, and nothing yields between that re-check
+		// and the close loop for a connection to appear in.
+		(network as any).redialSuppressedByNet = new Map([['net', new Set([PEER_ID])]]);
 		installBootstrapRegistry(network, []);
 		(network as any).redialBackoff = new Map();
 		(network as any).unreachableQuarantine = new Map();
@@ -2041,18 +2045,16 @@ describe('purgeStalePeer — a purge that started inside another one', () => {
 });
 
 /**
- * Serialising the purges fixed them corrupting each other, and introduced the last thing
- * left: the queued purge still acts on the decision it was created with. The condition —
- * no connections, no address that has not been disproved — is read OUTSIDE the lock, so a
- * purge can wait behind another one for as long as that one takes and then run against an
- * answer that is no longer true.
+ * A purge acts on a condition — no connections, no address that has not been disproved —
+ * that its caller read OUTSIDE the lock. Every purge therefore arrives with an answer that
+ * is at least a microtask old, and a pending connection can complete in that window.
  *
- * The case the earlier tests miss is the one where the connection SURVIVES. The first purge
- * finds the peer connected again and heals it, correctly. The second, queued behind it,
- * then force-closes that live connection and deletes the peer — not because anything about
- * the peer says so, but because nothing re-asked.
+ * Queueing behind another purge of the same peer is the longest and worst version of it:
+ * the purge ahead can find the peer connected again and heal it, correctly, and the one
+ * behind then force-closes that live connection and deletes the peer. But the gap exists
+ * with an uncontended lock too, so both are tested here.
  */
-describe('purgeStalePeer — a queued purge must not act on a stale decision', () => {
+describe('purgeStalePeer — no purge may act on a stale decision', () => {
 	const LIVE = `/ip4/203.0.113.91/tcp/9090/p2p/${PEER_ID}`;
 
 	/**
@@ -2111,6 +2113,61 @@ describe('purgeStalePeer — a queued purge must not act on a stale decision', (
 			registry: registryAddresses(network),
 			direct: [...direct],
 			closes: closes(),
+		}).toEqual({
+			record: true,
+			bootstrapPeerIDs: [PEER_ID],
+			registry: [normalizeMultiaddrForCompare(LIVE)],
+			direct: [PEER_ID],
+			closes: 0,
+		});
+	});
+
+	/**
+	 * The same staleness with nothing queued at all. `Mutex.runExclusive` awaits its acquire
+	 * even when the lock is free, so the body of EVERY purge starts a microtask after the
+	 * caller decided to purge — long enough for a pending connection to complete. Here the
+	 * mutex is uncontended and the connection lands in exactly that gap.
+	 */
+	it('drops a purge whose peer connected before its lock body ran', async () => {
+		const real = await createRealPeerStore(PEER_ID, [LIVE]);
+		let connected = false;
+		let closes = 0;
+		const connection = {
+			remoteAddr: multiaddr(LIVE),
+			async close(): Promise<void> {
+				closes++;
+				connected = false;
+			},
+		};
+		const direct = new Set<string>([PEER_ID]);
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).pubsub = { direct };
+		installBootstrapRegistry(network, [{ address: LIVE }]);
+		(network as any).node = {
+			getConnections: () => (connected ? [connection] : []),
+			peerStore: real.store,
+		};
+
+		// The reading an opportunistic caller purges on — taken, as they take it, from a peer
+		// with no live connection.
+		expect((network as any).node.getConnections().length).toBe(0);
+		const purge = (network as any).purgeStalePeer(PEER_ID, 'unreachable after 5 re-dial failures', 1);
+		// Synchronous, and that is the point: the purge is suspended on its acquire and has
+		// run none of its body, so this connection lands strictly between the two.
+		connected = true;
+		await purge;
+
+		expect({
+			record: await real.store.has(real.pid),
+			bootstrapPeerIDs: [...((network as any).bootstrapPeerIDs as Set<string>)],
+			registry: registryAddresses(network),
+			direct: [...direct],
+			closes,
 		}).toEqual({
 			record: true,
 			bootstrapPeerIDs: [PEER_ID],

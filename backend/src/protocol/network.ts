@@ -2394,9 +2394,9 @@ export class Network {
 	 * cycle and the caller would otherwise report a disconnect that a restart undoes (see
 	 * {@link PeerPurgeMode}). A record that was already gone is success in both.
 	 *
-	 * A purge that waited behind another purge of the same peer, and finds the peer connected
-	 * and not suppressed by the time it runs, heals instead of purging — see {@link runPurge}.
-	 * A leave-network suppresses the peer first, so its teardown is never the one dropped.
+	 * A purge that finds the peer connected and not suppressed by the time it runs heals
+	 * instead of purging — see {@link runPurge}. A leave-network suppresses the peer first,
+	 * so its teardown is never the one dropped.
 	 *
 	 * `epoch` binds the call to the node instance it was started for. This is the most
 	 * destructive path there is — it closes connections and deletes peerStore entries —
@@ -2406,7 +2406,7 @@ export class Network {
 	 * same reason: re-reading `this.node` after an await can hand back a different node.
 	 */
 	async purgeStalePeer(peerID: string, reason: string, epoch: number = this.runEpoch, mode: PeerPurgeMode = 'best-effort'): Promise<void> {
-		await this.withPurgeLock(peerID, queued => this.runPurge(peerID, reason, epoch, mode, queued));
+		await this.withPurgeLock(peerID, () => this.runPurge(peerID, reason, epoch, mode));
 	}
 
 	/**
@@ -2429,26 +2429,23 @@ export class Network {
 	 * The entry goes away once nobody holds or awaits it, so the map is bounded by the peers
 	 * being purged right now rather than by every peer ever purged.
 	 *
-	 * Serialising them is only half of it: waiting is also what makes a purge's reason old,
-	 * so `purge` is told whether it waited. That is the one thing the peer's own state cannot
-	 * say for itself, and the purge re-asks its condition when it hears yes — see
-	 * {@link runPurge}.
+	 * Serialising them is only half of it: waiting is also what makes a purge's reason old.
+	 * That is not something this can tell the purge, because waiting is only the longest
+	 * version of a gap every purge has — see {@link runPurge}, which re-asks its condition
+	 * unconditionally.
 	 */
-	private async withPurgeLock(peerID: string, purge: (queued: boolean) => Promise<void>): Promise<void> {
+	private async withPurgeLock(peerID: string, purge: () => Promise<void>): Promise<void> {
 		const locks = (this.purgeLocks ??= new Map());
 		let held = locks.get(peerID);
 		if (!held) {
 			held = { mutex: new Mutex(), waiting: 0 };
 			locks.set(peerID, held);
 		}
-		// Read before the await, where it still means "somebody else holds this": asking
-		// inside the exclusive section would always answer yes.
-		const queued = held.mutex.isLocked();
 		// Both halves of the count are synchronous either side of the await, so a purge that
 		// arrives while another holds the lock always finds the same entry still in the map.
 		held.waiting++;
 		try {
-			await held.mutex.runExclusive(() => purge(queued));
+			await held.mutex.runExclusive(purge);
 		} finally {
 			if (--held.waiting === 0) locks.delete(peerID);
 		}
@@ -2456,37 +2453,37 @@ export class Network {
 
 	/**
 	 * The body of {@link purgeStalePeer}, which holds that peer's purge lock around it.
-	 *
-	 * `queued` says this purge waited for another purge of the same peer to finish, and so
-	 * arrives with a decision that is at least that old.
 	 */
-	private async runPurge(peerID: string, reason: string, epoch: number, mode: PeerPurgeMode, queued: boolean): Promise<void> {
+	private async runPurge(peerID: string, reason: string, epoch: number, mode: PeerPurgeMode): Promise<void> {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return;
 		try {
 			const pid = peerIDFromString(peerID);
 			// Every caller settles the condition to purge on — no connections, no address left
-			// that has not been disproved — right before it calls, and the purge acting on a
-			// connection that appeared since is what the close loop and the healing below are
-			// for. `queued` is the one case that is not covered by them: this purge waited on
-			// another purge of the SAME peer, for however long that one took, so its decision
-			// is as old as that wait. The purge ahead can have found the peer connected again
-			// and healed it — correctly — and this one would then close that very connection
-			// and delete the peer on the strength of an answer nobody re-asked.
+			// that has not been disproved — before it calls, and by the time this body runs that
+			// answer is already old. There is no such thing as a purge that acts on a fresh one:
+			// `Mutex.runExclusive` awaits its acquire even when the lock is free, so the decision
+			// and the act are always at least a microtask apart, and a pending connection can
+			// complete in that window. Queueing behind another purge of the SAME peer is only the
+			// longest version of the same gap — and the worst, because the purge ahead can have
+			// found the peer connected and healed it, correctly, leaving this one to close that
+			// very connection. So the condition is re-asked here, for every purge alike.
 			//
 			// Suppression is what separates the two kinds of purge. An OPPORTUNISTIC one —
 			// identity mismatch, no reachable address, too many dial failures — exists only
 			// because the peer looked gone, and a live connection disproves it. A COMMANDED one
 			// — leave-network, or a keep-alive write that raced a cleanup — claims suppression
 			// before it purges and means the peer gone whether it is connected or not, so it
-			// still runs. Healing rather than simply returning covers the other order too: if
-			// the purge ahead deleted the peer and the connection arrived after it, the state
-			// this one would have rebuilt at the end is rebuilt here instead.
-			if (queued && node.getConnections(pid).length > 0 && !this.isRedialSuppressed(peerID)) {
-				trace(`[NET] queued purge of ${peerID.slice(0, 16)}… dropped, the peer is connected again (reason was: ${reason})`);
+			// still runs. Healing rather than simply returning covers the case where a purge
+			// ahead already deleted the peer and the connection arrived after it: the state this
+			// one would have rebuilt at the end is rebuilt here instead.
+			if (node.getConnections(pid).length > 0 && !this.isRedialSuppressed(peerID)) {
+				trace(`[NET] purge of ${peerID.slice(0, 16)}… dropped, the peer is connected (reason was: ${reason})`);
 				await this.restorePurgedPeerState(node, pid, epoch, null, false);
 				return;
 			}
+			// Nothing between that answer and the end of the in-memory cleanup below yields, so
+			// the cleanup acts on the reading as it was taken.
 			this.bootstrapPeerIDs.delete(peerID);
 			// Drop the peer's addrs from the autodial registry too — otherwise the
 			// zero-connection recovery loop would keep dialing addrs of an identity we just
