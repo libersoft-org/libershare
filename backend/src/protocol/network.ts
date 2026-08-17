@@ -896,43 +896,81 @@ export class Network {
 	// Event listeners setup (extracted from start() for readability)
 	// =========================================================================
 
-	private setupEventListeners(): void {
-		this.addListener(this.node!, 'peer:discovery', async (evt: any) => {
-			const peerID = evt.detail.id.toString();
-			const multiaddrs = evt.detail.multiaddrs?.map((ma: any) => ma.toString()) || [];
-			trace(`[NET] Discovered peer: ${peerID}, addrs: ${multiaddrs.join(', ') || '(empty)'}`);
-
-			// Skip if already connected (autoDial in v2 is unreliable; we dial actively
-			// for mDNS/bootstrap discoveries to ensure local peers form a mesh quickly).
-			if (peerID === this.node!.peerId.toString()) return;
-			// A peer we deliberately left (leave-network) must not be re-tagged or
-			// re-dialed by discovery (mDNS/identify/PX) — that would beat the disconnect.
-			// Suppression lifts on a legitimate inbound reconnect or on network rejoin.
-			if (this.isRedialSuppressed(peerID)) return;
-			// Stamp `keep-alive-fleet` on every discovered peer, regardless of how they
-			// surfaced (mDNS, bootstrap, autonat, identify, peer-announce). libp2p
-			// ReconnectQueue only acts on peers with a tag whose key starts with
-			// `keep-alive`; without it, fleet peers found via non-announce channels
-			// (e.g. identify push from a common neighbour) are not re-dialed when
-			// they drop. Value 50 sits between bootstrap (100) and idle (1) — protects
-			// from ConnectionPruner without taking precedence over true bootstraps.
+	/**
+	 * React to a `peer:discovery` event: tag the peer so libp2p's ReconnectQueue will
+	 * re-dial it, and dial it now if we hold no connection (autoDial in v2 is unreliable
+	 * and mDNS/bootstrap peers have to mesh quickly).
+	 *
+	 * `node` and `epoch` are the ones current when the event was delivered. Every await
+	 * below re-checks both AND the suppression set, because this runs unawaited and both
+	 * a stop()/start() and a leave-network can land inside a multi-second dial.
+	 */
+	private async handleDiscoveredPeer(detail: any, node: Libp2p | null, epoch: number): Promise<void> {
+		if (!node) return;
+		const isCurrentRun = (): boolean => node === this.node && epoch === this.runEpoch;
+		const peerID = detail.id.toString();
+		const multiaddrs = detail.multiaddrs?.map((ma: any) => ma.toString()) || [];
+		trace(`[NET] Discovered peer: ${peerID}, addrs: ${multiaddrs.join(', ') || '(empty)'}`);
+		if (peerID === node.peerId.toString()) return;
+		// A peer we deliberately left (leave-network) must not be re-tagged or
+		// re-dialed by discovery (mDNS/identify/PX) — that would beat the disconnect.
+		// Suppression lifts on a legitimate inbound reconnect or on network rejoin.
+		if (this.isRedialSuppressed(peerID)) return;
+		// Stamp `keep-alive-fleet` on every discovered peer, regardless of how they
+		// surfaced (mDNS, bootstrap, autonat, identify, peer-announce). libp2p
+		// ReconnectQueue only acts on peers with a tag whose key starts with
+		// `keep-alive`; without it, fleet peers found via non-announce channels
+		// (e.g. identify push from a common neighbour) are not re-dialed when
+		// they drop. Value 50 sits between bootstrap (100) and idle (1) — protects
+		// from ConnectionPruner without taking precedence over true bootstraps.
+		try {
+			await node.peerStore.merge(detail.id, { tags: { 'keep-alive-fleet': { value: 50 } } });
+		} catch {
+			/* ignore */
+		}
+		if (!isCurrentRun()) return;
+		if (this.isRedialSuppressed(peerID)) {
+			// A leave landed while that merge was in flight. It stripped the keep-alive
+			// tags before we wrote ours, so leaving this one behind re-arms exactly the
+			// ReconnectQueue re-dial the leave existed to stop.
 			try {
-				await this.node!.peerStore.merge(evt.detail.id, {
-					tags: { 'keep-alive-fleet': { value: 50 } },
-				});
+				await node.peerStore.merge(detail.id, { tags: { 'keep-alive-fleet': undefined } });
 			} catch {
 				/* ignore */
 			}
-			const existing = this.node!.getConnections(evt.detail.id);
-			if (existing.length > 0) return;
-			if (!evt.detail.multiaddrs?.length) return;
-
-			try {
-				await this.node!.dial(evt.detail.multiaddrs);
-				trace(`[NET] Dialed discovered peer ${peerID.slice(0, 16)}`);
-			} catch (err: any) {
-				trace(`[NET] Failed to dial discovered peer ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+			return;
+		}
+		if (node.getConnections(detail.id).length > 0) return;
+		if (!detail.multiaddrs?.length) return;
+		try {
+			await node.dial(detail.multiaddrs);
+			if (!isCurrentRun()) return;
+			// The suppression check above answered for the moment before the dial, and a
+			// dial takes seconds. leave-network can land inside that window: its hangUp
+			// finds no connection yet, finishes, and this dial then completes into a
+			// connection nothing else will close. Whoever notices last closes it.
+			if (this.isRedialSuppressed(peerID) && !this.isPeerNeededByJoinedNetwork(peerID)) {
+				trace(`[NET] discovery dial landed after leave, hanging up: ${peerID.slice(0, 16)}`);
+				try {
+					await node.hangUp(detail.id);
+				} catch (err: any) {
+					trace(`[NET] hangUp of late discovery dial failed: ${err?.message ?? err}`);
+				}
+				return;
 			}
+			trace(`[NET] Dialed discovered peer ${peerID.slice(0, 16)}`);
+		} catch (err: any) {
+			trace(`[NET] Failed to dial discovered peer ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+		}
+	}
+
+	private setupEventListeners(): void {
+		// The node and the epoch are read HERE, while the event is being delivered, and
+		// passed down. The handler is fire-and-forget and awaits twice, so reading
+		// `this.node` inside it hands back whatever instance happens to be current when
+		// the await resumes — an old run's listener would then drive the new node.
+		this.addListener(this.node!, 'peer:discovery', (evt: any) => {
+			void this.handleDiscoveredPeer(evt.detail, this.node, this.runEpoch).catch(err => trace(`[NET] peer:discovery handler error: ${err?.message ?? err}`));
 		});
 
 		// Async listener — any rejection must be caught or it becomes unhandledRejection
