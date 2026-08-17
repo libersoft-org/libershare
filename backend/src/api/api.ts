@@ -76,12 +76,42 @@ const MAX_LOGGED_PARAMS = 1000;
 
 /**
  * Serialise request params for the log, truncated. Some methods carry a whole
- * file as a base64 parameter, and a multi-megabyte log line per call is both
- * unreadable and a measurable write cost.
+ * file chunk, and a multi-megabyte log line per call is both unreadable and a
+ * measurable write cost — the truncation alone would not help, because the
+ * megabytes are spent building the string before it is cut. A binary payload is
+ * always a plain `Uint8Array` (see {@link decodeBinaryRequest}), never a
+ * `Buffer`, whose `toJSON` would run before this replacer ever sees it.
  */
 export function formatParamsForLog(params: unknown): string {
-	const json = JSON.stringify(params) ?? String(params);
+	const json = JSON.stringify(params, (_key, value) => (value instanceof Uint8Array ? `<${value.byteLength} bytes>` : value)) ?? String(params);
 	return json.length <= MAX_LOGGED_PARAMS ? json : json.slice(0, MAX_LOGGED_PARAMS) + `…(${json.length} chars)`;
+}
+
+/** Byte length of the header-length prefix on a binary request frame. */
+const BINARY_HEADER_PREFIX = 4;
+
+/**
+ * Decode a binary request frame, laid out as
+ * `[uint32 BE header length][header JSON][payload]`. The header is the same
+ * `{ id, method, params }` object a text request carries, so the frame is
+ * dispatched and answered by exactly the same code path; the trailing bytes
+ * arrive at the handler as `params.data`. Sending a payload this way costs its
+ * own size, where base64 in JSON would cost a third more plus an encode and a
+ * decode pass over the whole file.
+ *
+ * The payload is copied out of the frame rather than referenced into it: the
+ * message handler is async, so the socket callback returns to Bun before a
+ * handler has finished with the bytes, and nothing promises the received buffer
+ * stays untouched that long.
+ */
+export function decodeBinaryRequest(frame: Uint8Array): Request {
+	if (frame.byteLength < BINARY_HEADER_PREFIX) throw new CodedError(ErrorCodes.PARSE_ERROR);
+	const headerLength = new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getUint32(0);
+	const payloadStart = BINARY_HEADER_PREFIX + headerLength;
+	if (payloadStart > frame.byteLength) throw new CodedError(ErrorCodes.PARSE_ERROR);
+	const req = JSON.parse(new TextDecoder().decode(frame.subarray(BINARY_HEADER_PREFIX, payloadStart))) as Request;
+	req.params = { ...req.params, data: new Uint8Array(frame.subarray(payloadStart)) };
+	return req;
 }
 
 export class APIServer {
@@ -319,7 +349,10 @@ export class APIServer {
 					console.log(`[API] Client disconnected (${self.clients.size} total)`);
 				},
 				async message(ws, message): Promise<void> {
-					await self.handleMessage(ws, message.toString());
+					// A binary frame must not be run through toString(): it is a
+					// request envelope around raw bytes, and decoding it as UTF-8
+					// would replace every invalid sequence before it is ever read.
+					await self.handleMessage(ws, message);
 				},
 			},
 		};
@@ -483,10 +516,10 @@ export class APIServer {
 		);
 	}
 
-	private async handleMessage(client: ClientSocket, message: string): Promise<void> {
+	private async handleMessage(client: ClientSocket, message: string | Buffer): Promise<void> {
 		let req: Request;
 		try {
-			req = JSON.parse(message);
+			req = typeof message === 'string' ? JSON.parse(message) : decodeBinaryRequest(message);
 		} catch {
 			client.send(JSON.stringify({ id: null, error: ErrorCodes.PARSE_ERROR }));
 			return;

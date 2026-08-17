@@ -140,6 +140,30 @@ export class WsClient {
 		await this.connect();
 	}
 
+	/**
+	 * Call a method with a raw binary payload attached, framed as
+	 * `[uint32 BE header length][header JSON][payload]`. The header is the same
+	 * `{ id, method, params }` a text request carries, so the reply comes back as
+	 * an ordinary JSON response and every existing mechanism — id correlation,
+	 * error codes, rejection on disconnect — applies unchanged. The payload
+	 * reaches the handler as `params.data` without being base64'd, which would
+	 * otherwise cost a third more bytes and two full passes over the file.
+	 */
+	async callBinary<T = any>(method: string, params: Record<string, any>, payload: Uint8Array): Promise<T> {
+		await this.ensureConnected();
+		const id = crypto.randomUUID();
+		const header = new TextEncoder().encode(JSON.stringify({ id, method, params }));
+		const frame = new Uint8Array(4 + header.byteLength + payload.byteLength);
+		new DataView(frame.buffer).setUint32(0, header.byteLength);
+		frame.set(header, 4);
+		frame.set(payload, 4 + header.byteLength);
+		if (frame.byteLength > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.MESSAGE_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
+		return new Promise<T>((resolve, reject) => {
+			this.pendingRequests.set(id, { resolve, reject });
+			this.ws!.send(frame);
+		});
+	}
+
 	async call<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
 		await this.ensureConnected();
 		const id = crypto.randomUUID();
