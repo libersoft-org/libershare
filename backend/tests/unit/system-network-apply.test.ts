@@ -525,7 +525,7 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('if (-not $addressingUnchanged) { $addressingChanged = $true; try { Remove-NetIPAddress');
 		// The resolvers and the state check are outside that branch: they are the
 		// part a DNS-only change is actually asking for.
-		expect(command).toContain('| Out-Null }; Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses 198.51.100.1');
+		expect(command).toContain('-Confirm:$false } }; Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses 198.51.100.1');
 		expect(command.indexOf('AddressState')).toBeGreaterThan(command.indexOf('-ServerAddresses 198.51.100.1'));
 	});
 
@@ -824,6 +824,21 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('-Dhcp Disabled');
 		expect(command).toContain('-IPAddress 192.0.2.10 -PrefixLength 24 -DefaultGateway 192.0.2.1');
 		expect(command).toContain('-ServerAddresses 192.0.2.1');
+	});
+
+	// `New-NetIPAddress -DefaultGateway` has no metric parameter and takes whatever
+	// Windows derives from the link speed, so a change of address alone re-ranked the
+	// route. Corrected afterwards rather than by creating the route by hand, which
+	// would give up -DefaultGateway's own reachability check.
+	it('keeps the existing route metric when the gateway does not move', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
+		expect(command).toContain("if (@($oldRoutes).Count -eq 1 -and $oldRoutes[0].NextHop -eq '192.0.2.1') { Set-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop 192.0.2.1 -RouteMetric $($oldRoutes[0].RouteMetric) -Confirm:$false }");
+		// Inside the rewrite, so a configuration that changed nothing does not run it.
+		expect(command.indexOf('Set-NetRoute')).toBeLessThan(command.indexOf('Set-DnsClientServerAddress'));
+	});
+
+	it('has no metric to keep when the config has no gateway', () => {
+		expect(windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 })).not.toContain('Set-NetRoute');
 	});
 
 	it('omits the gateway parameter entirely when there is none', () => {

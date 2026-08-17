@@ -143,6 +143,12 @@ function New-NetRoute {
 	$script:routes += [pscustomobject]@{ NextHop = $NextHop; RouteMetric = [int]$RouteMetric; Protocol = $Protocol; Publish = $Publish; ValidLifetime = (ToSpan $ValidLifetime); PreferredLifetime = (ToSpan $PreferredLifetime); Stores = $stores }
 }
 
+function Set-NetRoute {
+	[CmdletBinding(SupportsShouldProcess = $true)] param($InterfaceIndex, $DestinationPrefix, $NextHop, $RouteMetric, $PolicyStore)
+	Note 'Set-NetRoute'
+	foreach ($r in $script:routes) { if ($r.NextHop -eq $NextHop) { $r.RouteMetric = [int]$RouteMetric } }
+}
+
 function Set-NetIPInterface { [CmdletBinding()] param($InterfaceIndex, $AddressFamily, $Dhcp) Note "Set-NetIPInterface:$Dhcp"; $script:dhcp = $Dhcp }
 
 function Set-DnsClientServerAddress {

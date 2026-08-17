@@ -918,6 +918,29 @@ export function windowsAddressingUnchanged(config: NetIPv4Config): string {
 	return `$addressingUnchanged = ($oldDhcp -ne 'Enabled') -and (@($oldAddresses).Count -eq 1) -and ($oldAddresses[0].IPAddress -eq '${config.address}') -and ($oldAddresses[0].PrefixLength -eq ${config.prefixLength}) -and ${route}`;
 }
 
+/**
+ * Give the new default route the metric the old one had, when it is the same
+ * gateway.
+ *
+ * The route is created as a side effect of `New-NetIPAddress -DefaultGateway`,
+ * which has no metric parameter — it takes whatever Windows derives from the link
+ * speed. So changing an address on an interface whose gateway did not move
+ * silently re-ranked that route against every other default route on the host, and
+ * on a multihomed machine that is a change of which interface traffic leaves by.
+ * The same reasoning is why {@link windowsAddressingUnchanged} exists: the metric
+ * is precisely what a needless rewrite was found to lose.
+ *
+ * Correcting it afterwards rather than creating the route by hand keeps
+ * `-DefaultGateway`'s own check that the gateway is reachable from the new
+ * address. Empty when there is no gateway, or when the gateway is not the one the
+ * interface already had — a metric belonging to a different next hop is not a
+ * metric worth keeping.
+ */
+function keepRouteMetric(config: NetIPv4Config): string[] {
+	if (!config.gateway) return [];
+	return [`if (@($oldRoutes).Count -eq 1 -and $oldRoutes[0].NextHop -eq '${config.gateway}') { Set-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop ${config.gateway} -RouteMetric $($oldRoutes[0].RouteMetric) -Confirm:$false }`];
+}
+
 /** How long duplicate address detection may run before the apply gives up on it. */
 const DAD_TIMEOUT_MS = 15000;
 /** How often the address state is re-read while duplicate address detection runs. */
@@ -1004,7 +1027,7 @@ export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): st
 		// The flag is set BEFORE the first removal, not after the last write: from that
 		// point on the interface is mid-change and the rollback has work to do however
 		// far the rewrite got.
-		const rewrite = ['$addressingChanged = $true', ...removals, 'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`].join('; ');
+		const rewrite = ['$addressingChanged = $true', ...removals, 'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`, ...keepRouteMetric(config)].join('; ');
 		mutation.push(windowsAddressingUnchanged(config), `if (-not $addressingUnchanged) { ${rewrite} }`, dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses', `if ($addressingChanged) { ${windowsAddressStateWait(config.address as string)} }`);
 	}
 	const rollback = [`if ($addressingChanged) { ${windowsRestoreAddressingSteps().join('; ')} }`, WINDOWS_RESTORE_DNS].join('; ');

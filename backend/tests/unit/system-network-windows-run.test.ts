@@ -116,6 +116,25 @@ describe('windowsApplyIPv4Command, executed', () => {
 		expect(result.routes[0]?.RouteMetric).toBe(25);
 	});
 
+	// The route is created as a side effect of New-NetIPAddress -DefaultGateway,
+	// which has no metric parameter, so changing an address on an interface whose
+	// gateway did not move re-ranked that route against every other default route on
+	// the host — on a multihomed machine, a change of which interface traffic leaves
+	// by.
+	it.skipIf(windowsOnly)('keeps the default route metric when only the address changes', async () => {
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '192.0.2.30', prefixLength: 24, gateway: '192.0.2.1' }), staticHost(GUID));
+		expect(result.error).toBeNull();
+		expect(result.addresses.map(a => a.IPAddress)).toEqual(['192.0.2.30']);
+		expect(result.routes.map(r => r.RouteMetric)).toEqual([25]);
+	});
+
+	it.skipIf(windowsOnly)('takes no metric from a route to a different gateway', async () => {
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.30', prefixLength: 24, gateway: '198.51.100.1' }), staticHost(GUID));
+		expect(result.error).toBeNull();
+		expect(result.calls).not.toContain('Set-NetRoute');
+		expect(result.routes.map(r => r.NextHop)).toEqual(['198.51.100.1']);
+	});
+
 	// A DHCP interface carrying a hand-added default route. The rollback used to
 	// re-enable DHCP and stop, so the route was gone for good — and if it was the
 	// only path into the network the host is administered over, so was the host.
