@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { isIPv4, isValidSSID, isValidWifiKey, isWifiHexKey, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { nmcliActivateArgs, nmcliModifyArgs, nmcliRestoreArgs, parseNmcliProperties, parseNmcliActiveUUID, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
+import { nmcliActivateArgs, nmcliMethodToMode, nmcliModifyArgs, parseNmcliActiveUUIDs, nmcliRestoreArgs, parseNmcliProperties, parseNmcliActiveUUID, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { assertDeviceName, firstLine } from '../../src/system-network.ts';
 
@@ -656,6 +656,36 @@ describe('parseNmcliActiveUUID', () => {
 		// A networkd-managed NIC or a Docker bridge has no active profile, and an
 		// apply must fail loudly rather than edit some other device's profile.
 		expect(parseNmcliActiveUUID(ACTIVE, 'docker0')).toBeNull();
+	});
+});
+
+describe('parseNmcliActiveUUIDs', () => {
+	const ACTIVE = '4b8a1f2c-0000-4000-8000-000000000001:eth0\n7c2d9e40-0000-4000-8000-000000000002:wlan0\n';
+
+	it('maps every device that has an active profile', () => {
+		expect([...parseNmcliActiveUUIDs(ACTIVE)]).toEqual([
+			['eth0', '4b8a1f2c-0000-4000-8000-000000000001'],
+			['wlan0', '7c2d9e40-0000-4000-8000-000000000002'],
+		]);
+	});
+
+	it('ignores a profile that is active but not on any device', () => {
+		// A VPN waiting for its base connection is active with an empty DEVICE.
+		expect(parseNmcliActiveUUIDs(`${ACTIVE}9a1b2c3d-0000-4000-8000-000000000003:\n`).size).toBe(2);
+	});
+});
+
+describe('nmcliMethodToMode', () => {
+	it('translates the two methods the model has a word for', () => {
+		expect(nmcliMethodToMode('auto')).toBe('dhcp');
+		expect(nmcliMethodToMode('manual')).toBe('static');
+	});
+
+	// `link-local`, `shared` and `disabled` are real methods with no counterpart.
+	// Calling any of them DHCP or static would put a mode in the editor that
+	// pressing Save would then impose on the profile.
+	it('refuses to name a method the model cannot express', () => {
+		for (const method of ['link-local', 'shared', 'disabled', '']) expect(nmcliMethodToMode(method)).toBe('unknown');
 	});
 });
 

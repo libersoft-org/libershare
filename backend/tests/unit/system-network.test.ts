@@ -214,8 +214,29 @@ describe('parseLinuxNetworkState', () => {
 	const result = parseLinuxNetworkState(sources);
 
 	it('reads DHCP from the kernel dynamic flag and static from a permanent lifetime', () => {
+		// Only where there is no active profile to ask — see the two cases below.
 		expect(byID(result, 'eth0').ipv4Mode).toBe('dhcp');
 		expect(byID(result, 'docker0').ipv4Mode).toBe('static');
+	});
+
+	// The kernel describes the address currently ON the interface; the profile
+	// describes what the editor changes and what survives a reboot. A DHCP profile
+	// with a manual secondary address, or one whose lease has momentarily lapsed,
+	// reads as static from the kernel — and saving then switched the profile to a
+	// mode the user had not chosen.
+	it('prefers the active profile method over what the kernel addresses suggest', () => {
+		const parsed = parseLinuxNetworkState({ ...sources, ipv4Methods: new Map([['docker0', 'dhcp' as const]]) });
+		expect(byID(parsed, 'docker0').ipv4Mode).toBe('dhcp');
+		// eth0 has no profile in this map, so the kernel reading stands for it.
+		expect(byID(parsed, 'eth0').ipv4Mode).toBe('dhcp');
+	});
+
+	it('reports a profile method the model cannot name as unknown, not as the kernel guess', () => {
+		// `link-local`, `shared` and `disabled` have no counterpart. Letting the
+		// kernel answer instead would offer an editable mode for a profile that is
+		// not in one.
+		const parsed = parseLinuxNetworkState({ ...sources, ipv4Methods: new Map([['eth0', 'unknown' as const]]) });
+		expect(byID(parsed, 'eth0').ipv4Mode).toBe('unknown');
 	});
 
 	it('ignores IPv6 dynamic — SLAAC is not DHCP', () => {

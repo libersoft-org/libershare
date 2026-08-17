@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
-import type { NetAddress, NetInterfaceInfo, NetIPv4Config, NetLink, NetWifiInfo, NetWifiNetwork } from '@shared';
+import type { NetAddress, NetAddressMode, NetInterfaceInfo, NetIPv4Config, NetLink, NetWifiInfo, NetWifiNetwork } from '@shared';
 
 const execFileAsync = promisify(execFile);
 
@@ -71,6 +71,12 @@ export interface LinuxNetworkSources {
 	 * evidence that a device is unmanaged.
 	 */
 	managed?: Set<string> | undefined;
+	/**
+	 * `ipv4.method` of the profile active on each device, as NetworkManager stores
+	 * it. Authoritative over anything inferred from the kernel's addresses; absent
+	 * for a device with no active profile, where the kernel is all there is.
+	 */
+	ipv4Methods?: Map<string, NetAddressMode> | undefined;
 }
 
 /**
@@ -156,10 +162,17 @@ function mapMedium(wireless: boolean, link: IpLinkEntry | undefined): NetInterfa
 /**
  * Build the interface list from the three `ip` documents.
  *
- * IPv4 addressing mode comes from the kernel's own `dynamic` flag: a DHCP lease
- * carries `dynamic: true`, a manually configured address has no `dynamic` key
- * and the permanent lifetime sentinel. IPv6 `dynamic` is deliberately ignored —
- * SLAAC also sets it and SLAAC is not DHCP.
+ * IPv4 addressing mode comes from the active NetworkManager profile's
+ * `ipv4.method`, because that is the setting the editor changes and the one that
+ * survives a reboot. The kernel's own `dynamic` flag is only the fallback for a
+ * device with no active profile: it describes the address currently ON the
+ * interface, which is not the same question. A DHCP profile with a manual
+ * secondary address, a lease that has momentarily lapsed, or an address another
+ * process added all read as static from the kernel — and saving then switched the
+ * profile to a mode the user had not chosen. Where the kernel is all there is, a
+ * DHCP lease carries `dynamic: true` and a manual address has no `dynamic` key
+ * and the permanent lifetime sentinel; IPv6 `dynamic` is deliberately ignored,
+ * because SLAAC also sets it and SLAAC is not DHCP.
  *
  * Nothing is filtered out here: a container's `eth0` has `info_kind: veth` yet
  * carries the default route, so link kind is not a safe exclusion criterion.
@@ -211,7 +224,7 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 			defaultRoute: entry.ifname === defaultDev,
 			mac: entry.address ?? link?.address ?? null,
 			addresses,
-			ipv4Mode,
+			ipv4Mode: sources.ipv4Methods?.get(entry.ifname) ?? ipv4Mode,
 			gateway: bestByDev.get(entry.ifname)?.gateway ?? null,
 			// Always stated, never left absent. NetworkManager is the only stack the
 			// apply path can drive, so a device it does not own cannot be edited — and
@@ -315,7 +328,7 @@ export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
 			// rather than being guessed from anything else.
 		}
 	}
-	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: await readNetworkManagerDns(), managed: await readManagedDevices() });
+	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: await readNetworkManagerDns(), managed: await readManagedDevices(), ipv4Methods: await readLinuxIPv4Methods() });
 }
 
 /**
@@ -483,12 +496,59 @@ async function activeConnection(device: string): Promise<string | null> {
 
 /** Pick the UUID of the profile active on `device` out of `nmcli -t -f UUID,DEVICE` output. */
 export function parseNmcliActiveUUID(text: string, device: string): string | null {
+	return parseNmcliActiveUUIDs(text).get(device) ?? null;
+}
+
+/** Every device with an active profile, mapped to that profile's UUID. */
+export function parseNmcliActiveUUIDs(text: string): Map<string, string> {
+	const result = new Map<string, string>();
 	for (const line of text.split(/\r?\n/)) {
 		if (!line.trim()) continue;
-		const fields = splitNmcliFields(line);
-		if (fields[1] === device) return fields[0] ?? null;
+		const [uuid, device] = splitNmcliFields(line);
+		// A profile with no device is active but not on anything (a VPN awaiting a
+		// base connection), and the first profile on a device is the one that owns it.
+		if (uuid && device && !result.has(device)) result.set(device, uuid);
 	}
-	return null;
+	return result;
+}
+
+/**
+ * Translate NetworkManager's `ipv4.method` into the model's addressing mode.
+ *
+ * Only `auto` and `manual` have a counterpart. `link-local`, `shared` and
+ * `disabled` are real methods the model cannot name, and calling any of them
+ * DHCP or static would put a mode in the editor that saving would then impose.
+ */
+export function nmcliMethodToMode(method: string): NetAddressMode {
+	if (method === 'auto') return 'dhcp';
+	if (method === 'manual') return 'static';
+	return 'unknown';
+}
+
+/**
+ * The `ipv4.method` of the profile active on each device.
+ *
+ * One `nmcli` call to list the active profiles, then one per profile — a host has
+ * a handful of them, and the read already spawns `iw` once per wireless device.
+ * Undefined when NetworkManager cannot be asked at all, so the caller falls back
+ * to the kernel rather than reporting every interface as unknown.
+ */
+async function readLinuxIPv4Methods(): Promise<Map<string, NetAddressMode> | undefined> {
+	let active: Map<string, string>;
+	try {
+		active = parseNmcliActiveUUIDs(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'UUID,DEVICE', 'connection', 'show', '--active']));
+	} catch {
+		return undefined;
+	}
+	const result = new Map<string, NetAddressMode>();
+	for (const [device, uuid] of active) {
+		try {
+			result.set(device, nmcliMethodToMode(parseNmcliProperties(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'ipv4.method', 'connection', 'show', 'uuid', uuid])).get('ipv4.method') ?? ''));
+		} catch {
+			// This one profile could not be read; the kernel inference stands for it.
+		}
+	}
+	return result;
 }
 
 /**
