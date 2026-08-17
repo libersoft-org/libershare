@@ -550,9 +550,26 @@ function tolerateMissing(command: string): string {
  * all cannot be configured, and finding that out before deleting anything is the
  * point. The other three legitimately return nothing on an adapter that is simply
  * unconfigured.
+ *
+ * The resolver snapshot deliberately does NOT use `Get-DnsClientServerAddress`.
+ * That cmdlet reports the EFFECTIVE list, which on a DHCP interface is the one
+ * the lease handed out — and writing an effective list back with
+ * `-ServerAddresses` pins it as a MANUAL override, so an interface that had been
+ * taking its resolvers from DHCP silently stops honouring future DHCP changes.
+ * Measured on Windows 11: a DHCP interface reports an effective server while its
+ * static `NameServer` registry value is empty, and the DHCP-supplied value lives
+ * under `DhcpNameServer` instead. `NameServer` is therefore the only reading that
+ * answers "was this a manual override?", which is the question the restore asks.
  */
 function windowsSnapshotSteps(): string[] {
-	return ['$oldDhcp = (Get-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop).Dhcp', '$oldAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object IPAddress, PrefixLength)', "$oldRoutes = @(Get-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object NextHop, RouteMetric)", '$oldDns = @((Get-DnsClientServerAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses)'];
+	return [
+		'$oldDhcp = (Get-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop).Dhcp',
+		'$oldAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object IPAddress, PrefixLength)',
+		"$oldRoutes = @(Get-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object NextHop, RouteMetric)",
+		// Empty for an interface on automatic DNS, and only then. Windows writes the
+		// value comma-separated but has historically also used spaces, so both split.
+		'$oldDnsManual = @((Get-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)" -Name NameServer -ErrorAction SilentlyContinue).NameServer -split \'[,\\s]+\' | Where-Object { $_ })',
+	];
 }
 
 /**
@@ -565,12 +582,15 @@ function windowsSnapshotSteps(): string[] {
  * static has to have every address and every default route written back
  * individually, metric included, because that configuration exists nowhere else.
  *
- * Resolvers are restored in both cases — `-ResetServerAddresses` when the
- * snapshot held none, which is what "inherit from DHCP" is spelled as here.
+ * Resolvers are restored the same way round: the addresses go back only when the
+ * snapshot proved they were a MANUAL override, and automatic DNS is put back with
+ * `-ResetServerAddresses`. Writing an effective list back unconditionally would
+ * convert a DHCP interface's resolvers into a static override it never had — see
+ * {@link windowsSnapshotSteps}.
  */
 function windowsRestoreSteps(): string[] {
 	const restoreStatic = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', 'foreach ($a in $oldAddresses) { New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $a.IPAddress -PrefixLength $a.PrefixLength -ErrorAction Stop | Out-Null }', "foreach ($r in $oldRoutes) { New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop $r.NextHop -RouteMetric $r.RouteMetric -Confirm:$false -ErrorAction Stop | Out-Null }"].join('; ');
-	return [tolerateMissing('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false'), tolerateMissing("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false"), `if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled } else { ${restoreStatic} }`, 'if ($oldDns.Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $oldDns } else { Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses }'];
+	return [tolerateMissing('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false'), tolerateMissing("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false"), `if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled } else { ${restoreStatic} }`, 'if ($oldDnsManual.Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $oldDnsManual } else { Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses }'];
 }
 
 /**

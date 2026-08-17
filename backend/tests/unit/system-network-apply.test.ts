@@ -474,7 +474,7 @@ describe('windowsApplyIPv4Command', () => {
 	it('snapshots the whole IPv4 configuration before the first destructive step', () => {
 		for (const config of [{ mode: 'dhcp' } as NetIPv4Config, { mode: 'static', address: '192.0.2.10', prefixLength: 24 } as NetIPv4Config]) {
 			const command = windowsApplyIPv4Command(guid, config);
-			for (const captured of ['$oldDhcp = ', '$oldAddresses = ', '$oldRoutes = ', '$oldDns = ']) {
+			for (const captured of ['$oldDhcp = ', '$oldAddresses = ', '$oldRoutes = ', '$oldDnsManual = ']) {
 				expect(command).toContain(captured);
 				expect(command.indexOf(captured)).toBeLessThan(command.indexOf('Remove-NetIPAddress'));
 			}
@@ -494,9 +494,24 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('throw $applyError');
 		expect(command).toContain('foreach ($a in $oldAddresses)');
 		expect(command).toContain('foreach ($r in $oldRoutes)');
-		expect(command).toContain('$oldDns.Count -gt 0');
+		expect(command).toContain('$oldDnsManual.Count -gt 0');
 		// New-NetIPAddress must be inside the guard, not before it.
 		expect(command.indexOf('try { try { Remove-NetIPAddress')).toBeGreaterThan(-1);
+	});
+
+	// A rollback that writes the EFFECTIVE resolver list back turns DHCP-supplied
+	// DNS into a manual static override: the network keeps working, and then
+	// silently stops honouring every future DHCP DNS change. Only the interface's
+	// static `NameServer` registry value answers "was this a manual override?" —
+	// verified on Windows 11, where a DHCP interface reports an effective server
+	// while `NameServer` is empty and the lease value sits under `DhcpNameServer`.
+	it('snapshots whether DNS was a manual override, not the effective list', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
+		expect(command).toContain('NameServer');
+		expect(command).not.toContain('$oldDns = @((Get-DnsClientServerAddress');
+		// The two branches: addresses back only for a proven manual override, and
+		// automatic mode restored with -ResetServerAddresses for everything else.
+		expect(command).toContain('if ($oldDnsManual.Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $oldDnsManual } else { Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses }');
 	});
 
 	it('restores a DHCP interface by re-enabling DHCP rather than by re-adding its lease', () => {
