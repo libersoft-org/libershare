@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, competingNtpUnits, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitLoadStates, type PlatformStatusReader, extractWords, extractWordsChecked, readNtpUnitsList, readTimedatedEnvironment, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, syncDirectory, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
-import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState } from '../../src/system-time-windows.ts';
+import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeDomainMembership, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
 // ---------------------------------------------------------------------------
@@ -1291,7 +1291,7 @@ describe('setSystemNtpEnabled', () => {
 	const capable = async (): Promise<SystemTimeStatus> => statusFixture();
 
 	/** A Windows host whose time source this application configured itself. */
-	const ourWindowsHost = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'automatic' });
+	const ourWindowsHost = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'automatic', membership: 'standalone' });
 
 	it('reports success once every step has succeeded', async () => {
 		await onPlatform('linux', async () => {
@@ -1364,7 +1364,7 @@ describe('setSystemNtpEnabled', () => {
 	it('refuses when the host stopped being ours between the status read and the write', async () => {
 		await onPlatform('win32', async () => {
 			const { exec, calls } = fakeRunner([]);
-			const joinedADomain = async (): Promise<WindowsModeState> => ({ mode: 'domain-hierarchy', start: 'automatic' });
+			const joinedADomain = async (): Promise<WindowsModeState> => ({ mode: 'domain-hierarchy', start: 'automatic', membership: 'domain' });
 			expect((await setSystemNtpEnabled(false, capable, exec, joinedADomain)).outcome).toBe('unsupported');
 			expect(calls).toEqual([]);
 		});
@@ -1373,8 +1373,34 @@ describe('setSystemNtpEnabled', () => {
 	it('refuses when a group policy arrived between the status read and the write', async () => {
 		await onPlatform('win32', async () => {
 			const { exec, calls } = fakeRunner([]);
-			const policyApplied = async (): Promise<WindowsModeState> => ({ mode: 'managed', start: 'automatic' });
+			const policyApplied = async (): Promise<WindowsModeState> => ({ mode: 'managed', start: 'automatic', membership: 'standalone' });
 			expect((await setSystemNtpEnabled(true, capable, exec, policyApplied)).outcome).toBe('unsupported');
+			expect(calls).toEqual([]);
+		});
+	});
+
+	/**
+	 * The destructive one. A forest-root PDC synchronising against an external source is
+	 * configured as local `Type=NTP` with no policy branch, which reads as `manual` — and
+	 * `manual` used to be enough to run `sc stop w32time` and `sc config w32time start=
+	 * disabled` on it, stopping the time service the whole forest depends on and keeping it
+	 * off across reboots. Not one command may reach a host that belongs to a domain.
+	 */
+	it('runs nothing on a domain member whose source reads as a plain peer list', async () => {
+		await onPlatform('win32', async () => {
+			const { exec, calls } = fakeRunner([]);
+			const forestRootPdc = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'automatic', membership: 'domain' });
+			expect((await setSystemNtpEnabled(false, capable, exec, forestRootPdc)).outcome).toBe('unsupported');
+			expect(calls).toEqual([]);
+		});
+	});
+
+	/** An unreadable join state may be that same PDC, so it is refused the same way. */
+	it('runs nothing when the domain membership could not be established', async () => {
+		await onPlatform('win32', async () => {
+			const { exec, calls } = fakeRunner([]);
+			const cannotTell = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'automatic', membership: 'unknown' });
+			expect((await setSystemNtpEnabled(false, capable, exec, cannotTell)).outcome).toBe('unsupported');
 			expect(calls).toEqual([]);
 		});
 	});
@@ -1397,7 +1423,7 @@ describe('setSystemNtpServer', () => {
 	it('writes the peer list on a host whose time source is ours', async () => {
 		await onPlatform('win32', async () => {
 			const { exec, calls } = fakeRunner([]);
-			const ours = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'disabled' });
+			const ours = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'disabled', membership: 'standalone' });
 			expect((await setSystemNtpServer('ntp.example.org', capable, ours, exec)).success).toBe(true);
 			// Start mode `disabled` means the service is not running, so nothing is asked of it.
 			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8 /syncfromflags:manual']);
@@ -1412,7 +1438,7 @@ describe('setSystemNtpServer', () => {
 	it('refuses a host whose time source stopped being ours before the write', async () => {
 		await onPlatform('win32', async () => {
 			const { exec, calls } = fakeRunner([]);
-			const joinedADomain = async (): Promise<WindowsModeState> => ({ mode: 'domain-hierarchy', start: 'automatic' });
+			const joinedADomain = async (): Promise<WindowsModeState> => ({ mode: 'domain-hierarchy', start: 'automatic', membership: 'domain' });
 			expect((await setSystemNtpServer('ntp.example.org', capable, joinedADomain, exec)).outcome).toBe('unsupported');
 			expect(calls).toEqual([]);
 		});
@@ -1421,8 +1447,21 @@ describe('setSystemNtpServer', () => {
 	it('refuses a host that became policy-managed before the write', async () => {
 		await onPlatform('win32', async () => {
 			const { exec, calls } = fakeRunner([]);
-			const policyApplied = async (): Promise<WindowsModeState> => ({ mode: 'managed', start: 'automatic' });
+			const policyApplied = async (): Promise<WindowsModeState> => ({ mode: 'managed', start: 'automatic', membership: 'standalone' });
 			expect((await setSystemNtpServer('ntp.example.org', capable, policyApplied, exec)).outcome).toBe('unsupported');
+			expect(calls).toEqual([]);
+		});
+	});
+
+	/**
+	 * The same forest-root PDC. Its peer list is what the whole domain's time derives from,
+	 * and `manual` alone used to be enough to overwrite it here too.
+	 */
+	it('refuses a domain member whose source reads as a plain peer list', async () => {
+		await onPlatform('win32', async () => {
+			const { exec, calls } = fakeRunner([]);
+			const forestRootPdc = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'automatic', membership: 'domain' });
+			expect((await setSystemNtpServer('ntp.example.org', capable, forestRootPdc, exec)).outcome).toBe('unsupported');
 			expect(calls).toEqual([]);
 		});
 	});
@@ -1504,10 +1543,30 @@ describe('probeLocalMachineKey', () => {
 	});
 });
 
+describe('probeDomainMembership', () => {
+	/** Never throws, and answers one of the three states, on Windows and off it alike. */
+	it('answers a join state rather than throwing', () => {
+		expect(['domain', 'standalone', 'unknown']).toContain(probeDomainMembership());
+	});
+
+	/**
+	 * On the host this suite runs on the answer has to agree with what Windows itself
+	 * reports, which is the only part of the probe a test can check against reality.
+	 * Elsewhere there is no join state to be right about.
+	 */
+	it('agrees with the host it runs on', () => {
+		if (process.platform !== 'win32') {
+			expect(probeDomainMembership()).toBe('unknown');
+			return;
+		}
+		expect(['domain', 'standalone']).toContain(probeDomainMembership());
+	});
+});
+
 describe('windowsSyncIsOurs', () => {
 	it('allows a change only where this application configured the source itself', () => {
-		expect(windowsSyncIsOurs('manual')).toBe(true);
-		expect(windowsSyncIsOurs('none')).toBe(true);
+		expect(windowsSyncIsOurs('manual', 'standalone')).toBe(true);
+		expect(windowsSyncIsOurs('none', 'standalone')).toBe(true);
 	});
 
 	/**
@@ -1516,9 +1575,9 @@ describe('windowsSyncIsOurs', () => {
 	 * offering a change that would detach the machine from its domain's time.
 	 */
 	it('refuses a domain, policy-managed or unidentified host', () => {
-		expect(windowsSyncIsOurs('domain-hierarchy')).toBe(false);
-		expect(windowsSyncIsOurs('managed')).toBe(false);
-		expect(windowsSyncIsOurs('unknown')).toBe(false);
+		expect(windowsSyncIsOurs('domain-hierarchy', 'standalone')).toBe(false);
+		expect(windowsSyncIsOurs('managed', 'standalone')).toBe(false);
+		expect(windowsSyncIsOurs('unknown', 'standalone')).toBe(false);
 	});
 
 	/**
@@ -1527,7 +1586,24 @@ describe('windowsSyncIsOurs', () => {
 	 * configured that way.
 	 */
 	it('refuses a host synchronising from every available source', () => {
-		expect(windowsSyncIsOurs('all')).toBe(false);
+		expect(windowsSyncIsOurs('all', 'standalone')).toBe(false);
+	});
+
+	/**
+	 * The forest-root PDC case. Pointed at an external time source the Microsoft-documented
+	 * way it carries local `Type=NTP` and no policy branch, so the mode alone reads exactly
+	 * like a workgroup machine with a peer list — while it is the clock the entire forest
+	 * follows. Treated as ours, the off switch stopped and disabled W32Time on it for good.
+	 */
+	it('refuses a domain member whose source looks like a plain peer list', () => {
+		expect(windowsSyncIsOurs('manual', 'domain')).toBe(false);
+		expect(windowsSyncIsOurs('none', 'domain')).toBe(false);
+	});
+
+	/** An unreadable join state may be a domain member, so it is refused like one. */
+	it('refuses a host whose domain membership could not be established', () => {
+		expect(windowsSyncIsOurs('manual', 'unknown')).toBe(false);
+		expect(windowsSyncIsOurs('none', 'unknown')).toBe(false);
 	});
 });
 

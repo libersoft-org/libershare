@@ -6,7 +6,7 @@ import { isIP } from 'node:net';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
-import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeLocalMachineKey, type RegistryKeyProbe } from './system-time-windows.ts';
+import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeDomainMembership, probeLocalMachineKey, type DomainMembership, type RegistryKeyProbe } from './system-time-windows.ts';
 import type { SystemTimeCapabilities, SystemTimeOutcome, SystemTimeResult, SystemTimeStatus, SystemTimeStep, SystemTimezoneSource } from '@shared';
 
 const execFileAsync = promisify(execFile);
@@ -341,11 +341,21 @@ export function parseWindowsStartMode(output: string | null): WindowsStartMode {
  * `AllSync` is in that group too. Windows defines it as using EVERY available source,
  * which on a domain member includes the AD hierarchy — so it is not the "just a peer
  * list" that `NTP` is, and disabling W32Time on such a host detaches it exactly as
- * disabling it on an `NT5DS` one does. Nothing here can tell an AllSync workgroup
- * machine from an AllSync domain member (that needs a separate domain-membership probe),
- * so the ambiguous case is refused rather than guessed at.
+ * disabling it on an `NT5DS` one does.
+ *
+ * The mode alone decides none of this, which is why `membership` is asked for and why
+ * only a PROVEN `standalone` passes. A forest-root PDC pointed at an external time
+ * source is configured the Microsoft-documented way — local `Type=NTP`, no policy branch
+ * — and so reads here as an ordinary `manual` host, while being the machine every clock
+ * in the forest follows. Stopping and disabling W32Time on it takes the root out of the
+ * domain time hierarchy for good, and Kerberos fails as the clocks drift apart. A domain
+ * member that is NOT the authority is refused along with it: nothing available here
+ * separates the two, and mistaking the authority for a plain member is the expensive
+ * direction of that guess. `unknown` — an unreadable join state — is refused for the
+ * same reason.
  */
-export function windowsSyncIsOurs(mode: WindowsSyncMode): boolean {
+export function windowsSyncIsOurs(mode: WindowsSyncMode, membership: DomainMembership): boolean {
+	if (membership !== 'standalone') return false;
 	return mode === 'manual' || mode === 'none';
 }
 
@@ -1327,10 +1337,15 @@ export function readWindowsPolicyManaged(probe: RegistryKeyProbe = probeLocalMac
 	return probe(W32TIME_POLICY_KEY) !== 'absent';
 }
 
-/** The Windows time source and service start type, as read from the registry. */
+/**
+ * The Windows time source and service start type, as read from the registry, plus the
+ * host's domain join state — which no registry value under `W32Time` carries and which
+ * decides ownership just as much as the mode does (see {@link windowsSyncIsOurs}).
+ */
 export interface WindowsModeState {
 	mode: WindowsSyncMode;
 	start: WindowsStartMode;
+	membership: DomainMembership;
 }
 
 /** Reads {@link WindowsModeState}. Injectable so a write's safety check can be tested off a real host. */
@@ -1345,7 +1360,10 @@ async function readWindowsMode(): Promise<WindowsModeState> {
 	const type = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'Type']);
 	const start = await tryRead('reg', ['query', W32TIME_SERVICE_KEY, '/v', 'Start']);
 	const policyManaged = readWindowsPolicyManaged();
-	return { mode: parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policyManaged), start: parseWindowsStartMode(start) };
+	// Read here rather than by the caller so a write's safety check gets the join state
+	// from the same read it gets the mode from, inside the same lock.
+	const membership = probeDomainMembership();
+	return { mode: parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policyManaged), start: parseWindowsStartMode(start), membership };
 }
 
 /** Read the Windows (W32Time) part of the status. */
@@ -1358,10 +1376,10 @@ async function readWindowsStatus(): Promise<PlatformStatus> {
 	const status = await tryRead('w32tm', ['/query', '/status']);
 	// tzutil answers with a Windows identifier, which has to be mapped back to IANA.
 	const zone = parseTzutilZone(await tryRead('tzutil', ['/g']));
-	const { mode, start } = await readWindowsMode();
+	const { mode, start, membership } = await readWindowsMode();
 	// A time source an administrator owns is read-only here, so the UI disables the
 	// controls instead of offering a change that would detach the host from its domain.
-	const ours = windowsSyncIsOurs(mode);
+	const ours = windowsSyncIsOurs(mode, membership);
 	return {
 		timezone: zone === null ? null : windowsToIanaTimezone(zone),
 		ntpEnabled: windowsSyncEnabled(mode, start),
@@ -1479,7 +1497,7 @@ export function withSystemTimeLock<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /** Why a host whose time source somebody else owns is left alone. */
-const NOT_OURS_MESSAGE = 'time synchronisation here is not ours to switch: this host has no such service, or its time source is managed by a domain or by group policy';
+const NOT_OURS_MESSAGE = 'time synchronisation here is not ours to switch: this host has no such service, it belongs to a domain, or its time source is managed by group policy';
 
 /**
  * Re-read the Windows time source immediately before mutating it and refuse when it is
@@ -1496,7 +1514,7 @@ const NOT_OURS_MESSAGE = 'time synchronisation here is not ours to switch: this 
  */
 async function checkWindowsWritable(readMode: WindowsModeReader): Promise<WindowsModeState & { refusal: SystemTimeResult | null }> {
 	const state = await readMode();
-	return { ...state, refusal: windowsSyncIsOurs(state.mode) ? null : result('unsupported', NOT_OURS_MESSAGE) };
+	return { ...state, refusal: windowsSyncIsOurs(state.mode, state.membership) ? null : result('unsupported', NOT_OURS_MESSAGE) };
 }
 
 /**

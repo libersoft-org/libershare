@@ -173,3 +173,80 @@ export function probeLocalMachineKey(subKey: string): RegistryKeyState {
 		return 'unreadable';
 	}
 }
+
+/**
+ * Whether this host belongs to an Active Directory domain.
+ *
+ * `standalone` is a PROVEN non-membership: Windows itself answered "workgroup" or "joined
+ * to nothing". `domain` and `unknown` both mean the host may be a domain member — and a
+ * domain member may be the very machine the rest of the forest takes its time from — so
+ * they are the same answer to every caller that is about to touch W32Time.
+ */
+export type DomainMembership = 'domain' | 'standalone' | 'unknown';
+
+/** Reports {@link DomainMembership}. Injectable for tests. */
+export type DomainMembershipProbe = () => DomainMembership;
+
+/** `NETSETUP_JOIN_STATUS` from `lmjoin.h`. 0 is `NetSetupUnknownStatus`. */
+const NET_SETUP_UNJOINED = 1;
+const NET_SETUP_WORKGROUP_NAME = 2;
+const NET_SETUP_DOMAIN_NAME = 3;
+
+interface Netapi32 {
+	NetGetJoinInformation: (server: bigint, nameBuffer: number, bufferType: number) => number;
+	NetApiBufferFree: (buffer: bigint) => number;
+}
+
+// null means "tried and unavailable" — the probe runs at most once either way.
+let netapi32: Netapi32 | null | undefined;
+
+/** Load `netapi32.dll` once, lazily. Null anywhere it is not there, which is everywhere but Windows. */
+function getNetapi32(): Netapi32 | null {
+	if (netapi32 === undefined) {
+		try {
+			const lib = dlopen('netapi32.dll', {
+				NetGetJoinInformation: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+				NetApiBufferFree: { args: [FFIType.u64], returns: FFIType.i32 },
+			});
+			netapi32 = lib.symbols as unknown as Netapi32;
+		} catch {
+			netapi32 = null;
+		}
+	}
+	return netapi32;
+}
+
+/**
+ * Ask Windows whether this machine is domain-joined, through `NetGetJoinInformation`.
+ *
+ * Neither the registry nor `Type=NTP` can answer this. A forest-root PDC synchronising
+ * against an external source is configured exactly as a workgroup machine with a peer
+ * list is — local `Type=NTP`, no group policy involved — and it is also the machine whose
+ * clock the whole domain follows. Told apart by nothing else, the two need this separate
+ * question asked before W32Time is stopped on either.
+ *
+ * `NetGetJoinInformation` needs no elevation — it reports the join state this machine
+ * holds locally. Never throws — anything unexpected,
+ * a status other than `NERR_Success` included, is `unknown`, which makes the caller
+ * fail closed.
+ */
+export function probeDomainMembership(): DomainMembership {
+	const lib = getNetapi32();
+	if (!lib) return 'unknown';
+	try {
+		const nameBuffer = new BigUint64Array(1);
+		const bufferType = new Int32Array(1);
+		// A NULL server name is the local machine, and a 64-bit zero is that NULL pointer.
+		const code = lib.NetGetJoinInformation(0n, ptr(nameBuffer), ptr(bufferType));
+		if (code !== 0) return 'unknown';
+		// The name itself is of no interest here, only the join status — but the call
+		// allocated it and only NetApiBufferFree may release it.
+		if (nameBuffer[0] !== 0n) lib.NetApiBufferFree(nameBuffer[0]!);
+		const status = bufferType[0];
+		if (status === NET_SETUP_DOMAIN_NAME) return 'domain';
+		if (status === NET_SETUP_UNJOINED || status === NET_SETUP_WORKGROUP_NAME) return 'standalone';
+		return 'unknown';
+	} catch {
+		return 'unknown';
+	}
+}
