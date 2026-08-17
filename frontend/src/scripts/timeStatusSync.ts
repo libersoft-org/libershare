@@ -71,6 +71,23 @@ export function loadMayApply({ fresh, background, busy, dirty }: LoadApplicabili
 	return !background || (!busy && !dirty);
 }
 
+/**
+ * What a status read's failure is allowed to say, given whether that answer may still speak
+ * for the form.
+ *
+ * The guard used to cover only the VALUES. An older background read landing after a failed
+ * save was correctly stopped from rewinding the form — and then replaced the save's error
+ * with a generic "could not read the time", which is the one message the user needed. The
+ * data race was fixed and the same race on the error state was left standing.
+ *
+ * An answer that may no longer touch the form may no longer touch what the form says either:
+ * it is a catch-up nobody asked for, reporting on a request the screen has already moved
+ * past.
+ */
+export function loadFailureMessage(failure: string, mayApply: boolean): string {
+	return mayApply ? failure : '';
+}
+
 /** One request a save has to make. */
 export interface TimeWrite {
 	method: string;

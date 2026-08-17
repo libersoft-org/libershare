@@ -7,7 +7,7 @@
  * so it runs under `bun test` without the Svelte runtime.
  */
 import { test, expect } from 'bun:test';
-import { createStatusGate, loadMayApply, planTimeWrites, syncSwitchIsDirty, writeFailureMessage, type TimeSavePlan } from '../../src/scripts/timeStatusSync.ts';
+import { createStatusGate, loadFailureMessage, loadMayApply, planTimeWrites, syncSwitchIsDirty, writeFailureMessage, type TimeSavePlan } from '../../src/scripts/timeStatusSync.ts';
 
 test('a read that nothing overtook is applied', () => {
 	const gate = createStatusGate();
@@ -143,4 +143,28 @@ test('an unreadable sync state can be asserted off, not only on', () => {
 	expect(syncSwitchIsDirty(true, null, true)).toBe(true);
 	// Until the user actually touches it, though: opening the page writes nothing.
 	expect(syncSwitchIsDirty(false, null, false)).toBe(false);
+});
+
+/**
+ * The race the last patch left standing. A reconnect read is issued on a clean, idle form;
+ * during its round trip the user edits and saves, the save fails with a specific write
+ * error, and only then does the older read come back rejected. Its values are already
+ * correctly discarded — its FAILURE was not, and it replaced the one message the user
+ * needed with a generic "could not read the time".
+ */
+test('an older background read that failed does not overwrite a newer error', () => {
+	const gate = createStatusGate();
+	// The reconnect read goes out while the form is clean and idle.
+	const reconnect = gate.begin();
+	// The user edits and saves; the failed save re-reads the host, which supersedes it.
+	const afterSave = gate.begin();
+	expect(loadMayApply({ fresh: afterSave(), background: false, busy: true, dirty: true })).toBe(true);
+	// Now the reconnect answer lands, rejected.
+	const stale = loadMayApply({ fresh: reconnect(), background: true, busy: true, dirty: true });
+	expect(stale).toBe(false);
+	expect(loadFailureMessage('the time could not be read', stale)).toBe('');
+});
+
+test('a read that may still fill the form still reports why it could not', () => {
+	expect(loadFailureMessage('the time could not be read', true)).toBe('the time could not be read');
 });

@@ -7,7 +7,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { api } from '../../scripts/api.ts';
 	import { connected } from '../../scripts/ws-client.ts';
-	import { createStatusGate, loadMayApply, planTimeWrites, syncSwitchIsDirty, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
+	import { createStatusGate, loadFailureMessage, loadMayApply, planTimeWrites, syncSwitchIsDirty, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
 	import { type SystemTimeOutcome, type SystemTimeResult, type SystemTimeStatus } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -95,6 +95,9 @@
 	 * fill the form while it is idle and clean, and that is decided when the ANSWER lands
 	 * (see loadMayApply). A foreground read is the re-read after a failed write, where
 	 * resetting the form is exactly what is wanted.
+	 *
+	 * The same guard covers the reason it returns. An answer that may no longer fill the form
+	 * may not overwrite what the form says either — see loadFailureMessage.
 	 */
 	async function load(background = false): Promise<string> {
 		const current = statusGate.begin();
@@ -107,9 +110,7 @@
 		// older answer replaced a newer one's list — or blanked it — while its own status was
 		// correctly thrown away as stale.
 		if (mayApply) timezones = zonesResult.status === 'fulfilled' ? zonesResult.value : [];
-		// The failure is reported whatever happens to the values: it says nothing about the
-		// form, only that the host could not be read.
-		if (statusResult.status === 'rejected') return translateError(statusResult.reason);
+		if (statusResult.status === 'rejected') return loadFailureMessage(translateError(statusResult.reason), mayApply);
 		if (mayApply) applyStatus(statusResult.value);
 		return '';
 	}
