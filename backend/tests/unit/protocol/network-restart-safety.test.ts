@@ -156,6 +156,45 @@ describe('Network.addBootstrapPeers — a dial that lands after a restart', () =
 		expect(disconnected).toEqual([]);
 	});
 
+	it('a dial settling after a restart does not release the claim of the new run', async () => {
+		const { network } = harness();
+		let dials = 0;
+		const gates: Array<{ promise: Promise<{ remoteAddr: string }>; resolve: (v: { remoteAddr: string }) => void }> = [];
+		(network as any).node.dial = (): Promise<{ remoteAddr: string }> => {
+			dials++;
+			let resolve!: (v: { remoteAddr: string }) => void;
+			const promise = new Promise<{ remoteAddr: string }>(res => {
+				resolve = res;
+			});
+			gates.push({ promise, resolve });
+			return promise;
+		};
+
+		// Run A claims the address on the old node.
+		const runA = (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		await Promise.resolve();
+		expect(dials).toBe(1);
+
+		// Teardown hands the next run a fresh claim table; run B takes the address in it.
+		(network as any).inFlightBootstrapDials = new Set<string>();
+		(network as any).runEpoch = 2;
+		const runB = (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		await Promise.resolve();
+		expect(dials).toBe(2);
+
+		// Run A finally settles. Its release must land in the table it claimed from.
+		gates[0]!.resolve({ remoteAddr: ADDR });
+		await runA;
+
+		// A third request for the same address must still find run B's claim in place.
+		const runC = (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		await Promise.resolve();
+		expect(dials).toBe(2);
+
+		gates[1]!.resolve({ remoteAddr: ADDR });
+		await Promise.all([runB, runC]);
+	});
+
 	it('still disconnects when the dial lands on the same run after a leave', async () => {
 		const { network, gate, disconnected } = harness();
 		// A leave bumps the generation; that must NOT short-circuit ahead of the

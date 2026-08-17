@@ -409,8 +409,13 @@ export class Network {
 	 * and the peer-level backoff cannot help — it is only written once a dial has already
 	 * failed. Claiming the address for the duration of the dial makes the second run a
 	 * no-op instead: the first one is about to record the outcome both were after.
+	 *
+	 * Replaced with a FRESH Set on teardown rather than cleared, and captured by reference
+	 * for the length of a dial. Clearing a shared Set let a dial still settling on the old
+	 * node release a claim the new node's dial of the same address had just taken — after
+	 * which a third request saw the address free and duplicated the live dial.
 	 */
-	private readonly inFlightBootstrapDials = new Set<string>();
+	private inFlightBootstrapDials = new Set<string>();
 	/**
 	 * peerID → time we first saw the peer disconnected with ZERO reachable
 	 * addresses. Such peers never enter the re-dial path (nothing to dial), so
@@ -1639,6 +1644,9 @@ export class Network {
 		// sweep until restart. Exactly the resurrection this eviction work exists to
 		// prevent.
 		const epoch = this.runEpoch;
+		// Captured, not re-read: the claims this run takes have to be released back into
+		// the same object it took them from, whatever teardown has since put in the field.
+		const inFlight = this.inFlightBootstrapDials;
 		const generation = this.bootstrapGenerationOf(networkID);
 		const superseded = (): boolean => epoch !== this.runEpoch || generation !== this.bootstrapGenerationOf(networkID);
 		for (const peer of peers) {
@@ -1740,11 +1748,11 @@ export class Network {
 				// two runs asking about the SAME address duplicate a 10 s timeout for one
 				// answer. Claimed after every skip above so a refused candidate never blocks
 				// the run that would actually dial it.
-				if (this.inFlightBootstrapDials.has(canonicalAddress)) {
+				if (inFlight.has(canonicalAddress)) {
 					trace(`[NET] addBootstrapPeers skip in-flight: ${peer}`);
 					continue;
 				}
-				this.inFlightBootstrapDials.add(canonicalAddress);
+				inFlight.add(canonicalAddress);
 				// A CONFIGURED identity is user data and enters the set on the strength of the
 				// saved config alone. A DISCOVERED one waits for the dial: it arrived in a
 				// gossip message and nothing has yet shown that the identity exists, let
@@ -1918,7 +1926,7 @@ export class Network {
 					// Every exit from the dial block releases the claim, `return` included —
 					// a leave landing mid-dial would otherwise lock the address out for the
 					// lifetime of the node.
-					this.inFlightBootstrapDials.delete(canonicalAddress);
+					inFlight.delete(canonicalAddress);
 				}
 			} catch (error: any) {
 				this.bootstrapTracker.recordOutcome(networkID, peer, null, 'error', error?.message ?? String(error), null, origin);
@@ -2809,8 +2817,9 @@ export class Network {
 		this.bootstrapMultiaddrs = [];
 		this.bootstrapGeneration.clear();
 		// Claims belong to the node being torn down; a dial still settling on the old node
-		// must not lock the address out for the next one.
-		this.inFlightBootstrapDials.clear();
+		// must not lock the address out for the next one — nor, by releasing into a shared
+		// Set, steal the claim the next one has taken. A new object does both.
+		this.inFlightBootstrapDials = new Set<string>();
 		this._lastPeerCounts.clear();
 		this._lastScores.clear();
 		this.redialBackoff.clear();
