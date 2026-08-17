@@ -4,7 +4,12 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { Key } from 'interface-datastore';
+import { multiaddr } from '@multiformats/multiaddr';
+import { generateKeyPair } from '@libp2p/crypto/keys';
+import { peerIdFromPrivateKey, peerIdFromString } from '@libp2p/peer-id';
+import { PeerRecord, RecordEnvelope } from '@libp2p/peer-record';
 import { SqliteDatastore } from '../../../src/protocol/datastore.ts';
+import { createEmptyPeerStore } from '../helpers/real-peer-store.ts';
 
 // SqliteDatastore is tested by directly exercising its SQL statements against
 // an in-memory database so no filesystem cleanup is needed.
@@ -176,6 +181,59 @@ describe('SqliteDatastore.clearPeerstore (real class, on-disk DB)', () => {
 		ds.clear();
 
 		expect(ds.has(identity)).toBe(false);
+		cleanup(ds, dir);
+	});
+});
+
+/**
+ * What libp2p does with a peer it has never stored, over the datastore PRODUCTION uses.
+ *
+ * The peer-store is not consistent about how it recognises "not stored": some paths accept
+ * `code === 'ERR_NOT_FOUND'`, others test only `name === 'NotFoundError'`. A missing key
+ * that raises only the code turns the ordinary first-contact branch into a failure, and no
+ * test over `MemoryDatastore` can catch it — that one raises the canonical error already.
+ */
+describe('peer-store over a real SqliteDatastore — a peer it has never stored', () => {
+	const UNKNOWN = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+
+	function tmpPeerStore(): { store: any; ds: SqliteDatastore; dir: string } {
+		const dir = mkdtempSync(join(tmpdir(), 'lish-ps-'));
+		const ds = new SqliteDatastore(join(dir, 'datastore'));
+		ds.open();
+		return { store: createEmptyPeerStore(ds), ds, dir };
+	}
+	function cleanup(ds: SqliteDatastore, dir: string): void {
+		ds.close();
+		try {
+			rmSync(dir, { recursive: true, force: true });
+		} catch {
+			/* Windows holds the WAL briefly after close; the assertions have already run */
+		}
+	}
+
+	it('answers has() with false instead of rethrowing', async () => {
+		const { store, ds, dir } = tmpPeerStore();
+		expect(await store.has(peerIdFromString(UNKNOWN))).toBe(false);
+		cleanup(ds, dir);
+	});
+
+	it('accepts the first signed peer record of an unknown peer', async () => {
+		const { store, ds, dir } = tmpPeerStore();
+		const privateKey = await generateKeyPair('Ed25519');
+		const peerId = peerIdFromPrivateKey(privateKey);
+		const record = new PeerRecord({ peerId, multiaddrs: [multiaddr('/ip4/203.0.113.51/tcp/9090')] });
+		const envelope = await RecordEnvelope.seal(record, privateKey);
+		expect(await store.consumePeerRecord(envelope.marshal().subarray())).toBe(true);
+		expect((await store.get(peerId)).addresses.map((a: any) => a.multiaddr.toString())).toEqual(['/ip4/203.0.113.51/tcp/9090']);
+		cleanup(ds, dir);
+	});
+
+	/** The require-existing write has no record to build on, so it must refuse outright. */
+	it('refuses a require-existing write for a peer with no record', async () => {
+		const { store, ds, dir } = tmpPeerStore();
+		const pid = peerIdFromString(UNKNOWN);
+		await expect(store.store.patchExisting(pid, { addresses: [] })).rejects.toThrow('was removed while its record was being updated');
+		expect(await store.has(pid)).toBe(false);
 		cleanup(ds, dir);
 	});
 });
