@@ -282,6 +282,13 @@ export interface IBootstrapEntry {
 	 * cannot take it away from another that still lists it.
 	 */
 	readonly configuredBy: Set<string>;
+	/**
+	 * Whether gossip ever announced this address in its own right. Provenance is not
+	 * exclusive: an address can be both discovered and configured, and collapsing the
+	 * two made dropping the configured claim delete an entry discovery had learned —
+	 * and verified — independently of any saved config.
+	 */
+	discovered: boolean;
 	/** Epoch ms the entry first entered the registry. */
 	firstSeenAt: number;
 	/** Epoch ms a dial last proved THIS endpoint, or null if it never has. */
@@ -2368,7 +2375,7 @@ export class Network {
 		const key = normalizeMultiaddrForCompare(ma.toString());
 		let entry = this.bootstrapByAddress.get(key);
 		if (!entry) {
-			entry = { key, ma, peerID: extractDestinationPeerID(ma), configuredBy: new Set<string>(), firstSeenAt: Date.now(), lastVerifiedAt: null, lastDisconnectedAt: null };
+			entry = { key, ma, peerID: extractDestinationPeerID(ma), configuredBy: new Set<string>(), discovered: false, firstSeenAt: Date.now(), lastVerifiedAt: null, lastDisconnectedAt: null };
 			this.bootstrapByAddress.set(key, entry);
 			if (entry.peerID) {
 				let keys = this.addressesByPeer.get(entry.peerID);
@@ -2380,6 +2387,7 @@ export class Network {
 			}
 		}
 		if (configuredBy !== null) entry.configuredBy.add(configuredBy);
+		else entry.discovered = true;
 		return entry;
 	}
 
@@ -2419,7 +2427,10 @@ export class Network {
 		const entry = this.bootstrapByAddress.get(key);
 		if (!entry?.configuredBy.has(networkID)) return;
 		entry.configuredBy.delete(networkID);
-		if (entry.configuredBy.size === 0) this.forgetBootstrapAddress(key);
+		// An address gossip also announced goes back to the discovered lifecycle — TTL
+		// and cap — instead of vanishing. Deleting it threw away a verification the user
+		// editing an unrelated field never asked to lose.
+		if (entry.configuredBy.size === 0 && !entry.discovered) this.forgetBootstrapAddress(key);
 	}
 
 	/** Apply the TTL and the discovered-entry cap to the registry. */

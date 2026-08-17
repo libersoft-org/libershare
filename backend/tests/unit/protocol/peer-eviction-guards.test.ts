@@ -1485,3 +1485,38 @@ describe('peerStore writes that race a leave-network', () => {
 		expect(registryAddresses(network)).toEqual([normalizeMultiaddrForCompare(LIVE)]);
 	});
 });
+
+/**
+ * An address can be BOTH gossip-discovered and user-configured. Collapsing the two into
+ * "has an owner or does not" meant removing the configured claim deleted an entry
+ * discovery had learned and verified on its own — a loss the user never asked for by
+ * editing an unrelated bootstrap row.
+ */
+describe('bootstrap registry — provenance is not exclusive', () => {
+	const ADDR = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork(seeds: Array<{ address: string; configuredBy?: string[]; discovered?: boolean }>) {
+		const network = Object.create(Network.prototype) as Network;
+		installBootstrapRegistry(network, seeds);
+		return network;
+	}
+
+	it('keeps a discovered address after its configured claim is dropped', () => {
+		const network = bareNetwork([{ address: ADDR, configuredBy: ['net-a'], discovered: true }]);
+		network.pruneBootstrapAddresses([ADDR], 'net-a');
+		expect(registryAddresses(network)).toEqual([normalizeMultiaddrForCompare(ADDR)]);
+	});
+
+	it('still removes an address only ever configured', () => {
+		const network = bareNetwork([{ address: ADDR, configuredBy: ['net-a'], discovered: false }]);
+		network.pruneBootstrapAddresses([ADDR], 'net-a');
+		expect(registryAddresses(network)).toEqual([]);
+	});
+
+	it('records the discovered provenance when gossip announces a configured address', () => {
+		const network = bareNetwork([{ address: ADDR, configuredBy: ['net-a'], discovered: false }]);
+		(network as any).rememberBootstrapAddress(multiaddr(ADDR), null);
+		network.pruneBootstrapAddresses([ADDR], 'net-a');
+		expect(registryAddresses(network)).toEqual([normalizeMultiaddrForCompare(ADDR)]);
+	});
+});
