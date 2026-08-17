@@ -65,13 +65,18 @@ function makeMockNet() {
 			if (this.disconnectGate) await this.disconnectGate;
 			this.disconnected.push(pid);
 		},
+		/** Bootstrap addresses the running node currently treats as configured. */
+		configured: new Set<string>(),
 		pruneConfiguredBootstrapPeer(): void {},
 		resetBootstrapStatus(): void {},
-		pruneBootstrapAddresses(): void {},
+		pruneBootstrapAddresses(addresses: string[]): void {
+			for (const address of addresses) this.configured.delete(address);
+		},
 		pruneBootstrapStatus(): void {},
 		clearRedialSuppressionForNetwork(): void {},
-		async addBootstrapPeers(): Promise<void> {
+		async addBootstrapPeers(peers: string[] = []): Promise<void> {
 			if (this.dialGate) await this.dialGate;
+			for (const peer of peers) this.configured.add(peer);
 		},
 	};
 }
@@ -586,6 +591,45 @@ describe('Networks — operations that change the set of lishnets', () => {
 
 		gate.resolve();
 		await joining;
+	});
+
+	/**
+	 * Phase two used to take the per-network lock only after the catalog had been released,
+	 * so the order runtime work ran in was decided by a microtask race rather than by the
+	 * order the rows were written. A `replace()` parked on one network let a newer write of
+	 * ANOTHER network converge first — from a baseline the newer writer had read out of the
+	 * row `replace()` itself had just written, so the list before that was never cleaned up
+	 * and the newer API answered success over a runtime that still held it.
+	 */
+	it('a newer bootstrap update does not converge ahead of a parked replace', async () => {
+		const OLD = '/ip4/192.0.2.10/tcp/9090/p2p/12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+		const MID = '/ip4/192.0.2.11/tcp/9090/p2p/12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fp';
+		const NEW = '/ip4/192.0.2.12/tcp/9090/p2p/12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fq';
+		addLISHnet(db, { networkID: NET_B, name: 'B', description: '', bootstrapPeers: [OLD], enabled: true, created: new Date().toISOString() });
+		const { networks } = makeNetworks(net, db, [NET, NET_B]);
+		net.configured.add(OLD);
+
+		// net-a's lock is held, so replace() parks on it with net-b's turn already reserved
+		// behind it.
+		const lock = (networks as any).operationLock(NET);
+		const release = await lock.acquire();
+		const replacing = networks.replace([
+			{ ...rowOf(NET), enabled: true },
+			{ networkID: NET_B, name: 'B', description: '', bootstrapPeers: [MID], enabled: true, created: new Date().toISOString() },
+		]);
+		await settle();
+		// The user edits net-b's bootstrap list again while replace is still parked.
+		const updating = networks.updateBootstrapPeers(NET_B, [NEW]);
+		await settle();
+
+		release();
+		await updating;
+
+		// The newer call has answered. Whatever else is still running, the address net-b was
+		// actually joined with must be off the node by now — the point of converging in
+		// catalog order is that this repair cannot be left to a straggler.
+		expect(net.configured.has(OLD)).toBe(false);
+		await replacing;
 	});
 
 	it('a network added while replace waits is not wiped out behind its back', async () => {

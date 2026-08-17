@@ -245,10 +245,10 @@ export class Networks {
 			setLISHnetEnabled(this.db, id, enabled);
 			// Named from the row this write landed on, not from a read the caller took outside
 			// the lock — see {@link SetEnabledResult.network}.
-			return { previous, row: this.get(id) };
+			return { row: this.get(id), job: this.reconcileLater(id, previous) };
 		});
 		if (!staged) return { found: false, transitioned: false, joined: false };
-		const outcome = await this.reconcile(id, staged.previous);
+		const outcome = await staged.job;
 		// Everything transition-related comes out of the outcome, which was assembled under
 		// the lishnet's lock. Nothing here may re-read the runtime: by now the next waiter
 		// has had the lock, so a second look answers for its transition, not for this one.
@@ -277,18 +277,38 @@ export class Networks {
 	}
 
 	/**
-	 * Phase two: converge one lishnet's runtime on the row phase one left behind, under that
-	 * lishnet's own lock and nothing else.
+	 * Reserve phase two for one lishnet and hand back the outcome it will settle.
 	 *
-	 * Safe outside the catalog precisely because {@link reconcileLocked} takes its desired
-	 * state from the database rather than from a value its caller captured: whichever
-	 * reconcile holds the lock last converges on the row that was written last, whatever
-	 * order the two finished their network work in.
+	 * MUST be called synchronously from inside an {@link inCatalog} body, and that is the
+	 * whole point of it. `Mutex.acquire()` enqueues its waiter synchronously, so calling it
+	 * while the catalog is held puts this lishnet's runtime work in the per-ID queue in
+	 * CATALOG order — the same order the database was written in.
+	 *
+	 * Taking the lock after the catalog was released did not order anything. Whoever reached
+	 * `runExclusive` first won, so a newer single-network write could converge before an
+	 * older `replace()` that had already rewritten the same row: the newer one computed its
+	 * bootstrap delta from the row the older one had written, never learned about the list
+	 * before that, and left the older addresses installed on the node with the API reporting
+	 * success. `replace()` reserves every network it touches before it lets go of the
+	 * catalog, so nothing can slip in front of it on any of them.
 	 */
-	private async reconcile(id: string, previous: LISHNetworkConfig | undefined): Promise<ReconcileOutcome> {
-		const outcome = await this.operationLock(id).runExclusive(() => this.reconcileLocked(id, previous));
-		this.forgetIfGone(id);
-		return outcome;
+	private reconcileLater(id: string, previous: LISHNetworkConfig | undefined): Promise<ReconcileOutcome> {
+		const reservation = this.operationLock(id).acquire();
+		const job = (async () => {
+			const release = await reservation;
+			try {
+				return await this.reconcileLocked(id, previous);
+			} finally {
+				release();
+				this.forgetIfGone(id);
+			}
+		})();
+		// A caller with several jobs awaits them one at a time, so a later one can settle
+		// while an earlier is still being awaited. Attaching this here — synchronously, at
+		// creation — is what keeps that from surfacing as an unhandled rejection; the caller
+		// still sees the failure when its own await reaches that job.
+		void job.catch(() => {});
+		return job;
 	}
 
 	/**
@@ -684,12 +704,12 @@ export class Networks {
 		const definition = this.validateNetwork(data);
 		const config: LISHNetworkConfig = { ...definition, enabled };
 		// An upsert can bring a network into existence — see {@link catalogMutex}.
-		const previous = await this.inCatalog(() => {
+		const job = await this.inCatalog(() => {
 			const row = this.get(config.networkID);
 			upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
-			return row;
+			return this.reconcileLater(config.networkID, row);
 		});
-		await this.reconcile(config.networkID, previous);
+		await job;
 		return config;
 	}
 
@@ -730,32 +750,33 @@ export class Networks {
 	}
 
 	async add(network: LISHNetworkConfig): Promise<boolean> {
-		const ok = await this.inCatalog(() => addLISHnet(this.db, network));
 		// A network added as enabled has to be joined, not merely written down. An add of one
 		// that already exists writes nothing and reconciles nothing: it used to claim a
 		// revision anyway on the way in, which cancelled a queued enable of that very network
 		// — a request that changed nothing discarding one that meant something.
-		if (ok) await this.reconcile(network.networkID, undefined);
-		return ok;
+		const job = await this.inCatalog(() => (addLISHnet(this.db, network) ? this.reconcileLater(network.networkID, undefined) : undefined));
+		if (!job) return false;
+		await job;
+		return true;
 	}
 
 	async update(network: LISHNetworkConfig): Promise<boolean> {
 		// Row read and write in ONE critical section. With the read outside it, a toggle
 		// could slip between the two and be overwritten by a row this edit had already read.
-		const staged = await this.inCatalog(() => {
+		// The general edit form carries the bootstrap list AND the enabled flag, so this path
+		// can change either one. Without the runtime reconciliation the edit would reach only
+		// the database and the live node would keep dialing the previous list — or stay in a
+		// network the edit had just disabled — until restart.
+		const job = await this.inCatalog(() => {
 			const existing = this.get(network.networkID);
 			// Store the cleaned list, not the raw one: blank rows from the form would
 			// otherwise be persisted while the runtime worked from the filtered copy, and
 			// the two would disagree about what this network's bootstrap list even is.
 			const cleaned = Networks.cleanBootstrapList(network.bootstrapPeers ?? []);
-			return updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned }) ? { existing } : undefined;
+			return updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned }) ? this.reconcileLater(network.networkID, existing) : undefined;
 		});
-		if (!staged) return false;
-		// The general edit form carries the bootstrap list AND the enabled flag, so this path
-		// can change either one. Without the runtime reconciliation the edit would reach only
-		// the database and the live node would keep dialing the previous list — or stay in a
-		// network the edit had just disabled — until restart.
-		await this.reconcile(network.networkID, staged.existing);
+		if (!job) return false;
+		await job;
 		return true;
 	}
 
@@ -771,14 +792,14 @@ export class Networks {
 	 * either.
 	 */
 	async delete(id: string): Promise<boolean> {
-		const staged = await this.inCatalog(() => {
+		const job = await this.inCatalog(() => {
 			if (!lishnetExists(this.db, id)) return undefined;
 			const previous = this.get(id);
 			deleteLISHnet(this.db, id);
-			return { previous };
+			return this.reconcileLater(id, previous);
 		});
-		if (!staged) return false;
-		await this.reconcile(id, staged.previous);
+		if (!job) return false;
+		await job;
 		return true;
 	}
 
@@ -818,15 +839,18 @@ export class Networks {
 		// is exactly the list it replaced. Reading it outside meant a network created while
 		// we waited was rewritten out of existence behind the back of the add that was still
 		// joining it.
-		const before = await this.inCatalog(() => {
+		// Every affected network's turn is reserved before the catalog is released, so a
+		// single-network write issued after this one cannot converge ahead of it on any of
+		// them — see {@link reconcileLater}.
+		const jobs = await this.inCatalog(() => {
 			const rows = new Map(this.list().map(n => [n.networkID, n]));
 			replaceLISHnets(this.db, networks);
-			return rows;
+			return [...new Set([...rows.keys(), ...networks.map(n => n.networkID)])].map(id => this.reconcileLater(id, rows.get(id)));
 		});
 		// One lishnet at a time, each under its own lock and none of them under the catalog.
 		// Reconciling the whole set under the global lock meant a rewrite of a long list held
 		// it across every affected network's dials and disconnects in turn.
-		for (const id of new Set([...before.keys(), ...networks.map(n => n.networkID)])) await this.reconcile(id, before.get(id));
+		for (const job of jobs) await job;
 	}
 
 	/**
@@ -858,10 +882,10 @@ export class Networks {
 			// write would leave the node dialing a list the database never accepted, and the
 			// old one would come back at the next restart with nothing to explain the change.
 			if (!updateLISHnet(this.db, next)) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, id);
-			return { existing, next };
+			return { next, job: this.reconcileLater(id, existing) };
 		});
 		if (!staged) return null;
-		await this.reconcile(id, staged.existing);
+		await staged.job;
 		return staged.next;
 	}
 
