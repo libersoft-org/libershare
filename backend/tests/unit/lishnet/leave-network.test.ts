@@ -417,12 +417,17 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		expect(mock.prunedBootstrap).toEqual([]);
 	});
 
-	it('keeps an address that is still configured for another joined network', () => {
+	/**
+	 * Releasing a claim is not a delete. Another joined network listing the same address
+	 * holds its own claim and keeps the entry alive, so there is no reason to skip this
+	 * network's release — skipping it left a claim nothing could ever drop.
+	 */
+	it('releases this network claim on an address another network also configures', () => {
 		const { networks, mock } = seeded([ADDR_A]);
 		(networks as any).get = (nid: string) => (nid === 'net-other' ? { networkID: nid, bootstrapPeers: [ADDR_A] } : { networkID: NET, bootstrapPeers: [ADDR_A] });
 		(networks as any).joinedNetworks = new Set([NET, 'net-other']);
 		edit(networks, [ADDR_B]);
-		expect(mock.prunedAddresses).toEqual([[]]);
+		expect(mock.prunedAddresses).toEqual([[ADDR_A]]);
 	});
 
 	/**

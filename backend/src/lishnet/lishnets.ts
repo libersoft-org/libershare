@@ -185,16 +185,6 @@ export class Networks {
 	}
 
 	/** Configured-bootstrap peer IDs of every joined network except `exceptID`. */
-	/** Canonical bootstrap ADDRESSES configured for every joined network except `exceptID`. */
-	private configuredBootstrapAddressesElsewhere(exceptID: string): Set<string> {
-		const out = new Set<string>();
-		for (const nid of this.joinedNetworks) {
-			if (nid === exceptID) continue;
-			for (const address of Networks.cleanBootstrapList(this.get(nid)?.bootstrapPeers ?? [])) out.add(normalizeMultiaddrForCompare(address));
-		}
-		return out;
-	}
-
 	private configuredBootstrapPeerIDsElsewhere(exceptID: string): Set<string> {
 		const out = new Set<string>();
 		for (const nid of this.joinedNetworks) {
@@ -507,9 +497,14 @@ export class Networks {
 		// Compare canonically, the same way the autodial list itself does. Raw string
 		// equality would treat two spellings of one address (DNS case, IPv6 form) as
 		// different entries here and as the same one during the prune below.
+		// No elsewhere-filter, for the same reason the leave path has none: ownership is
+		// held per network, so pruneBootstrapAddresses releases only THIS network's claim
+		// and an address another joined network still lists survives on its own claim.
+		// Skipping the prune because someone else uses the address left this network's
+		// claim on it forever — the address then read as configured long after the user
+		// removed it, escaping the discovered TTL and cap.
 		const keptAddresses = new Set(cleaned.map(normalizeMultiaddrForCompare));
-		const elsewhereAddresses = this.configuredBootstrapAddressesElsewhere(id);
-		const dropped = Networks.cleanBootstrapList(previousPeers).filter(a => !keptAddresses.has(normalizeMultiaddrForCompare(a)) && !elsewhereAddresses.has(normalizeMultiaddrForCompare(a)));
+		const dropped = Networks.cleanBootstrapList(previousPeers).filter(a => !keptAddresses.has(normalizeMultiaddrForCompare(a)));
 		this.network.pruneBootstrapAddresses(dropped, id);
 		this.network.pruneBootstrapStatus(id, cleaned);
 		if (this.joinedNetworks.has(id) && cleaned.length > 0) {
