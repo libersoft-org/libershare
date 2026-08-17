@@ -104,14 +104,19 @@ function makeNetworks(net: MockNet, joined: string[], configs: Record<string, st
 	const networks = Object.create(Networks.prototype) as Networks;
 	(networks as any).network = net;
 	(networks as any).joinedNetworks = new Set(joined);
+	(networks as any).networkOperations = new Map();
+	(networks as any).desiredRevisions = new Map();
+	// Same seeding startEnabledNetworks does: already-joined at construction time.
+	(networks as any).announcedJoined = new Map(joined.map(id => [id, true]));
 	(networks as any)._onNetworkLeft = null;
 	(networks as any)._onNetworkJoined = null;
 	(networks as any).get = (id: string) => (configs[id] ? { networkID: id, bootstrapPeers: configs[id] } : undefined);
 	return networks;
 }
 
-const leave = (networks: Networks, id: string): Promise<void> => (networks as any).leaveNetwork(id);
-const join = (networks: Networks, id: string): Promise<void> => (networks as any).joinNetwork(id);
+// Both go through reconcile(), which is where the join/leave notifications live.
+const leave = (networks: Networks, id: string): Promise<void> => (networks as any).reconcile(id, false);
+const join = (networks: Networks, id: string): Promise<void> => (networks as any).reconcile(id, true);
 
 describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 	let net: MockNet;

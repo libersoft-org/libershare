@@ -1,4 +1,5 @@
 import { type Database } from 'bun:sqlite';
+import { Mutex } from 'async-mutex';
 import { Network, normalizeMultiaddrForCompare } from '../protocol/network.ts';
 import { canonicalMultiaddr } from '../protocol/multiaddr-utils.ts';
 import { Utils } from '../utils.ts';
@@ -17,6 +18,39 @@ export class Networks {
 
 	// Track which lishnets are currently joined (subscribed)
 	private joinedNetworks: Set<string> = new Set();
+
+	/**
+	 * One lock per lishnet, so join and leave of the SAME network never interleave.
+	 *
+	 * Both of them await for a long time — a join waits on bootstrap dials, a leave
+	 * disconnects peers one at a time — while mutating `joinedNetworks`, the pubsub
+	 * subscription and the redial suppression that the other one reads. Overlapping
+	 * runs left those four disagreeing with the database and with each other.
+	 */
+	private readonly networkOperations = new Map<string, Mutex>();
+	/**
+	 * The revision of the LAST enable/disable requested for a network, bumped
+	 * synchronously when the request arrives.
+	 *
+	 * The lock alone only orders the operations; it cannot tell a queued one that the
+	 * user has since asked for the opposite. Each operation carries the revision it was
+	 * created for and abandons itself — before it starts, after each await and before
+	 * every callback — once a newer one exists. That is what keeps the callbacks, the
+	 * subscription and the database describing the same, final, request.
+	 */
+	private readonly desiredRevisions = new Map<string, number>();
+	/**
+	 * The join/leave state last announced to higher layers, per lishnet.
+	 *
+	 * A superseded operation must not announce anything, but the one that settles the
+	 * network must — and it can find the runtime already in the state it wanted, because
+	 * an abandoned predecessor got part of the way there. Announcing the OUTCOME rather
+	 * than the operation covers both: no event for a change that was undone before it
+	 * settled, exactly one for a change that stuck. Unset reads as "not joined", and the
+	 * startup join seeds it directly — startup itself stays silent (it has its own
+	 * resume path) while a later disable still has a `true` to change away from.
+	 */
+	private readonly announcedJoined = new Map<string, boolean>();
 
 	// Callback for peer count changes
 	private _onPeerCountChange: ((counts: { networkID: string; count: number }[]) => void) | null = null;
@@ -107,6 +141,9 @@ export class Networks {
 		for (const net of enabled) {
 			this.network.subscribeTopic(net.networkID);
 			this.joinedNetworks.add(net.networkID);
+			// Startup itself announces nothing, but a later disable has to have a joined
+			// state to change away from — otherwise its leave looks like a no-op.
+			this.announcedJoined.set(net.networkID, true);
 			if (net.bootstrapPeers.length > 0) {
 				// Fire-and-forget so a slow / unreachable network does not delay startup of the others.
 				this.network.addBootstrapPeers(net.bootstrapPeers, net.networkID, 'configured').catch(err => {
@@ -124,15 +161,59 @@ export class Networks {
 		if (!lishnetExists(this.db, id)) return false;
 
 		setLISHnetEnabled(this.db, id, enabled);
-
-		if (enabled) await this.joinNetwork(id);
-		else await this.leaveNetwork(id);
+		await this.reconcile(id, enabled);
 
 		return true;
 	}
 
+	/** The lock guarding one lishnet's join/leave — see {@link networkOperations}. */
+	private operationLock(id: string): Mutex {
+		let lock = this.networkOperations.get(id);
+		if (!lock) {
+			lock = new Mutex();
+			this.networkOperations.set(id, lock);
+		}
+		return lock;
+	}
+
+	/**
+	 * Bring the runtime in line with a requested enabled state, serialised per lishnet.
+	 *
+	 * The revision is claimed SYNCHRONOUSLY, before anything is awaited, so the order in
+	 * which requests arrive — not the order in which their dials happen to finish — is
+	 * what decides the outcome. A request that has been overtaken by a newer one does
+	 * nothing at all: three fast toggles cost one operation, the last one.
+	 */
+	private async reconcile(id: string, enabled: boolean): Promise<void> {
+		const revision = (this.desiredRevisions.get(id) ?? 0) + 1;
+		this.desiredRevisions.set(id, revision);
+		await this.operationLock(id).runExclusive(async () => {
+			if (this.desiredRevisions.get(id) !== revision) return;
+			if (enabled) await this.joinNetwork(id);
+			else await this.leaveNetwork(id, revision);
+			if (this.desiredRevisions.get(id) !== revision) return;
+			this.announce(id, this.joinedNetworks.has(id));
+		});
+	}
+
+	/** True while `revision` is still the newest request for this lishnet. */
+	private isCurrentRevision(id: string, revision: number | undefined): boolean {
+		return revision === undefined || this.desiredRevisions.get(id) === revision;
+	}
+
+	/** Tell higher layers about a settled join/leave, once per actual change. */
+	private announce(id: string, joined: boolean): void {
+		if ((this.announcedJoined.get(id) ?? false) === joined) return;
+		this.announcedJoined.set(id, joined);
+		if (joined) this._onNetworkJoined?.(id);
+		else this._onNetworkLeft?.(id);
+	}
+
 	/**
 	 * Join a lishnet (subscribe to its topic, add bootstrap peers).
+	 *
+	 * Announcing the join is {@link reconcile}'s job, not this one's — see
+	 * {@link announcedJoined} for why the outcome is what gets announced.
 	 */
 	private async joinNetwork(id: string): Promise<void> {
 		if (this.joinedNetworks.has(id)) {
@@ -157,10 +238,6 @@ export class Networks {
 		if (net && net.bootstrapPeers.length > 0) await this.network.addBootstrapPeers(net.bootstrapPeers, id, 'configured');
 
 		console.log(`✓ Joined lishnet: ${net?.name ?? id}`);
-
-		// Notify higher layers (e.g. transfer) so downloads suspended when this
-		// lishnet was last left can resume now that it is joined again.
-		this._onNetworkJoined?.(id);
 	}
 
 	/**
@@ -205,7 +282,11 @@ export class Networks {
 		return out;
 	}
 
-	private async leaveNetwork(id: string): Promise<void> {
+	/**
+	 * Leave a lishnet. `revision` is the disable request this leave belongs to; see
+	 * {@link joinNetwork} for why the long loops below re-check it.
+	 */
+	private async leaveNetwork(id: string, revision?: number): Promise<void> {
 		if (!this.joinedNetworks.has(id)) return;
 
 		// Snapshot the topic subscribers BEFORE unsubscribing — unsubscribeTopic
@@ -264,6 +345,11 @@ export class Networks {
 
 		const stillConfigured = this.configuredBootstrapPeerIDsElsewhere(id);
 		for (const pid of this.configuredBootstrapPeerIDsOf(id)) {
+			// Each disconnect awaits a hangUp and a peerStore delete, so a long list keeps
+			// this loop running well past the point at which the user may have re-enabled
+			// the lishnet. Every peer torn down after that belongs to the network we are
+			// about to be back in.
+			if (!this.isCurrentRevision(id, revision)) return;
 			if (stillConfigured.has(pid)) continue;
 			this.network.pruneConfiguredBootstrapPeer(pid);
 			if (stillJoinedPeers.has(pid)) continue;
@@ -279,6 +365,7 @@ export class Networks {
 		// Network.disconnectPeer entry point (which also clears the keep-alive tag
 		// so ReconnectQueue does not immediately re-dial it).
 		for (const pid of leftPeers) {
+			if (!this.isCurrentRevision(id, revision)) return;
 			if (stillJoinedPeers.has(pid)) continue;
 			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
 			await this.network.disconnectPeer(pid, id);
@@ -286,10 +373,6 @@ export class Networks {
 
 		const net = this.get(id);
 		console.log(`✓ Left lishnet: ${net?.name ?? id}`);
-
-		// Notify higher layers (e.g. transfer) so downloads bound exclusively to
-		// this lishnet can be stopped.
-		this._onNetworkLeft?.(id);
 	}
 
 	/**
