@@ -193,6 +193,32 @@ describe('Network.disconnectPeer — a peer claimed while it is being let go', (
 		expect((network as any).isRedialSuppressed(PEER_ID)).toBe(false);
 	});
 
+	/**
+	 * The mirror image of the race above, and the one the first fix opened. The claim was read
+	 * only BEFORE the keep-alive restore, so the last owner leaving while that merge was in
+	 * flight got its own cleanup finished and then had this restore land on top of it — a
+	 * keep-alive tag put back on a peer nobody is in a lishnet with, and the caller told to
+	 * stop, so the hangUp and the purge never happened.
+	 */
+	it('carries on when the claim disappears again during the restore', async () => {
+		const { network, hungUp, deleted, merges, subscribers } = claimable();
+		// Another lishnet claims the peer during the tag removal, and its own leave finishes
+		// while the keep-alive restore that claim triggered is still in flight.
+		(network as any).node.peerStore.merge = async (_pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> => {
+			merges.push(patch);
+			if (merges.length === 1) subscribers.push(PEER_ID);
+			else if (patch.tags[KEEP_ALIVE] !== undefined) subscribers.length = 0;
+		};
+
+		await network.disconnectPeer(PEER_ID, NET);
+
+		// The disconnect ran to the end, and the tag the restore put back is off again.
+		expect(hungUp).toEqual([PEER_ID]);
+		expect(deleted).toEqual([PEER_ID]);
+		expect((network as any).isRedialSuppressed(PEER_ID)).toBe(true);
+		expect(merges[merges.length - 1]!.tags[KEEP_ALIVE]).toBeUndefined();
+	});
+
 	it('still tears down a peer nobody claims', async () => {
 		const { network, hungUp, deleted } = claimable();
 

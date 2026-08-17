@@ -2563,6 +2563,9 @@ export class Network {
 		}
 		if (epoch !== this.runEpoch) return;
 		if (await this.releaseIfClaimed(node, pid, peerID, networkID)) return;
+		// The recheck itself awaits, so the run can end inside it — and a `false` from it is
+		// permission to go on tearing down, which must not be spent on the next node instance.
+		if (epoch !== this.runEpoch) return;
 		try {
 			await node.hangUp(pid);
 			trace(`[NET] disconnectPeer: hung up ${peerID.slice(0, 16)}`);
@@ -2571,6 +2574,7 @@ export class Network {
 		}
 		if (epoch !== this.runEpoch) return;
 		if (await this.releaseIfClaimed(node, pid, peerID, networkID)) return;
+		if (epoch !== this.runEpoch) return;
 		// Forget the persisted peerStore entry so the disconnect survives a restart —
 		// suppression is in-memory only, but the peerStore is on disk.
 		await this.purgeStalePeer(peerID, 'left-network exclusive peer', epoch);
@@ -2589,6 +2593,14 @@ export class Network {
 	 * intake owns that tag and re-adds it on the next announce, and inventing it here would
 	 * claim a fleet membership nothing has observed.
 	 *
+	 * The claim has to hold on BOTH sides of the restore, and that is the mirror image of the
+	 * race this whole recheck exists for. Checking only before the await let the LAST owner
+	 * leave while the restore was in flight: the merge then landed after that leave's own
+	 * cleanup had finished, putting the keep-alive tag back on a peer nobody wants, and the
+	 * `true` returned here told the caller to leave the rest of its teardown undone. Instead
+	 * of a shared peer being destroyed, a dead one survived. If the claim is gone by then the
+	 * restore is taken back — tag and suppression both — and the caller carries on.
+	 *
 	 * Returns whether the disconnect should stop.
 	 */
 	private async releaseIfClaimed(node: Libp2p, pid: PeerID, peerID: string, networkID: string): Promise<boolean> {
@@ -2598,6 +2610,16 @@ export class Network {
 			await node.peerStore.merge(pid, { tags: { [KEEP_ALIVE]: { value: 1 } } });
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: keep-alive restore failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+		}
+		if (!this.isPeerNeededByJoinedNetwork(peerID)) {
+			this.addRedialSuppression(networkID, peerID);
+			try {
+				await node.peerStore.merge(pid, { tags: { [KEEP_ALIVE]: undefined } });
+			} catch (err: any) {
+				trace(`[NET] disconnectPeer: keep-alive re-removal failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+			}
+			trace(`[NET] disconnectPeer: the claim on ${peerID.slice(0, 16)} was gone again by the restore, continuing the disconnect`);
+			return false;
 		}
 		trace(`[NET] disconnectPeer: ${peerID.slice(0, 16)} was claimed by a joined lishnet mid-disconnect, released`);
 		return true;
