@@ -21,6 +21,7 @@ import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
 import { type MeshPeer } from '@chainsafe/libp2p-gossipsub';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
 import { applyGossipsubPatches } from './gossipsub-patches.ts';
+import { canonicalMultiaddr, extractDestinationPeerID } from './multiaddr-utils.ts';
 import { BootstrapStatusTracker } from './bootstrap-status.ts';
 import { logStatusDebug, dumpGossipsubScores } from './status-logger.ts';
 import { classifyConnection as classifyConnectionFn, dialProtocol as dialProtocolFn, dialProtocolByPeerId as dialProtocolByPeerIdFn, connectToPeer as connectToPeerFn } from './dial-helpers.ts';
@@ -85,6 +86,8 @@ interface PubsubEvent {
  */
 type TopicHandler = (data: Record<string, any>, from?: string) => void;
 const AUTODIAL_WORKAROUND = true;
+/** Grace period before the startup bootstrap workaround decides the bootstrap module failed. */
+const BOOTSTRAP_WORKAROUND_DELAY_MS = 2000;
 /** Minimum interval between two `have` responses sent to the same peer for the same LISH. */
 const WANT_RESPONSE_COOLDOWN_MS = 60_000;
 /** Periodic cleanup of stale entries in lastWantResponseTime (entries older than the cooldown are useless). */
@@ -400,6 +403,8 @@ export class Network {
 	private readonly dataServer: DataServer;
 	private readonly dataDir: string;
 	private statusInterval: NodeJS.Timeout | null = null;
+	/** Handle of the one-shot startup bootstrap workaround, so stop() can cancel it. */
+	private bootstrapWorkaroundTimer: NodeJS.Timeout | null = null;
 	/** Monotonic counter for status-interval ticks. Used by the periodic autodial promotion. */
 	private statusTickCount = 0;
 	/** Guards against overlapping status ticks — see setupStatusInterval. */
@@ -459,6 +464,12 @@ export class Network {
 	private readonly bootstrapByAddress: Map<string, IBootstrapEntry> = new Map();
 	/** Reverse index peerID → its canonical addresses in {@link bootstrapByAddress}. */
 	private readonly addressesByPeer: Map<string, Set<string>> = new Map();
+	/**
+	 * Canonical addresses with a bootstrap dial in flight right now. The real dedup for
+	 * repeated gossip mentions of one endpoint — a job any number of fire-and-forget
+	 * announce handlers can join, but only one of them pays for.
+	 */
+	private readonly inFlightBootstrapDials = new Set<string>();
 	/**
 	 * Where the last recovery pass stopped in each priority group, so the next one
 	 * resumes after it rather than replaying the same prefix. See
@@ -885,43 +896,81 @@ export class Network {
 	// Event listeners setup (extracted from start() for readability)
 	// =========================================================================
 
-	private setupEventListeners(): void {
-		this.addListener(this.node!, 'peer:discovery', async (evt: any) => {
-			const peerID = evt.detail.id.toString();
-			const multiaddrs = evt.detail.multiaddrs?.map((ma: any) => ma.toString()) || [];
-			trace(`[NET] Discovered peer: ${peerID}, addrs: ${multiaddrs.join(', ') || '(empty)'}`);
-
-			// Skip if already connected (autoDial in v2 is unreliable; we dial actively
-			// for mDNS/bootstrap discoveries to ensure local peers form a mesh quickly).
-			if (peerID === this.node!.peerId.toString()) return;
-			// A peer we deliberately left (leave-network) must not be re-tagged or
-			// re-dialed by discovery (mDNS/identify/PX) — that would beat the disconnect.
-			// Suppression lifts on a legitimate inbound reconnect or on network rejoin.
-			if (this.isRedialSuppressed(peerID)) return;
-			// Stamp `keep-alive-fleet` on every discovered peer, regardless of how they
-			// surfaced (mDNS, bootstrap, autonat, identify, peer-announce). libp2p
-			// ReconnectQueue only acts on peers with a tag whose key starts with
-			// `keep-alive`; without it, fleet peers found via non-announce channels
-			// (e.g. identify push from a common neighbour) are not re-dialed when
-			// they drop. Value 50 sits between bootstrap (100) and idle (1) — protects
-			// from ConnectionPruner without taking precedence over true bootstraps.
+	/**
+	 * React to a `peer:discovery` event: tag the peer so libp2p's ReconnectQueue will
+	 * re-dial it, and dial it now if we hold no connection (autoDial in v2 is unreliable
+	 * and mDNS/bootstrap peers have to mesh quickly).
+	 *
+	 * `node` and `epoch` are the ones current when the event was delivered. Every await
+	 * below re-checks both AND the suppression set, because this runs unawaited and both
+	 * a stop()/start() and a leave-network can land inside a multi-second dial.
+	 */
+	private async handleDiscoveredPeer(detail: any, node: Libp2p | null, epoch: number): Promise<void> {
+		if (!node) return;
+		const isCurrentRun = (): boolean => node === this.node && epoch === this.runEpoch;
+		const peerID = detail.id.toString();
+		const multiaddrs = detail.multiaddrs?.map((ma: any) => ma.toString()) || [];
+		trace(`[NET] Discovered peer: ${peerID}, addrs: ${multiaddrs.join(', ') || '(empty)'}`);
+		if (peerID === node.peerId.toString()) return;
+		// A peer we deliberately left (leave-network) must not be re-tagged or
+		// re-dialed by discovery (mDNS/identify/PX) — that would beat the disconnect.
+		// Suppression lifts on a legitimate inbound reconnect or on network rejoin.
+		if (this.isRedialSuppressed(peerID)) return;
+		// Stamp `keep-alive-fleet` on every discovered peer, regardless of how they
+		// surfaced (mDNS, bootstrap, autonat, identify, peer-announce). libp2p
+		// ReconnectQueue only acts on peers with a tag whose key starts with
+		// `keep-alive`; without it, fleet peers found via non-announce channels
+		// (e.g. identify push from a common neighbour) are not re-dialed when
+		// they drop. Value 50 sits between bootstrap (100) and idle (1) — protects
+		// from ConnectionPruner without taking precedence over true bootstraps.
+		try {
+			await node.peerStore.merge(detail.id, { tags: { 'keep-alive-fleet': { value: 50 } } });
+		} catch {
+			/* ignore */
+		}
+		if (!isCurrentRun()) return;
+		if (this.isRedialSuppressed(peerID)) {
+			// A leave landed while that merge was in flight. It stripped the keep-alive
+			// tags before we wrote ours, so leaving this one behind re-arms exactly the
+			// ReconnectQueue re-dial the leave existed to stop.
 			try {
-				await this.node!.peerStore.merge(evt.detail.id, {
-					tags: { 'keep-alive-fleet': { value: 50 } },
-				});
+				await node.peerStore.merge(detail.id, { tags: { 'keep-alive-fleet': undefined } });
 			} catch {
 				/* ignore */
 			}
-			const existing = this.node!.getConnections(evt.detail.id);
-			if (existing.length > 0) return;
-			if (!evt.detail.multiaddrs?.length) return;
-
-			try {
-				await this.node!.dial(evt.detail.multiaddrs);
-				trace(`[NET] Dialed discovered peer ${peerID.slice(0, 16)}`);
-			} catch (err: any) {
-				trace(`[NET] Failed to dial discovered peer ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+			return;
+		}
+		if (node.getConnections(detail.id).length > 0) return;
+		if (!detail.multiaddrs?.length) return;
+		try {
+			await node.dial(detail.multiaddrs);
+			if (!isCurrentRun()) return;
+			// The suppression check above answered for the moment before the dial, and a
+			// dial takes seconds. leave-network can land inside that window: its hangUp
+			// finds no connection yet, finishes, and this dial then completes into a
+			// connection nothing else will close. Whoever notices last closes it.
+			if (this.isRedialSuppressed(peerID) && !this.isPeerNeededByJoinedNetwork(peerID)) {
+				trace(`[NET] discovery dial landed after leave, hanging up: ${peerID.slice(0, 16)}`);
+				try {
+					await node.hangUp(detail.id);
+				} catch (err: any) {
+					trace(`[NET] hangUp of late discovery dial failed: ${err?.message ?? err}`);
+				}
+				return;
 			}
+			trace(`[NET] Dialed discovered peer ${peerID.slice(0, 16)}`);
+		} catch (err: any) {
+			trace(`[NET] Failed to dial discovered peer ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+		}
+	}
+
+	private setupEventListeners(): void {
+		// The node and the epoch are read HERE, while the event is being delivered, and
+		// passed down. The handler is fire-and-forget and awaits twice, so reading
+		// `this.node` inside it hands back whatever instance happens to be current when
+		// the await resumes — an old run's listener would then drive the new node.
+		this.addListener(this.node!, 'peer:discovery', (evt: any) => {
+			void this.handleDiscoveredPeer(evt.detail, this.node, this.runEpoch).catch(err => trace(`[NET] peer:discovery handler error: ${err?.message ?? err}`));
 		});
 
 		// Async listener — any rejection must be caught or it becomes unhandledRejection
@@ -1094,22 +1143,43 @@ export class Network {
 		// setTimeout discards the Promise returned by async callbacks, so throws escape
 		// as unhandledRejection. Plus this.node can be null if stop() fires within 2s.
 		// Null-check at entry, wrap inner async work, attach .catch() to surface errors.
-		setTimeout(() => {
-			if (!this.node || this.node.getPeers().length > 0) return;
-			(async () => {
-				console.log('⚠️  Bootstrap module failed - dialing directly...');
-				for (const { ma } of orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values())) {
-					if (!this.node) break;
-					try {
-						await this.node.dial(ma);
-						console.log('✓ Connected to bootstrap peer via direct dial');
-						break;
-					} catch (err: any) {
-						console.log('✗ Direct dial failed:', err.message);
-					}
-				}
-			})().catch(err => trace(`[NET] bootstrapWorkaround error: ${err?.message ?? err}`));
-		}, 2000);
+		//
+		// Node and epoch are captured here rather than re-read in the callback: a
+		// stop()/start() inside the two-second window would otherwise have this run's
+		// timer dial on behalf of the NEXT node, alongside the fresh timer that instance
+		// scheduled for itself. The handle is stored so stop() can cancel it outright.
+		const node = this.node;
+		const epoch = this.runEpoch;
+		this.bootstrapWorkaroundTimer = setTimeout(() => {
+			this.bootstrapWorkaroundTimer = null;
+			this.runBootstrapWorkaround(node, epoch).catch(err => trace(`[NET] bootstrapWorkaround error: ${err?.message ?? err}`));
+		}, BOOTSTRAP_WORKAROUND_DELAY_MS);
+	}
+
+	/**
+	 * The bootstrap module occasionally fails to dial anything at startup; this walks the
+	 * registry once and takes the first address that answers.
+	 *
+	 * Split out of the timer so the lifecycle guards are reachable from a test: `node`
+	 * and `epoch` are the ones captured when the timer was scheduled, and every await
+	 * re-checks both, because each dial can outlive a stop().
+	 */
+	private async runBootstrapWorkaround(node: Libp2p | null, epoch: number): Promise<void> {
+		if (!node || node !== this.node || epoch !== this.runEpoch) return;
+		if (node.getPeers().length > 0) return;
+		console.log('⚠️  Bootstrap module failed - dialing directly...');
+		for (const { ma } of orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values())) {
+			if (node !== this.node || epoch !== this.runEpoch) break;
+			try {
+				// An explicit deadline, like every other dial path: without one this loop
+				// inherits libp2p's default and can sit on a single dead address.
+				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
+				console.log('✓ Connected to bootstrap peer via direct dial');
+				break;
+			} catch (err: any) {
+				console.log('✗ Direct dial failed:', err.message);
+			}
+		}
 	}
 
 	private setupStatusInterval(): void {
@@ -1747,9 +1817,28 @@ export class Network {
 						probeAfterQuarantine = true;
 					}
 				}
-				// The identity set is the dedup that stops every gossip mention of the same
-				// peer from costing another dial, so it is claimed up front either way.
-				if (peerID) this.bootstrapPeerIDs.add(peerID);
+				// Single-flight, keyed by the endpoint rather than the peer: two addresses of
+				// one peer are two different questions and both deserve their own dial, while
+				// two runs asking about the SAME address duplicate a 10 s timeout for one
+				// answer. Claimed after every skip above so a refused candidate never blocks
+				// the run that would actually dial it.
+				const canonicalAddress = normalizeMultiaddrForCompare(ma.toString());
+				if (this.inFlightBootstrapDials.has(canonicalAddress)) {
+					trace(`[NET] addBootstrapPeers skip in-flight: ${peer}`);
+					continue;
+				}
+				this.inFlightBootstrapDials.add(canonicalAddress);
+				// A CONFIGURED identity is user data and enters the set on the strength of the
+				// saved config alone. A DISCOVERED one waits for the dial: it arrived in a
+				// gossip message and nothing has yet shown that the identity exists, let
+				// alone that it is the one behind this address. Admitting it here put every
+				// peer ID any topic subscriber cared to name into a set that the connection
+				// gater and the gossipsub PX scoring both read as "trusted bootstrap" — one
+				// nothing prunes on a failed dial, because a discovered address only enters
+				// the registry after it verifies. Deduplication of repeated mentions is not
+				// this set's job and never was: {@link inFlightBootstrapDials} and the
+				// quarantine above do that.
+				if (peerID && origin === 'configured') this.bootstrapPeerIDs.add(peerID);
 				console.debug('Adding bootstrap peer:', peer);
 				this.bootstrapTracker.markPending(networkID, peer, peerID, origin);
 				try {
@@ -1795,6 +1884,10 @@ export class Network {
 						return;
 					}
 					if (superseded()) return;
+					// The peer answered, so the identity behind this address is real and
+					// wanted — the point at which a discovered ID has earned its place in the
+					// set (see the claim above for why it may not have it yet).
+					if (peerID) this.bootstrapPeerIDs.add(peerID);
 					if (pidObj) {
 						await this.node.peerStore.merge(pidObj, verifiedThisAddr ? { multiaddrs: [ma], tags: { [KEEP_ALIVE]: { value: 1 } } } : { tags: { [KEEP_ALIVE]: { value: 1 } } });
 					}
@@ -1912,6 +2005,11 @@ export class Network {
 							this.bootstrapTracker.deletePeer(networkID, peer);
 						}
 					}
+				} finally {
+					// Every exit from the dial block releases the claim, `return` included —
+					// a leave landing mid-dial would otherwise lock the address out for the
+					// lifetime of the node.
+					this.inFlightBootstrapDials.delete(canonicalAddress);
 				}
 			} catch (error: any) {
 				this.bootstrapTracker.recordOutcome(networkID, peer, null, 'error', error?.message ?? String(error), null, origin);
@@ -1994,20 +2092,62 @@ export class Network {
 			// purge just removed — so if the peer is connected NOW, rebuild its dial
 			// state from the live connections; otherwise reconnect would silently die
 			// with the first drop.
+			//
+			// Not for a peer leave-network hung up: it is meant to be forgotten, and a
+			// connection racing the purge is no reason to rebuild what the leave
+			// deliberately tore down.
 			if (epoch !== this.runEpoch) return;
 			const after = node.getConnections(pid);
-			if (after.length > 0) {
-				this.bootstrapPeerIDs.add(peerID);
-				this.unreachableQuarantine.delete(peerID);
-				await node.peerStore.merge(pid, {
-					multiaddrs: after.map(c => c.remoteAddr),
-					tags: { [KEEP_ALIVE]: { value: 1 } },
-				});
-				console.log(`[NET] purge raced an inbound connection — restored ${peerID.slice(0, 16)}…`);
+			if (after.length > 0 && !this.isRedialSuppressed(peerID)) {
+				await this.restorePurgedPeerState(node, pid, after, epoch);
 			}
 		} catch (err: any) {
 			trace(`[NET] purgeStalePeer ${peerID.slice(0, 16)} failed: ${err?.message ?? err}`);
 		}
+	}
+
+	/**
+	 * Put back everything {@link purgeStalePeer} took away, for a peer that turns out to
+	 * be connected after all.
+	 *
+	 * The purge removes four things — the bootstrap dedup entry, the peer's addresses
+	 * from the registry, its gossipsub direct entry and its keep-alive tag — and
+	 * restoring only some of them left a state nothing else repairs: periodic promotion
+	 * skips any peer already in `bootstrapPeerIDs`, so the missing addresses and direct
+	 * entry would stay missing for as long as the peer stayed connected, and the next
+	 * drop would find nothing to dial it back with.
+	 *
+	 * `bootstrapPeerIDs` is therefore filled in LAST. It is the flag the other paths read
+	 * as "this peer is handled"; setting it first is what let promotion observe a
+	 * half-restored peer and walk away from it.
+	 */
+	private async restorePurgedPeerState(node: Libp2p, pid: PeerID, connections: Array<{ remoteAddr: any }>, epoch: number): Promise<void> {
+		const peerID = pid.toString();
+		this.unreachableQuarantine.delete(peerID);
+		await node.peerStore.merge(pid, {
+			multiaddrs: connections.map(c => c.remoteAddr),
+			tags: { [KEEP_ALIVE]: { value: 1 } },
+		});
+		if (epoch !== this.runEpoch) return;
+		for (const c of connections) {
+			const remote = c.remoteAddr;
+			if (!remote) continue;
+			try {
+				// A live connection is the strongest possible proof of an endpoint, so the
+				// entry goes back verified — that is also what its TTL runs from. The address
+				// gets this peer's `/p2p` suffix when it lacks one, matching the shape
+				// promotion builds, or the registry would key it without an identity.
+				const ma = extractDestinationPeerID(remote) === peerID ? remote : Multiaddr(`${remote.toString()}/p2p/${peerID}`);
+				this.rememberBootstrapAddress(ma, null);
+				this.markBootstrapAddressVerified(ma);
+			} catch {
+				// Unparseable remote address — nothing to put back in the registry for it.
+			}
+		}
+		const gossipsub: any = this.pubsub;
+		if (gossipsub?.direct && typeof gossipsub.direct.add === 'function') gossipsub.direct.add(peerID);
+		this.bootstrapPeerIDs.add(peerID);
+		console.log(`[NET] purge raced an inbound connection — restored ${peerID.slice(0, 16)}…`);
 	}
 
 	/**
@@ -2343,6 +2483,14 @@ export class Network {
 			trace(`[NET] disconnectPeer: invalid peerID ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 			return;
 		}
+		// Suppression is claimed BEFORE the first await, not after the hangUp. The two
+		// awaits below yield, and a dial started in that window — by redial maintenance,
+		// by peer:discovery, by a bootstrap job — used to read "not suppressed", go
+		// ahead, and complete after the hangUp had already looked for connections and
+		// found none: the peer ends up connected and re-tagged with the leave apparently
+		// finished. Recording the intent up front makes the window harmless, because
+		// every one of those paths re-checks suppression before it keeps its result.
+		this.addRedialSuppression(networkID, peerID);
 		// Remove the keep-alive tags FIRST so the imminent hangUp does not race
 		// the ReconnectQueue back into a re-dial. Both tags matter: the custom
 		// 'keep-alive-fleet' tag (peer-announce intake) and the native KEEP_ALIVE
@@ -2364,10 +2512,6 @@ export class Network {
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: hangUp failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
-		// Keep redial maintenance from re-dialing this just-left peer on the next
-		// status tick. Keyed by the left lishnet so rejoin lifts exactly its peers;
-		// cleared automatically once it reconnects legitimately.
-		this.addRedialSuppression(networkID, peerID);
 		// Forget the persisted peerStore entry so the disconnect survives a restart —
 		// suppression is in-memory only, but the peerStore is on disk.
 		await this.purgeStalePeer(peerID, 'left-network exclusive peer');
@@ -2768,6 +2912,12 @@ export class Network {
 
 	async stop(): Promise<void> {
 		this.runEpoch++; // invalidate any in-flight status tick before touching state
+		// The startup workaround is a one-shot timer that can still be pending: left
+		// armed, it fires two seconds into the NEXT run and dials on the old node's behalf.
+		if (this.bootstrapWorkaroundTimer) {
+			clearTimeout(this.bootstrapWorkaroundTimer);
+			this.bootstrapWorkaroundTimer = null;
+		}
 		if (this.statusInterval) {
 			clearInterval(this.statusInterval);
 			this.statusInterval = null;
@@ -2806,6 +2956,9 @@ export class Network {
 		this.bootstrapTracker.clear();
 		this.bootstrapByAddress.clear();
 		this.addressesByPeer.clear();
+		this.inFlightBootstrapDials.clear();
+		this.recoveryCursors.configured = null;
+		this.recoveryCursors.discovered = null;
 		this.recoveryBackoff.clear();
 		this.bootstrapGeneration.clear();
 		this._lastPeerCounts.clear();
@@ -2850,19 +3003,22 @@ export class Network {
 	}
 }
 
+// Re-exported so callers and tests that already reach for this here keep working; the
+// implementation lives in multiaddr-utils so network-config can share it without
+// importing this module.
+export { extractDestinationPeerID };
+
 /**
- * Normalize a multiaddr STRING for equality comparison. Multiaddr.toString()
- * already compresses IPv6, but leaves DNS host case and the FQDN root dot intact —
- * `/dns4/EXAMPLE.COM./tcp/...` and `/dns4/example.com/tcp/...` address the same
- * endpoint.
+ * Normalize a multiaddr STRING for equality comparison.
  *
- * Only the HOST of a DNS component is folded, never the whole address. A circuit
- * multiaddr carries `/p2p/<relay>` in the middle, and a base58 peer ID is
- * case-significant — case-folding an identifier is a different question from
- * case-folding a hostname, and this function is only entitled to the second.
+ * Delegates to {@link canonicalMultiaddr}, which parses the address first — that is
+ * what folds an expanded IPv6 literal into its compressed form. Doing it with a regex
+ * over the raw text, as this used to, left `/ip6/2001:0db8:0000:...:0001` and
+ * `/ip6/2001:db8::1` looking like two different addresses even though they are one,
+ * so a configuration edit could leave the old spelling behind in the registry.
  */
 export function normalizeMultiaddrForCompare(s: string): string {
-	return s.replace(/\/(dns|dns4|dns6|dnsaddr)\/([^/]+)/gi, (_match, protocol: string, host: string) => `/${protocol.toLowerCase()}/${host.toLowerCase().replace(/\.+$/, '')}`);
+	return canonicalMultiaddr(s);
 }
 
 /**
@@ -2878,26 +3034,6 @@ export function isSameDialEndpoint(a: string, b: string): boolean {
 	const strip = (s: string): string => normalizeMultiaddrForCompare(s).replace(/\/p2p\/[^/]+$/, '');
 	const left = strip(a);
 	return left.length > 0 && left === strip(b);
-}
-
-/**
- * Extract the DESTINATION peer ID from a multiaddr. A circuit-relay address has
- * the shape `/.../p2p/<relay>/p2p-circuit/p2p/<destination>` — taking the FIRST
- * /p2p/ component would return the relay's identity, so eviction and configured
- * protection would target the wrong peer. The last /p2p/ component is always
- * the dial target. Returns null when the multiaddr carries no peer ID at all.
- */
-export function extractDestinationPeerID(ma: any): string | null {
-	try {
-		const components: Array<{ code: number; value?: string }> = ma?.getComponents?.() ?? [];
-		for (let i = components.length - 1; i >= 0; i--) {
-			const c = components[i]!;
-			if (c.code === 421 && typeof c.value === 'string') return c.value;
-		}
-	} catch {
-		/* unparseable multiaddr — no ID */
-	}
-	return null;
 }
 
 /**

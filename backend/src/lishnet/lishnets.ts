@@ -248,6 +248,18 @@ export class Networks {
 		// if it still subscribes another joined lishnet, or if it is an active circuit
 		// relay we depend on. disconnectPeer is a safe no-op hangUp for an unconnected
 		// peer and always strips keep-alive + suppresses redial.
+		// Address-level cleanup first, because the identity-level loop below cannot do it.
+		// Ownership of an address is held per NETWORK, but that loop is keyed by peer ID
+		// and `continue`s the moment the identity is configured somewhere else — so the
+		// left network's own claim was never released. Two ways that bit: A and B listing
+		// the SAME address left A's claim pinning it for the lifetime of the node, and A
+		// and B listing the same peer under DIFFERENT addresses left A's address being
+		// force-dialed by the parked probe and exempt from the stale sweep.
+		// Releasing a claim is not a delete: an address another joined network still
+		// lists keeps its own claim and survives, which is why no elsewhere-filter is
+		// needed here.
+		this.network.pruneBootstrapAddresses(Networks.cleanBootstrapList(this.get(id)?.bootstrapPeers ?? []), id);
+
 		const stillConfigured = this.configuredBootstrapPeerIDsElsewhere(id);
 		for (const pid of this.configuredBootstrapPeerIDsOf(id)) {
 			if (stillConfigured.has(pid)) continue;

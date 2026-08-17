@@ -82,6 +82,159 @@ describe('Network.disconnectPeer — keep-alive tag removal', () => {
 		await network.disconnectPeer(PEER_ID, NET);
 		expect(deleted).toEqual([PEER_ID]);
 	});
+
+	/**
+	 * Suppression used to be recorded only AFTER the tag removal and the hangUp, both of
+	 * which yield. A dial started inside that window read "not suppressed", went ahead,
+	 * and landed after hangUp had already found no connection to close — leaving the
+	 * peer connected and re-tagged with the leave apparently complete.
+	 */
+	it('claims suppression before the first await, not after the hangUp', async () => {
+		const { network, suppressed } = makeNetwork();
+		const observedDuringMerge: boolean[] = [];
+		let release = (): void => {};
+		const gate = new Promise<void>(resolve => {
+			release = resolve;
+		});
+		(network as any).node.peerStore.merge = async (): Promise<void> => {
+			observedDuringMerge.push(suppressed(PEER_ID));
+			await gate;
+		};
+		const pending = network.disconnectPeer(PEER_ID, NET);
+		// The tag-removal await is where every racing dial path reads the flag.
+		expect(observedDuringMerge).toEqual([true]);
+		release();
+		await pending;
+		expect(suppressed(PEER_ID)).toBe(true);
+	});
+
+	it('claims it even when the hangUp itself throws', async () => {
+		const { network, suppressed } = makeNetwork();
+		(network as any).node.hangUp = async (): Promise<never> => {
+			throw new Error('hangUp failed');
+		};
+		await network.disconnectPeer(PEER_ID, NET);
+		expect(suppressed(PEER_ID)).toBe(true);
+	});
+});
+
+/**
+ * The peer:discovery handler is fire-and-forget and awaits twice — a peerStore merge and
+ * a dial. It used to check suppression only at entry and to re-read `this.node` after
+ * every await, so a leave-network landing inside the window was simply overridden, and a
+ * stop()/start() had the old run's listener drive the new node.
+ */
+describe('Network.handleDiscoveredPeer — post-await re-checks', () => {
+	function makeNetwork() {
+		const dialed: string[][] = [];
+		const hungUp: string[] = [];
+		const merges: Array<Record<string, unknown>> = [];
+		const gates: Array<() => void> = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+		(network as any).runEpoch = 1;
+		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
+		// isPeerNeededByJoinedNetwork reaches for all three; leaving any undefined throws
+		// inside the handler's try block, which then reads as "the dial failed".
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).peerAnnounce = { getRecentMembers: () => [] };
+		const node = {
+			peerId: { toString: () => 'selfID' },
+			getConnections: () => [],
+			peerStore: {
+				async merge(_pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> {
+					merges.push(patch.tags);
+				},
+			},
+			async dial(addrs: Array<{ toString(): string }>): Promise<void> {
+				dialed.push(addrs.map(a => a.toString()));
+				// Park the dial so a test can act while it is still in flight. The timer is
+				// a backstop: a test that reaches a dial it did not expect must fail on its
+				// assertion, not hang the suite waiting for a release that never comes.
+				await new Promise<void>(resolve => {
+					gates.push(resolve);
+					setTimeout(resolve, 250);
+				});
+			},
+			async hangUp(pid: { toString(): string }): Promise<void> {
+				hungUp.push(pid.toString());
+			},
+		};
+		(network as any).node = node;
+		const detail = { id: { toString: () => PEER_ID }, multiaddrs: [multiaddr('/ip4/203.0.113.5/tcp/9090')] };
+		const run = (): Promise<void> => (network as any).handleDiscoveredPeer(detail, node, 1);
+		const releaseDial = (): void => gates.forEach(g => g());
+		return { network, node, dialed, hungUp, merges, run, releaseDial };
+	}
+
+	/** Let the handler run up to its parked dial — it awaits the tag merge before that. */
+	const untilDialing = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0));
+
+	it('dials a freshly discovered peer', async () => {
+		const { dialed, run, releaseDial } = makeNetwork();
+		const pending = run();
+		await untilDialing();
+		expect(dialed.length).toBe(1);
+		releaseDial();
+		await pending;
+	});
+
+	it('hangs up a dial that completed after leave-network', async () => {
+		const { network, hungUp, run, releaseDial } = makeNetwork();
+		const pending = run();
+		await untilDialing();
+		// The leave lands while the dial is still in flight — exactly the window in which
+		// hangUp finds nothing to close and reports success.
+		(network as any).addRedialSuppression('net-a', PEER_ID);
+		releaseDial();
+		await pending;
+		expect(hungUp).toEqual([PEER_ID]);
+	});
+
+	it('keeps a late dial whose peer another joined lishnet still needs', async () => {
+		const { network, hungUp, run, releaseDial } = makeNetwork();
+		const pending = run();
+		await untilDialing();
+		(network as any).addRedialSuppression('net-a', PEER_ID);
+		(network as any).isPeerNeededByJoinedNetwork = (): boolean => true;
+		releaseDial();
+		await pending;
+		expect(hungUp).toEqual([]);
+	});
+
+	it('does not dial when a stop landed while the tag merge was in flight', async () => {
+		const { network, node, dialed } = makeNetwork();
+		node.peerStore.merge = async (): Promise<void> => {
+			(network as any).runEpoch = 2;
+		};
+		await (network as any).handleDiscoveredPeer({ id: { toString: () => PEER_ID }, multiaddrs: [multiaddr('/ip4/203.0.113.5/tcp/9090')] }, node, 1);
+		expect(dialed).toEqual([]);
+	});
+
+	it('does not dial when a restart swapped the node under the handler', async () => {
+		const { network, node, dialed } = makeNetwork();
+		node.peerStore.merge = async (): Promise<void> => {
+			(network as any).node = { ...node };
+		};
+		await (network as any).handleDiscoveredPeer({ id: { toString: () => PEER_ID }, multiaddrs: [multiaddr('/ip4/203.0.113.5/tcp/9090')] }, node, 1);
+		expect(dialed).toEqual([]);
+	});
+
+	it('takes back the keep-alive tag when a leave landed during the merge', async () => {
+		// disconnectPeer strips the tags before this merge runs, so leaving ours behind
+		// re-arms the ReconnectQueue re-dial the leave was there to prevent.
+		const { network, node, merges, dialed } = makeNetwork();
+		const realMerge = node.peerStore.merge.bind(node.peerStore);
+		node.peerStore.merge = async (pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> => {
+			await realMerge(pid, patch);
+			(network as any).addRedialSuppression('net-a', PEER_ID);
+		};
+		await (network as any).handleDiscoveredPeer({ id: { toString: () => PEER_ID }, multiaddrs: [multiaddr('/ip4/203.0.113.5/tcp/9090')] }, node, 1);
+		expect(dialed).toEqual([]);
+		expect(merges.length).toBe(2);
+		expect(merges[1]!['keep-alive-fleet']).toBeUndefined();
+		expect(Object.keys(merges[1]!)).toContain('keep-alive-fleet');
+	});
 });
 
 /**

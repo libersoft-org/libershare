@@ -80,6 +80,66 @@ describe('purgeStalePeer — epoch guard', () => {
 });
 
 /**
+ * An inbound connection can land between the caller's liveness check and the delete.
+ * Healing used to restore only the dedup entry, the quarantine and the keep-alive tag —
+ * not the registry entry nor the gossipsub direct entry. Since promotion SKIPS any peer
+ * already in `bootstrapPeerIDs`, nothing repaired the rest: the peer stayed connected
+ * with no recovery address at all, and the next drop had nothing to dial.
+ */
+describe('purgeStalePeer — healing a purge that raced a connection', () => {
+	const LIVE = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork(opts: { suppressed?: boolean } = {}) {
+		const network = Object.create(Network.prototype) as Network;
+		const direct = new Set<string>();
+		(network as any).runEpoch = 1;
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		installBootstrapRegistry(network, []);
+		(network as any).redialBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map([[PEER_ID, Date.now()]]);
+		(network as any).redialSuppressedByNet = new Map(opts.suppressed ? [['net-a', new Set([PEER_ID])]] : []);
+		(network as any).pubsub = { direct };
+		(network as any).node = {
+			// A connection exists throughout — the purge finds it again after the delete.
+			getConnections: () => [{ remoteAddr: multiaddr(LIVE), async close(): Promise<void> {} }],
+			peerStore: {
+				async delete(): Promise<void> {},
+				async merge(): Promise<void> {},
+			},
+		};
+		return { network, direct };
+	}
+
+	it('puts the address back in the registry, verified', async () => {
+		const { network } = bareNetwork();
+		await (network as any).purgeStalePeer(PEER_ID, 'test', 1);
+		expect(registryAddresses(network)).toEqual([normalizeMultiaddrForCompare(LIVE)]);
+		expect(((network as any).bootstrapByAddress.get(normalizeMultiaddrForCompare(LIVE)) as IBootstrapEntry).lastVerifiedAt).not.toBe(null);
+	});
+
+	it('puts the gossipsub direct entry back', async () => {
+		const { network, direct } = bareNetwork();
+		await (network as any).purgeStalePeer(PEER_ID, 'test', 1);
+		expect([...direct]).toEqual([PEER_ID]);
+	});
+
+	it('re-admits the identity and lifts the quarantine', async () => {
+		const { network } = bareNetwork();
+		await (network as any).purgeStalePeer(PEER_ID, 'test', 1);
+		expect([...((network as any).bootstrapPeerIDs as Set<string>)]).toEqual([PEER_ID]);
+		expect((network as any).unreachableQuarantine.has(PEER_ID)).toBe(false);
+	});
+
+	it('heals nothing for a peer leave-network deliberately hung up', async () => {
+		const { network, direct } = bareNetwork({ suppressed: true });
+		await (network as any).purgeStalePeer(PEER_ID, 'test', 1);
+		expect(registryAddresses(network)).toEqual([]);
+		expect([...direct]).toEqual([]);
+		expect((network as any).bootstrapPeerIDs.size).toBe(0);
+	});
+});
+
+/**
  * A peer whose every stored address is rejected by the dial gater is not proof the peer
  * is gone — a LAN/VPN-only peer looks exactly like this the moment our own interface
  * drops. This path must therefore take the same self-online evidence as the
