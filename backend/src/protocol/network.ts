@@ -417,6 +417,16 @@ export class Network {
 	 */
 	private inFlightBootstrapDials = new Set<string>();
 	/**
+	 * Peer IDs with a `peer:discovery` dial currently outstanding.
+	 *
+	 * Keyed by PEER, not by address, because that is the question discovery asks: mDNS,
+	 * identify and PX all raise an event for the same arrival, each carrying its own
+	 * address list, and the per-peer backoff cannot separate them — it is written only
+	 * after a dial has already failed. Replaced on teardown for the same reason as
+	 * {@link inFlightBootstrapDials}.
+	 */
+	private inFlightDiscoveryDials = new Set<string>();
+	/**
 	 * peerID → time we first saw the peer disconnected with ZERO reachable
 	 * addresses. Such peers never enter the re-dial path (nothing to dial), so
 	 * the failure counter cannot evict them — without this they would sit in
@@ -828,6 +838,18 @@ export class Network {
 				trace(`[NET] discovery dial skipped (quarantined or in backoff): ${peerID.slice(0, 16)}`);
 				return;
 			}
+			// Single-flight per peer. The backoff above is only written once a dial has
+			// already FAILED, so several discovery events for one peer — mDNS, identify and
+			// PX all fire for the same arrival — used to pass it together and start that
+			// many concurrent dials of the same identity. Captured by reference for the same
+			// reason the bootstrap claims are: a teardown replaces the set, and releasing
+			// into the replacement would free the next run's claim.
+			const inFlight = this.inFlightDiscoveryDials;
+			if (inFlight.has(peerID)) {
+				trace(`[NET] discovery dial skipped (already in flight): ${peerID.slice(0, 16)}`);
+				return;
+			}
+			inFlight.add(peerID);
 			const epoch = this.runEpoch;
 
 			try {
@@ -855,6 +877,8 @@ export class Network {
 				// discovery keeps naming is paced like everything else.
 				this.noteRecoveryDialFailure(peerID);
 				trace(`[NET] Failed to dial discovered peer ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+			} finally {
+				inFlight.delete(peerID);
 			}
 		});
 
@@ -2822,6 +2846,7 @@ export class Network {
 		// must not lock the address out for the next one — nor, by releasing into a shared
 		// Set, steal the claim the next one has taken. A new object does both.
 		this.inFlightBootstrapDials = new Set<string>();
+		this.inFlightDiscoveryDials = new Set<string>();
 		this._lastPeerCounts.clear();
 		this._lastScores.clear();
 		this.redialBackoff.clear();

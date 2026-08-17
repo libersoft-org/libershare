@@ -22,6 +22,7 @@ function bareNetwork(opts: { connected?: boolean; dialFails?: boolean } = {}) {
 	(network as any).runEpoch = 1;
 	(network as any).listeners = [];
 	(network as any).redialSuppressedByNet = new Map();
+	(network as any).inFlightDiscoveryDials = new Set<string>();
 	(network as any).redialBackoff = new Map();
 	(network as any).unreachableQuarantine = new Map();
 	(network as any).dcutrPeers = new Set<string>();
@@ -135,6 +136,7 @@ describe('peer:discovery — a dial that lands after leave-network', () => {
 		(network as any).runEpoch = 1;
 		(network as any).listeners = [];
 		(network as any).redialSuppressedByNet = new Map();
+		(network as any).inFlightDiscoveryDials = new Set<string>();
 		(network as any).redialBackoff = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).dcutrPeers = new Set<string>();
@@ -232,5 +234,37 @@ describe('peer:discovery — a dial that lands after leave-network', () => {
 
 		expect(tagged).toEqual([]);
 		expect(hungUp).toContain(PEER_ID);
+	});
+});
+
+/**
+ * mDNS, identify and PX all raise a discovery event for the same arrival. The per-peer
+ * backoff cannot separate them — it is written only once a dial has already FAILED — so
+ * without a claim every event started its own dial of the same identity.
+ */
+describe('peer:discovery — one dial per peer at a time', () => {
+	it('collapses concurrent events for one peer into a single dial', async () => {
+		const { network, dialled, fire } = bareNetwork();
+		let release!: () => void;
+		const gate = new Promise<void>(res => {
+			release = res;
+		});
+		(network as any).node.dial = async (multiaddrs: unknown[]): Promise<unknown> => {
+			dialled.push(multiaddrs);
+			await gate;
+			return {};
+		};
+
+		const first = fire();
+		const second = fire();
+		const third = fire();
+		expect(dialled).toHaveLength(1);
+
+		release();
+		await Promise.all([first, second, third]);
+
+		// Claim released — a later event is free to dial again.
+		await fire();
+		expect(dialled).toHaveLength(2);
 	});
 });
