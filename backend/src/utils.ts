@@ -220,8 +220,10 @@ export class Utils {
 			// `decompress: false` keeps Bun from undoing Content-Encoding inside its native
 			// HTTP layer, where no check we write can reach: a few kilobytes of zstd expand to
 			// hundreds of megabytes there before the first byte is handed to JS, so a cap that
-			// runs on the arriving chunk runs too late. It also drops `Accept-Encoding` from
-			// the request, so a well-behaved server sends nothing to undo in the first place.
+			// runs on the arriving chunk runs too late. It also drops `Accept-Encoding` from the
+			// request, which asks for nothing rather than for plain bytes: with the field absent
+			// every content coding is acceptable (RFC 9110), so an encoded body is exactly what a
+			// compliant server is allowed to send back, and undoing it below is ours to do.
 			const response = await fetch(url, { signal: controller.signal, decompress: false });
 			if (!response.ok) throw new CodedError(ErrorCodes.HTTP_ERROR, String(response.status));
 			// Detect on the final URL's path first — a redirect can change the extension, and a
