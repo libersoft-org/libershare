@@ -1823,6 +1823,43 @@ describe('peerStore writes that race a leave-network', () => {
 		expect(await real.store.has(real.pid)).toBe(true);
 		expect(registryAddresses(network)).toEqual([normalizeMultiaddrForCompare(LIVE)]);
 	});
+
+	/**
+	 * The purge can also put the record back INSIDE the lock it deleted under, which is
+	 * before healing runs at all. A leave landing in THAT write has to be taken back on the
+	 * same terms — the entry is on disk again and nothing else would remove it.
+	 */
+	it('drops an entry the purge restored under its own lock', async () => {
+		const { network, real } = await bareNetwork(net => {
+			(net as any).redialSuppressedByNet = new Map([['net-a', new Set([PEER_ID])]]);
+		});
+		// Blind for the close loop and for the check that decides to delete, live from the
+		// re-check inside the lock onwards — so the restore happens there, not in healing.
+		let reads = 0;
+		(network as any).node.getConnections = () => (reads++ < 2 ? [] : [{ remoteAddr: multiaddr(LIVE), async close(): Promise<void> {} }]);
+		await (network as any).purgeStalePeer(PEER_ID, 'test', 1);
+		expect(await real.store.has(real.pid)).toBe(false);
+		expect(registryAddresses(network)).toEqual([]);
+		expect((network as any).bootstrapPeerIDs.size).toBe(0);
+	});
+
+	/**
+	 * The mirror case: the peer that made healing worth doing is gone again by the time the
+	 * write lock is granted. Nothing then contradicts the purge, so nothing is put back —
+	 * least of all `bootstrapPeerIDs`, which promotion reads as "this peer is handled" and
+	 * which would strand a peer with no registry address behind it.
+	 */
+	it('restores nothing for a peer that dropped again before the lock', async () => {
+		const { network, real } = await bareNetwork(() => {});
+		// As the purge leaves it: the peer is out of the dedup set and the record is deleted.
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		await (real.store as any).delete(real.pid);
+		(network as any).node.getConnections = () => [];
+		await (network as any).restorePurgedPeerState((network as any).node, real.pid, [{ remoteAddr: multiaddr(LIVE) }], 1, null, false);
+		expect(await real.store.has(real.pid)).toBe(false);
+		expect(registryAddresses(network)).toEqual([]);
+		expect((network as any).bootstrapPeerIDs.has(PEER_ID)).toBe(false);
+	});
 });
 
 /**
