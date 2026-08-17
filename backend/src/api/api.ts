@@ -401,6 +401,8 @@ export class APIServer {
 
 	stop(): void {
 		this._search?.stopAll();
+		// The upload sweep is a long-lived interval and must not outlive the server.
+		this._upload.stop();
 		// Stop the volume poll interval and the push monitor (a long-lived pactl
 		// subscribe child on Linux) — they must not outlive the API server.
 		this._system?.stopPolling();

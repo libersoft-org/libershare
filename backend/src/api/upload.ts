@@ -9,8 +9,19 @@ const assert = Utils.assertParams;
 /** Longest original file name kept in a temp upload name, so a pathological name cannot blow the OS limit. */
 const MAX_UPLOAD_NAME_LENGTH = 100;
 
-/** How long an uploaded file that was never imported is kept before it is swept. */
+/** How long a file with no upload record behind it is kept before it is swept. */
 const UPLOAD_MAX_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * How long a live upload may go without a chunk, an end or an import before it
+ * is dropped. Separate from {@link UPLOAD_MAX_AGE_MS}, which is about files
+ * nobody owns: this one is what stops a client from parking four open transfers
+ * and simply never touching them again.
+ */
+const UPLOAD_IDLE_MS = 15 * 60 * 1000;
+
+/** How often the sweep runs. */
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
  * Transfers one client may have open at once. Each holds an open file handle and
@@ -41,6 +52,12 @@ export interface UploadLimits {
 	maxTotalBytes?: number;
 	/** Uploads that may exist at once across all sockets. */
 	maxTotalUploads?: number;
+	/** How long an unowned file survives in the upload directory. */
+	maxAgeMs?: number;
+	/** How long a live upload may sit untouched. */
+	idleMs?: number;
+	/** How often the sweep runs. Zero disables the timer. */
+	sweepIntervalMs?: number;
 }
 
 /**
@@ -70,6 +87,8 @@ interface Upload {
 	/** Socket that started the transfer; nothing else may append to it or finish it. */
 	client: unknown;
 	state: UploadState;
+	/** When this upload was last begun, appended to, finished or read. */
+	lastActivityAt: number;
 }
 
 interface UploadHandlers {
@@ -83,6 +102,10 @@ interface UploadHandlers {
 	closeClient: (client: unknown) => void;
 	/** Remove the whole temp directory, for use before the server starts listening. */
 	wipe: () => void;
+	/** Stop the periodic sweep. Must be called when the API server shuts down. */
+	stop: () => void;
+	/** Run one cleanup pass now, rather than waiting for the timer. */
+	sweep: () => Promise<void>;
 }
 
 /**
@@ -102,6 +125,9 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 	const maxUploadSize = limits.maxUploadSize ?? MAX_API_MESSAGE_SIZE;
 	const maxTotalBytes = limits.maxTotalBytes ?? MAX_TOTAL_UPLOAD_BYTES;
 	const maxTotalUploads = limits.maxTotalUploads ?? MAX_TOTAL_UPLOADS;
+	const maxAgeMs = limits.maxAgeMs ?? UPLOAD_MAX_AGE_MS;
+	const idleMs = limits.idleMs ?? UPLOAD_IDLE_MS;
+	const sweepIntervalMs = limits.sweepIntervalMs ?? SWEEP_INTERVAL_MS;
 	const uploadDir = join(dataDir, 'tmp');
 	const uploads = new Map<string, Upload>();
 	/**
@@ -112,24 +138,60 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 	let totalBytes = 0;
 
 	/**
-	 * Drop uploads nobody ever imported. The client removes its own temp file once
-	 * the import is parsed, but a lost response or a killed tab leaves one behind,
-	 * and on a node that runs for months the startup wipe alone would let those
-	 * pile up until the disk is full. Runs when a transfer starts rather than on a
-	 * timer, because that is the only thing that creates them. Never throws: a
-	 * failed sweep must not fail the upload it was making room for.
+	 * Drop uploads nobody finished and files nobody owns. Two separate problems:
+	 * a transfer still in the map whose client walked away, and a file on disk
+	 * with no record behind it at all — the residue of a lost response or a
+	 * killed process.
+	 *
+	 * Runs on a timer rather than when the next transfer starts. The age was
+	 * previously only a condition, evaluated whenever another upload happened to
+	 * arrive; on a node that imports twice a year that is indistinguishable from
+	 * never, and the disk fills in the meantime.
+	 *
+	 * Never throws: a failed sweep must not take anything else down with it.
 	 */
 	async function sweep(): Promise<void> {
-		const cutoff = Date.now() - UPLOAD_MAX_AGE_MS;
+		const now = Date.now();
+		// Idle transfers first, so their files become unowned and the pass below
+		// can see them rather than skipping them as active.
+		for (const [uploadID, upload] of [...uploads]) {
+			if (now - upload.lastActivityAt < idleMs) continue;
+			console.warn(`[API] Upload expired after ${Math.round((now - upload.lastActivityAt) / 1000)}s idle: ${uploadID}`);
+			await discard(uploadID);
+		}
+		let names: string[];
 		try {
-			for (const name of await readdir(uploadDir)) {
-				const path = join(uploadDir, name);
-				// A transfer still running rewrites its mtime on every chunk, so it is never swept.
-				try {
-					if ((await stat(path)).mtimeMs < cutoff) await rm(path, { force: true });
-				} catch {}
+			names = await readdir(uploadDir);
+		} catch (err: any) {
+			// ENOENT before the first upload is the normal case, not a fault.
+			if (err?.code !== 'ENOENT') console.error(`[API] Upload sweep could not read ${uploadDir}: ${err.message}`);
+			return;
+		}
+		const cutoff = now - maxAgeMs;
+		for (const name of names) {
+			const path = join(uploadDir, name);
+			// Recomputed per file rather than snapshotted: the awaits in this loop
+			// give a new transfer time to appear, and mtime is not a safe proxy for
+			// "in use" — an upload can sit paused for longer than the cutoff and
+			// still have an open writer pointed at this exact path.
+			if (activePaths().has(path)) continue;
+			try {
+				if ((await stat(path)).mtimeMs >= cutoff) continue;
+				await rm(path, { force: true });
+				console.warn(`[API] Removed orphaned upload file: ${path}`);
+			} catch (err: any) {
+				// Logged rather than swallowed: silent failures here are how a disk
+				// fills up with no indication of why.
+				if (err?.code !== 'ENOENT') console.error(`[API] Upload sweep failed to remove ${path}: ${err.message}`);
 			}
-		} catch {}
+		}
+	}
+
+	/** Paths that belong to a live upload record and must never be swept. */
+	function activePaths(): Set<string> {
+		const paths = new Set<string>();
+		for (const upload of uploads.values()) paths.add(upload.path);
+		return paths;
 	}
 
 	/** Look up a transfer the given socket is allowed to touch. */
@@ -212,14 +274,13 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 			if (open >= MAX_CONCURRENT_UPLOADS) throw new CodedError(ErrorCodes.TOO_MANY_UPLOADS, String(MAX_CONCURRENT_UPLOADS));
 			if (uploads.size >= maxTotalUploads) throw new CodedError(ErrorCodes.UPLOAD_QUOTA_EXCEEDED, String(maxTotalUploads));
 			await mkdir(uploadDir, { recursive: true });
-			await sweep();
-			// The socket can close while the two awaits above run, and `closeClient`
+			// The socket can close while the await above runs, and `closeClient`
 			// would have found nothing to clean up. Registering the upload now would
 			// leave one owned by a dead socket that nobody can finish or abort.
 			if (isGone(client)) throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, 'client disconnected');
 			const uploadID = randomUUID();
 			const path = join(uploadDir, uploadFileName(p.name ?? 'upload'));
-			uploads.set(uploadID, { path, writer: Bun.file(path).writer(), written: 0, client, state: 'receiving' });
+			uploads.set(uploadID, { path, writer: Bun.file(path).writer(), written: 0, client, state: 'receiving', lastActivityAt: Date.now() });
 			console.log(`[API] Upload started: ${uploadID} → ${path}`);
 			return { uploadID };
 		});
@@ -270,6 +331,7 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 			throw new CodedError(ErrorCodes.UPLOAD_QUOTA_EXCEEDED, formatBytes(maxTotalBytes));
 		}
 		upload.written = nextWritten;
+		upload.lastActivityAt = Date.now();
 		totalBytes += p.data.byteLength;
 		await upload.writer.write(p.data);
 		// Flushed before the response goes out, so the ack the client waits on means
@@ -296,6 +358,7 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 				throw err;
 			}
 			upload.state = 'ready';
+			upload.lastActivityAt = Date.now();
 			console.log(`[API] Upload stored: ${upload.path} (${upload.written} bytes)`);
 			// The path deliberately does not go back to the client. It used to, which
 			// meant every authorised socket could learn the temp directory and then
@@ -362,5 +425,14 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 		rmSync(uploadDir, { recursive: true, force: true });
 	}
 
-	return { begin, chunk, end, abort, withFile, closeClient, wipe };
+	// Unreferenced so a node with nothing to do can still exit; the sweep is
+	// housekeeping and never a reason to keep the process alive.
+	const sweepTimer = sweepIntervalMs > 0 ? setInterval(() => void sweep(), sweepIntervalMs) : null;
+	sweepTimer?.unref?.();
+
+	function stop(): void {
+		if (sweepTimer) clearInterval(sweepTimer);
+	}
+
+	return { begin, chunk, end, abort, withFile, closeClient, wipe, stop, sweep };
 }

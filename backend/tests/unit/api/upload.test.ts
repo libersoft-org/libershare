@@ -1,5 +1,5 @@
 import { describe, expect, it, afterAll } from 'bun:test';
-import { readdir, rm } from 'fs/promises';
+import { mkdir, readdir, rm, utimes } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { BinaryFrameError, MAX_BINARY_HEADER_SIZE, decodeBinaryRequest } from '../../../src/api/api.ts';
@@ -296,6 +296,84 @@ describe('upload lifecycle races', () => {
 		await writing;
 		expect(await entriesAfterSettle(uploadDir)).toEqual([]);
 	});
+});
+
+describe('upload sweep', () => {
+	/** Handlers with the timer off, so a sweep only happens when a test asks for one. */
+	function sweepHandlers(limits: UploadLimits): { handlers: ReturnType<typeof initUploadHandlers>; uploadDir: string } {
+		const dataDir = join(tmpdir(), `lish-upload-sweep-${crypto.randomUUID()}`);
+		tempDirs.push(dataDir);
+		return { handlers: initUploadHandlers(dataDir, { sweepIntervalMs: 0, ...limits }), uploadDir: join(dataDir, 'tmp') };
+	}
+
+	/** Push a file's mtime well past any cutoff a test sets. */
+	async function backdate(path: string): Promise<void> {
+		const longAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+		await utimes(path, longAgo, longAgo);
+	}
+
+	it('keeps an active upload whose file is older than the cutoff', async () => {
+		const { handlers, uploadDir } = sweepHandlers({ idleMs: 60_000, maxAgeMs: 60_000 });
+		const client = {};
+		const { uploadID } = await handlers.begin({ name: 'paused.lish' }, client);
+		await handlers.chunk({ uploadID, data: pattern(1024) }, client);
+		// An upload can sit paused for longer than the cutoff. The old sweep judged
+		// purely by mtime, so it would delete this file out from under an open
+		// writer while the record was still in the map.
+		const [name] = await readdir(uploadDir);
+		await backdate(join(uploadDir, name!));
+
+		await handlers.sweep();
+		expect(await readdir(uploadDir)).toEqual([name!]);
+		// Still genuinely usable, not merely still present.
+		expect(await handlers.chunk({ uploadID, data: pattern(1024) }, client)).toEqual({ received: 2048 });
+		handlers.stop();
+	});
+
+	it('expires an upload that has gone quiet for too long', async () => {
+		const { handlers, uploadDir } = sweepHandlers({ idleMs: 0, maxAgeMs: 60_000 });
+		const client = {};
+		const { uploadID } = await handlers.begin({ name: 'forgotten.lish' }, client);
+		await handlers.chunk({ uploadID, data: pattern(1024) }, client);
+		// Idle expiry drops the record, which is what lets the file be removed —
+		// an active path is never swept on age alone.
+		await handlers.sweep();
+		expect(await readdir(uploadDir)).toEqual([]);
+		await expect(handlers.chunk({ uploadID, data: pattern(16) }, client)).rejects.toThrow(ErrorCodes.UPLOAD_NOT_FOUND);
+		handlers.stop();
+	});
+
+	it('removes a file no upload record owns', async () => {
+		const { handlers, uploadDir } = sweepHandlers({ idleMs: 60_000, maxAgeMs: 60_000 });
+		const client = {};
+		// One real upload to create the directory, then an orphan beside it — the
+		// residue of a killed process or a lost reply.
+		const { uploadID } = await handlers.begin({ name: 'live.lish' }, client);
+		await handlers.chunk({ uploadID, data: pattern(64) }, client);
+		const orphan = join(uploadDir, 'orphan.lish');
+		await Bun.write(orphan, 'left behind');
+		await backdate(orphan);
+
+		await handlers.sweep();
+		expect(await Bun.file(orphan).exists()).toBe(false);
+		// The live upload is untouched.
+		expect((await readdir(uploadDir)).length).toBe(1);
+		handlers.stop();
+	});
+
+	it('runs on its own timer rather than only when a transfer starts', async () => {
+		const { handlers, uploadDir } = sweepHandlers({ maxAgeMs: 60_000, sweepIntervalMs: 50 });
+		// Nothing else will ever touch this node: with the sweep tied to the next
+		// upload.begin, this file would sit here until the process restarted.
+		await mkdir(uploadDir, { recursive: true });
+		const stale = join(uploadDir, 'stale.lish');
+		await Bun.write(stale, 'forgotten');
+		await backdate(stale);
+
+		for (let attempt = 0; attempt < 100 && (await readdir(uploadDir)).length > 0; attempt++) await Bun.sleep(20);
+		expect(await readdir(uploadDir)).toEqual([]);
+		handlers.stop();
+	}, 30000);
 });
 
 describe('chunked upload over the websocket', () => {
