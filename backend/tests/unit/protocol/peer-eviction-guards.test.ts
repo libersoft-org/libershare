@@ -523,11 +523,13 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		installBootstrapRegistry(network, []);
 		(network as any).bootstrapGeneration = new Map();
-		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
+		(network as any).redialBackoff = new Map();
+		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {}, deleteDiscoveredByPeerID() {} };
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
 			getPeers: () => [],
 			getConnections: () => [],
+			async hangUp(): Promise<void> {},
 			async dial(ma: { toString(): string }): Promise<unknown> {
 				dialled.push(ma.toString());
 				// Model the edit landing while the FIRST dial is still in flight.
@@ -536,6 +538,10 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 			},
 			peerStore: {
 				async merge(): Promise<void> {},
+				async get(): Promise<unknown> {
+					throw new Error('not in store');
+				},
+				async delete(): Promise<void> {},
 			},
 		};
 		return { network, dialled };
@@ -614,6 +620,32 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
 		expect(closed).toEqual([]);
 		expect((network as any).configuredBootstrapPeerIDs.has(PEER_ID)).toBe(true);
+	});
+
+	/**
+	 * The write is what outlives the cleanup here: the edit lands while the peerStore
+	 * merge is still pending, so the address and the keep-alive tag are stamped ON TOP
+	 * of a teardown that has already finished. Returning at that point is not enough —
+	 * redial maintenance takes its candidates from the peerStore, so the entry alone
+	 * brings the peer back on the next tick.
+	 */
+	it('takes back a peerStore write the edit overtook', async () => {
+		const closed: string[] = [];
+		const purged: string[] = [];
+		const { network } = bareNetwork();
+		(network as any).node.peerStore.merge = async (): Promise<void> => {
+			(network as any).pruneBootstrapAddresses([ADDR_A], 'net-a');
+			(network as any).bumpBootstrapGeneration('net-a');
+		};
+		(network as any).node.peerStore.delete = async (pid: { toString(): string }): Promise<void> => void purged.push(pid.toString());
+		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => ({
+			remoteAddr: { toString: () => ma.toString() },
+			close: async (): Promise<void> => void closed.push(ma.toString()),
+		});
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
+		expect(purged).toEqual([PEER_ID]);
+		expect(closed).toEqual([ADDR_A]);
+		expect((network as any).configuredBootstrapPeerIDs.has(PEER_ID)).toBe(false);
 	});
 
 	it('keeps a superseded connection a joined network still needs', async () => {

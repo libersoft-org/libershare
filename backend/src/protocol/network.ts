@@ -1975,30 +1975,42 @@ export class Network {
 						await this.disconnectPeer(peerID, networkID);
 						return;
 					}
-					if (superseded()) {
-						// The configuration this dial belonged to was replaced while the dial was
-						// still in flight. Returning alone leaks the connection just opened: the
-						// address may no longer be configured at all, and nothing else closes a
-						// connection nobody asked for. Only keep it when some joined network still
-						// needs the peer — a replaced address does not make its peer unwanted if
-						// another network still lists it.
-						// Asked against the REGISTRY, not the flat configured set: a configured
-						// entry claims that set before its own dial, so consulting it here let
-						// every superseded configured dial declare its own peer "needed" and
-						// keep the connection. The registry claim is released by the very
-						// config change that superseded us, so it answers honestly.
-						if (peerID && !this.isPeerNeededByJoinedNetwork(peerID, true)) {
-							trace(`[NET] bootstrap dial superseded, closing connection: ${peerID.slice(0, 16)}`);
-							// The exemption this iteration claimed up front is stale for the same
-							// reason: no address of the peer is configured any more. Leaving it
-							// would keep the peer un-evictable for the life of the process.
-							this.configuredBootstrapPeerIDs.delete(peerID);
-							try {
-								await conn?.close();
-							} catch {
-								// Already gone — nothing left to close.
-							}
+					// The configuration this dial belonged to was replaced while the dial was
+					// still in flight. Returning alone leaks the connection just opened: the
+					// address may no longer be configured at all, and nothing else closes a
+					// connection nobody asked for. Only keep it when some joined network still
+					// needs the peer — a replaced address does not make its peer unwanted if
+					// another network still lists it.
+					// Asked against the REGISTRY, not the flat configured set: a configured
+					// entry claims that set before its own dial, so consulting it here let
+					// every superseded configured dial declare its own peer "needed" and
+					// keep the connection. The registry claim is released by the very
+					// config change that superseded us, so it answers honestly.
+					//
+					// Shared by both supersede checks: the one before the peerStore write and
+					// the one after it. The second is the reason this undoes rather than just
+					// returns — an edit landing during the merge await leaves the tag and the
+					// address written on top of a cleanup that has already finished.
+					const abandonSuperseded = async (): Promise<void> => {
+						if (!peerID || this.isPeerNeededByJoinedNetwork(peerID, true)) return;
+						trace(`[NET] bootstrap dial superseded, closing connection: ${peerID.slice(0, 16)}`);
+						// The exemption this iteration claimed up front is stale for the same
+						// reason: no address of the peer is configured any more. Leaving it
+						// would keep the peer un-evictable for the life of the process.
+						this.configuredBootstrapPeerIDs.delete(peerID);
+						// Undo the peerStore side too, not just the connection. Redial
+						// maintenance takes its candidates from the peerStore and does not
+						// care about tags, so an address left behind by a merge that landed
+						// after the cleanup is enough on its own to bring the peer back.
+						await this.reconcilePeerAfterBootstrapRemoval(peerID, [ma.toString()], networkID ?? STARTUP_BOOTSTRAP_OWNER);
+						try {
+							await conn?.close();
+						} catch {
+							// Already gone — nothing left to close.
 						}
+					};
+					if (superseded()) {
+						await abandonSuperseded();
 						return;
 					}
 					// The peer answered, so the identity behind this address is real and
@@ -2010,8 +2022,14 @@ export class Network {
 					}
 					// Re-check after the merge await too: stop() may have cleared the
 					// tracker while it was pending, and recordOutcome would otherwise
-					// resurrect a network row for the old (or next) node instance.
-					if (superseded()) return;
+					// resurrect a network row for the old (or next) node instance. The write
+					// above is the older one now, so returning is not enough — it has to be
+					// taken back, or an edit that landed during the merge finds its cleanup
+					// silently overwritten by the tag and address this iteration just wrote.
+					if (superseded()) {
+						await abandonSuperseded();
+						return;
+					}
 					// `force: true` defeats connection REUSE, but not a dial to the same peer
 					// ID already in libp2p's queue: this call joins that job and can be handed
 					// the connection its other address won. For a CONFIGURED entry the row
