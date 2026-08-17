@@ -249,6 +249,15 @@ export class Networks {
 		// if it still subscribes another joined lishnet, or if it is an active circuit
 		// relay we depend on. disconnectPeer is a safe no-op hangUp for an unconnected
 		// peer and always strips keep-alive + suppresses redial.
+		// Address-level cleanup first, because the identity-level loop below cannot do it.
+		// One peer can be configured in two networks under two DIFFERENT addresses; on
+		// leaving the first, `stillConfigured` says the identity is in use elsewhere and
+		// skips its cleanup entirely — so the left network's own address went on counting
+		// as a configured bootstrap: force-dialed by the parked probe, exempt from the
+		// stale sweep, and disagreeing with what the UI shows as configured.
+		const configuredElsewhere = this.configuredBootstrapAddressesElsewhere(id);
+		this.network.pruneBootstrapAddresses(Networks.cleanBootstrapList(this.get(id)?.bootstrapPeers ?? []).filter(address => !configuredElsewhere.has(normalizeMultiaddrForCompare(address))));
+
 		const stillConfigured = this.configuredBootstrapPeerIDsElsewhere(id);
 		for (const pid of this.configuredBootstrapPeerIDsOf(id)) {
 			if (stillConfigured.has(pid)) continue;

@@ -253,6 +253,42 @@ describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 		expect(net.prunedBootstrap).toEqual(['pBootA']); // exemption still pruned
 	});
 
+	/**
+	 * Cleanup keyed on the identity alone cannot express "this peer is configured in both
+	 * networks, under two different addresses". The identity is in use elsewhere, so the
+	 * whole cleanup is skipped and the left network's own address goes on counting as a
+	 * configured bootstrap — dialed by the parked probe and exempt from removal.
+	 */
+	it('drops the left network address of a peer configured elsewhere under another address', async () => {
+		net.topicPeers.set('net-a', []);
+		const networks = makeNetworks(net, ['net-a', 'net-b'], {
+			'net-a': ['/ip4/192.0.2.1/tcp/9090/p2p/pShared'],
+			'net-b': ['/ip4/192.0.2.2/tcp/9090/p2p/pShared'],
+		});
+		await leave(networks, 'net-a');
+		expect(net.prunedAddresses).toEqual([['/ip4/192.0.2.1/tcp/9090/p2p/pShared']]);
+		expect(net.prunedBootstrap).toEqual([]); // the identity itself is still configured
+	});
+
+	it('keeps an address the still-joined network configures identically', async () => {
+		net.topicPeers.set('net-a', []);
+		const networks = makeNetworks(net, ['net-a', 'net-b'], {
+			'net-a': ['/ip4/192.0.2.1/tcp/9090/p2p/pShared'],
+			'net-b': ['/ip4/192.0.2.1/tcp/9090/p2p/pShared'],
+		});
+		await leave(networks, 'net-a');
+		expect(net.prunedAddresses).toEqual([[]]);
+	});
+
+	it('drops every address of a network left with nothing else configured', async () => {
+		net.topicPeers.set('net-a', []);
+		const networks = makeNetworks(net, ['net-a'], {
+			'net-a': ['/ip4/192.0.2.1/tcp/9090/p2p/pOnlyA', '/ip4/192.0.2.2/tcp/9090/p2p/pAlsoA'],
+		});
+		await leave(networks, 'net-a');
+		expect(net.prunedAddresses).toEqual([['/ip4/192.0.2.1/tcp/9090/p2p/pOnlyA', '/ip4/192.0.2.2/tcp/9090/p2p/pAlsoA']]);
+	});
+
 	it('keeps a left-lishnet bootstrap peer that is still an active circuit relay', async () => {
 		net.topicPeers.set('net-a', []);
 		net.bootstrapOrRelay.add('pRelayNode'); // still relaying another connection
