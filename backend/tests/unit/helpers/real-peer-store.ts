@@ -37,12 +37,43 @@ export class FaultyDatastore extends MemoryDatastore {
 	/** Reads to let through before the next one fails, or `null` for no armed fault. */
 	private goodReadsLeft: number | null = null;
 
+	/** Reads to let through before the next one finds its key gone, or `null` for none. */
+	private readsBeforeVanish: number | null = null;
+
+	/** Every `put()` this store has been asked to make. */
+	writes = 0;
+
 	/** Arm a single read failure, after `skip` further reads have succeeded. */
 	failReadAfter(skip: number): void {
 		this.goodReadsLeft = skip;
 	}
 
+	/**
+	 * Arm a single read that finds its record deleted, after `skip` further reads.
+	 *
+	 * The record really is removed, so the read raises the datastore's own
+	 * `NotFoundError` — the same thing `all()` cleaning up an expired snapshot or a TTL
+	 * boundary crossed mid-call produces, and not a synthetic error the code could tell
+	 * apart from the genuine one.
+	 */
+	vanishReadAfter(skip: number): void {
+		this.readsBeforeVanish = skip;
+	}
+
+	override put(key: any, val: any, options?: any): any {
+		this.writes++;
+		return super.put(key, val, options);
+	}
+
 	override get(key: any, options?: any): any {
+		if (this.readsBeforeVanish !== null) {
+			if (this.readsBeforeVanish === 0) {
+				this.readsBeforeVanish = null;
+				super.delete(key, options);
+			} else {
+				this.readsBeforeVanish--;
+			}
+		}
 		if (this.goodReadsLeft !== null) {
 			if (this.goodReadsLeft === 0) {
 				this.goodReadsLeft = null;
@@ -70,8 +101,8 @@ export function createEmptyPeerStore(datastore: any = new MemoryDatastore()): an
 }
 
 /** An empty store plus `addresses` written for `peerID`. */
-export async function createRealPeerStore(peerID: string, addresses: readonly string[] = []): Promise<IRealPeerStore> {
-	const store = createEmptyPeerStore();
+export async function createRealPeerStore(peerID: string, addresses: readonly string[] = [], datastore: any = new MemoryDatastore()): Promise<IRealPeerStore> {
+	const store = createEmptyPeerStore(datastore);
 	const pid = peerIdFromString(peerID);
 	if (addresses.length > 0) await store.patch(pid, { multiaddrs: addresses.map(a => multiaddr(a)) });
 	return { store, pid };

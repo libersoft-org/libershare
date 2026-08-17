@@ -1055,9 +1055,9 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 	const BAD = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
 	const GOOD = `/ip4/198.51.100.7/tcp/9090/p2p/${PEER_ID}`;
 
-	async function bareNetwork(stored: string[]) {
+	async function bareNetwork(stored: string[], datastore?: any) {
 		const purged: string[] = [];
-		const real = await createRealPeerStore(PEER_ID, stored);
+		const real = await createRealPeerStore(PEER_ID, stored, datastore ?? new MemoryDatastore());
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
@@ -1124,6 +1124,23 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 		};
 		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
 		expect(purged).toEqual([]);
+	});
+
+	/**
+	 * The record disappearing between the trim's read and its write leaves the peer's
+	 * real address set unknown, exactly like a read error does — and "unknown" is the
+	 * one answer this path may not turn into a purge of the whole record.
+	 */
+	it('does not purge when the record vanishes mid-trim', async () => {
+		const datastore = new FaultyDatastore();
+		const { network, purged } = await bareNetwork([BAD], datastore);
+		const writes = datastore.writes;
+		// Nothing between arming and the trim reads the datastore, so the removal's own
+		// load() is the first read and the one inside the write is the second.
+		datastore.vanishReadAfter(1);
+		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
+		expect(purged).toEqual([]);
+		expect(datastore.writes).toBe(writes);
 	});
 
 	/** A peer genuinely absent from the store is still an answer, and still purgeable. */
@@ -1686,7 +1703,7 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 		const { store } = await realPeerStore();
 		expect(typeof (store as any).store?.getWriteLock).toBe('function');
 		expect(typeof (store as any).store?.load).toBe('function');
-		expect(typeof (store as any).store?.patch).toBe('function');
+		expect(typeof (store as any).store?.patchExisting).toBe('function');
 		expect(typeof (store as any).events?.safeDispatchEvent).toBe('function');
 	});
 
@@ -1725,6 +1742,35 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 		datastore.failReadAfter(1);
 		await expect((network as any).removePeerStoreAddresses(pid, (a: string) => a.includes('203.0.113.22'))).rejects.toThrow('datastore read failed');
 		expect(await store.get(pid)).toEqual(before);
+	});
+
+	/**
+	 * A genuine NotFound from that hidden second read is not "this peer is new" either.
+	 * The first read found the record, so its disappearance means a path this lock does
+	 * not cover removed it — the `all()` cleanup, or the record crossing its TTL boundary
+	 * mid-call. Upserting there rebuilds the peer out of the addresses this call happens
+	 * to hold and nothing else, so the survivors come back without protocols, tags,
+	 * public key or signed peer record.
+	 */
+	it('writes nothing when the record vanishes inside the write', async () => {
+		const datastore = new FaultyDatastore();
+		const store = createEmptyPeerStore(datastore);
+		const pid = peerIdFromString(PEER_ID);
+		const other = `/ip4/203.0.113.22/tcp/9090/p2p/${PEER_ID}`;
+		await store.patch(pid, {
+			addresses: [
+				{ multiaddr: multiaddr(ADDR), isCertified: true },
+				{ multiaddr: multiaddr(other), isCertified: false },
+			],
+			tags: { [KEEP_ALIVE]: { value: 1 } },
+		});
+		const network = networkOver(store);
+		const writes = datastore.writes;
+		// The removal's own load() is the first read; the one inside the write is the
+		// second, and it finds the record really gone rather than a synthetic error.
+		datastore.vanishReadAfter(1);
+		await expect((network as any).removePeerStoreAddresses(pid, (a: string) => a.includes('203.0.113.22'))).rejects.toThrow('was removed while its record was being updated');
+		expect(datastore.writes).toBe(writes);
 	});
 
 	/** No lock, no removal: the callers act destructively on the result. */
