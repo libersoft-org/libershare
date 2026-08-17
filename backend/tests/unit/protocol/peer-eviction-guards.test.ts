@@ -147,6 +147,99 @@ describe('purgeStalePeer — healing a purge that raced a connection', () => {
 });
 
 /**
+ * The purge deletes a peer's WHOLE record, and an inbound connection can land while it is
+ * closing the old ones. Healing then rebuilt the entry out of the live connections and a
+ * keep-alive tag, so a record that had been complete a moment earlier came back without its
+ * protocols, metadata, other tags, public key or signed peer record — and with its
+ * addresses uncertified, which downgrades a signed record to hearsay. Exactly the
+ * partial-overwrite the address trim was fixed not to do.
+ */
+describe('purgeStalePeer — a record must survive a connection racing the delete', () => {
+	const CERTIFIED = `/ip4/203.0.113.51/tcp/9090/p2p/${PEER_ID}`;
+	const PLAIN = `/ip4/203.0.113.52/tcp/9090/p2p/${PEER_ID}`;
+	const LIVE = `/ip4/203.0.113.53/tcp/9090/p2p/${PEER_ID}`;
+	const ENVELOPE = Uint8Array.from([1, 2, 3, 4]);
+
+	/**
+	 * A peerStore holding everything a partial rewrite loses, and a node whose connection
+	 * list is empty for `blindCalls` reads and live from then on.
+	 *
+	 * That counter is the barrier. The purge asks three times — before closing the old
+	 * connections, again under the write lock, and once more after releasing it — so
+	 * `blindCalls` places the arriving connection either inside the lock's window or after
+	 * it, which are the two orderings that decide whether the record is deleted at all.
+	 */
+	async function bareNetwork(blindCalls: number) {
+		const real = await createRealPeerStore(PEER_ID);
+		await real.store.patch(real.pid, {
+			addresses: [
+				{ multiaddr: multiaddr(CERTIFIED), isCertified: true },
+				{ multiaddr: multiaddr(PLAIN), isCertified: false },
+			],
+			protocols: ['/lish/1.0.0'],
+			metadata: { region: Uint8Array.from([7]) },
+			tags: { [KEEP_ALIVE]: { value: 1 }, 'keep-alive-fleet': { value: 50 } },
+			peerRecordEnvelope: ENVELOPE,
+		});
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).pubsub = { direct: new Set<string>() };
+		installBootstrapRegistry(network, []);
+		let reads = 0;
+		(network as any).node = {
+			getConnections: () => (reads++ < blindCalls ? [] : [{ remoteAddr: multiaddr(LIVE), async close(): Promise<void> {} }]),
+			peerStore: real.store,
+		};
+		return { network, real };
+	}
+
+	/** Everything about the record that a rebuild-from-connections would throw away. */
+	async function fullRecord(real: { store: any; pid: any }) {
+		const peer = await real.store.get(real.pid);
+		return {
+			addresses: peer.addresses.map((a: { multiaddr: { toString(): string }; isCertified: boolean }) => `${a.multiaddr.toString()}${a.isCertified ? ' (certified)' : ''}`).sort(),
+			protocols: peer.protocols,
+			metadata: [...peer.metadata.keys()],
+			tags: [...peer.tags.keys()].sort(),
+			envelope: peer.peerRecordEnvelope,
+		};
+	}
+
+	it('does not delete a record whose peer is connected again by the time the lock is taken', async () => {
+		// The connection lands while the old ones are closing: under the write lock the peer
+		// reads as alive, so there is nothing to delete and nothing to rebuild.
+		const { network, real } = await bareNetwork(0);
+		const before = await fullRecord(real);
+		await (network as any).purgeStalePeer(PEER_ID, 'test', 1);
+		const after = await fullRecord(real);
+		expect(after.addresses).toEqual([...before.addresses, '/ip4/203.0.113.53/tcp/9090'].sort());
+		expect(after.protocols).toEqual(['/lish/1.0.0']);
+		expect(after.metadata).toEqual(['region']);
+		expect(after.tags).toEqual([KEEP_ALIVE, 'keep-alive-fleet'].sort());
+		expect(after.envelope).toEqual(ENVELOPE);
+	});
+
+	it('puts the whole record back when the connection lands after the delete', async () => {
+		// Blind for the close loop AND the check under the lock: the record really is
+		// deleted, and only the snapshot taken inside that lock can restore it.
+		const { network, real } = await bareNetwork(2);
+		const before = await fullRecord(real);
+		await (network as any).purgeStalePeer(PEER_ID, 'test', 1);
+		const after = await fullRecord(real);
+		expect(after.addresses).toEqual([...before.addresses, '/ip4/203.0.113.53/tcp/9090'].sort());
+		// None of these can be rebuilt from a connection — losing them is permanent.
+		expect(after.protocols).toEqual(['/lish/1.0.0']);
+		expect(after.metadata).toEqual(['region']);
+		expect(after.tags).toEqual([KEEP_ALIVE, 'keep-alive-fleet'].sort());
+		expect(after.envelope).toEqual(ENVELOPE);
+	});
+});
+
+/**
  * A peer whose every stored address is rejected by the dial gater is not proof the peer
  * is gone — a LAN/VPN-only peer looks exactly like this the moment our own interface
  * drops. This path must therefore take the same self-online evidence as the
