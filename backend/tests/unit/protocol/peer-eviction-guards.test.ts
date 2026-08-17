@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
-import { Network, isRecoveryDialDue, isSameDialEndpoint, normalizeMultiaddrForCompare } from '../../../src/protocol/network.ts';
+import { Network, isRecoveryDialDue, isSameDialEndpoint, normalizeMultiaddrForCompare, type IBootstrapEntry } from '../../../src/protocol/network.ts';
 import { installBootstrapRegistry, registryAddresses } from '../helpers/bootstrap-registry.ts';
 
 /**
@@ -926,7 +926,7 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 describe('probeParkedConfiguredBootstraps', () => {
 	const PARKED = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
 
-	function bareNetwork(opts: { configured?: boolean; connections?: number } = {}) {
+	function bareNetwork(opts: { configured?: boolean; connections?: number; answerWith?: string } = {}) {
 		const dialed: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
@@ -938,8 +938,12 @@ describe('probeParkedConfiguredBootstraps', () => {
 		installBootstrapRegistry(network, [{ address: PARKED, configuredBy: opts.configured === false ? [] : ['net-a'] }]);
 		(network as any).node = {
 			getConnections: () => Array.from({ length: opts.connections ?? 0 }, () => ({})),
-			async dial(ma: { toString(): string }): Promise<void> {
+			// `answerWith` models libp2p coalescing this dial into a job another address of
+			// the same peer already had in flight: the call resolves, but with a connection
+			// that proves nothing about the address we asked about.
+			async dial(ma: { toString(): string }): Promise<unknown> {
 				dialed.push(ma.toString());
+				return { remoteAddr: multiaddr(opts.answerWith ?? ma.toString()) };
 			},
 		};
 		return { network, dialed };
@@ -977,6 +981,23 @@ describe('probeParkedConfiguredBootstraps', () => {
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set([PEER_ID])]]);
 		await run(network);
 		expect(dialed).toEqual([]);
+	});
+
+	it('marks the address verified when the connection is on that endpoint', async () => {
+		const { network } = bareNetwork();
+		await run(network);
+		const entry = (network as any).bootstrapByAddress.get(normalizeMultiaddrForCompare(PARKED)) as IBootstrapEntry;
+		expect(entry.lastVerifiedAt).not.toBe(null);
+	});
+
+	it('does not mark it verified when a sibling address answered instead', async () => {
+		// libp2p coalesces dials by peer ID. Taking any resolved dial as proof turned a
+		// dead configured address green and cleared the backoff that paces it.
+		const { network } = bareNetwork({ answerWith: `/ip4/198.51.100.7/tcp/9090/p2p/${PEER_ID}` });
+		await run(network);
+		const key = normalizeMultiaddrForCompare(PARKED);
+		expect(((network as any).bootstrapByAddress.get(key) as IBootstrapEntry).lastVerifiedAt).toBe(null);
+		expect((network as any).recoveryBackoff.get(key).failCount).toBe(1);
 	});
 });
 

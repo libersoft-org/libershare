@@ -1387,14 +1387,22 @@ export class Network {
 			attempted++;
 			try {
 				console.log(`   → Dialing ${maStr}`);
-				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
+				const conn = await node.dial(ma, { signal: AbortSignal.timeout(10000) });
 				console.log(`   ✓ Connected via ${maStr}`);
 				// Same fence the failure branch already had. A dial owns the node for up
 				// to ten seconds, and a stop()/start() inside that window makes this the
 				// old run's result: the canonical key is stable across runs, so writing it
 				// would refresh the TTL and clear the backoff of the NEW run's entry.
 				if (epoch !== this.runEpoch || node !== this.node) return;
-				this.markBootstrapAddressVerified(ma);
+				// libp2p coalesces dials by peer ID, so this call can be handed the
+				// connection a SIBLING address won — which is why addBootstrapPeers reads
+				// verification off the result rather than off the dial resolving. Recovery
+				// took any resolved dial as proof and so refreshed the TTL and cleared the
+				// backoff of an endpoint nothing had ever answered on. We are connected
+				// either way, which is the whole point of this loop, so it still stops
+				// here; only the claim about THIS address is withheld.
+				if (isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString())) this.markBootstrapAddressVerified(ma);
+				else trace(`[NET] recovery connected on another address of the same peer — ${maStr} left unverified`);
 				break;
 			} catch (err: any) {
 				console.log(`   ✗ Failed ${maStr}: ${err.message ?? err}`);
@@ -1447,8 +1455,18 @@ export class Network {
 				continue; // unparseable id — nothing sane to probe
 			}
 			try {
-				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
-				if (epoch !== this.runEpoch) return;
+				// `force` for the reason a configured entry forces in addBootstrapPeers: the
+				// question this probe asks is whether THIS endpoint works, and without it
+				// libp2p may answer with a connection it already holds to the same peer.
+				const conn = await node.dial(ma, { force: true, signal: AbortSignal.timeout(10000) });
+				if (epoch !== this.runEpoch || node !== this.node) return;
+				if (!isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString())) {
+					// A sibling address answered. Nothing about this one is proved, so it keeps
+					// its pacing instead of quietly going green and having its TTL refreshed.
+					this.recoveryBackoff.set(key, nextRecoveryBackoff(this.recoveryBackoff.get(key)?.failCount ?? 0, Date.now(), true));
+					trace(`[NET] parked configured bootstrap answered on another address: ${ma.toString()}`);
+					continue;
+				}
 				this.markBootstrapAddressVerified(ma);
 				console.log(`[NET] parked configured bootstrap reachable again: ${ma.toString()}`);
 			} catch (err: any) {

@@ -213,6 +213,16 @@ describe('Network.runZeroConnectionRecovery — per-address pacing', () => {
 		expect(((network as any).bootstrapByAddress.get(key(ADDR_A)) as IBootstrapEntry).lastVerifiedAt).toBe(null);
 	});
 
+	it('does not mark an address verified when a sibling endpoint answered', async () => {
+		// libp2p coalesces dials of one peer ID, so a resolved dial is not proof about
+		// the address it was asked for — addBootstrapPeers reads the result for exactly
+		// that reason, recovery did not and turned a dead endpoint green.
+		const { network, run } = bareNetwork({ seeds: [{ address: ADDR_A }] });
+		(network as any).node.dial = async (): Promise<unknown> => ({ remoteAddr: multiaddr(ADDR_A2) });
+		await run();
+		expect(((network as any).bootstrapByAddress.get(key(ADDR_A)) as IBootstrapEntry).lastVerifiedAt).toBe(null);
+	});
+
 	it('clears the address backoff after a successful dial', async () => {
 		const { network, run } = bareNetwork({ seeds: [{ address: ADDR_A }] });
 		(network as any).recoveryBackoff.set(key(ADDR_A), { nextAttempt: Date.now() - 1, failCount: 3 });
