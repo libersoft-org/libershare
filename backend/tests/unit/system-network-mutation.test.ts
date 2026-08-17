@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
-import { applyIPv4, connectWifi, ipv4EditObjection, isCapabilityProbeStale, networkStateGeneration, readNetworkStateUnlocked, readSettledNetworkState, resetNetworkStateCache, runHostMutation, withVolatileCapabilities } from '../../src/system-network.ts';
+import { applyIPv4, connectWifi, ipv4EditObjection, isCapabilityProbeStale, networkStateGeneration, readCapabilities, readNetworkStateUnlocked, readSettledNetworkState, resetCapabilityProbe, resetNetworkStateCache, runHostMutation, withVolatileCapabilities } from '../../src/system-network.ts';
 import { windowsIPv4Objection } from '../../src/system-network-windows.ts';
-import { CodedError, ErrorCodes, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
+import { CodedError, ErrorCodes, validateIPv4Config, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
 
 /**
  * A host reconfiguration is several platform commands and is not atomic, while
@@ -152,6 +152,60 @@ describe('withVolatileCapabilities', () => {
 				})
 			).toBe(remembered);
 		}
+	});
+});
+
+/**
+ * What every caller gets while the answer is being re-established.
+ *
+ * The TTL that lets the Linux verdict expire also means several callers can find
+ * it stale at the same moment — the 5 s read cadence, a settings screen opening,
+ * an apply establishing its premise. Each of them used to run its own probe, and
+ * the one that FINISHED last stored its answer regardless of which had started
+ * first.
+ */
+describe('readCapabilities', () => {
+	const answer = { ipv4: true, wifi: true, staticGatewayRequired: false } as const;
+
+	it('runs one probe for every caller that finds the answer stale', async () => {
+		resetCapabilityProbe();
+		let probes = 0;
+		const probe = async (): Promise<NetCapabilities> => {
+			probes++;
+			await new Promise(resolve => setTimeout(resolve, 20));
+			return answer;
+		};
+		const results = await Promise.all([readCapabilities('linux', probe), readCapabilities('linux', probe), readCapabilities('linux', probe)]);
+		expect(probes).toBe(1);
+		for (const result of results) expect(result).toEqual(answer);
+		resetCapabilityProbe();
+	});
+
+	// A slow probe that fails must not become the remembered answer just because a
+	// quicker one started after it: with one probe in flight there is no later
+	// answer for an older one to overwrite, and a failure is not remembered at all.
+	it('forgets a failed probe instead of remembering it for the whole TTL', async () => {
+		resetCapabilityProbe();
+		await expect(
+			readCapabilities('linux', async () => {
+				throw new Error('nmcli is not there yet');
+			})
+		).rejects.toThrow('nmcli is not there yet');
+		expect(await readCapabilities('linux', async () => answer)).toEqual(answer);
+		resetCapabilityProbe();
+	});
+
+	it('asks again only once the remembered answer has aged out', async () => {
+		resetCapabilityProbe();
+		let probes = 0;
+		const probe = async (): Promise<NetCapabilities> => {
+			probes++;
+			return answer;
+		};
+		await readCapabilities('linux', probe);
+		await readCapabilities('linux', probe);
+		expect(probes).toBe(1);
+		resetCapabilityProbe();
 	});
 });
 

@@ -378,30 +378,70 @@ export function isCapabilityProbeStale(at: number, platform: string): boolean {
 	return platform === 'linux' && Date.now() - at >= CAPABILITIES_TTL_MS;
 }
 
-async function readCapabilities(): Promise<NetCapabilities> {
-	if (capabilities && !isCapabilityProbeStale(capabilities.at, process.platform)) return withVolatileCapabilities(capabilities.value, process.platform, isWindowsWifiConfigurable);
-	if (process.platform === 'win32') {
-		// The Get/Set-Net* cmdlets refuse outright without an elevated token, so the
-		// capability is that token — probed once here rather than discovered by the
-		// user when Save fails. Wi-Fi goes through wlanapi instead, which asks for no
-		// elevation at all, so the two are probed separately.
-		capabilities = { at: Date.now(), value: { ipv4: await isWindowsElevated(), wifi: isWindowsWifiConfigurable(), staticGatewayRequired: false } };
-	} else if (process.platform === 'linux') {
-		const managed = await isLinuxWritable();
-		capabilities = { at: Date.now(), value: { ipv4: managed, wifi: managed, staticGatewayRequired: false } };
-	} else if (process.platform === 'darwin') {
-		// networksetup persists a change and is present on every macOS install, so
-		// addressing is editable. Wi-Fi is not: see isMacWifiConfigurable. The
-		// gateway requirement is macOS's alone — `-setmanual` takes the router as a
-		// mandatory value, and the form has to know that before the user presses Save.
-		capabilities = { at: Date.now(), value: { ipv4: await isMacWritable(), wifi: isMacWifiConfigurable(), staticGatewayRequired: true } };
-	} else {
-		// Everything else reads through os.networkInterfaces(), which cannot even
-		// report whether an address came from DHCP. Offering to edit a configuration
-		// we cannot describe would be worse than not offering it.
-		capabilities = { at: Date.now(), value: { ipv4: false, wifi: false, staticGatewayRequired: false } };
+/**
+ * The probe currently running, shared by every caller that found the answer stale.
+ *
+ * Without it, each of the concurrent callers that arrive once the Linux TTL has
+ * expired ran its own `nmcli` probe, and the last one to FINISH stored its answer
+ * whichever had started first. A transient failure racing a success could
+ * therefore land last and pin `ipv4: false, wifi: false` — the whole settings
+ * screen greyed out — for the next minute. One probe, one answer, everybody gets
+ * it.
+ *
+ * No generation token goes with it, because nothing invalidates a probe
+ * explicitly: it expires on age alone, so the single probe in flight is always the
+ * newest one there is.
+ */
+let capabilitiesInFlight: Promise<NetCapabilities> | null = null;
+
+/**
+ * What this host lets the app change, remembered per {@link capabilities}.
+ *
+ * `platform` and `probe` are parameters so a test can drive the staleness and
+ * single-flight behaviour of a platform it is not running on; production passes
+ * neither.
+ */
+export function readCapabilities(platform: string = process.platform, probe: (target: string) => Promise<NetCapabilities> = probeCapabilities): Promise<NetCapabilities> {
+	if (capabilities && !isCapabilityProbeStale(capabilities.at, platform)) return Promise.resolve(withVolatileCapabilities(capabilities.value, platform, isWindowsWifiConfigurable));
+	if (!capabilitiesInFlight) {
+		capabilitiesInFlight = probe(platform)
+			.then(value => {
+				capabilities = { at: Date.now(), value };
+				return value;
+			})
+			.finally(() => {
+				capabilitiesInFlight = null;
+			});
 	}
-	return capabilities.value;
+	return capabilitiesInFlight;
+}
+
+/** Drop the remembered probe, so a test cannot inherit one another case installed. */
+export function resetCapabilityProbe(): void {
+	capabilities = null;
+	capabilitiesInFlight = null;
+}
+
+/** Ask the host itself, once. */
+async function probeCapabilities(platform: string): Promise<NetCapabilities> {
+	// The Get/Set-Net* cmdlets refuse outright without an elevated token, so the
+	// capability is that token — probed here rather than discovered by the user when
+	// Save fails. Wi-Fi goes through wlanapi instead, which asks for no elevation at
+	// all, so the two are probed separately.
+	if (platform === 'win32') return { ipv4: await isWindowsElevated(), wifi: isWindowsWifiConfigurable(), staticGatewayRequired: false };
+	if (platform === 'linux') {
+		const managed = await isLinuxWritable();
+		return { ipv4: managed, wifi: managed, staticGatewayRequired: false };
+	}
+	// networksetup persists a change and is present on every macOS install, so
+	// addressing is editable. Wi-Fi is not: see isMacWifiConfigurable. The gateway
+	// requirement is macOS's alone — `-setmanual` takes the router as a mandatory
+	// value, and the form has to know that before the user presses Save.
+	if (platform === 'darwin') return { ipv4: await isMacWritable(), wifi: isMacWifiConfigurable(), staticGatewayRequired: true };
+	// Everything else reads through os.networkInterfaces(), which cannot even report
+	// whether an address came from DHCP. Offering to edit a configuration we cannot
+	// describe would be worse than not offering it.
+	return { ipv4: false, wifi: false, staticGatewayRequired: false };
 }
 
 /** True when this process can actually run the privileged cmdlets. One spawn, cached with the capabilities. */
