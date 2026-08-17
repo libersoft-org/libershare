@@ -286,15 +286,20 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 
 	function begin(p: { name?: string }, client: unknown): Promise<{ uploadID: string }> {
 		return exclusive(client, async () => {
-			let open = 0;
-			for (const upload of uploads.values()) if (upload.client === client) open++;
-			if (open >= MAX_CONCURRENT_UPLOADS) throw new CodedError(ErrorCodes.TOO_MANY_UPLOADS, String(MAX_CONCURRENT_UPLOADS));
-			if (uploads.size >= maxTotalUploads) throw new CodedError(ErrorCodes.UPLOAD_QUOTA_EXCEEDED, String(maxTotalUploads));
 			await mkdir(uploadDir, { recursive: true });
 			// The socket can close while the await above runs, and `closeClient`
 			// would have found nothing to clean up. Registering the upload now would
 			// leave one owned by a dead socket that nobody can finish or abort.
 			if (isGone(client)) throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, 'client disconnected');
+			// Nothing below may await. The ceilings used to be read before the mkdir
+			// above, and the per-socket gate does not reach across sockets: at one
+			// short of the global cap every concurrent begin passed the check, stalled
+			// on the mkdir together and then all inserted. Checking and inserting in
+			// one synchronous run is what makes the cap a cap.
+			let open = 0;
+			for (const upload of uploads.values()) if (upload.client === client) open++;
+			if (open >= MAX_CONCURRENT_UPLOADS) throw new CodedError(ErrorCodes.TOO_MANY_UPLOADS, String(MAX_CONCURRENT_UPLOADS));
+			if (uploads.size >= maxTotalUploads) throw new CodedError(ErrorCodes.UPLOAD_QUOTA_EXCEEDED, String(maxTotalUploads));
 			const uploadID = randomUUID();
 			const path = join(uploadDir, uploadFileName(p.name ?? 'upload'));
 			uploads.set(uploadID, { path, writer: Bun.file(path).writer(), written: 0, client, state: 'receiving', lastActivityAt: Date.now() });

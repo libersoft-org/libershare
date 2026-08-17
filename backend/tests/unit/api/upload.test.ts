@@ -855,6 +855,31 @@ describe('chunked upload over the websocket', () => {
 		}
 	}, 30000);
 
+	it('does not let concurrent begins on separate sockets overshoot the global cap', async () => {
+		const srv = startUploadServer({ maxTotalUploads: 4 });
+		const filler = new WsClient(srv.url, () => {});
+		const racers = [new WsClient(srv.url, () => {}), new WsClient(srv.url, () => {}), new WsClient(srv.url, () => {}), new WsClient(srv.url, () => {}), new WsClient(srv.url, () => {})];
+		try {
+			// One short of the cap, so exactly one of the racers below may win.
+			for (let i = 0; i < 3; i++) await filler.call('upload.begin', { name: `f${i}.lish` });
+			// Connect first: a begin that is still opening its socket is not racing
+			// the others, and the window under test is between the check and the insert.
+			await Promise.all(racers.map(client => client.call('upload.abort', { uploadID: 'warm-up' })));
+			// The per-socket gate cannot see across sockets, so this is the case the
+			// global cap has to survive on its own.
+			const results = await Promise.allSettled(racers.map((client, i) => client.call<{ uploadID: string }>('upload.begin', { name: `r${i}.lish` })));
+			expect(results.filter(r => r.status === 'fulfilled').length).toBe(1);
+			for (const r of results) {
+				if (r.status === 'rejected') expect((r.reason as any).code).toBe(ErrorCodes.UPLOAD_QUOTA_EXCEEDED);
+			}
+			expect((await readdir(srv.uploadDir)).length).toBe(4);
+		} finally {
+			filler.stopReconnect();
+			for (const client of racers) client.stopReconnect();
+			srv.stop();
+		}
+	}, 30000);
+
 	it('parses one import at a time however many clients ask at once', async () => {
 		const srv = startUploadServer();
 		const clients = [new WsClient(srv.url, () => {}), new WsClient(srv.url, () => {}), new WsClient(srv.url, () => {})];
