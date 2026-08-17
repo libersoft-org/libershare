@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, type PlatformStatusReader, readNtpUnitsList, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
-import { canConvertTimezoneId, ianaToWindowsTimezoneId } from '../../src/system-time-windows.ts';
+import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
 // ---------------------------------------------------------------------------
@@ -1007,73 +1007,78 @@ describe('setSystemNtpServer', () => {
 });
 
 describe('readWindowsPolicyManaged', () => {
-	/** What `reg query` prints for both a missing key and a denied one — the exit code is 1 either way. */
-	const NOT_FOUND: RunOutcome = { kind: 'failed', code: 1, output: 'ERROR: The system was unable to find the specified registry key or value.\r\n' };
+	/** The root of the branch, which is the one question that cannot miss a subkey. */
+	const POLICY_ROOT = 'SOFTWARE\\Policies\\Microsoft\\W32Time';
 
-	/**
-	 * Answer each `reg query <key>` from a map; anything not listed is a key that is not
-	 * there. `HKLM\SOFTWARE\Policies` reads by default, as it does on a real host — the
-	 * control that makes a "not found" on the W32Time branch believable.
-	 */
-	function registry(present: Record<string, RunOutcome>): { exec: CommandRunner; keys: string[] } {
+	/** Answer the probe from a map; anything not listed is a key that is genuinely not there. */
+	function registry(states: Record<string, RegistryKeyState>): { probe: RegistryKeyProbe; keys: string[] } {
 		const keys: string[] = [];
-		const answers: Record<string, RunOutcome> = { 'HKLM\\SOFTWARE\\Policies': { kind: 'ok', output: '\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\r\n' }, ...present };
-		const exec: CommandRunner = async (_cmd, args) => {
-			const key = args[args.length - 1] ?? '';
-			keys.push(key);
-			return answers[key] ?? NOT_FOUND;
+		const probe: RegistryKeyProbe = subKey => {
+			keys.push(subKey);
+			return states[subKey] ?? 'absent';
 		};
-		return { exec, keys };
+		return { probe, keys };
 	}
 
-	/** The root of the branch, which is the one question that cannot miss a subkey. */
-	const POLICY_ROOT = 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time';
-
-	it('reports an unmanaged host when the policy branch does not exist', async () => {
-		const { exec, keys } = registry({});
-		expect(await readWindowsPolicyManaged(exec)).toBe(false);
-		expect(keys).toContain(POLICY_ROOT);
+	it('reports an unmanaged host when the policy branch does not exist', () => {
+		const { probe, keys } = registry({});
+		expect(readWindowsPolicyManaged(probe)).toBe(false);
+		expect(keys).toEqual([POLICY_ROOT]);
 	});
 
 	/**
-	 * Every subkey a policy can land in reports through its parent. Enumerating a chosen
-	 * few answered "unmanaged" for the rest — `TimeProviders\NtpServer` here, which the
-	 * old list did not name.
+	 * Every subkey a policy can land in reports through its parent, so the root is asked
+	 * rather than a hand-picked list — enumerating a chosen few answered "unmanaged" for
+	 * every branch not on it, `TimeProviders\NtpServer` included.
 	 */
-	it('reports a managed host from a policy branch nobody enumerated', async () => {
-		const { exec } = registry({ [POLICY_ROOT]: { kind: 'ok', output: `\r\n${POLICY_ROOT}\\TimeProviders\\NtpServer\r\n` } });
-		expect(await readWindowsPolicyManaged(exec)).toBe(true);
-	});
-
-	it('reports a managed host from values on the branch itself', async () => {
-		const { exec } = registry({ [POLICY_ROOT]: { kind: 'ok', output: '    MaxPollInterval    REG_DWORD    0xa\r\n' } });
-		expect(await readWindowsPolicyManaged(exec)).toBe(true);
-	});
-
-	/** Fail closed: a branch that could not be read may be the policy about to be overridden. */
-	it('treats an unreadable branch as managed', async () => {
-		for (const outcome of [{ kind: 'failed', code: 5, output: 'ERROR: Access is denied.\r\n' }, { kind: 'missing' }, { kind: 'timeout' }] as RunOutcome[]) {
-			const { exec } = registry({ [POLICY_ROOT]: outcome });
-			expect(await readWindowsPolicyManaged(exec)).toBe(true);
-		}
+	it('reports a managed host when the policy branch is there', () => {
+		const { probe } = registry({ [POLICY_ROOT]: 'present' });
+		expect(readWindowsPolicyManaged(probe)).toBe(true);
 	});
 
 	/**
-	 * The route the exit code cannot close on its own: `reg query` exits 1 for a key it
-	 * may not read exactly as it does for one that is not there, so a denied policy branch
-	 * arrives here spelled "absent". Only the control key tells the two apart — when it is
-	 * denied too, the registry is what is unreadable, not the branch that is empty.
+	 * The case the old `reg query` exit code could not see, and the reason this went to the
+	 * Win32 call: an administrator's policy branch carrying its own ACL. `reg` exits 1 for
+	 * it exactly as it does for a key that is not there — and the parent `HKLM\SOFTWARE\
+	 * Policies` stays readable, so the control key confirmed an "absence" that was really a
+	 * denial and the host was declared ours to stop, disable and reconfigure.
 	 */
-	it('treats a denied read of the policy branch as managed', async () => {
-		const denied: RunOutcome = { kind: 'failed', code: 1, output: 'ERROR: Access is denied.\r\n' };
-		const { exec } = registry({ [POLICY_ROOT]: denied, 'HKLM\\SOFTWARE\\Policies': denied });
-		expect(await readWindowsPolicyManaged(exec)).toBe(true);
+	it('treats a denied policy key as managed even though its parent reads', () => {
+		const { probe } = registry({ [POLICY_ROOT]: 'unreadable', 'SOFTWARE\\Policies': 'present' });
+		expect(readWindowsPolicyManaged(probe)).toBe(true);
 	});
 
-	it('believes an absent branch only once the control key has answered', async () => {
-		const { exec, keys } = registry({});
-		expect(await readWindowsPolicyManaged(exec)).toBe(false);
-		expect(keys).toEqual([POLICY_ROOT, 'HKLM\\SOFTWARE\\Policies']);
+	/** Fail closed on anything short of a proven absence — a missing advapi32 included. */
+	it('treats an unreadable branch as managed', () => {
+		const { probe } = registry({ [POLICY_ROOT]: 'unreadable' });
+		expect(readWindowsPolicyManaged(probe)).toBe(true);
+	});
+});
+
+describe('probeLocalMachineKey', () => {
+	const windows = process.platform === 'win32';
+
+	/**
+	 * The real registry, because the whole fix rests on `RegOpenKeyExW` returning distinct
+	 * codes where `reg.exe` returns 1 for everything. A mock would only re-assert the
+	 * mapping this module already spells out.
+	 *
+	 * `SYSTEM\CurrentControlSet\Services\W32Time` is on every Windows install, and `SECURITY`
+	 * is the standard key that exists and is denied to everything but SYSTEM — which is the
+	 * pair the old exit-code route could not tell apart.
+	 */
+	it.skipIf(!windows)('tells present, absent and denied keys apart', () => {
+		expect(probeLocalMachineKey('SYSTEM\\CurrentControlSet\\Services\\W32Time')).toBe('present');
+		expect(probeLocalMachineKey('SOFTWARE\\LiberShareNoSuchKeyExists')).toBe('absent');
+		// Not `unreadable` outright: run as SYSTEM this key does open. The load-bearing claim
+		// is the one the exit code got wrong — a key that EXISTS is never reported absent.
+		expect(probeLocalMachineKey('SECURITY')).not.toBe('absent');
+	});
+
+	/** Never throws, whatever it is handed and whatever platform it runs on. */
+	it('answers unreadable rather than throwing off Windows or on a bad name', () => {
+		expect(['present', 'absent', 'unreadable']).toContain(probeLocalMachineKey(''));
+		expect(['present', 'absent', 'unreadable']).toContain(probeLocalMachineKey('a'.repeat(500)));
 	});
 });
 

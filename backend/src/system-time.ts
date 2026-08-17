@@ -6,7 +6,7 @@ import { isIP } from 'node:net';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
-import { canConvertTimezoneId, ianaToWindowsTimezoneId } from './system-time-windows.ts';
+import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeLocalMachineKey, type RegistryKeyProbe } from './system-time-windows.ts';
 import type { SystemTimeCapabilities, SystemTimeOutcome, SystemTimeResult, SystemTimeStatus, SystemTimeStep, SystemTimezoneSource } from '@shared';
 
 const execFileAsync = promisify(execFile);
@@ -39,7 +39,8 @@ const W32TIME_PARAMS_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\
 const W32TIME_SERVICE_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time';
 
 /**
- * Root of group policy's own W32Time configuration. When this key exists, an
+ * Root of group policy's own W32Time configuration, relative to `HKEY_LOCAL_MACHINE`
+ * ({@link probeLocalMachineKey} takes the subkey, not a full path). When this key exists, an
  * administrator's policy owns the settings and the values under
  * {@link W32TIME_PARAMS_KEY} need not be the ones in effect — policy values override the
  * local W32Time configuration.
@@ -51,26 +52,7 @@ const W32TIME_SERVICE_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time'
  * not on the list, `TimeProviders\NtpServer` included. A subkey cannot exist without its
  * parent, so the parent is the one question that covers all of them, present and future.
  */
-const W32TIME_POLICY_KEY = 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time';
-
-/**
- * `reg query` exit code for a key that is not there. It is also what a key this process
- * may not read exits with, which is why an exit of 1 is only believed alongside
- * {@link POLICY_CONTROL_KEY}.
- */
-const REG_KEY_NOT_FOUND = 1;
-
-/**
- * A key present on every Windows install, one level above the policy root and reachable
- * by the same permissions. It is the control for a "not found" answer: `reg query` cannot
- * say whether exit 1 means the key is absent or merely unreadable, and the difference is
- * the whole question — an unreadable policy branch is a policy that may well be there.
- *
- * When the control answers, the absence of the W32Time branch is a real absence. When the
- * control does not answer either, this process cannot see that part of the registry and
- * nothing about a policy may be concluded from it, so the host counts as managed.
- */
-const POLICY_CONTROL_KEY = 'HKLM\\SOFTWARE\\Policies';
+const W32TIME_POLICY_KEY = 'SOFTWARE\\Policies\\Microsoft\\W32Time';
 
 /** Platforms with an implemented time backend. Anything else is reported as unsupported. */
 export type SystemPlatform = 'win32' | 'linux' | 'darwin';
@@ -960,33 +942,24 @@ async function readLinuxStatus(): Promise<PlatformStatus> {
 }
 
 /**
- * What one `reg query <policy key>` says about that policy branch.
- *
- * `absent` is only the exit code that means "no such key". Every other failure — `reg`
- * missing, a timeout, an access denied on the branch — is `unreadable`, which is NOT the
- * same answer: a branch we could not read may well be a policy we are about to override.
- */
-export function policyBranchState(outcome: RunOutcome): 'present' | 'absent' | 'unreadable' {
-	if (outcome.kind === 'ok') return 'present';
-	if (outcome.kind === 'failed' && outcome.code === REG_KEY_NOT_FOUND) return 'absent';
-	return 'unreadable';
-}
-
-/**
  * True when group policy owns this host's time configuration — or when that could not be
  * established, which is treated the same way.
  *
  * Failing closed is the whole point: "no policy" lets the application stop, disable and
- * reconfigure W32Time, so it may only be concluded from branches that definitely are not
- * there. An unreadable registry yields a managed host, the capabilities go false and the
- * UI shows the controls as somebody else's to change.
+ * reconfigure W32Time, so it may only be concluded from a branch that DEFINITELY is not
+ * there. Only `absent` is that proof; `present` and `unreadable` alike yield a managed
+ * host, the capabilities go false and the UI shows the controls as somebody else's to
+ * change.
+ *
+ * This used to ask `reg query` and read its exit code. That code cannot carry the answer:
+ * `reg` documents only 0 and 1, and exits 1 both for a key that is absent and for one this
+ * process may not open — so a policy branch carrying its own restrictive ACL, which is
+ * exactly the branch an administrator locks down, arrived here spelled "absent" and the
+ * host was declared ours to reconfigure. Probing the key itself replaces that guess with
+ * the Win32 error code, which distinguishes the two (see {@link probeLocalMachineKey}).
  */
-export async function readWindowsPolicyManaged(exec: CommandRunner = run): Promise<boolean> {
-	if (policyBranchState(await exec('reg', ['query', W32TIME_POLICY_KEY])) !== 'absent') return true;
-	// "Not there" is only believable from a process that can read that part of the registry
-	// at all — see POLICY_CONTROL_KEY. Anything short of a definite `present` here leaves
-	// the branch's absence unproven, which is a managed host.
-	return policyBranchState(await exec('reg', ['query', POLICY_CONTROL_KEY])) !== 'present';
+export function readWindowsPolicyManaged(probe: RegistryKeyProbe = probeLocalMachineKey): boolean {
+	return probe(W32TIME_POLICY_KEY) !== 'absent';
 }
 
 /** The Windows time source and service start type, as read from the registry. */
@@ -1006,7 +979,7 @@ export type WindowsModeReader = () => Promise<WindowsModeState>;
 async function readWindowsMode(): Promise<WindowsModeState> {
 	const type = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'Type']);
 	const start = await tryRead('reg', ['query', W32TIME_SERVICE_KEY, '/v', 'Start']);
-	const policyManaged = await readWindowsPolicyManaged();
+	const policyManaged = readWindowsPolicyManaged();
 	return { mode: parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policyManaged), start: parseWindowsStartMode(start) };
 }
 
