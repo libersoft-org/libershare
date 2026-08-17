@@ -14,8 +14,8 @@ function asBytes(data: Uint8Array): Uint8Array<ArrayBuffer> {
 	return new Uint8Array(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength);
 }
 
-/** HTTP `Content-Encoding` token that corresponds to each compression algorithm. */
-const CONTENT_ENCODING_TOKENS: Record<CompressionAlgorithm, string> = { gzip: 'gzip', brotli: 'br', zstd: 'zstd' };
+/** Compression algorithm each HTTP `Content-Encoding` token names. */
+const CONTENT_ENCODING_ALGORITHMS: Record<string, CompressionAlgorithm> = { gzip: 'gzip', br: 'brotli', zstd: 'zstd' };
 
 export class Utils {
 	static expandHome(path: string): string {
@@ -128,11 +128,12 @@ export class Utils {
 	 * Read a response body into memory, giving up as soon as more than `limit`
 	 * bytes have arrived.
 	 *
-	 * `fetch()` undoes HTTP `Content-Encoding` on the way in, so a few hundred
-	 * kilobytes on the wire can become gigabytes here — and neither the encoding
-	 * header nor `Content-Length` can be trusted to say so in advance. Counting
-	 * the decoded bytes as they stream is the only cap that holds whatever the
-	 * remote server sends; checking a body that is already in memory is not a cap.
+	 * Neither `Content-Length` nor any other header can be trusted to say how much
+	 * a remote server is about to send: it can lie, or send a chunked body with no
+	 * length at all. Counting the bytes as they stream is the only cap that holds;
+	 * checking a body that is already in memory is not a cap. The caller must have
+	 * disabled automatic decompression, or these are post-expansion bytes counted
+	 * after the allocation they were supposed to prevent.
 	 */
 	private static async readBodyCapped(response: Response, limit: number): Promise<Uint8Array<ArrayBuffer>> {
 		if (!response.body) return new Uint8Array(0);
@@ -162,26 +163,48 @@ export class Utils {
 	}
 
 	/**
+	 * Compression algorithm named by an HTTP `Content-Encoding` header, or null when the
+	 * header is absent, empty or `identity`.
+	 *
+	 * Throws for any other value, including a multi-codec list. With automatic
+	 * decompression off we are the only decoder in the path, so a codec we cannot read
+	 * has to be an error — decoding it as text would hand the caller binary garbage.
+	 */
+	private static contentEncodingAlgorithm(header: string | null): CompressionAlgorithm | null {
+		const token = header?.trim().toLowerCase() ?? '';
+		if (token === '' || token === 'identity') return null;
+		const algorithm = CONTENT_ENCODING_ALGORITHMS[token];
+		if (!algorithm) throw new CodedError(ErrorCodes.UNSUPPORTED_DECOMPRESSION, token);
+		return algorithm;
+	}
+
+	/**
 	 * Fetch a URL and return the response body as a string.
 	 * Automatically decompresses compressed URLs (.gz, .br, .zst, …). Throws on non-OK responses.
-	 * The body is capped at {@link MAX_API_MESSAGE_SIZE}, both as it arrives and again on expansion.
+	 * Every expansion on the way is capped at {@link MAX_API_MESSAGE_SIZE}, as are the
+	 * compressed bytes themselves while they arrive.
 	 */
 	static async fetchURL(url: string, timeoutMs: number = 10000): Promise<string> {
 		const controller = new AbortController();
 		const timeout = setTimeout(() => controller.abort(), timeoutMs);
 		try {
-			const response = await fetch(url, { signal: controller.signal });
+			// `decompress: false` keeps Bun from undoing Content-Encoding inside its native
+			// HTTP layer, where no check we write can reach: a few kilobytes of zstd expand to
+			// hundreds of megabytes there before the first byte is handed to JS, so a cap that
+			// runs on the arriving chunk runs too late. It also drops `Accept-Encoding` from
+			// the request, so a well-behaved server sends nothing to undo in the first place.
+			const response = await fetch(url, { signal: controller.signal, decompress: false });
 			if (!response.ok) throw new CodedError(ErrorCodes.HTTP_ERROR, String(response.status));
 			// Detect on the final URL's path first — a redirect can change the extension, and a
 			// query string or fragment would hide it. Fall back to the requested URL, because a
 			// CDN or release redirect often lands on an opaque blob path that carries no extension.
 			const algorithm = detectCompression(Utils.urlPath(response.url || url)) ?? detectCompression(Utils.urlPath(url));
-			// When the server serves the file with the same codec as a transfer encoding,
-			// fetch() has already undone it — decompressing a second time would fail.
-			const contentEncoding = response.headers.get('content-encoding')?.toLowerCase() ?? '';
-			const alreadyDecoded = algorithm !== null && contentEncoding.includes(CONTENT_ENCODING_TOKENS[algorithm]);
-			const body = await Utils.readBodyCapped(response, MAX_API_MESSAGE_SIZE);
-			if (algorithm && !alreadyDecoded) return new TextDecoder().decode(Utils.decompress(body, algorithm));
+			const transport = Utils.contentEncodingAlgorithm(response.headers.get('content-encoding'));
+			let body = await Utils.readBodyCapped(response, MAX_API_MESSAGE_SIZE);
+			if (transport) body = Utils.decompress(body, transport);
+			// A `.gz` served as `Content-Encoding: gzip` is one layer labelled twice, not two:
+			// the extension still means something only when it names a different codec.
+			if (algorithm && algorithm !== transport) body = Utils.decompress(body, algorithm);
 			return new TextDecoder().decode(body);
 		} finally {
 			clearTimeout(timeout);

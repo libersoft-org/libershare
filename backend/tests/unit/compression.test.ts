@@ -156,18 +156,80 @@ describe('Utils.fetchURL', () => {
 		}
 	});
 
-	it('caps a body that HTTP transfer encoding expands past the limit', async () => {
-		// The URL carries no compression extension, so nothing routes this body through
-		// Utils.decompress — but fetch() still undoes Content-Encoding, and Content-Length
-		// is whatever the server feels like claiming. Only counting arriving bytes catches it.
-		const bomb = Utils.compress(new Uint8Array(MAX_API_MESSAGE_SIZE + 1024 * 1024) as Uint8Array<ArrayBuffer>, 'gzip');
-		expect(bomb.byteLength).toBeLessThan(1024 * 1024);
+	it('refuses a Content-Encoding bomb without ever allocating it', async () => {
+		// 192 concatenated zstd frames of zeros: 9.6 KB on the wire, 192 MiB decoded. A zstd
+		// decoder treats concatenated frames as one stream, so this is the cheap shape of the
+		// attack — no oversized buffer is needed to build it, on either side.
+		const frame = Utils.compress(new Uint8Array(1024 * 1024) as Uint8Array<ArrayBuffer>, 'zstd');
+		const bomb = new Uint8Array(frame.byteLength * 192);
+		for (let i = 0; i < 192; i++) bomb.set(frame, i * frame.byteLength);
+		expect(bomb.byteLength).toBeLessThan(64 * 1024);
 		const server = Bun.serve({
 			port: 0,
-			fetch: (): Response => new Response(bomb, { headers: { 'content-encoding': 'gzip', 'content-length': '17' } }),
+			// A truthful Content-Length, so nothing about the response looks suspicious up front.
+			fetch: (): Response => new Response(bomb, { headers: { 'content-encoding': 'zstd', 'content-length': String(bomb.byteLength) } }),
+		});
+		// Sample RSS across the call. The error alone proves nothing here: the runtime can
+		// expand the whole body natively and only then hand over a chunk to be rejected,
+		// which is the out-of-memory this cap exists to prevent. So the allocation is what
+		// gets asserted first, and the error code second.
+		Bun.gc(true);
+		const baseline = process.memoryUsage.rss();
+		let peak = baseline;
+		const sampler = setInterval(() => (peak = Math.max(peak, process.memoryUsage.rss())), 4);
+		let failure: unknown;
+		try {
+			await Utils.fetchURL(`http://localhost:${server.port}/settings.json`);
+		} catch (err) {
+			failure = err;
+		} finally {
+			clearInterval(sampler);
+			await server.stop(true);
+		}
+		// Decoded output is 192 MiB; anything close to that means the bytes were materialised.
+		expect(peak - baseline).toBeLessThan(64 * 1024 * 1024);
+		expect((failure as Error | undefined)?.message).toContain(ErrorCodes.DECOMPRESSED_TOO_LARGE);
+	});
+
+	it('undoes a transfer encoding and a file extension that name different codecs', async () => {
+		// Nothing decodes this body for us any more, so both layers are ours to unwrap.
+		const json = '{"double":true}';
+		const inner = Utils.compress(new TextEncoder().encode(json) as Uint8Array<ArrayBuffer>, 'gzip');
+		const outer = Utils.compress(inner, 'brotli');
+		const server = Bun.serve({
+			port: 0,
+			fetch: (): Response => new Response(outer, { headers: { 'content-encoding': 'br' } }),
 		});
 		try {
-			await expect(Utils.fetchURL(`http://localhost:${server.port}/settings.json`)).rejects.toThrow(ErrorCodes.RESPONSE_TOO_LARGE);
+			expect(await Utils.fetchURL(`http://localhost:${server.port}/settings.json.gz`)).toBe(json);
+		} finally {
+			await server.stop(true);
+		}
+	});
+
+	it('treats an extension and a matching transfer encoding as one layer', async () => {
+		// The common ambiguous case: a .gz file served as Content-Encoding: gzip is gzipped
+		// once, whatever the two labels suggest between them.
+		const json = '{"single":true}';
+		const body = Utils.compress(new TextEncoder().encode(json) as Uint8Array<ArrayBuffer>, 'gzip');
+		const server = Bun.serve({
+			port: 0,
+			fetch: (): Response => new Response(body, { headers: { 'content-encoding': 'gzip' } }),
+		});
+		try {
+			expect(await Utils.fetchURL(`http://localhost:${server.port}/settings.json.gz`)).toBe(json);
+		} finally {
+			await server.stop(true);
+		}
+	});
+
+	it('rejects a transfer encoding it cannot decode instead of returning the bytes', async () => {
+		const server = Bun.serve({
+			port: 0,
+			fetch: (): Response => new Response(Utils.compress(new TextEncoder().encode('{"a":1}') as Uint8Array<ArrayBuffer>, 'gzip'), { headers: { 'content-encoding': 'deflate' } }),
+		});
+		try {
+			await expect(Utils.fetchURL(`http://localhost:${server.port}/settings.json`)).rejects.toThrow(ErrorCodes.UNSUPPORTED_DECOMPRESSION);
 		} finally {
 			await server.stop(true);
 		}
