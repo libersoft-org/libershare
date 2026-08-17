@@ -316,7 +316,6 @@ describe('Network.runRedialMaintenance — leave-peer suppression', () => {
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
-		(network as any).noReachableSince = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		// A reconnected peer's suppression is lifted only if it currently shares a joined

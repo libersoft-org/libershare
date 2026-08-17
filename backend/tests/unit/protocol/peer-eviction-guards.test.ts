@@ -82,28 +82,35 @@ describe('purgeStalePeer — epoch guard', () => {
 });
 
 /**
- * A peer whose every stored address is rejected by the dial gater is not proof the peer
- * is gone — a LAN/VPN-only peer looks exactly like this the moment our own interface
- * drops. This path must therefore take the same self-online evidence as the
- * dial-failure path, or a local outage evicts the whole non-configured peerStore.
+ * A peer whose every stored address is rejected by the dial gater is NEVER evicted, no
+ * matter how long it stays that way.
+ *
+ * "Unreachable" on this path is a statement about our own routing table: a peer reachable
+ * only over a LAN or VPN subnet looks exactly like this the moment that interface drops,
+ * and no dial is attempted here, so there is nothing to weigh against it. Holding another
+ * connection is not the missing evidence either — the Ethernet link stays up while the
+ * VPN dies, which is precisely the case that used to purge a live peer. The peer is
+ * parked: not dialled, rows expiring on their own clock, peerStore entry left to libp2p's
+ * maxPeerAge.
  */
-describe('runRedialMaintenance — eviction with no reachable address', () => {
-	function bareNetwork(opts: { weAreOnline: boolean; sinceMsAgo: number; configured?: boolean }) {
+describe('runRedialMaintenance — a peer with no reachable address', () => {
+	function bareNetwork(opts: { weAreOnline: boolean; configured?: boolean }) {
 		const purged: string[] = [];
+		const dropped: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
 		(network as any).redialBackoff = new Map();
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
-		(network as any).redialBackoff = new Map();
-		(network as any).noReachableSince = new Map([[PEER_ID, Date.now() - opts.sinceMsAgo]]);
 		(network as any).configuredBootstrapPeerIDs = new Set(opts.configured ? [PEER_ID] : []);
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).bootstrapTracker = {
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
-			deleteDiscoveredByPeerID() {},
+			deleteDiscoveredByPeerID(pid: string) {
+				dropped.push(pid);
+			},
 		};
 		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
 		(network as any).node = { getConnections: () => [] };
@@ -113,43 +120,45 @@ describe('runRedialMaintenance — eviction with no reachable address', () => {
 		(network as any).purgeStalePeer = async (pid: string): Promise<void> => {
 			purged.push(pid);
 		};
-		return { network, purged };
+		return { network, purged, dropped };
 	}
 
 	const undialablePeer = { id: peerIdLike(PEER_ID), addresses: NO_ADDRESSES };
-	const run = (network: Network): Promise<void> => (network as any).runRedialMaintenance([], [undialablePeer], 1);
+	/** Half a day of ticks: whatever window a future writer reaches for, this outlasts it. */
+	async function runForHours(network: Network): Promise<void> {
+		for (let tick = 0; tick < 12 * 60 * 2; tick++) await (network as any).runRedialMaintenance([], [undialablePeer], 1);
+	}
 
-	it('evicts once the window has passed and we are demonstrably online', async () => {
-		const { network, purged } = bareNetwork({ weAreOnline: true, sinceMsAgo: 45 * 60_000 });
-		await run(network);
-		expect(purged).toEqual([PEER_ID]);
-	});
-
-	it('keeps the peer when the outage is ours', async () => {
-		const { network, purged } = bareNetwork({ weAreOnline: false, sinceMsAgo: 45 * 60_000 });
-		await run(network);
+	it('does not evict it however long it stays unreachable, even while we are online', async () => {
+		const { network, purged } = bareNetwork({ weAreOnline: true });
+		await runForHours(network);
 		expect(purged).toEqual([]);
 	});
 
-	it('slides the window forward during our outage instead of accumulating', async () => {
-		// Otherwise the first tick after connectivity returns would evict everything
-		// that went unreachable while we were down.
-		const { network } = bareNetwork({ weAreOnline: false, sinceMsAgo: 45 * 60_000 });
-		await run(network);
-		const since = (network as any).noReachableSince.get(PEER_ID) as number;
-		expect(Date.now() - since).toBeLessThan(60_000);
+	it('does not evict it when the outage is ours either', async () => {
+		const { network, purged } = bareNetwork({ weAreOnline: false });
+		await runForHours(network);
+		expect(purged).toEqual([]);
+	});
+
+	it('leaves its discovered rows to expire on their own staleness clock', async () => {
+		// Dropping them here would hide a live VPN peer from the participant list the
+		// moment our own route to it went; sweepStale removes the row of a peer that has
+		// actually stopped answering.
+		const { network, dropped } = bareNetwork({ weAreOnline: true });
+		await runForHours(network);
+		expect(dropped).toEqual([]);
+	});
+
+	it('does not quarantine it, so a routable address is dialled the moment one appears', async () => {
+		const { network } = bareNetwork({ weAreOnline: true });
+		await runForHours(network);
+		expect((network as any).unreachableQuarantine.size).toBe(0);
 	});
 
 	it('never evicts a configured peer', async () => {
-		const { network, purged } = bareNetwork({ weAreOnline: true, sinceMsAgo: 45 * 60_000, configured: true });
-		await run(network);
-		expect(purged).toEqual([]);
-	});
-
-	it('keeps a peer that reconnected while the window was running', async () => {
-		const { network, purged } = bareNetwork({ weAreOnline: true, sinceMsAgo: 45 * 60_000 });
-		(network as any).node = { getConnections: () => [{}] }; // live again
-		await run(network);
+		const { network, purged } = bareNetwork({ weAreOnline: true, configured: true });
+		await runForHours(network);
 		expect(purged).toEqual([]);
 	});
 });
@@ -408,8 +417,10 @@ describe('configured exemption ends when the peer leaves the config', () => {
 		(network as any).redialBackoff = new Map();
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
-		(network as any).redialBackoff = new Map();
-		(network as any).noReachableSince = new Map([[PEER_ID, Date.now() - 45 * 60_000]]);
+		// One failure short of eviction, failing for longer than the window: the next
+		// failed dial is the one that decides, so the exemption is all that stands
+		// between this peer and the purge.
+		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() - 1, failCount: 5, firstFailure: Date.now() - 45 * 60_000, evictionFails: 5 }]]);
 		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
@@ -423,7 +434,12 @@ describe('configured exemption ends when the peer leaves the config', () => {
 			deleteDiscoveredByPeerID() {},
 		};
 		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
-		(network as any).node = { getConnections: () => [] };
+		(network as any).node = {
+			getConnections: () => [],
+			async dial(): Promise<void> {
+				throw new Error('connection refused');
+			},
+		};
 		(network as any).hasConnectionOtherThan = () => true;
 		(network as any).purgeStalePeer = async (pid: string): Promise<void> => {
 			purged.push(pid);
@@ -431,8 +447,10 @@ describe('configured exemption ends when the peer leaves the config', () => {
 		return { network, purged };
 	}
 
-	const undialable = { id: peerIdLike(PEER_ID), addresses: NO_ADDRESSES };
-	const run = (network: Network): Promise<void> => (network as any).runRedialMaintenance([], [undialable], 1);
+	// A documentation-range address, so the dial gater lets the peer through to the dial
+	// that then fails — the only evidence eviction is allowed to act on.
+	const dead = { id: peerIdLike(PEER_ID), addresses: [{ multiaddr: multiaddr('/ip4/203.0.113.9/tcp/9090') }] };
+	const run = (network: Network): Promise<void> => (network as any).runRedialMaintenance([], [dead], 1);
 
 	it('protects the peer while it is still configured', async () => {
 		const { network, purged } = bareNetwork();
@@ -1243,7 +1261,7 @@ describe('configured origin is a property of the address, not the peer', () => {
 describe('Network.stop — per-run state really is per run', () => {
 	function bareNetwork() {
 		const network = Object.create(Network.prototype) as Network;
-		for (const field of ['lastWantResponseTime', 'seenSearchIDs', 'topicHandlers', 'dcutrPeers', 'bootstrapPeerIDs', 'bootstrapGeneration', '_lastPeerCounts', '_lastScores', 'redialBackoff', 'unreachableQuarantine', 'addressProbeBackoff', 'noReachableSince', 'configuredBootstrapPeerIDs', 'configuredBootstrapAddresses', 'redialSuppressedByNet', 'pxIngressLogKeys', 'inFlightBootstrapDials']) {
+		for (const field of ['lastWantResponseTime', 'seenSearchIDs', 'topicHandlers', 'dcutrPeers', 'bootstrapPeerIDs', 'bootstrapGeneration', '_lastPeerCounts', '_lastScores', 'redialBackoff', 'unreachableQuarantine', 'addressProbeBackoff', 'configuredBootstrapPeerIDs', 'configuredBootstrapAddresses', 'redialSuppressedByNet', 'pxIngressLogKeys', 'inFlightBootstrapDials']) {
 			(network as any)[field] = field === 'seenSearchIDs' || field === 'dcutrPeers' || field === 'bootstrapPeerIDs' || field === 'configuredBootstrapPeerIDs' || field === 'configuredBootstrapAddresses' || field === 'inFlightBootstrapDials' ? new Set() : new Map();
 		}
 		(network as any).runEpoch = 1;
@@ -1499,7 +1517,6 @@ describe('runRedialMaintenance — quarantined peers are not candidates', () => 
 		(network as any).redialBackoff = new Map();
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).unreachableQuarantine = quarantinedAt === null ? new Map() : new Map([[PEER_ID, quarantinedAt]]);
-		(network as any).noReachableSince = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set(configured ? [PEER_ID] : []);
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).bootstrapTracker = {

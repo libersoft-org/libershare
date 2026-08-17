@@ -465,13 +465,6 @@ export class Network {
 	 */
 	private inFlightDiscoveryDials = new Set<string>();
 	/**
-	 * peerID → time we first saw the peer disconnected with ZERO reachable
-	 * addresses. Such peers never enter the re-dial path (nothing to dial), so
-	 * the failure counter cannot evict them — without this they would sit in
-	 * peerStore/bootstrap sets until maxPeerAge while every tick re-scans them.
-	 */
-	private readonly noReachableSince = new Map<string, number>();
-	/**
 	 * Peers deliberately hung up by {@link disconnectPeer} (leave-network), keyed by
 	 * the lishnet they were left with. Redial maintenance / discovery must NOT
 	 * proactively re-dial them — otherwise a peer we just left is re-connected within
@@ -952,7 +945,6 @@ export class Network {
 				// gets evicted as "unreachable for 30 minutes" despite never being
 				// gone that long.
 				this.redialBackoff.delete(peerID);
-				this.noReachableSince.delete(peerID);
 				const connections = this.node!.getConnections(evt.detail);
 				const connTypes = connections.map(c => {
 					const isRelay = Circuit.matches(c.remoteAddr);
@@ -1223,7 +1215,6 @@ export class Network {
 			if (connectedSet.has(pid)) {
 				this.redialBackoff.delete(pid); // clear on observed connection
 				this.unreachableQuarantine.delete(pid);
-				this.noReachableSince.delete(pid);
 				if (this.sharesJoinedTopicWith(pid)) this.clearRedialSuppressionForPeer(pid); // back on a shared topic → resume
 				continue;
 			}
@@ -1262,31 +1253,18 @@ export class Network {
 			}
 			if (reachable.length === 0) {
 				skippedNoReachable++;
-				// No dialable address ⇒ the failure counter can never fire for this
-				// peer. Track how long it has been in this state; a disconnected peer
-				// with zero reachable addrs for the whole eviction window is as gone
-				// as one that failed every dial.
-				//
-				// "Unreachable" here means the dial gater rejects every stored address
-				// from where WE stand, which is not the same as the peer being gone: a
-				// peer reachable only over a LAN or VPN subnet stops passing the filter
-				// the moment that interface drops, through no fault of its own. So this
-				// path takes the same two safeguards as the dial-failure path below —
-				// evidence that we are online at all, and a liveness re-check right
-				// before acting — on top of the configured-peer exemption.
-				const weAreOnline = this.hasConnectionOtherThan(peer.id);
-				const since = nextEvictionWindowStart(weAreOnline, this.noReachableSince.get(pid), now);
-				this.noReachableSince.set(pid, since);
-				if (weAreOnline && now - since >= REDIAL_EVICT_MIN_MS && !this.configuredBootstrapPeerIDs.has(pid) && this.node?.getConnections(peer.id).length === 0) {
-					this.noReachableSince.delete(pid);
-					this.unreachableQuarantine.set(pid, now);
-					this.redialBackoff.delete(pid);
-					this.bootstrapTracker.deleteDiscoveredByPeerID(pid);
-					await this.purgeStalePeer(pid, `no reachable addresses for ${Math.round((now - since) / 60_000)} min`, epoch);
-				}
+				// Skipped, never evicted. "Unreachable" here means the dial gater rejects
+				// every stored address FROM WHERE WE STAND, which says nothing about the
+				// peer: one reachable only over a LAN or VPN subnet looks exactly like this
+				// the moment that interface drops. No dial happens on this path, so there is
+				// no failure evidence to weigh either — and "we hold some other connection"
+				// does not supply any, since the Ethernet link stays up while the VPN dies.
+				// The peer is therefore parked, not purged: it stops being dialled, its
+				// discovered rows expire on their own staleness clock, and libp2p's own
+				// maxPeerAge retires the peerStore entry. Eviction stays with the dial-failure
+				// path below, which at least tried addresses this host could route to.
 				continue;
 			}
-			this.noReachableSince.delete(pid); // addresses came back — reset the clock
 			candidates.push({ peer, pid, addrSummary: reachable.join(' | '), failCount: bo?.failCount ?? 0 });
 		}
 		// Parallel dial with concurrency=10 via rolling promise pool; caps worst-case
@@ -1376,7 +1354,6 @@ export class Network {
 		// bounded by clear-on-rejoin / clear-on-reconnect / stop().
 		const storeSet = new Set(allPeers.map(p => p.id.toString()));
 		for (const pid of this.redialBackoff.keys()) if (!storeSet.has(pid)) this.redialBackoff.delete(pid);
-		for (const pid of this.noReachableSince.keys()) if (!storeSet.has(pid)) this.noReachableSince.delete(pid);
 		// Quarantine entries for peers gossip never mentions again would leak — drop
 		// them once they are far past the window (re-entry from gossip self-cleans).
 		const quarantineCutoff = now - 2 * UNREACHABLE_QUARANTINE_MS;
@@ -2137,10 +2114,14 @@ export class Network {
 	 * True when this node holds a live connection to somebody OTHER than the given
 	 * peer.
 	 *
-	 * This is the difference between "that peer is gone" and "we are the ones who
-	 * are offline", and eviction is only ever entitled to the first reading. The
-	 * peer being judged is excluded because a connection to it would make the
-	 * question moot — that case is handled separately, right before the purge.
+	 * It tells a total local outage from a working link, no more than that: a host whose
+	 * VPN dropped still answers true off its LAN connections. So it can only ever DISCOUNT
+	 * evidence — a dial that failed while we could reach nobody proves nothing about the
+	 * peer — and never stand in for evidence on its own. Eviction is decided by the dial
+	 * failures themselves; this is the veto over counting them.
+	 *
+	 * The peer being judged is excluded because a connection to it would make the question
+	 * moot — that case is handled separately, right before the purge.
 	 */
 	private hasConnectionOtherThan(peer: PeerID): boolean {
 		return !!this.node && this.node.getConnections().some(connection => !connection.remotePeer.equals(peer));
@@ -3170,7 +3151,6 @@ export class Network {
 		this.redialBackoff.clear();
 		this.unreachableQuarantine.clear();
 		this.addressProbeBackoff.clear();
-		this.noReachableSince.clear();
 		this.configuredBootstrapPeerIDs.clear();
 		this.configuredBootstrapAddresses.clear();
 		// Per-run like the rest of this state: a fresh node must not inherit a count that
