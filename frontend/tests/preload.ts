@@ -1,6 +1,17 @@
 import { plugin } from 'bun';
+import { mock } from 'bun:test';
 import { compileModule } from 'svelte/compiler';
 import { readFileSync } from 'fs';
+import { fakeAPI } from './api-mock.ts';
+
+/**
+ * Replace the WebSocket transport once, for the whole suite.
+ *
+ * Here rather than in the test files that need it, because `mock.module()` is a
+ * global registry with no per-file scope and no undo — see `api-mock.ts`. Importing
+ * the real `api.ts` would open a socket from a unit test regardless.
+ */
+mock.module('../src/scripts/api.ts', () => ({ api: fakeAPI }));
 
 /**
  * Teach `bun test` to load `.svelte.ts` modules.

@@ -14,10 +14,13 @@
  * the same store, the same effect — inside an `$effect.root` standing in for the
  * component instance. `await tick()` is where Svelte's scheduler gets its turn.
  */
-import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { tick } from 'svelte';
 import type { NetInterfaceInfo, NetworkStateInfo } from '@shared';
 import type { InterfaceForm } from '../../src/scripts/networkState.ts';
+import { apiHandlers, resetAPIMock } from '../api-mock.ts';
+import { InterfaceFormState } from '../../src/scripts/networkForm.svelte.ts';
+import { applyInterfaceConfig, networkState, unknownNetworkState } from '../../src/scripts/networkState.ts';
 
 /** What the next `system.networkApply` answers with. */
 let answer: NetworkStateInfo;
@@ -25,13 +28,13 @@ let answer: NetworkStateInfo;
 // The real RPC helper is what makes the ordering real: it stores the answer and
 // only then resolves, so the effect is already scheduled by the time the caller's
 // await resumes. Stubbing the helper instead of the transport would have invented
-// a different number of microtask hops and quietly tested nothing.
-mock.module('../../src/scripts/api.ts', () => ({
-	api: { on: () => {}, subscribe: () => {}, call: async () => answer },
-}));
-
-const { InterfaceFormState } = await import('../../src/scripts/networkForm.svelte.ts');
-const { applyInterfaceConfig, networkState, unknownNetworkState } = await import('../../src/scripts/networkState.ts');
+// a different number of microtask hops and quietly tested nothing. The transport
+// itself is the suite-wide fake — see `tests/api-mock.ts` for why it may not be
+// replaced per file.
+beforeEach(() => {
+	resetAPIMock();
+	apiHandlers.call = async () => answer;
+});
 
 function iface(overrides: Partial<NetInterfaceInfo> = {}): NetInterfaceInfo {
 	return { id: 'eth0', name: 'eth0', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [{ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 }], ipv4Mode: 'static', gateway: '192.0.2.1', dns: [], ipv4Configurable: true, wifiScannable: true, wifiConnectable: true, ...overrides };
