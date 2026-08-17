@@ -5,6 +5,7 @@ import { rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { serialiseImportHandlers } from '../../../src/api/api.ts';
+import { ErrorCodes } from '@shared';
 import { initUploadHandlers } from '../../../src/api/upload.ts';
 
 const tempDirs: string[] = [];
@@ -22,7 +23,7 @@ afterAll(async () => {
 function dispatchTableMethods(): string[] {
 	const source = readFileSync(join(import.meta.dir, '..', '..', '..', 'src', 'api', 'api.ts'), 'utf-8');
 	const start = source.indexOf('this.handlers = {');
-	const end = source.indexOf('serialiseImportHandlers(this.handlers, this.importLock);', start);
+	const end = source.indexOf('serialiseImportHandlers(this.handlers,', start);
 	expect(start).toBeGreaterThan(0);
 	expect(end).toBeGreaterThan(start);
 	return [...source.slice(start, end).matchAll(/^\t{3}'([a-zA-Z]+\.[a-zA-Z]+)':/gm)].map(match => match[1]!);
@@ -61,7 +62,9 @@ describe('import serialisation', () => {
 		expect(imports).toContain('lishs.importFromURL');
 
 		const table = overlapTable(imports);
-		serialiseImportHandlers(table.handlers, new Mutex());
+		// Every entry at once, so the queue allowance is raised out of the way — what
+		// is under test here is which handlers hold the lock, not the admission bound.
+		serialiseImportHandlers(table.handlers, new Mutex(), () => true, imports.length);
 		await Promise.all(imports.map(method => table.handlers[method]!({}, {})));
 		expect(table.peak()).toBe(1);
 	});
@@ -118,5 +121,73 @@ describe('import serialisation', () => {
 		await Promise.all([uploads.withFile({ uploadID }, client, table.body), table.handlers['lishs.parseFromJSON']!({}, {})]);
 		expect(table.peak()).toBe(1);
 		uploads.stop();
+	});
+});
+
+describe('import queue admission', () => {
+	/** A promise plus the function that settles it, for holding the parser open. */
+	function gate(): { wait: Promise<void>; open: () => void } {
+		let open!: () => void;
+		const wait = new Promise<void>(resolve => (open = resolve));
+		return { wait, open };
+	}
+
+	it('refuses a direct import once the queue behind the parser is full', async () => {
+		const held = gate();
+		let entered = 0;
+		const handlers: Record<string, (p: any, client: any) => any> = {
+			'lishs.parseFromJSON': async () => {
+				entered++;
+				await held.wait;
+				return entered;
+			},
+		};
+		serialiseImportHandlers(handlers, new Mutex(), () => true, 3);
+		const parse = handlers['lishs.parseFromJSON']!;
+		const client = {};
+		// One running plus two waiting fills the allowance; each of those holds its
+		// whole request — for `parseFromJSON` that is the file as a string — alive
+		// for as long as it waits.
+		const admitted = [parse({}, client), parse({}, client), parse({}, client)];
+		await Bun.sleep(20);
+		await expect(parse({}, client)).rejects.toThrow(ErrorCodes.IMPORT_BUSY);
+
+		held.open();
+		await Promise.all(admitted);
+		// And the allowance comes back, rather than being spent for good.
+		expect(await parse({}, client)).toBe(4);
+	});
+
+	it('does not parse for a client that left while its import queued', async () => {
+		const held = gate();
+		let parsed = 0;
+		const live = new Set<any>();
+		const handlers: Record<string, (p: any, client: any) => any> = {
+			'lishs.parseFromFile': async () => {
+				parsed++;
+				return parsed;
+			},
+			'settings.parseFromJSON': async () => {
+				await held.wait;
+				return 'slow';
+			},
+		};
+		serialiseImportHandlers(handlers, new Mutex(), client => live.has(client));
+		const [staying, leaving] = [{}, {}];
+		live.add(staying);
+		live.add(leaving);
+
+		const slow = handlers['settings.parseFromJSON']!({}, staying);
+		await Bun.sleep(20);
+		const queued = handlers['lishs.parseFromFile']!({}, leaving).catch((err: any) => err.code);
+		await Bun.sleep(20);
+		// The socket goes while its import is still behind the slow one.
+		live.delete(leaving);
+		held.open();
+
+		expect(await slow).toBe('slow');
+		expect(await queued).toBe(ErrorCodes.CLIENT_DISCONNECTED);
+		// The expensive half never ran for a caller with nowhere to send the answer.
+		expect(parsed).toBe(0);
 	});
 });

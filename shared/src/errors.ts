@@ -95,6 +95,8 @@ const errorCodes = [
 	'UPLOAD_BUSY',
 	'UPLOAD_QUOTA_EXCEEDED',
 	'UPLOAD_CLEANUP_PENDING',
+	'IMPORT_BUSY',
+	'CLIENT_DISCONNECTED',
 
 	// Download events
 	'DOWNLOAD_ERROR',

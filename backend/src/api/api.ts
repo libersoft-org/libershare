@@ -72,6 +72,20 @@ export function formatParamsForLog(params: unknown): string {
 const BINARY_HEADER_PREFIX = 4;
 
 /**
+ * Direct imports — those that did not arrive as an upload — that may be waiting
+ * for the parser at once. An upload import is deliberately not counted here: its
+ * file is already on our disk and already charged against the upload ceilings,
+ * so refusing it at this queue would be a second and harsher limit on work that
+ * has been admitted.
+ *
+ * This bounds the queue, not peak memory. A request's payload is parsed out of
+ * the frame before any handler runs, so it exists before this check can refuse
+ * it — what the bound stops is that cost being multiplied by an unlimited number
+ * of waiters.
+ */
+const MAX_QUEUED_IMPORTS = 8;
+
+/**
  * True for a dispatch table entry that parses an import and therefore has to
  * queue behind every other one.
  *
@@ -100,13 +114,32 @@ export function isSerialisedImport(method: string): boolean {
  * the {@link APIServer} constructor, which wants a database, a network stack and
  * a data server before it will hand one over.
  */
-export function serialiseImportHandlers(handlers: Record<string, (p: any, client: ClientSocket) => any>, lock: Mutex): void {
+export function serialiseImportHandlers(handlers: Record<string, (p: any, client: ClientSocket) => any>, lock: Mutex, isConnected: (client: ClientSocket) => boolean = () => true, maxQueued: number = MAX_QUEUED_IMPORTS): void {
+	let queued = 0;
 	for (const method of Object.keys(handlers)) {
 		if (!isSerialisedImport(method)) continue;
 		const handler = handlers[method]!;
-		// The handler goes straight to its domain implementation, never back through
-		// this table, so nothing re-enters the lock it is already holding.
-		handlers[method] = (p: any, client: ClientSocket): Promise<any> => lock.runExclusive(async () => handler(p, client));
+		handlers[method] = async (p: any, client: ClientSocket): Promise<any> => {
+			// Refused rather than queued once the queue is full. `runExclusive` waits
+			// without limit, and each waiter holds its whole request alive for as long
+			// as it waits — so an unbounded queue is an unbounded number of import
+			// payloads in memory, which is the thing the lock exists to keep down.
+			if (queued >= maxQueued) throw new CodedError(ErrorCodes.IMPORT_BUSY, String(maxQueued));
+			queued++;
+			try {
+				// The handler goes straight to its domain implementation, never back
+				// through this table, so nothing re-enters the lock it is holding.
+				return await lock.runExclusive(async () => {
+					// The wait has no time bound, so the caller may well be gone by the
+					// time the lock comes free — and parsing an import nobody is left to
+					// answer is the expensive half of the operation spent on nothing.
+					if (!isConnected(client)) throw new CodedError(ErrorCodes.CLIENT_DISCONNECTED, method);
+					return await handler(p, client);
+				});
+			} finally {
+				queued--;
+			}
+		};
 	}
 }
 
@@ -375,7 +408,7 @@ export class APIServer {
 			// Relay
 			'relay.stats': _relay.stats,
 		};
-		serialiseImportHandlers(this.handlers, this.importLock);
+		serialiseImportHandlers(this.handlers, this.importLock, client => this.clients.has(client));
 	}
 
 	start(): void {
