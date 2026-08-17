@@ -512,10 +512,18 @@ export class Networks {
 		this.appliedBootstrap.set(id, configured);
 		if (configured.length > 0) await this.network.addBootstrapPeers(configured, id, 'configured');
 
-		// The dials above take seconds. A node that went down during them owns neither the
+		// The dials above take seconds. A node that went DOWN during them owns neither the
 		// subscription nor the connections this join was building, so the membership claim
 		// has to go with it rather than survive into the next run.
-		if (!this.canJoin()) {
+		//
+		// The question here is the node, not {@link canJoin}: a stop that has merely been
+		// ASKED for is not a stop that happened. Answering the intent discarded the claim
+		// before the stop was even attempted — and a stop that then failed left the node
+		// alive, subscribed, and with nothing recording that we are in this lishnet, so the
+		// next disable found "not joined, nothing to do" and unsubscribed nobody. The stop
+		// waits for this operation and clears the membership itself once the node is
+		// provably down; see {@link stopAllNetworks}.
+		if (!this.network.isRunning()) {
 			this.joinedNetworks.delete(id);
 			this.appliedBootstrap.delete(id);
 			console.log(`Abandoning join of lishnet ${id}: the node went down during its bootstrap dials`);

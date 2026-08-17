@@ -250,6 +250,39 @@ describe('Networks.startEnabledNetworks — coordinated with concurrent changes'
 		expect(net.running).toBe(false);
 	});
 
+	/**
+	 * The join used to drop its own membership claim as soon as a stop had been ASKED for.
+	 * With a stop that then fails, the node stays alive and subscribed while nothing records
+	 * that we are in the lishnet at all — so the next disable finds "not joined, nothing to
+	 * do" and unsubscribes nobody, on a node that is demonstrably still in the topic.
+	 */
+	it('a stop that fails keeps the membership of the join it interrupted', async () => {
+		const net = makeMockNet(Promise.resolve());
+		const networks = makeNetworks(net, db);
+		setLISHnetEnabled(db, NET, false);
+		await networks.startEnabledNetworks();
+		reseedWithBootstrap(db);
+
+		const gate = deferred();
+		net.dialGate = gate.promise;
+		const enabling = networks.setEnabled(NET, true);
+		await settle();
+		net.stop = async (): Promise<void> => {
+			throw new Error('node.stop failed');
+		};
+		const stopping = networks.stopAllNetworks();
+		await settle();
+		gate.resolve();
+		await expect(stopping).rejects.toThrow('node.stop failed');
+		await enabling;
+
+		expect(net.running).toBe(true);
+		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
+		// And the membership is worth something: the disable really leaves.
+		await networks.setEnabled(NET, false);
+		expect(net.unsubscribed).toEqual([NET]);
+	});
+
 	it('an undisturbed startup still joins every enabled network', async () => {
 		const net = makeMockNet(Promise.resolve());
 		const networks = makeNetworks(net, db);
