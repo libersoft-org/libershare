@@ -944,8 +944,23 @@ async function snapshotLinuxWifiProfiles(run: NmcliRunner, ssid: string): Promis
  * nmcli ever reached a profile — the ordinary case, a network out of range or an
  * association that never came up — leaves every keyfile exactly as it was rather
  * than rewriting each one with its own values. And a profile some other tool
- * changed during the attempt keeps that change: it does not hold this attempt's
+ * changed before that re-read keeps that change: it does not hold this attempt's
  * password, so it is not this attempt's to undo.
+ *
+ * The re-read is a check, not a lock, and the gap between it and the write is
+ * real: a change another tool commits inside that gap is overwritten by the
+ * restore and lost without a word. Nothing here closes it. nmcli has no
+ * conditional modify, and the guard NetworkManager does have — the `version-id`
+ * argument to Update2, which rejects a write whose profile has moved on — cannot
+ * be reached from here: nmcli exposes no flag for it, and the version-id is not a
+ * D-Bus property, so only a libnm client can read one to pass back. The gap is
+ * one nmcli invocation wide, which is as narrow as it goes without libnm.
+ *
+ * Overwriting is still the better of the two errors. Refusing to restore unless
+ * the profile were provably untouched would trade that rare lost edit for leaving
+ * the password that just failed saved on every ordinary failed join — a profile
+ * broken every time, to avoid breaking one during a collision that lasts as long
+ * as one process spawn.
  *
  * What nmcli said is deliberately not part of what is reported. The restoring
  * command carries the previous passphrase as an argv entry, and the message
@@ -969,6 +984,9 @@ async function restoreLinuxWifiSecrets(run: NmcliRunner, profiles: readonly Wifi
 		// Written by this attempt, and not already the value it replaced — a password
 		// that matches the saved one destroyed nothing by being written over it.
 		if (!NM_WIFI_SECRET_FIELDS.some(field => current.get(field) === password && snapshot.get(field) !== password)) continue;
+		// Nothing may be awaited between that check and this write. The check is the
+		// only thing standing between the restore and a concurrent edit, and every
+		// suspension point added here widens the window in which one is lost.
 		try {
 			await run(nmcliWifiRestoreArgs(uuid, snapshot), APPLY_TIMEOUT_MS);
 		} catch {
