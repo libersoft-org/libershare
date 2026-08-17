@@ -590,6 +590,13 @@ export async function applyMacIPv4(device: string, config: NetIPv4Config): Promi
 	const service = await serviceForDevice(device);
 	const snapshot = await readMacServiceSnapshot(service);
 	if (!snapshot) throw new CodedError(ErrorCodes.NETCONFIG_FAILED, `the current configuration of ${service} could not be read, so it will not be changed`);
+	// Read fine, and still un-writable: a static service with no router, or a mode
+	// networksetup did not name (BOOTP, "Automatic"), has no `-setmanual` or
+	// `-setdhcp` spelling to go back to. Discovering that in the rollback is
+	// discovering it too late — the address has already changed by then and the
+	// user is told only that undoing failed. The apply is refusable up to this
+	// point and nothing has been written, so this is where it is refused.
+	if (!macRestoreArgs(service, snapshot)) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, `the current configuration of ${service} cannot be written back if the change fails, so it will not be changed`);
 	const [addressArgs, dnsArgs] = macApplyArgs(service, config, snapshot.dns);
 	try {
 		await run(NETWORKSETUP, addressArgs, APPLY_TIMEOUT_MS);

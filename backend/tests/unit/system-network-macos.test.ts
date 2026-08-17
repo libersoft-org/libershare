@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { CodedError, ErrorCodes } from '@shared';
-import { macApplyArgs, macDbmToQuality, readMacDnsServers, macRestoreArgs, parseMacServiceSnapshot, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceDns, parseServiceInfo, parseServiceOrder, parseServiceRouter, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { applyMacIPv4, macApplyArgs, macDbmToQuality, readMacDnsServers, macRestoreArgs, parseMacServiceSnapshot, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceDns, parseServiceInfo, parseServiceOrder, parseServiceRouter, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -419,6 +419,31 @@ describe('macRestoreArgs', () => {
 	it('reports that a configuration with no networksetup form cannot be restored', () => {
 		expect(macRestoreArgs('Wi-Fi', snapshotOf('Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: none\n'))).toBeNull();
 		expect(macRestoreArgs('Wi-Fi', snapshotOf('Automatic Configuration\n'))).toBeNull();
+	});
+});
+
+/**
+ * What the apply does with a snapshot it cannot write back.
+ *
+ * `macRestoreArgs` returning null used to be discovered only in the rollback — by
+ * which time `-setmanual` or `-setdhcp` had already replaced a configuration that
+ * has no networksetup spelling to return to, and the user was told the change
+ * failed AND could not be undone. Nothing has been written until the first
+ * `networksetup` call, so the refusal belongs before it.
+ *
+ * Driving that needs macOS and a service in one of those states; the ordering
+ * inside the function is asserted instead, where it is just as visible.
+ */
+describe('applyMacIPv4', () => {
+	const body = applyMacIPv4.toString();
+
+	it('consults the rollback before it runs any networksetup command', () => {
+		for (const step of ['macRestoreArgs', 'NETWORKSETUP']) expect(body).toContain(step);
+		expect(body.indexOf('macRestoreArgs')).toBeLessThan(body.indexOf('NETWORKSETUP'));
+	});
+
+	it('refuses rather than proceeding when there is no way back', () => {
+		expect(body).toContain('cannot be written back');
 	});
 });
 
