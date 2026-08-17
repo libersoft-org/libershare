@@ -344,11 +344,65 @@ describe('windowsApplyIPv4Command', () => {
 		}
 	});
 
+	// The removals above are destructive and irreversible on their own: between
+	// them and the last step the interface holds no usable configuration, so a
+	// failure in between used to leave the machine with no address, no gateway and
+	// no resolvers. Everything the apply overwrites has to be recorded BEFORE the
+	// first removal, because afterwards the machine no longer knows what it was.
+	it('snapshots the whole IPv4 configuration before the first destructive step', () => {
+		for (const config of [{ mode: 'dhcp' } as NetIPv4Config, { mode: 'static', address: '192.0.2.10', prefixLength: 24 } as NetIPv4Config]) {
+			const command = windowsApplyIPv4Command(guid, config);
+			for (const captured of ['$oldDhcp = ', '$oldAddresses = ', '$oldRoutes = ', '$oldDns = ']) {
+				expect(command).toContain(captured);
+				expect(command.indexOf(captured)).toBeLessThan(command.indexOf('Remove-NetIPAddress'));
+			}
+		}
+	});
+
+	it('keeps the route metrics in the snapshot, not just the next hops', () => {
+		// A hand-set metric is what ranks competing default routes; restoring the
+		// route without it silently re-ranks every route on a multi-homed host.
+		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).toContain('Select-Object NextHop, RouteMetric');
+	});
+
+	it('rolls the snapshot back when any step of the change fails', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
+		// The mutation runs inside a guard, and the guard restores before rethrowing.
+		expect(command).toContain('catch { $applyError = $_;');
+		expect(command).toContain('throw $applyError');
+		expect(command).toContain('foreach ($a in $oldAddresses)');
+		expect(command).toContain('foreach ($r in $oldRoutes)');
+		expect(command).toContain('$oldDns.Count -gt 0');
+		// New-NetIPAddress must be inside the guard, not before it.
+		expect(command.indexOf('try { try { Remove-NetIPAddress')).toBeGreaterThan(-1);
+	});
+
+	it('restores a DHCP interface by re-enabling DHCP rather than by re-adding its lease', () => {
+		// The snapshot addresses of a DHCP interface came from a lease. Writing them
+		// back by hand installs a static copy that the next lease then duplicates.
+		expect(windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 })).toContain("if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled } else {");
+	});
+
+	it('reports both failures when the rollback itself fails', () => {
+		// Neither error alone describes the machine at that point, and answering with
+		// only the original one would claim the host was left as it was found.
+		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).toContain('and rolling it back also failed');
+	});
+
+	it('verifies a static address actually landed before reporting success', () => {
+		// PowerShell reports a clean run for a New-NetIPAddress the stack did not
+		// honour; without this the apply answers "done" on an interface with no address.
+		expect(windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 })).toContain("$_.IPAddress -eq '192.0.2.10' })) { throw ");
+	});
+
 	it('enables DHCP and resets the resolvers for a DHCP config', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
 		expect(command).toContain('-Dhcp Enabled');
 		expect(command).toContain('-ResetServerAddresses');
-		expect(command).not.toContain('New-NetIPAddress');
+		// No address is SET. The rollback still carries a New-NetIPAddress, but that
+		// one re-adds `$a.IPAddress` out of the snapshot rather than a literal.
+		expect(command).not.toContain('New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress 1');
+		expect(command.match(/New-NetIPAddress/g)).toEqual(['New-NetIPAddress']);
 	});
 
 	it('sets the address, prefix and gateway for a static config', () => {
@@ -372,7 +426,9 @@ describe('windowsApplyIPv4Command', () => {
 		// matches nothing reports CategoryInfo.Category of ObjectNotFound, and a
 		// genuine failure reports anything but.
 		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
-		expect(command).not.toContain('SilentlyContinue');
+		// Only the read-only snapshot queries may be silent — a removal never is.
+		expect(command).not.toContain('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue');
+		expect(command).not.toContain("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false -ErrorAction SilentlyContinue");
 		expect(command).toContain("catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw } }");
 		for (const step of ['Remove-NetIPAddress', 'Remove-NetRoute']) expect(command).toContain(`try { ${step}`);
 	});

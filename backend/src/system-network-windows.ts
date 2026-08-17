@@ -531,31 +531,81 @@ function tolerateMissing(command: string): string {
 }
 
 /**
+ * Capture everything the apply below is about to overwrite.
+ *
+ * Runs before the first destructive step, because from that point on the machine
+ * no longer knows what it used to be: the addresses are gone, the default routes
+ * are gone, and a failure two steps later would leave an interface with neither
+ * the old configuration nor the new one. What is captured is exactly what
+ * {@link windowsRestoreSteps} puts back — DHCP state, every IPv4 address with its
+ * prefix, every IPv4 default route with its metric, and the resolver list.
+ *
+ * Only the DHCP read is `-ErrorAction Stop`: an interface with no IPv4 stack at
+ * all cannot be configured, and finding that out before deleting anything is the
+ * point. The other three legitimately return nothing on an adapter that is simply
+ * unconfigured.
+ */
+function windowsSnapshotSteps(): string[] {
+	return ['$oldDhcp = (Get-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop).Dhcp', '$oldAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object IPAddress, PrefixLength)', "$oldRoutes = @(Get-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object NextHop, RouteMetric)", '$oldDns = @((Get-DnsClientServerAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses)'];
+}
+
+/**
+ * Put the snapshot back after a failed apply.
+ *
+ * The two branches are not symmetrical, and deliberately so. An interface that
+ * was on DHCP is restored by re-enabling DHCP and nothing else: the addresses and
+ * routes in the snapshot came from a lease, and re-adding them by hand would
+ * install a static copy that the lease then duplicates. An interface that was
+ * static has to have every address and every default route written back
+ * individually, metric included, because that configuration exists nowhere else.
+ *
+ * Resolvers are restored in both cases — `-ResetServerAddresses` when the
+ * snapshot held none, which is what "inherit from DHCP" is spelled as here.
+ */
+function windowsRestoreSteps(): string[] {
+	const restoreStatic = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', 'foreach ($a in $oldAddresses) { New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $a.IPAddress -PrefixLength $a.PrefixLength -ErrorAction Stop | Out-Null }', "foreach ($r in $oldRoutes) { New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop $r.NextHop -RouteMetric $r.RouteMetric -Confirm:$false -ErrorAction Stop | Out-Null }"].join('; ');
+	return [tolerateMissing('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false'), tolerateMissing("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false"), `if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled } else { ${restoreStatic} }`, 'if ($oldDns.Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $oldDns } else { Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses }'];
+}
+
+/**
  * Build the PowerShell one-shot that applies an IPv4 configuration.
  *
  * The interface is resolved by GUID rather than by name because `netsh` and the
  * `-InterfaceAlias` parameters take a localized, user-renameable string, while
  * the GUID is what the reader already reports as the interface id.
  *
- * The existing address and default route are removed first so a repeated apply
- * cannot stack a second address on the adapter — `New-NetIPAddress` adds, it does
- * not replace. Both removals tolerate "there was nothing there", which is the
- * normal state of an adapter currently on DHCP.
+ * The shape is snapshot → mutate → verify, with a restore on any failure. The
+ * existing address and default route have to be removed before the new ones are
+ * written — `New-NetIPAddress` adds, it does not replace, so a repeated apply
+ * would otherwise stack a second address on the adapter — and that is precisely
+ * what makes the snapshot mandatory: between the removal and the last step the
+ * interface holds no usable configuration at all, and a failure anywhere in
+ * between would leave it that way. {@link windowsSnapshotSteps} records what was
+ * there and {@link windowsRestoreSteps} puts it back before the error is
+ * rethrown. A rollback that itself fails is reported alongside the original
+ * failure rather than in place of it, because the machine is then in a state
+ * neither error alone describes.
+ *
+ * A static apply is verified before it is called a success: PowerShell can report
+ * a clean run for a `New-NetIPAddress` the stack did not honour, and an
+ * unverified apply would answer "done" while the interface still has no address.
  *
  * Every interpolated value has been through the shared validator, so each one is
  * a dotted-quad literal, a small integer, or a GUID. No quoting rule protects
  * this string — the validation does.
  */
 export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): string {
-	const steps = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', `$adapter = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq '${guid}' }`, 'if (-not $adapter) { throw "interface not found" }', '$i = $adapter.ifIndex', tolerateMissing('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false'), tolerateMissing("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false")];
+	const preamble = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', `$adapter = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq '${guid}' }`, 'if (-not $adapter) { throw "interface not found" }', '$i = $adapter.ifIndex'];
+	const mutation = [tolerateMissing('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false'), tolerateMissing("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false")];
 	if (config.mode === 'dhcp') {
-		steps.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses');
+		mutation.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses');
 	} else {
 		const gateway = config.gateway ? ` -DefaultGateway ${config.gateway}` : '';
 		const dns = config.dns ?? [];
-		steps.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`, dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses');
+		mutation.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`, dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses', `if (-not (Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq '${config.address}' })) { throw "the address was accepted but is not on the interface" }`);
 	}
-	return steps.join('; ');
+	const guarded = `try { ${mutation.join('; ')} } catch { $applyError = $_; try { ${windowsRestoreSteps().join('; ')} } catch { throw "the change failed ($($applyError.Exception.Message)) and rolling it back also failed ($($_.Exception.Message))" }; throw $applyError }`;
+	return [...preamble, ...windowsSnapshotSteps(), guarded].join('; ');
 }
 
 /**
