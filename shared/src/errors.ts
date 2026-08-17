@@ -89,6 +89,7 @@ const errorCodes = [
 	'UPLOAD_TOO_LARGE',
 	'UPLOAD_NOT_FOUND',
 	'TOO_MANY_UPLOADS',
+	'UPLOAD_INVALID_CHUNK',
 
 	// Download events
 	'DOWNLOAD_ERROR',

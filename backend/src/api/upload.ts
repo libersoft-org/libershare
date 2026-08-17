@@ -122,16 +122,29 @@ export function initUploadHandlers(dataDir: string, maxUploadSize: number = MAX_
 
 	async function chunk(p: { uploadID: string; data: Uint8Array }, client: unknown): Promise<{ received: number }> {
 		assert(p, ['uploadID', 'data']);
+		// Ownership first: the discard below must not be reachable for a stranger
+		// who merely guessed someone else's upload id.
 		const upload = owned(p.uploadID, client);
-		upload.written += p.data.byteLength;
+		// A text frame lands in the same dispatch as a binary one, so `data` can be
+		// a string that no envelope ever validated. A string has no `byteLength`,
+		// which would turn `written` into NaN — and every later `written > limit`
+		// comparison against NaN is false, so the size ceiling would be gone for the
+		// rest of the transfer while `FileSink.write()` happily kept writing.
+		if (!(p.data instanceof Uint8Array)) {
+			await discard(p.uploadID);
+			throw new CodedError(ErrorCodes.UPLOAD_INVALID_CHUNK, typeof p.data);
+		}
+		const nextWritten = upload.written + p.data.byteLength;
 		// Enforced as the bytes arrive rather than from a declared total, which a
-		// client is free to understate.
-		if (upload.written > maxUploadSize) {
+		// client is free to understate. The safe-integer check is the backstop for
+		// the counter itself: a limit compared against NaN or Infinity never trips.
+		if (!Number.isSafeInteger(nextWritten) || nextWritten > maxUploadSize) {
 			await discard(p.uploadID);
 			console.error(`[API] Upload rejected: ${p.uploadID} exceeds ${maxUploadSize} bytes`);
 			throw new CodedError(ErrorCodes.UPLOAD_TOO_LARGE, formatBytes(maxUploadSize));
 		}
-		upload.writer.write(p.data);
+		upload.written = nextWritten;
+		await upload.writer.write(p.data);
 		// Flushed before the response goes out, so the ack the client waits on means
 		// the bytes are on disk. Without it the sink would buffer the whole file in
 		// memory while the client happily kept sending.

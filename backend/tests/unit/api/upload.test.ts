@@ -277,6 +277,63 @@ describe('chunked upload over the websocket', () => {
 		}
 	});
 
+	it('rejects a text chunk instead of letting it poison the size counter', async () => {
+		const srv = startUploadServer(128 * 1024);
+		const client = new WsClient(srv.url, () => {});
+		try {
+			const { uploadID } = await client.call<{ uploadID: string }>('upload.begin', { name: 'text.lish' });
+			// A string has no byteLength: unchecked this makes `written` NaN, and
+			// every later `written > limit` comparison against NaN is false — the
+			// ceiling would be gone for the rest of the transfer.
+			await expectRejection(client.call('upload.chunk', { uploadID, data: 'x' }), ErrorCodes.UPLOAD_INVALID_CHUNK);
+			// The transfer is discarded outright rather than left with a poisoned counter.
+			await expectRejection(client.callBinary('upload.chunk', { uploadID }, pattern(16)), ErrorCodes.UPLOAD_NOT_FOUND);
+			expect(await readdir(srv.uploadDir)).toEqual([]);
+		} finally {
+			client.stopReconnect();
+			srv.stop();
+		}
+	});
+
+	it('never writes past the ceiling once a text chunk has been sent', async () => {
+		const ceiling = 128 * 1024;
+		const srv = startUploadServer(ceiling);
+		const client = new WsClient(srv.url, () => {});
+		try {
+			const { uploadID } = await client.call<{ uploadID: string }>('upload.begin', { name: 'poison.lish' });
+			// One text chunk is the whole exploit: it makes `written` NaN, and NaN
+			// fails every `> ceiling` test that follows, so the binary chunks after
+			// it can run to any size at all.
+			await client.call('upload.chunk', { uploadID, data: 'x' }).catch(() => {});
+			for (let i = 0; i < 8; i++) await client.callBinary('upload.chunk', { uploadID }, pattern(64 * 1024)).catch(() => {});
+			await client.call('upload.end', { uploadID }).catch(() => {});
+			// Whatever survives on disk, none of it may be over the ceiling.
+			for (const name of await readdir(srv.uploadDir).catch(() => [] as string[])) {
+				expect(Bun.file(join(srv.uploadDir, name)).size).toBeLessThanOrEqual(ceiling);
+			}
+		} finally {
+			client.stopReconnect();
+			srv.stop();
+		}
+	});
+
+	it('will not let a stranger discard a transfer with a text chunk', async () => {
+		const srv = startUploadServer();
+		const owner = new WsClient(srv.url, () => {});
+		const intruder = new WsClient(srv.url, () => {});
+		try {
+			const { uploadID } = await owner.call<{ uploadID: string }>('upload.begin', { name: 'mine.lish' });
+			await owner.callBinary('upload.chunk', { uploadID }, pattern(16));
+			// Ownership is checked before the discard, so a guessed id is inert.
+			await expectRejection(intruder.call('upload.chunk', { uploadID, data: 'x' }), ErrorCodes.UPLOAD_NOT_FOUND);
+			await owner.callBinary('upload.chunk', { uploadID }, pattern(16));
+		} finally {
+			owner.stopReconnect();
+			intruder.stopReconnect();
+			srv.stop();
+		}
+	});
+
 	it('rejects a chunk for an upload id nobody started', async () => {
 		const srv = startUploadServer();
 		const client = new WsClient(srv.url, () => {});
