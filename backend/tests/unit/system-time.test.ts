@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, type PlatformStatusReader, readNtpUnitsList, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, type PlatformStatusReader, readNtpUnitsList, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, syncDirectory, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -1265,10 +1265,9 @@ describe('writeFileAtomically', () => {
 	});
 
 	/**
-	 * The directory fsync that makes the rename itself durable. Whether it can happen at
-	 * all is a platform question — Windows has no directory handle to open and journals the
-	 * metadata instead — so what is asserted here is that a platform which refuses it does
-	 * not lose the write over it. The durability itself is only observable across a crash.
+	 * A platform that has no directory flush must not lose the write over it. This is a real
+	 * flush of a real directory, so on Windows it exercises the refusal itself (the handle
+	 * opens and `fsync` on it returns EPERM) and elsewhere the flush that works.
 	 */
 	it('publishes the file whether or not the directory can be flushed', async () => {
 		const path = join(dir, '90-libershare.conf');
@@ -1277,10 +1276,90 @@ describe('writeFileAtomically', () => {
 		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
 	});
 
+	/**
+	 * A flush that was ATTEMPTED and failed is not the same as one the platform does not
+	 * have. EIO and ENOSPC mean the metadata is not reliably stored — swallowing them
+	 * reported a durability the filesystem had just declined — while EPERM/EISDIR/EINVAL are
+	 * the "no such operation here" codes and stay silent.
+	 */
+	it('propagates a genuine directory flush error and ignores the unsupported ones', async () => {
+		const fail = async (code: string): Promise<unknown> => syncDirectory(join(dir, `probe-${code}`)).catch((err: Error) => err);
+		// A directory that is not there: a real error from the real implementation.
+		expect(await fail('ENOENT')).toBeInstanceOf(Error);
+		// And the ordinary path stays quiet on every platform, refusal included.
+		expect(await syncDirectory(dir)).toBeUndefined();
+	});
+
+	/**
+	 * The rename already happened, so the content is live under its final name. Removing the
+	 * temporary file would delete exactly that, and reporting a clean failure would claim
+	 * nothing happened — the flag is what lets the caller say which of the two it has.
+	 */
+	it('marks a post-rename flush failure as published and keeps the file', async () => {
+		const path = join(dir, '90-libershare.conf');
+		const eio = async (): Promise<void> => Promise.reject(Object.assign(new Error('EIO: i/o error, fsync'), { code: 'EIO' }));
+		const err = await writeFileAtomically(path, 'new\n', p => readFile(p, 'utf8'), eio).catch((e: { published?: boolean; code?: string }) => e);
+		expect(err).toMatchObject({ published: true, code: 'EIO' });
+		// Published means published: the file is there and no staging file was left behind.
+		expect(await readFile(path, 'utf8')).toBe('new\n');
+		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
+	});
+
+	/** Before the rename nothing is published, so the temp file goes and the error is bare. */
+	it('cleans up and does not mark a pre-rename failure as published', async () => {
+		const path = join(dir, 'made-here', '90-libershare.conf');
+		const eio = async (): Promise<void> => Promise.reject(Object.assign(new Error('EIO: i/o error, fsync'), { code: 'EIO' }));
+		// The parent flush runs before anything is written, because the directory was created.
+		const err = await writeFileAtomically(path, 'new\n', p => readFile(p, 'utf8'), eio).catch((e: { published?: boolean }) => e);
+		expect(err).toMatchObject({ code: 'EIO' });
+		expect(err).not.toMatchObject({ published: true });
+		expect(await readdir(join(dir, 'made-here'))).toEqual([]);
+	});
+
 	it('creates a missing parent directory', async () => {
 		const path = join(dir, 'timesyncd.conf.d', '90-libershare.conf');
 		await writeFileAtomically(path, 'x\n');
 		expect(await readFile(path, 'utf8')).toBe('x\n');
+	});
+
+	/**
+	 * Creating the directory is itself a change to ITS parent. Flushing only the new
+	 * directory commits what is inside it, not the entry that names it — a crash then comes
+	 * back to no `timesyncd.conf.d` at all and a drop-in nothing can read.
+	 */
+	it('flushes the parent of a directory it had to create', async () => {
+		const path = join(dir, 'a', 'b', '90-libershare.conf');
+		const flushed: string[] = [];
+		await writeFileAtomically(
+			path,
+			'x\n',
+			p => readFile(p, 'utf8'),
+			async d => void flushed.push(d)
+		);
+		// `mkdir` answers with an extended-length path on Windows (`\\?\C:\...`), which opens
+		// just the same — the prefix comes off so the assertion is about the directory.
+		// The first directory created is `a`, so its parent is the flush the rename would miss.
+		expect(flushed.map(d => d.replace(/^\\\\\?\\/, ''))).toEqual([dir, join(dir, 'a', 'b')]);
+	});
+
+	/**
+	 * Removing the name is a directory change like the rename was, and buffered the same way.
+	 * Without the flush a crash can bring the entry back and with it the drop-in this
+	 * rollback exists to withdraw.
+	 */
+	it('flushes the directory after the rollback removes a file it created', async () => {
+		const path = join(dir, '90-libershare.conf');
+		const flushed: string[] = [];
+		const rollback = await writeFileAtomically(
+			path,
+			'new\n',
+			p => readFile(p, 'utf8'),
+			async d => void flushed.push(d)
+		);
+		expect(await rollback()).toBe(true);
+		expect(await readdir(dir)).toEqual([]);
+		// Once for the rename, once for the unlink that took the name away again.
+		expect(flushed).toEqual([dir, dir]);
 	});
 
 	it('rolls an overwrite back to the previous content', async () => {

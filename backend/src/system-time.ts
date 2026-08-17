@@ -1272,6 +1272,17 @@ export async function setSystemNtpServer(server: string, readStatus: () => Promi
 }
 
 /**
+ * Errors from a directory flush that mean "there is no such operation here", as opposed
+ * to "it was attempted and failed".
+ *
+ * `EPERM` is Windows, where the directory handle opens and `fsync` on it is then refused;
+ * `EISDIR` is the platforms that refuse the open itself; `EINVAL` and the two "not
+ * supported" spellings are filesystems whose `fsync` rejects a directory descriptor.
+ * Anything outside this set propagates.
+ */
+const DIRECTORY_SYNC_UNSUPPORTED: ReadonlySet<string> = new Set(['EPERM', 'EISDIR', 'EINVAL', 'ENOTSUP', 'EOPNOTSUPP']);
+
+/**
  * Flush a directory's own contents so a name created in it survives a power loss.
  *
  * `fsync` on the FILE only commits its data; the entry that gives it its name lives in the
@@ -1279,10 +1290,13 @@ export async function setSystemNtpServer(server: string, readStatus: () => Promi
  * the rename can come back to the old file, or to no file at all — the one outcome the
  * atomic swap exists to rule out.
  *
- * A platform with no directory handle to open (Windows) refuses here, and that is not a
- * failure: it journals the metadata itself, which is the same guarantee by other means.
+ * A platform that has no such operation refuses here, and that is not a failure: Windows
+ * journals the metadata itself, which is the same guarantee by other means. Every OTHER
+ * error is a flush that was attempted and did not happen — `EIO` and `ENOSPC` say the
+ * metadata is not reliably stored — and swallowing those reported a durability the
+ * filesystem had just declined to provide.
  */
-async function syncDirectory(dir: string): Promise<void> {
+export async function syncDirectory(dir: string): Promise<void> {
 	try {
 		const handle = await open(dir, 'r');
 		try {
@@ -1290,8 +1304,8 @@ async function syncDirectory(dir: string): Promise<void> {
 		} finally {
 			await handle.close();
 		}
-	} catch {
-		// See above: no directory handle on this platform, and nothing to do about it here.
+	} catch (err) {
+		if (!DIRECTORY_SYNC_UNSUPPORTED.has((err as { code?: string }).code ?? '')) throw err;
 	}
 }
 
@@ -1315,7 +1329,7 @@ async function syncDirectory(dir: string): Promise<void> {
  * lets a second write truncate the first one's staging file and then rename it away, so
  * the first write publishes the second's content and the second fails with ENOENT.
  */
-export async function writeFileAtomically(path: string, content: string, readOriginal: (p: string) => Promise<string> = p => readFile(p, 'utf8')): Promise<() => Promise<boolean>> {
+export async function writeFileAtomically(path: string, content: string, readOriginal: (p: string) => Promise<string> = p => readFile(p, 'utf8'), syncDir: (dir: string) => Promise<void> = syncDirectory): Promise<() => Promise<boolean>> {
 	// ENOENT is the ONLY error that means "there was nothing here". Reading every other
 	// one — EACCES, EIO, EISDIR — as absence hands the rollback a `previous` of null, and
 	// null makes it DELETE the file: a permission fault on a live configuration would
@@ -1325,9 +1339,15 @@ export async function writeFileAtomically(path: string, content: string, readOri
 		if (err.code === 'ENOENT') return null;
 		throw err;
 	});
-	await mkdir(dirname(path), { recursive: true });
+	const created = await mkdir(dirname(path), { recursive: true });
+	// `mkdir` answers with the FIRST directory it had to create, or undefined when they were
+	// all already there. Flushing the new directory would commit what is inside it; the entry
+	// that NAMES it lives in its parent and needs its own flush, or a crash comes back to a
+	// drop-in directory that is not there and a configuration that was never read.
+	if (created !== undefined) await syncDir(dirname(created));
 	// Same directory, or the rename would cross a filesystem boundary and stop being atomic.
 	const temp = `${path}.libershare-${process.pid}-${randomUUID()}.tmp`;
+	let renamed = false;
 	try {
 		// `wx`, not `w`: an existing name is a collision to report, never one to overwrite.
 		const handle = await open(temp, 'wx');
@@ -1338,19 +1358,35 @@ export async function writeFileAtomically(path: string, content: string, readOri
 			await handle.close();
 		}
 		await rename(temp, path);
-		await syncDirectory(dirname(path));
+		renamed = true;
+		await syncDir(dirname(path));
 	} catch (err) {
-		await unlink(temp).catch(() => {});
-		throw err;
+		// Only up to the rename is the temporary file the thing to remove. Afterwards it IS
+		// the live file under its final name, so unlinking it would delete the configuration —
+		// and there is nothing to undo anyway: the content is published, and only the
+		// durability of its NAME is in doubt. The flag says which of the two the caller has,
+		// because "nothing happened" and "it happened and may not survive a power loss" are
+		// different things to tell a user.
+		if (!renamed) {
+			await unlink(temp).catch(() => {});
+			throw err;
+		}
+		throw Object.assign(err as object, { published: true });
 	}
 	// Reports whether the previous state is actually back. Swallowing that told the caller
 	// the host had been left as it was found while the new configuration was still on disk,
 	// to be adopted at the next boot — long after the user was told nothing had happened.
 	return async (): Promise<boolean> => {
 		try {
-			if (previous !== null) await writeFileAtomically(path, previous);
-			// Already gone is the state being restored to, not a failure.
-			else await unlink(path).catch((err: { code?: string }) => (err.code === 'ENOENT' ? undefined : Promise.reject(err)));
+			if (previous !== null) await writeFileAtomically(path, previous, readOriginal, syncDir);
+			else {
+				// Already gone is the state being restored to, not a failure.
+				await unlink(path).catch((err: { code?: string }) => (err.code === 'ENOENT' ? undefined : Promise.reject(err)));
+				// The removal is a directory change like the rename was, and buffered the same
+				// way: without this a crash can bring the entry back and with it the drop-in
+				// this rollback exists to withdraw.
+				await syncDir(dirname(path));
+			}
 			return true;
 		} catch {
 			return false;
@@ -1381,7 +1417,11 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
 		try {
 			rollback = await writeFileAtomically(path, buildTimesyncdDropIn(server));
 		} catch (err) {
-			const e = err as { code?: string; message?: string };
+			const e = err as { code?: string; message?: string; published?: boolean };
+			// The content reached its final name and only the flush afterwards failed, so this
+			// is not "nothing happened": the file is on disk, the daemon was never restarted
+			// onto it, and the host adopts it at the next start unless somebody removes it.
+			if (e.published) return { ...result('error', `${path} now holds the new server but could not be flushed to disk (${e.message ?? 'the directory flush failed'}), so systemd-timesyncd was not restarted onto it`), changed: true, stateMayHaveChanged: true };
 			if (e.code === 'EACCES' || e.code === 'EPERM') return result('permission-denied', `cannot write ${path}`);
 			return result('error', e.message ?? `cannot write ${path}`);
 		}
