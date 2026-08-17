@@ -39,6 +39,12 @@ type ClientData = {
 	reconnectAttempt: number;
 	reconnectTimer?: ReturnType<typeof setTimeout>;
 	/**
+	 * Set once an upstream connection has been established for this client. From
+	 * that point a drop is no longer transparently recoverable — see
+	 * {@link connectUpstream} — so the browser socket is closed instead.
+	 */
+	upstreamOpened: boolean;
+	/**
 	 * Upstream URL with the client's original query string preserved so the
 	 * backend sees `?token=…` (and any future query params) when
 	 * authentication is enabled. Computed at upgrade time and reused on
@@ -79,6 +85,7 @@ function connectUpstream(ws: import('bun').ServerWebSocket<ClientData>): void {
 	const upstream = new WebSocket(ws.data.upstreamUrl);
 	ws.data.upstream = upstream;
 	upstream.onopen = () => {
+		ws.data.upstreamOpened = true;
 		ws.data.reconnectAttempt = 0;
 		for (const message of ws.data.pending.splice(0)) upstream.send(message);
 	};
@@ -87,10 +94,23 @@ function connectUpstream(ws: import('bun').ServerWebSocket<ClientData>): void {
 	};
 	const handleDrop = (): void => {
 		if (ws.data.closed) return;
-		// Exponential backoff capped at MAX_RECONNECT_DELAY_MS. The browser
-		// tab stays connected to this proxy while we retry the upstream — so
-		// a backend rolling restart no longer forces every open page to
-		// reload to recover its WebSocket session.
+		// Once a session has been established, a silent reconnect is a lie: the
+		// backend has already torn down everything keyed to the old socket —
+		// event subscriptions, and in-progress uploads, which are owned by socket
+		// identity and can never be continued over a replacement. Meanwhile the
+		// browser is still waiting on a request whose reply died with that socket,
+		// and its WsClient only rejects pending requests when its own socket
+		// closes. Closing here is what lets it fail fast, reconnect and redo its
+		// handshake from scratch.
+		if (ws.data.upstreamOpened) {
+			console.warn('[proxy] established upstream session lost; closing client to force re-handshake');
+			ws.close(1011, 'upstream session lost');
+			return;
+		}
+		// Before the first successful open there is no session to lose, so
+		// retrying is transparent. Exponential backoff capped at
+		// MAX_RECONNECT_DELAY_MS — a backend that is still starting up does not
+		// force every open page to reload.
 		const attempt = ws.data.reconnectAttempt++;
 		if (attempt === RECONNECT_WARN_AFTER_ATTEMPTS) {
 			console.warn(`[proxy] upstream still unreachable after ${attempt} attempts; will keep retrying every ${MAX_RECONNECT_DELAY_MS}ms`);
@@ -114,7 +134,7 @@ Bun.serve({
 		const url = new URL(request.url);
 		if (url.pathname === '/ws') {
 			const upgraded = server.upgrade<ClientData>(request, {
-				data: { pending: [], closed: false, reconnectAttempt: 0, upstreamUrl: buildUpstreamUrl(url) },
+				data: { pending: [], closed: false, reconnectAttempt: 0, upstreamOpened: false, upstreamUrl: buildUpstreamUrl(url) },
 			});
 			if (upgraded) return undefined;
 			return new Response('Expected WebSocket', { status: 400 });
