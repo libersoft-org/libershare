@@ -433,3 +433,40 @@ describe('PeerAnnounceManager.stop clears per-run state', () => {
 		mgr.stop();
 	});
 });
+
+/**
+ * The unique cap bounds what intake ADMITS, not what the walk costs. Every raw entry is
+ * parsed, canonicalised and routability-tested before dedup can discard it, so a message
+ * of thousands of duplicates or junk values bought that work unbounded.
+ */
+describe('PeerAnnounceManager.handle raw input bound', () => {
+	it('stops examining a flood of duplicates long before the end of the list', async () => {
+		// The unique address sits past the raw budget, so reaching it would mean the walk
+		// went all the way through the padding.
+		const { mgr, forwarded } = intakeManager();
+		const dup = withID('/ip4/198.51.100.7/tcp/9090');
+		const beyond = withID('/ip4/203.0.113.200/tcp/9099');
+
+		await mgr.handle({ type: 'peer-announce', multiaddrs: [...Array(5000).fill(dup), beyond] }, 'netAAAA', SRC_ID);
+
+		expect(forwarded).toEqual([[dup]]);
+	});
+
+	it('still admits a legitimate full-size announce', async () => {
+		const { mgr, forwarded } = intakeManager();
+
+		await mgr.handle({ type: 'peer-announce', multiaddrs: distinctAddrs(128) }, 'netAAAA', SRC_ID);
+
+		expect(forwarded[0]!.length).toBe(128);
+	});
+
+	it('drops an over-long value without parsing it', async () => {
+		const { mgr, forwarded } = intakeManager();
+		const bloated = `/dns4/${'a'.repeat(600)}.example.com/tcp/9090/p2p/${ANNOUNCED_ID}`;
+		const named = withID('/ip4/203.0.113.5/tcp/9090');
+
+		await mgr.handle({ type: 'peer-announce', multiaddrs: [bloated, named] }, 'netAAAA', SRC_ID);
+
+		expect(forwarded).toEqual([[named]]);
+	});
+});

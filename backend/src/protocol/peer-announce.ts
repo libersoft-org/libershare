@@ -47,6 +47,22 @@ const PEER_ANNOUNCE_MAX_ADDRS = 32;
  * latency cost (sub-2 announce cycles to fill peerStore).
  */
 const PEER_ANNOUNCE_MAX_TOTAL_ADDRS = 128;
+/**
+ * Hard bound on RAW entries examined per announce, before anything is deduplicated.
+ *
+ * {@link PEER_ANNOUNCE_MAX_TOTAL_ADDRS} caps the UNIQUE addresses admitted, which bounds
+ * what intake costs downstream but not what the walk itself costs: every raw entry is
+ * parsed, canonicalised and routability-tested first, and a message can carry thousands
+ * of duplicates or unparseable values that never reach the unique cap at all. Eight times
+ * the unique cap leaves ample room for a legitimate announce (which is already trimmed to
+ * the unique cap by its emitter) while putting a ceiling on the work one message can buy.
+ */
+const PEER_ANNOUNCE_MAX_RAW_ADDRS = PEER_ANNOUNCE_MAX_TOTAL_ADDRS * 8;
+/**
+ * Longest announced address we will even attempt to parse. Real multiaddrs are well under
+ * this; anything longer is a parser workload, not an address.
+ */
+const PEER_ANNOUNCE_MAX_ADDR_LENGTH = 512;
 /** Max addrs we take from a single known peer when including transitive list. */
 const PEER_ANNOUNCE_MAX_ADDRS_PER_PEER = 3;
 /**
@@ -288,8 +304,12 @@ export class PeerAnnounceManager {
 		let droppedNonRoutable = 0;
 		let droppedDuplicate = 0;
 		let droppedAnonymous = 0;
+		let examined = 0;
 		for (const a of data.multiaddrs) {
-			if (typeof a !== 'string' || a.length === 0) continue;
+			// Counted over RAW entries, so duplicates and junk are spent from the same
+			// budget as anything else — the unique cap alone bounds only what survives.
+			if (++examined > PEER_ANNOUNCE_MAX_RAW_ADDRS) break;
+			if (typeof a !== 'string' || a.length === 0 || a.length > PEER_ANNOUNCE_MAX_ADDR_LENGTH) continue;
 			if (unique.size >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
 			try {
 				const ma = Multiaddr(a);
