@@ -116,6 +116,7 @@ function makeNetworks(net: MockNet, joined: string[], configs: Record<string, st
 	(networks as any).joinedNetworks = new Set(joined);
 	(networks as any).networkOperations = new Map();
 	(networks as any).catalogMutex = new Mutex();
+	(networks as any).activeReconciles = new Set();
 	// Same seeding startEnabledNetworks does: already-joined at construction time.
 	(networks as any).announcedJoined = new Map(joined.map(id => [id, true]));
 	// The list each joined network installed when it was joined.
@@ -404,6 +405,7 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		(networks as any).joinedNetworks = new Set(enabled ? [NET] : []);
 		(networks as any).networkOperations = new Map();
 		(networks as any).catalogMutex = new Mutex();
+		(networks as any).activeReconciles = new Set();
 		(networks as any).announcedJoined = new Map(enabled ? [[NET, true]] : []);
 		// What a startup join would have installed for an already-joined network.
 		(networks as any).appliedBootstrap = new Map(enabled ? [[NET, bootstrapPeers]] : []);
@@ -538,6 +540,7 @@ describe('Networks — leaving cleans the configuration it is leaving, not the n
 		(networks as any).joinedNetworks = new Set([NET]);
 		(networks as any).networkOperations = new Map();
 		(networks as any).catalogMutex = new Mutex();
+		(networks as any).activeReconciles = new Set();
 		(networks as any).announcedJoined = new Map([[NET, true]]);
 		// What a startup join would have installed for an already-joined network.
 		(networks as any).appliedBootstrap = new Map([[NET, bootstrapPeers]]);

@@ -53,7 +53,15 @@ function makeMockNet(startGate: Promise<void>) {
 		pruneBootstrapAddresses(): void {},
 		pruneBootstrapStatus(): void {},
 		clearRedialSuppressionForNetwork(): void {},
-		addBootstrapPeers: async (): Promise<void> => {},
+		dialsCancelled: 0,
+		cancelBootstrapDials(): void {
+			this.dialsCancelled++;
+		},
+		/** Set to hold the bootstrap dial of a join open. */
+		dialGate: null as null | Promise<void>,
+		async addBootstrapPeers(): Promise<void> {
+			if (this.dialGate) await this.dialGate;
+		},
 	};
 }
 
@@ -64,12 +72,21 @@ function makeNetworks(net: ReturnType<typeof makeMockNet>, db: Database): Networ
 	(networks as any).joinedNetworks = new Set<string>();
 	(networks as any).networkOperations = new Map<string, Mutex>();
 	(networks as any).catalogMutex = new Mutex();
+	(networks as any).activeReconciles = new Set();
 	(networks as any).announcedJoined = new Map<string, boolean>();
 	(networks as any).appliedBootstrap = new Map<string, string[]>();
 	(networks as any).shuttingDown = false;
 	(networks as any)._onNetworkJoined = null;
 	(networks as any)._onNetworkLeft = null;
 	return networks;
+}
+
+const BOOTSTRAP = '/ip4/192.0.2.1/tcp/9090/p2p/12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+
+/** Give the row a bootstrap peer, so a join has a dial to park on. Leaves it disabled. */
+function reseedWithBootstrap(db: Database): void {
+	deleteLISHnet(db, NET);
+	addLISHnet(db, { networkID: NET, name: 'A', description: '', bootstrapPeers: [BOOTSTRAP], enabled: false, created: '2026-01-01T00:00:00.000Z' });
 }
 
 /** Let the startup loop get past its awaits. */
@@ -201,6 +218,36 @@ describe('Networks.startEnabledNetworks — coordinated with concurrent changes'
 		await networks.setEnabled(NET, false);
 		expect(net.unsubscribed).toEqual([NET]);
 		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
+	});
+
+	/**
+	 * The catalog mutex only ever guarded the database phase, so holding it said nothing
+	 * about the runtime work in flight: an operation could be between its two phases, queued
+	 * on a per-lishnet lock, or half-way through a join when the node was pulled out from
+	 * under it. The stop now waits for everything that was reserved before it closed the door.
+	 */
+	it('waits for an operation already under way before stopping the node', async () => {
+		const net = makeMockNet(Promise.resolve());
+		const networks = makeNetworks(net, db);
+		setLISHnetEnabled(db, NET, false);
+		await networks.startEnabledNetworks();
+		reseedWithBootstrap(db);
+
+		const gate = deferred();
+		net.dialGate = gate.promise;
+		const enabling = networks.setEnabled(NET, true);
+		await settle();
+		const stopping = networks.stopAllNetworks();
+		await settle();
+
+		// The join is parked on its bootstrap dial, so the node must still be up — and the
+		// stop must have asked the dials to end rather than simply waiting them out.
+		expect(net.running).toBe(true);
+		expect(net.dialsCancelled).toBe(1);
+
+		gate.resolve();
+		await Promise.all([enabling, stopping]);
+		expect(net.running).toBe(false);
 	});
 
 	it('an undisturbed startup still joins every enabled network', async () => {

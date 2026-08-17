@@ -81,7 +81,7 @@ export class Networks {
 	 * writer enqueues here before it awaits anything else, so one gate for everyone makes
 	 * arrival order and write order the same.
 	 *
-	 * Held for the DATABASE phase only — see {@link inCatalog} and {@link reconcile}. It is
+	 * Held for the DATABASE phase only — see {@link inCatalog} and {@link reconcileLater}. It is
 	 * never held while a per-ID lock is taken, so no cycle is possible.
 	 */
 	private readonly catalogMutex = new Mutex();
@@ -111,6 +111,17 @@ export class Networks {
 	 * is something to take back off.
 	 */
 	private readonly appliedBootstrap = new Map<string, string[]>();
+	/**
+	 * Every reconcile that has been RESERVED and not yet finished — the shutdown barrier.
+	 *
+	 * The catalog mutex guards the database phase only, so holding it says nothing about the
+	 * runtime work already in flight: an operation could be between its two phases, queued on
+	 * a per-lishnet lock, or half-way through a join or a leave when the node was stopped
+	 * underneath it. Registration happens inside {@link reconcileLater}, synchronously, while
+	 * the catalog is still held — which is what leaves no window between phase one and phase
+	 * two for a stop to slip through.
+	 */
+	private readonly activeReconciles = new Set<Promise<unknown>>();
 
 	/**
 	 * True from the synchronous start of {@link stopAllNetworks} until the next
@@ -310,8 +321,19 @@ export class Networks {
 	 * before that, and left the older addresses installed on the node with the API reporting
 	 * success. `replace()` reserves every network it touches before it lets go of the
 	 * catalog, so nothing can slip in front of it on any of them.
+	 *
+	 * The reservation is also the shutdown's ticket — see {@link activeReconciles}. Both the
+	 * enqueue and the registration are synchronous, so a job is known to the barrier from the
+	 * moment its database write happened, never from some later turn of the loop.
 	 */
 	private reconcileLater(id: string): Promise<ReconcileOutcome> {
+		// {@link stopAllNetworks} closes the door here and then drains what is already
+		// through it. A convergence started now would work on a node about to go down, and
+		// the stop clears the runtime state anyway; the database write it belongs to stands.
+		if (this.shuttingDown) {
+			this.forgetIfGone(id);
+			return Promise.resolve(this.currentState(id));
+		}
 		const reservation = this.operationLock(id).acquire();
 		const job = (async () => {
 			const release = await reservation;
@@ -325,9 +347,20 @@ export class Networks {
 		// A caller with several jobs awaits them one at a time, so a later one can settle
 		// while an earlier is still being awaited. Attaching this here — synchronously, at
 		// creation — is what keeps that from surfacing as an unhandled rejection; the caller
-		// still sees the failure when its own await reaches that job.
-		void job.catch(() => {});
+		// still sees the failure when its own await reaches that job, and the barrier below
+		// waits on something that cannot reject.
+		const settled = job.catch(() => {});
+		this.activeReconciles.add(settled);
+		void settled.then(() => this.activeReconciles.delete(settled));
 		return job;
+	}
+
+	/** The lishnet as it stands right now, for a convergence that was never run. */
+	private currentState(id: string): ReconcileOutcome {
+		const row = this.get(id);
+		const outcome: ReconcileOutcome = { transitioned: false, joined: this.joinedNetworks.has(id) };
+		if (row) outcome.network = { networkID: row.networkID, name: row.name };
+		return outcome;
 	}
 
 	/**
@@ -638,14 +671,17 @@ export class Networks {
 		// until the next microtask, so `isRunning()` alone still reads true for a moment
 		// and a startup loop in that moment would subscribe onto a node about to die.
 		this.shuttingDown = true;
-		// The catalog mutex covers the DATABASE phase of every writer, not their network
-		// work, so it is `shuttingDown` — set above, before anything is awaited — that keeps
-		// a join out of the way: {@link canJoin} is consulted before the subscribe and again
-		// after the bootstrap dials, so a join running concurrently with this either never
-		// subscribes or drops the membership claim it was building. What the mutex adds is
-		// that no new row can be written, and no reconcile started, from the moment the node
-		// begins to go down.
+		// Taking the catalog closes the door on new work in both phases at once: no further
+		// row can be written, and {@link reconcileLater} — which reserves only from inside a
+		// catalog body — can no longer register a convergence. Everything already through
+		// that door is in {@link activeReconciles} and is waited for below, so the node is
+		// stopped with no join or leave still holding a subscription, a peer or a dial.
 		await this.catalogMutex.runExclusive(async () => {
+			// A join parked on a sequential walk of unreachable bootstrap addresses would hold
+			// the drain for one connection timeout per address. Cancelling first is what keeps
+			// waiting for it from presenting as a frozen shutdown.
+			this.network.cancelBootstrapDials();
+			await this.drainReconciles();
 			// Cleared only once the node is provably down. Discarding the membership first
 			// meant a stop that failed — leaving the node alive and the wrapper `failed` —
 			// still left this layer claiming it was in no lishnet and had announced nothing.
@@ -653,7 +689,16 @@ export class Networks {
 			// those networks afterwards wrote `enabled=false` and then unsubscribed nothing,
 			// disconnected nobody and dropped no keep-alive tag, while the node went on
 			// subscribed to the topic.
-			await this.network.stop();
+			try {
+				await this.network.stop();
+			} catch (err) {
+				// The shutdown did not happen. The node is still up and still owns its
+				// subscriptions, so this layer has to go on managing it — leaving the flag set
+				// would make every later write refuse its runtime half, and a disable would
+				// once again write `enabled=false` over a network we are demonstrably still in.
+				this.shuttingDown = false;
+				throw err;
+			}
 			// Per-run, like `joinedNetworks` itself. Surviving a stop left the map claiming
 			// networks were still announced as joined, so after a restart a network that came
 			// back disabled never produced the "left" event its subscribers were waiting for,
@@ -666,6 +711,19 @@ export class Networks {
 			this.appliedBootstrap.clear();
 			console.log('✓ All lishnets left and node stopped');
 		});
+	}
+
+	/**
+	 * Wait for every convergence that was reserved before the door closed.
+	 *
+	 * One pass is enough: a job is registered when its slot is RESERVED, not when it starts
+	 * running, so the queued ones are in the set too and no new entry can appear while the
+	 * catalog is held. The promises waited on never reject — see {@link reconcileLater}.
+	 */
+	private async drainReconciles(): Promise<void> {
+		if (this.activeReconciles.size === 0) return;
+		console.log(`Waiting for ${this.activeReconciles.size} lishnet operation(s) to finish before stopping the node`);
+		await Promise.all([...this.activeReconciles]);
 	}
 
 	/**

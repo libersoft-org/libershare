@@ -88,6 +88,7 @@ function makeNetworks(net: ReturnType<typeof makeMockNet>, db: Database, joined:
 	(networks as any).joinedNetworks = new Set(joined);
 	(networks as any).networkOperations = new Map<string, Mutex>();
 	(networks as any).catalogMutex = new Mutex();
+	(networks as any).activeReconciles = new Set();
 	(networks as any).announcedJoined = new Map<string, boolean>(joined.map(id => [id, true]));
 	// The bootstrap list each already-joined network installed, as a startup join would.
 	(networks as any).appliedBootstrap = new Map<string, string[]>(joined.map(id => [id, getLISHnet(db, id)?.bootstrapPeers ?? []]));
