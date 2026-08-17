@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { connectWifi, ipv4EditObjection, networkStateGeneration, resetNetworkStateCache, runHostMutation } from '../../src/system-network.ts';
+import { connectWifi, ipv4EditObjection, networkStateGeneration, resetNetworkStateCache, runHostMutation, withVolatileCapabilities } from '../../src/system-network.ts';
 import { ErrorCodes, type NetInterfaceInfo, type NetworkStateInfo } from '@shared';
 
 /**
@@ -56,6 +56,42 @@ describe('runHostMutation', () => {
 		await Promise.all([slow, fast]);
 		expect(order).toEqual(['a:start', 'a:end', 'b:start']);
 		resetNetworkStateCache();
+	});
+});
+
+/**
+ * The half of the capability probe that must not be remembered.
+ *
+ * The probe is cached for the whole process, which is right for an elevated
+ * token and for `admin` group membership — neither can change without a new
+ * process — and wrong for the Windows radio: a USB adapter plugged in after
+ * start, or WLAN AutoConfig restarted, left the entire Wi-Fi section hidden
+ * until the app was restarted.
+ */
+describe('withVolatileCapabilities', () => {
+	const remembered = { ipv4: true, wifi: false, staticGatewayRequired: false } as const;
+
+	it('re-asks the windows radio question every time', () => {
+		expect(withVolatileCapabilities(remembered, 'win32', () => true).wifi).toBe(true);
+		expect(withVolatileCapabilities({ ...remembered, wifi: true }, 'win32', () => false).wifi).toBe(false);
+	});
+
+	it('leaves the rest of the remembered probe alone', () => {
+		const fresh = withVolatileCapabilities(remembered, 'win32', () => true);
+		expect(fresh.ipv4).toBe(true);
+		expect(fresh.staticGatewayRequired).toBe(false);
+	});
+
+	it('does not re-probe where the answer costs a spawn and cannot change', () => {
+		// Linux pays an nmcli spawn for this answer and a 5 s read cadence must not
+		// pay it again; macOS reports a constant.
+		for (const platform of ['linux', 'darwin', 'freebsd']) {
+			expect(
+				withVolatileCapabilities(remembered, platform, () => {
+					throw new Error('probed anyway');
+				})
+			).toBe(remembered);
+		}
 	});
 });
 

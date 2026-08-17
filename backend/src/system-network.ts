@@ -283,11 +283,29 @@ export async function runHostMutation<T>(action: () => Promise<T>): Promise<T> {
  * Probed once and remembered: on Linux the answer is an `nmcli` spawn, and it
  * cannot change without the daemon being installed or stopped, which does not
  * happen inside one run of the app.
+ *
+ * The one answer that DOES change under the app is the Windows Wi-Fi one — a USB
+ * adapter plugged in after start, or the WLAN AutoConfig service restarted, and
+ * the whole Wi-Fi section stays hidden until the app is restarted. That probe is
+ * an in-process wlanapi enumeration the read performs anyway, so it is taken
+ * fresh every time instead of being remembered with the rest.
  */
 let capabilities: NetCapabilities | null = null;
 
+/**
+ * Re-answer the parts of a remembered probe that can change while the app runs.
+ *
+ * Only the Windows Wi-Fi answer can. An elevated token is fixed for the life of a
+ * process, `admin` group membership is fixed for the life of a login, and the
+ * Linux answer costs an `nmcli` spawn that a 5 s read cadence must not pay for
+ * again — while the Windows one is an in-process wlanapi enumeration.
+ */
+export function withVolatileCapabilities(remembered: NetCapabilities, platform: string, probeWifi: () => boolean): NetCapabilities {
+	return platform === 'win32' ? { ...remembered, wifi: probeWifi() } : remembered;
+}
+
 async function readCapabilities(): Promise<NetCapabilities> {
-	if (capabilities) return capabilities;
+	if (capabilities) return withVolatileCapabilities(capabilities, process.platform, isWindowsWifiConfigurable);
 	if (process.platform === 'win32') {
 		// The Get/Set-Net* cmdlets refuse outright without an elevated token, so the
 		// capability is that token — probed once here rather than discovered by the
