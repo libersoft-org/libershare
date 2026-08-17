@@ -222,6 +222,7 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 		}
 		const link = linkByName.get(entry.ifname);
 		const wireless = sources.wireless?.has(entry.ifname) ?? false;
+		const managed = sources.managed?.has(entry.ifname) ?? false;
 		const info: NetInterfaceInfo = {
 			id: entry.ifname,
 			name: entry.ifname,
@@ -238,12 +239,20 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 			// unknown permission is not a permission, and `isLinuxWritable()` has
 			// already reported the host read-only in that case anyway.
 			//
-			// Being managed is necessary but not sufficient. `applyLinuxIPv4` edits the
-			// profile ACTIVE on the device, so a managed device that is disconnected or
-			// unavailable — which "managed" happily includes — has nothing to edit, and
-			// offering Configure there showed a working Save that failed every time
-			// with "no NetworkManager profile is active". Both conditions, or neither.
-			configurable: (sources.managed?.has(entry.ifname) ?? false) && (sources.activeProfiles?.has(entry.ifname) ?? false),
+			// Being managed is necessary but not sufficient FOR ADDRESSING.
+			// `applyLinuxIPv4` edits the profile ACTIVE on the device, so a managed
+			// device that is disconnected or unavailable — which "managed" happily
+			// includes — has nothing to edit, and offering Configure there showed a
+			// working Save that failed every time with "no NetworkManager profile is
+			// active". Both conditions, or neither.
+			ipv4Configurable: managed && (sources.activeProfiles?.has(entry.ifname) ?? false),
+			// Wi-Fi asks nothing of the active profile, and requiring one was a
+			// regression: a disconnected adapter has no active profile and is precisely
+			// the one a user needs to scan and join with. `nmcli device wifi list`
+			// drives the radio, and `nmcli device wifi connect` finds or CREATES a
+			// profile for a managed device — so managed is the whole condition.
+			wifiScannable: managed && wireless,
+			wifiConnectable: managed && wireless,
 			// NetworkManager knows the resolvers PER LINK, which is the only correct
 			// answer on a systemd-resolved host: there /etc/resolv.conf holds the
 			// 127.0.0.53 stub, so reporting it would show every machine the same

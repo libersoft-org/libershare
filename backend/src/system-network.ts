@@ -97,7 +97,7 @@ export function readGenericInterfaces(): NetInterfaceInfo[] {
 		// This reader is the fallback for a platform with no configuration backend at
 		// all, and its ids are runtime device names rather than the identifiers an
 		// apply resolves. Nothing it reports can be edited.
-		result.push({ id: name, name, medium: 'other', link: 'unknown', defaultRoute: false, mac, addresses, ipv4Mode: 'unknown', gateway: null, dns: [], configurable: false });
+		result.push({ id: name, name, medium: 'other', link: 'unknown', defaultRoute: false, mac, addresses, ipv4Mode: 'unknown', gateway: null, dns: [], ipv4Configurable: false, wifiScannable: false, wifiConnectable: false });
 	}
 	return result;
 }
@@ -324,14 +324,14 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Pro
 
 /** Scan for joinable Wi-Fi networks on one interface. */
 export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
-	await assertWirelessInterface(interfaceID);
+	await assertWirelessInterface(interfaceID, 'wifiScannable');
 	if (process.platform === 'win32') return run(() => scanWindowsWifi(assertWindowsGuid(interfaceID)));
 	return run(() => scanLinuxWifi(assertDeviceName(interfaceID)));
 }
 
 /** Join a Wi-Fi network on one interface. An empty password means an open network. */
 export async function connectWifi(interfaceID: string, ssid: string, password: string): Promise<void> {
-	await assertWirelessInterface(interfaceID);
+	await assertWirelessInterface(interfaceID, 'wifiConnectable');
 	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
 	// Checked before anything is written. On Windows the profile lands on disk
 	// ahead of the association attempt, so a credential no WPA2/WPA3 network could
@@ -360,14 +360,19 @@ function assertWindowsGuid(interfaceID: string): string {
  * a Wi-Fi device" — a true statement, but one that surfaces as a command failure
  * for what is really a bad request. The medium comes from the same read the UI
  * displays, so the two can never disagree about which interfaces are wireless.
+ *
+ * `capability` is the per-interface flag the operation actually needs, checked
+ * here rather than trusted from the frontend: scanning and joining are separate
+ * answers, and a direct RPC client sends neither.
  */
-async function assertWirelessInterface(interfaceID: string): Promise<void> {
+async function assertWirelessInterface(interfaceID: string, capability: 'wifiScannable' | 'wifiConnectable'): Promise<void> {
 	const supported = await readCapabilities();
 	if (!supported.wifi) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host cannot configure Wi-Fi');
 	const state = await readNetworkState();
 	const target = state.interfaces.find(i => i.id === interfaceID);
 	if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
 	if (target.medium !== 'wireless') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'not a wireless interface');
+	if (target[capability] !== true) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this interface cannot be driven over Wi-Fi');
 }
 
 /**

@@ -2,7 +2,7 @@
  * Unit tests for the host network-state store in `src/scripts/networkState.ts`.
  *
  * The store feeds the Settings > Network screen, which gates its Configure and
- * Wi-Fi buttons on `capabilities` and on the per-interface `configurable` flag.
+ * Wi-Fi buttons on `capabilities` and on the per-interface capability flags.
  * A failed read therefore has to clear those, not merely flag the snapshot
  * unknown: buttons left enabled from a stale snapshot refer to a host state
  * nobody can still vouch for, and pressing one starts a destructive operation.
@@ -17,7 +17,7 @@ import type { NetInterfaceInfo, NetworkStateInfo, NetWifiNetwork } from '@shared
 
 /** One interface of a settled, writable host. */
 function iface(overrides: Partial<NetInterfaceInfo> = {}): NetInterfaceInfo {
-	return { id: 'eth0', name: 'eth0', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [{ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 }], ipv4Mode: 'static', gateway: '192.0.2.1', dns: [], configurable: true, ...overrides };
+	return { id: 'eth0', name: 'eth0', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [{ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 }], ipv4Mode: 'static', gateway: '192.0.2.1', dns: [], ipv4Configurable: true, wifiScannable: true, wifiConnectable: true, ...overrides };
 }
 
 /** A settled snapshot whose host can be reconfigured. */
@@ -33,7 +33,7 @@ function wifi(overrides: Partial<NetWifiNetwork> = {}): NetWifiNetwork {
 /** A settled snapshot of a host that can be reconfigured. */
 function liveState(): NetworkStateInfo {
 	return {
-		interfaces: [{ id: 'eth0', name: 'eth0', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [{ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 }], ipv4Mode: 'static', gateway: '192.0.2.1', dns: [], configurable: true }],
+		interfaces: [{ id: 'eth0', name: 'eth0', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [{ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 }], ipv4Mode: 'static', gateway: '192.0.2.1', dns: [], ipv4Configurable: true, wifiScannable: true, wifiConnectable: true }],
 		primaryID: 'eth0',
 		detail: 'full',
 		known: true,
@@ -106,7 +106,7 @@ test('addressing is not editable from an address-only read', () => {
 });
 
 test('addressing is not editable on an interface the tooling cannot reach', () => {
-	expect(canEditInterfaceIPv4(iface({ configurable: false }), snapshot())).toBe(false);
+	expect(canEditInterfaceIPv4(iface({ ipv4Configurable: false }), snapshot())).toBe(false);
 });
 
 test('addressing is not editable on an interface carrying IPv4 aliases', () => {
@@ -131,8 +131,18 @@ test('wi-fi is driveable only on an interface with a real radio', () => {
 });
 
 test('wi-fi is not driveable on an interface the tooling cannot reach', () => {
-	const radio = iface({ medium: 'wireless', configurable: false, wifi: { ssid: null, signal: null, radio: 'on' } });
+	const radio = iface({ medium: 'wireless', wifiScannable: false, wifi: { ssid: null, signal: null, radio: 'on' } });
 	expect(canEditInterfaceWifi(radio, snapshot())).toBe(false);
+});
+
+// The regression the split exists for. On Linux `ipv4Configurable` requires an
+// ACTIVE connection profile, which a disconnected adapter has not got — and while
+// Wi-Fi read the same flag, the one adapter a user most needs to scan with was
+// the one adapter they could not.
+test('wi-fi stays driveable on a radio whose addressing is not editable', () => {
+	const disconnected = iface({ medium: 'wireless', ipv4Configurable: false, wifiScannable: true, wifiConnectable: true, wifi: { ssid: null, signal: null, radio: 'on' } });
+	expect(canEditInterfaceIPv4(disconnected, snapshot())).toBe(false);
+	expect(canEditInterfaceWifi(disconnected, snapshot())).toBe(true);
 });
 
 test('an addressing mode the host could not name is not applicable', () => {

@@ -75,20 +75,26 @@ export async function applyInterfaceConfig(interfaceID: string, config: NetIPv4C
  */
 export function canEditInterfaceIPv4(iface: NetInterfaceInfo | undefined, state: NetworkStateInfo): boolean {
 	if (!iface || !state.capabilities.ipv4 || state.detail !== 'full') return false;
-	if (iface.configurable !== true) return false;
+	if (iface.ipv4Configurable !== true) return false;
 	return iface.addresses.filter(a => a.family === 'ipv4').length <= 1;
 }
 
 /**
  * Whether the Wi-Fi of one interface may be driven.
  *
- * Independent of the addressing answer: Windows lets any user join a network but
- * only an elevated one change an address. `wifi` present is what separates a real
- * radio from a Wi-Fi Direct virtual adapter that calls itself wireless.
+ * Independent of the addressing answer, and asked of its OWN flag. Windows lets
+ * any user join a network but only an elevated one change an address, and on
+ * Linux the addressing answer requires an active connection profile — which a
+ * disconnected Wi-Fi adapter does not have, and which has nothing to do with
+ * whether its radio can scan. Sharing one flag between the two left exactly that
+ * adapter unable to scan or join at all.
+ *
+ * `wifi` present is what separates a real radio from a Wi-Fi Direct virtual
+ * adapter that calls itself wireless.
  */
 export function canEditInterfaceWifi(iface: NetInterfaceInfo | undefined, state: NetworkStateInfo): boolean {
 	if (!iface || !state.capabilities.wifi || state.detail !== 'full') return false;
-	return iface.configurable === true && !!iface.wifi;
+	return iface.wifiScannable === true && !!iface.wifi;
 }
 
 /**

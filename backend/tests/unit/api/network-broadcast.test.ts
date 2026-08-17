@@ -4,7 +4,7 @@ import { applyAndPublish } from '../../../src/api/system.ts';
 
 /** A state that is recognisable in an assertion without standing for anything real. */
 function fakeState(marker: string): NetworkStateInfo {
-	return { interfaces: [{ id: marker, name: marker, medium: 'wired', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'dhcp', gateway: null, dns: [], configurable: true }], primaryID: marker, detail: 'full', known: true, capabilities: { ipv4: true, wifi: false, staticGatewayRequired: false } };
+	return { interfaces: [{ id: marker, name: marker, medium: 'wired', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'dhcp', gateway: null, dns: [], ipv4Configurable: true, wifiScannable: true, wifiConnectable: true }], primaryID: marker, detail: 'full', known: true, capabilities: { ipv4: true, wifi: false, staticGatewayRequired: false } };
 }
 
 describe('applyAndPublish', () => {

@@ -244,7 +244,12 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 			// `ifIndex:N` id, and the apply path resolves an adapter by GUID — so
 			// `assertWindowsGuid` rejects that id every time. Saying so here keeps the
 			// UI from offering a Configure button whose Save could only ever fail.
-			configurable: guid !== null,
+			ipv4Configurable: guid !== null,
+			// Every wlanapi call is addressed by the same GUID, and none of them needs
+			// the elevation the address apply does — so on Windows the three answers
+			// differ only in what they are asked about, not in what they require.
+			wifiScannable: guid !== null,
+			wifiConnectable: guid !== null,
 		};
 		// Wi-Fi Direct virtual adapters also report medium 9 but have no WLAN
 		// interface of their own, so an absent entry leaves `wifi` undefined.

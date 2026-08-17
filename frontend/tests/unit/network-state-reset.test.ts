@@ -29,7 +29,7 @@ mock.module('../../src/scripts/api.ts', () => ({
 }));
 
 const live: NetworkStateInfo = {
-	interfaces: [{ id: 'eth0', name: 'eth0', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'static', gateway: '192.0.2.1', dns: [], configurable: true }],
+	interfaces: [{ id: 'eth0', name: 'eth0', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'static', gateway: '192.0.2.1', dns: [], ipv4Configurable: true, wifiScannable: true, wifiConnectable: true }],
 	primaryID: 'eth0',
 	detail: 'full',
 	known: true,

@@ -301,7 +301,12 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 			// record is created here for every non-loopback device the kernel reports,
 			// including plenty with no service at all, so without this the UI offers
 			// an edit that fails only once the user presses Save.
-			configurable: services.has(device),
+			ipv4Configurable: services.has(device),
+			// Never, on any device: macOS withholds every network name from a process
+			// without CoreLocation authorization, so a scan cannot name what it found
+			// and a join's outcome cannot be checked. See isMacWifiConfigurable.
+			wifiScannable: false,
+			wifiConnectable: false,
 		};
 		if (medium === 'wireless' && airport) {
 			info.wifi = {

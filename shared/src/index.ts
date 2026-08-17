@@ -370,14 +370,15 @@ export interface NetInterfaceInfo {
 	gateway: string | null;
 	dns: string[];
 	/**
-	 * Whether this interface can be reconfigured, given that the host can be.
+	 * Whether this interface's IPv4 addressing can be reconfigured, given that the
+	 * host can be.
 	 *
 	 * The host-wide {@link NetCapabilities} answer only says the tooling is present
 	 * and we may use it. Each interface still has to be reachable BY that tooling:
-	 * on Linux the interface list comes from the kernel and includes devices
-	 * NetworkManager does not own, on Windows an addressed stack may have no
-	 * adapter GUID for the apply to resolve, on macOS a device may belong to no
-	 * enabled network service.
+	 * on Linux the apply edits the profile ACTIVE on the device, so a device with
+	 * none has nothing to edit; on Windows an addressed stack may have no adapter
+	 * GUID for the apply to resolve; on macOS a device may belong to no enabled
+	 * network service.
 	 *
 	 * REQUIRED, and deliberately so. While it was optional, an absent value meant
 	 * "no per-interface objection" and the frontend read that as permission — a
@@ -385,7 +386,28 @@ export interface NetInterfaceInfo {
 	 * network. Every reader now states it outright, so only `true` is permission
 	 * and a reader that forgets is a compile error rather than an open door.
 	 */
-	configurable: boolean;
+	ipv4Configurable: boolean;
+	/**
+	 * Whether this interface's radio can be asked what networks it can see.
+	 *
+	 * Separate from {@link ipv4Configurable} because the two answer to different
+	 * tooling and were briefly conflated, with a plain regression: requiring an
+	 * ACTIVE NetworkManager profile is right for editing an address and wrong for
+	 * Wi-Fi, since a DISCONNECTED adapter has no active profile and is exactly the
+	 * adapter a user needs to scan with. `nmcli device wifi list` asks the radio,
+	 * not the profile, and needs only a managed device.
+	 */
+	wifiScannable: boolean;
+	/**
+	 * Whether this interface can be told to join a network.
+	 *
+	 * Distinct from {@link wifiScannable} because seeing a network and being
+	 * allowed to associate with it are not the same permission on every platform —
+	 * a radio can be scannable while joining is refused by policy. No current
+	 * platform separates them, so today every reader answers both alike; the field
+	 * exists so the join path asks the question it actually means.
+	 */
+	wifiConnectable: boolean;
 	/** Present only when medium === 'wireless'. */
 	wifi?: NetWifiInfo;
 }

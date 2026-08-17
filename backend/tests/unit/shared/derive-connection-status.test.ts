@@ -3,7 +3,7 @@ import { deriveConnectionStatus, type NetInterfaceInfo, type NetworkStateInfo } 
 
 /** An interface with only the fields a case cares about spelled out. */
 function iface(overrides: Partial<NetInterfaceInfo> & { id: string }): NetInterfaceInfo {
-	return { name: overrides.id, medium: 'wired', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [], configurable: false, ...overrides };
+	return { name: overrides.id, medium: 'wired', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [], ipv4Configurable: false, wifiScannable: false, wifiConnectable: false, ...overrides };
 }
 
 function state(interfaces: NetInterfaceInfo[], overrides: Partial<NetworkStateInfo> = {}): NetworkStateInfo {

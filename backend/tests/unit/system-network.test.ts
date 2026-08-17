@@ -114,8 +114,8 @@ describe('parseWindowsNetworkState', () => {
 		// `ifIndex:69` is not a GUID, so assertWindowsGuid rejects it on every save.
 		// Offering Configure for it puts a button in front of the user that cannot
 		// do anything but fail.
-		expect(byID(result, 'ifIndex:69').configurable).toBe(false);
-		expect(byID(result, ID.ethernet).configurable).toBe(true);
+		expect(byID(result, 'ifIndex:69').ipv4Configurable).toBe(false);
+		expect(byID(result, ID.ethernet).ipv4Configurable).toBe(true);
 	});
 
 	it('drops tentative APIPA, deprecated link-local and loopback addresses', () => {
@@ -185,7 +185,7 @@ describe('parseLinuxNetworkState', () => {
 		// The interface list comes from the kernel, so it holds devices another stack
 		// manages. Offering Configure for those shows an action that can only fail.
 		const parsed = parseLinuxNetworkState({ ...sources, managed: new Set(['eth0', 'docker0']), activeProfiles: new Set(['eth0']) });
-		expect(byID(parsed, 'eth0').configurable).toBe(true);
+		expect(byID(parsed, 'eth0').ipv4Configurable).toBe(true);
 	});
 
 	it('withholds configurability when NetworkManager could not be asked', () => {
@@ -194,7 +194,7 @@ describe('parseLinuxNetworkState', () => {
 		// apply needs an active NetworkManager profile, and a host that cannot even
 		// be asked has already reported itself read-only through isLinuxWritable.
 		const parsed = parseLinuxNetworkState(sources);
-		expect(byID(parsed, 'eth0').configurable).toBe(false);
+		expect(byID(parsed, 'eth0').ipv4Configurable).toBe(false);
 	});
 
 	// Being managed is not enough. `applyLinuxIPv4` edits the profile ACTIVE on the
@@ -204,11 +204,38 @@ describe('parseLinuxNetworkState', () => {
 	it('refuses to offer an edit on a managed device with no active profile', () => {
 		const managed = new Set(['eth0', 'docker0']);
 		const parsed = parseLinuxNetworkState({ ...sources, managed, activeProfiles: new Set(['eth0']) });
-		expect(byID(parsed, 'eth0').configurable).toBe(true);
-		expect(byID(parsed, 'docker0').configurable).toBe(false);
+		expect(byID(parsed, 'eth0').ipv4Configurable).toBe(true);
+		expect(byID(parsed, 'docker0').ipv4Configurable).toBe(false);
 		// ...and an active profile on a device NetworkManager does not own is not
 		// permission either. Both conditions, or neither.
-		expect(byID(parseLinuxNetworkState({ ...sources, managed: new Set(['eth0']), activeProfiles: managed }), 'docker0').configurable).toBe(false);
+		expect(byID(parseLinuxNetworkState({ ...sources, managed: new Set(['eth0']), activeProfiles: managed }), 'docker0').ipv4Configurable).toBe(false);
+	});
+
+	// The active-profile rule above is right for ADDRESSING and was briefly applied
+	// to Wi-Fi as well, through a single shared flag. A disconnected adapter has no
+	// active profile by definition — and is exactly the adapter a user opens the
+	// screen to scan with — so the user could no longer scan or join at all.
+	// `nmcli device wifi list` drives the radio, and `connect` finds or creates a
+	// profile; neither needs one to be active already.
+	it('lets a managed wireless device scan and join with no active profile', () => {
+		// The fixture has no radio of its own; the flag is driven by the `wireless`
+		// set the reader passes in, not by the device's name.
+		const parsed = parseLinuxNetworkState({ ...sources, wireless: new Set(['eth0']), managed: new Set(['eth0']), activeProfiles: new Set() });
+		const radio = byID(parsed, 'eth0');
+		expect(radio.ipv4Configurable).toBe(false);
+		expect(radio.wifiScannable).toBe(true);
+		expect(radio.wifiConnectable).toBe(true);
+	});
+
+	it('still refuses Wi-Fi on a device NetworkManager does not own', () => {
+		const parsed = parseLinuxNetworkState({ ...sources, wireless: new Set(['eth0']), managed: new Set(), activeProfiles: new Set() });
+		expect(byID(parsed, 'eth0').wifiScannable).toBe(false);
+	});
+
+	it('never offers Wi-Fi on a device that is not a radio', () => {
+		const parsed = parseLinuxNetworkState({ ...sources, managed: new Set(['eth0']), activeProfiles: new Set(['eth0']) });
+		expect(byID(parsed, 'eth0').wifiScannable).toBe(false);
+		expect(byID(parsed, 'eth0').wifiConnectable).toBe(false);
 	});
 
 	it('keeps a secondary interface own gateway, not just the default route one', () => {
@@ -408,8 +435,8 @@ describe('prefixFromNetmask', () => {
 
 describe('resolvePrimaryID', () => {
 	const list: NetInterfaceInfo[] = [
-		{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [], configurable: false },
-		{ id: 'b', name: 'b', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [], configurable: false },
+		{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [], ipv4Configurable: false, wifiScannable: false, wifiConnectable: false },
+		{ id: 'b', name: 'b', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [], ipv4Configurable: false, wifiScannable: false, wifiConnectable: false },
 	];
 
 	it('honours a pick that still exists', () => {
@@ -430,7 +457,7 @@ describe('resolvePrimaryID', () => {
 });
 
 describe('assertReadProducedSomething', () => {
-	const list: NetInterfaceInfo[] = [{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [], configurable: false }];
+	const list: NetInterfaceInfo[] = [{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [], ipv4Configurable: false, wifiScannable: false, wifiConnectable: false }];
 
 	it('passes a non-empty read straight through', () => {
 		expect(assertReadProducedSomething(list)).toBe(list);
