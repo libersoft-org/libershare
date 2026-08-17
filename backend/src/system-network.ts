@@ -303,14 +303,46 @@ async function isWindowsElevated(): Promise<boolean> {
 	}
 }
 
+/**
+ * Why one interface may not have its IPv4 configuration replaced right now, or
+ * null when it may.
+ *
+ * These are the same three conditions the settings screen checks before it
+ * offers the edit — and the frontend must not be the boundary that enforces
+ * them. A direct RPC client sends none of them, and a frontend acting on a
+ * snapshot a few seconds old sends them as they WERE. The apply is destructive
+ * in a way that cannot be walked back from a wrong premise: on Windows it
+ * removes every IPv4 address and every default route before creating the single
+ * new one, which is exactly the aliases this last condition exists to protect.
+ */
+export function ipv4EditObjection(state: NetworkStateInfo, interfaceID: string): CodedError | null {
+	// An address-only reading reports runtime device names where the apply
+	// resolves adapter GUIDs or NetworkManager profiles, and cannot say whether
+	// an address came from DHCP. Nothing in it is a safe premise for a write.
+	if (state.detail !== 'full') return new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'the host network state could not be read in full');
+	const target = state.interfaces.find(i => i.id === interfaceID);
+	if (!target) return new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
+	if (target.ipv4Configurable !== true) return new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this interface cannot be reconfigured');
+	// The configuration holds ONE address and applying it replaces every address
+	// the interface had. Until the API can express and preserve aliases, an
+	// interface carrying several is one this app must decline rather than thin out.
+	if (target.addresses.filter(a => a.family === 'ipv4').length > 1) return new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this interface carries several IPv4 addresses, which this app cannot preserve');
+	return null;
+}
+
 /** Apply an IPv4 configuration to one interface, then drop the cache so the next read reflects it. */
 export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Promise<void> {
 	const invalid = validateIPv4Config(config);
 	if (invalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${invalid}`);
 	const supported = await readCapabilities();
 	if (!supported.ipv4) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host does not expose a writable network configuration');
-	await runHostMutation(() =>
-		run(async () => {
+	await runHostMutation(async () => {
+		// Inside the lock and after `runHostMutation` has invalidated the cache, so
+		// this reaches the platform: the premise is the host as it is now, not as
+		// some earlier reading described it.
+		const objection = ipv4EditObjection(await readNetworkState(), interfaceID);
+		if (objection) throw objection;
+		return run(async () => {
 			if (process.platform === 'win32') {
 				await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(assertWindowsGuid(interfaceID), config)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
 			} else if (process.platform === 'darwin') {
@@ -318,8 +350,8 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Pro
 			} else {
 				await applyLinuxIPv4(assertDeviceName(interfaceID), config);
 			}
-		})
-	);
+		});
+	});
 }
 
 /** Scan for joinable Wi-Fi networks on one interface. */
