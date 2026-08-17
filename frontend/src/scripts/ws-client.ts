@@ -159,7 +159,7 @@ export async function uploadImportFile(file: File): Promise<string> {
 			const slice = await file.slice(offset, offset + UPLOAD_CHUNK_SIZE).arrayBuffer();
 			await wsClient.callBinary('upload.chunk', { uploadID }, new Uint8Array(slice), UPLOAD_STEP_TIMEOUT_MS);
 		}
-		await wsClient.call('upload.end', { uploadID }, UPLOAD_STEP_TIMEOUT_MS);
+		await finishUpload(uploadID);
 		return uploadID;
 	} catch (err) {
 		// Nothing half-written is left behind. If the socket is what failed, the
@@ -167,5 +167,21 @@ export async function uploadImportFile(file: File): Promise<string> {
 		// is not worth reporting over the error that caused it.
 		void wsClient.call('upload.abort', { uploadID }).catch(() => {});
 		throw err;
+	}
+}
+
+/**
+ * Close the transfer, retrying once if the acknowledgement does not arrive. The
+ * backend answers a repeated `upload.end` with the same id, precisely so a lost
+ * reply here costs a round trip instead of the whole upload. A chunk carries no
+ * such guarantee — there is no offset to resume from — so chunks are never
+ * retried and the upload restarts from the beginning instead.
+ */
+async function finishUpload(uploadID: string): Promise<void> {
+	try {
+		await wsClient.call('upload.end', { uploadID }, UPLOAD_STEP_TIMEOUT_MS);
+	} catch (err) {
+		if ((err as { code?: string })?.code !== ErrorCodes.REQUEST_TIMEOUT) throw err;
+		await wsClient.call('upload.end', { uploadID }, UPLOAD_STEP_TIMEOUT_MS);
 	}
 }
