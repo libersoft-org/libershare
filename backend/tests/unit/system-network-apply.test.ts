@@ -750,7 +750,26 @@ describe('windowsApplyIPv4Command', () => {
 	it('restores a DHCP interface by re-enabling DHCP rather than by re-adding its lease', () => {
 		// The snapshot addresses of a DHCP interface came from a lease. Writing them
 		// back by hand installs a static copy that the next lease then duplicates.
-		expect(windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 })).toContain("if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled } else {");
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
+		expect(command).toContain("if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled; foreach ($r in $oldActiveRoutes)");
+		// The addresses are the lease's to hand back; nothing re-adds them.
+		expect(command.slice(command.indexOf("if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface"), command.indexOf('} else { Set-NetIPInterface'))).not.toContain('New-NetIPAddress');
+	});
+
+	// Windows lets an interface take its address from DHCP and still carry a default
+	// route somebody added. That route exists nowhere but on this machine, so a
+	// rollback that re-enables DHCP and stops there deletes it for good — and if it
+	// was the only path into the management network, the host goes with it.
+	it('puts a DHCP interface default route back unless a lease handed it out', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
+		// Told apart by lifetime, not by Protocol: measured on Windows 11 a lease's
+		// default route and a hand-added one both report Protocol NetMgmt, and only the
+		// lease's counts down.
+		expect(command).toContain('} else { if ($r.ValidLifetime -eq [TimeSpan]::MaxValue) { New-NetRoute');
+		expect(command).toContain('foreach ($r in $oldPersistentRoutes) { if ($oldActiveRoutes.NextHop -notcontains $r.NextHop) { New-NetRoute');
+		// The static branch restores every route it snapshotted — there is no lease on
+		// a static interface for a countdown to have come from.
+		expect(command.slice(command.indexOf('} else { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled'))).not.toContain('[TimeSpan]::MaxValue');
 	});
 
 	it('reports both failures when the rollback itself fails', () => {

@@ -692,12 +692,13 @@ function windowsSnapshotSteps(): string[] {
 /**
  * Put the snapshot back after a failed apply.
  *
- * The two branches are not symmetrical, and deliberately so. An interface that
- * was on DHCP is restored by re-enabling DHCP and nothing else: the addresses and
- * routes in the snapshot came from a lease, and re-adding them by hand would
- * install a static copy that the lease then duplicates. An interface that was
- * static has to have every address and every default route written back
- * individually, metric included, because that configuration exists nowhere else.
+ * The two branches are not symmetrical, and deliberately so. An interface that was
+ * static has every address and every default route written back individually,
+ * metric included, because that configuration exists nowhere else. An interface
+ * that was on DHCP has its addresses put back by the lease instead — re-adding
+ * them by hand would install a static copy the lease then duplicates — but its
+ * default routes are NOT all the lease's, and the ones that are not have to be
+ * written back like any other. See {@link NOT_FROM_A_LEASE}.
  *
  * Resolvers are restored the same way round: the addresses go back only when the
  * snapshot proved they were a MANUAL override, and automatic DNS is put back with
@@ -719,8 +720,32 @@ function windowsSnapshotSteps(): string[] {
  */
 function windowsRestoreAddressingSteps(): string[] {
 	const restoreStatic = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', ...restorePerStore('$a', '$oldActiveAddresses', '$oldPersistentAddresses', 'IPAddress', NEW_ADDRESS), ...restorePerStore('$r', '$oldActiveRoutes', '$oldPersistentRoutes', 'NextHop', NEW_ROUTE)].join('; ');
-	return [...windowsRemovalSteps(), `if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled } else { ${restoreStatic} }`];
+	const restoreDhcp = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', ...restorePerStore('$r', '$oldActiveRoutes', '$oldPersistentRoutes', 'NextHop', NEW_ROUTE, NOT_FROM_A_LEASE)].join('; ');
+	return [...windowsRemovalSteps(), `if ($oldDhcp -eq 'Enabled') { ${restoreDhcp} } else { ${restoreStatic} }`];
 }
+
+/**
+ * True for an active-only object a lease did NOT hand out.
+ *
+ * A DHCP interface's addresses and default route come back by themselves once the
+ * lease is re-acquired, so re-adding them by hand would install a static copy the
+ * lease then duplicates. But Windows lets an interface take its address from DHCP
+ * and still carry a default route somebody added — and that route exists nowhere
+ * but on this machine, so a rollback that re-enables DHCP and stops there deletes
+ * it for good. If it was the only path into the network the host is administered
+ * over, the host is then unreachable.
+ *
+ * The two are told apart by LIFETIME, not by `Protocol`. Measured on Windows 11: a
+ * DHCP-supplied default route reports `Protocol` NetMgmt with a lifetime counting
+ * down with the lease, and a route added by hand or by a VPN client on the same
+ * interface reports NetMgmt as well, with an infinite lifetime. Protocol therefore
+ * separates nothing; the countdown does. A route in the persistent store is never
+ * a lease's either, and is restored without consulting this at all.
+ *
+ * What this cannot tell apart is a manual route somebody gave a finite lifetime on
+ * a DHCP interface. That one is treated as the lease's and is not put back.
+ */
+const NOT_FROM_A_LEASE = '$r.ValidLifetime -eq [TimeSpan]::MaxValue';
 
 /**
  * Re-create an address out of the snapshot, minus the store it belongs in.
@@ -751,9 +776,15 @@ const WINDOWS_RESTORE_DNS = 'if ($oldDnsManual.Count -gt 0) { Set-DnsClientServe
  *
  * `identity` is the property the two stores are matched on — the address itself,
  * or a route's next hop, both of which are unique per interface within one store.
+ *
+ * `activeOnlyCondition` narrows the active-only branch, which is the only one that
+ * can hold something a DHCP lease produced — see {@link NOT_FROM_A_LEASE}. An
+ * object in the persistent store is always this machine's own and always goes
+ * back.
  */
-function restorePerStore(item: string, active: string, persistent: string, identity: string, create: string): string[] {
-	return [`foreach (${item} in ${active}) { if (${persistent}.${identity} -contains ${item}.${identity}) { ${create} -ErrorAction Stop | Out-Null } else { ${create} -PolicyStore ActiveStore -ErrorAction Stop | Out-Null } }`, `foreach (${item} in ${persistent}) { if (${active}.${identity} -notcontains ${item}.${identity}) { ${create} -PolicyStore PersistentStore -ErrorAction Stop | Out-Null } }`];
+function restorePerStore(item: string, active: string, persistent: string, identity: string, create: string, activeOnlyCondition: string = ''): string[] {
+	const activeOnly = `${create} -PolicyStore ActiveStore -ErrorAction Stop | Out-Null`;
+	return [`foreach (${item} in ${active}) { if (${persistent}.${identity} -contains ${item}.${identity}) { ${create} -ErrorAction Stop | Out-Null } else { ${activeOnlyCondition ? `if (${activeOnlyCondition}) { ${activeOnly} }` : activeOnly} } }`, `foreach (${item} in ${persistent}) { if (${active}.${identity} -notcontains ${item}.${identity}) { ${create} -PolicyStore PersistentStore -ErrorAction Stop | Out-Null } }`];
 }
 
 /**

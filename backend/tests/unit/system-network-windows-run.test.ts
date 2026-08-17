@@ -4,6 +4,13 @@ import { INFINITE_LIFETIME, runWindowsApplyScript, staticHost, type FakeHost } f
 
 const GUID = '{2B1F0E8A-4C3D-4E5F-9A7B-1C2D3E4F5A6B}';
 const windowsOnly = process.platform !== 'win32';
+/** A lease's countdown, as Windows reports the remaining half of a renewal interval. */
+const LEASED_LIFETIME = '00:10:00';
+
+/** An interface on DHCP: one leased address and, unless overridden, the lease's own default route. */
+function leasedHost(overrides: Partial<FakeHost> = {}): FakeHost {
+	return { guid: GUID, dhcp: 'Enabled', addresses: [{ IPAddress: '203.0.113.50', PrefixLength: 24, PrefixOrigin: 'Dhcp', SuffixOrigin: 'Dhcp', SkipAsSource: false, ValidLifetime: LEASED_LIFETIME, PreferredLifetime: LEASED_LIFETIME, Type: 'Unicast', Stores: ['ActiveStore'] }], routes: [{ NextHop: '203.0.113.1', RouteMetric: 0, Protocol: 'NetMgmt', Publish: 'No', ValidLifetime: LEASED_LIFETIME, PreferredLifetime: LEASED_LIFETIME, Stores: ['ActiveStore'] }], nameServer: '', ...overrides };
+}
 
 /**
  * The apply script, executed rather than inspected.
@@ -107,6 +114,31 @@ describe('windowsApplyIPv4Command, executed', () => {
 		expect(result.addresses[0]?.Type).toBe('Anycast');
 		expect(result.routes[0]?.ValidLifetime).toBe('00:30:00');
 		expect(result.routes[0]?.RouteMetric).toBe(25);
+	});
+
+	// A DHCP interface carrying a hand-added default route. The rollback used to
+	// re-enable DHCP and stop, so the route was gone for good — and if it was the
+	// only path into the network the host is administered over, so was the host.
+	it.skipIf(windowsOnly)('puts a DHCP interface manual default route back after a failed apply', async () => {
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24, gateway: '198.51.100.1' }), leasedHost({ failOn: 'Set-DnsClientServerAddress', routes: [{ NextHop: '203.0.113.1', RouteMetric: 5, Protocol: 'NetMgmt', Publish: 'No', ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME, Stores: ['ActiveStore'] }] }));
+		expect(result.error).toContain('injected failure');
+		expect(result.dhcp).toBe('Enabled');
+		expect(result.routes.map(r => r.NextHop)).toEqual(['203.0.113.1']);
+		expect(result.routes[0]?.RouteMetric).toBe(5);
+		expect(result.routes[0]?.Stores).toEqual(['ActiveStore']);
+	});
+
+	// The other half of the same rule: a route the lease handed out comes back with
+	// the lease, so re-adding it by hand would install a static copy beside it.
+	it.skipIf(windowsOnly)('leaves a leased default route to come back with the lease', async () => {
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24, gateway: '198.51.100.1' }), leasedHost({ failOn: 'Set-DnsClientServerAddress' }));
+		expect(result.error).toContain('injected failure');
+		expect(result.dhcp).toBe('Enabled');
+		expect(result.routes).toEqual([]);
+		expect(result.calls.filter(call => call.startsWith('New-NetRoute'))).toEqual([]);
+		// And no static copy of the leased address is left behind either — the
+		// interface is handed back to DHCP holding nothing.
+		expect(result.addresses).toEqual([]);
 	});
 
 	// Counted across both stores, and deduplicated: one address held in both is one
