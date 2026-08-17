@@ -1707,6 +1707,33 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 	 * re-dials and deletes the peerStore entry. Reaching it after the trim failed would
 	 * remove everything precisely because we could not remove one thing.
 	 */
+	/**
+	 * The helper awaits twice, and a restart can land between them. Re-reading the node
+	 * after the read would take the OLD run's address snapshot and write it into the NEW
+	 * node's peerStore — the next run losing addresses it just learned, because a call
+	 * belonging to the previous one finished late.
+	 */
+	it('writes nothing into the node that replaced it mid-read', async () => {
+		const old = await realPeerStore();
+		const next = await realPeerStore();
+		const network = networkOver(old.store);
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		const disconnected: string[] = [];
+		(network as any).disconnectPeer = async (id: string): Promise<void> => void disconnected.push(id);
+		const read = (old.store as any).get.bind(old.store);
+		(old.store as any).get = async (id: unknown): Promise<unknown> => {
+			const rec = await read(id);
+			// stop() then start(): a new node, a new epoch, and this call belongs to neither.
+			(network as any).node = { peerStore: next.store, getConnections: () => [] };
+			(network as any).runEpoch = 2;
+			return rec;
+		};
+		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [ADDR], 'net-a');
+		// The new run keeps every address it holds, and the old run's teardown stops.
+		expect((await next.store.get(next.pid)).addresses.map(a => a.multiaddr.toString())).toEqual(['/ip4/203.0.113.21/tcp/9090']);
+		expect(disconnected).toEqual([]);
+	});
+
 	it('does not tear the peer down when the trim fails', async () => {
 		const { store } = await realPeerStore();
 		const network = networkOver(store);

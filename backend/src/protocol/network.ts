@@ -410,9 +410,10 @@ export function pruneBootstrapEntries<T extends Pick<IBootstrapEntry, 'firstSeen
  *
  * Only `updated` carries a trustworthy count. Collapsing everything else into a number
  * was how a datastore hiccup came to read as "this peer has no addresses left" — the one
- * answer that lets the caller escalate to a full purge.
+ * answer that lets the caller escalate to a full purge. `superseded` means a
+ * stop()/start() overtook the call: nothing was written and nothing may be concluded.
  */
-export type PeerStoreAddressRemoval = { kind: 'updated'; remaining: number } | { kind: 'not-found' };
+export type PeerStoreAddressRemoval = { kind: 'updated'; remaining: number } | { kind: 'not-found' } | { kind: 'superseded' };
 
 /**
  * True for the error the peerStore raises when the peer simply is not stored — the one
@@ -2192,7 +2193,9 @@ export class Network {
 						} catch (removalErr: any) {
 							console.log(`[NET] could not trim the disproved address of ${peerID.slice(0, 16)}, leaving the peer record alone: ${removalErr?.message ?? removalErr}`);
 						}
-						if (superseded()) return;
+						// A stop()/start() overtook the trim: this run owns nothing any more, so
+						// neither its count nor its purge belongs to the node that is running now.
+						if (removal?.kind === 'superseded' || superseded()) return;
 						const remainingInStore = removal?.kind === 'updated' ? removal.remaining : 0;
 						// Survivors are counted across BOTH stores. A configured LAN or VPN
 						// bootstrap deliberately sits in the registry alone while its interface
@@ -2456,6 +2459,12 @@ export class Network {
 	 * callers act destructively on "no addresses left" and a swallowed error reaching
 	 * them as zero is what turns a transient hiccup into a deleted peer record.
 	 *
+	 * The node and the epoch are captured before the first await and re-checked after
+	 * it. Re-reading `this.node` across the read would let a stop()/start() landing
+	 * inside it write the OLD run's address snapshot into the NEW node's peerStore —
+	 * and with `this.node` already null, produce a `TypeError` indistinguishable from
+	 * a genuine miss.
+	 *
 	 * The store has no "remove one address" call, so this reads and writes back — but
 	 * it patches `addresses`, the field it actually filtered, and puts back the very
 	 * objects it kept. Rebuilding them as a bare `multiaddrs` list dropped the
@@ -2467,15 +2476,20 @@ export class Network {
 	 * libp2p has no such API today.
 	 */
 	private async removePeerStoreAddresses(pid: PeerID, matches: (address: string) => boolean): Promise<PeerStoreAddressRemoval> {
+		const node = this.node;
+		const epoch = this.runEpoch;
+		if (!node) return { kind: 'superseded' };
 		let rec;
 		try {
-			rec = await this.node!.peerStore.get(pid);
+			rec = await node.peerStore.get(pid);
 		} catch (err: unknown) {
 			if (isPeerStoreNotFound(err)) return { kind: 'not-found' };
 			throw err;
 		}
+		if (node !== this.node || epoch !== this.runEpoch) return { kind: 'superseded' };
 		const keep = rec.addresses.filter(a => !matches(a.multiaddr.toString()));
-		if (keep.length < rec.addresses.length) await this.node!.peerStore.patch(pid, { addresses: keep });
+		if (keep.length < rec.addresses.length) await node.peerStore.patch(pid, { addresses: keep });
+		if (node !== this.node || epoch !== this.runEpoch) return { kind: 'superseded' };
 		return { kind: 'updated', remaining: keep.length };
 	}
 
@@ -2841,7 +2855,9 @@ export class Network {
 		const removed = new Set(removedAddresses.filter(a => !this.bootstrapByAddress.has(normalizeMultiaddrForCompare(a))).map(bareDialEndpoint));
 		if (removed.size > 0) {
 			try {
-				await this.removePeerStoreAddresses(pid, address => removed.has(bareDialEndpoint(address)));
+				// A stop()/start() inside the trim leaves this teardown speaking for a node
+				// that is gone — and disconnectPeer below would act on the one that replaced it.
+				if ((await this.removePeerStoreAddresses(pid, address => removed.has(bareDialEndpoint(address)))).kind === 'superseded') return;
 			} catch (err: any) {
 				// The trim is the reason this runs at all, and disconnectPeer below is the
 				// destructive half — it hangs up, suppresses re-dials and deletes the record.
