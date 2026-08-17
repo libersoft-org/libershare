@@ -2,12 +2,17 @@ import { mkdir, readdir, rm, stat } from 'fs/promises';
 import { rmSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
-import { CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, formatBytes, sanitizeFilename } from '@shared';
+import { CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, formatBytes, sanitizeFilename, truncateUTF8End } from '@shared';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 
-/** Longest original file name kept in a temp upload name, so a pathological name cannot blow the OS limit. */
-const MAX_UPLOAD_NAME_LENGTH = 100;
+/**
+ * Longest original file name kept in a temp upload name, in UTF-8 bytes. Bytes
+ * rather than characters because that is what the filesystem limits — typically
+ * 255 per path component — and a hundred CJK or emoji characters are three or
+ * four times that. Leaves ample room for the UUID prefix and separator.
+ */
+const MAX_UPLOAD_NAME_BYTES = 100;
 
 /** How long a file with no upload record behind it is kept before it is swept. */
 const UPLOAD_MAX_AGE_MS = 60 * 60 * 1000;
@@ -67,7 +72,7 @@ export interface UploadLimits {
  * brotli upload get read as UTF-8 and fail later as a JSON parse error.
  */
 export function uploadFileName(originalName: string): string {
-	const safe = sanitizeFilename(originalName).slice(-MAX_UPLOAD_NAME_LENGTH) || 'upload';
+	const safe = truncateUTF8End(sanitizeFilename(originalName), MAX_UPLOAD_NAME_BYTES) || 'upload';
 	return `${randomUUID()}-${safe}`;
 }
 

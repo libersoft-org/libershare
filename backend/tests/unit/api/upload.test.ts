@@ -44,6 +44,35 @@ describe('uploadFileName', () => {
 	it('falls back to a usable name when nothing survives sanitising', () => {
 		expect(uploadFileName('///')).toEndWith('-upload');
 	});
+
+	it('measures the name in utf-8 bytes, not utf-16 units', () => {
+		// 200 CJK characters are 600 UTF-8 bytes. Counted as characters they look
+		// like a modest name and still blow past the 255-byte component limit.
+		for (const name of ['字'.repeat(200) + '.lish', '😀'.repeat(200) + '.lish', 'ř'.repeat(200) + '.lish']) {
+			expect(Buffer.byteLength(uploadFileName(name), 'utf8')).toBeLessThanOrEqual(255);
+		}
+	});
+
+	it('never splits a character when trimming the name', () => {
+		// A byte-wise cut through a multi-byte sequence decodes as U+FFFD, which is
+		// both a corrupt name and a different one on every filesystem round trip.
+		for (const filler of ['字', '😀', 'ř']) {
+			for (let count = 30; count < 40; count++) {
+				expect(uploadFileName(filler.repeat(count) + '.lish')).not.toContain('�');
+			}
+		}
+	});
+
+	it('strips control characters, including NUL', () => {
+		// A NUL ends the path at the system-call boundary, so a name carrying one
+		// can address a file other than the one it appears to name.
+		const NUL = String.fromCharCode(0);
+		const BEL = String.fromCharCode(7);
+		const name = uploadFileName(`back${NUL}door${BEL}.lish`);
+		expect(name).not.toContain(NUL);
+		expect(name).not.toContain(BEL);
+		expect(name).toEndWith('backdoor.lish');
+	});
 });
 
 describe('uploaded file round trip', () => {
