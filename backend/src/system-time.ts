@@ -461,21 +461,38 @@ export function buildSetTimezoneCommands(platform: SystemPlatform, timezone: str
 	return windowsId ? [{ cmd: 'tzutil', args: ['/s', windowsId] }] : [];
 }
 
+/** What systemd answered about one unit: the name it prefers for it, and its `LoadState`. */
+export interface UnitState {
+	/** The `Id` property — the canonical name, which an alias is NOT. */
+	id: string;
+	load: string;
+}
+
 /**
- * Parse `systemctl show -p Id -p LoadState <units...>` into unit name -> `LoadState`.
+ * Parse `systemctl show -p Id -p Names -p LoadState <units...>` into unit name -> state.
  *
- * The output is one `Key=Value` record per unit, records separated by a blank line. Units
- * are keyed by the `Id` systemd itself reports rather than by argument position, so an
- * alias, a reordering or a unit systemd declines to report cannot shift the answers onto
- * the wrong names.
+ * The output is one `Key=Value` record per unit, records separated by a blank line. Each
+ * record is indexed under its `Id` AND under every name in `Names`, because those are not
+ * the same thing: asking about an alias answers with the aliased unit's `Id`, so a map keyed
+ * on `Id` alone has no entry under the name that was asked about. The ordered provider list
+ * is looked up by the names it contains, so an aliased provider read as absent — the ordering
+ * skipped it and named the next daemon down, while timedated hands the clock to the alias.
+ *
+ * The canonical `Id` is kept in the value so the caller can compare units by identity rather
+ * than by the name it happened to ask under.
  */
-export function parseUnitLoadStates(output: string): Map<string, string> {
-	const states = new Map<string, string>();
+export function parseUnitLoadStates(output: string): Map<string, UnitState> {
+	const states = new Map<string, UnitState>();
 	let id: string | null = null;
+	let names: string[] = [];
 	let load: string | null = null;
 	const flush = (): void => {
-		if (id !== null && load !== null) states.set(id, load);
+		if (id !== null && load !== null) {
+			const state: UnitState = { id, load };
+			for (const name of new Set([id, ...names])) states.set(name, state);
+		}
 		id = null;
+		names = [];
 		load = null;
 	};
 	for (const line of output.split(/\r?\n/)) {
@@ -492,10 +509,22 @@ export function parseUnitLoadStates(output: string): Map<string, string> {
 			// A second Id without a blank line between: end the record that was open.
 			if (id !== null) flush();
 			id = value;
-		} else if (key === 'LoadState') load = value;
+		} else if (key === 'Names') names = extractWords(value, true);
+		else if (key === 'LoadState') load = value;
 	}
 	flush();
 	return states;
+}
+
+/**
+ * The canonical unit name behind `unit`, or `unit` itself when systemd said nothing about it.
+ *
+ * Comparing unit names as text is only safe once they have been through this: `vendor-ntp.service`
+ * and `systemd-timesyncd.service` can be the same unit, and the whole question here is which
+ * daemon owns the clock — not which of its names somebody wrote down.
+ */
+export function canonicalUnitName(states: Map<string, UnitState> | null, unit: string): string {
+	return states?.get(unit)?.id ?? unit;
 }
 
 /**
@@ -509,8 +538,8 @@ export function parseUnitLoadStates(output: string): Map<string, string> {
  * next provider in the ordering, which never reads that file. `masked` and `not-found`
  * still fall out, since neither of them is `loaded`.
  */
-export function unitIsLoaded(states: Map<string, string>, unit: string): boolean {
-	return states.get(unit) === 'loaded';
+export function unitIsLoaded(states: Map<string, UnitState>, unit: string): boolean {
+	return states.get(unit)?.load === 'loaded';
 }
 
 /**
@@ -528,10 +557,15 @@ export const COMPETING_NTP_UNITS: string[] = ['chronyd.service', 'chrony.service
  * there that is on nobody's list — and asking only about the five reported "nothing in the
  * way" while that daemon held the clock. The host's own ordering is therefore folded in,
  * minus timesyncd, which is the one daemon that is not a competitor.
+ *
+ * `states` is what systemd answered about those names, and it decides which of them IS
+ * timesyncd: an alias for it is a different string and excluding by text alone kept the
+ * alias on the list, so timesyncd running normally answered as a competing daemon and the
+ * capability went false on a host that is ours to configure.
  */
-export function competingNtpUnits(ordered: string[] | null): string[] {
+export function competingNtpUnits(ordered: string[] | null, states: Map<string, UnitState> | null = null): string[] {
 	const units = new Set(COMPETING_NTP_UNITS);
-	for (const unit of ordered ?? []) if (unit !== TIMESYNCD_UNIT) units.add(unit);
+	for (const unit of ordered ?? []) if (canonicalUnitName(states, unit) !== TIMESYNCD_UNIT) units.add(unit);
 	return [...units];
 }
 
@@ -781,11 +815,16 @@ export async function readNtpUnitsList(env: Record<string, string> | null, dirs:
 /**
  * The provider `timedatectl set-ntp true` would actually start: the first unit of
  * `ordered` whose `LoadState` is `loaded`. Null when none of them is.
+ *
+ * Answered as the CANONICAL name, not as the entry that matched. An ordering may name a
+ * provider through an alias, and the caller's question is which daemon this is — an alias
+ * for timesyncd compared unequal to it and had the host reported as somebody else's.
  */
 export function firstUsableNtpUnit(ordered: string[], unitOutput: string | null): string | null {
 	if (unitOutput === null) return null;
 	const states = parseUnitLoadStates(unitOutput);
-	return ordered.find(unit => unitIsLoaded(states, unit)) ?? null;
+	const found = ordered.find(unit => unitIsLoaded(states, unit));
+	return found === undefined ? null : canonicalUnitName(states, found);
 }
 
 /**
@@ -1141,13 +1180,18 @@ async function readLinuxStatus(): Promise<PlatformStatus> {
 	// unit's `LoadState`, which is the property timedated selects on: `show-timesync` would
 	// only answer while the daemon runs, and the UI turns synchronisation off before writing
 	// a server.
+	// `Names` comes along because an entry of the ordering may be an alias, and systemd
+	// answers for an alias under the aliased unit's `Id` — with only `Id` asked for, the
+	// name we looked the state up by was in no answer at all.
 	const ordered = canNtp ? await readNtpUnitsList(await readTimedatedEnvironment()) : [];
-	const unit = canNtp ? await tryRead('systemctl', ['show', '-p', 'Id', '-p', 'LoadState', ...(ordered !== null && ordered.length > 0 ? ordered : [TIMESYNCD_UNIT])]) : null;
+	const unit = canNtp ? await tryRead('systemctl', ['show', '-p', 'Id', '-p', 'Names', '-p', 'LoadState', ...(ordered !== null && ordered.length > 0 ? ordered : [TIMESYNCD_UNIT])]) : null;
 	// timedated manages several NTP implementations; a host where chrony is the active
 	// one would ignore our drop-in entirely (see canConfigureTimesyncdServer). The units to
 	// ask about come from the host's own ordering as well as the known names, so a provider
-	// nobody hardcoded is still seen.
-	const competing = canNtp ? await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', ...competingNtpUnits(ordered)]) : null;
+	// nobody hardcoded is still seen — with the aliases resolved, or timesyncd under another
+	// name would be counted as a daemon competing with itself.
+	const states = unit === null ? null : parseUnitLoadStates(unit);
+	const competing = canNtp ? await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', ...competingNtpUnits(ordered, states)]) : null;
 	return {
 		// `timedatectl show` was read above and already carries it — no extra probe.
 		timezone: map['Timezone'] ?? null,

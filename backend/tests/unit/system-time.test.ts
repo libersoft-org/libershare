@@ -654,6 +654,21 @@ describe('canConfigureTimesyncdServer', () => {
 	});
 
 	/**
+	 * An ordering may name a provider through an alias, and systemd answers for it under the
+	 * ALIASED unit's `Id`. Both directions were wrong before: an alias for chrony was read as
+	 * a unit that is not there, so the ordering skipped it and permitted the write while
+	 * `set-ntp` would start chrony — and an alias for timesyncd compared unequal to it, so a
+	 * host that is ours to configure was reported as somebody else's.
+	 */
+	it('follows an alias to the unit it names', () => {
+		const ALIASED = ['vendor-ntp.service', 'systemd-timesyncd.service'];
+		const toChrony = `Id=chronyd.service\nNames=vendor-ntp.service chronyd.service\nLoadState=loaded\n\n${show(['systemd-timesyncd.service', 'loaded'])}`;
+		expect(canConfigureTimesyncdServer(ALIASED, toChrony, NONE_ACTIVE)).toBe(false);
+		const toTimesyncd = `Id=systemd-timesyncd.service\nNames=vendor-ntp.service systemd-timesyncd.service\nLoadState=loaded\n`;
+		expect(canConfigureTimesyncdServer(ALIASED, toTimesyncd, NONE_ACTIVE)).toBe(true);
+	});
+
+	/**
 	 * The gap `list-unit-files` left. It answers about the unit FILE, so a unit whose file is
 	 * on disk but will not load — a bad setting, a parse error — was read as a usable
 	 * provider. timedated selects on `LoadState == loaded` and skips it, so the drop-in was
@@ -700,6 +715,21 @@ describe('competingNtpUnits', () => {
 	it('does not ask twice about a unit that is on both lists', () => {
 		const units = competingNtpUnits(['chronyd.service', TIMESYNCD_UNIT]);
 		expect(units.filter(u => u === 'chronyd.service')).toHaveLength(1);
+	});
+
+	/**
+	 * Excluded by identity, not by spelling: an alias for timesyncd is a different string, so
+	 * it stayed on the competitor list and timesyncd running normally answered as a rival
+	 * daemon — the capability went false on a host that is ours to configure.
+	 */
+	it('excludes an alias that names timesyncd', () => {
+		const states = parseUnitLoadStates('Id=systemd-timesyncd.service\nNames=vendor-ntp.service systemd-timesyncd.service\nLoadState=loaded\n');
+		expect(competingNtpUnits(['vendor-ntp.service'], states)).not.toContain('vendor-ntp.service');
+	});
+
+	it('keeps an alias that names another daemon', () => {
+		const states = parseUnitLoadStates('Id=chronyd.service\nNames=vendor-ntp.service chronyd.service\nLoadState=loaded\n');
+		expect(competingNtpUnits(['vendor-ntp.service'], states)).toContain('vendor-ntp.service');
 	});
 });
 
@@ -994,25 +1024,36 @@ describe('buildSetNtpServerCommands', () => {
 });
 
 describe('parseUnitLoadStates', () => {
-	/** Two units as `systemctl show -p Id -p LoadState` prints them: records, blank-separated. */
-	const TWO = 'Id=chronyd.service\nLoadState=not-found\n\nId=systemd-timesyncd.service\nLoadState=loaded\n';
+	/** Two units as `systemctl show -p Id -p Names -p LoadState` prints them: records, blank-separated. */
+	const TWO = 'Id=chronyd.service\nNames=chronyd.service\nLoadState=not-found\n\nId=systemd-timesyncd.service\nNames=systemd-timesyncd.service\nLoadState=loaded\n';
 
 	it('keys each state by the unit systemd reported it for', () => {
 		expect([...parseUnitLoadStates(TWO)]).toEqual([
-			['chronyd.service', 'not-found'],
-			['systemd-timesyncd.service', 'loaded'],
+			['chronyd.service', { id: 'chronyd.service', load: 'not-found' }],
+			['systemd-timesyncd.service', { id: 'systemd-timesyncd.service', load: 'loaded' }],
 		]);
+	});
+
+	/**
+	 * Asking about an alias answers under the ALIASED unit's `Id`, so a map keyed on `Id`
+	 * alone has nothing under the name that was asked about — the provider was read as absent
+	 * and the ordering moved on to a daemon timedated would never have started.
+	 */
+	it('keys a record under its aliases as well as its Id', () => {
+		const states = parseUnitLoadStates('Id=chronyd.service\nNames=vendor-ntp.service chronyd.service\nLoadState=loaded\n');
+		expect(states.get('vendor-ntp.service')).toEqual({ id: 'chronyd.service', load: 'loaded' });
+		expect(states.get('chronyd.service')).toEqual({ id: 'chronyd.service', load: 'loaded' });
 	});
 
 	/** A disabled unit still loads, and the drop-in applies the moment it is started. */
 	it('reads a disabled unit as loaded', () => {
-		expect(parseUnitLoadStates('Id=systemd-timesyncd.service\nLoadState=loaded\nUnitFileState=disabled\n').get('systemd-timesyncd.service')).toBe('loaded');
+		expect(parseUnitLoadStates('Id=systemd-timesyncd.service\nLoadState=loaded\nUnitFileState=disabled\n').get('systemd-timesyncd.service')?.load).toBe('loaded');
 	});
 
 	it('carries masked and unparsable units through as themselves', () => {
 		const states = parseUnitLoadStates('Id=a.service\nLoadState=masked\n\nId=b.service\nLoadState=bad-setting\n');
-		expect(states.get('a.service')).toBe('masked');
-		expect(states.get('b.service')).toBe('bad-setting');
+		expect(states.get('a.service')?.load).toBe('masked');
+		expect(states.get('b.service')?.load).toBe('bad-setting');
 	});
 
 	it('is empty for empty output', () => {
@@ -1021,14 +1062,14 @@ describe('parseUnitLoadStates', () => {
 
 	/** A record with no Id to key it on is dropped rather than attached to a neighbour. */
 	it('drops a half record instead of misattributing it', () => {
-		expect([...parseUnitLoadStates('LoadState=loaded\n\nId=a.service\nLoadState=masked\n')]).toEqual([['a.service', 'masked']]);
+		expect([...parseUnitLoadStates('LoadState=loaded\n\nId=a.service\nLoadState=masked\n')]).toEqual([['a.service', { id: 'a.service', load: 'masked' }]]);
 	});
 
 	/** systemd puts Id first, but back-to-back records without a blank line must not merge. */
 	it('ends a record at the next Id even without a blank line', () => {
 		expect([...parseUnitLoadStates('Id=a.service\nLoadState=loaded\nId=b.service\nLoadState=masked\n')]).toEqual([
-			['a.service', 'loaded'],
-			['b.service', 'masked'],
+			['a.service', { id: 'a.service', load: 'loaded' }],
+			['b.service', { id: 'b.service', load: 'masked' }],
 		]);
 	});
 });
