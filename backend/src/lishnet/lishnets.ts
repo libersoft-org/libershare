@@ -22,6 +22,14 @@ export interface SetEnabledResult {
 	transitioned: boolean;
 	/** The join state the lishnet is in now, whoever settled it. */
 	joined: boolean;
+	/**
+	 * Identity of the row as it stood inside the critical section, for the event the API
+	 * broadcasts. The handler used to read the row itself before awaiting this call, which
+	 * raced the catalog in both directions: a network still being added read as undefined
+	 * and its join was never broadcast, and a rename queued ahead of the enable made the
+	 * event carry the name the network no longer has.
+	 */
+	network?: { networkID: string; name: string };
 }
 
 /**
@@ -217,11 +225,15 @@ export class Networks {
 			if (!lishnetExists(this.db, id)) return undefined;
 			const previous = this.get(id);
 			setLISHnetEnabled(this.db, id, enabled);
-			return { previous };
+			// Named from the row this write landed on, not from a read the caller took outside
+			// the lock — see {@link SetEnabledResult.network}.
+			return { previous, row: this.get(id) };
 		});
 		if (!staged) return { found: false, transitioned: false, joined: false };
 		const transitioned = await this.reconcile(id, staged.previous);
-		return { found: true, transitioned, joined: this.joinedNetworks.has(id) };
+		const result: SetEnabledResult = { found: true, transitioned, joined: this.joinedNetworks.has(id) };
+		if (staged.row) result.network = { networkID: staged.row.networkID, name: staged.row.name };
+		return result;
 	}
 
 	/**

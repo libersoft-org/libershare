@@ -21,6 +21,7 @@ import { Networks } from '../../../src/lishnet/lishnets.ts';
  */
 
 const NET = 'net-a';
+const NAMED = { networkID: 'net-a', name: 'A' };
 const BOOTSTRAP = '/ip4/192.0.2.1/tcp/9090/p2p/12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -300,23 +301,58 @@ describe('Networks.setEnabled — what the result claims', () => {
 		// before either reconcile ran, so by the enable's turn the desired state was already
 		// "disabled" and it had nothing to apply. `transitioned: false` with `joined: false`
 		// is what the API needs to hear — it must not broadcast a join that did not happen.
-		expect(holdingResult).toEqual({ found: true, transitioned: true, joined: false });
-		expect(olderResult).toEqual({ found: true, transitioned: false, joined: false });
-		expect(newerResult).toEqual({ found: true, transitioned: false, joined: false });
+		expect(holdingResult).toEqual({ found: true, transitioned: true, joined: false, network: NAMED });
+		expect(olderResult).toEqual({ found: true, transitioned: false, joined: false, network: NAMED });
+		expect(newerResult).toEqual({ found: true, transitioned: false, joined: false, network: NAMED });
 		expect(getLISHnet(db, NET)!.enabled).toBe(false);
 	});
 
 	it('an enable of an already-joined network reports no transition', async () => {
 		const { networks } = makeNetworks(net, db, [NET]);
 
-		expect(await networks.setEnabled(NET, true)).toEqual({ found: true, transitioned: false, joined: true });
+		expect(await networks.setEnabled(NET, true)).toEqual({ found: true, transitioned: false, joined: true, network: NAMED });
+	});
+
+	/**
+	 * The API broadcasts `lishnets:joined` / `lishnets:left` from this result. It used to
+	 * read the row itself before awaiting the call, which raced the catalog both ways: a
+	 * network still being added read as undefined and its join was never broadcast at all,
+	 * and a rename queued ahead of the enable made the event carry the previous name.
+	 */
+	it('names the row the enable settled, not one a queued rename has replaced', async () => {
+		setLISHnetEnabled(db, NET, false);
+		const { networks } = makeNetworks(net, db, []);
+		const release = await (networks as any).catalogMutex.acquire();
+
+		const renaming = networks.update({ networkID: NET, name: 'renamed', description: '', bootstrapPeers: [BOOTSTRAP], enabled: false, created: new Date().toISOString() });
+		const enabling = networks.setEnabled(NET, true);
+		release();
+		const [, result] = await Promise.all([renaming, enabling]);
+
+		// Whichever of the two reconciles reaches the lock first settles the join; what this
+		// pins down is the name — it is the one this call's own critical section wrote, never
+		// a value read before or after the await.
+		expect(result.joined).toBe(true);
+		expect(result.network).toEqual({ networkID: NET, name: 'renamed' });
+	});
+
+	it('names a network that only came into existence while it waited', async () => {
+		const { networks } = makeNetworks(net, db, []);
+		const release = await (networks as any).catalogMutex.acquire();
+
+		const adding = networks.addIfNotExists({ networkID: 'net-new', name: 'New', description: '', bootstrapPeers: [], created: new Date().toISOString() });
+		const enabling = networks.setEnabled('net-new', true);
+		release();
+		const [, result] = await Promise.all([adding, enabling]);
+
+		expect(result).toEqual({ found: true, transitioned: true, joined: true, network: { networkID: 'net-new', name: 'New' } });
 	});
 
 	it('a real enable reports the transition it settled', async () => {
 		setLISHnetEnabled(db, NET, false);
 		const { networks } = makeNetworks(net, db, []);
 
-		expect(await networks.setEnabled(NET, true)).toEqual({ found: true, transitioned: true, joined: true });
+		expect(await networks.setEnabled(NET, true)).toEqual({ found: true, transitioned: true, joined: true, network: NAMED });
 	});
 });
 
@@ -463,7 +499,7 @@ describe('Networks — operations that change the set of lishnets', () => {
 		// net-b shares nothing with net-a — no bootstrap peers of its own, so it has no dial
 		// to wait on — and neither of these may wait on net-a's.
 		expect(await networks.add({ ...rowOf(NET_B), name: 'B', bootstrapPeers: [] })).toBe(true);
-		expect(await networks.setEnabled(NET_B, true)).toEqual({ found: true, transitioned: true, joined: true });
+		expect(await networks.setEnabled(NET_B, true)).toEqual({ found: true, transitioned: true, joined: true, network: { networkID: NET_B, name: 'B' } });
 		expect(getLISHnet(db, NET)!.enabled).toBe(true);
 
 		gate.resolve();

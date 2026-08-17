@@ -116,13 +116,18 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 	}
 	async function setEnabled(p: { networkID: string; enabled: boolean }): Promise<SuccessResponse> {
 		assert(p, ['networkID', 'enabled']);
-		const net = networks.get(p.networkID);
 		const result = await networks.setEnabled(p.networkID, p.enabled);
 		// Only a settled transition is broadcast, and the event names the state the network
 		// actually ended in. Broadcasting on "the network exists" plus the REQUESTED flag
 		// announced a join for a request a newer one had already overruled, and repeated the
 		// event for an enable of an already-enabled network.
-		if (result.transitioned && net) broadcast(result.joined ? 'lishnets:joined' : 'lishnets:left', { networkID: p.networkID, name: net.name });
+		//
+		// The name comes from the operation, not from a get() of our own. Reading the row
+		// before the await missed a network that was still being added — undefined, so the
+		// join it really did perform was never broadcast — and carried the pre-rename name
+		// when an edit was queued ahead of the enable. Reading it after the await races the
+		// next write instead.
+		if (result.transitioned && result.network) broadcast(result.joined ? 'lishnets:joined' : 'lishnets:left', result.network);
 		return { success: result.found };
 	}
 	async function connect(p: { multiaddr: string }): Promise<SuccessResponse> {
