@@ -78,13 +78,24 @@ export function uploadFileName(originalName: string): string {
 }
 
 /**
- * `receiving` while chunks are still being appended, `ready` once the file is
- * closed and complete. A `ready` upload stays in the map on purpose: the record
- * is what proves the file is finished, whose it is, and how much disk it holds,
- * and dropping it the moment `end()` returns leaves a file nobody is accountable
- * for until a sweep happens to notice it.
+ * `receiving` while chunks are still being appended, `finalizing` while the
+ * writer is being closed, `ready` once the file is closed and complete. A
+ * `ready` upload stays in the map on purpose: the record is what proves the file
+ * is finished, whose it is, and how much disk it holds, and dropping it the
+ * moment `end()` returns leaves a file nobody is accountable for until a sweep
+ * happens to notice it.
  */
-type UploadState = 'receiving' | 'ready';
+type UploadState = 'receiving' | 'finalizing' | 'ready';
+
+/**
+ * States in which nothing of ours is running and the client is the one who
+ * should act next — the only ones an idle timeout can fairly apply to. A record
+ * with an operation in flight is busy, not idle, and expiring it pulls the file
+ * out from under the operation still writing to it.
+ */
+function isIdleExpirable(state: UploadState): boolean {
+	return state === 'receiving' || state === 'ready';
+}
 
 interface Upload {
 	path: string;
@@ -172,6 +183,7 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 		// Idle transfers first, so their files become unowned and the pass below
 		// can see them rather than skipping them as active.
 		for (const [uploadID, upload] of [...uploads]) {
+			if (!isIdleExpirable(upload.state)) continue;
 			if (now - upload.lastActivityAt < idleMs) continue;
 			console.warn(`[API] Upload expired after ${Math.round((now - upload.lastActivityAt) / 1000)}s idle: ${uploadID}`);
 			await discard(uploadID);
@@ -370,6 +382,12 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 			// Finishing twice is not a resend of the first answer: the second call
 			// would re-close a closed writer and hand out the path again.
 			if (upload.state !== 'receiving') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, p.uploadID);
+			// Claimed before the first await, or the sweep can find a record that still
+			// looks like an untouched transfer while its writer is mid-close, discard it,
+			// end the writer a second time and delete the file — after which this call
+			// still answers with a success for an upload that no longer exists.
+			upload.state = 'finalizing';
+			upload.lastActivityAt = Date.now();
 			try {
 				await upload.writer.end();
 			} catch (err) {

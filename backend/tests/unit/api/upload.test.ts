@@ -384,6 +384,25 @@ describe('upload sweep', () => {
 		handlers.stop();
 	});
 
+	it('does not expire an upload whose writer is still being closed', async () => {
+		const { handlers, uploadDir } = sweepHandlers({ idleMs: 0, maxAgeMs: 60_000 });
+		const client = {};
+		const { uploadID } = await handlers.begin({ name: 'closing.lish' }, client);
+		await handlers.chunk({ uploadID, data: pattern(4096) }, client);
+		// Not awaited: `end` runs its synchronous prefix and then suspends inside
+		// `writer.end()`, which is exactly the window the sweep used to walk into —
+		// the record still looked like an untouched transfer, so it was discarded,
+		// the writer closed twice and the file deleted while `end` was mid-close.
+		const finishing = handlers.end({ uploadID }, client);
+		await handlers.sweep();
+		expect(await finishing).toEqual({ uploadID });
+		// The success it just reported has to be true: the file is still there and
+		// the upload is still consumable.
+		expect((await readdir(uploadDir)).length).toBe(1);
+		expect((await handlers.withFile({ uploadID }, client, async path => Bun.file(path).size)) as number).toBe(4096);
+		handlers.stop();
+	});
+
 	it('removes a file no upload record owns', async () => {
 		const { handlers, uploadDir } = sweepHandlers({ idleMs: 60_000, maxAgeMs: 60_000 });
 		const client = {};
