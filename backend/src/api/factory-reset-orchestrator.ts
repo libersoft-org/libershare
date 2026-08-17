@@ -68,10 +68,10 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 			for (const id of enabledDownloads) triggerEnableDownload(id);
 		};
 
-		// Each selected category is wiped INDEPENDENTLY (a failure in one never blocks
-		// the others) and the node is always brought back up best-effort, so a partial
-		// failure can't leave networks stopped. Per-category outcomes go to the FE,
-		// which surfaces one notification per category. See runFactoryReset.
+		// `prepare` is a barrier: if the transfers or the node cannot be stopped, every
+		// wipe that works on state the node owns is skipped and nothing is restarted.
+		// Categories that do run are independent of each other. Per-category and
+		// per-phase outcomes go to the FE, one notification each. See runFactoryReset.
 		const response = await runFactoryReset({
 			prepare: async () => {
 				if (wipeDownloads || restartNode) {

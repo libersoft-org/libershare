@@ -229,7 +229,7 @@ describe('buildFactoryResetHandler — partial failure', () => {
 		expect(res.results.every(r => r.ok)).toBe(true);
 	});
 
-	it('prepare failure is best-effort — wipes still run and success reflects only categories', async () => {
+	it('prepare failure is a barrier — the download wipe is skipped and success is false', async () => {
 		const ran: string[] = [];
 		const deps = makeDeps({
 			stopVerifyAll: async () => {
@@ -244,10 +244,48 @@ describe('buildFactoryResetHandler — partial failure', () => {
 		});
 		const handler = buildFactoryResetHandler(deps);
 		const res = await handler({ downloads: true, settings: false, identity: false, networks: false, peers: false });
-		// prepare threw but downloads still ran.
-		expect(ran).toContain('stopVerify');
-		expect(ran).toContain('downloads');
-		expect(res.success).toBe(true);
+		// Live transfers were never stopped, so wiping the tables they write to is not safe.
+		expect(ran).toEqual(['stopVerify']);
+		expect(res.success).toBe(false);
+		expect(res.phases[0]).toEqual({ phase: 'prepare', ok: false, detail: 'verify-stop boom' });
+	});
+
+	it('a node that cannot be stopped blocks every destructive wipe and the restart', async () => {
+		const called: string[] = [];
+		const deps = makeDeps({
+			networkOverride: {
+				stopAllNetworks: () => Promise.reject(new Error('node.stop failed')),
+				startEnabledNetworks: () => {
+					called.push('restart');
+					return Promise.resolve();
+				},
+				clearDatastore: () => {
+					called.push('clearDatastore');
+					return Promise.resolve();
+				},
+				clearPeerstore: () => {
+					called.push('clearPeerstore');
+					return Promise.resolve();
+				},
+			},
+			dataServerOverride: {
+				clearLishs: () => {
+					called.push('clearLishs');
+				},
+				clearLishnets: () => {
+					called.push('clearLishnets');
+				},
+			},
+		});
+		const handler = buildFactoryResetHandler(deps);
+		const res = await handler({ settings: false, identity: true, downloads: true, networks: true, peers: true });
+
+		// The node may still own its datastore, its peerstore and its identity. Wiping any
+		// of them here — and then bringing a second node up over the result — is exactly
+		// what the barrier exists to stop.
+		expect(called).toEqual([]);
+		expect(res.success).toBe(false);
+		expect(res.results.every(r => !r.ok)).toBe(true);
 	});
 });
 

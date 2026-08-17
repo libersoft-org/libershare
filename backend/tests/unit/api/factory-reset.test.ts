@@ -38,25 +38,77 @@ describe('runFactoryReset', () => {
 		expect(res.success).toBe(true);
 	});
 
-	it('runs prepare before the wipes and restart after — both best-effort (their failure neither aborts nor flips success)', async () => {
+	it('runs prepare before the wipes and restart after, reporting both as phases', async () => {
 		const order: string[] = [];
 		const res = await runFactoryReset({
 			prepare: (): void => {
 				order.push('prepare');
-				throw new Error('prep boom');
 			},
 			downloads: (): void => {
 				order.push('downloads');
 			},
 			restart: (): void => {
 				order.push('restart');
-				throw new Error('restart boom');
 			},
 		});
 		expect(order).toEqual(['prepare', 'downloads', 'restart']);
-		// prepare/restart failures are infrastructure — not in results, don't fail the reset.
 		expect(res.success).toBe(true);
+		expect(res.phases).toEqual([
+			{ phase: 'prepare', ok: true },
+			{ phase: 'restart', ok: true },
+		]);
+	});
+
+	it('a failed prepare skips every wipe that needs the node down, and the restart', async () => {
+		const ran: string[] = [];
+		const res = await runFactoryReset({
+			prepare: (): void => {
+				throw new Error('stopAllNetworks boom');
+			},
+			downloads: (): void => {
+				ran.push('downloads');
+			},
+			networks: (): void => {
+				ran.push('networks');
+			},
+			peers: (): void => {
+				ran.push('peers');
+			},
+			identity: (): void => {
+				ran.push('identity');
+			},
+			// The one wipe that touches neither the node nor the transfers.
+			settings: (): void => {
+				ran.push('settings');
+			},
+			restart: (): void => {
+				ran.push('restart');
+			},
+		});
+
+		expect(ran).toEqual(['settings']);
+		expect(res.success).toBe(false);
+		expect(res.results.filter(r => !r.ok).map(r => r.category)).toEqual(['downloads', 'networks', 'peers', 'identity']);
+		expect(res.results.find(r => r.category === 'settings')).toEqual({ category: 'settings', ok: true });
+		expect(res.phases[0]).toEqual({ phase: 'prepare', ok: false, detail: 'stopAllNetworks boom' });
+		expect(res.phases[1]?.phase).toBe('restart');
+		expect(res.phases[1]?.ok).toBe(false);
+	});
+
+	it('a failed restart forces success=false even when every category passed', async () => {
+		const res = await runFactoryReset({
+			prepare: (): void => {},
+			downloads: (): void => {},
+			restart: (): void => {
+				throw new Error('restart boom');
+			},
+		});
 		expect(res.results).toEqual([{ category: 'downloads', ok: true }]);
+		expect(res.success).toBe(false);
+		expect(res.phases).toEqual([
+			{ phase: 'prepare', ok: true },
+			{ phase: 'restart', ok: false, detail: 'restart boom' },
+		]);
 	});
 
 	it('reports success=true when every selected category passes', async () => {
