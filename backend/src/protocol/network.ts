@@ -2779,6 +2779,14 @@ export class Network {
 				// Not in the peerStore — there is nothing to trim.
 			}
 		}
+		// One address left the configuration; the peer may have others. The registry is
+		// where that question is settled — an address of this peer still in it is one
+		// another network claims, or one gossip announced and a dial verified, and it is
+		// very likely the address the open connection is running over. Hanging the peer
+		// up because a SIBLING address was edited closes a connection nobody asked to
+		// lose, and disconnectPeer is not a soft action: it suppresses re-dials and
+		// deletes the peerStore entry.
+		if (this.addressesByPeer.has(peerID)) return;
 		if (this.isPeerNeededByJoinedNetwork(peerID)) return;
 		// Nothing left that wants this peer. disconnectPeer is the single entry point
 		// that suppresses re-dials, strips BOTH keep-alive tags, hangs up and deletes

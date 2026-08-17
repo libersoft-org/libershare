@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
 import { Network, isRecoveryDialDue, isSameDialEndpoint, normalizeMultiaddrForCompare, type IBootstrapEntry } from '../../../src/protocol/network.ts';
-import { installBootstrapRegistry, registryAddresses } from '../helpers/bootstrap-registry.ts';
+import { installBootstrapRegistry, registryAddresses, type IRegistrySeed } from '../helpers/bootstrap-registry.ts';
 
 /**
  * Guards on the DESTRUCTIVE peer-eviction paths. The pure decision helpers are covered
@@ -1268,10 +1268,13 @@ describe('reconcilePeerAfterBootstrapRemoval', () => {
 	const OLD = `/ip4/203.0.113.7/tcp/9090/p2p/${PEER_ID}`;
 	const OTHER = `/ip4/203.0.113.8/tcp/9090/p2p/${PEER_ID}`;
 
-	function bareNetwork(needed: boolean, stored: string[] = [OLD, OTHER]) {
+	function bareNetwork(needed: boolean, stored: string[] = [OLD, OTHER], seeds: IRegistrySeed[] = []) {
 		const patched: string[][] = [];
 		const disconnected: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
+		// What the registry still holds of this peer AFTER the removal — the addresses
+		// the edit did not touch.
+		installBootstrapRegistry(network, seeds);
 		(network as any).node = {
 			peerStore: {
 				async get(): Promise<unknown> {
@@ -1303,6 +1306,24 @@ describe('reconcilePeerAfterBootstrapRemoval', () => {
 		const { network, disconnected } = bareNetwork(false, [OLD]);
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [OLD], 'net-a');
 		expect(disconnected).toEqual([PEER_ID]);
+	});
+
+	/**
+	 * The edit removed ONE address; whatever else the registry holds of this peer —
+	 * another network's claim, or a discovered address a dial verified — is untouched by
+	 * it, and the open connection is as likely to be running over one of those. Tearing
+	 * the peer down is not soft: it suppresses re-dials and deletes the peerStore entry.
+	 */
+	it('keeps the connection when another network still claims a sibling address', async () => {
+		const { network, disconnected } = bareNetwork(false, [OLD, OTHER], [{ address: OTHER, configuredBy: ['net-b'] }]);
+		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [OLD], 'net-a');
+		expect(disconnected).toEqual([]);
+	});
+
+	it('keeps the connection when the surviving sibling is a discovered address', async () => {
+		const { network, disconnected } = bareNetwork(false, [OLD, OTHER], [{ address: OTHER, discovered: true, lastVerifiedAt: Date.now() }]);
+		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [OLD], 'net-a');
+		expect(disconnected).toEqual([]);
 	});
 
 	/** Canonically, so one spelling of an address is not left behind as another. */
