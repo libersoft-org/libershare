@@ -1260,10 +1260,11 @@ describe('connectLinuxWifi', () => {
 		expect(state.keys.get(SAVED)).toBe('');
 	});
 
-	it('takes away the profile a failed first join created', async () => {
+	it('names the profile a failed first join left behind, without deleting it', async () => {
 		// Nothing was overwritten, so there is nothing to put back — but nmcli adds the
 		// profile to disk before it tries to associate, and a failed attempt that leaves
-		// one behind has saved a password nothing ever verified.
+		// one behind has saved a password nothing ever verified. The user is told which
+		// profile that is; taking it away is not this code's call to make.
 		const state = hostWithSavedKey({
 			onConnect: s => {
 				s.ssids.set(CREATED, NEW_SSID);
@@ -1274,15 +1275,65 @@ describe('connectLinuxWifi', () => {
 			() => new Error('the join should not have succeeded'),
 			(e: Error) => e
 		);
-		expect(err.message).toBe('Secrets were required, but not provided');
-		expect(state.ssids.has(CREATED)).toBe(false);
+		expect(err.message).toContain('Secrets were required');
+		expect(err.message).toContain('left in place');
+		expect(err.message).toContain(CREATED);
+		expect(err.message).not.toContain(NEW_KEY);
+		expect(state.ssids.has(CREATED)).toBe(true);
 		expect(state.keys.get(SAVED)).toBe(OLD_KEY);
 	});
 
-	it("keeps a profile that appeared during the attempt but is not the attempt's", async () => {
+	it('keeps a profile another program saved for this network just before the join', async () => {
+		// The sequence a delete cannot survive. Another program saves this network,
+		// with the password the user happens to have typed here, after the snapshot and
+		// before nmcli runs — so nmcli reuses THAT profile and fails on it. It was
+		// absent from the snapshot, it carries the SSID, it holds the attempt's
+		// password, and it is the only one: every test a delete could apply says it is
+		// this attempt's own work, and every one of them is wrong.
+		const state = hostWithSavedKey({ onConnect: () => {} });
+		const run = nmcli(state);
+		const err = await connectLinuxWifi(DEVICE, NEW_SSID, NEW_KEY, async args => {
+			if (args[0] === 'device') {
+				state.ssids.set(CREATED, NEW_SSID);
+				state.keys.set(CREATED, NEW_KEY);
+			}
+			return run(args);
+		}).then(
+			() => new Error('the join should not have succeeded'),
+			(e: Error) => e
+		);
+		expect(state.ssids.has(CREATED)).toBe(true);
+		expect(state.keys.get(CREATED)).toBe(NEW_KEY);
+		expect(err.message).toContain(CREATED);
+		expect(err.message).not.toContain(NEW_KEY);
+	});
+
+	it('keeps a profile whose SSID could not be read, having tied it to nothing', async () => {
+		// The harsher half of the same problem: nmcli refuses the SSID read, so the
+		// profile is not even known to belong to the network being joined. A profile
+		// that could not be identified has been attributed to nothing and must survive.
+		const state = hostWithSavedKey({
+			onConnect: s => {
+				s.ssids.set(CREATED, NEW_SSID);
+				s.keys.set(CREATED, NEW_KEY);
+			},
+		});
+		const run = nmcli(state);
+		const err = await connectLinuxWifi(DEVICE, NEW_SSID, NEW_KEY, async args => {
+			if (args.includes('802-11-wireless.ssid') && args.includes(CREATED)) throw new Error('nmcli said no');
+			return run(args);
+		}).then(
+			() => new Error('the join should not have succeeded'),
+			(e: Error) => e
+		);
+		expect(state.ssids.has(CREATED)).toBe(true);
+		expect(err.message).toContain(CREATED);
+	});
+
+	it("keeps a profile that appeared during the attempt carrying someone else's password", async () => {
 		// Someone adding the same network in another program while this one runs. It
-		// appeared inside the window, it carries the SSID, and it is still not ours to
-		// delete — the password it holds is not the one this attempt supplied.
+		// appeared inside the window and it carries the SSID, so it is reported — the
+		// password it holds is not consulted, because holding one never proved anything.
 		const state = hostWithSavedKey({
 			onConnect: s => {
 				s.ssids.set(CREATED, NEW_SSID);
@@ -1298,7 +1349,7 @@ describe('connectLinuxWifi', () => {
 		expect(state.ssids.has(CREATED)).toBe(true);
 	});
 
-	it("keeps both profiles when two appeared and either could be the attempt's", async () => {
+	it('names both profiles when two appeared while the attempt ran', async () => {
 		const state = hostWithSavedKey({
 			onConnect: s => {
 				for (const uuid of [CREATED, SECOND]) {
