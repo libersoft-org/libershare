@@ -356,16 +356,22 @@ export class BootstrapStatusTracker {
 	 * cycling through failures that this node produces itself. See {@link TrackedPeer}. The
 	 * liveness predicate is scoped to the network (its topic subscribers), NOT the
 	 * shared libp2p connection: a peer that left network B but is still connected
-	 * through network A must not keep a stale row under B. Configured entries are
-	 * exempt (user data). `now` is injectable for tests.
+	 * through network A must not keep a stale row under B. Membership is judged on the
+	 * VERIFIED identity only — see the check below. Configured entries are exempt (user
+	 * data). `now` is injectable for tests.
 	 */
 	sweepStale(ttlMs: number, isMember: (networkID: string, peerID: string) => boolean, now: number = Date.now()): void {
 		for (const [networkID, peers] of [...this.stats]) {
 			let changed = false;
 			for (const [addr, p] of [...peers]) {
 				if (p.origin !== 'discovered') continue;
-				const pid = p.expectedPeerID ?? p.actualPeerID;
-				if (pid && isMember(networkID, pid)) continue;
+				// Only a VERIFIED identity exempts a row. `expectedPeerID` is whatever the
+				// address claims, and a discovered multiaddr practically always carries one —
+				// so reading it here handed the exemption to the announcer: any address ending
+				// /p2p/<a-live-member> was treated as that member's, never dialed successfully,
+				// and never expired. The cap bounds how many such rows exist; this is what
+				// stops them from occupying the budget permanently.
+				if (p.actualPeerID && isMember(networkID, p.actualPeerID)) continue;
 				if (now - p.staleSince < ttlMs) continue;
 				peers.delete(addr);
 				changed = true;

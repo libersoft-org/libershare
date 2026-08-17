@@ -142,7 +142,9 @@ describe('BootstrapStatusTracker.sweepStale', () => {
 	it('drops stale discovered rows, keeps fresh, connected and configured ones', () => {
 		const tracker = new BootstrapStatusTracker();
 		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
-		tracker.recordOutcome(NET, LIVE_ADDR, LIVE_ID, 'connected', null, null, 'discovered');
+		// The live row carries the identity its dial actually proved, which is what the
+		// production path records on a successful connection.
+		tracker.recordOutcome(NET, LIVE_ADDR, LIVE_ID, 'connected', null, LIVE_ID, 'discovered');
 		tracker.recordOutcome(NET, CONF_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'configured');
 		const past = Date.now() + TTL + 60_000; // both rows are then older than TTL
 
@@ -172,6 +174,21 @@ describe('BootstrapStatusTracker.sweepStale', () => {
 		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'connected', null, null, 'discovered');
 
 		tracker.sweepStale(TTL, networkID => networkID !== NET, Date.now() + TTL + 60_000);
+
+		expect(tracker.getStatus(NET)).toBe(null);
+	});
+
+	/**
+	 * A discovered multiaddr practically always carries a /p2p/<id>, so honouring the
+	 * CLAIMED identity here let anyone keep a row alive forever by naming a live member
+	 * in an address nothing ever answered on.
+	 */
+	it('expires an address that merely claims a live member without ever answering', () => {
+		const tracker = new BootstrapStatusTracker();
+		const invented = `/ip4/198.51.100.77/tcp/9090/p2p/${LIVE_ID}`;
+		tracker.recordOutcome(NET, invented, LIVE_ID, 'timeout', 'no answer', null, 'discovered');
+
+		tracker.sweepStale(TTL, (_net, pid) => pid === LIVE_ID, Date.now() + TTL + 60_000);
 
 		expect(tracker.getStatus(NET)).toBe(null);
 	});
