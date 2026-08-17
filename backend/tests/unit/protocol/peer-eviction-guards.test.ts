@@ -30,6 +30,7 @@ describe('purgeStalePeer — epoch guard', () => {
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).redialBackoff = new Map();
 		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
 		(network as any).node = {
 			getConnections: () => [
 				{
@@ -92,6 +93,7 @@ describe('runRedialMaintenance — eviction with no reachable address', () => {
 		(network as any).redialBackoff = new Map();
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
 		(network as any).noReachableSince = new Map([[PEER_ID, Date.now() - opts.sinceMsAgo]]);
 		(network as any).configuredBootstrapPeerIDs = new Set(opts.configured ? [PEER_ID] : []);
 		(network as any).configuredBootstrapAddresses = new Set<string>();
@@ -162,6 +164,7 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
@@ -325,6 +328,7 @@ describe('addBootstrapPeers — forced probe only for configured addresses', () 
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
@@ -370,6 +374,7 @@ describe('configured exemption ends when the peer leaves the config', () => {
 		(network as any).redialBackoff = new Map();
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
 		(network as any).noReachableSince = new Map([[PEER_ID, Date.now() - 45 * 60_000]]);
 		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
 		(network as any).configuredBootstrapAddresses = new Set<string>();
@@ -457,6 +462,7 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
@@ -519,6 +525,7 @@ describe('addBootstrapPeers — a dial that lands after leave-network', () => {
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
@@ -612,6 +619,7 @@ describe('addBootstrapPeers — only a working discovered address joins the auto
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
@@ -699,6 +707,7 @@ describe('addBootstrapPeers — a non-routable configured entry is still configu
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
@@ -771,6 +780,7 @@ describe('addBootstrapPeers — quarantine after the probe it allowed', () => {
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map([[PEER_ID, quarantinedAt]]);
+		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
@@ -805,6 +815,7 @@ describe('addBootstrapPeers — quarantine after the probe it allowed', () => {
 	it('does not quarantine a plain failure that was never in one', async () => {
 		const network = bareNetwork(true, LONG_AGO);
 		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
 		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
 		expect((network as any).unreachableQuarantine.has(PEER_ID)).toBe(false);
 	});
@@ -855,6 +866,7 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [multiaddr(BAD)];
 		(network as any).bootstrapGeneration = new Map();
@@ -1157,6 +1169,7 @@ describe('runZeroConnectionRecovery — connectivity is read, not remembered', (
 		(network as any).redialBackoff = new Map();
 		(network as any).addressProbeBackoff = new Map();
 		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).bootstrapMultiaddrs = (opts.addresses ?? [ADDR_A]).map(a => multiaddr(a));
@@ -1220,6 +1233,7 @@ describe('runZeroConnectionRecovery — a failed dial paces the next one', () =>
 		(network as any).redialBackoff = new Map();
 		(network as any).addressProbeBackoff = new Map();
 		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set(opts.configured ? [PEER_ID] : []);
 		(network as any).configuredBootstrapAddresses = new Set(opts.configured ? [normalizeMultiaddrForCompare(opts.address)] : []);
 		(network as any).bootstrapMultiaddrs = [multiaddr(opts.address)];
@@ -1383,6 +1397,7 @@ describe('addBootstrapPeers — a gossip announce of a configured address', () =
 		(network as any).configuredBootstrapPeerIDs = new Set(knownConfigured.length > 0 ? [PEER_ID] : []);
 		(network as any).configuredBootstrapAddresses = new Set(knownConfigured.map(a => normalizeMultiaddrForCompare(a)));
 		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
@@ -1520,5 +1535,77 @@ describe('purgeStalePeer — healing an inbound race restores the whole dial sta
 		expect((network as any).bootstrapPeerIDs.has(PEER_ID)).toBe(false);
 		expect((network as any).bootstrapMultiaddrs).toEqual([]);
 		expect(direct.has(PEER_ID)).toBe(false);
+	});
+});
+
+/**
+ * Gossip re-announces a dead peer on every cycle. The intake path used to answer each
+ * mention with a fresh dial because it consulted the unreachable quarantine and nothing
+ * else — the per-peer backoff that paces every other dial path was never read, and never
+ * written either, so it could not have bitten even if it had been.
+ */
+describe('addBootstrapPeers — discovered dials are paced by the per-peer backoff', () => {
+	const ADDR = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork(dialOutcome: 'ok' | 'fail') {
+		const dialled: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).bootstrapGeneration = new Map();
+		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {}, deletePeer() {} };
+		(network as any).node = {
+			peerId: { toString: () => 'selfID' },
+			getConnections: () => [],
+			async dial(ma: { toString(): string }): Promise<unknown> {
+				dialled.push(ma.toString());
+				if (dialOutcome === 'fail') throw new Error('dial timed out');
+				return { remoteAddr: { toString: () => ADDR } };
+			},
+			peerStore: { async merge(): Promise<void> {} },
+		};
+		return { network, dialled };
+	}
+
+	it('records a failed discovered dial into the shared backoff', async () => {
+		const { network } = bareNetwork('fail');
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect((network as any).redialBackoff.get(PEER_ID)?.nextAttempt).toBeGreaterThan(Date.now());
+	});
+
+	it('refuses a second mention of the same peer while the backoff is running', async () => {
+		const { network, dialled } = bareNetwork('fail');
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect(dialled).toEqual([ADDR]);
+	});
+
+	it('dials again once the backoff window has passed', async () => {
+		const { network, dialled } = bareNetwork('fail');
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		(network as any).redialBackoff.set(PEER_ID, { nextAttempt: Date.now() - 1, failCount: 1, firstFailure: Date.now(), evictionFails: 0 });
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect(dialled).toEqual([ADDR, ADDR]);
+	});
+
+	/** A configured entry is user data and the way back in — the backoff must not hold it. */
+	it('never holds a configured address back on the peer backoff', async () => {
+		const { network, dialled } = bareNetwork('fail');
+		(network as any).redialBackoff.set(PEER_ID, { nextAttempt: Date.now() + 600_000, failCount: 9, firstFailure: Date.now(), evictionFails: 0 });
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+		expect(dialled).toEqual([ADDR]);
+	});
+
+	/** A dial that worked clears the record, so a returning peer is not paced. */
+	it('leaves no backoff behind after a successful discovered dial', async () => {
+		const { network } = bareNetwork('ok');
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect((network as any).redialBackoff.has(PEER_ID)).toBe(false);
 	});
 });

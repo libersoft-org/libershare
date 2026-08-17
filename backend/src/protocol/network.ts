@@ -1577,6 +1577,19 @@ export class Network {
 					if (effectiveOrigin === 'configured') this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'error', 'address is not routable from this host', null, effectiveOrigin);
 					continue;
 				}
+				// Pacing, before the quarantine is consulted: gossip mentions a dead peer
+				// on every announce cycle, and this path used to answer each one with a
+				// fresh 10 s dial because it read the quarantine and nothing else. The
+				// backoff is the record every other dial path already waits on, and
+				// checking it FIRST matters — an expired quarantine buys exactly one probe,
+				// which must not be spent by a dial the backoff was going to refuse.
+				if (peerID && effectiveOrigin === 'discovered') {
+					const backoff = this.redialBackoff.get(peerID);
+					if (backoff !== undefined && backoff.nextAttempt > Date.now()) {
+						trace(`[NET] addBootstrapPeers skip backoff: ${peerID.slice(0, 16)}`);
+						continue;
+					}
+				}
 				// Skip peers recently evicted as unreachable — nodes that still remember
 				// them keep gossiping their addrs, and without this window every mention
 				// would re-create the status row and burn a dial. Configured entries are
@@ -1676,6 +1689,13 @@ export class Network {
 					// The probe the expired quarantine allowed has failed, so close the window
 					// again rather than letting the next announce buy another dial.
 					if (probeAfterQuarantine && peerID) this.unreachableQuarantine.set(peerID, Date.now());
+					// Pay the failure into the shared per-peer backoff the check above reads.
+					// Without this the check could never bite for a gossip-learned peer: nothing
+					// else writes that record for a peer absent from the peerStore, so re-dial
+					// maintenance never sees it either and every announce bought another dial.
+					// Same accounting as the recovery loop — pacing only, no eviction credit,
+					// since a failed announce dial says nothing about who is the broken side.
+					if (peerID && effectiveOrigin === 'discovered') this.noteRecoveryDialFailure(peerID);
 					const actualPeerID = kind === 'identity-mismatch' ? extractActualPeerID(message) : null;
 					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, kind, message, actualPeerID, effectiveOrigin);
 					// [NET-MISMATCH] richer log for identity-mismatch — single line containing
