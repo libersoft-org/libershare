@@ -746,6 +746,32 @@ export const WINDOWS_ROUTE_GUARD: string = `if (@($oldRoutes).Count -gt 1) { thr
 export const WINDOWS_ORIGIN_GUARD: string = `if ($oldDhcp -ne 'Enabled') { foreach ($a in $oldAddresses) { if ($a.PrefixOrigin -ne 'Manual' -or $a.SuffixOrigin -ne 'Manual') { throw "this interface carries an IPv4 address this app could not put back if the change failed" } } }`;
 
 /**
+ * Why Windows cannot apply this configuration at all, or null when it can.
+ *
+ * The shared validator answers whether a configuration is coherent, not whether
+ * every platform can express it, and there is one combination it accepts that
+ * `New-NetIPAddress` cannot take: a `/32` with a gateway. The validator waives
+ * the on-link requirement at that length deliberately — a host route has no
+ * subnet, so an off-link gateway is the normal arrangement — while
+ * `-DefaultGateway` is documented to require a gateway inside the address's own
+ * subnet, and a `/32` has none.
+ *
+ * Left to the apply, the refusal arrives from the middle of the mutation: the old
+ * addresses and routes are already gone by then and only the rollback stands
+ * between the user and an unconfigured interface. Asked here, before the lock is
+ * taken, nothing has happened yet.
+ *
+ * Expressing it properly is an on-link sequence — the address without a gateway,
+ * a host route to the gateway, then the default route through it — which needs
+ * both routes snapshotted and restored as accurately as the address is. Until
+ * that exists, saying no is the honest answer.
+ */
+export function windowsIPv4Objection(config: NetIPv4Config): string | null {
+	if (config.mode !== 'static' || !config.gateway) return null;
+	return config.prefixLength === 32 ? 'Windows cannot set a gateway on an address that has no subnet of its own (/32)' : null;
+}
+
+/**
  * Decide, on the machine, whether the requested addressing is already in place —
  * so a change to the resolvers alone does not rewrite it.
  *

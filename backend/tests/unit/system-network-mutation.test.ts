@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
-import { connectWifi, ipv4EditObjection, networkStateGeneration, resetNetworkStateCache, runHostMutation, withVolatileCapabilities } from '../../src/system-network.ts';
-import { ErrorCodes, type NetInterfaceInfo, type NetworkStateInfo } from '@shared';
+import { applyIPv4, connectWifi, ipv4EditObjection, networkStateGeneration, resetNetworkStateCache, runHostMutation, withVolatileCapabilities } from '../../src/system-network.ts';
+import { windowsIPv4Objection } from '../../src/system-network-windows.ts';
+import { CodedError, ErrorCodes, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
 
 /**
  * A host reconfiguration is several platform commands and is not atomic, while
@@ -92,6 +93,47 @@ describe('withVolatileCapabilities', () => {
 				})
 			).toBe(remembered);
 		}
+	});
+});
+
+/**
+ * The combination the shared validator accepts and Windows cannot express.
+ *
+ * `validateIPv4Config` waives the on-link gateway check at `/32` on purpose — a
+ * host route has no subnet, so an off-link gateway is the normal arrangement —
+ * while `New-NetIPAddress -DefaultGateway` requires the gateway to be inside the
+ * address's own subnet. Discovered by the apply, that refusal arrives after the
+ * old addresses and routes have already been removed.
+ */
+describe('windowsIPv4Objection', () => {
+	const slash32 = { mode: 'static', address: '192.0.2.10', prefixLength: 32, gateway: '198.51.100.1' } as NetIPv4Config;
+
+	it('refuses a gateway on an address with no subnet', () => {
+		// The shared validator is right to accept it, and Windows still cannot do it.
+		expect(validateIPv4Config(slash32)).toBeNull();
+		expect(windowsIPv4Objection(slash32)).toContain('/32');
+	});
+
+	it('says nothing about a /32 with no gateway, which Windows can set', () => {
+		expect(windowsIPv4Objection({ mode: 'static', address: '192.0.2.10', prefixLength: 32 })).toBeNull();
+	});
+
+	it('says nothing about the ordinary prefixes, /31 included', () => {
+		for (const prefixLength of [24, 30, 31]) expect(windowsIPv4Objection({ mode: 'static', address: '192.0.2.0', prefixLength, gateway: '192.0.2.1' })).toBeNull();
+	});
+
+	it('says nothing about a DHCP config', () => {
+		expect(windowsIPv4Objection({ mode: 'dhcp' })).toBeNull();
+	});
+
+	// Refused before the mutation lock is taken, so nothing has been removed by the
+	// time the user is told no. Only meaningful on Windows, which is where the
+	// apply would otherwise reach New-NetIPAddress.
+	it.skipIf(process.platform !== 'win32')('refuses the apply before it can remove anything', async () => {
+		const error = (await applyIPv4('{2B1F0E8A-4C3D-4E5F-9A7B-1C2D3E4F5A6B}', slash32).catch((err: unknown) => err)) as CodedError;
+		expect(error).toBeInstanceOf(CodedError);
+		expect(error.code).toBe(ErrorCodes.NETCONFIG_UNSUPPORTED);
+		expect(error.message).toContain('/32');
 	});
 });
 

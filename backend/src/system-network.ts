@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
 import { CodedError, ErrorCodes, isValidSSID, isValidWifiKey, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
-import { connectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, windowsApplyIPv4Command, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
+import { connectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, windowsApplyIPv4Command, windowsIPv4Objection, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
 import { applyLinuxIPv4, connectLinuxWifi, isLinuxWritable, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
 import { applyMacIPv4, isMacWifiConfigurable, isMacWritable, readMacNetworkState } from './system-network-macos.ts';
 
@@ -371,6 +371,13 @@ export function ipv4EditObjection(state: NetworkStateInfo, interfaceID: string):
 export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Promise<void> {
 	const invalid = validateIPv4Config(config);
 	if (invalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${invalid}`);
+	// Coherent is not the same as expressible. The shared validator answers the
+	// first for every platform; the second is the platform's own answer, and asking
+	// it here rather than mid-apply is the difference between a refused request and
+	// an interface whose addresses have already been removed. See
+	// {@link windowsIPv4Objection}.
+	const unsupported = process.platform === 'win32' ? windowsIPv4Objection(config) : null;
+	if (unsupported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, unsupported);
 	const supported = await readCapabilities();
 	if (!supported.ipv4) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host does not expose a writable network configuration');
 	await runHostMutation(async () => {
