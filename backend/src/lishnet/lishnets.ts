@@ -746,7 +746,7 @@ export class Networks {
 			this.network.pruneConfiguredBootstrapPeer(pid);
 			if (stillJoinedPeers.has(pid)) continue;
 			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
-			await this.network.disconnectPeer(pid, id, epoch);
+			await this.releasePeer(pid, id, epoch);
 		}
 
 		// Disconnect peers that belonged exclusively to the lishnet we just left.
@@ -759,11 +759,30 @@ export class Networks {
 		for (const pid of leftPeers) {
 			if (stillJoinedPeers.has(pid)) continue;
 			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
-			await this.network.disconnectPeer(pid, id, epoch);
+			await this.releasePeer(pid, id, epoch);
 		}
 
 		const net = this.get(id);
 		console.log(`✓ Left lishnet: ${net?.name ?? id}`);
+	}
+
+	/**
+	 * Let go of one peer of a leave, whatever that costs.
+	 *
+	 * {@link leaveNetwork} promises to run to completion once it has started, and both of its
+	 * loops reach the peers after this one only by returning from here. That promise was being
+	 * kept by the callee happening never to reject — every await inside `disconnectPeer` is
+	 * caught there today — which is not a guarantee this side can rely on: one rejection would
+	 * abandon every remaining peer of the lishnet mid-cleanup, with the topic already
+	 * unsubscribed and nobody left to finish. The peer that failed is logged and the leave
+	 * carries on.
+	 */
+	private async releasePeer(peerID: string, id: string, epoch: number): Promise<void> {
+		try {
+			await this.network.disconnectPeer(peerID, id, epoch);
+		} catch (err: any) {
+			console.error(`[Networks] disconnecting ${peerID.slice(0, 16)} while leaving ${id} failed:`, err?.message ?? err);
+		}
 	}
 
 	/**
@@ -834,11 +853,11 @@ export class Networks {
 	 * catalog is held. The promises waited on never reject — see {@link reconcileLater}.
 	 *
 	 * The wait has no timeout and does not need one, because the work it waits for has been
-	 * cancelled first: both halves of a convergence — the bootstrap dials of a join and the
-	 * per-peer teardown of a leave — end on this run's abort rather than on a deadline of
-	 * their own, so nothing is left that can outlive it. A timeout instead of cancelling
-	 * would be the worse answer: the abandoned reconcile would still be running, and would
-	 * come back to a stopped node or a new run's state.
+	 * cancelled first. A convergence awaits exactly two things — the bootstrap dials of a join
+	 * and the per-peer teardown of a leave — and both end on this run's abort rather than on a
+	 * deadline of their own. A timeout instead of cancelling would be the worse answer: the
+	 * abandoned reconcile would still be running, and would come back to a stopped node or to
+	 * a new run's state.
 	 */
 	private async drainReconciles(): Promise<void> {
 		if (this.activeReconciles.size === 0) return;

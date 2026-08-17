@@ -193,6 +193,27 @@ describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 		expect(net.disconnectEpochs).toEqual([1, 1]);
 	});
 
+	/**
+	 * The leave promises to run to completion once it has started, but both of its peer loops
+	 * reach the next peer only by returning from the disconnect. Nothing on this side enforced
+	 * that: one rejection would abandon every remaining peer with the topic already
+	 * unsubscribed and no successor left to finish the cleanup.
+	 */
+	it('finishes the remaining peers when one teardown fails', async () => {
+		net.topicPeers.set('net-a', ['p-first', 'p-second']);
+		const networks = makeNetworks(net, ['net-a']);
+		const disconnect = net.disconnectPeer.bind(net);
+		net.disconnectPeer = async (pid: string, networkID: string, epoch?: number): Promise<void> => {
+			if (pid === 'p-first') throw new Error('peerStore delete failed');
+			await disconnect(pid, networkID, epoch);
+		};
+
+		await leave(networks, 'net-a');
+
+		expect(net.disconnected).toEqual(['p-second']);
+		expect(net.unsubscribed).toEqual(['net-a']);
+	});
+
 	it('disconnects a recently-seen content peer offline at leave time', async () => {
 		// Not a live subscriber right now, but seen within TTL and still in the peerStore —
 		// must be suppressed too, or maintenance would redial it after the leave.
