@@ -183,13 +183,13 @@ export class Networks {
 	 * what decides the outcome. A request that has been overtaken by a newer one does
 	 * nothing at all: three fast toggles cost one operation, the last one.
 	 */
-	private async reconcile(id: string, enabled: boolean): Promise<void> {
+	private async reconcile(id: string, enabled: boolean, outgoingBootstrap?: string[]): Promise<void> {
 		const revision = (this.desiredRevisions.get(id) ?? 0) + 1;
 		this.desiredRevisions.set(id, revision);
 		await this.operationLock(id).runExclusive(async () => {
 			if (this.desiredRevisions.get(id) !== revision) return;
 			if (enabled) await this.joinNetwork(id);
-			else await this.leaveNetwork(id, revision);
+			else await this.leaveNetwork(id, revision, outgoingBootstrap);
 			if (this.desiredRevisions.get(id) !== revision) return;
 			this.announce(id, this.joinedNetworks.has(id));
 		});
@@ -217,7 +217,9 @@ export class Networks {
 		// joined against the pruned state — except when we are on our way OUT of it, where
 		// the leave resets the whole status anyway and a dial would be pure waste.
 		if (!(joined && !wantJoined) && before.join('\n') !== after.join('\n')) this.syncBootstrapRuntime(id, previous?.bootstrapPeers ?? [], after);
-		if (joined !== wantJoined) await this.reconcile(id, wantJoined);
+		// On the way out the leave does the whole cleanup, and it has to do it over the list
+		// this network was joined WITH — `previous` — because the new row is already written.
+		if (joined !== wantJoined) await this.reconcile(id, wantJoined, !wantJoined && previous ? before : undefined);
 	}
 
 	/** True while `revision` is still the newest request for this lishnet. */
@@ -281,11 +283,6 @@ export class Networks {
 		return ids;
 	}
 
-	/** Configured-bootstrap peer IDs of a single network. */
-	private configuredBootstrapPeerIDsOf(networkID: string): Set<string> {
-		return new Set(Networks.bootstrapPeerIDsOf(this.get(networkID)?.bootstrapPeers ?? []));
-	}
-
 	/** Configured-bootstrap peer IDs of every joined network except `exceptID`. */
 	/** Canonical bootstrap ADDRESSES configured for every joined network except `exceptID`. */
 	private configuredBootstrapAddressesElsewhere(exceptID: string): Set<string> {
@@ -310,8 +307,15 @@ export class Networks {
 	 * Leave a lishnet. `revision` is the disable request this leave belongs to; see
 	 * {@link joinNetwork} for why the long loops below re-check it.
 	 */
-	private async leaveNetwork(id: string, revision?: number): Promise<void> {
+	private async leaveNetwork(id: string, revision?: number, outgoingBootstrap?: string[]): Promise<void> {
 		if (!this.joinedNetworks.has(id)) return;
+
+		// The list we are leaving, NOT whatever the database holds now. Every caller on the
+		// disable path writes the row before the runtime catches up — an edit that swaps the
+		// bootstraps and disables in one go, or a `replace()`/`delete()` that removes the row
+		// outright — so re-reading here cleaned up the INCOMING list (or nothing at all) and
+		// left the outgoing addresses installed: still exempt from eviction, still redialled.
+		const outgoing = Networks.cleanBootstrapList(outgoingBootstrap ?? this.get(id)?.bootstrapPeers ?? []);
 
 		// Snapshot the topic subscribers BEFORE unsubscribing — unsubscribeTopic
 		// tears the topic out of pubsub, after which getTopicPeers(id) returns [].
@@ -365,10 +369,10 @@ export class Networks {
 		// as a configured bootstrap: force-dialed by the parked probe, exempt from the
 		// stale sweep, and disagreeing with what the UI shows as configured.
 		const configuredElsewhere = this.configuredBootstrapAddressesElsewhere(id);
-		this.network.pruneBootstrapAddresses(Networks.cleanBootstrapList(this.get(id)?.bootstrapPeers ?? []).filter(address => !configuredElsewhere.has(normalizeMultiaddrForCompare(address))));
+		this.network.pruneBootstrapAddresses(outgoing.filter(address => !configuredElsewhere.has(normalizeMultiaddrForCompare(address))));
 
 		const stillConfigured = this.configuredBootstrapPeerIDsElsewhere(id);
-		for (const pid of this.configuredBootstrapPeerIDsOf(id)) {
+		for (const pid of new Set(Networks.bootstrapPeerIDsOf(outgoing))) {
 			// Each disconnect awaits a hangUp and a peerStore delete, so a long list keeps
 			// this loop running well past the point at which the user may have re-enabled
 			// the lishnet. Every peer torn down after that belongs to the network we are

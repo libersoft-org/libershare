@@ -479,3 +479,62 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		expect(mock.unsubscribed).toEqual([NET]);
 	});
 });
+
+/**
+ * The disable path writes the row first and reconciles the runtime afterwards, so the
+ * leave cannot ask the database what it is leaving — by then the row holds the INCOMING
+ * list, or has been deleted outright. It used to do exactly that, which meant the old
+ * addresses and identities kept their bootstrap exemption on the live node: still
+ * force-dialled, still exempt from the stale sweep, still reconnectable after removal.
+ */
+describe('Networks — leaving cleans the configuration it is leaving, not the new one', () => {
+	const NET = 'net-a';
+	const PEER_A = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+	const PEER_B = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fp';
+	const ADDR_A = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_A}`;
+	const ADDR_B = `/ip4/203.0.113.10/tcp/9090/p2p/${PEER_B}`;
+	const ROW = (bootstrapPeers: string[], enabled: boolean) => ({ networkID: NET, name: 'A', description: '', bootstrapPeers, enabled, created: '2026-01-01T00:00:00.000Z' });
+
+	/** A joined network with `bootstrapPeers`, over a real in-memory row. */
+	function joined(bootstrapPeers: string[]) {
+		const db = new Database(':memory:');
+		initLISHnetsTables(db);
+		addLISHnet(db, ROW(bootstrapPeers, true));
+		const mock = makeMockNet();
+		const networks = Object.create(Networks.prototype) as Networks;
+		(networks as any).network = mock;
+		(networks as any).db = db;
+		(networks as any).joinedNetworks = new Set([NET]);
+		(networks as any).networkOperations = new Map();
+		(networks as any).desiredRevisions = new Map();
+		(networks as any).announcedJoined = new Map([[NET, true]]);
+		return { networks, mock, db };
+	}
+
+	it('an edit that swaps the list and disables at once still prunes the old address', async () => {
+		const { networks, mock } = joined([ADDR_A]);
+		await (networks as any).update(ROW([ADDR_B], false));
+		expect(mock.unsubscribed).toEqual([NET]);
+		// Re-reading the row gave [ADDR_B] here, so ADDR_A was never pruned and PEER_A
+		// kept its exemption while PEER_B — a peer we never joined with — lost its own.
+		expect(mock.prunedAddresses.flat()).toEqual([ADDR_A]);
+		expect(mock.prunedBootstrap).toEqual([PEER_A]);
+	});
+
+	it('a replace() that removes a joined network prunes its bootstraps', async () => {
+		const { networks, mock } = joined([ADDR_A]);
+		await networks.replace([]);
+		expect(mock.unsubscribed).toEqual([NET]);
+		// The row is gone by the time the leave runs, so a re-read yielded nothing at all.
+		expect(mock.prunedAddresses.flat()).toEqual([ADDR_A]);
+		expect(mock.prunedBootstrap).toEqual([PEER_A]);
+	});
+
+	it('a replace() that changes the list and disables at once prunes the old address', async () => {
+		const { networks, mock } = joined([ADDR_A]);
+		await networks.replace([ROW([ADDR_B], false)]);
+		expect(mock.unsubscribed).toEqual([NET]);
+		expect(mock.prunedAddresses.flat()).toEqual([ADDR_A]);
+		expect(mock.prunedBootstrap).toEqual([PEER_A]);
+	});
+});
