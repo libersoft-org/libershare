@@ -13,6 +13,11 @@ import { Networks } from '../../../src/lishnet/lishnets.ts';
  * waits on bootstrap dials, a leave disconnects peers one at a time. So an enable
  * could announce a join after a disable had already left, and a leave could keep
  * disconnecting the peers of a network that had just been re-enabled.
+ *
+ * Each request now runs to completion and then the next one converges on the row it
+ * left behind, so a contested toggle costs one redundant pass and reports honestly
+ * what happened. Abandoning the loser mid-flight instead is what left a cleanup
+ * half-done with a successor that had nothing left to finish.
  */
 
 const NET = 'net-a';
@@ -77,7 +82,6 @@ function makeNetworks(net: ReturnType<typeof makeMockNet>, db: Database, joined:
 	(networks as any).joinedNetworks = new Set(joined);
 	(networks as any).networkOperations = new Map<string, Mutex>();
 	(networks as any).catalogMutex = new Mutex();
-	(networks as any).desiredRevisions = new Map<string, number>();
 	(networks as any).announcedJoined = new Map<string, boolean>(joined.map(id => [id, true]));
 	const events: string[] = [];
 	(networks as any)._onNetworkJoined = (id: string): void => {
@@ -100,7 +104,7 @@ describe('Networks.setEnabled — serialised per lishnet', () => {
 		net = makeMockNet();
 	});
 
-	it('an enable overtaken by a disable never announces the join', async () => {
+	it('an enable overtaken by a disable ends disabled, both transitions announced', async () => {
 		const gate = deferred();
 		net.dialGate = gate.promise;
 		const { networks, events } = makeNetworks(net, db, []);
@@ -115,13 +119,16 @@ describe('Networks.setEnabled — serialised per lishnet', () => {
 		gate.resolve();
 		await Promise.all([enabling, disabling]);
 
-		expect(events).toEqual([]);
+		// The join really did happen — it subscribed the topic before it parked — so saying
+		// so and then saying it was undone is the honest report. Cancelling it half-way is
+		// what left the subscription and the dials behind with nobody to clean them up.
+		expect(events).toEqual([`joined:${NET}`, `left:${NET}`]);
 		expect(getLISHnet(db, NET)!.enabled).toBe(false);
 		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
 		expect(net.unsubscribed).toEqual([NET]);
 	});
 
-	it('a disable overtaken by an enable never announces the leave', async () => {
+	it('a disable overtaken by an enable finishes its cleanup before the rejoin', async () => {
 		net.topicPeers.set(NET, ['p-only-a']);
 		const gate = deferred();
 		net.disconnectGate = gate.promise;
@@ -133,14 +140,13 @@ describe('Networks.setEnabled — serialised per lishnet', () => {
 		gate.resolve();
 		await Promise.all([disabling, enabling]);
 
-		// From the outside nothing changed: the network never stopped being joined.
-		expect(events).toEqual([]);
+		expect(events).toEqual([`left:${NET}`, `joined:${NET}`]);
 		expect(getLISHnet(db, NET)!.enabled).toBe(true);
 		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
-		// The disconnect already in flight when the re-enable arrived cannot be recalled,
-		// but everything the leave had not reached yet belongs to the network we are back
-		// in and must be left alone.
-		expect(net.disconnected).not.toContain('p-only-a');
+		// The peer the leave was disconnecting when the re-enable arrived is disconnected,
+		// not stranded: abandoning the loop there left the tag, the peerStore record and the
+		// connection installed with the successor believing the leave was already done.
+		expect(net.disconnected).toContain('p-only-a');
 	});
 
 	it('three fast toggles land on the state the last one asked for', async () => {
@@ -157,8 +163,30 @@ describe('Networks.setEnabled — serialised per lishnet', () => {
 
 		expect(getLISHnet(db, NET)!.enabled).toBe(true);
 		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
-		expect(events).toEqual(['joined:' + NET]);
-		expect(net.unsubscribed).toEqual([]);
+		expect(events).toEqual([`joined:${NET}`, `left:${NET}`, `joined:${NET}`]);
+		expect(net.unsubscribed).toEqual([NET]);
+	});
+
+	/**
+	 * Two identical disables. The first used to bail out of its peer-disconnect loop the
+	 * moment the second merely ARRIVED, and the second then found the network already
+	 * unsubscribed and returned at once — so the peers of a network nobody was in kept
+	 * their connections, and nothing was ever going to come back for them.
+	 */
+	it('a second identical disable does not strand the first one’s peer cleanup', async () => {
+		net.topicPeers.set(NET, ['p-one', 'p-two', 'p-three']);
+		const gate = deferred();
+		net.disconnectGate = gate.promise;
+		const { networks } = makeNetworks(net, db, [NET]);
+
+		const first = networks.setEnabled(NET, false);
+		for (let i = 0; i < 10; i++) await Promise.resolve();
+		const second = networks.setEnabled(NET, false);
+		gate.resolve();
+		await Promise.all([first, second]);
+
+		for (const pid of ['p-one', 'p-two', 'p-three']) expect(net.disconnected).toContain(pid);
+		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
 	});
 
 	it('an uncontested enable still joins and announces it', async () => {
@@ -249,7 +277,7 @@ describe('Networks.setEnabled — what the result claims', () => {
 		net = makeMockNet();
 	});
 
-	it('an enable overruled by a later disable reports no transition', async () => {
+	it('each queued request reports the transition it settled, in order', async () => {
 		net.topicPeers.set(NET, ['p-only-a']);
 		const gate = deferred();
 		net.disconnectGate = gate.promise;
@@ -260,10 +288,11 @@ describe('Networks.setEnabled — what the result claims', () => {
 		const older = networks.setEnabled(NET, true);
 		const newer = networks.setEnabled(NET, false);
 		gate.resolve();
-		const [, olderResult, newerResult] = await Promise.all([holding, older, newer]);
+		const [holdingResult, olderResult, newerResult] = await Promise.all([holding, older, newer]);
 
-		expect(olderResult).toEqual({ found: true, transitioned: false, joined: false });
-		expect(newerResult.joined).toBe(false);
+		expect(holdingResult).toEqual({ found: true, transitioned: true, joined: false });
+		expect(olderResult).toEqual({ found: true, transitioned: true, joined: true });
+		expect(newerResult).toEqual({ found: true, transitioned: true, joined: false });
 		expect(getLISHnet(db, NET)!.enabled).toBe(false);
 	});
 
@@ -305,11 +334,10 @@ describe('Networks — operations that change the set of lishnets', () => {
 	}
 
 	/**
-	 * setEnabled claims its revision synchronously at the API entry, but the other writers
-	 * used to mint theirs inside the lock, after their own database write. An older update
-	 * therefore came out NEWER than a setEnabled that had arrived after it, and that
-	 * setEnabled stood down — writing nothing while still answering success. The user's
-	 * last request has to win, whichever API it came through.
+	 * The user's last request has to win, whichever API it came through. Every public writer
+	 * queues on the catalog mutex before it awaits anything else, and the mutex dispatches
+	 * first come, first served, so the last request also writes its row last and the
+	 * reconcile that follows converges on it.
 	 */
 	function rowOf(id: string) {
 		return { networkID: id, name: 'A', description: '', bootstrapPeers: [BOOTSTRAP], enabled: false, created: new Date().toISOString() };
@@ -397,9 +425,9 @@ describe('Networks — operations that change the set of lishnets', () => {
 
 		const replacing = networks.replace([]);
 		await settle();
-		// A newer enable only has to CLAIM its revision to pre-empt an abortable leave —
-		// it need not run. Its row is already gone, so it will answer "not found" and
-		// nothing else will ever finish this cleanup.
+		// The enable's row is already gone, so it answers "not found" and reconciles nothing.
+		// If the leave it arrived during were abortable, nothing would ever finish this
+		// cleanup: no row, no subscription, and the peers still connected.
 		const enabling = networks.setEnabled(NET, true);
 		gate.resolve();
 		await Promise.all([replacing, enabling]);

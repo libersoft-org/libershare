@@ -105,28 +105,34 @@ function makeMockNet(): MockNet {
 	};
 }
 
-// bootstrapPeers per network id, exposed to the class via `get`.
+// bootstrapPeers per network id, exposed to the class via `get`. The rows stand in for the
+// database: reconcileLocked converges on what `get` says, so a transition edits the row.
 function makeNetworks(net: MockNet, joined: string[], configs: Record<string, string[]> = {}): Networks {
 	const networks = Object.create(Networks.prototype) as Networks;
+	const rows = new Map<string, { networkID: string; bootstrapPeers: string[]; enabled: boolean }>();
+	for (const id of new Set([...joined, ...Object.keys(configs)])) rows.set(id, { networkID: id, bootstrapPeers: configs[id] ?? [], enabled: joined.includes(id) });
 	(networks as any).network = net;
+	(networks as any).rows = rows;
 	(networks as any).joinedNetworks = new Set(joined);
 	(networks as any).networkOperations = new Map();
 	(networks as any).catalogMutex = new Mutex();
-	(networks as any).desiredRevisions = new Map();
 	// Same seeding startEnabledNetworks does: already-joined at construction time.
 	(networks as any).announcedJoined = new Map(joined.map(id => [id, true]));
 	(networks as any)._onNetworkLeft = null;
 	(networks as any)._onNetworkJoined = null;
-	(networks as any).get = (id: string) => (configs[id] ? { networkID: id, bootstrapPeers: configs[id] } : undefined);
+	(networks as any).get = (id: string) => rows.get(id);
 	return networks;
 }
 
 // Both go through reconcileLocked(), which is where the join/leave notifications live.
-// Same shape the real writers use: claim the revision synchronously, then take the lock.
+// Same shape the real writers use: write the row, then converge the runtime on it.
 function transition(networks: Networks, id: string, enabled: boolean): Promise<void> {
 	const n = networks as any;
-	const revision = n.claimRevision(id);
-	return n.operationLock(id).runExclusive(() => n.reconcileLocked(id, enabled, undefined, revision));
+	const row = n.rows.get(id);
+	const previous = row ? { ...row } : undefined;
+	if (row) row.enabled = enabled;
+	else n.rows.set(id, { networkID: id, bootstrapPeers: [], enabled });
+	return n.operationLock(id).runExclusive(() => n.reconcileLocked(id, previous));
 }
 const leave = (networks: Networks, id: string): Promise<void> => transition(networks, id, false);
 const join = (networks: Networks, id: string): Promise<void> => transition(networks, id, true);
@@ -396,7 +402,6 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		(networks as any).joinedNetworks = new Set(enabled ? [NET] : []);
 		(networks as any).networkOperations = new Map();
 		(networks as any).catalogMutex = new Mutex();
-		(networks as any).desiredRevisions = new Map();
 		(networks as any).announcedJoined = new Map(enabled ? [[NET, true]] : []);
 		return { networks, mock, db };
 	}
@@ -521,7 +526,6 @@ describe('Networks — leaving cleans the configuration it is leaving, not the n
 		(networks as any).joinedNetworks = new Set([NET]);
 		(networks as any).networkOperations = new Map();
 		(networks as any).catalogMutex = new Mutex();
-		(networks as any).desiredRevisions = new Map();
 		(networks as any).announcedJoined = new Map([[NET, true]]);
 		return { networks, mock, db };
 	}

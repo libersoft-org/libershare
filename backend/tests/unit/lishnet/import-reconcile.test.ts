@@ -63,7 +63,6 @@ function bare(db: Database, mock: ReturnType<typeof makeMockNet>, joined: string
 	(networks as any).joinedNetworks = new Set(joined);
 	(networks as any).networkOperations = new Map();
 	(networks as any).catalogMutex = new Mutex();
-	(networks as any).desiredRevisions = new Map();
 	(networks as any).announcedJoined = new Map(joined.map(id => [id, true]));
 	return networks;
 }

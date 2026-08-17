@@ -64,7 +64,6 @@ function makeNetworks(net: ReturnType<typeof makeMockNet>, db: Database): Networ
 	(networks as any).joinedNetworks = new Set<string>();
 	(networks as any).networkOperations = new Map<string, Mutex>();
 	(networks as any).catalogMutex = new Mutex();
-	(networks as any).desiredRevisions = new Map<string, number>();
 	(networks as any).announcedJoined = new Map<string, boolean>();
 	(networks as any).shuttingDown = false;
 	(networks as any)._onNetworkJoined = null;
