@@ -58,9 +58,17 @@ export async function initNetworkState(): Promise<void> {
  * The backend answers with the state that resulted, which is stored immediately:
  * the user just changed the interface they are looking at and must see what
  * actually happened rather than wait up to 10 s for the next broadcast.
+ *
+ * That state is also HANDED BACK, because storing it is not enough for the caller.
+ * The store notifies synchronously and Svelte runs the resulting effect before this
+ * promise resolves, so by the time the caller's `await` resumes the editor has
+ * already been told its form is out of date — and it needs the answer itself, not
+ * another read of a store it cannot re-derive its basis from, to settle that.
  */
-export async function applyInterfaceConfig(interfaceID: string, config: NetIPv4Config): Promise<void> {
-	networkState.set(await api.call<NetworkStateInfo>('system.networkApply', { interfaceID, config }));
+export async function applyInterfaceConfig(interfaceID: string, config: NetIPv4Config): Promise<NetworkStateInfo> {
+	const state = await api.call<NetworkStateInfo>('system.networkApply', { interfaceID, config });
+	networkState.set(state);
+	return state;
 }
 
 /**
@@ -183,7 +191,9 @@ export function scanWifiNetworks(interfaceID: string): Promise<NetWifiNetwork[]>
 	return api.call<NetWifiNetwork[]>('system.wifiScan', { interfaceID });
 }
 
-/** Join a Wi-Fi network. An empty password means an open network. */
-export async function joinWifiNetwork(interfaceID: string, ssid: string, password: string): Promise<void> {
-	networkState.set(await api.call<NetworkStateInfo>('system.wifiConnect', { interfaceID, ssid, password }));
+/** Join a Wi-Fi network. An empty password means an open network. Answers with the state that resulted — see {@link applyInterfaceConfig}. */
+export async function joinWifiNetwork(interfaceID: string, ssid: string, password: string): Promise<NetworkStateInfo> {
+	const state = await api.call<NetworkStateInfo>('system.wifiConnect', { interfaceID, ssid, password });
+	networkState.set(state);
+	return state;
 }

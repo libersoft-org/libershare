@@ -47,10 +47,31 @@ export class InterfaceFormState {
 		this.dns = form.dns;
 	}
 
-	/** Take the state an apply or a join answered with as the form's new basis. */
-	reseed(): void {
-		this.seeded = null;
-		this.stale = false;
+	/**
+	 * Take the state an apply or a join ANSWERED with as the new basis.
+	 *
+	 * Clearing `seeded` and waiting for the effect to re-seed was what this used to
+	 * do, and it leaves the form in a state nothing should be relied on to repair.
+	 * Measured against Svelte 5.56: the RPC helper stores the answer synchronously, so
+	 * the effect below has already run by the time the `await` resumes — and it has
+	 * compared an EDITED form against the old basis and set `stale`. The continuation
+	 * then clears the basis, which does happen to schedule that effect once more, so
+	 * one microtask later it re-seeds and the damage undoes itself.
+	 *
+	 * "Happens to" is the problem. `seeded` is read inside `untrack`, so nothing
+	 * documents that writing it re-runs the effect at all; it simply does in this
+	 * version. A form whose basis is correct only after an extra scheduler turn, and
+	 * only because a read that asked not to be tracked was tracked anyway, is one
+	 * Svelte can break in a patch release. Seeding from the answer settles the basis,
+	 * the staleness and the fields together, on the spot, and shows whatever the host
+	 * normalised or refused without waiting for anything.
+	 *
+	 * Does nothing when the answer does not describe this interface — it may have been
+	 * renamed, removed, or taken over by another stack by the time the apply returned.
+	 */
+	seedFromState(state: NetworkStateInfo, interfaceID: string): void {
+		const source = state.interfaces.find(candidate => candidate.id === interfaceID);
+		if (source) this.seed(interfaceForm(source));
 	}
 
 	/**

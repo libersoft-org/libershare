@@ -105,10 +105,12 @@
 		busy = true;
 		message = '';
 		try {
-			await applyInterfaceConfig(interfaceID, config);
-			// The backend answered with the state that resulted, and that is the form's
-			// new basis — including the parts the host normalized or refused to take.
-			form.reseed();
+			// Seeded from the ANSWER, not by clearing the basis and waiting for the next
+			// broadcast: that left `seeded` null while the screen still showed the form,
+			// so the following broadcast overwrote whatever the user had begun typing
+			// after the "saved" message. This also shows the values the host normalized
+			// or refused to take, straight away.
+			form.seedFromState(await applyInterfaceConfig(interfaceID, config), interfaceID);
 			failed = false;
 			message = $t('settings.network.applied');
 		} catch (error) {
@@ -160,10 +162,10 @@
 		busy = true;
 		message = '';
 		try {
-			await joinWifiNetwork(interfaceID, joinSSID, password);
 			// The interface is on a different network now, very possibly with a different
-			// addressing mode. Whatever the form held describes the network that was left.
-			form.reseed();
+			// addressing mode. Whatever the form held describes the network that was left,
+			// so the state the join answered with becomes the new basis outright.
+			form.seedFromState(await joinWifiNetwork(interfaceID, joinSSID, password), interfaceID);
 			failed = false;
 			message = $t('settings.network.joined', { ssid: joinSSID });
 			password = '';
