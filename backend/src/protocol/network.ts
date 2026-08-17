@@ -439,8 +439,13 @@ interface IStoredAddress {
  * separately, so anything libp2p writes between the two (identify, a signed peer record,
  * an inbound connection) is inside the window and gets overwritten by the older
  * snapshot. The store keeps exactly one lock per peer and hands it out; taking it around
- * both halves is what makes removing a single address safe. Calling the public methods
- * while holding it would deadlock, hence the unlocked inner pair.
+ * both halves is what closes that window. Calling the public methods while holding it
+ * would deadlock, hence the unlocked inner pair.
+ *
+ * It is a lock, not a transaction, and it does not cover everything the store does:
+ * `all()` deletes records it finds expired straight through the datastore, with no lock
+ * at all, and this node walks `peerStore.all()` on a timer. What the lock guarantees is
+ * that no ordinary `get`/`save`/`patch`/`merge`/`delete` for THIS peer interleaves.
  */
 interface IPeerStoreInternals {
 	getWriteLock(peerID: PeerID): Promise<() => void>;
@@ -2518,10 +2523,11 @@ export class Network {
 	 * a genuine miss.
 	 *
 	 * The store has no "remove one address" call, so this reads and writes back — under
-	 * the peer's own peerStore write lock, which every libp2p write to that peer also
-	 * takes, so nothing can be added between the two halves and then overwritten. It
-	 * patches `addresses`, the field it actually filtered, and puts back the very
-	 * objects it kept. Rebuilding them as a bare `multiaddrs` list dropped the
+	 * the peer's own peerStore write lock, which every ordinary peerStore operation on
+	 * that peer also takes, so an address libp2p learns between the two halves cannot be
+	 * overwritten by the older snapshot (see {@link IPeerStoreInternals} for what the
+	 * lock does NOT cover). It patches `addresses`, the field it actually filtered, and
+	 * puts back the very objects it kept. Rebuilding them as a bare `multiaddrs` list dropped the
 	 * `isCertified` flag of every surviving address, downgrading signed peer records to
 	 * hearsay as a side effect of deleting an unrelated address.
 	 */
