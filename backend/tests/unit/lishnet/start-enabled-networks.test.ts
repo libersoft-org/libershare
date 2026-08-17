@@ -132,6 +132,26 @@ describe('Networks.startEnabledNetworks — coordinated with concurrent changes'
 		expect(net.subscribed).toEqual([]);
 	});
 
+	it('a stop forgets what it had announced, so the next change is announced again', async () => {
+		const net = makeMockNet(Promise.resolve());
+		const networks = makeNetworks(net, db);
+		const events: string[] = [];
+		(networks as any)._onNetworkJoined = (id: string): void => {
+			events.push(`joined:${id}`);
+		};
+
+		await networks.startEnabledNetworks();
+		expect((networks as any).announcedJoined.get(NET)).toBe(true);
+
+		await networks.stopAllNetworks();
+		// Surviving the stop, the `true` here made the rejoin below look like no change at
+		// all — the runtime had gone down and come back and nobody was told.
+		expect((networks as any).announcedJoined.has(NET)).toBe(false);
+
+		await networks.setEnabled(NET, true);
+		expect(events).toEqual([`joined:${NET}`]);
+	});
+
 	it('an undisturbed startup still joins every enabled network', async () => {
 		const net = makeMockNet(Promise.resolve());
 		const networks = makeNetworks(net, db);

@@ -470,6 +470,12 @@ export class Networks {
 		// and a startup loop in that moment would subscribe onto a node about to die.
 		this.shuttingDown = true;
 		this.joinedNetworks.clear();
+		// Per-run, like `joinedNetworks` itself. Surviving a stop left the map claiming
+		// networks were still announced as joined, so after a restart a network that came
+		// back disabled never produced the "left" event its subscribers were waiting for,
+		// and a rejoin of one that had been announced before the stop produced no event
+		// either — the runtime had changed and nobody was told.
+		this.announcedJoined.clear();
 		await this.network.stop();
 		console.log('✓ All lishnets left and node stopped');
 	}
