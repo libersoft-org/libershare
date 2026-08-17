@@ -310,6 +310,15 @@ describe('windowsWifiProfileXml', () => {
 		expect(windowsWifiProfileXml('Work laptop - cafe', bar, '')).not.toContain('<SSID><name>');
 	});
 
+	// The UI offers Connect and no "remember this network" choice, so an explicit
+	// one-off join must not leave Windows re-associating with a guest or
+	// conference network by itself afterwards — nor auto-joining an open network
+	// of that name somewhere else entirely.
+	it('joins once rather than saving a network to be auto-joined later', () => {
+		for (const password of ['', 'hunter2000']) expect(windowsWifiProfileXml('Coffee Bar', bar, password)).toContain('<connectionMode>manual</connectionMode>');
+		expect(windowsWifiProfileXml('Coffee Bar', bar, '')).not.toContain('<connectionMode>auto</connectionMode>');
+	});
+
 	it('builds a WPA2 personal profile carrying the passphrase', () => {
 		const xml = windowsWifiProfileXml('Coffee Bar', bar, 'hunter2000');
 		expect(xml).toContain('<authentication>WPA2PSK</authentication><encryption>AES</encryption>');

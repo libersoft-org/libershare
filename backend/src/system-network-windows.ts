@@ -836,6 +836,15 @@ function escapeXml(text: string): string {
  * and a WPA2 network refuses a WPA3SAE one, so the caller passes what the scan
  * said the network actually uses.
  *
+ * The join is a one-off: `<connectionMode>manual</connectionMode>` means Windows
+ * will not re-associate with this network by itself later. `auto` was the wrong
+ * default because the user is never asked — the UI offers Connect and nothing
+ * else — so an explicit single join to a guest or conference network silently
+ * changed the machine's long-term behaviour, up to and including auto-joining an
+ * open network of that name anywhere in the world. A "remember this network"
+ * option would be the way to offer the other mode; until one exists, the mode the
+ * user did not ask for is the one not to pick.
+ *
  * ponytail: WPA2PSK and WPA3SAE cover personal networks, including the WPA2/WPA3
  * transition mode consumer access points ship with (which advertises itself as
  * WPA2 and accepts the WPA2 profile). Enterprise 802.1X and OWE "enhanced open"
@@ -860,7 +869,7 @@ export function windowsWifiProfileXml(profileName: string, ssidBytes: Uint8Array
 	// the profile is written, accepted, and then simply never authenticates.
 	const keyType = isWifiHexKey(password) ? 'networkKey' : 'passPhrase';
 	const security = password ? `<authEncryption><authentication>${sae ? 'WPA3SAE' : 'WPA2PSK'}</authentication><encryption>AES</encryption><useOneX>false</useOneX></authEncryption><sharedKey><keyType>${keyType}</keyType><protected>false</protected><keyMaterial>${escapeXml(password)}</keyMaterial></sharedKey>` : `<authEncryption><authentication>open</authentication><encryption>none</encryption><useOneX>false</useOneX></authEncryption>`;
-	return `<?xml version="1.0"?><WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1"><name>${name}</name><SSIDConfig><SSID><hex>${hex}</hex></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>auto</connectionMode><MSM><security>${security}</security></MSM></WLANProfile>`;
+	return `<?xml version="1.0"?><WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1"><name>${name}</name><SSIDConfig><SSID><hex>${hex}</hex></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>manual</connectionMode><MSM><security>${security}</security></MSM></WLANProfile>`;
 }
 
 /**
