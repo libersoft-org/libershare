@@ -1743,3 +1743,52 @@ describe('bootstrap ownership belongs to the network that claimed it', () => {
 		expect(registryAddresses(network)).toEqual([]);
 	});
 });
+
+/**
+ * The post-dial validator, at the point where a configured address loses its last
+ * owner mid-dial. Ownership is not the only reason an address exists: gossip announces
+ * addresses too, and a dial that answered on the endpoint it claimed verifies one
+ * independently of anybody's configuration. The entry survives the drop for that
+ * reason, and the result of the dial has to survive with it.
+ */
+describe('shouldKeepDialResult — provenance of an address that lost its owner', () => {
+	const ADDR = `/ip4/203.0.113.61/tcp/9090/p2p/${PEER_ID}`;
+	const CANON = normalizeMultiaddrForCompare(ADDR);
+
+	function bareNetwork(seed: IRegistrySeed | null) {
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).node = {};
+		installBootstrapRegistry(network, seed ? [seed] : []);
+		return network;
+	}
+
+	function keep(network: Network, entry: IBootstrapEntry | undefined): boolean {
+		return (network as any).shouldKeepDialResult({ node: (network as any).node, epoch: 1, key: CANON, entry, requireConfigured: true });
+	}
+
+	it('keeps a result whose address gossip still vouches for', () => {
+		const network = bareNetwork({ address: ADDR, discovered: true, lastVerifiedAt: Date.now() });
+		expect(keep(network, (network as any).bootstrapByAddress.get(CANON))).toBe(true);
+	});
+
+	it('keeps a result whose address another network still configures', () => {
+		const network = bareNetwork({ address: ADDR, configuredBy: ['net-b'], discovered: false });
+		expect(keep(network, (network as any).bootstrapByAddress.get(CANON))).toBe(true);
+	});
+
+	it('drops a result whose address has no provenance left', () => {
+		const withEntry = bareNetwork({ address: ADDR, configuredBy: ['net-a'], discovered: false });
+		const entry = (withEntry as any).bootstrapByAddress.get(CANON) as IBootstrapEntry;
+		entry.configuredBy.clear(); // the last owner released it and nothing else claims it
+		expect(keep(withEntry, entry)).toBe(false);
+	});
+
+	it('drops a result whose address left the registry entirely', () => {
+		const network = bareNetwork({ address: ADDR, configuredBy: ['net-a'], discovered: false });
+		const entry = (network as any).bootstrapByAddress.get(CANON) as IBootstrapEntry;
+		(network as any).bootstrapByAddress.delete(CANON);
+		expect(keep(network, entry)).toBe(false);
+	});
+});

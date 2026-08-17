@@ -1321,8 +1321,9 @@ export class Network {
 	 *
 	 * `entry`/`key` express registry identity: the loops walk a snapshot, so the entry
 	 * must still be the SAME OBJECT under the same key. `requireConfigured` adds that a
-	 * dial started for a configured address must still find it configured — a discovered
-	 * entry legitimately has no owner and must not be judged by that rule.
+	 * dial started for a configured address must still find a reason to exist — either a
+	 * remaining configured owner or its own discovered provenance. A discovered entry
+	 * legitimately has no owner and must not be judged by the ownership rule alone.
 	 */
 	private shouldKeepDialResult(opts: { node: Libp2p | null; epoch: number; peerID?: string | null; key?: string; entry?: IBootstrapEntry; requireConfigured?: boolean }): boolean {
 		if (!opts.node || opts.node !== this.node || opts.epoch !== this.runEpoch) return false;
@@ -1330,7 +1331,12 @@ export class Network {
 		if (opts.key !== undefined) {
 			const current = this.bootstrapByAddress.get(opts.key);
 			if (opts.entry !== undefined && current !== opts.entry) return false;
-			if (opts.requireConfigured && (current?.configuredBy.size ?? 0) === 0) return false;
+			// An entry gossip announced and a dial verified stands on its own claim: when
+			// the last configuring network drops the address the entry SURVIVES as a
+			// discovered one, and rejecting the dial result then throws away a
+			// verification the config edit never spoke for. Only an address with no
+			// provenance left at all fails here.
+			if (opts.requireConfigured && (current?.configuredBy.size ?? 0) === 0 && current?.discovered !== true) return false;
 		}
 		return true;
 	}
