@@ -101,4 +101,20 @@ describe('run with a secret-bearing child process', () => {
 		expect(detail.length).toBeGreaterThan(0);
 		expect(everything(raw, detail)).not.toContain(SECRET);
 	});
+
+	it('passes a leftover profile named in a composed failure through to the client', async () => {
+		// A Wi-Fi join that could not be undone names the saved profile it left behind,
+		// and that name is the entire value of the report — a message truncated to the
+		// child's first stderr line would tell the user nothing to act on. It survives
+		// because the composed error is a plain Error with no stderr of its own.
+		const leftover = 'a2df06d1-0000-4000-8000-00000000009e';
+		const message = await run(async () => {
+			throw new Error(`Error: Connection activation failed\nHint: see journalctl — and the attempt could not be fully undone: it was left in place for you to remove (${leftover})`);
+		}, [SECRET]).then(
+			() => '',
+			(err: CodedError) => err.message
+		);
+		expect(message).toContain(leftover);
+		expect(message).toContain('left in place');
+	});
 });
