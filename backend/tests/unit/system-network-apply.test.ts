@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { isIPv4, isValidSSID, isValidWifiKey, isWifiHexKey, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { nmcliActivateArgs, nmcliMethodToMode, nmcliModifyArgs, parseNmcliActiveUUIDs, nmcliRestoreArgs, parseNmcliProperties, parseNmcliActiveUUID, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
+import { nmcliActivateArgs, nmcliMethodToMode, parseLinuxIPv4Snapshot, nmcliModifyArgs, parseNmcliActiveUUIDs, nmcliRestoreArgs, parseNmcliProperties, parseNmcliActiveUUID, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { assertDeviceName, firstLine } from '../../src/system-network.ts';
 
@@ -438,6 +438,36 @@ describe('nmcliRestoreArgs', () => {
 
 	it('still addresses the profile by uuid rather than by name', () => {
 		expect(nmcliRestoreArgs(uuid, new Map()).slice(2, 4)).toEqual(['uuid', uuid]);
+	});
+});
+
+// The clearing behaviour two cases up is exactly why a partial reading must never
+// become a snapshot: restoring from one does not put the profile back, it wipes
+// the fields that failed to read. The apply refuses to start without a complete
+// set, so a partial reading has to be rejected here rather than half-used.
+describe('parseLinuxIPv4Snapshot', () => {
+	const COMPLETE = 'ipv4.method:manual\nipv4.addresses:192.0.2.10/24\nipv4.gateway:192.0.2.1\nipv4.dns:192.0.2.1\nipv4.ignore-auto-dns:yes\n';
+
+	it('accepts a reading that holds every field the apply rewrites', () => {
+		expect(parseLinuxIPv4Snapshot(COMPLETE)?.get('ipv4.addresses')).toBe('192.0.2.10/24');
+	});
+
+	// An empty VALUE is a real answer — the property is unset — and must not be
+	// confused with a missing LINE, which is an answer nmcli never gave.
+	it('accepts fields that are present but empty', () => {
+		const empty = 'ipv4.method:auto\nipv4.addresses:\nipv4.gateway:--\nipv4.dns:\nipv4.ignore-auto-dns:no\n';
+		expect(parseLinuxIPv4Snapshot(empty)?.get('ipv4.gateway')).toBe('');
+	});
+
+	it.each(['ipv4.method', 'ipv4.addresses', 'ipv4.gateway', 'ipv4.dns', 'ipv4.ignore-auto-dns'])('rejects a reading missing %s', field => {
+		const partial = COMPLETE.split('\n')
+			.filter(line => !line.startsWith(`${field}:`))
+			.join('\n');
+		expect(parseLinuxIPv4Snapshot(partial)).toBeNull();
+	});
+
+	it('rejects output that holds nothing at all', () => {
+		expect(parseLinuxIPv4Snapshot('')).toBeNull();
 	});
 });
 

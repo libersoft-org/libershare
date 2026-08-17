@@ -648,10 +648,24 @@ export function nmcliRestoreArgs(uuid: string, snapshot: Map<string, string>): s
 	return args;
 }
 
-/** The profile's current IPv4 properties, or null when they could not be read. */
+/**
+ * A restorable snapshot parsed out of `nmcli connection show` output, or null
+ * when the output does not hold one.
+ *
+ * Completeness is the whole check. {@link nmcliRestoreArgs} writes an EMPTY value
+ * for every field the snapshot does not carry, so restoring from a partial
+ * reading would not put the profile back — it would clear precisely the
+ * properties that failed to read. A snapshot is all five fields or it is nothing.
+ */
+export function parseLinuxIPv4Snapshot(text: string): Map<string, string> | null {
+	const properties = parseNmcliProperties(text);
+	return NM_IPV4_FIELDS.every(field => properties.has(field)) ? properties : null;
+}
+
+/** The profile's current IPv4 properties, or null when a complete set could not be read. */
 async function readLinuxIPv4Properties(uuid: string): Promise<Map<string, string> | null> {
 	try {
-		return parseNmcliProperties(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', NM_IPV4_FIELDS.join(','), 'connection', 'show', 'uuid', uuid]));
+		return parseLinuxIPv4Snapshot(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', NM_IPV4_FIELDS.join(','), 'connection', 'show', 'uuid', uuid]));
 	} catch {
 		return null;
 	}
@@ -668,13 +682,23 @@ async function readLinuxIPv4Properties(uuid: string): Promise<Map<string, string
  * working, the damage only surfaced at the next reconnect or reboot, far from
  * anything the user could connect it to. Reading the properties first is what
  * makes the change undoable.
+ *
+ * Two things follow from that, and both were missing. Nothing may be changed
+ * without a complete snapshot: an unreadable profile is not a profile to edit
+ * hopefully, because the rollback would have nothing to write back. And the
+ * `connection modify` has to be INSIDE the guard — it is the step that rewrites
+ * the profile permanently, so a failure or a timeout in it left the stored
+ * configuration changed with no rollback attempted at all.
  */
 export async function applyLinuxIPv4(device: string, config: NetIPv4Config): Promise<void> {
 	const connection = await activeConnection(device);
 	if (!connection) throw new Error(`no NetworkManager profile is active on ${device}`);
 	const snapshot = await readLinuxIPv4Properties(connection);
-	await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connection, config), APPLY_TIMEOUT_MS);
+	if (!snapshot) throw new Error(`the current IPv4 configuration of ${device} could not be read in full, so it will not be changed`);
 	try {
+		// Permanent the moment it returns, and permanent as well if it times out
+		// having already applied — which is why the rollback has to cover it.
+		await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connection, config), APPLY_TIMEOUT_MS);
 		// `connection up` re-applies the edited profile in place. The device drops for
 		// a moment either way — that is inherent to changing an address, not to this.
 		await runFirst(NMCLI_CANDIDATES, nmcliActivateArgs(connection, device), APPLY_TIMEOUT_MS);
@@ -689,14 +713,17 @@ export async function applyLinuxIPv4(device: string, config: NetIPv4Config): Pro
 
 /**
  * Put the profile's IPv4 properties back and bring it up again. Returns what
- * went wrong, or null when there was nothing left to undo.
+ * went wrong, or null when the rollback succeeded.
  *
  * Re-activating is part of the rollback, not an extra: the failed `connection up`
  * may well have torn the old connection down before it gave up, so restoring the
  * file alone would leave the device configured correctly and switched off.
+ *
+ * The snapshot is not nullable. {@link applyLinuxIPv4} refuses to change anything
+ * without one, so "there was nothing to restore from" is a state this function
+ * can no longer be reached in.
  */
-async function restoreLinuxIPv4(uuid: string, device: string, snapshot: Map<string, string> | null): Promise<string | null> {
-	if (!snapshot) return 'the previous configuration could not be read before the change was made';
+async function restoreLinuxIPv4(uuid: string, device: string, snapshot: Map<string, string>): Promise<string | null> {
 	try {
 		await runFirst(NMCLI_CANDIDATES, nmcliRestoreArgs(uuid, snapshot), APPLY_TIMEOUT_MS);
 	} catch (err) {
