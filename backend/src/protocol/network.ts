@@ -1134,21 +1134,7 @@ export class Network {
 				if (epoch !== this.runEpoch) return;
 				await this.maybePromotePeers(epoch);
 				if (epoch !== this.runEpoch) return;
-				// Sweep by per-network membership (topic subscribers), not global
-				// connectivity: a peer that left this network but stays connected via
-				// another must still have its stale row here expire. Snapshot per topic
-				// lazily and freshly — the tick-start state is stale after the re-dial
-				// phase, and a peer that (re)subscribed during it must not be swept.
-				const topicMembers = new Map<string, Set<string>>();
-				const isMember = (networkID: string, pid: string): boolean => {
-					let set = topicMembers.get(networkID);
-					if (!set) {
-						set = new Set(this.getTopicPeers(networkID));
-						topicMembers.set(networkID, set);
-					}
-					return set.has(pid);
-				};
-				this.bootstrapTracker.sweepStale(BOOTSTRAP_STATUS_STALE_MS, isMember);
+				this.sweepStaleBootstrapRows();
 			} catch (err: any) {
 				trace(`[NET] statusInterval error: ${err?.message ?? err}`);
 			} finally {
@@ -1160,6 +1146,30 @@ export class Network {
 		// Status interval 30 s. promoteKnownPeersToBootstrap + gossipsub.direct
 		// mutations run on the 5th tick (~150 s) — fast enough to absorb peer
 		// churn at N≈100 without flooding logs or burning CPU on per-second probes.
+	}
+
+	/**
+	 * Expire discovered status rows whose peer has stopped answering — the participant
+	 * list forgetting a peer that went away.
+	 *
+	 * Swept by per-network membership (topic subscribers), not global connectivity: a peer
+	 * that left this network but stays connected via another must still have its stale row
+	 * here expire. The per-topic snapshot is taken lazily and freshly — the tick-start
+	 * state is stale by the time the re-dial phase is done, and a peer that (re)subscribed
+	 * during it must not be swept. `now` is injectable, like the sweep's own, so a test can
+	 * age rows without waiting out the window.
+	 */
+	private sweepStaleBootstrapRows(now: number = Date.now()): void {
+		const topicMembers = new Map<string, Set<string>>();
+		const isMember = (networkID: string, pid: string): boolean => {
+			let set = topicMembers.get(networkID);
+			if (!set) {
+				set = new Set(this.getTopicPeers(networkID));
+				topicMembers.set(networkID, set);
+			}
+			return set.has(pid);
+		};
+		this.bootstrapTracker.sweepStale(BOOTSTRAP_STATUS_STALE_MS, isMember, now);
 	}
 
 	/**
