@@ -559,6 +559,18 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		expect((network as any).configuredBootstrapPeerIDs.has(PEER_B)).toBe(false);
 	});
 
+	/** Every other dial path has a deadline; without one a stalled address hangs the walk. */
+	it('gives the dial an explicit deadline', async () => {
+		const signals: Array<AbortSignal | undefined> = [];
+		const { network } = bareNetwork();
+		(network as any).node.dial = async (ma: { toString(): string }, opts?: { signal?: AbortSignal }): Promise<unknown> => {
+			signals.push(opts?.signal);
+			return { remoteAddr: { toString: () => ma.toString() } };
+		};
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
+		expect(signals[0]).toBeInstanceOf(AbortSignal);
+	});
+
 	it('walks the whole list when nothing supersedes it', async () => {
 		const { network, dialled } = bareNetwork();
 		await (network as any).addBootstrapPeers([ADDR_A, ADDR_B], 'net-a', 'configured');

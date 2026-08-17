@@ -239,6 +239,13 @@ const CONFIGURED_RECOVERY_BACKOFF_MAX_MS = 120_000;
  * ordering puts configured entries first, and address-level backoff makes the next
  * pass start where this one stopped rather than re-trying the same dead prefix.
  */
+/**
+ * Deadline for a bootstrap-list dial. The recovery paths already use ten seconds; the
+ * main list walk had no deadline at all, so one stalled address could hold the walk —
+ * and its single-flight claim — for as long as libp2p's own default allowed.
+ */
+const BOOTSTRAP_DIAL_TIMEOUT_MS = 10_000;
+
 const RECOVERY_DIALS_PER_TICK = 8;
 
 /**
@@ -1973,7 +1980,11 @@ export class Network {
 					// that names many of them could otherwise make us open a connection per
 					// address. For those, libp2p's own reuse is the desired behaviour.
 					const pidObj = peerID ? peerIDFromString(peerID) : null;
-					const conn = await this.node.dial(ma, origin === 'configured' ? { force: true } : {});
+					// Every other dial path carries an explicit deadline; without one this loop
+					// inherits libp2p's default and walks the configured list one stalled address
+					// at a time, holding the single-flight claim for the whole time.
+					const dialOptions = { signal: AbortSignal.timeout(BOOTSTRAP_DIAL_TIMEOUT_MS), ...(origin === 'configured' ? { force: true } : {}) };
+					const conn = await this.node.dial(ma, dialOptions);
 					const verifiedThisAddr = isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString());
 					// A dial already in flight cannot be called back: hangUp only closes
 					// connections that ALREADY exist, so a leave-network landing mid-dial finds
