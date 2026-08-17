@@ -300,10 +300,23 @@ describe('Networks.startEnabledNetworks — coordinated with concurrent changes'
 		const dialsBefore = net.bootstrapDials.length;
 
 		// A bootstrap change is stored — the row is the desired state and the next start
-		// converges on it — but nothing pretends it reached the node.
-		const updated = await networks.updateBootstrapPeers(NET, [BOOTSTRAP]);
+		// converges on it — but nothing pretends it reached the node, and the skip is not
+		// silent: the API stays up after a failed stop, so without a log every later write
+		// would look applied.
+		const warnings: string[] = [];
+		const realWarn = console.warn;
+		console.warn = (...args: unknown[]): void => {
+			warnings.push(args.join(' '));
+		};
+		let updated;
+		try {
+			updated = await networks.updateBootstrapPeers(NET, [BOOTSTRAP]);
+		} finally {
+			console.warn = realWarn;
+		}
 		expect(updated?.bootstrapPeers).toEqual([BOOTSTRAP]);
 		expect(net.bootstrapDials.length).toBe(dialsBefore);
+		expect(warnings.some(w => w.includes(NET) && w.includes('not applied'))).toBe(true);
 
 		// And a disable does not tear down peer state on a half-stopped node.
 		const result = await networks.setEnabled(NET, false);

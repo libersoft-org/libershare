@@ -385,6 +385,12 @@ export class Networks {
 		// convergence reserved now would work on a node that is down or terminally failed;
 		// the database write it belongs to stands and the next start converges on it.
 		if (this.reconcileAdmissionClosed) {
+			// Loud on purpose. The door stays shut until a start succeeds, and after a stop that
+			// FAILED that can be a long time — the API is still up and still accepting writes,
+			// so every one of them would otherwise be stored, skipped here and reported as
+			// though it had been applied. The result the caller gets is accurate (nothing
+			// transitioned), but only this line says why.
+			console.warn(`[Networks] ${id}: saved, but not applied — the node is down or its stop failed, so the runtime converges at the next start`);
 			this.forgetIfGone(id);
 			return Promise.resolve(this.currentState(id));
 		}
