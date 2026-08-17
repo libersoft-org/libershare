@@ -945,9 +945,17 @@ describe('readTimedatedEnvironment', () => {
 
 	const ok = (output: string): RunOutcome => ({ kind: 'ok', output });
 
-	/** The unit's `systemctl show` answer, one `Key=Value` line per property systemd reports. */
+	/**
+	 * The unit's `systemctl show` answer, one `Key=Value` line per property systemd reports.
+	 *
+	 * `EnvironmentFiles` is left OUT when there is no file, because that is what a running
+	 * systemd does: the empty list prints no line at all, while `Environment` and the other
+	 * two print an empty value. A fixture that printed it empty would have tested a host
+	 * shape that does not exist.
+	 */
 	function props(values: { Environment?: string; EnvironmentFiles?: string; PassEnvironment?: string; UnsetEnvironment?: string } = {}): RunOutcome {
-		return ok(`Environment=${values.Environment ?? ''}\nEnvironmentFiles=${values.EnvironmentFiles ?? ''}\nPassEnvironment=${values.PassEnvironment ?? ''}\nUnsetEnvironment=${values.UnsetEnvironment ?? ''}\n`);
+		const files = values.EnvironmentFiles === undefined ? '' : `EnvironmentFiles=${values.EnvironmentFiles}\n`;
+		return ok(`Environment=${values.Environment ?? ''}\n${files}PassEnvironment=${values.PassEnvironment ?? ''}\nUnsetEnvironment=${values.UnsetEnvironment ?? ''}\n`);
 	}
 
 	/**
@@ -1036,9 +1044,14 @@ describe('readTimedatedEnvironment', () => {
 		expect(files).toBeNull();
 	});
 
+	/**
+	 * The ordinary host: no `EnvironmentFile`, so systemd prints no such line at all. That
+	 * absence must not read as "unknown" or the capability would be off everywhere.
+	 */
 	it('reads the environment normally when the unit has no EnvironmentFile', async () => {
-		const env = await readTimedatedEnvironment(systemctl(ok(''), props({ EnvironmentFiles: '', Environment: 'SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service' })));
-		expect(env?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBe('chronyd.service');
+		const answer = props({ Environment: 'SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service' });
+		expect(answer.kind === 'ok' && answer.output).not.toContain('EnvironmentFiles');
+		expect((await readTimedatedEnvironment(systemctl(ok(''), answer)))?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBe('chronyd.service');
 	});
 
 	/**

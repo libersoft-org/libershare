@@ -781,8 +781,12 @@ function splitAssignment(word: string): [string, string] | null {
  * report success, and `set-ntp` would then start chrony, which never reads it. So the
  * capability to set a server goes off here and the host is left alone.
  *
- * A systemd too old to report the property at all leaves it absent, which reads as "no such
- * file" — the same answer as a unit that genuinely has none.
+ * `systemctl show` OMITS `EnvironmentFiles=` entirely when the unit has none, rather than
+ * printing it empty the way it prints `Environment=` — so an absent line is the ordinary
+ * "no file" answer and only a line that is there decides anything. An unknown property name
+ * is omitted just the same, which is why the name matters more than it looks: get it wrong
+ * and this reads "no file" on every host in the world. Both behaviours, and the
+ * `PATH (ignore_errors=yes)` shape of the value, were checked against a running systemd.
  */
 export async function readTimedatedEnvironment(exec: CommandRunner = run): Promise<Record<string, string> | null> {
 	const manager = await exec('systemctl', ['show-environment']);
