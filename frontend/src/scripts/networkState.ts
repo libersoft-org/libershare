@@ -11,7 +11,7 @@ import { deriveConnectionStatus, type ConnectionStatus, type NetAddressMode, typ
  * rather than by a stale snapshot with a flag turned off.
  */
 export function unknownNetworkState(): NetworkStateInfo {
-	return { interfaces: [], primaryID: null, detail: 'full', known: false, capabilities: { ipv4: false, wifi: false } };
+	return { interfaces: [], primaryID: null, detail: 'full', known: false, capabilities: { ipv4: false, wifi: false, staticGatewayRequired: false } };
 }
 
 /**

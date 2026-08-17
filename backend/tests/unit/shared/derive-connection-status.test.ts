@@ -7,7 +7,7 @@ function iface(overrides: Partial<NetInterfaceInfo> & { id: string }): NetInterf
 }
 
 function state(interfaces: NetInterfaceInfo[], overrides: Partial<NetworkStateInfo> = {}): NetworkStateInfo {
-	return { interfaces, primaryID: interfaces.find(i => i.defaultRoute)?.id ?? null, detail: 'full', known: true, capabilities: { ipv4: false, wifi: false }, ...overrides };
+	return { interfaces, primaryID: interfaces.find(i => i.defaultRoute)?.id ?? null, detail: 'full', known: true, capabilities: { ipv4: false, wifi: false, staticGatewayRequired: false }, ...overrides };
 }
 
 describe('deriveConnectionStatus', () => {

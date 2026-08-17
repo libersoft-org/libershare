@@ -22,7 +22,7 @@ function iface(overrides: Partial<NetInterfaceInfo> = {}): NetInterfaceInfo {
 
 /** A settled snapshot whose host can be reconfigured. */
 function snapshot(overrides: Partial<NetworkStateInfo> = {}): NetworkStateInfo {
-	return { interfaces: [], primaryID: null, detail: 'full', known: true, capabilities: { ipv4: true, wifi: true }, ...overrides };
+	return { interfaces: [], primaryID: null, detail: 'full', known: true, capabilities: { ipv4: true, wifi: true, staticGatewayRequired: false }, ...overrides };
 }
 
 /** One row of a Wi-Fi scan result. */
@@ -37,7 +37,7 @@ function liveState(): NetworkStateInfo {
 		primaryID: 'eth0',
 		detail: 'full',
 		known: true,
-		capabilities: { ipv4: true, wifi: true },
+		capabilities: { ipv4: true, wifi: true, staticGatewayRequired: false },
 	};
 }
 
@@ -46,7 +46,7 @@ test('the unknown state claims no interfaces and no capabilities', () => {
 	expect(blank.known).toBe(false);
 	expect(blank.interfaces).toEqual([]);
 	expect(blank.primaryID).toBeNull();
-	expect(blank.capabilities).toEqual({ ipv4: false, wifi: false });
+	expect(blank.capabilities).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
 });
 
 test('a fresh unknown state is returned each time, not one shared object', () => {
@@ -64,7 +64,7 @@ test('resetting to unknown drops the capabilities a failed read can no longer vo
 	// than turn one flag off on top of the stale one.
 	networkState.set(unknownNetworkState());
 	const after = get(networkState);
-	expect(after.capabilities).toEqual({ ipv4: false, wifi: false });
+	expect(after.capabilities).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
 	expect(after.interfaces).toEqual([]);
 	expect(after.known).toBe(false);
 });
@@ -96,7 +96,7 @@ test('addressing is editable on a settled, writable, single-address interface', 
 });
 
 test('addressing is not editable when the host cannot write it', () => {
-	expect(canEditInterfaceIPv4(iface(), snapshot({ capabilities: { ipv4: false, wifi: true } }))).toBe(false);
+	expect(canEditInterfaceIPv4(iface(), snapshot({ capabilities: { ipv4: false, wifi: true, staticGatewayRequired: false } }))).toBe(false);
 });
 
 test('addressing is not editable from an address-only read', () => {

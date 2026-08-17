@@ -415,6 +415,17 @@ export interface NetCapabilities {
 	ipv4: boolean;
 	/** Wi-Fi networks can be scanned and joined. */
 	wifi: boolean;
+	/**
+	 * A static address on this host cannot be applied without a gateway.
+	 *
+	 * True on macOS and nowhere else: `networksetup -setmanual` takes the router as
+	 * a MANDATORY fourth value, so a gateway-less static address — perfectly
+	 * legitimate on an isolated segment, and accepted by the shared validator for
+	 * that reason — has no spelling there. Reported as a capability so the form can
+	 * require the field before Save, rather than letting the user find out from a
+	 * platform error after the change had already been called valid.
+	 */
+	staticGatewayRequired: boolean;
 }
 
 /**

@@ -102,7 +102,12 @@
 			return;
 		}
 		const config = buildConfig();
-		const invalid = validateIPv4Config(config);
+		// The gateway rule is the host's, not the protocol's: macOS has no
+		// `networksetup` spelling for a static address without a router, while every
+		// other platform accepts one on an isolated segment. Applying the host's own
+		// answer here is what turns that into a named field the user can fix, instead
+		// of a platform error arriving after the configuration was called valid.
+		const invalid = validateIPv4Config(config, $networkState.capabilities.staticGatewayRequired);
 		if (invalid) {
 			failed = true;
 			message = $t('settings.network.invalidField', { field: $t('settings.network.field.' + invalid) });

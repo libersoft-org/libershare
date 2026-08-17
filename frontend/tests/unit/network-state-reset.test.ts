@@ -33,7 +33,7 @@ const live: NetworkStateInfo = {
 	primaryID: 'eth0',
 	detail: 'full',
 	known: true,
-	capabilities: { ipv4: true, wifi: true },
+	capabilities: { ipv4: true, wifi: true, staticGatewayRequired: false },
 };
 
 const { initNetworkState, networkState } = await import('../../src/scripts/networkState.ts');
@@ -55,6 +55,6 @@ test('a failed read clears the interfaces and the capabilities it can no longer 
 	const after = get(networkState);
 	expect(after.known).toBe(false);
 	expect(after.interfaces).toEqual([]);
-	expect(after.capabilities).toEqual({ ipv4: false, wifi: false });
+	expect(after.capabilities).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
 	expect(after.primaryID).toBeNull();
 });

@@ -122,6 +122,24 @@ describe('validateIPv4Config', () => {
 		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 32, gateway: '198.51.100.1' })).toBeNull();
 	});
 
+	// The gateway rule is the host's, not the protocol's: `networksetup -setmanual`
+	// takes the router as a mandatory value, so macOS cannot express the
+	// gateway-less form other platforms accept on an isolated segment. Asked here,
+	// the form can mark the field; asked at apply time it was a platform error
+	// arriving after the configuration had been called valid.
+	it('requires a gateway only where the host says it cannot do without one', () => {
+		const noGateway: NetIPv4Config = { mode: 'static', address: '192.0.2.10', prefixLength: 24 };
+		expect(validateIPv4Config(noGateway, false)).toBeNull();
+		expect(validateIPv4Config(noGateway, true)).toBe('gateway');
+		// A gateway that IS supplied is judged the same way on every host.
+		expect(validateIPv4Config({ ...noGateway, gateway: '192.0.2.1' }, true)).toBeNull();
+		expect(validateIPv4Config({ ...noGateway, gateway: '198.51.100.1' }, true)).toBe('gateway');
+	});
+
+	it('does not demand a gateway from a DHCP configuration even then', () => {
+		expect(validateIPv4Config({ mode: 'dhcp' }, true)).toBeNull();
+	});
+
 	it('refuses anything carrying shell or PowerShell syntax', () => {
 		for (const attack of ["192.0.2.1'; Stop-Computer; '", '192.0.2.1 -and $(calc)', '$(whoami)', '192.0.2.1;reboot']) {
 			expect(validateIPv4Config({ mode: 'static', address: attack, prefixLength: 24 })).toBe('address');

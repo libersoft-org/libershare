@@ -92,7 +92,7 @@ export function isIPv4(value: string): boolean {
  * a plain IPv4 literal or a small integer must never get that far. Callers on
  * every platform validate before touching a child process.
  */
-export function validateIPv4Config(config: NetIPv4Config): string | null {
+export function validateIPv4Config(config: NetIPv4Config, staticGatewayRequired: boolean = false): string | null {
 	// The parameter is typed, but it arrives from an RPC client, so nothing about
 	// its runtime SHAPE is guaranteed either. `null` used to reach the field reads
 	// below and throw a TypeError out of the API dispatcher instead of being
@@ -124,19 +124,22 @@ export function validateIPv4Config(config: NetIPv4Config): string | null {
 		const network = (host & mask) >>> 0;
 		if (host === network || host === (network | (~mask >>> 0)) >>> 0) return 'address';
 	}
-	// An interface on an isolated segment legitimately has no gateway, so only a
-	// present-but-unusable value is an error.
-	if (config.gateway) {
-		if (!isIPv4(config.gateway)) return 'gateway';
-		const gateway = ipv4ToInt(config.gateway);
-		// A gateway of 0.0.0.0, or one that is the interface's own address, is a
-		// routing loop rather than a route.
-		if (gateway === 0 || gateway === host) return 'gateway';
-		// A gateway has to be reachable without already having a route to it. The
-		// exception is a /32, where nothing at all is on-link and an off-link
-		// gateway is the normal arrangement.
-		if (prefix <= 31 && (gateway & mask) >>> 0 !== (host & mask) >>> 0) return 'gateway';
-	}
+	// An interface on an isolated segment legitimately has no gateway, so an absent
+	// one is only an error where the platform has no way to express it —
+	// `networksetup -setmanual` takes the router as a mandatory value, which the
+	// caller states through `NetCapabilities.staticGatewayRequired`. Asking here
+	// rather than at apply time is the difference between the form marking the
+	// field and the user being told the configuration was valid and then failing.
+	if (!config.gateway) return staticGatewayRequired ? 'gateway' : null;
+	if (!isIPv4(config.gateway)) return 'gateway';
+	const gateway = ipv4ToInt(config.gateway);
+	// A gateway of 0.0.0.0, or one that is the interface's own address, is a
+	// routing loop rather than a route.
+	if (gateway === 0 || gateway === host) return 'gateway';
+	// A gateway has to be reachable without already having a route to it. The
+	// exception is a /32, where nothing at all is on-link and an off-link
+	// gateway is the normal arrangement.
+	if (prefix <= 31 && (gateway & mask) >>> 0 !== (host & mask) >>> 0) return 'gateway';
 	return null;
 }
 

@@ -274,19 +274,21 @@ async function readCapabilities(): Promise<NetCapabilities> {
 		// capability is that token — probed once here rather than discovered by the
 		// user when Save fails. Wi-Fi goes through wlanapi instead, which asks for no
 		// elevation at all, so the two are probed separately.
-		capabilities = { ipv4: await isWindowsElevated(), wifi: isWindowsWifiConfigurable() };
+		capabilities = { ipv4: await isWindowsElevated(), wifi: isWindowsWifiConfigurable(), staticGatewayRequired: false };
 	} else if (process.platform === 'linux') {
 		const managed = await isLinuxWritable();
-		capabilities = { ipv4: managed, wifi: managed };
+		capabilities = { ipv4: managed, wifi: managed, staticGatewayRequired: false };
 	} else if (process.platform === 'darwin') {
 		// networksetup persists a change and is present on every macOS install, so
-		// addressing is editable. Wi-Fi is not: see isMacWifiConfigurable.
-		capabilities = { ipv4: await isMacWritable(), wifi: isMacWifiConfigurable() };
+		// addressing is editable. Wi-Fi is not: see isMacWifiConfigurable. The
+		// gateway requirement is macOS's alone — `-setmanual` takes the router as a
+		// mandatory value, and the form has to know that before the user presses Save.
+		capabilities = { ipv4: await isMacWritable(), wifi: isMacWifiConfigurable(), staticGatewayRequired: true };
 	} else {
 		// Everything else reads through os.networkInterfaces(), which cannot even
 		// report whether an address came from DHCP. Offering to edit a configuration
 		// we cannot describe would be worse than not offering it.
-		capabilities = { ipv4: false, wifi: false };
+		capabilities = { ipv4: false, wifi: false, staticGatewayRequired: false };
 	}
 	return capabilities;
 }
