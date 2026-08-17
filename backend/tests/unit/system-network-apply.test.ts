@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { isIPv4, isValidSSID, isValidWifiKey, isWifiHexKey, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { nmcliActivateArgs, nmcliMethodToMode, parseLinuxIPv4Snapshot, nmcliModifyArgs, parseNmcliActiveUUIDs, nmcliRestoreArgs, parseNmcliProperties, parseNmcliActiveUUID, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
+import { connectLinuxWifi, nmcliActivateArgs, nmcliMethodToMode, parseLinuxIPv4Snapshot, parseLinuxWifiSecrets, nmcliModifyArgs, parseNmcliActiveUUIDs, nmcliRestoreArgs, nmcliWifiRestoreArgs, parseNmcliProperties, parseNmcliActiveUUID, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseNmcliWifiProfileUUIDs, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { assertDeviceName, firstLine } from '../../src/system-network.ts';
 
@@ -1070,5 +1070,204 @@ describe('parseNmcliManagedDevices', () => {
 	it('drops a device another stack owns, so no edit is offered for it', () => {
 		const managed = parseNmcliManagedDevices(STATUS);
 		expect(managed.has('docker0')).toBe(false);
+	});
+});
+
+/**
+ * A join that reuses a saved profile writes the supplied key into that profile and
+ * persists it BEFORE the association is attempted, so a wrong password used to
+ * replace a correct saved one for good. Every case below is about the direction a
+ * failure has to leave the host in: holding the configuration it already had.
+ *
+ * The runner stands in for nmcli. Every passphrase here is invented.
+ */
+describe('connectLinuxWifi', () => {
+	const DEVICE = 'wlan0';
+	const SSID = 'demo-network';
+	const SAVED = 'a2df06d1-0000-4000-8000-000000000001';
+	const OTHER = 'a2df06d1-0000-4000-8000-000000000002';
+	const OLD_KEY = 'old-passphrase-that-works';
+	const NEW_KEY = 'wrong-passphrase-typed';
+
+	/** `nmcli -t -f UUID,TYPE connection show`: one Wi-Fi profile, one wired. */
+	const PROFILE_LIST = `${SAVED}:802-11-wireless\n${OTHER}:802-3-ethernet\n`;
+
+	interface HostState {
+		/** What each profile currently holds under `802-11-wireless-security.psk`. */
+		keys: Map<string, string>;
+		/** Commands nmcli was asked to run, in order. */
+		calls: string[][];
+		/** Argument shapes that make this nmcli fail. */
+		fail?: (args: string[]) => boolean;
+		/** Report the key as one nmcli holds but will not print. */
+		hidden?: boolean;
+		/** The profile carries no `802-11-wireless-security` setting, so nmcli reports none of its properties. */
+		noSecurity?: boolean;
+	}
+
+	function nmcli(state: HostState): (args: string[]) => Promise<string> {
+		return async args => {
+			state.calls.push(args);
+			if (state.fail?.(args)) throw new Error('nmcli said no');
+			if (args[2] === 'UUID,TYPE') return PROFILE_LIST;
+			if (args.includes('802-11-wireless.ssid')) return `802-11-wireless.ssid:${SSID}\n`;
+			const uuid = args[args.indexOf('uuid') + 1] ?? '';
+			if (args[0] === '--show-secrets') return state.noSecurity ? '' : `802-11-wireless-security.psk:${state.hidden ? '<hidden>' : (state.keys.get(uuid) ?? '')}\n802-11-wireless-security.wep-key0:\n802-11-wireless-security.wep-key-type:\n`;
+			if (args[1] === 'modify') {
+				state.keys.set(uuid, args[args.indexOf('802-11-wireless-security.psk') + 1] ?? '');
+				return '';
+			}
+			// `device wifi connect`: nmcli persists the key into the profile it found,
+			// and only then tries to associate.
+			state.keys.set(SAVED, NEW_KEY);
+			throw new Error('Secrets were required, but not provided');
+		};
+	}
+
+	function hostWithSavedKey(over: Partial<HostState> = {}): HostState {
+		return { keys: new Map([[SAVED, OLD_KEY]]), calls: [], ...over };
+	}
+
+	it('puts the working password back when the attempt fails with a wrong one', async () => {
+		const state = hostWithSavedKey();
+		await expect(connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state))).rejects.toThrow('Secrets were required');
+		expect(state.keys.get(SAVED)).toBe(OLD_KEY);
+	});
+
+	it('leaves the profile alone when the attempt never reached it', async () => {
+		// A network out of range fails without nmcli writing anything, and rewriting
+		// every matching keyfile with its own values would be a change for nothing.
+		const state = hostWithSavedKey({ fail: args => args[0] === 'device' });
+		await expect(connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state))).rejects.toThrow();
+		expect(state.keys.get(SAVED)).toBe(OLD_KEY);
+		expect(state.calls.some(args => args[1] === 'modify')).toBe(false);
+	});
+
+	it('keeps a change another tool made during the attempt', async () => {
+		const state = hostWithSavedKey();
+		const run = nmcli(state);
+		await expect(
+			connectLinuxWifi(DEVICE, SSID, NEW_KEY, async args => {
+				const out = await run(args).catch((err: Error) => {
+					// Someone edits the same network while the association is still being tried.
+					state.keys.set(SAVED, 'set-by-another-tool');
+					throw err;
+				});
+				return out;
+			})
+		).rejects.toThrow();
+		expect(state.keys.get(SAVED)).toBe('set-by-another-tool');
+	});
+
+	it('refuses the join when the saved networks cannot be listed', async () => {
+		// Not "there is no saved profile" — an unknown state, and joining on the
+		// assumption that it is empty is what destroys the profile that was there.
+		const state = hostWithSavedKey({ fail: args => args[2] === 'UUID,TYPE' });
+		await expect(connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state))).rejects.toThrow('could not be listed');
+		expect(state.calls.some(args => args[0] === 'device')).toBe(false);
+	});
+
+	it('refuses the join when a saved key exists but is not readable', async () => {
+		const state = hostWithSavedKey({ hidden: true });
+		await expect(connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state))).rejects.toThrow('could not be read');
+		expect(state.calls.some(args => args[0] === 'device')).toBe(false);
+		expect(state.keys.get(SAVED)).toBe(OLD_KEY);
+	});
+
+	it('reports the failed restore alongside the join, without the passphrase in it', async () => {
+		const state = hostWithSavedKey({ fail: args => args[1] === 'modify' });
+		const err = await connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state)).then(
+			() => new Error('the join should not have succeeded'),
+			(e: Error) => e
+		);
+		expect(err.message).toContain('Secrets were required');
+		expect(err.message).toContain('could not be put back');
+		expect(err.message).not.toContain(OLD_KEY);
+		expect(err.message).not.toContain(NEW_KEY);
+	});
+
+	it('joins a network no profile carries without writing to any of them', async () => {
+		const state = hostWithSavedKey();
+		await expect(connectLinuxWifi(DEVICE, 'somewhere-else', NEW_KEY, nmcli(state))).rejects.toThrow();
+		expect(state.calls.some(args => args[1] === 'modify')).toBe(false);
+		expect(state.calls.some(args => args[0] === '--show-secrets')).toBe(false);
+	});
+
+	it('does not try to restore a profile that carries no security setting', async () => {
+		// There is nothing on it to lose, and `connection modify` with no properties
+		// is not a command — keeping it would report a failed rollback for a profile
+		// that was never at risk.
+		const state = hostWithSavedKey({ keys: new Map(), noSecurity: true });
+		const err = await connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state)).then(
+			() => new Error('the join should not have succeeded'),
+			(e: Error) => e
+		);
+		expect(err.message).toBe('Secrets were required, but not provided');
+		expect(state.calls.some(args => args[1] === 'modify')).toBe(false);
+	});
+
+	it('takes back a key the attempt added to a profile that had none', async () => {
+		// Undoing is not only putting an old key back. A profile left holding a key it
+		// never had is just as much a configuration the host did not have before.
+		const state = hostWithSavedKey({ keys: new Map() });
+		await expect(connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state))).rejects.toThrow();
+		expect(state.keys.get(SAVED)).toBe('');
+	});
+
+	it('skips the snapshot entirely for an open network', async () => {
+		const state: HostState = { keys: new Map(), calls: [] };
+		await connectLinuxWifi(DEVICE, SSID, '', async args => {
+			state.calls.push(args);
+			return '';
+		});
+		expect(state.calls).toEqual([['device', 'wifi', 'connect', SSID, 'ifname', DEVICE]]);
+	});
+});
+
+describe('parseNmcliWifiProfileUUIDs', () => {
+	it('keeps the Wi-Fi profiles and drops every other kind', () => {
+		expect(parseNmcliWifiProfileUUIDs('11111111-0000-4000-8000-000000000001:802-11-wireless\n22222222-0000-4000-8000-000000000002:802-3-ethernet\n33333333-0000-4000-8000-000000000003:vpn\n')).toEqual(['11111111-0000-4000-8000-000000000001']);
+	});
+
+	it('ignores blank lines rather than reading an empty uuid out of them', () => {
+		expect(parseNmcliWifiProfileUUIDs('\n\n')).toEqual([]);
+	});
+});
+
+describe('parseLinuxWifiSecrets', () => {
+	it('captures only the fields nmcli reported', () => {
+		// An absent field is one the profile does not have. Writing an empty value
+		// back for it would clear a property rather than restore one.
+		const snapshot = parseLinuxWifiSecrets('802-11-wireless-security.psk:some-passphrase\n');
+		expect(snapshot?.get('802-11-wireless-security.psk')).toBe('some-passphrase');
+		expect(snapshot?.has('802-11-wireless-security.wep-key0')).toBe(false);
+	});
+
+	it('reads a profile with no security setting as nothing to lose', () => {
+		expect(parseLinuxWifiSecrets('')?.size).toBe(0);
+	});
+
+	it('refuses a secret nmcli holds but will not print', () => {
+		// The opposite of an empty reading: there IS a key, a failed join can destroy
+		// it, and nothing could put it back.
+		expect(parseLinuxWifiSecrets('802-11-wireless-security.psk:<hidden>\n')).toBeNull();
+	});
+
+	it('keeps a passphrase containing a colon in one piece', () => {
+		expect(parseLinuxWifiSecrets('802-11-wireless-security.psk:one\\:two\n')?.get('802-11-wireless-security.psk')).toBe('one:two');
+	});
+});
+
+describe('nmcliWifiRestoreArgs', () => {
+	const uuid = 'a2df06d1-0000-4000-8000-000000000001';
+
+	it('writes back every captured field and addresses the profile by uuid', () => {
+		const args = nmcliWifiRestoreArgs(uuid, new Map([['802-11-wireless-security.psk', 'restored-passphrase']]));
+		expect(args.slice(0, 4)).toEqual(['connection', 'modify', 'uuid', uuid]);
+		expect(args[args.indexOf('802-11-wireless-security.psk') + 1]).toBe('restored-passphrase');
+	});
+
+	it('writes nothing for a field the snapshot never held', () => {
+		expect(nmcliWifiRestoreArgs(uuid, new Map())).toEqual(['connection', 'modify', 'uuid', uuid]);
 	});
 });
