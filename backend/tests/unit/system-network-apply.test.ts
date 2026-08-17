@@ -577,6 +577,17 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('if (@($oldAddresses).Count -gt 1) { throw');
 	});
 
+	// The reader keeps only the best of several default routes, so the configuration
+	// the user edits can name one gateway — while the apply removes every default
+	// route on the interface and creates at most one. A backup route, or one a VPN
+	// client installed, was therefore destroyed by a change to the DNS servers.
+	it('refuses an interface carrying several IPv4 default routes', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
+		expect(command).toContain('if (@($oldRoutes).Count -gt 1) { throw');
+		expect(command).toContain('several IPv4 default routes');
+		expect(command.indexOf('several IPv4 default routes')).toBeLessThan(command.indexOf('try { try { Remove-NetIPAddress'));
+	});
+
 	it('keeps the route metrics in the snapshot, not just the next hops', () => {
 		// A hand-set metric is what ranks competing default routes; restoring the
 		// route without it silently re-ranks every route on a multi-homed host.

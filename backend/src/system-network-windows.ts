@@ -685,6 +685,23 @@ function windowsRestoreSteps(): string[] {
 export const WINDOWS_ALIAS_GUARD: string = `if (@($oldAddresses).Count -gt 1) { throw "this interface carries several IPv4 addresses, which this app cannot preserve" }`;
 
 /**
+ * The same refusal for default routes, and for the same reason.
+ *
+ * {@link parseWindowsNetworkState} reports at most ONE gateway per interface — it
+ * ranks the competing default routes and keeps the best — so the configuration
+ * the user edits can express one. The apply removes ALL of them and creates at
+ * most one, which on an interface carrying a backup route, or a second default
+ * route installed by a VPN client or by device management, destroys the extra
+ * ones for good while reporting success. The user need not even have touched the
+ * gateway: a DNS-only change ran the same removal.
+ *
+ * Refusing is the honest answer until the configuration can carry more than one
+ * route. Counted out of the snapshot, so it costs no extra call, and placed
+ * before the first removal, so nothing has to be undone.
+ */
+export const WINDOWS_ROUTE_GUARD: string = `if (@($oldRoutes).Count -gt 1) { throw "this interface carries several IPv4 default routes, which this app cannot preserve" }`;
+
+/**
  * Build the PowerShell one-shot that applies an IPv4 configuration.
  *
  * The interface is resolved by GUID rather than by name because `netsh` and the
@@ -722,7 +739,7 @@ export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): st
 		mutation.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`, dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses', `if (-not (Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq '${config.address}' })) { throw "the address was accepted but is not on the interface" }`);
 	}
 	const guarded = `try { ${mutation.join('; ')} } catch { $applyError = $_; try { ${windowsRestoreSteps().join('; ')} } catch { throw "the change failed ($($applyError.Exception.Message)) and rolling it back also failed ($($_.Exception.Message))" }; throw $applyError }`;
-	return [...preamble, ...windowsSnapshotSteps(), WINDOWS_ALIAS_GUARD, guarded].join('; ');
+	return [...preamble, ...windowsSnapshotSteps(), WINDOWS_ALIAS_GUARD, WINDOWS_ROUTE_GUARD, guarded].join('; ');
 }
 
 /**

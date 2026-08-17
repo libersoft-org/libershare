@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { WINDOWS_ALIAS_GUARD } from '../../src/system-network-windows.ts';
+import { WINDOWS_ALIAS_GUARD, WINDOWS_ROUTE_GUARD } from '../../src/system-network-windows.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -62,6 +62,29 @@ describe.skipIf(process.platform !== 'win32')('windows apply fragments (live Pow
 			const result = await run(`${addresses({ ip: '192.0.2.10' }, { ip: '169.254.10.20', origin: 'WellKnown' })}; ${WINDOWS_ALIAS_GUARD}`);
 			expect(result.failed).toBe(true);
 			expect(result.stderr).toContain('several IPv4 addresses');
+		});
+	});
+
+	describe('the default-route guard', () => {
+		/** One `$oldRoutes` row, in the shape {@link windowsSnapshotSteps} selects. */
+		function routes(...metrics: number[]): string {
+			return `$oldRoutes = @(${metrics.map(metric => `[pscustomobject]@{ NextHop='192.0.2.1'; RouteMetric=${metric}; Protocol='NetMgmt'; Publish='No' }`).join(', ')})`;
+		}
+
+		it('lets a single default route through', async () => {
+			expect((await run(`${routes(10)}; ${WINDOWS_ROUTE_GUARD}`)).failed).toBe(false);
+		});
+
+		it('lets an interface with no default route through', async () => {
+			expect((await run(`$oldRoutes = @(); ${WINDOWS_ROUTE_GUARD}`)).failed).toBe(false);
+		});
+
+		// A backup gateway, or one a VPN client installed. The apply removes every
+		// default route and creates at most one, so it used to destroy the second.
+		it('refuses two default routes rather than dropping the weaker one', async () => {
+			const result = await run(`${routes(10, 100)}; ${WINDOWS_ROUTE_GUARD}`);
+			expect(result.failed).toBe(true);
+			expect(result.stderr).toContain('several IPv4 default routes');
 		});
 	});
 });
