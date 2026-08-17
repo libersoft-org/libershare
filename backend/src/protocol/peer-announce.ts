@@ -1,7 +1,7 @@
 import { trace } from '../logger.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
-import { canonicalMultiaddr } from './multiaddr-utils.ts';
+import { canonicalMultiaddr, extractDestinationPeerID } from './multiaddr-utils.ts';
 import { LISH_TOPIC_PREFIX } from './constants.ts';
 import { type Libp2p } from 'libp2p';
 import { type BootstrapPeerOrigin } from '@shared';
@@ -270,12 +270,24 @@ export class PeerAnnounceManager {
 		const unique = new Map<string, string>();
 		let droppedNonRoutable = 0;
 		let droppedDuplicate = 0;
+		let droppedAnonymous = 0;
 		for (const a of data.multiaddrs) {
 			if (typeof a !== 'string' || a.length === 0) continue;
 			if (unique.size >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
 			try {
-				if (shouldDenyDial(Multiaddr(a), localCidrs)) {
+				const ma = Multiaddr(a);
+				if (shouldDenyDial(ma, localCidrs)) {
 					droppedNonRoutable++;
+					continue;
+				}
+				// An address with no trailing /p2p/<peerID> names no identity, and every
+				// per-peer control downstream is keyed by one: backoff, quarantine,
+				// leave-network suppression and purge-by-peer-ID all silently do nothing
+				// for it, while a single successful dial is enough to park it on the
+				// recovery list that nothing can then take it off. Our own emitter always
+				// appends the identity, so requiring it costs nothing legitimate.
+				if (extractDestinationPeerID(ma) === null) {
+					droppedAnonymous++;
 					continue;
 				}
 			} catch {
@@ -293,7 +305,7 @@ export class PeerAnnounceManager {
 			unique.set(canonical, a);
 		}
 		if (unique.size === 0) {
-			if (droppedNonRoutable > 0 || droppedDuplicate > 0) trace(`[NET] peer-announce from ${fromPeerID?.slice(0, 16) ?? 'unknown'}: dropped all ${rawCount} addrs (${droppedNonRoutable} non-routable, ${droppedDuplicate} duplicate)`);
+			if (droppedNonRoutable > 0 || droppedDuplicate > 0 || droppedAnonymous > 0) trace(`[NET] peer-announce from ${fromPeerID?.slice(0, 16) ?? 'unknown'}: dropped all ${rawCount} addrs (${droppedNonRoutable} non-routable, ${droppedDuplicate} duplicate, ${droppedAnonymous} without /p2p)`);
 			return;
 		}
 		// Rate-limit AFTER dedup: a duplicate flood must not be able to drain the
@@ -306,7 +318,7 @@ export class PeerAnnounceManager {
 		}
 		const filtered = admitted < unique.size ? [...unique.values()].slice(0, admitted) : [...unique.values()];
 		if (admitted < unique.size) trace(`[NET] peer-announce from ${source.slice(0, 16)}: rate limited to ${admitted}/${unique.size} addrs`);
-		trace(`[NET] peer-announce from ${source.slice(0, 16)}: ${filtered.length}/${rawCount} addrs (dropped ${droppedNonRoutable} non-routable, ${droppedDuplicate} duplicate, network ${networkID.slice(0, 8)})`);
+		trace(`[NET] peer-announce from ${source.slice(0, 16)}: ${filtered.length}/${rawCount} addrs (dropped ${droppedNonRoutable} non-routable, ${droppedDuplicate} duplicate, ${droppedAnonymous} without /p2p, network ${networkID.slice(0, 8)})`);
 		// Pass networkID so per-peer outcomes from gossiped entries surface in the
 		// UI under the network through which they arrived. Identity-mismatch
 		// outcomes inside addBootstrapPeers also trigger purgeStalePeer.

@@ -237,6 +237,13 @@ describe('PeerAnnounceManager.emit recently-seen membership', () => {
 
 const SRC_ID = '12D3KooWSourceSourceSourceSourceSourceSourceSourceSS';
 const OTHER_SRC_ID = '12D3KooWOtherOtherOtherOtherOtherOtherOtherOtherOO';
+/** Identity every intake fixture terminates in — intake refuses addresses without one. */
+const ANNOUNCED_ID = '12D3KooWH3uVF6wv47WnArKHk5p6cvgCJEb74UTmxztmQDc298L3';
+
+/** Append the announced identity, which inbound intake requires. */
+function withID(address: string, id: string = ANNOUNCED_ID): string {
+	return `${address}/p2p/${id}`;
+}
 
 /** A manager wired only for handle(): captures the address lists it forwards. */
 function intakeManager() {
@@ -254,13 +261,13 @@ function intakeManager() {
 
 /** N distinct routable addresses in RFC5737 TEST-NET-3. */
 function distinctAddrs(count: number): string[] {
-	return Array.from({ length: count }, (_v, i) => `/ip4/203.0.113.${i % 254}/tcp/${9000 + i}`);
+	return Array.from({ length: count }, (_v, i) => withID(`/ip4/203.0.113.${i % 254}/tcp/${9000 + i}`));
 }
 
 describe('PeerAnnounceManager.handle address dedup', () => {
 	it('collapses one address repeated many times into a single entry', async () => {
 		const { mgr, forwarded } = intakeManager();
-		const addr = '/ip4/198.51.100.7/tcp/9090';
+		const addr = withID('/ip4/198.51.100.7/tcp/9090');
 
 		await mgr.handle({ type: 'peer-announce', multiaddrs: Array(300).fill(addr) }, 'netAAAA', SRC_ID);
 
@@ -269,7 +276,7 @@ describe('PeerAnnounceManager.handle address dedup', () => {
 
 	it('collapses two spellings of one address (DNS case, expanded vs compressed IPv6)', async () => {
 		const { mgr, forwarded } = intakeManager();
-		const multiaddrs = [`/dns4/Peer.Example.COM/tcp/9090/p2p/${SELF_ID}`, `/dns4/peer.example.com/tcp/9090/p2p/${SELF_ID}`, '/ip6/2001:0db8:0000:0000:0000:0000:0000:0001/tcp/9090', '/ip6/2001:db8::1/tcp/9090'];
+		const multiaddrs = [`/dns4/Peer.Example.COM/tcp/9090/p2p/${SELF_ID}`, `/dns4/peer.example.com/tcp/9090/p2p/${SELF_ID}`, withID('/ip6/2001:0db8:0000:0000:0000:0000:0000:0001/tcp/9090'), withID('/ip6/2001:db8::1/tcp/9090')];
 
 		await mgr.handle({ type: 'peer-announce', multiaddrs }, 'netAAAA', SRC_ID);
 
@@ -281,7 +288,7 @@ describe('PeerAnnounceManager.handle address dedup', () => {
 		// 300 copies of one address plus 5 distinct ones is 6 unique — the duplicates
 		// must not consume the 128-address budget the distinct ones need.
 		const { mgr, forwarded } = intakeManager();
-		const dup = '/ip4/198.51.100.7/tcp/9090';
+		const dup = withID('/ip4/198.51.100.7/tcp/9090');
 		const rest = distinctAddrs(5);
 
 		await mgr.handle({ type: 'peer-announce', multiaddrs: [...Array(300).fill(dup), ...rest] }, 'netAAAA', SRC_ID);
@@ -300,9 +307,30 @@ describe('PeerAnnounceManager.handle address dedup', () => {
 	it('drops non-routable addresses before deduping', async () => {
 		const { mgr, forwarded } = intakeManager();
 
-		await mgr.handle({ type: 'peer-announce', multiaddrs: ['/ip4/127.0.0.1/tcp/9090', '/ip4/127.0.0.1/tcp/9090', 'not-a-multiaddr'] }, 'netAAAA', SRC_ID);
+		await mgr.handle({ type: 'peer-announce', multiaddrs: [withID('/ip4/127.0.0.1/tcp/9090'), withID('/ip4/127.0.0.1/tcp/9090'), 'not-a-multiaddr'] }, 'netAAAA', SRC_ID);
 
 		expect(forwarded).toEqual([]);
+	});
+
+	it('refuses an announced address that carries no /p2p identity', async () => {
+		// Without an identity the address is unreachable by every per-peer control
+		// downstream — backoff, quarantine, leave-suppression, purge — while one
+		// successful dial parks it on the recovery list for good.
+		const { mgr, forwarded } = intakeManager();
+		const named = withID('/ip4/203.0.113.5/tcp/9090');
+
+		await mgr.handle({ type: 'peer-announce', multiaddrs: ['/ip4/203.0.113.4/tcp/9090', named] }, 'netAAAA', SRC_ID);
+
+		expect(forwarded).toEqual([[named]]);
+	});
+
+	it('keeps the relay-circuit target identity, not the relay hop', async () => {
+		const { mgr, forwarded } = intakeManager();
+		const relayed = `/ip4/203.0.113.6/tcp/9090/p2p/${SELF_ID}/p2p-circuit/p2p/${ANNOUNCED_ID}`;
+
+		await mgr.handle({ type: 'peer-announce', multiaddrs: [relayed] }, 'netAAAA', SRC_ID);
+
+		expect(forwarded).toEqual([[relayed]]);
 	});
 });
 
