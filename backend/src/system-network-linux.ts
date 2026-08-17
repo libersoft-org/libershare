@@ -792,15 +792,222 @@ export async function scanLinuxWifi(device: string): Promise<NetWifiNetwork[]> {
 }
 
 /**
+ * How this module reaches nmcli.
+ *
+ * A parameter rather than a direct call, so the join's rollback can be driven
+ * through every one of its outcomes without a radio, a NetworkManager or a saved
+ * profile to damage.
+ */
+export type NmcliRunner = (args: string[], timeoutMs?: number) => Promise<string>;
+
+/** The real thing: the first nmcli on disk, with this module's own timeouts. */
+const runNmcli: NmcliRunner = (args, timeoutMs) => runFirst(NMCLI_CANDIDATES, args, timeoutMs);
+
+/** `connection.type` of a Wi-Fi profile, as `nmcli -t -f TYPE connection show` prints it. */
+const NM_WIFI_TYPE = '802-11-wireless';
+
+/**
+ * The `802-11-wireless-security` properties a join can overwrite, and so the ones
+ * it has to be able to put back.
+ *
+ * `device wifi connect` does not create a profile when a compatible one is already
+ * saved. It writes the supplied key into THAT profile — `psk` for WPA/SAE,
+ * `wep-key0` and `wep-key-type` for WEP — commits it, and only then starts the
+ * association. The commit carries neither `to-disk` nor `in-memory`, and for a
+ * profile that already lives on disk that means the key is persisted. So a wrong
+ * password replaced a correct saved one before anything had proved it works, the
+ * association then failed, and the next autoconnect or reboot failed with it.
+ */
+const NM_WIFI_SECRET_FIELDS = ['802-11-wireless-security.psk', '802-11-wireless-security.wep-key0', '802-11-wireless-security.wep-key-type'] as const;
+
+/** What nmcli prints in place of a secret it holds but will not hand over. */
+const NM_HIDDEN_SECRET = '<hidden>';
+
+/** UUIDs of the saved Wi-Fi profiles in `nmcli -t -f UUID,TYPE connection show` output. */
+export function parseNmcliWifiProfileUUIDs(text: string): string[] {
+	const uuids: string[] = [];
+	for (const line of text.split(/\r?\n/)) {
+		if (!line.trim()) continue;
+		const [uuid, type] = splitNmcliFields(line);
+		if (uuid && type === NM_WIFI_TYPE) uuids.push(uuid);
+	}
+	return uuids;
+}
+
+/**
+ * The restorable security properties of one saved profile, or null when one of
+ * them exists but could not be read.
+ *
+ * Only the fields nmcli actually reported are captured, and the restore writes
+ * back only those — an absent field is one this profile does not have, and
+ * writing an empty value for it would clear a property rather than restore it.
+ * A profile with no `802-11-wireless-security` setting at all reports none of
+ * them and yields an empty snapshot, which is the right answer: there is no
+ * stored key on it for a join to destroy.
+ *
+ * `<hidden>` is the one value that is not a value. It means nmcli knows a secret
+ * is there and did not print it, so the profile CAN be damaged and CANNOT be put
+ * back — the opposite of an empty reading, and the two must not be confused.
+ */
+export function parseLinuxWifiSecrets(text: string): Map<string, string> | null {
+	const properties = parseNmcliProperties(text);
+	const snapshot = new Map<string, string>();
+	for (const field of NM_WIFI_SECRET_FIELDS) {
+		const value = properties.get(field);
+		if (value === undefined) continue;
+		if (value === NM_HIDDEN_SECRET) return null;
+		snapshot.set(field, value);
+	}
+	return snapshot;
+}
+
+/** Build the `nmcli connection modify` arguments that put a Wi-Fi snapshot back verbatim. */
+export function nmcliWifiRestoreArgs(uuid: string, snapshot: Map<string, string>): string[] {
+	const args = ['connection', 'modify', 'uuid', uuid];
+	for (const field of NM_WIFI_SECRET_FIELDS) {
+		const value = snapshot.get(field);
+		if (value !== undefined) args.push(field, value);
+	}
+	return args;
+}
+
+/** One saved profile a join could overwrite, and the properties to put back if it does. */
+interface WifiProfileSnapshot {
+	readonly uuid: string;
+	readonly snapshot: Map<string, string>;
+}
+
+/** One profile's security properties as nmcli prints them. Throws when the read failed. */
+async function readWifiSecrets(run: NmcliRunner, uuid: string): Promise<string> {
+	return run(['--show-secrets', '-t', '-f', NM_WIFI_SECRET_FIELDS.join(','), 'connection', 'show', 'uuid', uuid]);
+}
+
+/**
+ * Snapshot every saved profile this join could overwrite, before it is attempted.
+ *
+ * Which profile `device wifi connect` picks is nmcli's decision, made against the
+ * live access point, and it is not reproducible from here. So every saved profile
+ * carrying this SSID is snapshotted rather than a guess at the one profile: a
+ * profile nmcli can reuse for this network is one that carries its SSID, and
+ * putting back a profile the join never touched is not something the restore
+ * does — see {@link restoreLinuxWifiSecrets}.
+ *
+ * Nothing here is optional. A profile whose SSID could not be read might be the
+ * target, and one whose key exists but could not be read is one a failed join
+ * would damage with no way back — so both refuse the join outright instead of
+ * proceeding on the assumption that they are neither. Refusing costs the user an
+ * attempt; guessing costs them a working network.
+ *
+ * A profile that stores no key at all is the one thing left out, because it has
+ * nothing to lose and no restore to build: `connection modify` with no properties
+ * is not a command, so keeping it would mean reporting a failed rollback for a
+ * profile that was never at risk. nmcli does not reuse such a profile for a
+ * secured network either — its key management does not match the access point.
+ */
+async function snapshotLinuxWifiProfiles(run: NmcliRunner, ssid: string): Promise<WifiProfileSnapshot[]> {
+	let uuids: string[];
+	try {
+		uuids = parseNmcliWifiProfileUUIDs(await run(['-t', '-f', 'UUID,TYPE', 'connection', 'show']));
+	} catch {
+		throw new Error('the saved Wi-Fi networks could not be listed, so none of them will be changed');
+	}
+	const profiles: WifiProfileSnapshot[] = [];
+	for (const uuid of uuids) {
+		let saved: string;
+		try {
+			// Both sides of this comparison are nmcli terse output put through the same
+			// unescaping, so a name carrying a colon or a backslash is compared as the
+			// user sees it rather than as nmcli escaped it.
+			saved = parseNmcliProperties(await run(['-t', '-f', '802-11-wireless.ssid', 'connection', 'show', 'uuid', uuid])).get('802-11-wireless.ssid') ?? '';
+		} catch {
+			throw new Error('a saved Wi-Fi network could not be read, so no saved password will be changed');
+		}
+		if (saved !== ssid) continue;
+		let snapshot: Map<string, string> | null;
+		try {
+			snapshot = parseLinuxWifiSecrets(await readWifiSecrets(run, uuid));
+		} catch {
+			snapshot = null;
+		}
+		if (!snapshot) throw new Error('the password already saved for this network could not be read, so it will not be replaced');
+		if (snapshot.size > 0) profiles.push({ uuid, snapshot });
+	}
+	return profiles;
+}
+
+/**
+ * Put back what a failed join overwrote. Returns what went wrong, or null when
+ * the undo succeeded or there was nothing to undo.
+ *
+ * Every profile is re-read first, and only one that now holds the password THIS
+ * attempt supplied is written back. Two things follow. A join that failed before
+ * nmcli ever reached a profile — the ordinary case, a network out of range or an
+ * association that never came up — leaves every keyfile exactly as it was rather
+ * than rewriting each one with its own values. And a profile some other tool
+ * changed during the attempt keeps that change: it does not hold this attempt's
+ * password, so it is not this attempt's to undo.
+ *
+ * What nmcli said is deliberately not part of what is reported. The restoring
+ * command carries the previous passphrase as an argv entry, and the message
+ * execFile builds for a failed child is the entire command line — so quoting it
+ * would put the passphrase into the error the caller logs and returns.
+ */
+async function restoreLinuxWifiSecrets(run: NmcliRunner, profiles: readonly WifiProfileSnapshot[], password: string): Promise<string | null> {
+	const unreadable: string[] = [];
+	const unrestored: string[] = [];
+	for (const { uuid, snapshot } of profiles) {
+		let current: Map<string, string> | null;
+		try {
+			current = parseLinuxWifiSecrets(await readWifiSecrets(run, uuid));
+		} catch {
+			current = null;
+		}
+		if (!current) {
+			unreadable.push(uuid);
+			continue;
+		}
+		// Written by this attempt, and not already the value it replaced — a password
+		// that matches the saved one destroyed nothing by being written over it.
+		if (!NM_WIFI_SECRET_FIELDS.some(field => current.get(field) === password && snapshot.get(field) !== password)) continue;
+		try {
+			await run(nmcliWifiRestoreArgs(uuid, snapshot), APPLY_TIMEOUT_MS);
+		} catch {
+			unrestored.push(uuid);
+		}
+	}
+	if (unrestored.length > 0) return `this network's previous password could not be put back, so the one that just failed is the one now saved for it (${unrestored.join(', ')})`;
+	if (unreadable.length > 0) return `this network's saved password could not be re-read, so whether the one that just failed replaced it is not known (${unreadable.join(', ')})`;
+	return null;
+}
+
+/**
  * Join a Wi-Fi network.
  *
  * `device wifi connect` reuses a saved profile when one exists and creates one
  * otherwise, so the same call covers both "reconnect to a known network" and
  * "join a new one with a password". The password is passed as a separate argv
  * entry — never interpolated into a command line — so no quoting rule applies to it.
+ *
+ * Reusing a saved profile is also what makes a failed attempt destructive, which
+ * is what the snapshot around it is for: see {@link NM_WIFI_SECRET_FIELDS} for
+ * what a join overwrites and when. Without a password there is nothing to
+ * overwrite — nmcli commits the profile it found unchanged — so the join runs on
+ * its own, and a network being joined for the first time snapshots to nothing.
  */
-export async function connectLinuxWifi(device: string, ssid: string, password: string): Promise<void> {
+export async function connectLinuxWifi(device: string, ssid: string, password: string, run: NmcliRunner = runNmcli): Promise<void> {
 	const args = ['device', 'wifi', 'connect', ssid, 'ifname', device];
-	if (password) args.push('password', password);
-	await runFirst(NMCLI_CANDIDATES, args, APPLY_TIMEOUT_MS);
+	if (!password) {
+		await run(args, APPLY_TIMEOUT_MS);
+		return;
+	}
+	const profiles = await snapshotLinuxWifiProfiles(run, ssid);
+	try {
+		await run([...args, 'password', password], APPLY_TIMEOUT_MS);
+	} catch (err) {
+		const rollback = await restoreLinuxWifiSecrets(run, profiles, password);
+		// Both, not just the first: a rollback that failed leaves the saved network in
+		// a state the join's own error says nothing about.
+		if (rollback) throw new Error(`${(err as Error).message} — and undoing the attempt failed: ${rollback}`);
+		throw err;
+	}
 }
