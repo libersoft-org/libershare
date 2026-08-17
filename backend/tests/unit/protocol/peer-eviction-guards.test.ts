@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
 import { Network, isRecoveryDialDue, isSameDialEndpoint, normalizeMultiaddrForCompare, type IBootstrapEntry } from '../../../src/protocol/network.ts';
 import { installBootstrapRegistry, registryAddresses, type IRegistrySeed } from '../helpers/bootstrap-registry.ts';
+import { createRealPeerStore, storedAddresses } from '../helpers/real-peer-store.ts';
 
 /**
  * Guards on the DESTRUCTIVE peer-eviction paths. The pure decision helpers are covered
@@ -513,8 +514,15 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 	const ADDR_A = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
 	const ADDR_B = `/ip4/203.0.113.10/tcp/9090/p2p/${PEER_B}`;
 
-	function bareNetwork(onFirstDial?: (network: Network) => void) {
+	async function bareNetwork(onFirstDial?: (network: Network) => void, stored: string[] = []) {
 		const dialled: string[] = [];
+		const deleted: string[] = [];
+		const real = await createRealPeerStore(PEER_ID, stored);
+		const dropRecord = real.store.delete.bind(real.store);
+		real.store.delete = async (id: { toString(): string }): Promise<void> => {
+			deleted.push(id.toString());
+			await dropRecord(id);
+		};
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
@@ -536,28 +544,19 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 				if (dialled.length === 1) onFirstDial?.(network);
 				return { remoteAddr: { toString: () => ma.toString() } };
 			},
-			peerStore: {
-				async merge(): Promise<void> {},
-				// Shaped like the real store's miss: the code tells a genuine absence from
-				// an operational failure by the error's name, and only the former is an
-				// answer it may act on.
-				async get(): Promise<unknown> {
-					throw Object.assign(new Error('not found'), { name: 'NotFoundError' });
-				},
-				async delete(): Promise<void> {},
-			},
+			peerStore: real.store,
 		};
-		return { network, dialled };
+		return { network, dialled, deleted, real };
 	}
 
 	it('abandons the rest of the list when the network configuration is superseded', async () => {
-		const { network, dialled } = bareNetwork(n => n.bumpBootstrapGeneration('net-a'));
+		const { network, dialled } = await bareNetwork(n => n.bumpBootstrapGeneration('net-a'));
 		await (network as any).addBootstrapPeers([ADDR_A, ADDR_B], 'net-a', 'configured');
 		expect(dialled).toEqual([ADDR_A]);
 	});
 
 	it('does not re-mark the abandoned entry as configured', async () => {
-		const { network } = bareNetwork(n => n.bumpBootstrapGeneration('net-a'));
+		const { network } = await bareNetwork(n => n.bumpBootstrapGeneration('net-a'));
 		await (network as any).addBootstrapPeers([ADDR_A, ADDR_B], 'net-a', 'configured');
 		expect((network as any).configuredBootstrapPeerIDs.has(PEER_B)).toBe(false);
 	});
@@ -565,7 +564,7 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 	/** Every other dial path has a deadline; without one a stalled address hangs the walk. */
 	it('gives the dial an explicit deadline', async () => {
 		const signals: Array<AbortSignal | undefined> = [];
-		const { network } = bareNetwork();
+		const { network } = await bareNetwork();
 		(network as any).node.dial = async (ma: { toString(): string }, opts?: { signal?: AbortSignal }): Promise<unknown> => {
 			signals.push(opts?.signal);
 			return { remoteAddr: { toString: () => ma.toString() } };
@@ -575,13 +574,13 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 	});
 
 	it('walks the whole list when nothing supersedes it', async () => {
-		const { network, dialled } = bareNetwork();
+		const { network, dialled } = await bareNetwork();
 		await (network as any).addBootstrapPeers([ADDR_A, ADDR_B], 'net-a', 'configured');
 		expect(dialled).toEqual([ADDR_A, ADDR_B]);
 	});
 
 	it('is not disturbed by an edit to a DIFFERENT network', async () => {
-		const { network, dialled } = bareNetwork(n => n.bumpBootstrapGeneration('net-other'));
+		const { network, dialled } = await bareNetwork(n => n.bumpBootstrapGeneration('net-other'));
 		await (network as any).addBootstrapPeers([ADDR_A, ADDR_B], 'net-a', 'configured');
 		expect(dialled).toEqual([ADDR_A, ADDR_B]);
 	});
@@ -593,7 +592,7 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 	 */
 	it('closes the connection the superseded dial had already opened', async () => {
 		const closed: string[] = [];
-		const { network } = bareNetwork();
+		const { network } = await bareNetwork();
 		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
 			(network as any).bumpBootstrapGeneration('net-a');
 			return { remoteAddr: { toString: () => ma.toString() }, close: async (): Promise<void> => void closed.push(ma.toString()) };
@@ -610,7 +609,7 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 	 */
 	it('closes a superseded configured dial whose address left the config', async () => {
 		const closed: string[] = [];
-		const { network } = bareNetwork();
+		const { network } = await bareNetwork();
 		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
 			// The edit lands mid-dial: the address is gone from the list, so its claim is
 			// released and the network's bootstrap job is invalidated.
@@ -625,7 +624,7 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 
 	it('keeps a superseded configured dial whose address is still configured', async () => {
 		const closed: string[] = [];
-		const { network } = bareNetwork();
+		const { network } = await bareNetwork();
 		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
 			// Only the generation moves — some OTHER entry of the list changed, this one
 			// is still the user's configuration and its connection is wanted.
@@ -646,19 +645,19 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 	 */
 	it('takes back a peerStore write the edit overtook', async () => {
 		const closed: string[] = [];
-		const purged: string[] = [];
-		const { network } = bareNetwork();
-		(network as any).node.peerStore.merge = async (): Promise<void> => {
+		const { network, deleted, real } = await bareNetwork(undefined, [ADDR_A]);
+		const write = real.store.merge.bind(real.store);
+		real.store.merge = async (id: unknown, data: unknown): Promise<unknown> => {
 			(network as any).pruneBootstrapAddresses([ADDR_A], 'net-a');
 			(network as any).bumpBootstrapGeneration('net-a');
+			return write(id, data);
 		};
-		(network as any).node.peerStore.delete = async (pid: { toString(): string }): Promise<void> => void purged.push(pid.toString());
 		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => ({
 			remoteAddr: { toString: () => ma.toString() },
 			close: async (): Promise<void> => void closed.push(ma.toString()),
 		});
 		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
-		expect(purged).toEqual([PEER_ID]);
+		expect(deleted).toEqual([PEER_ID]);
 		expect(closed).toEqual([ADDR_A]);
 		expect((network as any).configuredBootstrapPeerIDs.has(PEER_ID)).toBe(false);
 	});
@@ -671,25 +670,22 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 	 */
 	it('removes the stale address even from a peer that stays', async () => {
 		const closed: string[] = [];
-		const patched: string[][] = [];
-		const { network } = bareNetwork();
-		(network as any).isPeerNeededByJoinedNetwork = (): boolean => true;
 		// The store holds it in its own shape — without the trailing /p2p/<id>.
-		(network as any).node.peerStore.get = async (): Promise<unknown> => ({ addresses: [{ multiaddr: multiaddr('/ip4/203.0.113.9/tcp/9090') }] });
-		(network as any).node.peerStore.patch = async (_pid: unknown, data: { addresses: Array<{ multiaddr: { toString(): string } }> }): Promise<void> => void patched.push(data.addresses.map(a => a.multiaddr.toString()));
+		const { network, real } = await bareNetwork(undefined, [ADDR_A]);
+		(network as any).isPeerNeededByJoinedNetwork = (): boolean => true;
 		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
 			(network as any).pruneBootstrapAddresses([ADDR_A], 'net-a');
 			(network as any).bumpBootstrapGeneration('net-a');
 			return { remoteAddr: { toString: () => ma.toString() }, close: async (): Promise<void> => void closed.push(ma.toString()) };
 		};
 		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
-		expect(patched).toEqual([[]]);
+		expect(await storedAddresses(real)).toEqual([]);
 		expect(closed).toEqual([]);
 	});
 
 	it('keeps a superseded connection a joined network still needs', async () => {
 		const closed: string[] = [];
-		const { network } = bareNetwork(n => n.bumpBootstrapGeneration('net-a'));
+		const { network } = await bareNetwork(n => n.bumpBootstrapGeneration('net-a'));
 		(network as any).isPeerNeededByJoinedNetwork = (): boolean => true;
 		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
 			(network as any).bumpBootstrapGeneration('net-a');
@@ -1055,9 +1051,9 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 	const BAD = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
 	const GOOD = `/ip4/198.51.100.7/tcp/9090/p2p/${PEER_ID}`;
 
-	function bareNetwork(storedAddresses: string[]) {
+	async function bareNetwork(stored: string[]) {
 		const purged: string[] = [];
-		const patched: string[][] = [];
+		const real = await createRealPeerStore(PEER_ID, stored);
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
@@ -1078,34 +1074,26 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 			async dial(): Promise<unknown> {
 				throw new Error(`Payload identity key 12D3KooWSomeoneElseSomeoneElseSomeoneElseSomeoneEls does not match expected remote identity key ${PEER_ID}`);
 			},
-			peerStore: {
-				async get(): Promise<unknown> {
-					return { addresses: storedAddresses.map(a => ({ multiaddr: multiaddr(a) })) };
-				},
-				async patch(_pid: unknown, data: { addresses: Array<{ multiaddr: { toString(): string } }> }): Promise<void> {
-					patched.push(data.addresses.map(a => a.multiaddr.toString()));
-				},
-				async merge(): Promise<void> {},
-			},
+			peerStore: real.store,
 		};
-		return { network, purged, patched };
+		return { network, purged, real };
 	}
 
 	it('keeps a disconnected peer that still has an undisproved address', async () => {
-		const { network, purged, patched } = bareNetwork([BAD, GOOD]);
+		const { network, purged, real } = await bareNetwork([BAD, GOOD]);
 		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
 		expect(purged).toEqual([]);
-		expect(patched).toEqual([[GOOD]]);
+		expect(await storedAddresses(real)).toEqual(['/ip4/198.51.100.7/tcp/9090']);
 	});
 
 	it('purges only once nothing usable is left', async () => {
-		const { network, purged } = bareNetwork([BAD]);
+		const { network, purged } = await bareNetwork([BAD]);
 		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
 		expect(purged).toEqual([PEER_ID]);
 	});
 
 	it('drops the disproved address from the registry either way', async () => {
-		const { network } = bareNetwork([BAD, GOOD]);
+		const { network } = await bareNetwork([BAD, GOOD]);
 		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
 		expect(registryAddresses(network)).toEqual([]);
 	});
@@ -1117,8 +1105,8 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 	 * cleanup under uncertainty may do.
 	 */
 	it('does not purge when the peerStore read fails', async () => {
-		const { network, purged } = bareNetwork([BAD]);
-		(network as any).node.peerStore.get = async (): Promise<unknown> => {
+		const { network, purged, real } = await bareNetwork([BAD]);
+		real.store.store.load = async (): Promise<unknown> => {
 			throw new Error('database is locked');
 		};
 		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
@@ -1126,8 +1114,8 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 	});
 
 	it('does not purge when the peerStore write fails', async () => {
-		const { network, purged } = bareNetwork([BAD]);
-		(network as any).node.peerStore.patch = async (): Promise<unknown> => {
+		const { network, purged, real } = await bareNetwork([BAD]);
+		real.store.store.patch = async (): Promise<unknown> => {
 			throw new Error('datastore closed');
 		};
 		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
@@ -1136,10 +1124,7 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 
 	/** A peer genuinely absent from the store is still an answer, and still purgeable. */
 	it('still purges when the peer really is not stored', async () => {
-		const { network, purged } = bareNetwork([BAD]);
-		(network as any).node.peerStore.get = async (): Promise<unknown> => {
-			throw Object.assign(new Error('not found'), { name: 'NotFoundError' });
-		};
+		const { network, purged } = await bareNetwork([]);
 		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
 		expect(purged).toEqual([PEER_ID]);
 	});
@@ -1329,42 +1314,41 @@ describe('reconcilePeerAfterBootstrapRemoval', () => {
 	const OLD = `/ip4/203.0.113.7/tcp/9090/p2p/${PEER_ID}`;
 	const OTHER = `/ip4/203.0.113.8/tcp/9090/p2p/${PEER_ID}`;
 
-	function bareNetwork(needed: boolean, stored: string[] = [OLD, OTHER], seeds: IRegistrySeed[] = []) {
-		const patched: string[][] = [];
+	/** The shape the store keeps an address in: canonical, without the peer's own /p2p suffix. */
+	const bare = (address: string): string =>
+		address
+			.replace(`/p2p/${PEER_ID}`, '')
+			.toLowerCase()
+			.replace(/\.\/tcp/, '/tcp');
+
+	async function bareNetwork(needed: boolean, stored: string[] = [OLD, OTHER], seeds: IRegistrySeed[] = []) {
 		const disconnected: string[] = [];
+		const real = await createRealPeerStore(PEER_ID, stored);
 		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
 		// What the registry still holds of this peer AFTER the removal — the addresses
 		// the edit did not touch.
 		installBootstrapRegistry(network, seeds);
-		(network as any).node = {
-			peerStore: {
-				async get(): Promise<unknown> {
-					return { addresses: stored.map(a => ({ multiaddr: multiaddr(a) })) };
-				},
-				async patch(_pid: unknown, data: { addresses: Array<{ multiaddr: { toString(): string } }> }): Promise<void> {
-					patched.push(data.addresses.map(a => a.multiaddr.toString()));
-				},
-			},
-		};
+		(network as any).node = { peerStore: real.store };
 		(network as any).isPeerNeededByJoinedNetwork = (): boolean => needed;
 		(network as any).disconnectPeer = async (pid: string): Promise<void> => void disconnected.push(pid);
-		return { network, patched, disconnected };
+		return { network, real, disconnected };
 	}
 
 	it('trims only the removed address from the peerStore', async () => {
-		const { network, patched } = bareNetwork(true);
+		const { network, real } = await bareNetwork(true);
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [OLD], 'net-a');
-		expect(patched).toEqual([[OTHER]]);
+		expect(await storedAddresses(real)).toEqual([bare(OTHER)]);
 	});
 
 	it('keeps a peer another joined network still needs', async () => {
-		const { network, disconnected } = bareNetwork(true);
+		const { network, disconnected } = await bareNetwork(true);
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [OLD], 'net-a');
 		expect(disconnected).toEqual([]);
 	});
 
 	it('tears down a peer nothing needs any more', async () => {
-		const { network, disconnected } = bareNetwork(false, [OLD]);
+		const { network, disconnected } = await bareNetwork(false, [OLD]);
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [OLD], 'net-a');
 		expect(disconnected).toEqual([PEER_ID]);
 	});
@@ -1376,15 +1360,15 @@ describe('reconcilePeerAfterBootstrapRemoval', () => {
 	 * peerStore, which has no notion of owners, disarms an address nobody dropped.
 	 */
 	it('leaves an address another network still claims in the peerStore', async () => {
-		const { network, patched } = bareNetwork(true, [OLD, OTHER], [{ address: OLD, configuredBy: ['net-b'] }]);
+		const { network, real } = await bareNetwork(true, [OLD, OTHER], [{ address: OLD, configuredBy: ['net-b'] }]);
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [OLD], 'net-a');
-		expect(patched).toEqual([]);
+		expect(await storedAddresses(real)).toEqual([bare(OLD), bare(OTHER)]);
 	});
 
 	it('leaves an address gossip still vouches for in the peerStore', async () => {
-		const { network, patched } = bareNetwork(true, [OLD, OTHER], [{ address: OLD, discovered: true, lastVerifiedAt: Date.now() }]);
+		const { network, real } = await bareNetwork(true, [OLD, OTHER], [{ address: OLD, discovered: true, lastVerifiedAt: Date.now() }]);
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [OLD], 'net-a');
-		expect(patched).toEqual([]);
+		expect(await storedAddresses(real)).toEqual([bare(OLD), bare(OTHER)]);
 	});
 
 	/**
@@ -1394,13 +1378,13 @@ describe('reconcilePeerAfterBootstrapRemoval', () => {
 	 * the peer down is not soft: it suppresses re-dials and deletes the peerStore entry.
 	 */
 	it('keeps the connection when another network still claims a sibling address', async () => {
-		const { network, disconnected } = bareNetwork(false, [OLD, OTHER], [{ address: OTHER, configuredBy: ['net-b'] }]);
+		const { network, disconnected } = await bareNetwork(false, [OLD, OTHER], [{ address: OTHER, configuredBy: ['net-b'] }]);
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [OLD], 'net-a');
 		expect(disconnected).toEqual([]);
 	});
 
 	it('keeps the connection when the surviving sibling is a discovered address', async () => {
-		const { network, disconnected } = bareNetwork(false, [OLD, OTHER], [{ address: OTHER, discovered: true, lastVerifiedAt: Date.now() }]);
+		const { network, disconnected } = await bareNetwork(false, [OLD, OTHER], [{ address: OTHER, discovered: true, lastVerifiedAt: Date.now() }]);
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [OLD], 'net-a');
 		expect(disconnected).toEqual([]);
 	});
@@ -1409,9 +1393,9 @@ describe('reconcilePeerAfterBootstrapRemoval', () => {
 	it('matches the removed address canonically', async () => {
 		const upper = `/dns4/BOOTSTRAP.EXAMPLE.ORG./tcp/9090/p2p/${PEER_ID}`;
 		const lower = `/dns4/bootstrap.example.org/tcp/9090/p2p/${PEER_ID}`;
-		const { network, patched } = bareNetwork(true, [lower, OTHER]);
+		const { network, real } = await bareNetwork(true, [lower, OTHER]);
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [upper], 'net-a');
-		expect(patched).toEqual([[OTHER]]);
+		expect(await storedAddresses(real)).toEqual([bare(OTHER)]);
 	});
 });
 
@@ -1632,24 +1616,7 @@ describe('bootstrap registry — provenance is not exclusive', () => {
 describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () => {
 	const ADDR = `/ip4/203.0.113.21/tcp/9090/p2p/${PEER_ID}`;
 
-	async function realPeerStore() {
-		const { persistentPeerStore } = await import('@libp2p/peer-store');
-		const { MemoryDatastore } = await import('datastore-core');
-		const { defaultLogger } = await import('@libp2p/logger');
-		const { peerIdFromString } = await import('@libp2p/peer-id');
-		const { TypedEventEmitter } = await import('main-event');
-		const pid = peerIdFromString(PEER_ID);
-		const store = persistentPeerStore({
-			peerId: pid,
-			// Cast: two copies of interface-datastore are installed (libp2p nests its own)
-			// and their Key classes are structurally incompatible. Runtime is one class.
-			datastore: new MemoryDatastore() as any,
-			events: new TypedEventEmitter() as any,
-			logger: defaultLogger(),
-		});
-		await store.patch(pid, { multiaddrs: [multiaddr(ADDR)] });
-		return { store, pid };
-	}
+	const realPeerStore = (): Promise<{ store: any; pid: any }> => createRealPeerStore(PEER_ID, [ADDR]);
 
 	function networkOver(store: unknown) {
 		const network = Object.create(Network.prototype) as Network;
@@ -1664,16 +1631,15 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 	}
 
 	it('stores an address without the trailing /p2p/<id>', async () => {
-		const { store, pid } = await realPeerStore();
-		const stored = (await store.get(pid)).addresses.map(a => a.multiaddr.toString());
-		expect(stored).toEqual(['/ip4/203.0.113.21/tcp/9090']);
+		const real = await realPeerStore();
+		expect(await storedAddresses(real)).toEqual(['/ip4/203.0.113.21/tcp/9090']);
 	});
 
 	it('removes the address the configuration dropped', async () => {
-		const { store, pid } = await realPeerStore();
-		const network = networkOver(store);
+		const real = await realPeerStore();
+		const network = networkOver(real.store);
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [ADDR], 'net-a');
-		expect((await store.get(pid)).addresses.map(a => a.multiaddr.toString())).toEqual([]);
+		expect(await storedAddresses(real)).toEqual([]);
 	});
 
 	/**
@@ -1696,10 +1662,10 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 	});
 
 	it('leaves an address the configuration kept', async () => {
-		const { store, pid } = await realPeerStore();
-		const network = networkOver(store);
+		const real = await realPeerStore();
+		const network = networkOver(real.store);
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [`/ip4/203.0.113.99/tcp/9090/p2p/${PEER_ID}`], 'net-a');
-		expect((await store.get(pid)).addresses.map(a => a.multiaddr.toString())).toEqual(['/ip4/203.0.113.21/tcp/9090']);
+		expect(await storedAddresses(real)).toEqual(['/ip4/203.0.113.21/tcp/9090']);
 	});
 
 	/**
@@ -1707,6 +1673,60 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 	 * re-dials and deletes the peerStore entry. Reaching it after the trim failed would
 	 * remove everything precisely because we could not remove one thing.
 	 */
+	/**
+	 * The removal borrows the store's own per-peer lock, which is not part of the public
+	 * PeerStore interface. If a libp2p upgrade reshapes it, that has to fail here rather
+	 * than silently reopen the window in production.
+	 */
+	it('finds the per-peer lock the removal borrows', async () => {
+		const { store } = await realPeerStore();
+		expect(typeof (store as any).store?.getWriteLock).toBe('function');
+		expect(typeof (store as any).store?.load).toBe('function');
+		expect(typeof (store as any).store?.patch).toBe('function');
+		expect(typeof (store as any).events?.safeDispatchEvent).toBe('function');
+	});
+
+	/** No lock, no removal: the callers act destructively on the result. */
+	it('refuses to remove an address from a store with no lock', async () => {
+		const network = networkOver({
+			async get(): Promise<unknown> {
+				return { addresses: [] };
+			},
+			async patch(): Promise<void> {},
+		});
+		const disconnected: string[] = [];
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).disconnectPeer = async (id: string): Promise<void> => void disconnected.push(id);
+		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [ADDR], 'net-a');
+		expect(disconnected).toEqual([]);
+	});
+
+	/**
+	 * Read-filter-write is only safe if nothing writes in between, and libp2p writes to
+	 * the peerStore constantly — identify, a signed peer record, an inbound connection.
+	 * An address that landed inside the window used to be overwritten by the older
+	 * snapshot, and it can be the only address the peer is currently reachable on.
+	 */
+	it('keeps an address libp2p adds while the removal is in flight', async () => {
+		const real = await realPeerStore();
+		const network = networkOver(real.store);
+		const arrival = `/ip4/198.51.100.4/tcp/9090/p2p/${PEER_ID}`;
+		let concurrent: Promise<unknown> | null = null;
+		const read = (real.store as any).store.load.bind((real.store as any).store);
+		(real.store as any).store.load = async (id: unknown): Promise<unknown> => {
+			const rec = await read(id);
+			// A verified address arrives right after the read — the window the old
+			// read-modify-write could not see. Not awaited: the point is that it lands
+			// on its own schedule, and the removal must not be able to overtake it.
+			concurrent ??= real.store.merge(real.pid, { addresses: [{ multiaddr: multiaddr(arrival), isCertified: true }] });
+			await new Promise(resolve => setTimeout(resolve, 10));
+			return rec;
+		};
+		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [ADDR], 'net-a');
+		await concurrent;
+		expect(await storedAddresses(real)).toEqual(['/ip4/198.51.100.4/tcp/9090']);
+	});
+
 	/**
 	 * The helper awaits twice, and a restart can land between them. Re-reading the node
 	 * after the read would take the OLD run's address snapshot and write it into the NEW
@@ -1720,8 +1740,8 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		const disconnected: string[] = [];
 		(network as any).disconnectPeer = async (id: string): Promise<void> => void disconnected.push(id);
-		const read = (old.store as any).get.bind(old.store);
-		(old.store as any).get = async (id: unknown): Promise<unknown> => {
+		const read = (old.store as any).store.load.bind((old.store as any).store);
+		(old.store as any).store.load = async (id: unknown): Promise<unknown> => {
 			const rec = await read(id);
 			// stop() then start(): a new node, a new epoch, and this call belongs to neither.
 			(network as any).node = { peerStore: next.store, getConnections: () => [] };
@@ -1730,7 +1750,7 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 		};
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [ADDR], 'net-a');
 		// The new run keeps every address it holds, and the old run's teardown stops.
-		expect((await next.store.get(next.pid)).addresses.map(a => a.multiaddr.toString())).toEqual(['/ip4/203.0.113.21/tcp/9090']);
+		expect(await storedAddresses(next)).toEqual(['/ip4/203.0.113.21/tcp/9090']);
 		expect(disconnected).toEqual([]);
 	});
 
@@ -1742,7 +1762,7 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
 		const disconnected: string[] = [];
 		(network as any).disconnectPeer = async (id: string): Promise<void> => void disconnected.push(id);
-		(store as any).get = async (): Promise<unknown> => {
+		(store as any).store.load = async (): Promise<unknown> => {
 			throw new Error('database is locked');
 		};
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [ADDR], 'net-a');

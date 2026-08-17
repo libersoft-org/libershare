@@ -425,6 +425,43 @@ export function isPeerStoreNotFound(err: unknown): boolean {
 	return e?.name === 'NotFoundError' || e?.code === 'ERR_NOT_FOUND';
 }
 
+/** One stored address of a peer, in the shape the peerStore reads and writes. */
+interface IStoredAddress {
+	multiaddr: { toString(): string };
+	isCertified?: boolean;
+}
+
+/**
+ * The peerStore's inner store — the same object its public methods delegate to, minus
+ * their locking — plus the emitter those methods notify.
+ *
+ * `peerStore.get()` takes the peer's READ lock and `peerStore.patch()` its WRITE lock,
+ * separately, so anything libp2p writes between the two (identify, a signed peer record,
+ * an inbound connection) is inside the window and gets overwritten by the older
+ * snapshot. The store keeps exactly one lock per peer and hands it out; taking it around
+ * both halves is what makes removing a single address safe. Calling the public methods
+ * while holding it would deadlock, hence the unlocked inner pair.
+ */
+interface IPeerStoreInternals {
+	getWriteLock(peerID: PeerID): Promise<() => void>;
+	load(peerID: PeerID): Promise<{ addresses: IStoredAddress[] }>;
+	patch(peerID: PeerID, data: { addresses: IStoredAddress[] }): Promise<{ updated: boolean }>;
+}
+
+/**
+ * Reach the inner store, or refuse. There is no correct read-modify-write through the
+ * public API alone, so a peerStore that does not expose its lock is a hard stop rather
+ * than a quiet fallback — the callers act destructively on the result, and the failure
+ * direction they can survive is "did nothing", not "lost an address".
+ */
+function peerStoreInternals(peerStore: unknown): { store: IPeerStoreInternals; events: { safeDispatchEvent(type: string, detail: unknown): void } | undefined } {
+	const store = (peerStore as { store?: Partial<IPeerStoreInternals> })?.store;
+	if (typeof store?.getWriteLock !== 'function' || typeof store?.load !== 'function' || typeof store?.patch !== 'function') {
+		throw new Error('peerStore does not expose its per-peer lock — refusing to remove an address without it');
+	}
+	return { store: store as IPeerStoreInternals, events: (peerStore as { events?: { safeDispatchEvent(type: string, detail: unknown): void } }).events };
+}
+
 /**
  * Single shared libp2p node.
  * LISH networks are logical groups represented as pubsub topics on this one node.
@@ -2465,32 +2502,41 @@ export class Network {
 	 * and with `this.node` already null, produce a `TypeError` indistinguishable from
 	 * a genuine miss.
 	 *
-	 * The store has no "remove one address" call, so this reads and writes back — but
-	 * it patches `addresses`, the field it actually filtered, and puts back the very
+	 * The store has no "remove one address" call, so this reads and writes back — under
+	 * the peer's own peerStore write lock, which every libp2p write to that peer also
+	 * takes, so nothing can be added between the two halves and then overwritten. It
+	 * patches `addresses`, the field it actually filtered, and puts back the very
 	 * objects it kept. Rebuilding them as a bare `multiaddrs` list dropped the
 	 * `isCertified` flag of every surviving address, downgrading signed peer records to
 	 * hearsay as a side effect of deleting an unrelated address.
-	 *
-	 * ponytail: read-modify-write, so an address added between the two calls is still
-	 * lost. Fixing that needs a peerStore that can remove an address in one operation —
-	 * libp2p has no such API today.
 	 */
 	private async removePeerStoreAddresses(pid: PeerID, matches: (address: string) => boolean): Promise<PeerStoreAddressRemoval> {
 		const node = this.node;
 		const epoch = this.runEpoch;
 		if (!node) return { kind: 'superseded' };
-		let rec;
+		const { store, events } = peerStoreInternals(node.peerStore);
+		const release = await store.getWriteLock(pid);
 		try {
-			rec = await node.peerStore.get(pid);
-		} catch (err: unknown) {
-			if (isPeerStoreNotFound(err)) return { kind: 'not-found' };
-			throw err;
+			if (node !== this.node || epoch !== this.runEpoch) return { kind: 'superseded' };
+			let rec;
+			try {
+				rec = await store.load(pid);
+			} catch (err: unknown) {
+				if (isPeerStoreNotFound(err)) return { kind: 'not-found' };
+				throw err;
+			}
+			const keep = rec.addresses.filter(a => !matches(a.multiaddr.toString()));
+			if (keep.length === rec.addresses.length) return { kind: 'updated', remaining: keep.length };
+			if (node !== this.node || epoch !== this.runEpoch) return { kind: 'superseded' };
+			const result = await store.patch(pid, { addresses: keep });
+			// The public wrapper raises this after every write it makes, and libp2p's own
+			// registrar listens for it. Going around the wrapper must not go around the event.
+			if (result.updated) events?.safeDispatchEvent('peer:update', { detail: result });
+			if (node !== this.node || epoch !== this.runEpoch) return { kind: 'superseded' };
+			return { kind: 'updated', remaining: keep.length };
+		} finally {
+			release();
 		}
-		if (node !== this.node || epoch !== this.runEpoch) return { kind: 'superseded' };
-		const keep = rec.addresses.filter(a => !matches(a.multiaddr.toString()));
-		if (keep.length < rec.addresses.length) await node.peerStore.patch(pid, { addresses: keep });
-		if (node !== this.node || epoch !== this.runEpoch) return { kind: 'superseded' };
-		return { kind: 'updated', remaining: keep.length };
 	}
 
 	/** Remove one address from the registry, its reverse index and its pacing state. */

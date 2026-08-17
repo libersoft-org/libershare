@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
 import { Network, bootstrapEntryLastActivity, nextRecoveryBackoff, normalizeMultiaddrForCompare, orderBootstrapEntriesForRecovery, pruneBootstrapEntries, type IBootstrapEntry } from '../../../src/protocol/network.ts';
 import { installBootstrapRegistry, registryAddresses, type IRegistrySeed } from '../helpers/bootstrap-registry.ts';
+import { createEmptyPeerStore } from '../helpers/real-peer-store.ts';
 
 /**
  * The bootstrap registry is what zero-connection recovery walks. It is keyed by the
@@ -46,13 +47,9 @@ function bareNetwork(opts: { seeds?: IRegistrySeed[]; suppressed?: string[]; liv
 		peerId: { toString: () => 'selfID' },
 		getPeers: () => livePeers.map(p => ({ toString: () => p })),
 		getConnections: () => [],
-		peerStore: {
-			async merge(): Promise<void> {},
-			async get(): Promise<unknown> {
-				return { addresses: [] };
-			},
-			async patch(): Promise<void> {},
-		},
+		// Real store, empty: every peer here reads as absent from it, which is what these
+		// tests are about — the registry, not the peerStore, is the survivor count.
+		peerStore: createEmptyPeerStore(),
 		async dial(ma: { toString(): string }): Promise<unknown> {
 			dialed.push(ma.toString());
 			opts.onDial?.(ma.toString());
