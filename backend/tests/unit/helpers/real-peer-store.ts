@@ -57,7 +57,10 @@ export class FaultyDatastore extends MemoryDatastore {
 /** An empty store. Every peer reads as absent until something is written for it. */
 export function createEmptyPeerStore(datastore: any = new MemoryDatastore()): any {
 	return persistentPeerStore({
-		peerId: peerIdFromString(STORE_SELF_ID),
+		// Cast: peer-store carries its own newer @libp2p/interface, whose PeerId types are
+		// structurally incompatible with the hoisted copy libp2p uses. `isPeerId` and the
+		// peer-id brand go through `Symbol.for`, so both copies agree at runtime.
+		peerId: peerIdFromString(STORE_SELF_ID) as any,
 		// Cast: two copies of interface-datastore are installed (libp2p nests its own)
 		// and their Key classes are structurally incompatible. Runtime is one class.
 		datastore: datastore as any,

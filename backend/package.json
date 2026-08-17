@@ -21,7 +21,7 @@
 		"@libp2p/interface": "^3.2.3",
 		"@libp2p/keychain": "^6.1.2",
 		"@libp2p/mdns": "^12.0.24",
-		"@libp2p/peer-store": "12.0.21",
+		"@libp2p/peer-store": "12.0.24",
 		"@libp2p/ping": "^3.1.6",
 		"@libp2p/simple-metrics": "^2.0.16",
 		"@libp2p/tcp": "^11.0.21",
@@ -37,7 +37,8 @@
 		"uint8arrays": "^6.1.1"
 	},
 	"overrides": {
-		"@multiformats/multiaddr": "^12.1.14"
+		"@multiformats/multiaddr": "^12.1.14",
+		"@libp2p/peer-store": "12.0.24"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit",
@@ -48,6 +49,6 @@
 	},
 	"patchedDependencies": {
 		"@achingbrain/ssdp@4.2.4": "patches/@achingbrain%2Fssdp@4.2.4.patch",
-		"@libp2p/peer-store@12.0.21": "patches/@libp2p%2Fpeer-store@12.0.21.patch"
+		"@libp2p/peer-store@12.0.24": "patches/@libp2p%2Fpeer-store@12.0.24.patch"
 	}
 }
