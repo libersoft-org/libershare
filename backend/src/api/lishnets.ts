@@ -13,7 +13,7 @@ interface LISHnetsHandlers {
 	update: (p: { network: LISHNetworkConfig }) => Promise<boolean>;
 	delete: (p: { networkID: string }) => Promise<boolean>;
 	addIfNotExists: (p: { network: LISHNetworkDefinition }) => Promise<boolean>;
-	import: (p: { networks: LISHNetworkDefinition[] }) => number;
+	import: (p: { networks: LISHNetworkDefinition[] }) => Promise<number>;
 	replace: (p: { networks: LISHNetworkConfig[] }) => Promise<boolean>;
 	exportToFile: (p: { networkID: string; filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 	exportAllToFile: (p: { filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
@@ -66,7 +66,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['network']);
 		return networks.addIfNotExists(p.network);
 	}
-	function importNetworks(p: { networks: LISHNetworkDefinition[] }): number {
+	async function importNetworks(p: { networks: LISHNetworkDefinition[] }): Promise<number> {
 		assert(p, ['networks']);
 		return networks.importNetworks(p.networks);
 	}

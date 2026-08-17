@@ -174,20 +174,20 @@ describe('bootstrap lists are normalised by whoever writes them', () => {
 		expect(getLISHnet(d, NET)!.bootstrapPeers).toEqual([ADDR_A]);
 	});
 
-	it('addIfNotExists() collapses two spellings of one address', () => {
+	it('addIfNotExists() collapses two spellings of one address', async () => {
 		const d = db();
 		const networks = bare(d, makeMockNet(), []);
 
-		networks.addIfNotExists({ networkID: NET, name: 'A', description: '', bootstrapPeers: [UPPER, LOWER], created: '' });
+		await networks.addIfNotExists({ networkID: NET, name: 'A', description: '', bootstrapPeers: [UPPER, LOWER], created: '' });
 
 		expect(getLISHnet(d, NET)!.bootstrapPeers).toEqual([UPPER]);
 	});
 
-	it('importNetworks() trims what it stores', () => {
+	it('importNetworks() trims what it stores', async () => {
 		const d = db();
 		const networks = bare(d, makeMockNet(), []);
 
-		networks.importNetworks([{ networkID: NET, name: 'A', description: '', bootstrapPeers: [PADDED], created: '' }]);
+		await networks.importNetworks([{ networkID: NET, name: 'A', description: '', bootstrapPeers: [PADDED], created: '' }]);
 
 		expect(getLISHnet(d, NET)!.bootstrapPeers).toEqual([ADDR_A]);
 	});
@@ -208,6 +208,33 @@ describe('bootstrap lists are normalised by whoever writes them', () => {
 		await networks.replace([{ networkID: NET, name: 'A', description: '', bootstrapPeers: [PADDED], enabled: false, created: '' }]);
 
 		expect(getLISHnet(d, NET)!.bootstrapPeers).toEqual([ADDR_A]);
+	});
+
+	/**
+	 * Both of these used to write straight to the database with no lock at all, while
+	 * `replaceLISHnets` deletes the whole catalog in a transaction and re-inserts the
+	 * snapshot. An import or an add that slipped in between a queued replace's read and its
+	 * rewrite reported success and then had its rows deleted again — and changed the ID set
+	 * the replace had already decided its affected list from.
+	 */
+	it('an import racing a queued replace is ordered against it, not lost', async () => {
+		const d = db();
+		const mock = makeMockNet();
+		const networks = bare(d, mock, []);
+		const release = await (networks as any).catalogMutex.acquire();
+
+		const replacing = networks.replace([{ networkID: 'net-keep', name: 'K', description: '', bootstrapPeers: [], enabled: false, created: '' }]);
+		const importing = networks.importNetworks([{ networkID: NET, name: 'A', description: '', bootstrapPeers: [ADDR_A], created: '' }]);
+		const adding = networks.addIfNotExists({ networkID: 'net-add', name: 'B', description: '', bootstrapPeers: [], created: '' });
+		release();
+		const [, imported, added] = await Promise.all([replacing, importing, adding]);
+
+		// Both queued behind the replace, so both survive it and both report truthfully.
+		expect(imported).toBe(1);
+		expect(added).toBe(true);
+		expect(getLISHnet(d, NET)).toBeDefined();
+		expect(getLISHnet(d, 'net-add')).toBeDefined();
+		expect(getLISHnet(d, 'net-keep')).toBeDefined();
 	});
 
 	it('validateNetwork() reports the list in the shape it would be stored in', () => {

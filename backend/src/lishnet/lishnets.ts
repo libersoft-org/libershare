@@ -711,17 +711,25 @@ export class Networks {
 		return lishnetExists(this.db, id);
 	}
 
-	addIfNotExists(network: LISHNetworkDefinition): boolean {
-		return addLISHnetIfNotExists(this.db, network);
+	/**
+	 * Add one definition if it does not exist yet. Nothing to reconcile — the writer inserts
+	 * it DISABLED — but the insert itself still belongs under {@link catalogMutex}: it went
+	 * straight to the database, so a `replace()` that had already read the catalog could
+	 * delete the row this had just reported as added, and the ID set `replace()` computes
+	 * its affected list from moved underneath it.
+	 */
+	async addIfNotExists(network: LISHNetworkDefinition): Promise<boolean> {
+		return await this.inCatalog(() => addLISHnetIfNotExists(this.db, network));
 	}
 
 	/**
-	 * Add every definition that does not exist yet. Nothing to reconcile: the underlying
-	 * writer skips networks that already exist and inserts new ones DISABLED, so no
-	 * network's runtime state can change here.
+	 * Add every definition that does not exist yet, as one batch under the catalog mutex.
+	 * Nothing to reconcile: the underlying writer skips networks that already exist and
+	 * inserts new ones DISABLED, so no network's runtime state can change here — but see
+	 * {@link addIfNotExists} for why the write is still not the caller's to do unlocked.
 	 */
-	importNetworks(networks: LISHNetworkDefinition[]): number {
-		return importLISHnets(this.db, networks);
+	async importNetworks(networks: LISHNetworkDefinition[]): Promise<number> {
+		return await this.inCatalog(() => importLISHnets(this.db, networks));
 	}
 
 	/**
