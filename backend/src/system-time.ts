@@ -565,6 +565,65 @@ const NTP_UNITS_DIRS: string[] = ['/etc/systemd/ntp-units.d', '/run/systemd/ntp-
 /** Environment override timedated honours in place of the directories above; colon-separated. */
 const NTP_SERVICES_ENV = 'SYSTEMD_TIMEDATED_NTP_SERVICES';
 
+/** The unit whose environment decides the override — timedated's own, not ours. */
+const TIMEDATED_UNIT = 'systemd-timedated.service';
+
+/**
+ * A syntactically valid systemd unit name: the permitted characters plus a type suffix.
+ *
+ * timedated validates every entry of its ordered list and ignores the ones that fail, so
+ * an invalid line is not part of the ordering. Passing it on would also fail the whole
+ * `systemctl show` that follows — one malformed line in a vendor's `.list` file would take
+ * the provider read with it and turn the capability off on a host that is perfectly fine.
+ */
+const UNIT_NAME_RE = /^[A-Za-z0-9:_.@\\-]+\.[a-z]+$/;
+
+/** Same rule timedated applies before it will look a unit up at all. */
+function isValidUnitName(name: string): boolean {
+	return name.length <= 255 && UNIT_NAME_RE.test(name);
+}
+
+/**
+ * The environment systemd-timedated runs with, as `KEY=value` pairs, or null when it could
+ * not be established.
+ *
+ * Reading `process.env` here was wrong in both directions. timedated takes
+ * {@link NTP_SERVICES_ENV} from ITS OWN process: an override an administrator set through
+ * `Environment=` or a drop-in on `systemd-timedated.service` is invisible to us, so we
+ * would use the directory ordering while timedated used the override — write the drop-in,
+ * report success, and have `set-ntp` start a daemon that never reads it. The other
+ * direction is as bad: the variable set in OUR environment changes nothing about
+ * timedated, and honouring it made us report an ordering the host does not have.
+ *
+ * Two sources, because a service's environment is assembled from both: the manager's
+ * environment, which every unit inherits, and the unit's own `Environment=`, which
+ * overrides it. Both have to be readable — a source that did not answer could be the one
+ * carrying the override, and an ordering derived from half the answer is a guess.
+ *
+ * `EnvironmentFile=` is deliberately not followed: it names a path on the host that we
+ * would have to read and parse with systemd's own quoting rules, and no distribution ships
+ * one for timedated. If a host ever uses it for this variable, the directory ordering is
+ * what we fall back to, and the ordinary competing-daemon check still stands behind it.
+ */
+export async function readTimedatedEnvironment(exec: CommandRunner = run): Promise<Record<string, string> | null> {
+	const manager = await exec('systemctl', ['show-environment']);
+	if (manager.kind !== 'ok') return null;
+	const unit = await exec('systemctl', ['show', '-p', 'Environment', '--value', TIMEDATED_UNIT]);
+	if (unit.kind !== 'ok') return null;
+	const env: Record<string, string> = {};
+	// `show-environment` prints one assignment per line; `Environment=` prints them
+	// whitespace-separated on one. Splitting on all whitespace reads both, and the unit's
+	// own entries are applied second so they win, as they do for the service itself.
+	for (const token of `${manager.output}\n${unit.output}`.split(/\s+/)) {
+		const eq = token.indexOf('=');
+		if (eq <= 0) continue;
+		// A value systemd had to quote cannot be one of ours — unit names carry no spaces —
+		// but the quotes come off so a single-token quoted value still reads correctly.
+		env[token.slice(0, eq)] = token.slice(eq + 1).replace(/^"(.*)"$/, '$1');
+	}
+	return env;
+}
+
 /**
  * The NTP providers systemd-timedated would consider, in ITS order.
  *
@@ -580,15 +639,20 @@ const NTP_SERVICES_ENV = 'SYSTEMD_TIMEDATED_NTP_SERVICES';
  * ({@link canConfigureTimesyncdServer}); null is a host whose ordering exists and is
  * unknown to us, where nothing about who owns the clock may be concluded.
  *
- * `dirs` and `env` are injectable so the ordering rules can be exercised off a systemd host.
+ * `env` is timedated's environment from {@link readTimedatedEnvironment}, and null there —
+ * an environment that could not be read — is itself an unknown ordering: the override it
+ * might carry replaces the directories entirely.
+ *
+ * `dirs` is injectable so the ordering rules can be exercised off a systemd host.
  */
-export async function readNtpUnitsList(dirs: string[] = NTP_UNITS_DIRS, env: NodeJS.ProcessEnv = process.env): Promise<string[] | null> {
+export async function readNtpUnitsList(env: Record<string, string> | null, dirs: string[] = NTP_UNITS_DIRS): Promise<string[] | null> {
+	if (env === null) return null;
 	const override = env[NTP_SERVICES_ENV];
 	if (override !== undefined)
 		return override
 			.split(':')
 			.map(unit => unit.trim())
-			.filter(unit => unit.length > 0);
+			.filter(unit => unit.length > 0 && isValidUnitName(unit));
 	// Basename -> path, first directory wins: the shadowing rule every systemd drop-in
 	// directory set follows.
 	const files = new Map<string, string>();
@@ -616,7 +680,10 @@ export async function readNtpUnitsList(dirs: string[] = NTP_UNITS_DIRS, env: Nod
 		if (content === null) return null;
 		for (const line of content.split('\n')) {
 			const unit = line.trim();
-			if (unit.length > 0 && !unit.startsWith('#') && !units.includes(unit)) units.push(unit);
+			if (unit.length === 0 || unit.startsWith('#')) continue;
+			// An entry timedated would reject is not part of ITS ordering, so it must not be
+			// part of ours either.
+			if (isValidUnitName(unit) && !units.includes(unit)) units.push(unit);
 		}
 	}
 	return units;
@@ -985,7 +1052,7 @@ async function readLinuxStatus(): Promise<PlatformStatus> {
 	// unit's `LoadState`, which is the property timedated selects on: `show-timesync` would
 	// only answer while the daemon runs, and the UI turns synchronisation off before writing
 	// a server.
-	const ordered = canNtp ? await readNtpUnitsList() : [];
+	const ordered = canNtp ? await readNtpUnitsList(await readTimedatedEnvironment()) : [];
 	const unit = canNtp ? await tryRead('systemctl', ['show', '-p', 'Id', '-p', 'LoadState', ...(ordered !== null && ordered.length > 0 ? ordered : [TIMESYNCD_UNIT])]) : null;
 	// timedated manages several NTP implementations; a host where chrony is the active
 	// one would ignore our drop-in entirely (see canConfigureTimesyncdServer). The units to

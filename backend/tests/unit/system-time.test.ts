@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, competingNtpUnits, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitLoadStates, type PlatformStatusReader, readNtpUnitsList, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, syncDirectory, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, competingNtpUnits, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitLoadStates, type PlatformStatusReader, readNtpUnitsList, readTimedatedEnvironment, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, syncDirectory, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -728,27 +728,27 @@ describe('readNtpUnitsList', () => {
 	 */
 	it('orders the providers by list file name, not by directory', async () => {
 		const lib = await dir('lib', { '80-systemd-timesync.list': 'systemd-timesyncd.service\n', '50-chronyd.list': 'chronyd.service\n' });
-		expect(await readNtpUnitsList([lib], {})).toEqual(['chronyd.service', 'systemd-timesyncd.service']);
+		expect(await readNtpUnitsList({}, [lib])).toEqual(['chronyd.service', 'systemd-timesyncd.service']);
 	});
 
 	it('lets an earlier directory shadow the same file name in a later one', async () => {
 		const etc = await dir('etc', { '50-chronyd.list': 'replacement.service\n' });
 		const lib = await dir('lib', { '50-chronyd.list': 'chronyd.service\n', '80-systemd-timesync.list': 'systemd-timesyncd.service\n' });
-		expect(await readNtpUnitsList([etc, lib], {})).toEqual(['replacement.service', 'systemd-timesyncd.service']);
+		expect(await readNtpUnitsList({}, [etc, lib])).toEqual(['replacement.service', 'systemd-timesyncd.service']);
 	});
 
 	it('skips comments, blank lines and repeats, and ignores files that are not lists', async () => {
 		const lib = await dir('lib', { '50-a.list': '# a comment\n\nchronyd.service\nchronyd.service\n', README: 'ntpd.service\n' });
-		expect(await readNtpUnitsList([lib], {})).toEqual(['chronyd.service']);
+		expect(await readNtpUnitsList({}, [lib])).toEqual(['chronyd.service']);
 	});
 
 	it('takes the environment override in place of the directories', async () => {
 		const lib = await dir('lib', { '50-chronyd.list': 'chronyd.service\n' });
-		expect(await readNtpUnitsList([lib], { SYSTEMD_TIMEDATED_NTP_SERVICES: 'ntpsec.service:systemd-timesyncd.service' })).toEqual(['ntpsec.service', 'systemd-timesyncd.service']);
+		expect(await readNtpUnitsList({ SYSTEMD_TIMEDATED_NTP_SERVICES: 'ntpsec.service:systemd-timesyncd.service' }, [lib])).toEqual(['ntpsec.service', 'systemd-timesyncd.service']);
 	});
 
 	it('reports no ordering at all on a host without the directories', async () => {
-		expect(await readNtpUnitsList([join(root, 'nowhere')], {})).toEqual([]);
+		expect(await readNtpUnitsList({}, [join(root, 'nowhere')])).toEqual([]);
 	});
 
 	/**
@@ -761,13 +761,81 @@ describe('readNtpUnitsList', () => {
 		const lib = await dir('lib', { '80-systemd-timesync.list': 'systemd-timesyncd.service\n' });
 		const notADirectory = join(root, 'blocked');
 		await writeFile(notADirectory, 'in the way', 'utf8');
-		expect(await readNtpUnitsList([notADirectory, lib], {})).toBeNull();
+		expect(await readNtpUnitsList({}, [notADirectory, lib])).toBeNull();
 	});
 
 	it('reports an unknown ordering when a list file cannot be read', async () => {
 		const lib = await dir('lib', {});
 		await mkdir(join(lib, '50-chronyd.list'));
-		expect(await readNtpUnitsList([lib], {})).toBeNull();
+		expect(await readNtpUnitsList({}, [lib])).toBeNull();
+	});
+
+	/**
+	 * An environment that could not be established is an unknown ordering, not an absent
+	 * override: the variable it might carry replaces the directories outright, so the
+	 * directory ordering cannot stand in for it.
+	 */
+	it('reports an unknown ordering when timedated s environment could not be read', async () => {
+		const lib = await dir('lib', { '50-chronyd.list': 'chronyd.service\n' });
+		expect(await readNtpUnitsList(null, [lib])).toBeNull();
+	});
+
+	/**
+	 * timedated validates each entry and ignores the ones that are not unit names. Keeping
+	 * them would also take the `systemctl show` that follows down with them — one malformed
+	 * line in a vendor list file would turn the capability off on a healthy host.
+	 */
+	it('drops entries that are not valid unit names', async () => {
+		const lib = await dir('lib', { '50-a.list': 'not a unit name\nchronyd.service\nno-suffix\n' });
+		expect(await readNtpUnitsList({}, [lib])).toEqual(['chronyd.service']);
+		expect(await readNtpUnitsList({ SYSTEMD_TIMEDATED_NTP_SERVICES: 'bad name:chronyd.service' }, [lib])).toEqual(['chronyd.service']);
+	});
+});
+
+describe('readTimedatedEnvironment', () => {
+	/** Answer `systemctl show-environment` and `systemctl show -p Environment` separately. */
+	function systemctl(manager: RunOutcome, unit: RunOutcome): CommandRunner {
+		return async (_cmd, args) => (args[0] === 'show-environment' ? manager : unit);
+	}
+
+	const ok = (output: string): RunOutcome => ({ kind: 'ok', output });
+
+	/**
+	 * The whole point of the read: the override lives in TIMEDATED's environment. Ours is a
+	 * different process and says nothing about which provider timedated would start.
+	 */
+	it('takes the override from the unit s own Environment', async () => {
+		const env = await readTimedatedEnvironment(systemctl(ok('LANG=C\n'), ok('SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service\n')));
+		expect(env).toMatchObject({ SYSTEMD_TIMEDATED_NTP_SERVICES: 'chronyd.service', LANG: 'C' });
+	});
+
+	it('takes it from the manager environment every unit inherits', async () => {
+		const env = await readTimedatedEnvironment(systemctl(ok('SYSTEMD_TIMEDATED_NTP_SERVICES=ntpd.service\n'), ok('\n')));
+		expect(env?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBe('ntpd.service');
+	});
+
+	/** A service's own `Environment=` overrides what it inherited, so it is applied last. */
+	it('lets the unit override the manager environment', async () => {
+		const env = await readTimedatedEnvironment(systemctl(ok('SYSTEMD_TIMEDATED_NTP_SERVICES=ntpd.service\n'), ok('SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service\n')));
+		expect(env?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBe('chronyd.service');
+	});
+
+	it('reads the several whitespace-separated entries Environment prints on one line', async () => {
+		const env = await readTimedatedEnvironment(systemctl(ok(''), ok('A=1 SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service:ntpd.service B=2\n')));
+		expect(env).toMatchObject({ A: '1', B: '2', SYSTEMD_TIMEDATED_NTP_SERVICES: 'chronyd.service:ntpd.service' });
+	});
+
+	it('reports no override on a host that sets none', async () => {
+		const env = await readTimedatedEnvironment(systemctl(ok('LANG=C\nPATH=/usr/bin\n'), ok('\n')));
+		expect(env?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBeUndefined();
+	});
+
+	/** Either source could be the one carrying the override, so neither may be skipped. */
+	it('reports an unknown environment when a source does not answer', async () => {
+		const failed: RunOutcome = { kind: 'failed', code: 1, output: 'Failed to get properties.\n' };
+		expect(await readTimedatedEnvironment(systemctl(failed, ok('')))).toBeNull();
+		expect(await readTimedatedEnvironment(systemctl(ok(''), failed))).toBeNull();
+		expect(await readTimedatedEnvironment(systemctl({ kind: 'missing' }, ok('')))).toBeNull();
 	});
 });
 
