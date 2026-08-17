@@ -39,6 +39,82 @@ export function createStatusGate(): StatusGate {
 	};
 }
 
+/** What decides whether an answered status read may still fill the form. */
+export interface LoadApplicability {
+	/** False once anything fresher was adopted — the {@link StatusGate} check. */
+	fresh: boolean;
+	/** A read nobody asked for (reconnect catch-up), as opposed to one the user's action needs. */
+	background: boolean;
+	/** A write is in flight. */
+	busy: boolean;
+	/** The form holds changes the user has not saved. */
+	dirty: boolean;
+}
+
+/**
+ * Whether an answered status read may overwrite the form.
+ *
+ * The generation check alone is not enough, and this is the half that was missing: it
+ * orders several ANSWERS against each other but knows nothing about the user. A reconnect
+ * read is issued while the form is clean and idle, and then takes a whole round trip during
+ * which the user can type, toggle the switch and press Save — so the conditions have to be
+ * re-asked when the answer LANDS, not only when it is sent. Checked only at the start, a
+ * reconnect read overwrote an edit made behind it, reset the baseline it would have been
+ * compared against, and cleared the `touched` flag a save in flight was relying on.
+ *
+ * A FOREGROUND read is exempt from the dirty and busy tests, because resetting the form is
+ * the point of it: it is the re-read after a refused or half-applied write, where the values
+ * on screen are the ones that must not be trusted.
+ */
+export function loadMayApply({ fresh, background, busy, dirty }: LoadApplicability): boolean {
+	if (!fresh) return false;
+	return !background || (!busy && !dirty);
+}
+
+/** One request a save has to make. */
+export interface TimeWrite {
+	method: string;
+	params: Record<string, unknown>;
+}
+
+/**
+ * Everything a save writes, read off the form ONCE before the first request.
+ *
+ * `loaded` is the host state the form was filled from, and the comparison that decides
+ * which steps run at all.
+ */
+export interface TimeSavePlan {
+	autoSync: boolean;
+	syncDirty: boolean;
+	ntpServer: string;
+	timezone: string;
+	clock: { hours: number; minutes: number; seconds: number } | null;
+	loaded: { ntpServer: string; timezone: string };
+}
+
+/**
+ * The requests a save makes, in the order the OS requires.
+ *
+ * Derived from a plan rather than from the live form, and that is the point: a save is up to
+ * five round trips, and reading a reactive value BETWEEN two of them lets a status answer
+ * landing mid-save decide what the remaining steps write — or whether they run at all. The
+ * plan is taken before the first request, so every step belongs to the save the user asked
+ * for.
+ *
+ * The order is not cosmetic. Synchronisation goes off first, because the OS refuses a manual
+ * clock set while a daemon owns the clock, and back on last, so a clock set in the same save
+ * is not stepped over by the sync that follows it.
+ */
+export function planTimeWrites(plan: TimeSavePlan): TimeWrite[] {
+	const writes: TimeWrite[] = [];
+	if (!plan.autoSync && plan.syncDirty) writes.push({ method: 'system.setNtpEnabled', params: { enabled: false } });
+	if (plan.ntpServer !== plan.loaded.ntpServer) writes.push({ method: 'system.setNtpServer', params: { server: plan.ntpServer } });
+	if (plan.timezone !== plan.loaded.timezone) writes.push({ method: 'system.setTimezone', params: { timezone: plan.timezone } });
+	if (plan.clock) writes.push({ method: 'system.setClock', params: { ...plan.clock } });
+	if (plan.autoSync && plan.syncDirty) writes.push({ method: 'system.setNtpEnabled', params: { enabled: true } });
+	return writes;
+}
+
 /**
  * What a failed write leaves on screen.
  *

@@ -7,7 +7,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { api } from '../../scripts/api.ts';
 	import { connected } from '../../scripts/ws-client.ts';
-	import { createStatusGate, syncSwitchIsDirty, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
+	import { createStatusGate, loadMayApply, planTimeWrites, syncSwitchIsDirty, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
 	import { type SystemTimeOutcome, type SystemTimeResult, type SystemTimeStatus } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -90,22 +90,33 @@
 	 * Settled, not all: a host that cannot list its timezones still has a clock and an
 	 * NTP state worth showing, and failing the whole screen over the picker would hide
 	 * them behind a bare error.
+	 *
+	 * `background` marks a read nobody asked for — the reconnect catch-up. Those may only
+	 * fill the form while it is idle and clean, and that is decided when the ANSWER lands
+	 * (see loadMayApply). A foreground read is the re-read after a failed write, where
+	 * resetting the form is exactly what is wanted.
 	 */
-	async function load(): Promise<string> {
+	async function load(background = false): Promise<string> {
 		const current = statusGate.begin();
 		const [statusResult, zonesResult] = await Promise.allSettled([api.call<SystemTimeStatus>('system.getTime'), api.call<string[]>('system.listTimezones')]);
-		timezones = zonesResult.status === 'fulfilled' ? zonesResult.value : [];
-		if (statusResult.status === 'rejected') return translateError(statusResult.reason);
 		// A broadcast, or a later read, may have landed while this one was out. Its state is
 		// the fresher one and this answer predates it — applying it anyway would rewind the
 		// form to what the host looked like before the change it has already been told about.
-		if (current()) applyStatus(statusResult.value);
+		const mayApply = loadMayApply({ fresh: current(), background, busy, dirty: hasChanges });
+		// Under the same guard as the status, and no longer ahead of it: written first, an
+		// older answer replaced a newer one's list — or blanked it — while its own status was
+		// correctly thrown away as stale.
+		if (mayApply) timezones = zonesResult.status === 'fulfilled' ? zonesResult.value : [];
+		// The failure is reported whatever happens to the values: it says nothing about the
+		// form, only that the host could not be read.
+		if (statusResult.status === 'rejected') return translateError(statusResult.reason);
+		if (mayApply) applyStatus(statusResult.value);
 		return '';
 	}
 
 	/** Load with nothing to preserve: whatever went wrong IS the message. */
-	async function reload(): Promise<void> {
-		const failure = await load();
+	async function reload(background = false): Promise<void> {
+		const failure = await load(background);
 		if (failure) errorMessage = failure;
 	}
 
@@ -156,7 +167,9 @@
 				.subscribe('system:timeChanged')
 				.catch(() => {})
 				.then(() => {
-					if (!busy && !hasChanges) void reload();
+					// Checked again when the answer lands: the read takes a round trip, and the
+					// user can start typing or saving inside it.
+					if (!busy && !hasChanges) void reload(true);
 				});
 		});
 		return () => {
@@ -248,16 +261,18 @@
 			errorMessage = tt('settings.time.errorInvalidInput');
 			return;
 		}
+		// Every value the save writes, read ONCE, here, before anything is in flight. The
+		// steps below are up to five round trips with the form still live behind them, so a
+		// reactive value re-read between two of them lets something that landed mid-save
+		// decide what a later step writes — or skip it, by moving the baseline it compares
+		// against. The plan makes that impossible locally, rather than leaving it to depend on
+		// every other place in this file keeping its `busy` guard right.
+		const plan = { autoSync, syncDirty, ntpServer: ntpServer.trim(), timezone, clock, loaded: { ntpServer: loaded.ntpServer, timezone: loaded.timezone } };
 		busy = true;
 		try {
-			// Order matters: automatic synchronisation goes off before a manual clock set
-			// (the OS refuses one while NTP owns the clock) and back on only at the end,
-			// so a clock set in the same save is not immediately overwritten by a sync.
-			if (!autoSync && syncDirty && !(await apply(api.call<SystemTimeResult>('system.setNtpEnabled', { enabled: false })))) return;
-			if (ntpServer.trim() !== loaded.ntpServer && !(await apply(api.call<SystemTimeResult>('system.setNtpServer', { server: ntpServer.trim() })))) return;
-			if (timezone !== loaded.timezone && !(await apply(api.call<SystemTimeResult>('system.setTimezone', { timezone })))) return;
-			if (clock && !(await apply(api.call<SystemTimeResult>('system.setClock', clock)))) return;
-			if (autoSync && syncDirty && !(await apply(api.call<SystemTimeResult>('system.setNtpEnabled', { enabled: true })))) return;
+			for (const write of planTimeWrites(plan)) {
+				if (!(await apply(api.call<SystemTimeResult>(write.method, write.params)))) return;
+			}
 			addNotification(tt('settings.time.saved'), 'success');
 			onBack?.();
 		} catch (e) {
