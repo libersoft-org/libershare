@@ -3,6 +3,9 @@ import { KEEP_ALIVE } from '@libp2p/interface';
 import { multiaddr } from '@multiformats/multiaddr';
 import { Network, normalizeMultiaddrForCompare } from '../../../src/protocol/network.ts';
 import { installBootstrapRegistry, type IRegistrySeed } from '../helpers/bootstrap-registry.ts';
+import { createEmptyPeerStore } from '../helpers/real-peer-store.ts';
+import { peerIdFromString } from '@libp2p/peer-id';
+import { MemoryDatastore } from 'datastore-core';
 
 /**
  * Unit tests for Network.disconnectPeer tag hygiene: hanging up a peer must
@@ -18,6 +21,20 @@ function makeNetwork() {
 	const merges: Array<{ tags: Record<string, unknown> }> = [];
 	const hungUp: string[] = [];
 	const deleted: string[] = [];
+	// A real peerStore: the purge that ends the disconnect decides and deletes under the
+	// store's own per-peer write lock, through its unlocked inner load/delete. Only the
+	// real store has either, and the durable delete is the whole point of this teardown.
+	const peerStore = createEmptyPeerStore();
+	const inner = (peerStore as any).store;
+	const dropRecord = inner.delete.bind(inner);
+	inner.delete = async (id: { toString(): string }): Promise<void> => {
+		deleted.push(id.toString());
+		await dropRecord(id);
+	};
+	// The tag removal is asserted from the patch it was handed, so it stays a spy.
+	peerStore.merge = async (_pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> => {
+		merges.push(patch);
+	};
 	const network = Object.create(Network.prototype) as Network;
 	(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
 	(network as any).bootstrapGeneration = new Map();
@@ -26,20 +43,13 @@ function makeNetwork() {
 	(network as any).redialBackoff = new Map();
 	(network as any).node = {
 		getConnections: () => [],
-		peerStore: {
-			async merge(_pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> {
-				merges.push(patch);
-			},
-			async delete(pid: { toString(): string }): Promise<void> {
-				deleted.push(pid.toString());
-			},
-		},
+		peerStore,
 		async hangUp(pid: { toString(): string }): Promise<void> {
 			hungUp.push(pid.toString());
 		},
 	};
 	const suppressed = (pid: string): boolean => (network as any).isRedialSuppressed(pid);
-	return { network, merges, hungUp, deleted, suppressed };
+	return { network, merges, hungUp, deleted, suppressed, peerStore, pid: peerIdFromString(PEER_ID) };
 }
 
 describe('Network.disconnectPeer — keep-alive tag removal', () => {
@@ -115,6 +125,65 @@ describe('Network.disconnectPeer — keep-alive tag removal', () => {
 		};
 		await network.disconnectPeer(PEER_ID, NET);
 		expect(suppressed(PEER_ID)).toBe(true);
+	});
+});
+
+/**
+ * The peerStore delete is the only part of a leave that outlives the process: suppression,
+ * the registry, the dedup set and the gossipsub direct entry are all in memory, and redial
+ * maintenance walks EVERY stored record — not just keep-alive-tagged ones — so a row that
+ * survived a leave dials the peer the user just left straight back after a restart.
+ * Swallowing that failure is fine for periodic eviction, where another cycle is coming; on
+ * an explicit leave it reports a disconnect the disk disagrees with.
+ */
+describe('Network.disconnectPeer — a failed durable delete must not report success', () => {
+	const ADDR = `/ip4/203.0.113.71/tcp/9090/p2p/${PEER_ID}`;
+
+	async function leavingNetwork(onDelete: (removeTheRow: () => Promise<void>) => Promise<never>) {
+		// One datastore, two stores: the second one stands in for the next process start,
+		// which is where a surviving row does its damage.
+		const datastore = new MemoryDatastore();
+		const peerStore = createEmptyPeerStore(datastore);
+		const pid = peerIdFromString(PEER_ID);
+		await peerStore.patch(pid, { multiaddrs: [multiaddr(ADDR)], tags: { [KEEP_ALIVE]: { value: 1 } } });
+		// The removal goes through a SECOND store over the same datastore — the shape of
+		// something outside this call having got there first, rather than of this delete
+		// half-succeeding. Through that store's inner, unlocked delete: mortice locks are
+		// keyed by peer id across every store in the process, and the public wrapper would
+		// queue behind the write lock this very call is holding.
+		(peerStore as any).store.delete = async (): Promise<never> => onDelete(async () => (createEmptyPeerStore(datastore) as any).store.delete(pid));
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).redialBackoff = new Map();
+		installBootstrapRegistry(network, []);
+		(network as any).node = {
+			getConnections: () => [],
+			peerStore,
+			async hangUp(): Promise<void> {},
+		};
+		return { network, datastore, pid };
+	}
+
+	it('rejects, and the row is still there for the next start to find', async () => {
+		const { network, datastore, pid } = await leavingNetwork(async () => {
+			throw Object.assign(new Error('database is locked'), { name: 'SqliteError' });
+		});
+		await expect(network.disconnectPeer(PEER_ID, NET)).rejects.toThrow('database is locked');
+		// Reopened over the same datastore, the way a restart would see it.
+		expect(await createEmptyPeerStore(datastore).has(pid)).toBe(true);
+	});
+
+	it('reports success when the record turns out to be gone already', async () => {
+		const { network, datastore, pid } = await leavingNetwork(async removeTheRow => {
+			await removeTheRow();
+			throw Object.assign(new Error('not found'), { name: 'NotFoundError', code: 'ERR_NOT_FOUND' });
+		});
+		await network.disconnectPeer(PEER_ID, NET);
+		// The row really is gone — which is the outcome the leave asked for, so the delete
+		// that found nothing left to remove must not be reported as a failure.
+		expect(await createEmptyPeerStore(datastore).has(pid)).toBe(false);
 	});
 });
 
