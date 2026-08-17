@@ -508,7 +508,7 @@ describe('BootstrapStatusTracker.batchDebounced', () => {
 		});
 
 		expect(seen.length).toBeGreaterThan(1); // not held back to the end
-		expect(seen.at(-1)).toBe(2);
+		expect(seen[seen.length - 1]).toBe(2);
 	});
 
 	it('emits nothing for a run that changed nothing', async () => {
