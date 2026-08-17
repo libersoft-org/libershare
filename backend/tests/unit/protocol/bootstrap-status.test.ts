@@ -208,7 +208,12 @@ describe('BootstrapStatusTracker.sweepStale', () => {
 		expect(tracker.getStatus(NET)).toBe(null); // ages out from the last real outcome
 	});
 
-	it('lets a real dial outcome refresh the clock', async () => {
+	/**
+	 * The failure is this node's own reaction to somebody else's mention of a dead peer.
+	 * Counting it as activity was the same immortality bug as the mention itself: gossip
+	 * names the peer, the dial fails, the row is refreshed, and the TTL never arrives.
+	 */
+	it('does not let a failed dial outcome refresh the staleness clock', async () => {
 		const tracker = new BootstrapStatusTracker();
 		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
 		const firstAt = clockOf(tracker);
@@ -216,9 +221,29 @@ describe('BootstrapStatusTracker.sweepStale', () => {
 
 		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
 
-		expect(Date.parse(clockOf(tracker))).toBeGreaterThan(Date.parse(firstAt));
+		expect(Date.parse(clockOf(tracker))).toBeGreaterThan(Date.parse(firstAt)); // display clock moves
 		tracker.sweepStale(TTL, () => false, Date.parse(firstAt) + TTL + 2);
-		expect(tracker.getStatus(NET)?.peers.length).toBe(1); // survives — clock moved
+		expect(tracker.getStatus(NET)).toBe(null); // staleness clock did not
+	});
+
+	it('lets a successful dial refresh the staleness clock', async () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
+		const firstAt = clockOf(tracker);
+		await Bun.sleep(5);
+
+		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'connected', null, null, 'discovered');
+
+		tracker.sweepStale(TTL, () => false, Date.parse(firstAt) + TTL + 2);
+		expect(tracker.getStatus(NET)?.peers.length).toBe(1); // survives — the address answered
+	});
+
+	/** The clock is bookkeeping, not part of what the API hands out. */
+	it('keeps the staleness clock out of the published snapshot', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'connected', null, null, 'discovered');
+
+		expect(tracker.getStatus(NET)!.peers[0]!).not.toHaveProperty('staleSince');
 	});
 
 	it('starts the clock on a first mention that has no prior row', () => {
