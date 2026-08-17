@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { ptr, type Pointer } from 'bun:ffi';
 import { parseWindowsNetworkState, readConnectionAttributes, WINDOWS_STATE_COMMAND } from '../../src/system-network-windows.ts';
 import { dbmToQuality, parseIwLink, parseLinuxNetworkState } from '../../src/system-network-linux.ts';
-import { assertReadProducedSomething, prefixFromNetmask, readGenericInterfaces, readNetworkState, resolvePrimaryID, resetNetworkStateCache } from '../../src/system-network.ts';
+import { assertReadProducedSomething, isAlreadyJoined, prefixFromNetmask, readGenericInterfaces, readNetworkState, resolvePrimaryID, resetNetworkStateCache } from '../../src/system-network.ts';
 import type { NetInterfaceInfo } from '@shared';
 
 /**
@@ -545,4 +545,64 @@ describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('r
 		},
 		LIVE_READ_TIMEOUT_MS
 	);
+});
+
+/**
+ * The backend's own refusal to "join" the network an interface is already on.
+ *
+ * The frontend hides that row, but the frontend is not the security boundary: a
+ * snapshot a few seconds old, a state change mid-operation or a direct RPC call
+ * all reach the join path anyway. And the join cannot be verified in that state —
+ * the Windows confirmation polls whether the adapter is connected to that SSID,
+ * which the still-live OLD connection satisfies on the first poll, reporting a
+ * success that never happened and skipping the rollback for a wrong password.
+ */
+describe('isAlreadyJoined', () => {
+	const radio = (overrides: Partial<NetInterfaceInfo> = {}): NetInterfaceInfo => ({
+		id: 'wlan0',
+		name: 'wlan0',
+		medium: 'wireless',
+		link: 'up',
+		defaultRoute: true,
+		mac: null,
+		addresses: [],
+		ipv4Mode: 'dhcp',
+		gateway: null,
+		dns: [],
+		ipv4Configurable: true,
+		wifiScannable: true,
+		wifiConnectable: true,
+		wifi: { ssid: 'Example Net', signal: 70, radio: 'on' },
+		...overrides,
+	});
+
+	it('recognises the network the adapter is on', () => {
+		expect(isAlreadyJoined(radio(), 'Example Net')).toBe(true);
+	});
+
+	it('lets a different network through', () => {
+		expect(isAlreadyJoined(radio(), 'Other Net')).toBe(false);
+	});
+
+	// An SSID is case-sensitive and byte-exact; two names that merely look alike
+	// are two networks, and joining the second must not be refused.
+	it('does not treat a similar name as the same network', () => {
+		expect(isAlreadyJoined(radio(), 'example net')).toBe(false);
+		expect(isAlreadyJoined(radio(), 'Example Net ')).toBe(false);
+	});
+
+	// An adapter that is merely ASSOCIATING carries the SSID already, so the name
+	// alone is not the answer — the carrier has to be up too.
+	it('does not count an adapter that is not actually on the network', () => {
+		expect(isAlreadyJoined(radio({ link: 'down' }), 'Example Net')).toBe(false);
+		expect(isAlreadyJoined(radio({ link: 'unknown' }), 'Example Net')).toBe(false);
+	});
+
+	it('lets a join through when the adapter reports no network at all', () => {
+		expect(isAlreadyJoined(radio({ wifi: { ssid: null, signal: null, radio: 'on' } }), 'Example Net')).toBe(false);
+		// A wireless row with no `wifi` block at all — a Wi-Fi Direct virtual adapter,
+		// or a host whose WLAN service could not be reached.
+		const { wifi: _wifi, ...noRadio } = radio();
+		expect(isAlreadyJoined(noRadio, 'Example Net')).toBe(false);
+	});
 });

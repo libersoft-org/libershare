@@ -331,8 +331,9 @@ export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 
 /** Join a Wi-Fi network on one interface. An empty password means an open network. */
 export async function connectWifi(interfaceID: string, ssid: string, password: string): Promise<void> {
-	await assertWirelessInterface(interfaceID, 'wifiConnectable');
+	const target = await assertWirelessInterface(interfaceID, 'wifiConnectable');
 	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
+	if (isAlreadyJoined(target, ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'this interface is already connected to that network');
 	// Checked before anything is written. On Windows the profile lands on disk
 	// ahead of the association attempt, so a credential no WPA2/WPA3 network could
 	// ever accept would overwrite a working saved one purely in order to fail.
@@ -365,7 +366,7 @@ function assertWindowsGuid(interfaceID: string): string {
  * here rather than trusted from the frontend: scanning and joining are separate
  * answers, and a direct RPC client sends neither.
  */
-async function assertWirelessInterface(interfaceID: string, capability: 'wifiScannable' | 'wifiConnectable'): Promise<void> {
+async function assertWirelessInterface(interfaceID: string, capability: 'wifiScannable' | 'wifiConnectable'): Promise<NetInterfaceInfo> {
 	const supported = await readCapabilities();
 	if (!supported.wifi) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host cannot configure Wi-Fi');
 	const state = await readNetworkState();
@@ -373,6 +374,33 @@ async function assertWirelessInterface(interfaceID: string, capability: 'wifiSca
 	if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
 	if (target.medium !== 'wireless') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'not a wireless interface');
 	if (target[capability] !== true) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this interface cannot be driven over Wi-Fi');
+	return target;
+}
+
+/**
+ * True when this interface is ALREADY associated with the named network.
+ *
+ * Such a join cannot be verified and must not be attempted. Windows confirms an
+ * association by polling whether the adapter is connected and to which SSID —
+ * and if it was already connected to that SSID, the very first poll sees the
+ * still-live old connection and reports success before Windows has finished the
+ * new attempt. A wrong password is then never noticed, because success has been
+ * reported and no rollback runs. It is also destructive for nothing: on Windows
+ * a join rewrites the stored profile before associating, so re-joining the
+ * current network replaces a working saved configuration to arrive back where it
+ * started.
+ *
+ * The frontend already hides the row, which is not the same as the backend
+ * refusing it — a snapshot a few seconds old, a state change mid-operation, or a
+ * direct RPC call all reach here regardless.
+ *
+ * ponytail: this closes the false-success path for the case that produces it.
+ * Proving an association in general needs `WlanRegisterNotification` and a
+ * notification-driven state machine correlated by interface, profile and
+ * attempt — a redesign, not a guard.
+ */
+export function isAlreadyJoined(iface: NetInterfaceInfo, ssid: string): boolean {
+	return iface.link === 'up' && iface.wifi?.ssid === ssid;
 }
 
 /**
