@@ -28,8 +28,10 @@ interface MockNet {
 	pruneConfiguredBootstrapPeer(pid: string): void;
 	bumpBootstrapGeneration(networkID: string): void;
 	generationBumps: string[];
-	pruneBootstrapAddresses(addresses: string[]): void;
+	pruneBootstrapAddresses(addresses: string[], networkID: string): void;
 	prunedAddresses: string[][];
+	/** Address releases with the owning network that is giving them up. */
+	addressReleases: Array<{ addresses: string[]; networkID: string }>;
 	pruneBootstrapStatus(networkID: string, keep: string[]): void;
 	prunedStatus: Array<{ networkID: string; keep: string[] }>;
 	addBootstrapPeers(peers: string[], networkID: string, origin: string): Promise<void>;
@@ -50,6 +52,7 @@ function makeMockNet(): MockNet {
 		suppressionClearedFor: [],
 		generationBumps: [],
 		prunedAddresses: [],
+		addressReleases: [],
 		prunedStatus: [],
 		dialledLists: [],
 		getTopicPeers(id) {
@@ -78,8 +81,9 @@ function makeMockNet(): MockNet {
 		bumpBootstrapGeneration(networkID) {
 			this.generationBumps.push(networkID);
 		},
-		pruneBootstrapAddresses(addresses) {
+		pruneBootstrapAddresses(addresses, networkID) {
 			this.prunedAddresses.push(addresses);
+			this.addressReleases.push({ addresses, networkID });
 		},
 		pruneBootstrapStatus(networkID, keep) {
 			this.prunedStatus.push({ networkID, keep });
@@ -263,6 +267,47 @@ describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 		expect(net.disconnected).toEqual([]);
 		// Exemption is still pruned — the relay status alone keeps it connected.
 		expect(net.prunedBootstrap).toEqual(['pRelayNode']);
+	});
+});
+
+/**
+ * Address ownership is per (address, network); the identity-level cleanup is per peer.
+ * Deciding the whole cleanup by peer ID skipped the address release whenever the same
+ * IDENTITY was configured somewhere else, so the left network's own claim survived —
+ * pinning the address against expiry and keeping the parked probe force-dialing it.
+ */
+describe('Networks.leaveNetwork — configured address release', () => {
+	let net: MockNet;
+
+	beforeEach(() => {
+		net = makeMockNet();
+	});
+
+	it('releases the left network claim on an address a second network also lists', async () => {
+		// Case (a): both networks list the SAME address of the same peer. The
+		// identity-level loop sees "still configured elsewhere" and skips, so nothing
+		// ever released net-a's claim and the address stayed pinned by it forever.
+		const shared = '/ip4/192.0.2.5/tcp/9090/p2p/pShared';
+		const networks = makeNetworks(net, ['net-a', 'net-b'], { 'net-a': [shared], 'net-b': [shared] });
+		await leave(networks, 'net-a');
+		expect(net.addressReleases).toContainEqual({ addresses: [shared], networkID: 'net-a' });
+	});
+
+	it('releases the left network address when the peer is listed elsewhere under another one', async () => {
+		// Case (b): same peer ID, different addresses. net-a's address was never
+		// released, so recovery and the parked probe went on dialing it.
+		const onlyA = '/ip4/192.0.2.5/tcp/9090/p2p/pShared';
+		const networks = makeNetworks(net, ['net-a', 'net-b'], { 'net-a': [onlyA], 'net-b': ['/ip4/192.0.2.6/tcp/9090/p2p/pShared'] });
+		await leave(networks, 'net-a');
+		expect(net.addressReleases).toContainEqual({ addresses: [onlyA], networkID: 'net-a' });
+	});
+
+	it('names the leaving network as the owner giving the claim up', async () => {
+		// Releasing under the wrong network id would drop somebody else's claim.
+		const address = '/ip4/192.0.2.5/tcp/9090/p2p/pBootA';
+		const networks = makeNetworks(net, ['net-a'], { 'net-a': [address] });
+		await leave(networks, 'net-a');
+		expect(net.addressReleases.every(r => r.networkID === 'net-a')).toBe(true);
 	});
 });
 
