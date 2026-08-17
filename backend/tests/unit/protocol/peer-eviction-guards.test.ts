@@ -1741,6 +1741,19 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 	});
 
 	/**
+	 * Going around the public wrapper must not go around its `peer:update` — libp2p's
+	 * registrar listens for it. A store that still has the lock but has moved or renamed
+	 * its emitter would otherwise write in silence, with nothing anywhere to fail on.
+	 */
+	it('refuses to remove an address from a store with no update emitter', async () => {
+		const real = await realPeerStore();
+		delete (real.store as any).events;
+		const network = networkOver(real.store);
+		await expect((network as any).removePeerStoreAddresses(real.pid, () => true)).rejects.toThrow('update emitter');
+		expect(await storedAddresses(real)).toEqual(['/ip4/203.0.113.21/tcp/9090']);
+	});
+
+	/**
 	 * Read-filter-write is only safe if nothing writes in between, and libp2p writes to
 	 * the peerStore constantly — identify, a signed peer record, an inbound connection.
 	 * An address that landed inside the window used to be overwritten by the older

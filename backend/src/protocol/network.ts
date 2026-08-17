@@ -448,18 +448,33 @@ interface IPeerStoreInternals {
 	patch(peerID: PeerID, data: { addresses: IStoredAddress[] }): Promise<{ updated: boolean }>;
 }
 
+/** The emitter the peerStore's public methods notify after every record they change. */
+interface IPeerStoreEvents {
+	safeDispatchEvent(type: string, detail: unknown): void;
+}
+
 /**
- * Reach the inner store, or refuse. There is no correct read-modify-write through the
- * public API alone, so a peerStore that does not expose its lock is a hard stop rather
- * than a quiet fallback — the callers act destructively on the result, and the failure
- * direction they can survive is "did nothing", not "lost an address".
+ * Reach the inner store and its emitter, or refuse. This is the ONE place that touches
+ * either: both are `private` upstream and outside any semver promise, so the whole
+ * binding is checked here and nowhere else.
+ *
+ * There is no correct read-modify-write through the public API alone, so a peerStore
+ * that does not expose its lock is a hard stop rather than a quiet fallback — the
+ * callers act destructively on the result, and the failure direction they can survive is
+ * "did nothing", not "lost an address". The emitter is required on the same terms: an
+ * upgrade that keeps the inner store but renames `events` would otherwise let the write
+ * go through with no `peer:update`, leaving libp2p's registrar looking at a record that
+ * changed under it — silently, and with nothing to fail on.
  */
-function peerStoreInternals(peerStore: unknown): { store: IPeerStoreInternals; events: { safeDispatchEvent(type: string, detail: unknown): void } | undefined } {
-	const store = (peerStore as { store?: Partial<IPeerStoreInternals> })?.store;
+function peerStoreInternals(peerStore: unknown): { store: IPeerStoreInternals; events: IPeerStoreEvents } {
+	const { store, events } = (peerStore as { store?: Partial<IPeerStoreInternals>; events?: Partial<IPeerStoreEvents> }) ?? {};
 	if (typeof store?.getWriteLock !== 'function' || typeof store?.load !== 'function' || typeof store?.patch !== 'function') {
 		throw new Error('peerStore does not expose its per-peer lock — refusing to remove an address without it');
 	}
-	return { store: store as IPeerStoreInternals, events: (peerStore as { events?: { safeDispatchEvent(type: string, detail: unknown): void } }).events };
+	if (typeof events?.safeDispatchEvent !== 'function') {
+		throw new Error('peerStore does not expose its update emitter — refusing to write an address change nothing would hear');
+	}
+	return { store: store as IPeerStoreInternals, events: events as IPeerStoreEvents };
 }
 
 /**
@@ -2531,7 +2546,7 @@ export class Network {
 			const result = await store.patch(pid, { addresses: keep });
 			// The public wrapper raises this after every write it makes, and libp2p's own
 			// registrar listens for it. Going around the wrapper must not go around the event.
-			if (result.updated) events?.safeDispatchEvent('peer:update', { detail: result });
+			if (result.updated) events.safeDispatchEvent('peer:update', { detail: result });
 			if (node !== this.node || epoch !== this.runEpoch) return { kind: 'superseded' };
 			return { kind: 'updated', remaining: keep.length };
 		} finally {
