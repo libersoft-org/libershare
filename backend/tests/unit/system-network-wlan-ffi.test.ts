@@ -12,7 +12,7 @@ import { isWindowsInterfaceID, readWindowsWifi, WLAN_SYMBOLS } from '../../src/s
  * checked; `WlanOpenHandle` receives a pointer to the caller's output buffer
  * instead and is the one function that legitimately declares `ptr` there.
  */
-const HANDLE_FIRST = ['WlanCloseHandle', 'WlanEnumInterfaces', 'WlanQueryInterface', 'WlanScan', 'WlanGetAvailableNetworkList', 'WlanSetProfile', 'WlanGetProfile', 'WlanDeleteProfile', 'WlanConnect'] as const;
+const HANDLE_FIRST = ['WlanCloseHandle', 'WlanEnumInterfaces', 'WlanQueryInterface', 'WlanScan', 'WlanGetAvailableNetworkList', 'WlanSetProfile', 'WlanGetProfile', 'WlanDeleteProfile', 'WlanGetProfileCustomUserData', 'WlanSetProfileCustomUserData', 'WlanConnect'] as const;
 
 describe('WLAN_SYMBOLS', () => {
 	it('declares every HANDLE parameter as u64 rather than ptr', () => {
@@ -23,6 +23,15 @@ describe('WLAN_SYMBOLS', () => {
 	// "what was there before" would be writing nothing and leaving it standing.
 	it('declares WlanDeleteProfile, without which a failed join cannot be undone', () => {
 		expect(WLAN_SYMBOLS.WlanDeleteProfile.args).toEqual([FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr]);
+	});
+
+	// Windows keeps a per-profile blob other WLAN clients own and discards it on any
+	// WlanSetProfile that changes the document — which every join does. Reading it
+	// hands back a pointer the caller must free; writing it takes the length as a
+	// plain DWORD, in the fourth position rather than through an out-parameter.
+	it('declares the custom user data pair with the length by value', () => {
+		expect(WLAN_SYMBOLS.WlanGetProfileCustomUserData.args).toEqual([FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr]);
+		expect(WLAN_SYMBOLS.WlanSetProfileCustomUserData.args).toEqual([FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr]);
 	});
 
 	it('declares WlanReasonCodeToString with the code first, not a handle', () => {

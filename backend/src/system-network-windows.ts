@@ -351,6 +351,8 @@ interface WlanApi {
 	WlanSetProfile: (handle: WlanHandle, guid: Pointer, flags: number, xml: Pointer, security: null, overwrite: number, reserved: null, reasonCode: Pointer) => number;
 	WlanGetProfile: (handle: WlanHandle, guid: Pointer, name: Pointer, reserved: null, xml: Pointer, flags: Pointer, access: null) => number;
 	WlanDeleteProfile: (handle: WlanHandle, guid: Pointer, name: Pointer, reserved: null) => number;
+	WlanGetProfileCustomUserData: (handle: WlanHandle, guid: Pointer, name: Pointer, reserved: null, size: Pointer, data: Pointer) => number;
+	WlanSetProfileCustomUserData: (handle: WlanHandle, guid: Pointer, name: Pointer, size: number, data: Pointer | null, reserved: null) => number;
 	WlanConnect: (handle: WlanHandle, guid: Pointer, parameters: Pointer, reserved: null) => number;
 	WlanReasonCodeToString: (reason: number, size: number, buffer: Pointer, reserved: null) => number;
 	WlanFreeMemory: (memory: Pointer) => void;
@@ -382,6 +384,8 @@ export const WLAN_SYMBOLS: Record<keyof WlanApi, WlanSymbol> = {
 	WlanSetProfile: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 	WlanGetProfile: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 	WlanDeleteProfile: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanGetProfileCustomUserData: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanSetProfileCustomUserData: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 	WlanConnect: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 	// The one entry point here that takes no handle at all: a reason code is
 	// translated by the DLL itself, so the first argument is the code.
@@ -1581,6 +1585,19 @@ export interface StoredProfile {
 	readonly xml: string;
 	/** WLAN_PROFILE_* flags. Writing it back with any others changes its scope. */
 	readonly flags: number;
+	/**
+	 * The opaque per-profile blob another WLAN client may keep beside this profile,
+	 * or null when it keeps none.
+	 *
+	 * Windows stores it separately from the document and DISCARDS it whenever the
+	 * document is rewritten with different content — measured on Windows 11: an
+	 * identical `WlanSetProfile` leaves it alone, one that changes the profile (which
+	 * every join does, because it writes the key the user just typed) drops it, and
+	 * a delete takes it with the profile. It belongs to whoever wrote it — enterprise
+	 * provisioning, a vendor's connection manager — and this app has no way to
+	 * reconstruct it, so the only honest thing is to hand it back.
+	 */
+	readonly customUserData: Uint8Array | null;
 }
 
 /**
@@ -1624,13 +1641,60 @@ export function readStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: U
 	if (xmlOut[0] === 0n) return { kind: 'error', message: 'the WLAN service reported a saved profile but returned no document for it' };
 	const xmlPointer = Number(xmlOut[0]) as Pointer;
 	try {
-		return { kind: 'found', profile: { xml: readUtf16z(xmlPointer), flags: flags[0] ?? 0 } };
+		return { kind: 'found', profile: { xml: readUtf16z(xmlPointer), flags: flags[0] ?? 0, customUserData: readProfileCustomUserData(api, handle, guidBytes, name) } };
 	} catch (err) {
 		// A document that cannot be read back is a document that cannot be restored.
 		return { kind: 'error', message: (err as Error).message };
 	} finally {
 		api.WlanFreeMemory(xmlPointer);
 	}
+}
+
+/** What `WlanGetProfileCustomUserData` answers for a profile that has none. */
+const ERROR_FILE_NOT_FOUND = 2;
+
+/**
+ * The custom user data stored against one profile, or null when there is none.
+ *
+ * Absence is a specific answer — measured on Windows 11, ERROR_FILE_NOT_FOUND for a
+ * profile that never had any and for one whose data a rewrite discarded — and
+ * ERROR_NOT_FOUND is accepted alongside it for the same reason `WlanGetProfile`
+ * distinguishes them. Any OTHER failure is also reported as null rather than
+ * raised: a blob that could not be read is one this attempt cannot promise to hand
+ * back, and failing the whole join over somebody else's metadata would be a worse
+ * answer than the join itself.
+ *
+ * `name` is the already-encoded profile name, because every caller has one.
+ */
+function readProfileCustomUserData(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, name: Uint16Array): Uint8Array | null {
+	const size = new Uint32Array(1);
+	const dataOut = new BigUint64Array(1);
+	const rc = api.WlanGetProfileCustomUserData(handle, ptr(guidBytes), ptr(name), null, ptr(size), ptr(dataOut));
+	if (rc === ERROR_FILE_NOT_FOUND || rc === ERROR_NOT_FOUND || rc !== 0) return null;
+	const length = size[0] ?? 0;
+	if (dataOut[0] === 0n || length === 0) return null;
+	const pointer = Number(dataOut[0]) as Pointer;
+	try {
+		// Copied out before the buffer is freed — a view over freed memory is not data.
+		return new Uint8Array(toArrayBuffer(pointer, 0, length)).slice();
+	} finally {
+		api.WlanFreeMemory(pointer);
+	}
+}
+
+/**
+ * Put somebody else's custom user data back after this attempt rewrote the profile
+ * out from under it.
+ *
+ * Best effort by design. The write that lost the data has already happened, so
+ * failing here would report a failure for a join that worked, and the caller has
+ * nothing better to do about it either. Nothing is written when the snapshot found
+ * no data: there is then nothing to lose, and a zero-length write is a clear
+ * rather than a no-op.
+ */
+function restoreProfileCustomUserData(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, name: Uint16Array, data: Uint8Array | null): void {
+	if (!data || data.length === 0) return;
+	api.WlanSetProfileCustomUserData(handle, ptr(guidBytes), ptr(name), data.length, ptr(data), null);
 }
 
 /** What one attempt did to the stored profiles, so the rollback knows what to undo. */
@@ -1702,6 +1766,11 @@ export function writeJoinProfile(api: WlanApi, handle: WlanHandle, guidBytes: Ui
 		// profile back afterwards.
 		if ((existing.flags & WLAN_PROFILE_GROUP_POLICY) !== 0) throw new Error('this network is managed by group policy and cannot be changed here');
 		writeProfile(api, handle, guidBytes, profileXml, existing.flags, 1);
+		// The write just discarded whatever another WLAN client kept beside this
+		// profile — see StoredProfile.customUserData. Replacing the credentials is
+		// what the user asked for; destroying somebody else's metadata is not, so it
+		// goes straight back, before the fingerprint is taken.
+		restoreProfileCustomUserData(api, handle, guidBytes, utf16z(profileName), existing.customUserData);
 		return { replaced: existing, created: false, written: readWrittenProfile(api, handle, guidBytes, profileName) };
 	}
 }
@@ -1783,7 +1852,11 @@ export function undoProfileChange(api: WlanApi, handle: WlanHandle, guidBytes: U
 	const document = utf16z(previous.xml);
 	const reason = new Uint32Array(1);
 	const rc = api.WlanSetProfile(handle, ptr(guidBytes), previous.flags, ptr(document), null, 1, null, ptr(reason));
-	return rc === 0 ? null : `the previous profile could not be restored (${describeProfileFailure(api, rc, reason[0] ?? 0)})`;
+	if (rc !== 0) return `the previous profile could not be restored (${describeProfileFailure(api, rc, reason[0] ?? 0)})`;
+	// Undoing the document is only half of undoing the write: that WlanSetProfile
+	// discarded the custom user data again, exactly as the failed attempt's own did.
+	restoreProfileCustomUserData(api, handle, guidBytes, name, previous.customUserData);
+	return null;
 }
 
 /** {@link undoProfileChange} on a handle of its own — the one used for the join is long closed by the time an association times out. */
