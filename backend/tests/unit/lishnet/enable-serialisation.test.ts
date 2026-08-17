@@ -333,6 +333,28 @@ describe('Networks — operations that change the set of lishnets', () => {
 		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
 	});
 
+	it('a network dropped by replace is cleaned up terminally, like a delete', async () => {
+		db = new Database(':memory:');
+		initLISHnetsTables(db);
+		addLISHnet(db, { networkID: NET, name: 'A', description: '', bootstrapPeers: [BOOTSTRAP], enabled: true, created: new Date().toISOString() });
+		net.topicPeers.set(NET, ['p-only-a']);
+		const gate = deferred();
+		net.disconnectGate = gate.promise;
+		const { networks } = makeNetworks(net, db, [NET]);
+
+		const replacing = networks.replace([]);
+		await settle();
+		// A newer enable only has to CLAIM its revision to pre-empt an abortable leave —
+		// it need not run. Its row is already gone, so it will answer "not found" and
+		// nothing else will ever finish this cleanup.
+		const enabling = networks.setEnabled(NET, true);
+		gate.resolve();
+		await Promise.all([replacing, enabling]);
+
+		expect(getLISHnet(db, NET)).toBeUndefined();
+		expect(net.disconnected).toContain('p-only-a');
+	});
+
 	it('a network added while replace waits is not wiped out behind its back', async () => {
 		const gate = deferred();
 		net.dialGate = gate.promise;

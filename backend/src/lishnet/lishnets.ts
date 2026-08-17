@@ -308,7 +308,15 @@ export class Networks {
 		if (!(joined && !wantJoined) && before.join('\n') !== after.join('\n')) this.syncBootstrapRuntime(id, previous?.bootstrapPeers ?? [], after);
 		// On the way out the leave does the whole cleanup, and it has to do it over the list
 		// this network was joined WITH — `previous` — because the new row is already written.
-		if (joined !== wantJoined) await this.reconcileLocked(id, wantJoined, !wantJoined && previous ? before : undefined, revision);
+		// A network whose ROW is gone gets the same terminal semantics as delete(): the
+		// cleanup must finish, because there will be nothing left to explain what it did
+		// not do. An abortable leave here — which is what a replace() that drops a joined
+		// network used to get — could be pre-empted between its steps by a newer enable,
+		// after it had already unsubscribed the topic. That enable then found no row and
+		// answered "not found", leaving the network's bootstrap addresses, keep-alive tags,
+		// peerStore records and connections installed with neither a row nor a subscription.
+		const terminal = next === undefined;
+		if (joined !== wantJoined) await this.reconcileLocked(id, wantJoined, !wantJoined && previous ? before : undefined, terminal ? undefined : revision);
 	}
 
 	/** True while `revision` is still the newest request for this lishnet. */
