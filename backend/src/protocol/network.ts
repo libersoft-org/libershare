@@ -456,6 +456,8 @@ export class Network {
 			getNode: (): Libp2p | null => this.node,
 			dialByPeerId: (peerID, protocol): Promise<IDialResult> => this.dialProtocolByPeerId(peerID, protocol),
 		});
+		// Lets the discovered-row cap keep live participants and drop dead addresses first.
+		this.bootstrapTracker.setMembersProvider((networkID): Set<string> => new Set(this.getTopicPeers(networkID)));
 		this.peerAnnounce = new PeerAnnounceManager({
 			getNode: (): Libp2p | null => this.node,
 			getPubsub: (): any => this.pubsub,

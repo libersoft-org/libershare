@@ -649,3 +649,51 @@ describe('BootstrapStatusTracker — one row per endpoint, whatever the spelling
 		expect(tracker.getStatus(NET)!.peers[0]!.status).toBe('connected');
 	});
 });
+
+/**
+ * The discovered-row cap decides what survives a flood. Dropping simply the oldest row
+ * let an attacker (or a broken emitter) push a live, connected participant out of the
+ * list with a burst of freshly invented dead addresses — undoing the protection the
+ * stale sweep gives an active member.
+ */
+describe('BootstrapStatusTracker — the cap evicts the least useful row', () => {
+	const NET = 'net-a';
+	const MEMBER = 'PeerMemberAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+	const GHOST = 'PeerGhostBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+
+	/** Fill the network to exactly the cap with fresh, failed, non-member rows. */
+	function floodToCap(tracker: BootstrapStatusTracker, count: number): void {
+		for (let i = 0; i < count; i++) tracker.recordOutcome(NET, `/ip4/198.51.100.${i % 254}/tcp/${9000 + i}/p2p/${GHOST}`, GHOST, 'timeout', 'no answer', null, 'discovered');
+	}
+
+	function survivors(tracker: BootstrapStatusTracker): string[] {
+		return (tracker.getStatus(NET)?.peers ?? []).map(p => p.multiaddr);
+	}
+
+	it('drops a fresh dead address before an older connected one', () => {
+		const tracker = new BootstrapStatusTracker();
+		const live = `/ip4/203.0.113.7/tcp/9090/p2p/${MEMBER}`;
+		tracker.recordOutcome(NET, live, MEMBER, 'connected', null, null, 'discovered');
+		// 256 further rows put the network one over the cap.
+		floodToCap(tracker, 256);
+
+		expect(survivors(tracker)).toContain(live);
+	});
+
+	it('keeps an active member even when its row is the oldest and failing', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.setMembersProvider(() => new Set([MEMBER]));
+		const failing = `/ip4/203.0.113.8/tcp/9090/p2p/${MEMBER}`;
+		tracker.recordOutcome(NET, failing, MEMBER, 'timeout', 'no answer', null, 'discovered');
+		floodToCap(tracker, 256);
+
+		expect(survivors(tracker)).toContain(failing);
+	});
+
+	it('still enforces the cap', () => {
+		const tracker = new BootstrapStatusTracker();
+		floodToCap(tracker, 300);
+
+		expect(survivors(tracker)).toHaveLength(256);
+	});
+});

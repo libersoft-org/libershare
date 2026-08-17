@@ -72,10 +72,22 @@ export class BootstrapStatusTracker {
 	private onStatusChange: ((networkID: string, status: BootstrapStatus) => void) | null = null;
 	/** Open {@link batch} frames, keyed by networkID. See that method for why. */
 	private readonly batches: Map<string, { depth: number; dirty: boolean }> = new Map();
+	/** Current members of a network, for {@link capDiscovered}. See {@link setMembersProvider}. */
+	private membersProvider: ((networkID: string) => Set<string>) | null = null;
 
 	/** Register a callback that fires on every status mutation. */
 	setOnChange(cb: ((networkID: string, status: BootstrapStatus) => void) | null): void {
 		this.onStatusChange = cb;
+	}
+
+	/**
+	 * Supply the current member set of a network, so {@link capDiscovered} can tell a row
+	 * that describes a live participant from one that describes an address nobody answers
+	 * on. Asked for the whole set rather than per peer because the cap ranks every row at
+	 * once and a per-peer question would rebuild the same snapshot for each of them.
+	 */
+	setMembersProvider(fn: ((networkID: string) => Set<string>) | null): void {
+		this.membersProvider = fn;
 	}
 
 	/**
@@ -219,7 +231,7 @@ export class BootstrapStatusTracker {
 		// could expire, no matter how many dials to it had already failed. Only a dial
 		// that actually CONNECTED advances it, in recordOutcome below.
 		net.set(key, { multiaddr: display, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: null, lastError: null, updatedAt: previous?.updatedAt ?? new Date().toISOString(), staleSince: previous?.staleSince ?? Date.now() });
-		this.capDiscovered(net);
+		this.capDiscovered(networkID, net);
 		this.notify(networkID);
 	}
 
@@ -237,7 +249,7 @@ export class BootstrapStatusTracker {
 		// clock kept exactly the rows this sweep exists to remove: gossip mentions the
 		// peer, the dial fails, the row is refreshed, and the TTL is never reached.
 		net.set(key, { multiaddr: display, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' ? Date.now() : (previous?.staleSince ?? Date.now()) });
-		this.capDiscovered(net);
+		this.capDiscovered(networkID, net);
 		this.notify(networkID);
 	}
 
@@ -263,13 +275,35 @@ export class BootstrapStatusTracker {
 		}
 	}
 
-	/** Bound discovered rows per network (drop the oldest) — see MAX_DISCOVERED_PER_NETWORK. */
-	private capDiscovered(net: Map<string, TrackedPeer>): void {
+	/**
+	 * Bound discovered rows per network — see MAX_DISCOVERED_PER_NETWORK.
+	 *
+	 * Age alone is the wrong order. It looks at neither the row's state nor whether the
+	 * peer is actually in the network, so a flood of freshly invented dead addresses could
+	 * push a live, connected participant out of the list — the stale sweep protects an
+	 * active member deliberately, and this used to undo that. Least useful goes first:
+	 * a non-member whose address failed, then one that has never answered, then a
+	 * non-member that once connected, and members last.
+	 */
+	private capDiscovered(networkID: string, net: Map<string, TrackedPeer>): void {
 		let discovered = 0;
 		for (const p of net.values()) if (p.origin === 'discovered') discovered++;
 		if (discovered <= MAX_DISCOVERED_PER_NETWORK) return;
-		const oldestFirst = [...net.entries()].filter(([, p]) => p.origin === 'discovered').sort((a, b) => Date.parse(a[1].updatedAt) - Date.parse(b[1].updatedAt));
-		for (let i = 0; i < discovered - MAX_DISCOVERED_PER_NETWORK; i++) net.delete(oldestFirst[i]![0]);
+		const members = this.membersProvider?.(networkID) ?? new Set<string>();
+		const rankOf = (p: TrackedPeer): number => {
+			const pid = p.expectedPeerID ?? p.actualPeerID;
+			if (pid && members.has(pid)) return 3;
+			if (p.status === 'connected') return 2;
+			if (p.status === 'pending') return 1;
+			return 0;
+		};
+		// Ranked once per row, not inside the comparator — the member lookup would
+		// otherwise run O(n log n) times over the same snapshot.
+		const victims = [...net.entries()]
+			.filter(([, p]) => p.origin === 'discovered')
+			.map(([key, p]) => ({ key, rank: rankOf(p), age: Date.parse(p.updatedAt) }))
+			.sort((a, b) => a.rank - b.rank || a.age - b.age);
+		for (let i = 0; i < discovered - MAX_DISCOVERED_PER_NETWORK; i++) net.delete(victims[i]!.key);
 	}
 
 	/** Drop a single peer entry directly (used after identity-mismatch purge of discovered peers). */
