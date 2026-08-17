@@ -282,6 +282,15 @@ export class Network {
 	 */
 	private runEpoch = 0;
 	/**
+	 * Aborts the bootstrap dial loop, for a shutdown that has to wait for it.
+	 *
+	 * The loop dials sequentially and one unreachable address costs a full connection
+	 * timeout, so a caller that waits for a join to finish before stopping the node would
+	 * otherwise wait out the whole list. Replaced on every {@link start}: an abort belongs to
+	 * the run it was raised for and must not refuse the next run's first dial.
+	 */
+	private dialAbort = new AbortController();
+	/**
 	 * Per-(peer,lish) timestamp of the last `have` response we sent.
 	 * Used to rate-limit responses to repeated `want` queries from the same peer for the same LISH:
 	 * we respond at most once per WANT_RESPONSE_COOLDOWN_MS. Periodic cleanup removes stale entries.
@@ -640,6 +649,9 @@ export class Network {
 				return;
 			}
 			this.lifecycle = 'starting';
+			// A fresh one per run — an abort raised for the previous shutdown would otherwise
+			// refuse this run's dials before it made any. See {@link dialAbort}.
+			this.dialAbort = new AbortController();
 			try {
 				await this.startLocked(bootstrapPeers);
 				this.lifecycle = 'running';
@@ -1719,6 +1731,18 @@ export class Network {
 		await this.bootstrapTracker.batchDebounced(networkID, () => this.dialBootstrapEntries(peers, networkID, origin));
 	}
 
+	/**
+	 * Abandon the bootstrap dialing of this run, without stopping the node.
+	 *
+	 * For a shutdown that waits for the operations already under way: a join parked on a
+	 * sequential walk of unreachable bootstrap addresses would otherwise hold it for one
+	 * connection timeout per address. Idempotent, and only ever the current run's dials —
+	 * {@link start} installs a fresh controller.
+	 */
+	cancelBootstrapDials(): void {
+		this.dialAbort.abort();
+	}
+
 	/** The dial loop behind {@link addBootstrapPeers}; see there for the batching wrapper. */
 	private async dialBootstrapEntries(peers: string[], networkID: string | null, origin: BootstrapPeerOrigin): Promise<void> {
 		if (!this.node) {
@@ -1744,7 +1768,10 @@ export class Network {
 		// the same object it took them from, whatever teardown has since put in the field.
 		const inFlight = this.inFlightBootstrapDials;
 		const generation = this.bootstrapGenerationOf(networkID);
-		const superseded = (): boolean => epoch !== this.runEpoch || generation !== this.bootstrapGenerationOf(networkID);
+		// Captured for the same reason as the epoch: this loop answers to the run it started
+		// on, and a controller replaced by a later start is not the one that can stop it.
+		const abort = this.dialAbort;
+		const superseded = (): boolean => epoch !== this.runEpoch || abort.signal.aborted || generation !== this.bootstrapGenerationOf(networkID);
 		for (const peer of peers) {
 			if (superseded()) return;
 			let probeAfterQuarantine = false;
@@ -1886,7 +1913,11 @@ export class Network {
 					// that names many of them could otherwise make us open a connection per
 					// address. For those, libp2p's own reuse is the desired behaviour.
 					const pidObj = peerID ? peerIDFromString(peerID) : null;
-					const conn = await this.node.dial(ma, effectiveOrigin === 'configured' ? { force: true } : {});
+					// The signal is what makes a shutdown able to WAIT for this loop instead of
+					// racing it: without it, abandoning the run still leaves the current dial
+					// running to its full timeout, and a list of unreachable addresses costs
+					// that many timeouts before anyone can stop the node.
+					const conn = await this.node.dial(ma, effectiveOrigin === 'configured' ? { force: true, signal: abort.signal } : { signal: abort.signal });
 					const verifiedThisAddr = isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString());
 					// A dial already in flight cannot be called back: hangUp only closes
 					// connections that ALREADY exist, so a leave-network landing mid-dial finds
