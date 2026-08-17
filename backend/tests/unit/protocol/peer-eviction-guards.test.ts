@@ -2041,6 +2041,123 @@ describe('purgeStalePeer — a purge that started inside another one', () => {
 });
 
 /**
+ * Serialising the purges fixed them corrupting each other, and introduced the last thing
+ * left: the queued purge still acts on the decision it was created with. The condition —
+ * no connections, no address that has not been disproved — is read OUTSIDE the lock, so a
+ * purge can wait behind another one for as long as that one takes and then run against an
+ * answer that is no longer true.
+ *
+ * The case the earlier tests miss is the one where the connection SURVIVES. The first purge
+ * finds the peer connected again and heals it, correctly. The second, queued behind it,
+ * then force-closes that live connection and deletes the peer — not because anything about
+ * the peer says so, but because nothing re-asked.
+ */
+describe('purgeStalePeer — a queued purge must not act on a stale decision', () => {
+	const LIVE = `/ip4/203.0.113.91/tcp/9090/p2p/${PEER_ID}`;
+
+	/**
+	 * The connection lands as the FIRST purge takes the peerStore write lock — inside its
+	 * close loop, which has already run and found nothing — and stays up from then on. The
+	 * second purge is started at that same moment, so it is queued on the purge lock before
+	 * the first one heals, which is exactly the interleaving that produces a stale decision.
+	 */
+	async function bareNetwork() {
+		const real = await createRealPeerStore(PEER_ID, [LIVE]);
+		let connected = false;
+		let closes = 0;
+		let second: Promise<void> | null = null;
+		const network = Object.create(Network.prototype) as Network;
+		const connection = {
+			remoteAddr: multiaddr(LIVE),
+			async close(): Promise<void> {
+				// libp2p drops a closed connection from the node, and it is that disappearance
+				// that lets the check under the lock read "gone" and delete the record.
+				closes++;
+				connected = false;
+			},
+		};
+		const inner = (real.store as any).store;
+		const getWriteLock = inner.getWriteLock.bind(inner);
+		let acquisitions = 0;
+		inner.getWriteLock = async (...args: any[]): Promise<() => void> => {
+			if (++acquisitions === 1) {
+				connected = true;
+				second = (network as any).purgeStalePeer(PEER_ID, 'second', 1);
+			}
+			return getWriteLock(...args);
+		};
+		const direct = new Set<string>([PEER_ID]);
+		(network as any).runEpoch = 1;
+		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).pubsub = { direct };
+		installBootstrapRegistry(network, [{ address: LIVE }]);
+		(network as any).node = {
+			getConnections: () => (connected ? [connection] : []),
+			peerStore: real.store,
+		};
+		return { network, real, direct, closes: (): number => closes, waitForSecond: async (): Promise<void> => void (await second) };
+	}
+
+	it('leaves a peer the earlier purge healed exactly as it found it', async () => {
+		const { network, real, direct, closes, waitForSecond } = await bareNetwork();
+		await (network as any).purgeStalePeer(PEER_ID, 'first', 1);
+		await waitForSecond();
+		expect({
+			record: await real.store.has(real.pid),
+			bootstrapPeerIDs: [...((network as any).bootstrapPeerIDs as Set<string>)],
+			registry: registryAddresses(network),
+			direct: [...direct],
+			closes: closes(),
+		}).toEqual({
+			record: true,
+			bootstrapPeerIDs: [PEER_ID],
+			registry: [normalizeMultiaddrForCompare(LIVE)],
+			direct: [PEER_ID],
+			closes: 0,
+		});
+	});
+
+	/**
+	 * The other side of that re-check, and the shape `disconnectPeer` has: a leave-network
+	 * claims the peer through suppression and then purges it while it is still connected.
+	 * That purge is COMMANDED — the connection is what it is there to close — so the
+	 * re-check must not touch it. Without this, every leave would silently become a no-op.
+	 */
+	it('still tears down a connected peer a leave has claimed', async () => {
+		const real = await createRealPeerStore(PEER_ID, [LIVE]);
+		let closes = 0;
+		const connection = {
+			remoteAddr: multiaddr(LIVE),
+			async close(): Promise<void> {
+				closes++;
+			},
+		};
+		const direct = new Set<string>([PEER_ID]);
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).redialSuppressedByNet = new Map([['net', new Set([PEER_ID])]]);
+		(network as any).redialBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).pubsub = { direct };
+		installBootstrapRegistry(network, [{ address: LIVE }]);
+		(network as any).node = { getConnections: () => [connection], peerStore: real.store };
+
+		await (network as any).purgeStalePeer(PEER_ID, 'left-network exclusive peer', 1, 'durable');
+		expect({
+			record: await real.store.has(real.pid),
+			bootstrapPeerIDs: [...((network as any).bootstrapPeerIDs as Set<string>)],
+			registry: registryAddresses(network),
+			direct: [...direct],
+			closes,
+		}).toEqual({ record: false, bootstrapPeerIDs: [], registry: [], direct: [], closes: 1 });
+	});
+});
+
+/**
  * An address can be BOTH gossip-discovered and user-configured. Collapsing the two into
  * "has an owner or does not" meant removing the configured claim deleted an entry
  * discovery had learned and verified on its own — a loss the user never asked for by
