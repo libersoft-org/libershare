@@ -1650,27 +1650,24 @@ export function readStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: U
 	}
 }
 
-/** What `WlanGetProfileCustomUserData` answers for a profile that has none. */
-const ERROR_FILE_NOT_FOUND = 2;
-
 /**
  * The custom user data stored against one profile, or null when there is none.
  *
- * Absence is a specific answer — measured on Windows 11, ERROR_FILE_NOT_FOUND for a
- * profile that never had any and for one whose data a rewrite discarded — and
- * ERROR_NOT_FOUND is accepted alongside it for the same reason `WlanGetProfile`
- * distinguishes them. Any OTHER failure is also reported as null rather than
- * raised: a blob that could not be read is one this attempt cannot promise to hand
- * back, and failing the whole join over somebody else's metadata would be a worse
- * answer than the join itself.
+ * Every non-zero result is null, absence and failure alike, and deliberately so —
+ * unlike {@link readStoredProfile}, which must tell them apart because it decides
+ * whether a profile may be overwritten. Absence is by far the common answer
+ * (ERROR_FILE_NOT_FOUND, measured on Windows 11 both for a profile that never had
+ * custom data and for one whose data a rewrite discarded), and a blob that could
+ * not be read for any other reason is equally one this attempt cannot promise to
+ * hand back. Failing a join over somebody else's metadata would be a worse answer
+ * than the join.
  *
  * `name` is the already-encoded profile name, because every caller has one.
  */
 function readProfileCustomUserData(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, name: Uint16Array): Uint8Array | null {
 	const size = new Uint32Array(1);
 	const dataOut = new BigUint64Array(1);
-	const rc = api.WlanGetProfileCustomUserData(handle, ptr(guidBytes), ptr(name), null, ptr(size), ptr(dataOut));
-	if (rc === ERROR_FILE_NOT_FOUND || rc === ERROR_NOT_FOUND || rc !== 0) return null;
+	if (api.WlanGetProfileCustomUserData(handle, ptr(guidBytes), ptr(name), null, ptr(size), ptr(dataOut)) !== 0) return null;
 	const length = size[0] ?? 0;
 	if (dataOut[0] === 0n || length === 0) return null;
 	const pointer = Number(dataOut[0]) as Pointer;
