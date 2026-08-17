@@ -268,3 +268,68 @@ describe('peer:discovery — one dial per peer at a time', () => {
 		expect(dialled).toHaveLength(2);
 	});
 });
+
+/**
+ * Single-flighting the dial per peer must not single-flight the KNOWLEDGE. mDNS,
+ * identify and PX each raise their own event for the same arrival with their own
+ * address list, so the second event routinely carries an address the first did not —
+ * a direct one where the outstanding dial is grinding through a relay. Dropping the
+ * event whole threw that address away entirely: never dialed, never even recorded.
+ */
+describe('peer:discovery — a skipped duplicate still contributes its addresses', () => {
+	const RELAY_ADDR = { toString: () => `/ip4/203.0.113.9/tcp/9090/p2p/RelayXYZ/p2p-circuit/p2p/${PEER_ID}` };
+	const DIRECT_ADDR = { toString: () => `/ip4/198.51.100.4/tcp/9090/p2p/${PEER_ID}` };
+
+	it('merges the later addresses into the peerStore instead of discarding them', async () => {
+		const handlers = new Map<string, Handler>();
+		const merged: unknown[][] = [];
+		const dialled: unknown[][] = [];
+		let releaseDial: () => void = () => {};
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).listeners = [];
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).inFlightDiscoveryDials = new Set<string>();
+		(network as any).redialBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).dcutrPeers = new Set<string>();
+		(network as any).peerDisconnectHandlers = new Set();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).recentDisconnects = [];
+		(network as any).lastMeshChange = new Map();
+		(network as any).pubsub = null;
+		(network as any).node = {
+			peerId: { toString: () => 'selfID' },
+			addEventListener(event: string, handler: Handler) {
+				handlers.set(event, handler);
+			},
+			getConnections: () => [],
+			getPeers: () => [],
+			async dial(multiaddrs: unknown[]): Promise<unknown> {
+				dialled.push(multiaddrs);
+				await new Promise<void>(resolve => {
+					releaseDial = resolve;
+				});
+				return {};
+			},
+			peerStore: {
+				async merge(_pid: unknown, patch: { multiaddrs?: unknown[] }): Promise<void> {
+					if (patch.multiaddrs) merged.push(patch.multiaddrs);
+				},
+			},
+		};
+		(network as any).setupEventListeners();
+		const fire = async (addr: unknown): Promise<void> => await handlers.get('peer:discovery')!({ detail: { id: { toString: () => PEER_ID }, multiaddrs: [addr] } });
+
+		const first = fire(RELAY_ADDR);
+		for (let i = 0; i < 4; i++) await Promise.resolve();
+		// Second source names the same peer on a better address while the first dial hangs.
+		await fire(DIRECT_ADDR);
+
+		expect(dialled).toHaveLength(1);
+		expect(merged).toEqual([[DIRECT_ADDR]]);
+
+		releaseDial();
+		await first;
+	});
+});

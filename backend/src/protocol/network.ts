@@ -847,6 +847,16 @@ export class Network {
 			// into the replacement would free the next run's claim.
 			const inFlight = this.inFlightDiscoveryDials;
 			if (inFlight.has(peerID)) {
+				// The DIAL is a duplicate; the ADDRESSES need not be. Each discovery source
+				// carries its own list, and the outstanding dial may be labouring through a
+				// relay address while this event names a direct one. Dropping the event whole
+				// threw that address away without even recording it, so nothing could use it
+				// later either. Merge it and let the skip cost only the redundant dial.
+				try {
+					await this.node!.peerStore.merge(evt.detail.id, { multiaddrs: evt.detail.multiaddrs });
+				} catch (err: any) {
+					trace(`[NET] discovery addr merge failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+				}
 				trace(`[NET] discovery dial skipped (already in flight): ${peerID.slice(0, 16)}`);
 				return;
 			}
