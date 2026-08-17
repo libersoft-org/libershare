@@ -504,9 +504,10 @@ interface IPeerStoreInternals {
 	 */
 	patchExisting(peerID: PeerID, data: { addresses: IStoredAddress[] }): Promise<{ updated: boolean }>;
 	/**
-	 * `merge()` without the lock the public wrapper takes — same reason as `delete()`.
-	 * A merge whose CONTENT depends on what the record holds right now has to read and
-	 * write inside one lock, and the public wrapper would deadlock against it.
+	 * `merge()` without the lock the public wrapper takes — that one is the peer's WRITE
+	 * lock, so calling it while holding the same lock deadlocks. A merge whose CONTENT
+	 * depends on what the record holds right now has to read and write inside one lock, so
+	 * it uses this and raises the event itself.
 	 */
 	merge(peerID: PeerID, data: Record<string, unknown>): Promise<{ updated: boolean }>;
 }
@@ -2553,9 +2554,10 @@ export class Network {
 			}
 		}
 		this.unreachableQuarantine.delete(peerID);
-		// The suppression check above happened before the write completed. A leave-network
-		// completing inside it makes the restore the older intent, and putting the entry back
-		// with a keep-alive tag is exactly what the leave had just undone — so take it back.
+		// Whichever of the two places wrote the record, it checked suppression before the
+		// write rather than after it. A leave-network completing inside that write makes the
+		// restore the older intent, and putting the entry back with a keep-alive tag is
+		// exactly what the leave had just undone — so take it back.
 		if (epoch !== this.runEpoch || node !== this.node) return;
 		if (this.isRedialSuppressed(peerID)) {
 			trace(`[NET] purge healing raced a leave, dropping the restored entry: ${peerID.slice(0, 16)}`);
