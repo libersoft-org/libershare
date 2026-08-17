@@ -1002,11 +1002,25 @@ export class Network {
 				console.debug(`   Total connected: ${this.node!.getPeers().length}`);
 
 				if (this.bootstrapPeerIDs.has(peerID)) {
+					const node = this.node!;
+					const epoch = this.runEpoch;
 					const connectionMultiaddrs = connections.map(c => c.remoteAddr);
-					await this.node!.peerStore.merge(evt.detail, {
+					await node.peerStore.merge(evt.detail, {
 						multiaddrs: connectionMultiaddrs,
 						tags: { [KEEP_ALIVE]: { value: 1 } },
 					});
+					// The decision to write was taken before this await; a leave-network or a
+					// config removal can finish inside it, and this write then lands ON TOP of
+					// the cleanup — addresses and a keep-alive tag for a peer that was just
+					// deliberately torn down. Suppression is the marker of that intent, and it
+					// is claimed before the cleanup's own awaits precisely so late writers can
+					// see it.
+					if (node !== this.node || epoch !== this.runEpoch) return;
+					if (this.isRedialSuppressed(peerID)) {
+						trace(`[NET] peer:connect write raced a cleanup, undoing: ${peerID.slice(0, 16)}`);
+						await this.purgeStalePeer(peerID, 'keep-alive write raced a leave', epoch);
+						return;
+					}
 					console.debug('   Tagged as KEEP_ALIVE (bootstrap peer)');
 				}
 				// A mere reconnect does NOT lift leave-network suppression: a peer we left can
@@ -2266,7 +2280,19 @@ export class Network {
 			multiaddrs: connections.map(c => c.remoteAddr),
 			tags: { [KEEP_ALIVE]: { value: 1 } },
 		});
-		if (epoch !== this.runEpoch) return;
+		// The caller checked suppression before this merge. A leave-network completing
+		// inside it makes the restore the older intent, and putting the entry back with a
+		// keep-alive tag is exactly what the leave had just undone — so take it back.
+		if (epoch !== this.runEpoch || node !== this.node) return;
+		if (this.isRedialSuppressed(peerID)) {
+			trace(`[NET] purge healing raced a leave, dropping the restored entry: ${peerID.slice(0, 16)}`);
+			try {
+				await node.peerStore.delete(pid);
+			} catch {
+				// Already gone — the outcome we were after.
+			}
+			return;
+		}
 		for (const c of connections) {
 			const remote = c.remoteAddr;
 			if (!remote) continue;

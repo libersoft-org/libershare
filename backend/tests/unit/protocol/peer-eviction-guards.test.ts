@@ -1420,3 +1420,56 @@ describe('post-dial validation of the remaining dial paths', () => {
 		expect(closed).toEqual([]);
 	});
 });
+
+/**
+ * The write, not the read, is what outlives the cleanup on these two paths: both decide
+ * to restore keep-alive state, and a leave-network finishes inside the peerStore merge
+ * they are awaiting. The suppression marker is claimed before the leave's own awaits so
+ * that a late writer can see it — these are the two writers that were not looking.
+ */
+describe('peerStore writes that race a leave-network', () => {
+	const LIVE = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork() {
+		const deleted: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).pubsub = { direct: new Set<string>() };
+		installBootstrapRegistry(network, []);
+		(network as any).node = {
+			getConnections: () => [{ remoteAddr: multiaddr(LIVE), async close(): Promise<void> {} }],
+			peerStore: {
+				// The leave lands while this write is pending — the exact window.
+				async merge(): Promise<void> {
+					(network as any).redialSuppressedByNet = new Map([['net-a', new Set([PEER_ID])]]);
+				},
+				async delete(pid: { toString(): string }): Promise<void> {
+					deleted.push(pid.toString());
+				},
+			},
+		};
+		return { network, deleted };
+	}
+
+	it('drops the entry a purge-healing restore put back', async () => {
+		const { network, deleted } = bareNetwork();
+		const pid = peerIdLike(PEER_ID);
+		await (network as any).restorePurgedPeerState((network as any).node, pid, [{ remoteAddr: multiaddr(LIVE) }], 1);
+		expect(deleted).toEqual([PEER_ID]);
+		// And nothing of the bootstrap state was rebuilt on top of the leave.
+		expect(registryAddresses(network)).toEqual([]);
+	});
+
+	it('keeps the restore when no leave interfered', async () => {
+		const { network, deleted } = bareNetwork();
+		(network as any).node.peerStore.merge = async (): Promise<void> => {};
+		const pid = peerIdLike(PEER_ID);
+		await (network as any).restorePurgedPeerState((network as any).node, pid, [{ remoteAddr: multiaddr(LIVE) }], 1);
+		expect(deleted).toEqual([]);
+		expect(registryAddresses(network)).toEqual([normalizeMultiaddrForCompare(LIVE)]);
+	});
+});
