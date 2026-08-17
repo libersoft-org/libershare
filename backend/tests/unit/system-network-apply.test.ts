@@ -551,6 +551,27 @@ describe('windowsApplyIPv4Command', () => {
 		expect(snapshot).not.toContain('-Name NameServer');
 	});
 
+	// The reader shows only addresses Windows calls Preferred, and the alias refusal
+	// in front of the apply counts what the reader shows — while the removal below
+	// takes every IPv4 address the interface has, Preferred or not. An interface
+	// with a deprecated address beside its real one therefore looked ordinary and
+	// lost the address nobody was shown.
+	it('refuses an interface holding several IPv4 addresses, counted on the machine', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
+		expect(command).toContain('this interface carries several IPv4 addresses');
+		// Out of the snapshot, which queries without an AddressState filter — so the
+		// count includes exactly the addresses the reader dropped.
+		expect(command).toContain('@($oldAddresses | Where-Object');
+		expect(command).not.toContain('AddressState');
+		// Before anything is removed, so the refusal costs nothing and undoes nothing.
+		expect(command.indexOf('several IPv4 addresses')).toBeLessThan(command.indexOf('try { try { Remove-NetIPAddress'));
+	});
+
+	it('does not count an APIPA address as an alias worth refusing', () => {
+		// 169.254.x is "DHCP did not answer", not a configuration to preserve.
+		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).toContain("$_.IPAddress -notlike '169.254.*'");
+	});
+
 	it('keeps the route metrics in the snapshot, not just the next hops', () => {
 		// A hand-set metric is what ranks competing default routes; restoring the
 		// route without it silently re-ranks every route on a multi-homed host.

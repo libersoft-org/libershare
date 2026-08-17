@@ -656,6 +656,27 @@ function windowsRestoreSteps(): string[] {
 }
 
 /**
+ * Refuse an interface carrying more than one IPv4 address, counted on the machine
+ * itself rather than in the reading.
+ *
+ * `ipv4EditObjection` already refuses aliases, but it counts what
+ * {@link parseWindowsNetworkState} REPORTS — and that reader drops every address
+ * Windows does not call `Preferred`, because a tentative or deprecated address is
+ * not one the host can be reached on. The apply is not so selective: a single
+ * `Remove-NetIPAddress -AddressFamily IPv4` takes ALL of them. So an interface
+ * holding one preferred address beside a deprecated one looked like a plain
+ * single-address interface, passed the check, and lost the address nobody had
+ * been shown.
+ *
+ * Counted out of the snapshot, which is the same query with no state filter, so
+ * this costs no extra call. APIPA is excluded: it exists only because DHCP did
+ * not answer, and removing it is the point of the apply rather than a loss.
+ * Placed after the snapshot and before the first removal — nothing has been
+ * changed yet, so the refusal is free.
+ */
+const WINDOWS_ALIAS_GUARD = `if (@($oldAddresses | Where-Object { $_.IPAddress -notlike '169.254.*' }).Count -gt 1) { throw "this interface carries several IPv4 addresses, which this app cannot preserve" }`;
+
+/**
  * Build the PowerShell one-shot that applies an IPv4 configuration.
  *
  * The interface is resolved by GUID rather than by name because `netsh` and the
@@ -693,7 +714,7 @@ export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): st
 		mutation.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`, dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses', `if (-not (Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq '${config.address}' })) { throw "the address was accepted but is not on the interface" }`);
 	}
 	const guarded = `try { ${mutation.join('; ')} } catch { $applyError = $_; try { ${windowsRestoreSteps().join('; ')} } catch { throw "the change failed ($($applyError.Exception.Message)) and rolling it back also failed ($($_.Exception.Message))" }; throw $applyError }`;
-	return [...preamble, ...windowsSnapshotSteps(), guarded].join('; ');
+	return [...preamble, ...windowsSnapshotSteps(), WINDOWS_ALIAS_GUARD, guarded].join('; ');
 }
 
 /**
