@@ -561,9 +561,28 @@ describe('parseAnyUnitActive', () => {
 		expect(parseAnyUnitActive('')).toBe(false);
 	});
 
-	it('does not match a state that merely contains the word', () => {
-		expect(parseAnyUnitActive('inactive (dead)\n')).toBe(false);
-		expect(parseAnyUnitActive('deactivating\n')).toBe(false);
+	/**
+	 * This test used to assert the opposite, and the assertion was the bug: timedated counts
+	 * everything but `inactive` and `failed` as active, and a daemon that is deactivating has
+	 * not let go of the clock yet. `maintenance` is the other state systemd already has that
+	 * the old "active/activating/reloading" list missed.
+	 */
+	it('counts a daemon on its way down, and every other state systemd reports', () => {
+		expect(parseAnyUnitActive('deactivating\n')).toBe(true);
+		expect(parseAnyUnitActive('maintenance\n')).toBe(true);
+		expect(parseAnyUnitActive('inactive\n\ndeactivating\n')).toBe(true);
+	});
+
+	/** An unknown state is a state we cannot rule out, so it counts as a daemon in the way. */
+	it('fails closed on a state it does not recognise', () => {
+		expect(parseAnyUnitActive('refreshing\n')).toBe(true);
+		expect(parseAnyUnitActive('inactive (dead)\n')).toBe(true);
+	});
+
+	/** Blank separator lines between units are not a state at all. */
+	it('ignores the blank lines systemctl puts between units', () => {
+		expect(parseAnyUnitActive('inactive\n\n\ninactive\n\n')).toBe(false);
+		expect(parseAnyUnitActive('   \n')).toBe(false);
 	});
 });
 

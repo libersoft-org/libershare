@@ -488,11 +488,17 @@ export const COMPETING_NTP_UNITS: string[] = ['chronyd.service', 'chrony.service
  * True when `systemctl show -p ActiveState --value <units...>` reports any of them as
  * running. A unit that does not exist on the host reports `inactive`, so an absent
  * chrony is indistinguishable from a stopped one — which is the correct answer here.
+ *
+ * The test is systemd-timedated's own, and it is the INVERSE of the obvious one: it counts
+ * a unit as active unless its state is exactly `inactive` or `failed`. Listing the states
+ * that mean "running" instead left `deactivating` — a daemon on its way down that still
+ * holds the clock — and every state a future systemd may add reading as "nothing in the
+ * way". An unrecognised state has to fail closed, and only this direction does that.
  */
 export function parseAnyUnitActive(output: string): boolean {
 	return output.split(/\r?\n/).some(line => {
 		const state = line.trim();
-		return state === 'active' || state === 'activating' || state === 'reloading';
+		return state.length > 0 && state !== 'inactive' && state !== 'failed';
 	});
 }
 
