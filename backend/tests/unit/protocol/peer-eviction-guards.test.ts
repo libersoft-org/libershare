@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
 import { Network, isRecoveryDialDue, isSameDialEndpoint, normalizeMultiaddrForCompare } from '../../../src/protocol/network.ts';
+import { BootstrapStatusTracker } from '../../../src/protocol/bootstrap-status.ts';
 
 /**
  * Guards on the DESTRUCTIVE peer-eviction paths. The pure decision helpers are covered
@@ -97,7 +98,12 @@ describe('runRedialMaintenance — eviction with no reachable address', () => {
 		(network as any).noReachableSince = new Map([[PEER_ID, Date.now() - opts.sinceMsAgo]]);
 		(network as any).configuredBootstrapPeerIDs = new Set(opts.configured ? [PEER_ID] : []);
 		(network as any).configuredBootstrapAddresses = new Set<string>();
-		(network as any).bootstrapTracker = { deleteDiscoveredByPeerID() {} };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			deleteDiscoveredByPeerID() {},
+		};
 		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
 		(network as any).node = { getConnections: () => [] };
 		// Only the peer itself is ever asked about; "online" means we hold a connection
@@ -171,6 +177,9 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 		(network as any).inFlightBootstrapDials = new Set<string>();
 		const outcomes: string[] = [];
 		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
 			markPending() {},
 			recordOutcome(_net: unknown, _addr: unknown, _pid: unknown, status: string) {
 				outcomes.push(status);
@@ -334,7 +343,13 @@ describe('addBootstrapPeers — forced probe only for configured addresses', () 
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Set<string>();
-		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			markPending() {},
+			recordOutcome() {},
+		};
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
 			getConnections: () => [{}], // already connected to this peer some other way
@@ -384,7 +399,12 @@ describe('configured exemption ends when the peer leaves the config', () => {
 		(network as any).bootstrapMultiaddrs = [multiaddr(`/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`)];
 		(network as any).configuredBootstrapAddresses = new Set([normalizeMultiaddrForCompare(`/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`)]);
 		(network as any).addressProbeBackoff = new Map();
-		(network as any).bootstrapTracker = { deleteDiscoveredByPeerID() {} };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			deleteDiscoveredByPeerID() {},
+		};
 		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
 		(network as any).node = { getConnections: () => [] };
 		(network as any).hasConnectionOtherThan = () => true;
@@ -470,7 +490,13 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Set<string>();
-		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			markPending() {},
+			recordOutcome() {},
+		};
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
 			getConnections: () => [],
@@ -534,7 +560,13 @@ describe('addBootstrapPeers — a dial that lands after leave-network', () => {
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Set<string>();
-		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			markPending() {},
+			recordOutcome() {},
+		};
 		(network as any).disconnectPeer = async (peerID: string): Promise<void> => {
 			disconnected.push(peerID);
 		};
@@ -629,7 +661,13 @@ describe('addBootstrapPeers — only a working discovered address joins the auto
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Set<string>();
-		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			markPending() {},
+			recordOutcome() {},
+		};
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
 			getConnections: () => [],
@@ -719,6 +757,9 @@ describe('addBootstrapPeers — a non-routable configured entry is still configu
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Set<string>();
 		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
 			markPending() {},
 			recordOutcome(_n: unknown, _a: unknown, _p: unknown, status: string, message: string | null) {
 				outcomes.push({ status, message });
@@ -792,7 +833,13 @@ describe('addBootstrapPeers — quarantine after the probe it allowed', () => {
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Set<string>();
-		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			markPending() {},
+			recordOutcome() {},
+		};
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
 			getConnections: () => [],
@@ -879,7 +926,14 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 		(network as any).bootstrapMultiaddrs = [multiaddr(BAD)];
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Set<string>();
-		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {}, deletePeer() {} };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			markPending() {},
+			recordOutcome() {},
+			deletePeer() {},
+		};
 		(network as any).purgeStalePeer = async (id: string): Promise<void> => {
 			purged.push(id);
 		};
@@ -1053,7 +1107,12 @@ describe('configured origin is a property of the address, not the peer', () => {
 		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
 		(network as any).bootstrapMultiaddrs = [multiaddr(CONFIGURED), multiaddr(DISCOVERED)];
 		(network as any).recentDisconnects = [];
-		(network as any).bootstrapTracker = { entries: () => [] };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			entries: () => [],
+		};
 		(network as any).node = {
 			getPeers: () => [],
 			getConnections: () => [],
@@ -1113,7 +1172,12 @@ describe('Network.stop — per-run state really is per run', () => {
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).delayedPeerCountTimers = new Set();
 		(network as any).peerAnnounce = { stop() {} };
-		(network as any).bootstrapTracker = { clear() {} };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			clear() {},
+		};
 		(network as any).node = null;
 		(network as any).datastore = null;
 		return network;
@@ -1184,6 +1248,9 @@ describe('runZeroConnectionRecovery — connectivity is read, not remembered', (
 		(network as any).bootstrapMultiaddrs = (opts.addresses ?? [ADDR_A]).map(a => multiaddr(a));
 		(network as any).recentDisconnects = [];
 		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
 			entries: () => {
 				churnDumps++;
 				return [];
@@ -1247,7 +1314,12 @@ describe('runZeroConnectionRecovery — a failed dial paces the next one', () =>
 		(network as any).configuredBootstrapAddresses = new Set(opts.configured ? [normalizeMultiaddrForCompare(opts.address)] : []);
 		(network as any).bootstrapMultiaddrs = [multiaddr(opts.address)];
 		(network as any).recentDisconnects = [];
-		(network as any).bootstrapTracker = { entries: () => [] };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			entries: () => [],
+		};
 		(network as any).node = {
 			getPeers: (): unknown[] => [],
 			async dial(ma: { toString(): string }): Promise<void> {
@@ -1344,7 +1416,12 @@ describe('runRedialMaintenance — quarantined peers are not candidates', () => 
 		(network as any).noReachableSince = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set(configured ? [PEER_ID] : []);
 		(network as any).configuredBootstrapAddresses = new Set<string>();
-		(network as any).bootstrapTracker = { deleteDiscoveredByPeerID() {} };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			deleteDiscoveredByPeerID() {},
+		};
 		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
 		(network as any).node = {
 			getConnections: () => [],
@@ -1412,6 +1489,9 @@ describe('addBootstrapPeers — a gossip announce of a configured address', () =
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Set<string>();
 		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
 			markPending() {},
 			recordOutcome(_net: unknown, _addr: unknown, _pid: unknown, status: string) {
 				outcomes.push(status);
@@ -1570,7 +1650,14 @@ describe('addBootstrapPeers — discovered dials are paced by the per-peer backo
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Set<string>();
-		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {}, deletePeer() {} };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			markPending() {},
+			recordOutcome() {},
+			deletePeer() {},
+		};
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
 			getConnections: () => [],
@@ -1647,7 +1734,14 @@ describe('addBootstrapPeers — one dial per address at a time', () => {
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Set<string>();
-		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {}, deletePeer() {} };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			markPending() {},
+			recordOutcome() {},
+			deletePeer() {},
+		};
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
 			getConnections: () => [],
@@ -1729,7 +1823,14 @@ describe('addBootstrapPeers — an identity joins the bootstrap set only once it
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Set<string>();
-		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {}, deletePeer() {} };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			markPending() {},
+			recordOutcome() {},
+			deletePeer() {},
+		};
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
 			getConnections: () => [],
@@ -1816,5 +1917,68 @@ describe('configured bootstrap removal releases the address probe backoff', () =
 		const network = bareNetwork();
 		network.pruneBootstrapAddresses([ADDR]);
 		expect((network as any).isAddressProbeDue(normalizeMultiaddrForCompare(ADDR), Date.now())).toBe(true);
+	});
+});
+
+/**
+ * Intake writes two status rows per address — a pending mark and an outcome — and each
+ * used to rebuild and publish the network's whole peer list. A 128-address announce cost
+ * 256 snapshots and 256 pushes, all but the last thrown away by the UI.
+ */
+describe('addBootstrapPeers — status updates are grouped per run', () => {
+	function bareNetwork(emissions: number[]) {
+		const network = Object.create(Network.prototype) as Network;
+		const tracker = new BootstrapStatusTracker();
+		tracker.setOnChange((_networkID, status) => emissions.push(status.peers.length));
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).bootstrapGeneration = new Map();
+		(network as any).inFlightBootstrapDials = new Set<string>();
+		(network as any).bootstrapTracker = tracker;
+		(network as any).node = {
+			peerId: { toString: () => 'selfID' },
+			getConnections: () => [],
+			async dial(ma: { toString(): string }): Promise<unknown> {
+				return { remoteAddr: { toString: () => ma.toString() } };
+			},
+			peerStore: { async merge(): Promise<void> {} },
+		};
+		return network;
+	}
+
+	const addrs = (count: number): string[] => Array.from({ length: count }, (_v, i) => `/ip4/203.0.113.${i + 1}/tcp/9090/p2p/${PEER_ID}`);
+
+	it('publishes one snapshot for a whole announce instead of two per address', async () => {
+		const emissions: number[] = [];
+		const network = bareNetwork(emissions);
+
+		await (network as any).addBootstrapPeers(addrs(20), 'net-a', 'discovered');
+
+		expect(emissions).toEqual([20]);
+	});
+
+	it('still records every address', async () => {
+		const emissions: number[] = [];
+		const network = bareNetwork(emissions);
+
+		await (network as any).addBootstrapPeers(addrs(20), 'net-a', 'discovered');
+
+		expect((network as any).bootstrapTracker.getStatus('net-a').peers).toHaveLength(20);
+	});
+
+	/** No owning network means no status rows at all — the wrapper must not assume one. */
+	it('runs unbatched when there is no network to group under', async () => {
+		const emissions: number[] = [];
+		const network = bareNetwork(emissions);
+
+		await (network as any).addBootstrapPeers(addrs(3), null, 'discovered');
+
+		expect(emissions).toEqual([]);
 	});
 });

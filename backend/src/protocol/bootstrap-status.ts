@@ -10,6 +10,18 @@ import { type BootstrapStatus, type BootstrapPeerStatus, type BootstrapPeerDialS
 const MAX_DISCOVERED_PER_NETWORK = 256;
 
 /**
+ * While a {@link BootstrapStatusTracker.batchDebounced} frame is open, how often the
+ * changes accumulated so far are published.
+ *
+ * A plain batch frame publishes once, at close — which is wrong for a body that awaits a
+ * dial per address: the frame would stay open for the whole list, one 10 s timeout at a
+ * time, and the UI would show nothing until the last address settled. Flushing on this
+ * interval keeps the run visible while still collapsing the burst of intake mutations
+ * (two per address, each rebuilding the whole snapshot) into a handful of emissions.
+ */
+const BATCH_FLUSH_INTERVAL_MS = 75;
+
+/**
  * A stored row: the status the UI sees, plus the clock {@link BootstrapStatusTracker.sweepStale}
  * measures against.
  *
@@ -92,6 +104,39 @@ export class BootstrapStatusTracker {
 		}
 		this.closeBatch(networkID, open);
 		return result;
+	}
+
+	/**
+	 * Like {@link batch}, but for an async body long enough that holding every change to
+	 * the end would leave the UI stale: what has accumulated is published every
+	 * {@link BATCH_FLUSH_INTERVAL_MS} while the frame is open, and once more at close.
+	 *
+	 * This is the shape bootstrap intake needs — it awaits a dial between each address's
+	 * pending mark and its outcome, so the alternatives are one emission per mutation
+	 * (what it used to do) or one emission for the entire list (a frozen UI).
+	 */
+	async batchDebounced<T>(networkID: string, fn: () => Promise<T>): Promise<T> {
+		let frame = this.batches.get(networkID);
+		if (!frame) {
+			frame = { depth: 0, dirty: false };
+			this.batches.set(networkID, frame);
+		}
+		frame.depth++;
+		const open = frame;
+		const timer = setInterval(() => {
+			// A frame replaced by clear() belongs to a torn-down run; publishing its
+			// leftovers under the same networkID would speak for whatever came next.
+			if (!open.dirty || this.batches.get(networkID) !== open) return;
+			open.dirty = false;
+			this.onStatusChange?.(networkID, this.buildStatus(networkID) ?? { networkID, peers: [] });
+		}, BATCH_FLUSH_INTERVAL_MS);
+		timer.unref?.();
+		try {
+			return await fn();
+		} finally {
+			clearInterval(timer);
+			this.closeBatch(networkID, open);
+		}
 	}
 
 	/** Leave one {@link batch} frame, emitting the grouped snapshot when the last one exits. */

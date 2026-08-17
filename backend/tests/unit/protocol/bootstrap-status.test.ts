@@ -466,3 +466,67 @@ describe('BootstrapStatusTracker.pruneEntries', () => {
 		expect(seen).toEqual([[CONF_KEPT, DISCOVERED]]);
 	});
 });
+
+/**
+ * Bootstrap intake awaits a dial between each address's pending mark and its outcome, so
+ * neither of the simple answers works: emitting per mutation costs a whole snapshot per
+ * row per address, and holding everything to the end of the list leaves the UI blank for
+ * as long as the dials take.
+ */
+describe('BootstrapStatusTracker.batchDebounced', () => {
+	const NET = 'netAAAA';
+	const PID = '12D3KooWBatchBatchBatchBatchBatchBatchBatchBatchBB';
+	const addr = (i: number): string => `/ip4/192.0.2.${i}/tcp/9090/p2p/${PID}`;
+
+	function tracked() {
+		const tracker = new BootstrapStatusTracker();
+		const seen: number[] = [];
+		tracker.setOnChange((_networkID, status) => seen.push(status.peers.length));
+		return { tracker, seen };
+	}
+
+	it('collapses a fast run of mutations into a single emission', async () => {
+		const { tracker, seen } = tracked();
+
+		await tracker.batchDebounced(NET, async () => {
+			for (let i = 0; i < 20; i++) {
+				tracker.markPending(NET, addr(i), PID, 'discovered');
+				tracker.recordOutcome(NET, addr(i), PID, 'connected', null, null, 'discovered');
+			}
+		});
+
+		expect(seen).toEqual([20]);
+	});
+
+	it('publishes progress while a slow run is still going', async () => {
+		const { tracker, seen } = tracked();
+
+		await tracker.batchDebounced(NET, async () => {
+			tracker.recordOutcome(NET, addr(1), PID, 'connected', null, null, 'discovered');
+			await Bun.sleep(200); // a dial's worth of waiting
+			tracker.recordOutcome(NET, addr(2), PID, 'connected', null, null, 'discovered');
+		});
+
+		expect(seen.length).toBeGreaterThan(1); // not held back to the end
+		expect(seen.at(-1)).toBe(2);
+	});
+
+	it('emits nothing for a run that changed nothing', async () => {
+		const { tracker, seen } = tracked();
+		await tracker.batchDebounced(NET, async () => {});
+		expect(seen).toEqual([]);
+	});
+
+	it('propagates the body result and still closes on a throw', async () => {
+		const { tracker, seen } = tracked();
+
+		await expect(
+			tracker.batchDebounced(NET, async () => {
+				tracker.recordOutcome(NET, addr(1), PID, 'connected', null, null, 'discovered');
+				throw new Error('dial exploded');
+			})
+		).rejects.toThrow('dial exploded');
+
+		expect(seen).toEqual([1]); // what it managed to change was still published
+	});
+});

@@ -1545,6 +1545,17 @@ export class Network {
 	 * additions with no owning network, in which case stats are skipped.
 	 */
 	async addBootstrapPeers(peers: string[], networkID: string | null = null, origin: BootstrapPeerOrigin = 'discovered'): Promise<void> {
+		// Group the run's status writes. Intake performs two per address — a pending mark
+		// and an outcome — and each rebuilds and publishes the network's whole peer list,
+		// so one 128-address announce used to cost 256 snapshots and 256 WebSocket pushes
+		// of which the UI kept the last. The frame flushes periodically rather than only
+		// at close, so a list of slow dials still reports progress as it goes.
+		if (networkID === null) return this.dialBootstrapEntries(peers, networkID, origin);
+		await this.bootstrapTracker.batchDebounced(networkID, () => this.dialBootstrapEntries(peers, networkID, origin));
+	}
+
+	/** The dial loop behind {@link addBootstrapPeers}; see there for the batching wrapper. */
+	private async dialBootstrapEntries(peers: string[], networkID: string | null, origin: BootstrapPeerOrigin): Promise<void> {
 		if (!this.node) {
 			console.error('Network not started - cannot add bootstrap peers');
 			return;

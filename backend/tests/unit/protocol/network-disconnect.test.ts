@@ -191,7 +191,12 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).bootstrapMultiaddrs = bootstrapMaStrs.map(s => multiaddr(s));
 		(network as any).recentDisconnects = [];
-		(network as any).bootstrapTracker = { entries: () => [] };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			entries: () => [],
+		};
 		(network as any).node = {
 			// Recovery reads connectivity itself rather than trusting the tick's snapshot.
 			getPeers: () => [],
@@ -268,7 +273,13 @@ describe('Network.addBootstrapPeers — rejoin clears suppression', () => {
 		(network as any).inFlightBootstrapDials = new Set<string>();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
-		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			markPending() {},
+			recordOutcome() {},
+		};
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
 			getConnections: () => [],
