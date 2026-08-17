@@ -643,6 +643,16 @@ function isValidUnitName(name: string): boolean {
 const WHITESPACE = ' \t\n\r';
 
 /**
+ * What {@link extractWordsChecked} read: the words up to the point it got to, and whether it
+ * stopped on a syntax error rather than on the end of the value.
+ *
+ * Tokens alone could not carry that. `a\` is not "the word `a`" — upstream returns `-EINVAL`
+ * for it and the caller has read a value systemd itself would have refused, which is not the
+ * same as having read the value.
+ */
+export type ExtractedWords = { words: string[]; error: boolean };
+
+/**
  * Split a systemctl value into words the way systemd's own `extract_first_word()` does.
  *
  * Splitting on whitespace is not that parser, and the difference is not cosmetic here:
@@ -657,8 +667,12 @@ const WHITESPACE = ' \t\n\r';
  * anyway. A backslash escapes the next character in both modes, as it does upstream, so an
  * escaped separator does not split. Runs of separators are coalesced and yield no empty
  * word, which is `extract_first_word`'s default.
+ *
+ * The words read before a syntax error are kept, and `error` says one was hit — see
+ * {@link ExtractedWords}. {@link extractWords} is the same parser for the callers that only
+ * want what could be read.
  */
-export function extractWords(input: string, unquote: boolean, separators: string = WHITESPACE): string[] {
+export function extractWordsChecked(input: string, unquote: boolean, separators: string = WHITESPACE): ExtractedWords {
 	const words: string[] = [];
 	let word = '';
 	let started = false;
@@ -686,8 +700,22 @@ export function extractWords(input: string, unquote: boolean, separators: string
 			started = true;
 		}
 	}
+	// A backslash with nothing behind it, and in unquoting mode a quote that is never closed,
+	// are `-EINVAL` upstream: the word under construction is not a word, so it is dropped
+	// rather than emitted half-written, and the caller is told the value was malformed. Both
+	// can only happen at the end of the input, so there is nothing left to stop parsing.
+	if (escaped || quote !== null) return { words, error: true };
 	if (started) words.push(word);
-	return words;
+	return { words, error: false };
+}
+
+/**
+ * The same words, for a caller that has nothing to do with a malformed value but read what
+ * there was — which is also what timedated does with its provider list: it logs the syntax
+ * error, keeps the entries it got to, and does not look at the files instead.
+ */
+export function extractWords(input: string, unquote: boolean, separators: string = WHITESPACE): string[] {
+	return extractWordsChecked(input, unquote, separators).words;
 }
 
 /** `Key=Value` lines of a single unit's `systemctl show` output, keyed by property name. */
@@ -755,30 +783,40 @@ export async function readTimedatedEnvironment(exec: CommandRunner = run): Promi
 	// `show-environment` prints one assignment per line; the unit properties print their
 	// entries whitespace-separated on one. Both are quoted by systemd, so both are read with
 	// systemd's own word parser rather than by splitting on whitespace.
+	//
+	// A value that value parser refuses is an environment we did not read: the words after the
+	// error are lost, and the override deciding the provider may be exactly one of them. Same
+	// answer as a source that did not answer at all.
+	let malformed = false;
+	const words = (value: string): string[] => {
+		const read = extractWordsChecked(value, true);
+		if (read.error) malformed = true;
+		return read.words;
+	};
 	const inherited = new Map<string, string>();
-	for (const word of extractWords(manager.output, true)) {
+	for (const word of words(manager.output)) {
 		const pair = splitAssignment(word);
 		if (pair) inherited.set(pair[0], pair[1]);
 	}
 	const env: Record<string, string> = {};
 	// Phase 1: the manager's value, but only for a name the unit asks to be passed.
-	for (const name of extractWords(props.get('PassEnvironment') ?? '', true)) {
+	for (const name of words(props.get('PassEnvironment') ?? '')) {
 		const value = inherited.get(name);
 		if (value !== undefined) env[name] = value;
 	}
 	// Phase 2: the unit's own `Environment=`, which wins over what was passed in.
-	for (const word of extractWords(props.get('Environment') ?? '', true)) {
+	for (const word of words(props.get('Environment') ?? '')) {
 		const pair = splitAssignment(word);
 		if (pair) env[pair[0]] = pair[1];
 	}
 	// Phase 3: `UnsetEnvironment=`. A bare name removes the variable; a `NAME=value` entry
 	// removes it only when the value matches, which is systemd's own rule.
-	for (const word of extractWords(props.get('UnsetEnvironment') ?? '', true)) {
+	for (const word of words(props.get('UnsetEnvironment') ?? '')) {
 		const pair = splitAssignment(word);
 		if (!pair) delete env[word];
 		else if (env[pair[0]] === pair[1]) delete env[pair[0]];
 	}
-	return env;
+	return malformed ? null : env;
 }
 
 /**

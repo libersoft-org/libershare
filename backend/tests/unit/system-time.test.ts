@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, competingNtpUnits, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitLoadStates, type PlatformStatusReader, extractWords, readNtpUnitsList, readTimedatedEnvironment, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, syncDirectory, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, competingNtpUnits, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitLoadStates, type PlatformStatusReader, extractWords, extractWordsChecked, readNtpUnitsList, readTimedatedEnvironment, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, syncDirectory, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -849,6 +849,16 @@ describe('readNtpUnitsList', () => {
 		expect(await readNtpUnitsList({}, [lib])).toEqual(['a.service', 'b.socket', 'c.target', 'd.timer', 'e.path', 'f.slice']);
 	});
 
+	/**
+	 * timedated stops at the syntax error and keeps what it had — and because the variable
+	 * exists, it never falls back to the list files. Emitting the half-read entry gave us a
+	 * provider the host never named, and one we then judged loaded.
+	 */
+	it('stops the override at a trailing backslash without falling back to the files', async () => {
+		const lib = await dir('lib', { '50-chronyd.list': 'chronyd.service\n' });
+		expect(await readNtpUnitsList({ SYSTEMD_TIMEDATED_NTP_SERVICES: 'missing.service:systemd-timesyncd.service\\' }, [lib])).toEqual(['missing.service']);
+	});
+
 	it('coalesces empty entries in the override the way systemd does', async () => {
 		const lib = await dir('lib', {});
 		expect(await readNtpUnitsList({ SYSTEMD_TIMEDATED_NTP_SERVICES: ':chronyd.service::ntpd.service:' }, [lib])).toEqual(['chronyd.service', 'ntpd.service']);
@@ -881,6 +891,36 @@ describe('extractWords', () => {
 	it('has nothing to say about an empty value', () => {
 		expect(extractWords('', true)).toEqual([]);
 		expect(extractWords('   ', true)).toEqual([]);
+	});
+
+	/**
+	 * `extract_first_word` returns `-EINVAL` for a word ending in a bare backslash, so the
+	 * word is not a word: timedated logs a syntax error and stops. Emitting it without the
+	 * backslash invented a provider name the host never wrote — and timedated, having seen the
+	 * variable, does not read the list files either, so the invented name was the ordering.
+	 */
+	it('drops a word left open by a trailing backslash and says so', () => {
+		expect(extractWordsChecked('systemd-timesyncd.service\\', false, ':')).toEqual({ words: [], error: true });
+	});
+
+	it('keeps the words read before the trailing backslash', () => {
+		expect(extractWordsChecked('missing.service:systemd-timesyncd.service\\', false, ':')).toEqual({ words: ['missing.service'], error: true });
+	});
+
+	/** A backslash that HAS a character behind it is an escape, not an error. */
+	it('still preserves an escaped separator', () => {
+		expect(extractWordsChecked('missing.service\\:alias.service', false, ':')).toEqual({ words: ['missing.service:alias.service'], error: false });
+	});
+
+	/** Unquoting mode has the second way to run out of input: a quote nothing closes. */
+	it('reports a quote that is never closed', () => {
+		expect(extractWordsChecked('A=1 B="unterminated', true)).toEqual({ words: ['A=1'], error: true });
+		// Without `EXTRACT_UNQUOTE` a quote is an ordinary character and cannot be unclosed.
+		expect(extractWordsChecked('B="unterminated', false)).toEqual({ words: ['B="unterminated'], error: false });
+	});
+
+	it('reports no error on a value that parses', () => {
+		expect(extractWordsChecked('a:b', false, ':')).toEqual({ words: ['a', 'b'], error: false });
 	});
 });
 
@@ -998,6 +1038,15 @@ describe('readTimedatedEnvironment', () => {
 		expect(ordered).toBeNull();
 		const loaded = 'Id=chronyd.service\nNames=chronyd.service\nLoadState=loaded\n';
 		expect(canConfigureTimesyncdServer(ordered, loaded, 'inactive\ninactive\n')).toBe(false);
+	});
+
+	/**
+	 * A property the word parser refuses is a source that did not answer: everything after the
+	 * error is unread, and the override that decides the provider may be exactly that.
+	 */
+	it('reports an unknown environment when a value does not parse', async () => {
+		expect(await readTimedatedEnvironment(systemctl(ok('LANG=C\\'), props()))).toBeNull();
+		expect(await readTimedatedEnvironment(systemctl(ok(''), props({ Environment: 'A="unterminated' })))).toBeNull();
 	});
 
 	/** Either source could be the one carrying the override, so neither may be skipped. */
