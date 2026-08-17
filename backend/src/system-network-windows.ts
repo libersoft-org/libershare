@@ -1081,6 +1081,12 @@ export function windowsAddressingUnchanged(config: NetIPv4Config): string {
  *
  * Empty when there is no gateway. A route to a DIFFERENT next hop contributes
  * nothing — its properties belong to a path this interface no longer takes.
+ *
+ * Read from the snapshot's union, active copy first, and written with no
+ * `-PolicyStore`, so where the two stores held divergent copies of one next hop
+ * BOTH come back carrying the active one's metric, `Publish` and lifetimes. That is
+ * deliberate — see {@link keepAddressProperties} for the whole of the reasoning,
+ * which is the same on this half.
  */
 function keepRouteProperties(config: NetIPv4Config): string[] {
 	if (!config.gateway) return [];
@@ -1103,6 +1109,30 @@ function keepRouteProperties(config: NetIPv4Config): string[] {
  * "a different address, so let Windows choose" are two different parameter lists
  * for one call. Read from the snapshot's union, active copy first, so an address
  * held only in the persistent store still contributes what it knows.
+ *
+ * A SUCCESSFUL apply deliberately normalises the two stores to one object, and the
+ * active copy is the one that wins. Where an address is held in both stores with
+ * different properties — an active Anycast copy against a persistent Unicast one —
+ * the rewrite creates one object into both stores and both come back carrying the
+ * active copy's. This is a decision, not the union leaking:
+ *
+ *  - The rollback and the apply answer different questions. The rollback's whole
+ *    contract is "leave this machine as it was found", so it hands each store back
+ *    its own copy. The apply's is "make this the configuration in force AND the one
+ *    the next boot comes up on" — the same rule the no-op check applies in
+ *    {@link windowsAddressingUnchanged}. Rewriting the address in both stores and
+ *    then preserving a startup-only variation of it is half of each answer.
+ *  - Reproducing the divergence cannot be done without destroying the address
+ *    again. `Type` on `Set-NetIPAddress` and `Protocol` on `Set-NetRoute` are
+ *    array-typed QUERY parameters — they select objects rather than change them,
+ *    which is already why `Protocol` cannot be carried across — so a divergent
+ *    `Type` needs create-both, remove-active, create-active. That is the sequence
+ *    the rollback runs, and it is acceptable there because the alternative is a
+ *    machine left unconfigured. Putting it on the success path adds a window in
+ *    which the interface has no address to the one path that currently has none.
+ *  - The active copy is what the user is looking at and what the screen reports
+ *    back. Having asked for a rewrite, the next boot behaving like the machine does
+ *    now is the outcome that matches what they were shown.
  */
 function keepAddressProperties(config: NetIPv4Config): string[] {
 	return [`$keptAddress = @($oldAddresses | Where-Object { $_.IPAddress -eq '${config.address}' })[0]`, '$keptAddressProperties = @{}', 'if ($keptAddress) { $keptAddressProperties = @{ Type = $keptAddress.Type; SkipAsSource = $keptAddress.SkipAsSource; ValidLifetime = $keptAddress.ValidLifetime; PreferredLifetime = $keptAddress.PreferredLifetime } }'];

@@ -304,6 +304,32 @@ describe('windowsApplyIPv4Command, executed', () => {
 		expect(inStore(result.routes, 'ActiveStore').map(r => [r.RouteMetric, r.Publish, r.ValidLifetime])).toEqual([[25, 'Yes', '00:45:00']]);
 	});
 
+	// The deliberate asymmetry between the two paths, pinned so it cannot drift into
+	// one by accident. The ROLLBACK hands each store back its own copy, because its
+	// contract is to leave the machine as it was found. A successful APPLY normalises
+	// both stores to one object and the ACTIVE copy wins, because its contract is to
+	// make the requested configuration both in force and durable — and because
+	// reproducing a divergent Type or Protocol would mean destroying and re-creating
+	// the address on the one path that currently never leaves the interface bare.
+	it.skipIf(windowsOnly)('normalises divergent store copies to the active one on success', async () => {
+		const host = staticHost(GUID);
+		host.addresses = [
+			{ Store: 'ActiveStore', IPAddress: '192.0.2.10', PrefixLength: 24, PrefixOrigin: 'Manual', SuffixOrigin: 'Manual', SkipAsSource: true, ValidLifetime: '02:00:00', PreferredLifetime: '02:00:00', Type: 'Anycast' },
+			{ Store: 'PersistentStore', IPAddress: '192.0.2.10', PrefixLength: 24, PrefixOrigin: 'Manual', SuffixOrigin: 'Manual', SkipAsSource: false, ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME, Type: 'Unicast' },
+		];
+		host.routes = [
+			{ Store: 'ActiveStore', NextHop: '192.0.2.1', RouteMetric: 5, Protocol: 'NetMgmt', Publish: 'No', ValidLifetime: '00:30:00', PreferredLifetime: '00:30:00' },
+			{ Store: 'PersistentStore', NextHop: '192.0.2.1', RouteMetric: 100, Protocol: 'NetMgmt', Publish: 'Yes', ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME },
+		];
+		// Same address, same gateway, a different prefix — so the rewrite runs.
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '192.0.2.10', prefixLength: 25, gateway: '192.0.2.1' }), host);
+		expect(result.error).toBeNull();
+		for (const store of ['ActiveStore', 'PersistentStore'] as const) {
+			expect(inStore(result.addresses, store).map(a => [a.Type, a.SkipAsSource, a.ValidLifetime])).toEqual([['Anycast', true, '02:00:00']]);
+			expect(inStore(result.routes, store).map(r => [r.RouteMetric, r.Publish, r.ValidLifetime])).toEqual([[5, 'No', '00:30:00']]);
+		}
+	});
+
 	// ...and an address that IS moving takes none of them: those properties belonged
 	// to the object being replaced.
 	it.skipIf(windowsOnly)('lets Windows choose the properties of an address that moved', async () => {
