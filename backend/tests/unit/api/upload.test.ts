@@ -2,7 +2,7 @@ import { describe, expect, it, afterAll } from 'bun:test';
 import { rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { uploadFileName } from '../../../src/api/api.ts';
+import { uploadFileName } from '../../../src/api/upload.ts';
 import { Utils } from '../../../src/utils.ts';
 import { COMPRESSION_ALGORITHMS, compressionExtension, detectCompression } from '@shared';
 

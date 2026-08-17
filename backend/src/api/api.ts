@@ -1,13 +1,9 @@
 import { type ServerWebSocket } from 'bun';
-import { mkdir, readdir, stat, unlink } from 'fs/promises';
-import { rmSync } from 'fs';
-import { join } from 'path';
-import { randomUUID } from 'crypto';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import type { PeerCountEntry } from '../protocol/network.ts';
 import { type Settings } from '../settings.ts';
-import { CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, formatBytes, sanitizeFilename } from '@shared';
+import { CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE } from '@shared';
 import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
@@ -53,23 +49,6 @@ export function handleHealthProbe(req: globalThis.Request): Response | null {
 	const url = new URL(req.url);
 	if (url.pathname === '/health') return new Response('ok\n', { status: 200, headers: { 'content-type': 'text/plain' } });
 	return null;
-}
-
-/** Longest original file name kept in a temp upload name, so a pathological name cannot blow the OS limit. */
-const MAX_UPLOAD_NAME_LENGTH = 100;
-
-/** How long an uploaded file that was never imported is kept before it is swept. */
-const UPLOAD_MAX_AGE_MS = 60 * 60 * 1000;
-
-/**
- * Temp file name for an uploaded import file. The random prefix keeps concurrent
- * uploads apart; the original name is appended verbatim because
- * `detectCompression()` reads the trailing extension — losing it would make a
- * brotli upload get read as UTF-8 and fail later as a JSON parse error.
- */
-export function uploadFileName(originalName: string): string {
-	const safe = sanitizeFilename(originalName).slice(-MAX_UPLOAD_NAME_LENGTH) || 'upload';
-	return `${randomUUID()}-${safe}`;
 }
 
 /** Longest params blob written to the log; enough to identify a call, short of dumping a file upload. */
@@ -127,7 +106,6 @@ export class APIServer {
 	private readonly certFile?: string | undefined;
 	private readonly apiToken?: string | undefined;
 	private readonly dataDir: string;
-	private readonly uploadDir: string;
 	private readonly dataServer: DataServer;
 	private readonly networks: Networks;
 	private readonly _upload: ReturnType<typeof initUploadHandlers>;
@@ -136,7 +114,6 @@ export class APIServer {
 
 	constructor(dataDir: string, dataServer: DataServer, networks: Networks, settings: Settings, options: APIServerOptions) {
 		this.dataDir = dataDir;
-		this.uploadDir = join(dataDir, 'tmp');
 		this.dataServer = dataServer;
 		this.networks = networks;
 		this.settings = settings;
@@ -307,20 +284,13 @@ export class APIServer {
 
 	start(): void {
 		const self = this;
-		// Uploads are client-supplied bytes on our disk; a form abandoned between
-		// picking a file and importing it leaves one behind. Wiping at startup is
-		// cheaper and more reliable than a TTL sweeper, and synchronous so no
-		// upload can race the removal.
-		rmSync(this.uploadDir, { recursive: true, force: true });
+		// Uploads are client-supplied bytes on our disk, and a transfer interrupted
+		// by a kill leaves one behind with nobody left to abort it.
+		this._upload.wipe();
 		const serverConfig: Parameters<typeof Bun.serve<ClientData>>[0] = {
 			port: this.port,
 			hostname: this.host,
-			// Upper bound on an uploaded import file. Bun's default happens to be
-			// the same 128 MiB, but it is stated here because it is the ceiling the
-			// client checks against before it starts sending — an import larger
-			// than one API message could not be answered anyway.
-			maxRequestBodySize: MAX_API_MESSAGE_SIZE,
-			fetch(req, server): Response | Promise<Response> | undefined {
+			fetch(req, server): Response | undefined {
 				const url = new URL(req.url);
 				// Liveness probe used by docker-compose healthcheck and external
 				// orchestrators. Placed before auth + per-request log so probes
@@ -328,12 +298,9 @@ export class APIServer {
 				const probe = handleHealthProbe(req);
 				if (probe) return probe;
 				console.log(`[API] Incoming request: ${req.method} ${url.pathname}`);
-				// A CORS preflight carries no credentials and no body, so it is
-				// answered before the token check — the real request still isn't.
-				if (req.method === 'OPTIONS') return self.corsOptionsResponse();
+				if (req.method === 'OPTIONS' && url.pathname === '/status') return self.statusOptionsResponse();
 				if (url.pathname === '/status') return self.statusResponse(url);
 				if (!self.isAuthorized(url)) return self.unauthorizedResponse();
-				if (req.method === 'POST' && url.pathname === '/upload') return self.handleUpload(req, url);
 				const clientIP = server.requestIP(req)?.address ?? '';
 				const upgraded = server.upgrade(req, {
 					data: { subscribedEvents: new Set<string>(), isLocalClient: self.localAddresses.has(clientIP) },
@@ -423,90 +390,15 @@ export class APIServer {
 		});
 	}
 
-	private corsOptionsResponse(): Response {
+	private statusOptionsResponse(): Response {
 		return new Response(null, {
 			status: 204,
 			headers: {
 				'access-control-allow-origin': '*',
-				'access-control-allow-methods': 'GET, POST, OPTIONS',
+				'access-control-allow-methods': 'GET, OPTIONS',
 				'access-control-allow-headers': 'content-type',
 			},
 		});
-	}
-
-	/**
-	 * Drop uploads nobody ever imported. The client removes its own temp file once
-	 * the import is parsed, but a closed tab, a refresh or a lost response leaves
-	 * one behind — and on a node that runs for months the startup wipe alone would
-	 * let those pile up until the disk is full. Runs on each upload rather than on
-	 * a timer, because uploads are the only thing that creates them. Never throws:
-	 * a failed sweep must not fail the upload it was making room for.
-	 */
-	private async sweepUploads(): Promise<void> {
-		const cutoff = Date.now() - UPLOAD_MAX_AGE_MS;
-		try {
-			for (const name of await readdir(this.uploadDir)) {
-				const path = join(this.uploadDir, name);
-				// A file still being uploaded has a current mtime, so it is never swept.
-				try {
-					if ((await stat(path)).mtimeMs < cutoff) await unlink(path);
-				} catch {}
-			}
-		} catch {}
-	}
-
-	/**
-	 * Accept one import file over plain HTTP and land it in a temp file under the
-	 * data directory. The client then imports it through the existing
-	 * `*.parseFromFile` handlers, so the file crosses the wire once instead of
-	 * being base64'd into a WebSocket frame and echoed back as text.
-	 */
-	private async handleUpload(req: globalThis.Request, url: URL): Promise<Response> {
-		const path = join(this.uploadDir, uploadFileName(url.searchParams.get('name') ?? 'upload'));
-		try {
-			await mkdir(this.uploadDir, { recursive: true });
-			await this.sweepUploads();
-			const writer = Bun.file(path).writer();
-			let written = 0;
-			let tooLarge = false;
-			try {
-				// Streamed chunk by chunk so a large import never has to sit in
-				// memory as a whole. `Bun.write(path, new Response(req.body))` would
-				// read better but deadlocks on Bun 1.3.13 — measured, not guessed.
-				if (req.body) {
-					for await (const chunk of req.body) {
-						written += chunk.byteLength;
-						// `maxRequestBodySize` only covers a body that declares its
-						// length; a chunked upload carries none and would otherwise be
-						// free to fill the disk. Measured on Bun 1.3.13: 320 MiB written
-						// against a 128 MiB limit before this check existed.
-						if (written > MAX_API_MESSAGE_SIZE) {
-							tooLarge = true;
-							break;
-						}
-						writer.write(chunk);
-					}
-				}
-			} finally {
-				// Also releases the file handle, which Windows needs before the
-				// half-written file can be removed on the error path below.
-				await writer.end();
-			}
-			if (tooLarge) {
-				rmSync(path, { force: true });
-				console.error(`[API] Upload rejected: body exceeds ${MAX_API_MESSAGE_SIZE} bytes`);
-				return this.jsonResponse({ error: ErrorCodes.MESSAGE_TOO_LARGE, errorDetail: formatBytes(MAX_API_MESSAGE_SIZE) }, 413);
-			}
-			console.log(`[API] Upload stored: ${path} (${Bun.file(path).size} bytes)`);
-			return this.jsonResponse({ path });
-		} catch (err: any) {
-			// A failed cleanup must not replace the error that caused it.
-			try {
-				rmSync(path, { force: true });
-			} catch {}
-			console.error(`[API] Upload failed: ${err.message}`);
-			return this.jsonResponse({ error: ErrorCodes.FS_ERROR, errorDetail: err.message }, 500);
-		}
 	}
 
 	private unauthorizedResponse(): Response {

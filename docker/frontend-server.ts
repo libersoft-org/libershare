@@ -60,19 +60,6 @@ function buildUpstreamUrl(clientUrl: URL): string {
 	return upstream.toString();
 }
 
-/**
- * Same URL rewrite as {@link buildUpstreamUrl} but for a plain HTTP call, used to
- * forward the import file upload. This proxy is the only thing a browser can
- * reach in a container deployment — the backend port is bound to the host's
- * loopback — so an HTTP route that is not forwarded here does not exist.
- */
-function buildUpstreamHttpUrl(clientUrl: URL): string {
-	const upstream = new URL(buildUpstreamUrl(clientUrl));
-	upstream.protocol = upstream.protocol === 'wss:' ? 'https:' : 'http:';
-	upstream.pathname = clientUrl.pathname;
-	return upstream.toString();
-}
-
 const MAX_PENDING_BYTES = 1 * 1024 * 1024; // 1 MiB cap so a long backend outage does not exhaust container memory
 const MAX_RECONNECT_DELAY_MS = 5000;
 const BASE_RECONNECT_DELAY_MS = 250;
@@ -131,12 +118,6 @@ Bun.serve({
 			});
 			if (upgraded) return undefined;
 			return new Response('Expected WebSocket', { status: 400 });
-		}
-
-		// Import file upload — streamed straight through so a multi-hundred-MB
-		// file never has to be held in this container's memory.
-		if (url.pathname === '/upload') {
-			return fetch(buildUpstreamHttpUrl(url), { method: request.method, body: request.body, headers: request.headers, duplex: 'half' } as RequestInit);
 		}
 
 		const filePath = fileForPath(url.pathname);
