@@ -1706,3 +1706,57 @@ describe('addBootstrapPeers — one dial per address at a time', () => {
 		expect(dialled).toEqual([ADDR, ADDR]);
 	});
 });
+
+/**
+ * `bootstrapPeerIDs` is a global, unbounded, never-TTL'd set that other code reads as
+ * "this peer is handled" — and the libp2p config closure reads it too. Admitting an
+ * identity the moment gossip named it meant any topic subscriber could put arbitrary peer
+ * IDs into it, before anything had shown the identity even exists.
+ */
+describe('addBootstrapPeers — an identity joins the bootstrap set only once it answers', () => {
+	const ADDR = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork(dialFails: boolean) {
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).bootstrapGeneration = new Map();
+		(network as any).inFlightBootstrapDials = new Set<string>();
+		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {}, deletePeer() {} };
+		(network as any).node = {
+			peerId: { toString: () => 'selfID' },
+			getConnections: () => [],
+			async dial(ma: { toString(): string }): Promise<unknown> {
+				if (dialFails) throw new Error('dial timed out');
+				return { remoteAddr: { toString: () => ma.toString() } };
+			},
+			peerStore: { async merge(): Promise<void> {} },
+		};
+		return network;
+	}
+
+	it('leaves an announced identity out while its dial is failing', async () => {
+		const network = bareNetwork(true);
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect((network as any).bootstrapPeerIDs.has(PEER_ID)).toBe(false);
+	});
+
+	it('admits the identity once the peer answers', async () => {
+		const network = bareNetwork(false);
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		expect((network as any).bootstrapPeerIDs.has(PEER_ID)).toBe(true);
+	});
+
+	/** A configured identity is the user's own assertion and does not wait for a dial. */
+	it('admits a configured identity even when its address is down', async () => {
+		const network = bareNetwork(true);
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+		expect((network as any).bootstrapPeerIDs.has(PEER_ID)).toBe(true);
+	});
+});

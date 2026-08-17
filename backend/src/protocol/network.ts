@@ -1670,9 +1670,15 @@ export class Network {
 					continue;
 				}
 				this.inFlightBootstrapDials.add(canonicalAddress);
-				// The identity set is the dedup that stops every gossip mention of the same
-				// peer from costing another dial, so it is claimed up front either way.
-				if (peerID) this.bootstrapPeerIDs.add(peerID);
+				// A CONFIGURED identity is user data and enters the set on the strength of the
+				// saved config alone. A DISCOVERED one waits for the dial: it arrived in a
+				// gossip message and nothing has yet shown that the identity exists, let
+				// alone that it is the one behind this address. Admitting it here put every
+				// peer ID any topic subscriber cared to name into an unbounded global set —
+				// one that nothing prunes, and that other code reads as "this peer is
+				// handled". Deduplication of repeated mentions is not this set's job and
+				// never was: {@link inFlightBootstrapDials} and the backoff above do that.
+				if (peerID && origin === 'configured') this.bootstrapPeerIDs.add(peerID);
 				console.debug('Adding bootstrap peer:', peer);
 				this.bootstrapTracker.markPending(networkID, peer, peerID, effectiveOrigin);
 				try {
@@ -1718,6 +1724,10 @@ export class Network {
 						return;
 					}
 					if (superseded()) return;
+					// The peer answered, so the identity behind this address is real and
+					// wanted — the point at which a discovered ID has earned its place in
+					// the set (see the claim above for why it may not have it yet).
+					if (peerID) this.bootstrapPeerIDs.add(peerID);
 					if (pidObj) {
 						await this.node.peerStore.merge(pidObj, verifiedThisAddr ? { multiaddrs: [ma], tags: { [KEEP_ALIVE]: { value: 1 } } } : { tags: { [KEEP_ALIVE]: { value: 1 } } });
 					}
