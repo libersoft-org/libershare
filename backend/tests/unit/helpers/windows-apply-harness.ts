@@ -87,6 +87,18 @@ function Note($name) {
 	if ($fixture.failOn -eq $base -and -not $script:failed[$base]) { $script:failed[$base] = $true; throw "injected failure in $base" }
 }
 
+# Neither creating cmdlet can write the persistent store on its own. New-NetIPAddress
+# is documented "Specify ActiveStore only", and New-NetRoute's own PolicyStore entry
+# says of PersistentStore, in as many words, "Cannot be used" — the parameter exists
+# to create an object in JUST the active store, and omitting it is the only way to
+# reach the persistent one. Accepting the value here, as these stubs first did, is
+# what let a rollback that emits it pass: the fake wrote the object where the real
+# provider would have refused, so the generated script was never held to the contract
+# it will meet on a real adapter.
+function RejectPersistentCreate($cmdlet, $store) {
+	if ($store -eq 'PersistentStore') { throw "$cmdlet cannot create an object with -PolicyStore PersistentStore" }
+}
+
 $script:addresses = @()
 foreach ($a in $fixture.addresses) { $script:addresses += [pscustomobject]@{ IPAddress = $a.IPAddress; PrefixLength = $a.PrefixLength; PrefixOrigin = $a.PrefixOrigin; SuffixOrigin = $a.SuffixOrigin; SkipAsSource = $a.SkipAsSource; ValidLifetime = (ToSpan $a.ValidLifetime); PreferredLifetime = (ToSpan $a.PreferredLifetime); Type = $a.Type; AddressState = 4; Stores = @($a.Stores) } }
 $script:routes = @()
@@ -131,6 +143,7 @@ function New-NetIPAddress {
 	[CmdletBinding()] param($InterfaceIndex, $AddressFamily, $IPAddress, $PrefixLength, $DefaultGateway, $SkipAsSource, $ValidLifetime, $PreferredLifetime, $PolicyStore, $Type)
 	$stores = if ($PolicyStore) { @($PolicyStore) } else { @('ActiveStore', 'PersistentStore') }
 	Note "New-NetIPAddress:$($stores -join '+')"
+	RejectPersistentCreate 'New-NetIPAddress' $PolicyStore
 	$state = if ($null -ne $script:newState) { $script:newState } else { 4 }
 	$script:addresses += [pscustomobject]@{ IPAddress = $IPAddress; PrefixLength = [int]$PrefixLength; PrefixOrigin = 'Manual'; SuffixOrigin = 'Manual'; SkipAsSource = $SkipAsSource; ValidLifetime = (ToSpan $ValidLifetime); PreferredLifetime = (ToSpan $PreferredLifetime); Type = $Type; AddressState = $state; Stores = $stores }
 	if ($DefaultGateway) { $script:routes += [pscustomobject]@{ NextHop = $DefaultGateway; RouteMetric = 256; Protocol = 'NetMgmt'; Publish = 'No'; ValidLifetime = [TimeSpan]::MaxValue; PreferredLifetime = [TimeSpan]::MaxValue; Stores = $stores } }
@@ -140,6 +153,7 @@ function New-NetRoute {
 	[CmdletBinding(SupportsShouldProcess = $true)] param($InterfaceIndex, $DestinationPrefix, $NextHop, $RouteMetric, $Protocol, $Publish, $PolicyStore, $ValidLifetime, $PreferredLifetime)
 	$stores = if ($PolicyStore) { @($PolicyStore) } else { @('ActiveStore', 'PersistentStore') }
 	Note "New-NetRoute:$($stores -join '+')"
+	RejectPersistentCreate 'New-NetRoute' $PolicyStore
 	$script:routes += [pscustomobject]@{ NextHop = $NextHop; RouteMetric = [int]$RouteMetric; Protocol = $Protocol; Publish = $Publish; ValidLifetime = (ToSpan $ValidLifetime); PreferredLifetime = (ToSpan $PreferredLifetime); Stores = $stores }
 }
 
