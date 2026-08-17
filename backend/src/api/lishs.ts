@@ -1,5 +1,5 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type ILISH, type IStoredLISH, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, sanitizeFilename, validateLISHStructure, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
+import { type ILISH, type IStoredLISH, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, sanitizeFilename, validateLISHStructure, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
 import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, runVerification } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
@@ -171,7 +171,9 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['lishID', 'filePath']);
 		const lish = dataServer.get(p.lishID);
 		if (!lish) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, p.lishID);
-		const { directory, chunks, ...exportData } = lish;
+		// `finalDirectory` goes out with the other node-local state: it is an absolute
+		// path on this machine (it carries the OS user name) and means nothing anywhere else.
+		const { directory, finalDirectory, chunks, ...exportData } = lish;
 		await Utils.writeJSONToFile(exportData, p.filePath, p.minifyJSON, p.compress, p.compressionAlgorithm);
 		console.log(`✓ LISH exported to: ${p.filePath}`);
 		return { success: true };
@@ -182,7 +184,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const lishs = dataServer.list();
 		if (lishs.length === 0) throw new CodedError(ErrorCodes.NO_LISHS);
 		const exportData: ILISH[] = lishs.map(lish => {
-			const { directory, chunks, ...data } = lish;
+			const { directory, finalDirectory, chunks, ...data } = lish;
 			return data;
 		});
 		await Utils.writeJSONToFile(exportData, p.filePath, p.minifyJSON, p.compress, p.compressionAlgorithm);
@@ -237,7 +239,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			try {
 				const fileStat = await stat(lishFilePath);
 				if (fileStat.isDirectory()) {
-					const ext = compress ? '.lish.gz' : '.lish';
+					const ext = compress ? '.lish' + compressionExtension(compressionAlgorithm) : '.lish';
 					let candidate = join(lishFilePath, lish.id + ext);
 					// Handle unlikely collision: append numeric suffix
 					let suffix = 1;
@@ -339,8 +341,22 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			finalDirectory = finalBaseDir;
 		} else directory = finalBaseDir; // Share-only / metadata-only import → files already live at the target location.
 		await mkdir(directory, { recursive: true });
+		// Drop the node-local fields that rode in with the imported data before merging: we own
+		// them, and `validateImportedLISH` is a cast, so a hostile .lish / JSON / URL / peer
+		// manifest can carry them. The cast spells out the hazard: `ILISH` has neither field,
+		// yet both can be there at runtime because the import validator only checks the fields
+		// it knows, and `exportToFile` already strips both on the way out.
+		//  - finalDirectory: share-only imports take none of their own, so the attacker's value
+		//    would survive — and deleteLISHData() treats a set finalDirectory as "still in temp"
+		//    and recursively wipes the LISH directory, which for a share-only import is the
+		//    user's own folder with files the LISH never listed.
+		//  - chunks: addLISH() persists `have = TRUE` for every listed checksum, so a manifest
+		//    listing its own checksums makes us claim data we never received — the downloader
+		//    finds nothing missing, isComplete() reports done, and getHaveChunks() advertises
+		//    'all' to peers that then request bytes we cannot serve.
+		const { finalDirectory: _importedFinalDirectory, chunks: _importedChunks, ...manifest } = lish as ILISH & { finalDirectory?: string; chunks?: string[] };
 		const storedLISH: IStoredLISH = {
-			...lish,
+			...manifest,
 			directory,
 			...(finalDirectory !== undefined ? { finalDirectory } : {}),
 		};

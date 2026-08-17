@@ -40,6 +40,11 @@ class MockLISHClient {
 	async close(): Promise<void> {
 		this.closeCalled = true;
 	}
+
+	/** Immediate teardown — records the same flag; tests assert the client was released. */
+	abort(): void {
+		this.closeCalled = true;
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1297,6 +1302,143 @@ describe('Downloader — inline ENOSPC retry', () => {
 		await Promise.all(promises);
 		expect(pc.writePaused).toBe(false);
 		expect(pc.writeResolvers.length).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Network peer:disconnect handling
+// ---------------------------------------------------------------------------
+
+describe('Downloader – network peer:disconnect handling', () => {
+	type PeerManagerView = {
+		tryAdd: (peerID: string, client: unknown, connectionType: 'DIRECT' | 'RELAY' | 'DCUtR') => boolean;
+		has: (peerID: string) => boolean;
+		isDropped: (peerID: string) => boolean;
+		isBanned: (peerID: string) => boolean;
+		canDial: (peerID: string) => boolean;
+	};
+
+	let net: MockNetwork;
+	let downloader: Downloader;
+
+	const pm = (): PeerManagerView => priv(downloader)['peerManager'] as PeerManagerView;
+
+	beforeEach(async () => {
+		net = new MockNetwork();
+		const ds = new MockDataServer();
+		ds.missingChunks = [];
+		downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
+		await downloader.initFromManifest(makeLISH());
+	});
+
+	afterEach(async () => {
+		await downloader.destroy();
+	});
+
+	it('initFromManifest subscribes exactly one peer:disconnect handler', () => {
+		expect(net.peerDisconnectHandlers.size).toBe(1);
+	});
+
+	it('a disconnected peer is removed from the peer manager', () => {
+		pm().tryAdd('peer-gone', new MockLISHClient() as never, 'DIRECT');
+		pm().tryAdd('peer-stays', new MockLISHClient() as never, 'DIRECT');
+		net.emitPeerDisconnect('peer-gone');
+		expect(pm().has('peer-gone')).toBe(false);
+		expect(pm().has('peer-stays')).toBe(true);
+	});
+
+	it('disconnect removal is plain — peer is neither dropped nor banned and may re-dial', () => {
+		pm().tryAdd('peer-flap', new MockLISHClient() as never, 'DIRECT');
+		net.emitPeerDisconnect('peer-flap');
+		expect(pm().isDropped('peer-flap')).toBe(false);
+		expect(pm().isBanned('peer-flap')).toBe(false);
+		expect(pm().canDial('peer-flap')).toBe(true);
+	});
+
+	it('disconnect of a peer not in the peer manager is a no-op', () => {
+		pm().tryAdd('peer-a', new MockLISHClient() as never, 'DIRECT');
+		expect(() => net.emitPeerDisconnect('peer-unknown')).not.toThrow();
+		expect(pm().has('peer-a')).toBe(true);
+	});
+
+	it('destroy() disposes the peer:disconnect subscription', async () => {
+		await downloader.destroy();
+		expect(net.peerDisconnectHandlers.size).toBe(0);
+	});
+
+	it('successful completion disposes the peer:disconnect subscription', async () => {
+		expect(net.peerDisconnectHandlers.size).toBe(1);
+		// needsManifest path parks download() on its internal completion promise
+		// without touching the filesystem; resolve it to simulate a finished download.
+		const done = downloader.download();
+		while (!priv(downloader)['downloadResolve']) await new Promise(r => setTimeout(r, 0));
+		priv(downloader)['state'] = 'downloaded';
+		(priv(downloader)['downloadResolve'] as () => void)();
+		await done;
+		expect(net.peerDisconnectHandlers.size).toBe(0);
+	});
+});
+
+describe('Downloader – lishnet membership across leave and rejoin', () => {
+	function make(networkIDs: string[]): Downloader {
+		return new Downloader('/tmp/dl', new MockNetwork() as never, new MockDataServer() as never, networkIDs);
+	}
+
+	it('drops a left lishnet from the set it broadcasts on', () => {
+		const dl = make(['net-a', 'net-b']);
+		dl.removeNetwork('net-a');
+		expect(dl.getNetworkIDs()).toEqual(['net-b']);
+	});
+
+	it('ignores a lishnet this download was never bound to', () => {
+		const dl = make(['net-a']);
+		dl.removeNetwork('net-z');
+		expect(dl.getNetworkIDs()).toEqual(['net-a']);
+	});
+
+	it('drops the last lishnet too, leaving nothing to broadcast on', () => {
+		// It used to keep the last one, on the grounds that the caller disables the
+		// download — but a disabled download can still be resumed by a rejoin.
+		const dl = make(['net-a']);
+		dl.removeNetwork('net-a');
+		expect(dl.getNetworkIDs()).toEqual([]);
+	});
+
+	it('does not resurrect a left lishnet when a different one is rejoined', () => {
+		// The reported defect, end to end: bound to A and B, leave both, rejoin only
+		// A. Before the fix B survived the second leave and addNetwork appended A
+		// beside it, so the resumed download broadcast WANTs on B — a topic the node
+		// had left.
+		const dl = make(['net-a', 'net-b']);
+		dl.removeNetwork('net-a');
+		dl.removeNetwork('net-b');
+		dl.addNetwork('net-a');
+		expect(dl.getNetworkIDs()).toEqual(['net-a']);
+		expect(dl.getNetworkIDs()).not.toContain('net-b');
+	});
+
+	it('rejoining restores only lishnets the download actually belongs to', () => {
+		const dl = make(['net-a']);
+		dl.removeNetwork('net-a');
+		dl.addNetwork('net-stranger');
+		expect(dl.getNetworkIDs()).toEqual([]);
+	});
+
+	it('keeps the original binding so a rejoin can still resume the download', () => {
+		// removeNetwork must not touch the original set — that is what the resume
+		// path matches a rejoined lishnet against.
+		const dl = make(['net-a', 'net-b']);
+		dl.removeNetwork('net-a');
+		dl.removeNetwork('net-b');
+		expect(dl.getOriginalNetworkIDs().sort()).toEqual(['net-a', 'net-b']);
+	});
+
+	it('adding a lishnet twice does not duplicate it', () => {
+		const dl = make(['net-a']);
+		dl.removeNetwork('net-a');
+		dl.addNetwork('net-a');
+		dl.addNetwork('net-a');
+		expect(dl.getNetworkIDs()).toEqual(['net-a']);
 	});
 });
 

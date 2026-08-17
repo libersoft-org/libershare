@@ -52,6 +52,12 @@ export class LISHServingHandlers {
 
 	/** Handle a `want` pubsub message from a remote peer requesting chunk metadata. */
 	async handleWant(data: WantMessage, networkID: string, fromPeerID?: string): Promise<void> {
+		// TODO(out of scope): enforce per-network ACL here — only answer a
+		// WANT if `data.lishID` is actually shared into `networkID`. Today we
+		// answer based solely on global upload-enabled state, so a peer on ANY
+		// joined lishnet can pull any LISH we upload. Implementing this needs a
+		// LISH↔networkIDs mapping in the DB which does not yet exist; until then
+		// the topic membership is the only (coarse) access boundary.
 		if (!fromPeerID) {
 			trace(`[NET] want ignored: no verified sender peerID`);
 			return;
@@ -121,6 +127,10 @@ export class LISHServingHandlers {
 	 * (same query can hit the same node from several peering paths).
 	 */
 	async handleSearchLishs(data: SearchLishsMessage, networkID: string, fromPeerID?: string): Promise<void> {
+		// TODO(out of scope): scope search results to LISHs actually shared
+		// into `networkID` (hence the explicit `void networkID` below — the param
+		// is received but not yet used for filtering). Blocked on the same missing
+		// LISH↔networkIDs DB mapping as handleWant's ACL TODO.
 		void networkID;
 		if (!fromPeerID) {
 			trace(`[NET] searchLishs ignored: no verified sender peerID`);
