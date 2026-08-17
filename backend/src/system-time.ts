@@ -1,0 +1,1947 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { access, mkdir, open, readdir, readFile, rename, unlink } from 'node:fs/promises';
+import { isIP } from 'node:net';
+import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
+import { Mutex } from 'async-mutex';
+import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeDomainMembership, probeLocalMachineKey, type DomainMembership, type RegistryKeyProbe } from './system-time-windows.ts';
+import type { SystemTimeCapabilities, SystemTimeOutcome, SystemTimeResult, SystemTimeStatus, SystemTimeStep, SystemTimezoneSource } from '@shared';
+
+const execFileAsync = promisify(execFile);
+
+/** Hard cap on how long any time-related child process may run before we give up. */
+const EXEC_TIMEOUT_MS = 5000;
+
+/** `systemsetup` is not on a default non-root PATH on macOS, so it is always addressed absolutely. */
+const MAC_SYSTEMSETUP = '/usr/sbin/systemsetup';
+
+/**
+ * Drop-in that carries our NTP server on systemd hosts. A drop-in is used instead of
+ * editing the shipped `timesyncd.conf` so a distribution package upgrade never fights
+ * our value and removing the feature is a single file deletion.
+ *
+ * The `90-` prefix is not cosmetic: drop-ins are applied in lexicographic order and a
+ * later file re-overrides the same key, so a distribution's `50-*.conf` would silently
+ * beat a `10-` prefix while the API still reported success. systemd reserves 60-90 for
+ * local administrative overrides in `/etc`, which is exactly what this is.
+ */
+export const TIMESYNCD_DROPIN_PATH = '/etc/systemd/timesyncd.conf.d/90-libershare.conf';
+
+/** systemd unit that reads {@link TIMESYNCD_DROPIN_PATH}. */
+export const TIMESYNCD_UNIT = 'systemd-timesyncd.service';
+
+/** Registry key holding the Windows Time service configuration (NTP peers and sync type). */
+const W32TIME_PARAMS_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters';
+
+/** The service key itself, whose `Start` value is the start type (`sc qc` localizes its output). */
+const W32TIME_SERVICE_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time';
+
+/**
+ * Root of group policy's own W32Time configuration, relative to `HKEY_LOCAL_MACHINE`
+ * ({@link probeLocalMachineKey} takes the subkey, not a full path). When this key exists, an
+ * administrator's policy owns the settings and the values under
+ * {@link W32TIME_PARAMS_KEY} need not be the ones in effect — policy values override the
+ * local W32Time configuration.
+ *
+ * The ROOT rather than the individual branches under it. Policy lands in several of
+ * them — "Configure Windows NTP Client" writes `TimeProviders\NtpClient`, "Global
+ * Configuration Settings" writes `Config`, a couple of older values land in
+ * `Parameters` — and enumerating a hand-picked set answers "unmanaged" for every branch
+ * not on the list, `TimeProviders\NtpServer` included. A subkey cannot exist without its
+ * parent, so the parent is the one question that covers all of them, present and future.
+ */
+const W32TIME_POLICY_KEY = 'SOFTWARE\\Policies\\Microsoft\\W32Time';
+
+/** Platforms with an implemented time backend. Anything else is reported as unsupported. */
+export type SystemPlatform = 'win32' | 'linux' | 'darwin';
+
+/** A single child process to run: an argv array, never a shell string. */
+export interface SystemCommand {
+	cmd: string;
+	args: string[];
+	/**
+	 * Exit codes that mean "this step had nothing left to do" — the desired state was
+	 * already in place. They are treated as success so the steps behind them still run,
+	 * which a plain abort would skip (see {@link buildSetNtpEnabledCommands}).
+	 */
+	benignCodes?: number[];
+	/**
+	 * Output that means the step failed even though it exited 0. `w32tm` routinely
+	 * refuses a request, prints the reason and still returns a zero exit code, so an
+	 * exit status alone would report a refused `/resync` or `/config` as saved.
+	 */
+	failOnOutput?: RegExp;
+}
+
+/**
+ * A failure HRESULT in command output: `0x8` followed by seven hex digits
+ * (`0x80070005` access denied, `0x80070522` privilege not held, `0x800706B5` the
+ * service is not running).
+ *
+ * Matched on the code, never on the sentence around it — `w32tm` localizes its
+ * messages, so a Czech or German host prints a translated reason next to the same
+ * number. Success output cannot collide: it carries no HRESULT, and the identifiers it
+ * does print (`ReferenceId: 0xC0000210`) are not in the `0x8` failure range.
+ */
+export const W32TM_ERROR_RE: RegExp = /0x8[0-9A-Fa-f]{7}/;
+
+/** A `w32tm` step, with the output check that its zero exit code makes necessary. */
+function w32tm(...args: string[]): SystemCommand {
+	return { cmd: 'w32tm', args, failOnOutput: W32TM_ERROR_RE };
+}
+
+/** ERROR_SERVICE_ALREADY_RUNNING — `sc start` against a service that is already up. */
+const SC_ALREADY_RUNNING = 1056;
+
+/** ERROR_SERVICE_NOT_ACTIVE — `sc stop` against a service that is already down. */
+const SC_NOT_ACTIVE = 1062;
+
+/** Local wall-clock date and time broken into parts. `month` is 1-12. */
+export interface LocalDateTime {
+	year: number;
+	month: number;
+	day: number;
+	hours: number;
+	minutes: number;
+	seconds: number;
+}
+
+/** True when the given `process.platform` value has an implemented time backend. */
+export function isSupportedPlatform(platform: string): platform is SystemPlatform {
+	return platform === 'win32' || platform === 'linux' || platform === 'darwin';
+}
+
+// ---------------------------------------------------------------------------
+// Validation (pure)
+// ---------------------------------------------------------------------------
+
+/**
+ * Characters an NTP address may consist of at all. Checked before anything else so
+ * whitespace, newlines and every shell metacharacter are gone regardless of which
+ * branch below accepts the value — the address is passed as a single argv element,
+ * but it is also written verbatim into a systemd drop-in, where a newline would
+ * inject a configuration directive (see {@link buildTimesyncdDropIn}).
+ */
+const NTP_SERVER_CHARSET_RE = /^[A-Za-z0-9._:%-]+$/;
+
+/** One DNS label: 1-63 alphanumerics and hyphens, never starting or ending with a hyphen. */
+const DNS_LABEL_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+
+/**
+ * True when `name` is a syntactically valid DNS name: at most 253 characters, each
+ * label at most 63. A single trailing dot (the explicit root, `ntp.example.org.`) is
+ * accepted and ignored.
+ *
+ * An all-digit last label is rejected: such a name can only have been meant as an IPv4
+ * address, and `1.2.3.999` reaching the resolver as a host name produces a late and
+ * confusing failure instead of the input error it is.
+ */
+function isValidDnsName(name: string): boolean {
+	const bare = name.endsWith('.') ? name.slice(0, -1) : name;
+	if (bare.length === 0 || bare.length > 253) return false;
+	const labels = bare.split('.');
+	if (!labels.every(label => DNS_LABEL_RE.test(label))) return false;
+	return !/^\d+$/.test(labels[labels.length - 1]!);
+}
+
+/**
+ * True for an IP literal that is syntactically fine and still cannot be an NTP peer: the
+ * unspecified address in either family, and the IPv4 limited broadcast.
+ *
+ * `net.isIP()` accepts all of them, so without this `0.0.0.0` and `::` were saved as the
+ * host's time source. Nothing ever answers there — the daemon simply stops synchronising,
+ * with the UI showing a configured server and no error anywhere. IPv6 is matched on the
+ * digits rather than on the literal `::`, because the same address also spells as
+ * `0:0:0:0:0:0:0:0` and `0000:...`.
+ */
+function isUnusableNtpAddress(address: string): boolean {
+	// The scope index comes off before anything is matched. Whether a scoped address even
+	// reaches here as one string is a RUNTIME difference: Bun's `net.isIP()` answers 6 for
+	// `::%eth0`, Node's answers 0 and sends it down the zone-index branch instead. On Bun
+	// the digits-only match below therefore saw `::%eth0`, did not match it, and the
+	// unspecified address was accepted as a peer with an interface pinned to it.
+	const percent = address.indexOf('%');
+	const bare = percent >= 0 ? address.slice(0, percent) : address;
+	if (isIP(bare) === 4) return bare === '0.0.0.0' || bare === '255.255.255.255';
+	return /^[0:]+$/.test(bare);
+}
+
+/**
+ * True when `server` is a usable NTP host name or IP address.
+ *
+ * IP literals are checked with `net.isIP()` rather than a character class, so
+ * `192.0.2.999` and `2001:db8:::1` are rejected where a "digits, dots and colons"
+ * pattern would let them through and fail much later, inside the OS tooling. A
+ * link-local IPv6 address may carry a zone index (`fe80::1%eth0`).
+ */
+export function isValidNtpServer(server: string): boolean {
+	if (!NTP_SERVER_CHARSET_RE.test(server)) return false;
+	if (isIP(server) !== 0) return !isUnusableNtpAddress(server);
+	// Zone index: only ever valid on an IPv6 literal, so `%` cannot reach a host name
+	// or a drop-in line through this branch.
+	const percent = server.indexOf('%');
+	if (percent >= 0) {
+		const base = server.slice(0, percent);
+		const zone = server.slice(percent + 1);
+		// The same usability test as above, on the ADDRESS rather than on the whole string.
+		// `net.isIP()` rejects a scope suffix, so `::%eth0` never reached the check that
+		// `::` fails and was saved as the host's time source with an interface pinned to it.
+		return isIP(base) === 6 && !isUnusableNtpAddress(base) && zone.length > 0 && /^[A-Za-z0-9._-]+$/.test(zone);
+	}
+	return isValidDnsName(server);
+}
+
+/**
+ * Check a requested wall-clock time. Returns null when the value is usable, or a
+ * human-readable reason why it is not.
+ */
+export function validateClockParts(hours: number, minutes: number, seconds: number): string | null {
+	const check = (label: string, value: number, max: number): string | null => {
+		if (!Number.isInteger(value)) return `${label} must be an integer`;
+		if (value < 0 || value > max) return `${label} must be between 0 and ${max}`;
+		return null;
+	};
+	return check('hours', hours, 23) ?? check('minutes', minutes, 59) ?? check('seconds', seconds, 59);
+}
+
+/** Zero-pad to two digits — the width every platform's date/time argument expects. */
+function pad2(value: number): string {
+	return String(value).padStart(2, '0');
+}
+
+// ---------------------------------------------------------------------------
+// Output parsers (pure)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the bare `key=value` lines of `timedatectl show` / `show-timesync` into a
+ * map. There are no sections and no quoting; a line without `=` is ignored.
+ */
+export function parseTimedatectlShow(output: string): Record<string, string> {
+	const result: Record<string, string> = {};
+	for (const line of output.split('\n')) {
+		const eq = line.indexOf('=');
+		if (eq <= 0) continue;
+		result[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+	}
+	return result;
+}
+
+/** systemd prints booleans as the literals `yes`/`no`; anything else is unknown. */
+export function parseYesNo(value: string | undefined): boolean | null {
+	if (value === 'yes') return true;
+	if (value === 'no') return false;
+	return null;
+}
+
+/**
+ * Pick the NTP server to display from `timedatectl show-timesync`. `ServerName` is
+ * the peer actually in use and wins, because a DHCP-supplied `LinkNTPServers` entry
+ * silently overrides the configured `SystemNTPServers` list — showing the configured
+ * value alone would claim a server that is not being used. Only the first entry is
+ * reported: the UI configures exactly one server.
+ */
+export function parseTimesyncServer(output: string): string | null {
+	const map = parseTimedatectlShow(output);
+	const first = (value: string | undefined): string | null => {
+		const token = (value ?? '').trim().split(/\s+/)[0];
+		return token ? token : null;
+	};
+	return first(map['ServerName']) ?? first(map['SystemNTPServers']) ?? first(map['LinkNTPServers']) ?? first(map['FallbackNTPServers']);
+}
+
+/**
+ * Extract the value of a `REG_SZ`/`REG_DWORD` entry from `reg query ... /v NAME`
+ * output, whose payload line is `    NAME    REG_SZ    value`. Returns null when the
+ * entry is absent.
+ */
+export function parseRegValue(output: string, name: string): string | null {
+	for (const line of output.split('\n')) {
+		const match = line.trim().match(/^(\S+)\s+REG_\w+\s+(.*)$/);
+		if (match && match[1] === name) return (match[2] ?? '').trim();
+	}
+	return null;
+}
+
+/**
+ * Turn the Windows `NtpServer` registry value (`time.windows.com,0x9 other.example.org,0x9`)
+ * into the first plain host name, dropping the trailing `,0x<flags>` suffix.
+ */
+export function parseWindowsNtpServer(value: string | null): string | null {
+	if (!value) return null;
+	const first = value.trim().split(/\s+/)[0];
+	if (!first) return null;
+	const host = first.split(',')[0];
+	return host ? host : null;
+}
+
+/**
+ * How Windows Time is configured to obtain the time, from the `Type` registry value.
+ *
+ * - `domain-hierarchy` (`NT5DS`): the Active Directory time hierarchy. The default on
+ *   a domain member and the one thing this application must never overwrite.
+ * - `manual` (`NTP`): a configured peer list.
+ * - `all` (`AllSync`): the domain hierarchy plus the peer list.
+ * - `none` (`NoSync`): no time source at all.
+ * - `managed`: group policy owns the configuration, so the registry under
+ *   `Services\W32Time` is not the effective one and writing it is pointless at best.
+ * - `unknown`: the value could not be read, which is never assumed to be safe.
+ */
+export type WindowsSyncMode = 'domain-hierarchy' | 'manual' | 'all' | 'none' | 'managed' | 'unknown';
+
+/** Service start type from the `Start` registry value. `disabled` means it cannot run at all. */
+export type WindowsStartMode = 'automatic' | 'on-demand' | 'disabled' | 'unknown';
+
+/**
+ * Classify the Windows time source. Group policy wins over the service's own registry
+ * values: when a policy is present those values need not be the effective configuration
+ * (finding: the raw key is not the same thing as what W32Time actually uses).
+ */
+export function parseWindowsSyncMode(typeValue: string | null, policyManaged: boolean): WindowsSyncMode {
+	if (policyManaged) return 'managed';
+	if (typeValue === 'NT5DS') return 'domain-hierarchy';
+	if (typeValue === 'NTP') return 'manual';
+	if (typeValue === 'AllSync') return 'all';
+	if (typeValue === 'NoSync') return 'none';
+	return 'unknown';
+}
+
+/**
+ * Read the service start type out of `reg query ...\Services\W32Time /v Start`.
+ * `0x0`-`0x2` all start without being asked, `0x3` is trigger/demand start and `0x4`
+ * is disabled.
+ */
+export function parseWindowsStartMode(output: string | null): WindowsStartMode {
+	const raw = output === null ? null : parseRegValue(output, 'Start');
+	if (raw === '0x0' || raw === '0x1' || raw === '0x2') return 'automatic';
+	if (raw === '0x3') return 'on-demand';
+	if (raw === '0x4') return 'disabled';
+	return 'unknown';
+}
+
+/**
+ * Whether Windows is set up to synchronise the clock, or null when that cannot be told.
+ *
+ * Deliberately NOT "the service is running right now". Windows Time is trigger-started
+ * on a workgroup machine: it synchronises, stops again, and is still fully configured —
+ * reading the live run state would show synchronisation as off, let the UI offer a
+ * manual clock set, and have W32Time overwrite it at the next trigger.
+ */
+/**
+ * True when this application may change the host's time source.
+ *
+ * False for a domain member, for a group-policy-managed host and whenever the mode
+ * could not be read. Those are configurations an administrator owns: switching a domain
+ * member off `NT5DS`, or disabling W32Time on one, detaches it from the forest's time
+ * and eventually breaks Kerberos, and neither the previous mode nor the peer list is
+ * anywhere we could restore it from.
+ *
+ * `AllSync` is in that group too. Windows defines it as using EVERY available source,
+ * which on a domain member includes the AD hierarchy — so it is not the "just a peer
+ * list" that `NTP` is, and disabling W32Time on such a host detaches it exactly as
+ * disabling it on an `NT5DS` one does.
+ *
+ * The mode alone decides none of this, which is why `membership` is asked for and why
+ * only a PROVEN `standalone` passes. A forest-root PDC pointed at an external time
+ * source is configured the Microsoft-documented way — local `Type=NTP`, no policy branch
+ * — and so reads here as an ordinary `manual` host, while being the machine every clock
+ * in the forest follows. Stopping and disabling W32Time on it takes the root out of the
+ * domain time hierarchy for good, and Kerberos fails as the clocks drift apart. A domain
+ * member that is NOT the authority is refused along with it: nothing available here
+ * separates the two, and mistaking the authority for a plain member is the expensive
+ * direction of that guess. `unknown` — an unreadable join state — is refused for the
+ * same reason.
+ */
+export function windowsSyncIsOurs(mode: WindowsSyncMode, membership: DomainMembership): boolean {
+	if (membership !== 'standalone') return false;
+	return mode === 'manual' || mode === 'none';
+}
+
+export function windowsSyncEnabled(mode: WindowsSyncMode, start: WindowsStartMode): boolean | null {
+	if (start === 'disabled') return false;
+	if (mode === 'none') return false;
+	if (mode === 'unknown' || start === 'unknown') return null;
+	return true;
+}
+
+/**
+ * Read the sync result out of `w32tm /query /status`. The field names stay English
+ * on a localized host, only the timestamp is localized — so the presence of a real
+ * value is the signal, never its format. Returns null when the line is missing.
+ */
+export function parseWindowsSyncStatus(output: string): boolean | null {
+	const match = output.match(/Last Successful Sync Time:\s*(.*)/);
+	if (!match) return null;
+	const value = (match[1] ?? '').trim();
+	if (!value) return null;
+	return !/unspecified/i.test(value);
+}
+
+/**
+ * Pull the value out of a `systemsetup -get...` line (`Network Time Server: time.apple.com`).
+ * Returns null when the tool printed an error instead of a `label: value` pair.
+ */
+export function parseSystemsetupValue(output: string): string | null {
+	const line = output.trim().split('\n')[0];
+	if (!line) return null;
+	const colon = line.indexOf(':');
+	if (colon < 0) return null;
+	const value = line.slice(colon + 1).trim();
+	return value ? value : null;
+}
+
+/** `systemsetup -getusingnetworktime` prints `Network Time: On|Off`. */
+export function parseSystemsetupOnOff(output: string): boolean | null {
+	const value = parseSystemsetupValue(output);
+	if (value === null) return null;
+	if (/^on$/i.test(value)) return true;
+	if (/^off$/i.test(value)) return false;
+	return null;
+}
+
+/**
+ * Classify a failed command into an actionable outcome.
+ *
+ * Windows is matched on exit codes and HRESULTs, never on the message: the text is
+ * localized (a Czech host prints "Přístup byl odepřen") and `w32tm` writes it to
+ * stdout rather than stderr. Linux and macOS are matched on their English messages,
+ * which is safe because every child runs with `LC_ALL=C` (see {@link run}).
+ */
+export function classifyFailure(platform: SystemPlatform, code: number | null, output: string): SystemTimeOutcome {
+	const text = output.toLowerCase();
+	// A clock write refused because the sync daemon owns the clock is a state
+	// conflict, not a failure of ours — it has its own fix (turn sync off first).
+	if (text.includes('automatic time synchronization is enabled')) return 'auto-sync-enabled';
+	// Deliberately the full phrase, not a bare "not supported": Windows reports
+	// ERROR_NOT_SUPPORTED (0x80070032) with that substring for plain failures, and
+	// calling those "unsupported" would tell the user to stop trying on a host that
+	// simply hit an error.
+	if (text.includes('ntp not supported')) return 'unsupported';
+	if (platform === 'win32') {
+		// Codes only, never the message: it is localized and w32tm even writes it to
+		// stdout. 5 = ERROR_ACCESS_DENIED (sc), 1314 = ERROR_PRIVILEGE_NOT_HELD, and
+		// the HRESULT forms of both as returned by w32tm and Set-Date — those arrive
+		// as signed int32, hence the negative literals.
+		if (code === 5 || code === 1314 || code === -2147024891 || code === -2147023582) return 'permission-denied';
+		// The HRESULT is also printed by w32tm, whose own exit code can be 1 or 0.
+		if (text.includes('0x80070005') || text.includes('0x80070522')) return 'permission-denied';
+		return 'error';
+	}
+	if (text.includes('interactive authentication required') || text.includes('access denied') || text.includes('permission denied') || text.includes('operation not permitted') || text.includes('must be run as root') || text.includes('administrator access')) return 'permission-denied';
+	return 'error';
+}
+
+/** Collapse command output to a single line suitable for an error message. */
+export function firstLine(output: string): string | null {
+	const line = output
+		.split('\n')
+		.map(l => l.trim())
+		.find(l => l.length > 0);
+	return line ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Command builders (pure)
+// ---------------------------------------------------------------------------
+
+/**
+ * Commands that set the wall clock to `when`. Every field is a validated integer,
+ * so the formatted date string cannot carry anything but digits and separators.
+ * macOS takes only the time — its `-settime` leaves the date alone.
+ */
+export function buildSetClockCommands(platform: SystemPlatform, when: LocalDateTime): SystemCommand[] {
+	const date = `${when.year}-${pad2(when.month)}-${pad2(when.day)}`;
+	const time = `${pad2(when.hours)}:${pad2(when.minutes)}:${pad2(when.seconds)}`;
+	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-time', `${date} ${time}`] }];
+	if (platform === 'darwin') return [{ cmd: MAC_SYSTEMSETUP, args: ['-settime', time] }];
+	return [{ cmd: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', `Set-Date -Date '${date}T${time}'`] }];
+}
+
+/**
+ * Commands that set the system timezone. `windowsId` is the converted identifier
+ * from {@link ianaToWindowsTimezoneId} and is required on Windows only; passing null
+ * there yields an empty list, meaning "this change cannot be expressed on this host"
+ * — the caller reports that as unsupported rather than running anything.
+ */
+export function buildSetTimezoneCommands(platform: SystemPlatform, timezone: string, windowsId: string | null): SystemCommand[] {
+	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-timezone', timezone] }];
+	if (platform === 'darwin') return [{ cmd: MAC_SYSTEMSETUP, args: ['-settimezone', timezone] }];
+	return windowsId ? [{ cmd: 'tzutil', args: ['/s', windowsId] }] : [];
+}
+
+/** What systemd answered about one unit: the name it prefers for it, and its `LoadState`. */
+export interface UnitState {
+	/** The `Id` property — the canonical name, which an alias is NOT. */
+	id: string;
+	load: string;
+}
+
+/**
+ * Parse `systemctl show -p Id -p Names -p LoadState <units...>` into unit name -> state.
+ *
+ * The output is one `Key=Value` record per unit, records separated by a blank line. Each
+ * record is indexed under its `Id` AND under every name in `Names`, because those are not
+ * the same thing: asking about an alias answers with the aliased unit's `Id`, so a map keyed
+ * on `Id` alone has no entry under the name that was asked about. The ordered provider list
+ * is looked up by the names it contains, so an aliased provider read as absent — the ordering
+ * skipped it and named the next daemon down, while timedated hands the clock to the alias.
+ *
+ * The canonical `Id` is kept in the value so the caller can compare units by identity rather
+ * than by the name it happened to ask under.
+ */
+export function parseUnitLoadStates(output: string): Map<string, UnitState> {
+	const states = new Map<string, UnitState>();
+	let id: string | null = null;
+	let names: string[] = [];
+	let load: string | null = null;
+	const flush = (): void => {
+		if (id !== null && load !== null) {
+			const state: UnitState = { id, load };
+			for (const name of new Set([id, ...names])) states.set(name, state);
+		}
+		id = null;
+		names = [];
+		load = null;
+	};
+	for (const line of output.split(/\r?\n/)) {
+		const trimmed = line.trim();
+		if (trimmed.length === 0) {
+			flush();
+			continue;
+		}
+		const eq = trimmed.indexOf('=');
+		if (eq <= 0) continue;
+		const key = trimmed.slice(0, eq);
+		const value = trimmed.slice(eq + 1);
+		if (key === 'Id') {
+			// A second Id without a blank line between: end the record that was open.
+			if (id !== null) flush();
+			id = value;
+		} else if (key === 'Names') names = extractWords(value, true);
+		else if (key === 'LoadState') load = value;
+	}
+	flush();
+	return states;
+}
+
+/**
+ * The canonical unit name behind `unit`, or `unit` itself when systemd said nothing about it.
+ *
+ * Comparing unit names as text is only safe once they have been through this: `vendor-ntp.service`
+ * and `systemd-timesyncd.service` can be the same unit, and the whole question here is which
+ * daemon owns the clock — not which of its names somebody wrote down.
+ */
+export function canonicalUnitName(states: Map<string, UnitState> | null, unit: string): string {
+	return states?.get(unit)?.id ?? unit;
+}
+
+/**
+ * Whether systemd-timedated would consider this unit a usable provider.
+ *
+ * `LoadState` is exactly `loaded`, which is timedated's own test — it reads the property
+ * over D-Bus and skips every unit that does not answer with it. `systemctl list-unit-files`
+ * was asked before, and it is not the same question: it reports a unit FILE on disk and its
+ * enablement, so a unit whose file fails to parse (`bad-setting`, `error`) or is not there
+ * at all was read as usable, the drop-in was written for it and timedated then picked the
+ * next provider in the ordering, which never reads that file. `masked` and `not-found`
+ * still fall out, since neither of them is `loaded`.
+ */
+export function unitIsLoaded(states: Map<string, UnitState>, unit: string): boolean {
+	return states.get(unit)?.load === 'loaded';
+}
+
+/**
+ * systemd units of the other NTP implementations systemd-timedated can hand the clock
+ * to. `NTP=yes` only says that SOME managed service is synchronising; when one of these
+ * is the one running, a timesyncd drop-in is read by nobody.
+ */
+export const COMPETING_NTP_UNITS: string[] = ['chronyd.service', 'chrony.service', 'ntpd.service', 'ntpsec.service', 'openntpd.service'];
+
+/**
+ * Every unit worth asking "is an NTP daemon other than timesyncd running here".
+ *
+ * The hardcoded five above are a floor, not the answer: timedated accepts ANY valid unit
+ * name from its ordered list, so a distribution or an administrator can put a provider
+ * there that is on nobody's list — and asking only about the five reported "nothing in the
+ * way" while that daemon held the clock. The host's own ordering is therefore folded in,
+ * minus timesyncd, which is the one daemon that is not a competitor.
+ *
+ * `states` is what systemd answered about those names, and it decides which of them IS
+ * timesyncd: an alias for it is a different string and excluding by text alone kept the
+ * alias on the list, so timesyncd running normally answered as a competing daemon and the
+ * capability went false on a host that is ours to configure.
+ *
+ * That test applies to the hardcoded names as well, and not only to the ordering. A host
+ * where `chronyd.service` is an ALIAS of timesyncd answers for it with timesyncd's own
+ * `ActiveState`, so a running timesyncd was read as chrony holding the clock — safe, in that
+ * nothing is written to the wrong daemon, but the server could not be configured on a host
+ * that has no other NTP daemon at all.
+ *
+ * Every name is queried under the spelling we hold — the host's own for an entry of the
+ * ordering, ours for the five above — and only JUDGED by its canonical form. `systemctl show`
+ * answers for an alias just as well as for the real name, so there is nothing to gain by
+ * rewriting the ordering's entries into names the host never wrote.
+ */
+export function competingNtpUnits(ordered: string[] | null, states: Map<string, UnitState> | null = null): string[] {
+	const units = new Set<string>();
+	for (const unit of [...COMPETING_NTP_UNITS, ...(ordered ?? [])]) {
+		if (canonicalUnitName(states, unit) !== TIMESYNCD_UNIT) units.add(unit);
+	}
+	return [...units];
+}
+
+/**
+ * True when `systemctl show -p ActiveState --value <units...>` reports any of them as
+ * running. A unit that does not exist on the host reports `inactive`, so an absent
+ * chrony is indistinguishable from a stopped one — which is the correct answer here.
+ *
+ * The test is systemd-timedated's own, and it is the INVERSE of the obvious one: it counts
+ * a unit as active unless its state is exactly `inactive` or `failed`. Listing the states
+ * that mean "running" instead left `deactivating` — a daemon on its way down that still
+ * holds the clock — and every state a future systemd may add reading as "nothing in the
+ * way". An unrecognised state has to fail closed, and only this direction does that.
+ */
+export function parseAnyUnitActive(output: string): boolean {
+	return output.split(/\r?\n/).some(line => {
+		const state = line.trim();
+		return state.length > 0 && state !== 'inactive' && state !== 'failed';
+	});
+}
+
+/**
+ * Directories systemd-timedated reads its ordered NTP provider list from, most specific
+ * first. A file name present in an earlier directory shadows the same name in a later
+ * one; across different names the whole set is ordered lexicographically by file name,
+ * which is what the numeric prefixes (`50-chronyd.list`, `80-systemd-timesync.list`) are
+ * for.
+ */
+const NTP_UNITS_DIRS: string[] = ['/etc/systemd/ntp-units.d', '/run/systemd/ntp-units.d', '/usr/local/lib/systemd/ntp-units.d', '/usr/lib/systemd/ntp-units.d'];
+
+/** Environment override timedated honours in place of the directories above; colon-separated. */
+const NTP_SERVICES_ENV = 'SYSTEMD_TIMEDATED_NTP_SERVICES';
+
+/** The unit whose environment decides the override — timedated's own, not ours. */
+const TIMEDATED_UNIT = 'systemd-timedated.service';
+
+/** The unit types systemd knows; a name whose suffix is not one of them is not a unit name. */
+const UNIT_TYPES: string[] = ['service', 'socket', 'target', 'device', 'mount', 'automount', 'swap', 'timer', 'path', 'slice', 'scope'];
+
+/** `UNIT_NAME_MAX` upstream, counted without the terminator. */
+const UNIT_NAME_MAX = 255;
+
+/**
+ * The characters a unit name may be built from, `@` deliberately excluded — see
+ * {@link isValidUnitName}.
+ */
+const UNIT_NAME_PREFIX_RE = /^[A-Za-z0-9:_.\\-]+$/;
+
+/**
+ * A syntactically valid PLAIN systemd unit name, which is what timedated demands.
+ *
+ * Every entry of the ordered list goes through `unit_name_is_valid(s, UNIT_NAME_PLAIN)`
+ * upstream, and the entries that fail are not part of the ordering — so they must not be
+ * part of ours either. Passing one on would also fail the whole `systemctl show` that
+ * follows, and one malformed line in a vendor's `.list` file would take the provider read
+ * down with it and turn the capability off on a host that is perfectly fine.
+ *
+ * `UNIT_NAME_PLAIN` is narrower than "looks like a unit name". It rejects instance and
+ * template names — anything containing `@` — which we used to accept: such an entry could be
+ * named as the first usable provider here while timedated ignores it outright and hands the
+ * clock to the next daemon down, the one that never reads our drop-in. And the suffix has to
+ * be a type systemd actually has: any lowercase word was accepted before, so `foo.waldo`
+ * reached `systemctl show`, which fails the whole call over it.
+ */
+function isValidUnitName(name: string): boolean {
+	if (name.length === 0 || name.length > UNIT_NAME_MAX) return false;
+	const dot = name.lastIndexOf('.');
+	// `e == n` upstream: a name that is nothing but a suffix is not a name.
+	if (dot <= 0) return false;
+	if (!UNIT_TYPES.includes(name.slice(dot + 1))) return false;
+	return UNIT_NAME_PREFIX_RE.test(name.slice(0, dot));
+}
+
+/** The whitespace `extract_first_word()` separates on when nothing else is asked for. */
+const WHITESPACE = ' \t\n\r';
+
+/**
+ * What {@link extractWordsChecked} read: the words up to the point it got to, and whether it
+ * stopped on a syntax error rather than on the end of the value.
+ *
+ * Tokens alone could not carry that. `a\` is not "the word `a`" — upstream returns `-EINVAL`
+ * for it and the caller has read a value systemd itself would have refused, which is not the
+ * same as having read the value.
+ */
+export type ExtractedWords = { words: string[]; error: boolean };
+
+/**
+ * Split a systemctl value into words the way systemd's own `extract_first_word()` does.
+ *
+ * Splitting on whitespace is not that parser, and the difference is not cosmetic here:
+ * systemd quotes and escapes what it prints, so a variable whose value is
+ * `a b SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service` arrives quoted as one word and a
+ * whitespace split tears a standalone assignment out of the middle of it — an NTP override
+ * the host never set, deciding which daemon we believe owns the clock.
+ *
+ * `unquote` is upstream's `EXTRACT_UNQUOTE`: set for environment values, which systemd
+ * quotes on the way out, and clear for the provider list, which timedated parses with flags
+ * `0` — there a quote is an ordinary character, and one no valid unit name may contain
+ * anyway. A backslash escapes the next character in both modes, as it does upstream, so an
+ * escaped separator does not split. Runs of separators are coalesced and yield no empty
+ * word, which is `extract_first_word`'s default.
+ *
+ * The words read before a syntax error are kept, and `error` says one was hit — see
+ * {@link ExtractedWords}. {@link extractWords} is the same parser for the callers that only
+ * want what could be read.
+ */
+export function extractWordsChecked(input: string, unquote: boolean, separators: string = WHITESPACE): ExtractedWords {
+	const words: string[] = [];
+	let word = '';
+	let started = false;
+	let quote: string | null = null;
+	let escaped = false;
+	for (const ch of input) {
+		if (escaped) {
+			word += ch;
+			escaped = false;
+		} else if (ch === '\\') {
+			escaped = true;
+			started = true;
+		} else if (quote !== null) {
+			if (ch === quote) quote = null;
+			else word += ch;
+		} else if (unquote && (ch === '"' || ch === "'")) {
+			quote = ch;
+			started = true;
+		} else if (separators.includes(ch)) {
+			if (started) words.push(word);
+			word = '';
+			started = false;
+		} else {
+			word += ch;
+			started = true;
+		}
+	}
+	// A backslash with nothing behind it, and in unquoting mode a quote that is never closed,
+	// are `-EINVAL` upstream: the word under construction is not a word, so it is dropped
+	// rather than emitted half-written, and the caller is told the value was malformed. Both
+	// can only happen at the end of the input, so there is nothing left to stop parsing.
+	if (escaped || quote !== null) return { words, error: true };
+	if (started) words.push(word);
+	return { words, error: false };
+}
+
+/**
+ * The same words, for the callers that have nothing to do with a malformed value but read
+ * what there was.
+ *
+ * That is upstream's behaviour for the provider list: timedated logs the syntax error, keeps
+ * the entries it got to, and does not fall back to the list files. For the `Names` of a unit
+ * it is simply the safe direction — an alias lost to a malformed value leaves that unit ON
+ * the competitor list, which refuses a write rather than permitting one. Anywhere the answer
+ * would be trusted instead, use {@link extractWordsChecked} and refuse.
+ */
+export function extractWords(input: string, unquote: boolean, separators: string = WHITESPACE): string[] {
+	return extractWordsChecked(input, unquote, separators).words;
+}
+
+/** `Key=Value` lines of a single unit's `systemctl show` output, keyed by property name. */
+function parseUnitProperties(output: string): Map<string, string> {
+	const props = new Map<string, string>();
+	for (const line of output.split(/\r?\n/)) {
+		const eq = line.indexOf('=');
+		if (eq > 0) props.set(line.slice(0, eq), line.slice(eq + 1));
+	}
+	return props;
+}
+
+/** One `NAME=value` word, or null when it is not an assignment. */
+function splitAssignment(word: string): [string, string] | null {
+	const eq = word.indexOf('=');
+	return eq > 0 ? [word.slice(0, eq), word.slice(eq + 1)] : null;
+}
+
+/**
+ * The environment systemd-timedated runs with, as `KEY=value` pairs, or null when it could
+ * not be established.
+ *
+ * Reading `process.env` here was wrong in both directions. timedated takes
+ * {@link NTP_SERVICES_ENV} from ITS OWN process: an override an administrator set through
+ * `Environment=` or a drop-in on `systemd-timedated.service` is invisible to us, so we
+ * would use the directory ordering while timedated used the override — write the drop-in,
+ * report success, and have `set-ntp` start a daemon that never reads it. The other
+ * direction is as bad: the variable set in OUR environment changes nothing about
+ * timedated, and honouring it made us report an ordering the host does not have.
+ *
+ * A system service does NOT inherit the manager's environment. Only the names its
+ * `PassEnvironment=` lists reach it, `Environment=` is applied on top of those, and
+ * `UnsetEnvironment=` is applied last and can take a value away that either of the first two
+ * put there. Merging the manager environment wholesale read an override to timedated that
+ * timedated never sees — it would pick the first provider on disk while we configured the
+ * one the variable names, and `set-ntp` would then start a daemon that never reads our
+ * drop-in. Reversed, a value removed by `UnsetEnvironment=` had us honour an override that
+ * is not in force.
+ *
+ * Both sources have to be readable — either could be the one carrying the override, and an
+ * ordering derived from half the answer is a guess.
+ *
+ * `EnvironmentFile=` is a source we do NOT read, so a unit that has one is answered as an
+ * environment we could not establish rather than as one without it. The files would have to
+ * be read from the host and parsed with systemd's own rules — its quoting, its line
+ * continuations, the optional `-` prefix, later files overriding earlier ones, specifiers in
+ * the path — and getting any of that wrong picks the wrong provider silently, which is the
+ * very failure this function exists to prevent. Ignoring the files instead is not the safe
+ * side either, and the competing-daemon check is NOT a backstop for it: a file naming
+ * `chronyd.service` first, with chrony installed but not yet running, is invisible to a
+ * check that only asks which daemon is active — we would write the timesyncd drop-in,
+ * report success, and `set-ntp` would then start chrony, which never reads it. So the
+ * capability to set a server goes off here and the host is left alone.
+ *
+ * `systemctl show` OMITS `EnvironmentFiles=` entirely when the unit has none, rather than
+ * printing it empty the way it prints `Environment=` — so an absent line is the ordinary
+ * "no file" answer and only a line that is there decides anything. An unknown property name
+ * is omitted just the same, which is why the name matters more than it looks: get it wrong
+ * and this reads "no file" on every host in the world. Both behaviours, and the
+ * `PATH (ignore_errors=yes)` shape of the value, were checked against a running systemd.
+ *
+ * `LoadState` is asked for because a SUCCESSFUL `systemctl show` is no evidence that the unit
+ * exists: for a name nothing matches it exits 0 and prints every requested property empty
+ * (checked against a running systemd, which answered `LoadState=not-found` while echoing the
+ * name straight back as `Id`). Without this, a wrong unit name — a typo, or a systemd that
+ * renames the service one day — would read as "timedated sets no override", we would take
+ * the directory ordering as authoritative, and nothing anywhere would say we had asked about
+ * a unit that is not there. Anything but `loaded` is an environment we did not read.
+ */
+export async function readTimedatedEnvironment(exec: CommandRunner = run): Promise<Record<string, string> | null> {
+	const manager = await exec('systemctl', ['show-environment']);
+	if (manager.kind !== 'ok') return null;
+	const unit = await exec('systemctl', ['show', '-p', 'LoadState', '-p', 'Environment', '-p', 'EnvironmentFiles', '-p', 'PassEnvironment', '-p', 'UnsetEnvironment', TIMEDATED_UNIT]);
+	if (unit.kind !== 'ok') return null;
+	const props = parseUnitProperties(unit.output);
+	if (props.get('LoadState') !== 'loaded') return null;
+	if ((props.get('EnvironmentFiles') ?? '').trim().length > 0) return null;
+	// `show-environment` prints one assignment per line; the unit properties print their
+	// entries whitespace-separated on one. Both are quoted by systemd, so both are read with
+	// systemd's own word parser rather than by splitting on whitespace.
+	//
+	// A value that parser refuses is an environment we did not read: the words after the
+	// error are lost, and the override deciding the provider may be exactly one of them. Same
+	// answer as a source that did not answer at all.
+	let malformed = false;
+	const words = (value: string): string[] => {
+		const read = extractWordsChecked(value, true);
+		if (read.error) malformed = true;
+		return read.words;
+	};
+	const inherited = new Map<string, string>();
+	for (const word of words(manager.output)) {
+		const pair = splitAssignment(word);
+		if (pair) inherited.set(pair[0], pair[1]);
+	}
+	const env: Record<string, string> = {};
+	// Phase 1: the manager's value, but only for a name the unit asks to be passed.
+	for (const name of words(props.get('PassEnvironment') ?? '')) {
+		const value = inherited.get(name);
+		if (value !== undefined) env[name] = value;
+	}
+	// Phase 2: the unit's own `Environment=`, which wins over what was passed in.
+	for (const word of words(props.get('Environment') ?? '')) {
+		const pair = splitAssignment(word);
+		if (pair) env[pair[0]] = pair[1];
+	}
+	// Phase 3: `UnsetEnvironment=`. A bare name removes the variable; a `NAME=value` entry
+	// removes it only when the value matches, which is systemd's own rule.
+	for (const word of words(props.get('UnsetEnvironment') ?? '')) {
+		const pair = splitAssignment(word);
+		if (!pair) delete env[word];
+		else if (env[pair[0]] === pair[1]) delete env[pair[0]];
+	}
+	return malformed ? null : env;
+}
+
+/**
+ * The NTP providers systemd-timedated would consider, in ITS order.
+ *
+ * This matters because `timedatectl set-ntp true` does not start systemd-timesyncd — it
+ * starts the FIRST unit in this list that exists on the host. A machine with chrony
+ * installed but stopped has `50-chronyd.list` sorting ahead of `80-systemd-timesync.list`,
+ * so writing a timesyncd drop-in and switching synchronisation on hands the clock to
+ * chrony, which never reads that file. Checking only which daemons are currently ACTIVE
+ * misses exactly that case.
+ *
+ * Returns null when the ordering could not be read — which is NOT the empty list. An
+ * empty list is a host that ships no ordering at all and is handled by its own rule
+ * ({@link canConfigureTimesyncdServer}); null is a host whose ordering exists and is
+ * unknown to us, where nothing about who owns the clock may be concluded.
+ *
+ * `env` is timedated's environment from {@link readTimedatedEnvironment}, and null there —
+ * an environment that could not be read — is itself an unknown ordering: the override it
+ * might carry replaces the directories entirely.
+ *
+ * `dirs` is injectable so the ordering rules can be exercised off a systemd host.
+ */
+export async function readNtpUnitsList(env: Record<string, string> | null, dirs: string[] = NTP_UNITS_DIRS): Promise<string[] | null> {
+	if (env === null) return null;
+	const override = env[NTP_SERVICES_ENV];
+	// timedated splits this list with `extract_first_word(&p, &word, ":", 0)`, so a colon
+	// escaped with a backslash belongs to the name rather than ending it, and a plain
+	// `split(':')` would cut a unit name in half there.
+	if (override !== undefined) return extractWords(override, false, ':').filter(isValidUnitName);
+	// Basename -> path, first directory wins: the shadowing rule every systemd drop-in
+	// directory set follows.
+	const files = new Map<string, string>();
+	for (const dir of dirs) {
+		let names: string[];
+		try {
+			names = await readdir(dir);
+		} catch (err) {
+			// A directory that is not there is the ordinary case — hardly any host ships all
+			// four. Every other error means part of the ordering stayed unread, and a partial
+			// ordering is not one: the very entry that would have put chrony ahead of
+			// timesyncd is the one that could be missing. Null says "cannot be determined".
+			if ((err as { code?: string }).code === 'ENOENT') continue;
+			return null;
+		}
+		for (const name of names) {
+			if (name.endsWith('.list') && !files.has(name)) files.set(name, join(dir, name));
+		}
+	}
+	const units: string[] = [];
+	for (const name of [...files.keys()].sort()) {
+		// Same rule for the file itself: a list that was there a moment ago and cannot be
+		// read now leaves the ordering incomplete, which is not the same as empty.
+		const content = await readFile(files.get(name)!, 'utf8').catch(() => null);
+		if (content === null) return null;
+		for (const line of content.split('\n')) {
+			const unit = line.trim();
+			if (unit.length === 0 || unit.startsWith('#')) continue;
+			// An entry timedated would reject is not part of ITS ordering, so it must not be
+			// part of ours either.
+			if (isValidUnitName(unit) && !units.includes(unit)) units.push(unit);
+		}
+	}
+	return units;
+}
+
+/**
+ * The provider `timedatectl set-ntp true` would actually start: the first unit of
+ * `ordered` whose `LoadState` is `loaded`. Null when none of them is.
+ *
+ * Answered as the CANONICAL name, not as the entry that matched. An ordering may name a
+ * provider through an alias, and the caller's question is which daemon this is — an alias
+ * for timesyncd compared unequal to it and had the host reported as somebody else's.
+ */
+export function firstUsableNtpUnit(ordered: string[], unitOutput: string | null): string | null {
+	if (unitOutput === null) return null;
+	const states = parseUnitLoadStates(unitOutput);
+	const found = ordered.find(unit => unitIsLoaded(states, unit));
+	return found === undefined ? null : canonicalUnitName(states, found);
+}
+
+/**
+ * Whether writing the timesyncd drop-in would actually change the host's time source.
+ *
+ * Only true when timesyncd is the provider this host would use. Otherwise the drop-in is
+ * read by nobody: the file lands, the API reports success, and the clock keeps coming
+ * from whichever daemon timedated hands it to.
+ *
+ * An EMPTY `ordered` list is not a competitor — it means the host ships no provider
+ * ordering at all, so `set-ntp` has nothing to hand the clock to and restarting timesyncd
+ * ourselves is the whole mechanism. There the older test stands: timesyncd installed, and
+ * no other NTP daemon currently running.
+ *
+ * A NULL `ordered` or `competingOutput` is neither of those: it is a state that could not
+ * be read. Both used to resolve to "nothing in the way", which is the permissive answer to
+ * a question nobody answered — the drop-in would be written and reported as saved while
+ * the daemon that actually holds the clock never reads it. Unknown refuses.
+ */
+export function canConfigureTimesyncdServer(ordered: string[] | null, unitOutput: string | null, competingOutput: string | null): boolean {
+	// Belt to the ordered list's braces: a daemon someone started outside timedated's
+	// ordering owns the clock just as effectively — and one we could not ask about may be
+	// running just as well as one that answered.
+	if (competingOutput === null || parseAnyUnitActive(competingOutput)) return false;
+	if (ordered === null) return false;
+	if (ordered.length > 0) return firstUsableNtpUnit(ordered, unitOutput) === TIMESYNCD_UNIT;
+	return unitOutput !== null && unitIsLoaded(parseUnitLoadStates(unitOutput), TIMESYNCD_UNIT);
+}
+
+/**
+ * Content of the systemd-timesyncd drop-in pinning `server` as the NTP source.
+ *
+ * `NTP=` is a list setting: a drop-in is parsed after the shipped configuration, so a
+ * bare assignment APPENDS to whatever the distribution already configured instead of
+ * replacing it. The empty assignment first resets the list, which is what makes this
+ * a pin rather than an addition.
+ */
+export function buildTimesyncdDropIn(server: string): string {
+	return `[Time]\nNTP=\nNTP=${server}\n`;
+}
+
+/**
+ * Commands that apply a new NTP server. On Linux the address itself lives in the
+ * timesyncd drop-in ({@link buildTimesyncdDropIn}) and only the daemon restart is a
+ * command — a reload is not enough for timesyncd to pick the file up. Windows needs
+ * an explicit resync afterwards, otherwise the new peer is not contacted until the
+ * next poll interval (which defaults to hours).
+ *
+ * `syncRunning` says whether automatic synchronisation is currently on. When it is
+ * off there is deliberately nothing to run on Linux: `systemctl restart` STARTS a
+ * stopped unit, so restarting here would switch the sync daemon back on behind the
+ * user's back and let it step the clock they are about to set by hand. The drop-in
+ * is on disk either way and is read the next time the daemon starts.
+ *
+ * Windows drops the resync AND the `/update` for the same reason. Both are requests to
+ * the RUNNING Windows Time service — `/update` is documented as notifying it that the
+ * configuration changed — so with the service stopped they can only fail, and the UI
+ * reaches this path exactly that way: it switches synchronisation off before writing a
+ * server. Sending them anyway is how a peer list that WAS written came back as an error.
+ * Without them `w32tm /config` still writes the registry, and the service reads it when
+ * it next starts (which is what switching synchronisation back on does).
+ */
+export function buildSetNtpServerCommands(platform: SystemPlatform, server: string, syncRunning: boolean): SystemCommand[] {
+	if (platform === 'linux') return syncRunning ? [{ cmd: 'systemctl', args: ['restart', 'systemd-timesyncd'] }] : [];
+	if (platform === 'darwin') return [{ cmd: MAC_SYSTEMSETUP, args: ['-setnetworktimeserver', server] }];
+	// 0x8 is the plain client flag. 0x9 would add 0x1 (SpecialInterval), which makes the
+	// peer poll at SpecialPollInterval — a standalone host defaults that to 604800s, so
+	// the peer would be contacted weekly instead of on the normal poll interval.
+	const peers = `/manualpeerlist:${server},0x8`;
+	if (!syncRunning) return [w32tm('/config', peers, '/syncfromflags:manual')];
+	return [w32tm('/config', peers, '/syncfromflags:manual', '/update'), w32tm('/resync')];
+}
+
+/**
+ * Commands that switch automatic time synchronisation on or off. Windows has no
+ * single switch: the sync type lives in the service start mode plus the running
+ * state, so both are set and the service is resynced once it is up.
+ *
+ * `sc` rather than `net` for the service control: `sc` exits with the underlying
+ * Win32 error code (5 for access denied), while `net` exits 2 for every problem and
+ * only says which one in a localized message we must not parse.
+ *
+ * Those two service steps carry {@link SystemCommand.benignCodes}, because a service
+ * that is already in the requested run state makes `sc` exit non-zero. Aborting there
+ * would skip the steps that carry the actual change — the sync type on the way on, the
+ * start mode on the way off — and the toggle would report a failure while leaving the
+ * host half-configured. A real refusal still surfaces: the following steps hit the same
+ * permission and fail with it.
+ *
+ * `mode` is the host's CURRENT Windows time source and decides whether the source is
+ * rewritten at all. It defaults to `unknown`, which rewrites nothing — the safe default
+ * for a caller that could not determine it.
+ */
+export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: boolean, mode: WindowsSyncMode = 'unknown'): SystemCommand[] {
+	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-ntp', enabled ? 'true' : 'false'] }];
+	if (platform === 'darwin') return [{ cmd: MAC_SYSTEMSETUP, args: ['-setusingnetworktime', enabled ? 'on' : 'off'] }];
+	if (enabled) {
+		return [
+			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'auto'] },
+			{ cmd: 'sc', args: ['start', 'w32time'], benignCodes: [SC_ALREADY_RUNNING] },
+			// ONLY for a host with no time source at all (Type=NoSync), which is the one
+			// case where "switch synchronisation on" has to invent one. On every other
+			// mode this REPLACES the source: run unconditionally on a domain member it
+			// switches Type from NT5DS to a manual peer list, detaching the machine from
+			// the Active Directory time hierarchy — which is what Kerberos ticket
+			// validity depends on. Enabling synchronisation must never mean "and also
+			// change where the time comes from".
+			...(mode === 'none' ? [w32tm('/config', '/syncfromflags:manual', '/update')] : []),
+			w32tm('/resync'),
+		];
+	}
+	return [
+		{ cmd: 'sc', args: ['stop', 'w32time'], benignCodes: [SC_NOT_ACTIVE] },
+		{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'disabled'] },
+	];
+}
+
+// ---------------------------------------------------------------------------
+// Timezone list
+// ---------------------------------------------------------------------------
+
+// Intl.supportedValuesOf is newer than the configured ES2020 lib, and it is absent
+// in runtimes built without the full ICU timezone database.
+const intlValues = Intl as unknown as { supportedValuesOf?: (key: string) => string[] };
+
+/**
+ * IANA timezone identifiers the host will accept. Sourced from the runtime's ICU
+ * database on every platform, including Windows: `tzutil /l` would return Windows
+ * identifiers with localized display names in the OEM codepage, while ICU gives the
+ * same IANA list everywhere and matches what Linux and macOS take natively.
+ * Returns an empty array on a runtime without the timezone database.
+ */
+export function listSystemTimezones(): string[] {
+	try {
+		return intlValues.supportedValuesOf?.('timeZone') ?? [];
+	} catch {
+		return [];
+	}
+}
+
+/** Where {@link listSystemTimezones} got its data — `unavailable` when the runtime has no timezone database. */
+export function getTimezoneSource(): SystemTimezoneSource {
+	return listSystemTimezones().length > 0 ? 'intl' : 'unavailable';
+}
+
+/**
+ * The timezone this PROCESS resolves to. Only a fallback for a host that could not be
+ * asked: it is fixed at startup, an inherited `TZ` overrides the real host setting, and
+ * a zone changed outside this application never reaches it.
+ */
+function processTimezone(): string {
+	return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+/**
+ * Minutes to ADD to UTC to get local time in `zone` at the given instant — positive
+ * east of Greenwich. Null when the runtime does not know the zone.
+ *
+ * Computed for the named zone rather than taken from `Date.getTimezoneOffset()`, which
+ * answers for the PROCESS: once the host's zone is read from the OS the two can differ,
+ * and pairing an OS zone with a process offset would put the displayed clock hours out.
+ */
+export function timezoneOffsetMinutes(zone: string, at: Date = new Date()): number | null {
+	try {
+		const parts: Record<string, string> = {};
+		for (const part of new Intl.DateTimeFormat('en-US', { timeZone: zone, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(at)) parts[part.type] = part.value;
+		// `hour12: false` renders midnight as 24 in some ICU versions.
+		const local = Date.UTC(Number(parts['year']), Number(parts['month']) - 1, Number(parts['day']), Number(parts['hour']) % 24, Number(parts['minute']), Number(parts['second']));
+		if (!Number.isFinite(local)) return null;
+		// Both sides truncated to the second: the reconstruction carries no milliseconds.
+		return Math.round((local - Math.floor(at.getTime() / 1000) * 1000) / 60000);
+	} catch {
+		return null;
+	}
+}
+
+/** Last resolved Windows-to-IANA pair. The scan below is not free, and the zone rarely changes. */
+let windowsZoneCache: { windowsId: string; iana: string } | null = null;
+
+/**
+ * IANA identifier for a Windows timezone ID, found by scanning the runtime's zone list
+ * for one that converts back to it — CLDR maps only IANA to Windows, and the reverse is
+ * many-to-one.
+ *
+ * The zone the process already reports is tried first and wins when it maps to the same
+ * Windows ID: several IANA zones share one, and picking CLDR's representative would
+ * rename the user's `Europe/Prague` to another city in the same Windows zone.
+ */
+/**
+ * Point the cache at the zone that was just written.
+ *
+ * Several IANA zones share one Windows identifier, so a change from `Europe/Prague` to
+ * `Europe/Budapest` leaves `tzutil /g` answering exactly as before — and the cache, keyed
+ * on that identifier, kept handing back the zone from before the change. The host was
+ * correctly reconfigured while the UI showed the old city and the user's change looked
+ * like it had been undone.
+ */
+export function rememberWindowsZone(windowsId: string, iana: string): void {
+	windowsZoneCache = { windowsId, iana };
+}
+
+export function windowsToIanaTimezone(windowsId: string): string | null {
+	if (windowsZoneCache?.windowsId === windowsId) return windowsZoneCache.iana;
+	const own = processTimezone();
+	const match = ianaToWindowsTimezoneId(own) === windowsId ? own : (listSystemTimezones().find(zone => ianaToWindowsTimezoneId(zone) === windowsId) ?? null);
+	if (match !== null) windowsZoneCache = { windowsId, iana: match };
+	return match;
+}
+
+/**
+ * Read the host timezone out of `tzutil /g`. The suffix Windows appends when daylight
+ * saving is switched off for the zone is not part of the identifier.
+ */
+export function parseTzutilZone(output: string | null): string | null {
+	const id = (output ?? '').trim().replace(/_dstoff$/, '');
+	return id.length > 0 ? id : null;
+}
+
+// ---------------------------------------------------------------------------
+// Child process layer (impure)
+// ---------------------------------------------------------------------------
+
+/**
+ * Outcome of running one command.
+ * - `ok`: exit 0, with stdout.
+ * - `missing`: the binary does not exist — a definitive "this facility is absent".
+ * - `failed`: it ran and refused; `code` and `output` feed {@link classifyFailure}.
+ * - `timeout`: the child was killed after {@link EXEC_TIMEOUT_MS}; the facility exists
+ *   but is wedged, which is a transient error and never an absence.
+ */
+export type RunOutcome = { kind: 'ok'; output: string } | { kind: 'missing' } | { kind: 'failed'; code: number | null; output: string } | { kind: 'timeout' };
+
+/**
+ * Run a binary with an argv array — never a shell string, so no input can be
+ * interpreted as a command. `LC_ALL=C` pins the child's messages to English, which
+ * is what {@link classifyFailure} matches on for Linux and macOS.
+ */
+async function run(cmd: string, args: string[]): Promise<RunOutcome> {
+	try {
+		// SIGKILL: the promise settles only after the child actually exits, so a
+		// wedged helper ignoring the default SIGTERM would hang the caller forever.
+		const { stdout } = await execFileAsync(cmd, args, { timeout: EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true, env: { ...process.env, LC_ALL: 'C' } });
+		return { kind: 'ok', output: stdout.toString() };
+	} catch (err) {
+		const e = err as { code?: number | string; killed?: boolean; signal?: string | null; stdout?: string; stderr?: string; message?: string };
+		if (e.killed || e.signal) return { kind: 'timeout' };
+		if (e.code === 'ENOENT') return { kind: 'missing' };
+		// w32tm prints its errors to stdout, timedatectl to stderr — read both.
+		const output = `${e.stdout ?? ''}\n${e.stderr ?? ''}`.trim() || (e.message ?? '');
+		return { kind: 'failed', code: typeof e.code === 'number' ? e.code : null, output };
+	}
+}
+
+/** Run a command and return its stdout, or null when it was missing or refused. Used for reads, where any failure just means "no value". */
+async function tryRead(cmd: string, args: string[]): Promise<string | null> {
+	const r = await run(cmd, args);
+	return r.kind === 'ok' ? r.output : null;
+}
+
+/** Build a result object. `success` is derived so a non-`ok` outcome can never be reported as a success. */
+function result(outcome: SystemTimeOutcome, message: string | null = null): SystemTimeResult {
+	return { success: outcome === 'ok', outcome, message };
+}
+
+/** Runs a single command and reports how it went. */
+export type CommandRunner = (cmd: string, args: string[]) => Promise<RunOutcome>;
+
+/**
+ * Run commands in order, stopping at the first one that does not succeed. Returns
+ * `ok` only when every command exited 0 or failed with one of its own
+ * {@link SystemCommand.benignCodes}.
+ *
+ * A failure carries what already happened. Stopping at the first bad step does not undo
+ * the steps before it — `sc config w32time start= auto` succeeding and `sc start` failing
+ * leaves the start mode changed, and `sc stop` succeeding before `sc config ... disabled`
+ * fails leaves the service down — so the result reports `changed`, `stateMayHaveChanged`
+ * and the per-step outcomes instead of a bare "it failed". A successful result implies
+ * all of it and carries none of the extra fields.
+ *
+ * `exec` is injectable so the sequencing and the outcome mapping can be exercised
+ * without spawning anything.
+ */
+export async function runAll(platform: SystemPlatform, commands: SystemCommand[], exec: CommandRunner = run): Promise<SystemTimeResult> {
+	if (commands.length === 0) return result('unsupported', 'no command available for this platform');
+	const steps: SystemTimeStep[] = [];
+	/** A stopped sequence: the failing step is recorded, and everything before it already ran. */
+	const stopped = (command: SystemCommand, outcome: SystemTimeOutcome, message: string, ran = true): SystemTimeResult => {
+		steps.push({ command: [command.cmd, ...command.args].join(' '), ok: false });
+		// `ran` is false only for a binary that does not exist, which cannot have touched
+		// anything. Every other failure was a process that started and refused part-way —
+		// as capable of leaving a change behind as one that exited 0.
+		return { ...result(outcome, message), changed: steps.some(step => step.ok), stateMayHaveChanged: ran || steps.some(step => step.ok), steps };
+	};
+	for (const command of commands) {
+		const r = await exec(command.cmd, command.args);
+		const done = (): void => void steps.push({ command: [command.cmd, ...command.args].join(' '), ok: true });
+		if (r.kind === 'ok') {
+			// Exit 0 is not the whole story for w32tm: it prints the HRESULT of a refusal
+			// and returns zero anyway, so the output has to be read before believing it.
+			if (!command.failOnOutput?.test(r.output)) {
+				done();
+				continue;
+			}
+			return stopped(command, classifyFailure(platform, 0, r.output), firstLine(r.output) ?? `${command.cmd} reported a failure`);
+		}
+		if (r.kind === 'failed' && r.code !== null && command.benignCodes?.includes(r.code)) {
+			done();
+			continue;
+		}
+		if (r.kind === 'missing') return stopped(command, 'unsupported', `${command.cmd} is not installed`, false);
+		if (r.kind === 'timeout') return stopped(command, 'error', `${command.cmd} timed out`);
+		return stopped(command, classifyFailure(platform, r.code, r.output), firstLine(r.output) ?? `${command.cmd} exited with ${r.code}`);
+	}
+	return result('ok');
+}
+
+// ---------------------------------------------------------------------------
+// Status
+// ---------------------------------------------------------------------------
+
+/** All capabilities off — the shape returned for a platform with no time backend. */
+const NO_CAPABILITIES: SystemTimeCapabilities = { setClock: false, setTimezone: false, setNtpServer: false, setNtpEnabled: false };
+
+/**
+ * The half of the status that comes from the OS. `timezone` is the host's own setting,
+ * null when it could not be read — the process's zone then stands in for it.
+ */
+export type PlatformStatus = Pick<SystemTimeStatus, 'ntpEnabled' | 'ntpSynchronized' | 'ntpServer' | 'capabilities'> & { timezone: string | null };
+
+/** Nothing could be read: every value unknown and every capability off. */
+const UNREADABLE_STATUS: PlatformStatus = { ntpEnabled: null, ntpSynchronized: null, ntpServer: null, timezone: null, capabilities: NO_CAPABILITIES };
+
+/** Reads the OS half of the status. Injectable so the assembly around it can be tested on any host. */
+export type PlatformStatusReader = (platform: SystemPlatform) => Promise<PlatformStatus>;
+
+/** Read the Linux (systemd-timedated) part of the status. */
+async function readLinuxStatus(): Promise<PlatformStatus> {
+	const show = await tryRead('timedatectl', ['show']);
+	if (show === null) {
+		// ponytail: no systemd-timedated means no supported backend here. The
+		// `date -s` / `/etc/localtime` symlink fallback is deliberately not
+		// implemented — the hosts that lack timedatectl are containers, which have
+		// no CAP_SYS_TIME and cannot set the clock at all. Add it if a non-systemd
+		// bare-metal target ever appears.
+		return UNREADABLE_STATUS;
+	}
+	const map = parseTimedatectlShow(show);
+	const canNtp = parseYesNo(map['CanNTP']) ?? false;
+	const timesync = canNtp ? await tryRead('timedatectl', ['show-timesync', '--all']) : null;
+	// Only timesyncd's configuration file is written by us, so the capability is "would
+	// this host's timedated actually use timesyncd" — a chrony host ignores the drop-in.
+	// That is decided by the provider ordering timedated itself reads, checked against each
+	// unit's `LoadState`, which is the property timedated selects on: `show-timesync` would
+	// only answer while the daemon runs, and the UI turns synchronisation off before writing
+	// a server.
+	// `Names` comes along because an entry of the ordering may be an alias, and systemd
+	// answers for an alias under the aliased unit's `Id` — with only `Id` asked for, the
+	// name we looked the state up by was in no answer at all.
+	// `--` because those names come off the host's own files and a valid unit name may begin
+	// with a dash: without the separator systemctl reads it as an option instead.
+	const ordered = canNtp ? await readNtpUnitsList(await readTimedatedEnvironment()) : [];
+	const unit = canNtp ? await tryRead('systemctl', ['show', '-p', 'Id', '-p', 'Names', '-p', 'LoadState', '--', ...(ordered !== null && ordered.length > 0 ? ordered : [TIMESYNCD_UNIT])]) : null;
+	// timedated manages several NTP implementations; a host where chrony is the active
+	// one would ignore our drop-in entirely (see canConfigureTimesyncdServer). The units to
+	// ask about come from the host's own ordering as well as the known names, so a provider
+	// nobody hardcoded is still seen — with the aliases resolved, or timesyncd under another
+	// name would be counted as a daemon competing with itself.
+	const states = unit === null ? null : parseUnitLoadStates(unit);
+	const competing = canNtp ? await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', '--', ...competingNtpUnits(ordered, states)]) : null;
+	return {
+		// `timedatectl show` was read above and already carries it — no extra probe.
+		timezone: map['Timezone'] ?? null,
+		ntpEnabled: parseYesNo(map['NTP']),
+		ntpSynchronized: parseYesNo(map['NTPSynchronized']),
+		ntpServer: timesync === null ? null : parseTimesyncServer(timesync),
+		capabilities: { setClock: true, setTimezone: true, setNtpEnabled: canNtp, setNtpServer: canConfigureTimesyncdServer(ordered, unit, competing) },
+	};
+}
+
+/**
+ * True when group policy owns this host's time configuration — or when that could not be
+ * established, which is treated the same way.
+ *
+ * Failing closed is the whole point: "no policy" lets the application stop, disable and
+ * reconfigure W32Time, so it may only be concluded from a branch that DEFINITELY is not
+ * there. Only `absent` is that proof; `present` and `unreadable` alike yield a managed
+ * host, the capabilities go false and the UI shows the controls as somebody else's to
+ * change.
+ *
+ * This used to ask `reg query` and read its exit code. That code cannot carry the answer:
+ * `reg` documents only 0 and 1, and exits 1 both for a key that is absent and for one this
+ * process may not open — so a policy branch carrying its own restrictive ACL, which is
+ * exactly the branch an administrator locks down, arrived here spelled "absent" and the
+ * host was declared ours to reconfigure. Probing the key itself replaces that guess with
+ * the Win32 error code, which distinguishes the two (see {@link probeLocalMachineKey}).
+ */
+export function readWindowsPolicyManaged(probe: RegistryKeyProbe = probeLocalMachineKey): boolean {
+	return probe(W32TIME_POLICY_KEY) !== 'absent';
+}
+
+/**
+ * The Windows time source and service start type, as read from the registry, plus the
+ * host's domain join state — which no registry value under `W32Time` carries and which
+ * decides ownership just as much as the mode does (see {@link windowsSyncIsOurs}).
+ */
+export interface WindowsModeState {
+	mode: WindowsSyncMode;
+	start: WindowsStartMode;
+	membership: DomainMembership;
+}
+
+/** Reads {@link WindowsModeState}. Injectable so a write's safety check can be tested off a real host. */
+export type WindowsModeReader = () => Promise<WindowsModeState>;
+
+/**
+ * Read the Windows time source and service start type. Both the status read and the
+ * enable/disable write need them — the write to decide whether it may rewrite the
+ * source at all, which is not something it can infer from the requested value.
+ */
+async function readWindowsMode(): Promise<WindowsModeState> {
+	const type = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'Type']);
+	const start = await tryRead('reg', ['query', W32TIME_SERVICE_KEY, '/v', 'Start']);
+	const policyManaged = readWindowsPolicyManaged();
+	// Read here rather than by the caller so a write's safety check gets the join state
+	// from the same read it gets the mode from, inside the same lock.
+	const membership = probeDomainMembership();
+	return { mode: parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policyManaged), start: parseWindowsStartMode(start), membership };
+}
+
+/** Read the Windows (W32Time) part of the status. */
+async function readWindowsStatus(): Promise<PlatformStatus> {
+	// Everything here is read from the registry rather than from `sc query` / `w32tm
+	// /query /configuration`: the first localizes its field NAMES as well as its values
+	// (a German host prints `ZUSTAND`, not `STATE`), and the second needs elevation.
+	// Registry value names are identifiers and are the same in every language.
+	const params = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'NtpServer']);
+	const status = await tryRead('w32tm', ['/query', '/status']);
+	// tzutil answers with a Windows identifier, which has to be mapped back to IANA.
+	const zone = parseTzutilZone(await tryRead('tzutil', ['/g']));
+	const { mode, start, membership } = await readWindowsMode();
+	// A time source an administrator owns is read-only here, so the UI disables the
+	// controls instead of offering a change that would detach the host from its domain.
+	const ours = windowsSyncIsOurs(mode, membership);
+	return {
+		timezone: zone === null ? null : windowsToIanaTimezone(zone),
+		ntpEnabled: windowsSyncEnabled(mode, start),
+		ntpSynchronized: status === null ? null : parseWindowsSyncStatus(status),
+		ntpServer: parseWindowsNtpServer(params === null ? null : parseRegValue(params, 'NtpServer')),
+		capabilities: { setClock: true, setTimezone: canConvertTimezoneId(), setNtpServer: ours, setNtpEnabled: ours },
+	};
+}
+
+/** Read the macOS (`systemsetup`) part of the status. Every subcommand, reads included, needs root. */
+async function readMacStatus(): Promise<PlatformStatus> {
+	const zone = await tryRead(MAC_SYSTEMSETUP, ['-gettimezone']);
+	const server = await tryRead(MAC_SYSTEMSETUP, ['-getnetworktimeserver']);
+	const using = await tryRead(MAC_SYSTEMSETUP, ['-getusingnetworktime']);
+	// An unreadable systemsetup is an unprivileged process, not a missing facility:
+	// the capabilities stay true so the UI keeps offering the controls and the write
+	// reports the permission problem.
+	return {
+		timezone: zone === null ? null : parseSystemsetupValue(zone),
+		ntpEnabled: using === null ? null : parseSystemsetupOnOff(using),
+		// macOS exposes no "last sync succeeded" flag.
+		ntpSynchronized: null,
+		ntpServer: server === null ? null : parseSystemsetupValue(server),
+		capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: true },
+	};
+}
+
+/** Dispatch the OS half of the status read to the backend for this platform. */
+function readPlatformStatus(platform: SystemPlatform): Promise<PlatformStatus> {
+	if (platform === 'linux') return readLinuxStatus();
+	if (platform === 'win32') return readWindowsStatus();
+	return readMacStatus();
+}
+
+/**
+ * Read the host's current time configuration. Never throws — an unreadable or
+ * unsupported host yields a status with `supported: false` and no capabilities, so
+ * a kiosk failure cannot crash the backend.
+ *
+ * The clock and the timezone always come from the process itself (`Date.now()` and
+ * ICU); only the NTP state needs the OS tooling.
+ */
+export async function getSystemTimeStatus(readPlatform: PlatformStatusReader = readPlatformStatus): Promise<SystemTimeStatus> {
+	const platform = process.platform;
+	const supported = isSupportedPlatform(platform);
+	let specific: PlatformStatus = UNREADABLE_STATUS;
+	if (supported) {
+		try {
+			specific = await readPlatform(platform);
+		} catch (err) {
+			console.warn('[system-time] Failed to read time status:', (err as Error).message);
+		}
+	}
+	// Sampled AFTER the reads, not before. Those are up to six child processes — registry
+	// queries, `w32tm`, `systemctl` — and a clock read taken before them is already that
+	// much in the past by the time it is sent, so the UI starts its own second-by-second
+	// count from a time the host had a moment ago and stays behind it for as long as the
+	// page is open.
+	const nowMs = Date.now();
+	// The process's own zone is the fallback only: it is fixed at startup and an
+	// inherited TZ can override the host's real setting (see processTimezone).
+	const timezone = specific.timezone ?? processTimezone();
+	const { timezone: _osZone, ...rest } = specific;
+	return {
+		...rest,
+		supported,
+		nowMs,
+		timezone,
+		// getTimezoneOffset() counts the other way (minutes to add to LOCAL to get UTC)
+		// and answers for the process, so it is only the fallback for an unknown zone.
+		utcOffsetMinutes: timezoneOffsetMinutes(timezone) ?? -new Date().getTimezoneOffset(),
+		timezoneSource: getTimezoneSource(),
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Writes
+// ---------------------------------------------------------------------------
+
+/** Serializes every system-time mutation in this process. See {@link withSystemTimeLock}. */
+const systemTimeWriteLock = new Mutex();
+
+/** Set while the current async context already owns {@link systemTimeWriteLock}. */
+const lockHeld = new AsyncLocalStorage<true>();
+
+/**
+ * Run `fn` as the only system-time mutation in flight in this process.
+ *
+ * The whole "read the current state → decide → write → restart → read back →
+ * broadcast" sequence has to be one critical section, not just the file write. Two
+ * concurrent requests otherwise interleave their halves: both verify against the same
+ * pre-state, the second one's file lands before the first one's daemon restart, and the
+ * first request reports success for a configuration that is no longer on disk. A
+ * rollback running against a newer successful write is the same bug with the older
+ * value winning.
+ *
+ * Re-entrant: the API layer takes the lock around the entire request, and the writers it
+ * calls take it again for their own sake (they are exported and used directly). A nested
+ * acquisition runs inline instead of waiting for a lock this very call stack is holding.
+ *
+ * "The writers" is all four of them — {@link setSystemClock}, {@link setSystemTimezone},
+ * {@link setSystemNtpServer} and {@link setSystemNtpEnabled} — plus
+ * {@link applyTimesyncdDropIn}. The clock and the timezone were left out while this text
+ * already claimed them, and they are the two that need it most: the clock decides whether
+ * it may be written from a status read a moment earlier, and the zone is what that clock
+ * reading is interpreted against. Anything added here takes the lock or this comment
+ * stops being true.
+ *
+ * ponytail: one process-wide lock, not one per resource. System-time writes are rare,
+ * human-driven and already seconds long; split it per path only if that ever changes.
+ */
+export function withSystemTimeLock<T>(fn: () => Promise<T>): Promise<T> {
+	if (lockHeld.getStore()) return fn();
+	return systemTimeWriteLock.runExclusive(() => lockHeld.run(true, fn));
+}
+
+/** Why a host whose time source somebody else owns is left alone. */
+const NOT_OURS_MESSAGE = 'time synchronisation here is not ours to switch: this host has no such service, it belongs to a domain, or its time source is managed by group policy';
+
+/**
+ * Re-read the Windows time source immediately before mutating it and refuse when it is
+ * not ours to change.
+ *
+ * The capability in a previously read status is a snapshot: between reading it and
+ * running the commands the host can be joined to a domain, have a policy applied or have
+ * its source switched by another administrator, and every one of those turns the write
+ * into an act of detaching the machine from a time source it depends on. So ownership is
+ * decided on a read taken inside the write lock, not on the one the decision started from.
+ *
+ * Returns the fresh state alongside the refusal so the caller builds its commands from
+ * the same read it was authorised by.
+ */
+async function checkWindowsWritable(readMode: WindowsModeReader): Promise<WindowsModeState & { refusal: SystemTimeResult | null }> {
+	const state = await readMode();
+	return { ...state, refusal: windowsSyncIsOurs(state.mode, state.membership) ? null : result('unsupported', NOT_OURS_MESSAGE) };
+}
+
+/**
+ * Reason a clock write must be refused given `status`, or null when it may proceed.
+ *
+ * Automatic synchronisation blocks the write on every platform, not only on the one
+ * that rejects it itself: Linux refuses outright, while Windows and macOS accept the
+ * write and let the sync daemon overwrite it minutes later. Reported as
+ * `auto-sync-enabled` so the caller can offer the actual fix (switch it off first).
+ *
+ * An UNKNOWN sync state blocks it too. Treating "could not read" as "off" is the
+ * dangerous direction: the write would be accepted, the daemon would step the clock
+ * back moments later, and the user would be left with a change that silently undid
+ * itself. Only a definite `false` releases the clock.
+ */
+export function clockWriteRefusal(status: SystemTimeStatus): SystemTimeResult | null {
+	if (!status.capabilities.setClock) return result('unsupported', 'this host has no facility for setting the clock');
+	if (status.ntpEnabled === null) return result('error', 'cannot determine whether automatic time synchronisation is enabled, so the clock is left alone');
+	if (status.ntpEnabled) return result('auto-sync-enabled', 'automatic time synchronisation is enabled');
+	return null;
+}
+
+/**
+ * Today's date in the zone that is `utcOffsetMinutes` from UTC at `nowMs`.
+ *
+ * Not `new Date().getFullYear()` and friends: those answer in the PROCESS's zone, which
+ * is fixed at startup and can be overridden by an inherited `TZ`, while the clock being
+ * set belongs to the HOST's zone. The two disagree for part of every day, and near
+ * midnight they disagree about the date — so a user in one zone setting 00:10 on a host
+ * in another would have the time written onto yesterday's or tomorrow's date, moving the
+ * clock by a whole day.
+ */
+export function hostDateParts(nowMs: number, utcOffsetMinutes: number): Pick<LocalDateTime, 'year' | 'month' | 'day'> {
+	const local = new Date(nowMs + utcOffsetMinutes * 60000);
+	return { year: local.getUTCFullYear(), month: local.getUTCMonth() + 1, day: local.getUTCDate() };
+}
+
+/**
+ * Set the wall clock to `hours:minutes:seconds`, keeping the host's current date.
+ *
+ * Under {@link withSystemTimeLock} from the status read onwards, not merely around the
+ * command: the whole point of the read is the refusal decided from it, and a
+ * `setNtpEnabled(true)` landing between the two turns "synchronisation is off, the clock
+ * is the user's to set" into a clock the daemon steps back seconds later.
+ *
+ * The validation stays outside the lock — a rejected value never touches the host, so
+ * queueing it behind another write would only make it slower.
+ *
+ * `readStatus` and `exec` are injectable so the ordering can be exercised without setting
+ * the clock of the machine running the tests.
+ */
+export async function setSystemClock(hours: number, minutes: number, seconds: number, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = run): Promise<SystemTimeResult> {
+	const invalid = validateClockParts(hours, minutes, seconds);
+	if (invalid) return result('invalid-input', invalid);
+	const platform = process.platform;
+	if (!isSupportedPlatform(platform)) return result('unsupported', `setting the clock is not implemented on ${platform}`);
+	return withSystemTimeLock(async () => {
+		const status = await readStatus();
+		const refusal = clockWriteRefusal(status);
+		if (refusal) return refusal;
+		// The same status the refusal was decided from carries the host's zone offset, so the
+		// date comes from the host rather than from this process.
+		return runAll(platform, buildSetClockCommands(platform, { ...hostDateParts(status.nowMs, status.utcOffsetMinutes), hours, minutes, seconds }), exec);
+	});
+}
+
+/**
+ * Set the system timezone from an IANA identifier. The value must be one the host
+ * listed ({@link listSystemTimezones}) — that membership check is also what keeps an
+ * arbitrary string out of the Windows conversion command.
+ *
+ * On success `process.env.TZ` is updated: writing the OS timezone does not
+ * invalidate the running process's ICU cache, so without this the backend would keep
+ * formatting in the old zone until it restarts.
+ *
+ * Under {@link withSystemTimeLock} like every other write. The zone is what turns the
+ * host's clock reading into a wall-clock time, so a change to it running alongside a
+ * clock set has that set land on a date and hour decided under the other zone.
+ *
+ * `exec` is injectable so the ordering can be exercised without moving the host's zone.
+ */
+export async function setSystemTimezone(timezone: string, exec: CommandRunner = run): Promise<SystemTimeResult> {
+	const known = listSystemTimezones();
+	if (known.length === 0) return result('unsupported', 'this runtime has no timezone database');
+	if (!known.includes(timezone)) return result('invalid-input', `unknown timezone: ${timezone}`);
+	const platform = process.platform;
+	if (!isSupportedPlatform(platform)) return result('unsupported', `setting the timezone is not implemented on ${platform}`);
+
+	let windowsId: string | null = null;
+	if (platform === 'win32') {
+		if (!canConvertTimezoneId()) return result('unsupported', 'this Windows version has no ICU timezone database');
+		windowsId = ianaToWindowsTimezoneId(timezone);
+		if (!windowsId) return result('error', `no Windows timezone matches ${timezone}`);
+	}
+
+	return withSystemTimeLock(async () => {
+		const r = await runAll(platform, buildSetTimezoneCommands(platform, timezone, windowsId), exec);
+		// Only so this process FORMATS in the new zone: writing the OS timezone does not
+		// invalidate a running process's ICU cache. What the status reports is read back
+		// from the OS, so an inherited or stale TZ can no longer misrepresent the host.
+		if (r.success) {
+			process.env['TZ'] = timezone;
+			// The next status read maps the host's Windows identifier back to IANA through a
+			// cache keyed on that identifier — which this change need not have altered.
+			if (windowsId) rememberWindowsZone(windowsId, timezone);
+		}
+		return r;
+	});
+}
+
+/**
+ * Point the host's time synchronisation at `server`. A single server is configured;
+ * that is all macOS supports through `systemsetup`, and it is what the UI offers.
+ */
+export async function setSystemNtpServer(server: string, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, readMode: WindowsModeReader = readWindowsMode, exec: CommandRunner = run): Promise<SystemTimeResult> {
+	if (!isValidNtpServer(server)) return result('invalid-input', 'the NTP server must be a host name or IP address without spaces or special characters');
+	const platform = process.platform;
+	if (!isSupportedPlatform(platform)) return result('unsupported', `configuring an NTP server is not implemented on ${platform}`);
+	return withSystemTimeLock(async () => {
+		const status = await readStatus();
+		if (!status.capabilities.setNtpServer) return result('unsupported', 'the NTP server can only be configured where this application owns the time synchronisation service');
+		if (platform === 'linux') return applyTimesyncdDropIn(server, status.ntpEnabled === true, TIMESYNCD_DROPIN_PATH, exec);
+		// Windows writes the peer list into the service's own registry key, so the source
+		// has to still be ours at the moment of writing — not merely when the status the
+		// capability came from was read (see checkWindowsWritable).
+		let syncRunning = status.ntpEnabled === true;
+		if (platform === 'win32') {
+			const state = await checkWindowsWritable(readMode);
+			if (state.refusal) return state.refusal;
+			syncRunning = windowsSyncEnabled(state.mode, state.start) === true;
+		}
+		const commands = buildSetNtpServerCommands(platform, server, syncRunning);
+		// A platform whose whole change is the file write above has no command to run, and
+		// runAll would read the empty list as "unsupported on this platform".
+		if (commands.length === 0) return result('ok');
+		return runAll(platform, commands, exec);
+	});
+}
+
+/**
+ * Errors from a directory flush that mean "there is no such operation here", as opposed
+ * to "it was attempted and failed".
+ *
+ * `EPERM` is Windows, where the directory handle opens and `fsync` on it is then refused;
+ * `EISDIR` is the platforms that refuse the open itself; `EINVAL` and the two "not
+ * supported" spellings are filesystems whose `fsync` rejects a directory descriptor.
+ * Anything outside this set propagates.
+ */
+const DIRECTORY_SYNC_UNSUPPORTED: ReadonlySet<string> = new Set(['EPERM', 'EISDIR', 'EINVAL', 'ENOTSUP', 'EOPNOTSUPP']);
+
+/**
+ * Flush a directory's own contents so a name created in it survives a power loss.
+ *
+ * `fsync` on the FILE only commits its data; the entry that gives it its name lives in the
+ * directory and is buffered just like everything else. Without this a crash moments after
+ * the rename can come back to the old file, or to no file at all — the one outcome the
+ * atomic swap exists to rule out.
+ *
+ * A platform that has no such operation refuses here, and that is not a failure: Windows
+ * journals the metadata itself, which is the same guarantee by other means. Every OTHER
+ * error is a flush that was attempted and did not happen — `EIO` and `ENOSPC` say the
+ * metadata is not reliably stored — and swallowing those reported a durability the
+ * filesystem had just declined to provide.
+ */
+export async function syncDirectory(dir: string): Promise<void> {
+	try {
+		const handle = await open(dir, 'r');
+		try {
+			await handle.sync();
+		} finally {
+			await handle.close();
+		}
+	} catch (err) {
+		if (!DIRECTORY_SYNC_UNSUPPORTED.has((err as { code?: string }).code ?? '')) throw err;
+	}
+}
+
+/**
+ * Replace `path` with `content` so a reader never observes a partial file, and return
+ * a rollback that restores whatever was there before (deleting the file when there was
+ * nothing).
+ *
+ * A plain `writeFile` to the final path truncates it first, so a crash or a full disk
+ * mid-write leaves the live configuration truncated. Writing a sibling temporary file,
+ * flushing it and renaming makes the swap atomic — and BOTH `fsync`s are needed: the one
+ * on the file, or a power loss leaves the new name pointing at an empty file, and the one
+ * on the directory afterwards ({@link syncDirectory}), or the name itself may never have
+ * been written.
+ *
+ * `readOriginal` is injectable so the unreadable-original case can be exercised: a real
+ * EACCES on the live file is not something a test can arrange on every platform.
+ *
+ * The temporary name is unique per call and created with `wx` (fail if it exists). A
+ * name shared by every call — a bare pid suffix is shared by every call in one process —
+ * lets a second write truncate the first one's staging file and then rename it away, so
+ * the first write publishes the second's content and the second fails with ENOENT.
+ */
+/**
+ * Create `dir` and every missing level above it, flushing the parent of each one.
+ *
+ * A directory entry lives in its PARENT, so that is where its durability comes from — and
+ * the rule has to be applied to every level, not just the first. `mkdir(…, {recursive})`
+ * answers with the first path it had to create, so flushing that path's parent alone left
+ * `/root/a/b/c` with the entries for `b` and `c` unflushed: a crash comes back to a
+ * drop-in directory that is not there and a configuration nothing ever read.
+ *
+ * Every level in the walk has its parent flushed, whether this call created it or found it
+ * there. Flushing only what we created was right for a clean first pass and wrong for the
+ * second: an attempt that created `b` and then failed to flush `a` leaves `b` visible but
+ * not committed, and the retry sees `EEXIST`, flushes nothing and reports a durability the
+ * filesystem never gave. A level that has always been there and one a dead attempt left
+ * behind look exactly alike from here, so both are flushed.
+ *
+ * The walk stops at the first level that already exists, INCLUDING it — that one is flushed,
+ * everything above it is not. It has to be included, because it is the level a previous
+ * attempt may have created and failed to commit. Above it nothing is owed by any attempt of
+ * OURS: this function stops at the first flush that fails, so a level we created always has
+ * an unflushed parent no higher than the one just below the first existing level. What it
+ * does not repair is a whole chain some other process created without flushing its own
+ * parents — walking to `/` for that would fsync directories we never touch and let an error
+ * from one of them fail a write that is otherwise fine, which is the worse trade.
+ *
+ * `dir` itself is deliberately not flushed here — it has no entry in it yet. The rename
+ * that follows puts one there and flushes it.
+ */
+async function makeDirectoryDurably(dir: string, syncDir: (d: string) => Promise<void>): Promise<void> {
+	const levels: string[] = [];
+	for (let current = dir; ; current = dirname(current)) {
+		levels.unshift(current);
+		// A level we cannot even ask about counts as missing: the walk goes one higher and
+		// `mkdir` below reports the real reason.
+		const exists = await access(current).then(
+			() => true,
+			() => false
+		);
+		if (exists || dirname(current) === current) break;
+	}
+	for (const level of levels) {
+		// One level at a time instead of `{recursive: true}`, because the recursive call
+		// reports only the first path it created — and on Windows it reports it in
+		// extended-length form, so the rest of the chain cannot be derived from its answer.
+		// An `EEXIST` here means the level was already there; anything else (a file in the
+		// way, no permission) is a real failure.
+		await mkdir(level).catch((err: { code?: string }) => {
+			if (err.code !== 'EEXIST') throw err;
+		});
+		await syncDir(dirname(level));
+	}
+}
+
+/**
+ * What a rollback actually achieved.
+ *
+ * A boolean could not say this. Restoring is a rename (or an unlink) followed by a directory
+ * flush, and when only the flush fails the original file IS back on the visible filesystem —
+ * just not guaranteed to survive a power loss. Folded into `false`, that told the caller
+ * nothing had been restored, which was untrue, and cost the second restart that puts the
+ * daemon back onto the configuration it was running with.
+ */
+export type RollbackResult = { state: 'restored-durable' } | { state: 'restored-not-durable'; error: unknown } | { state: 'not-restored'; error: unknown };
+
+export async function writeFileAtomically(path: string, content: string, readOriginal: (p: string) => Promise<string> = p => readFile(p, 'utf8'), syncDir: (dir: string) => Promise<void> = syncDirectory): Promise<() => Promise<RollbackResult>> {
+	// ENOENT is the ONLY error that means "there was nothing here". Reading every other
+	// one — EACCES, EIO, EISDIR — as absence hands the rollback a `previous` of null, and
+	// null makes it DELETE the file: a permission fault on a live configuration would
+	// have the rollback remove it rather than restore it. An unknown original means the
+	// write cannot be undone, so it does not happen at all.
+	const previous = await readOriginal(path).catch((err: { code?: string }) => {
+		if (err.code === 'ENOENT') return null;
+		throw err;
+	});
+	await makeDirectoryDurably(dirname(path), syncDir);
+	// Same directory, or the rename would cross a filesystem boundary and stop being atomic.
+	const temp = `${path}.libershare-${process.pid}-${randomUUID()}.tmp`;
+	let renamed = false;
+	try {
+		// `wx`, not `w`: an existing name is a collision to report, never one to overwrite.
+		const handle = await open(temp, 'wx');
+		try {
+			await handle.writeFile(content, 'utf8');
+			await handle.sync();
+		} finally {
+			await handle.close();
+		}
+		await rename(temp, path);
+		renamed = true;
+		await syncDir(dirname(path));
+	} catch (err) {
+		// Only up to the rename is the temporary file the thing to remove. Afterwards it IS
+		// the live file under its final name, so unlinking it would delete the configuration —
+		// and there is nothing to undo anyway: the content is published, and only the
+		// durability of its NAME is in doubt. The flag says which of the two the caller has,
+		// because "nothing happened" and "it happened and may not survive a power loss" are
+		// different things to tell a user.
+		if (!renamed) {
+			await unlink(temp).catch(() => {});
+			throw err;
+		}
+		throw Object.assign(err as object, { published: true });
+	}
+	// Reports whether the previous state is actually back. Swallowing that told the caller
+	// the host had been left as it was found while the new configuration was still on disk,
+	// to be adopted at the next boot — long after the user was told nothing had happened.
+	return async (): Promise<RollbackResult> => {
+		// Set once the visible filesystem already holds the original state, so a directory
+		// flush failing after that point is a durability warning and not a failed restore.
+		let visible = false;
+		try {
+			if (previous !== null) await writeFileAtomically(path, previous, readOriginal, syncDir);
+			else {
+				// Already gone is the state being restored to, not a failure.
+				await unlink(path).catch((err: { code?: string }) => (err.code === 'ENOENT' ? undefined : Promise.reject(err)));
+				visible = true;
+				// The removal is a directory change like the rename was, and buffered the same
+				// way: without this a crash can bring the entry back and with it the drop-in
+				// this rollback exists to withdraw.
+				await syncDir(dirname(path));
+			}
+			return { state: 'restored-durable' };
+		} catch (err) {
+			// The nested write marks its own published-but-unflushed failure the same way the
+			// outer one does, and it means the same thing here: the original content reached
+			// its final name and only the flush behind it did not.
+			if (visible || (err as { published?: boolean }).published === true) return { state: 'restored-not-durable', error: err };
+			return { state: 'not-restored', error: err };
+		}
+	};
+}
+
+/**
+ * Pin `server` in the systemd-timesyncd drop-in and make the daemon read it.
+ *
+ * The file is written atomically and rolled back when the restart fails: leaving it
+ * on disk after a failed save would apply the change at the next boot anyway, long
+ * after the user was told nothing had happened. The daemon is restarted a second time
+ * on that path so it also goes back to the configuration it was running with.
+ *
+ * `path`, `exec` and `syncDir` are injectable so the rollback — including a restore whose
+ * durability flush fails — can be exercised without a systemd host.
+ *
+ * The write, the restart and the rollback are one critical section
+ * ({@link withSystemTimeLock}): a second request landing between the write and the
+ * restart would have the daemon pick up ITS file while this call reports success for a
+ * server that is no longer on disk, and a rollback interleaved that way restores an old
+ * configuration over a newer successful write.
+ */
+export async function applyTimesyncdDropIn(server: string, syncRunning: boolean, path: string = TIMESYNCD_DROPIN_PATH, exec: CommandRunner = run, syncDir: (dir: string) => Promise<void> = syncDirectory): Promise<SystemTimeResult> {
+	return withSystemTimeLock(async () => {
+		let rollback: () => Promise<RollbackResult>;
+		try {
+			rollback = await writeFileAtomically(path, buildTimesyncdDropIn(server), undefined, syncDir);
+		} catch (err) {
+			const e = err as { code?: string; message?: string; published?: boolean };
+			// The content reached its final name and only the flush afterwards failed, so this
+			// is not "nothing happened": the file is on disk, the daemon was never restarted
+			// onto it, and the host adopts it at the next start unless somebody removes it.
+			if (e.published) return { ...result('error', `${path} now holds the new server but could not be flushed to disk (${e.message ?? 'the directory flush failed'}), so systemd-timesyncd was not restarted onto it`), changed: true, stateMayHaveChanged: true };
+			if (e.code === 'EACCES' || e.code === 'EPERM') return result('permission-denied', `cannot write ${path}`);
+			return result('error', e.message ?? `cannot write ${path}`);
+		}
+		const commands = buildSetNtpServerCommands('linux', server, syncRunning);
+		// Synchronisation is off, so there is deliberately no restart — the drop-in on disk
+		// IS the whole change and is read when the daemon next starts. Nothing to roll back.
+		if (commands.length === 0) return result('ok');
+		const r = await runAll('linux', commands, exec);
+		if (!r.success) {
+			const restored = await rollback();
+			const reason = r.message ?? 'the change could not be applied';
+			// Nothing is restarted onto a file that is not back. The restart loads whatever is
+			// on disk, and after a failed restore that is the new server — so retrying it here
+			// could SUCCEED and make the rejected configuration live, immediately, while the
+			// API answers that the change could not be applied and was not restored. Leaving
+			// the daemon alone keeps the failure to the file, which the message names.
+			if (restored.state === 'not-restored') return { ...r, message: `${reason} (and ${path} still holds the new server — it could not be restored, so systemd-timesyncd was left as it is and the host will adopt that server at the next start)` };
+			// Both restored states get the restart: the visible file is the original one either
+			// way, and only its durability is in question. Skipping it over a failed flush left
+			// the daemon stopped, or running the configuration just withdrawn, while the file
+			// on disk was in fact the old one.
+			//
+			// The daemon has to be put back onto the restored file for the rollback to mean
+			// anything, so this restart is part of it and its outcome is part of the answer.
+			// Discarded, a rollback that put the file back and left the daemon down reported as
+			// a clean undo.
+			const back = await runAll('linux', commands, exec);
+			const caveats: string[] = [];
+			if (!back.success) caveats.push('systemd-timesyncd could not be restarted onto it');
+			if (restored.state === 'restored-not-durable') caveats.push('the restore could not be flushed to disk, so it may not survive a crash or a power loss');
+			if (caveats.length > 0) return { ...r, message: `${reason} (${path} was restored, but ${caveats.join(', and ')})` };
+		}
+		return r;
+	});
+}
+
+/**
+ * Switch automatic time synchronisation on or off.
+ *
+ * A failed step stays failed. This used to re-read the host afterwards and report `ok`
+ * whenever the single `ntpEnabled` boolean matched the request — which erased precisely
+ * the failures worth reporting: a `/resync` that never reached a peer, or a start-mode
+ * change that was refused while the service happened to stop anyway. One boolean cannot
+ * confirm every dimension a sequence touched (source mode, start mode, peer list, the
+ * sync itself), so it must not be allowed to overrule any of them.
+ *
+ * The one thing that reconciliation legitimately covered — a service already in the
+ * requested run state making `sc` exit non-zero — is handled at the source instead, by
+ * {@link SystemCommand.benignCodes} on exactly those two steps.
+ *
+ * `readStatus` and `exec` are injectable so the sequencing and the outcome mapping can
+ * be exercised without touching the host's time service.
+ */
+export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = run, readMode: WindowsModeReader = readWindowsMode): Promise<SystemTimeResult> {
+	const platform = process.platform;
+	if (!isSupportedPlatform(platform)) return result('unsupported', `time synchronisation cannot be switched on ${platform}`);
+	return withSystemTimeLock(async () => {
+		const status = await readStatus();
+		if (!status.capabilities.setNtpEnabled) return result('unsupported', NOT_OURS_MESSAGE);
+		// Windows needs its CURRENT time source to decide whether it may be rewritten; every
+		// other platform has a single switch that changes nothing else. The re-read also has
+		// to be re-judged: the capability above came from an earlier snapshot, and stopping
+		// and disabling W32Time on a host that has since become a domain member or gained a
+		// policy is exactly the change this must never make.
+		let mode: WindowsSyncMode = 'unknown';
+		if (platform === 'win32') {
+			const state = await checkWindowsWritable(readMode);
+			if (state.refusal) return state.refusal;
+			mode = state.mode;
+		}
+		return runAll(platform, buildSetNtpEnabledCommands(platform, enabled, mode), exec);
+	});
+}

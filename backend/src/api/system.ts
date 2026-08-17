@@ -1,10 +1,11 @@
 import os from 'os';
 import { statfs } from 'fs/promises';
 import { readFileSync } from 'fs';
-import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, CodedError, ErrorCodes } from '@shared';
+import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type SystemTimeResult, type SystemTimeStatus, CodedError, ErrorCodes } from '@shared';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
+import { getSystemTimeStatus, listSystemTimezones, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, withSystemTimeLock } from '../system-time.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -20,8 +21,49 @@ interface SystemHandlers {
 	cpu: () => SystemCPUInfo;
 	setVolume: (p: { volume: number }) => Promise<{ success: boolean; available: boolean }>;
 	getVolume: () => Promise<{ volume: number | null; available: boolean }>;
+	getTime: () => Promise<SystemTimeStatus>;
+	listTimezones: () => string[];
+	setClock: (p: { hours: number; minutes: number; seconds: number }) => Promise<SystemTimeResult>;
+	setTimezone: (p: { timezone: string }) => Promise<SystemTimeResult>;
+	setNtpServer: (p: { server: string }) => Promise<SystemTimeResult>;
+	setNtpEnabled: (p: { enabled: boolean }) => Promise<SystemTimeResult>;
 	startPolling: () => void;
 	stopPolling: () => void;
+}
+
+/**
+ * Run a system-time write and, when it changed something, push the resulting state to
+ * every client. The event carries a freshly read status rather than the value that was
+ * requested: the OS may normalise it (a timezone alias, an NTP peer the daemon rejects),
+ * and a second window must show what the host actually has.
+ *
+ * The refresh and the broadcast are best-effort and happen strictly AFTER the outcome is
+ * decided. The system change is already applied at that point, so letting an exception
+ * from the re-read or from a dead client's socket escape would report a successful clock
+ * or NTP-mode change as an INTERNAL_ERROR — and invite the client to retry it, which is
+ * the one thing a clock change must not be.
+ *
+ * The write, the read-back and the broadcast are one critical section. Requests arrive
+ * concurrently on the WebSocket API, and without the lock a second write lands between
+ * this one's write and its read-back — so both clients are told the host looks like
+ * whatever the LAST write left, and the earlier request claims an end state it did not
+ * produce.
+ */
+export function runTimeWrite(write: () => Promise<SystemTimeResult>, readStatus: () => Promise<SystemTimeStatus>, broadcast: BroadcastFn): Promise<SystemTimeResult> {
+	return withSystemTimeLock(async () => {
+		const res = await write();
+		// A failure is not "nothing happened". A sequence that stopped part-way left the
+		// steps before it applied — the service already stopped, the start mode already
+		// changed — so the clients are told what the host looks like NOW. Skipping that
+		// leaves every open window showing a state the host no longer has.
+		if (!res.success && !res.stateMayHaveChanged) return res;
+		try {
+			broadcast('system:timeChanged', await readStatus());
+		} catch (err) {
+			console.warn('[system-time] Applied, but could not announce the new time status:', (err as Error).message);
+		}
+		return res;
+	});
 }
 
 export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, hasSubscribers: HasSubscribersFn): SystemHandlers {
@@ -88,6 +130,59 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		lastKnownAvailable = status.available;
 		if (!status.available) return { volume: null, available: false, known: true };
 		return { volume: status.volume ?? (settings.get('audio.volume') as number), available: true, known: true };
+	}
+
+	/**
+	 * Read the host's live time configuration (clock, timezone, NTP state and what
+	 * this host is capable of). Never throws — an unsupported or unreadable host is
+	 * reported through `supported: false` and empty capabilities.
+	 */
+	function getTime(): Promise<SystemTimeStatus> {
+		return getSystemTimeStatus();
+	}
+
+	/** IANA timezone identifiers this host accepts, for the timezone picker. Empty on a runtime without a timezone database. */
+	function listTimezones(): string[] {
+		return listSystemTimezones();
+	}
+
+	/** Run a system-time write and tell every client what the host looks like afterwards. */
+	function applyTimeWrite(write: () => Promise<SystemTimeResult>): Promise<SystemTimeResult> {
+		return runTimeWrite(write, getSystemTimeStatus, broadcast);
+	}
+
+	/**
+	 * Set the wall clock to the given local time, keeping today's date. Range checks
+	 * live in the core so an out-of-range value comes back as an `invalid-input`
+	 * outcome the UI can show inline, not as a thrown protocol error.
+	 */
+	function setClock(p: { hours: number; minutes: number; seconds: number }): Promise<SystemTimeResult> {
+		assert(p, ['hours', 'minutes', 'seconds']);
+		for (const key of ['hours', 'minutes', 'seconds'] as const) {
+			if (typeof p[key] !== 'number' || !Number.isFinite(p[key])) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `${key} must be a number`);
+		}
+		return applyTimeWrite(() => setSystemClock(p.hours, p.minutes, p.seconds));
+	}
+
+	/** Set the system timezone from an IANA identifier. An unknown identifier comes back as an `invalid-input` outcome. */
+	function setTimezone(p: { timezone: string }): Promise<SystemTimeResult> {
+		assert(p, ['timezone']);
+		if (typeof p.timezone !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'timezone must be a string');
+		return applyTimeWrite(() => setSystemTimezone(p.timezone));
+	}
+
+	/** Point automatic time synchronisation at an NTP server (host name or IP address). */
+	function setNtpServer(p: { server: string }): Promise<SystemTimeResult> {
+		assert(p, ['server']);
+		if (typeof p.server !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'server must be a string');
+		return applyTimeWrite(() => setSystemNtpServer(p.server.trim()));
+	}
+
+	/** Switch automatic time synchronisation on or off. Setting the clock by hand requires it off. */
+	function setNtpEnabled(p: { enabled: boolean }): Promise<SystemTimeResult> {
+		assert(p, ['enabled']);
+		if (typeof p.enabled !== 'boolean') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'enabled must be a boolean');
+		return applyTimeWrite(() => setSystemNtpEnabled(p.enabled));
 	}
 
 	// Detect OS-side volume changes (system tray, media keys, device plug/unplug)
@@ -278,5 +373,5 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		}
 	}
 
-	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, startPolling, stopPolling };
+	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, getTime, listTimezones, setClock, setTimezone, setNtpServer, setNtpEnabled, startPolling, stopPolling };
 }
