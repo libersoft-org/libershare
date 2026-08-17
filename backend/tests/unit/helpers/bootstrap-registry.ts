@@ -55,6 +55,7 @@ export function installBootstrapRegistry(network: unknown, seeds: readonly IRegi
 	// the registry loops read has to be seeded here alongside the registry itself.
 	(network as any).recoveryCursors ??= { configured: null, discovered: null };
 	(network as any).inFlightBootstrapDials ??= new Set<string>();
+	(network as any).quarantineProbeInFlight ??= new Set<string>();
 	return byAddress;
 }
 

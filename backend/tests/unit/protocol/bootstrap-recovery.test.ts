@@ -172,6 +172,96 @@ describe('bootstrap dials — single flight per address', () => {
 	});
 });
 
+/**
+ * An expired unreachable-quarantine buys exactly ONE probe. The old code deleted the
+ * quarantine synchronously and only then awaited the dial, so every concurrent handler
+ * that arrived afterwards saw a clean peer and spent another dial — and only the first
+ * carried the flag that re-closes the window on failure. Announce handlers are
+ * fire-and-forget, so the overlap is the normal case, not the exotic one.
+ */
+describe('bootstrap dials — one probe per expired quarantine', () => {
+	/** Older than UNREACHABLE_QUARANTINE_MS by any margin — the window has lapsed. */
+	const EXPIRED = Date.now() - 24 * 60 * 60 * 1000;
+
+	function quarantined(opts: { failDial?: boolean } = {}) {
+		const harness = bareNetwork(opts.failDial === undefined ? {} : { failDial: opts.failDial });
+		(harness.network as any).unreachableQuarantine = new Map([[PEER_A, EXPIRED]]);
+		return harness;
+	}
+
+	it('spends exactly one dial across concurrent announces of different addresses', async () => {
+		// Different addresses on purpose: the address-level single flight cannot collapse
+		// these, so only the peer-level probe reservation can.
+		let release = (): void => {};
+		const gate = new Promise<void>(resolve => {
+			release = resolve;
+		});
+		const { network, dialed } = quarantined();
+		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
+			dialed.push(ma.toString());
+			await gate;
+			return { remoteAddr: ma };
+		};
+		const runs = Promise.all([(network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered'), (network as any).addBootstrapPeers([ADDR_A2], 'net-a', 'discovered')]);
+		expect(dialed.length).toBe(1);
+		release();
+		await runs;
+		expect(dialed.length).toBe(1);
+	});
+
+	it('re-closes the window when the one probe fails', async () => {
+		const { network, dialed } = quarantined({ failDial: true });
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
+		expect(dialed.length).toBe(1);
+		expect((network as any).unreachableQuarantine.has(PEER_A)).toBe(true);
+		// A later mention now finds a fresh window and buys nothing.
+		dialed.length = 0;
+		await (network as any).addBootstrapPeers([ADDR_A2], 'net-a', 'discovered');
+		expect(dialed).toEqual([]);
+	});
+
+	it('releases the reservation so a later expiry buys its own probe', async () => {
+		const { network } = quarantined({ failDial: true });
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
+		expect((network as any).quarantineProbeInFlight.size).toBe(0);
+	});
+
+	it('hands the window back untouched when the address is already in flight', async () => {
+		// Refusing a duplicate must not spend the probe, and must not restamp the
+		// quarantine either — restamping would silently extend it on every mention.
+		let release = (): void => {};
+		const gate = new Promise<void>(resolve => {
+			release = resolve;
+		});
+		const { network, dialed } = quarantined();
+		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
+			dialed.push(ma.toString());
+			await gate;
+			return { remoteAddr: ma };
+		};
+		// Another run already holds the ADDRESS lock — reached here without a quarantine,
+		// so the peer reservation is free. This run therefore passes the peer check and
+		// consumes the window, then finds the address in flight and must hand the window
+		// back with its ORIGINAL timestamp: a refused probe was never spent.
+		let releaseOther = (): void => {};
+		(network as any).inFlightBootstrapDials = new Map([
+			[
+				key(ADDR_A),
+				new Promise<void>(resolve => {
+					releaseOther = (): void => resolve();
+				}),
+			],
+		]);
+		const refused = (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
+		expect((network as any).unreachableQuarantine.get(PEER_A)).toBe(EXPIRED);
+		expect((network as any).quarantineProbeInFlight.has(PEER_A)).toBe(false);
+		releaseOther();
+		release();
+		await refused;
+		expect(dialed.length).toBe(0);
+	});
+});
+
 describe('bootstrap registry — per-network ownership', () => {
 	it('keeps an address one network drops while another still configures it', () => {
 		const { network } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a', 'net-b'] }] });

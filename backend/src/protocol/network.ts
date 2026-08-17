@@ -471,6 +471,12 @@ export class Network {
 	 */
 	private readonly inFlightBootstrapDials = new Set<string>();
 	/**
+	 * Peers whose single post-quarantine probe is being spent right now. Peer-keyed
+	 * rather than address-keyed, because the quarantine itself is a statement about the
+	 * identity: an expired window buys ONE dial, not one per address gossip names.
+	 */
+	private readonly quarantineProbeInFlight = new Set<string>();
+	/**
 	 * Where the last recovery pass stopped in each priority group, so the next one
 	 * resumes after it rather than replaying the same prefix. See
 	 * {@link orderBootstrapEntriesForRecovery}.
@@ -1754,7 +1760,10 @@ export class Network {
 		const superseded = (): boolean => epoch !== this.runEpoch || generation !== this.bootstrapGenerationOf(networkID);
 		for (const peer of peers) {
 			if (superseded()) return;
-			let probeAfterQuarantine = false;
+			// Non-null once this iteration has consumed an expired quarantine window and
+			// holds the peer's single probe reservation. Carries the ORIGINAL timestamp so
+			// handing the window back does not silently extend it.
+			let consumedQuarantineAt: number | null = null;
 			try {
 				const ma = Multiaddr(peer);
 				// Claim the configured status BEFORE the routability filter. Whether an address
@@ -1803,18 +1812,35 @@ export class Network {
 				// would re-create the status row and burn a dial. Configured entries are
 				// exempt: the user asked for them explicitly.
 				if (peerID && origin === 'discovered') {
+					// A probe bought by an expired quarantine may already be in flight for this
+					// PEER. Announce handlers are fire-and-forget so overlap is routine, and
+					// once the first one has deleted the quarantine every later handler sees a
+					// clean peer and spends another dial — exactly the churn the window exists
+					// to stop. The reservation is what makes "one probe per expiry" true; the
+					// address-level single flight below cannot, because two addresses of one
+					// peer are two different claims.
+					if (this.quarantineProbeInFlight.has(peerID)) {
+						trace(`[NET] addBootstrapPeers skip quarantine probe in flight: ${peerID.slice(0, 16)}`);
+						continue;
+					}
 					const quarantinedAt = this.unreachableQuarantine.get(peerID);
 					if (quarantinedAt !== undefined) {
 						if (Date.now() - quarantinedAt < UNREACHABLE_QUARANTINE_MS) {
 							trace(`[NET] addBootstrapPeers skip quarantined: ${peerID.slice(0, 16)}`);
 							continue;
 						}
-						this.unreachableQuarantine.delete(peerID);
+						// Consumed and reserved in the SAME synchronous stretch as the check
+						// above — there is no await between them, so no other handler can
+						// observe the moment when the quarantine is gone and nothing has yet
+						// claimed the probe.
+						//
 						// This dial is the ONE probe an expired quarantine buys. If it fails the
 						// window has to close again — otherwise every later gossip mention spends
 						// another dial and refreshes the status row, which is exactly the churn
 						// the quarantine exists to stop.
-						probeAfterQuarantine = true;
+						this.unreachableQuarantine.delete(peerID);
+						this.quarantineProbeInFlight.add(peerID);
+						consumedQuarantineAt = quarantinedAt;
 					}
 				}
 				// Single-flight, keyed by the endpoint rather than the peer: two addresses of
@@ -1825,6 +1851,14 @@ export class Network {
 				const canonicalAddress = normalizeMultiaddrForCompare(ma.toString());
 				if (this.inFlightBootstrapDials.has(canonicalAddress)) {
 					trace(`[NET] addBootstrapPeers skip in-flight: ${peer}`);
+					// The probe was reserved a moment ago but will not be spent here: another
+					// run already holds this exact address. Hand the window back with its
+					// ORIGINAL timestamp, so refusing a duplicate never extends a quarantine.
+					if (peerID && consumedQuarantineAt !== null) {
+						this.unreachableQuarantine.set(peerID, consumedQuarantineAt);
+						this.quarantineProbeInFlight.delete(peerID);
+						consumedQuarantineAt = null;
+					}
 					continue;
 				}
 				this.inFlightBootstrapDials.add(canonicalAddress);
@@ -1926,7 +1960,7 @@ export class Network {
 					const kind = classifyBootstrapError(message);
 					// The probe the expired quarantine allowed has failed, so close the window
 					// again rather than letting the next announce buy another dial.
-					if (probeAfterQuarantine && peerID) this.unreachableQuarantine.set(peerID, Date.now());
+					if (consumedQuarantineAt !== null && peerID) this.unreachableQuarantine.set(peerID, Date.now());
 					const actualPeerID = kind === 'identity-mismatch' ? extractActualPeerID(message) : null;
 					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, kind, message, actualPeerID, origin);
 					// [NET-MISMATCH] richer log for identity-mismatch — single line containing
@@ -2010,6 +2044,9 @@ export class Network {
 					// a leave landing mid-dial would otherwise lock the address out for the
 					// lifetime of the node.
 					this.inFlightBootstrapDials.delete(canonicalAddress);
+					// The probe has now been spent, whatever the outcome: the catch above has
+					// already re-armed the window if the dial failed.
+					if (peerID && consumedQuarantineAt !== null) this.quarantineProbeInFlight.delete(peerID);
 				}
 			} catch (error: any) {
 				this.bootstrapTracker.recordOutcome(networkID, peer, null, 'error', error?.message ?? String(error), null, origin);
@@ -2957,6 +2994,7 @@ export class Network {
 		this.bootstrapByAddress.clear();
 		this.addressesByPeer.clear();
 		this.inFlightBootstrapDials.clear();
+		this.quarantineProbeInFlight.clear();
 		this.recoveryCursors.configured = null;
 		this.recoveryCursors.discovered = null;
 		this.recoveryBackoff.clear();
