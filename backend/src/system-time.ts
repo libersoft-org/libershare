@@ -792,13 +792,22 @@ function splitAssignment(word: string): [string, string] | null {
  * is omitted just the same, which is why the name matters more than it looks: get it wrong
  * and this reads "no file" on every host in the world. Both behaviours, and the
  * `PATH (ignore_errors=yes)` shape of the value, were checked against a running systemd.
+ *
+ * `LoadState` is asked for because a SUCCESSFUL `systemctl show` is no evidence that the unit
+ * exists: for a name nothing matches it exits 0 and prints every requested property empty
+ * (checked against a running systemd, which answered `LoadState=not-found` while echoing the
+ * name straight back as `Id`). Without this, a wrong unit name — a typo, or a systemd that
+ * renames the service one day — would read as "timedated sets no override", we would take
+ * the directory ordering as authoritative, and nothing anywhere would say we had asked about
+ * a unit that is not there. Anything but `loaded` is an environment we did not read.
  */
 export async function readTimedatedEnvironment(exec: CommandRunner = run): Promise<Record<string, string> | null> {
 	const manager = await exec('systemctl', ['show-environment']);
 	if (manager.kind !== 'ok') return null;
-	const unit = await exec('systemctl', ['show', '-p', 'Environment', '-p', 'EnvironmentFiles', '-p', 'PassEnvironment', '-p', 'UnsetEnvironment', TIMEDATED_UNIT]);
+	const unit = await exec('systemctl', ['show', '-p', 'LoadState', '-p', 'Environment', '-p', 'EnvironmentFiles', '-p', 'PassEnvironment', '-p', 'UnsetEnvironment', TIMEDATED_UNIT]);
 	if (unit.kind !== 'ok') return null;
 	const props = parseUnitProperties(unit.output);
+	if (props.get('LoadState') !== 'loaded') return null;
 	if ((props.get('EnvironmentFiles') ?? '').trim().length > 0) return null;
 	// `show-environment` prints one assignment per line; the unit properties print their
 	// entries whitespace-separated on one. Both are quoted by systemd, so both are read with

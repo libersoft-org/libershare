@@ -953,9 +953,9 @@ describe('readTimedatedEnvironment', () => {
 	 * two print an empty value. A fixture that printed it empty would have tested a host
 	 * shape that does not exist.
 	 */
-	function props(values: { Environment?: string; EnvironmentFiles?: string; PassEnvironment?: string; UnsetEnvironment?: string } = {}): RunOutcome {
+	function props(values: { LoadState?: string; Environment?: string; EnvironmentFiles?: string; PassEnvironment?: string; UnsetEnvironment?: string } = {}): RunOutcome {
 		const files = values.EnvironmentFiles === undefined ? '' : `EnvironmentFiles=${values.EnvironmentFiles}\n`;
-		return ok(`Environment=${values.Environment ?? ''}\n${files}PassEnvironment=${values.PassEnvironment ?? ''}\nUnsetEnvironment=${values.UnsetEnvironment ?? ''}\n`);
+		return ok(`LoadState=${values.LoadState ?? 'loaded'}\nEnvironment=${values.Environment ?? ''}\n${files}PassEnvironment=${values.PassEnvironment ?? ''}\nUnsetEnvironment=${values.UnsetEnvironment ?? ''}\n`);
 	}
 
 	/**
@@ -1073,6 +1073,20 @@ describe('readTimedatedEnvironment', () => {
 	it('reports an unknown environment when a value does not parse', async () => {
 		expect(await readTimedatedEnvironment(systemctl(ok('LANG=C\\'), props()))).toBeNull();
 		expect(await readTimedatedEnvironment(systemctl(ok(''), props({ Environment: 'A="unterminated' })))).toBeNull();
+	});
+
+	/**
+	 * `systemctl show` exits 0 for a unit that does not exist and prints every property empty,
+	 * so a successful call is no evidence we read the unit we named. Taken as "timedated sets
+	 * no override" it would hand the directory ordering the last word on a host we never
+	 * actually asked about.
+	 */
+	it('reports an unknown environment when the unit is not loaded', async () => {
+		const missing = props({ LoadState: 'not-found', Environment: '' });
+		expect(await readTimedatedEnvironment(systemctl(ok(''), missing))).toBeNull();
+		expect(await readTimedatedEnvironment(systemctl(ok(''), props({ LoadState: 'masked' })))).toBeNull();
+		// Absent entirely — an older systemd, or a property name that answered nothing.
+		expect(await readTimedatedEnvironment(systemctl(ok(''), ok('Environment=\n')))).toBeNull();
 	});
 
 	/** Either source could be the one carrying the override, so neither may be skipped. */
