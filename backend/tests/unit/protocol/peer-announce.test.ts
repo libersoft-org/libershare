@@ -399,3 +399,37 @@ describe('AnnounceRateLimiter', () => {
 		expect(limiter.take('c', 1, 0)).toBe(0); // recently used → still exhausted
 	});
 });
+
+/**
+ * Both maps belong to the run that filled them. Membership is recorded against the libp2p
+ * node that was up at the time and is what leave-network reads to decide who to hang up;
+ * the rate-limiter buckets are per-source budgets. Carrying either into the next start()
+ * makes the new run act on the old one's state.
+ */
+describe('PeerAnnounceManager.stop clears per-run state', () => {
+	const TOPIC = `${LISH_TOPIC_PREFIX}netAAAA`;
+
+	it('forgets topic membership', () => {
+		const { mgr } = intakeManager();
+		mgr.noteMember(TOPIC, PA_ID);
+		expect(mgr.getRecentMembers(TOPIC)).toEqual([PA_ID]);
+
+		mgr.stop();
+
+		expect(mgr.getRecentMembers(TOPIC)).toEqual([]);
+	});
+
+	it('gives a throttled source its full budget back after a restart', async () => {
+		const { mgr, forwarded } = intakeManager();
+		const addrs = distinctAddrs(128);
+		for (let i = 0; i < 4; i++) await mgr.handle({ type: 'peer-announce', multiaddrs: addrs }, 'netAAAA', SRC_ID);
+		expect(forwarded).toHaveLength(3); // the fourth was over budget
+
+		mgr.stop();
+		mgr.start();
+		await mgr.handle({ type: 'peer-announce', multiaddrs: addrs }, 'netAAAA', SRC_ID);
+
+		expect(forwarded).toHaveLength(4);
+		mgr.stop();
+	});
+});

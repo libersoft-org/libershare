@@ -133,6 +133,11 @@ export class AnnounceRateLimiter {
 		}
 		return granted;
 	}
+
+	/** Forget every source's budget. Used when the owning manager is stopped. */
+	clear(): void {
+		this.buckets.clear();
+	}
 }
 
 /** Dependencies for PeerAnnounceManager. */
@@ -239,13 +244,25 @@ export class PeerAnnounceManager {
 		});
 	}
 
-	/** Stop the emitter. Idempotent. Any in-flight tick will not reschedule. */
+	/**
+	 * Stop the emitter and drop everything the previous run learned. Idempotent; any
+	 * in-flight tick will not reschedule.
+	 *
+	 * Both maps are per-run state. Membership is read by leave-network to decide who to
+	 * hang up, and it is recorded against the libp2p node that was running when the peer
+	 * was seen — carrying it into the next start() means a leave acting on the previous
+	 * node's mesh. The rate-limiter buckets are the same kind of thing from the other
+	 * side: an exhausted budget surviving a restart throttles a source that has not sent
+	 * anything to THIS run yet.
+	 */
 	stop(): void {
 		this.stopped = true;
 		if (this.timer) {
 			clearTimeout(this.timer);
 			this.timer = null;
 		}
+		this.topicMembers.clear();
+		this.rateLimiter.clear();
 	}
 
 	/** Handle an inbound peer-announce pubsub message. */
