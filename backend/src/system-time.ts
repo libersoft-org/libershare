@@ -1392,15 +1392,17 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
 		const r = await runAll('linux', commands, exec);
 		if (!r.success) {
 			const restored = await rollback();
+			// Nothing is restarted onto a file that is not back. The restart loads whatever is
+			// on disk, and after a failed restore that is the new server — so retrying it here
+			// could SUCCEED and make the rejected configuration live, immediately, while the
+			// API answers that the change could not be applied and was not restored. Leaving
+			// the daemon alone keeps the failure to the file, which the message names.
+			if (!restored) return { ...r, message: `${r.message ?? 'the change could not be applied'} (and ${path} still holds the new server — it could not be restored, so systemd-timesyncd was left as it is and the host will adopt that server at the next start)` };
 			// The daemon has to be put back onto the restored file for the rollback to mean
 			// anything, so this restart is part of it and its outcome is part of the answer.
 			// Discarded, a rollback that put the file back and left the daemon down — or still
 			// running the configuration that was just withdrawn — reported as a clean undo.
 			const back = await runAll('linux', commands, exec);
-			// The failure is reported either way, but a drop-in still holding the new server
-			// is a different situation for the user: the host will adopt it at the next boot
-			// unless they remove it by hand, so the message has to say so.
-			if (!restored) return { ...r, message: `${r.message ?? 'the change could not be applied'} (and ${path} still holds the new server — it could not be restored)` };
 			if (!back.success) return { ...r, message: `${r.message ?? 'the change could not be applied'} (${path} was restored, but systemd-timesyncd could not be restarted onto it)` };
 		}
 		return r;

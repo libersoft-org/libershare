@@ -1415,6 +1415,31 @@ describe('applyTimesyncdDropIn', () => {
 		expect(r.message).toContain('could not be restarted onto it');
 	});
 
+	/**
+	 * A restart onto an unrestored file is worse than no restart at all: the file on disk is
+	 * still the new server, so the second restart can SUCCEED and make the rejected
+	 * configuration live at once — while the caller is told the change could not be applied.
+	 * The restore failure has to stop the sequence, not merely change the message after it.
+	 *
+	 * The restore is broken from inside the failing restart, which is the one moment between
+	 * the write and the rollback: the drop-in is swapped for a directory, so putting the old
+	 * content back cannot work.
+	 */
+	it('does not restart the daemon again when the drop-in could not be restored', async () => {
+		await writeFile(path, '[Time]\nNTP=\nNTP=old.example.org\n', 'utf8');
+		const calls: string[] = [];
+		const exec: CommandRunner = async (cmd, args) => {
+			calls.push([cmd, ...args].join(' '));
+			await rm(path, { force: true });
+			await mkdir(path);
+			return { kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' };
+		};
+		const r = await applyTimesyncdDropIn('new.example.org', true, path, exec);
+		expect(r.success).toBe(false);
+		expect(calls).toEqual(['systemctl restart systemd-timesyncd']);
+		expect(r.message).toContain('could not be restored');
+	});
+
 	it('removes a drop-in it created when the restart fails', async () => {
 		const { exec } = fakeRunner([{ kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' }]);
 		expect((await applyTimesyncdDropIn('new.example.org', true, path, exec)).success).toBe(false);
