@@ -169,6 +169,11 @@ export class PeerAnnounceManager {
 			clearTimeout(this.timer);
 			this.timer = null;
 		}
+		// The same manager instance is reused across a node restart, and membership
+		// entries live for nine minutes. Left behind, they let getRecentTopicMembers
+		// answer a rejoin-then-leave with peer IDs observed by the PREVIOUS run — peers
+		// this node has never spoken to, which leave-network then suppresses and purges.
+		this.topicMembers.clear();
 	}
 
 	/** Handle an inbound peer-announce pubsub message. */
