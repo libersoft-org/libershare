@@ -1,8 +1,35 @@
 diff --git a/dist/src/store.js b/dist/src/store.js
-index 103fcc357761a56be2576e7bb4cf7cc2b3858f6f..e468a485dce098e48477cc32127dc154c6cabef1 100644
+index 103fcc357761a56be2576e7bb4cf7cc2b3858f6f..02bdc792e4dd5e4e1335f08723be45a8031c5476 100644
 --- a/dist/src/store.js
 +++ b/dist/src/store.js
-@@ -186,9 +186,15 @@ export class PersistentStore {
+@@ -146,6 +146,26 @@ export class PersistentStore {
+         });
+         return this.#saveIfDifferent(peerId, peerPb, existingPeer);
+     }
++    async patchExisting(peerId, data, options) {
++        // `patch()` is an upsert, and libp2p legitimately relies on that for peers it has
++        // not stored yet. A read-modify-write is a different job: its caller has already
++        // READ the record, so "not stored" here means the record vanished mid-way — by a
++        // path the per-peer write lock does not cover — and upserting would rebuild it
++        // from the partial data the caller happens to hold, dropping the protocols,
++        // metadata, tags, public key and signed peer record the read had seen.
++        const existingPeer = await this.#findExistingPeer(peerId, options);
++        if (existingPeer == null) {
++            const err = new Error(`peer ${peerId.toString()} was removed while its record was being updated`);
++            err.name = 'PeerStoreConcurrentRemovalError';
++            throw err;
++        }
++        const peerPb = await toPeerPB(peerId, data, 'patch', {
++            ...options,
++            addressFilter: this.addressFilter,
++            existingPeer
++        });
++        return this.#saveIfDifferent(peerId, peerPb, existingPeer);
++    }
+     async merge(peerId, data, options) {
+         const existingPeer = await this.#findExistingPeer(peerId, options);
+         const peerPb = await toPeerPB(peerId, data, 'merge', {
+@@ -186,9 +206,15 @@ export class PersistentStore {
              };
          }
          catch (err) {

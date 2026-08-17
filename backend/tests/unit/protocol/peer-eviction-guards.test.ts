@@ -1119,7 +1119,7 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 
 	it('does not purge when the peerStore write fails', async () => {
 		const { network, purged, real } = await bareNetwork([BAD]);
-		real.store.store.patch = async (): Promise<unknown> => {
+		real.store.store.patchExisting = async (): Promise<unknown> => {
 			throw new Error('datastore closed');
 		};
 		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
