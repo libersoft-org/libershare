@@ -118,8 +118,15 @@ describe('Networks.setEnabled — serialised per lishnet', () => {
 		// The user changes their mind while the bootstrap dial is still outstanding.
 		const disabling = networks.setEnabled(NET, false);
 		gate.resolve();
-		await Promise.all([enabling, disabling]);
+		const [enabled, disabled] = await Promise.all([enabling, disabling]);
 
+		// Each result describes its OWN transition. Reading `joinedNetworks` after releasing
+		// the per-ID lock did not: async-mutex hands the lock to the next waiter before the
+		// previous holder resumes, so the disable had already unsubscribed and dropped the
+		// membership by the time the enable looked — and the enable reported the leave as its
+		// own outcome, making the API broadcast `left` for a call that had joined.
+		expect(enabled).toEqual({ found: true, transitioned: true, joined: true, network: NAMED });
+		expect(disabled).toEqual({ found: true, transitioned: true, joined: false, network: NAMED });
 		// The join really did happen — it subscribed the topic before it parked — so saying
 		// so and then saying it was undone is the honest report. Cancelling it half-way is
 		// what left the subscription and the dials behind with nobody to clean them up.
@@ -381,6 +388,32 @@ describe('Networks.setEnabled — what the result claims', () => {
 		// Whichever of the two reconciles reaches the lock first settles the join; what this
 		// pins down is the name — it is the one this call's own critical section wrote, never
 		// a value read before or after the await.
+		expect(result.joined).toBe(true);
+		expect(result.network).toEqual({ networkID: NET, name: 'renamed' });
+	});
+
+	/**
+	 * A rename can also land AFTER the enable's own catalog phase, while its runtime work is
+	 * still queued. The convergence then works from the renamed row — it reads the database
+	 * when its turn comes — so an event named from the caller's staged copy described a row
+	 * the transition never used.
+	 */
+	it('names the row the convergence used, not the one its own write left', async () => {
+		setLISHnetEnabled(db, NET, false);
+		const { networks } = makeNetworks(net, db, []);
+		const lock = (networks as any).operationLock(NET);
+		const release = await lock.acquire();
+
+		const enabling = networks.setEnabled(NET, true);
+		for (let i = 0; i < 10; i++) await Promise.resolve();
+		// Its catalog phase is done and its reconcile is queued on the lock held here, so the
+		// rename slips in between the two halves of the enable.
+		const renaming = networks.update({ networkID: NET, name: 'renamed', description: '', bootstrapPeers: [BOOTSTRAP], enabled: true, created: new Date().toISOString() });
+		for (let i = 0; i < 10; i++) await Promise.resolve();
+
+		release();
+		const [result] = await Promise.all([enabling, renaming]);
+
 		expect(result.joined).toBe(true);
 		expect(result.network).toEqual({ networkID: NET, name: 'renamed' });
 	});

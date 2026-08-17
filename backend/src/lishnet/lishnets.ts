@@ -33,6 +33,24 @@ export interface SetEnabledResult {
 }
 
 /**
+ * What one convergence settled, as read from INSIDE that lishnet's own lock.
+ *
+ * Every field of it has to be sampled there. `async-mutex` hands the lock to the next
+ * waiter synchronously on release, before the previous holder's `await` resumes — so a
+ * caller that released the lock and then read `joinedNetworks` was describing the state
+ * the NEXT transition had already moved to, and reported a leave for the join it had
+ * itself just performed.
+ */
+interface ReconcileOutcome {
+	/** Whether this convergence was the one that changed the join state. */
+	transitioned: boolean;
+	/** The join state as it stood when this convergence finished. */
+	joined: boolean;
+	/** Identity of the row this convergence actually converged on, if it still exists. */
+	network?: { networkID: string; name: string };
+}
+
+/**
  * Manages lishnets (logical network groups) on top of a single shared Network (libp2p) node.
  * Each lishnet is represented as a pubsub topic on the shared node.
  */
@@ -230,9 +248,17 @@ export class Networks {
 			return { previous, row: this.get(id) };
 		});
 		if (!staged) return { found: false, transitioned: false, joined: false };
-		const transitioned = await this.reconcile(id, staged.previous);
-		const result: SetEnabledResult = { found: true, transitioned, joined: this.joinedNetworks.has(id) };
-		if (staged.row) result.network = { networkID: staged.row.networkID, name: staged.row.name };
+		const outcome = await this.reconcile(id, staged.previous);
+		// Everything transition-related comes out of the outcome, which was assembled under
+		// the lishnet's lock. Nothing here may re-read the runtime: by now the next waiter
+		// has had the lock, so a second look answers for its transition, not for this one.
+		const result: SetEnabledResult = { found: true, transitioned: outcome.transitioned, joined: outcome.joined };
+		// The row the convergence worked from, so the event carries the name the transition
+		// actually used rather than a snapshot a queued rename has since replaced. A row that
+		// no longer exists falls back to the one this call's own catalog phase wrote — there
+		// is no later truth to name it by.
+		const named = outcome.network ?? staged.row;
+		if (named) result.network = { networkID: named.networkID, name: named.name };
 		return result;
 	}
 
@@ -259,10 +285,10 @@ export class Networks {
 	 * reconcile holds the lock last converges on the row that was written last, whatever
 	 * order the two finished their network work in.
 	 */
-	private async reconcile(id: string, previous: LISHNetworkConfig | undefined): Promise<boolean> {
-		const transitioned = await this.operationLock(id).runExclusive(() => this.reconcileLocked(id, previous));
+	private async reconcile(id: string, previous: LISHNetworkConfig | undefined): Promise<ReconcileOutcome> {
+		const outcome = await this.operationLock(id).runExclusive(() => this.reconcileLocked(id, previous));
 		this.forgetIfGone(id);
-		return transitioned;
+		return outcome;
 	}
 
 	/**
@@ -320,10 +346,10 @@ export class Networks {
 	 * moved, and a leave needs it because the cleanup has to run over the list the network
 	 * was joined WITH, which the new row no longer holds — and may not exist at all.
 	 *
-	 * Callers hold the lishnet's operation lock. Returns whether this call settled an actual
-	 * change of join state.
+	 * Callers hold the lishnet's operation lock, and the whole outcome is assembled before it
+	 * is released — see {@link ReconcileOutcome}.
 	 */
-	private async reconcileLocked(id: string, previous: LISHNetworkConfig | undefined): Promise<boolean> {
+	private async reconcileLocked(id: string, previous: LISHNetworkConfig | undefined): Promise<ReconcileOutcome> {
 		const next = this.get(id);
 		const wantJoined = next?.enabled === true;
 		const joined = this.joinedNetworks.has(id);
@@ -337,7 +363,10 @@ export class Networks {
 			if (wantJoined) await this.joinNetwork(id);
 			else await this.leaveNetwork(id, previous ? before : undefined);
 		}
-		return this.announce(id, this.joinedNetworks.has(id));
+		const settled = this.joinedNetworks.has(id);
+		const outcome: ReconcileOutcome = { transitioned: this.announce(id, settled), joined: settled };
+		if (next) outcome.network = { networkID: next.networkID, name: next.name };
+		return outcome;
 	}
 
 	/**
