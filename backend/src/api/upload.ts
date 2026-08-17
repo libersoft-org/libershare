@@ -109,6 +109,10 @@ interface Upload {
 	state: UploadState;
 	/** When this upload was last begun, appended to, finished or read. */
 	lastActivityAt: number;
+	/** True while an operation for this upload is running. */
+	busy: boolean;
+	/** Set by an abort or a disconnect that arrived while the upload was busy. */
+	cancelled: boolean;
 }
 
 interface UploadHandlers {
@@ -242,11 +246,11 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 	}
 
 	/**
-	 * The operation currently running for a socket, and the sockets that have
+	 * The operations still running for a socket, and the sockets that have
 	 * disconnected. Both are keyed by the socket object itself, so the entries
 	 * disappear with the socket rather than accumulating.
 	 */
-	const inFlight = new WeakMap<object, Promise<void>>();
+	const inFlight = new WeakMap<object, Set<Promise<void>>>();
 	const disconnected = new WeakSet<object>();
 
 	/** The socket as a weak-collection key, or null for a non-object caller (tests). */
@@ -261,35 +265,60 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 	}
 
 	/**
-	 * Run one upload operation for a socket, refusing a second while it is in
+	 * Note an operation for as long as it runs, so a disconnect can wait for
+	 * everything the socket still has in flight rather than pulling a file out from
+	 * under one. A set rather than a slot: a socket may legitimately be aborting
+	 * one upload while another is still transferring.
+	 */
+	function track<T>(client: unknown, run: () => Promise<T>): Promise<T> {
+		const key = clientKey(client);
+		if (!key) return run();
+		let running = inFlight.get(key);
+		if (!running) {
+			running = new Set();
+			inFlight.set(key, running);
+		}
+		const result = run();
+		// Held as a promise that always resolves, so disconnect cleanup can wait for
+		// the operation to finish without inheriting its rejection.
+		const settled = result.then(
+			() => {},
+			() => {}
+		);
+		running.add(settled);
+		void settled.then(() => running.delete(settled));
+		return result;
+	}
+
+	/**
+	 * Run one operation against one upload, refusing a second while it is in
 	 * flight. `Bun.serve` does not await an async `websocket.message` handler — it
 	 * dispatches the next frame straight away (measured: five pipelined frames all
-	 * entered the handler before the first returned) — so without this every
-	 * handler below could run concurrently against the same `Upload`, racing the
-	 * size counter, the shared `FileSink` and the map entry itself.
+	 * entered the handler before the first returned) — so without this the handlers
+	 * below could run concurrently against the same `Upload`, racing the size
+	 * counter, the shared `FileSink` and the map entry itself.
+	 *
+	 * Per upload rather than per socket. A socket-wide gate refused every other
+	 * upload call for as long as one import was running — including the `abort` the
+	 * frontend sends when the user picks a different file, and the one it sends
+	 * when a step times out — and an abort answered `UPLOAD_BUSY` is an abort that
+	 * did not happen.
 	 *
 	 * Refusing rather than queueing is deliberate: a queue has no bound, and the
 	 * only client that trips this is one ignoring the ack it is supposed to wait
 	 * for.
 	 */
-	async function exclusive<T>(client: unknown, run: () => Promise<T>): Promise<T> {
-		const key = clientKey(client);
-		if (!key) return run();
-		if (inFlight.has(key)) throw new CodedError(ErrorCodes.UPLOAD_BUSY);
-		const result = run();
-		// Stored as a promise that always resolves, so disconnect cleanup can wait
-		// for the operation to finish without inheriting its rejection.
-		inFlight.set(
-			key,
-			result.then(
-				() => {},
-				() => {}
-			)
-		);
+	async function exclusiveUpload<T>(uploadID: string, upload: Upload, run: () => Promise<T>): Promise<T> {
+		if (upload.busy) throw new CodedError(ErrorCodes.UPLOAD_BUSY);
+		upload.busy = true;
 		try {
-			return await result;
+			return await run();
 		} finally {
-			inFlight.delete(key);
+			upload.busy = false;
+			// An abort or a disconnect that landed mid-operation could not touch the
+			// record while it was running, so it left a mark and the cleanup happens
+			// here instead. A no-op if the operation already cleaned up itself.
+			if (upload.cancelled) await discard(uploadID);
 		}
 	}
 
@@ -333,7 +362,7 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 	}
 
 	function begin(p: { name?: string }, client: unknown): Promise<{ uploadID: string }> {
-		return exclusive(client, async () => {
+		return track(client, async () => {
 			await mkdir(uploadDir, { recursive: true });
 			// The socket can close while the await above runs, and `closeClient`
 			// would have found nothing to clean up. Registering the upload now would
@@ -350,7 +379,7 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 			if (uploads.size >= maxTotalUploads) throw new CodedError(ErrorCodes.UPLOAD_QUOTA_EXCEEDED, String(maxTotalUploads));
 			const uploadID = randomUUID();
 			const path = join(uploadDir, uploadFileName(p.name ?? 'upload'));
-			uploads.set(uploadID, { path, writer: Bun.file(path).writer(), written: 0, client, state: 'receiving', lastActivityAt: Date.now() });
+			uploads.set(uploadID, { path, writer: Bun.file(path).writer(), written: 0, client, state: 'receiving', lastActivityAt: Date.now(), busy: false, cancelled: false });
 			console.log(`[API] Upload started: ${uploadID} → ${path}`);
 			return { uploadID };
 		});
@@ -358,13 +387,16 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 
 	function chunk(p: { uploadID: string; data: Uint8Array }, client: unknown): Promise<{ received: number }> {
 		assert(p, ['uploadID', 'data']);
-		return exclusive(client, () => receiveChunk(p, client));
+		return track(client, async () => {
+			// Ownership first: the discard inside must not be reachable for a stranger
+			// who merely guessed someone else's upload id. Nothing awaits between this
+			// and taking the gate, so the pair cannot be interleaved.
+			const upload = owned(p.uploadID, client);
+			return exclusiveUpload(p.uploadID, upload, () => receiveChunk(p, upload));
+		});
 	}
 
-	async function receiveChunk(p: { uploadID: string; data: Uint8Array }, client: unknown): Promise<{ received: number }> {
-		// Ownership first: the discard below must not be reachable for a stranger
-		// who merely guessed someone else's upload id.
-		const upload = owned(p.uploadID, client);
+	async function receiveChunk(p: { uploadID: string; data: Uint8Array }, upload: Upload): Promise<{ received: number }> {
 		// The writer is closed once the transfer is finished, so a late chunk has
 		// nowhere to go and must not silently look like it was accepted.
 		if (upload.state !== 'receiving') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, p.uploadID);
@@ -413,36 +445,40 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 
 	function end(p: { uploadID: string }, client: unknown): Promise<{ uploadID: string }> {
 		assert(p, ['uploadID']);
-		return exclusive(client, async () => {
+		return track(client, async () => {
 			const upload = owned(p.uploadID, client);
-			// Finishing twice is not a resend of the first answer: the second call
-			// would re-close a closed writer and hand out the path again.
-			if (upload.state !== 'receiving') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, p.uploadID);
-			// Claimed before the first await, or the sweep can find a record that still
-			// looks like an untouched transfer while its writer is mid-close, discard it,
-			// end the writer a second time and delete the file — after which this call
-			// still answers with a success for an upload that no longer exists.
-			upload.state = 'finalizing';
-			upload.lastActivityAt = Date.now();
-			try {
-				await upload.writer.end();
-			} catch (err) {
-				// A failed close (ENOSPC, a broken handle) leaves a partial file. It
-				// used to survive, because the record had already been removed and the
-				// client's follow-up abort then found nothing to delete.
-				await discard(p.uploadID);
-				throw err;
-			}
-			upload.state = 'ready';
-			upload.lastActivityAt = Date.now();
-			console.log(`[API] Upload stored: ${upload.path} (${upload.written} bytes)`);
-			// The path deliberately does not go back to the client. It used to, which
-			// meant every authorised socket could learn the temp directory and then
-			// use the generic `fs.*` methods to read, overwrite or delete a file
-			// belonging to someone else's upload between this call and the import —
-			// and left the client holding a path it had to remember to clean up.
-			return { uploadID: p.uploadID };
+			return exclusiveUpload(p.uploadID, upload, () => finish(p.uploadID, upload));
 		});
+	}
+
+	async function finish(uploadID: string, upload: Upload): Promise<{ uploadID: string }> {
+		// Finishing twice is not a resend of the first answer: the second call would
+		// re-close a closed writer.
+		if (upload.state !== 'receiving') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, uploadID);
+		// Claimed before the first await, or the sweep can find a record that still
+		// looks like an untouched transfer while its writer is mid-close, discard it,
+		// end the writer a second time and delete the file — after which this call
+		// still answers with a success for an upload that no longer exists.
+		upload.state = 'finalizing';
+		upload.lastActivityAt = Date.now();
+		try {
+			await upload.writer.end();
+		} catch (err) {
+			// A failed close (ENOSPC, a broken handle) leaves a partial file. It
+			// used to survive, because the record had already been removed and the
+			// client's follow-up abort then found nothing to delete.
+			await discard(uploadID);
+			throw err;
+		}
+		upload.state = 'ready';
+		upload.lastActivityAt = Date.now();
+		console.log(`[API] Upload stored: ${upload.path} (${upload.written} bytes)`);
+		// The path deliberately does not go back to the client. It used to, which
+		// meant every authorised socket could learn the temp directory and then
+		// use the generic `fs.*` methods to read, overwrite or delete a file
+		// belonging to someone else's upload between this call and the import —
+		// and left the client holding a path it had to remember to clean up.
+		return { uploadID };
 	}
 
 	/**
@@ -453,44 +489,55 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 	 */
 	function withFile<T>(p: { uploadID: string }, client: unknown, read: (path: string) => Promise<T>): Promise<T> {
 		assert(p, ['uploadID']);
-		return exclusive(client, async () => {
+		return track(client, async () => {
 			const upload = owned(p.uploadID, client);
-			if (upload.state !== 'ready') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, p.uploadID);
-			// Claimed synchronously so a second consume cannot get past the check
-			// above, but deliberately still in the map and still charged for. The
-			// record used to be dropped here, before the wait for the import lock:
-			// a queued file then counted towards neither ceiling, so a client could
-			// park an unbounded number of them by simply calling parse and uploading
-			// again — and the sweep, which only ever knew about the map, would judge
-			// the file an orphan and delete it before its parse had even started.
-			upload.state = 'queued';
-			try {
-				return await parseLock.runExclusive(async () => {
-					// The wait above is unbounded, so the owner may well be gone by the
-					// time the lock comes free. Parsing an import nobody is listening for
-					// is pure cost, and it is the expensive part of the whole operation.
-					if (isGone(client) || uploads.get(p.uploadID) !== upload) throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, p.uploadID);
-					upload.state = 'parsing';
-					return await read(upload.path);
-				});
-			} finally {
-				// Removed whether or not the read worked: a file that failed to parse
-				// is no more use than one that succeeded, and leaving it would let a
-				// bad import linger until a sweep. The bytes come back with the file,
-				// not before it.
-				upload.state = 'cleanup';
-				await release(p.uploadID, upload);
-			}
+			return exclusiveUpload(p.uploadID, upload, () => consume(p.uploadID, upload, client, read));
 		});
+	}
+
+	async function consume<T>(uploadID: string, upload: Upload, client: unknown, read: (path: string) => Promise<T>): Promise<T> {
+		if (upload.state !== 'ready') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, uploadID);
+		// Claimed synchronously so a second consume cannot get past the check above,
+		// but deliberately still in the map and still charged for. The record used to
+		// be dropped here, before the wait for the import lock: a queued file then
+		// counted towards neither ceiling, so a client could park an unbounded number
+		// of them by simply calling parse and uploading again — and the sweep, which
+		// only ever knew about the map, would judge the file an orphan and delete it
+		// before its parse had even started.
+		upload.state = 'queued';
+		try {
+			return await parseLock.runExclusive(async () => {
+				// The wait above is unbounded, so the owner may well be gone by the time
+				// the lock comes free. Parsing an import nobody is listening for is pure
+				// cost, and it is the expensive part of the whole operation.
+				if (upload.cancelled || isGone(client) || uploads.get(uploadID) !== upload) throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, uploadID);
+				upload.state = 'parsing';
+				return await read(upload.path);
+			});
+		} finally {
+			// Removed whether or not the read worked: a file that failed to parse is no
+			// more use than one that succeeded, and leaving it would let a bad import
+			// linger until a sweep. The bytes come back with the file, not before it.
+			upload.state = 'cleanup';
+			await release(uploadID, upload);
+		}
 	}
 
 	function abort(p: { uploadID: string }, client: unknown): Promise<void> {
 		assert(p, ['uploadID']);
-		return exclusive(client, async () => {
+		return track(client, async () => {
 			// A transfer that is already gone is not an error: the client aborts on any
 			// failure, including one that discarded the transfer on its way out.
 			const upload = uploads.get(p.uploadID);
 			if (!upload || upload.client !== client) return;
+			// Deliberately outside the per-upload gate. An abort refused as UPLOAD_BUSY
+			// is an abort that did not happen, and the frontend sends one precisely
+			// when something else on this upload has stopped answering. Marked instead,
+			// and whatever is running discards on its way out.
+			if (upload.busy) {
+				upload.cancelled = true;
+				return;
+			}
 			await discard(p.uploadID);
 		});
 	}
@@ -500,12 +547,17 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 		// Recorded before anything else, so an operation still mid-await can see
 		// that its socket is gone and stop rather than register an orphan.
 		if (key) disconnected.add(key);
-		const pending = key ? inFlight.get(key) : undefined;
+		// Marked before the wait below, so an operation parked behind the import lock
+		// gives up at its next checkpoint instead of doing the work first and then
+		// finding nobody to answer.
+		for (const upload of uploads.values()) if (upload.client === client) upload.cancelled = true;
+		// Snapshotted, since each entry removes itself as it settles.
+		const running = key ? [...(inFlight.get(key) ?? [])] : [];
 		void (async () => {
 			// An operation can still be mid-await when the socket closes. Discarding
 			// underneath it would end the writer while that operation is writing to
-			// it, so wait for it to finish first.
-			if (pending) await pending;
+			// it, so wait for all of them to finish first.
+			await Promise.all(running);
 			for (const [uploadID, upload] of uploads) if (upload.client === client) await discard(uploadID);
 		})();
 	}

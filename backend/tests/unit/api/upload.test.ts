@@ -849,6 +849,50 @@ describe('chunked upload over the websocket', () => {
 		}
 	}, 30000);
 
+	it('lets a socket abort one upload and begin the next in the same breath', async () => {
+		const srv = startUploadServer();
+		const client = new WsClient(srv.url, () => {});
+		try {
+			const { uploadID: first } = await client.call<{ uploadID: string }>('upload.begin', { name: 'first.lish' });
+			await client.callBinary('upload.chunk', { uploadID: first }, pattern(64 * 1024));
+			// Exactly what picking a second file in the import form does: the abort is
+			// not awaited and the next begin goes out on the same socket right behind
+			// it. Under a socket-wide gate whichever arrived second was refused —
+			// either the new transfer never started or the old file was left with no
+			// id on the frontend at all.
+			const aborting = client.call('upload.abort', { uploadID: first });
+			const { uploadID: second } = await client.call<{ uploadID: string }>('upload.begin', { name: 'second.lish' });
+			await aborting;
+			await client.callBinary('upload.chunk', { uploadID: second }, pattern(64 * 1024));
+			await client.call('upload.end', { uploadID: second });
+			// Both took effect: the new transfer is whole and the old file is gone.
+			expect((await client.call<{ size: number }>('upload.digest', { uploadID: second })).size).toBe(64 * 1024);
+			expect(await readdir(srv.uploadDir)).toEqual([]);
+		} finally {
+			client.stopReconnect();
+			srv.stop();
+		}
+	}, 30000);
+
+	it('does not let one long import block the rest of the socket', async () => {
+		const srv = startUploadServer();
+		const client = new WsClient(srv.url, () => {});
+		try {
+			const idA = await upload(client, 'slow.lish', pattern(4096), 4096);
+			const idB = await upload(client, 'other.lish', pattern(4096), 4096);
+			// Held open for 150 ms inside the import lock. The gate used to be the
+			// whole socket, so every call below came back UPLOAD_BUSY.
+			const parsing = client.call<{ peak: number }>('upload.slowRead', { uploadID: idA });
+			await client.call('upload.abort', { uploadID: idB });
+			const { uploadID: idC } = await client.call<{ uploadID: string }>('upload.begin', { name: 'new.lish' });
+			expect(await client.callBinary<{ received: number }>('upload.chunk', { uploadID: idC }, pattern(1024))).toEqual({ received: 1024 });
+			await parsing;
+		} finally {
+			client.stopReconnect();
+			srv.stop();
+		}
+	}, 30000);
+
 	it('never hands the client a filesystem path', async () => {
 		const srv = startUploadServer();
 		const client = new WsClient(srv.url, () => {});
