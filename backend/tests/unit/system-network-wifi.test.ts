@@ -26,6 +26,10 @@ interface NetworkFields {
 	profileName?: string;
 	/** Raw SSID octets, for a name that is not valid UTF-8 and so has no text form. */
 	ssidOctets?: number[];
+	/** bNetworkConnectable. Real lists set this TRUE for anything joinable. */
+	connectable?: boolean;
+	/** wlanNotConnectableReason, meaningful only when connectable is false. */
+	notConnectableReason?: number;
 	/** Overrides the SSID's own byte length — used to forge an impossible one. */
 	ssidLength?: number;
 }
@@ -46,6 +50,8 @@ function buildList(networks: NetworkFields[], declaredCount: number = networks.l
 		for (let i = 0; i < profile.length && i < 256; i++) view.setUint16(base + i * 2, profile.charCodeAt(i), true);
 		view.setUint32(base + 512, network.ssidLength ?? name.length, true);
 		bytes.set(name.subarray(0, 32), base + 516);
+		view.setUint32(base + 556, network.connectable === false ? 0 : 1, true);
+		view.setUint32(base + 560, network.notConnectableReason ?? 0, true);
 		view.setUint32(base + 604, network.signal, true);
 		view.setUint32(base + 608, network.secured === false ? 0 : 1, true);
 		view.setUint32(base + 612, network.auth ?? 7, true);
@@ -186,6 +192,20 @@ describe('findScannedNetwork', () => {
 		const entry = findScannedNetwork(list, 'Net\uFFFD\uFFFD');
 		expect(entry).not.toBeNull();
 		expect([...(entry?.ssidBytes ?? [])]).toEqual(octets);
+	});
+
+	// Windows sets bNetworkConnectable FALSE when it already knows it cannot
+	// associate — an unsupported cipher, a policy restriction. Attempting anyway
+	// spent twenty seconds waiting and then blamed the password.
+	it('carries the connectability verdict and the reason Windows gave for it', () => {
+		const list = buildList([
+			{ ssid: 'Enterprise Net', signal: 70, connectable: false, notConnectableReason: 0x00028001 },
+			{ ssid: 'Coffee Bar', signal: 70 },
+		]);
+		expect(findScannedNetwork(list, 'Enterprise Net')?.connectable).toBe(false);
+		expect(findScannedNetwork(list, 'Enterprise Net')?.notConnectableReason).toBe(0x00028001);
+		expect(findScannedNetwork(list, 'Coffee Bar')?.connectable).toBe(true);
+		expect(findScannedNetwork(list, 'Coffee Bar')?.notConnectableReason).toBe(0);
 	});
 
 	it('picks the strongest entry when one name is on several access points', () => {

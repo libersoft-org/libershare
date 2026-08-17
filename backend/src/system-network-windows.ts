@@ -659,6 +659,10 @@ const AVAILABLE_PROFILE_NAME_OFFSET = 0;
 /** strProfileName is a WCHAR[256] field, NUL-padded rather than NUL-terminated when full. */
 const AVAILABLE_PROFILE_NAME_CHARS = 256;
 const AVAILABLE_SSID_LENGTH_OFFSET = 512;
+/** bNetworkConnectable: FALSE when Windows already knows it cannot join this network. */
+const AVAILABLE_CONNECTABLE_OFFSET = 556;
+/** wlanNotConnectableReason: a WLAN reason code, meaningful only when the flag above is FALSE. */
+const AVAILABLE_NOT_CONNECTABLE_REASON_OFFSET = 560;
 const AVAILABLE_SSID_OFFSET = 516;
 const AVAILABLE_SIGNAL_OFFSET = 604;
 const AVAILABLE_SECURITY_OFFSET = 608;
@@ -944,6 +948,10 @@ export type AvailableNetwork = NetWifiNetwork & {
 	ssidBytes: Uint8Array;
 	/** Windows' own name for the stored profile of this network. Empty when nothing is stored. */
 	profileName: string;
+	/** False when Windows has already decided it cannot associate with this network. */
+	connectable: boolean;
+	/** Why not, as a WLAN reason code. Meaningful only when {@link connectable} is false. */
+	notConnectableReason: number;
 };
 
 /** Walk the entries of a WLAN_AVAILABLE_NETWORK_LIST, skipping the ones that cannot be offered. */
@@ -976,6 +984,8 @@ function* availableNetworks(list: Pointer): Generator<AvailableNetwork> {
 			secured: read.u32(list, base + AVAILABLE_SECURITY_OFFSET) !== 0,
 			active: (read.u32(list, base + AVAILABLE_FLAGS_OFFSET) & AVAILABLE_NETWORK_CONNECTED) !== 0,
 			auth: read.u32(list, base + AVAILABLE_AUTH_OFFSET),
+			connectable: read.u32(list, base + AVAILABLE_CONNECTABLE_OFFSET) !== 0,
+			notConnectableReason: read.u32(list, base + AVAILABLE_NOT_CONNECTABLE_REASON_OFFSET),
 		};
 	}
 }
@@ -1063,6 +1073,13 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 	// the transition mode most access points run advertises, and it is also what an
 	// out-of-date list would have said.
 	const sae = scanned?.auth === AUTH_ALGO_WPA3_SAE;
+	// Windows sets `bNetworkConnectable` FALSE when it has already decided it
+	// cannot associate — an unsupported authentication or cipher, a policy
+	// restriction. Attempting anyway spent twenty seconds waiting for an
+	// association that was never going to happen and then told the user to check
+	// the password, which was not the problem. The reason code Windows supplied
+	// alongside it is the answer, so it is asked for by name.
+	if (scanned && !scanned.connectable) throw new Error(withWlanHandle(api => wlanReasonText(api, scanned.notConnectableReason)) ?? 'Windows reports that this network cannot be joined');
 	if (password) assertWindowsWifiKey(password, sae);
 	// Held in a local of its own: WLAN_CONNECTION_PARAMETERS stores only the
 	// ADDRESS of the profile name, so the array behind it has to outlive the call.
