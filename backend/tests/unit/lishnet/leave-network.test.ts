@@ -26,7 +26,13 @@ interface MockNet {
 	isRunning(): boolean;
 	subscribeTopic(id: string): boolean;
 	isBootstrapOrRelayPeer(pid: string): boolean;
-	disconnectPeer(pid: string, networkID: string): Promise<void>;
+	disconnectPeer(pid: string, networkID: string, epoch?: number): Promise<void>;
+	/** Epoch each disconnect was bound to, in call order. */
+	disconnectEpochs: Array<number | undefined>;
+	/** Set to hold the next peer disconnect open. */
+	disconnectGate: Promise<void> | null;
+	runEpoch: number;
+	getRunEpoch(): number;
 	pruneConfiguredBootstrapPeer(pid: string): void;
 	bumpBootstrapGeneration(networkID: string): void;
 	generationBumps: string[];
@@ -78,8 +84,16 @@ function makeMockNet(): MockNet {
 		isBootstrapOrRelayPeer(pid) {
 			return this.bootstrapOrRelay.has(pid);
 		},
-		async disconnectPeer(pid) {
+		disconnectEpochs: [],
+		disconnectGate: null,
+		runEpoch: 1,
+		getRunEpoch() {
+			return this.runEpoch;
+		},
+		async disconnectPeer(pid, _networkID, epoch) {
+			if (this.disconnectGate) await this.disconnectGate;
 			this.disconnected.push(pid);
+			this.disconnectEpochs.push(epoch);
 		},
 		pruneConfiguredBootstrapPeer(pid) {
 			this.prunedBootstrap.push(pid);
@@ -153,6 +167,29 @@ describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 		const networks = makeNetworks(net, ['net-a', 'net-b']);
 		await leave(networks, 'net-a');
 		expect(net.disconnected).toEqual(['p-only-a']);
+	});
+
+	/**
+	 * `disconnectPeer` defaults its epoch per call, so a leave parked inside one peer's
+	 * hangUp picked up the CURRENT run for the next peer — surviving a stop and a start and
+	 * then tearing peers off a node instance that had never heard of this lishnet.
+	 */
+	it('binds every peer of one leave to the run it started on', async () => {
+		net.topicPeers.set('net-a', ['p-one', 'p-two']);
+		const networks = makeNetworks(net, ['net-a']);
+		let release!: () => void;
+		net.disconnectGate = new Promise<void>(res => {
+			release = res;
+		});
+
+		const leaving = leave(networks, 'net-a');
+		for (let i = 0; i < 10; i++) await Promise.resolve();
+		// The node is stopped and started again while the first peer is being hung up.
+		net.runEpoch = 2;
+		release();
+		await leaving;
+
+		expect(net.disconnectEpochs).toEqual([1, 1]);
 	});
 
 	it('disconnects a recently-seen content peer offline at leave time', async () => {

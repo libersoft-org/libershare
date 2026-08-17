@@ -53,6 +53,9 @@ function makeMockNet(startGate: Promise<void>) {
 		pruneBootstrapAddresses(): void {},
 		pruneBootstrapStatus(): void {},
 		clearRedialSuppressionForNetwork(): void {},
+		getRunEpoch(): number {
+			return 1;
+		},
 		dialsCancelled: 0,
 		cancelBootstrapDials(): void {
 			this.dialsCancelled++;

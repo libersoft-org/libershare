@@ -74,6 +74,9 @@ function makeMockNet() {
 		},
 		pruneBootstrapStatus(): void {},
 		clearRedialSuppressionForNetwork(): void {},
+		getRunEpoch(): number {
+			return 1;
+		},
 		async addBootstrapPeers(peers: string[] = []): Promise<void> {
 			if (this.dialGate) await this.dialGate;
 			for (const peer of peers) this.configured.add(peer);

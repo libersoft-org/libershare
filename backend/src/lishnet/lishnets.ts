@@ -587,6 +587,11 @@ export class Networks {
 		// nothing at all) and left the outgoing addresses installed: still exempt from
 		// eviction, still redialled.
 		const outgoing = Networks.cleanBootstrapList(outgoingBootstrap);
+		// One epoch for the whole leave. `disconnectPeer` defaults it per call, so a leave
+		// parked inside the first peer's hangUp used to pick up the CURRENT run for the next
+		// peer — surviving a stop and a start and then tearing down peers of a node that had
+		// never heard of this lishnet.
+		const epoch = this.network.getRunEpoch();
 
 		// Snapshot the topic subscribers BEFORE unsubscribing — unsubscribeTopic
 		// tears the topic out of pubsub, after which getTopicPeers(id) returns [].
@@ -651,7 +656,7 @@ export class Networks {
 			this.network.pruneConfiguredBootstrapPeer(pid);
 			if (stillJoinedPeers.has(pid)) continue;
 			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
-			await this.network.disconnectPeer(pid, id);
+			await this.network.disconnectPeer(pid, id, epoch);
 		}
 
 		// Disconnect peers that belonged exclusively to the lishnet we just left.
@@ -664,7 +669,7 @@ export class Networks {
 		for (const pid of leftPeers) {
 			if (stillJoinedPeers.has(pid)) continue;
 			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
-			await this.network.disconnectPeer(pid, id);
+			await this.network.disconnectPeer(pid, id, epoch);
 		}
 
 		const net = this.get(id);

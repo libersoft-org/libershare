@@ -40,6 +40,9 @@ function makeMockNet() {
 			this.prunedStatus.push({ networkID, keep });
 		},
 		clearRedialSuppressionForNetwork(): void {},
+		getRunEpoch(): number {
+			return 1;
+		},
 		isRunning(): boolean {
 			return true;
 		},

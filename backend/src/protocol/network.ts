@@ -1704,6 +1704,17 @@ export class Network {
 	}
 
 	/**
+	 * The run this node instance belongs to — see {@link runEpoch}.
+	 *
+	 * For a caller whose SEQUENCE of destructive calls has to answer to one node: taking the
+	 * default epoch per call binds each of them to whatever run is current at that moment, so
+	 * a sequence that outlives a stop finishes against the node that replaced it.
+	 */
+	getRunEpoch(): number {
+		return this.runEpoch;
+	}
+
+	/**
 	 * Get the underlying libp2p node (for low-level event listening / stats).
 	 * Returns null if node has not been started yet.
 	 */
@@ -2459,10 +2470,13 @@ export class Network {
 	 * `networkID` is the lishnet the peer is being left with — the peer is suppressed
 	 * under it so rejoining that lishnet lifts exactly its peers.
 	 *
-	 * `epoch` binds the whole sequence to the node instance it started on, for the same
-	 * reason {@link purgeStalePeer} takes one: this awaits twice, and re-reading
-	 * `this.node` after a stop()/start() used to hand back the NEW node — so the hangUp
-	 * and the purge landed on an instance that had never heard of this leave.
+	 * `epoch` binds THIS CALL to the node instance it started on, for the same reason
+	 * {@link purgeStalePeer} takes one: this awaits twice, and re-reading `this.node` after a
+	 * stop()/start() used to hand back the NEW node — so the hangUp and the purge landed on
+	 * an instance that had never heard of this leave. It binds one call for one peer and
+	 * nothing more: a caller walking several peers has to capture {@link getRunEpoch} once
+	 * and pass it in, or the default re-reads the counter per peer and the later peers of a
+	 * leave that outlived a restart are torn off the node that replaced it.
 	 */
 	async disconnectPeer(peerID: string, networkID: string, epoch: number = this.runEpoch): Promise<void> {
 		const node = this.node;
