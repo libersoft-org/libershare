@@ -162,8 +162,13 @@ export interface PeerAnnounceManagerDeps {
 	getNode(): Libp2p | null;
 	/** Returns the current pubsub instance (may be null). */
 	getPubsub(): any | null;
-	/** Broadcast a message on a gossipsub topic. */
-	broadcast(topic: string, msg: Record<string, any>): Promise<void>;
+	/**
+	 * Broadcast a message on a gossipsub topic, over the pubsub instance the caller
+	 * captured — NOT over whatever pubsub the network happens to hold now. An emit spans
+	 * one await per topic, so a restart in the middle of one would otherwise publish the
+	 * finished run's payload onto the new node.
+	 */
+	broadcast(topic: string, msg: Record<string, any>, pubsub: any): Promise<void>;
 	/** Process an inbound peer-announce payload: dial/tag discovered peers. */
 	addBootstrapPeers(multiaddrs: string[], networkID: string, origin: BootstrapPeerOrigin): Promise<void>;
 }
@@ -472,6 +477,10 @@ export class PeerAnnounceManager {
 		// the rest of their OWN network in one hop, without cross-network leak.
 		let skippedTransitive = 0;
 		for (const topic of lishTopics) {
+			// Once per iteration, not once before the loop: every iteration below ends in an
+			// awaited publish, and a stop/start landing in any of them makes each remaining
+			// topic a topic of a node this emit knows nothing about.
+			if (this.isSuperseded(generation)) return;
 			const current = new Set<string>();
 			try {
 				for (const p of pubsub.getSubscribers(topic)) current.add(p.toString());
@@ -520,10 +529,15 @@ export class PeerAnnounceManager {
 			const msg: PeerAnnounceMessage = { type: 'peer-announce', multiaddrs: Array.from(collected) };
 			trace(`[NET] peer-announce emit topic=${topic.slice(0, 16)}: ${collected.size} addrs (self + ${transitiveAdded} scoped transitive)`);
 			try {
-				await this.deps.broadcast(topic, msg as unknown as Record<string, any>);
+				// Bound to the pubsub captured at the top of this emit, so even a publish that
+				// slips past the checks cannot reach the successor run's transport.
+				await this.deps.broadcast(topic, msg as unknown as Record<string, any>, pubsub);
 			} catch (err: any) {
 				trace(`[NET] peer-announce publish failed topic=${topic}: ${err?.message ?? err}`);
 			}
+			// The publish above is the await this loop exists to protect: a run that ended
+			// while it was outstanding must stop here rather than roll on to the next topic.
+			if (this.isSuperseded(generation)) return;
 		}
 		if (skippedSelf > 0 || skippedTransitive > 0) {
 			trace(`[NET] peer-announce filter: skipped ${skippedSelf} self + ${skippedTransitive} transitive non-routable addrs`);

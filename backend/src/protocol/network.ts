@@ -471,7 +471,7 @@ export class Network {
 		this.peerAnnounce = new PeerAnnounceManager({
 			getNode: (): Libp2p | null => this.node,
 			getPubsub: (): any => this.pubsub,
-			broadcast: (topic, msg): Promise<void> => this.broadcast(topic, msg),
+			broadcast: (topic, msg, pubsub): Promise<void> => Network.publishOn(pubsub, topic, msg),
 			addBootstrapPeers: (multiaddrs, networkID, origin): Promise<void> => this.addBootstrapPeers(multiaddrs, networkID, origin),
 		});
 	}
@@ -2666,9 +2666,23 @@ export class Network {
 			console.error('Network not started');
 			return;
 		}
+		await Network.publishOn(this.pubsub, topic, data);
+	}
+
+	/**
+	 * Publish over a SPECIFIC pubsub instance rather than whatever `this.pubsub` is now.
+	 *
+	 * A long-running emitter captures the pubsub of the run it started in and then awaits
+	 * — repeatedly, once per topic. Routing those later publishes through
+	 * {@link broadcast} re-reads the field, so a stop/start landing in one of the awaits
+	 * put the OLD run's payload (its identity, its addresses, its peerStore snapshot) onto
+	 * the NEW node's topics. Binding the publish to the captured transport makes that
+	 * impossible instead of merely unlikely.
+	 */
+	static async publishOn(pubsub: any, topic: string, data: Record<string, any>): Promise<void> {
 		trace(`[NET] broadcast ${topic}: ${data['type']}`);
 		const encoded = new TextEncoder().encode(JSON.stringify(data));
-		const result = await this.pubsub.publish(topic, encoded);
+		const result = await pubsub.publish(topic, encoded);
 		const recips = (result as any)?.recipients?.map((p: any) => p.toString().slice(0, 12)) ?? [];
 		trace(`[NET] broadcast ${topic.slice(0, 28)}: ${data['type']} → recipients=[${recips.join(',')}] count=${recips.length}`);
 	}

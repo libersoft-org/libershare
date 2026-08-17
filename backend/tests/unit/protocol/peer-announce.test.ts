@@ -537,6 +537,46 @@ describe('PeerAnnounceManager lifecycle — one loop per start', () => {
 		expect(broadcasts).toEqual([]);
 	});
 
+	it('a publish parked across a stop/start never reaches the next topic', async () => {
+		// Two topics, so the emit has a second awaited publish after the first one returns.
+		let release!: () => void;
+		const held = new Promise<void>(res => {
+			release = res;
+		});
+		const oldPubsub = { getTopics: (): string[] => [TOPIC_A, TOPIC_B], getSubscribers: (): unknown[] => [fakeSubscriber(PA_ID)] };
+		const newPubsub = { getTopics: (): string[] => [TOPIC_A, TOPIC_B], getSubscribers: (): unknown[] => [fakeSubscriber(PA_ID)] };
+		let pubsub: any = oldPubsub;
+		const seen: Array<{ topic: string; onNew: boolean }> = [];
+		const mgr = new PeerAnnounceManager({
+			getNode: () => gatedNode(Promise.resolve()) as any,
+			getPubsub: () => pubsub,
+			broadcast: async (topic, _msg, target) => {
+				seen.push({ topic, onNew: target === newPubsub });
+				if (topic === TOPIC_A) await held;
+			},
+			addBootstrapPeers: async () => {},
+		});
+
+		mgr.start();
+		const emitting = (mgr as any).emit((mgr as any).generation);
+		// Let the emit reach the first publish and park there.
+		for (let i = 0; i < 8; i++) await Promise.resolve();
+		expect(seen).toHaveLength(1);
+
+		// The run ends and a new one begins while topic A's publish is still outstanding.
+		mgr.stop();
+		pubsub = newPubsub;
+		mgr.start();
+		release();
+		await emitting;
+		mgr.stop();
+
+		// Topic B belongs to the new run; the old emit must not have published it at all,
+		// and nothing it did publish may have gone over the new transport.
+		expect(seen.map(s => s.topic)).toEqual([TOPIC_A]);
+		expect(seen.some(s => s.onNew)).toBe(false);
+	});
+
 	it('an uninterrupted emit still publishes', async () => {
 		const pubsub = { getTopics: (): string[] => [TOPIC_A], getSubscribers: (): unknown[] => [fakeSubscriber(PA_ID)] };
 		const { mgr, broadcasts } = buildManager(gatedNode(Promise.resolve()), pubsub);
