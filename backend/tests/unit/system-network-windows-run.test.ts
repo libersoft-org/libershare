@@ -92,12 +92,13 @@ describe('windowsApplyIPv4Command, executed', () => {
 	}
 
 	// Create-both then remove-active is two provider writes with nothing binding them.
-	// A removal that reports success and leaves the object where it was — which no
-	// -ErrorAction can see — used to end the rollback with the address in BOTH stores
-	// while it reported having put everything back. Re-reading catches it, and one
-	// retry is usually the whole of the repair.
-	it.skipIf(windowsOnly)('retries a removal that reported success without removing', async () => {
-		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24 }), persistentOnlyHost({ removalsIgnored: 1 }));
+	// The removal here raises ObjectNotFound while the object is still in the active
+	// store — the one category the apply is allowed to ignore, on the reading that it
+	// means the object has already gone — so the rollback used to end with the address
+	// in BOTH stores while reporting it had put everything back. Re-reading catches
+	// it, and one retry is usually the whole of the repair.
+	it.skipIf(windowsOnly)('retries a removal that left the object where it was', async () => {
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24 }), persistentOnlyHost({ removalsNotFound: 1 }));
 		expect(result.error).toContain('injected failure');
 		// Four: the bulk clear the apply starts with, the one the rollback starts with,
 		// the remove-active that reported success and did nothing, and the retry.
@@ -110,7 +111,7 @@ describe('windowsApplyIPv4Command, executed', () => {
 	// beside the original failure, because the machine is then in a state neither
 	// error alone describes.
 	it.skipIf(windowsOnly)('reports a surplus active copy it could not remove', async () => {
-		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24 }), persistentOnlyHost({ removalsIgnored: 2 }));
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24 }), persistentOnlyHost({ removalsNotFound: 2 }));
 		expect(result.error).toContain('injected failure');
 		expect(result.error).toContain('a restored address could not be taken back out of the active store');
 	});

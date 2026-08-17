@@ -63,17 +63,21 @@ export interface FakeHost {
 	/** Name of the stub whose FIRST call throws, so a mid-apply failure can be provoked. */
 	failOn?: string;
 	/**
-	 * How many identity-scoped removals report success without removing anything.
+	 * How many identity-scoped removals raise `ObjectNotFound` and leave the object
+	 * where it was.
 	 *
-	 * The failure mode the postcondition check exists for, and one no `-ErrorAction`
-	 * can see: `Remove-NetIPAddress`/`Remove-NetRoute` returns cleanly and the object
-	 * is still in the active store. Only the removals that name an address or a next
-	 * hop are affected — those are the ones that follow a create-both, which is the
-	 * pair that is not atomic. The bulk removals at the head of the apply take a
-	 * whole interface at once and are left alone, so a fixture can provoke this
-	 * without changing what the apply had to undo.
+	 * The state the postcondition check exists for: the create-both ran, the removal
+	 * that was to leave only the persistent copy did not remove it, and the apply is
+	 * none the wiser. `ObjectNotFound` is how it gets past unnoticed — that is the one
+	 * category `tolerateMissing` swallows, on the reading that it means the object is
+	 * already gone.
+	 *
+	 * Only the removals naming an address or a next hop are affected, because those
+	 * are the ones following a create-both. The bulk removals at the head of the apply
+	 * take a whole interface at once and are left alone, so a fixture can provoke this
+	 * without also changing what the apply had to undo.
 	 */
-	removalsIgnored?: number;
+	removalsNotFound?: number;
 	/** AddressState the stub reports for a freshly created address (4 = Preferred). */
 	newAddressState?: number;
 }
@@ -128,12 +132,14 @@ function TargetStores($store) { if ($store) { @($store) } else { @('ActiveStore'
 # that distinction — stubs that never threw at all left it untested.
 function NotFound($message) { New-Object System.Management.Automation.ErrorRecord ([Exception]::new($message)), 'NotFound', ([System.Management.Automation.ErrorCategory]::ObjectNotFound), $null }
 
-# A removal that reports success and removes nothing — see FakeHost.removalsIgnored.
-$script:removalsIgnored = [int]$fixture.removalsIgnored
-function IgnoreThisRemoval($identity) {
-	if ($null -eq $identity -or $script:removalsIgnored -le 0) { return $false }
-	$script:removalsIgnored -= 1
-	$true
+# A removal that raises ObjectNotFound and removes nothing — see
+# FakeHost.removalsNotFound. Only the identity-scoped ones, which are the removals
+# that follow a create-both.
+$script:removalsNotFound = [int]$fixture.removalsNotFound
+function RefuseThisRemoval($identity) {
+	if ($null -eq $identity -or $script:removalsNotFound -le 0) { return }
+	$script:removalsNotFound -= 1
+	throw (NotFound 'no matching object found')
 }
 
 function Note($name) {
@@ -182,7 +188,7 @@ function Remove-NetIPAddress {
 	[CmdletBinding(SupportsShouldProcess = $true)] param($InterfaceIndex, $AddressFamily, $PolicyStore, $IPAddress)
 	$store = if ($PolicyStore) { $PolicyStore } else { 'ActiveStore' }
 	Note "Remove-NetIPAddress:$store"
-	if (IgnoreThisRemoval $IPAddress) { return }
+	RefuseThisRemoval $IPAddress
 	$hit = @($script:addresses | Where-Object { $_.Store -eq $store -and ($null -eq $IPAddress -or $_.IPAddress -eq $IPAddress) })
 	if ($hit.Count -eq 0) { throw (NotFound 'no matching MSFT_NetIPAddress objects found') }
 	$script:addresses = @($script:addresses | Where-Object { $hit -notcontains $_ })
@@ -192,7 +198,7 @@ function Remove-NetRoute {
 	[CmdletBinding(SupportsShouldProcess = $true)] param($InterfaceIndex, $DestinationPrefix, $PolicyStore, $NextHop)
 	$store = if ($PolicyStore) { $PolicyStore } else { 'ActiveStore' }
 	Note "Remove-NetRoute:$store"
-	if (IgnoreThisRemoval $NextHop) { return }
+	RefuseThisRemoval $NextHop
 	$hit = @($script:routes | Where-Object { $_.Store -eq $store -and ($null -eq $NextHop -or $_.NextHop -eq $NextHop) })
 	if ($hit.Count -eq 0) { throw (NotFound 'no matching MSFT_NetRoute objects found') }
 	$script:routes = @($script:routes | Where-Object { $hit -notcontains $_ })
