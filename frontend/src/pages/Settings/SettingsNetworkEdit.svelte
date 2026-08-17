@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { applyInterfaceConfig, canApplyMode, canEditInterfaceIPv4, canEditInterfaceWifi, interfaceForm, isJoinable, joinWifiNetwork, networkState, reseedDecision, scanWifiNetworks, type InterfaceForm } from '../../scripts/networkState.ts';
-	import { validateIPv4Config, type NetAddressMode, type NetIPv4Config, type NetWifiNetwork } from '@shared';
+	import { InterfaceFormState } from '../../scripts/networkForm.svelte.ts';
+	import { applyInterfaceConfig, canApplyMode, canEditInterfaceIPv4, canEditInterfaceWifi, isJoinable, joinWifiNetwork, networkState, scanWifiNetworks } from '../../scripts/networkState.ts';
+	import { validateIPv4Config, type NetIPv4Config, type NetWifiNetwork } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -35,12 +35,12 @@
 
 	// Seeded from what the host actually reports, `unknown` included. Collapsing an
 	// unknown reading to DHCP made the form claim the interface was on DHCP and let
-	// Save convert it to exactly that.
-	let mode = $state<NetAddressMode>('unknown');
-	let address = $state('');
-	let prefix = $state('24');
-	let gateway = $state('');
-	let dns = $state('');
+	// Save convert it to exactly that. The fields and the basis they were seeded from
+	// live together in one rune module, because following the host is a question of
+	// ORDERING between a store update, the effect it schedules and the continuation of
+	// an await — which is testable there and is not testable field by field here.
+	const form = new InterfaceFormState();
+	form.watch(() => interfaceID);
 	let busy = $state(false);
 	let message = $state('');
 	let failed = $state(false);
@@ -52,67 +52,14 @@
 	let joinSecured = $state(true);
 	let password = $state('');
 
-	// The configuration the form was seeded from, so a later broadcast can be
-	// compared against it. Null until the first one arrives.
-	let seeded = $state<InterfaceForm | null>(null);
-	// True once the host's configuration has moved away from what an EDITED form was
-	// seeded from. Save is then refusing to write a basis that no longer exists.
-	let stale = $state(false);
-
-	/**
-	 * Follow the host while the form is untouched, and refuse to overwrite it once
-	 * it is not.
-	 *
-	 * Seeding exactly once was the whole of this, and it made Save write a
-	 * configuration the user was no longer looking at. A Wi-Fi join replaces the
-	 * whole network state — the interface can go from a static address to the DHCP
-	 * one the new network handed out — while the form kept the old network's
-	 * address, and the next Save wrote it into the new network's profile. The same
-	 * lost update arrives from the Windows network UI, from NetworkManager, or from
-	 * a second client of this app.
-	 *
-	 * So: unchanged host, leave the form alone. Changed host and a clean form,
-	 * follow it. Changed host and a form the user has edited, keep what they typed —
-	 * throwing away typing is its own kind of data loss — and block Save, because
-	 * the basis it would be written against is gone.
-	 */
-	$effect(() => {
-		const source = iface;
-		if (!source) return;
-		const live = interfaceForm(source);
-		// Everything below reads the form fields, which this effect must not follow —
-		// it answers to the HOST changing, not to the user typing.
-		untrack(() => {
-			const decision = reseedDecision(seeded, live, { mode, address, prefix, gateway, dns });
-			if (decision === 'ignore') return;
-			if (decision === 'stale') {
-				stale = true;
-				return;
-			}
-			seeded = live;
-			stale = false;
-			mode = live.mode;
-			address = live.address;
-			prefix = live.prefix;
-			gateway = live.gateway;
-			dns = live.dns;
-		});
-	});
-
-	/** Take the state an apply or a join answered with as the form's new basis. */
-	function reseed(): void {
-		seeded = null;
-		stale = false;
-	}
-
 	function buildConfig(): NetIPv4Config {
-		if (mode === 'dhcp') return { mode: 'dhcp' };
+		if (form.mode === 'dhcp') return { mode: 'dhcp' };
 		return {
 			mode: 'static',
-			address: address.trim(),
-			prefixLength: Number(prefix.trim()),
-			gateway: gateway.trim(),
-			dns: dns
+			address: form.address.trim(),
+			prefixLength: Number(form.prefix.trim()),
+			gateway: form.gateway.trim(),
+			dns: form.dns
 				.split(',')
 				.map(server => server.trim())
 				.filter(Boolean),
@@ -131,14 +78,14 @@
 		// on screen was derived from a state that no longer exists. Writing it would
 		// silently undo whatever changed it — a Wi-Fi join, the system's own network
 		// UI, or another client.
-		if (stale) {
+		if (form.stale) {
 			failed = true;
 			message = $t('settings.network.staleNote');
 			return;
 		}
 		// Guarded in the markup as well; repeated here because Save is the step that
 		// rewrites the host's addressing and must never act on a mode nobody chose.
-		if (!canApplyMode(mode)) {
+		if (!canApplyMode(form.mode)) {
 			failed = true;
 			message = $t('settings.network.invalidField', { field: $t('settings.network.field.mode') });
 			return;
@@ -161,7 +108,7 @@
 			await applyInterfaceConfig(interfaceID, config);
 			// The backend answered with the state that resulted, and that is the form's
 			// new basis — including the parts the host normalized or refused to take.
-			reseed();
+			form.reseed();
 			failed = false;
 			message = $t('settings.network.applied');
 		} catch (error) {
@@ -216,7 +163,7 @@
 			await joinWifiNetwork(interfaceID, joinSSID, password);
 			// The interface is on a different network now, very possibly with a different
 			// addressing mode. Whatever the form held describes the network that was left.
-			reseed();
+			form.reseed();
 			failed = false;
 			message = $t('settings.network.joined', { ssid: joinSSID });
 			password = '';
@@ -229,7 +176,7 @@
 	}
 
 	// Row positions shift with the mode: the static fields exist only in 'static'.
-	let staticRows = $derived(mode === 'static' ? 4 : 0);
+	let staticRows = $derived(form.mode === 'static' ? 4 : 0);
 	// ...and with the addressing half being absent altogether on a host that cannot
 	// change an address, in which case the Wi-Fi section starts at the top.
 	let wifiBaseY = $derived(canEditIPv4 ? 1 + staticRows + 1 : 0);
@@ -293,33 +240,33 @@
 
 		{#if canEditIPv4}
 			<div role="group" data-mouse-activate-area={areaID}>
-				<Select bind:value={mode} label={$t('settings.network.addressing')} position={[0, 0]} flex>
+				<Select bind:value={form.mode} label={$t('settings.network.addressing')} position={[0, 0]} flex>
 					<!-- Offered only while it is what the host reported, so the form can
 					     show the truth without inviting the user to select it back. -->
-					{#if mode === 'unknown'}<SelectOption value="unknown" label={$t('settings.network.modeUnknown')} />{/if}
+					{#if form.mode === 'unknown'}<SelectOption value="unknown" label={$t('settings.network.modeUnknown')} />{/if}
 					<SelectOption value="dhcp" label={$t('settings.network.dhcp')} />
 					<SelectOption value="static" label={$t('settings.network.static')} />
 				</Select>
 			</div>
-			{#if mode === 'unknown'}
+			{#if form.mode === 'unknown'}
 				<div class="note">{$t('settings.network.invalidField', { field: $t('settings.network.field.mode') })}</div>
 			{/if}
 
-			{#if mode === 'static'}
+			{#if form.mode === 'static'}
 				<div role="group" data-mouse-activate-area={areaID}>
-					<Input bind:value={address} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, 1]} flex />
-					<Input bind:value={prefix} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, 2]} flex />
-					<Input bind:value={gateway} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, 3]} flex />
-					<Input bind:value={dns} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 1.1.1.1" position={[0, 4]} flex />
+					<Input bind:value={form.address} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, 1]} flex />
+					<Input bind:value={form.prefix} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, 2]} flex />
+					<Input bind:value={form.gateway} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, 3]} flex />
+					<Input bind:value={form.dns} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 1.1.1.1" position={[0, 4]} flex />
 				</div>
 			{/if}
 
-			{#if stale}
+			{#if form.stale}
 				<div class="note failed">{$t('settings.network.staleNote')}</div>
 			{/if}
 
 			<ButtonBar justify="center" basePosition={[0, 1 + staticRows]}>
-				<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy || stale || !canApplyMode(mode)} onConfirm={save} />
+				<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy || form.stale || !canApplyMode(form.mode)} onConfirm={save} />
 			</ButtonBar>
 		{/if}
 
