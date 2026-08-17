@@ -416,6 +416,19 @@ export function pruneBootstrapEntries<T extends Pick<IBootstrapEntry, 'firstSeen
 export type PeerStoreAddressRemoval = { kind: 'updated'; remaining: number } | { kind: 'not-found' } | { kind: 'superseded' };
 
 /**
+ * How hard {@link Network.purgeStalePeer} has to try.
+ *
+ * `best-effort` is periodic eviction: another cycle is coming, so a failed delete costs
+ * nothing but a log line. `durable` is an explicit teardown — a leave-network, or the
+ * removal of the last configuration that wanted the peer — where the persisted delete IS
+ * the disconnect. Redial suppression lives in memory and dies with the process, while the
+ * peerStore row does not: a delete that quietly failed lets redial maintenance, which
+ * walks every stored record, dial the peer the user just left straight back after a
+ * restart. That caller has to hear about it.
+ */
+export type PeerPurgeMode = 'best-effort' | 'durable';
+
+/**
  * True for the error the peerStore raises when the peer simply is not stored — the one
  * failure that is an answer rather than a fault. Everything else (a datastore read
  * error, a closed store, a programming error) must reach the caller as an exception.
@@ -2365,8 +2378,11 @@ export class Network {
 	 * suffix claimed). Removing the entry stops libp2p ReconnectQueue / autodial
 	 * from re-attempting the dead identity.
 	 *
-	 * Best-effort: a peerStore.delete failure is logged at debug but does not throw —
-	 * the same peer will be re-purged next cycle if libp2p keeps trying it.
+	 * `mode` decides what a failure means. The default `best-effort` logs it and moves on:
+	 * the same peer will be re-purged next cycle if libp2p keeps trying it. `durable` — the
+	 * explicit teardown behind a leave-network — rethrows instead, because there is no next
+	 * cycle and the caller would otherwise report a disconnect that a restart undoes (see
+	 * {@link PeerPurgeMode}). A record that was already gone is success in both.
 	 *
 	 * `epoch` binds the call to the node instance it was started for. This is the most
 	 * destructive path there is — it closes connections and deletes peerStore entries —
@@ -2375,7 +2391,7 @@ export class Network {
 	 * instance never had a problem with. The node reference is captured once for the
 	 * same reason: re-reading `this.node` after an await can hand back a different node.
 	 */
-	async purgeStalePeer(peerID: string, reason: string, epoch: number = this.runEpoch): Promise<void> {
+	async purgeStalePeer(peerID: string, reason: string, epoch: number = this.runEpoch, mode: PeerPurgeMode = 'best-effort'): Promise<void> {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return;
 		this.bootstrapPeerIDs.delete(peerID);
@@ -2428,7 +2444,13 @@ export class Network {
 						// what this path is here to collect.
 						if (!isPeerStoreNotFound(err)) throw err;
 					}
-					await store.delete(pid);
+					try {
+						await store.delete(pid);
+					} catch (err: unknown) {
+						// The row being gone already is the outcome this wanted, whichever mode
+						// asked for it. Anything else is a real datastore failure.
+						if (!isPeerStoreNotFound(err)) throw err;
+					}
 				}
 			} finally {
 				release();
@@ -2450,6 +2472,11 @@ export class Network {
 				await this.restorePurgedPeerState(node, pid, after, epoch, snapshot);
 			}
 		} catch (err: any) {
+			// An explicit teardown has no next cycle to fix this, and everything else it
+			// removed — the registry entries, the dedup set, the gossipsub direct entry, the
+			// backoff — is already gone, so swallowing here reports a peer as removed while
+			// the disk still says otherwise.
+			if (mode === 'durable') throw err;
 			trace(`[NET] purgeStalePeer ${peerID.slice(0, 16)} failed: ${err?.message ?? err}`);
 		}
 	}
@@ -2939,7 +2966,12 @@ export class Network {
 	 * followed by a restart before rejoin would otherwise let redial maintenance dial
 	 * the left peer straight back. The sole caller (leaveNetwork) only passes peers
 	 * with no remaining reason to stay, and rejoin re-acquires the entry via
-	 * bootstrap/discovery. Best-effort: failures are logged at trace, never thrown.
+	 * bootstrap/discovery.
+	 *
+	 * That last step is the one thing here that REJECTS. The tag removal and the hangUp
+	 * are best-effort — a restart undoes their effect anyway — but the peerStore delete is
+	 * what makes this disconnect outlive the process, so a caller told the peer was
+	 * disconnected must not be told that when the row is still on disk.
 	 *
 	 * `networkID` is the lishnet the peer is being left with — the peer is suppressed
 	 * under it so rejoining that lishnet lifts exactly its peers.
@@ -2983,8 +3015,9 @@ export class Network {
 			trace(`[NET] disconnectPeer: hangUp failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
 		// Forget the persisted peerStore entry so the disconnect survives a restart —
-		// suppression is in-memory only, but the peerStore is on disk.
-		await this.purgeStalePeer(peerID, 'left-network exclusive peer');
+		// suppression is in-memory only, but the peerStore is on disk. Durable: a failure
+		// here is the difference between a peer that stays left and one that comes back.
+		await this.purgeStalePeer(peerID, 'left-network exclusive peer', this.runEpoch, 'durable');
 	}
 
 	/**
