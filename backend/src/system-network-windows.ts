@@ -43,6 +43,8 @@ const MEDIA_STATE_DISCONNECTED = 2;
 const AF_INET = 2;
 const AF_INET6 = 23;
 // AddressState (Get-NetIPAddress): 0 Invalid, 1 Tentative, 2 Duplicate, 3 Deprecated, 4 Preferred.
+const ADDRESS_STATE_TENTATIVE = 1;
+const ADDRESS_STATE_DUPLICATE = 2;
 const ADDRESS_STATE_PREFERRED = 4;
 // NetIPInterface.Dhcp: 0 Disabled, 1 Enabled. NOTE the opposite convention to
 // MediaConnectionState, where 1 means Connected — they must never be swapped.
@@ -743,6 +745,39 @@ export const WINDOWS_ROUTE_GUARD: string = `if (@($oldRoutes).Count -gt 1) { thr
  */
 export const WINDOWS_ORIGIN_GUARD: string = `if ($oldDhcp -ne 'Enabled') { foreach ($a in $oldAddresses) { if ($a.PrefixOrigin -ne 'Manual' -or $a.SuffixOrigin -ne 'Manual') { throw "this interface carries an IPv4 address this app could not put back if the change failed" } } }`;
 
+/** How long duplicate address detection may run before the apply gives up on it. */
+const DAD_TIMEOUT_MS = 15000;
+/** How often the address state is re-read while duplicate address detection runs. */
+const DAD_POLL_MS = 250;
+
+/**
+ * Wait for a freshly created address to become usable, and fail the apply if it
+ * does not.
+ *
+ * `New-NetIPAddress` returns as soon as the object exists, and Windows then runs
+ * duplicate address detection: until that finishes the address is `Tentative`,
+ * and it can end as `Duplicate` because some other device on the segment already
+ * answers for it. Checking only that an object with the requested IP exists —
+ * which is all the apply used to do — reports success for both outcomes.
+ *
+ * That is not merely optimistic, it contradicts the reader: it accepts only
+ * `Preferred` addresses, so the state broadcast right after a "successful" apply
+ * showed an interface with no IPv4 address at all.
+ *
+ * `Deprecated` and `Invalid` are failures for the same reason `Duplicate` is —
+ * the reader will not report them, so calling the apply a success would leave the
+ * UI contradicting itself — but they are described separately, because the answer
+ * to a duplicate is to pick another address and the answer to the others is not.
+ */
+export function windowsAddressStateWait(address: string): string {
+	const found = `@(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq '${address}' })`;
+	// `$state` is read again after the loop: `break` leaves it Preferred, and
+	// falling out of the `while` leaves whatever the last poll saw, which is the
+	// only way to tell a timeout apart from a success.
+	const poll = [`$found = ${found}`, 'if ($found.Count -eq 0) { throw "the address was accepted but is not on the interface" }', '$state = [int]$found[0].AddressState', `if ($state -eq ${ADDRESS_STATE_PREFERRED}) { break }`, `if ($state -eq ${ADDRESS_STATE_DUPLICATE}) { throw "another device on this network is already using that address" }`, `if ($state -ne ${ADDRESS_STATE_TENTATIVE}) { throw "Windows accepted the address but will not use it" }`, `Start-Sleep -Milliseconds ${DAD_POLL_MS}`].join('; ');
+	return [`$deadline = (Get-Date).AddMilliseconds(${DAD_TIMEOUT_MS})`, '$state = 0', `do { ${poll} } while ((Get-Date) -lt $deadline)`, `if ($state -ne ${ADDRESS_STATE_PREFERRED}) { throw "Windows is still checking the new address for duplicates" }`].join('; ');
+}
+
 /**
  * Build the PowerShell one-shot that applies an IPv4 configuration.
  *
@@ -765,6 +800,8 @@ export const WINDOWS_ORIGIN_GUARD: string = `if ($oldDhcp -ne 'Enabled') { forea
  * A static apply is verified before it is called a success: PowerShell can report
  * a clean run for a `New-NetIPAddress` the stack did not honour, and an
  * unverified apply would answer "done" while the interface still has no address.
+ * That verification waits for duplicate address detection rather than merely
+ * looking the object up — see {@link windowsAddressStateWait}.
  *
  * Every interpolated value has been through the shared validator, so each one is
  * a dotted-quad literal, a small integer, or a GUID. No quoting rule protects
@@ -778,7 +815,7 @@ export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): st
 	} else {
 		const gateway = config.gateway ? ` -DefaultGateway ${config.gateway}` : '';
 		const dns = config.dns ?? [];
-		mutation.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`, dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses', `if (-not (Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq '${config.address}' })) { throw "the address was accepted but is not on the interface" }`);
+		mutation.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`, dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses', windowsAddressStateWait(config.address as string));
 	}
 	const guarded = `try { ${mutation.join('; ')} } catch { $applyError = $_; try { ${windowsRestoreSteps().join('; ')} } catch { throw "the change failed ($($applyError.Exception.Message)) and rolling it back also failed ($($_.Exception.Message))" }; throw $applyError }`;
 	return [...preamble, ...windowsSnapshotSteps(), WINDOWS_ALIAS_GUARD, WINDOWS_ROUTE_GUARD, WINDOWS_ORIGIN_GUARD, guarded].join('; ');

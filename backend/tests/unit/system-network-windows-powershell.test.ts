@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { WINDOWS_ALIAS_GUARD, WINDOWS_ORIGIN_GUARD, WINDOWS_ROUTE_GUARD } from '../../src/system-network-windows.ts';
+import { WINDOWS_ALIAS_GUARD, WINDOWS_ORIGIN_GUARD, WINDOWS_ROUTE_GUARD, windowsAddressStateWait } from '../../src/system-network-windows.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -107,6 +107,59 @@ describe.skipIf(process.platform !== 'win32')('windows apply fragments (live Pow
 		// addresses back itself — nothing is re-created by hand, so nothing is lost.
 		it('says nothing about a DHCP interface, whose addresses it never re-creates', async () => {
 			expect((await run(`$oldDhcp = 'Enabled'; ${addresses({ ip: '192.0.2.10', origin: 'Dhcp' })}; ${WINDOWS_ORIGIN_GUARD}`)).failed).toBe(false);
+		});
+	});
+
+	describe('the duplicate-address-detection wait', () => {
+		/**
+		 * Drive the wait against a scripted sequence of AddressState values.
+		 *
+		 * `Get-NetIPAddress` answers one entry of `states` per call and then repeats
+		 * the last, which is how a real address behaves — it stops changing once
+		 * detection has settled. The clock runs fast and `Start-Sleep` does nothing,
+		 * so the 15 s timeout is reached in a handful of iterations rather than in 15
+		 * seconds of test time; `Get-Date` is only ever consulted for the deadline and
+		 * the loop condition, so advancing it per call is the whole simulation.
+		 */
+		function wait(states: number[], secondsPerCall: number = 1): string {
+			const list = states.join(', ');
+			return [`$script:calls = 0`, `$script:states = @(${list})`, `$script:clock = [datetime]'2026-01-01'`, `function Get-Date { $script:clock = $script:clock.AddSeconds(${secondsPerCall}); $script:clock }`, 'function Start-Sleep { }', 'function Get-NetIPAddress { $index = [Math]::Min($script:calls, $script:states.Count - 1); $script:calls++; [pscustomobject]@{ IPAddress = "192.0.2.10"; AddressState = $script:states[$index] } }', '$i = 1', windowsAddressStateWait('192.0.2.10')].join('; ');
+		}
+
+		it('accepts an address that reaches Preferred after a few tentative reads', async () => {
+			expect(await run(wait([1, 1, 4]))).toEqual({ failed: false, stderr: '' });
+		});
+
+		it('accepts an address that is Preferred on the first read', async () => {
+			expect((await run(wait([4]))).failed).toBe(false);
+		});
+
+		// The case an existence check passes and the reader then contradicts: the
+		// object is there, and Windows will not let the host use it.
+		it('fails an address that duplicate address detection rejects', async () => {
+			const result = await run(wait([1, 2]));
+			expect(result.failed).toBe(true);
+			expect(result.stderr).toContain('already using that address');
+		});
+
+		it('fails an address that never leaves Tentative', async () => {
+			const result = await run(wait([1], 5));
+			expect(result.failed).toBe(true);
+			expect(result.stderr).toContain('still checking the new address for duplicates');
+		});
+
+		it('fails an address that Windows will not use for some other reason', async () => {
+			// Deprecated: the object exists and the reader will not report it either.
+			const result = await run(wait([1, 3]));
+			expect(result.failed).toBe(true);
+			expect(result.stderr).toContain('will not use it');
+		});
+
+		it('fails when the address is not on the interface at all', async () => {
+			const gone = ['function Get-NetIPAddress { @() }', 'function Start-Sleep { }', '$i = 1', windowsAddressStateWait('192.0.2.10')].join('; ');
+			const result = await run(gone);
+			expect(result.failed).toBe(true);
+			expect(result.stderr).toContain('is not on the interface');
 		});
 	});
 });

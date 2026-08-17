@@ -661,7 +661,31 @@ describe('windowsApplyIPv4Command', () => {
 	it('verifies a static address actually landed before reporting success', () => {
 		// PowerShell reports a clean run for a New-NetIPAddress the stack did not
 		// honour; without this the apply answers "done" on an interface with no address.
-		expect(windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 })).toContain("$_.IPAddress -eq '192.0.2.10' })) { throw ");
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
+		expect(command).toContain("$_.IPAddress -eq '192.0.2.10'");
+		expect(command).toContain('the address was accepted but is not on the interface');
+	});
+
+	// Windows creates the object first and only then runs duplicate address
+	// detection, so an existence check passes for an address that ends up
+	// Duplicate — and the reader, which shows only Preferred addresses, then
+	// reports the interface as having no IPv4 address at all right after the apply
+	// claimed to have set one.
+	it('waits for duplicate address detection instead of only looking the address up', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
+		expect(command).toContain('$state = [int]$found[0].AddressState');
+		expect(command).toContain('if ($state -eq 4) { break }');
+		expect(command).toContain('if ($state -eq 2) { throw "another device on this network is already using that address" }');
+		expect(command).toContain('if ($state -ne 1) { throw "Windows accepted the address but will not use it" }');
+		expect(command).toContain('Windows is still checking the new address for duplicates');
+		// Inside the guarded mutation, so a duplicate rolls the change back rather
+		// than leaving the interface on an address it cannot use.
+		expect(command.indexOf('AddressState')).toBeGreaterThan(command.indexOf('try { try { Remove-NetIPAddress'));
+		expect(command.indexOf('AddressState')).toBeLessThan(command.indexOf('catch { $applyError = $_;'));
+	});
+
+	it('does not wait for an address a DHCP config never sets', () => {
+		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).not.toContain('AddressState');
 	});
 
 	it('enables DHCP and resets the resolvers for a DHCP config', () => {
