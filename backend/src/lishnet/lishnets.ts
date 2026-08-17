@@ -772,9 +772,10 @@ export class Networks {
 		await this.catalogMutex.runExclusive(async () => {
 			this.reconcileAdmissionClosed = true;
 			// A join parked on a sequential walk of unreachable bootstrap addresses would hold
-			// the drain for one connection timeout per address. Cancelling first is what keeps
-			// waiting for it from presenting as a frozen shutdown.
-			this.network.cancelBootstrapDials();
+			// the drain for one connection timeout per address, and a leave parked on the hangUp
+			// of an unresponsive peer would hold it with no deadline at all. Cancelling first is
+			// what keeps waiting for them from presenting as a frozen shutdown.
+			this.network.cancelRunOperations();
 			await this.drainReconciles();
 			// Cleared only once the node is provably down. Discarding the membership first
 			// meant a stop that failed — leaving the node alive and the wrapper `failed` —
@@ -820,6 +821,13 @@ export class Networks {
 	 * One pass is enough: a job is registered when its slot is RESERVED, not when it starts
 	 * running, so the queued ones are in the set too and no new entry can appear while the
 	 * catalog is held. The promises waited on never reject — see {@link reconcileLater}.
+	 *
+	 * The wait has no timeout and does not need one, because the work it waits for has been
+	 * cancelled first: both halves of a convergence — the bootstrap dials of a join and the
+	 * per-peer teardown of a leave — end on this run's abort rather than on a deadline of
+	 * their own, so nothing is left that can outlive it. A timeout instead of cancelling
+	 * would be the worse answer: the abandoned reconcile would still be running, and would
+	 * come back to a stopped node or a new run's state.
 	 */
 	private async drainReconciles(): Promise<void> {
 		if (this.activeReconciles.size === 0) return;

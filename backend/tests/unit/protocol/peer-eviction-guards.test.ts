@@ -561,7 +561,7 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 	 * node can be stopped.
 	 */
 	it('abandons the rest of the list once the run’s dials are cancelled', async () => {
-		const { network, dialled } = bareNetwork(n => n.cancelBootstrapDials());
+		const { network, dialled } = bareNetwork(n => n.cancelRunOperations());
 		await (network as any).addBootstrapPeers([ADDR_A, ADDR_B], 'net-a', 'configured');
 		expect(dialled).toEqual([ADDR_A]);
 	});
@@ -582,7 +582,7 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 	/** An abort belongs to the run it was raised for — the next start must dial again. */
 	it('dials again after a restart replaces the cancelled controller', async () => {
 		const { network, dialled } = bareNetwork();
-		network.cancelBootstrapDials();
+		network.cancelRunOperations();
 		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
 		expect(dialled).toEqual([]);
 

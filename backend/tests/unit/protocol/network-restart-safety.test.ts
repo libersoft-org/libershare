@@ -23,6 +23,9 @@ describe('Network.disconnectPeer — bound to the node it started on', () => {
 	function harness() {
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
+		// A prototype-only instance has no field initializers: disconnectPeer binds itself to
+		// this run's cancellation and needs a controller to read.
+		(network as any).dialAbort = new AbortController();
 		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).pubsub = null;

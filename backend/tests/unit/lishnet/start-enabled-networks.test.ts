@@ -65,7 +65,7 @@ function makeMockNet(startGate: Promise<void>) {
 			return 1;
 		},
 		dialsCancelled: 0,
-		cancelBootstrapDials(): void {
+		cancelRunOperations(): void {
 			this.dialsCancelled++;
 		},
 		/** Set to hold the bootstrap dial of a join open. */

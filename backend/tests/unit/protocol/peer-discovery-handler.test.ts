@@ -20,6 +20,9 @@ function bareNetwork(opts: { connected?: boolean; dialFails?: boolean } = {}) {
 	const handlers = new Map<string, Handler>();
 	const network = Object.create(Network.prototype) as Network;
 	(network as any).runEpoch = 1;
+	// A prototype-only instance has no field initializers: disconnectPeer binds itself to
+	// this run's cancellation and needs a controller to read.
+	(network as any).dialAbort = new AbortController();
 	(network as any).listeners = [];
 	(network as any).redialSuppressedByNet = new Map();
 	(network as any).inFlightDiscoveryDials = new Set<string>();
@@ -134,6 +137,9 @@ describe('peer:discovery — a dial that lands after leave-network', () => {
 		let releaseDial: () => void = () => {};
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
+		// A prototype-only instance has no field initializers: disconnectPeer binds itself to
+		// this run's cancellation and needs a controller to read.
+		(network as any).dialAbort = new AbortController();
 		(network as any).listeners = [];
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).inFlightDiscoveryDials = new Set<string>();
@@ -287,6 +293,9 @@ describe('peer:discovery — a skipped duplicate writes nothing of its own', () 
 		let releaseDial: () => void = () => {};
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
+		// A prototype-only instance has no field initializers: disconnectPeer binds itself to
+		// this run's cancellation and needs a controller to read.
+		(network as any).dialAbort = new AbortController();
 		(network as any).listeners = [];
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).inFlightDiscoveryDials = new Set<string>();

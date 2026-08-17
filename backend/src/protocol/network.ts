@@ -1778,14 +1778,17 @@ export class Network {
 	}
 
 	/**
-	 * Abandon the bootstrap dialing of this run, without stopping the node.
+	 * Abandon this run's outstanding network work, without stopping the node.
 	 *
-	 * For a shutdown that waits for the operations already under way: a join parked on a
-	 * sequential walk of unreachable bootstrap addresses would otherwise hold it for one
-	 * connection timeout per address. Idempotent, and only ever the current run's dials —
-	 * {@link start} installs a fresh controller.
+	 * For a shutdown that WAITS for the operations already under way. Neither half of that
+	 * work ends by itself: a join parked on a sequential walk of unreachable bootstrap
+	 * addresses costs one connection timeout per address, and a leave's per-peer teardown
+	 * awaits a `hangUp` and peerStore writes that have no deadline at all — so a single
+	 * unresponsive peer used to hold the shutdown, and the catalog behind it, indefinitely.
+	 *
+	 * Idempotent, and only ever the current run: {@link start} installs a fresh controller.
 	 */
-	cancelBootstrapDials(): void {
+	cancelRunOperations(): void {
 		this.dialAbort.abort();
 	}
 
@@ -2524,10 +2527,22 @@ export class Network {
 	 * nothing more: a caller walking several peers has to capture {@link getRunEpoch} once
 	 * and pass it in, or the default re-reads the counter per peer and the later peers of a
 	 * leave that outlived a restart are torn off the node that replaced it.
+	 *
+	 * Every step is bound to this run's cancellation as well — see {@link cancelRunOperations}.
+	 * A shutdown waits for the leave that is running, and the peer teardown a leave is made of
+	 * has no deadline of its own: one `hangUp` on a peer that never acknowledges held the whole
+	 * stop, and the catalog with it, for as long as that peer felt like it. Cancelled, the
+	 * remaining peers are given up on. The cost is a peerStore entry left behind for a lishnet
+	 * we left — harmless, and cleaned up by the next leave of it — against a shutdown that
+	 * never returns at all.
 	 */
 	async disconnectPeer(peerID: string, networkID: string, epoch: number = this.runEpoch): Promise<void> {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return;
+		// Captured beside the node and for the same reason: a controller a later start
+		// installed does not speak for the run this call belongs to.
+		const signal = this.dialAbort.signal;
+		if (signal.aborted) return;
 		let pid: PeerID;
 		try {
 			pid = peerIDFromString(peerID);
@@ -2555,33 +2570,31 @@ export class Network {
 		// undefined as the tag value removes it (per @libp2p/interface PeerStore
 		// merge semantics).
 		try {
-			await node.peerStore.merge(pid, {
-				tags: { 'keep-alive-fleet': undefined, [KEEP_ALIVE]: undefined },
-			});
+			await node.peerStore.merge(pid, { tags: { 'keep-alive-fleet': undefined, [KEEP_ALIVE]: undefined } }, { signal });
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: tag removal failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
 		if (epoch !== this.runEpoch) return;
-		if (await this.releaseIfClaimed(node, pid, peerID, networkID)) return;
+		if (await this.releaseIfClaimed(node, pid, peerID, networkID, signal)) return;
 		// The recheck itself awaits, so the run can end inside it — and a `false` from it is
 		// permission to go on tearing down, which must not be spent on the next node instance.
 		if (epoch !== this.runEpoch) return;
 		try {
-			await node.hangUp(pid);
+			await node.hangUp(pid, { signal });
 			trace(`[NET] disconnectPeer: hung up ${peerID.slice(0, 16)}`);
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: hangUp failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
 		if (epoch !== this.runEpoch) return;
-		if (await this.releaseIfClaimed(node, pid, peerID, networkID)) return;
-		if (epoch !== this.runEpoch) return;
+		if (await this.releaseIfClaimed(node, pid, peerID, networkID, signal)) return;
+		if (epoch !== this.runEpoch || signal.aborted) return;
 		// Forget the persisted peerStore entry so the disconnect survives a restart —
 		// suppression is in-memory only, but the peerStore is on disk.
 		await this.purgeStalePeer(peerID, 'left-network exclusive peer', epoch);
 		// A claim can still land during the purge, and by then the record is gone. What must
 		// not survive is the suppression: it is global, so leaving it in place would make
 		// every maintenance path refuse to dial a peer a joined lishnet is now asking for.
-		if (epoch === this.runEpoch) await this.releaseIfClaimed(node, pid, peerID, networkID);
+		if (epoch === this.runEpoch) await this.releaseIfClaimed(node, pid, peerID, networkID, signal);
 	}
 
 	/**
@@ -2603,18 +2616,18 @@ export class Network {
 	 *
 	 * Returns whether the disconnect should stop.
 	 */
-	private async releaseIfClaimed(node: Libp2p, pid: PeerID, peerID: string, networkID: string): Promise<boolean> {
+	private async releaseIfClaimed(node: Libp2p, pid: PeerID, peerID: string, networkID: string, signal: AbortSignal): Promise<boolean> {
 		if (!this.isPeerNeededByJoinedNetwork(peerID)) return false;
 		this.redialSuppressedByNet.get(networkID)?.delete(peerID);
 		try {
-			await node.peerStore.merge(pid, { tags: { [KEEP_ALIVE]: { value: 1 } } });
+			await node.peerStore.merge(pid, { tags: { [KEEP_ALIVE]: { value: 1 } } }, { signal });
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: keep-alive restore failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
 		if (!this.isPeerNeededByJoinedNetwork(peerID)) {
 			this.addRedialSuppression(networkID, peerID);
 			try {
-				await node.peerStore.merge(pid, { tags: { [KEEP_ALIVE]: undefined } });
+				await node.peerStore.merge(pid, { tags: { [KEEP_ALIVE]: undefined } }, { signal });
 			} catch (err: any) {
 				trace(`[NET] disconnectPeer: keep-alive re-removal failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 			}

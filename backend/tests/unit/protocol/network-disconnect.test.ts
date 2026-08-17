@@ -88,6 +88,44 @@ describe('Network.disconnectPeer — keep-alive tag removal', () => {
 });
 
 /**
+ * A shutdown WAITS for the lishnet operations already under way, and a leave is a walk of
+ * per-peer teardowns with no deadline of their own — one `hangUp` on a peer that never
+ * acknowledges used to hold the whole stop, and the lishnet catalog behind it, indefinitely.
+ * A deadline would be the wrong answer (the abandoned teardown would come back on a stopped
+ * node); ending the work is the right one.
+ */
+describe('Network.disconnectPeer — bounded by the run it belongs to', () => {
+	it('does nothing once this run has been cancelled', async () => {
+		const { network, merges, hungUp, deleted } = makeNetwork();
+		network.cancelRunOperations();
+
+		await network.disconnectPeer(PEER_ID, NET);
+
+		expect(merges).toEqual([]);
+		expect(hungUp).toEqual([]);
+		expect(deleted).toEqual([]);
+	});
+
+	it('hands the run signal to the awaits a cancellation has to reach', async () => {
+		const { network } = makeNetwork();
+		const signals: unknown[] = [];
+		(network as any).node.peerStore.merge = async (_pid: unknown, _patch: unknown, opts?: { signal?: AbortSignal }): Promise<void> => {
+			signals.push(opts?.signal);
+		};
+		(network as any).node.hangUp = async (_pid: unknown, opts?: { signal?: AbortSignal }): Promise<void> => {
+			signals.push(opts?.signal);
+		};
+
+		await network.disconnectPeer(PEER_ID, NET);
+
+		// The tag removal and the hangUp: the two awaits between the start of a teardown and
+		// the point where it can no longer block anything.
+		expect(signals.length).toBe(2);
+		for (const signal of signals) expect(signal).toBe((network as any).dialAbort.signal);
+	});
+});
+
+/**
  * Join and leave of DIFFERENT lishnets run concurrently, but the peerStore, the keep-alive
  * tags, the connections and the redial suppression they work on are global. `leaveNetwork`
  * snapshots which peers are exclusive to the lishnet it is leaving and then works through
@@ -104,6 +142,9 @@ describe('Network.disconnectPeer — a peer claimed while it is being let go', (
 		const subscribers: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
+		// A prototype-only instance has no field initializers: disconnectPeer binds itself to
+		// this run's cancellation and needs a controller to read.
+		(network as any).dialAbort = new AbortController();
 		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapPeerIDs = new Set<string>();
