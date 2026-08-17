@@ -25,13 +25,42 @@ export interface IRealPeerStore {
 /** Identity of the store itself. A valid ID that is never one of the peers under test. */
 const STORE_SELF_ID = '12D3KooWH3uVF6wv47WnArKHk5p6cvgCJEb74UTmxztmQDc298L3';
 
+/**
+ * A memory datastore that can be told to fail one specific read.
+ *
+ * `store.patch()` performs its OWN `datastore.get()` after the one the caller made, and
+ * upstream used to swallow every error from it and write as if the peer had never
+ * existed. Only a fault injected at the datastore reaches that hidden second read —
+ * stubbing `load` or `patch` steps over it entirely.
+ */
+export class FaultyDatastore extends MemoryDatastore {
+	/** Reads to let through before the next one fails, or `null` for no armed fault. */
+	private goodReadsLeft: number | null = null;
+
+	/** Arm a single read failure, after `skip` further reads have succeeded. */
+	failReadAfter(skip: number): void {
+		this.goodReadsLeft = skip;
+	}
+
+	override get(key: any, options?: any): any {
+		if (this.goodReadsLeft !== null) {
+			if (this.goodReadsLeft === 0) {
+				this.goodReadsLeft = null;
+				throw Object.assign(new Error('datastore read failed'), { name: 'DatastoreReadError' });
+			}
+			this.goodReadsLeft--;
+		}
+		return super.get(key, options);
+	}
+}
+
 /** An empty store. Every peer reads as absent until something is written for it. */
-export function createEmptyPeerStore(): any {
+export function createEmptyPeerStore(datastore: any = new MemoryDatastore()): any {
 	return persistentPeerStore({
 		peerId: peerIdFromString(STORE_SELF_ID),
 		// Cast: two copies of interface-datastore are installed (libp2p nests its own)
 		// and their Key classes are structurally incompatible. Runtime is one class.
-		datastore: new MemoryDatastore() as any,
+		datastore: datastore as any,
 		events: new TypedEventEmitter() as any,
 		logger: defaultLogger(),
 	});

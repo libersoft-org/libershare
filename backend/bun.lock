@@ -42,6 +42,7 @@
   },
   "patchedDependencies": {
     "@achingbrain/ssdp@4.2.4": "patches/@achingbrain%2Fssdp@4.2.4.patch",
+    "@libp2p/peer-store@12.0.21": "patches/@libp2p%2Fpeer-store@12.0.21.patch",
   },
   "overrides": {
     "@multiformats/multiaddr": "^12.1.14",

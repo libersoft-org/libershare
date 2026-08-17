@@ -2,7 +2,9 @@ import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
 import { Network, isRecoveryDialDue, isSameDialEndpoint, normalizeMultiaddrForCompare, type IBootstrapEntry } from '../../../src/protocol/network.ts';
 import { installBootstrapRegistry, registryAddresses, type IRegistrySeed } from '../helpers/bootstrap-registry.ts';
-import { createRealPeerStore, storedAddresses } from '../helpers/real-peer-store.ts';
+import { createEmptyPeerStore, createRealPeerStore, storedAddresses, FaultyDatastore } from '../helpers/real-peer-store.ts';
+import { peerIdFromString } from '@libp2p/peer-id';
+import { KEEP_ALIVE } from '@libp2p/interface';
 
 /**
  * Guards on the DESTRUCTIVE peer-eviction paths. The pure decision helpers are covered
@@ -1684,6 +1686,43 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 		expect(typeof (store as any).store?.load).toBe('function');
 		expect(typeof (store as any).store?.patch).toBe('function');
 		expect(typeof (store as any).events?.safeDispatchEvent).toBe('function');
+	});
+
+	/**
+	 * `store.patch()` reads the record a SECOND time, after the read this code makes
+	 * itself. Upstream swallowed every error from that hidden read and carried on as if
+	 * the peer had never existed, so removing one address rebuilt the record with empty
+	 * protocols, empty metadata, empty tags and no signed peer record. The reconnect
+	 * queue runs off the KEEP_ALIVE tags, so that is a behaviour change, not cosmetics —
+	 * and the failure direction this path must survive is "wrote nothing".
+	 */
+	it('writes nothing when the read inside the patch fails', async () => {
+		const datastore = new FaultyDatastore();
+		const store = createEmptyPeerStore(datastore);
+		const pid = peerIdFromString(PEER_ID);
+		const other = `/ip4/203.0.113.22/tcp/9090/p2p/${PEER_ID}`;
+		await store.patch(pid, {
+			addresses: [
+				{ multiaddr: multiaddr(ADDR), isCertified: true },
+				{ multiaddr: multiaddr(other), isCertified: false },
+			],
+			protocols: ['/lish/1.0.0'],
+			metadata: { AgentVersion: Uint8Array.from([9, 9]) },
+			tags: { [KEEP_ALIVE]: { value: 1 }, 'keep-alive-fleet': { value: 50 } },
+			peerRecordEnvelope: Uint8Array.from([1, 2, 3, 4]),
+		});
+		const before = await store.get(pid);
+		// Guard against a vacuous pass: the fields the swallowed error used to wipe have
+		// to actually be there before anything is asserted about them surviving.
+		expect([...before.tags.keys()].sort()).toEqual([KEEP_ALIVE, 'keep-alive-fleet'].sort());
+		expect(before.protocols).toEqual(['/lish/1.0.0']);
+		expect(before.peerRecordEnvelope).toBeDefined();
+
+		const network = networkOver(store);
+		// The removal's own load() is the first read; the one inside patch() is the second.
+		datastore.failReadAfter(1);
+		await expect((network as any).removePeerStoreAddresses(pid, (a: string) => a.includes('203.0.113.22'))).rejects.toThrow('datastore read failed');
+		expect(await store.get(pid)).toEqual(before);
 	});
 
 	/** No lock, no removal: the callers act destructively on the result. */
