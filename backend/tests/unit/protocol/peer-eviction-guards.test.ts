@@ -2,7 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
 import { Network, isRecoveryDialDue, isSameDialEndpoint, normalizeMultiaddrForCompare, type IBootstrapEntry } from '../../../src/protocol/network.ts';
 import { installBootstrapRegistry, registryAddresses, type IRegistrySeed } from '../helpers/bootstrap-registry.ts';
-import { createEmptyPeerStore, createRealPeerStore, storedAddresses, FaultyDatastore } from '../helpers/real-peer-store.ts';
+import { createEmptyPeerStore, createRealPeerStore, storedAddresses, storedPeerRows, FaultyDatastore, SnapshotBarrierDatastore } from '../helpers/real-peer-store.ts';
 import { peerIdFromString } from '@libp2p/peer-id';
 import { KEEP_ALIVE } from '@libp2p/interface';
 import { createLibp2p } from 'libp2p';
@@ -1055,9 +1055,9 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 	const BAD = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
 	const GOOD = `/ip4/198.51.100.7/tcp/9090/p2p/${PEER_ID}`;
 
-	async function bareNetwork(stored: string[]) {
+	async function bareNetwork(stored: string[], datastore?: any) {
 		const purged: string[] = [];
-		const real = await createRealPeerStore(PEER_ID, stored);
+		const real = await createRealPeerStore(PEER_ID, stored, datastore ?? new MemoryDatastore());
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
@@ -1119,11 +1119,28 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 
 	it('does not purge when the peerStore write fails', async () => {
 		const { network, purged, real } = await bareNetwork([BAD]);
-		real.store.store.patch = async (): Promise<unknown> => {
+		real.store.store.patchExisting = async (): Promise<unknown> => {
 			throw new Error('datastore closed');
 		};
 		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
 		expect(purged).toEqual([]);
+	});
+
+	/**
+	 * The record disappearing between the trim's read and its write leaves the peer's
+	 * real address set unknown, exactly like a read error does — and "unknown" is the
+	 * one answer this path may not turn into a purge of the whole record.
+	 */
+	it('does not purge when the record vanishes mid-trim', async () => {
+		const datastore = new FaultyDatastore();
+		const { network, purged } = await bareNetwork([BAD], datastore);
+		const writes = datastore.writes;
+		// Nothing between arming and the trim reads the datastore, so the removal's own
+		// load() is the first read and the one inside the write is the second.
+		datastore.vanishReadAfter(1);
+		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
+		expect(purged).toEqual([]);
+		expect(datastore.writes).toBe(writes);
 	});
 
 	/** A peer genuinely absent from the store is still an answer, and still purgeable. */
@@ -1686,7 +1703,7 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 		const { store } = await realPeerStore();
 		expect(typeof (store as any).store?.getWriteLock).toBe('function');
 		expect(typeof (store as any).store?.load).toBe('function');
-		expect(typeof (store as any).store?.patch).toBe('function');
+		expect(typeof (store as any).store?.patchExisting).toBe('function');
 		expect(typeof (store as any).events?.safeDispatchEvent).toBe('function');
 	});
 
@@ -1725,6 +1742,35 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 		datastore.failReadAfter(1);
 		await expect((network as any).removePeerStoreAddresses(pid, (a: string) => a.includes('203.0.113.22'))).rejects.toThrow('datastore read failed');
 		expect(await store.get(pid)).toEqual(before);
+	});
+
+	/**
+	 * A genuine NotFound from that hidden second read is not "this peer is new" either.
+	 * The first read found the record, so its disappearance means a path this lock does
+	 * not cover removed it — the `all()` cleanup, or the record crossing its TTL boundary
+	 * mid-call. Upserting there rebuilds the peer out of the addresses this call happens
+	 * to hold and nothing else, so the survivors come back without protocols, tags,
+	 * public key or signed peer record.
+	 */
+	it('writes nothing when the record vanishes inside the write', async () => {
+		const datastore = new FaultyDatastore();
+		const store = createEmptyPeerStore(datastore);
+		const pid = peerIdFromString(PEER_ID);
+		const other = `/ip4/203.0.113.22/tcp/9090/p2p/${PEER_ID}`;
+		await store.patch(pid, {
+			addresses: [
+				{ multiaddr: multiaddr(ADDR), isCertified: true },
+				{ multiaddr: multiaddr(other), isCertified: false },
+			],
+			tags: { [KEEP_ALIVE]: { value: 1 } },
+		});
+		const network = networkOver(store);
+		const writes = datastore.writes;
+		// The removal's own load() is the first read; the one inside the write is the
+		// second, and it finds the record really gone rather than a synthetic error.
+		datastore.vanishReadAfter(1);
+		await expect((network as any).removePeerStoreAddresses(pid, (a: string) => a.includes('203.0.113.22'))).rejects.toThrow('was removed while its record was being updated');
+		expect(datastore.writes).toBe(writes);
 	});
 
 	/** No lock, no removal: the callers act destructively on the result. */
@@ -1821,6 +1867,103 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 		};
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [ADDR], 'net-a');
 		expect(disconnected).toEqual([]);
+	});
+});
+
+/**
+ * `peerStore.all()` judges each peer against a snapshot the datastore took before the
+ * iteration started — the SQLite one materialises every matching row up front — and
+ * upstream then DELETED any row it read as expired, straight through the datastore, under
+ * no lock at all. An ordinary locked write landing after the snapshot loses its whole
+ * record that way: the delete removes the NEW value on the strength of the OLD one. This
+ * node walks `all()` on a timer, and the same interleaving is what makes a peer vanish
+ * halfway through a locked read-modify-write elsewhere in this file.
+ */
+describe('peerStore.all — an expired snapshot must not delete a fresh record', () => {
+	const ADDR = `/ip4/203.0.113.41/tcp/9090/p2p/${PEER_ID}`;
+
+	/**
+	 * The walker's record window. Long enough that a record rewritten during the sweep is
+	 * unambiguously fresh when the sweep re-reads it, short enough to age the original out
+	 * with a real wait. The address window stays at 1ms: an address keeps its original
+	 * observation time across a rewrite, so only `updated` can tell the two apart.
+	 */
+	const MAX_PEER_AGE = 150;
+
+	it('keeps a record rewritten after the snapshot was taken', async () => {
+		const datastore = new SnapshotBarrierDatastore();
+		// Two stores over ONE datastore: the writer works with ordinary ages, the walker
+		// stands in for the timer sweep with a window the original write has already left.
+		// Two stores rather than one precisely because `all()` takes no per-peer lock of
+		// its own to begin with — there was nothing for the writer to wait on.
+		const writer = createEmptyPeerStore(datastore);
+		const walker = createEmptyPeerStore(datastore, { maxPeerAge: MAX_PEER_AGE, maxAddressAge: 1 });
+		const pid = peerIdFromString(PEER_ID);
+		await writer.patch(pid, { multiaddrs: [multiaddr(ADDR)] });
+		// `#peerIsExpired` needs the record AND its addresses to be older than the walker's
+		// ages, both of which are stamped at write time — so the snapshot has to be taken
+		// after a real gap, or nothing in it reads as expired and the test proves nothing.
+		await new Promise(resolve => setTimeout(resolve, MAX_PEER_AGE + 50));
+		datastore.onSnapshot = async (): Promise<void> => {
+			await writer.merge(pid, { multiaddrs: [multiaddr(ADDR)], tags: { [KEEP_ALIVE]: { value: 1 } } });
+		};
+		await walker.all();
+		expect(await storedPeerRows(datastore)).toHaveLength(1);
+		expect(await writer.has(pid)).toBe(true);
+		// The reconnect queue runs off this tag, so losing the record is not cosmetic.
+		expect([...(await writer.get(pid)).tags.keys()]).toEqual([KEEP_ALIVE]);
+	});
+
+	it('deletes a row that is still expired when the sweep re-reads it', async () => {
+		// The other half of the same fix: skipping the delete closed the race but stopped
+		// the sweep collecting anything, and a peer that never comes back is never load()ed
+		// nor written again — its row would then sit in SQLite for good and be decoded on
+		// every tick.
+		const datastore = new MemoryDatastore();
+		const store = createEmptyPeerStore(datastore, { maxPeerAge: 1, maxAddressAge: 1 });
+		const pid = peerIdFromString(PEER_ID);
+		await store.patch(pid, { multiaddrs: [multiaddr(ADDR)] });
+		expect(await storedPeerRows(datastore)).toHaveLength(1);
+		await new Promise(resolve => setTimeout(resolve, 20));
+		await store.all();
+		// Asserted through the datastore, not `has()`: `load()` deletes an expired record on
+		// its own, so `has()` reads false whether the sweep collected the row or never
+		// touched it.
+		expect(await storedPeerRows(datastore)).toEqual([]);
+	});
+});
+
+/**
+ * Every stored address carries its own observation time, and that time is what decides
+ * when the address expires — which in turn feeds the record-expiry check behind the
+ * deletions above. Peer-store 12.0.21 shadowed the loop variable while looking the
+ * address up among the existing ones, so the lookup compared each existing address with
+ * itself and always matched the first: every address inherited the first one's timestamp.
+ */
+describe('peerStore — an address keeps its own observation time', () => {
+	// The reader's window. Long enough to survive scheduling jitter, short enough to keep
+	// the test fast; the wait below has to clear it with room to spare.
+	const MAX_ADDRESS_AGE = 100;
+	const OLD = `/ip4/203.0.113.61/tcp/9090/p2p/${PEER_ID}`;
+	const NEW = `/ip4/203.0.113.62/tcp/9090/p2p/${PEER_ID}`;
+
+	it('does not age a new address into the timestamp of an old one', async () => {
+		const store = createEmptyPeerStore(new MemoryDatastore(), { maxAddressAge: MAX_ADDRESS_AGE });
+		const pid = peerIdFromString(PEER_ID);
+		await store.patch(pid, { addresses: [{ multiaddr: multiaddr(OLD), isCertified: false }] });
+		await new Promise(resolve => setTimeout(resolve, MAX_ADDRESS_AGE + 50));
+		await store.patch(pid, {
+			addresses: [
+				{ multiaddr: multiaddr(OLD), isCertified: false },
+				{ multiaddr: multiaddr(NEW), isCertified: false },
+			],
+		});
+		// The old address has aged out; the one just added has not. Handing it the old
+		// timestamp expired an address the peer is reachable on the moment it was learned.
+		expect((await store.get(pid)).addresses.map((a: { multiaddr: { toString(): string } }) => a.multiaddr.toString())).toEqual(['/ip4/203.0.113.62/tcp/9090']);
+		// Nor may the survivor inherit the timestamp of the address being removed.
+		await store.patch(pid, { addresses: [{ multiaddr: multiaddr(NEW), isCertified: false }] });
+		expect((await store.get(pid)).addresses.map((a: { multiaddr: { toString(): string } }) => a.multiaddr.toString())).toEqual(['/ip4/203.0.113.62/tcp/9090']);
 	});
 });
 

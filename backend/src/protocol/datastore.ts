@@ -13,6 +13,22 @@ import { mkdirSync } from 'fs';
 // due to private field nominal typing. Runtime behavior is unaffected.
 const _BaseDatastore: any = BaseDatastore;
 
+/**
+ * The error a missing key must raise, carrying BOTH markers libp2p tests for.
+ *
+ * The peer-store is not consistent about which one it reads: parts of it accept
+ * `code === 'ERR_NOT_FOUND'`, others test only `name === 'NotFoundError'` — `has()`
+ * rethrows instead of answering false, and `consumePeerRecord()` expects exactly that
+ * name for a peer whose first record is arriving. An error carrying only the code turns
+ * an ordinary "not stored yet" into a failure on those paths.
+ */
+function createNotFoundError(key: Key): Error {
+	const err = new Error(`Key not found: ${key.toString()}`);
+	err.name = 'NotFoundError';
+	(err as any).code = 'ERR_NOT_FOUND';
+	return err;
+}
+
 interface Batch {
 	put(key: Key, value: Uint8Array): void;
 	delete(key: Key): void;
@@ -94,11 +110,7 @@ export class SqliteDatastore extends _BaseDatastore {
 	get(key: Key): Uint8Array {
 		this.ensureOpen();
 		const row = this.stmtGet.get(key.toString()) as { value: Buffer } | null;
-		if (row == null) {
-			const err = new Error(`Key not found: ${key.toString()}`);
-			(err as any).code = 'ERR_NOT_FOUND';
-			throw err;
-		}
+		if (row == null) throw createNotFoundError(key);
 		return new Uint8Array(row.value);
 	}
 

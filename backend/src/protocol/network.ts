@@ -442,15 +442,29 @@ interface IStoredAddress {
  * both halves is what closes that window. Calling the public methods while holding it
  * would deadlock, hence the unlocked inner pair.
  *
- * It is a lock, not a transaction, and it does not cover everything the store does:
- * `all()` deletes records it finds expired straight through the datastore, with no lock
- * at all, and this node walks `peerStore.all()` on a timer. What the lock guarantees is
- * that no ordinary `get`/`save`/`patch`/`merge`/`delete` for THIS peer interleaves.
+ * It is a lock, not a transaction, and it does not cover everything the store does. What
+ * it guarantees is that no ordinary `get`/`save`/`patch`/`merge`/`delete` for THIS peer
+ * interleaves. `peerStore.all()`, which this node walks on a timer, used to delete
+ * records it judged expired straight through the datastore under no lock at all — from a
+ * snapshot taken before any of those writes — and the local dependency patch makes it take
+ * this same lock, re-read the current row under it and delete only what is still expired.
+ * So the sweep still frees dead rows, it just no longer deletes a record that was rewritten
+ * after its snapshot. `load()` still deletes an expired record it reads, so a record CAN still disappear
+ * between two reads of a locked read-modify-write; that is what `patchExisting` is for.
  */
 interface IPeerStoreInternals {
 	getWriteLock(peerID: PeerID): Promise<() => void>;
 	load(peerID: PeerID): Promise<{ addresses: IStoredAddress[] }>;
-	patch(peerID: PeerID, data: { addresses: IStoredAddress[] }): Promise<{ updated: boolean }>;
+	/**
+	 * `patch()` that refuses to upsert — a local addition (see `patches/`), because the
+	 * upstream one silently creates the record when it is gone. Halfway through a
+	 * read-modify-write "gone" is not "new": it means something outside this lock removed
+	 * the record between the read and the write, and rebuilding it from the addresses this
+	 * caller happens to hold would drop the peer's protocols, tags, metadata, public key
+	 * and signed peer record. It throws instead, which the callers already treat as "leave
+	 * the peer alone".
+	 */
+	patchExisting(peerID: PeerID, data: { addresses: IStoredAddress[] }): Promise<{ updated: boolean }>;
 }
 
 /** The emitter the peerStore's public methods notify after every record they change. */
@@ -470,11 +484,15 @@ interface IPeerStoreEvents {
  * upgrade that keeps the inner store but renames `events` would otherwise let the write
  * go through with no `peer:update`, leaving libp2p's registrar looking at a record that
  * changed under it — silently, and with nothing to fail on.
+ *
+ * `patchExisting` is checked on the same terms, and it is the check that also proves the
+ * local dependency patch is in place: an install that skipped it leaves only the upstream
+ * upsert, which is the very behaviour this path must not have.
  */
 function peerStoreInternals(peerStore: unknown): { store: IPeerStoreInternals; events: IPeerStoreEvents } {
 	const { store, events } = (peerStore as { store?: Partial<IPeerStoreInternals>; events?: Partial<IPeerStoreEvents> }) ?? {};
-	if (typeof store?.getWriteLock !== 'function' || typeof store?.load !== 'function' || typeof store?.patch !== 'function') {
-		throw new Error('peerStore does not expose its per-peer lock — refusing to remove an address without it');
+	if (typeof store?.getWriteLock !== 'function' || typeof store?.load !== 'function' || typeof store?.patchExisting !== 'function') {
+		throw new Error('peerStore does not expose its per-peer lock and require-existing patch — refusing to remove an address without them');
 	}
 	if (typeof events?.safeDispatchEvent !== 'function') {
 		throw new Error('peerStore does not expose its update emitter — refusing to write an address change nothing would hear');
@@ -2530,6 +2548,10 @@ export class Network {
 	 * puts back the very objects it kept. Rebuilding them as a bare `multiaddrs` list dropped the
 	 * `isCertified` flag of every surviving address, downgrading signed peer records to
 	 * hearsay as a side effect of deleting an unrelated address.
+	 *
+	 * The write goes through `patchExisting`, so a record that disappears between the read
+	 * and the write raises instead of being recreated from the addresses alone — after a
+	 * successful `load()`, "not stored" is a concurrent removal, not a new peer.
 	 */
 	private async removePeerStoreAddresses(pid: PeerID, matches: (address: string) => boolean): Promise<PeerStoreAddressRemoval> {
 		const node = this.node;
@@ -2549,7 +2571,7 @@ export class Network {
 			const keep = rec.addresses.filter(a => !matches(a.multiaddr.toString()));
 			if (keep.length === rec.addresses.length) return { kind: 'updated', remaining: keep.length };
 			if (node !== this.node || epoch !== this.runEpoch) return { kind: 'superseded' };
-			const result = await store.patch(pid, { addresses: keep });
+			const result = await store.patchExisting(pid, { addresses: keep });
 			// The public wrapper raises this after every write it makes, and libp2p's own
 			// registrar listens for it. Going around the wrapper must not go around the event.
 			if (result.updated) events.safeDispatchEvent('peer:update', { detail: result });

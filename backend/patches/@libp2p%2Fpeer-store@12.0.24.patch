@@ -1,0 +1,85 @@
+diff --git a/dist/src/store.js b/dist/src/store.js
+index 103fcc357761a56be2576e7bb4cf7cc2b3858f6f..f66bd5b08ba8ea0d07cd5b052edf4afde59ea23f 100644
+--- a/dist/src/store.js
++++ b/dist/src/store.js
+@@ -146,6 +146,26 @@ export class PersistentStore {
+         });
+         return this.#saveIfDifferent(peerId, peerPb, existingPeer);
+     }
++    async patchExisting(peerId, data, options) {
++        // `patch()` is an upsert, and libp2p legitimately relies on that for peers it has
++        // not stored yet. A read-modify-write is a different job: its caller has already
++        // READ the record, so "not stored" here means the record vanished mid-way — by a
++        // path the per-peer write lock does not cover — and upserting would rebuild it
++        // from the partial data the caller happens to hold, dropping the protocols,
++        // metadata, tags, public key and signed peer record the read had seen.
++        const existingPeer = await this.#findExistingPeer(peerId, options);
++        if (existingPeer == null) {
++            const err = new Error(`peer ${peerId.toString()} was removed while its record was being updated`);
++            err.name = 'PeerStoreConcurrentRemovalError';
++            throw err;
++        }
++        const peerPb = await toPeerPB(peerId, data, 'patch', {
++            ...options,
++            addressFilter: this.addressFilter,
++            existingPeer
++        });
++        return this.#saveIfDifferent(peerId, peerPb, existingPeer);
++    }
+     async merge(peerId, data, options) {
+         const existingPeer = await this.#findExistingPeer(peerId, options);
+         const peerPb = await toPeerPB(peerId, data, 'merge', {
+@@ -162,9 +182,33 @@ export class PersistentStore {
+                 continue;
+             }
+             const peer = PeerPB.decode(value);
+-            // remove expired peer
++            // Upstream DELETES the snapshotted row here. The rows come from a snapshot the
++            // datastore took at the start of the iteration, and this runs under no lock at
++            // all — so an ordinary locked save/patch/merge landing after the snapshot
++            // refreshes the record, and the delete then removes the NEW value on the
++            // strength of the OLD one. Skipping the delete altogether is not the answer
++            // either: a peer that never comes back is never load()ed nor written again, so
++            // its row would stay here for good and be re-read and decoded by every sweep.
++            // Take the peer's own write lock, re-read the CURRENT row under it, and delete
++            // only that — and only while it is still expired.
+             if (this.#peerIsExpired(peerId, peer)) {
+-                await this.datastore.delete(key, options);
++                const release = await this.getWriteLock(peerId, options);
++                try {
++                    const current = await this.datastore.get(key, options);
++                    if (this.#peerIsExpired(peerId, PeerPB.decode(current))) {
++                        await this.delete(peerId, options);
++                    }
++                }
++                catch (err) {
++                    // Already gone is the outcome this wanted. Anything else is a real
++                    // datastore fault and upstream let it out of here too.
++                    if (err?.name !== 'NotFoundError' && err?.code !== 'ERR_NOT_FOUND') {
++                        throw err;
++                    }
++                }
++                finally {
++                    release();
++                }
+                 continue;
+             }
+             yield pbToPeer(peerId, peer, this.peerId.equals(peerId) ? Infinity : this.maxAddressAge);
+@@ -186,9 +230,15 @@ export class PersistentStore {
+             };
+         }
+         catch (err) {
+-            if (err.name !== 'NotFoundError') {
+-                this.log.error('invalid peer data found in peer store - %e', err);
++            // Upstream logs EVERY error here and returns undefined, so save/patch/merge
++            // then rebuild the record as if the peer had never existed — dropping its
++            // protocols, metadata, tags and signed peer record on a transient datastore
++            // read failure. Only "the peer is not stored" may answer with undefined.
++            if (err?.name === 'NotFoundError' || err?.code === 'ERR_NOT_FOUND') {
++                return undefined;
+             }
++            this.log.error('invalid peer data found in peer store - %e', err);
++            throw err;
+         }
+     }
+     async #saveIfDifferent(peerId, peer, existingPeer, options) {
