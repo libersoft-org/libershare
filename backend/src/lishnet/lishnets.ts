@@ -247,12 +247,6 @@ export class Networks {
 		// can record which specific peers connected / mismatched / timed out.
 		// (Previous behaviour used a flat preset list that bypassed our tracking.)
 		await this.network.start([]);
-		// Reopened only by a start that SUCCEEDED. Clearing the flags first admitted work onto
-		// a node that then failed to come up — including one refused because the previous stop
-		// left the instance in `failed`, where reopening would undo exactly what that stop's
-		// failure closed.
-		this.stopRequested = false;
-		this.reconcileAdmissionClosed = false;
 
 		// The enabled list is read AFTER the start, not before it. Reading it first meant
 		// startup worked from a snapshot taken before a long await: an API disable or
@@ -262,6 +256,23 @@ export class Networks {
 		// Under the catalog mutex for the whole loop, so no API write and no shutdown can
 		// interleave with the networks coming up — see {@link catalogMutex}.
 		await this.catalogMutex.runExclusive(async () => {
+			// Admission reopens HERE, on a node observed running while the catalog is held, and
+			// never on the strength of `start()` having returned. A stop that arrives during the
+			// start takes the free catalog first, closes the door and drains, then blocks in
+			// `Network.stop()` behind the start's own lifecycle mutex — so it finishes AFTER the
+			// start it overtook. Reopening on the return would hand every later write a runtime
+			// that had just been torn down, and report it as converged: the failure the stop's
+			// own error path exists to prevent, arriving through the start door instead.
+			//
+			// Reopening here rather than before the catalog also closes the window in which a
+			// writer got in between the two and joined a lishnet this loop then subscribed a
+			// second time.
+			if (!this.network.isRunning()) {
+				console.log('Not joining any lishnet: the node is no longer running by the time startup reached them');
+				return;
+			}
+			this.stopRequested = false;
+			this.reconcileAdmissionClosed = false;
 			for (const net of this.getEnabled()) {
 				await this.operationLock(net.networkID).runExclusive(() => {
 					// Re-read under the lock as well: an earlier network's turn is another await.

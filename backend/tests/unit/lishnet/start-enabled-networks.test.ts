@@ -23,17 +23,26 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 
 /** A Network stub whose start() can be held open, tracking subscribe/unsubscribe. */
 function makeMockNet(startGate: Promise<void>) {
+	// The real Network serialises start() against stop() on one lifecycle mutex, so a stop
+	// issued during a start does not take effect until that start has finished — and then
+	// undoes it. Without that here, a stop could be modelled as completing BEFORE the start
+	// it overtook, which is the one ordering the real node cannot produce.
+	const lifecycle = new Mutex();
 	return {
 		subscribed: [] as string[],
 		unsubscribed: [] as string[],
 		running: false,
 		async start(): Promise<void> {
-			await startGate;
-			this.running = true;
+			await lifecycle.runExclusive(async () => {
+				await startGate;
+				this.running = true;
+			});
 		},
 		async stop(): Promise<void> {
-			this.running = false;
-			this.events.push('stop');
+			await lifecycle.runExclusive(async () => {
+				this.running = false;
+				this.events.push('stop');
+			});
 		},
 		stopTerminal: false,
 		isStopTerminal(): boolean {
@@ -320,6 +329,35 @@ describe('Networks.startEnabledNetworks — coordinated with concurrent changes'
 		await networks.stopAllNetworks();
 		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
 		expect((networks as any).announcedJoined.size).toBe(0);
+	});
+
+	/**
+	 * A stop issued during a start finishes AFTER it — they share the node's lifecycle mutex
+	 * — so `start()` returning is not evidence that the node is up. Reopening admission on
+	 * the strength of that return handed every later write a runtime that had just been torn
+	 * down, and told it the write had converged.
+	 */
+	it('a stop that overtook the start leaves admission closed', async () => {
+		const gate = deferred();
+		const net = makeMockNet(gate.promise);
+		const networks = makeNetworks(net, db);
+
+		const starting = networks.startEnabledNetworks();
+		await settle();
+		// Lands while the start is still inside the node's own start(), so it takes the free
+		// catalog, closes the door and drains before the start can reach its join loop.
+		const stopping = networks.stopAllNetworks();
+		await settle();
+		gate.resolve();
+		await Promise.all([starting, stopping]);
+
+		expect(net.running).toBe(false);
+		expect(net.subscribed).toEqual([]);
+		expect((networks as any).reconcileAdmissionClosed).toBe(true);
+
+		// And the door really is shut: a disable is stored, nothing is asked of the runtime.
+		await networks.setEnabled(NET, false);
+		expect(net.unsubscribed).toEqual([]);
 	});
 
 	/**
