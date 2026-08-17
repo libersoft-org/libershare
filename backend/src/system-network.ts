@@ -309,14 +309,68 @@ export function networkStateGeneration(): number {
  * says the request did not complete but says nothing about how much of it did.
  */
 export async function runHostMutation<T>(action: () => Promise<T>): Promise<T> {
-	return applyLock.runExclusive(async () => {
-		mutationDepth++;
+	return applyLock.runExclusive(() => trackedMutation(action));
+}
+
+/** The body of {@link runHostMutation}, minus taking the lock — see {@link mutateAndReadBack}. */
+async function trackedMutation<T>(action: () => Promise<T>): Promise<T> {
+	mutationDepth++;
+	resetNetworkStateCache();
+	try {
+		return await action();
+	} finally {
 		resetNetworkStateCache();
+		mutationDepth--;
+	}
+}
+
+/** A reconfiguration and the state the host settled on afterwards, whether it worked or not. */
+export interface MutationOutcome {
+	/** The state read once the change was done, or null when that read failed too. */
+	readonly state: NetworkStateInfo | null;
+	/** Why the reconfiguration failed, or null when it did not. */
+	readonly failure: unknown;
+	/** Why the follow-up read failed, or null when it did not. */
+	readonly readError: unknown;
+}
+
+/**
+ * Reconfigure the host and read the result WITHOUT letting go of the lock in
+ * between.
+ *
+ * Doing the two separately looked equivalent and was not. `runExclusive` hands the
+ * mutex to the longest-waiting owner the instant it is released, so a second apply
+ * already queued behind this one started before the first had read anything — and
+ * the first request then waited for the second to finish and answered with ITS
+ * state. Two clients saving at once each got the other's configuration back, and a
+ * fast apply could be held up behind a twenty-second Wi-Fi join for a reading it
+ * was not going to use.
+ *
+ * The read is `readNetworkStateUnlocked` deliberately: the settled read takes this
+ * very lock, and the mutex is not reentrant. It runs after {@link trackedMutation}
+ * has invalidated the cache on its way out, so it reaches the platform rather than
+ * returning the reading the mutation displaced.
+ *
+ * Both failures are carried out rather than thrown, because the caller has to
+ * broadcast the state before deciding which error to report — a half-applied
+ * change leaves the machine in a state the error does not describe.
+ *
+ * `read` is a parameter so a test can make the reading depend on what the action
+ * did, which is the only way the swapped answer above is visible at all.
+ * Production passes nothing.
+ */
+export function mutateAndReadBack(action: () => Promise<void>, primaryInterface: string, read: (primary: string) => Promise<NetworkStateInfo> = readNetworkStateUnlocked): Promise<MutationOutcome> {
+	return applyLock.runExclusive(async () => {
+		let failure: unknown = null;
 		try {
-			return await action();
-		} finally {
-			resetNetworkStateCache();
-			mutationDepth--;
+			await trackedMutation(action);
+		} catch (err) {
+			failure = err;
+		}
+		try {
+			return { state: await read(primaryInterface), failure, readError: null };
+		} catch (readError) {
+			return { state: null, failure, readError };
 		}
 	});
 }
@@ -481,8 +535,20 @@ export function ipv4EditObjection(state: NetworkStateInfo, interfaceID: string):
 	return null;
 }
 
-/** Apply an IPv4 configuration to one interface, then drop the cache so the next read reflects it. */
-export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Promise<void> {
+/**
+ * Apply an IPv4 configuration to one interface and answer with the state the host
+ * settled on.
+ *
+ * The state is read inside the same critical section as the change — see
+ * {@link mutateAndReadBack} — so it is this request's own outcome rather than
+ * whatever a second apply queued behind it went on to do.
+ *
+ * Everything checkable without touching the host is checked BEFORE the lock, so a
+ * malformed configuration is refused immediately instead of waiting out a
+ * twenty-second Wi-Fi join queued ahead of it. Such a refusal happens before
+ * anything changed, so it carries no state to publish and simply throws.
+ */
+export async function applyIPv4(interfaceID: string, config: NetIPv4Config, primaryInterface: string = ''): Promise<MutationOutcome> {
 	const invalid = validateIPv4Config(config);
 	if (invalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${invalid}`);
 	// Coherent is not the same as expressible. The shared validator answers the
@@ -494,13 +560,13 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Pro
 	if (unsupported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, unsupported);
 	const supported = await readCapabilities();
 	if (!supported.ipv4) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host does not expose a writable network configuration');
-	await runHostMutation(async () => {
-		// Inside the lock and after `runHostMutation` has invalidated the cache, so
-		// this reaches the platform: the premise is the host as it is now, not as
-		// some earlier reading described it.
+	return mutateAndReadBack(async () => {
+		// Inside the lock and after the cache has been invalidated, so this reaches the
+		// platform: the premise is the host as it is now, not as some earlier reading
+		// described it.
 		const objection = ipv4EditObjection(await readNetworkStateUnlocked(), interfaceID);
 		if (objection) throw objection;
-		return run(async () => {
+		await run(async () => {
 			if (process.platform === 'win32') {
 				await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(assertWindowsGuid(interfaceID), config)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
 			} else if (process.platform === 'darwin') {
@@ -509,7 +575,7 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Pro
 				await applyLinuxIPv4(assertDeviceName(interfaceID), config);
 			}
 		});
-	});
+	}, primaryInterface);
 }
 
 /** Scan for joinable Wi-Fi networks on one interface. */
@@ -519,8 +585,12 @@ export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 	return run(() => scanLinuxWifi(assertDeviceName(interfaceID)));
 }
 
-/** Join a Wi-Fi network on one interface. An empty password means an open network. */
-export async function connectWifi(interfaceID: string, ssid: string, password: string): Promise<void> {
+/**
+ * Join a Wi-Fi network on one interface, and answer with the state that resulted.
+ * An empty password means an open network. See {@link applyIPv4} on why the read
+ * shares the mutation's critical section.
+ */
+export async function connectWifi(interfaceID: string, ssid: string, password: string, primaryInterface: string = ''): Promise<MutationOutcome> {
 	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
 	// Checked before anything is written. On Windows the profile lands on disk
 	// ahead of the association attempt, so a credential no WPA2/WPA3 network could
@@ -530,18 +600,18 @@ export async function connectWifi(interfaceID: string, ssid: string, password: s
 	// failure of that child process has to be scrubbed of it before it is logged
 	// or sent back — including the timeout case, where the only text available is
 	// the message execFile assembled out of the whole command line.
-	await runHostMutation(async () => {
-		// Both premises are established INSIDE the lock, after `runHostMutation` has
-		// invalidated the cache — exactly as applyIPv4 does. Read outside it, they
-		// come from a reading up to CACHE_TTL_MS old and from before any mutation
-		// queued ahead of this one ran, so "not currently on that network" could
-		// already be false by the time the join starts. The interface the guard
-		// approved is then the one the join runs against.
+	return mutateAndReadBack(async () => {
+		// Both premises are established INSIDE the lock, after the cache has been
+		// invalidated — exactly as applyIPv4 does. Read outside it, they come from a
+		// reading up to CACHE_TTL_MS old and from before any mutation queued ahead of
+		// this one ran, so "not currently on that network" could already be false by
+		// the time the join starts. The interface the guard approved is then the one
+		// the join runs against.
 		const target = await assertWirelessInterface(interfaceID, 'wifiConnectable');
 		if (isAlreadyJoined(target, ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'this interface is already connected to that network');
-		if (process.platform === 'win32') return run(() => connectWindowsWifi(assertWindowsGuid(interfaceID), ssid, password), [password]);
-		return run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password), [password]);
-	});
+		if (process.platform === 'win32') await run(() => connectWindowsWifi(assertWindowsGuid(interfaceID), ssid, password), [password]);
+		else await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password), [password]);
+	}, primaryInterface);
 }
 
 /** Validate a Windows interface id before it addresses an adapter. Same boundary check as {@link assertDeviceName}. */

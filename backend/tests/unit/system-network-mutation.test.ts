@@ -270,15 +270,15 @@ describe('connectWifi', () => {
 	it('mentions each step of the guard it is ordering', () => {
 		// Without this an identifier that got renamed would leave the assertions
 		// below comparing -1 against -1 and passing on a function that guards nothing.
-		for (const step of ['runHostMutation', 'assertWirelessInterface', 'isAlreadyJoined']) expect(body).toContain(step);
+		for (const step of ['mutateAndReadBack', 'assertWirelessInterface', 'isAlreadyJoined']) expect(body).toContain(step);
 	});
 
 	it('re-reads the interface inside the lock rather than before it', () => {
-		expect(body.indexOf('assertWirelessInterface')).toBeGreaterThan(body.indexOf('runHostMutation'));
+		expect(body.indexOf('assertWirelessInterface')).toBeGreaterThan(body.indexOf('mutateAndReadBack'));
 	});
 
 	it('refuses the network already in use from inside the lock as well', () => {
-		expect(body.indexOf('isAlreadyJoined')).toBeGreaterThan(body.indexOf('runHostMutation'));
+		expect(body.indexOf('isAlreadyJoined')).toBeGreaterThan(body.indexOf('mutateAndReadBack'));
 	});
 });
 

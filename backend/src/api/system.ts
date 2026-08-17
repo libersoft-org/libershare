@@ -5,7 +5,7 @@ import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type Ne
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
-import { applyIPv4, connectWifi, hostMutationInProgress, readSettledNetworkState, scanWifi } from '../system-network.ts';
+import { applyIPv4, connectWifi, hostMutationInProgress, readSettledNetworkState, scanWifi, type MutationOutcome } from '../system-network.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -48,31 +48,20 @@ export function assertString(value: unknown, name: string, maxLength: number, mi
  * client heard nothing at all. Reading and broadcasting on both paths is what
  * makes the published state the real one.
  *
- * The read is uncached by construction: `runHostMutation` invalidates the cache
- * in its own `finally`, so this reaches the platform rather than returning the
- * reading the mutation displaced. It is also taken through
- * `readSettledNetworkState`, which re-acquires the mutation lock — the mutation
- * has released it by the time this runs, so what that buys is the guarantee that
- * a second reconfiguration queued behind this one cannot be halfway through when
- * the state is read. A read that fails as well is swallowed when there is already
- * a mutation error to report — replacing it would hide the reason the user
- * actually needs.
+ * The reading itself is taken by `mutateAndReadBack`, inside the lock the
+ * reconfiguration holds. Reading here instead looked equivalent and was not: the
+ * mutex hands over to the longest-waiting owner the moment it is released, so a
+ * second apply already queued behind this one ran first and this request answered
+ * with ITS state. What is left here is only what has to happen after the lock —
+ * broadcasting, and choosing which of two failures to report. A read that failed
+ * as well is swallowed when there is already a mutation error, because replacing
+ * it would hide the reason the user actually needs.
  */
-export async function applyAndPublish(mutate: () => Promise<void>, readState: () => Promise<NetworkStateInfo>, broadcast: BroadcastFn): Promise<NetworkStateInfo> {
-	let failure: unknown = null;
-	try {
-		await mutate();
-	} catch (err) {
-		failure = err;
-	}
-	let state: NetworkStateInfo | null = null;
-	try {
-		state = await readState();
-		broadcast('system:network', state);
-	} catch (readError) {
-		if (!failure) throw readError;
-	}
+export async function applyAndPublish(mutate: () => Promise<MutationOutcome>, broadcast: BroadcastFn): Promise<NetworkStateInfo> {
+	const { state, failure, readError } = await mutate();
+	if (state) broadcast('system:network', state);
 	if (failure) throw failure;
+	if (readError) throw readError;
 	return state as NetworkStateInfo;
 }
 
@@ -325,7 +314,12 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 
 	/** Live host network state, with the user's primary-interface preference applied. */
 	function getNetworkState(): Promise<NetworkStateInfo> {
-		return readSettledNetworkState(settings.get('network.primaryInterface') ?? '');
+		return readSettledNetworkState(primaryInterface());
+	}
+
+	/** The interface the user pinned as primary, if any — the reconfigurations read back through it too. */
+	function primaryInterface(): string {
+		return settings.get('network.primaryInterface') ?? '';
 	}
 
 	/**
@@ -337,7 +331,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	 */
 	function applyNetworkConfig(p: { interfaceID: string; config: NetIPv4Config }): Promise<NetworkStateInfo> {
 		assert(p, ['interfaceID', 'config']);
-		return applyAndPublish(() => applyIPv4(assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID), p.config), getNetworkState, broadcast);
+		return applyAndPublish(() => applyIPv4(assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID), p.config, primaryInterface()), broadcast);
 	}
 
 	async function scanWifiNetworks(p: { interfaceID: string }): Promise<NetWifiNetwork[]> {
@@ -352,7 +346,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		// otherwise travel all the way into nmcli's argv, or into a WLAN profile
 		// document as "[object Object]".
 		const password = p.password === undefined ? '' : assertString(p.password, 'password', MAX_WIFI_PASSWORD, 0);
-		return applyAndPublish(() => connectWifi(assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID), assertString(p.ssid, 'ssid', MAX_SSID_PARAM), password), getNetworkState, broadcast);
+		return applyAndPublish(() => connectWifi(assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID), assertString(p.ssid, 'ssid', MAX_SSID_PARAM), password, primaryInterface()), broadcast);
 	}
 
 	let networkTick = 0;

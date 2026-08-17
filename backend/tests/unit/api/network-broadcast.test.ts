@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import type { NetworkStateInfo } from '@shared';
 import { applyAndPublish, publishNetworkState } from '../../../src/api/system.ts';
-import { hostMutationInProgress, readSettledNetworkState, runHostMutation } from '../../../src/system-network.ts';
+import { hostMutationInProgress, mutateAndReadBack, readSettledNetworkState, runHostMutation, type MutationOutcome } from '../../../src/system-network.ts';
 
 /** A state that is recognisable in an assertion without standing for anything real. */
 function fakeState(marker: string): NetworkStateInfo {
@@ -93,27 +93,26 @@ describe('publishNetworkState', () => {
 });
 
 describe('applyAndPublish', () => {
+	/** What `mutateAndReadBack` hands back — the state, and either failure or neither. */
+	const outcome = (marker: string | null, failure: unknown = null, readError: unknown = null): MutationOutcome => ({ state: marker === null ? null : fakeState(marker), failure, readError });
+
 	it('publishes the resulting state and answers with it on success', async () => {
 		const sent: Array<{ event: string; data: unknown }> = [];
 		const state = await applyAndPublish(
-			async () => {},
-			async () => fakeState('after'),
+			async () => outcome('after'),
 			(event, data) => sent.push({ event, data })
 		);
 		expect(state.primaryID).toBe('after');
 		expect(sent).toEqual([{ event: 'system:network', data: state }]);
 	});
 
-	it('still reads and broadcasts the real state when the mutation fails', async () => {
+	it('still broadcasts the real state when the mutation failed', async () => {
 		// The whole point: a half-applied change leaves the machine in a state the
 		// error does not describe, and every connected client used to hear nothing.
 		const sent: Array<{ event: string; data: unknown }> = [];
 		await expect(
 			applyAndPublish(
-				async () => {
-					throw new Error('access is denied');
-				},
-				async () => fakeState('half-applied'),
+				async () => outcome('half-applied', new Error('access is denied')),
 				(event, data) => sent.push({ event, data })
 			)
 		).rejects.toThrow('access is denied');
@@ -121,16 +120,11 @@ describe('applyAndPublish', () => {
 		expect((sent[0]?.data as NetworkStateInfo).primaryID).toBe('half-applied');
 	});
 
-	it('keeps the mutation error when the follow-up read fails too', async () => {
+	it('keeps the mutation error when the follow-up read failed too', async () => {
 		// Reporting the read failure instead would hide the reason the user needs.
 		await expect(
 			applyAndPublish(
-				async () => {
-					throw new Error('access is denied');
-				},
-				async () => {
-					throw new Error('the reader is unavailable');
-				},
+				async () => outcome(null, new Error('access is denied'), new Error('the reader is unavailable')),
 				() => {}
 			)
 		).rejects.toThrow('access is denied');
@@ -139,12 +133,63 @@ describe('applyAndPublish', () => {
 	it('reports a read failure when the mutation itself succeeded', async () => {
 		await expect(
 			applyAndPublish(
-				async () => {},
-				async () => {
-					throw new Error('the reader is unavailable');
-				},
+				async () => outcome(null, null, new Error('the reader is unavailable')),
 				() => {}
 			)
 		).rejects.toThrow('the reader is unavailable');
+	});
+});
+
+/**
+ * Whose outcome each request gets back.
+ *
+ * The mutation and the read used to be two separate critical sections, and
+ * `runExclusive` hands the mutex to the longest-waiting owner the instant it is
+ * released — so a second apply already queued behind the first started before the
+ * first had read anything, and the first then waited for it and answered with its
+ * state.
+ */
+describe('mutateAndReadBack', () => {
+	// The reading reports whatever the last change wrote, which is the only way a
+	// swapped answer is visible at all.
+	const applied: string[] = [];
+	const readLast = async (): Promise<NetworkStateInfo> => fakeState(applied[applied.length - 1] ?? 'none');
+
+	it('answers each request with the state its own change left behind', async () => {
+		applied.length = 0;
+		let releaseFirst = () => {};
+		const held = new Promise<void>(resolve => {
+			releaseFirst = resolve;
+		});
+		const first = mutateAndReadBack(
+			async () => {
+				applied.push('a');
+				await held;
+			},
+			'',
+			readLast
+		);
+		// Queued behind the first, and dispatched the instant the first lets go.
+		await new Promise(resolve => setTimeout(resolve, 10));
+		const second = mutateAndReadBack(async () => void applied.push('b'), '', readLast);
+		releaseFirst();
+		expect((await first).state?.primaryID).toBe('a');
+		expect((await second).state?.primaryID).toBe('b');
+	});
+
+	it('carries a mutation failure out rather than throwing it', async () => {
+		applied.length = 0;
+		const failed = await mutateAndReadBack(
+			async () => {
+				throw new Error('access is denied');
+			},
+			'',
+			readLast
+		);
+		expect((failed.failure as Error).message).toBe('access is denied');
+		// And the host is still read, because the failure says nothing about how much
+		// of the change went through.
+		expect(failed.state?.primaryID).toBe('none');
+		expect(failed.readError).toBeNull();
 	});
 });
