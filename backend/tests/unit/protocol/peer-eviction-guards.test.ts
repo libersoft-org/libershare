@@ -1520,3 +1520,66 @@ describe('bootstrap registry — provenance is not exclusive', () => {
 		expect(registryAddresses(network)).toEqual([normalizeMultiaddrForCompare(ADDR)]);
 	});
 });
+
+/**
+ * The teardown after a bootstrap address is removed from the configuration, exercised
+ * against a REAL `@libp2p/peer-store` rather than a hand-written stand-in.
+ *
+ * The store decapsulates its own peer's ID before writing an address, so a stub built
+ * in the shape the CODE expected would have passed while the production trim matched
+ * nothing at all. Only the real store settles what is actually held.
+ */
+describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () => {
+	const ADDR = `/ip4/203.0.113.21/tcp/9090/p2p/${PEER_ID}`;
+
+	async function realPeerStore() {
+		const { persistentPeerStore } = await import('@libp2p/peer-store');
+		const { MemoryDatastore } = await import('datastore-core');
+		const { defaultLogger } = await import('@libp2p/logger');
+		const { peerIdFromString } = await import('@libp2p/peer-id');
+		const { TypedEventEmitter } = await import('main-event');
+		const pid = peerIdFromString(PEER_ID);
+		const store = persistentPeerStore({
+			peerId: pid,
+			// Cast: two copies of interface-datastore are installed (libp2p nests its own)
+			// and their Key classes are structurally incompatible. Runtime is one class.
+			datastore: new MemoryDatastore() as any,
+			events: new TypedEventEmitter() as any,
+			logger: defaultLogger(),
+		});
+		await store.patch(pid, { multiaddrs: [multiaddr(ADDR)] });
+		return { store, pid };
+	}
+
+	function networkOver(store: unknown) {
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		// Still configured elsewhere ⇒ the peer itself survives and only the removed
+		// address is trimmed, which is the case the shape bug hid.
+		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
+		installBootstrapRegistry(network, []);
+		(network as any).node = { peerStore: store, getConnections: () => [] };
+		return network;
+	}
+
+	it('stores an address without the trailing /p2p/<id>', async () => {
+		const { store, pid } = await realPeerStore();
+		const stored = (await store.get(pid)).addresses.map(a => a.multiaddr.toString());
+		expect(stored).toEqual(['/ip4/203.0.113.21/tcp/9090']);
+	});
+
+	it('removes the address the configuration dropped', async () => {
+		const { store, pid } = await realPeerStore();
+		const network = networkOver(store);
+		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [ADDR], 'net-a');
+		expect((await store.get(pid)).addresses.map(a => a.multiaddr.toString())).toEqual([]);
+	});
+
+	it('leaves an address the configuration kept', async () => {
+		const { store, pid } = await realPeerStore();
+		const network = networkOver(store);
+		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [`/ip4/203.0.113.99/tcp/9090/p2p/${PEER_ID}`], 'net-a');
+		expect((await store.get(pid)).addresses.map(a => a.multiaddr.toString())).toEqual(['/ip4/203.0.113.21/tcp/9090']);
+	});
+});

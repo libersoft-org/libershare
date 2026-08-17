@@ -2753,11 +2753,15 @@ export class Network {
 			trace(`[NET] reconcile after removal: invalid peerID ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 			return;
 		}
-		const removed = new Set(removedAddresses.map(normalizeMultiaddrForCompare));
+		// Compared WITHOUT the trailing /p2p/<id>: that is the shape the peerStore holds
+		// (see {@link bareDialEndpoint}), while a configured entry always carries the ID.
+		// Comparing the two canonical forms as-is matched nothing, so the trim this whole
+		// teardown is built on silently did nothing for every ordinary address.
+		const removed = new Set(removedAddresses.map(bareDialEndpoint));
 		if (removed.size > 0) {
 			try {
 				const rec = await this.node.peerStore.get(pid);
-				const keep = rec.addresses.filter((a: any) => !removed.has(normalizeMultiaddrForCompare(a.multiaddr.toString())));
+				const keep = rec.addresses.filter((a: any) => !removed.has(bareDialEndpoint(a.multiaddr.toString())));
 				if (keep.length < rec.addresses.length) await this.node.peerStore.patch(pid, { multiaddrs: keep.map((a: any) => a.multiaddr) });
 			} catch {
 				// Not in the peerStore — there is nothing to trim.
@@ -3285,9 +3289,21 @@ export function normalizeMultiaddrForCompare(s: string): string {
  * reject.
  */
 export function isSameDialEndpoint(a: string, b: string): boolean {
-	const strip = (s: string): string => normalizeMultiaddrForCompare(s).replace(/\/p2p\/[^/]+$/, '');
-	const left = strip(a);
-	return left.length > 0 && left === strip(b);
+	const left = bareDialEndpoint(a);
+	return left.length > 0 && left === bareDialEndpoint(b);
+}
+
+/**
+ * A multiaddr's transport endpoint in canonical form, without the trailing
+ * `/p2p/<id>`.
+ *
+ * The shape the libp2p peerStore holds: it decapsulates its own peer's ID before
+ * writing an address (`dedupeFilterAndSortAddresses` in `@libp2p/peer-store`), while
+ * a configured bootstrap entry always carries it. Anything comparing a configured
+ * address against a stored one has to meet in this form.
+ */
+export function bareDialEndpoint(s: string): string {
+	return normalizeMultiaddrForCompare(s).replace(/\/p2p\/[^/]+$/, '');
 }
 
 /**
