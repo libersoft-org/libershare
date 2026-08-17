@@ -2394,6 +2394,10 @@ export class Network {
 	 * cycle and the caller would otherwise report a disconnect that a restart undoes (see
 	 * {@link PeerPurgeMode}). A record that was already gone is success in both.
 	 *
+	 * A purge that waited behind another purge of the same peer, and finds the peer connected
+	 * and not suppressed by the time it runs, heals instead of purging — see {@link runPurge}.
+	 * A leave-network suppresses the peer first, so its teardown is never the one dropped.
+	 *
 	 * `epoch` binds the call to the node instance it was started for. This is the most
 	 * destructive path there is — it closes connections and deletes peerStore entries —
 	 * and it awaits in the middle, so a stop()/start() landing between those awaits
@@ -2402,7 +2406,7 @@ export class Network {
 	 * same reason: re-reading `this.node` after an await can hand back a different node.
 	 */
 	async purgeStalePeer(peerID: string, reason: string, epoch: number = this.runEpoch, mode: PeerPurgeMode = 'best-effort'): Promise<void> {
-		await this.withPurgeLock(peerID, () => this.runPurge(peerID, reason, epoch, mode));
+		await this.withPurgeLock(peerID, queued => this.runPurge(peerID, reason, epoch, mode, queued));
 	}
 
 	/**
@@ -2424,40 +2428,75 @@ export class Network {
 	 *
 	 * The entry goes away once nobody holds or awaits it, so the map is bounded by the peers
 	 * being purged right now rather than by every peer ever purged.
+	 *
+	 * Serialising them is only half of it: waiting is also what makes a purge's reason old,
+	 * so `purge` is told whether it waited. That is the one thing the peer's own state cannot
+	 * say for itself, and the purge re-asks its condition when it hears yes — see
+	 * {@link runPurge}.
 	 */
-	private async withPurgeLock(peerID: string, purge: () => Promise<void>): Promise<void> {
+	private async withPurgeLock(peerID: string, purge: (queued: boolean) => Promise<void>): Promise<void> {
 		const locks = (this.purgeLocks ??= new Map());
 		let held = locks.get(peerID);
 		if (!held) {
 			held = { mutex: new Mutex(), waiting: 0 };
 			locks.set(peerID, held);
 		}
+		// Read before the await, where it still means "somebody else holds this": asking
+		// inside the exclusive section would always answer yes.
+		const queued = held.mutex.isLocked();
 		// Both halves of the count are synchronous either side of the await, so a purge that
 		// arrives while another holds the lock always finds the same entry still in the map.
 		held.waiting++;
 		try {
-			await held.mutex.runExclusive(purge);
+			await held.mutex.runExclusive(() => purge(queued));
 		} finally {
 			if (--held.waiting === 0) locks.delete(peerID);
 		}
 	}
 
-	/** The body of {@link purgeStalePeer}, which holds that peer's purge lock around it. */
-	private async runPurge(peerID: string, reason: string, epoch: number, mode: PeerPurgeMode): Promise<void> {
+	/**
+	 * The body of {@link purgeStalePeer}, which holds that peer's purge lock around it.
+	 *
+	 * `queued` says this purge waited for another purge of the same peer to finish, and so
+	 * arrives with a decision that is at least that old.
+	 */
+	private async runPurge(peerID: string, reason: string, epoch: number, mode: PeerPurgeMode, queued: boolean): Promise<void> {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return;
-		this.bootstrapPeerIDs.delete(peerID);
-		// Drop the peer's addrs from the autodial registry too — otherwise the
-		// zero-connection recovery loop would keep dialing addrs of an identity we just
-		// proved dead, and the registry would grow until stop().
-		for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) this.forgetBootstrapAddress(key);
-		// Remove from the gossipsub never-PRUNE direct set, or gossipsub keeps
-		// attempting a direct stream to the dead peer every directConnectTicks.
-		const gossipsub: any = this.pubsub;
-		if (gossipsub?.direct && typeof gossipsub.direct.delete === 'function') gossipsub.direct.delete(peerID);
-		this.redialBackoff.delete(peerID);
 		try {
 			const pid = peerIDFromString(peerID);
+			// Every caller settles the condition to purge on — no connections, no address left
+			// that has not been disproved — right before it calls, and the purge acting on a
+			// connection that appeared since is what the close loop and the healing below are
+			// for. `queued` is the one case that is not covered by them: this purge waited on
+			// another purge of the SAME peer, for however long that one took, so its decision
+			// is as old as that wait. The purge ahead can have found the peer connected again
+			// and healed it — correctly — and this one would then close that very connection
+			// and delete the peer on the strength of an answer nobody re-asked.
+			//
+			// Suppression is what separates the two kinds of purge. An OPPORTUNISTIC one —
+			// identity mismatch, no reachable address, too many dial failures — exists only
+			// because the peer looked gone, and a live connection disproves it. A COMMANDED one
+			// — leave-network, or a keep-alive write that raced a cleanup — claims suppression
+			// before it purges and means the peer gone whether it is connected or not, so it
+			// still runs. Healing rather than simply returning covers the other order too: if
+			// the purge ahead deleted the peer and the connection arrived after it, the state
+			// this one would have rebuilt at the end is rebuilt here instead.
+			if (queued && node.getConnections(pid).length > 0 && !this.isRedialSuppressed(peerID)) {
+				trace(`[NET] queued purge of ${peerID.slice(0, 16)}… dropped, the peer is connected again (reason was: ${reason})`);
+				await this.restorePurgedPeerState(node, pid, epoch, null, false);
+				return;
+			}
+			this.bootstrapPeerIDs.delete(peerID);
+			// Drop the peer's addrs from the autodial registry too — otherwise the
+			// zero-connection recovery loop would keep dialing addrs of an identity we just
+			// proved dead, and the registry would grow until stop().
+			for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) this.forgetBootstrapAddress(key);
+			// Remove from the gossipsub never-PRUNE direct set, or gossipsub keeps
+			// attempting a direct stream to the dead peer every directConnectTicks.
+			const gossipsub: any = this.pubsub;
+			if (gossipsub?.direct && typeof gossipsub.direct.delete === 'function') gossipsub.direct.delete(peerID);
+			this.redialBackoff.delete(peerID);
 			// Drop existing connections so libp2p considers the entry fully gone.
 			const conns = node.getConnections(pid);
 			for (const c of conns) {
