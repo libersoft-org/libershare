@@ -239,6 +239,22 @@ describe('runRedialMaintenance — failures either side of a no-route stretch', 
 		expect((network as any).redialBackoff.get(PEER_ID).evictionFails).toBe(1);
 	});
 
+	it('does not purge one that sat in a backoff for the whole no-route stretch', async () => {
+		// The realistic shape, and the one an early `continue` on the backoff gate hides:
+		// by the seventh failure the backoff is already at its 10-min cap, so EVERY tick
+		// of the outage falls inside it. Reach the no-route reset only after that gate and
+		// the outage leaves no trace, and the first blip once the route is back evicts.
+		const { network, purged } = bareNetwork();
+		(network as any).redialBackoff.set(PEER_ID, { nextAttempt: Date.now() + 10 * 60_000, failCount: 7, firstFailure: Date.now() - 45 * 60_000, evictionFails: 7 });
+		for (let tick = 0; tick < 5; tick++) await run(network, []); // route gone, peer parked in backoff
+		// The backoff comes due while the route is still down; only then does it return.
+		const parked = (network as any).redialBackoff.get(PEER_ID);
+		(network as any).redialBackoff.set(PEER_ID, { ...parked, nextAttempt: Date.now() - 1 });
+		await run(network, ROUTABLE); // back, and the live peer blips once
+		expect(purged).toEqual([]);
+		expect((network as any).redialBackoff.get(PEER_ID).evictionFails).toBe(1);
+	});
+
 	it('keeps the backoff pacing across the no-route stretch', async () => {
 		// Forgetting failCount here would re-dial every parked peer from a 30 s backoff
 		// the moment a route came back.

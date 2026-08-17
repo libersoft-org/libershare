@@ -1246,14 +1246,17 @@ export class Network {
 				continue;
 			}
 			const bo = this.redialBackoff.get(pid);
-			if (bo && bo.nextAttempt > now) {
-				skippedBackoff++;
-				continue;
-			}
 			// Pre-filter peerStore multiaddrs through the dial gater. If every
 			// known address is unreachable from this node (e.g. only LAN addrs
 			// of a foreign subnet), skip the dial entirely — otherwise libp2p
 			// returns "no valid addresses" after still spending a slot on us.
+			//
+			// Deliberately ahead of the backoff gate below: a peer waiting out a
+			// backoff is precisely the one the reset has to reach, since it carries
+			// the accumulated window that would evict it on the first failure after
+			// the route returns. The cost is one gater pass per parked peer per tick
+			// — address parsing and integer compares against a cached CIDR list,
+			// nothing next to the 5 s dial it guards.
 			const entries = peer.addresses ?? [];
 			const reachable: string[] = [];
 			for (const a of entries) {
@@ -1278,12 +1281,16 @@ export class Network {
 				// means CONTINUOUS unreachability of the peer, and nothing observed while we
 				// had no route to it can be attributed to the peer — so the run of failures
 				// ends here and a fresh window starts once a route returns. Re-stamped on
-				// every no-route tick, which costs one map write and keeps the restart point
-				// at the end of the outage rather than its beginning. Pacing (nextAttempt,
-				// failCount) is deliberately kept: the peer still is not answering, and
-				// dropping it would dial every parked peer at once the moment a route
-				// appears.
+				// every tick that finds no route — backoff or not, see the ordering note
+				// above — which costs one map write and keeps the restart point at the end
+				// of the outage rather than its beginning. Pacing (nextAttempt, failCount)
+				// is deliberately kept: the peer still is not answering, and dropping it
+				// would dial every parked peer at once the moment a route appears.
 				if (bo) this.redialBackoff.set(pid, { ...bo, firstFailure: now, evictionFails: 0 });
+				continue;
+			}
+			if (bo && bo.nextAttempt > now) {
+				skippedBackoff++;
 				continue;
 			}
 			candidates.push({ peer, pid, addrSummary: reachable.join(' | '), failCount: bo?.failCount ?? 0 });
