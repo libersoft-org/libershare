@@ -73,6 +73,28 @@ describe('windowsApplyIPv4Command, executed', () => {
 		expect(result.addresses.map(a => a.Stores)).toEqual([['PersistentStore']]);
 	});
 
+	// The form posts the whole configuration whichever field was edited, so the
+	// ordinary apply is a DNS-only one. Undoing a failed resolver write by clearing
+	// every address and default route and rebuilding them changes store membership,
+	// route metrics and address types on an interface nobody asked to re-address.
+	it.skipIf(windowsOnly)('touches no address or route when only the resolvers fail', async () => {
+		const host = staticHost(GUID, { failOn: 'Set-DnsClientServerAddress' });
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['198.51.100.53'] }), host);
+		expect(result.error).toContain('injected failure');
+		for (const destructive of ['Remove-NetIPAddress', 'Remove-NetRoute', 'New-NetIPAddress', 'New-NetRoute']) expect(result.calls.filter(call => call.startsWith(destructive))).toEqual([]);
+		// And the interface is exactly as it was found, metric included.
+		expect(result.addresses.map(a => a.IPAddress)).toEqual(['192.0.2.10']);
+		expect(result.routes.map(r => r.RouteMetric)).toEqual([25]);
+	});
+
+	// Duplicate address detection hangs off the same flag: with no new address there
+	// is nothing to wait for, and the wait would have been reading the old one.
+	it.skipIf(windowsOnly)('runs no duplicate address detection when nothing was created', async () => {
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['198.51.100.53'] }), staticHost(GUID));
+		expect(result.error).toBeNull();
+		expect(result.calls).toEqual(['Get-NetIPInterface', 'Get-NetIPAddress:ActiveStore', 'Get-NetIPAddress:PersistentStore', 'Get-NetRoute:ActiveStore', 'Get-NetRoute:PersistentStore', 'Get-ItemProperty', 'Set-DnsClientServerAddress:set']);
+	});
+
 	// Counted across both stores, and deduplicated: one address held in both is one
 	// address, while an interface whose second address exists only in the persistent
 	// store is still an interface this app cannot preserve.

@@ -709,10 +709,17 @@ function windowsSnapshotSteps(): string[] {
  * stores is re-created with no `-PolicyStore` at all, which is how it came to be
  * in both; one held in only one store names that store, so an active-only object
  * is not silently promoted to a persistent one that outlives the next boot.
+ *
+ * The addressing half is separate from {@link WINDOWS_RESTORE_DNS} because the two
+ * are not undone together. The resolvers are rewritten by every apply, so they are
+ * always put back; the addressing is rewritten only when it actually changed, and
+ * clearing an interface that was never touched in order to rebuild it is a
+ * destructive answer to a failure that did not involve it — see
+ * `$addressingChanged` in {@link windowsApplyIPv4Command}.
  */
-function windowsRestoreSteps(): string[] {
+function windowsRestoreAddressingSteps(): string[] {
 	const restoreStatic = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', ...restorePerStore('$a', '$oldActiveAddresses', '$oldPersistentAddresses', 'IPAddress', NEW_ADDRESS), ...restorePerStore('$r', '$oldActiveRoutes', '$oldPersistentRoutes', 'NextHop', NEW_ROUTE)].join('; ');
-	return [...windowsRemovalSteps(), `if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled } else { ${restoreStatic} }`, WINDOWS_RESTORE_DNS];
+	return [...windowsRemovalSteps(), `if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled } else { ${restoreStatic} }`];
 }
 
 /** Re-create an address out of the snapshot, minus the store it belongs in. */
@@ -922,6 +929,18 @@ export function windowsAddressStateWait(address: string): string {
  * That verification waits for duplicate address detection rather than merely
  * looking the object up — see {@link windowsAddressStateWait}.
  *
+ * `$addressingChanged` is what keeps the rollback proportionate to the change. A
+ * configuration whose address, prefix and gateway already match is not rewritten,
+ * and the settings form posts the whole configuration whichever field was edited —
+ * so the common apply is a DNS-only one that never touches the addressing. Undoing
+ * such a failure by clearing every address and default route and rebuilding them
+ * is destructive for nothing: it can alter store membership, a route's metric or
+ * an address's type, and it does so on an interface the user only changed the
+ * resolvers of. The flag is raised at the first destructive step, so the rollback
+ * repairs the addressing exactly when the apply disturbed it. Duplicate address
+ * detection hangs off the same flag — there is no new address to check when none
+ * was created.
+ *
  * Every interpolated value has been through the shared validator, so each one is
  * a dotted-quad literal, a small integer, or a GUID. No quoting rule protects
  * this string — the validation does.
@@ -931,15 +950,19 @@ export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): st
 	const removals = windowsRemovalSteps();
 	const mutation: string[] = [];
 	if (config.mode === 'dhcp') {
-		mutation.push(...removals, 'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses');
+		mutation.push('$addressingChanged = $true', ...removals, 'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses');
 	} else {
 		const gateway = config.gateway ? ` -DefaultGateway ${config.gateway}` : '';
 		const dns = config.dns ?? [];
-		const rewrite = [...removals, 'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`].join('; ');
-		mutation.push(windowsAddressingUnchanged(config), `if (-not $addressingUnchanged) { ${rewrite} }`, dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses', windowsAddressStateWait(config.address as string));
+		// The flag is set BEFORE the first removal, not after the last write: from that
+		// point on the interface is mid-change and the rollback has work to do however
+		// far the rewrite got.
+		const rewrite = ['$addressingChanged = $true', ...removals, 'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`].join('; ');
+		mutation.push(windowsAddressingUnchanged(config), `if (-not $addressingUnchanged) { ${rewrite} }`, dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses', `if ($addressingChanged) { ${windowsAddressStateWait(config.address as string)} }`);
 	}
-	const guarded = `try { ${mutation.join('; ')} } catch { $applyError = $_; try { ${windowsRestoreSteps().join('; ')} } catch { throw "the change failed ($($applyError.Exception.Message)) and rolling it back also failed ($($_.Exception.Message))" }; throw $applyError }`;
-	return [...preamble, ...windowsSnapshotSteps(), WINDOWS_ALIAS_GUARD, WINDOWS_ROUTE_GUARD, WINDOWS_ORIGIN_GUARD, guarded].join('; ');
+	const rollback = [`if ($addressingChanged) { ${windowsRestoreAddressingSteps().join('; ')} }`, WINDOWS_RESTORE_DNS].join('; ');
+	const guarded = `try { ${mutation.join('; ')} } catch { $applyError = $_; try { ${rollback} } catch { throw "the change failed ($($applyError.Exception.Message)) and rolling it back also failed ($($_.Exception.Message))" }; throw $applyError }`;
+	return [...preamble, ...windowsSnapshotSteps(), WINDOWS_ALIAS_GUARD, WINDOWS_ROUTE_GUARD, WINDOWS_ORIGIN_GUARD, '$addressingChanged = $false', guarded].join('; ');
 }
 
 /**
