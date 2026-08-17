@@ -28,18 +28,19 @@ export class Networks {
 	 */
 	private readonly networkOperations = new Map<string, Mutex>();
 	/**
-	 * Serialises every operation that can change WHICH lishnets exist — add, delete,
-	 * import/upsert, replace.
+	 * Taken by EVERY public write, before any per-ID lock.
 	 *
-	 * The per-ID locks cannot cover this on their own: a multi-network write has to know
-	 * which IDs it touches before it can lock them, so an ID created while it waited was
-	 * then reconciled without its lock held — a join and a leave of the same network
-	 * running at once, or a joined network left with no row to explain it.
+	 * Two things need it. A multi-network write has to know which IDs it touches before it
+	 * can lock them, so without this an ID created while it waited was reconciled with
+	 * nobody holding its lock — a join and a leave of one network at once, or a joined
+	 * network left with no row to explain it. And the writers must EXECUTE in the order
+	 * their revisions were claimed: acquiring a mutex is itself an await, so a writer that
+	 * had to pass through one extra gate reached the per-ID lock after a later request and
+	 * overwrote it. One gate for everyone keeps claim order and execution order the same.
 	 *
-	 * Lock order is always this mutex first, then the per-ID locks in sorted ID order.
-	 * Operations that only mutate an EXISTING network (setEnabled, update,
-	 * updateBootstrapPeers) take the per-ID lock alone and never reach for this one, so
-	 * no cycle is possible.
+	 * Lock order is always this mutex, then the per-ID locks in sorted ID order. Nothing
+	 * acquires them the other way round, so no cycle is possible. Lishnet writes are rare
+	 * user actions, so serialising them globally costs nothing worth measuring.
 	 */
 	private readonly catalogMutex = new Mutex();
 	/**
@@ -194,7 +195,7 @@ export class Networks {
 	 */
 	async setEnabled(id: string, enabled: boolean): Promise<boolean> {
 		const revision = this.claimRevision(id);
-		return await this.operationLock(id).runExclusive(async () => {
+		return await this.withCatalog(id, async () => {
 			if (!lishnetExists(this.db, id)) return false;
 			// Superseded before we got the lock: the newer request owns both the row and the
 			// runtime, and writing our value here would leave the database describing an
@@ -204,6 +205,15 @@ export class Networks {
 			await this.reconcileLocked(id, enabled, undefined, revision);
 			return true;
 		});
+	}
+
+	/**
+	 * The standard critical section for a write that touches ONE lishnet: the catalog
+	 * mutex, then that lishnet's own lock. See {@link catalogMutex} for why every writer
+	 * passes through the same two gates in the same order.
+	 */
+	private async withCatalog<T>(id: string, body: () => Promise<T>): Promise<T> {
+		return await this.catalogMutex.runExclusive(async () => await this.operationLock(id).runExclusive(body));
 	}
 
 	/** The lock guarding one lishnet's whole transition — see {@link networkOperations}. */
@@ -278,8 +288,15 @@ export class Networks {
 	 *
 	 * `previous` is the row as it was before the write, and is needed only to tell whether
 	 * the bootstrap list moved. Callers hold the lishnet's operation lock.
+	 *
+	 * `revision` is the one the CALLING request claimed synchronously at its public entry.
+	 * Minting a fresh one here instead inverted the user's intent across the write APIs: a
+	 * queued older update took the lock first, minted a revision newer than the setEnabled
+	 * that had arrived after it, and that setEnabled then found itself "stale" and wrote
+	 * nothing — while still answering success. Taking the originating revision makes the
+	 * older request stand down instead, which is what the revision system is for.
 	 */
-	private async reconcileStoredLocked(id: string, previous: LISHNetworkConfig | undefined): Promise<void> {
+	private async reconcileStoredLocked(id: string, previous: LISHNetworkConfig | undefined, revision: number): Promise<void> {
 		const next = this.get(id);
 		const wantJoined = next?.enabled === true;
 		const joined = this.joinedNetworks.has(id);
@@ -291,7 +308,7 @@ export class Networks {
 		if (!(joined && !wantJoined) && before.join('\n') !== after.join('\n')) this.syncBootstrapRuntime(id, previous?.bootstrapPeers ?? [], after);
 		// On the way out the leave does the whole cleanup, and it has to do it over the list
 		// this network was joined WITH — `previous` — because the new row is already written.
-		if (joined !== wantJoined) await this.reconcileLocked(id, wantJoined, !wantJoined && previous ? before : undefined, this.claimRevision(id));
+		if (joined !== wantJoined) await this.reconcileLocked(id, wantJoined, !wantJoined && previous ? before : undefined, revision);
 	}
 
 	/** True while `revision` is still the newest request for this lishnet. */
@@ -563,12 +580,14 @@ export class Networks {
 		const definition = this.validateNetwork(data);
 		const config: LISHNetworkConfig = { ...definition, enabled };
 		// An upsert can bring a network into existence — see {@link catalogMutex}.
-		await this.catalogMutex.runExclusive(async () => {
-			await this.operationLock(config.networkID).runExclusive(async () => {
-				const previous = this.get(config.networkID);
-				upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
-				await this.reconcileStoredLocked(config.networkID, previous);
-			});
+		// Claimed synchronously at the entry, like every other writer — even acquiring the
+		// catalog mutex is an await, and a request arriving during it would otherwise come
+		// out older than this one. See {@link reconcileStoredLocked}.
+		const revision = this.claimRevision(config.networkID);
+		await this.withCatalog(config.networkID, async () => {
+			const previous = this.get(config.networkID);
+			upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
+			await this.reconcileStoredLocked(config.networkID, previous, revision);
 		});
 		return config;
 	}
@@ -610,21 +629,26 @@ export class Networks {
 	}
 
 	async add(network: LISHNetworkConfig): Promise<boolean> {
-		return await this.catalogMutex.runExclusive(async () => {
-			return await this.operationLock(network.networkID).runExclusive(async () => {
-				const ok = addLISHnet(this.db, network);
-				// A network added as enabled has to be joined, not merely written down.
-				if (ok) await this.reconcileStoredLocked(network.networkID, undefined);
-				return ok;
-			});
+		const revision = this.claimRevision(network.networkID);
+		return await this.withCatalog(network.networkID, async () => {
+			const ok = addLISHnet(this.db, network);
+			// A network added as enabled has to be joined, not merely written down.
+			if (ok) await this.reconcileStoredLocked(network.networkID, undefined, revision);
+			return ok;
 		});
 	}
 
 	async update(network: LISHNetworkConfig): Promise<boolean> {
+		// Claimed synchronously, before the lock is awaited: an enable/disable arriving
+		// AFTER this edit must be the one that settles the runtime, whichever of the two
+		// reaches the lock first. The row write still happens either way — the field edits
+		// this form also carries are not the newer request's to discard — but the runtime
+		// change belongs to whoever holds the current revision.
+		const revision = this.claimRevision(network.networkID);
 		// Row read, write and runtime reconciliation in ONE critical section. With the
 		// write outside it, a toggle could slip between the two halves and settle the
 		// runtime against a row this edit was about to replace.
-		return await this.operationLock(network.networkID).runExclusive(async () => {
+		return await this.withCatalog(network.networkID, async () => {
 			const existing = this.get(network.networkID);
 			// Store the cleaned list, not the raw one: blank rows from the form would
 			// otherwise be persisted while the runtime worked from the filtered copy, and
@@ -636,7 +660,7 @@ export class Networks {
 			// reach only the database and the live node would keep dialing the previous list —
 			// or stay in a network the edit had just disabled — until restart.
 			if (!ok) return ok;
-			await this.reconcileStoredLocked(network.networkID, existing);
+			await this.reconcileStoredLocked(network.networkID, existing, revision);
 			return ok;
 		});
 	}
@@ -652,14 +676,12 @@ export class Networks {
 	 * queued finds no row and answers "not found" instead of rejoining a deleted network.
 	 */
 	async delete(id: string): Promise<boolean> {
-		return await this.catalogMutex.runExclusive(async () => {
-			return await this.operationLock(id).runExclusive(async () => {
-				if (!lishnetExists(this.db, id)) return false;
-				const previous = this.get(id);
-				setLISHnetEnabled(this.db, id, false);
-				await this.reconcileLocked(id, false, previous?.bootstrapPeers, undefined);
-				return deleteLISHnet(this.db, id);
-			});
+		return await this.withCatalog(id, async () => {
+			if (!lishnetExists(this.db, id)) return false;
+			const previous = this.get(id);
+			setLISHnetEnabled(this.db, id, false);
+			await this.reconcileLocked(id, false, previous?.bootstrapPeers, undefined);
+			return deleteLISHnet(this.db, id);
 		});
 	}
 
@@ -691,12 +713,18 @@ export class Networks {
 		// here is the list the per-ID locks below will actually cover. Reading it outside
 		// meant a network created while we waited was reconciled with nobody holding its
 		// lock, against the add that was still joining it.
+		// One revision per affected network, claimed synchronously at the entry so a request
+		// arriving later cannot come out older than this one. An ID that only exists once we
+		// hold the catalog mutex (an add queued ahead of us) is claimed there instead.
+		const revisions = new Map<string, number>();
+		for (const id of new Set([...this.list().map(n => n.networkID), ...networks.map(n => n.networkID)])) revisions.set(id, this.claimRevision(id));
 		await this.catalogMutex.runExclusive(async () => {
-			const affected = [...this.list().map(n => n.networkID), ...networks.map(n => n.networkID)];
+			const affected = [...new Set([...this.list().map(n => n.networkID), ...networks.map(n => n.networkID)])];
+			for (const id of affected) if (!revisions.has(id)) revisions.set(id, this.claimRevision(id));
 			await this.withNetworks(affected, async () => {
 				const before = new Map(this.list().map(n => [n.networkID, n]));
 				replaceLISHnets(this.db, networks);
-				for (const id of new Set([...before.keys(), ...networks.map(n => n.networkID)])) await this.reconcileStoredLocked(id, before.get(id));
+				for (const id of new Set([...before.keys(), ...networks.map(n => n.networkID)])) await this.reconcileStoredLocked(id, before.get(id), revisions.get(id) ?? this.claimRevision(id));
 			});
 		});
 	}
@@ -722,7 +750,7 @@ export class Networks {
 	 * recorded. Returns the updated config or null if the network is unknown.
 	 */
 	async updateBootstrapPeers(id: string, bootstrapPeers: string[]): Promise<LISHNetworkConfig | null> {
-		return await this.operationLock(id).runExclusive(() => {
+		return await this.withCatalog(id, async () => {
 			const existing = this.get(id);
 			if (!existing) return null;
 			const cleaned = Networks.cleanBootstrapList(bootstrapPeers);

@@ -102,7 +102,10 @@ describe('Networks.setEnabled — serialised per lishnet', () => {
 		const { networks, events } = makeNetworks(net, db, []);
 
 		const enabling = networks.setEnabled(NET, true);
-		await Promise.resolve();
+		// Enough turns for the enable to take its locks, subscribe, and park on the dial —
+		// the disable has to arrive with the join already half-done for this to mean
+		// anything.
+		for (let i = 0; i < 10; i++) await Promise.resolve();
 		// The user changes their mind while the bootstrap dial is still outstanding.
 		const disabling = networks.setEnabled(NET, false);
 		gate.resolve();
@@ -247,6 +250,88 @@ describe('Networks — operations that change the set of lishnets', () => {
 	async function settle(): Promise<void> {
 		for (let i = 0; i < 10; i++) await Promise.resolve();
 	}
+
+	/**
+	 * setEnabled claims its revision synchronously at the API entry, but the other writers
+	 * used to mint theirs inside the lock, after their own database write. An older update
+	 * therefore came out NEWER than a setEnabled that had arrived after it, and that
+	 * setEnabled stood down — writing nothing while still answering success. The user's
+	 * last request has to win, whichever API it came through.
+	 */
+	function rowOf(id: string) {
+		return { networkID: id, name: 'A', description: '', bootstrapPeers: [BOOTSTRAP], enabled: false, created: new Date().toISOString() };
+	}
+
+	it('a setEnabled issued after an update wins over it', async () => {
+		const gate = deferred();
+		net.dialGate = gate.promise;
+		const { networks } = makeNetworks(net, db, []);
+
+		// Something holds net-a's lock, so both writers below queue behind it.
+		const holdingA = networks.setEnabled(NET, true);
+		await settle();
+		const updating = networks.update({ ...rowOf(NET), name: 'renamed', enabled: false });
+		const enabling = networks.setEnabled(NET, true);
+
+		gate.resolve();
+		await Promise.all([holdingA, updating, enabling]);
+
+		expect(getLISHnet(db, NET)!.enabled).toBe(true);
+		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
+		// The edit's own field change is not the newer request's to discard.
+		expect(getLISHnet(db, NET)!.name).toBe('renamed');
+	});
+
+	it('an update issued after a setEnabled wins over it', async () => {
+		const gate = deferred();
+		net.dialGate = gate.promise;
+		const { networks } = makeNetworks(net, db, []);
+
+		const holdingA = networks.setEnabled(NET, true);
+		await settle();
+		const enabling = networks.setEnabled(NET, true);
+		const updating = networks.update({ ...rowOf(NET), enabled: false });
+
+		gate.resolve();
+		await Promise.all([holdingA, enabling, updating]);
+
+		expect(getLISHnet(db, NET)!.enabled).toBe(false);
+		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
+	});
+
+	it('a setEnabled issued after an import wins over it', async () => {
+		const gate = deferred();
+		net.dialGate = gate.promise;
+		const { networks } = makeNetworks(net, db, []);
+
+		const holdingA = networks.setEnabled(NET, true);
+		await settle();
+		const importing = networks.importFromLISHnet({ networkID: NET, name: 'A', description: '', bootstrapPeers: [BOOTSTRAP], created: new Date().toISOString() } as any, false);
+		const enabling = networks.setEnabled(NET, true);
+
+		gate.resolve();
+		await Promise.all([holdingA, importing, enabling]);
+
+		expect(getLISHnet(db, NET)!.enabled).toBe(true);
+		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
+	});
+
+	it('a setEnabled issued after a replace wins over it', async () => {
+		const gate = deferred();
+		net.dialGate = gate.promise;
+		const { networks } = makeNetworks(net, db, []);
+
+		const holdingA = networks.setEnabled(NET, true);
+		await settle();
+		const replacing = networks.replace([rowOf(NET)]);
+		const enabling = networks.setEnabled(NET, true);
+
+		gate.resolve();
+		await Promise.all([holdingA, replacing, enabling]);
+
+		expect(getLISHnet(db, NET)!.enabled).toBe(true);
+		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
+	});
 
 	it('a network added while replace waits is not wiped out behind its back', async () => {
 		const gate = deferred();
