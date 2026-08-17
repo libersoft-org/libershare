@@ -2,7 +2,7 @@ import { mkdir, readdir, rm, stat } from 'fs/promises';
 import { rmSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
-import { CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, formatBytes, sanitizeFilename } from '@shared';
+import { CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, formatBytes, sanitizeFilename } from '@shared';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 
@@ -133,6 +133,13 @@ export function initUploadHandlers(dataDir: string, maxUploadSize: number = MAX_
 		if (!(p.data instanceof Uint8Array)) {
 			await discard(p.uploadID);
 			throw new CodedError(ErrorCodes.UPLOAD_INVALID_CHUNK, typeof p.data);
+		}
+		// The chunk size is a protocol rule, not a frontend preference: without it
+		// one client can send a whole file as a single frame, which is exactly the
+		// allocation the chunking was introduced to avoid.
+		if (p.data.byteLength > MAX_UPLOAD_CHUNK_SIZE) {
+			await discard(p.uploadID);
+			throw new CodedError(ErrorCodes.UPLOAD_CHUNK_TOO_LARGE, formatBytes(MAX_UPLOAD_CHUNK_SIZE));
 		}
 		const nextWritten = upload.written + p.data.byteLength;
 		// Enforced as the bytes arrive rather than from a declared total, which a

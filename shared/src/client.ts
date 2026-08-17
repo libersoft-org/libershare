@@ -1,5 +1,5 @@
 import { CodedError, ErrorCodes } from './errors.ts';
-import { MAX_API_MESSAGE_SIZE } from './product.ts';
+import { MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE } from './product.ts';
 import { formatBytes } from './utils.ts';
 
 type EventCallback = (data: any) => void;
@@ -153,11 +153,15 @@ export class WsClient {
 		await this.ensureConnected();
 		const id = crypto.randomUUID();
 		const header = new TextEncoder().encode(JSON.stringify({ id, method, params }));
+		// Both limits are checked before the frame is allocated: building a copy of
+		// an oversized payload only to reject it doubles the peak memory of the very
+		// case the limit exists to prevent.
+		if (payload.byteLength > MAX_UPLOAD_CHUNK_SIZE) throw new CodedError(ErrorCodes.UPLOAD_CHUNK_TOO_LARGE, formatBytes(MAX_UPLOAD_CHUNK_SIZE));
+		if (4 + header.byteLength + payload.byteLength > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.MESSAGE_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
 		const frame = new Uint8Array(4 + header.byteLength + payload.byteLength);
 		new DataView(frame.buffer).setUint32(0, header.byteLength);
 		frame.set(header, 4);
 		frame.set(payload, 4 + header.byteLength);
-		if (frame.byteLength > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.MESSAGE_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
 		return new Promise<T>((resolve, reject) => {
 			this.pendingRequests.set(id, { resolve, reject });
 			this.ws!.send(frame);

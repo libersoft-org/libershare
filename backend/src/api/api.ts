@@ -3,7 +3,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import type { PeerCountEntry } from '../protocol/network.ts';
 import { type Settings } from '../settings.ts';
-import { CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE } from '@shared';
+import { CodedError, type ErrorCode, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, formatBytes } from '@shared';
 import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
@@ -71,6 +71,29 @@ export function formatParamsForLog(params: unknown): string {
 const BINARY_HEADER_PREFIX = 4;
 
 /**
+ * Largest JSON header accepted on a binary frame. The header is a short
+ * `{ id, method, params }` envelope — 64 KiB is orders of magnitude more than
+ * one needs, and the cap stops a frame from forcing a huge `TextDecoder` pass
+ * and `JSON.parse` before anything about it has been validated.
+ */
+export const MAX_BINARY_HEADER_SIZE: number = 64 * 1024;
+
+/**
+ * A binary frame rejected after its header was understood, so the reply can
+ * still carry the request id. Without the id the caller's promise is never
+ * settled by anything but a socket close, since responses are correlated by id
+ * alone.
+ */
+export class BinaryFrameError extends CodedError {
+	readonly requestID: string | null;
+
+	constructor(code: ErrorCode, detail: string, requestID: string | null) {
+		super(code, detail);
+		this.requestID = requestID;
+	}
+}
+
+/**
  * Decode a binary request frame, laid out as
  * `[uint32 BE header length][header JSON][payload]`. The header is the same
  * `{ id, method, params }` object a text request carries, so the frame is
@@ -87,9 +110,17 @@ const BINARY_HEADER_PREFIX = 4;
 export function decodeBinaryRequest(frame: Uint8Array): Request {
 	if (frame.byteLength < BINARY_HEADER_PREFIX) throw new CodedError(ErrorCodes.PARSE_ERROR);
 	const headerLength = new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getUint32(0);
+	// Both bounds are checked before any decoding or copying: the transport
+	// allows a frame far bigger than any legitimate chunk, and an oversized one
+	// must cost a length comparison rather than a full second copy of itself.
+	if (headerLength > MAX_BINARY_HEADER_SIZE) throw new CodedError(ErrorCodes.PARSE_ERROR);
 	const payloadStart = BINARY_HEADER_PREFIX + headerLength;
 	if (payloadStart > frame.byteLength) throw new CodedError(ErrorCodes.PARSE_ERROR);
+	// The header is bounded and cheap, so it is parsed first — that way an
+	// oversized payload is still rejected with the id the caller is waiting on.
 	const req = JSON.parse(new TextDecoder().decode(frame.subarray(BINARY_HEADER_PREFIX, payloadStart))) as Request;
+	// Checked before the copy below, which is the allocation worth avoiding.
+	if (frame.byteLength - payloadStart > MAX_UPLOAD_CHUNK_SIZE) throw new BinaryFrameError(ErrorCodes.UPLOAD_CHUNK_TOO_LARGE, formatBytes(MAX_UPLOAD_CHUNK_SIZE), req.id ?? null);
 	req.params = { ...req.params, data: new Uint8Array(frame.subarray(payloadStart)) };
 	return req;
 }
@@ -423,8 +454,14 @@ export class APIServer {
 		let req: Request;
 		try {
 			req = typeof message === 'string' ? JSON.parse(message) : decodeBinaryRequest(message);
-		} catch {
-			client.send(JSON.stringify({ id: null, error: ErrorCodes.PARSE_ERROR }));
+		} catch (err) {
+			// A frame rejected on a real limit reports that limit rather than a
+			// blanket parse failure, and carries the request id when the decoder got
+			// far enough to read one — otherwise the caller waits for a reply that
+			// can never be matched to it.
+			const coded = err instanceof CodedError ? err : null;
+			const id = err instanceof BinaryFrameError ? err.requestID : null;
+			client.send(JSON.stringify({ id, error: coded?.code ?? ErrorCodes.PARSE_ERROR, ...(coded?.detail !== undefined && { errorDetail: coded.detail }) }));
 			return;
 		}
 

@@ -2,10 +2,13 @@ import { describe, expect, it, afterAll } from 'bun:test';
 import { readdir, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { decodeBinaryRequest } from '../../../src/api/api.ts';
+import { BinaryFrameError, MAX_BINARY_HEADER_SIZE, decodeBinaryRequest } from '../../../src/api/api.ts';
 import { initUploadHandlers, uploadFileName } from '../../../src/api/upload.ts';
 import { Utils } from '../../../src/utils.ts';
-import { COMPRESSION_ALGORITHMS, CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, WsClient, compressionExtension, detectCompression } from '@shared';
+import { COMPRESSION_ALGORITHMS, CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, WsClient, compressionExtension, detectCompression } from '@shared';
+
+/** Byte length of the header-length prefix on a binary request frame. */
+const BINARY_HEADER_PREFIX = 4;
 
 const tempFiles: string[] = [];
 const tempDirs: string[] = [];
@@ -100,6 +103,23 @@ describe('decodeBinaryRequest', () => {
 		expect(Array.from(req.params?.['data'] as Uint8Array)).toEqual([1, 2, 3]);
 	});
 
+	it('rejects a payload larger than one chunk before copying it', () => {
+		const payload = new Uint8Array(MAX_UPLOAD_CHUNK_SIZE + 1);
+		expect(() => decodeBinaryRequest(frame({ id: 'x', method: 'upload.chunk', params: {} }, payload))).toThrow(ErrorCodes.UPLOAD_CHUNK_TOO_LARGE);
+	});
+
+	it('accepts a payload of exactly one chunk', () => {
+		const payload = new Uint8Array(MAX_UPLOAD_CHUNK_SIZE);
+		expect(decodeBinaryRequest(frame({ id: 'x', method: 'upload.chunk', params: {} }, payload)).params?.['data'].byteLength).toBe(MAX_UPLOAD_CHUNK_SIZE);
+	});
+
+	it('rejects an oversized json header before decoding it', () => {
+		// The length prefix alone decides this — the header bytes are never read.
+		const bad = new Uint8Array(BINARY_HEADER_PREFIX + 8);
+		new DataView(bad.buffer).setUint32(0, MAX_BINARY_HEADER_SIZE + 1);
+		expect(() => decodeBinaryRequest(bad)).toThrow(ErrorCodes.PARSE_ERROR);
+	});
+
 	it('rejects a frame too short to hold a length prefix', () => {
 		expect(() => decodeBinaryRequest(new Uint8Array([1, 2]))).toThrow(ErrorCodes.PARSE_ERROR);
 	});
@@ -140,8 +160,10 @@ function startUploadServer(maxUploadSize?: number): { url: string; dataDir: stri
 				let req;
 				try {
 					req = typeof message === 'string' ? JSON.parse(message) : decodeBinaryRequest(message);
-				} catch {
-					ws.send(JSON.stringify({ id: null, error: ErrorCodes.PARSE_ERROR }));
+				} catch (err: any) {
+					const coded = err instanceof CodedError ? err : null;
+					const id = err instanceof BinaryFrameError ? err.requestID : null;
+					ws.send(JSON.stringify({ id, error: coded?.code ?? ErrorCodes.PARSE_ERROR, errorDetail: coded?.detail }));
 					return;
 				}
 				try {
@@ -174,6 +196,32 @@ async function expectRejection(promise: Promise<unknown>, code: string): Promise
 		thrown = err;
 	}
 	expect(thrown?.code).toBe(code);
+}
+
+/**
+ * Send one binary frame over a bare WebSocket and return the `error` code from
+ * the reply. Bypasses {@link WsClient}, which enforces its own limits before
+ * sending — the point here is what the server does with a frame no cooperating
+ * client would produce.
+ */
+async function rawBinaryCall(url: string, header: object, payload: Uint8Array): Promise<any> {
+	const encoded = new TextEncoder().encode(JSON.stringify(header));
+	const out = new Uint8Array(4 + encoded.byteLength + payload.byteLength);
+	new DataView(out.buffer).setUint32(0, encoded.byteLength);
+	out.set(encoded, 4);
+	out.set(payload, 4 + encoded.byteLength);
+	const ws = new WebSocket(url);
+	try {
+		await new Promise<void>((resolve, reject) => {
+			ws.onopen = () => resolve();
+			ws.onerror = () => reject(new Error('raw socket failed to open'));
+		});
+		const reply = new Promise<any>(resolve => (ws.onmessage = e => resolve(JSON.parse(String(e.data)))));
+		ws.send(out);
+		return await reply;
+	} finally {
+		ws.close();
+	}
 }
 
 /** Deterministic bytes whose value depends on position, so truncation or reordering shows up. */
@@ -333,6 +381,25 @@ describe('chunked upload over the websocket', () => {
 			srv.stop();
 		}
 	});
+
+	it('refuses an oversized chunk sent by a client that ignores the limit', async () => {
+		const srv = startUploadServer();
+		const client = new WsClient(srv.url, () => {});
+		try {
+			const { uploadID } = await client.call<{ uploadID: string }>('upload.begin', { name: 'fat.lish' });
+			// The shared client refuses to build this frame, so the server side is
+			// only reachable over a raw socket — which is exactly what a client that
+			// does not cooperate looks like.
+			const reply = await rawBinaryCall(srv.url, { id: 'raw', method: 'upload.chunk', params: { uploadID } }, new Uint8Array(MAX_UPLOAD_CHUNK_SIZE + 1));
+			expect(reply.error).toBe(ErrorCodes.UPLOAD_CHUNK_TOO_LARGE);
+			// The id comes back, so the caller's promise is rejected rather than
+			// left waiting for a reply it can never correlate.
+			expect(reply.id).toBe('raw');
+		} finally {
+			client.stopReconnect();
+			srv.stop();
+		}
+	}, 30000);
 
 	it('rejects a chunk for an upload id nobody started', async () => {
 		const srv = startUploadServer();

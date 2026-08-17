@@ -1,5 +1,5 @@
 import { get, writable } from 'svelte/store';
-import { WsClient, CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, formatBytes } from '@shared';
+import { WsClient, CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, formatBytes } from '@shared';
 import { addNotification } from './notifications.ts';
 import { tt } from './language.ts';
 import { getAPIURL } from './api-url.ts';
@@ -117,10 +117,10 @@ wsClient.onError = () => {
 void checkBackendStatus();
 
 /**
- * Bytes per chunk. Twenty-five round trips for a 100 MB import, and small enough
- * that a chunk is nowhere near the frame limit however the envelope grows.
+ * Bytes per chunk. Shared with the backend, which enforces it: this is the
+ * protocol's chunk size, not a local preference.
  */
-const UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024;
+const UPLOAD_CHUNK_SIZE = MAX_UPLOAD_CHUNK_SIZE;
 
 /**
  * Send a locally picked file to the backend in chunks over the API WebSocket and

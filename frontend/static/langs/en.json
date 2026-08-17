@@ -69,6 +69,7 @@
 		"errorUploadNotFound": "The upload is no longer available. Please select the file again",
 		"errorTooManyUploads": "Too many uploads are running at once (maximum {detail})",
 		"errorUploadInvalidChunk": "The upload sent an invalid chunk of data",
+		"errorUploadChunkTooLarge": "A single upload chunk may not exceed {detail}",
 		"errorParseError": "Invalid request format",
 		"errorMethodRequired": "Method is required",
 		"errorUnknownMethod": "Unknown method: {detail}",

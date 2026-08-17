@@ -69,6 +69,7 @@
 		"errorUploadNotFound": "Nahrávaný soubor už není k dispozici. Vyberte soubor znovu",
 		"errorTooManyUploads": "Souběžně běží příliš mnoho nahrávání (maximum {detail})",
 		"errorUploadInvalidChunk": "Nahrávání odeslalo neplatnou část dat",
+		"errorUploadChunkTooLarge": "Jedna část nahrávaného souboru nesmí přesáhnout {detail}",
 		"errorParseError": "Neplatný formát požadavku",
 		"errorMethodRequired": "Metoda je povinná",
 		"errorUnknownMethod": "Neznámá metoda: {detail}",
