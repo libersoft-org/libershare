@@ -196,6 +196,32 @@ describe('isValidWifiKey', () => {
 	it('rejects a non-string rather than throwing', () => {
 		for (const bogus of [null, undefined, 42, ['secret']]) expect(isValidWifiKey(bogus as unknown as string)).toBe(false);
 	});
+
+	it('counts octets rather than UTF-16 code units', () => {
+		// 802.11i measures the passphrase in octets. 32 two-byte characters are 64
+		// of them and overflow the field, even though `.length` says 32.
+		expect(isValidWifiKey('ě'.repeat(32))).toBe(false);
+		expect(isValidWifiKey('ě'.repeat(31))).toBe(true);
+		// ...and four of them are still only 8 octets, so the lower bound holds too.
+		expect(isValidWifiKey('ě'.repeat(4))).toBe(true);
+		expect(isValidWifiKey('ě'.repeat(3))).toBe(false);
+	});
+
+	it('rejects control characters, which no join path can carry', () => {
+		// A NUL ends a Win32 LPCWSTR mid-key and the Windows profile is XML, which
+		// cannot carry most of the C0 range at all.
+		for (const code of [0x00, 0x09, 0x0a, 0x0d, 0x1b, 0x7f, 0x85]) expect(isValidWifiKey(`passw${String.fromCharCode(code)}ord`)).toBe(false);
+	});
+
+	it('refuses a raw 64-hex pre-shared key under WPA3 SAE', () => {
+		// SAE derives its key from a passphrase. A profile announcing 64 hex digits
+		// as SAE key material is written, accepted, and then never authenticates.
+		const psk = '0123456789abcdef'.repeat(4);
+		expect(isValidWifiKey(psk, false)).toBe(true);
+		expect(isValidWifiKey(psk, true)).toBe(false);
+		// A genuine passphrase is acceptable under either mechanism.
+		expect(isValidWifiKey('correct horse', true)).toBe(true);
+	});
 });
 
 describe('isWifiHexKey', () => {

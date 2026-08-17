@@ -196,18 +196,36 @@ export function isWifiHexKey(key: string): boolean {
 /**
  * True for a credential a WPA2/WPA3 personal network can actually accept.
  *
- * IEEE 802.11i, and the Microsoft WLAN profile schema with it, allow either a
- * passphrase of 8 to 63 characters or the 64-hex raw key above. Anything
- * shorter, longer or in between is refused here rather than by the supplicant:
- * on Windows the profile is written to disk BEFORE the association is
- * attempted, so a credential that could never work would replace a saved
- * network's real one on its way to failing.
+ * Three separate constraints, and the previous `key.length >= 8 && <= 63` met
+ * none of them exactly:
+ *
+ *  - IEEE 802.11i measures a passphrase in OCTETS, not in JavaScript characters.
+ *    A 40-character passphrase of accented letters is 60-80 bytes, so counting
+ *    `.length` accepted credentials that overflow the field and are then
+ *    truncated or rejected by the supplicant.
+ *  - A control character is never part of an intended passphrase and is actively
+ *    harmful on the way to one: a NUL ends a Win32 `LPCWSTR` mid-key, and the
+ *    Windows profile is XML, which cannot carry most of the C0 range at all.
+ *  - The 64-hex form is a raw 256-bit PSK, which is a WPA/WPA2 construct. WPA3
+ *    SAE derives its key from a passphrase instead, so a profile announcing 64
+ *    hex digits as SAE key material is written, accepted, and then simply never
+ *    authenticates. `sae` is passed by the caller that knows which mechanism the
+ *    access point actually advertises.
+ *
+ * Checked before anything is written, because on Windows the profile lands on
+ * disk BEFORE the association is attempted — a credential that could never work
+ * would replace a saved network's real one purely on its way to failing.
  */
-export function isValidWifiKey(key: string): boolean {
+export function isValidWifiKey(key: string, sae: boolean = false): boolean {
 	if (typeof key !== 'string') return false;
-	if (isWifiHexKey(key)) return true;
-	return key.length >= 8 && key.length <= 63;
+	if (isWifiHexKey(key)) return !sae;
+	if (WIFI_KEY_FORBIDDEN.test(key)) return false;
+	const octets = new TextEncoder().encode(key).length;
+	return octets >= 8 && octets <= 63;
 }
+
+/** Every C0 and C1 control character, plus DEL. None of them belongs in a passphrase. */
+const WIFI_KEY_FORBIDDEN = /[\u0000-\u001f\u007f-\u009f]/;
 
 // Sanitize filename - remove invalid characters and normalize spaces
 export function sanitizeFilename(filename: string): string {
