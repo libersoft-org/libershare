@@ -2,7 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
 import { Network, isRecoveryDialDue, isSameDialEndpoint, normalizeMultiaddrForCompare, type IBootstrapEntry } from '../../../src/protocol/network.ts';
 import { installBootstrapRegistry, registryAddresses, type IRegistrySeed } from '../helpers/bootstrap-registry.ts';
-import { createEmptyPeerStore, createRealPeerStore, storedAddresses, FaultyDatastore, SnapshotBarrierDatastore } from '../helpers/real-peer-store.ts';
+import { createEmptyPeerStore, createRealPeerStore, storedAddresses, storedPeerRows, FaultyDatastore, SnapshotBarrierDatastore } from '../helpers/real-peer-store.ts';
 import { peerIdFromString } from '@libp2p/peer-id';
 import { KEEP_ALIVE } from '@libp2p/interface';
 import { createLibp2p } from 'libp2p';
@@ -1882,27 +1882,54 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 describe('peerStore.all — an expired snapshot must not delete a fresh record', () => {
 	const ADDR = `/ip4/203.0.113.41/tcp/9090/p2p/${PEER_ID}`;
 
+	/**
+	 * The walker's record window. Long enough that a record rewritten during the sweep is
+	 * unambiguously fresh when the sweep re-reads it, short enough to age the original out
+	 * with a real wait. The address window stays at 1ms: an address keeps its original
+	 * observation time across a rewrite, so only `updated` can tell the two apart.
+	 */
+	const MAX_PEER_AGE = 150;
+
 	it('keeps a record rewritten after the snapshot was taken', async () => {
 		const datastore = new SnapshotBarrierDatastore();
 		// Two stores over ONE datastore: the writer works with ordinary ages, the walker
-		// stands in for the timer sweep and reads everything it snapshots as long expired.
-		// Two stores rather than one precisely because `all()` takes no per-peer lock —
-		// there is nothing for the writer to wait on, which is the whole bug.
+		// stands in for the timer sweep with a window the original write has already left.
+		// Two stores rather than one precisely because `all()` takes no per-peer lock of
+		// its own to begin with — there was nothing for the writer to wait on.
 		const writer = createEmptyPeerStore(datastore);
-		const walker = createEmptyPeerStore(datastore, { maxPeerAge: 1, maxAddressAge: 1 });
+		const walker = createEmptyPeerStore(datastore, { maxPeerAge: MAX_PEER_AGE, maxAddressAge: 1 });
 		const pid = peerIdFromString(PEER_ID);
 		await writer.patch(pid, { multiaddrs: [multiaddr(ADDR)] });
 		// `#peerIsExpired` needs the record AND its addresses to be older than the walker's
 		// ages, both of which are stamped at write time — so the snapshot has to be taken
 		// after a real gap, or nothing in it reads as expired and the test proves nothing.
-		await new Promise(resolve => setTimeout(resolve, 20));
+		await new Promise(resolve => setTimeout(resolve, MAX_PEER_AGE + 50));
 		datastore.onSnapshot = async (): Promise<void> => {
 			await writer.merge(pid, { multiaddrs: [multiaddr(ADDR)], tags: { [KEEP_ALIVE]: { value: 1 } } });
 		};
 		await walker.all();
+		expect(await storedPeerRows(datastore)).toHaveLength(1);
 		expect(await writer.has(pid)).toBe(true);
 		// The reconnect queue runs off this tag, so losing the record is not cosmetic.
 		expect([...(await writer.get(pid)).tags.keys()]).toEqual([KEEP_ALIVE]);
+	});
+
+	it('deletes a row that is still expired when the sweep re-reads it', async () => {
+		// The other half of the same fix: skipping the delete closed the race but stopped
+		// the sweep collecting anything, and a peer that never comes back is never load()ed
+		// nor written again — its row would then sit in SQLite for good and be decoded on
+		// every tick.
+		const datastore = new MemoryDatastore();
+		const store = createEmptyPeerStore(datastore, { maxPeerAge: 1, maxAddressAge: 1 });
+		const pid = peerIdFromString(PEER_ID);
+		await store.patch(pid, { multiaddrs: [multiaddr(ADDR)] });
+		expect(await storedPeerRows(datastore)).toHaveLength(1);
+		await new Promise(resolve => setTimeout(resolve, 20));
+		await store.all();
+		// Asserted through the datastore, not `has()`: `load()` deletes an expired record on
+		// its own, so `has()` reads false whether the sweep collected the row or never
+		// touched it.
+		expect(await storedPeerRows(datastore)).toEqual([]);
 	});
 });
 

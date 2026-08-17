@@ -106,6 +106,19 @@ export class SnapshotBarrierDatastore extends MemoryDatastore {
 	}
 }
 
+/**
+ * The `/peers/...` rows the datastore PHYSICALLY holds, as key strings.
+ *
+ * `has()` and `get()` both go through `load()`, which deletes an expired record itself —
+ * so they answer "gone" for a row the expiry sweep never touched, and a sweep that stopped
+ * cleaning up entirely would still look healthy through them.
+ */
+export async function storedPeerRows(datastore: any): Promise<string[]> {
+	const keys: string[] = [];
+	for await (const { key } of datastore.query({ prefix: '/peers' })) keys.push(key.toString());
+	return keys;
+}
+
 /** An empty store. Every peer reads as absent until something is written for it. */
 export function createEmptyPeerStore(datastore: any = new MemoryDatastore(), init: Record<string, unknown> = {}): any {
 	return persistentPeerStore(
