@@ -1614,7 +1614,18 @@ export async function syncDirectory(dir: string): Promise<void> {
  * lets a second write truncate the first one's staging file and then rename it away, so
  * the first write publishes the second's content and the second fails with ENOENT.
  */
-export async function writeFileAtomically(path: string, content: string, readOriginal: (p: string) => Promise<string> = p => readFile(p, 'utf8'), syncDir: (dir: string) => Promise<void> = syncDirectory): Promise<() => Promise<boolean>> {
+/**
+ * What a rollback actually achieved.
+ *
+ * A boolean could not say this. Restoring is a rename (or an unlink) followed by a directory
+ * flush, and when only the flush fails the original file IS back on the visible filesystem —
+ * just not guaranteed to survive a power loss. Folded into `false`, that told the caller
+ * nothing had been restored, which was untrue, and cost the second restart that puts the
+ * daemon back onto the configuration it was running with.
+ */
+export type RollbackResult = { state: 'restored-durable' } | { state: 'restored-not-durable'; error: unknown } | { state: 'not-restored'; error: unknown };
+
+export async function writeFileAtomically(path: string, content: string, readOriginal: (p: string) => Promise<string> = p => readFile(p, 'utf8'), syncDir: (dir: string) => Promise<void> = syncDirectory): Promise<() => Promise<RollbackResult>> {
 	// ENOENT is the ONLY error that means "there was nothing here". Reading every other
 	// one — EACCES, EIO, EISDIR — as absence hands the rollback a `previous` of null, and
 	// null makes it DELETE the file: a permission fault on a live configuration would
@@ -1661,20 +1672,28 @@ export async function writeFileAtomically(path: string, content: string, readOri
 	// Reports whether the previous state is actually back. Swallowing that told the caller
 	// the host had been left as it was found while the new configuration was still on disk,
 	// to be adopted at the next boot — long after the user was told nothing had happened.
-	return async (): Promise<boolean> => {
+	return async (): Promise<RollbackResult> => {
+		// Set once the visible filesystem already holds the original state, so a directory
+		// flush failing after that point is a durability warning and not a failed restore.
+		let visible = false;
 		try {
 			if (previous !== null) await writeFileAtomically(path, previous, readOriginal, syncDir);
 			else {
 				// Already gone is the state being restored to, not a failure.
 				await unlink(path).catch((err: { code?: string }) => (err.code === 'ENOENT' ? undefined : Promise.reject(err)));
+				visible = true;
 				// The removal is a directory change like the rename was, and buffered the same
 				// way: without this a crash can bring the entry back and with it the drop-in
 				// this rollback exists to withdraw.
 				await syncDir(dirname(path));
 			}
-			return true;
-		} catch {
-			return false;
+			return { state: 'restored-durable' };
+		} catch (err) {
+			// The nested write marks its own published-but-unflushed failure the same way the
+			// outer one does, and it means the same thing here: the original content reached
+			// its final name and only the flush behind it did not.
+			if (visible || (err as { published?: boolean }).published === true) return { state: 'restored-not-durable', error: err };
+			return { state: 'not-restored', error: err };
 		}
 	};
 }
@@ -1687,8 +1706,8 @@ export async function writeFileAtomically(path: string, content: string, readOri
  * after the user was told nothing had happened. The daemon is restarted a second time
  * on that path so it also goes back to the configuration it was running with.
  *
- * `path` and `exec` are injectable so the rollback can be exercised without a systemd
- * host.
+ * `path`, `exec` and `syncDir` are injectable so the rollback — including a restore whose
+ * durability flush fails — can be exercised without a systemd host.
  *
  * The write, the restart and the rollback are one critical section
  * ({@link withSystemTimeLock}): a second request landing between the write and the
@@ -1696,11 +1715,11 @@ export async function writeFileAtomically(path: string, content: string, readOri
  * server that is no longer on disk, and a rollback interleaved that way restores an old
  * configuration over a newer successful write.
  */
-export async function applyTimesyncdDropIn(server: string, syncRunning: boolean, path: string = TIMESYNCD_DROPIN_PATH, exec: CommandRunner = run): Promise<SystemTimeResult> {
+export async function applyTimesyncdDropIn(server: string, syncRunning: boolean, path: string = TIMESYNCD_DROPIN_PATH, exec: CommandRunner = run, syncDir: (dir: string) => Promise<void> = syncDirectory): Promise<SystemTimeResult> {
 	return withSystemTimeLock(async () => {
-		let rollback: () => Promise<boolean>;
+		let rollback: () => Promise<RollbackResult>;
 		try {
-			rollback = await writeFileAtomically(path, buildTimesyncdDropIn(server));
+			rollback = await writeFileAtomically(path, buildTimesyncdDropIn(server), undefined, syncDir);
 		} catch (err) {
 			const e = err as { code?: string; message?: string; published?: boolean };
 			// The content reached its final name and only the flush afterwards failed, so this
@@ -1717,18 +1736,27 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
 		const r = await runAll('linux', commands, exec);
 		if (!r.success) {
 			const restored = await rollback();
+			const reason = r.message ?? 'the change could not be applied';
 			// Nothing is restarted onto a file that is not back. The restart loads whatever is
 			// on disk, and after a failed restore that is the new server — so retrying it here
 			// could SUCCEED and make the rejected configuration live, immediately, while the
 			// API answers that the change could not be applied and was not restored. Leaving
 			// the daemon alone keeps the failure to the file, which the message names.
-			if (!restored) return { ...r, message: `${r.message ?? 'the change could not be applied'} (and ${path} still holds the new server — it could not be restored, so systemd-timesyncd was left as it is and the host will adopt that server at the next start)` };
+			if (restored.state === 'not-restored') return { ...r, message: `${reason} (and ${path} still holds the new server — it could not be restored, so systemd-timesyncd was left as it is and the host will adopt that server at the next start)` };
+			// Both restored states get the restart: the visible file is the original one either
+			// way, and only its durability is in question. Skipping it over a failed flush left
+			// the daemon stopped, or running the configuration just withdrawn, while the file
+			// on disk was in fact the old one.
+			//
 			// The daemon has to be put back onto the restored file for the rollback to mean
 			// anything, so this restart is part of it and its outcome is part of the answer.
-			// Discarded, a rollback that put the file back and left the daemon down — or still
-			// running the configuration that was just withdrawn — reported as a clean undo.
+			// Discarded, a rollback that put the file back and left the daemon down reported as
+			// a clean undo.
 			const back = await runAll('linux', commands, exec);
-			if (!back.success) return { ...r, message: `${r.message ?? 'the change could not be applied'} (${path} was restored, but systemd-timesyncd could not be restarted onto it)` };
+			const caveats: string[] = [];
+			if (!back.success) caveats.push('systemd-timesyncd could not be restarted onto it');
+			if (restored.state === 'restored-not-durable') caveats.push('the restore could not be flushed to disk, so it may not survive a crash or a power loss');
+			if (caveats.length > 0) return { ...r, message: `${reason} (${path} was restored, but ${caveats.join(', and ')})` };
 		}
 		return r;
 	});

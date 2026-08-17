@@ -1660,7 +1660,7 @@ describe('writeFileAtomically', () => {
 			p => readFile(p, 'utf8'),
 			async d => void flushed.push(d)
 		);
-		expect(await rollback()).toBe(true);
+		expect((await rollback()).state).toBe('restored-durable');
 		expect(await readdir(dir)).toEqual([]);
 		// Once for the rename, once for the unlink that took the name away again.
 		expect(flushed).toEqual([dir, dir]);
@@ -1700,14 +1700,14 @@ describe('writeFileAtomically', () => {
 		// Replace the whole directory with a file: nothing can be written under it again.
 		await rm(dir, { recursive: true, force: true });
 		await writeFile(dir, 'in the way', 'utf8');
-		expect(await rollback()).toBe(false);
+		expect((await rollback()).state).toBe('not-restored');
 	});
 
 	it('treats a file that is already gone as restored', async () => {
 		const path = join(dir, '90-libershare.conf');
 		const rollback = await writeFileAtomically(path, 'new\n');
 		await rm(path, { force: true });
-		expect(await rollback()).toBe(true);
+		expect((await rollback()).state).toBe('restored-durable');
 	});
 
 	it('rolls a creation back by removing the file it created', async () => {
@@ -1733,11 +1733,42 @@ describe('writeFileAtomically', () => {
 		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
 	});
 
+	/**
+	 * The state a boolean could not carry. The original content reached its final name, so
+	 * the visible filesystem holds it — only the flush behind the rename failed, which puts
+	 * its survival of a power loss in doubt and nothing else. Reported as "not restored", it
+	 * had the caller claim the new configuration was still on disk when it was not.
+	 */
+	it('separates a restore that was not flushed from one that did not happen', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await writeFile(path, 'original\n', 'utf8');
+		let calls = 0;
+		const failOnRollback = async (): Promise<void> => {
+			calls += 1;
+			if (calls > 1) throw Object.assign(new Error('input/output error'), { code: 'EIO' });
+		};
+		const rollback = await writeFileAtomically(path, 'replacement\n', undefined, failOnRollback);
+		expect((await rollback()).state).toBe('restored-not-durable');
+		expect(await readFile(path, 'utf8')).toBe('original\n');
+	});
+
+	it('reads a removal whose flush failed as restored but not durable', async () => {
+		const path = join(dir, '90-libershare.conf');
+		let calls = 0;
+		const failOnRollback = async (): Promise<void> => {
+			calls += 1;
+			if (calls > 1) throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+		};
+		const rollback = await writeFileAtomically(path, 'new\n', undefined, failOnRollback);
+		expect((await rollback()).state).toBe('restored-not-durable');
+		expect(await readdir(dir)).toEqual([]);
+	});
+
 	it('still treats a genuinely absent original as nothing to restore', async () => {
 		const path = join(dir, '90-libershare.conf');
 		const missing = (): Promise<string> => Promise.reject(Object.assign(new Error('no such file'), { code: 'ENOENT' }));
 		const rollback = await writeFileAtomically(path, 'new\n', missing);
-		expect(await rollback()).toBe(true);
+		expect((await rollback()).state).toBe('restored-durable');
 		expect(await readdir(dir)).toEqual([]);
 	});
 });
@@ -1796,6 +1827,44 @@ describe('applyTimesyncdDropIn', () => {
 		expect(r.success).toBe(false);
 		expect(await readFile(path, 'utf8')).toBe('[Time]\nNTP=\nNTP=old.example.org\n');
 		expect(r.message).toContain('could not be restarted onto it');
+	});
+
+	/**
+	 * The old file IS back on the visible filesystem and only its flush failed, so the daemon
+	 * has to be put back onto it. Folded into "not restored", this skipped the second restart
+	 * — leaving the service stopped or running a withdrawn configuration — and told the user
+	 * the new server was still on disk, which was untrue.
+	 */
+	it('restarts onto a restored drop-in whose flush failed, and says only that', async () => {
+		await writeFile(path, '[Time]\nNTP=\nNTP=old.example.org\n', 'utf8');
+		const { exec, calls } = fakeRunner([{ kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' }]);
+		let syncs = 0;
+		const failOnRollback = async (): Promise<void> => {
+			syncs += 1;
+			if (syncs > 1) throw Object.assign(new Error('input/output error'), { code: 'EIO' });
+		};
+		const r = await applyTimesyncdDropIn('new.example.org', true, path, exec, failOnRollback);
+		expect(r.success).toBe(false);
+		expect(await readFile(path, 'utf8')).toBe('[Time]\nNTP=\nNTP=old.example.org\n');
+		expect(calls).toEqual(['systemctl restart systemd-timesyncd', 'systemctl restart systemd-timesyncd']);
+		expect(r.message).toContain('was restored');
+		expect(r.message).toContain('may not survive');
+		expect(r.message).not.toContain('still holds the new server');
+	});
+
+	/** Same for the removal branch: the drop-in is gone from the filesystem either way. */
+	it('restarts after a removal whose flush failed', async () => {
+		const { exec, calls } = fakeRunner([{ kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' }]);
+		let syncs = 0;
+		const failOnRollback = async (): Promise<void> => {
+			syncs += 1;
+			if (syncs > 1) throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+		};
+		const r = await applyTimesyncdDropIn('new.example.org', true, path, exec, failOnRollback);
+		expect(r.success).toBe(false);
+		expect(await readdir(dir)).toEqual([]);
+		expect(calls).toEqual(['systemctl restart systemd-timesyncd', 'systemctl restart systemd-timesyncd']);
+		expect(r.message).not.toContain('still holds the new server');
 	});
 
 	/**
