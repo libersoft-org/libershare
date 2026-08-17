@@ -406,6 +406,83 @@ export function pruneBootstrapEntries<T extends Pick<IBootstrapEntry, 'firstSeen
 }
 
 /**
+ * Outcome of {@link Network.removePeerStoreAddresses}.
+ *
+ * Only `updated` carries a trustworthy count. Collapsing everything else into a number
+ * was how a datastore hiccup came to read as "this peer has no addresses left" — the one
+ * answer that lets the caller escalate to a full purge. `superseded` means a
+ * stop()/start() overtook the call: nothing was written and nothing may be concluded.
+ */
+export type PeerStoreAddressRemoval = { kind: 'updated'; remaining: number } | { kind: 'not-found' } | { kind: 'superseded' };
+
+/**
+ * True for the error the peerStore raises when the peer simply is not stored — the one
+ * failure that is an answer rather than a fault. Everything else (a datastore read
+ * error, a closed store, a programming error) must reach the caller as an exception.
+ */
+export function isPeerStoreNotFound(err: unknown): boolean {
+	const e = err as { name?: string; code?: string } | null;
+	return e?.name === 'NotFoundError' || e?.code === 'ERR_NOT_FOUND';
+}
+
+/** One stored address of a peer, in the shape the peerStore reads and writes. */
+interface IStoredAddress {
+	multiaddr: { toString(): string };
+	isCertified?: boolean;
+}
+
+/**
+ * The peerStore's inner store — the same object its public methods delegate to, minus
+ * their locking — plus the emitter those methods notify.
+ *
+ * `peerStore.get()` takes the peer's READ lock and `peerStore.patch()` its WRITE lock,
+ * separately, so anything libp2p writes between the two (identify, a signed peer record,
+ * an inbound connection) is inside the window and gets overwritten by the older
+ * snapshot. The store keeps exactly one lock per peer and hands it out; taking it around
+ * both halves is what closes that window. Calling the public methods while holding it
+ * would deadlock, hence the unlocked inner pair.
+ *
+ * It is a lock, not a transaction, and it does not cover everything the store does:
+ * `all()` deletes records it finds expired straight through the datastore, with no lock
+ * at all, and this node walks `peerStore.all()` on a timer. What the lock guarantees is
+ * that no ordinary `get`/`save`/`patch`/`merge`/`delete` for THIS peer interleaves.
+ */
+interface IPeerStoreInternals {
+	getWriteLock(peerID: PeerID): Promise<() => void>;
+	load(peerID: PeerID): Promise<{ addresses: IStoredAddress[] }>;
+	patch(peerID: PeerID, data: { addresses: IStoredAddress[] }): Promise<{ updated: boolean }>;
+}
+
+/** The emitter the peerStore's public methods notify after every record they change. */
+interface IPeerStoreEvents {
+	safeDispatchEvent(type: string, detail: unknown): void;
+}
+
+/**
+ * Reach the inner store and its emitter, or refuse. This is the ONE place that touches
+ * either: both are `private` upstream and outside any semver promise, so the whole
+ * binding is checked here and nowhere else.
+ *
+ * There is no correct read-modify-write through the public API alone, so a peerStore
+ * that does not expose its lock is a hard stop rather than a quiet fallback — the
+ * callers act destructively on the result, and the failure direction they can survive is
+ * "did nothing", not "lost an address". The emitter is required on the same terms: an
+ * upgrade that keeps the inner store but renames `events` would otherwise let the write
+ * go through with no `peer:update`, leaving libp2p's registrar looking at a record that
+ * changed under it — silently, and with nothing to fail on.
+ */
+function peerStoreInternals(peerStore: unknown): { store: IPeerStoreInternals; events: IPeerStoreEvents } {
+	const { store, events } = (peerStore as { store?: Partial<IPeerStoreInternals>; events?: Partial<IPeerStoreEvents> }) ?? {};
+	if (typeof store?.getWriteLock !== 'function' || typeof store?.load !== 'function' || typeof store?.patch !== 'function') {
+		throw new Error('peerStore does not expose its per-peer lock — refusing to remove an address without it');
+	}
+	if (typeof events?.safeDispatchEvent !== 'function') {
+		throw new Error('peerStore does not expose its update emitter — refusing to write an address change nothing would hear');
+	}
+	return { store: store as IPeerStoreInternals, events: events as IPeerStoreEvents };
+}
+
+/**
  * Single shared libp2p node.
  * LISH networks are logical groups represented as pubsub topics on this one node.
  */
@@ -2163,16 +2240,20 @@ export class Network {
 						for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) {
 							if (matches(key)) this.forgetBootstrapAddress(key);
 						}
-						let remainingInStore = 0;
+						// A failure here leaves the peer's real address set unknown. The only safe
+						// reading of "unknown" on this path is "do not purge": the follow-up
+						// deletes the whole peer record, and a datastore hiccup is no evidence
+						// that a peer has run out of addresses.
+						let removal: PeerStoreAddressRemoval | null = null;
 						try {
-							const rec = await this.node.peerStore.get(pid);
-							const keep = rec.addresses.filter((a: any) => !matches(a.multiaddr.toString()));
-							if (keep.length < rec.addresses.length) await this.node.peerStore.patch(pid, { multiaddrs: keep.map((a: any) => a.multiaddr) });
-							remainingInStore = keep.length;
-						} catch {
-							/* peer not in store — nothing to trim there */
+							removal = await this.removePeerStoreAddresses(pid, matches);
+						} catch (removalErr: any) {
+							console.log(`[NET] could not trim the disproved address of ${peerID.slice(0, 16)}, leaving the peer record alone: ${removalErr?.message ?? removalErr}`);
 						}
-						if (superseded()) return;
+						// A stop()/start() overtook the trim: this run owns nothing any more, so
+						// neither its count nor its purge belongs to the node that is running now.
+						if (removal?.kind === 'superseded' || superseded()) return;
+						const remainingInStore = removal?.kind === 'updated' ? removal.remaining : 0;
 						// Survivors are counted across BOTH stores. A configured LAN or VPN
 						// bootstrap deliberately sits in the registry alone while its interface
 						// is down — it never reaches the peerStore — so a peerStore-only count
@@ -2183,7 +2264,7 @@ export class Network {
 						const remainingAddresses = remainingInStore + (this.addressesByPeer.get(peerID)?.size ?? 0);
 						// Only once the peer has neither a live connection nor a single address we
 						// have not disproved is there anything left to purge.
-						if (this.node.getConnections(pid).length === 0 && remainingAddresses === 0) {
+						if (removal !== null && this.node.getConnections(pid).length === 0 && remainingAddresses === 0) {
 							await this.purgeStalePeer(peerID, `${origin} dial identity mismatch, no usable address left`, epoch);
 						} else {
 							console.log(`[NET] dropped stale addr of peer ${peerID.slice(0, 16)}: ${ma.toString()}`);
@@ -2426,6 +2507,59 @@ export class Network {
 		this.recoveryBackoff.delete(entry.key);
 	}
 
+	/**
+	 * Take matching addresses out of a peer's peerStore record, keeping everything
+	 * else about them.
+	 *
+	 * Only a `not-found` or an `updated` count is an answer. Any other failure — a
+	 * datastore read error, a store closed under us, a bug — is rethrown, because the
+	 * callers act destructively on "no addresses left" and a swallowed error reaching
+	 * them as zero is what turns a transient hiccup into a deleted peer record.
+	 *
+	 * The node and the epoch are captured before the first await and re-checked after
+	 * it. Re-reading `this.node` across the read would let a stop()/start() landing
+	 * inside it write the OLD run's address snapshot into the NEW node's peerStore —
+	 * and with `this.node` already null, produce a `TypeError` indistinguishable from
+	 * a genuine miss.
+	 *
+	 * The store has no "remove one address" call, so this reads and writes back — under
+	 * the peer's own peerStore write lock, which every ordinary peerStore operation on
+	 * that peer also takes, so an address libp2p learns between the two halves cannot be
+	 * overwritten by the older snapshot (see {@link IPeerStoreInternals} for what the
+	 * lock does NOT cover). It patches `addresses`, the field it actually filtered, and
+	 * puts back the very objects it kept. Rebuilding them as a bare `multiaddrs` list dropped the
+	 * `isCertified` flag of every surviving address, downgrading signed peer records to
+	 * hearsay as a side effect of deleting an unrelated address.
+	 */
+	private async removePeerStoreAddresses(pid: PeerID, matches: (address: string) => boolean): Promise<PeerStoreAddressRemoval> {
+		const node = this.node;
+		const epoch = this.runEpoch;
+		if (!node) return { kind: 'superseded' };
+		const { store, events } = peerStoreInternals(node.peerStore);
+		const release = await store.getWriteLock(pid);
+		try {
+			if (node !== this.node || epoch !== this.runEpoch) return { kind: 'superseded' };
+			let rec;
+			try {
+				rec = await store.load(pid);
+			} catch (err: unknown) {
+				if (isPeerStoreNotFound(err)) return { kind: 'not-found' };
+				throw err;
+			}
+			const keep = rec.addresses.filter(a => !matches(a.multiaddr.toString()));
+			if (keep.length === rec.addresses.length) return { kind: 'updated', remaining: keep.length };
+			if (node !== this.node || epoch !== this.runEpoch) return { kind: 'superseded' };
+			const result = await store.patch(pid, { addresses: keep });
+			// The public wrapper raises this after every write it makes, and libp2p's own
+			// registrar listens for it. Going around the wrapper must not go around the event.
+			if (result.updated) events.safeDispatchEvent('peer:update', { detail: result });
+			if (node !== this.node || epoch !== this.runEpoch) return { kind: 'superseded' };
+			return { kind: 'updated', remaining: keep.length };
+		} finally {
+			release();
+		}
+	}
+
 	/** Remove one address from the registry, its reverse index and its pacing state. */
 	private forgetBootstrapAddress(key: string): void {
 		const entry = this.bootstrapByAddress.get(key);
@@ -2506,13 +2640,15 @@ export class Network {
 	 * leave-network must keep connected — and so the unreachable-eviction exemption
 	 * ends with it.
 	 *
-	 * Both callers already establish that the peer is configured in NO joined network
-	 * before calling, so the identity-level part needs no refcount of its own. The
-	 * ADDRESS-level part still does: `networkID` names the claim being released, and
-	 * each of the peer's addresses survives until its last claimant is gone.
+	 * Both callers establish that no joined LISHNET configures the peer before calling —
+	 * but the application's own startup list is an owner too, and no lishnet edit speaks
+	 * for it. So the exemption is dropped only once the registry holds no configured
+	 * claim on any address of this peer, which is what `isBootstrapOrRelayPeer` would
+	 * answer if it read the registry directly. Deleting it unconditionally left the two
+	 * disagreeing: the registry still called the peer a startup bootstrap while an
+	 * eviction sweep saw an ordinary peer and hung it up.
 	 */
 	pruneConfiguredBootstrapPeer(peerID: string, networkID: string): void {
-		this.configuredBootstrapPeerIDs.delete(peerID);
 		// Forget its addresses too. They entered the registry when the entry was first
 		// configured, and that registry is what zero-connection recovery walks — leaving
 		// them means a bootstrap the user has just deleted keeps being dialed whenever
@@ -2520,6 +2656,9 @@ export class Network {
 		// This network's claim only — the startup list is an owner of its own, see
 		// {@link pruneBootstrapAddresses}.
 		for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) this.dropConfiguredOwnership(key, networkID);
+		// Released last, and only if nothing configures the peer any more — the startup
+		// list survives a lishnet edit, and with it the peer's infrastructure status.
+		if (!this.hasConfiguredAddressClaim(peerID)) this.configuredBootstrapPeerIDs.delete(peerID);
 		// The dedup set has to let go as well, or a later re-add would be treated as
 		// already known and the peer could never come back. Only once nothing of it is
 		// left in the registry: a gossip-learned address that earned its place by
@@ -2788,11 +2927,15 @@ export class Network {
 		const removed = new Set(removedAddresses.filter(a => !this.bootstrapByAddress.has(normalizeMultiaddrForCompare(a))).map(bareDialEndpoint));
 		if (removed.size > 0) {
 			try {
-				const rec = await this.node.peerStore.get(pid);
-				const keep = rec.addresses.filter((a: any) => !removed.has(bareDialEndpoint(a.multiaddr.toString())));
-				if (keep.length < rec.addresses.length) await this.node.peerStore.patch(pid, { multiaddrs: keep.map((a: any) => a.multiaddr) });
-			} catch {
-				// Not in the peerStore — there is nothing to trim.
+				// A stop()/start() inside the trim leaves this teardown speaking for a node
+				// that is gone — and disconnectPeer below would act on the one that replaced it.
+				if ((await this.removePeerStoreAddresses(pid, address => removed.has(bareDialEndpoint(address)))).kind === 'superseded') return;
+			} catch (err: any) {
+				// The trim is the reason this runs at all, and disconnectPeer below is the
+				// destructive half — it hangs up, suppresses re-dials and deletes the record.
+				// Failing to remove one address is no licence to remove everything.
+				trace(`[NET] reconcile after removal: peerStore trim failed for ${peerID.slice(0, 16)}, leaving the peer alone: ${err?.message ?? err}`);
+				return;
 			}
 		}
 		// One address left the configuration; the peer may have others. The registry is

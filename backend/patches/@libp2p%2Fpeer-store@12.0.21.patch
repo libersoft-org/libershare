@@ -1,0 +1,22 @@
+diff --git a/dist/src/store.js b/dist/src/store.js
+index 103fcc357761a56be2576e7bb4cf7cc2b3858f6f..e468a485dce098e48477cc32127dc154c6cabef1 100644
+--- a/dist/src/store.js
++++ b/dist/src/store.js
+@@ -186,9 +186,15 @@ export class PersistentStore {
+             };
+         }
+         catch (err) {
+-            if (err.name !== 'NotFoundError') {
+-                this.log.error('invalid peer data found in peer store - %e', err);
++            // Upstream logs EVERY error here and returns undefined, so save/patch/merge
++            // then rebuild the record as if the peer had never existed — dropping its
++            // protocols, metadata, tags and signed peer record on a transient datastore
++            // read failure. Only "the peer is not stored" may answer with undefined.
++            if (err?.name === 'NotFoundError' || err?.code === 'ERR_NOT_FOUND') {
++                return undefined;
+             }
++            this.log.error('invalid peer data found in peer store - %e', err);
++            throw err;
+         }
+     }
+     async #saveIfDifferent(peerId, peer, existingPeer, options) {
