@@ -171,6 +171,8 @@ function startUploadServer(limits: UploadLimits = {}): { url: string; dataDir: s
 	const dataDir = join(tmpdir(), `lish-upload-test-${crypto.randomUUID()}`);
 	tempDirs.push(dataDir);
 	const handlers = initUploadHandlers(dataDir, limits);
+	let concurrentReads = 0;
+	let peakConcurrentReads = 0;
 	const table: Record<string, (p: any, client: unknown) => unknown> = {
 		'upload.begin': handlers.begin,
 		'upload.chunk': handlers.chunk,
@@ -185,6 +187,16 @@ function startUploadServer(limits: UploadLimits = {}): { url: string; dataDir: s
 				return { size: bytes.byteLength, sha256: Bun.SHA256.hash(bytes, 'hex') };
 			}),
 		'upload.text': (p, client) => handlers.withFile(p, client, path => Utils.readFileCompressed(path)),
+		// A read slow enough for a concurrent one to overlap it, reporting the
+		// highest number that were ever in flight together.
+		'upload.slowRead': (p, client) =>
+			handlers.withFile(p, client, async () => {
+				concurrentReads++;
+				peakConcurrentReads = Math.max(peakConcurrentReads, concurrentReads);
+				await Bun.sleep(150);
+				concurrentReads--;
+				return { peak: peakConcurrentReads };
+			}),
 	};
 	const server = Bun.serve<Record<string, never>, never>({
 		port: 0,
@@ -837,6 +849,22 @@ describe('chunked upload over the websocket', () => {
 			}
 			expect(started).toBe(6);
 			expect(rejected).toBe(2);
+		} finally {
+			for (const client of clients) client.stopReconnect();
+			srv.stop();
+		}
+	}, 30000);
+
+	it('parses one import at a time however many clients ask at once', async () => {
+		const srv = startUploadServer();
+		const clients = [new WsClient(srv.url, () => {}), new WsClient(srv.url, () => {}), new WsClient(srv.url, () => {})];
+		try {
+			const ids = await Promise.all(clients.map((client, i) => upload(client, `p${i}.lish`, pattern(256 * 1024), 64 * 1024)));
+			// `upload.slowRead` reports how many reads overlapped. Each holds the
+			// whole file plus its decompressed and parsed forms, so overlapping them
+			// multiplies peak memory by the number of clients.
+			const overlaps = await Promise.all(clients.map((client, i) => client.call<{ peak: number }>('upload.slowRead', { uploadID: ids[i] })));
+			for (const result of overlaps) expect(result.peak).toBe(1);
 		} finally {
 			for (const client of clients) client.stopReconnect();
 			srv.stop();

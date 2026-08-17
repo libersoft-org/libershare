@@ -2,6 +2,7 @@ import { mkdir, readdir, rm, stat } from 'fs/promises';
 import { rmSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
+import { Mutex } from 'async-mutex';
 import { CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, formatBytes, sanitizeFilename, truncateUTF8End } from '@shared';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
@@ -141,6 +142,17 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 	 * the slow part of receiving a file.
 	 */
 	let totalBytes = 0;
+
+	/**
+	 * Serialises reading an upload. Parsing an import is where the memory actually
+	 * goes: the file is held as a buffer, decompressed into a second buffer, decoded
+	 * into a string and then parsed into an object graph, and the last two are
+	 * usually several times the file. Chunking bounds what arrives on the wire, not
+	 * that. One at a time keeps peak memory at one import's worth however many
+	 * clients ask at once — the alternative is a multiple of it with no bound but
+	 * the socket count.
+	 */
+	const parseLock = new Mutex();
 
 	/**
 	 * Drop uploads nobody finished and files nobody owns. Two separate problems:
@@ -388,7 +400,7 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 			uploads.delete(p.uploadID);
 			totalBytes -= upload.written;
 			try {
-				return await read(upload.path);
+				return await parseLock.runExclusive(() => read(upload.path));
 			} finally {
 				// Removed whether or not the read worked: a file that failed to parse
 				// is no more use than one that succeeded, and leaving it would let a
