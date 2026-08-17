@@ -108,7 +108,14 @@ export class InterfaceFormState {
 			// it answers to the HOST changing, not to the user typing.
 			untrack(() => {
 				const decision = reseedDecision(this.seeded, live, this.onScreen);
-				if (decision === 'ignore') return;
+				if (decision === 'ignore') {
+					// The host is back on the basis this form was seeded from — A to B and back
+					// to A is the ordinary shape of a failed apply somebody else undid. Leaving
+					// `stale` set from the trip through B kept Save blocked on a form whose basis
+					// had returned, with no way to unblock it but reopening the screen.
+					this.stale = false;
+					return;
+				}
 				if (decision === 'stale') {
 					this.stale = true;
 					return;

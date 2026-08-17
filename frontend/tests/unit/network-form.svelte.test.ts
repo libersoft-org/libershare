@@ -159,6 +159,24 @@ describe('InterfaceFormState', () => {
 		expect(form.stale).toBe(true);
 	});
 
+	// A to B and back to A — a failed apply somebody else undid, or a link that
+	// flapped. The decision for the final state is `ignore`, and `ignore` used to
+	// leave `stale` exactly as the trip through B had set it. Save then stayed blocked
+	// on a form whose basis had returned, with no way out but reopening the screen.
+	it('unblocks Save when the host returns to the basis the form was seeded from', async () => {
+		const form = editor();
+		networkState.set(snapshot(iface()));
+		await tick();
+		form.address = '192.0.2.77';
+		networkState.set(snapshot(iface({ gateway: '192.0.2.254' })));
+		await tick();
+		expect(form.stale).toBe(true);
+		networkState.set(snapshot(iface()));
+		await tick();
+		expect(form.stale).toBe(false);
+		expect(form.address).toBe('192.0.2.77');
+	});
+
 	// The interface can be gone by the time the RPC answers — renamed, removed, or
 	// taken over by another stack. There is then nothing to seed from, and inventing a
 	// basis would be worse than keeping none.
