@@ -177,13 +177,15 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Set<string>();
 		const outcomes: string[] = [];
+		const actualPeerIDs: Array<string | null> = [];
 		(network as any).bootstrapTracker = {
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
 			markPending() {},
-			recordOutcome(_net: unknown, _addr: unknown, _pid: unknown, status: string) {
+			recordOutcome(_net: unknown, _addr: unknown, _pid: unknown, status: string, _msg: unknown, actualPeerID: string | null) {
 				outcomes.push(status);
+				actualPeerIDs.push(actualPeerID);
 			},
 		};
 		(network as any).node = {
@@ -192,7 +194,7 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 			async dial(ma: { toString(): string }, opts?: { force?: boolean }): Promise<unknown> {
 				dialled.push(ma.toString());
 				forced.push(opts?.force === true);
-				return { remoteAddr: { toString: () => remoteAddrOfReturnedConn } };
+				return { remoteAddr: { toString: () => remoteAddrOfReturnedConn }, remotePeer: peerIdLike(PEER_ID) };
 			},
 			peerStore: {
 				async merge(_pid: unknown, patch: Record<string, unknown>): Promise<void> {
@@ -200,7 +202,7 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 				},
 			},
 		};
-		return { network, merges, dialled, forced, outcomes };
+		return { network, merges, dialled, forced, outcomes, actualPeerIDs };
 	}
 
 	const ADDR = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
@@ -243,6 +245,18 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 		const { network, outcomes } = bareNetwork(ADDR);
 		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
 		expect(outcomes).toEqual(['connected']);
+	});
+
+	/**
+	 * The row-cap ranking only protects a peer whose identity we have actually PROVEN, and
+	 * the successful dial is the only place that proof exists. Recording null there meant
+	 * the production path never produced a protected row at all — the protection was real
+	 * only in tests that wrote the field by hand.
+	 */
+	it('records the identity Noise proved on the connection as the verified peer ID', async () => {
+		const { network, actualPeerIDs } = bareNetwork(ADDR);
+		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
+		expect(actualPeerIDs).toEqual([PEER_ID]);
 	});
 
 	it('withholds the address when libp2p answered over a different one', async () => {

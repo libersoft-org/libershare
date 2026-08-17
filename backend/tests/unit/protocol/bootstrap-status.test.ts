@@ -704,6 +704,24 @@ describe('BootstrapStatusTracker — the cap evicts the least useful row', () =>
 		expect(survivors(tracker)).toHaveLength(256);
 	});
 
+	/**
+	 * markPending fires every time gossip names an address — far more often than anything
+	 * dials it. Clearing the verified identity there demoted a proven member's row to an
+	 * ordinary pending one within an announce cycle, and a flood of equally-pending
+	 * invented addresses then evicted it for being the oldest of them.
+	 */
+	it('a gossip re-mention does not cost a verified member its protection', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.setMembersProvider(() => new Set([MEMBER]));
+		const verified = `/ip4/203.0.113.8/tcp/9090/p2p/${MEMBER}`;
+		tracker.recordOutcome(NET, verified, MEMBER, 'connected', null, MEMBER, 'discovered');
+		tracker.markPending(NET, verified, MEMBER, 'discovered');
+		for (let i = 0; i < 300; i++) tracker.markPending(NET, `/ip4/198.51.100.${i % 254}/tcp/${30000 + i}/p2p/${MEMBER}`, MEMBER, 'discovered');
+
+		expect(survivors(tracker)).toContain(verified);
+		expect(survivors(tracker)).toHaveLength(256);
+	});
+
 	it('still enforces the cap', () => {
 		const tracker = new BootstrapStatusTracker();
 		floodToCap(tracker, 300);

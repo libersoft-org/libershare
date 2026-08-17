@@ -1941,7 +1941,12 @@ export class Network {
 					// it has earned its place in the autodial list. Unverified ones never get
 					// there, which is what keeps a flood of invented addresses off it.
 					if (effectiveOrigin === 'discovered' && verifiedThisAddr) this.rememberBootstrapAddress(ma);
-					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, null, effectiveOrigin);
+					// The identity Noise actually proved on this connection, not the one the
+					// address claimed. It is the only evidence the row-cap ranking accepts, and
+					// passing null here left an active, verified member ranked as an ordinary
+					// connected row — evictable by age alongside the invented addresses the
+					// ranking exists to drop.
+					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, conn?.remotePeer?.toString() ?? null, effectiveOrigin);
 					console.log('✓ Connected to new bootstrap peer');
 				} catch (err: any) {
 					if (superseded()) return;

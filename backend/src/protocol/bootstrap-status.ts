@@ -230,7 +230,12 @@ export class BootstrapStatusTracker {
 		// is far shorter than the sweep TTL, so the row was refreshed long before it
 		// could expire, no matter how many dials to it had already failed. Only a dial
 		// that actually CONNECTED advances it, in recordOutcome below.
-		net.set(key, { multiaddr: display, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: null, lastError: null, updatedAt: previous?.updatedAt ?? new Date().toISOString(), staleSince: previous?.staleSince ?? Date.now() });
+		// Keep any identity a previous dial actually PROVED on this endpoint. Clearing it
+		// here threw away the one piece of evidence the row-cap ranking trusts, and gossip
+		// re-mentions an address constantly — so a verified member's row was demoted to an
+		// ordinary one within an announce cycle of being verified. A new dial result
+		// overwrites it in recordOutcome; only that can change who is behind the address.
+		net.set(key, { multiaddr: display, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: previous?.actualPeerID ?? null, lastError: null, updatedAt: previous?.updatedAt ?? new Date().toISOString(), staleSince: previous?.staleSince ?? Date.now() });
 		this.capDiscovered(networkID, net);
 		this.notify(networkID);
 	}
@@ -270,7 +275,9 @@ export class BootstrapStatusTracker {
 		for (const [networkID, peers] of this.stats) {
 			const peer = peers.get(target);
 			if (!peer || peer.status === 'connected') continue;
-			peers.set(target, { ...peer, status: 'connected', lastError: null, actualPeerID: null, updatedAt: new Date().toISOString(), staleSince: Date.now() });
+			// The probe knows the endpoint answered, not who answered — so it neither sets
+			// nor clears the verified identity a real dial may already have established.
+			peers.set(target, { ...peer, status: 'connected', lastError: null, updatedAt: new Date().toISOString(), staleSince: Date.now() });
 			this.notify(networkID);
 		}
 	}
