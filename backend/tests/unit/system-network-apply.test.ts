@@ -789,7 +789,12 @@ describe('windowsApplyIPv4Command', () => {
 		// Told apart by lifetime, not by Protocol: measured on Windows 11 a lease's
 		// default route and a hand-added one both report Protocol NetMgmt, and only the
 		// lease's counts down.
-		expect(command).toContain('if ($null -eq $rTwin) { if ($r.ValidLifetime -eq [TimeSpan]::MaxValue) { New-NetRoute');
+		// Asked of the ACTIVE copy first, ahead of every question about the twin: a
+		// persistent route on the same next hop says nothing about where the active one
+		// came from, and evaluating the filter only in the twin-less branch had the
+		// lease's own route re-created by hand whenever a twin happened to exist.
+		expect(command).toContain('$r = $rActive; if (-not ($r.ValidLifetime -eq [TimeSpan]::MaxValue)) { if ($null -ne $rTwin) { $r = $rTwin; New-NetRoute');
+		expect(command).toContain('} } elseif ($null -eq $rTwin) { New-NetRoute');
 		expect(command).toContain('foreach ($r in $oldPersistentRoutes) { if ($oldActiveRoutes.NextHop -notcontains $r.NextHop) { New-NetRoute');
 		// The static branch restores every route it snapshotted — there is no lease on
 		// a static interface for a countdown to have come from.

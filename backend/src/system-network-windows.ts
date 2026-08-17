@@ -826,10 +826,15 @@ const RESTORABLE_ROUTE: RestorableKind = { item: '$r', identity: 'NextHop', prop
  * equal; otherwise each store gets its own copy, the persistent variant first
  * (which reaches both stores) and the active variant after its copy is removed.
  *
- * `activeOnlyCondition` narrows the active-only branch, which is the only one that
- * can hold something a DHCP lease produced — see {@link NOT_FROM_A_LEASE}. An
- * object in the persistent store is always this machine's own and always goes
- * back, and so is one held in both, because a lease writes only the active store.
+ * `activeOnlyCondition` decides whether the ACTIVE copy may be written back at all,
+ * and is therefore asked BEFORE the twin is consulted rather than inside the
+ * twin-less branch. A lease writes only the active store, so a persistent twin says
+ * nothing about where the active copy came from: an active default route counting
+ * down with the lease, beside a persistent one on the same next hop, took the
+ * "identical" or "diverged" path and had the lease's own route re-created by hand —
+ * which is exactly what {@link NOT_FROM_A_LEASE} exists to prevent. An active copy
+ * that fails the condition is dropped and only its persistent twin is put back, the
+ * persistent-only way; the twin is always this machine's own and always goes back.
  *
  * The persistent-only case cannot be written the way it reads. There is no
  * `-PolicyStore PersistentStore` to create with: `New-NetIPAddress` is documented
@@ -854,9 +859,13 @@ function restorePerStore(kind: RestorableKind, active: string, persistent: strin
 	const activeCopy = `${item}Active`;
 	const twin = `${item}Twin`;
 	const alike = kind.properties.map(property => `${activeCopy}.${property} -eq ${twin}.${property}`).join(' -and ');
-	const activeBranch = activeOnlyCondition ? `if (${activeOnlyCondition}) { ${activeOnly} }` : activeOnly;
 	const diverged = `${item} = ${twin}; ${inBothStores}; ${item} = ${activeCopy}; ${tolerateMissing(removeActive)}; ${activeOnly}`;
-	return [`foreach (${activeCopy} in ${active}) { ${twin} = @(${persistent} | Where-Object { $_.${identity} -eq ${activeCopy}.${identity} })[0]; ${item} = ${activeCopy}; if ($null -eq ${twin}) { ${activeBranch} } elseif (${alike}) { ${inBothStores} } else { ${diverged} } }`, `foreach (${item} in ${persistent}) { if (${active}.${identity} -notcontains ${item}.${identity}) { ${persistentOnly} } }`];
+	// First, and so ahead of anything the twin decides: an active copy the caller will
+	// not write back is not written back whether or not a twin exists. What the twin
+	// then adds is that there is still something to restore — its own copy, and only
+	// into the store it was found in.
+	const branches = [...(activeOnlyCondition ? [`(-not (${activeOnlyCondition})) { if ($null -ne ${twin}) { ${item} = ${twin}; ${persistentOnly} } }`] : []), `($null -eq ${twin}) { ${activeOnly} }`, `(${alike}) { ${inBothStores} }`];
+	return [`foreach (${activeCopy} in ${active}) { ${twin} = @(${persistent} | Where-Object { $_.${identity} -eq ${activeCopy}.${identity} })[0]; ${item} = ${activeCopy}; if ${branches.join(' elseif ')} else { ${diverged} } }`, `foreach (${item} in ${persistent}) { if (${active}.${identity} -notcontains ${item}.${identity}) { ${persistentOnly} } }`];
 }
 
 /**

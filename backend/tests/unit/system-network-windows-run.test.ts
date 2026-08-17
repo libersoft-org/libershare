@@ -318,6 +318,29 @@ describe('windowsApplyIPv4Command, executed', () => {
 		expect(result.addresses).toEqual([]);
 	});
 
+	// ...and a persistent twin does not exempt the active copy from that rule. A lease
+	// writes only the active store, so a persistent route on the same next hop says
+	// nothing about where the ACTIVE one came from — but the filter used to be asked
+	// only where no twin existed, so this interface took the "diverged" path and had
+	// the lease's own countdown route re-created by hand beside the one DHCP was about
+	// to hand back.
+	it.skipIf(windowsOnly)('applies the lease filter to an active route that has a persistent twin', async () => {
+		const host = leasedHost({
+			failOn: 'Set-DnsClientServerAddress',
+			routes: [
+				{ Store: 'ActiveStore', NextHop: '203.0.113.1', RouteMetric: 0, Protocol: 'NetMgmt', Publish: 'No', ValidLifetime: LEASED_LIFETIME, PreferredLifetime: LEASED_LIFETIME },
+				{ Store: 'PersistentStore', NextHop: '203.0.113.1', RouteMetric: 100, Protocol: 'NetMgmt', Publish: 'Yes', ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME },
+			],
+		});
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24, gateway: '198.51.100.1' }), host);
+		expect(result.error).toContain('injected failure');
+		expect(result.dhcp).toBe('Enabled');
+		// The persistent copy is this machine's own and goes back; the active one is
+		// left for the lease to reinstate.
+		expect(inStore(result.routes, 'ActiveStore')).toEqual([]);
+		expect(inStore(result.routes, 'PersistentStore').map(r => [r.RouteMetric, r.Publish, r.ValidLifetime])).toEqual([[100, 'Yes', INFINITE_LIFETIME]]);
+	});
+
 	// Counted across both stores, and deduplicated: one address held in both is one
 	// address, while an interface whose second address exists only in the persistent
 	// store is still an interface this app cannot preserve.
