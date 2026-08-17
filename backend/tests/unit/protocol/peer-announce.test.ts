@@ -548,3 +548,46 @@ describe('PeerAnnounceManager lifecycle — one loop per start', () => {
 		expect(broadcasts).toHaveLength(1);
 	});
 });
+
+/**
+ * A peerStore entry for A can hold an address that terminates in /p2p/B — stale config,
+ * a poisoned announce, or a peer that changed identity. Broadcasting it verbatim taught
+ * every receiver that the address belongs to B.
+ */
+describe('PeerAnnounceManager.emit — transitive addresses must name their own peer', () => {
+	function emitWith(addresses: string[]) {
+		const peer = { id: { toString: (): string => PA_ID }, addresses: addresses.map(a => ({ multiaddr: Multiaddr(a) })) };
+		const allPeers = peersWithFillers(peer as any);
+		const node = {
+			peerId: { toString: (): string => SELF_ID },
+			getMultiaddrs: (): unknown[] => [Multiaddr(SELF_ADDR)],
+			peerStore: { all: async (): Promise<unknown[]> => allPeers },
+		};
+		const pubsub = { getTopics: (): string[] => [TOPIC_A], getSubscribers: (): unknown[] => [fakeSubscriber(PA_ID)] };
+		return buildManager(node, pubsub);
+	}
+
+	it('drops an address of one peer that ends in another peer identity', async () => {
+		const { mgr, broadcasts } = emitWith([`${PA_ADDR}/p2p/${PB_ID}`]);
+
+		await (mgr as any).emit();
+
+		expect(broadcasts[0]!.msg.multiaddrs).toEqual([SELF_ADDR]);
+	});
+
+	it('keeps an address that already ends in the right identity', async () => {
+		const { mgr, broadcasts } = emitWith([`${PA_ADDR}/p2p/${PA_ID}`]);
+
+		await (mgr as any).emit();
+
+		expect(broadcasts[0]!.msg.multiaddrs).toContain(`${PA_ADDR}/p2p/${PA_ID}`);
+	});
+
+	it('appends the identity to a bare address', async () => {
+		const { mgr, broadcasts } = emitWith([PA_ADDR]);
+
+		await (mgr as any).emit();
+
+		expect(broadcasts[0]!.msg.multiaddrs).toContain(`${PA_ADDR}/p2p/${PA_ID}`);
+	});
+});

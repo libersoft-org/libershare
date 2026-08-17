@@ -497,7 +497,17 @@ export class PeerAnnounceManager {
 						skippedTransitive++;
 						continue;
 					}
-					const full = base.includes('/p2p/') ? base : `${base}/p2p/${pid}`;
+					// "Contains a /p2p/" is not the same question as "ends at THIS peer". A
+					// stale or poisoned peerStore address of A that terminates in /p2p/B was
+					// treated as already identified and broadcast verbatim, so every receiver
+					// learned it as B's address and dialed the wrong identity. Ask the
+					// destination — the same way the dial paths do — and skip what disagrees.
+					const destination = extractDestinationPeerID(addr.multiaddr);
+					if (destination !== null && destination !== pid) {
+						trace(`[NET] peer-announce skipping addr of ${pid.slice(0, 16)} that resolves to ${destination.slice(0, 16)}: ${base}`);
+						continue;
+					}
+					const full = destination === pid ? base : `${base}/p2p/${pid}`;
 					if (!collected.has(full)) transitiveAdded++;
 					collected.add(full);
 					perPeer++;
