@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, competingNtpUnits, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitLoadStates, type PlatformStatusReader, extractWords, extractWordsChecked, readNtpUnitsList, readTimedatedEnvironment, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, syncDirectory, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
@@ -1760,9 +1760,10 @@ describe('writeFileAtomically', () => {
 			p => readFile(p, 'utf8'),
 			async d => void flushed.push(d)
 		);
-		// The parent of `a` for the entry that names it, then `a` itself for the rename. The
-		// levels above the temporary directory are flushed too and are not what this is about.
-		expect(flushed.slice(-2)).toEqual([dir, join(dir, 'a')]);
+		// The walk stops at `dir`, the first level already there, so its own parent is flushed
+		// once and nothing above it is; then `dir` for the entry naming `a`, then `a` for the
+		// rename.
+		expect(flushed).toEqual([dirname(dir), dir, join(dir, 'a')]);
 	});
 
 	/**
@@ -1780,7 +1781,26 @@ describe('writeFileAtomically', () => {
 			p => readFile(p, 'utf8'),
 			async d => void flushed.push(d)
 		);
-		expect(flushed.slice(-4)).toEqual([dir, join(dir, 'a'), join(dir, 'a', 'b'), join(dir, 'a', 'b', 'c')]);
+		expect(flushed).toEqual([dirname(dir), dir, join(dir, 'a'), join(dir, 'a', 'b'), join(dir, 'a', 'b', 'c')]);
+	});
+
+	/**
+	 * The other half of the same rule: the walk must not climb past the first level that is
+	 * already there. Flushing every ancestor up to `/` would fsync directories nothing in this
+	 * call touches and let an error from one of them fail a write that is perfectly fine.
+	 */
+	it('stops the walk at the first level that already exists', async () => {
+		const path = join(dir, '90-libershare.conf');
+		const flushed: string[] = [];
+		await writeFileAtomically(
+			path,
+			'x\n',
+			p => readFile(p, 'utf8'),
+			async d => void flushed.push(d)
+		);
+		// `dir` exists, so: its parent once (it may itself be a dead attempt's leftover), then
+		// `dir` for the rename. Nothing above.
+		expect(flushed).toEqual([dirname(dir), dir]);
 	});
 
 	/**
@@ -1802,7 +1822,9 @@ describe('writeFileAtomically', () => {
 			p => readFile(p, 'utf8'),
 			async d => void flushed.push(d)
 		);
-		expect(flushed.slice(-2)).toEqual([dir, join(dir, 'a')]);
+		// `a` is now the first level that exists, so the walk stops there — and still flushes
+		// `dir`, which is the entry that the dead attempt left uncommitted.
+		expect(flushed).toEqual([dir, join(dir, 'a')]);
 	});
 
 	/**
@@ -1821,8 +1843,9 @@ describe('writeFileAtomically', () => {
 		);
 		expect((await rollback()).state).toBe('restored-durable');
 		expect(await readdir(dir)).toEqual([]);
-		// Once for the rename, once for the unlink that took the name away again.
-		expect(flushed.slice(-2)).toEqual([dir, dir]);
+		// The walk's one flush, then `dir` for the rename and again for the unlink that took
+		// the name away.
+		expect(flushed).toEqual([dirname(dir), dir, dir]);
 	});
 
 	it('rolls an overwrite back to the previous content', async () => {

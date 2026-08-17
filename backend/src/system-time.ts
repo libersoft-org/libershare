@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readdir, readFile, rename, unlink } from 'node:fs/promises';
+import { access, mkdir, open, readdir, readFile, rename, unlink } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -1687,21 +1687,34 @@ export async function syncDirectory(dir: string): Promise<void> {
  * `/root/a/b/c` with the entries for `b` and `c` unflushed: a crash comes back to a
  * drop-in directory that is not there and a configuration nothing ever read.
  *
- * Every level's parent is flushed, whether this call created the level or found it there.
- * Flushing only what we created was right for a clean first pass and wrong for the second:
- * an attempt that created `b` and then failed to flush `a` leaves `b` visible but not
- * committed, and the retry sees `EEXIST`, flushes nothing and reports a durability the
- * filesystem never gave. A level that is already there and one another process just created
- * without flushing look exactly alike from here, so the only safe rule is to flush all of
- * them. That does mean flushing `/` and `/etc` on a path nobody could have half-created;
- * a handful of directory flushes with nothing dirty in them costs nothing worth measuring.
+ * Every level in the walk has its parent flushed, whether this call created it or found it
+ * there. Flushing only what we created was right for a clean first pass and wrong for the
+ * second: an attempt that created `b` and then failed to flush `a` leaves `b` visible but
+ * not committed, and the retry sees `EEXIST`, flushes nothing and reports a durability the
+ * filesystem never gave. A level that has always been there and one a dead attempt left
+ * behind look exactly alike from here, so both are flushed.
+ *
+ * The walk stops at the first level that already exists, INCLUDING it — that one is flushed,
+ * everything above it is not. It has to be included, because it is the level a previous
+ * attempt may have created and failed to commit. Above it nothing can be owed: whatever
+ * created those levels is older than any attempt of ours, and walking on to `/` would fsync
+ * directories we never touch and let an error from one of them fail a write that is fine.
  *
  * `dir` itself is deliberately not flushed here — it has no entry in it yet. The rename
  * that follows puts one there and flushes it.
  */
 async function makeDirectoryDurably(dir: string, syncDir: (d: string) => Promise<void>): Promise<void> {
 	const levels: string[] = [];
-	for (let current = dir; dirname(current) !== current; current = dirname(current)) levels.unshift(current);
+	for (let current = dir; ; current = dirname(current)) {
+		levels.unshift(current);
+		// A level we cannot even ask about counts as missing: the walk goes one higher and
+		// `mkdir` below reports the real reason.
+		const exists = await access(current).then(
+			() => true,
+			() => false
+		);
+		if (exists || dirname(current) === current) break;
+	}
 	for (const level of levels) {
 		// One level at a time instead of `{recursive: true}`, because the recursive call
 		// reports only the first path it created — and on Windows it reports it in
