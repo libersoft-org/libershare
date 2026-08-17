@@ -1907,6 +1907,40 @@ describe('peerStore.all — an expired snapshot must not delete a fresh record',
 });
 
 /**
+ * Every stored address carries its own observation time, and that time is what decides
+ * when the address expires — which in turn feeds the record-expiry check behind the
+ * deletions above. Peer-store 12.0.21 shadowed the loop variable while looking the
+ * address up among the existing ones, so the lookup compared each existing address with
+ * itself and always matched the first: every address inherited the first one's timestamp.
+ */
+describe('peerStore — an address keeps its own observation time', () => {
+	// The reader's window. Long enough to survive scheduling jitter, short enough to keep
+	// the test fast; the wait below has to clear it with room to spare.
+	const MAX_ADDRESS_AGE = 100;
+	const OLD = `/ip4/203.0.113.61/tcp/9090/p2p/${PEER_ID}`;
+	const NEW = `/ip4/203.0.113.62/tcp/9090/p2p/${PEER_ID}`;
+
+	it('does not age a new address into the timestamp of an old one', async () => {
+		const store = createEmptyPeerStore(new MemoryDatastore(), { maxAddressAge: MAX_ADDRESS_AGE });
+		const pid = peerIdFromString(PEER_ID);
+		await store.patch(pid, { addresses: [{ multiaddr: multiaddr(OLD), isCertified: false }] });
+		await new Promise(resolve => setTimeout(resolve, MAX_ADDRESS_AGE + 50));
+		await store.patch(pid, {
+			addresses: [
+				{ multiaddr: multiaddr(OLD), isCertified: false },
+				{ multiaddr: multiaddr(NEW), isCertified: false },
+			],
+		});
+		// The old address has aged out; the one just added has not. Handing it the old
+		// timestamp expired an address the peer is reachable on the moment it was learned.
+		expect((await store.get(pid)).addresses.map((a: { multiaddr: { toString(): string } }) => a.multiaddr.toString())).toEqual(['/ip4/203.0.113.62/tcp/9090']);
+		// Nor may the survivor inherit the timestamp of the address being removed.
+		await store.patch(pid, { addresses: [{ multiaddr: multiaddr(NEW), isCertified: false }] });
+		expect((await store.get(pid)).addresses.map((a: { multiaddr: { toString(): string } }) => a.multiaddr.toString())).toEqual(['/ip4/203.0.113.62/tcp/9090']);
+	});
+});
+
+/**
  * Re-dial maintenance is the resurrection path the config-removal teardown has to
  * survive: it takes its candidates from the peerStore and re-stamps keep-alive on every
  * success, so a peer torn down while one of its dials was in flight comes back — entry,
