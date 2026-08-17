@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { CodedError, ErrorCodes } from '@shared';
-import { macApplyArgs, macDbmToQuality, macRestoreArgs, parseMacServiceSnapshot, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceDns, parseServiceInfo, parseServiceOrder, parseServiceRouter, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { macApplyArgs, macDbmToQuality, readMacDnsServers, macRestoreArgs, parseMacServiceSnapshot, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceDns, parseServiceInfo, parseServiceOrder, parseServiceRouter, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -353,23 +353,63 @@ describe('parseMacServiceSnapshot', () => {
 	});
 
 	it('reads the literal "none" as absent rather than as a value', () => {
-		const snapshot = parseMacServiceSnapshot('Manual Configuration\nIP address: none\nSubnet mask: none\nRouter: none\n', '');
-		expect([snapshot.address, snapshot.mask, snapshot.router]).toEqual([null, null, null]);
+		const snapshot = parseMacServiceSnapshot('Manual Configuration\nIP address: none\nSubnet mask: none\nRouter: none\n', NO_DNS);
+		expect([snapshot?.address, snapshot?.mask, snapshot?.router]).toEqual([null, null, null]);
+	});
+
+	// `runOptional` answers an empty string for a command that could not run, was
+	// refused, or named a service that has gone — and an empty string used to parse
+	// as "this service has no manual resolvers". The apply then wrote that absence
+	// to the service as fact, deleting DNS the read had merely failed to see, and
+	// the rollback had nothing correct left to put back.
+	it('refuses a snapshot whose resolver reading established nothing', () => {
+		expect(parseMacServiceSnapshot(MANUAL, '')).toBeNull();
+		expect(parseMacServiceSnapshot(MANUAL, '** Error: The parameters were not valid.\n')).toBeNull();
+	});
+
+	it('refuses a snapshot whose -getinfo reading established nothing', () => {
+		expect(parseMacServiceSnapshot('', NO_DNS)).toBeNull();
+		expect(parseMacServiceSnapshot('   \n', NO_DNS)).toBeNull();
+	});
+});
+
+/** What macOS really answers for a service with no manual resolvers. */
+const NO_DNS = "There aren't any DNS Servers set on Wi-Fi.\n";
+
+describe('readMacDnsServers', () => {
+	it('separates a real absence from a failed reading', () => {
+		expect(readMacDnsServers(NO_DNS)).toEqual({ kind: 'none' });
+		expect(readMacDnsServers('')).toEqual({ kind: 'readError' });
+	});
+
+	it('reports the servers a successful reading listed, both families', () => {
+		expect(readMacDnsServers('192.0.2.1\n2001:db8::1\n')).toEqual({ kind: 'values', servers: ['192.0.2.1', '2001:db8::1'] });
+	});
+
+	it('treats an error message as a failed reading, not as an empty list', () => {
+		expect(readMacDnsServers('** Error: Command requires admin privileges.\n')).toEqual({ kind: 'readError' });
 	});
 });
 
 describe('macRestoreArgs', () => {
+	/** A snapshot these fixtures are known to produce; a null here is a broken case, not a result. */
+	function snapshotOf(info: string, dns: string = NO_DNS) {
+		const snapshot = parseMacServiceSnapshot(info, dns);
+		if (!snapshot) throw new Error('the fixture did not produce a snapshot');
+		return snapshot;
+	}
+
 	it('puts a manual configuration back exactly, resolvers of both families included', () => {
-		const snapshot = parseMacServiceSnapshot('Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\n', '192.0.2.1\n2001:db8::1\n');
-		expect(macRestoreArgs('Wi-Fi', snapshot)).toEqual([
+		expect(macRestoreArgs('Wi-Fi', snapshotOf('Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\n', '192.0.2.1\n2001:db8::1\n'))).toEqual([
 			['-setmanual', 'Wi-Fi', '192.0.2.10', '255.255.255.0', '192.0.2.1'],
 			['-setdnsservers', 'Wi-Fi', '192.0.2.1', '2001:db8::1'],
 		]);
 	});
 
 	it('puts a DHCP service back as DHCP, not as the address it happened to hold', () => {
-		const snapshot = parseMacServiceSnapshot('DHCP Configuration\nIP address: 198.51.100.24\nRouter: 198.51.100.1\n', '');
+		const snapshot = snapshotOf('DHCP Configuration\nIP address: 198.51.100.24\nRouter: 198.51.100.1\n');
 		expect(macRestoreArgs('Wi-Fi', snapshot)?.[0]).toEqual(['-setdhcp', 'Wi-Fi']);
+		// A service that really has no manual resolvers is restored to having none.
 		expect(macRestoreArgs('Wi-Fi', snapshot)?.[1]).toEqual(['-setdnsservers', 'Wi-Fi', 'Empty']);
 	});
 
@@ -377,8 +417,8 @@ describe('macRestoreArgs', () => {
 	// a static service without one cannot be written back at all. Saying so lets
 	// the caller report an un-undone change rather than guess at one.
 	it('reports that a configuration with no networksetup form cannot be restored', () => {
-		expect(macRestoreArgs('Wi-Fi', parseMacServiceSnapshot('Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: none\n', ''))).toBeNull();
-		expect(macRestoreArgs('Wi-Fi', parseMacServiceSnapshot('Automatic Configuration\n', ''))).toBeNull();
+		expect(macRestoreArgs('Wi-Fi', snapshotOf('Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: none\n'))).toBeNull();
+		expect(macRestoreArgs('Wi-Fi', snapshotOf('Automatic Configuration\n'))).toBeNull();
 	});
 });
 

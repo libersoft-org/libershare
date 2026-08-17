@@ -465,14 +465,51 @@ function presentValue(value: string | undefined): string | null {
 	return value && value !== 'none' ? value : null;
 }
 
-/** Read a snapshot out of `networksetup -getinfo` and `-getdnsservers` output. */
-export function parseMacServiceSnapshot(info: string, dns: string): MacServiceSnapshot {
+/**
+ * What a `networksetup -getdnsservers` reading actually established.
+ *
+ * Three outcomes, because two of them used to be one. `runOptional` turns every
+ * failure into an empty string, so "this service genuinely has no manual
+ * resolvers" was indistinguishable from "the command could not run", "the call
+ * was refused" and "the service has disappeared" — and an apply built on the
+ * second kind DELETES the manual DNS the read failed to see.
+ *
+ * The outcome is decided from the OUTPUT rather than from the exit code alone:
+ * macOS answers the "aren't any" sentence for a service with no manual
+ * resolvers, and `networksetup` is documented as printing its errors to stdout
+ * and signalling failure only through the exit status — so the text is the more
+ * reliable of the two signals, and it is the one available here.
+ */
+export type MacDnsReading = { readonly kind: 'none' } | { readonly kind: 'values'; readonly servers: readonly string[] } | { readonly kind: 'readError' };
+
+/** Classify `networksetup -getdnsservers` output into {@link MacDnsReading}. */
+export function readMacDnsServers(text: string): MacDnsReading {
+	if (/There aren't any DNS Servers set/i.test(text)) return { kind: 'none' };
+	const servers = parseServiceDns(text);
+	// Neither the sentence nor a single parseable address: an empty string from a
+	// failed command, or an error message. Nothing was established either way.
+	return servers.length > 0 ? { kind: 'values', servers } : { kind: 'readError' };
+}
+
+/**
+ * Read a snapshot out of `networksetup -getinfo` and `-getdnsservers` output, or
+ * null when either reading established nothing.
+ *
+ * Null is what makes the apply refusable. A snapshot missing its resolvers is
+ * worse than no snapshot at all: it is written back as "this service had no DNS",
+ * which is a change of its own.
+ */
+export function parseMacServiceSnapshot(info: string, dns: string): MacServiceSnapshot | null {
+	const resolvers = readMacDnsServers(dns);
+	if (resolvers.kind === 'readError') return null;
+	// The same failure by the other command — `-getinfo` answers nothing at all.
+	if (!info.trim()) return null;
 	return {
 		mode: parseServiceInfo(info),
 		address: presentValue(info.match(/^\s*IP address:\s*(\S+)/m)?.[1]),
 		mask: presentValue(info.match(/^\s*Subnet mask:\s*(\S+)/m)?.[1]),
 		router: parseServiceRouter(info),
-		dns: parseServiceDns(dns),
+		dns: resolvers.kind === 'values' ? resolvers.servers : [],
 	};
 }
 
@@ -538,13 +575,19 @@ async function serviceForDevice(device: string): Promise<string> {
  * resolvers and no way back. The snapshot taken first serves twice: it supplies
  * the IPv6 resolvers the editor cannot express, and it is what the address is
  * put back to when the second command fails.
+ *
+ * Nothing is changed without a complete snapshot, and BOTH writes are inside the
+ * guard. Neither used to be true: a snapshot that failed to read yielded an empty
+ * resolver list, which the apply then wrote to the service as fact, and the
+ * address command sat outside the try, so its own failure rolled nothing back.
  */
 export async function applyMacIPv4(device: string, config: NetIPv4Config): Promise<void> {
 	const service = await serviceForDevice(device);
 	const snapshot = await readMacServiceSnapshot(service);
-	const [addressArgs, dnsArgs] = macApplyArgs(service, config, snapshot?.dns ?? []);
-	await run(NETWORKSETUP, addressArgs, APPLY_TIMEOUT_MS);
+	if (!snapshot) throw new CodedError(ErrorCodes.NETCONFIG_FAILED, `the current configuration of ${service} could not be read, so it will not be changed`);
+	const [addressArgs, dnsArgs] = macApplyArgs(service, config, snapshot.dns);
 	try {
+		await run(NETWORKSETUP, addressArgs, APPLY_TIMEOUT_MS);
 		await run(NETWORKSETUP, dnsArgs, APPLY_TIMEOUT_MS);
 	} catch (err) {
 		const rollback = await restoreMacService(service, snapshot);
@@ -555,15 +598,19 @@ export async function applyMacIPv4(device: string, config: NetIPv4Config): Promi
 	}
 }
 
-/** The service's IPv4 configuration and resolvers, or null when they could not be read. */
+/** The service's IPv4 configuration and resolvers, or null when either could not be read. */
 async function readMacServiceSnapshot(service: string): Promise<MacServiceSnapshot | null> {
 	const [info, dns] = await Promise.all([runOptional(NETWORKSETUP, ['-getinfo', service]), runOptional(NETWORKSETUP, ['-getdnsservers', service])]);
-	return info ? parseMacServiceSnapshot(info, dns) : null;
+	return parseMacServiceSnapshot(info, dns);
 }
 
-/** Put the service's addressing and resolvers back. Returns what went wrong, or null. */
-async function restoreMacService(service: string, snapshot: MacServiceSnapshot | null): Promise<string | null> {
-	if (!snapshot) return 'the previous configuration could not be read before the change was made';
+/**
+ * Put the service's addressing and resolvers back. Returns what went wrong, or null.
+ *
+ * The snapshot is not nullable: {@link applyMacIPv4} refuses to change anything
+ * without one, so there is no longer a path here with nothing to restore from.
+ */
+async function restoreMacService(service: string, snapshot: MacServiceSnapshot): Promise<string | null> {
 	const restore = macRestoreArgs(service, snapshot);
 	if (!restore) return 'the previous configuration has no networksetup form and cannot be written back';
 	for (const args of restore) {
