@@ -35,6 +35,22 @@ describe('WINDOWS_STATE_COMMAND', () => {
 	it('only queries — it contains no cmdlet that could change configuration', () => {
 		expect(WINDOWS_STATE_COMMAND).not.toMatch(/\b(Set|New|Remove|Disable|Enable|Restart)-Net/);
 	});
+
+	// `-ErrorAction SilentlyContinue` made "this host has no default route" and "the
+	// route provider failed" the same empty array. The sections that feed the edit
+	// form's gateway and DNS fields now report whether they SUCCEEDED, so an empty
+	// one can be told from an unknown one.
+	it('reports whether the optional sections could be read at all', () => {
+		for (const section of ['routes', 'dns']) {
+			expect(WINDOWS_STATE_COMMAND).toContain(`$${section}Ok = $true`);
+			expect(WINDOWS_STATE_COMMAND).toContain(`${section}Ok=$${section}Ok`);
+		}
+		// Verified on Windows 11: a query matching nothing raises ObjectNotFound while
+		// a genuine failure raises anything else, so that one category is what a
+		// host with no default route is allowed to be.
+		expect(WINDOWS_STATE_COMMAND).toContain("if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { $routesOk = $false }");
+		expect(WINDOWS_STATE_COMMAND).not.toContain('-ErrorAction SilentlyContinue');
+	});
 });
 
 describe('parseWindowsNetworkState', () => {
@@ -116,6 +132,31 @@ describe('parseWindowsNetworkState', () => {
 		// do anything but fail.
 		expect(byID(result, 'ifIndex:69').ipv4Configurable).toBe(false);
 		expect(byID(result, ID.ethernet).ipv4Configurable).toBe(true);
+	});
+
+	// A section that failed leaves the gateway or the resolvers UNKNOWN, not absent
+	// — and an apply replaces both. Reporting such a reading as configurable let the
+	// form show empty fields and a save write that emptiness back as fact.
+	it.each(['routesOk', 'dnsOk'])('refuses to call an interface configurable when %s is false', flag => {
+		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
+		doc[flag] = false;
+		const parsed = parseWindowsNetworkState(JSON.stringify(doc));
+		expect(parsed.length).toBeGreaterThan(0);
+		expect(parsed.some(i => i.ipv4Configurable)).toBe(false);
+	});
+
+	it('still treats a document captured before those flags existed as complete', () => {
+		// Absent is not false: the fixture predates the flags and describes a read
+		// that really did succeed.
+		expect(byID(parseWindowsNetworkState(fixture('network-windows.json')), ID.ethernet).ipv4Configurable).toBe(true);
+	});
+
+	// Wi-Fi asks nothing of the route or resolver sections, so their failure must
+	// not take the radio down with them.
+	it('leaves the Wi-Fi capabilities alone when a section could not be read', () => {
+		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
+		doc['dnsOk'] = false;
+		expect(byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.wifi).wifiScannable).toBe(true);
 	});
 
 	it('drops tentative APIPA, deprecated link-local and loopback addresses', () => {

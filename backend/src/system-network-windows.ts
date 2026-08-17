@@ -56,7 +56,28 @@ const DHCP_ENABLED = 1;
  * because Windows PowerShell serializes an empty array inside a calculated
  * property as `{}` and a one-element array as a bare string.
  */
-export const WINDOWS_STATE_COMMAND: string = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', "$adapters = @(Get-NetAdapter -IncludeHidden | Select-Object ifIndex, Name, InterfaceGuid, MacAddress, @{n='Media';e={[int]$_.NdisPhysicalMedium}}, @{n='IfType';e={[int]$_.InterfaceType}}, @{n='Hidden';e={[int]$_.Hidden}}, @{n='State';e={[int]$_.MediaConnectionState}})", "$addresses = @(Get-NetIPAddress | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}})", "$interfaces = @(Get-NetIPInterface | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, @{n='Dhcp';e={[int]$_.Dhcp}})", "$routes = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric)", "$dns = @(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object InterfaceIndex, @{n='Servers';e={($_.ServerAddresses -join ',')}})", '[pscustomobject]@{adapters=$adapters; addresses=$addresses; interfaces=$interfaces; routes=$routes; dns=$dns} | ConvertTo-Json -Depth 6 -Compress'].join('; ');
+export const WINDOWS_STATE_COMMAND: string = [
+	'[Console]::OutputEncoding=[System.Text.Encoding]::UTF8',
+	"$adapters = @(Get-NetAdapter -IncludeHidden | Select-Object ifIndex, Name, InterfaceGuid, MacAddress, @{n='Media';e={[int]$_.NdisPhysicalMedium}}, @{n='IfType';e={[int]$_.InterfaceType}}, @{n='Hidden';e={[int]$_.Hidden}}, @{n='State';e={[int]$_.MediaConnectionState}})",
+	"$addresses = @(Get-NetIPAddress | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}})",
+	"$interfaces = @(Get-NetIPInterface | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, @{n='Dhcp';e={[int]$_.Dhcp}})",
+	// The two sections below report whether they SUCCEEDED, not merely what they
+	// found. `-ErrorAction SilentlyContinue` made "this host has no default route"
+	// and "the route provider failed" the same empty array, and the parser then
+	// reported a confident state with no gateway and no resolvers — which the edit
+	// form shows as empty fields and a save writes back as fact.
+	//
+	// ObjectNotFound is the one category that is genuinely an absence: a host with
+	// no default route really has none. Everything else leaves the section unknown.
+	...sectionStep('routes', "Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric"),
+	...sectionStep('dns', "Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction Stop | Select-Object InterfaceIndex, @{n='Servers';e={($_.ServerAddresses -join ',')}}"),
+	'[pscustomobject]@{adapters=$adapters; addresses=$addresses; interfaces=$interfaces; routes=$routes; routesOk=$routesOk; dns=$dns; dnsOk=$dnsOk} | ConvertTo-Json -Depth 6 -Compress',
+].join('; ');
+
+/** One optional section of the state document, plus the `<name>Ok` flag saying whether it could be read. */
+function sectionStep(name: string, query: string): string[] {
+	return [`$${name}Ok = $true`, `$${name} = @()`, `try { $${name} = @(${query}) } catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { $${name}Ok = $false } }`];
+}
 
 interface WindowsAdapterRow {
 	ifIndex: number;
@@ -164,6 +185,11 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 	const ipInterfaces = asArray<WindowsInterfaceRow>(doc['interfaces']);
 	const routes = asArray<WindowsRouteRow>(doc['routes']);
 	const dnsRows = asArray<WindowsDnsRow>(doc['dns']);
+	// A section that could not be read leaves this interface's gateway or resolvers
+	// unknown rather than absent — and an apply REPLACES both, so acting on the
+	// empty reading would delete values nobody ever saw. `!== false` so a document
+	// captured before these flags existed still parses as the complete read it was.
+	const complete = doc['routesOk'] !== false && doc['dnsOk'] !== false;
 
 	const addressesByIndex = new Map<number, NetAddress[]>();
 	for (const row of addresses) {
@@ -244,7 +270,7 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 			// `ifIndex:N` id, and the apply path resolves an adapter by GUID — so
 			// `assertWindowsGuid` rejects that id every time. Saying so here keeps the
 			// UI from offering a Configure button whose Save could only ever fail.
-			ipv4Configurable: guid !== null,
+			ipv4Configurable: guid !== null && complete,
 			// Every wlanapi call is addressed by the same GUID, and none of them needs
 			// the elevation the address apply does — so on Windows the three answers
 			// differ only in what they are asked about, not in what they require.
