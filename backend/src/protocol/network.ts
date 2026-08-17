@@ -1787,16 +1787,24 @@ export class Network {
 						for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) {
 							if (matches(key)) this.forgetBootstrapAddress(key);
 						}
-						let remainingAddresses = 0;
+						let remainingInStore = 0;
 						try {
 							const rec = await this.node.peerStore.get(pid);
 							const keep = rec.addresses.filter((a: any) => !matches(a.multiaddr.toString()));
 							if (keep.length < rec.addresses.length) await this.node.peerStore.patch(pid, { multiaddrs: keep.map((a: any) => a.multiaddr) });
-							remainingAddresses = keep.length;
+							remainingInStore = keep.length;
 						} catch {
-							/* peer not in store — nothing to trim, and nothing left either */
+							/* peer not in store — nothing to trim there */
 						}
 						if (superseded()) return;
+						// Survivors are counted across BOTH stores. A configured LAN or VPN
+						// bootstrap deliberately sits in the registry alone while its interface
+						// is down — it never reaches the peerStore — so a peerStore-only count
+						// read "no usable address left" and let a mismatch on an address any
+						// topic subscriber cared to announce purge an address Noise had never
+						// touched. The loop above has already dropped the disproved keys, so
+						// what is left in the reverse index is exactly the undisproved set.
+						const remainingAddresses = remainingInStore + (this.addressesByPeer.get(peerID)?.size ?? 0);
 						// Only once the peer has neither a live connection nor a single address we
 						// have not disproved is there anything left to purge.
 						if (this.node.getConnections(pid).length === 0 && remainingAddresses === 0) {

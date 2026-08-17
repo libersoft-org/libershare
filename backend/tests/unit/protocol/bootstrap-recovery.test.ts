@@ -133,6 +133,38 @@ describe('bootstrap registry — identity mismatch', () => {
 		expect(registryAddresses(network)).toEqual([key(ADDR_A2)]);
 	});
 
+	it('keeps a configured address that lives only in the registry', async () => {
+		// The configured entry models a LAN or VPN bootstrap parked while its interface
+		// is down: it is in the registry and NOT in the peerStore. A topic subscriber
+		// announces a second address of the same peer, which Noise disproves. Counting
+		// survivors from the peerStore alone read zero and purged the whole peer —
+		// taking the configured address nothing had disproved with it.
+		const { network } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }, { address: ADDR_A2 }] });
+		const purged: string[] = [];
+		(network as any).purgeStalePeer = async (peerID: string): Promise<void> => {
+			purged.push(peerID);
+		};
+		(network as any).node.dial = async (): Promise<never> => {
+			throw new Error(MISMATCH);
+		};
+		await (network as any).addBootstrapPeers([ADDR_A2], 'net-a', 'discovered');
+		expect(purged).toEqual([]);
+		expect(registryAddresses(network)).toEqual([key(ADDR_A)]);
+	});
+
+	it('still purges once nothing undisproved is left anywhere', async () => {
+		const { network } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }] });
+		const purged: string[] = [];
+		(network as any).purgeStalePeer = async (peerID: string): Promise<void> => {
+			purged.push(peerID);
+		};
+		(network as any).node.dial = async (): Promise<never> => {
+			throw new Error(MISMATCH);
+		};
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
+		expect(purged).toEqual([PEER_A]);
+	});
+
 	it('stops recovery dialing a disproved CONFIGURED address', async () => {
 		const { network, dialed } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }] });
 		(network as any).purgeStalePeer = async (): Promise<void> => {};
