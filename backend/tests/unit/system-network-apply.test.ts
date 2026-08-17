@@ -661,16 +661,25 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('$oldRoutes = @($oldActiveRoutes + @($oldPersistentRoutes | Where-Object { $oldActiveRoutes.NextHop -notcontains $_.NextHop }))');
 	});
 
-	// An object held in both stores is re-created with no -PolicyStore, which is how
-	// it came to be in both. One held in only one store names that store, so an
-	// active-only address is not promoted to a persistent one that outlives the next
-	// boot — the very asymmetry that made the rollback dishonest.
+	// An object held in both stores with the same properties is re-created with no
+	// -PolicyStore, which is how it came to be in both. One held in only one store
+	// names that store, so an active-only address is not promoted to a persistent one
+	// that outlives the next boot — the very asymmetry that made the rollback
+	// dishonest.
 	it('puts every restored object back into the store it was found in', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
-		expect(command).toContain('foreach ($a in $oldActiveAddresses) { if ($oldPersistentAddresses.IPAddress -contains $a.IPAddress) {');
+		expect(command).toContain('foreach ($aActive in $oldActiveAddresses) { $aTwin = @($oldPersistentAddresses | Where-Object { $_.IPAddress -eq $aActive.IPAddress })[0];');
 		expect(command).toContain('foreach ($a in $oldPersistentAddresses) { if ($oldActiveAddresses.IPAddress -notcontains $a.IPAddress) {');
-		expect(command).toContain('foreach ($r in $oldActiveRoutes) { if ($oldPersistentRoutes.NextHop -contains $r.NextHop) {');
+		expect(command).toContain('foreach ($rActive in $oldActiveRoutes) { $rTwin = @($oldPersistentRoutes | Where-Object { $_.NextHop -eq $rActive.NextHop })[0];');
 		expect(command).toContain('foreach ($r in $oldPersistentRoutes) { if ($oldActiveRoutes.NextHop -notcontains $r.NextHop) {');
+		// The shortcut is taken only when every restored property matches, because the
+		// two stores are free to hold the same identity with different properties.
+		expect(command).toContain('elseif ($aActive.PrefixLength -eq $aTwin.PrefixLength -and $aActive.Type -eq $aTwin.Type -and $aActive.SkipAsSource -eq $aTwin.SkipAsSource -and $aActive.ValidLifetime -eq $aTwin.ValidLifetime -and $aActive.PreferredLifetime -eq $aTwin.PreferredLifetime)');
+		expect(command).toContain('elseif ($rActive.RouteMetric -eq $rTwin.RouteMetric -and $rActive.Protocol -eq $rTwin.Protocol -and $rActive.Publish -eq $rTwin.Publish -and $rActive.ValidLifetime -eq $rTwin.ValidLifetime -and $rActive.PreferredLifetime -eq $rTwin.PreferredLifetime)');
+		// And when they do not, the persistent variant goes in first (reaching both
+		// stores), its active copy is taken away, and the active variant replaces it.
+		expect(command).toContain('else { $a = $aTwin; New-NetIPAddress');
+		expect(command).toContain('else { $r = $rTwin; New-NetRoute');
 		// The active-only branches say so; the both-stores branches say nothing, which
 		// is what writes both.
 		expect(command).toContain('-PreferredLifetime $a.PreferredLifetime -PolicyStore ActiveStore -ErrorAction Stop');
@@ -731,8 +740,8 @@ describe('windowsApplyIPv4Command', () => {
 		// The mutation runs inside a guard, and the guard restores before rethrowing.
 		expect(command).toContain('catch { $applyError = $_;');
 		expect(command).toContain('throw $applyError');
-		expect(command).toContain('foreach ($a in $oldActiveAddresses)');
-		expect(command).toContain('foreach ($r in $oldActiveRoutes)');
+		expect(command).toContain('foreach ($aActive in $oldActiveAddresses)');
+		expect(command).toContain('foreach ($rActive in $oldActiveRoutes)');
 		expect(command).toContain('$oldDnsManual.Count -gt 0');
 		// The mutation must be inside the guard, not before it.
 		expect(command).toContain('try { $addressingUnchanged =');
@@ -757,7 +766,7 @@ describe('windowsApplyIPv4Command', () => {
 		// The snapshot addresses of a DHCP interface came from a lease. Writing them
 		// back by hand installs a static copy that the next lease then duplicates.
 		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
-		expect(command).toContain("if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled; foreach ($r in $oldActiveRoutes)");
+		expect(command).toContain("if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled; foreach ($rActive in $oldActiveRoutes)");
 		// The addresses are the lease's to hand back; nothing re-adds them.
 		expect(command.slice(command.indexOf("if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface"), command.indexOf('} else { Set-NetIPInterface'))).not.toContain('New-NetIPAddress');
 	});
@@ -771,7 +780,7 @@ describe('windowsApplyIPv4Command', () => {
 		// Told apart by lifetime, not by Protocol: measured on Windows 11 a lease's
 		// default route and a hand-added one both report Protocol NetMgmt, and only the
 		// lease's counts down.
-		expect(command).toContain('} else { if ($r.ValidLifetime -eq [TimeSpan]::MaxValue) { New-NetRoute');
+		expect(command).toContain('if ($null -eq $rTwin) { if ($r.ValidLifetime -eq [TimeSpan]::MaxValue) { New-NetRoute');
 		expect(command).toContain('foreach ($r in $oldPersistentRoutes) { if ($oldActiveRoutes.NextHop -notcontains $r.NextHop) { New-NetRoute');
 		// The static branch restores every route it snapshotted — there is no lease on
 		// a static interface for a countdown to have come from.
@@ -819,10 +828,10 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('-Dhcp Enabled');
 		expect(command).toContain('-ResetServerAddresses');
 		// No address is SET. The rollback still carries New-NetIPAddress — once per
-		// store an address could have come from — but each re-adds `$a.IPAddress` out
-		// of the snapshot rather than a literal.
+		// combination of stores an address could have come from — but each re-adds
+		// `$a.IPAddress` out of the snapshot rather than a literal.
 		expect(command).not.toContain('New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress 1');
-		expect(command.match(/New-NetIPAddress -InterfaceIndex \$i -AddressFamily IPv4 -IPAddress \$a\.IPAddress/g)).toHaveLength(3);
+		expect(command.match(/New-NetIPAddress -InterfaceIndex \$i -AddressFamily IPv4 -IPAddress \$a\.IPAddress/g)).toHaveLength(5);
 	});
 
 	it('sets the address, prefix and gateway for a static config', () => {

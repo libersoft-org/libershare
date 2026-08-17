@@ -723,8 +723,8 @@ function windowsSnapshotSteps(): string[] {
  * `$addressingChanged` in {@link windowsApplyIPv4Command}.
  */
 function windowsRestoreAddressingSteps(): string[] {
-	const restoreStatic = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', ...restorePerStore('$a', '$oldActiveAddresses', '$oldPersistentAddresses', 'IPAddress', NEW_ADDRESS, REMOVE_ACTIVE_ADDRESS), ...restorePerStore('$r', '$oldActiveRoutes', '$oldPersistentRoutes', 'NextHop', NEW_ROUTE, REMOVE_ACTIVE_ROUTE)].join('; ');
-	const restoreDhcp = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', ...restorePerStore('$r', '$oldActiveRoutes', '$oldPersistentRoutes', 'NextHop', NEW_ROUTE, REMOVE_ACTIVE_ROUTE, NOT_FROM_A_LEASE)].join('; ');
+	const restoreStatic = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', ...restorePerStore(RESTORABLE_ADDRESS, '$oldActiveAddresses', '$oldPersistentAddresses'), ...restorePerStore(RESTORABLE_ROUTE, '$oldActiveRoutes', '$oldPersistentRoutes')].join('; ');
+	const restoreDhcp = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', ...restorePerStore(RESTORABLE_ROUTE, '$oldActiveRoutes', '$oldPersistentRoutes', NOT_FROM_A_LEASE)].join('; ');
 	return [...windowsRemovalSteps(), `if ($oldDhcp -eq 'Enabled') { ${restoreDhcp} } else { ${restoreStatic} }`];
 }
 
@@ -787,16 +787,49 @@ const REMOVE_ACTIVE_ROUTE = "Remove-NetRoute -InterfaceIndex $i -DestinationPref
 /** Put the resolvers back — a manual override as itself, anything else as automatic. */
 const WINDOWS_RESTORE_DNS = 'if ($oldDnsManual.Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $oldDnsManual } else { Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses }';
 
+/** Everything restoring one kind of snapshotted object needs — see {@link restorePerStore}. */
+interface RestorableKind {
+	/** The variable the create template reads its properties from. */
+	readonly item: string;
+	/** The property matching an object in one store to its twin in the other. */
+	readonly identity: string;
+	/**
+	 * The properties a restore actually writes back, and so the ones deciding whether
+	 * one create can cover both stores.
+	 *
+	 * The origins are deliberately absent: Windows assigns them and no create can ask
+	 * for them, so two copies differing only there are as alike as anything put back
+	 * could be. {@link WINDOWS_ORIGIN_GUARD} is what refuses the ones that matter.
+	 */
+	readonly properties: readonly string[];
+	readonly create: string;
+	readonly removeActive: string;
+}
+
+/** An IPv4 address, as the restore has to reproduce it. */
+const RESTORABLE_ADDRESS: RestorableKind = { item: '$a', identity: 'IPAddress', properties: ['PrefixLength', 'Type', 'SkipAsSource', 'ValidLifetime', 'PreferredLifetime'], create: NEW_ADDRESS, removeActive: REMOVE_ACTIVE_ADDRESS };
+/** An IPv4 default route, likewise. */
+const RESTORABLE_ROUTE: RestorableKind = { item: '$r', identity: 'NextHop', properties: ['RouteMetric', 'Protocol', 'Publish', 'ValidLifetime', 'PreferredLifetime'], create: NEW_ROUTE, removeActive: REMOVE_ACTIVE_ROUTE };
+
 /**
  * Re-create one kind of snapshotted object, each into the store it came from.
  *
- * `identity` is the property the two stores are matched on — the address itself,
- * or a route's next hop, both of which are unique per interface within one store.
+ * The two stores are matched on identity — the address itself, or a route's next
+ * hop, both of which are unique per interface within one store — but an identity
+ * held in both is NOT one object. `Set-NetIPAddress` and `Set-NetRoute` can be
+ * pointed at the active store alone, so the same next hop legitimately exists as an
+ * active route at metric 5 with a half-hour lifetime and a persistent one at metric
+ * 100 with an infinite one. Matching on identity and then re-creating both copies
+ * from the ACTIVE one restored the machine's startup configuration as something it
+ * had never been, inside a rollback reporting that it had changed nothing. So the
+ * one-create shortcut is taken only when every property a restore writes back is
+ * equal; otherwise each store gets its own copy, the persistent variant first
+ * (which reaches both stores) and the active variant after its copy is removed.
  *
  * `activeOnlyCondition` narrows the active-only branch, which is the only one that
  * can hold something a DHCP lease produced — see {@link NOT_FROM_A_LEASE}. An
  * object in the persistent store is always this machine's own and always goes
- * back.
+ * back, and so is one held in both, because a lease writes only the active store.
  *
  * The persistent-only case cannot be written the way it reads. There is no
  * `-PolicyStore PersistentStore` to create with: `New-NetIPAddress` is documented
@@ -811,11 +844,19 @@ const WINDOWS_RESTORE_DNS = 'if ($oldDnsManual.Count -gt 0) { Set-DnsClientServe
  * store as it was. The interface carries that address for the moment in between,
  * which is the whole of the difference and is not observable outside the rollback.
  */
-function restorePerStore(item: string, active: string, persistent: string, identity: string, create: string, removeActive: string, activeOnlyCondition: string = ''): string[] {
+function restorePerStore(kind: RestorableKind, active: string, persistent: string, activeOnlyCondition: string = ''): string[] {
+	const { item, identity, create, removeActive } = kind;
 	const inBothStores = `${create} -ErrorAction Stop | Out-Null`;
 	const activeOnly = `${create} -PolicyStore ActiveStore -ErrorAction Stop | Out-Null`;
 	const persistentOnly = `${inBothStores}; ${tolerateMissing(removeActive)}`;
-	return [`foreach (${item} in ${active}) { if (${persistent}.${identity} -contains ${item}.${identity}) { ${inBothStores} } else { ${activeOnlyCondition ? `if (${activeOnlyCondition}) { ${activeOnly} }` : activeOnly} } }`, `foreach (${item} in ${persistent}) { if (${active}.${identity} -notcontains ${item}.${identity}) { ${persistentOnly} } }`];
+	// The loop variable is held apart from the one the templates read, so the
+	// differing case can point them at the persistent copy and then back again.
+	const activeCopy = `${item}Active`;
+	const twin = `${item}Twin`;
+	const alike = kind.properties.map(property => `${activeCopy}.${property} -eq ${twin}.${property}`).join(' -and ');
+	const activeBranch = activeOnlyCondition ? `if (${activeOnlyCondition}) { ${activeOnly} }` : activeOnly;
+	const diverged = `${item} = ${twin}; ${inBothStores}; ${item} = ${activeCopy}; ${tolerateMissing(removeActive)}; ${activeOnly}`;
+	return [`foreach (${activeCopy} in ${active}) { ${twin} = @(${persistent} | Where-Object { $_.${identity} -eq ${activeCopy}.${identity} })[0]; ${item} = ${activeCopy}; if ($null -eq ${twin}) { ${activeBranch} } elseif (${alike}) { ${inBothStores} } else { ${diverged} } }`, `foreach (${item} in ${persistent}) { if (${active}.${identity} -notcontains ${item}.${identity}) { ${persistentOnly} } }`];
 }
 
 /**
