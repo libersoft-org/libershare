@@ -1672,6 +1672,15 @@ export async function syncDirectory(dir: string): Promise<void> {
  * `/root/a/b/c` with the entries for `b` and `c` unflushed: a crash comes back to a
  * drop-in directory that is not there and a configuration nothing ever read.
  *
+ * Every level's parent is flushed, whether this call created the level or found it there.
+ * Flushing only what we created was right for a clean first pass and wrong for the second:
+ * an attempt that created `b` and then failed to flush `a` leaves `b` visible but not
+ * committed, and the retry sees `EEXIST`, flushes nothing and reports a durability the
+ * filesystem never gave. A level that is already there and one another process just created
+ * without flushing look exactly alike from here, so the only safe rule is to flush all of
+ * them. That does mean flushing `/` and `/etc` on a path nobody could have half-created;
+ * a handful of directory flushes with nothing dirty in them costs nothing worth measuring.
+ *
  * `dir` itself is deliberately not flushed here — it has no entry in it yet. The rename
  * that follows puts one there and flushes it.
  */
@@ -1682,16 +1691,12 @@ async function makeDirectoryDurably(dir: string, syncDir: (d: string) => Promise
 		// One level at a time instead of `{recursive: true}`, because the recursive call
 		// reports only the first path it created — and on Windows it reports it in
 		// extended-length form, so the rest of the chain cannot be derived from its answer.
-		// An `EEXIST` here means the level was already there and no entry was added to its
-		// parent; anything else (a file in the way, no permission) is a real failure.
-		const created = await mkdir(level).then(
-			() => true,
-			(err: { code?: string }) => {
-				if (err.code === 'EEXIST') return false;
-				throw err;
-			}
-		);
-		if (created) await syncDir(dirname(level));
+		// An `EEXIST` here means the level was already there; anything else (a file in the
+		// way, no permission) is a real failure.
+		await mkdir(level).catch((err: { code?: string }) => {
+			if (err.code !== 'EEXIST') throw err;
+		});
+		await syncDir(dirname(level));
 	}
 }
 

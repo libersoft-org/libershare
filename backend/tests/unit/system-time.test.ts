@@ -1628,6 +1628,24 @@ describe('runAll', () => {
 	});
 });
 
+/**
+ * A directory-flush stub that fails on flushes of `target`, letting the first `after` of them
+ * through.
+ *
+ * Only flushes OF `target` are counted, and every other directory succeeds. Every level of the
+ * path is flushed now, including the ones above the temporary directory, so a stub that
+ * refused everything would fail on an ancestor long before the step under test — and one that
+ * counted every flush would depend on how deep the temporary directory happens to live.
+ */
+function failFlushOf(target: string, code = 'EIO', after = 0): (d: string) => Promise<void> {
+	let seen = 0;
+	return async d => {
+		if (d !== target) return;
+		seen += 1;
+		if (seen > after) throw Object.assign(new Error(`${code}: directory flush`), { code });
+	};
+}
+
 describe('writeFileAtomically', () => {
 	let dir = '';
 
@@ -1679,8 +1697,7 @@ describe('writeFileAtomically', () => {
 	 */
 	it('marks a post-rename flush failure as published and keeps the file', async () => {
 		const path = join(dir, '90-libershare.conf');
-		const eio = async (): Promise<void> => Promise.reject(Object.assign(new Error('EIO: i/o error, fsync'), { code: 'EIO' }));
-		const err = await writeFileAtomically(path, 'new\n', p => readFile(p, 'utf8'), eio).catch((e: { published?: boolean; code?: string }) => e);
+		const err = await writeFileAtomically(path, 'new\n', p => readFile(p, 'utf8'), failFlushOf(dir)).catch((e: { published?: boolean; code?: string }) => e);
 		expect(err).toMatchObject({ published: true, code: 'EIO' });
 		// Published means published: the file is there and no staging file was left behind.
 		expect(await readFile(path, 'utf8')).toBe('new\n');
@@ -1690,9 +1707,8 @@ describe('writeFileAtomically', () => {
 	/** Before the rename nothing is published, so the temp file goes and the error is bare. */
 	it('cleans up and does not mark a pre-rename failure as published', async () => {
 		const path = join(dir, 'made-here', '90-libershare.conf');
-		const eio = async (): Promise<void> => Promise.reject(Object.assign(new Error('EIO: i/o error, fsync'), { code: 'EIO' }));
 		// The parent flush runs before anything is written, because the directory was created.
-		const err = await writeFileAtomically(path, 'new\n', p => readFile(p, 'utf8'), eio).catch((e: { published?: boolean }) => e);
+		const err = await writeFileAtomically(path, 'new\n', p => readFile(p, 'utf8'), failFlushOf(dir)).catch((e: { published?: boolean }) => e);
 		expect(err).toMatchObject({ code: 'EIO' });
 		expect(err).not.toMatchObject({ published: true });
 		expect(await readdir(join(dir, 'made-here'))).toEqual([]);
@@ -1718,8 +1734,9 @@ describe('writeFileAtomically', () => {
 			p => readFile(p, 'utf8'),
 			async d => void flushed.push(d)
 		);
-		// The parent of `a` for the entry that names it, then `a` itself for the rename.
-		expect(flushed).toEqual([dir, join(dir, 'a')]);
+		// The parent of `a` for the entry that names it, then `a` itself for the rename. The
+		// levels above the temporary directory are flushed too and are not what this is about.
+		expect(flushed.slice(-2)).toEqual([dir, join(dir, 'a')]);
 	});
 
 	/**
@@ -1737,11 +1754,21 @@ describe('writeFileAtomically', () => {
 			p => readFile(p, 'utf8'),
 			async d => void flushed.push(d)
 		);
-		expect(flushed).toEqual([dir, join(dir, 'a'), join(dir, 'a', 'b'), join(dir, 'a', 'b', 'c')]);
+		expect(flushed.slice(-4)).toEqual([dir, join(dir, 'a'), join(dir, 'a', 'b'), join(dir, 'a', 'b', 'c')]);
 	});
 
-	it('flushes nothing extra when every level is already there', async () => {
-		const path = join(dir, '90-libershare.conf');
+	/**
+	 * The half-finished attempt is the case flushing only what WE created got wrong. The first
+	 * call creates `a` and dies on the flush of `dir`, so `a` is visible but its entry in
+	 * `dir` was never committed. The retry finds `a` there, and if `EEXIST` means "flush
+	 * nothing" the write, the rename and the flush of `a` all succeed and the API reports a
+	 * durability that a power loss would still take away with the whole directory.
+	 */
+	it('flushes the parent again when a retry finds the level already there', async () => {
+		const path = join(dir, 'a', '90-libershare.conf');
+		const failed = await writeFileAtomically(path, 'x\n', p => readFile(p, 'utf8'), failFlushOf(dir)).catch((e: { code?: string }) => e);
+		expect(failed).toMatchObject({ code: 'EIO' });
+		expect(await readdir(dir)).toEqual(['a']);
 		const flushed: string[] = [];
 		await writeFileAtomically(
 			path,
@@ -1749,7 +1776,7 @@ describe('writeFileAtomically', () => {
 			p => readFile(p, 'utf8'),
 			async d => void flushed.push(d)
 		);
-		expect(flushed).toEqual([dir]);
+		expect(flushed.slice(-2)).toEqual([dir, join(dir, 'a')]);
 	});
 
 	/**
@@ -1769,7 +1796,7 @@ describe('writeFileAtomically', () => {
 		expect((await rollback()).state).toBe('restored-durable');
 		expect(await readdir(dir)).toEqual([]);
 		// Once for the rename, once for the unlink that took the name away again.
-		expect(flushed).toEqual([dir, dir]);
+		expect(flushed.slice(-2)).toEqual([dir, dir]);
 	});
 
 	it('rolls an overwrite back to the previous content', async () => {
@@ -1848,24 +1875,15 @@ describe('writeFileAtomically', () => {
 	it('separates a restore that was not flushed from one that did not happen', async () => {
 		const path = join(dir, '90-libershare.conf');
 		await writeFile(path, 'original\n', 'utf8');
-		let calls = 0;
-		const failOnRollback = async (): Promise<void> => {
-			calls += 1;
-			if (calls > 1) throw Object.assign(new Error('input/output error'), { code: 'EIO' });
-		};
-		const rollback = await writeFileAtomically(path, 'replacement\n', undefined, failOnRollback);
+		// The rename's own flush goes through; the one behind the restore does not.
+		const rollback = await writeFileAtomically(path, 'replacement\n', undefined, failFlushOf(dir, 'EIO', 1));
 		expect((await rollback()).state).toBe('restored-not-durable');
 		expect(await readFile(path, 'utf8')).toBe('original\n');
 	});
 
 	it('reads a removal whose flush failed as restored but not durable', async () => {
 		const path = join(dir, '90-libershare.conf');
-		let calls = 0;
-		const failOnRollback = async (): Promise<void> => {
-			calls += 1;
-			if (calls > 1) throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
-		};
-		const rollback = await writeFileAtomically(path, 'new\n', undefined, failOnRollback);
+		const rollback = await writeFileAtomically(path, 'new\n', undefined, failFlushOf(dir, 'ENOSPC', 1));
 		expect((await rollback()).state).toBe('restored-not-durable');
 		expect(await readdir(dir)).toEqual([]);
 	});
@@ -1944,12 +1962,7 @@ describe('applyTimesyncdDropIn', () => {
 	it('restarts onto a restored drop-in whose flush failed, and says only that', async () => {
 		await writeFile(path, '[Time]\nNTP=\nNTP=old.example.org\n', 'utf8');
 		const { exec, calls } = fakeRunner([{ kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' }]);
-		let syncs = 0;
-		const failOnRollback = async (): Promise<void> => {
-			syncs += 1;
-			if (syncs > 1) throw Object.assign(new Error('input/output error'), { code: 'EIO' });
-		};
-		const r = await applyTimesyncdDropIn('new.example.org', true, path, exec, failOnRollback);
+		const r = await applyTimesyncdDropIn('new.example.org', true, path, exec, failFlushOf(dir, 'EIO', 1));
 		expect(r.success).toBe(false);
 		expect(await readFile(path, 'utf8')).toBe('[Time]\nNTP=\nNTP=old.example.org\n');
 		expect(calls).toEqual(['systemctl restart systemd-timesyncd', 'systemctl restart systemd-timesyncd']);
@@ -1961,12 +1974,7 @@ describe('applyTimesyncdDropIn', () => {
 	/** Same for the removal branch: the drop-in is gone from the filesystem either way. */
 	it('restarts after a removal whose flush failed', async () => {
 		const { exec, calls } = fakeRunner([{ kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' }]);
-		let syncs = 0;
-		const failOnRollback = async (): Promise<void> => {
-			syncs += 1;
-			if (syncs > 1) throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
-		};
-		const r = await applyTimesyncdDropIn('new.example.org', true, path, exec, failOnRollback);
+		const r = await applyTimesyncdDropIn('new.example.org', true, path, exec, failFlushOf(dir, 'ENOSPC', 1));
 		expect(r.success).toBe(false);
 		expect(await readdir(dir)).toEqual([]);
 		expect(calls).toEqual(['systemctl restart systemd-timesyncd', 'systemctl restart systemd-timesyncd']);
