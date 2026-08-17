@@ -249,7 +249,8 @@ export class LISHClient {
 		} finally {
 			this.lengthSink = null;
 			this.byteSink = null;
-		}	}
+		}
+	}
 
 	// Request list of shared LISHs from peer. `query` is an optional
 	// case-insensitive substring filter the peer applies server-side; omit it
