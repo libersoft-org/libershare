@@ -1000,6 +1000,12 @@ describe('probeParkedConfiguredBootstraps', () => {
 		(network as any).redialBackoff = new Map();
 		(network as any).addressProbeBackoff = new Map();
 		(network as any).bootstrapMultiaddrs = addresses.map(a => multiaddr(a));
+		const repaired: string[] = [];
+		(network as any).bootstrapTracker = {
+			recordAddressReachable(address: string) {
+				repaired.push(address);
+			},
+		};
 		(network as any).node = {
 			getConnections: () => (opts.connectionAddrs ?? []).map(a => ({ remoteAddr: { toString: () => a } })),
 			async dial(ma: { toString(): string }): Promise<void> {
@@ -1007,7 +1013,7 @@ describe('probeParkedConfiguredBootstraps', () => {
 				if (opts.failAddresses?.includes(ma.toString())) throw new Error('dial timeout');
 			},
 		};
-		return { network, dialed };
+		return { network, dialed, repaired };
 	}
 
 	const run = (network: Network): Promise<void> => (network as any).probeParkedConfiguredBootstraps(1);
@@ -1016,6 +1022,23 @@ describe('probeParkedConfiguredBootstraps', () => {
 		const { network, dialed } = bareNetwork({ connectionAddrs: [`/ip4/198.51.100.200/tcp/9090/p2p/${PEER_ID}`] });
 		await run(network);
 		expect(dialed).toEqual([multiaddr(PARKED).toString()]);
+	});
+
+	/**
+	 * This probe is the only thing that ever retries an address the routability filter
+	 * rejected at configure time — a LAN or VPN bootstrap whose interface was down. The
+	 * `error` row written back then had no other way to go green again.
+	 */
+	it('repairs the status row when a parked address answers', async () => {
+		const { network, repaired } = bareNetwork();
+		await run(network);
+		expect(repaired).toEqual([multiaddr(PARKED).toString()]);
+	});
+
+	it('leaves the row alone while the address is still failing', async () => {
+		const { network, repaired } = bareNetwork({ failAddresses: [multiaddr(PARKED).toString()] });
+		await run(network);
+		expect(repaired).toEqual([]);
 	});
 
 	it('leaves a discovered address to the loops that own it', async () => {

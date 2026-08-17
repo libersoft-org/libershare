@@ -1,4 +1,5 @@
 import { type BootstrapStatus, type BootstrapPeerStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
+import { canonicalMultiaddr } from './multiaddr-utils.ts';
 
 /**
  * Hard ceiling on DISCOVERED (gossip-learned) rows kept per network. A hostile
@@ -216,6 +217,31 @@ export class BootstrapStatusTracker {
 		net.set(multiaddr, { multiaddr, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' ? Date.now() : (previous?.staleSince ?? Date.now()) });
 		this.capDiscovered(net);
 		this.notify(networkID);
+	}
+
+	/**
+	 * Mark every row for one endpoint reachable, in every network that has one.
+	 *
+	 * For the loops that probe an ADDRESS rather than a network's list: they know the
+	 * endpoint answered but not who was waiting to hear it. The parked-bootstrap probe is
+	 * the case that matters — it is the only thing that ever retries an address the
+	 * routability filter rejected at configure time, and it used to keep its success to
+	 * itself, so the row stayed red for an address that had been working for hours.
+	 *
+	 * Matching is canonical, not by string identity: the probe walks parsed multiaddrs
+	 * while the rows are keyed by the spelling the user typed.
+	 */
+	recordAddressReachable(address: string): void {
+		const target = canonicalMultiaddr(address);
+		for (const [networkID, peers] of this.stats) {
+			let changed = false;
+			for (const [addr, peer] of peers) {
+				if (peer.status === 'connected' || canonicalMultiaddr(addr) !== target) continue;
+				peers.set(addr, { ...peer, status: 'connected', lastError: null, actualPeerID: null, updatedAt: new Date().toISOString(), staleSince: Date.now() });
+				changed = true;
+			}
+			if (changed) this.notify(networkID);
+		}
 	}
 
 	/** Bound discovered rows per network (drop the oldest) — see MAX_DISCOVERED_PER_NETWORK. */

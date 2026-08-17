@@ -530,3 +530,61 @@ describe('BootstrapStatusTracker.batchDebounced', () => {
 		expect(seen).toEqual([1]); // what it managed to change was still published
 	});
 });
+
+/**
+ * The address-level probes know an endpoint answered but not which networks were waiting
+ * to hear it. The parked-bootstrap probe is the case that matters: it is the only thing
+ * that retries an address the routability filter rejected at configure time, so the red
+ * row it left behind had no other way back to green.
+ */
+describe('BootstrapStatusTracker.recordAddressReachable', () => {
+	const NET_A = 'netAAAA';
+	const NET_B = 'netBBBB';
+	const PID = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+	const ADDR = `/dns4/bootstrap.example.org/tcp/9090/p2p/${PID}`;
+	const OTHER = `/ip4/192.0.2.50/tcp/9090/p2p/${PID}`;
+
+	function seeded() {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET_A, ADDR, PID, 'error', 'address is not routable from this host', null, 'configured');
+		tracker.recordOutcome(NET_B, ADDR, PID, 'error', 'address is not routable from this host', null, 'configured');
+		tracker.recordOutcome(NET_A, OTHER, PID, 'timeout', 'The operation timed out', null, 'configured');
+		return tracker;
+	}
+
+	const statusOf = (tracker: BootstrapStatusTracker, networkID: string, addr: string): string | undefined => tracker.getStatus(networkID)?.peers.find(p => p.multiaddr === addr)?.status;
+
+	it('repairs the row in every network that configured the address', () => {
+		const tracker = seeded();
+		tracker.recordAddressReachable(ADDR);
+		expect(statusOf(tracker, NET_A, ADDR)).toBe('connected');
+		expect(statusOf(tracker, NET_B, ADDR)).toBe('connected');
+	});
+
+	it('clears the error text it is replacing', () => {
+		const tracker = seeded();
+		tracker.recordAddressReachable(ADDR);
+		expect(tracker.getStatus(NET_A)?.peers.find(p => p.multiaddr === ADDR)?.lastError).toBe(null);
+	});
+
+	it('leaves other addresses of the same peer alone', () => {
+		const tracker = seeded();
+		tracker.recordAddressReachable(ADDR);
+		expect(statusOf(tracker, NET_A, OTHER)).toBe('timeout');
+	});
+
+	/** The probe walks parsed multiaddrs; the rows keep the spelling the user typed. */
+	it('matches the row canonically, not by string identity', () => {
+		const tracker = seeded();
+		tracker.recordAddressReachable(`/dns4/BOOTSTRAP.EXAMPLE.ORG./tcp/9090/p2p/${PID}`);
+		expect(statusOf(tracker, NET_A, ADDR)).toBe('connected');
+	});
+
+	it('emits nothing when no row is waiting for that address', () => {
+		const tracker = seeded();
+		const seen: string[] = [];
+		tracker.setOnChange(networkID => seen.push(networkID));
+		tracker.recordAddressReachable(`/ip4/198.51.100.77/tcp/9090/p2p/${PID}`);
+		expect(seen).toEqual([]);
+	});
+});

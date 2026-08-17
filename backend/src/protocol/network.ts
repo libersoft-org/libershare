@@ -1421,6 +1421,11 @@ export class Network {
 				await node.dial(ma, { signal: AbortSignal.timeout(10000), force: true });
 				if (epoch !== this.runEpoch) return;
 				this.addressProbeBackoff.delete(canonical);
+				// Tell the UI as well. This probe is the ONLY thing that retries an address
+				// the routability filter rejected at configure time, so without this the row
+				// written when the interface was down stayed red for as long as the node ran,
+				// however long the address had since been working.
+				this.bootstrapTracker.recordAddressReachable(ma.toString());
 				console.log(`[NET] parked configured bootstrap reachable again: ${ma.toString()}`);
 			} catch (err: any) {
 				if (epoch !== this.runEpoch) return;
