@@ -570,12 +570,6 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 	 * edit landed returns a live connection, and nothing else closes one nobody asked
 	 * for — the address may not even be configured any more.
 	 */
-	/**
-	 * Discovered origin on purpose: a CONFIGURED entry is claimed in `bootstrapPeerIDs`
-	 * BEFORE its dial, so by the time the supersede is noticed the peer already looks
-	 * "needed" to every reason-to-keep check. Closing it would need evidence this path
-	 * did not itself write moments earlier — see the note in the round-3 report.
-	 */
 	it('closes the connection the superseded dial had already opened', async () => {
 		const closed: string[] = [];
 		const { network } = bareNetwork();
@@ -585,6 +579,41 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		};
 		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
 		expect(closed).toEqual([ADDR_A]);
+	});
+
+	/**
+	 * The configured half of the same race, and the harder one: a configured entry
+	 * claims `configuredBootstrapPeerIDs` BEFORE its dial, so a check that trusts that
+	 * set finds the peer "needed" purely because this very dial said so. The registry
+	 * claim, which the config change releases, is the honest witness.
+	 */
+	it('closes a superseded configured dial whose address left the config', async () => {
+		const closed: string[] = [];
+		const { network } = bareNetwork();
+		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
+			// The edit lands mid-dial: the address is gone from the list, so its claim is
+			// released and the network's bootstrap job is invalidated.
+			(network as any).pruneBootstrapAddresses([ADDR_A], 'net-a');
+			(network as any).bumpBootstrapGeneration('net-a');
+			return { remoteAddr: { toString: () => ma.toString() }, close: async (): Promise<void> => void closed.push(ma.toString()) };
+		};
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
+		expect(closed).toEqual([ADDR_A]);
+		expect((network as any).configuredBootstrapPeerIDs.has(PEER_ID)).toBe(false);
+	});
+
+	it('keeps a superseded configured dial whose address is still configured', async () => {
+		const closed: string[] = [];
+		const { network } = bareNetwork();
+		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
+			// Only the generation moves — some OTHER entry of the list changed, this one
+			// is still the user's configuration and its connection is wanted.
+			(network as any).bumpBootstrapGeneration('net-a');
+			return { remoteAddr: { toString: () => ma.toString() }, close: async (): Promise<void> => void closed.push(ma.toString()) };
+		};
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
+		expect(closed).toEqual([]);
+		expect((network as any).configuredBootstrapPeerIDs.has(PEER_ID)).toBe(true);
 	});
 
 	it('keeps a superseded connection a joined network still needs', async () => {

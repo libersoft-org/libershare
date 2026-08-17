@@ -1924,8 +1924,17 @@ export class Network {
 						// connection nobody asked for. Only keep it when some joined network still
 						// needs the peer — a replaced address does not make its peer unwanted if
 						// another network still lists it.
-						if (peerID && !this.isPeerNeededByJoinedNetwork(peerID)) {
+						// Asked against the REGISTRY, not the flat configured set: a configured
+						// entry claims that set before its own dial, so consulting it here let
+						// every superseded configured dial declare its own peer "needed" and
+						// keep the connection. The registry claim is released by the very
+						// config change that superseded us, so it answers honestly.
+						if (peerID && !this.isPeerNeededByJoinedNetwork(peerID, true)) {
 							trace(`[NET] bootstrap dial superseded, closing connection: ${peerID.slice(0, 16)}`);
+							// The exemption this iteration claimed up front is stale for the same
+							// reason: no address of the peer is configured any more. Leaving it
+							// would keep the peer un-evictable for the life of the process.
+							this.configuredBootstrapPeerIDs.delete(peerID);
 							try {
 								await conn?.close();
 							} catch {
@@ -2373,6 +2382,28 @@ export class Network {
 
 	isBootstrapOrRelayPeer(peerID: string): boolean {
 		if (this.configuredBootstrapPeerIDs.has(peerID)) return true;
+		return this.isActiveRelayPeer(peerID);
+	}
+
+	/**
+	 * Whether the registry still holds a CONFIGURED claim on any address of this peer.
+	 *
+	 * The authoritative answer to "is this peer configured", as opposed to
+	 * {@link configuredBootstrapPeerIDs}, which a dial claims for itself before it
+	 * runs. A config change releases the claims it dropped (pruneBootstrapAddresses /
+	 * pruneConfiguredBootstrapPeer) and the entry disappears with its last owner, so a
+	 * dial that outlived its own configuration reads false here — while the flat set
+	 * still reads true, because that dial wrote it.
+	 */
+	private hasConfiguredAddressClaim(peerID: string): boolean {
+		for (const key of this.addressesByPeer.get(peerID) ?? []) {
+			if ((this.bootstrapByAddress.get(key)?.configuredBy.size ?? 0) > 0) return true;
+		}
+		return false;
+	}
+
+	/** True while some open circuit connection uses this peer as its relay hop. */
+	private isActiveRelayPeer(peerID: string): boolean {
 		if (!this.node) return false;
 		try {
 			// A relay's ID is the hop right before /p2p-circuit in a circuit address:
@@ -2428,8 +2459,10 @@ export class Network {
 	 * reserved for a peer no joined network has a use for. It is the same question
 	 * leaveNetwork asks before it hangs anyone up.
 	 */
-	private isPeerNeededByJoinedNetwork(peerID: string): boolean {
-		if (this.isBootstrapOrRelayPeer(peerID)) return true;
+	private isPeerNeededByJoinedNetwork(peerID: string, configuredFromRegistry = false): boolean {
+		// A caller that is itself the reason the peer looks configured must ask the
+		// registry instead of the flat set — see {@link hasConfiguredAddressClaim}.
+		if (configuredFromRegistry ? this.hasConfiguredAddressClaim(peerID) || this.isActiveRelayPeer(peerID) : this.isBootstrapOrRelayPeer(peerID)) return true;
 		if (this.sharesJoinedTopicWith(peerID)) return true;
 		if (!this.pubsub) return false;
 		for (const topic of this.pubsub.getTopics()) {
