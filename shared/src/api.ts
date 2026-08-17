@@ -7,7 +7,7 @@ type EventCallback = (data: any) => void;
  * Both browser and CLI clients must implement this interface.
  */
 export interface IWsClient {
-	call<T = any>(method: string, params?: Record<string, any>): Promise<T>;
+	call<T = any>(method: string, params?: Record<string, any>, timeoutMs?: number): Promise<T>;
 	on(event: string, callback: EventCallback): (() => void) | void;
 	off(event: string, callback: EventCallback): void;
 }
@@ -64,6 +64,13 @@ export class API {
 }
 
 /**
+ * How long an abort may wait for the server to finish clearing the upload. Long
+ * enough to cover a chunk write and an unlink on a slow disk, short enough that
+ * a modal blocked on it does not become permanent.
+ */
+const UPLOAD_ABORT_TIMEOUT_MS = 60_000;
+
+/**
  * Import file uploads. The transfer itself lives in the frontend's
  * `uploadImportFile`, which drives `upload.begin` / `chunk` / `end` directly;
  * what belongs here is the one call a caller makes on its own — discarding a
@@ -78,9 +85,16 @@ class UploadAPI {
 	/**
 	 * Throw away an upload without importing it. Safe to call for an id the
 	 * server no longer knows: an upload already gone is the outcome asked for.
+	 *
+	 * The server waits for whatever operation the abort interrupted and then for
+	 * the file to actually leave the disk before it answers, so this call is a
+	 * barrier and not a request — a caller may start its next transfer the moment
+	 * it resolves. It can therefore take as long as that operation does, which is
+	 * exactly why it goes out with a timeout: without one a reply lost on a socket
+	 * that stays open leaves the caller waiting for good.
 	 */
-	abort(uploadID: string): Promise<void> {
-		return this.client.call<void>('upload.abort', { uploadID });
+	abort(uploadID: string, timeoutMs: number = UPLOAD_ABORT_TIMEOUT_MS): Promise<void> {
+		return this.client.call<void>('upload.abort', { uploadID }, timeoutMs);
 	}
 }
 

@@ -142,8 +142,13 @@ const UPLOAD_STEP_TIMEOUT_MS = 60_000;
  *
  * The id, not a path: the file stays the server's to read and delete, so nothing
  * here can point the generic filesystem methods at it.
+ *
+ * `onStart` is handed the id as soon as it exists, before a single byte has gone
+ * out. Returning it only on success left the caller with nothing to clean up
+ * when the transfer failed in the middle — the id stayed in here, and the only
+ * attempt to discard the partial file was the fire-and-forget one below.
  */
-export async function uploadImportFile(file: File): Promise<string> {
+export async function uploadImportFile(file: File, onStart?: (uploadID: string) => void): Promise<string> {
 	// Checked up front so a file that could never be accepted fails immediately
 	// instead of after uploading its way to the ceiling.
 	if (file.size > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.UPLOAD_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
@@ -153,6 +158,7 @@ export async function uploadImportFile(file: File): Promise<string> {
 	// no id for — so it could neither finish nor abort it, and only the sweep ever
 	// cleared it. The backend treats a repeat of the same id as the same transfer.
 	const uploadID = crypto.randomUUID();
+	onStart?.(uploadID);
 	try {
 		await wsClient.call('upload.begin', { uploadID, name: file.name }, UPLOAD_STEP_TIMEOUT_MS);
 		for (let offset = 0; offset < file.size; offset += UPLOAD_CHUNK_SIZE) {
@@ -164,8 +170,11 @@ export async function uploadImportFile(file: File): Promise<string> {
 	} catch (err) {
 		// Nothing half-written is left behind. If the socket is what failed, the
 		// backend has already dropped the transfer on its own, so a failed abort
-		// is not worth reporting over the error that caused it.
-		void wsClient.call('upload.abort', { uploadID }).catch(() => {});
+		// is not worth reporting over the error that caused it. A caller that took
+		// the id through `onStart` can wait for a real cleanup itself; this is only
+		// the backstop for one that did not, and it is bounded so a lost reply does
+		// not leave a pending request behind for the life of the socket.
+		void wsClient.call('upload.abort', { uploadID }, UPLOAD_STEP_TIMEOUT_MS).catch(() => {});
 		throw err;
 	}
 }

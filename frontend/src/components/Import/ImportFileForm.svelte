@@ -49,6 +49,13 @@
 	let uploadFileName = $state('');
 	/** Id the backend holds the uploaded file under, empty until one is picked. */
 	let uploadID = $state('');
+	/**
+	 * Id of the last transfer this form started, whether it finished or not, and
+	 * only ever used to clean up. `uploadID` is the one that may be imported, so it
+	 * stays empty until the upload succeeded — which used to mean a transfer that
+	 * failed halfway left nothing here to discard.
+	 */
+	let startedUploadID = '';
 	let fileInput = $state<HTMLInputElement>();
 	let errorMessage = $state('');
 	let parsedData = $state<TData | null>(null);
@@ -73,21 +80,26 @@
 		// user could not retry with that file at all.
 		input.value = '';
 		if (!file) return;
-		// Picking a second file abandons the first one on the backend's disk.
-		const previous = uploadID;
+		// Picking a second file abandons the first one on the backend's disk —
+		// whether that one finished or died in the middle.
+		const previous = startedUploadID;
 		uploadID = '';
 		uploadFileName = file.name;
 		errorMessage = '';
 		busyLabel = $t('import.uploading');
 		try {
-			// Awaited rather than fired off. The next transfer starts on this same
-			// socket immediately afterwards, and the old file has to be off the disk
-			// and out of the quota before the new one starts claiming both.
-			if (previous) await api.upload.abort(previous).catch(() => {});
+			// Awaited, and the error is not swallowed. The next transfer starts on this
+			// same socket immediately afterwards, and the old file has to be off the
+			// disk and out of the quota before the new one begins claiming both — so a
+			// cleanup that did not happen is this pick's problem, not a footnote.
+			if (previous) {
+				await api.upload.abort(previous);
+				startedUploadID = '';
+			}
 			// The file goes to the backend as-is and is parsed there. Reading it here
 			// would also mean decompressing it here, and the browser only knows gzip
 			// and deflate — a .br or .zst upload has no chance.
-			const id = await uploadImportFile(file);
+			const id = await uploadImportFile(file, started => (startedUploadID = started));
 			// The form can be closed mid-upload; the file that lands afterwards has
 			// nobody left to import or discard it, so drop it here instead.
 			if (destroyed) void api.upload.abort(id).catch(() => {});
@@ -109,7 +121,7 @@
 	// the uploaded copy on the backend's disk until it ages out.
 	onDestroy(() => {
 		destroyed = true;
-		if (uploadID) void api.upload.abort(uploadID).catch(() => {});
+		if (startedUploadID) void api.upload.abort(startedUploadID).catch(() => {});
 	});
 
 	async function handleImport(): Promise<void> {
@@ -144,6 +156,7 @@
 			parsedData = uploadMode ? await parseUpload(uploadID) : await parseFile(filePath);
 			if (uploadMode) {
 				uploadID = '';
+				startedUploadID = '';
 				uploadFileName = '';
 			}
 		} catch (e) {
@@ -152,6 +165,7 @@
 			// chosen again rather than silently retried against a file that is gone.
 			if (uploadMode) {
 				uploadID = '';
+				startedUploadID = '';
 				uploadFileName = '';
 			}
 		} finally {

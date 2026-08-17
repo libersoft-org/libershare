@@ -167,6 +167,9 @@ const errorCodeKeys: Record<string, string> = {
 	UPLOAD_CHUNK_TOO_LARGE: 'common.errorUploadChunkTooLarge',
 	UPLOAD_BUSY: 'common.errorUploadBusy',
 	UPLOAD_QUOTA_EXCEEDED: 'common.errorUploadQuotaExceeded',
+	UPLOAD_CLEANUP_PENDING: 'common.errorUploadCleanupPending',
+	IMPORT_BUSY: 'common.errorImportBusy',
+	CLIENT_DISCONNECTED: 'common.errorClientDisconnected',
 	REQUEST_TIMEOUT: 'common.errorRequestTimeout',
 	// Filesystem (FileBrowser) → fileBrowser
 	FS_NOT_FOUND: 'fileBrowser.errorNotFound',
