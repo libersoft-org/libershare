@@ -421,6 +421,40 @@ describe('upload sweep', () => {
 		handlers.stop();
 	});
 
+	it('keeps charging for an upload whose file could not be deleted', async () => {
+		const budget = 256 * 1024;
+		const { handlers, uploadDir } = sweepHandlers({ idleMs: 60_000, maxAgeMs: 60_000, maxTotalBytes: budget });
+		const client = {};
+		const { uploadID } = await handlers.begin({ name: 'stuck.lish' }, client);
+		await handlers.chunk({ uploadID, data: pattern(200 * 1024) }, client);
+		await handlers.end({ uploadID }, client);
+
+		// A deletion that fails for real: the path is replaced by a non-empty
+		// directory, which `rm` without `recursive` refuses. Standing in for ENOSPC,
+		// a permission change or a handle another process is holding.
+		const [name] = await readdir(uploadDir);
+		const path = join(uploadDir, name!);
+		await rm(path, { force: true });
+		await mkdir(path, { recursive: true });
+		await Bun.write(join(path, 'in-the-way'), 'x');
+
+		await handlers.abort({ uploadID }, client);
+		// Unreachable for its owner — the abort did happen.
+		await expect(handlers.withFile({ uploadID }, client, async () => 1)).rejects.toThrow(ErrorCodes.UPLOAD_NOT_FOUND);
+		// But still charged for, because the bytes are still on the disk. Released
+		// early, this second upload of the same size would fit and real disk use
+		// would quietly pass the ceiling.
+		const { uploadID: next } = await handlers.begin({ name: 'next.lish' }, client);
+		await expect(handlers.chunk({ uploadID: next, data: pattern(200 * 1024) }, client)).rejects.toThrow(ErrorCodes.UPLOAD_QUOTA_EXCEEDED);
+
+		// Once the obstruction is gone the sweep retries and the budget comes back.
+		await rm(path, { recursive: true, force: true });
+		await handlers.sweep();
+		const { uploadID: after } = await handlers.begin({ name: 'after.lish' }, client);
+		expect(await handlers.chunk({ uploadID: after, data: pattern(200 * 1024) }, client)).toEqual({ received: 200 * 1024 });
+		handlers.stop();
+	});
+
 	it('runs on its own timer rather than only when a transfer starts', async () => {
 		const { handlers, uploadDir } = sweepHandlers({ maxAgeMs: 60_000, sweepIntervalMs: 50 });
 		// Nothing else will ever touch this node: with the sweep tied to the next

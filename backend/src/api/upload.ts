@@ -83,9 +83,11 @@ export function uploadFileName(originalName: string): string {
  * `ready` upload stays in the map on purpose: the record is what proves the file
  * is finished, whose it is, and how much disk it holds, and dropping it the
  * moment `end()` returns leaves a file nobody is accountable for until a sweep
- * happens to notice it.
+ * happens to notice it. `cleanup` is the tail of every path: the client can no
+ * longer reach the upload, but the file is still on the disk and so the record
+ * still answers for it.
  */
-type UploadState = 'receiving' | 'finalizing' | 'ready';
+type UploadState = 'receiving' | 'finalizing' | 'ready' | 'cleanup';
 
 /**
  * States in which nothing of ours is running and the client is the one who
@@ -180,7 +182,13 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 	 */
 	async function sweep(): Promise<void> {
 		const now = Date.now();
-		// Idle transfers first, so their files become unowned and the pass below
+		// Cleanups whose unlink failed come first. Those bytes are still charged to
+		// the global budget — correctly, since the file is still there — so a stuck
+		// cleanup starves every other client until it is retried.
+		for (const [uploadID, upload] of [...uploads]) {
+			if (upload.state === 'cleanup') await release(uploadID, upload);
+		}
+		// Idle transfers next, so their files become unowned and the pass below
 		// can see them rather than skipping them as active.
 		for (const [uploadID, upload] of [...uploads]) {
 			if (!isIdleExpirable(upload.state)) continue;
@@ -226,7 +234,9 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 	/** Look up a transfer the given socket is allowed to touch. */
 	function owned(uploadID: string, client: unknown): Upload {
 		const upload = uploads.get(uploadID);
-		if (!upload || upload.client !== client) throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, uploadID);
+		// A record still here in `cleanup` is only here because its file is: it is
+		// part of the disk accounting and nothing more, and must not be addressable.
+		if (!upload || upload.client !== client || upload.state === 'cleanup') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, uploadID);
 		return upload;
 	}
 
@@ -285,15 +295,40 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 	/** Close and delete a partial transfer. Safe to call on one that is already gone. */
 	async function discard(uploadID: string): Promise<void> {
 		const upload = uploads.get(uploadID);
-		if (!upload) return;
-		uploads.delete(uploadID);
-		totalBytes -= upload.written;
+		if (!upload || upload.state === 'cleanup') return;
+		// Moved into `cleanup` rather than removed. The record used to go first and
+		// the bytes with it, so an unlink that failed left a file on the disk that
+		// nothing was accounting for — repeat that and real disk use climbs past the
+		// configured ceiling while the running total reads zero.
+		upload.state = 'cleanup';
 		// Ending the writer also releases the file handle, which Windows needs
 		// before the half-written file can be removed.
 		try {
 			await upload.writer.end();
 		} catch {}
-		await rm(upload.path, { force: true }).catch(() => {});
+		await release(uploadID, upload);
+	}
+
+	/**
+	 * Delete an upload's file and, only if that worked, drop it from the map and
+	 * give its bytes back to the budget. A failure leaves the record in `cleanup`
+	 * for the next sweep to retry, which is the honest state of things: the file is
+	 * still there, so it still counts.
+	 */
+	async function release(uploadID: string, upload: Upload): Promise<void> {
+		try {
+			await rm(upload.path, { force: true });
+		} catch (err: any) {
+			console.error(`[API] Upload cleanup failed for ${upload.path}: ${err.message}`);
+			return;
+		}
+		// A sweep can retry a cleanup that is already running, so only whoever still
+		// finds the record may credit the bytes back — otherwise they are returned
+		// twice and the total drifts below what is really held. Nothing awaits
+		// between the check and the delete, so the pair is atomic.
+		if (uploads.get(uploadID) !== upload) return;
+		uploads.delete(uploadID);
+		totalBytes -= upload.written;
 	}
 
 	function begin(p: { name?: string }, client: unknown): Promise<{ uploadID: string }> {
