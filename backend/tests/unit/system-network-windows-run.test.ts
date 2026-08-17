@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
-import { INFINITE_LIFETIME, runWindowsApplyScript, staticHost, type FakeHost } from './helpers/windows-apply-harness.ts';
+import { INFINITE_LIFETIME, inStore, runWindowsApplyScript, staticHost, type FakeHost } from './helpers/windows-apply-harness.ts';
 
 const GUID = '{2B1F0E8A-4C3D-4E5F-9A7B-1C2D3E4F5A6B}';
 const windowsOnly = process.platform !== 'win32';
@@ -9,7 +9,7 @@ const LEASED_LIFETIME = '00:10:00';
 
 /** An interface on DHCP: one leased address and, unless overridden, the lease's own default route. */
 function leasedHost(overrides: Partial<FakeHost> = {}): FakeHost {
-	return { guid: GUID, dhcp: 'Enabled', addresses: [{ IPAddress: '203.0.113.50', PrefixLength: 24, PrefixOrigin: 'Dhcp', SuffixOrigin: 'Dhcp', SkipAsSource: false, ValidLifetime: LEASED_LIFETIME, PreferredLifetime: LEASED_LIFETIME, Type: 'Unicast', Stores: ['ActiveStore'] }], routes: [{ NextHop: '203.0.113.1', RouteMetric: 0, Protocol: 'NetMgmt', Publish: 'No', ValidLifetime: LEASED_LIFETIME, PreferredLifetime: LEASED_LIFETIME, Stores: ['ActiveStore'] }], nameServer: '', ...overrides };
+	return { guid: GUID, dhcp: 'Enabled', addresses: [{ Store: 'ActiveStore', IPAddress: '203.0.113.50', PrefixLength: 24, PrefixOrigin: 'Dhcp', SuffixOrigin: 'Dhcp', SkipAsSource: false, ValidLifetime: LEASED_LIFETIME, PreferredLifetime: LEASED_LIFETIME, Type: 'Unicast' }], routes: [{ Store: 'ActiveStore', NextHop: '203.0.113.1', RouteMetric: 0, Protocol: 'NetMgmt', Publish: 'No', ValidLifetime: LEASED_LIFETIME, PreferredLifetime: LEASED_LIFETIME }], nameServer: '', ...overrides };
 }
 
 /**
@@ -28,9 +28,8 @@ describe('windowsApplyIPv4Command, executed', () => {
 		const host = staticHost(GUID, { addresses: [], routes: [], nameServer: '' });
 		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '192.0.2.20', prefixLength: 24, gateway: '192.0.2.1', dns: ['198.51.100.1'] }), host);
 		expect(result.error).toBeNull();
-		expect(result.addresses).toHaveLength(1);
-		expect(result.addresses[0]?.IPAddress).toBe('192.0.2.20');
-		expect(result.addresses[0]?.Stores.sort()).toEqual(['ActiveStore', 'PersistentStore']);
+		expect(inStore(result.addresses, 'ActiveStore').map(a => a.IPAddress)).toEqual(['192.0.2.20']);
+		expect(inStore(result.addresses, 'PersistentStore').map(a => a.IPAddress)).toEqual(['192.0.2.20']);
 		expect(result.dns).toEqual(['198.51.100.1']);
 	});
 
@@ -40,8 +39,8 @@ describe('windowsApplyIPv4Command, executed', () => {
 	it.skipIf(windowsOnly)('clears a persistent copy of the address it replaces', async () => {
 		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '192.0.2.20', prefixLength: 24, gateway: '192.0.2.1' }), staticHost(GUID));
 		expect(result.error).toBeNull();
-		expect(result.addresses.map(a => a.IPAddress)).toEqual(['192.0.2.20']);
-		expect(result.routes.map(r => r.NextHop)).toEqual(['192.0.2.1']);
+		expect(inStore(result.addresses, 'PersistentStore').map(a => a.IPAddress)).toEqual(['192.0.2.20']);
+		expect(inStore(result.routes, 'PersistentStore').map(r => r.NextHop)).toEqual(['192.0.2.1']);
 	});
 
 	// A rejected configuration that reinstates itself at the next boot is worse than
@@ -51,9 +50,10 @@ describe('windowsApplyIPv4Command, executed', () => {
 		const host = staticHost(GUID, { failOn: 'Set-DnsClientServerAddress' });
 		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24, gateway: '198.51.100.1', dns: ['198.51.100.53'] }), host);
 		expect(result.error).toContain('injected failure');
-		expect(result.addresses.map(a => a.IPAddress)).toEqual(['192.0.2.10']);
-		expect(result.addresses[0]?.Stores.sort()).toEqual(['ActiveStore', 'PersistentStore']);
-		expect(result.routes.map(r => r.NextHop)).toEqual(['192.0.2.1']);
+		expect(inStore(result.addresses, 'ActiveStore').map(a => a.IPAddress)).toEqual(['192.0.2.10']);
+		expect(inStore(result.addresses, 'PersistentStore').map(a => a.IPAddress)).toEqual(['192.0.2.10']);
+		expect(inStore(result.routes, 'ActiveStore').map(r => r.NextHop)).toEqual(['192.0.2.1']);
+		expect(inStore(result.routes, 'PersistentStore').map(r => r.NextHop)).toEqual(['192.0.2.1']);
 	});
 
 	// An address that was active-only must not come back persistent: the rollback
@@ -61,29 +61,60 @@ describe('windowsApplyIPv4Command, executed', () => {
 	// never had.
 	it.skipIf(windowsOnly)('restores an active-only address as active-only', async () => {
 		const host = staticHost(GUID, { failOn: 'Set-DnsClientServerAddress' });
-		host.addresses[0]!.Stores = ['ActiveStore'];
-		host.routes[0]!.Stores = ['ActiveStore'];
+		host.addresses = inStore(host.addresses, 'ActiveStore');
+		host.routes = inStore(host.routes, 'ActiveStore');
 		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24, gateway: '198.51.100.1' }), host);
 		expect(result.error).toContain('injected failure');
-		expect(result.addresses.map(a => a.Stores)).toEqual([['ActiveStore']]);
-		expect(result.routes.map(r => r.Stores)).toEqual([['ActiveStore']]);
+		expect(result.addresses.map(a => a.Store)).toEqual(['ActiveStore']);
+		expect(result.routes.map(r => r.Store)).toEqual(['ActiveStore']);
 	});
 
 	// The persistent store legitimately holds objects the active store does not.
 	// Reading only the active one made such an interface look unconfigured, so the
 	// rollback wrote that emptiness back as its former state.
 	it.skipIf(windowsOnly)('sees and restores an address held only in the persistent store', async () => {
-		const host: FakeHost = { guid: GUID, dhcp: 'Disabled', addresses: [{ IPAddress: '192.0.2.10', PrefixLength: 24, PrefixOrigin: 'Manual', SuffixOrigin: 'Manual', SkipAsSource: false, ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME, Type: 'Unicast', Stores: ['PersistentStore'] }], routes: [], nameServer: '', failOn: 'Set-DnsClientServerAddress' };
+		const host: FakeHost = { guid: GUID, dhcp: 'Disabled', addresses: [{ Store: 'PersistentStore', IPAddress: '192.0.2.10', PrefixLength: 24, PrefixOrigin: 'Manual', SuffixOrigin: 'Manual', SkipAsSource: false, ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME, Type: 'Unicast' }], routes: [], nameServer: '', failOn: 'Set-DnsClientServerAddress' };
 		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24 }), host);
 		expect(result.error).toContain('injected failure');
 		expect(result.addresses.map(a => a.IPAddress)).toEqual(['192.0.2.10']);
-		expect(result.addresses.map(a => a.Stores)).toEqual([['PersistentStore']]);
+		expect(result.addresses.map(a => a.Store)).toEqual(['PersistentStore']);
 		// And it got there the only way the provider allows: created into both stores,
 		// then the active copy taken away. Neither creating cmdlet can be pointed at the
 		// persistent store, so a rollback that tries lands in the catch that reports the
 		// apply as unrecoverable.
 		expect(result.calls).toContain('New-NetIPAddress:ActiveStore+PersistentStore');
 		expect(result.calls.filter(call => call.startsWith('New-') && call.includes('PersistentStore') && !call.includes('+'))).toEqual([]);
+	});
+
+	// The two stores are free to disagree about an object they both hold, because
+	// Set-NetIPAddress and Set-NetRoute can be pointed at the active store alone. A
+	// rollback that matched on identity and then restored both copies from the ACTIVE
+	// one rewrote the startup configuration while reporting it had changed nothing.
+	it.skipIf(windowsOnly)('restores each store its own copy of one next hop', async () => {
+		const host = staticHost(GUID, { failOn: 'Set-DnsClientServerAddress' });
+		host.routes = [
+			{ Store: 'ActiveStore', NextHop: '192.0.2.1', RouteMetric: 5, Protocol: 'NetMgmt', Publish: 'No', ValidLifetime: '00:30:00', PreferredLifetime: '00:30:00' },
+			{ Store: 'PersistentStore', NextHop: '192.0.2.1', RouteMetric: 100, Protocol: 'NetMgmt', Publish: 'Yes', ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME },
+		];
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24, gateway: '198.51.100.1' }), host);
+		expect(result.error).toContain('injected failure');
+		expect(inStore(result.routes, 'ActiveStore').map(r => [r.RouteMetric, r.Publish, r.ValidLifetime])).toEqual([[5, 'No', '00:30:00']]);
+		expect(inStore(result.routes, 'PersistentStore').map(r => [r.RouteMetric, r.Publish, r.ValidLifetime])).toEqual([[100, 'Yes', INFINITE_LIFETIME]]);
+	});
+
+	// The same for an address: an active Anycast copy against a persistent Unicast one
+	// is a state the machine can be put into, so it is one the rollback has to hand
+	// back as it found it.
+	it.skipIf(windowsOnly)('restores each store its own copy of one address', async () => {
+		const host = staticHost(GUID, { failOn: 'Set-DnsClientServerAddress' });
+		host.addresses = [
+			{ Store: 'ActiveStore', IPAddress: '192.0.2.10', PrefixLength: 24, PrefixOrigin: 'Manual', SuffixOrigin: 'Manual', SkipAsSource: true, ValidLifetime: '00:30:00', PreferredLifetime: '00:30:00', Type: 'Anycast' },
+			{ Store: 'PersistentStore', IPAddress: '192.0.2.10', PrefixLength: 24, PrefixOrigin: 'Manual', SuffixOrigin: 'Manual', SkipAsSource: false, ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME, Type: 'Unicast' },
+		];
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24 }), host);
+		expect(result.error).toContain('injected failure');
+		expect(inStore(result.addresses, 'ActiveStore').map(a => [a.Type, a.SkipAsSource, a.ValidLifetime])).toEqual([['Anycast', true, '00:30:00']]);
+		expect(inStore(result.addresses, 'PersistentStore').map(a => [a.Type, a.SkipAsSource, a.ValidLifetime])).toEqual([['Unicast', false, INFINITE_LIFETIME]]);
 	});
 
 	// The form posts the whole configuration whichever field was edited, so the
@@ -96,8 +127,8 @@ describe('windowsApplyIPv4Command, executed', () => {
 		expect(result.error).toContain('injected failure');
 		for (const destructive of ['Remove-NetIPAddress', 'Remove-NetRoute', 'New-NetIPAddress', 'New-NetRoute']) expect(result.calls.filter(call => call.startsWith(destructive))).toEqual([]);
 		// And the interface is exactly as it was found, metric included.
-		expect(result.addresses.map(a => a.IPAddress)).toEqual(['192.0.2.10']);
-		expect(result.routes.map(r => r.RouteMetric)).toEqual([25]);
+		expect(inStore(result.addresses, 'ActiveStore').map(a => a.IPAddress)).toEqual(['192.0.2.10']);
+		expect(result.routes.map(r => r.RouteMetric)).toEqual([25, 25]);
 	});
 
 	// Duplicate address detection hangs off the same flag: with no new address there
@@ -112,14 +143,16 @@ describe('windowsApplyIPv4Command, executed', () => {
 	// removed, not one that merely has the same address on it.
 	it.skipIf(windowsOnly)('hands back an anycast address and a temporary route unchanged', async () => {
 		const host = staticHost(GUID, { failOn: 'Set-DnsClientServerAddress' });
-		host.addresses[0]!.Type = 'Anycast';
-		host.routes[0]!.ValidLifetime = '00:30:00';
-		host.routes[0]!.PreferredLifetime = '00:30:00';
+		for (const address of host.addresses) address.Type = 'Anycast';
+		for (const route of host.routes) {
+			route.ValidLifetime = '00:30:00';
+			route.PreferredLifetime = '00:30:00';
+		}
 		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24, gateway: '198.51.100.1' }), host);
 		expect(result.error).toContain('injected failure');
-		expect(result.addresses[0]?.Type).toBe('Anycast');
-		expect(result.routes[0]?.ValidLifetime).toBe('00:30:00');
-		expect(result.routes[0]?.RouteMetric).toBe(25);
+		expect(result.addresses.map(a => a.Type)).toEqual(['Anycast', 'Anycast']);
+		expect(result.routes.map(r => r.ValidLifetime)).toEqual(['00:30:00', '00:30:00']);
+		expect(result.routes.map(r => r.RouteMetric)).toEqual([25, 25]);
 	});
 
 	// The route is created as a side effect of New-NetIPAddress -DefaultGateway,
@@ -130,27 +163,27 @@ describe('windowsApplyIPv4Command, executed', () => {
 	it.skipIf(windowsOnly)('keeps the default route metric when only the address changes', async () => {
 		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '192.0.2.30', prefixLength: 24, gateway: '192.0.2.1' }), staticHost(GUID));
 		expect(result.error).toBeNull();
-		expect(result.addresses.map(a => a.IPAddress)).toEqual(['192.0.2.30']);
-		expect(result.routes.map(r => r.RouteMetric)).toEqual([25]);
+		expect(inStore(result.addresses, 'ActiveStore').map(a => a.IPAddress)).toEqual(['192.0.2.30']);
+		expect(result.routes.map(r => r.RouteMetric)).toEqual([25, 25]);
 	});
 
 	it.skipIf(windowsOnly)('takes no metric from a route to a different gateway', async () => {
 		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.30', prefixLength: 24, gateway: '198.51.100.1' }), staticHost(GUID));
 		expect(result.error).toBeNull();
 		expect(result.calls).not.toContain('Set-NetRoute');
-		expect(result.routes.map(r => r.NextHop)).toEqual(['198.51.100.1']);
+		expect(inStore(result.routes, 'ActiveStore').map(r => r.NextHop)).toEqual(['198.51.100.1']);
 	});
 
 	// A DHCP interface carrying a hand-added default route. The rollback used to
 	// re-enable DHCP and stop, so the route was gone for good — and if it was the
 	// only path into the network the host is administered over, so was the host.
 	it.skipIf(windowsOnly)('puts a DHCP interface manual default route back after a failed apply', async () => {
-		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24, gateway: '198.51.100.1' }), leasedHost({ failOn: 'Set-DnsClientServerAddress', routes: [{ NextHop: '203.0.113.1', RouteMetric: 5, Protocol: 'NetMgmt', Publish: 'No', ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME, Stores: ['ActiveStore'] }] }));
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24, gateway: '198.51.100.1' }), leasedHost({ failOn: 'Set-DnsClientServerAddress', routes: [{ Store: 'ActiveStore', NextHop: '203.0.113.1', RouteMetric: 5, Protocol: 'NetMgmt', Publish: 'No', ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME }] }));
 		expect(result.error).toContain('injected failure');
 		expect(result.dhcp).toBe('Enabled');
 		expect(result.routes.map(r => r.NextHop)).toEqual(['203.0.113.1']);
 		expect(result.routes[0]?.RouteMetric).toBe(5);
-		expect(result.routes[0]?.Stores).toEqual(['ActiveStore']);
+		expect(result.routes[0]?.Store).toBe('ActiveStore');
 	});
 
 	// The other half of the same rule: a route the lease handed out comes back with
@@ -171,7 +204,7 @@ describe('windowsApplyIPv4Command, executed', () => {
 	// store is still an interface this app cannot preserve.
 	it.skipIf(windowsOnly)('counts an alias that lives only in the persistent store', async () => {
 		const host = staticHost(GUID);
-		host.addresses.push({ IPAddress: '192.0.2.11', PrefixLength: 24, PrefixOrigin: 'Manual', SuffixOrigin: 'Manual', SkipAsSource: false, ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME, Type: 'Unicast', Stores: ['PersistentStore'] });
+		host.addresses.push({ Store: 'PersistentStore', IPAddress: '192.0.2.11', PrefixLength: 24, PrefixOrigin: 'Manual', SuffixOrigin: 'Manual', SkipAsSource: false, ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME, Type: 'Unicast' });
 		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24 }), host);
 		expect(result.error).toContain('several IPv4 addresses');
 		// Refused before the first removal, so nothing was touched.

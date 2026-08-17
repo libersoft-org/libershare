@@ -3,8 +3,24 @@ import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
 
-/** An IPv4 address as the fake host holds it, with the stores it lives in. */
+/** One of the two policy stores an object can live in. */
+export type PolicyStore = 'ActiveStore' | 'PersistentStore';
+
+/**
+ * One IPv4 address as ONE policy store holds it.
+ *
+ * Per store, not per address, and that is the whole point. The first version of
+ * this carried one property set plus a `Stores` array, which cannot express the
+ * state the two stores are actually free to be in: `Set-NetIPAddress` and
+ * `Set-NetRoute` can be pointed at the active store alone, so the same address or
+ * the same next hop legitimately exists in both stores with DIFFERENT properties —
+ * an active route at metric 5 against a persistent one at metric 100. A model that
+ * cannot represent that cannot catch a rollback which restores both from the active
+ * copy and silently rewrites the startup configuration. An object in both stores is
+ * two rows here, exactly as it is two objects on the machine.
+ */
 export interface FakeAddress {
+	Store: PolicyStore;
 	IPAddress: string;
 	PrefixLength: number;
 	PrefixOrigin?: string;
@@ -13,18 +29,27 @@ export interface FakeAddress {
 	ValidLifetime?: string;
 	PreferredLifetime?: string;
 	Type?: string;
-	Stores: string[];
 }
 
-/** An IPv4 default route as the fake host holds it. */
+/** One IPv4 default route as ONE policy store holds it — see {@link FakeAddress}. */
 export interface FakeRoute {
+	Store: PolicyStore;
 	NextHop: string;
 	RouteMetric: number;
 	Protocol?: string;
 	Publish?: string;
 	ValidLifetime?: string;
 	PreferredLifetime?: string;
-	Stores: string[];
+}
+
+/** The rows one policy store holds, in the order the fake host kept them. */
+export function inStore<T extends { Store: PolicyStore }>(rows: readonly T[], store: PolicyStore): T[] {
+	return rows.filter(row => row.Store === store);
+}
+
+/** The same object in both stores, from one property set — the ordinary case. */
+export function inBothStores<T extends { Store: PolicyStore }>(row: Omit<T, 'Store'>): T[] {
+	return [{ ...row, Store: 'ActiveStore' } as T, { ...row, Store: 'PersistentStore' } as T];
 }
 
 /** The host the generated script is run against. */
@@ -79,7 +104,11 @@ $script:dns = @()
 $script:newState = $fixture.newAddressState
 
 function ToSpan($value) { if ($null -eq $value) { [TimeSpan]::MaxValue } else { [TimeSpan]::Parse($value) } }
-function Live($item, $store) { $item.Stores -contains $store }
+
+# The stores a write with no -PolicyStore lands in. All four writing cmdlets agree:
+# omitting the parameter writes both, and naming ActiveStore is the only supported
+# way to write one.
+function TargetStores($store) { if ($store) { @($store) } else { @('ActiveStore', 'PersistentStore') } }
 
 # A removal that matched nothing, in the one category the apply is allowed to
 # ignore. The real cmdlets raise ObjectNotFound for it and anything else for a
@@ -106,9 +135,9 @@ function RejectPersistentCreate($cmdlet, $store) {
 }
 
 $script:addresses = @()
-foreach ($a in $fixture.addresses) { $script:addresses += [pscustomobject]@{ IPAddress = $a.IPAddress; PrefixLength = $a.PrefixLength; PrefixOrigin = $a.PrefixOrigin; SuffixOrigin = $a.SuffixOrigin; SkipAsSource = $a.SkipAsSource; ValidLifetime = (ToSpan $a.ValidLifetime); PreferredLifetime = (ToSpan $a.PreferredLifetime); Type = $a.Type; AddressState = 4; Stores = @($a.Stores) } }
+foreach ($a in $fixture.addresses) { $script:addresses += [pscustomobject]@{ Store = $a.Store; IPAddress = $a.IPAddress; PrefixLength = $a.PrefixLength; PrefixOrigin = $a.PrefixOrigin; SuffixOrigin = $a.SuffixOrigin; SkipAsSource = $a.SkipAsSource; ValidLifetime = (ToSpan $a.ValidLifetime); PreferredLifetime = (ToSpan $a.PreferredLifetime); Type = $a.Type; AddressState = 4 } }
 $script:routes = @()
-foreach ($r in $fixture.routes) { $script:routes += [pscustomobject]@{ NextHop = $r.NextHop; RouteMetric = $r.RouteMetric; Protocol = $r.Protocol; Publish = $r.Publish; ValidLifetime = (ToSpan $r.ValidLifetime); PreferredLifetime = (ToSpan $r.PreferredLifetime); Stores = @($r.Stores) } }
+foreach ($r in $fixture.routes) { $script:routes += [pscustomobject]@{ Store = $r.Store; NextHop = $r.NextHop; RouteMetric = $r.RouteMetric; Protocol = $r.Protocol; Publish = $r.Publish; ValidLifetime = (ToSpan $r.ValidLifetime); PreferredLifetime = (ToSpan $r.PreferredLifetime) } }
 
 function Get-NetAdapter { [CmdletBinding()] param([switch]$IncludeHidden) [pscustomobject]@{ InterfaceGuid = $fixture.guid; ifIndex = 42 } }
 function Get-NetIPInterface { [CmdletBinding()] param($InterfaceIndex, $AddressFamily) Note 'Get-NetIPInterface'; [pscustomobject]@{ Dhcp = $script:dhcp } }
@@ -119,58 +148,64 @@ function Get-NetIPAddress {
 	[CmdletBinding()] param($InterfaceIndex, $AddressFamily, $PolicyStore)
 	$store = if ($PolicyStore) { $PolicyStore } else { 'ActiveStore' }
 	Note "Get-NetIPAddress:$store"
-	@($script:addresses | Where-Object { Live $_ $store })
+	@($script:addresses | Where-Object { $_.Store -eq $store })
 }
 
 function Get-NetRoute {
 	[CmdletBinding()] param($InterfaceIndex, $DestinationPrefix, $PolicyStore)
 	$store = if ($PolicyStore) { $PolicyStore } else { 'ActiveStore' }
 	Note "Get-NetRoute:$store"
-	@($script:routes | Where-Object { Live $_ $store })
+	@($script:routes | Where-Object { $_.Store -eq $store })
 }
 
 function Remove-NetIPAddress {
 	[CmdletBinding(SupportsShouldProcess = $true)] param($InterfaceIndex, $AddressFamily, $PolicyStore, $IPAddress)
 	$store = if ($PolicyStore) { $PolicyStore } else { 'ActiveStore' }
 	Note "Remove-NetIPAddress:$store"
-	$hit = @($script:addresses | Where-Object { (Live $_ $store) -and ($null -eq $IPAddress -or $_.IPAddress -eq $IPAddress) })
+	$hit = @($script:addresses | Where-Object { $_.Store -eq $store -and ($null -eq $IPAddress -or $_.IPAddress -eq $IPAddress) })
 	if ($hit.Count -eq 0) { throw (NotFound 'no matching MSFT_NetIPAddress objects found') }
-	foreach ($a in $hit) { $a.Stores = @($a.Stores | Where-Object { $_ -ne $store }) }
-	$script:addresses = @($script:addresses | Where-Object { $_.Stores.Count -gt 0 })
+	$script:addresses = @($script:addresses | Where-Object { $hit -notcontains $_ })
 }
 
 function Remove-NetRoute {
 	[CmdletBinding(SupportsShouldProcess = $true)] param($InterfaceIndex, $DestinationPrefix, $PolicyStore, $NextHop)
 	$store = if ($PolicyStore) { $PolicyStore } else { 'ActiveStore' }
 	Note "Remove-NetRoute:$store"
-	$hit = @($script:routes | Where-Object { (Live $_ $store) -and ($null -eq $NextHop -or $_.NextHop -eq $NextHop) })
+	$hit = @($script:routes | Where-Object { $_.Store -eq $store -and ($null -eq $NextHop -or $_.NextHop -eq $NextHop) })
 	if ($hit.Count -eq 0) { throw (NotFound 'no matching MSFT_NetRoute objects found') }
-	foreach ($r in $hit) { $r.Stores = @($r.Stores | Where-Object { $_ -ne $store }) }
-	$script:routes = @($script:routes | Where-Object { $_.Stores.Count -gt 0 })
+	$script:routes = @($script:routes | Where-Object { $hit -notcontains $_ })
 }
 
 function New-NetIPAddress {
 	[CmdletBinding()] param($InterfaceIndex, $AddressFamily, $IPAddress, $PrefixLength, $DefaultGateway, $SkipAsSource, $ValidLifetime, $PreferredLifetime, $PolicyStore, $Type)
-	$stores = if ($PolicyStore) { @($PolicyStore) } else { @('ActiveStore', 'PersistentStore') }
+	$stores = TargetStores $PolicyStore
 	Note "New-NetIPAddress:$($stores -join '+')"
 	RejectPersistentCreate 'New-NetIPAddress' $PolicyStore
 	$state = if ($null -ne $script:newState) { $script:newState } else { 4 }
-	$script:addresses += [pscustomobject]@{ IPAddress = $IPAddress; PrefixLength = [int]$PrefixLength; PrefixOrigin = 'Manual'; SuffixOrigin = 'Manual'; SkipAsSource = $SkipAsSource; ValidLifetime = (ToSpan $ValidLifetime); PreferredLifetime = (ToSpan $PreferredLifetime); Type = $Type; AddressState = $state; Stores = $stores }
-	if ($DefaultGateway) { $script:routes += [pscustomobject]@{ NextHop = $DefaultGateway; RouteMetric = 256; Protocol = 'NetMgmt'; Publish = 'No'; ValidLifetime = [TimeSpan]::MaxValue; PreferredLifetime = [TimeSpan]::MaxValue; Stores = $stores } }
+	# One row per store, and separate objects: a write to both stores makes two
+	# objects the machine can afterwards change one of.
+	foreach ($s in $stores) {
+		$script:addresses += [pscustomobject]@{ Store = $s; IPAddress = $IPAddress; PrefixLength = [int]$PrefixLength; PrefixOrigin = 'Manual'; SuffixOrigin = 'Manual'; SkipAsSource = $SkipAsSource; ValidLifetime = (ToSpan $ValidLifetime); PreferredLifetime = (ToSpan $PreferredLifetime); Type = $Type; AddressState = $state }
+		if ($DefaultGateway) { $script:routes += [pscustomobject]@{ Store = $s; NextHop = $DefaultGateway; RouteMetric = 256; Protocol = 'NetMgmt'; Publish = 'No'; ValidLifetime = [TimeSpan]::MaxValue; PreferredLifetime = [TimeSpan]::MaxValue } }
+	}
 }
 
 function New-NetRoute {
 	[CmdletBinding(SupportsShouldProcess = $true)] param($InterfaceIndex, $DestinationPrefix, $NextHop, $RouteMetric, $Protocol, $Publish, $PolicyStore, $ValidLifetime, $PreferredLifetime)
-	$stores = if ($PolicyStore) { @($PolicyStore) } else { @('ActiveStore', 'PersistentStore') }
+	$stores = TargetStores $PolicyStore
 	Note "New-NetRoute:$($stores -join '+')"
 	RejectPersistentCreate 'New-NetRoute' $PolicyStore
-	$script:routes += [pscustomobject]@{ NextHop = $NextHop; RouteMetric = [int]$RouteMetric; Protocol = $Protocol; Publish = $Publish; ValidLifetime = (ToSpan $ValidLifetime); PreferredLifetime = (ToSpan $PreferredLifetime); Stores = $stores }
+	foreach ($s in $stores) { $script:routes += [pscustomobject]@{ Store = $s; NextHop = $NextHop; RouteMetric = [int]$RouteMetric; Protocol = $Protocol; Publish = $Publish; ValidLifetime = (ToSpan $ValidLifetime); PreferredLifetime = (ToSpan $PreferredLifetime) } }
 }
 
+# Documented "Specify ActiveStore only", and without the parameter it changes the
+# object in both stores — which is what makes an active-only Set the way the two
+# stores come to disagree in the first place.
 function Set-NetRoute {
 	[CmdletBinding(SupportsShouldProcess = $true)] param($InterfaceIndex, $DestinationPrefix, $NextHop, $RouteMetric, $PolicyStore)
 	Note 'Set-NetRoute'
-	foreach ($r in $script:routes) { if ($r.NextHop -eq $NextHop) { $r.RouteMetric = [int]$RouteMetric } }
+	$stores = TargetStores $PolicyStore
+	foreach ($r in $script:routes) { if ($r.NextHop -eq $NextHop -and $stores -contains $r.Store) { $r.RouteMetric = [int]$RouteMetric } }
 }
 
 function Set-NetIPInterface { [CmdletBinding()] param($InterfaceIndex, $AddressFamily, $Dhcp) Note "Set-NetIPInterface:$Dhcp"; $script:dhcp = $Dhcp }
@@ -185,8 +220,8 @@ function Set-DnsClientServerAddress {
 /** Project the fake host's remaining state back out as JSON the test can read. */
 const REPORT = String.raw`
 $report = @{ calls = @($script:log); dhcp = $script:dhcp; dns = @($script:dns); error = $applyFailure
-	addresses = @($script:addresses | ForEach-Object { @{ IPAddress = $_.IPAddress; PrefixLength = $_.PrefixLength; SkipAsSource = $_.SkipAsSource; Type = $_.Type; ValidLifetime = $_.ValidLifetime.ToString(); PreferredLifetime = $_.PreferredLifetime.ToString(); Stores = @($_.Stores) } })
-	routes = @($script:routes | ForEach-Object { @{ NextHop = $_.NextHop; RouteMetric = $_.RouteMetric; Protocol = $_.Protocol; Publish = $_.Publish; ValidLifetime = $_.ValidLifetime.ToString(); PreferredLifetime = $_.PreferredLifetime.ToString(); Stores = @($_.Stores) } }) }
+	addresses = @($script:addresses | ForEach-Object { @{ Store = $_.Store; IPAddress = $_.IPAddress; PrefixLength = $_.PrefixLength; SkipAsSource = $_.SkipAsSource; Type = $_.Type; ValidLifetime = $_.ValidLifetime.ToString(); PreferredLifetime = $_.PreferredLifetime.ToString() } })
+	routes = @($script:routes | ForEach-Object { @{ Store = $_.Store; NextHop = $_.NextHop; RouteMetric = $_.RouteMetric; Protocol = $_.Protocol; Publish = $_.Publish; ValidLifetime = $_.ValidLifetime.ToString(); PreferredLifetime = $_.PreferredLifetime.ToString() } }) }
 Write-Output ('LISHREPORT:' + (ConvertTo-Json $report -Depth 6 -Compress))
 `;
 
@@ -210,5 +245,5 @@ export async function runWindowsApplyScript(command: string, host: FakeHost): Pr
 
 /** A single-address static interface with one default route, held in both stores. */
 export function staticHost(guid: string, overrides: Partial<FakeHost> = {}): FakeHost {
-	return { guid, dhcp: 'Disabled', addresses: [{ IPAddress: '192.0.2.10', PrefixLength: 24, PrefixOrigin: 'Manual', SuffixOrigin: 'Manual', SkipAsSource: false, ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME, Type: 'Unicast', Stores: ['ActiveStore', 'PersistentStore'] }], routes: [{ NextHop: '192.0.2.1', RouteMetric: 25, Protocol: 'NetMgmt', Publish: 'No', ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME, Stores: ['ActiveStore', 'PersistentStore'] }], nameServer: '198.51.100.1', ...overrides };
+	return { guid, dhcp: 'Disabled', addresses: inBothStores<FakeAddress>({ IPAddress: '192.0.2.10', PrefixLength: 24, PrefixOrigin: 'Manual', SuffixOrigin: 'Manual', SkipAsSource: false, ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME, Type: 'Unicast' }), routes: inBothStores<FakeRoute>({ NextHop: '192.0.2.1', RouteMetric: 25, Protocol: 'NetMgmt', Publish: 'No', ValidLifetime: INFINITE_LIFETIME, PreferredLifetime: INFINITE_LIFETIME }), nameServer: '198.51.100.1', ...overrides };
 }
