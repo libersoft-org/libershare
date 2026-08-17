@@ -1,12 +1,11 @@
 import { type Database } from 'bun:sqlite';
 import { Mutex } from 'async-mutex';
 import { Network, normalizeMultiaddrForCompare } from '../protocol/network.ts';
-import { canonicalMultiaddr } from '../protocol/multiaddr-utils.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, CodedError, ErrorCodes } from '@shared';
-import { lishnetExists, getLISHnet, listLISHnets, listEnabledLISHnets, addLISHnet, updateLISHnet, deleteLISHnet, setLISHnetEnabled, addLISHnetIfNotExists, importLISHnets, upsertLISHnet, replaceLISHnets } from '../db/lishnets.ts';
+import { cleanBootstrapList, lishnetExists, getLISHnet, listLISHnets, listEnabledLISHnets, addLISHnet, updateLISHnet, deleteLISHnet, setLISHnetEnabled, addLISHnetIfNotExists, importLISHnets, upsertLISHnet, replaceLISHnets } from '../db/lishnets.ts';
 
 /**
  * Manages lishnets (logical network groups) on top of a single shared Network (libp2p) node.
@@ -466,7 +465,10 @@ export class Networks {
 			networkID: data.networkID,
 			name: data.name,
 			description: data.description || '',
-			bootstrapPeers: Array.isArray(data.bootstrapPeers) ? data.bootstrapPeers.filter(p => typeof p === 'string' && p.trim()) : [],
+			// Cleaned here as well as on write: this shape is also handed straight back to the
+			// caller as an import preview, and a preview that still shows the untrimmed value
+			// describes something other than what would be stored.
+			bootstrapPeers: Array.isArray(data.bootstrapPeers) ? cleanBootstrapList(data.bootstrapPeers) : [],
 			created: data.created || new Date().toISOString(),
 		};
 	}
@@ -607,28 +609,11 @@ export class Networks {
 	}
 
 	/**
-	 * Normalise a user-supplied bootstrap list: drop blanks, trim, and keep one entry per
-	 * canonical address.
-	 *
-	 * Trimming matters because the list came from a text field — a value with stray
-	 * whitespace passed the old blank check and then failed to parse at dial time.
-	 * Deduplicating matters because two spellings of one address (DNS case, expanded vs
-	 * compressed IPv6) would otherwise each get their own forced probe and their own
-	 * status row for the same endpoint.
+	 * The same normalisation the repository applies on write, for the comparisons here
+	 * that have to speak about a list in the shape it will be stored in.
 	 */
 	private static cleanBootstrapList(peers: string[]): string[] {
-		const seen = new Set<string>();
-		const out: string[] = [];
-		for (const raw of peers) {
-			if (typeof raw !== 'string') continue;
-			const trimmed = raw.trim();
-			if (trimmed.length === 0) continue;
-			const key = canonicalMultiaddr(trimmed);
-			if (seen.has(key)) continue;
-			seen.add(key);
-			out.push(trimmed);
-		}
-		return out;
+		return cleanBootstrapList(peers);
 	}
 
 	/**

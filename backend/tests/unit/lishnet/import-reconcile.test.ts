@@ -142,3 +142,74 @@ describe('Networks.replace — a wholesale rewrite reaches the runtime', () => {
 		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
 	});
 });
+
+/**
+ * Normalisation belongs to the write, not to the caller. Only the two edit paths used to
+ * apply it, so import, add and wholesale replace could store whitespace-padded values
+ * that fail to parse at dial time, and two spellings of one endpoint that each earn their
+ * own probe and their own status row.
+ */
+describe('bootstrap lists are normalised by whoever writes them', () => {
+	const PADDED = `  ${ADDR_A}  `;
+	const UPPER = `/dns4/BOOTSTRAP.EXAMPLE.ORG./tcp/9090/p2p/${PEER_A}`;
+	const LOWER = `/dns4/bootstrap.example.org/tcp/9090/p2p/${PEER_A}`;
+
+	function db(): Database {
+		const d = new Database(':memory:');
+		initLISHnetsTables(d);
+		return d;
+	}
+
+	it('add() trims and drops blanks', async () => {
+		const d = db();
+		const networks = bare(d, makeMockNet(), []);
+
+		await networks.add({ networkID: NET, name: 'A', description: '', bootstrapPeers: [PADDED, '', '   '], enabled: false, created: '' });
+
+		expect(getLISHnet(d, NET)!.bootstrapPeers).toEqual([ADDR_A]);
+	});
+
+	it('addIfNotExists() collapses two spellings of one address', () => {
+		const d = db();
+		const networks = bare(d, makeMockNet(), []);
+
+		networks.addIfNotExists({ networkID: NET, name: 'A', description: '', bootstrapPeers: [UPPER, LOWER], created: '' });
+
+		expect(getLISHnet(d, NET)!.bootstrapPeers).toEqual([UPPER]);
+	});
+
+	it('importNetworks() trims what it stores', () => {
+		const d = db();
+		const networks = bare(d, makeMockNet(), []);
+
+		networks.importNetworks([{ networkID: NET, name: 'A', description: '', bootstrapPeers: [PADDED], created: '' }]);
+
+		expect(getLISHnet(d, NET)!.bootstrapPeers).toEqual([ADDR_A]);
+	});
+
+	it('importFromLISHnet() trims what it stores', async () => {
+		const d = db();
+		const networks = bare(d, makeMockNet(), []);
+
+		await networks.importFromLISHnet({ networkID: NET, name: 'A', description: '', bootstrapPeers: [PADDED] } as any, false);
+
+		expect(getLISHnet(d, NET)!.bootstrapPeers).toEqual([ADDR_A]);
+	});
+
+	it('replace() trims what it stores', async () => {
+		const d = db();
+		const networks = bare(d, makeMockNet(), []);
+
+		await networks.replace([{ networkID: NET, name: 'A', description: '', bootstrapPeers: [PADDED], enabled: false, created: '' }]);
+
+		expect(getLISHnet(d, NET)!.bootstrapPeers).toEqual([ADDR_A]);
+	});
+
+	it('validateNetwork() reports the list in the shape it would be stored in', () => {
+		const networks = bare(db(), makeMockNet(), []);
+
+		const definition = networks.validateNetwork({ networkID: NET, name: 'A', description: '', bootstrapPeers: [PADDED, '  '] } as any);
+
+		expect(definition.bootstrapPeers).toEqual([ADDR_A]);
+	});
+});
