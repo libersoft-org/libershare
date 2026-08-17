@@ -202,10 +202,19 @@ function New-NetRoute {
 # object in both stores — which is what makes an active-only Set the way the two
 # stores come to disagree in the first place.
 function Set-NetRoute {
-	[CmdletBinding(SupportsShouldProcess = $true)] param($InterfaceIndex, $DestinationPrefix, $NextHop, $RouteMetric, $PolicyStore)
+	[CmdletBinding(SupportsShouldProcess = $true)] param($InterfaceIndex, $DestinationPrefix, $NextHop, $RouteMetric, $Publish, $ValidLifetime, $PreferredLifetime, $PolicyStore)
 	Note 'Set-NetRoute'
 	$stores = TargetStores $PolicyStore
-	foreach ($r in $script:routes) { if ($r.NextHop -eq $NextHop -and $stores -contains $r.Store) { $r.RouteMetric = [int]$RouteMetric } }
+	# Exactly the four the real cmdlet can change. NextHop and Protocol appear only as
+	# array-typed query parameters, and Windows refuses to modify either after the
+	# route exists.
+	foreach ($r in $script:routes) {
+		if ($r.NextHop -ne $NextHop -or $stores -notcontains $r.Store) { continue }
+		if ($null -ne $RouteMetric) { $r.RouteMetric = [int]$RouteMetric }
+		if ($null -ne $Publish) { $r.Publish = $Publish }
+		if ($null -ne $ValidLifetime) { $r.ValidLifetime = (ToSpan $ValidLifetime) }
+		if ($null -ne $PreferredLifetime) { $r.PreferredLifetime = (ToSpan $PreferredLifetime) }
+	}
 }
 
 function Set-NetIPInterface { [CmdletBinding()] param($InterfaceIndex, $AddressFamily, $Dhcp) Note "Set-NetIPInterface:$Dhcp"; $script:dhcp = $Dhcp }

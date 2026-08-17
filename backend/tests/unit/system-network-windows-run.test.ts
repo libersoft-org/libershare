@@ -184,6 +184,41 @@ describe('windowsApplyIPv4Command, executed', () => {
 		expect(result.routes.map(r => r.RouteMetric)).toEqual([25, 25]);
 	});
 
+	// The rollback already handed these back; the SUCCESS path was dropping them. An
+	// interface whose address is not changing — the user moved the gateway, or only
+	// the resolvers, and the form posts the whole configuration either way — came back
+	// Unicast, answering for outgoing traffic, and permanent.
+	it.skipIf(windowsOnly)('keeps an anycast address and a temporary route across a successful change', async () => {
+		const host = staticHost(GUID);
+		for (const address of host.addresses) {
+			address.Type = 'Anycast';
+			address.SkipAsSource = true;
+			address.ValidLifetime = '02:00:00';
+			address.PreferredLifetime = '02:00:00';
+		}
+		for (const route of host.routes) {
+			route.Publish = 'Yes';
+			route.ValidLifetime = '00:45:00';
+			route.PreferredLifetime = '00:45:00';
+		}
+		// Same address, same gateway, a different prefix — so the rewrite runs.
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '192.0.2.10', prefixLength: 25, gateway: '192.0.2.1' }), host);
+		expect(result.error).toBeNull();
+		expect(inStore(result.addresses, 'ActiveStore').map(a => [a.Type, a.SkipAsSource, a.ValidLifetime])).toEqual([['Anycast', true, '02:00:00']]);
+		expect(inStore(result.routes, 'ActiveStore').map(r => [r.RouteMetric, r.Publish, r.ValidLifetime])).toEqual([[25, 'Yes', '00:45:00']]);
+	});
+
+	// ...and an address that IS moving takes none of them: those properties belonged
+	// to the object being replaced.
+	it.skipIf(windowsOnly)('lets Windows choose the properties of an address that moved', async () => {
+		const host = staticHost(GUID);
+		for (const address of host.addresses) address.Type = 'Anycast';
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '192.0.2.30', prefixLength: 24, gateway: '192.0.2.1' }), host);
+		expect(result.error).toBeNull();
+		// No -Type was passed at all, which is what leaves Windows its own default.
+		expect(inStore(result.addresses, 'ActiveStore')[0]?.Type).toBeFalsy();
+	});
+
 	it.skipIf(windowsOnly)('takes no metric from a route to a different gateway', async () => {
 		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.30', prefixLength: 24, gateway: '198.51.100.1' }), staticHost(GUID));
 		expect(result.error).toBeNull();

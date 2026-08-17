@@ -1003,26 +1003,51 @@ export function windowsAddressingUnchanged(config: NetIPv4Config): string {
 }
 
 /**
- * Give the new default route the metric the old one had, when it is the same
+ * Give the new default route the properties the old one had, when it is the same
  * gateway.
  *
  * The route is created as a side effect of `New-NetIPAddress -DefaultGateway`,
- * which has no metric parameter — it takes whatever Windows derives from the link
- * speed. So changing an address on an interface whose gateway did not move
- * silently re-ranked that route against every other default route on the host, and
- * on a multihomed machine that is a change of which interface traffic leaves by.
- * The same reasoning is why {@link windowsAddressingUnchanged} exists: the metric
- * is precisely what a needless rewrite was found to lose.
+ * which has no parameter for any of them — it takes the metric Windows derives from
+ * the link speed, an infinite lifetime and `Publish` No. So changing an address on
+ * an interface whose gateway did not move silently re-ranked that route against
+ * every other default route on the host (on a multihomed machine, a change of which
+ * interface traffic leaves by), made a route with a countdown on it permanent, and
+ * stopped a published route being advertised. The same reasoning is why
+ * {@link windowsAddressingUnchanged} exists: this is exactly what a rewrite loses.
  *
  * Correcting it afterwards rather than creating the route by hand keeps
- * `-DefaultGateway`'s own check that the gateway is reachable from the new
- * address. Empty when there is no gateway, or when the gateway is not the one the
- * interface already had — a metric belonging to a different next hop is not a
- * metric worth keeping.
+ * `-DefaultGateway`'s own check that the gateway is reachable from the new address.
+ * `Protocol` is the one property that cannot be carried across: on `Set-NetRoute` it
+ * selects routes rather than changing them, and Windows will not let a route's next
+ * hop or protocol be modified after creation.
+ *
+ * Empty when there is no gateway. A route to a DIFFERENT next hop contributes
+ * nothing — its properties belong to a path this interface no longer takes.
  */
-function keepRouteMetric(config: NetIPv4Config): string[] {
+function keepRouteProperties(config: NetIPv4Config): string[] {
 	if (!config.gateway) return [];
-	return [`if (@($oldRoutes).Count -eq 1 -and $oldRoutes[0].NextHop -eq '${config.gateway}') { Set-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop ${config.gateway} -RouteMetric $($oldRoutes[0].RouteMetric) -Confirm:$false }`];
+	return [`$keptRoute = @($oldRoutes | Where-Object { $_.NextHop -eq '${config.gateway}' })[0]`, `if ($keptRoute) { Set-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop ${config.gateway} -RouteMetric $keptRoute.RouteMetric -Publish $keptRoute.Publish -ValidLifetime $keptRoute.ValidLifetime -PreferredLifetime $keptRoute.PreferredLifetime -Confirm:$false }`];
+}
+
+/**
+ * Carry a re-created address's own properties across, when it keeps its address.
+ *
+ * The rewrite removes and re-creates rather than edits, so an address that is not
+ * changing — the user moved the gateway, or only the resolvers, and the form posted
+ * the whole configuration — came back with `New-NetIPAddress`'s defaults on every
+ * property the form does not carry. An Anycast address became Unicast, a
+ * `SkipAsSource` address started answering for outgoing traffic and appearing in
+ * DNS, and an address with a lifetime on it became permanent. The rollback already
+ * hands all four back; the SUCCESS path was throwing them away and reporting that
+ * only the gateway had changed.
+ *
+ * Splatted rather than interpolated, because "the same address, so keep them" and
+ * "a different address, so let Windows choose" are two different parameter lists
+ * for one call. Read from the snapshot's union, active copy first, so an address
+ * held only in the persistent store still contributes what it knows.
+ */
+function keepAddressProperties(config: NetIPv4Config): string[] {
+	return [`$keptAddress = @($oldAddresses | Where-Object { $_.IPAddress -eq '${config.address}' })[0]`, '$keptAddressProperties = @{}', 'if ($keptAddress) { $keptAddressProperties = @{ Type = $keptAddress.Type; SkipAsSource = $keptAddress.SkipAsSource; ValidLifetime = $keptAddress.ValidLifetime; PreferredLifetime = $keptAddress.PreferredLifetime } }'];
 }
 
 /** How long duplicate address detection may run before the apply gives up on it. */
@@ -1111,7 +1136,7 @@ export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): st
 		// The flag is set BEFORE the first removal, not after the last write: from that
 		// point on the interface is mid-change and the rollback has work to do however
 		// far the rewrite got.
-		const rewrite = ['$addressingChanged = $true', ...removals, 'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`, ...keepRouteMetric(config)].join('; ');
+		const rewrite = ['$addressingChanged = $true', ...keepAddressProperties(config), ...removals, 'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} @keptAddressProperties | Out-Null`, ...keepRouteProperties(config)].join('; ');
 		mutation.push(windowsAddressingUnchanged(config), `if (-not $addressingUnchanged) { ${rewrite} }`, dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses', `if ($addressingChanged) { ${windowsAddressStateWait(config.address as string)} }`);
 	}
 	const rollback = [`if ($addressingChanged) { ${windowsRestoreAddressingSteps().join('; ')} }`, WINDOWS_RESTORE_DNS].join('; ');

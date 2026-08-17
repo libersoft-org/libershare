@@ -525,7 +525,7 @@ describe('windowsApplyIPv4Command', () => {
 		// interface comes up with at the next boot, not what is in force now, and
 		// counting it as already-applied skipped the creation entirely.
 		expect(command).toContain("$addressingUnchanged = ($oldDhcp -ne 'Enabled') -and (@($oldActiveAddresses).Count -eq 1) -and ($oldActiveAddresses[0].IPAddress -eq '192.0.2.10') -and ($oldActiveAddresses[0].PrefixLength -eq 24) -and (@($oldActiveRoutes).Count -eq 1) -and ($oldActiveRoutes[0].NextHop -eq '192.0.2.1')");
-		expect(command).toContain('if (-not $addressingUnchanged) { $addressingChanged = $true; try { Remove-NetIPAddress');
+		expect(command).toContain('if (-not $addressingUnchanged) { $addressingChanged = $true; $keptAddress =');
 		// The resolvers and the state check are outside that branch: they are the
 		// part a DNS-only change is actually asking for.
 		expect(command).toContain('-Confirm:$false } }; Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses 198.51.100.1');
@@ -540,7 +540,7 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('$addressingChanged = $false; try {');
 		// Raised at the first destructive step, not after the last write — a rewrite
 		// that failed halfway still has to be undone.
-		expect(command).toContain('if (-not $addressingUnchanged) { $addressingChanged = $true; try { Remove-NetIPAddress');
+		expect(command).toContain('if (-not $addressingUnchanged) { $addressingChanged = $true; $keptAddress =');
 		// The resolvers are rewritten by every apply, so they always go back; the
 		// addressing goes back only when it was disturbed.
 		expect(command).toContain('catch { $applyError = $_; try { if ($addressingChanged) { try { Remove-NetIPAddress');
@@ -844,15 +844,29 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('-ServerAddresses 192.0.2.1');
 	});
 
-	// `New-NetIPAddress -DefaultGateway` has no metric parameter and takes whatever
-	// Windows derives from the link speed, so a change of address alone re-ranked the
-	// route. Corrected afterwards rather than by creating the route by hand, which
-	// would give up -DefaultGateway's own reachability check.
-	it('keeps the existing route metric when the gateway does not move', () => {
+	// `New-NetIPAddress -DefaultGateway` has a parameter for none of these and takes
+	// Windows' own defaults, so a change of address alone re-ranked the route, made a
+	// temporary one permanent and stopped a published one being advertised. Corrected
+	// afterwards rather than by creating the route by hand, which would give up
+	// -DefaultGateway's own reachability check.
+	it('keeps the existing route properties when the gateway does not move', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
-		expect(command).toContain("if (@($oldRoutes).Count -eq 1 -and $oldRoutes[0].NextHop -eq '192.0.2.1') { Set-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop 192.0.2.1 -RouteMetric $($oldRoutes[0].RouteMetric) -Confirm:$false }");
+		expect(command).toContain("$keptRoute = @($oldRoutes | Where-Object { $_.NextHop -eq '192.0.2.1' })[0]");
+		expect(command).toContain("if ($keptRoute) { Set-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop 192.0.2.1 -RouteMetric $keptRoute.RouteMetric -Publish $keptRoute.Publish -ValidLifetime $keptRoute.ValidLifetime -PreferredLifetime $keptRoute.PreferredLifetime -Confirm:$false }");
 		// Inside the rewrite, so a configuration that changed nothing does not run it.
 		expect(command.indexOf('Set-NetRoute')).toBeLessThan(command.indexOf('Set-DnsClientServerAddress'));
+	});
+
+	// The same for the address itself. The rewrite re-creates rather than edits, so an
+	// interface whose address is not changing — the user moved the gateway, or only
+	// the resolvers — got New-NetIPAddress's defaults on everything the form does not
+	// carry: an Anycast address came back Unicast, a SkipAsSource one started
+	// answering for outgoing traffic, and a lifetime became infinite.
+	it('keeps the existing address properties when the address does not move', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
+		expect(command).toContain("$keptAddress = @($oldAddresses | Where-Object { $_.IPAddress -eq '192.0.2.10' })[0]");
+		expect(command).toContain('if ($keptAddress) { $keptAddressProperties = @{ Type = $keptAddress.Type; SkipAsSource = $keptAddress.SkipAsSource; ValidLifetime = $keptAddress.ValidLifetime; PreferredLifetime = $keptAddress.PreferredLifetime } }');
+		expect(command).toContain('-IPAddress 192.0.2.10 -PrefixLength 24 -DefaultGateway 192.0.2.1 @keptAddressProperties | Out-Null');
 	});
 
 	it('has no metric to keep when the config has no gateway', () => {
