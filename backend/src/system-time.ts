@@ -462,19 +462,55 @@ export function buildSetTimezoneCommands(platform: SystemPlatform, timezone: str
 }
 
 /**
- * Whether `systemctl list-unit-files <unit>` reports the unit as installed and usable.
+ * Parse `systemctl show -p Id -p LoadState <units...>` into unit name -> `LoadState`.
  *
- * A masked unit is listed but can never start, so it is treated as absent — writing a
- * drop-in for it would silently do nothing. The header and the trailing "N unit files
- * listed." summary are skipped by requiring the line to begin with the unit name.
+ * The output is one `Key=Value` record per unit, records separated by a blank line. Units
+ * are keyed by the `Id` systemd itself reports rather than by argument position, so an
+ * alias, a reordering or a unit systemd declines to report cannot shift the answers onto
+ * the wrong names.
  */
-export function parseUnitInstalled(output: string, unit: string): boolean {
+export function parseUnitLoadStates(output: string): Map<string, string> {
+	const states = new Map<string, string>();
+	let id: string | null = null;
+	let load: string | null = null;
+	const flush = (): void => {
+		if (id !== null && load !== null) states.set(id, load);
+		id = null;
+		load = null;
+	};
 	for (const line of output.split(/\r?\n/)) {
-		if (!line.startsWith(unit)) continue;
-		const state = line.slice(unit.length).trim().split(/\s+/)[0] ?? '';
-		return state !== 'masked' && state !== 'masked-runtime' && state !== 'not-found';
+		const trimmed = line.trim();
+		if (trimmed.length === 0) {
+			flush();
+			continue;
+		}
+		const eq = trimmed.indexOf('=');
+		if (eq <= 0) continue;
+		const key = trimmed.slice(0, eq);
+		const value = trimmed.slice(eq + 1);
+		if (key === 'Id') {
+			// A second Id without a blank line between: end the record that was open.
+			if (id !== null) flush();
+			id = value;
+		} else if (key === 'LoadState') load = value;
 	}
-	return false;
+	flush();
+	return states;
+}
+
+/**
+ * Whether systemd-timedated would consider this unit a usable provider.
+ *
+ * `LoadState` is exactly `loaded`, which is timedated's own test — it reads the property
+ * over D-Bus and skips every unit that does not answer with it. `systemctl list-unit-files`
+ * was asked before, and it is not the same question: it reports a unit FILE on disk and its
+ * enablement, so a unit whose file fails to parse (`bad-setting`, `error`) or is not there
+ * at all was read as usable, the drop-in was written for it and timedated then picked the
+ * next provider in the ordering, which never reads that file. `masked` and `not-found`
+ * still fall out, since neither of them is `loaded`.
+ */
+export function unitIsLoaded(states: Map<string, string>, unit: string): boolean {
+	return states.get(unit) === 'loaded';
 }
 
 /**
@@ -588,11 +624,12 @@ export async function readNtpUnitsList(dirs: string[] = NTP_UNITS_DIRS, env: Nod
 
 /**
  * The provider `timedatectl set-ntp true` would actually start: the first unit of
- * `ordered` that is installed and not masked. Null when none of them is usable.
+ * `ordered` whose `LoadState` is `loaded`. Null when none of them is.
  */
 export function firstUsableNtpUnit(ordered: string[], unitOutput: string | null): string | null {
 	if (unitOutput === null) return null;
-	return ordered.find(unit => parseUnitInstalled(unitOutput, unit)) ?? null;
+	const states = parseUnitLoadStates(unitOutput);
+	return ordered.find(unit => unitIsLoaded(states, unit)) ?? null;
 }
 
 /**
@@ -619,7 +656,7 @@ export function canConfigureTimesyncdServer(ordered: string[] | null, unitOutput
 	if (competingOutput === null || parseAnyUnitActive(competingOutput)) return false;
 	if (ordered === null) return false;
 	if (ordered.length > 0) return firstUsableNtpUnit(ordered, unitOutput) === TIMESYNCD_UNIT;
-	return unitOutput !== null && parseUnitInstalled(unitOutput, TIMESYNCD_UNIT);
+	return unitOutput !== null && unitIsLoaded(parseUnitLoadStates(unitOutput), TIMESYNCD_UNIT);
 }
 
 /**
@@ -944,11 +981,12 @@ async function readLinuxStatus(): Promise<PlatformStatus> {
 	const timesync = canNtp ? await tryRead('timedatectl', ['show-timesync', '--all']) : null;
 	// Only timesyncd's configuration file is written by us, so the capability is "would
 	// this host's timedated actually use timesyncd" — a chrony host ignores the drop-in.
-	// That is decided by the provider ordering timedated itself reads, checked against the
-	// unit catalogue: `show-timesync` would only answer while the daemon runs, and the UI
-	// turns synchronisation off before writing a server.
+	// That is decided by the provider ordering timedated itself reads, checked against each
+	// unit's `LoadState`, which is the property timedated selects on: `show-timesync` would
+	// only answer while the daemon runs, and the UI turns synchronisation off before writing
+	// a server.
 	const ordered = canNtp ? await readNtpUnitsList() : [];
-	const unit = canNtp ? await tryRead('systemctl', ['list-unit-files', ...(ordered !== null && ordered.length > 0 ? ordered : [TIMESYNCD_UNIT])]) : null;
+	const unit = canNtp ? await tryRead('systemctl', ['show', '-p', 'Id', '-p', 'LoadState', ...(ordered !== null && ordered.length > 0 ? ordered : [TIMESYNCD_UNIT])]) : null;
 	// timedated manages several NTP implementations; a host where chrony is the active
 	// one would ignore our drop-in entirely (see canConfigureTimesyncdServer). The units to
 	// ask about come from the host's own ordering as well as the known names, so a provider

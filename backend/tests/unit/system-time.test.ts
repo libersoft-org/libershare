@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, competingNtpUnits, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, type PlatformStatusReader, readNtpUnitsList, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, syncDirectory, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, competingNtpUnits, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitLoadStates, type PlatformStatusReader, readNtpUnitsList, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, syncDirectory, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -587,12 +587,14 @@ describe('parseAnyUnitActive', () => {
 });
 
 describe('canConfigureTimesyncdServer', () => {
-	const INSTALLED = 'UNIT FILE                 STATE     PRESET\nsystemd-timesyncd.service disabled  disabled\n\n1 unit files listed.';
-	const ABSENT = 'UNIT FILE                 STATE     PRESET\n\n0 unit files listed.';
+	/** `systemctl show -p Id -p LoadState <units...>` — one record per unit, blank-separated. */
+	const show = (...units: [string, string][]): string => units.map(([id, load]) => `Id=${id}\nLoadState=${load}\n`).join('\n');
+	const INSTALLED = show(['systemd-timesyncd.service', 'loaded']);
+	const ABSENT = show(['systemd-timesyncd.service', 'not-found']);
 	const CHRONY_ACTIVE = 'active\n\ninactive\n\ninactive\n\ninactive\n\ninactive\n';
 	const NONE_ACTIVE = 'inactive\n\ninactive\n\ninactive\n\ninactive\n\ninactive\n';
 
-	const BOTH_INSTALLED = 'UNIT FILE                 STATE     PRESET\nchronyd.service           disabled  disabled\nsystemd-timesyncd.service disabled  disabled\n\n2 unit files listed.';
+	const BOTH_INSTALLED = show(['chronyd.service', 'loaded'], ['systemd-timesyncd.service', 'loaded']);
 	const TIMESYNCD_FIRST = ['systemd-timesyncd.service', 'chronyd.service'];
 	const CHRONY_FIRST = ['chronyd.service', 'systemd-timesyncd.service'];
 
@@ -649,6 +651,23 @@ describe('canConfigureTimesyncdServer', () => {
 
 	it('refuses when the provider ordering could not be read', () => {
 		expect(canConfigureTimesyncdServer(null, INSTALLED, NONE_ACTIVE)).toBe(false);
+	});
+
+	/**
+	 * The gap `list-unit-files` left. It answers about the unit FILE, so a unit whose file is
+	 * on disk but will not load — a bad setting, a parse error — was read as a usable
+	 * provider. timedated selects on `LoadState == loaded` and skips it, so the drop-in was
+	 * written for a daemon that never gets the clock.
+	 */
+	it('refuses a unit that is on disk but does not load', () => {
+		expect(canConfigureTimesyncdServer([], show(['systemd-timesyncd.service', 'bad-setting']), NONE_ACTIVE)).toBe(false);
+		expect(canConfigureTimesyncdServer(TIMESYNCD_FIRST, show(['systemd-timesyncd.service', 'error']), NONE_ACTIVE)).toBe(false);
+		expect(canConfigureTimesyncdServer([], show(['systemd-timesyncd.service', 'masked']), NONE_ACTIVE)).toBe(false);
+	});
+
+	/** And the same rule the other way: a broken leader is skipped, exactly as timedated skips it. */
+	it('looks past a leading provider whose unit does not load', () => {
+		expect(canConfigureTimesyncdServer(CHRONY_FIRST, show(['chronyd.service', 'bad-setting'], ['systemd-timesyncd.service', 'loaded']), NONE_ACTIVE)).toBe(true);
 	});
 
 	it('names every implementation timedated can hand the clock to', () => {
@@ -812,23 +831,43 @@ describe('buildSetNtpServerCommands', () => {
 	});
 });
 
-describe('parseUnitInstalled', () => {
-	const HEADER = 'UNIT FILE                 STATE     PRESET';
+describe('parseUnitLoadStates', () => {
+	/** Two units as `systemctl show -p Id -p LoadState` prints them: records, blank-separated. */
+	const TWO = 'Id=chronyd.service\nLoadState=not-found\n\nId=systemd-timesyncd.service\nLoadState=loaded\n';
 
-	it('accepts an installed unit', () => {
-		expect(parseUnitInstalled(`${HEADER}\nsystemd-timesyncd.service enabled   enabled\n\n1 unit files listed.`, 'systemd-timesyncd.service')).toBe(true);
+	it('keys each state by the unit systemd reported it for', () => {
+		expect([...parseUnitLoadStates(TWO)]).toEqual([
+			['chronyd.service', 'not-found'],
+			['systemd-timesyncd.service', 'loaded'],
+		]);
 	});
 
-	it('accepts a disabled unit — the drop-in still applies when it is started', () => {
-		expect(parseUnitInstalled(`${HEADER}\nsystemd-timesyncd.service disabled  disabled\n\n1 unit files listed.`, 'systemd-timesyncd.service')).toBe(true);
+	/** A disabled unit still loads, and the drop-in applies the moment it is started. */
+	it('reads a disabled unit as loaded', () => {
+		expect(parseUnitLoadStates('Id=systemd-timesyncd.service\nLoadState=loaded\nUnitFileState=disabled\n').get('systemd-timesyncd.service')).toBe('loaded');
 	});
 
-	it('rejects a masked unit, which can never start', () => {
-		expect(parseUnitInstalled(`${HEADER}\nsystemd-timesyncd.service masked    disabled\n\n1 unit files listed.`, 'systemd-timesyncd.service')).toBe(false);
+	it('carries masked and unparsable units through as themselves', () => {
+		const states = parseUnitLoadStates('Id=a.service\nLoadState=masked\n\nId=b.service\nLoadState=bad-setting\n');
+		expect(states.get('a.service')).toBe('masked');
+		expect(states.get('b.service')).toBe('bad-setting');
 	});
 
-	it('rejects a host without the unit, e.g. one running chrony', () => {
-		expect(parseUnitInstalled(`${HEADER}\n\n0 unit files listed.`, 'systemd-timesyncd.service')).toBe(false);
+	it('is empty for empty output', () => {
+		expect(parseUnitLoadStates('').size).toBe(0);
+	});
+
+	/** A record with no Id to key it on is dropped rather than attached to a neighbour. */
+	it('drops a half record instead of misattributing it', () => {
+		expect([...parseUnitLoadStates('LoadState=loaded\n\nId=a.service\nLoadState=masked\n')]).toEqual([['a.service', 'masked']]);
+	});
+
+	/** systemd puts Id first, but back-to-back records without a blank line must not merge. */
+	it('ends a record at the next Id even without a blank line', () => {
+		expect([...parseUnitLoadStates('Id=a.service\nLoadState=loaded\nId=b.service\nLoadState=masked\n')]).toEqual([
+			['a.service', 'loaded'],
+			['b.service', 'masked'],
+		]);
 	});
 });
 
