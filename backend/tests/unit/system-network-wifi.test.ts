@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { ptr, toArrayBuffer, type Pointer } from 'bun:ffi';
-import { assertWindowsWifiKey, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readStoredProfile, readUtf16z, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
+import { assertWindowsWifiKey, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readStoredProfile, readUtf16z, writeJoinProfile, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
 
 /**
  * The Windows Wi-Fi surface is FFI, so most of what can go wrong is a struct
@@ -497,5 +497,111 @@ describe('readStoredProfile', () => {
 	it('refuses a success that returned no document', () => {
 		const result = readStoredProfile(getProfileApi(0, null), 1n, ANY_GUID, 'Example');
 		expect(result.kind).toBe('error');
+	});
+});
+
+/** One scripted WlanGetProfile answer: a Win32 code, the document, and its flags. */
+interface ScriptedRead {
+	rc: number;
+	xml?: string;
+	flags?: number;
+}
+
+/** One recorded WlanSetProfile call. */
+interface RecordedWrite {
+	flags: number;
+	overwrite: number;
+}
+
+/**
+ * A WlanApi that answers WlanGetProfile from a script — one entry per call, in
+ * order — and records every WlanSetProfile. `setResults` supplies the Win32 code
+ * each write returns, so the ERROR_ALREADY_EXISTS race can be reproduced exactly.
+ */
+function joinApi(reads: ScriptedRead[], setResults: number[] = []) {
+	const writes: RecordedWrite[] = [];
+	let readIndex = 0;
+	let writeIndex = 0;
+	const api = {
+		WlanGetProfile: (_handle: bigint, _guid: Pointer, _name: Pointer, _reserved: null, xmlOut: Pointer, flagsOut: Pointer) => {
+			const scripted = reads[readIndex++];
+			if (!scripted) throw new Error('WlanGetProfile was called more times than the case scripted');
+			const document = scripted.xml === undefined ? null : utf16z(scripted.xml);
+			if (document) retainedProfiles.push(document);
+			new BigUint64Array(toArrayBuffer(xmlOut, 0, 8))[0] = document ? BigInt(ptr(document)) : 0n;
+			new Uint32Array(toArrayBuffer(flagsOut, 0, 4))[0] = scripted.flags ?? 0;
+			return scripted.rc;
+		},
+		WlanSetProfile: (_handle: bigint, _guid: Pointer, flags: number, _xml: Pointer, _security: null, overwrite: number) => {
+			writes.push({ flags, overwrite });
+			return setResults[writeIndex++] ?? 0;
+		},
+		WlanReasonCodeToString: () => 1,
+		WlanFreeMemory: () => {},
+	} as unknown as Parameters<typeof writeJoinProfile>[0];
+	return { api, writes };
+}
+
+/** ERROR_NOT_FOUND / ERROR_ALREADY_EXISTS, as Windows returns them. */
+const NOT_FOUND = 1168;
+const ALREADY_EXISTS = 183;
+/** WLAN_PROFILE_USER / WLAN_PROFILE_GROUP_POLICY. */
+const USER_FLAGS = 2;
+const POLICY_FLAGS = 1;
+
+describe('writeJoinProfile', () => {
+	it('overwrites an existing profile keeping its scope, and marks it for restore', () => {
+		const { api, writes } = joinApi([{ rc: 0, xml: '<WLANProfile>old</WLANProfile>', flags: USER_FLAGS }]);
+		const change = writeJoinProfile(api, 1n, ANY_GUID, 'Example', '<WLANProfile>new</WLANProfile>');
+		expect(change).toEqual({ replaced: { xml: '<WLANProfile>old</WLANProfile>', flags: USER_FLAGS }, created: false });
+		// Rewritten with the flags it already had — restoring a per-user profile as
+		// all-user would be a different object under the same name.
+		expect(writes).toEqual([{ flags: USER_FLAGS, overwrite: 1 }]);
+	});
+
+	it('creates a profile only when Windows confirms the name was free', () => {
+		const { api, writes } = joinApi([{ rc: NOT_FOUND }]);
+		expect(writeJoinProfile(api, 1n, ANY_GUID, 'Example', '<WLANProfile/>')).toEqual({ replaced: null, created: true });
+		// bOverwrite FALSE: the write is what CHECKS the absence, not just what acts on it.
+		expect(writes).toEqual([{ flags: USER_FLAGS, overwrite: 0 }]);
+	});
+
+	// The race. Between the read that found nothing and the write, another process
+	// saves a profile under that name. Writing with bOverwrite TRUE would replace
+	// it while this attempt believed it had CREATED it — and the rollback would
+	// then delete a network the user had just saved.
+	it('does not claim to have created a profile that appeared mid-attempt', () => {
+		const { api, writes } = joinApi([{ rc: NOT_FOUND }, { rc: 0, xml: '<WLANProfile>raced</WLANProfile>', flags: USER_FLAGS }], [ALREADY_EXISTS]);
+		const change = writeJoinProfile(api, 1n, ANY_GUID, 'Example', '<WLANProfile/>');
+		// created FALSE is the whole point: the rollback restores rather than deletes.
+		expect(change.created).toBe(false);
+		expect(change.replaced).toEqual({ xml: '<WLANProfile>raced</WLANProfile>', flags: USER_FLAGS });
+		expect(writes).toEqual([
+			{ flags: USER_FLAGS, overwrite: 0 },
+			{ flags: USER_FLAGS, overwrite: 1 },
+		]);
+	});
+
+	it('leaves a raced profile alone when it cannot be backed up', () => {
+		const { api, writes } = joinApi([{ rc: NOT_FOUND }, { rc: 5 }], [ALREADY_EXISTS]);
+		expect(() => writeJoinProfile(api, 1n, ANY_GUID, 'Example', '<WLANProfile/>')).toThrow();
+		// The refused overwrite is the only write attempted; nothing was replaced.
+		expect(writes).toEqual([{ flags: USER_FLAGS, overwrite: 0 }]);
+	});
+
+	it('writes nothing at all when the existing profile could not be read', () => {
+		const { api, writes } = joinApi([{ rc: 5 }]);
+		expect(() => writeJoinProfile(api, 1n, ANY_GUID, 'Example', '<WLANProfile/>')).toThrow();
+		expect(writes).toEqual([]);
+	});
+
+	it('refuses a group-policy profile, before and after the race', () => {
+		const policy = joinApi([{ rc: 0, xml: '<WLANProfile/>', flags: POLICY_FLAGS }]);
+		expect(() => writeJoinProfile(policy.api, 1n, ANY_GUID, 'Example', '<WLANProfile/>')).toThrow(/group policy/);
+		expect(policy.writes).toEqual([]);
+		// A policy profile pushed between the read and the write is refused too.
+		const raced = joinApi([{ rc: NOT_FOUND }, { rc: 0, xml: '<WLANProfile/>', flags: POLICY_FLAGS }], [ALREADY_EXISTS]);
+		expect(() => writeJoinProfile(raced.api, 1n, ANY_GUID, 'Example', '<WLANProfile/>')).toThrow(/group policy/);
+		expect(raced.writes).toEqual([{ flags: USER_FLAGS, overwrite: 0 }]);
 	});
 });

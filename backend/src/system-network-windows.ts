@@ -1134,28 +1134,9 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 	try {
 		withWlanHandle((api, handle) => {
 			if (password) {
-				// Read before overwriting: the typed key may be wrong, and the profile
-				// being replaced may be the working one the user has had for years. The
-				// FLAGS come back with it, because restoring an all-user or a per-user
-				// profile as flags 0 changes its scope — a different profile in all but
-				// name, and a rollback that fails for that reason alone.
-				const stored = readStoredProfile(api, handle, guidBytes, profileName);
-				// A read that FAILED is not a read that found nothing. Proceeding on one
-				// would overwrite a profile with no backup taken, and the rollback would
-				// then delete a network the user had saved for years. Only a provable
-				// absence lets this attempt create a profile of its own.
-				if (stored.kind === 'error') throw new Error(`the saved configuration of this network could not be read, so it will not be replaced (${stored.message})`);
-				replaced = stored.kind === 'found' ? stored.profile : null;
-				// A group-policy profile is not this app's to replace. The overwrite is
-				// refused on most hosts, and where it is not, nothing here can put a
-				// policy profile back afterwards.
-				if (replaced !== null && (replaced.flags & WLAN_PROFILE_GROUP_POLICY) !== 0) throw new Error('this network is managed by group policy and cannot be changed here');
-				// An existing profile is rewritten with the flags it already had; a new
-				// one is created per-user, because creating one for every account on the
-				// machine needs a privilege the Wi-Fi capability never established, and
-				// a one-off join has no business reaching outside this account.
-				writeProfile(api, handle, guidBytes, profileXml, replaced === null ? WLAN_PROFILE_USER : replaced.flags, 1);
-				created = replaced === null;
+				const change = writeJoinProfile(api, handle, guidBytes, profileName, profileXml);
+				replaced = change.replaced;
+				created = change.created;
 				connectByProfile(api, handle, guidBytes, parameters);
 				return;
 			}
@@ -1257,6 +1238,67 @@ export function readStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: U
 		return { kind: 'error', message: (err as Error).message };
 	} finally {
 		api.WlanFreeMemory(xmlPointer);
+	}
+}
+
+/** What one attempt did to the stored profiles, so the rollback knows what to undo. */
+interface ProfileChange {
+	/** The profile this attempt overwrote, or null when it created one. */
+	readonly replaced: StoredProfile | null;
+	/** True when nothing was stored under this name before this attempt. */
+	readonly created: boolean;
+}
+
+/**
+ * Write the profile a keyed join needs, and report what that did to what Windows
+ * already held.
+ *
+ * Read before overwriting: the typed key may be wrong, and the profile being
+ * replaced may be the working one the user has had for years. The FLAGS come back
+ * with it, because restoring an all-user or a per-user profile as flags 0 changes
+ * its scope — a different profile in all but name, and a rollback that fails for
+ * that reason alone.
+ *
+ * The absent case is where the race lives. Between the read that found nothing
+ * and the write, another process — a second client of this app, netsh, the
+ * Windows UI, a policy refresh — can save a profile under that name. Writing with
+ * `bOverwrite` TRUE would replace it and, because this attempt believed it had
+ * CREATED the profile, a later rollback would DELETE a network the user had just
+ * saved. So the first write asks not to overwrite: ERROR_ALREADY_EXISTS is
+ * Windows answering that the absence no longer holds, and the profile that
+ * appeared is then read, backed up and overwritten like any other existing one.
+ */
+export function writeJoinProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string, profileXml: string): ProfileChange {
+	const stored = readStoredProfile(api, handle, guidBytes, profileName);
+	// A read that FAILED is not a read that found nothing. Proceeding on one would
+	// overwrite a profile with no backup taken, and the rollback would then delete
+	// a network the user had saved for years. Only a provable absence lets this
+	// attempt create a profile of its own.
+	if (stored.kind === 'error') throw new Error(`the saved configuration of this network could not be read, so it will not be replaced (${stored.message})`);
+	if (stored.kind === 'found') return overwrite(stored.profile);
+	// Believed absent — and asking not to overwrite is what makes that belief
+	// checkable rather than merely assumed. Anything but ERROR_ALREADY_EXISTS means
+	// the write landed on the empty name it was aimed at.
+	if (writeProfile(api, handle, guidBytes, profileXml, WLAN_PROFILE_USER, 0) !== ERROR_ALREADY_EXISTS) return { replaced: null, created: true };
+	const raced = readStoredProfile(api, handle, guidBytes, profileName);
+	// It existed a moment ago and cannot be read now: there is a profile here that
+	// this attempt cannot back up, so it does not touch it.
+	if (raced.kind !== 'found') throw new Error('another process saved a profile for this network while it was being joined, and it could not be read');
+	return overwrite(raced.profile);
+
+	/**
+	 * Replace an existing profile, keeping its scope. A new one would be created
+	 * per-user instead: creating one for every account on the machine needs a
+	 * privilege the Wi-Fi capability never established, and a one-off join has no
+	 * business reaching outside this account.
+	 */
+	function overwrite(existing: StoredProfile): ProfileChange {
+		// A group-policy profile is not this app's to replace. The overwrite is
+		// refused on most hosts, and where it is not, nothing here can put a policy
+		// profile back afterwards.
+		if ((existing.flags & WLAN_PROFILE_GROUP_POLICY) !== 0) throw new Error('this network is managed by group policy and cannot be changed here');
+		writeProfile(api, handle, guidBytes, profileXml, existing.flags, 1);
+		return { replaced: existing, created: false };
 	}
 }
 
