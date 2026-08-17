@@ -2092,20 +2092,62 @@ export class Network {
 			// purge just removed — so if the peer is connected NOW, rebuild its dial
 			// state from the live connections; otherwise reconnect would silently die
 			// with the first drop.
+			//
+			// Not for a peer leave-network hung up: it is meant to be forgotten, and a
+			// connection racing the purge is no reason to rebuild what the leave
+			// deliberately tore down.
 			if (epoch !== this.runEpoch) return;
 			const after = node.getConnections(pid);
-			if (after.length > 0) {
-				this.bootstrapPeerIDs.add(peerID);
-				this.unreachableQuarantine.delete(peerID);
-				await node.peerStore.merge(pid, {
-					multiaddrs: after.map(c => c.remoteAddr),
-					tags: { [KEEP_ALIVE]: { value: 1 } },
-				});
-				console.log(`[NET] purge raced an inbound connection — restored ${peerID.slice(0, 16)}…`);
+			if (after.length > 0 && !this.isRedialSuppressed(peerID)) {
+				await this.restorePurgedPeerState(node, pid, after, epoch);
 			}
 		} catch (err: any) {
 			trace(`[NET] purgeStalePeer ${peerID.slice(0, 16)} failed: ${err?.message ?? err}`);
 		}
+	}
+
+	/**
+	 * Put back everything {@link purgeStalePeer} took away, for a peer that turns out to
+	 * be connected after all.
+	 *
+	 * The purge removes four things — the bootstrap dedup entry, the peer's addresses
+	 * from the registry, its gossipsub direct entry and its keep-alive tag — and
+	 * restoring only some of them left a state nothing else repairs: periodic promotion
+	 * skips any peer already in `bootstrapPeerIDs`, so the missing addresses and direct
+	 * entry would stay missing for as long as the peer stayed connected, and the next
+	 * drop would find nothing to dial it back with.
+	 *
+	 * `bootstrapPeerIDs` is therefore filled in LAST. It is the flag the other paths read
+	 * as "this peer is handled"; setting it first is what let promotion observe a
+	 * half-restored peer and walk away from it.
+	 */
+	private async restorePurgedPeerState(node: Libp2p, pid: PeerID, connections: Array<{ remoteAddr: any }>, epoch: number): Promise<void> {
+		const peerID = pid.toString();
+		this.unreachableQuarantine.delete(peerID);
+		await node.peerStore.merge(pid, {
+			multiaddrs: connections.map(c => c.remoteAddr),
+			tags: { [KEEP_ALIVE]: { value: 1 } },
+		});
+		if (epoch !== this.runEpoch) return;
+		for (const c of connections) {
+			const remote = c.remoteAddr;
+			if (!remote) continue;
+			try {
+				// A live connection is the strongest possible proof of an endpoint, so the
+				// entry goes back verified — that is also what its TTL runs from. The address
+				// gets this peer's `/p2p` suffix when it lacks one, matching the shape
+				// promotion builds, or the registry would key it without an identity.
+				const ma = extractDestinationPeerID(remote) === peerID ? remote : Multiaddr(`${remote.toString()}/p2p/${peerID}`);
+				this.rememberBootstrapAddress(ma, null);
+				this.markBootstrapAddressVerified(ma);
+			} catch {
+				// Unparseable remote address — nothing to put back in the registry for it.
+			}
+		}
+		const gossipsub: any = this.pubsub;
+		if (gossipsub?.direct && typeof gossipsub.direct.add === 'function') gossipsub.direct.add(peerID);
+		this.bootstrapPeerIDs.add(peerID);
+		console.log(`[NET] purge raced an inbound connection — restored ${peerID.slice(0, 16)}…`);
 	}
 
 	/**
