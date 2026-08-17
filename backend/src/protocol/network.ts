@@ -1793,9 +1793,18 @@ export class Network {
 					// by leave-network and sits in the suppression set, or we left the network
 					// this dial belonged to before ever seeing the peer as one of its members,
 					// in which case it never entered that set at all.
+					//
+					// The EPOCH is checked first and separately from the full `superseded()`:
+					// a different node instance means none of this run's suppression or
+					// subscription state describes the node that would be torn at, so the
+					// destructive branch must not run at all. A bumped GENERATION is the
+					// opposite case — the network was left or its list replaced on the SAME
+					// node, which is precisely when this connection needs closing, so it may
+					// not short-circuit ahead of it.
+					if (epoch !== this.runEpoch) return;
 					if (peerID && networkID && (this.isRedialSuppressed(peerID) || !this.isTopicSubscribed(networkID)) && !this.isPeerNeededByJoinedNetwork(peerID)) {
 						trace(`[NET] bootstrap dial landed after leave, disconnecting: ${peerID.slice(0, 16)}`);
-						await this.disconnectPeer(peerID, networkID);
+						await this.disconnectPeer(peerID, networkID, epoch);
 						return;
 					}
 					if (superseded()) return;
@@ -2296,9 +2305,15 @@ export class Network {
 	 *
 	 * `networkID` is the lishnet the peer is being left with — the peer is suppressed
 	 * under it so rejoining that lishnet lifts exactly its peers.
+	 *
+	 * `epoch` binds the whole sequence to the node instance it started on, for the same
+	 * reason {@link purgeStalePeer} takes one: this awaits twice, and re-reading
+	 * `this.node` after a stop()/start() used to hand back the NEW node — so the hangUp
+	 * and the purge landed on an instance that had never heard of this leave.
 	 */
-	async disconnectPeer(peerID: string, networkID: string): Promise<void> {
-		if (!this.node) return;
+	async disconnectPeer(peerID: string, networkID: string, epoch: number = this.runEpoch): Promise<void> {
+		const node = this.node;
+		if (!node || epoch !== this.runEpoch) return;
 		let pid: PeerID;
 		try {
 			pid = peerIDFromString(peerID);
@@ -2322,21 +2337,22 @@ export class Network {
 		// undefined as the tag value removes it (per @libp2p/interface PeerStore
 		// merge semantics).
 		try {
-			await this.node.peerStore.merge(pid, {
+			await node.peerStore.merge(pid, {
 				tags: { 'keep-alive-fleet': undefined, [KEEP_ALIVE]: undefined },
 			});
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: tag removal failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
+		if (epoch !== this.runEpoch) return;
 		try {
-			await this.node.hangUp(pid);
+			await node.hangUp(pid);
 			trace(`[NET] disconnectPeer: hung up ${peerID.slice(0, 16)}`);
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: hangUp failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
 		// Forget the persisted peerStore entry so the disconnect survives a restart —
 		// suppression is in-memory only, but the peerStore is on disk.
-		await this.purgeStalePeer(peerID, 'left-network exclusive peer');
+		await this.purgeStalePeer(peerID, 'left-network exclusive peer', epoch);
 	}
 
 	/** Snapshot of all per-network bootstrap statuses. */
