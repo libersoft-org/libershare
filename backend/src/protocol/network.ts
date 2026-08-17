@@ -1389,6 +1389,11 @@ export class Network {
 				console.log(`   → Dialing ${maStr}`);
 				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
 				console.log(`   ✓ Connected via ${maStr}`);
+				// Same fence the failure branch already had. A dial owns the node for up
+				// to ten seconds, and a stop()/start() inside that window makes this the
+				// old run's result: the canonical key is stable across runs, so writing it
+				// would refresh the TTL and clear the backoff of the NEW run's entry.
+				if (epoch !== this.runEpoch || node !== this.node) return;
 				this.markBootstrapAddressVerified(ma);
 				break;
 			} catch (err: any) {

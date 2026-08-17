@@ -198,6 +198,21 @@ describe('Network.runZeroConnectionRecovery — per-address pacing', () => {
 		expect(dialed).toEqual([]);
 	});
 
+	it('writes nothing when a stop lands while the successful dial is in flight', async () => {
+		// The failure branch was fenced, the success branch was not. Canonical keys are
+		// stable across runs, so the old run's result landed on the new run's entry.
+		let net: any;
+		const { network, run } = bareNetwork({
+			seeds: [{ address: ADDR_A }],
+			onDial: () => {
+				net.runEpoch = 2;
+			},
+		});
+		net = network;
+		await run();
+		expect(((network as any).bootstrapByAddress.get(key(ADDR_A)) as IBootstrapEntry).lastVerifiedAt).toBe(null);
+	});
+
 	it('clears the address backoff after a successful dial', async () => {
 		const { network, run } = bareNetwork({ seeds: [{ address: ADDR_A }] });
 		(network as any).recoveryBackoff.set(key(ADDR_A), { nextAttempt: Date.now() - 1, failCount: 3 });
