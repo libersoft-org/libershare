@@ -583,6 +583,73 @@ function isValidUnitName(name: string): boolean {
 	return name.length <= 255 && UNIT_NAME_RE.test(name);
 }
 
+/** The whitespace `extract_first_word()` separates on when nothing else is asked for. */
+const WHITESPACE = ' \t\n\r';
+
+/**
+ * Split a systemctl value into words the way systemd's own `extract_first_word()` does.
+ *
+ * Splitting on whitespace is not that parser, and the difference is not cosmetic here:
+ * systemd quotes and escapes what it prints, so a variable whose value is
+ * `a b SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service` arrives quoted as one word and a
+ * whitespace split tears a standalone assignment out of the middle of it — an NTP override
+ * the host never set, deciding which daemon we believe owns the clock.
+ *
+ * `unquote` is upstream's `EXTRACT_UNQUOTE`: set for environment values, which systemd
+ * quotes on the way out, and clear for the provider list, which timedated parses with flags
+ * `0` — there a quote is an ordinary character, and one no valid unit name may contain
+ * anyway. A backslash escapes the next character in both modes, as it does upstream, so an
+ * escaped separator does not split. Runs of separators are coalesced and yield no empty
+ * word, which is `extract_first_word`'s default.
+ */
+export function extractWords(input: string, unquote: boolean, separators: string = WHITESPACE): string[] {
+	const words: string[] = [];
+	let word = '';
+	let started = false;
+	let quote: string | null = null;
+	let escaped = false;
+	for (const ch of input) {
+		if (escaped) {
+			word += ch;
+			escaped = false;
+		} else if (ch === '\\') {
+			escaped = true;
+			started = true;
+		} else if (quote !== null) {
+			if (ch === quote) quote = null;
+			else word += ch;
+		} else if (unquote && (ch === '"' || ch === "'")) {
+			quote = ch;
+			started = true;
+		} else if (separators.includes(ch)) {
+			if (started) words.push(word);
+			word = '';
+			started = false;
+		} else {
+			word += ch;
+			started = true;
+		}
+	}
+	if (started) words.push(word);
+	return words;
+}
+
+/** `Key=Value` lines of a single unit's `systemctl show` output, keyed by property name. */
+function parseUnitProperties(output: string): Map<string, string> {
+	const props = new Map<string, string>();
+	for (const line of output.split(/\r?\n/)) {
+		const eq = line.indexOf('=');
+		if (eq > 0) props.set(line.slice(0, eq), line.slice(eq + 1));
+	}
+	return props;
+}
+
+/** One `NAME=value` word, or null when it is not an assignment. */
+function splitAssignment(word: string): [string, string] | null {
+	const eq = word.indexOf('=');
+	return eq > 0 ? [word.slice(0, eq), word.slice(eq + 1)] : null;
+}
+
 /**
  * The environment systemd-timedated runs with, as `KEY=value` pairs, or null when it could
  * not be established.
@@ -595,10 +662,17 @@ function isValidUnitName(name: string): boolean {
  * direction is as bad: the variable set in OUR environment changes nothing about
  * timedated, and honouring it made us report an ordering the host does not have.
  *
- * Two sources, because a service's environment is assembled from both: the manager's
- * environment, which every unit inherits, and the unit's own `Environment=`, which
- * overrides it. Both have to be readable — a source that did not answer could be the one
- * carrying the override, and an ordering derived from half the answer is a guess.
+ * A system service does NOT inherit the manager's environment. Only the names its
+ * `PassEnvironment=` lists reach it, `Environment=` is applied on top of those, and
+ * `UnsetEnvironment=` is applied last and can take a value away that either of the first two
+ * put there. Merging the manager environment wholesale read an override to timedated that
+ * timedated never sees — it would pick the first provider on disk while we configured the
+ * one the variable names, and `set-ntp` would then start a daemon that never reads our
+ * drop-in. Reversed, a value removed by `UnsetEnvironment=` had us honour an override that
+ * is not in force.
+ *
+ * Both sources have to be readable — either could be the one carrying the override, and an
+ * ordering derived from half the answer is a guess.
  *
  * `EnvironmentFile=` is deliberately not followed: it names a path on the host that we
  * would have to read and parse with systemd's own quoting rules, and no distribution ships
@@ -608,18 +682,34 @@ function isValidUnitName(name: string): boolean {
 export async function readTimedatedEnvironment(exec: CommandRunner = run): Promise<Record<string, string> | null> {
 	const manager = await exec('systemctl', ['show-environment']);
 	if (manager.kind !== 'ok') return null;
-	const unit = await exec('systemctl', ['show', '-p', 'Environment', '--value', TIMEDATED_UNIT]);
+	const unit = await exec('systemctl', ['show', '-p', 'Environment', '-p', 'PassEnvironment', '-p', 'UnsetEnvironment', TIMEDATED_UNIT]);
 	if (unit.kind !== 'ok') return null;
+	const props = parseUnitProperties(unit.output);
+	// `show-environment` prints one assignment per line; the unit properties print their
+	// entries whitespace-separated on one. Both are quoted by systemd, so both are read with
+	// systemd's own word parser rather than by splitting on whitespace.
+	const inherited = new Map<string, string>();
+	for (const word of extractWords(manager.output, true)) {
+		const pair = splitAssignment(word);
+		if (pair) inherited.set(pair[0], pair[1]);
+	}
 	const env: Record<string, string> = {};
-	// `show-environment` prints one assignment per line; `Environment=` prints them
-	// whitespace-separated on one. Splitting on all whitespace reads both, and the unit's
-	// own entries are applied second so they win, as they do for the service itself.
-	for (const token of `${manager.output}\n${unit.output}`.split(/\s+/)) {
-		const eq = token.indexOf('=');
-		if (eq <= 0) continue;
-		// A value systemd had to quote cannot be one of ours — unit names carry no spaces —
-		// but the quotes come off so a single-token quoted value still reads correctly.
-		env[token.slice(0, eq)] = token.slice(eq + 1).replace(/^"(.*)"$/, '$1');
+	// Phase 1: the manager's value, but only for a name the unit asks to be passed.
+	for (const name of extractWords(props.get('PassEnvironment') ?? '', true)) {
+		const value = inherited.get(name);
+		if (value !== undefined) env[name] = value;
+	}
+	// Phase 2: the unit's own `Environment=`, which wins over what was passed in.
+	for (const word of extractWords(props.get('Environment') ?? '', true)) {
+		const pair = splitAssignment(word);
+		if (pair) env[pair[0]] = pair[1];
+	}
+	// Phase 3: `UnsetEnvironment=`. A bare name removes the variable; a `NAME=value` entry
+	// removes it only when the value matches, which is systemd's own rule.
+	for (const word of extractWords(props.get('UnsetEnvironment') ?? '', true)) {
+		const pair = splitAssignment(word);
+		if (!pair) delete env[word];
+		else if (env[pair[0]] === pair[1]) delete env[pair[0]];
 	}
 	return env;
 }
@@ -648,11 +738,10 @@ export async function readTimedatedEnvironment(exec: CommandRunner = run): Promi
 export async function readNtpUnitsList(env: Record<string, string> | null, dirs: string[] = NTP_UNITS_DIRS): Promise<string[] | null> {
 	if (env === null) return null;
 	const override = env[NTP_SERVICES_ENV];
-	if (override !== undefined)
-		return override
-			.split(':')
-			.map(unit => unit.trim())
-			.filter(unit => unit.length > 0 && isValidUnitName(unit));
+	// timedated splits this list with `extract_first_word(&p, &word, ":", 0)`, so a colon
+	// escaped with a backslash belongs to the name rather than ending it, and a plain
+	// `split(':')` would cut a unit name in half there.
+	if (override !== undefined) return extractWords(override, false, ':').filter(isValidUnitName);
 	// Basename -> path, first directory wins: the shadowing rule every systemd drop-in
 	// directory set follows.
 	const files = new Map<string, string>();

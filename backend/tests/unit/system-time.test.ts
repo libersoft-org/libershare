@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, competingNtpUnits, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitLoadStates, type PlatformStatusReader, readNtpUnitsList, readTimedatedEnvironment, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, syncDirectory, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, competingNtpUnits, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitLoadStates, type PlatformStatusReader, extractWords, readNtpUnitsList, readTimedatedEnvironment, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, syncDirectory, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -790,6 +790,51 @@ describe('readNtpUnitsList', () => {
 		expect(await readNtpUnitsList({}, [lib])).toEqual(['chronyd.service']);
 		expect(await readNtpUnitsList({ SYSTEMD_TIMEDATED_NTP_SERVICES: 'bad name:chronyd.service' }, [lib])).toEqual(['chronyd.service']);
 	});
+
+	/**
+	 * timedated reads this list with `extract_first_word(&p, &word, ":", 0)`, where a
+	 * backslash escapes the next character. A plain `split(':')` cut such a name in half and
+	 * dropped both halves as invalid, so the provider timedated would actually start was not
+	 * in our ordering at all.
+	 */
+	it('does not split the override on an escaped colon', async () => {
+		const lib = await dir('lib', { '50-chronyd.list': 'chronyd.service\n' });
+		expect(await readNtpUnitsList({ SYSTEMD_TIMEDATED_NTP_SERVICES: 'weird\\:name.service:chronyd.service' }, [lib])).toEqual(['weird:name.service', 'chronyd.service']);
+	});
+
+	it('coalesces empty entries in the override the way systemd does', async () => {
+		const lib = await dir('lib', {});
+		expect(await readNtpUnitsList({ SYSTEMD_TIMEDATED_NTP_SERVICES: ':chronyd.service::ntpd.service:' }, [lib])).toEqual(['chronyd.service', 'ntpd.service']);
+	});
+});
+
+describe('extractWords', () => {
+	it('splits on the separator and coalesces runs of it', () => {
+		expect(extractWords('a:b::c', false, ':')).toEqual(['a', 'b', 'c']);
+	});
+
+	it('keeps an escaped separator inside the word', () => {
+		expect(extractWords('a\\:b:c', false, ':')).toEqual(['a:b', 'c']);
+	});
+
+	/** With `EXTRACT_UNQUOTE` clear, a quote is an ordinary character — timedated's own flags. */
+	it('leaves quotes alone when it is not unquoting', () => {
+		expect(extractWords('"a b"', false)).toEqual(['"a', 'b"']);
+	});
+
+	it('keeps a quoted value together when it is unquoting', () => {
+		expect(extractWords('A="a b" B=c', true)).toEqual(['A=a b', 'B=c']);
+		expect(extractWords("A='a b'", true)).toEqual(['A=a b']);
+	});
+
+	it('reads every kind of whitespace systemd separates on', () => {
+		expect(extractWords('a\tb\nc\r\nd', true)).toEqual(['a', 'b', 'c', 'd']);
+	});
+
+	it('has nothing to say about an empty value', () => {
+		expect(extractWords('', true)).toEqual([]);
+		expect(extractWords('   ', true)).toEqual([]);
+	});
 });
 
 describe('readTimedatedEnvironment', () => {
@@ -800,33 +845,82 @@ describe('readTimedatedEnvironment', () => {
 
 	const ok = (output: string): RunOutcome => ({ kind: 'ok', output });
 
+	/** The unit's `systemctl show` answer, one `Key=Value` line per property systemd reports. */
+	function props(values: { Environment?: string; PassEnvironment?: string; UnsetEnvironment?: string } = {}): RunOutcome {
+		return ok(`Environment=${values.Environment ?? ''}\nPassEnvironment=${values.PassEnvironment ?? ''}\nUnsetEnvironment=${values.UnsetEnvironment ?? ''}\n`);
+	}
+
 	/**
 	 * The whole point of the read: the override lives in TIMEDATED's environment. Ours is a
 	 * different process and says nothing about which provider timedated would start.
 	 */
 	it('takes the override from the unit s own Environment', async () => {
-		const env = await readTimedatedEnvironment(systemctl(ok('LANG=C\n'), ok('SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service\n')));
-		expect(env).toMatchObject({ SYSTEMD_TIMEDATED_NTP_SERVICES: 'chronyd.service', LANG: 'C' });
-	});
-
-	it('takes it from the manager environment every unit inherits', async () => {
-		const env = await readTimedatedEnvironment(systemctl(ok('SYSTEMD_TIMEDATED_NTP_SERVICES=ntpd.service\n'), ok('\n')));
-		expect(env?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBe('ntpd.service');
-	});
-
-	/** A service's own `Environment=` overrides what it inherited, so it is applied last. */
-	it('lets the unit override the manager environment', async () => {
-		const env = await readTimedatedEnvironment(systemctl(ok('SYSTEMD_TIMEDATED_NTP_SERVICES=ntpd.service\n'), ok('SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service\n')));
+		const env = await readTimedatedEnvironment(systemctl(ok('LANG=C\n'), props({ Environment: 'SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service' })));
 		expect(env?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBe('chronyd.service');
 	});
 
+	/**
+	 * A system service is not handed the manager's environment. Reading it as if it were
+	 * gave timedated an override it never receives: it would start the first provider on
+	 * disk while we configured the one the variable names.
+	 */
+	it('ignores a manager value the unit does not ask to have passed', async () => {
+		const env = await readTimedatedEnvironment(systemctl(ok('SYSTEMD_TIMEDATED_NTP_SERVICES=ntpd.service\nLANG=C\n'), props()));
+		expect(env?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBeUndefined();
+		expect(env?.['LANG']).toBeUndefined();
+	});
+
+	it('takes a manager value the unit names in PassEnvironment', async () => {
+		const env = await readTimedatedEnvironment(systemctl(ok('SYSTEMD_TIMEDATED_NTP_SERVICES=ntpd.service\n'), props({ PassEnvironment: 'SYSTEMD_TIMEDATED_NTP_SERVICES' })));
+		expect(env?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBe('ntpd.service');
+	});
+
+	/** A service's own `Environment=` overrides what was passed in, so it is applied second. */
+	it('lets Environment override a passed-through manager value', async () => {
+		const env = await readTimedatedEnvironment(systemctl(ok('SYSTEMD_TIMEDATED_NTP_SERVICES=ntpd.service\n'), props({ PassEnvironment: 'SYSTEMD_TIMEDATED_NTP_SERVICES', Environment: 'SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service' })));
+		expect(env?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBe('chronyd.service');
+	});
+
+	/** Applied last, and it can take away what either of the first two phases put there. */
+	it('removes a variable UnsetEnvironment names', async () => {
+		const env = await readTimedatedEnvironment(systemctl(ok('SYSTEMD_TIMEDATED_NTP_SERVICES=ntpd.service\n'), props({ PassEnvironment: 'SYSTEMD_TIMEDATED_NTP_SERVICES', UnsetEnvironment: 'SYSTEMD_TIMEDATED_NTP_SERVICES' })));
+		expect(env?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBeUndefined();
+		const own = await readTimedatedEnvironment(systemctl(ok(''), props({ Environment: 'SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service', UnsetEnvironment: 'SYSTEMD_TIMEDATED_NTP_SERVICES' })));
+		expect(own?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBeUndefined();
+	});
+
+	/** systemd removes a `NAME=value` entry only when the value is the one named. */
+	it('removes an assignment from UnsetEnvironment only when the value matches', async () => {
+		const kept = await readTimedatedEnvironment(systemctl(ok(''), props({ Environment: 'SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service', UnsetEnvironment: 'SYSTEMD_TIMEDATED_NTP_SERVICES=ntpd.service' })));
+		expect(kept?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBe('chronyd.service');
+		const gone = await readTimedatedEnvironment(systemctl(ok(''), props({ Environment: 'SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service', UnsetEnvironment: 'SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service' })));
+		expect(gone?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBeUndefined();
+	});
+
 	it('reads the several whitespace-separated entries Environment prints on one line', async () => {
-		const env = await readTimedatedEnvironment(systemctl(ok(''), ok('A=1 SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service:ntpd.service B=2\n')));
+		const env = await readTimedatedEnvironment(systemctl(ok(''), props({ Environment: 'A=1 SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service:ntpd.service B=2' })));
 		expect(env).toMatchObject({ A: '1', B: '2', SYSTEMD_TIMEDATED_NTP_SERVICES: 'chronyd.service:ntpd.service' });
 	});
 
+	/**
+	 * systemd quotes the values it prints, so another variable's value can contain what
+	 * looks like an assignment. Splitting on whitespace tore it out and invented an override
+	 * the host never set — which decides which daemon we believe owns the clock.
+	 */
+	it('does not read an assignment out of another variable s quoted value', async () => {
+		const env = await readTimedatedEnvironment(systemctl(ok(''), props({ Environment: 'GREETING="hello SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service"' })));
+		expect(env?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBeUndefined();
+		expect(env?.['GREETING']).toBe('hello SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service');
+	});
+
+	it('reads a quoted manager value as one assignment', async () => {
+		const env = await readTimedatedEnvironment(systemctl(ok('GREETING="hello SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service"\n'), props({ PassEnvironment: 'GREETING' })));
+		expect(env?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBeUndefined();
+		expect(env?.['GREETING']).toBe('hello SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service');
+	});
+
 	it('reports no override on a host that sets none', async () => {
-		const env = await readTimedatedEnvironment(systemctl(ok('LANG=C\nPATH=/usr/bin\n'), ok('\n')));
+		const env = await readTimedatedEnvironment(systemctl(ok('LANG=C\nPATH=/usr/bin\n'), props()));
 		expect(env?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBeUndefined();
 	});
 
