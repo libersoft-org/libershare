@@ -564,6 +564,40 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		await (network as any).addBootstrapPeers([ADDR_A, ADDR_B], 'net-a', 'configured');
 		expect(dialled).toEqual([ADDR_A, ADDR_B]);
 	});
+
+	/**
+	 * Abandoning the loop is not enough. The dial that was already in flight when the
+	 * edit landed returns a live connection, and nothing else closes one nobody asked
+	 * for — the address may not even be configured any more.
+	 */
+	/**
+	 * Discovered origin on purpose: a CONFIGURED entry is claimed in `bootstrapPeerIDs`
+	 * BEFORE its dial, so by the time the supersede is noticed the peer already looks
+	 * "needed" to every reason-to-keep check. Closing it would need evidence this path
+	 * did not itself write moments earlier — see the note in the round-3 report.
+	 */
+	it('closes the connection the superseded dial had already opened', async () => {
+		const closed: string[] = [];
+		const { network } = bareNetwork();
+		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
+			(network as any).bumpBootstrapGeneration('net-a');
+			return { remoteAddr: { toString: () => ma.toString() }, close: async (): Promise<void> => void closed.push(ma.toString()) };
+		};
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
+		expect(closed).toEqual([ADDR_A]);
+	});
+
+	it('keeps a superseded connection a joined network still needs', async () => {
+		const closed: string[] = [];
+		const { network } = bareNetwork(n => n.bumpBootstrapGeneration('net-a'));
+		(network as any).isPeerNeededByJoinedNetwork = (): boolean => true;
+		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
+			(network as any).bumpBootstrapGeneration('net-a');
+			return { remoteAddr: { toString: () => ma.toString() }, close: async (): Promise<void> => void closed.push(ma.toString()) };
+		};
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
+		expect(closed).toEqual([]);
+	});
 });
 
 /**

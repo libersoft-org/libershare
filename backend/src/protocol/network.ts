@@ -1917,7 +1917,23 @@ export class Network {
 						await this.disconnectPeer(peerID, networkID);
 						return;
 					}
-					if (superseded()) return;
+					if (superseded()) {
+						// The configuration this dial belonged to was replaced while the dial was
+						// still in flight. Returning alone leaks the connection just opened: the
+						// address may no longer be configured at all, and nothing else closes a
+						// connection nobody asked for. Only keep it when some joined network still
+						// needs the peer — a replaced address does not make its peer unwanted if
+						// another network still lists it.
+						if (peerID && !this.isPeerNeededByJoinedNetwork(peerID)) {
+							trace(`[NET] bootstrap dial superseded, closing connection: ${peerID.slice(0, 16)}`);
+							try {
+								await conn?.close();
+							} catch {
+								// Already gone — nothing left to close.
+							}
+						}
+						return;
+					}
 					// The peer answered, so the identity behind this address is real and
 					// wanted — the point at which a discovered ID has earned its place in the
 					// set (see the claim above for why it may not have it yet).
