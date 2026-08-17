@@ -865,16 +865,11 @@ export class Network {
 			// into the replacement would free the next run's claim.
 			const inFlight = this.inFlightDiscoveryDials;
 			if (inFlight.has(peerID)) {
-				// The DIAL is a duplicate; the ADDRESSES need not be. Each discovery source
-				// carries its own list, and the outstanding dial may be labouring through a
-				// relay address while this event names a direct one. Dropping the event whole
-				// threw that address away without even recording it, so nothing could use it
-				// later either. Merge it and let the skip cost only the redundant dial.
-				try {
-					await this.node!.peerStore.merge(evt.detail.id, { multiaddrs: evt.detail.multiaddrs });
-				} catch (err: any) {
-					trace(`[NET] discovery addr merge failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
-				}
+				// Only the DIAL is skipped; the addresses are not lost. libp2p's own
+				// `#onDiscoveryPeer` merges every discovery service's address list into the
+				// peerStore before this public event is dispatched, so a second merge here
+				// would be an unguarded write that adds nothing — and one that can land after
+				// a leave, an eviction or a stop and reinstate addresses those just removed.
 				trace(`[NET] discovery dial skipped (already in flight): ${peerID.slice(0, 16)}`);
 				return;
 			}

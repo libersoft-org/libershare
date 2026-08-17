@@ -270,17 +270,17 @@ describe('peer:discovery — one dial per peer at a time', () => {
 });
 
 /**
- * Single-flighting the dial per peer must not single-flight the KNOWLEDGE. mDNS,
- * identify and PX each raise their own event for the same arrival with their own
- * address list, so the second event routinely carries an address the first did not —
- * a direct one where the outstanding dial is grinding through a relay. Dropping the
- * event whole threw that address away entirely: never dialed, never even recorded.
+ * The addresses of every discovery event are already in the peerStore by the time this
+ * handler runs: libp2p merges each discovery service's list in `#onDiscoveryPeer` and
+ * only then dispatches the public `peer:discovery`. A skipped duplicate therefore loses
+ * nothing, and an application-level merge would only be an unguarded late write — one
+ * that can land after a leave, an eviction or a stop and put back what those removed.
  */
-describe('peer:discovery — a skipped duplicate still contributes its addresses', () => {
+describe('peer:discovery — a skipped duplicate writes nothing of its own', () => {
 	const RELAY_ADDR = { toString: () => `/ip4/203.0.113.9/tcp/9090/p2p/RelayXYZ/p2p-circuit/p2p/${PEER_ID}` };
 	const DIRECT_ADDR = { toString: () => `/ip4/198.51.100.4/tcp/9090/p2p/${PEER_ID}` };
 
-	it('merges the later addresses into the peerStore instead of discarding them', async () => {
+	it('does not merge addresses of its own while a dial for the peer is in flight', async () => {
 		const handlers = new Map<string, Handler>();
 		const merged: unknown[][] = [];
 		const dialled: unknown[][] = [];
@@ -327,7 +327,7 @@ describe('peer:discovery — a skipped duplicate still contributes its addresses
 		await fire(DIRECT_ADDR);
 
 		expect(dialled).toHaveLength(1);
-		expect(merged).toEqual([[DIRECT_ADDR]]);
+		expect(merged).toEqual([]);
 
 		releaseDial();
 		await first;
