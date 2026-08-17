@@ -327,6 +327,7 @@
 			"addressing": "Addressing",
 			"applying": "Applying…",
 			"applied": "Configuration applied.",
+			"staleNote": "This interface was reconfigured elsewhere while you were editing. Go back and open it again to start from its current settings.",
 			"applyWarning": "Changing the network settings restarts the connection. If you get it wrong you may lose access to this machine over the network.",
 			"invalidField": "Check the {field} field.",
 			"field": {

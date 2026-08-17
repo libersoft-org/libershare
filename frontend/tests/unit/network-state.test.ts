@@ -12,7 +12,7 @@
  */
 import { test, expect } from 'bun:test';
 import { get } from 'svelte/store';
-import { canApplyMode, canEditInterfaceIPv4, canEditInterfaceWifi, isJoinable, networkState, unknownNetworkState } from '../../src/scripts/networkState.ts';
+import { canApplyMode, canEditInterfaceIPv4, canEditInterfaceWifi, interfaceForm, isJoinable, networkState, reseedDecision, unknownNetworkState } from '../../src/scripts/networkState.ts';
 import type { NetInterfaceInfo, NetworkStateInfo, NetWifiNetwork } from '@shared';
 
 /** One interface of a settled, writable host. */
@@ -168,4 +168,43 @@ test('merely clearing known would have left the stale list and capabilities behi
 	// ...and this is what it is handed now.
 	networkState.set(unknownNetworkState());
 	expect(get(networkState).interfaces).toHaveLength(0);
+});
+
+/**
+ * What the addressing editor does with a fresh reading of the interface it is on.
+ *
+ * The form used to seed exactly once, so a Wi-Fi join could replace the whole
+ * network state underneath it — the interface moving from a static address to the
+ * DHCP one the new network handed out — while the fields kept the old network's
+ * configuration, and the next Save wrote that into the new network's profile.
+ */
+test('leaves an untouched form following the host', () => {
+	const before = interfaceForm(iface());
+	const after = interfaceForm(iface({ ipv4Mode: 'dhcp', addresses: [{ family: 'ipv4', address: '198.51.100.20', prefixLength: 24 }], gateway: '198.51.100.1' }));
+	expect(reseedDecision(before, after, before)).toBe('reseed');
+});
+
+test('says nothing has to happen while the host reports what it reported', () => {
+	const seeded = interfaceForm(iface());
+	// Even mid-typing: the host has not moved, so there is nothing to follow.
+	expect(reseedDecision(seeded, { ...seeded }, { ...seeded, address: '192.0.2.99' })).toBe('ignore');
+});
+
+// Network A is static 192.0.2.10/24, the user opens the editor, then joins
+// network B on the same screen and B is on DHCP. Saving now would write A's
+// address into B's profile.
+test('refuses to save an edited form whose basis the host has replaced', () => {
+	const seeded = interfaceForm(iface());
+	const joined = interfaceForm(iface({ ipv4Mode: 'dhcp', addresses: [{ family: 'ipv4', address: '198.51.100.20', prefixLength: 24 }], gateway: '198.51.100.1' }));
+	expect(reseedDecision(seeded, joined, { ...seeded, address: '192.0.2.44' })).toBe('stale');
+});
+
+test('seeds from the first reading there is', () => {
+	const live = interfaceForm(iface());
+	expect(reseedDecision(null, live, { mode: 'unknown', address: '', prefix: '24', gateway: '', dns: '' })).toBe('reseed');
+});
+
+test('offers only the resolvers a user could sensibly re-submit', () => {
+	// A loopback stub is what the host runs, not something anybody typed.
+	expect(interfaceForm(iface({ dns: ['127.0.0.53', '198.51.100.1', 'fe80::1'] })).dns).toBe('198.51.100.1');
 });

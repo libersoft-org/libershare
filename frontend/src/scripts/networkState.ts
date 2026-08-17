@@ -1,6 +1,6 @@
 import { derived, writable, type Readable } from 'svelte/store';
 import { api } from './api.ts';
-import { deriveConnectionStatus, type ConnectionStatus, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
+import { deriveConnectionStatus, isIPv4, type ConnectionStatus, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
 
 /**
  * What the frontend knows before, and after, it knows anything.
@@ -114,6 +114,55 @@ export function canEditInterfaceWifi(iface: NetInterfaceInfo | undefined, state:
  */
 export function isJoinable(network: NetWifiNetwork, state: { busy: boolean; scanning: boolean }): boolean {
 	return !state.busy && !state.scanning && !network.active;
+}
+
+/** The addressing form's fields, as one interface reading fills them. */
+export interface InterfaceForm {
+	mode: NetAddressMode;
+	address: string;
+	prefix: string;
+	gateway: string;
+	dns: string;
+}
+
+/** The form one interface reading seeds. */
+export function interfaceForm(source: NetInterfaceInfo): InterfaceForm {
+	const ipv4 = source.addresses.find(a => a.family === 'ipv4');
+	// Only real resolvers are offered back for editing: a loopback stub is what the
+	// host runs, not something the user typed, and re-submitting it would pin the
+	// machine to its own resolver.
+	return { mode: source.ipv4Mode, address: ipv4?.address ?? '', prefix: String(ipv4?.prefixLength ?? 24), gateway: source.gateway ?? '', dns: source.dns.filter(server => isIPv4(server) && !server.startsWith('127.')).join(', ') };
+}
+
+export function sameInterfaceForm(a: InterfaceForm, b: InterfaceForm): boolean {
+	return a.mode === b.mode && a.address === b.address && a.prefix === b.prefix && a.gateway === b.gateway && a.dns === b.dns;
+}
+
+/**
+ * What the editor should do with a fresh reading of the interface it is editing.
+ *
+ * Seeding exactly once — which is all the editor used to do — made Save write a
+ * configuration the user was no longer looking at. A Wi-Fi join replaces the whole
+ * network state, so an interface can go from a static address to the DHCP one the
+ * new network handed out while the form still holds the old network's address; the
+ * next Save then writes that address into the new network's profile. The same lost
+ * update arrives from the system's own network UI, from NetworkManager, or from a
+ * second client of this app.
+ *
+ * Three answers, and each is the least destructive one available:
+ *  - `ignore` — the host says what it said when the form was seeded. Nothing to do,
+ *    and re-seeding would fight the user's typing for no reason.
+ *  - `reseed` — the host moved and the form is untouched, so following it costs
+ *    nothing and keeps the screen honest.
+ *  - `stale` — the host moved and the form has been edited. Both are real: throwing
+ *    the typing away is data loss, and writing it against a basis that no longer
+ *    exists silently undoes whatever changed it. So keep what was typed and refuse
+ *    to save it.
+ */
+export function reseedDecision(seeded: InterfaceForm | null, live: InterfaceForm, onScreen: InterfaceForm): 'ignore' | 'reseed' | 'stale' {
+	if (!seeded) return 'reseed';
+	if (sameInterfaceForm(seeded, live)) return 'ignore';
+	return sameInterfaceForm(seeded, onScreen) ? 'reseed' : 'stale';
 }
 
 /**

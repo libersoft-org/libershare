@@ -1,10 +1,11 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { applyInterfaceConfig, canApplyMode, canEditInterfaceIPv4, canEditInterfaceWifi, isJoinable, joinWifiNetwork, networkState, scanWifiNetworks } from '../../scripts/networkState.ts';
-	import { isIPv4, validateIPv4Config, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork } from '@shared';
+	import { applyInterfaceConfig, canApplyMode, canEditInterfaceIPv4, canEditInterfaceWifi, interfaceForm, isJoinable, joinWifiNetwork, networkState, reseedDecision, scanWifiNetworks, type InterfaceForm } from '../../scripts/networkState.ts';
+	import { validateIPv4Config, type NetAddressMode, type NetIPv4Config, type NetWifiNetwork } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -51,25 +52,57 @@
 	let joinSecured = $state(true);
 	let password = $state('');
 
-	// Seed the form from the live state once, when the screen opens. Re-seeding on
-	// every broadcast would overwrite what the user is in the middle of typing.
-	let seeded = false;
+	// The configuration the form was seeded from, so a later broadcast can be
+	// compared against it. Null until the first one arrives.
+	let seeded = $state<InterfaceForm | null>(null);
+	// True once the host's configuration has moved away from what an EDITED form was
+	// seeded from. Save is then refusing to write a basis that no longer exists.
+	let stale = $state(false);
+
+	/**
+	 * Follow the host while the form is untouched, and refuse to overwrite it once
+	 * it is not.
+	 *
+	 * Seeding exactly once was the whole of this, and it made Save write a
+	 * configuration the user was no longer looking at. A Wi-Fi join replaces the
+	 * whole network state — the interface can go from a static address to the DHCP
+	 * one the new network handed out — while the form kept the old network's
+	 * address, and the next Save wrote it into the new network's profile. The same
+	 * lost update arrives from the Windows network UI, from NetworkManager, or from
+	 * a second client of this app.
+	 *
+	 * So: unchanged host, leave the form alone. Changed host and a clean form,
+	 * follow it. Changed host and a form the user has edited, keep what they typed —
+	 * throwing away typing is its own kind of data loss — and block Save, because
+	 * the basis it would be written against is gone.
+	 */
 	$effect(() => {
-		if (seeded || !iface) return;
-		seeded = true;
-		seedFrom(iface);
+		const source = iface;
+		if (!source) return;
+		const live = interfaceForm(source);
+		// Everything below reads the form fields, which this effect must not follow —
+		// it answers to the HOST changing, not to the user typing.
+		untrack(() => {
+			const decision = reseedDecision(seeded, live, { mode, address, prefix, gateway, dns });
+			if (decision === 'ignore') return;
+			if (decision === 'stale') {
+				stale = true;
+				return;
+			}
+			seeded = live;
+			stale = false;
+			mode = live.mode;
+			address = live.address;
+			prefix = live.prefix;
+			gateway = live.gateway;
+			dns = live.dns;
+		});
 	});
 
-	function seedFrom(source: NetInterfaceInfo): void {
-		mode = source.ipv4Mode;
-		const ipv4 = source.addresses.find(a => a.family === 'ipv4');
-		address = ipv4?.address ?? '';
-		prefix = String(ipv4?.prefixLength ?? 24);
-		gateway = source.gateway ?? '';
-		// Only real resolvers are offered back for editing: a loopback stub is what
-		// the host runs, not something the user typed, and re-submitting it would
-		// pin the machine to its own resolver.
-		dns = source.dns.filter(server => isIPv4(server) && !server.startsWith('127.')).join(', ');
+	/** Take the state an apply or a join answered with as the form's new basis. */
+	function reseed(): void {
+		seeded = null;
+		stale = false;
 	}
 
 	function buildConfig(): NetIPv4Config {
@@ -92,6 +125,15 @@
 		if (!canEditIPv4) {
 			failed = true;
 			message = $t('settings.network.readOnlyNote');
+			return;
+		}
+		// The host's configuration moved while this form was being edited, so what is
+		// on screen was derived from a state that no longer exists. Writing it would
+		// silently undo whatever changed it — a Wi-Fi join, the system's own network
+		// UI, or another client.
+		if (stale) {
+			failed = true;
+			message = $t('settings.network.staleNote');
 			return;
 		}
 		// Guarded in the markup as well; repeated here because Save is the step that
@@ -117,6 +159,9 @@
 		message = '';
 		try {
 			await applyInterfaceConfig(interfaceID, config);
+			// The backend answered with the state that resulted, and that is the form's
+			// new basis — including the parts the host normalized or refused to take.
+			reseed();
 			failed = false;
 			message = $t('settings.network.applied');
 		} catch (error) {
@@ -169,6 +214,9 @@
 		message = '';
 		try {
 			await joinWifiNetwork(interfaceID, joinSSID, password);
+			// The interface is on a different network now, very possibly with a different
+			// addressing mode. Whatever the form held describes the network that was left.
+			reseed();
 			failed = false;
 			message = $t('settings.network.joined', { ssid: joinSSID });
 			password = '';
@@ -266,8 +314,12 @@
 				</div>
 			{/if}
 
+			{#if stale}
+				<div class="note failed">{$t('settings.network.staleNote')}</div>
+			{/if}
+
 			<ButtonBar justify="center" basePosition={[0, 1 + staticRows]}>
-				<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy || !canApplyMode(mode)} onConfirm={save} />
+				<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy || stale || !canApplyMode(mode)} onConfirm={save} />
 			</ButtonBar>
 		{/if}
 
