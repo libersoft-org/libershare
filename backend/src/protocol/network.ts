@@ -2431,9 +2431,10 @@ export class Network {
 			// key, signed record and address certification.
 			let snapshot: IStoredPeerRecord | null = null;
 			let keptAlive = false;
-			// True once the record has been put back INSIDE the lock below, so the healing
-			// after it only has the in-memory state left to rebuild.
-			let recordRestored = false;
+			// The live connections the restore INSIDE the lock below wrote the record back
+			// for, or null when it did not run — so the healing after it knows the record is
+			// already there and has only the in-memory state left to rebuild.
+			let restoredWith: Array<{ remoteAddr: any }> | null = null;
 			const release = await store.getWriteLock(pid);
 			try {
 				if (node !== this.node || epoch !== this.runEpoch) return;
@@ -2469,7 +2470,7 @@ export class Network {
 					const arrived = node.getConnections(pid);
 					if (arrived.length > 0 && !this.isRedialSuppressed(peerID)) {
 						await this.restorePurgedRecord(store, events, pid, arrived, snapshot);
-						recordRestored = true;
+						restoredWith = arrived;
 					}
 				}
 			} finally {
@@ -2488,10 +2489,14 @@ export class Network {
 			// Not for a peer leave-network hung up: it is meant to be forgotten, and a
 			// connection racing the purge is no reason to rebuild what the leave
 			// deliberately tore down.
+			//
+			// A restore that already happened is followed up whatever the peer is doing now:
+			// the entry is back on disk, and a leave-network landing inside that write is
+			// honoured by the same path that would have taken back a restore made here.
 			if (epoch !== this.runEpoch) return;
 			const after = node.getConnections(pid);
-			if (after.length > 0 && !this.isRedialSuppressed(peerID)) {
-				await this.restorePurgedPeerState(node, pid, after, epoch, snapshot, recordRestored);
+			if (restoredWith !== null || (after.length > 0 && !this.isRedialSuppressed(peerID))) {
+				await this.restorePurgedPeerState(node, pid, after.length > 0 ? after : (restoredWith ?? []), epoch, snapshot, restoredWith !== null);
 			}
 		} catch (err: any) {
 			// An explicit teardown has no next cycle to fix this, and everything else it
