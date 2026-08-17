@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import type { NetworkStateInfo } from '@shared';
 import { applyAndPublish, publishNetworkState } from '../../../src/api/system.ts';
-import { hostMutationInProgress, runHostMutation } from '../../../src/system-network.ts';
+import { hostMutationInProgress, readSettledNetworkState, runHostMutation } from '../../../src/system-network.ts';
 
 /** A state that is recognisable in an assertion without standing for anything real. */
 function fakeState(marker: string): NetworkStateInfo {
@@ -69,6 +69,26 @@ describe('publishNetworkState', () => {
 		});
 		expect(sent).toEqual([]);
 		expect(hostMutationInProgress()).toBe(false);
+	});
+
+	// An ordinary read takes the same lock — that is how it waits for a
+	// reconfiguration to finish — so asking the LOCK whether one is running answered
+	// yes throughout every read, and the publisher dropped its tick because another
+	// read held it. Harmless but pointless: the footer sat a poll interval behind.
+	it('does not call an ordinary settled read a reconfiguration', async () => {
+		const sent: unknown[] = [];
+		const reading = readSettledNetworkState();
+		// Long enough for the mutex to have handed the lock to that read, far too
+		// short for the platform reader it then spawns to have answered.
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(hostMutationInProgress()).toBe(false);
+		await publishNetworkState(
+			async () => fakeState('settled'),
+			(_event, data) => sent.push(data)
+		);
+		expect(sent).toHaveLength(1);
+		await reading;
 	});
 });
 

@@ -270,10 +270,19 @@ export function resetNetworkStateCache(): void {
  * There is no reading of a half-applied interface worth broadcasting, so the
  * publisher skips the tick instead. Nothing is lost: `applyAndPublish` reads and
  * broadcasts the settled state the moment the mutation is done.
+ *
+ * Counted rather than read off the lock. {@link readSettledNetworkState} takes the
+ * same lock — that is how it waits for a reconfiguration — so `applyLock.isLocked()`
+ * was also true throughout every ordinary read, and the publisher then dropped its
+ * tick because another read was in progress. Nothing was damaged by that, but the
+ * footer sat up to a poll interval behind for no reason.
  */
 export function hostMutationInProgress(): boolean {
-	return applyLock.isLocked();
+	return mutationDepth > 0;
 }
+
+/** How many host reconfigurations are running. Only {@link runHostMutation} moves it. */
+let mutationDepth = 0;
 
 /**
  * The current cache generation. Exported so a test can observe that a mutation
@@ -301,11 +310,13 @@ export function networkStateGeneration(): number {
  */
 export async function runHostMutation<T>(action: () => Promise<T>): Promise<T> {
 	return applyLock.runExclusive(async () => {
+		mutationDepth++;
 		resetNetworkStateCache();
 		try {
 			return await action();
 		} finally {
 			resetNetworkStateCache();
+			mutationDepth--;
 		}
 	});
 }
