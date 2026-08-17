@@ -575,7 +575,16 @@ export function isWindowsInterfaceID(id: string): boolean {
  * category is the whole of what may be ignored.
  */
 function tolerateMissing(command: string): string {
-	return `try { ${command} -ErrorAction Stop } catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw } }`;
+	return ignoringMissing(`${command} -ErrorAction Stop`);
+}
+
+/**
+ * The same tolerance around a whole statement rather than one cmdlet call — for a
+ * reading that has to assign its result, where `-ErrorAction Stop` belongs inside
+ * the pipeline instead of after it.
+ */
+function ignoringMissing(statement: string): string {
+	return `try { ${statement} } catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw } }`;
 }
 
 /**
@@ -588,10 +597,13 @@ function tolerateMissing(command: string): string {
  * {@link windowsRestoreSteps} puts back — DHCP state, every IPv4 address with its
  * prefix, every IPv4 default route with its metric, and the resolver list.
  *
- * Only the DHCP read is `-ErrorAction Stop`: an interface with no IPv4 stack at
- * all cannot be configured, and finding that out before deleting anything is the
- * point. The other three legitimately return nothing on an adapter that is simply
- * unconfigured.
+ * Not one of the four may fail open. `-ErrorAction SilentlyContinue` made "this
+ * adapter has no static address" and "the address provider could not be reached"
+ * the same empty list — and an empty list is what the restore writes back, so a
+ * reading that failed here is a rollback that silently deletes the configuration
+ * it was supposed to preserve. The other three legitimately return nothing on an
+ * adapter that is simply unconfigured, which is `ObjectNotFound` and only that;
+ * every other failure aborts the apply before anything has been removed.
  *
  * The resolver snapshot deliberately does NOT use `Get-DnsClientServerAddress`.
  * That cmdlet reports the EFFECTIVE list, which on a DHCP interface is the one
@@ -606,11 +618,19 @@ function tolerateMissing(command: string): string {
 function windowsSnapshotSteps(): string[] {
 	return [
 		'$oldDhcp = (Get-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop).Dhcp',
-		'$oldAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object IPAddress, PrefixLength)',
-		"$oldRoutes = @(Get-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object NextHop, RouteMetric)",
+		'$oldAddresses = @()',
+		ignoringMissing('$oldAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop | Select-Object IPAddress, PrefixLength)'),
+		'$oldRoutes = @()',
+		ignoringMissing("$oldRoutes = @(Get-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop | Select-Object NextHop, RouteMetric)"),
 		// Empty for an interface on automatic DNS, and only then. Windows writes the
 		// value comma-separated but has historically also used spaces, so both split.
-		'$oldDnsManual = @((Get-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)" -Name NameServer -ErrorAction SilentlyContinue).NameServer -split \'[,\\s]+\' | Where-Object { $_ })',
+		//
+		// The whole key is read rather than the one value: `-Name NameServer` on an
+		// interface that never had a manual override raises InvalidArgument, which is
+		// indistinguishable from a real read failure by category. Reading the key
+		// leaves an absent value as $null — the honest "no override" — while a key
+		// that cannot be read at all still throws.
+		'$oldDnsManual = @((Get-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)" -ErrorAction Stop).NameServer -split \'[,\\s]+\' | Where-Object { $_ })',
 	];
 }
 

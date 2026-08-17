@@ -529,6 +529,28 @@ describe('windowsApplyIPv4Command', () => {
 		}
 	});
 
+	// The snapshot is the only copy of what the apply is about to delete, so a
+	// reading of it that fails open is a rollback that deletes for good: an
+	// unreachable address provider produced an empty `$oldAddresses`, and the
+	// restore then wrote that emptiness back as the interface's former state.
+	it('aborts the apply when a snapshot reading fails, rather than recording nothing', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
+		const snapshot = command.slice(0, command.indexOf('Remove-NetIPAddress'));
+		// Nothing captured before the first removal may swallow a failure silently.
+		expect(snapshot).not.toContain('SilentlyContinue');
+		// Only "this adapter simply has none" is tolerated, and it aborts otherwise —
+		// the same one category the removals treat as an absence.
+		for (const variable of ['$oldAddresses', '$oldRoutes']) {
+			expect(snapshot).toContain(`try { ${variable} = @(`);
+			expect(snapshot).toContain(`${variable} = @();`);
+		}
+		// A DHCP interface has no manual override to find, and asking for the value by
+		// name reports that as InvalidArgument — a category a genuine failure also
+		// uses. Reading the key leaves the absence as $null and keeps the failure a failure.
+		expect(snapshot).toContain('NameServer -split');
+		expect(snapshot).not.toContain('-Name NameServer');
+	});
+
 	it('keeps the route metrics in the snapshot, not just the next hops', () => {
 		// A hand-set metric is what ranks competing default routes; restoring the
 		// route without it silently re-ranks every route on a multi-homed host.
