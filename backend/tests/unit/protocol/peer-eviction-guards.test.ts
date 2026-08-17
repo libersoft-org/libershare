@@ -2485,4 +2485,49 @@ describe('removePeerStoreAddresses — against a real libp2p peerStore', () => {
 			await node.stop();
 		}
 	});
+
+	/**
+	 * Purge healing writes through the same private door and owes the same event. Against a
+	 * real node, because the emitter it has to reach is libp2p's own and only a real node
+	 * hands that out.
+	 */
+	it('raises peer:update for the record purge healing puts back', async () => {
+		const node = await createLibp2p({
+			start: false,
+			addresses: { listen: [] },
+			transports: [],
+			connectionEncrypters: [],
+			streamMuxers: [],
+			// Cast: two copies of interface-datastore are installed and their Key classes
+			// are structurally incompatible. Runtime is one class.
+			datastore: new MemoryDatastore() as any,
+		});
+		try {
+			const pid = peerIdFromString(PEER_ID);
+			await node.peerStore.patch(pid, { addresses: [{ multiaddr: multiaddr(KEPT), isCertified: true }], protocols: ['/lish/1.0.0'] });
+			const network = Object.create(Network.prototype) as Network;
+			(network as any).runEpoch = 1;
+			(network as any).node = node;
+			(network as any).bootstrapPeerIDs = new Set<string>();
+			(network as any).redialSuppressedByNet = new Map();
+			(network as any).unreachableQuarantine = new Map();
+			(network as any).pubsub = { direct: new Set<string>() };
+			installBootstrapRegistry(network, []);
+			// The record as the purge would have snapshotted it, then deleted.
+			const snapshot = await node.peerStore.get(pid);
+			await node.peerStore.delete(pid);
+
+			const updates: unknown[] = [];
+			node.addEventListener('peer:update', evt => updates.push(evt));
+			(node as any).getConnections = () => [{ remoteAddr: multiaddr(DROPPED) }];
+			await (network as any).restorePurgedPeerState(node, pid, [{ remoteAddr: multiaddr(DROPPED) }], 1, snapshot, false);
+
+			expect(updates).toHaveLength(1);
+			const after = await node.peerStore.get(pid);
+			expect(after.protocols).toEqual(['/lish/1.0.0']);
+			expect(after.addresses.map(a => a.multiaddr.toString()).sort()).toEqual(['/ip4/203.0.113.21/tcp/9090', '/ip4/203.0.113.22/tcp/9090']);
+		} finally {
+			await node.stop();
+		}
+	});
 });
