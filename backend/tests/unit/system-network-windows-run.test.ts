@@ -131,6 +131,23 @@ describe('windowsApplyIPv4Command, executed', () => {
 		expect(result.routes.map(r => r.RouteMetric)).toEqual([25, 25]);
 	});
 
+	// ...but "already configured" is a question about the ACTIVE store. An interface
+	// whose address and gateway exist only in the persistent store is one that will
+	// come up on them at the next boot and has none of them now, so submitting those
+	// same values — which the form does whichever field was edited — has to create
+	// them. Asked of the union of both stores, this branch was skipped and the apply
+	// reported success on an interface still holding no IPv4 address at all.
+	it.skipIf(windowsOnly)('applies a configuration the persistent store alone already holds', async () => {
+		const host = staticHost(GUID, { failOn: undefined });
+		host.addresses = inStore(host.addresses, 'PersistentStore');
+		host.routes = inStore(host.routes, 'PersistentStore');
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['198.51.100.53'] }), host);
+		expect(result.error).toBeNull();
+		expect(inStore(result.addresses, 'ActiveStore').map(a => a.IPAddress)).toEqual(['192.0.2.10']);
+		expect(inStore(result.routes, 'ActiveStore').map(r => r.NextHop)).toEqual(['192.0.2.1']);
+		expect(result.calls).toContain('New-NetIPAddress:ActiveStore+PersistentStore');
+	});
+
 	// Duplicate address detection hangs off the same flag: with no new address there
 	// is nothing to wait for, and the wait would have been reading the old one.
 	it.skipIf(windowsOnly)('runs no duplicate address detection when nothing was created', async () => {

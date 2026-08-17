@@ -113,12 +113,27 @@ describe.skipIf(process.platform !== 'win32')('windows apply fragments (live Pow
 	describe('the unchanged-addressing test', () => {
 		const config = { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' } as const;
 
-		/** Run the assignment against a scripted snapshot and report what it decided. */
+		/**
+		 * Run the assignment against a scripted snapshot and report what it decided.
+		 *
+		 * The snapshot scripted here is the ACTIVE store's, which is the only one the
+		 * decision may read: a persistent-only object is what the interface will come up
+		 * with next boot, not what it is on now.
+		 */
 		async function decide(dhcp: string, address: string, prefix: number, nextHops: string[]): Promise<boolean> {
-			const state = [`$oldDhcp = '${dhcp}'`, `$oldAddresses = @([pscustomobject]@{ IPAddress='${address}'; PrefixLength=${prefix} })`, `$oldRoutes = @(${nextHops.map(hop => `[pscustomobject]@{ NextHop='${hop}' }`).join(', ')})`].join('; ');
+			const state = [`$oldDhcp = '${dhcp}'`, `$oldActiveAddresses = @([pscustomobject]@{ IPAddress='${address}'; PrefixLength=${prefix} })`, `$oldActiveRoutes = @(${nextHops.map(hop => `[pscustomobject]@{ NextHop='${hop}' }`).join(', ')})`].join('; ');
 			const result = await run(`${state}; ${windowsAddressingUnchanged(config)}; if ($addressingUnchanged) { exit 0 } else { exit 3 }`);
 			return !result.failed;
 		}
+
+		// The union of both stores used to answer this, so an interface holding the
+		// requested address and gateway only in the persistent store — with an empty
+		// active store — was called already-configured. Nothing was created, and the
+		// apply reported success on an interface with no address in force.
+		it('does not recognise a configuration only the persistent store holds', async () => {
+			const state = ["$oldDhcp = 'Disabled'", '$oldActiveAddresses = @()', '$oldActiveRoutes = @()', "$oldAddresses = @([pscustomobject]@{ IPAddress='192.0.2.10'; PrefixLength=24 })", "$oldRoutes = @([pscustomobject]@{ NextHop='192.0.2.1' })"].join('; ');
+			expect((await run(`${state}; ${windowsAddressingUnchanged(config)}; if ($addressingUnchanged) { exit 0 } else { exit 3 }`)).failed).toBe(true);
+		});
 
 		it('recognises the configuration already on the interface', async () => {
 			expect(await decide('Disabled', '192.0.2.10', 24, ['192.0.2.1'])).toBe(true);

@@ -984,10 +984,22 @@ export function windowsIPv4Objection(config: NetIPv4Config): string | null {
  * client sent, so it describes the host as it is now. It leans on
  * {@link WINDOWS_ROUTE_GUARD} having already refused more than one default route,
  * which is what makes "the gateway" a single value worth comparing.
+ *
+ * The ACTIVE store alone answers it, not the union the guards count. The question
+ * here is "is this configuration in force right now?", and a persistent-only object
+ * is precisely one that is not: it is what the interface will come up with at the
+ * next boot and has no effect until then. Asked of the union, an interface whose
+ * address and gateway existed only in the persistent store — an ordinary state, and
+ * one this code treats as legitimate everywhere else — looked already-configured to
+ * a user submitting those same values while changing a DNS server. Nothing was
+ * created, duplicate address detection never ran, and the apply reported success
+ * and broadcast an interface still holding no active IPv4 address or default route.
+ * The union stays where it belongs: counting what the destructive steps will take,
+ * and deciding what the rollback puts back.
  */
 export function windowsAddressingUnchanged(config: NetIPv4Config): string {
-	const route = config.gateway ? `(@($oldRoutes).Count -eq 1) -and ($oldRoutes[0].NextHop -eq '${config.gateway}')` : '(@($oldRoutes).Count -eq 0)';
-	return `$addressingUnchanged = ($oldDhcp -ne 'Enabled') -and (@($oldAddresses).Count -eq 1) -and ($oldAddresses[0].IPAddress -eq '${config.address}') -and ($oldAddresses[0].PrefixLength -eq ${config.prefixLength}) -and ${route}`;
+	const route = config.gateway ? `(@($oldActiveRoutes).Count -eq 1) -and ($oldActiveRoutes[0].NextHop -eq '${config.gateway}')` : '(@($oldActiveRoutes).Count -eq 0)';
+	return `$addressingUnchanged = ($oldDhcp -ne 'Enabled') -and (@($oldActiveAddresses).Count -eq 1) -and ($oldActiveAddresses[0].IPAddress -eq '${config.address}') -and ($oldActiveAddresses[0].PrefixLength -eq ${config.prefixLength}) -and ${route}`;
 }
 
 /**
