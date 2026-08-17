@@ -209,6 +209,34 @@ describe('Network lifecycle', () => {
 		expect(net.getLifecycle()).toBe('stopped');
 	});
 
+	it('a datastore that will not close leaves the instance failed, and the retry only closes it', async () => {
+		const net = bareNetwork();
+		let attempts = 0;
+		const node = fakeNode();
+		(net as any).node = node;
+		const datastore = {
+			close: async (): Promise<void> => {
+				if (++attempts === 1) throw new Error('sqlite close failed');
+			},
+		};
+		(net as any).datastore = datastore;
+
+		await expect(net.stop()).rejects.toThrow('sqlite close failed');
+		// Losing the reference here is what made the open handle unreachable AND let a wipe
+		// or a second start run over the database it still holds.
+		expect((net as any).datastore).toBe(datastore);
+		expect(net.getLifecycle()).toBe('failed');
+		await expect(net.clearDatastore()).rejects.toThrow('Network must be stopped');
+
+		// The node was proved down on the first attempt and must not be stopped again — only
+		// the phase that is still outstanding repeats.
+		await net.stop();
+		expect(attempts).toBe(2);
+		expect(node.calls).toBe(1);
+		expect((net as any).datastore).toBeNull();
+		expect(net.getLifecycle()).toBe('stopped');
+	});
+
 	it('an interrupted libp2p stop is terminal — a retry is refused, not faked', async () => {
 		const net = bareNetwork();
 		let closed = 0;

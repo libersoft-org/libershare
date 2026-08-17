@@ -3032,6 +3032,13 @@ export class Network {
 			}
 		} catch (err: any) {
 			trace(`[NET] datastore.close() failed: ${err?.message ?? err}`);
+			// SqliteDatastore.close() closes the database handle directly and can throw.
+			// Swallowing that and reporting a clean stop lost the reference to a database
+			// still open: the close could never be retried, a new start would open a second
+			// handle on the same file, and clearDatastore / clearPeerstore / an identity
+			// change were all permitted over it. The node above is provably down and stays
+			// released, so a retried stop() repeats only this close.
+			throw err;
 		}
 		this.datastore = null;
 	}
