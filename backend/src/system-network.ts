@@ -224,6 +224,41 @@ export function resetNetworkStateCache(): void {
 }
 
 /**
+ * The current cache generation. Exported so a test can observe that a mutation
+ * invalidated the cache on both sides of the platform action, which is otherwise
+ * only visible as the absence of a stale reading several seconds later.
+ */
+export function networkStateGeneration(): number {
+	return cacheGeneration;
+}
+
+/**
+ * Run one host reconfiguration, with the cached reading invalidated on both
+ * sides of it.
+ *
+ * The leading invalidation is the half that used to be missing. A platform apply
+ * is several commands and is not atomic — it can change the address and then fail
+ * rewriting the route — while the 10 s poll reads the host on its own schedule. A
+ * read that starts mid-apply used to carry the pre-apply generation, so when it
+ * finished it was accepted as valid and an intermediate state was published as
+ * the truth. Bumping first means any read overlapping the mutation is discarded.
+ *
+ * The trailing invalidation is in a `finally` for the same reason: a failed apply
+ * is precisely the case where the cached reading is fiction, because the failure
+ * says the request did not complete but says nothing about how much of it did.
+ */
+export async function runHostMutation<T>(action: () => Promise<T>): Promise<T> {
+	return applyLock.runExclusive(async () => {
+		resetNetworkStateCache();
+		try {
+			return await action();
+		} finally {
+			resetNetworkStateCache();
+		}
+	});
+}
+
+/**
  * What this host lets the app change.
  *
  * Probed once and remembered: on Linux the answer is an `nmcli` spawn, and it
@@ -272,8 +307,8 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Pro
 	if (invalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${invalid}`);
 	const supported = await readCapabilities();
 	if (!supported.ipv4) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host does not expose a writable network configuration');
-	await applyLock.runExclusive(async () => {
-		await run(async () => {
+	await runHostMutation(() =>
+		run(async () => {
 			if (process.platform === 'win32') {
 				await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(assertWindowsGuid(interfaceID), config)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
 			} else if (process.platform === 'darwin') {
@@ -281,9 +316,8 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Pro
 			} else {
 				await applyLinuxIPv4(assertDeviceName(interfaceID), config);
 			}
-		});
-		resetNetworkStateCache();
-	});
+		})
+	);
 }
 
 /** Scan for joinable Wi-Fi networks on one interface. */
@@ -301,14 +335,13 @@ export async function connectWifi(interfaceID: string, ssid: string, password: s
 	// ahead of the association attempt, so a credential no WPA2/WPA3 network could
 	// ever accept would overwrite a working saved one purely in order to fail.
 	if (password && !isValidWifiKey(password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
-	await applyLock.runExclusive(async () => {
-		// The passphrase reaches nmcli as an argv entry, so every text derived from a
-		// failure of that child process has to be scrubbed of it before it is logged
-		// or sent back — including the timeout case, where the only text available is
-		// the message execFile assembled out of the whole command line.
-		if (process.platform === 'win32') await run(() => connectWindowsWifi(assertWindowsGuid(interfaceID), ssid, password), [password]);
-		else await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password), [password]);
-		resetNetworkStateCache();
+	// The passphrase reaches nmcli as an argv entry, so every text derived from a
+	// failure of that child process has to be scrubbed of it before it is logged
+	// or sent back — including the timeout case, where the only text available is
+	// the message execFile assembled out of the whole command line.
+	await runHostMutation(() => {
+		if (process.platform === 'win32') return run(() => connectWindowsWifi(assertWindowsGuid(interfaceID), ssid, password), [password]);
+		return run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password), [password]);
 	});
 }
 
