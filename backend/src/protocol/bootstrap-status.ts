@@ -282,8 +282,14 @@ export class BootstrapStatusTracker {
 	 * peer is actually in the network, so a flood of freshly invented dead addresses could
 	 * push a live, connected participant out of the list — the stale sweep protects an
 	 * active member deliberately, and this used to undo that. Least useful goes first:
-	 * a non-member whose address failed, then one that has never answered, then a
-	 * non-member that once connected, and members last.
+	 * a row whose address failed, then one that has never answered, then one that once
+	 * connected, and rows belonging to a VERIFIED member last.
+	 *
+	 * Verified is the operative word. Ranking on `expectedPeerID` — the identity the
+	 * ADDRESS claims — handed the protection to whoever was making the claim: invented
+	 * addresses that all named a live member each took the top rank, and the member's own
+	 * genuine row, being the oldest of them, was the one evicted. Only `actualPeerID`, set
+	 * from a connection we actually made, is evidence of anything.
 	 */
 	private capDiscovered(networkID: string, net: Map<string, TrackedPeer>): void {
 		let discovered = 0;
@@ -291,8 +297,7 @@ export class BootstrapStatusTracker {
 		if (discovered <= MAX_DISCOVERED_PER_NETWORK) return;
 		const members = this.membersProvider?.(networkID) ?? new Set<string>();
 		const rankOf = (p: TrackedPeer): number => {
-			const pid = p.expectedPeerID ?? p.actualPeerID;
-			if (pid && members.has(pid)) return 3;
+			if (p.actualPeerID && members.has(p.actualPeerID)) return 3;
 			if (p.status === 'connected') return 2;
 			if (p.status === 'pending') return 1;
 			return 0;

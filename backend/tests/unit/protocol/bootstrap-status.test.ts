@@ -680,14 +680,28 @@ describe('BootstrapStatusTracker — the cap evicts the least useful row', () =>
 		expect(survivors(tracker)).toContain(live);
 	});
 
-	it('keeps an active member even when its row is the oldest and failing', () => {
+	it('keeps an active member whose identity we have actually verified', () => {
 		const tracker = new BootstrapStatusTracker();
 		tracker.setMembersProvider(() => new Set([MEMBER]));
-		const failing = `/ip4/203.0.113.8/tcp/9090/p2p/${MEMBER}`;
-		tracker.recordOutcome(NET, failing, MEMBER, 'timeout', 'no answer', null, 'discovered');
+		const verified = `/ip4/203.0.113.8/tcp/9090/p2p/${MEMBER}`;
+		tracker.recordOutcome(NET, verified, MEMBER, 'connected', null, MEMBER, 'discovered');
 		floodToCap(tracker, 256);
 
-		expect(survivors(tracker)).toContain(failing);
+		expect(survivors(tracker)).toContain(verified);
+	});
+
+	it('a flood of invented addresses claiming a member cannot evict the member', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.setMembersProvider(() => new Set([MEMBER]));
+		const verified = `/ip4/203.0.113.8/tcp/9090/p2p/${MEMBER}`;
+		tracker.recordOutcome(NET, verified, MEMBER, 'connected', null, MEMBER, 'discovered');
+		// Every one of these DECLARES the member's peer ID and none has ever answered.
+		// Ranking on the declared identity gave them all top rank and evicted the genuine
+		// row above, purely for being the oldest of the group.
+		for (let i = 0; i < 300; i++) tracker.recordOutcome(NET, `/ip4/198.51.100.${i % 254}/tcp/${20000 + i}/p2p/${MEMBER}`, MEMBER, 'timeout', 'no answer', null, 'discovered');
+
+		expect(survivors(tracker)).toContain(verified);
+		expect(survivors(tracker)).toHaveLength(256);
 	});
 
 	it('still enforces the cap', () => {
