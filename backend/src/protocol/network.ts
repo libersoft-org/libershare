@@ -1720,10 +1720,12 @@ export class Network {
 	 * a failed stop means the node is provably down and the failure was in the cleanup that
 	 * follows it, which a retried `stop()` completes.
 	 *
-	 * NEITHER answer makes the instance usable. A failed stop leaves the lifecycle `failed`,
-	 * which refuses `start()` and reads as not running, and leaves {@link dialAbort} aborted
-	 * with no path to a fresh controller — so anything dial-shaped ends the moment it begins.
-	 * This exists only so a caller can say whether retrying the stop is worth anything.
+	 * NEITHER answer makes the instance usable: a failed stop leaves the lifecycle `failed`,
+	 * which refuses `start()` and reads as not running. A shutdown that came through
+	 * {@link cancelRunOperations} has also left {@link dialAbort} aborted, and only a start
+	 * installs a fresh one — so for that caller anything dial-shaped now ends the moment it
+	 * begins. This exists only so a caller can say whether retrying the stop is worth
+	 * anything.
 	 */
 	isStopTerminal(): boolean {
 		return this.nodeStopUnrecoverable;
@@ -2532,9 +2534,11 @@ export class Network {
 	 * A shutdown waits for the leave that is running, and the peer teardown a leave is made of
 	 * has no deadline of its own: one `hangUp` on a peer that never acknowledges held the whole
 	 * stop, and the catalog with it, for as long as that peer felt like it. Cancelled, the
-	 * remaining peers are given up on. The cost is a peerStore entry left behind for a lishnet
-	 * we left — harmless, and cleaned up by the next leave of it — against a shutdown that
-	 * never returns at all.
+	 * remaining peers are given up on. The cost is real but small: their peerStore records and
+	 * keep-alive tags outlive the run, so libp2p may redial them after a restart. Nothing here
+	 * comes back to tidy that up — they are ordinary non-configured peers, so eviction and the
+	 * next leave of that lishnet are what eventually reach them. The alternative is a shutdown
+	 * that never returns at all.
 	 */
 	async disconnectPeer(peerID: string, networkID: string, epoch: number = this.runEpoch): Promise<void> {
 		const node = this.node;
