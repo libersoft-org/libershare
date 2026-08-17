@@ -363,9 +363,7 @@ export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 
 /** Join a Wi-Fi network on one interface. An empty password means an open network. */
 export async function connectWifi(interfaceID: string, ssid: string, password: string): Promise<void> {
-	const target = await assertWirelessInterface(interfaceID, 'wifiConnectable');
 	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
-	if (isAlreadyJoined(target, ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'this interface is already connected to that network');
 	// Checked before anything is written. On Windows the profile lands on disk
 	// ahead of the association attempt, so a credential no WPA2/WPA3 network could
 	// ever accept would overwrite a working saved one purely in order to fail.
@@ -374,7 +372,15 @@ export async function connectWifi(interfaceID: string, ssid: string, password: s
 	// failure of that child process has to be scrubbed of it before it is logged
 	// or sent back — including the timeout case, where the only text available is
 	// the message execFile assembled out of the whole command line.
-	await runHostMutation(() => {
+	await runHostMutation(async () => {
+		// Both premises are established INSIDE the lock, after `runHostMutation` has
+		// invalidated the cache — exactly as applyIPv4 does. Read outside it, they
+		// come from a reading up to CACHE_TTL_MS old and from before any mutation
+		// queued ahead of this one ran, so "not currently on that network" could
+		// already be false by the time the join starts. The interface the guard
+		// approved is then the one the join runs against.
+		const target = await assertWirelessInterface(interfaceID, 'wifiConnectable');
+		if (isAlreadyJoined(target, ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'this interface is already connected to that network');
 		if (process.platform === 'win32') return run(() => connectWindowsWifi(assertWindowsGuid(interfaceID), ssid, password), [password]);
 		return run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password), [password]);
 	});

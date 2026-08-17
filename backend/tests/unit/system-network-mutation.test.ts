@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { ipv4EditObjection, networkStateGeneration, resetNetworkStateCache, runHostMutation } from '../../src/system-network.ts';
+import { connectWifi, ipv4EditObjection, networkStateGeneration, resetNetworkStateCache, runHostMutation } from '../../src/system-network.ts';
 import { ErrorCodes, type NetInterfaceInfo, type NetworkStateInfo } from '@shared';
 
 /**
@@ -56,6 +56,38 @@ describe('runHostMutation', () => {
 		await Promise.all([slow, fast]);
 		expect(order).toEqual(['a:start', 'a:end', 'b:start']);
 		resetNetworkStateCache();
+	});
+});
+
+/**
+ * Where the join's premise is established.
+ *
+ * Both conditions a join rests on — this interface can be driven over Wi-Fi, and
+ * it is not already on that network — come from {@link readNetworkState}, which
+ * serves a reading up to CACHE_TTL_MS old. Checked BEFORE the lock, that reading
+ * predates both the cache invalidation and any mutation queued ahead of this one,
+ * so it can approve a join against a state the machine has already left. Checked
+ * inside, it is the same state the join then acts on.
+ *
+ * Telling the two apart at runtime needs a real wireless adapter driven into a
+ * chosen association state, which no unit test has — the ordering is therefore
+ * asserted on the compiled function body, where it is exactly as visible.
+ */
+describe('connectWifi', () => {
+	const body = connectWifi.toString();
+
+	it('mentions each step of the guard it is ordering', () => {
+		// Without this an identifier that got renamed would leave the assertions
+		// below comparing -1 against -1 and passing on a function that guards nothing.
+		for (const step of ['runHostMutation', 'assertWirelessInterface', 'isAlreadyJoined']) expect(body).toContain(step);
+	});
+
+	it('re-reads the interface inside the lock rather than before it', () => {
+		expect(body.indexOf('assertWirelessInterface')).toBeGreaterThan(body.indexOf('runHostMutation'));
+	});
+
+	it('refuses the network already in use from inside the lock as well', () => {
+		expect(body.indexOf('isAlreadyJoined')).toBeGreaterThan(body.indexOf('runHostMutation'));
 	});
 });
 
