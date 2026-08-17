@@ -1,7 +1,7 @@
 import { untrack } from 'svelte';
 import { get } from 'svelte/store';
-import type { NetworkStateInfo } from '@shared';
-import { interfaceForm, networkState, reseedDecision, type InterfaceForm } from './networkState.ts';
+import type { NetIPv4Config, NetworkStateInfo } from '@shared';
+import { applyInterfaceConfig, interfaceForm, joinWifiNetwork, networkState, reseedDecision, type InterfaceForm } from './networkState.ts';
 
 /**
  * The addressing form's fields and the basis they were seeded from.
@@ -72,6 +72,31 @@ export class InterfaceFormState {
 	seedFromState(state: NetworkStateInfo, interfaceID: string): void {
 		const source = state.interfaces.find(candidate => candidate.id === interfaceID);
 		if (source) this.seed(interfaceForm(source));
+	}
+
+	/**
+	 * Apply a configuration and settle the form on the state the host answered with.
+	 *
+	 * The RPC and the seeding live together here rather than in the component because
+	 * their ORDER is the whole of what went wrong once already, and a test that
+	 * hand-copies the two lines out of the handler pins its own copy rather than the
+	 * one that ships. There is nothing else in it: the caller keeps the capability
+	 * checks, the validation and the message, which are its own.
+	 */
+	async apply(interfaceID: string, config: NetIPv4Config): Promise<void> {
+		this.seedFromState(await applyInterfaceConfig(interfaceID, config), interfaceID);
+	}
+
+	/**
+	 * Join a Wi-Fi network and take the state it answered with as the new basis.
+	 *
+	 * The interface is on a different network afterwards, very possibly with a
+	 * different addressing mode, so whatever the form held describes the network that
+	 * was left. `ssid` is a value rather than something read back off the screen: the
+	 * caller may not re-read a live binding the user can move while this is in flight.
+	 */
+	async join(interfaceID: string, ssid: string, password: string): Promise<void> {
+		this.seedFromState(await joinWifiNetwork(interfaceID, ssid, password), interfaceID);
 	}
 
 	/**

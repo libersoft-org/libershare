@@ -20,7 +20,7 @@ import type { NetInterfaceInfo, NetworkStateInfo } from '@shared';
 import type { InterfaceForm } from '../../src/scripts/networkState.ts';
 import { apiHandlers, resetAPIMock } from '../api-mock.ts';
 import { InterfaceFormState } from '../../src/scripts/networkForm.svelte.ts';
-import { applyInterfaceConfig, networkState, unknownNetworkState } from '../../src/scripts/networkState.ts';
+import { networkState, unknownNetworkState } from '../../src/scripts/networkState.ts';
 
 /** What the next `system.networkApply` answers with. */
 let answer: NetworkStateInfo;
@@ -64,16 +64,21 @@ function editor(): InstanceType<typeof InterfaceFormState> {
 }
 
 /**
- * The Save handler's two lines, verbatim from the component, plus a reading of the
- * basis taken on the SAME tick as the seeding.
+ * What the component's Save handler runs, plus a reading of the basis taken on the
+ * SAME tick as the seeding.
  *
- * That reading is the discriminating one. Clearing the basis instead leaves it null
- * here and lets the effect repair it a microtask later — so an assertion made after
- * any `await` sees the same thing either way, and pins nothing.
+ * `form.apply()` is the production call, not a copy of its two lines: the ordering
+ * is the whole of what this file exists to pin, and a hand-copied helper pins the
+ * copy instead. What stays in the component is the capability checks, the
+ * validation and the message.
+ *
+ * The basis reading is the discriminating one. Clearing the basis instead leaves it
+ * null here and lets the effect repair it a microtask later — so an assertion made
+ * after any `await` sees the same thing either way, and pins nothing.
  */
 async function save(form: InstanceType<typeof InterfaceFormState>, resulting: NetworkStateInfo): Promise<{ seeded: InterfaceForm | null; stale: boolean }> {
 	answer = resulting;
-	form.seedFromState(await applyInterfaceConfig('eth0', { mode: 'dhcp' }), 'eth0');
+	await form.apply('eth0', { mode: 'dhcp' });
 	return { seeded: form.seeded, stale: form.stale };
 }
 
@@ -178,6 +183,38 @@ describe('InterfaceFormState', () => {
 		await tick();
 		expect(form.stale).toBe(false);
 		expect(form.address).toBe('192.0.2.77');
+	});
+
+	// A join is the same ordering problem as a save and used to be a second copy of
+	// the same two lines. It matters more here: a join replaces the whole network
+	// state, so the form is guaranteed to be looking at the network that was left.
+	it('takes the state a join answered with as the new basis', async () => {
+		const form = editor();
+		networkState.set(snapshot(iface()));
+		await tick();
+		form.address = '192.0.2.77';
+		answer = snapshot(iface({ ipv4Mode: 'dhcp', addresses: [{ family: 'ipv4', address: '203.0.113.40', prefixLength: 24 }], gateway: '203.0.113.1' }));
+		await form.join('eth0', 'some-network', 'secret');
+		expect(form.seeded).toEqual(form.onScreen);
+		expect(form.stale).toBe(false);
+		expect(form.onScreen.mode).toBe('dhcp');
+		expect(form.onScreen.address).toBe('203.0.113.40');
+	});
+
+	// The SSID is a value the caller passes, never something read back off the screen
+	// after the await: the user can arm a different network while the join is in
+	// flight, and the request went to one network while the message named another.
+	it('joins the network it was given rather than whatever is armed later', async () => {
+		const form = editor();
+		networkState.set(snapshot(iface()));
+		await tick();
+		let requested: unknown = null;
+		apiHandlers.call = async (_method, params) => {
+			requested = params;
+			return snapshot(iface());
+		};
+		await form.join('eth0', 'first-network', 'secret');
+		expect(requested).toEqual({ interfaceID: 'eth0', ssid: 'first-network', password: 'secret' });
 	});
 
 	// The interface can be gone by the time the RPC answers — renamed, removed, or
