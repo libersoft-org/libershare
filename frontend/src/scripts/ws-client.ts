@@ -124,12 +124,15 @@ const UPLOAD_CHUNK_SIZE = MAX_UPLOAD_CHUNK_SIZE;
 
 /**
  * Send a locally picked file to the backend in chunks over the API WebSocket and
- * return the temp path it landed in. The file is never read into memory whole
- * and never travels as one message — that is what used to take the socket down
- * once an import grew past the frame limit. Each chunk is a binary frame, so the
+ * return the id it is held under. The file is never read into memory whole and
+ * never travels as one message — that is what used to take the socket down once
+ * an import grew past the frame limit. Each chunk is a binary frame, so the
  * bytes cost their own size rather than a third more as base64, and the next one
  * is only sent once the backend has acknowledged the last, which keeps the send
  * buffer from growing without bound.
+ *
+ * The id, not a path: the file stays the server's to read and delete, so nothing
+ * here can point the generic filesystem methods at it.
  */
 export async function uploadImportFile(file: File): Promise<string> {
 	// Checked up front so a file that could never be accepted fails immediately
@@ -141,8 +144,8 @@ export async function uploadImportFile(file: File): Promise<string> {
 			const slice = await file.slice(offset, offset + UPLOAD_CHUNK_SIZE).arrayBuffer();
 			await wsClient.callBinary('upload.chunk', { uploadID }, new Uint8Array(slice));
 		}
-		const { path } = await wsClient.call<{ path: string }>('upload.end', { uploadID });
-		return path;
+		await wsClient.call('upload.end', { uploadID });
+		return uploadID;
 	} catch (err) {
 		// Nothing half-written is left behind. If the socket is what failed, the
 		// backend has already dropped the transfer on its own, so a failed abort

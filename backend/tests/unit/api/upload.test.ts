@@ -147,6 +147,15 @@ function startUploadServer(maxUploadSize?: number): { url: string; dataDir: stri
 		'upload.chunk': handlers.chunk,
 		'upload.end': handlers.end,
 		'upload.abort': handlers.abort,
+		// Stand-ins for the real `*.parseFromUpload` handlers, which all consume a
+		// finished upload through `withFile`. Tests go through them rather than
+		// reading a path, because a path is exactly what the client no longer gets.
+		'upload.digest': (p, client) =>
+			handlers.withFile(p, client, async path => {
+				const bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
+				return { size: bytes.byteLength, sha256: Bun.SHA256.hash(bytes, 'hex') };
+			}),
+		'upload.text': (p, client) => handlers.withFile(p, client, path => Utils.readFileCompressed(path)),
 	};
 	const server = Bun.serve<Record<string, never>, never>({
 		port: 0,
@@ -231,14 +240,14 @@ function pattern(size: number, seed = 1): Uint8Array {
 	return out;
 }
 
-/** The same loop the frontend runs, against the shared client. */
+/** The same loop the frontend runs, against the shared client. Returns the upload id. */
 async function upload(client: WsClient, name: string, data: Uint8Array, chunkSize: number): Promise<string> {
 	const { uploadID } = await client.call<{ uploadID: string }>('upload.begin', { name });
 	for (let offset = 0; offset < data.byteLength; offset += chunkSize) {
 		await client.callBinary('upload.chunk', { uploadID }, data.subarray(offset, offset + chunkSize));
 	}
-	const { path } = await client.call<{ path: string }>('upload.end', { uploadID });
-	return path;
+	await client.call('upload.end', { uploadID });
+	return uploadID;
 }
 
 /** Poll until the upload directory settles, since cleanup on socket close is fire-and-forget. */
@@ -296,10 +305,12 @@ describe('chunked upload over the websocket', () => {
 		try {
 			// 20 MiB: base64 in a single frame is what used to drop the socket here.
 			const data = pattern(20 * 1024 * 1024);
-			const path = await upload(client, 'big.lish', data, 4 * 1024 * 1024);
-			const written = new Uint8Array(await Bun.file(path).arrayBuffer());
-			expect(written.byteLength).toBe(data.byteLength);
-			expect(Bun.SHA256.hash(written, 'hex')).toBe(Bun.SHA256.hash(data, 'hex'));
+			const uploadID = await upload(client, 'big.lish', data, 4 * 1024 * 1024);
+			const digest = await client.call<{ size: number; sha256: string }>('upload.digest', { uploadID });
+			expect(digest.size).toBe(data.byteLength);
+			expect(digest.sha256).toBe(Bun.SHA256.hash(data, 'hex'));
+			// Consuming the upload removes it, so nothing is left on disk afterwards.
+			expect(await readdir(srv.uploadDir)).toEqual([]);
 		} finally {
 			client.stopReconnect();
 			srv.stop();
@@ -310,8 +321,8 @@ describe('chunked upload over the websocket', () => {
 		const srv = startUploadServer();
 		const client = new WsClient(srv.url, () => {});
 		try {
-			const path = await upload(client, 'empty.lish', new Uint8Array(0), 1024);
-			expect(Bun.file(path).size).toBe(0);
+			const uploadID = await upload(client, 'empty.lish', new Uint8Array(0), 1024);
+			expect((await client.call<{ size: number }>('upload.digest', { uploadID })).size).toBe(0);
 		} finally {
 			client.stopReconnect();
 			srv.stop();
@@ -461,7 +472,7 @@ describe('chunked upload over the websocket', () => {
 			await expectRejection(intruder.call('upload.end', { uploadID }), ErrorCodes.UPLOAD_NOT_FOUND);
 			// The owner's transfer is untouched by the attempt.
 			await owner.callBinary('upload.chunk', { uploadID }, pattern(16));
-			expect(await owner.call<{ path: string }>('upload.end', { uploadID })).toHaveProperty('path');
+			expect(await owner.call<{ uploadID: string }>('upload.end', { uploadID })).toEqual({ uploadID });
 		} finally {
 			owner.stopReconnect();
 			intruder.stopReconnect();
@@ -521,13 +532,122 @@ describe('chunked upload over the websocket', () => {
 			}
 			// The file holds exactly the chunks that were acknowledged — no partial
 			// or interleaved write survived.
-			const { path } = await client.call<{ path: string }>('upload.end', { uploadID });
-			expect(Bun.file(path).size).toBe(accepted * 1024 * 1024);
+			await client.call('upload.end', { uploadID });
+			expect((await client.call<{ size: number }>('upload.digest', { uploadID })).size).toBe(accepted * 1024 * 1024);
 		} finally {
 			client.stopReconnect();
 			srv.stop();
 		}
 	}, 30000);
+
+	it('never hands the client a filesystem path', async () => {
+		const srv = startUploadServer();
+		const client = new WsClient(srv.url, () => {});
+		try {
+			const { uploadID } = await client.call<{ uploadID: string }>('upload.begin', { name: 'secret.lish' });
+			await client.callBinary('upload.chunk', { uploadID }, pattern(1024));
+			// The reply used to carry the absolute temp path, which let any
+			// authorised socket point the generic fs.* methods at another client's
+			// upload between finishing and importing it.
+			const finished = await client.call<Record<string, unknown>>('upload.end', { uploadID });
+			expect(Object.keys(finished)).toEqual(['uploadID']);
+			expect(JSON.stringify(finished)).not.toContain(srv.dataDir);
+		} finally {
+			client.stopReconnect();
+			srv.stop();
+		}
+	});
+
+	it('consumes a finished upload exactly once', async () => {
+		const srv = startUploadServer();
+		const client = new WsClient(srv.url, () => {});
+		try {
+			const uploadID = await upload(client, 'once.lish', pattern(4096), 1024);
+			expect((await client.call<{ size: number }>('upload.digest', { uploadID })).size).toBe(4096);
+			// The record and the file both go with the first consume, so a replay
+			// cannot read it again.
+			await expectRejection(client.call('upload.digest', { uploadID }), ErrorCodes.UPLOAD_NOT_FOUND);
+			expect(await readdir(srv.uploadDir)).toEqual([]);
+		} finally {
+			client.stopReconnect();
+			srv.stop();
+		}
+	});
+
+	it('deletes the upload even when parsing it fails', async () => {
+		const srv = startUploadServer();
+		const client = new WsClient(srv.url, () => {});
+		try {
+			// Not valid brotli, so readFileCompressed throws — the temp file must
+			// still go, or a bad import lingers until a sweep.
+			const uploadID = await upload(client, 'broken.lish.br', pattern(512), 512);
+			await expectRejection(client.call('upload.text', { uploadID }), ErrorCodes.INTERNAL_ERROR);
+			expect(await readdir(srv.uploadDir)).toEqual([]);
+		} finally {
+			client.stopReconnect();
+			srv.stop();
+		}
+	});
+
+	it('refuses to consume a transfer that was never finished', async () => {
+		const srv = startUploadServer();
+		const client = new WsClient(srv.url, () => {});
+		try {
+			const { uploadID } = await client.call<{ uploadID: string }>('upload.begin', { name: 'partial.lish' });
+			await client.callBinary('upload.chunk', { uploadID }, pattern(1024));
+			// Still receiving: the writer is open and the file is incomplete.
+			await expectRejection(client.call('upload.digest', { uploadID }), ErrorCodes.UPLOAD_NOT_FOUND);
+		} finally {
+			client.stopReconnect();
+			srv.stop();
+		}
+	});
+
+	it('will not let a stranger consume a finished upload', async () => {
+		const srv = startUploadServer();
+		const owner = new WsClient(srv.url, () => {});
+		const intruder = new WsClient(srv.url, () => {});
+		try {
+			const uploadID = await upload(owner, 'mine.lish', pattern(1024), 1024);
+			await expectRejection(intruder.call('upload.digest', { uploadID }), ErrorCodes.UPLOAD_NOT_FOUND);
+			// Untouched for its owner.
+			expect((await owner.call<{ size: number }>('upload.digest', { uploadID })).size).toBe(1024);
+		} finally {
+			owner.stopReconnect();
+			intruder.stopReconnect();
+			srv.stop();
+		}
+	});
+
+	it('rejects a chunk that arrives after the transfer was finished', async () => {
+		const srv = startUploadServer();
+		const client = new WsClient(srv.url, () => {});
+		try {
+			const uploadID = await upload(client, 'late.lish', pattern(1024), 1024);
+			// The writer is closed; a late chunk must not look accepted.
+			await expectRejection(client.callBinary('upload.chunk', { uploadID }, pattern(16)), ErrorCodes.UPLOAD_NOT_FOUND);
+			await expectRejection(client.call('upload.end', { uploadID }), ErrorCodes.UPLOAD_NOT_FOUND);
+		} finally {
+			client.stopReconnect();
+			srv.stop();
+		}
+	});
+
+	it('drops a finished but unconsumed upload when the socket goes', async () => {
+		const srv = startUploadServer();
+		const client = new WsClient(srv.url, () => {});
+		try {
+			await upload(client, 'abandoned.lish', pattern(2048), 1024);
+			expect((await readdir(srv.uploadDir)).length).toBe(1);
+			// The record survives `end` now, which is what makes this cleanup
+			// possible at all — previously the file was already unowned.
+			client.stopReconnect();
+			expect(await entriesAfterSettle(srv.uploadDir)).toEqual([]);
+		} finally {
+			client.stopReconnect();
+			srv.stop();
+		}
+	});
 
 	it('reads a compressed upload back through the same path an import takes', async () => {
 		const srv = startUploadServer();
@@ -535,8 +655,8 @@ describe('chunked upload over the websocket', () => {
 		try {
 			const document = { name: 'Kompresní test', values: [1, 2, 3] };
 			const compressed = Utils.compress(new TextEncoder().encode(JSON.stringify(document)) as Uint8Array<ArrayBuffer>, 'brotli');
-			const path = await upload(client, 'import.lish.br', compressed, 4096);
-			expect(JSON.parse(await Utils.readFileCompressed(path))).toEqual(document);
+			const uploadID = await upload(client, 'import.lish.br', compressed, 4096);
+			expect(JSON.parse(await client.call<string>('upload.text', { uploadID }))).toEqual(document);
 		} finally {
 			client.stopReconnect();
 			srv.stop();

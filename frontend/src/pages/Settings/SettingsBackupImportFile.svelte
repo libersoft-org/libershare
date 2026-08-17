@@ -21,6 +21,10 @@
 		return api.settings.parseFromFile(path);
 	}
 
+	function parseUpload(uploadID: string): Promise<BackupData> {
+		return api.settings.parseFromUpload(uploadID);
+	}
+
 	function handleConfirmDone(): void {
 		onImport?.();
 		onBack?.();
@@ -28,7 +32,7 @@
 	}
 </script>
 
-<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageBackupPath} fileFilter={withCompressionExtensions(['*.lishset', '*.json'])} fileFilterName={'LISHSET ' + $t('common.extensions')} {parseFile} onConfirmDone={handleConfirmDone}>
+<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageBackupPath} fileFilter={withCompressionExtensions(['*.lishset', '*.json'])} fileFilterName={'LISHSET ' + $t('common.extensions')} {parseFile} {parseUpload} onConfirmDone={handleConfirmDone}>
 	{#snippet confirm({ data, onDone })}
 		<SettingsBackupImportConfirm data={data as BackupData} {position} {onDone} />
 	{/snippet}

@@ -30,19 +30,31 @@ export function uploadFileName(originalName: string): string {
 	return `${randomUUID()}-${safe}`;
 }
 
+/**
+ * `receiving` while chunks are still being appended, `ready` once the file is
+ * closed and complete. A `ready` upload stays in the map on purpose: the record
+ * is what proves the file is finished, whose it is, and how much disk it holds,
+ * and dropping it the moment `end()` returns leaves a file nobody is accountable
+ * for until a sweep happens to notice it.
+ */
+type UploadState = 'receiving' | 'ready';
+
 interface Upload {
 	path: string;
 	writer: ReturnType<ReturnType<typeof Bun.file>['writer']>;
 	written: number;
 	/** Socket that started the transfer; nothing else may append to it or finish it. */
 	client: unknown;
+	state: UploadState;
 }
 
 interface UploadHandlers {
 	begin: (p: { name?: string }, client: unknown) => Promise<{ uploadID: string }>;
 	chunk: (p: { uploadID: string; data: Uint8Array }, client: unknown) => Promise<{ received: number }>;
-	end: (p: { uploadID: string }, client: unknown) => Promise<{ path: string }>;
+	end: (p: { uploadID: string }, client: unknown) => Promise<{ uploadID: string }>;
 	abort: (p: { uploadID: string }, client: unknown) => Promise<void>;
+	/** Read a finished upload from disk and delete it, without exposing its path. */
+	withFile: <T>(p: { uploadID: string }, client: unknown, read: (path: string) => Promise<T>) => Promise<T>;
 	/** Drop every transfer a disconnecting socket left half-written. */
 	closeClient: (client: unknown) => void;
 	/** Remove the whole temp directory, for use before the server starts listening. */
@@ -172,7 +184,7 @@ export function initUploadHandlers(dataDir: string, maxUploadSize: number = MAX_
 			if (isGone(client)) throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, 'client disconnected');
 			const uploadID = randomUUID();
 			const path = join(uploadDir, uploadFileName(p.name ?? 'upload'));
-			uploads.set(uploadID, { path, writer: Bun.file(path).writer(), written: 0, client });
+			uploads.set(uploadID, { path, writer: Bun.file(path).writer(), written: 0, client, state: 'receiving' });
 			console.log(`[API] Upload started: ${uploadID} → ${path}`);
 			return { uploadID };
 		});
@@ -187,6 +199,9 @@ export function initUploadHandlers(dataDir: string, maxUploadSize: number = MAX_
 		// Ownership first: the discard below must not be reachable for a stranger
 		// who merely guessed someone else's upload id.
 		const upload = owned(p.uploadID, client);
+		// The writer is closed once the transfer is finished, so a late chunk has
+		// nowhere to go and must not silently look like it was accepted.
+		if (upload.state !== 'receiving') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, p.uploadID);
 		// A text frame lands in the same dispatch as a binary one, so `data` can be
 		// a string that no envelope ever validated. A string has no `byteLength`,
 		// which would turn `written` into NaN — and every later `written > limit`
@@ -221,14 +236,53 @@ export function initUploadHandlers(dataDir: string, maxUploadSize: number = MAX_
 		return { received: upload.written };
 	}
 
-	function end(p: { uploadID: string }, client: unknown): Promise<{ path: string }> {
+	function end(p: { uploadID: string }, client: unknown): Promise<{ uploadID: string }> {
 		assert(p, ['uploadID']);
 		return exclusive(client, async () => {
 			const upload = owned(p.uploadID, client);
-			uploads.delete(p.uploadID);
-			await upload.writer.end();
+			// Finishing twice is not a resend of the first answer: the second call
+			// would re-close a closed writer and hand out the path again.
+			if (upload.state !== 'receiving') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, p.uploadID);
+			try {
+				await upload.writer.end();
+			} catch (err) {
+				// A failed close (ENOSPC, a broken handle) leaves a partial file. It
+				// used to survive, because the record had already been removed and the
+				// client's follow-up abort then found nothing to delete.
+				await discard(p.uploadID);
+				throw err;
+			}
+			upload.state = 'ready';
 			console.log(`[API] Upload stored: ${upload.path} (${upload.written} bytes)`);
-			return { path: upload.path };
+			// The path deliberately does not go back to the client. It used to, which
+			// meant every authorised socket could learn the temp directory and then
+			// use the generic `fs.*` methods to read, overwrite or delete a file
+			// belonging to someone else's upload between this call and the import —
+			// and left the client holding a path it had to remember to clean up.
+			return { uploadID: p.uploadID };
+		});
+	}
+
+	/**
+	 * Hand a finished upload to a reader, then delete it. The file is identified
+	 * by upload id rather than by path, so the client never learns where it lives
+	 * and cannot race anything against it; the record is removed before the read
+	 * so a second call cannot consume the same file twice.
+	 */
+	function withFile<T>(p: { uploadID: string }, client: unknown, read: (path: string) => Promise<T>): Promise<T> {
+		assert(p, ['uploadID']);
+		return exclusive(client, async () => {
+			const upload = owned(p.uploadID, client);
+			if (upload.state !== 'ready') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, p.uploadID);
+			uploads.delete(p.uploadID);
+			try {
+				return await read(upload.path);
+			} finally {
+				// Removed whether or not the read worked: a file that failed to parse
+				// is no more use than one that succeeded, and leaving it would let a
+				// bad import linger until a sweep.
+				await rm(upload.path, { force: true }).catch(err => console.error(`[API] Upload cleanup failed for ${upload.path}: ${err.message}`));
+			}
 		});
 	}
 
@@ -264,5 +318,5 @@ export function initUploadHandlers(dataDir: string, maxUploadSize: number = MAX_
 		rmSync(uploadDir, { recursive: true, force: true });
 	}
 
-	return { begin, chunk, end, abort, closeClient, wipe };
+	return { begin, chunk, end, abort, withFile, closeClient, wipe };
 }

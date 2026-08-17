@@ -26,6 +26,7 @@ export class API {
 	readonly lishs: LISHsAPI;
 	readonly transfer: TransferAPI;
 	readonly search: SearchAPI;
+	readonly upload: UploadAPI;
 
 	constructor(client: IWsClient) {
 		this.client = client;
@@ -37,6 +38,7 @@ export class API {
 		this.lishs = new LISHsAPI(client);
 		this.transfer = new TransferAPI(client);
 		this.search = new SearchAPI(client);
+		this.upload = new UploadAPI(client);
 	}
 
 	// Raw call access
@@ -58,6 +60,27 @@ export class API {
 
 	unsubscribe(...events: string[]): Promise<boolean> {
 		return this.client.call<boolean>('events.unsubscribe', { events });
+	}
+}
+
+/**
+ * Import file uploads. The transfer itself lives in the frontend's
+ * `uploadImportFile`, which drives `upload.begin` / `chunk` / `end` directly;
+ * what belongs here is the one call a caller makes on its own — discarding a
+ * finished upload it decided not to import after all.
+ */
+class UploadAPI {
+	private client: IWsClient;
+	constructor(client: IWsClient) {
+		this.client = client;
+	}
+
+	/**
+	 * Throw away an upload without importing it. Safe to call for an id the
+	 * server no longer knows: an upload already gone is the outcome asked for.
+	 */
+	abort(uploadID: string): Promise<void> {
+		return this.client.call<void>('upload.abort', { uploadID });
 	}
 }
 
@@ -179,6 +202,11 @@ class SettingsAPI {
 		return this.client.call<T>('settings.parseFromFile', { filePath });
 	}
 
+	/** Parse a finished upload. The server reads and deletes it; no path is ever exposed. */
+	parseFromUpload<T = Record<string, unknown>>(uploadID: string): Promise<T> {
+		return this.client.call<T>('settings.parseFromUpload', { uploadID });
+	}
+
 	parseFromJSON<T = Record<string, unknown>>(json: string): Promise<T> {
 		return this.client.call<T>('settings.parseFromJSON', { json });
 	}
@@ -213,6 +241,11 @@ class IdentityAPI {
 
 	parseFromFile(filePath: string): Promise<IdentityBackup> {
 		return this.client.call<IdentityBackup>('identity.parseFromFile', { filePath });
+	}
+
+	/** Parse a finished upload. The server reads and deletes it; no path is ever exposed. */
+	parseFromUpload(uploadID: string): Promise<IdentityBackup> {
+		return this.client.call<IdentityBackup>('identity.parseFromUpload', { uploadID });
 	}
 
 	parseFromJSON(json: string): Promise<IdentityBackup> {
@@ -290,6 +323,11 @@ class LISHnetsAPI {
 
 	parseFromFile(path: string): Promise<LISHNetworkDefinition[]> {
 		return this.client.call<LISHNetworkDefinition[]>('lishnets.parseFromFile', { path });
+	}
+
+	/** Parse a finished upload. The server reads and deletes it; no path is ever exposed. */
+	parseFromUpload(uploadID: string): Promise<LISHNetworkDefinition[]> {
+		return this.client.call<LISHNetworkDefinition[]>('lishnets.parseFromUpload', { uploadID });
 	}
 
 	parseFromJSON(json: string): Promise<LISHNetworkDefinition[]> {
@@ -418,6 +456,11 @@ class LISHsAPI {
 
 	parseFromFile(filePath: string): Promise<ILISH[]> {
 		return this.client.call<ILISH[]>('lishs.parseFromFile', { filePath });
+	}
+
+	/** Parse a finished upload. The server reads and deletes it; no path is ever exposed. */
+	parseFromUpload(uploadID: string): Promise<ILISH[]> {
+		return this.client.call<ILISH[]>('lishs.parseFromUpload', { uploadID });
 	}
 
 	parseFromJSON(json: string): Promise<ILISH[]> {

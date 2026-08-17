@@ -31,7 +31,10 @@
 		fileFilter: string[];
 		fileFilterName: string;
 		filePathLabel?: string | undefined;
+		/** Parse a file the user pointed at by path, on a machine with a local filesystem. */
 		parseFile: (path: string) => Promise<TData>;
+		/** Parse a file the user uploaded. The backend reads and deletes it by id. */
+		parseUpload: (uploadID: string) => Promise<TData>;
 		downloadPath?: string | undefined;
 		downloadPathLabel?: string | undefined;
 		validate?: (() => string | null) | undefined;
@@ -39,13 +42,13 @@
 		onConfirmDone: () => void;
 	}
 
-	let { areaID, position = LAYOUT.content, onBack, defaultDirectory, fileFilter, fileFilterName, filePathLabel, parseFile, downloadPath = $bindable(), downloadPathLabel, validate, confirm, onConfirmDone }: Props = $props();
+	let { areaID, position = LAYOUT.content, onBack, defaultDirectory, fileFilter, fileFilterName, filePathLabel, parseFile, parseUpload, downloadPath = $bindable(), downloadPathLabel, validate, confirm, onConfirmDone }: Props = $props();
 
 	let filePath = $state('');
 	let uploadMode = $state(false);
 	let uploadFileName = $state('');
-	/** Path of the uploaded file in the backend's temp directory, empty until one is picked. */
-	let uploadPath = $state('');
+	/** Id the backend holds the uploaded file under, empty until one is picked. */
+	let uploadID = $state('');
 	let fileInput = $state<HTMLInputElement>();
 	let errorMessage = $state('');
 	let parsedData = $state<TData | null>(null);
@@ -71,20 +74,20 @@
 		input.value = '';
 		if (!file) return;
 		// Picking a second file abandons the first one on the backend's disk.
-		if (uploadPath) void api.fs.delete(uploadPath).catch(() => {});
-		uploadPath = '';
+		if (uploadID) void api.upload.abort(uploadID).catch(() => {});
+		uploadID = '';
 		uploadFileName = file.name;
 		errorMessage = '';
 		busyLabel = $t('import.uploading');
 		try {
-			// The file goes to the backend as-is and is parsed there from its path.
-			// Reading it here would also mean decompressing it here, and the browser
-			// only knows gzip and deflate — a .br or .zst upload has no chance.
-			const path = await uploadImportFile(file);
+			// The file goes to the backend as-is and is parsed there. Reading it here
+			// would also mean decompressing it here, and the browser only knows gzip
+			// and deflate — a .br or .zst upload has no chance.
+			const id = await uploadImportFile(file);
 			// The form can be closed mid-upload; the file that lands afterwards has
-			// nobody left to import or delete it, so drop it here instead.
-			if (destroyed) void api.fs.delete(path).catch(() => {});
-			else uploadPath = path;
+			// nobody left to import or discard it, so drop it here instead.
+			if (destroyed) void api.upload.abort(id).catch(() => {});
+			else uploadID = id;
 		} catch (err) {
 			errorMessage = translateError(err);
 			uploadFileName = '';
@@ -99,17 +102,16 @@
 
 	// Leaving the form after picking a file but before importing it — Back, a
 	// mode switch followed by a path import, any navigation away — would strand
-	// the uploaded copy on the backend's disk. The sweep only runs on the next
-	// upload, which on a node that imports twice a year is effectively never.
+	// the uploaded copy on the backend's disk until it ages out.
 	onDestroy(() => {
 		destroyed = true;
-		if (uploadPath) void api.fs.delete(uploadPath).catch(() => {});
+		if (uploadID) void api.upload.abort(uploadID).catch(() => {});
 	});
 
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
 		if (uploadMode) {
-			if (!uploadPath) {
+			if (!uploadID) {
 				errorMessage = $t('import.uploadRequired');
 				return;
 			}
@@ -132,19 +134,24 @@
 		}
 		try {
 			busyLabel = $t('import.importing');
-			parsedData = await parseFile(uploadMode ? uploadPath : filePath);
+			// The backend consumes the upload as part of parsing it — reading the
+			// file and deleting it under its own lock — so there is nothing left to
+			// clean up here on either outcome.
+			parsedData = uploadMode ? await parseUpload(uploadID) : await parseFile(filePath);
+			if (uploadMode) {
+				uploadID = '';
+				uploadFileName = '';
+			}
 		} catch (e) {
 			errorMessage = translateError(e);
+			// A failed parse consumes the upload too, so the picked file has to be
+			// chosen again rather than silently retried against a file that is gone.
+			if (uploadMode) {
+				uploadID = '';
+				uploadFileName = '';
+			}
 		} finally {
 			busyLabel = '';
-			// The parsed data lives in memory from here on, so the temp copy is done
-			// either way. Dropping it on failure too means a bad file cannot linger.
-			if (uploadMode && uploadPath) {
-				const uploaded = uploadPath;
-				uploadPath = '';
-				uploadFileName = '';
-				void api.fs.delete(uploaded).catch(() => {});
-			}
 		}
 	}
 

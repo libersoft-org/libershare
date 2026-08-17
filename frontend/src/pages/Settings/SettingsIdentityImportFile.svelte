@@ -16,10 +16,20 @@
 	let { areaID, position = LAYOUT.content, onBack, onImport }: Props = $props();
 	let currentPeerID = $state('');
 
-	async function parseFile(path: string): Promise<IdentityBackup> {
+	/** The confirm step shows what the current identity is being replaced with. */
+	async function rememberCurrentPeerID(): Promise<void> {
 		const cur = await api.identity.get();
 		currentPeerID = cur.peerID;
+	}
+
+	async function parseFile(path: string): Promise<IdentityBackup> {
+		await rememberCurrentPeerID();
 		return await api.identity.parseFromFile(path);
+	}
+
+	async function parseUpload(uploadID: string): Promise<IdentityBackup> {
+		await rememberCurrentPeerID();
+		return await api.identity.parseFromUpload(uploadID);
 	}
 
 	function handleConfirmDone(): void {
@@ -29,7 +39,7 @@
 	}
 </script>
 
-<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageBackupPath} fileFilter={withCompressionExtensions(['*.lishid', '*.json'])} fileFilterName={'LISHID ' + $t('common.extensions')} {parseFile} onConfirmDone={handleConfirmDone}>
+<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageBackupPath} fileFilter={withCompressionExtensions(['*.lishid', '*.json'])} fileFilterName={'LISHID ' + $t('common.extensions')} {parseFile} {parseUpload} onConfirmDone={handleConfirmDone}>
 	{#snippet confirm({ data, onDone })}
 		<SettingsIdentityImportConfirm data={data as IdentityBackup} {currentPeerID} {position} {onDone} />
 	{/snippet}
