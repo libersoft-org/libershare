@@ -1091,7 +1091,15 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 	// Everything about the target is resolved once, from the list the WLAN service
 	// already holds — no scan is triggered, so this costs a call and not four
 	// seconds. Null when the network is not currently visible.
-	const scanned = withWlanHandle((api, handle) => readScannedNetwork(api, handle, guidBytes, ssid));
+	const lookup = withWlanHandle((api, handle) => readScannedNetwork(api, handle, guidBytes, ssid));
+	// A list that could not be read is not a network that is not there. Everything
+	// below falls back to values GUESSED from what the user typed — the SSID as
+	// text, the SSID as the profile name, WPA2 — and then writes a profile out of
+	// them. That fallback is right for a network which is genuinely not visible;
+	// running it because the WLAN service hiccuped is how a transient error came to
+	// overwrite a saved network's configuration.
+	if (lookup.kind === 'readError') throw new Error(`the list of visible networks could not be read, so this network was not joined (${lookup.message})`);
+	const scanned = lookup.kind === 'found' ? lookup.network : null;
 	// A profile name is NOT an SSID. Windows keeps the two apart, the profile name
 	// is case-sensitive, and `WLAN_AVAILABLE_NETWORK` already carries the real one —
 	// so addressing everything below by SSID meant an existing custom-named profile
@@ -1327,18 +1335,35 @@ function wlanReasonText(api: WlanApi, reason: number): string | null {
 }
 
 /**
+ * What a lookup in the WLAN service's own network list established.
+ *
+ * `notFound` and `readError` are not the same answer, and treating them as one
+ * was how a transient WLAN failure came to trigger the destructive fallback: the
+ * caller took `null` for "this network is not currently visible", carried on with
+ * a guessed profile name, guessed SSID bytes and a guessed security type, and
+ * wrote a profile from them. A list that could not be read says nothing about the
+ * network, so nothing may be guessed from it.
+ */
+type ScanLookup = { readonly kind: 'found'; readonly network: AvailableNetwork } | { readonly kind: 'notFound' } | { readonly kind: 'readError'; readonly message: string };
+
+/**
  * What the WLAN service currently knows about one network name on one adapter.
  *
  * Reads the list the service already holds — no scan is triggered, so this costs
- * a call and not four seconds. Null when the list cannot be read or does not
- * contain the name; every caller has a defined fallback for that.
+ * a call and not four seconds.
  */
-function readScannedNetwork(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, ssid: string): AvailableNetwork | null {
+function readScannedNetwork(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, ssid: string): ScanLookup {
 	const listOut = new BigUint64Array(1);
-	if (api.WlanGetAvailableNetworkList(handle, ptr(guidBytes), 0, null, ptr(listOut)) !== 0) return null;
+	const rc = api.WlanGetAvailableNetworkList(handle, ptr(guidBytes), 0, null, ptr(listOut));
+	if (rc !== 0) return { kind: 'readError', message: wlanScanErrorMessage(rc) };
 	const list = Number(listOut[0]) as Pointer;
 	try {
-		return findScannedNetwork(list, ssid);
+		const network = findScannedNetwork(list, ssid);
+		return network ? { kind: 'found', network } : { kind: 'notFound' };
+	} catch (err) {
+		// A list that describes itself impossibly (see MAX_AVAILABLE_NETWORKS) is a
+		// structure we cannot read, not a network that is not there.
+		return { kind: 'readError', message: (err as Error).message };
 	} finally {
 		api.WlanFreeMemory(list);
 	}
