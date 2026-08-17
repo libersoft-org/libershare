@@ -730,17 +730,28 @@ function splitAssignment(word: string): [string, string] | null {
  * Both sources have to be readable — either could be the one carrying the override, and an
  * ordering derived from half the answer is a guess.
  *
- * `EnvironmentFile=` is deliberately not followed: it names a path on the host that we
- * would have to read and parse with systemd's own quoting rules, and no distribution ships
- * one for timedated. If a host ever uses it for this variable, the directory ordering is
- * what we fall back to, and the ordinary competing-daemon check still stands behind it.
+ * `EnvironmentFile=` is a source we do NOT read, so a unit that has one is answered as an
+ * environment we could not establish rather than as one without it. The files would have to
+ * be read from the host and parsed with systemd's own rules — its quoting, its line
+ * continuations, the optional `-` prefix, later files overriding earlier ones, specifiers in
+ * the path — and getting any of that wrong picks the wrong provider silently, which is the
+ * very failure this function exists to prevent. Ignoring the files instead is not the safe
+ * side either, and the competing-daemon check is NOT a backstop for it: a file naming
+ * `chronyd.service` first, with chrony installed but not yet running, is invisible to a
+ * check that only asks which daemon is active — we would write the timesyncd drop-in,
+ * report success, and `set-ntp` would then start chrony, which never reads it. So the
+ * capability to set a server goes off here and the host is left alone.
+ *
+ * A systemd too old to report the property at all leaves it absent, which reads as "no such
+ * file" — the same answer as a unit that genuinely has none.
  */
 export async function readTimedatedEnvironment(exec: CommandRunner = run): Promise<Record<string, string> | null> {
 	const manager = await exec('systemctl', ['show-environment']);
 	if (manager.kind !== 'ok') return null;
-	const unit = await exec('systemctl', ['show', '-p', 'Environment', '-p', 'PassEnvironment', '-p', 'UnsetEnvironment', TIMEDATED_UNIT]);
+	const unit = await exec('systemctl', ['show', '-p', 'Environment', '-p', 'EnvironmentFiles', '-p', 'PassEnvironment', '-p', 'UnsetEnvironment', TIMEDATED_UNIT]);
 	if (unit.kind !== 'ok') return null;
 	const props = parseUnitProperties(unit.output);
+	if ((props.get('EnvironmentFiles') ?? '').trim().length > 0) return null;
 	// `show-environment` prints one assignment per line; the unit properties print their
 	// entries whitespace-separated on one. Both are quoted by systemd, so both are read with
 	// systemd's own word parser rather than by splitting on whitespace.

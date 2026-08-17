@@ -893,8 +893,8 @@ describe('readTimedatedEnvironment', () => {
 	const ok = (output: string): RunOutcome => ({ kind: 'ok', output });
 
 	/** The unit's `systemctl show` answer, one `Key=Value` line per property systemd reports. */
-	function props(values: { Environment?: string; PassEnvironment?: string; UnsetEnvironment?: string } = {}): RunOutcome {
-		return ok(`Environment=${values.Environment ?? ''}\nPassEnvironment=${values.PassEnvironment ?? ''}\nUnsetEnvironment=${values.UnsetEnvironment ?? ''}\n`);
+	function props(values: { Environment?: string; EnvironmentFiles?: string; PassEnvironment?: string; UnsetEnvironment?: string } = {}): RunOutcome {
+		return ok(`Environment=${values.Environment ?? ''}\nEnvironmentFiles=${values.EnvironmentFiles ?? ''}\nPassEnvironment=${values.PassEnvironment ?? ''}\nUnsetEnvironment=${values.UnsetEnvironment ?? ''}\n`);
 	}
 
 	/**
@@ -969,6 +969,35 @@ describe('readTimedatedEnvironment', () => {
 	it('reports no override on a host that sets none', async () => {
 		const env = await readTimedatedEnvironment(systemctl(ok('LANG=C\nPATH=/usr/bin\n'), props()));
 		expect(env?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBeUndefined();
+	});
+
+	/**
+	 * The file is a source of the same variable that we do not read. Reported as an unknown
+	 * environment, it turns the capability off; reported as no override, it would have us
+	 * write the timesyncd drop-in on a host whose timedated starts chronyd instead — and the
+	 * competing-daemon check does not catch that, because a chrony that has not been started
+	 * yet is not active.
+	 */
+	it('reports an unknown environment when the unit has an EnvironmentFile', async () => {
+		const files = await readTimedatedEnvironment(systemctl(ok(''), props({ EnvironmentFiles: '/etc/systemd/timedated-provider.env (ignore_errors=no)' })));
+		expect(files).toBeNull();
+	});
+
+	it('reads the environment normally when the unit has no EnvironmentFile', async () => {
+		const env = await readTimedatedEnvironment(systemctl(ok(''), props({ EnvironmentFiles: '', Environment: 'SYSTEMD_TIMEDATED_NTP_SERVICES=chronyd.service' })));
+		expect(env?.['SYSTEMD_TIMEDATED_NTP_SERVICES']).toBe('chronyd.service');
+	});
+
+	/**
+	 * What that unknown environment costs, end to end: the ordering cannot be read, so the
+	 * server may not be configured — even though chronyd is only installed, not running.
+	 */
+	it('leaves the server unconfigurable when an EnvironmentFile hides the ordering', async () => {
+		const env = await readTimedatedEnvironment(systemctl(ok(''), props({ EnvironmentFiles: '/etc/systemd/timedated-provider.env (ignore_errors=no)' })));
+		const ordered = await readNtpUnitsList(env);
+		expect(ordered).toBeNull();
+		const loaded = 'Id=chronyd.service\nNames=chronyd.service\nLoadState=loaded\n';
+		expect(canConfigureTimesyncdServer(ordered, loaded, 'inactive\ninactive\n')).toBe(false);
 	});
 
 	/** Either source could be the one carrying the override, so neither may be skipped. */
