@@ -54,6 +54,7 @@ export function installBootstrapRegistry(network: unknown, seeds: readonly IRegi
 	// Object.create(Network.prototype) never runs field initializers, so the walk state
 	// the registry loops read has to be seeded here alongside the registry itself.
 	(network as any).recoveryCursors ??= { configured: null, discovered: null };
+	(network as any).inFlightBootstrapDials ??= new Set<string>();
 	return byAddress;
 }
 

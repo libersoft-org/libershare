@@ -461,6 +461,12 @@ export class Network {
 	/** Reverse index peerID → its canonical addresses in {@link bootstrapByAddress}. */
 	private readonly addressesByPeer: Map<string, Set<string>> = new Map();
 	/**
+	 * Canonical addresses with a bootstrap dial in flight right now. The real dedup for
+	 * repeated gossip mentions of one endpoint — a job any number of fire-and-forget
+	 * announce handlers can join, but only one of them pays for.
+	 */
+	private readonly inFlightBootstrapDials = new Set<string>();
+	/**
 	 * Where the last recovery pass stopped in each priority group, so the next one
 	 * resumes after it rather than replaying the same prefix. See
 	 * {@link orderBootstrapEntriesForRecovery}.
@@ -1748,9 +1754,28 @@ export class Network {
 						probeAfterQuarantine = true;
 					}
 				}
-				// The identity set is the dedup that stops every gossip mention of the same
-				// peer from costing another dial, so it is claimed up front either way.
-				if (peerID) this.bootstrapPeerIDs.add(peerID);
+				// Single-flight, keyed by the endpoint rather than the peer: two addresses of
+				// one peer are two different questions and both deserve their own dial, while
+				// two runs asking about the SAME address duplicate a 10 s timeout for one
+				// answer. Claimed after every skip above so a refused candidate never blocks
+				// the run that would actually dial it.
+				const canonicalAddress = normalizeMultiaddrForCompare(ma.toString());
+				if (this.inFlightBootstrapDials.has(canonicalAddress)) {
+					trace(`[NET] addBootstrapPeers skip in-flight: ${peer}`);
+					continue;
+				}
+				this.inFlightBootstrapDials.add(canonicalAddress);
+				// A CONFIGURED identity is user data and enters the set on the strength of the
+				// saved config alone. A DISCOVERED one waits for the dial: it arrived in a
+				// gossip message and nothing has yet shown that the identity exists, let
+				// alone that it is the one behind this address. Admitting it here put every
+				// peer ID any topic subscriber cared to name into a set that the connection
+				// gater and the gossipsub PX scoring both read as "trusted bootstrap" — one
+				// nothing prunes on a failed dial, because a discovered address only enters
+				// the registry after it verifies. Deduplication of repeated mentions is not
+				// this set's job and never was: {@link inFlightBootstrapDials} and the
+				// quarantine above do that.
+				if (peerID && origin === 'configured') this.bootstrapPeerIDs.add(peerID);
 				console.debug('Adding bootstrap peer:', peer);
 				this.bootstrapTracker.markPending(networkID, peer, peerID, origin);
 				try {
@@ -1796,6 +1821,10 @@ export class Network {
 						return;
 					}
 					if (superseded()) return;
+					// The peer answered, so the identity behind this address is real and
+					// wanted — the point at which a discovered ID has earned its place in the
+					// set (see the claim above for why it may not have it yet).
+					if (peerID) this.bootstrapPeerIDs.add(peerID);
 					if (pidObj) {
 						await this.node.peerStore.merge(pidObj, verifiedThisAddr ? { multiaddrs: [ma], tags: { [KEEP_ALIVE]: { value: 1 } } } : { tags: { [KEEP_ALIVE]: { value: 1 } } });
 					}
@@ -1913,6 +1942,11 @@ export class Network {
 							this.bootstrapTracker.deletePeer(networkID, peer);
 						}
 					}
+				} finally {
+					// Every exit from the dial block releases the claim, `return` included —
+					// a leave landing mid-dial would otherwise lock the address out for the
+					// lifetime of the node.
+					this.inFlightBootstrapDials.delete(canonicalAddress);
 				}
 			} catch (error: any) {
 				this.bootstrapTracker.recordOutcome(networkID, peer, null, 'error', error?.message ?? String(error), null, origin);
@@ -2807,6 +2841,9 @@ export class Network {
 		this.bootstrapTracker.clear();
 		this.bootstrapByAddress.clear();
 		this.addressesByPeer.clear();
+		this.inFlightBootstrapDials.clear();
+		this.recoveryCursors.configured = null;
+		this.recoveryCursors.discovered = null;
 		this.recoveryBackoff.clear();
 		this.bootstrapGeneration.clear();
 		this._lastPeerCounts.clear();

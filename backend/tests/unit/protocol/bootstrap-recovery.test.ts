@@ -85,6 +85,93 @@ describe('bootstrap registry — address identity', () => {
 	});
 });
 
+/**
+ * `bootstrapPeerIDs` is the SAME Set instance handed to buildLibp2pConfig, where the
+ * connection gater and the gossipsub PX scoring close over it. An entry there bypasses
+ * the routability gate and scores 1000 under PX, so an unverified gossip claim must
+ * never put one in — and a failed discovered dial leaves nothing behind that could
+ * ever take it out again.
+ */
+describe('bootstrap trust set — admission', () => {
+	it('does not admit a discovered identity that never answered', async () => {
+		const { network } = bareNetwork({ failDial: true });
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
+		expect([...((network as any).bootstrapPeerIDs as Set<string>)]).toEqual([]);
+	});
+
+	it('admits it once the dial answers', async () => {
+		const { network } = bareNetwork();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
+		expect([...((network as any).bootstrapPeerIDs as Set<string>)]).toEqual([PEER_A]);
+	});
+
+	it('admits a configured identity on the strength of the saved config alone', async () => {
+		// The user wrote it down; the exemption must apply even while the address is down.
+		const { network } = bareNetwork({ failDial: true });
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
+		expect([...((network as any).bootstrapPeerIDs as Set<string>)]).toEqual([PEER_A]);
+	});
+
+	it('does not grow the trust set under a flood of failing announces', async () => {
+		const { network } = bareNetwork({ failDial: true });
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		const flood = Array.from({ length: 500 }, (_unused, i) => `/ip4/198.51.100.${(i % 250) + 1}/tcp/${9000 + i}/p2p/${PEER_B}`);
+		await (network as any).addBootstrapPeers(flood, 'net-a', 'discovered');
+		expect((network as any).bootstrapPeerIDs.size).toBe(0);
+	});
+});
+
+describe('bootstrap dials — single flight per address', () => {
+	it('collapses concurrent announces of one address into a single dial', async () => {
+		// peer-announce handlers are fire-and-forget, so overlap is routine: without a
+		// claim held for the whole dial, a hundred mentions bought a hundred 10 s dials.
+		let release = (): void => {};
+		const gate = new Promise<void>(resolve => {
+			release = resolve;
+		});
+		const { network, dialed } = bareNetwork();
+		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
+			dialed.push(ma.toString());
+			await gate;
+			return { remoteAddr: ma };
+		};
+		const runs = Promise.all(Array.from({ length: 100 }, () => (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered')));
+		// Every handler has now reached the claim; only one may be past it.
+		expect(dialed.length).toBe(1);
+		release();
+		await runs;
+		expect(dialed.length).toBe(1);
+	});
+
+	it('releases the claim so a later announce of the same address can dial again', async () => {
+		const { network, dialed } = bareNetwork({ failDial: true });
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
+		expect(dialed.length).toBe(2);
+	});
+
+	it('lets a sibling address of the same peer dial in parallel', async () => {
+		// Keyed by endpoint, not identity: two addresses are two different questions.
+		let release = (): void => {};
+		const gate = new Promise<void>(resolve => {
+			release = resolve;
+		});
+		const { network, dialed } = bareNetwork();
+		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
+			dialed.push(ma.toString());
+			await gate;
+			return { remoteAddr: ma };
+		};
+		const runs = Promise.all([(network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered'), (network as any).addBootstrapPeers([ADDR_A2], 'net-a', 'discovered')]);
+		expect(dialed.length).toBe(2);
+		release();
+		await runs;
+	});
+});
+
 describe('bootstrap registry — per-network ownership', () => {
 	it('keeps an address one network drops while another still configures it', () => {
 		const { network } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a', 'net-b'] }] });
