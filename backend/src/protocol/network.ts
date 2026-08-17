@@ -1460,6 +1460,17 @@ export class Network {
 				// libp2p may answer with a connection it already holds to the same peer.
 				const conn = await node.dial(ma, { force: true, signal: AbortSignal.timeout(10000) });
 				if (epoch !== this.runEpoch || node !== this.node) return;
+				// A configuration edit or a leave-network landing inside a ten-second dial
+				// bumps neither the epoch nor the generation, so the fence above is blind to
+				// it — and the loop is walking a snapshot, so `entry` may already have been
+				// dropped from the registry. Left unchecked, a bootstrap the user has just
+				// removed keeps the connection this probe opened, and the verification below
+				// lands on an entry nobody owns any more.
+				if (this.bootstrapByAddress.get(key) !== entry || entry.configuredBy.size === 0 || this.isRedialSuppressed(pid)) {
+					trace(`[NET] parked probe result no longer wanted, closing: ${ma.toString()}`);
+					await conn?.close?.();
+					continue;
+				}
 				if (!isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString())) {
 					// A sibling address answered. Nothing about this one is proved, so it keeps
 					// its pacing instead of quietly going green and having its TTL refreshed.

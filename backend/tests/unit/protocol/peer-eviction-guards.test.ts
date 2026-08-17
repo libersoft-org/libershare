@@ -926,8 +926,9 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 describe('probeParkedConfiguredBootstraps', () => {
 	const PARKED = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
 
-	function bareNetwork(opts: { configured?: boolean; connections?: number; answerWith?: string } = {}) {
+	function bareNetwork(opts: { configured?: boolean; connections?: number; answerWith?: string; duringDial?: (network: any) => void } = {}) {
 		const dialed: string[] = [];
+		const closed: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
@@ -941,12 +942,20 @@ describe('probeParkedConfiguredBootstraps', () => {
 			// `answerWith` models libp2p coalescing this dial into a job another address of
 			// the same peer already had in flight: the call resolves, but with a connection
 			// that proves nothing about the address we asked about.
+			// `duringDial` is what makes this a race test rather than a state test: it runs
+			// while the dial is still pending, exactly where a leave or a config edit lands.
 			async dial(ma: { toString(): string }): Promise<unknown> {
 				dialed.push(ma.toString());
-				return { remoteAddr: multiaddr(opts.answerWith ?? ma.toString()) };
+				opts.duringDial?.(network);
+				return {
+					remoteAddr: multiaddr(opts.answerWith ?? ma.toString()),
+					close: async (): Promise<void> => {
+						closed.push(ma.toString());
+					},
+				};
 			},
 		};
-		return { network, dialed };
+		return { network, dialed, closed };
 	}
 
 	const run = (network: Network): Promise<void> => (network as any).probeParkedConfiguredBootstraps(1);
@@ -988,6 +997,26 @@ describe('probeParkedConfiguredBootstraps', () => {
 		await run(network);
 		const entry = (network as any).bootstrapByAddress.get(normalizeMultiaddrForCompare(PARKED)) as IBootstrapEntry;
 		expect(entry.lastVerifiedAt).not.toBe(null);
+	});
+
+	it('closes the connection when the address lost its last owner mid-dial', async () => {
+		// A config edit during a ten-second dial bumps neither the epoch nor the
+		// generation, so the epoch fence is blind to it: the probe kept the connection
+		// to a bootstrap the user had just deleted.
+		const { network, closed } = bareNetwork({ duringDial: net => net.pruneBootstrapAddresses([PARKED], 'net-a') });
+		await run(network);
+		expect(closed).toEqual([multiaddr(PARKED).toString()]);
+	});
+
+	it('closes the connection when the peer was left mid-dial', async () => {
+		const { network, closed } = bareNetwork({
+			duringDial: net => {
+				net.redialSuppressedByNet = new Map([['net-a', new Set([PEER_ID])]]);
+			},
+		});
+		await run(network);
+		expect(closed).toEqual([multiaddr(PARKED).toString()]);
+		expect(((network as any).bootstrapByAddress.get(normalizeMultiaddrForCompare(PARKED)) as IBootstrapEntry).lastVerifiedAt).toBe(null);
 	});
 
 	it('does not mark it verified when a sibling address answered instead', async () => {
