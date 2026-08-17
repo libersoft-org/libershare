@@ -72,6 +72,45 @@ export function formatParamsForLog(params: unknown): string {
 const BINARY_HEADER_PREFIX = 4;
 
 /**
+ * True for a dispatch table entry that parses an import and therefore has to
+ * queue behind every other one.
+ *
+ * Decided from the method name rather than by wrapping entries one at a time as
+ * the table is written. That list was opt-in and four handlers were left off
+ * it — the legacy `importFrom*` set, which parses exactly like its `parseFrom*`
+ * neighbours — so they ran beside a serialised parse and undid the point of the
+ * lock. A name cannot be forgotten in the same way.
+ *
+ * `parseFromUpload` is the one exclusion: it reaches the same lock further down,
+ * inside `withFile`, where it also keeps the upload's disk accounting open while
+ * it waits. Taking a non-reentrant mutex twice would deadlock the first upload
+ * import.
+ */
+export function isSerialisedImport(method: string): boolean {
+	return /\.(parseFrom|importFrom)/.test(method) && !method.endsWith('.parseFromUpload');
+}
+
+/**
+ * Put every import entry in a dispatch table behind the shared parser lock, in
+ * place. Applied to the whole table once it is built rather than written around
+ * individual entries as they are added, which is what makes it impossible to
+ * add an import RPC and forget the lock.
+ *
+ * Exported so the wiring can be exercised on its own: the real table is built in
+ * the {@link APIServer} constructor, which wants a database, a network stack and
+ * a data server before it will hand one over.
+ */
+export function serialiseImportHandlers(handlers: Record<string, (p: any, client: ClientSocket) => any>, lock: Mutex): void {
+	for (const method of Object.keys(handlers)) {
+		if (!isSerialisedImport(method)) continue;
+		const handler = handlers[method]!;
+		// The handler goes straight to its domain implementation, never back through
+		// this table, so nothing re-enters the lock it is already holding.
+		handlers[method] = (p: any, client: ClientSocket): Promise<any> => lock.runExclusive(async () => handler(p, client));
+	}
+}
+
+/**
  * Largest JSON header accepted on a binary frame. The header is a short
  * `{ id, method, params }` envelope — 64 KiB is orders of magnitude more than
  * one needs, and the cap stops a frame from forcing a huge `TextDecoder` pass
@@ -148,15 +187,17 @@ export class APIServer {
 	 * and the last two are usually several times the file. Chunking bounds what
 	 * arrives on the wire, not that.
 	 *
-	 * Shared by every `parseFrom*` entry point, uploaded or not — it used to sit
-	 * inside the upload handlers and cover only `parseFromUpload`, so any number of
-	 * direct parses could still run side by side with it.
+	 * Taken by every import entry point, uploaded or not — the uploaded ones reach
+	 * it inside `withFile`, the rest through {@link serialiseImportHandlers}.
 	 *
-	 * What it guarantees is one parse body at a time, which is not the same as a
-	 * ceiling on peak memory: the previous import's object graph is still being
-	 * serialised into its reply when the next parse starts, so two imports' worth
-	 * can briefly overlap. Bounding that as well would mean holding the lock across
-	 * the response write.
+	 * What it guarantees is one parse body at a time. That is not a ceiling on
+	 * peak memory, and nothing here should be read as claiming one: this server
+	 * runs `JSON.parse` over the whole request frame before any handler is
+	 * reached, so a large `parseFromJSON` argument already exists in memory before
+	 * the lock can delay anything, and the previous import's object graph is still
+	 * being serialised into its reply when the next parse starts. A real ceiling
+	 * would mean streaming the request body and holding the permit across the
+	 * response write.
 	 */
 	private readonly importLock = new Mutex();
 	private _search: ReturnType<typeof import('./search.ts').initSearchManager> | null = null;
@@ -181,14 +222,6 @@ export class APIServer {
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
 		this._upload = initUploadHandlers(dataDir, {}, this.importLock);
-		// Every way of parsing an import queues on the same lock. `parseFromUpload`
-		// reaches it through `withFile`; the rest are wrapped here. The inner calls
-		// below go straight to the domain handlers, never back through this table, so
-		// nothing re-enters the lock it is already holding.
-		const serialiseImport =
-			<P, T>(handler: (p: P, client: ClientSocket) => T | Promise<T>) =>
-			(p: P, client: ClientSocket): Promise<T> =>
-				this.importLock.runExclusive(async () => handler(p, client));
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn, this.settings);
 		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifest);
 		const _identity = initIdentityHandlers(this.networks);
@@ -233,18 +266,18 @@ export class APIServer {
 			'settings.reset': _settings.reset,
 			'settings.factoryReset': factoryReset,
 			'settings.exportToFile': _settings.exportToFile,
-			'settings.parseFromFile': serialiseImport(_settings.parseFromFile),
+			'settings.parseFromFile': _settings.parseFromFile,
 			'settings.parseFromUpload': (p, client) => this._upload.withFile(p, client, filePath => _settings.parseFromFile({ filePath })),
-			'settings.parseFromJSON': serialiseImport(_settings.parseFromJSON),
-			'settings.parseFromURL': serialiseImport(_settings.parseFromURL),
+			'settings.parseFromJSON': _settings.parseFromJSON,
+			'settings.parseFromURL': _settings.parseFromURL,
 			'settings.applyImported': _settings.applyImported,
 			// Identity
 			'identity.get': _identity.get,
 			'identity.exportToFile': _identity.exportToFile,
-			'identity.parseFromFile': serialiseImport(_identity.parseFromFile),
+			'identity.parseFromFile': _identity.parseFromFile,
 			'identity.parseFromUpload': (p, client) => this._upload.withFile(p, client, filePath => _identity.parseFromFile({ filePath })),
-			'identity.parseFromJSON': serialiseImport(_identity.parseFromJSON),
-			'identity.parseFromURL': serialiseImport(_identity.parseFromURL),
+			'identity.parseFromJSON': _identity.parseFromJSON,
+			'identity.parseFromURL': _identity.parseFromURL,
 			'identity.applyImported': _identity.applyImported,
 			'identity.regenerate': _identity.regenerate,
 			// LISH Networks
@@ -260,10 +293,10 @@ export class APIServer {
 			'lishnets.exportToFile': _lishnets.exportToFile,
 			'lishnets.exportAllToFile': _lishnets.exportAllToFile,
 			'lishnets.importFromFile': _lishnets.importFromFile,
-			'lishnets.parseFromFile': serialiseImport(_lishnets.parseFromFile),
+			'lishnets.parseFromFile': _lishnets.parseFromFile,
 			'lishnets.parseFromUpload': (p, client) => this._upload.withFile(p, client, path => _lishnets.parseFromFile({ path })),
-			'lishnets.parseFromJSON': serialiseImport(_lishnets.parseFromJSON),
-			'lishnets.parseFromURL': serialiseImport(_lishnets.parseFromURL),
+			'lishnets.parseFromJSON': _lishnets.parseFromJSON,
+			'lishnets.parseFromURL': _lishnets.parseFromURL,
 			'lishnets.setEnabled': _lishnets.setEnabled,
 			'lishnets.connect': _lishnets.connect,
 			'lishnets.findPeer': _lishnets.findPeer,
@@ -292,10 +325,10 @@ export class APIServer {
 			'lishs.importFromFile': _lishs.importFromFile,
 			'lishs.importFromJSON': _lishs.importFromJSON,
 			'lishs.importFromURL': _lishs.importFromURL,
-			'lishs.parseFromFile': serialiseImport(_lishs.parseFromFile),
+			'lishs.parseFromFile': _lishs.parseFromFile,
 			'lishs.parseFromUpload': (p, client) => this._upload.withFile(p, client, filePath => _lishs.parseFromFile({ filePath })),
-			'lishs.parseFromJSON': serialiseImport(_lishs.parseFromJSON),
-			'lishs.parseFromURL': serialiseImport(_lishs.parseFromURL),
+			'lishs.parseFromJSON': _lishs.parseFromJSON,
+			'lishs.parseFromURL': _lishs.parseFromURL,
 			'lishs.verify': _lishs.verify,
 			'lishs.verifyAll': _lishs.verifyAll,
 			'lishs.stopVerify': _lishs.stopVerify,
@@ -342,6 +375,7 @@ export class APIServer {
 			// Relay
 			'relay.stats': _relay.stats,
 		};
+		serialiseImportHandlers(this.handlers, this.importLock);
 	}
 
 	start(): void {
