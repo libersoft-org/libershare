@@ -219,10 +219,14 @@ export class Networks {
 
 		this.network.unsubscribeTopic(id);
 		this.joinedNetworks.delete(id);
-		// Abandon any bootstrap job still walking this network's list. Left half-way
+		// Abandon any bootstrap job still walking this network's list — left half-way
 		// through, it would keep dialing peers of a network we just left and clear the
-		// redial suppression the loop below is about to apply.
-		this.network.bumpBootstrapGeneration(id);
+		// redial suppression the loop below is about to apply — and drop the status rows
+		// with it. Those rows describe a membership that has ended: keeping them meant a
+		// later rejoin opened on the previous session's connected/error/discovered results
+		// until fresh dials happened to overwrite each one. Reset publishes an empty list,
+		// which is what the UI should show for a network this node is not in.
+		this.network.resetBootstrapStatus(id);
 
 		// Subscribers of any OTHER joined lishnet must stay connected (shared
 		// infrastructure). Compute this set BEFORE the bootstrap cleanup so that loop

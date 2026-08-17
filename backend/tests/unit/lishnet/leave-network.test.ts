@@ -28,6 +28,8 @@ interface MockNet {
 	pruneConfiguredBootstrapPeer(pid: string): void;
 	bumpBootstrapGeneration(networkID: string): void;
 	generationBumps: string[];
+	resetBootstrapStatus(networkID: string): void;
+	statusResets: string[];
 	pruneBootstrapAddresses(addresses: string[]): void;
 	prunedAddresses: string[][];
 	pruneBootstrapStatus(networkID: string, keep: string[]): void;
@@ -49,6 +51,7 @@ function makeMockNet(): MockNet {
 		prunedBootstrap: [],
 		suppressionClearedFor: [],
 		generationBumps: [],
+		statusResets: [],
 		prunedAddresses: [],
 		prunedStatus: [],
 		dialledLists: [],
@@ -77,6 +80,9 @@ function makeMockNet(): MockNet {
 		},
 		bumpBootstrapGeneration(networkID) {
 			this.generationBumps.push(networkID);
+		},
+		resetBootstrapStatus(networkID) {
+			this.statusResets.push(networkID);
 		},
 		pruneBootstrapAddresses(addresses) {
 			this.prunedAddresses.push(addresses);
@@ -287,6 +293,18 @@ describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 		});
 		await leave(networks, 'net-a');
 		expect(net.prunedAddresses).toEqual([['/ip4/192.0.2.1/tcp/9090/p2p/pOnlyA', '/ip4/192.0.2.2/tcp/9090/p2p/pAlsoA']]);
+	});
+
+	/**
+	 * The rows describe a membership that has ended. Kept, a later rejoin opens on the
+	 * previous session's connected/error/discovered results until fresh dials happen to
+	 * overwrite each one.
+	 */
+	it('drops the bootstrap status of the network it left', async () => {
+		net.topicPeers.set('net-a', []);
+		const networks = makeNetworks(net, ['net-a'], { 'net-a': ['/ip4/192.0.2.1/tcp/9090/p2p/pOnlyA'] });
+		await leave(networks, 'net-a');
+		expect(net.statusResets).toEqual(['net-a']);
 	});
 
 	it('keeps a left-lishnet bootstrap peer that is still an active circuit relay', async () => {
