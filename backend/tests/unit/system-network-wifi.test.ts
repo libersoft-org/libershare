@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { ptr, type Pointer } from 'bun:ffi';
-import { encodeConnectionParameters, findAuthAlgorithm, guidToBytes, parseAvailableNetworks, readUtf16z, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
+import { encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readUtf16z, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
 
 /**
  * The Windows Wi-Fi surface is FFI, so most of what can go wrong is a struct
@@ -22,6 +22,10 @@ interface NetworkFields {
 	secured?: boolean;
 	active?: boolean;
 	auth?: number;
+	/** Windows' own name for the stored profile. Not the SSID, and often not equal to it. */
+	profileName?: string;
+	/** Raw SSID octets, for a name that is not valid UTF-8 and so has no text form. */
+	ssidOctets?: number[];
 	/** Overrides the SSID's own byte length — used to forge an impossible one. */
 	ssidLength?: number;
 }
@@ -37,7 +41,9 @@ function buildList(networks: NetworkFields[], declaredCount: number = networks.l
 	view.setUint32(4, 0, true);
 	networks.forEach((network, index) => {
 		const base = LIST_HEADER + index * NETWORK_SIZE;
-		const name = new TextEncoder().encode(network.ssid);
+		const name = network.ssidOctets ? Uint8Array.from(network.ssidOctets) : new TextEncoder().encode(network.ssid);
+		const profile = network.profileName ?? network.ssid;
+		for (let i = 0; i < profile.length && i < 256; i++) view.setUint16(base + i * 2, profile.charCodeAt(i), true);
 		view.setUint32(base + 512, network.ssidLength ?? name.length, true);
 		bytes.set(name.subarray(0, 32), base + 516);
 		view.setUint32(base + 604, network.signal, true);
@@ -143,18 +149,51 @@ describe('parseAvailableNetworks', () => {
 	});
 });
 
-describe('findAuthAlgorithm', () => {
+describe('findScannedNetwork', () => {
 	it('reports the algorithm Windows recorded for a network', () => {
 		const list = buildList([
 			{ ssid: 'Modern Net', signal: 70, auth: 9 },
 			{ ssid: 'Older Net', signal: 70, auth: 7 },
 		]);
-		expect(findAuthAlgorithm(list, 'Modern Net')).toBe(9);
-		expect(findAuthAlgorithm(list, 'Older Net')).toBe(7);
+		expect(findScannedNetwork(list, 'Modern Net')?.auth).toBe(9);
+		expect(findScannedNetwork(list, 'Older Net')?.auth).toBe(7);
 	});
 
 	it('reports null for a name the list does not contain', () => {
-		expect(findAuthAlgorithm(buildList([{ ssid: 'Present', signal: 70 }]), 'Absent')).toBeNull();
+		expect(findScannedNetwork(buildList([{ ssid: 'Present', signal: 70 }]), 'Absent')).toBeNull();
+	});
+
+	// Windows keeps the profile name and the SSID apart, and the profile name is
+	// case-sensitive. Using the SSID as the profile name left an existing
+	// custom-named profile unfound and unbacked-up, and created a second profile
+	// competing with it.
+	it('carries the profile name Windows itself uses, not the SSID', () => {
+		const list = buildList([{ ssid: 'Coffee Bar', signal: 70, profileName: 'Work laptop - cafe' }]);
+		expect(findScannedNetwork(list, 'Coffee Bar')?.profileName).toBe('Work laptop - cafe');
+	});
+
+	it('reports an empty profile name for a network nothing is stored for', () => {
+		const list = buildList([{ ssid: 'Coffee Bar', signal: 70, profileName: '' }]);
+		expect(findScannedNetwork(list, 'Coffee Bar')?.profileName).toBe('');
+	});
+
+	// An SSID is a byte sequence. The decoded text is lossy for anything that is
+	// not UTF-8, so the bytes have to survive alongside it or the profile would
+	// target a network built out of replacement characters.
+	it('keeps the raw SSID octets beside the decoded text', () => {
+		const octets = [0x4e, 0x65, 0x74, 0xff, 0xfe];
+		const list = buildList([{ ssid: '', signal: 70, ssidOctets: octets, ssidLength: octets.length }]);
+		const entry = findScannedNetwork(list, 'Net\uFFFD\uFFFD');
+		expect(entry).not.toBeNull();
+		expect([...(entry?.ssidBytes ?? [])]).toEqual(octets);
+	});
+
+	it('picks the strongest entry when one name is on several access points', () => {
+		const list = buildList([
+			{ ssid: 'Roaming Net', signal: 30, auth: 7 },
+			{ ssid: 'Roaming Net', signal: 88, auth: 9 },
+		]);
+		expect(findScannedNetwork(list, 'Roaming Net')?.auth).toBe(9);
 	});
 });
 
@@ -248,20 +287,37 @@ describe('encodeConnectionParameters', () => {
 });
 
 describe('windowsWifiProfileXml', () => {
-	it('names the network in both places Windows reads it from', () => {
-		const xml = windowsWifiProfileXml('Coffee Bar', 'hunter2000');
-		expect(xml).toContain('<name>Coffee Bar</name><SSIDConfig><SSID><name>Coffee Bar</name></SSID></SSIDConfig>');
+	const bar = new TextEncoder().encode('Coffee Bar');
+	const modern = new TextEncoder().encode('Modern Net');
+
+	it('labels the profile with the profile name and the SSID with its octets', () => {
+		const xml = windowsWifiProfileXml('Work laptop - cafe', bar, 'hunter2000');
+		expect(xml).toContain('<name>Work laptop - cafe</name>');
+		expect(xml).toContain('<SSIDConfig><SSID><hex>436F6666656520426172</hex></SSID></SSIDConfig>');
 		expect(xml).toContain('xmlns="http://www.microsoft.com/networking/WLAN/profile/v1"');
 	});
 
+	// An SSID is not guaranteed to be UTF-8, and round-tripping it through text
+	// replaces every undecodable octet with U+FFFD — so the profile would target a
+	// network that does not exist. `<hex>` is the authoritative form.
+	it('carries an SSID that has no valid text form byte for byte', () => {
+		const xml = windowsWifiProfileXml('Odd Net', Uint8Array.from([0x4e, 0x65, 0x74, 0xff, 0xfe]), '');
+		expect(xml).toContain('<hex>4E6574FFFE</hex>');
+		expect(xml).not.toContain('\uFFFD');
+	});
+
+	it('never writes the SSID as text, which Windows would ignore anyway', () => {
+		expect(windowsWifiProfileXml('Work laptop - cafe', bar, '')).not.toContain('<SSID><name>');
+	});
+
 	it('builds a WPA2 personal profile carrying the passphrase', () => {
-		const xml = windowsWifiProfileXml('Coffee Bar', 'hunter2000');
+		const xml = windowsWifiProfileXml('Coffee Bar', bar, 'hunter2000');
 		expect(xml).toContain('<authentication>WPA2PSK</authentication><encryption>AES</encryption>');
 		expect(xml).toContain('<keyType>passPhrase</keyType><protected>false</protected><keyMaterial>hunter2000</keyMaterial>');
 	});
 
 	it('builds a WPA3 personal profile when the network uses SAE', () => {
-		const xml = windowsWifiProfileXml('Modern Net', 'hunter2000', true);
+		const xml = windowsWifiProfileXml('Modern Net', modern, 'hunter2000', true);
 		expect(xml).toContain('<authentication>WPA3SAE</authentication><encryption>AES</encryption>');
 		expect(xml).not.toContain('WPA2PSK');
 	});
@@ -269,7 +325,7 @@ describe('windowsWifiProfileXml', () => {
 	it('declares a 64-hex credential as a raw network key, not a passphrase', () => {
 		// Announced as passPhrase, Windows hashes an already-hashed key a second
 		// time: the profile is accepted and then never authenticates.
-		const xml = windowsWifiProfileXml('Modern Net', 'a'.repeat(64));
+		const xml = windowsWifiProfileXml('Modern Net', modern, 'a'.repeat(64));
 		expect(xml).toContain('<keyType>networkKey</keyType>');
 		expect(xml).not.toContain('passPhrase');
 	});
@@ -277,12 +333,12 @@ describe('windowsWifiProfileXml', () => {
 	it('still declares an ordinary credential as a passphrase', () => {
 		// 64 characters that are NOT all hex are a passphrase — but they are also
 		// past the 63-character limit, so the ordinary case is a normal-length one.
-		expect(windowsWifiProfileXml('Coffee Bar', 'hunter2000')).toContain('<keyType>passPhrase</keyType>');
-		expect(windowsWifiProfileXml('Coffee Bar', `${'a'.repeat(63)}z`)).toContain('<keyType>passPhrase</keyType>');
+		expect(windowsWifiProfileXml('Coffee Bar', bar, 'hunter2000')).toContain('<keyType>passPhrase</keyType>');
+		expect(windowsWifiProfileXml('Coffee Bar', bar, `${'a'.repeat(63)}z`)).toContain('<keyType>passPhrase</keyType>');
 	});
 
 	it('builds an open profile with no key when there is no password', () => {
-		const xml = windowsWifiProfileXml('Open Guest Net', '');
+		const xml = windowsWifiProfileXml('Open Guest Net', new TextEncoder().encode('Open Guest Net'), '');
 		expect(xml).toContain('<authentication>open</authentication><encryption>none</encryption>');
 		expect(xml).not.toContain('sharedKey');
 	});
@@ -291,7 +347,7 @@ describe('windowsWifiProfileXml', () => {
 	// not be able to close a tag, which would either corrupt the profile or make it
 	// describe a different network than the user picked.
 	it('escapes XML metacharacters in the name and the key', () => {
-		const xml = windowsWifiProfileXml('A & B <net>', 'p"a\'ss<');
+		const xml = windowsWifiProfileXml('A & B <net>', new TextEncoder().encode('A & B <net>'), 'p"a\'ss<');
 		expect(xml).toContain('<name>A &amp; B &lt;net&gt;</name>');
 		expect(xml).toContain('<keyMaterial>p&quot;a&apos;ss&lt;</keyMaterial>');
 		expect(xml).not.toContain('<net>');

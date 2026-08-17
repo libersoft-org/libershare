@@ -649,6 +649,9 @@ export function parseElevation(stdout: string): boolean {
  *   dwReserved                    4  @ 624
  */
 const AVAILABLE_NETWORK_SIZE = 628;
+const AVAILABLE_PROFILE_NAME_OFFSET = 0;
+/** strProfileName is a WCHAR[256] field, NUL-padded rather than NUL-terminated when full. */
+const AVAILABLE_PROFILE_NAME_CHARS = 256;
 const AVAILABLE_SSID_LENGTH_OFFSET = 512;
 const AVAILABLE_SSID_OFFSET = 516;
 const AVAILABLE_SIGNAL_OFFSET = 604;
@@ -803,6 +806,19 @@ export function encodeConnectionParameters(profile: bigint): Uint8Array {
 	return bytes;
 }
 
+/**
+ * Read a fixed-size, NUL-padded UTF-16LE field out of a struct.
+ *
+ * Unlike {@link readUtf16z} the length is known from the layout, and a field
+ * filled to capacity carries no terminator at all — so running off the end is the
+ * normal case rather than an error.
+ */
+function readFixedUtf16(base: Pointer, offset: number, maxChars: number): string {
+	const view = new Uint16Array(toArrayBuffer(base, offset, maxChars * 2));
+	const end = view.indexOf(0);
+	return String.fromCharCode(...view.subarray(0, end === -1 ? maxChars : end));
+}
+
 /** Escape the five XML metacharacters. An SSID may legally contain any of them. */
 function escapeXml(text: string): string {
 	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
@@ -826,14 +842,25 @@ function escapeXml(text: string): string {
  * are not covered — those fail with a reason code from Windows rather than
  * silently doing nothing, and would need their own profile shapes.
  */
-export function windowsWifiProfileXml(ssid: string, password: string, sae: boolean = false): string {
-	const name = escapeXml(ssid);
+export function windowsWifiProfileXml(profileName: string, ssidBytes: Uint8Array, password: string, sae: boolean = false): string {
+	// The profile name and the SSID are two different things. Windows keeps them
+	// apart — the profile name is a case-sensitive label the user or a policy can
+	// change, the SSID is what goes on the air — and writing the SSID into both
+	// created a second, competing profile whenever the real one was named anything
+	// else.
+	const name = escapeXml(profileName);
+	// The SSID goes in as `<hex>` rather than `<name>`, because an SSID is a byte
+	// sequence and is not guaranteed to be UTF-8. Round-tripping it through text
+	// replaces every undecodable octet with U+FFFD, and the profile would then
+	// target a network that does not exist. `<hex>` is authoritative and `<name>`
+	// is ignored when it is present, so only the hex form is emitted.
+	const hex = [...ssidBytes].map(byte => byte.toString(16).padStart(2, '0').toUpperCase()).join('');
 	// A 64-hex credential is a raw 256-bit PSK, not a passphrase, and the profile
 	// has to say so: announced as `passPhrase` Windows hashes it a second time, so
 	// the profile is written, accepted, and then simply never authenticates.
 	const keyType = isWifiHexKey(password) ? 'networkKey' : 'passPhrase';
 	const security = password ? `<authEncryption><authentication>${sae ? 'WPA3SAE' : 'WPA2PSK'}</authentication><encryption>AES</encryption><useOneX>false</useOneX></authEncryption><sharedKey><keyType>${keyType}</keyType><protected>false</protected><keyMaterial>${escapeXml(password)}</keyMaterial></sharedKey>` : `<authEncryption><authentication>open</authentication><encryption>none</encryption><useOneX>false</useOneX></authEncryption>`;
-	return `<?xml version="1.0"?><WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1"><name>${name}</name><SSIDConfig><SSID><name>${name}</name></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>auto</connectionMode><MSM><security>${security}</security></MSM></WLANProfile>`;
+	return `<?xml version="1.0"?><WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1"><name>${name}</name><SSIDConfig><SSID><hex>${hex}</hex></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>auto</connectionMode><MSM><security>${security}</security></MSM></WLANProfile>`;
 }
 
 /**
@@ -852,7 +879,11 @@ export function windowsWifiProfileXml(ssid: string, password: string, sae: boole
  */
 export function parseAvailableNetworks(list: Pointer): NetWifiNetwork[] {
 	const best = new Map<string, NetWifiNetwork>();
-	for (const { auth: _auth, ...entry } of availableNetworks(list)) {
+	for (const found of availableNetworks(list)) {
+		// Projected explicitly rather than by rest-spread: the decoded entry carries
+		// the raw SSID bytes and the stored profile name, which the join path needs
+		// and the wire contract does not have a field for.
+		const entry: NetWifiNetwork = { ssid: found.ssid, signal: found.signal, secured: found.secured, active: found.active };
 		const previous = best.get(entry.ssid);
 		if (!previous) best.set(entry.ssid, entry);
 		else if ((entry.signal ?? -1) > (previous.signal ?? -1)) best.set(entry.ssid, { ...entry, active: previous.active || entry.active, secured: previous.secured || entry.secured });
@@ -862,16 +893,37 @@ export function parseAvailableNetworks(list: Pointer): NetWifiNetwork[] {
 }
 
 /**
- * The DOT11_AUTH_ALGORITHM Windows last saw one network use, or null when the
- * list does not contain it. Used to pick between a WPA2 and a WPA3 profile.
+ * The scan entry for one network name, or null when the list does not hold it.
+ *
+ * This is what a join resolves its target from: the profile name Windows itself
+ * uses for the network, the SSID exactly as the radio reported it, and the
+ * authentication algorithm that decides between a WPA2 and a WPA3 profile. A
+ * network that is not in the list yields null, and the caller then falls back to
+ * what the user asked for, which is the best available answer rather than a
+ * guess about a network nobody can currently see.
+ *
+ * ponytail: a name is not an identity — one SSID can be several access points,
+ * and on a WPA2/WPA3 transition network they can differ in authentication. The
+ * strongest entry is taken, which is also the one the radio is likeliest to
+ * associate with. Resolving this properly needs a scan identity (interface +
+ * BSSID + SSID bytes) carried through the API, which the wire contract has no
+ * field for.
  */
-export function findAuthAlgorithm(list: Pointer, ssid: string): number | null {
-	for (const entry of availableNetworks(list)) if (entry.ssid === ssid) return entry.auth;
-	return null;
+export function findScannedNetwork(list: Pointer, ssid: string): AvailableNetwork | null {
+	let best: AvailableNetwork | null = null;
+	for (const entry of availableNetworks(list)) if (entry.ssid === ssid && (!best || (entry.signal ?? -1) > (best.signal ?? -1))) best = entry;
+	return best;
 }
 
-/** One decoded WLAN_AVAILABLE_NETWORK, plus the authentication algorithm the public list omits. */
-type AvailableNetwork = NetWifiNetwork & { auth: number };
+/** One decoded WLAN_AVAILABLE_NETWORK, plus the fields the public list has no room for. */
+export type AvailableNetwork = NetWifiNetwork & {
+	/** DOT11_AUTH_ALGORITHM, as Windows last saw the network advertise it. */
+	auth: number;
+	/** The SSID as the radio reported it. Copied out of the list, which the caller frees. */
+	ssidBytes: Uint8Array;
+	/** Windows' own name for the stored profile of this network. Empty when nothing is stored. */
+	profileName: string;
+};
 
 /** Walk the entries of a WLAN_AVAILABLE_NETWORK_LIST, skipping the ones that cannot be offered. */
 function* availableNetworks(list: Pointer): Generator<AvailableNetwork> {
@@ -889,8 +941,16 @@ function* availableNetworks(list: Pointer): Generator<AvailableNetwork> {
 		const ssidLength = read.u32(list, base + AVAILABLE_SSID_LENGTH_OFFSET);
 		const signal = read.u32(list, base + AVAILABLE_SIGNAL_OFFSET);
 		if (ssidLength === 0 || ssidLength > MAX_SSID_LENGTH || signal > 100) continue;
+		// `slice`, not `subarray`: the caller frees the list as soon as this
+		// generator is drained, and the bytes have to outlive it.
+		const ssidBytes = new Uint8Array(toArrayBuffer(list, base + AVAILABLE_SSID_OFFSET, MAX_SSID_LENGTH)).slice(0, ssidLength);
 		yield {
-			ssid: decoder.decode(new Uint8Array(toArrayBuffer(list, base + AVAILABLE_SSID_OFFSET, MAX_SSID_LENGTH)).subarray(0, ssidLength)),
+			// Lossy by nature — an SSID is not guaranteed to be UTF-8 — so this form
+			// is for display and for matching what the user picked, never for
+			// building a profile. `ssidBytes` is the authoritative value.
+			ssid: decoder.decode(ssidBytes),
+			ssidBytes,
+			profileName: readFixedUtf16(list, base + AVAILABLE_PROFILE_NAME_OFFSET, AVAILABLE_PROFILE_NAME_CHARS),
 			signal,
 			secured: read.u32(list, base + AVAILABLE_SECURITY_OFFSET) !== 0,
 			active: (read.u32(list, base + AVAILABLE_FLAGS_OFFSET) & AVAILABLE_NETWORK_CONNECTED) !== 0,
@@ -954,24 +1014,42 @@ export async function scanWindowsWifi(guid: string): Promise<NetWifiNetwork[]> {
  */
 export async function connectWindowsWifi(guid: string, ssid: string, password: string): Promise<void> {
 	const guidBytes = guidToBytes(guid);
+	// Everything about the target is resolved once, from the list the WLAN service
+	// already holds — no scan is triggered, so this costs a call and not four
+	// seconds. Null when the network is not currently visible.
+	const scanned = withWlanHandle((api, handle) => readScannedNetwork(api, handle, guidBytes, ssid));
+	// A profile name is NOT an SSID. Windows keeps the two apart, the profile name
+	// is case-sensitive, and `WLAN_AVAILABLE_NETWORK` already carries the real one —
+	// so addressing everything below by SSID meant an existing custom-named profile
+	// was never found, never backed up, and a second competing profile was created
+	// beside it. The SSID is only the fallback for a network the scan cannot see.
+	const profileName = scanned?.profileName || ssid;
+	// The SSID is a byte sequence, not text. The decoded form is what the user
+	// picked from and what the association is checked against, but the profile is
+	// built from the bytes the radio actually reported.
+	const ssidBytes = scanned?.ssidBytes ?? new TextEncoder().encode(ssid);
+	// WPA2 is the right default for a network the list does not name: it is what
+	// the transition mode most access points run advertises, and it is also what an
+	// out-of-date list would have said.
+	const sae = scanned?.auth === AUTH_ALGO_WPA3_SAE;
 	// Held in a local of its own: WLAN_CONNECTION_PARAMETERS stores only the
 	// ADDRESS of the profile name, so the array behind it has to outlive the call.
-	const profileName = utf16z(ssid);
-	const parameters = encodeConnectionParameters(BigInt(ptr(profileName)));
+	const profileNameW = utf16z(profileName);
+	const parameters = encodeConnectionParameters(BigInt(ptr(profileNameW)));
 	// The document Windows held for this network before we touched it, kept so a
 	// join that never lands can put it back. Null when there was nothing stored.
 	let replacedProfile: string | null = null;
 	withWlanHandle((api, handle) => {
 		const connect = (): number => api.WlanConnect(handle, ptr(guidBytes), ptr(parameters), null);
 		const writeProfile = (overwrite: number): number => {
-			const xml = utf16z(windowsWifiProfileXml(ssid, password, password ? usesSae(api, handle, guidBytes, ssid) : false));
+			const xml = utf16z(windowsWifiProfileXml(profileName, ssidBytes, password, sae));
 			const reasonCode = new Uint32Array(1);
 			return api.WlanSetProfile(handle, ptr(guidBytes), 0, ptr(xml), null, overwrite, null, ptr(reasonCode));
 		};
 		if (password) {
 			// Read before overwriting: the typed key may be wrong, and the profile
 			// being replaced may be the working one the user has had for years.
-			replacedProfile = readStoredProfile(api, handle, guidBytes, ssid);
+			replacedProfile = readStoredProfile(api, handle, guidBytes, profileName);
 			const set = writeProfile(1);
 			if (set !== 0) throw new Error(wlanErrorMessage(set));
 			const rc = connect();
@@ -1002,15 +1080,15 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 }
 
 /**
- * The stored profile document for one network, or null when Windows holds none.
+ * The stored profile document for one profile name, or null when Windows holds none.
  *
  * The key material comes back encrypted (reading it in the clear needs elevation
  * this app does not have), which is exactly what {@link restoreStoredProfile}
  * needs: the same user on the same machine can hand that ciphertext straight
  * back, so the saved key survives without ever being seen.
  */
-function readStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, ssid: string): string | null {
-	const name = utf16z(ssid);
+function readStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string): string | null {
+	const name = utf16z(profileName);
 	const xmlOut = new BigUint64Array(1);
 	// In/out: zero asks for the profile as stored, without the plaintext key.
 	const flags = new Uint32Array(1);
@@ -1045,20 +1123,18 @@ function restoreStoredProfile(guidBytes: Uint8Array, profileXml: string): void {
 }
 
 /**
- * True when the network Windows can currently see under this name uses
- * WPA3-Personal.
+ * What the WLAN service currently knows about one network name on one adapter.
  *
- * This reads the list the WLAN service already holds — no scan is triggered, so
- * it costs a call and not four seconds. A network that is not in the list yields
- * false, which is the right default: WPA2 is what the transition mode most access
- * points run advertises, and it is also what an out-of-date list would have said.
+ * Reads the list the service already holds — no scan is triggered, so this costs
+ * a call and not four seconds. Null when the list cannot be read or does not
+ * contain the name; every caller has a defined fallback for that.
  */
-function usesSae(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, ssid: string): boolean {
+function readScannedNetwork(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, ssid: string): AvailableNetwork | null {
 	const listOut = new BigUint64Array(1);
-	if (api.WlanGetAvailableNetworkList(handle, ptr(guidBytes), 0, null, ptr(listOut)) !== 0) return false;
+	if (api.WlanGetAvailableNetworkList(handle, ptr(guidBytes), 0, null, ptr(listOut)) !== 0) return null;
 	const list = Number(listOut[0]) as Pointer;
 	try {
-		return findAuthAlgorithm(list, ssid) === AUTH_ALGO_WPA3_SAE;
+		return findScannedNetwork(list, ssid);
 	} finally {
 		api.WlanFreeMemory(list);
 	}
