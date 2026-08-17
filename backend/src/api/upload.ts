@@ -119,6 +119,19 @@ interface Upload {
 	lastActivityAt: number;
 	/** True while an operation for this upload is running. */
 	busy: boolean;
+	/**
+	 * The operation {@link busy} refers to, as a promise that always resolves.
+	 * `busy` alone only says an operation exists; this is how a caller that must
+	 * not act until it is over — an abort, a retried `end` — waits for it.
+	 */
+	operation: Promise<void> | null;
+	/**
+	 * The cleanup in flight for this upload, so a second attempt joins the first
+	 * instead of closing a writer that is already closing or unlinking a file
+	 * mid-unlink. Cleared again if the unlink failed and the record survived,
+	 * which is what lets a later sweep retry it.
+	 */
+	cleanup: Promise<void> | null;
 	/** Set by an abort or a disconnect that arrived while the upload was busy. */
 	cancelled: boolean;
 }
@@ -168,6 +181,8 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 	 * the slow part of receiving a file.
 	 */
 	let totalBytes = 0;
+	/** The sweep in flight, so the timer cannot start a second one beside it. */
+	let sweeping: Promise<void> | null = null;
 
 	/**
 	 * Drop uploads nobody finished and files nobody owns. Two separate problems:
@@ -182,17 +197,36 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 	 *
 	 * Never throws: a failed sweep must not take anything else down with it.
 	 */
-	async function sweep(): Promise<void> {
+	function sweep(): Promise<void> {
+		// One pass at a time. A slow pass — a stuck unlink, a directory full of
+		// files to stat — would otherwise still be walking the map when the timer
+		// fires the next one, and two passes racing each other over the same
+		// records is the one thing a cleanup pass must not do.
+		if (!sweeping) sweeping = runSweep().finally(() => (sweeping = null));
+		return sweeping;
+	}
+
+	async function runSweep(): Promise<void> {
 		const now = Date.now();
 		// Cleanups whose unlink failed come first. Those bytes are still charged to
 		// the global budget — correctly, since the file is still there — so a stuck
 		// cleanup starves every other client until it is retried.
 		for (const [uploadID, upload] of [...uploads]) {
-			if (upload.state === 'cleanup') await release(uploadID, upload);
+			if (upload.state !== 'cleanup') continue;
+			// A cleanup already running owns the writer. Unlinking underneath it can
+			// succeed on Unix and hand the bytes back while the open inode is still
+			// there to be written to, so join it instead of racing it.
+			if (upload.cleanup) await upload.cleanup;
+			else await release(uploadID, upload);
 		}
 		// Idle transfers next, so their files become unowned and the pass below
 		// can see them rather than skipping them as active.
 		for (const [uploadID, upload] of [...uploads]) {
+			// The state is not enough on its own: `receiveChunk` stays in `receiving`
+			// across its write and its flush, so a filesystem that hangs for longer
+			// than the idle limit would otherwise have this pass close the writer and
+			// delete the file under the handler still writing to it.
+			if (upload.busy) continue;
 			if (!isIdleExpirable(upload.state)) continue;
 			if (now - upload.lastActivityAt < idleMs) continue;
 			console.warn(`[API] Upload expired after ${Math.round((now - upload.lastActivityAt) / 1000)}s idle: ${uploadID}`);
@@ -305,35 +339,60 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 	 * only client that trips this is one ignoring the ack it is supposed to wait
 	 * for.
 	 */
-	async function exclusiveUpload<T>(uploadID: string, upload: Upload, run: () => Promise<T>): Promise<T> {
+	function exclusiveUpload<T>(uploadID: string, upload: Upload, run: () => Promise<T>): Promise<T> {
 		if (upload.busy) throw new CodedError(ErrorCodes.UPLOAD_BUSY);
 		upload.busy = true;
-		try {
-			return await run();
-		} finally {
-			upload.busy = false;
-			// An abort or a disconnect that landed mid-operation could not touch the
-			// record while it was running, so it left a mark and the cleanup happens
-			// here instead. A no-op if the operation already cleaned up itself.
-			if (upload.cancelled) await discard(uploadID);
-		}
+		const result = (async () => {
+			try {
+				return await run();
+			} finally {
+				upload.busy = false;
+				upload.operation = null;
+				// An abort or a disconnect that landed mid-operation could not touch the
+				// record while it was running, so it left a mark and the cleanup happens
+				// here instead. A no-op if the operation already cleaned up itself.
+				if (upload.cancelled) await discard(uploadID);
+			}
+		})();
+		// Published so an abort can wait for this exact operation — including the
+		// discard in the `finally` above, which settles before the promise does.
+		// Rejections are absorbed: a waiter cares that the operation is over, not
+		// how it went, and an unhandled rejection here would be a second one.
+		upload.operation = result.then(
+			() => {},
+			() => {}
+		);
+		return result;
 	}
 
-	/** Close and delete a partial transfer. Safe to call on one that is already gone. */
-	async function discard(uploadID: string): Promise<void> {
+	/**
+	 * Close and delete a partial transfer. Safe to call on one that is already
+	 * gone, and safe to call twice: the second caller joins the first rather than
+	 * ending a writer mid-close or unlinking a file mid-unlink.
+	 */
+	function discard(uploadID: string): Promise<void> {
 		const upload = uploads.get(uploadID);
-		if (!upload || upload.state === 'cleanup') return;
+		if (!upload) return Promise.resolve();
+		if (upload.cleanup) return upload.cleanup;
 		// Moved into `cleanup` rather than removed. The record used to go first and
 		// the bytes with it, so an unlink that failed left a file on the disk that
 		// nothing was accounting for — repeat that and real disk use climbs past the
-		// configured ceiling while the running total reads zero.
+		// configured ceiling while the running total reads zero. The state and the
+		// promise are set in the same tick, so nothing can observe one without the
+		// other.
 		upload.state = 'cleanup';
-		// Ending the writer also releases the file handle, which Windows needs
-		// before the half-written file can be removed.
-		try {
-			await upload.writer.end();
-		} catch {}
-		await release(uploadID, upload);
+		upload.cleanup = (async () => {
+			// Ending the writer also releases the file handle, which Windows needs
+			// before the half-written file can be removed.
+			try {
+				await upload.writer.end();
+			} catch {}
+			await release(uploadID, upload);
+			// A failed unlink leaves the record behind for a later attempt. Keeping
+			// the settled promise would make every one of those attempts a no-op.
+			if (uploads.get(uploadID) === upload) upload.cleanup = null;
+		})();
+		return upload.cleanup;
 	}
 
 	/**
@@ -390,7 +449,7 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 			if (open >= MAX_CONCURRENT_UPLOADS) throw new CodedError(ErrorCodes.TOO_MANY_UPLOADS, String(MAX_CONCURRENT_UPLOADS));
 			if (uploads.size >= maxTotalUploads) throw new CodedError(ErrorCodes.UPLOAD_QUOTA_EXCEEDED, String(maxTotalUploads));
 			const path = join(uploadDir, uploadFileName(p.name ?? 'upload'));
-			uploads.set(uploadID, { path, writer: Bun.file(path).writer(), written: 0, client, state: 'receiving', lastActivityAt: Date.now(), busy: false, cancelled: false });
+			uploads.set(uploadID, { path, writer: Bun.file(path).writer(), written: 0, client, state: 'receiving', lastActivityAt: Date.now(), busy: false, operation: null, cleanup: null, cancelled: false });
 			console.log(`[API] Upload started: ${uploadID} → ${path}`);
 			return { uploadID };
 		});
@@ -446,11 +505,21 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 		upload.written = nextWritten;
 		upload.lastActivityAt = Date.now();
 		totalBytes += p.data.byteLength;
-		await upload.writer.write(p.data);
-		// Flushed before the response goes out, so the ack the client waits on means
-		// the bytes are on disk. Without it the sink would buffer the whole file in
-		// memory while the client happily kept sending.
-		await upload.writer.flush();
+		try {
+			await upload.writer.write(p.data);
+			// Flushed before the response goes out, so the ack the client waits on
+			// means the bytes are on disk. Without it the sink would buffer the whole
+			// file in memory while the client happily kept sending.
+			await upload.writer.flush();
+		} catch (err) {
+			// The counters above already include this chunk, and the file may now be
+			// short or shifted by however much of it reached the disk. Nothing about
+			// the transfer is trustworthy after that, so it ends here rather than
+			// staying open for the next chunk or for an `end` that would mark a
+			// damaged file `ready`. The bytes stay charged until the file is gone.
+			await discard(p.uploadID);
+			throw err;
+		}
 		return { received: upload.written };
 	}
 
@@ -458,6 +527,20 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 		assert(p, ['uploadID']);
 		return track(client, async () => {
 			const upload = owned(p.uploadID, client);
+			// Checked ahead of the generic busy rejection, because a second `end`
+			// while the first is still inside `writer.end()` is the same retry as one
+			// sent after it finished, and has to get the same answer. Refusing it as
+			// UPLOAD_BUSY is what made the frontend give up and abort a transfer that
+			// was about to succeed — and then throw the finished file away.
+			if (upload.state === 'finalizing' && upload.operation) {
+				await upload.operation;
+				// Answered from where the first call actually landed: `ready` is the
+				// same success it reported, and anything else means its close failed
+				// and took the upload with it.
+				const settled = owned(p.uploadID, client);
+				if (settled.state !== 'ready') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, p.uploadID);
+				return { uploadID: p.uploadID };
+			}
 			return exclusiveUpload(p.uploadID, upload, () => finish(p.uploadID, upload));
 		});
 	}
@@ -534,8 +617,9 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 			// Removed whether or not the read worked: a file that failed to parse is no
 			// more use than one that succeeded, and leaving it would let a bad import
 			// linger until a sweep. The bytes come back with the file, not before it.
-			upload.state = 'cleanup';
-			await release(uploadID, upload);
+			// Through `discard` rather than `release` alone so this cleanup is the
+			// same joinable one every other path publishes.
+			await discard(uploadID);
 		}
 	}
 
@@ -550,11 +634,16 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 			// is an abort that did not happen, and the frontend sends one precisely
 			// when something else on this upload has stopped answering. Marked instead,
 			// and whatever is running discards on its way out.
-			if (upload.busy) {
-				upload.cancelled = true;
-				return;
-			}
+			upload.cancelled = true;
+			// Then waited for, rather than answered straight away. The caller's next
+			// transfer starts on this same socket the moment this returns, and it has
+			// to start against a disk and a quota this file has really left — which it
+			// has not while the operation holding it is still running.
+			if (upload.operation) await upload.operation;
 			await discard(p.uploadID);
+			// The unlink can fail, and a success reported over a file that is still
+			// there is what let the caller believe the quota was free when it was not.
+			if (uploads.has(p.uploadID)) throw new CodedError(ErrorCodes.UPLOAD_CLEANUP_PENDING, p.uploadID);
 		});
 	}
 
