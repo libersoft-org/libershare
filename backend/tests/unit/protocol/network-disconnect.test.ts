@@ -3,6 +3,8 @@ import { KEEP_ALIVE } from '@libp2p/interface';
 import { multiaddr } from '@multiformats/multiaddr';
 import { Network, normalizeMultiaddrForCompare } from '../../../src/protocol/network.ts';
 import { installBootstrapRegistry, type IRegistrySeed } from '../helpers/bootstrap-registry.ts';
+import { createEmptyPeerStore } from '../helpers/real-peer-store.ts';
+import { peerIdFromString } from '@libp2p/peer-id';
 
 /**
  * Unit tests for Network.disconnectPeer tag hygiene: hanging up a peer must
@@ -18,6 +20,20 @@ function makeNetwork() {
 	const merges: Array<{ tags: Record<string, unknown> }> = [];
 	const hungUp: string[] = [];
 	const deleted: string[] = [];
+	// A real peerStore: the purge that ends the disconnect decides and deletes under the
+	// store's own per-peer write lock, through its unlocked inner load/delete. Only the
+	// real store has either, and the durable delete is the whole point of this teardown.
+	const peerStore = createEmptyPeerStore();
+	const inner = (peerStore as any).store;
+	const dropRecord = inner.delete.bind(inner);
+	inner.delete = async (id: { toString(): string }): Promise<void> => {
+		deleted.push(id.toString());
+		await dropRecord(id);
+	};
+	// The tag removal is asserted from the patch it was handed, so it stays a spy.
+	peerStore.merge = async (_pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> => {
+		merges.push(patch);
+	};
 	const network = Object.create(Network.prototype) as Network;
 	(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
 	(network as any).bootstrapGeneration = new Map();
@@ -26,20 +42,13 @@ function makeNetwork() {
 	(network as any).redialBackoff = new Map();
 	(network as any).node = {
 		getConnections: () => [],
-		peerStore: {
-			async merge(_pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> {
-				merges.push(patch);
-			},
-			async delete(pid: { toString(): string }): Promise<void> {
-				deleted.push(pid.toString());
-			},
-		},
+		peerStore,
 		async hangUp(pid: { toString(): string }): Promise<void> {
 			hungUp.push(pid.toString());
 		},
 	};
 	const suppressed = (pid: string): boolean => (network as any).isRedialSuppressed(pid);
-	return { network, merges, hungUp, deleted, suppressed };
+	return { network, merges, hungUp, deleted, suppressed, peerStore, pid: peerIdFromString(PEER_ID) };
 }
 
 describe('Network.disconnectPeer — keep-alive tag removal', () => {
