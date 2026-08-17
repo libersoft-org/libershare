@@ -1,4 +1,5 @@
 import { createLibp2p } from 'libp2p';
+import { Mutex } from 'async-mutex';
 import { KEEP_ALIVE } from '@libp2p/interface';
 import { SqliteDatastore } from './datastore.ts';
 import { privateKeyToProtobuf } from '@libp2p/crypto/keys';
@@ -726,6 +727,8 @@ export class Network {
 	private readonly redialBackoff = new Map<string, { nextAttempt: number; failCount: number; firstFailure: number; evictionFails: number }>();
 	/** peerID → eviction time. Blocks re-adding a just-evicted unreachable peer from gossip for UNREACHABLE_QUARANTINE_MS. */
 	private readonly unreachableQuarantine = new Map<string, number>();
+	/** peerID → its purge lock and how many purges hold or await it. See {@link withPurgeLock}. */
+	private purgeLocks?: Map<string, { mutex: Mutex; waiting: number }>;
 	/**
 	 * peerID → time we first saw the peer disconnected with ZERO reachable
 	 * addresses. Such peers never enter the re-dial path (nothing to dial), so
@@ -2399,6 +2402,48 @@ export class Network {
 	 * same reason: re-reading `this.node` after an await can hand back a different node.
 	 */
 	async purgeStalePeer(peerID: string, reason: string, epoch: number = this.runEpoch, mode: PeerPurgeMode = 'best-effort'): Promise<void> {
+		await this.withPurgeLock(peerID, () => this.runPurge(peerID, reason, epoch, mode));
+	}
+
+	/**
+	 * Run `purge` with no other purge of the same peer in flight.
+	 *
+	 * The bootstrap single-flight is per ENDPOINT, so two addresses of one peer can fail
+	 * their identity check at the same time and both conclude the peer has no usable address
+	 * left. Interleaved, the two corrupt each other: a purge strips the peer from
+	 * `bootstrapPeerIDs`, the registry and `gossipsub.direct` BEFORE it waits for anything,
+	 * so a purge that heals a peer found connected again can put all of that back after the
+	 * other one has already removed it — and the other, with no cleanup left to do, then
+	 * deletes the record. What is left is dial state for a peer with no record behind it, and
+	 * a zero-connection recovery free to dial an identity the last purge just disproved.
+	 * Serialised, the later purge's cleanup always runs after the earlier one's healing.
+	 *
+	 * The lock is only ever taken OUTSIDE the peerStore write lock — nothing that holds that
+	 * lock purges — so the two cannot deadlock against each other, and a purge never re-enters
+	 * itself for the same peer.
+	 *
+	 * The entry goes away once nobody holds or awaits it, so the map is bounded by the peers
+	 * being purged right now rather than by every peer ever purged.
+	 */
+	private async withPurgeLock(peerID: string, purge: () => Promise<void>): Promise<void> {
+		const locks = (this.purgeLocks ??= new Map());
+		let held = locks.get(peerID);
+		if (!held) {
+			held = { mutex: new Mutex(), waiting: 0 };
+			locks.set(peerID, held);
+		}
+		// Both halves of the count are synchronous either side of the await, so a purge that
+		// arrives while another holds the lock always finds the same entry still in the map.
+		held.waiting++;
+		try {
+			await held.mutex.runExclusive(purge);
+		} finally {
+			if (--held.waiting === 0) locks.delete(peerID);
+		}
+	}
+
+	/** The body of {@link purgeStalePeer}, which holds that peer's purge lock around it. */
+	private async runPurge(peerID: string, reason: string, epoch: number, mode: PeerPurgeMode): Promise<void> {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return;
 		this.bootstrapPeerIDs.delete(peerID);

@@ -1933,6 +1933,114 @@ describe('purgeStalePeer — two purges of one peer', () => {
 });
 
 /**
+ * The other half of that race, and the reason the two purges must not interleave at all: a
+ * purge does its in-memory cleanup up front, before it waits for anything. A second purge
+ * that started while the first was still running has therefore ALREADY cleaned up by the
+ * time the first one heals — so the first puts the peer back, and the second, holding no
+ * cleanup left to do, deletes the record and walks away. The healing was right when it ran;
+ * what is wrong is that a later purge could no longer take it back.
+ */
+describe('purgeStalePeer — a purge that started inside another one', () => {
+	const LIVE = `/ip4/203.0.113.72/tcp/9090/p2p/${PEER_ID}`;
+
+	/**
+	 * The connection lands inside the first purge's delete and ends as soon as that purge has
+	 * healed — and the SECOND purge is started from the healing's own lock acquisition, so its
+	 * cleanup lands before the healing and its record delete after it. That is the ordering
+	 * the interleaving produces; pinning it here is what makes the test deterministic.
+	 */
+	async function bareNetwork() {
+		const real = await createRealPeerStore(PEER_ID, [LIVE]);
+		let connected = false;
+		let deletes = 0;
+		let second: Promise<void> | null = null;
+		const network = Object.create(Network.prototype) as Network;
+		const inner = (real.store as any).store;
+		const innerDelete = inner.delete.bind(inner);
+		inner.delete = async (...args: any[]): Promise<void> => {
+			await innerDelete(...args);
+			if (++deletes === 1) connected = true;
+		};
+		const getWriteLock = inner.getWriteLock.bind(inner);
+		let acquisitions = 0;
+		inner.getWriteLock = async (...args: any[]): Promise<() => void> => {
+			// #1 is the first purge's delete; #2 is its healing asking for the lock back.
+			if (++acquisitions === 2) second = (network as any).purgeStalePeer(PEER_ID, 'second', 1);
+			return getWriteLock(...args);
+		};
+		const direct = {
+			ids: new Set<string>(),
+			add(id: string): void {
+				this.ids.add(id);
+				// The last thing the healing writes before `bootstrapPeerIDs`, so the connection
+				// outlives the healing decision and dies immediately after it.
+				connected = false;
+			},
+			delete(id: string): boolean {
+				return this.ids.delete(id);
+			},
+		};
+		(network as any).runEpoch = 1;
+		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).pubsub = { direct };
+		installBootstrapRegistry(network, [{ address: LIVE }]);
+		(network as any).node = {
+			getConnections: () => (connected ? [{ remoteAddr: multiaddr(LIVE), async close(): Promise<void> {} }] : []),
+			peerStore: real.store,
+		};
+		return { network, real, direct, waitForSecond: async (): Promise<void> => void (await second) };
+	}
+
+	it('leaves no dial state behind for the peer whose record the later purge deleted', async () => {
+		const { network, real, direct, waitForSecond } = await bareNetwork();
+		await (network as any).purgeStalePeer(PEER_ID, 'first', 1);
+		await waitForSecond();
+		expect(await real.store.has(real.pid)).toBe(false);
+		expect({
+			bootstrapPeerIDs: [...((network as any).bootstrapPeerIDs as Set<string>)],
+			registry: registryAddresses(network),
+			direct: [...direct.ids],
+		}).toEqual({ bootstrapPeerIDs: [], registry: [], direct: [] });
+	});
+
+	/**
+	 * A leave-network purge REJECTS on a datastore failure. Holding a peer's purge lock past
+	 * that would wedge every later purge of the peer — the eviction loop simply stops
+	 * finishing, silently, for as long as the node runs.
+	 */
+	it('frees the lock when a durable purge fails', async () => {
+		const real = await createRealPeerStore(PEER_ID, [LIVE]);
+		const inner = (real.store as any).store;
+		const innerDelete = inner.delete.bind(inner);
+		let failNext = true;
+		inner.delete = async (...args: any[]): Promise<void> => {
+			if (failNext) {
+				failNext = false;
+				throw new Error('datastore unavailable');
+			}
+			await innerDelete(...args);
+		};
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).pubsub = { direct: new Set<string>() };
+		installBootstrapRegistry(network, [{ address: LIVE }]);
+		(network as any).node = { getConnections: () => [], peerStore: real.store };
+
+		await expect((network as any).purgeStalePeer(PEER_ID, 'leave', 1, 'durable')).rejects.toThrow('datastore unavailable');
+		await (network as any).purgeStalePeer(PEER_ID, 'retry', 1);
+		expect(await real.store.has(real.pid)).toBe(false);
+		expect((network as any).purgeLocks.size).toBe(0);
+	});
+});
+
+/**
  * An address can be BOTH gossip-discovered and user-configured. Collapsing the two into
  * "has an owner or does not" meant removing the configured claim deleted an entry
  * discovery had learned and verified on its own — a loss the user never asked for by
