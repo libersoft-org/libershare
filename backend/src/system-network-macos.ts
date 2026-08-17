@@ -159,10 +159,17 @@ export function parseDefaultRoute(text: string): { device: string | null; gatewa
  * "BOOTP Configuration" or "Automatic Configuration". Anything else — including
  * the "not a recognized network service" error — is honestly unknown rather than
  * guessed.
+ *
+ * BOOTP is deliberately NOT reported as DHCP. They are different protocols with
+ * different `networksetup` verbs, and the model has no word for BOOTP — so
+ * calling it DHCP meant merely opening the editor and pressing Save ran
+ * `-setdhcp` and converted the service to a protocol the user never chose.
+ * Reported as `unknown` the editor shows the mode as itself and waits for the
+ * user to pick one, which is the same treatment every other unnameable mode gets.
  */
 export function parseServiceInfo(text: string): NetInterfaceInfo['ipv4Mode'] {
 	if (/^\s*Manual Configuration/m.test(text)) return 'static';
-	if (/^\s*(DHCP|BOOTP) Configuration/m.test(text)) return 'dhcp';
+	if (/^\s*DHCP Configuration/m.test(text)) return 'dhcp';
 	return 'unknown';
 }
 

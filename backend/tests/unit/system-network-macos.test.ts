@@ -167,7 +167,14 @@ describe('parseServiceInfo', () => {
 	it('distinguishes the addressing modes', () => {
 		expect(parseServiceInfo('DHCP Configuration\nIP address: 192.0.2.2\n')).toBe('dhcp');
 		expect(parseServiceInfo('Manual Configuration\nIP address: 192.0.2.2\n')).toBe('static');
-		expect(parseServiceInfo('BOOTP Configuration\n')).toBe('dhcp');
+	});
+
+	// BOOTP and DHCP are different protocols with different networksetup verbs,
+	// and the model has no word for BOOTP. Reported as DHCP, merely opening the
+	// editor and pressing Save ran `-setdhcp` and converted the service to a
+	// protocol the user never chose.
+	it('refuses to call BOOTP a form of DHCP', () => {
+		expect(parseServiceInfo('BOOTP Configuration\n')).toBe('unknown');
 	});
 
 	it('does not guess when networksetup does not recognise the service', () => {
