@@ -137,6 +137,18 @@ const UNREACHABLE_QUARANTINE_MS = 30 * 60_000;
 const CONFIGURED_PROBE_BACKOFF_MAX_MS = 5 * 60_000;
 
 /**
+ * Ceiling on the autodial list zero-connection recovery walks.
+ *
+ * A discovered address earns its place by answering a dial, so the list grows with the
+ * number of distinct endpoints that have ever worked — unbounded on a fleet with churn,
+ * and the array is otherwise only ever shortened by an identity purge. Over the ceiling
+ * the OLDEST DISCOVERED entry goes: configured entries are finite user data and the way
+ * back into a network, so they are never the ones dropped. 512 is far above any real
+ * node's working set while keeping the list, and the walk over it, bounded.
+ */
+const MAX_BOOTSTRAP_ADDRESSES = 512;
+
+/**
  * Where the eviction window should run from after a re-dial failure.
  *
  * A failure only says something about the PEER when this node can reach anyone
@@ -2026,6 +2038,14 @@ export class Network {
 		const canonical = normalizeMultiaddrForCompare(ma.toString());
 		if (this.bootstrapMultiaddrs.some(m => normalizeMultiaddrForCompare(m.toString()) === canonical)) return;
 		this.bootstrapMultiaddrs.push(ma);
+		if (this.bootstrapMultiaddrs.length <= MAX_BOOTSTRAP_ADDRESSES) return;
+		// Array order is insertion order, so the first discovered entry is the oldest one.
+		// A list of nothing but configured entries is left to grow: it is bounded by what
+		// the user saved, and dropping any of it would silently unconfigure a bootstrap.
+		const oldestDiscovered = this.bootstrapMultiaddrs.findIndex(m => !this.configuredBootstrapAddresses.has(normalizeMultiaddrForCompare(m.toString())));
+		if (oldestDiscovered === -1) return;
+		trace(`[NET] autodial list full — dropping ${this.bootstrapMultiaddrs[oldestDiscovered]?.toString()}`);
+		this.bootstrapMultiaddrs.splice(oldestDiscovered, 1);
 	}
 
 	/**

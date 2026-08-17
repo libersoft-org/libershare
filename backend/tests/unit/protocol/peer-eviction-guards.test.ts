@@ -2005,3 +2005,47 @@ describe('addBootstrapPeers — status updates are grouped per run', () => {
 		expect(emissions).toEqual([]);
 	});
 });
+
+/**
+ * The autodial list grows with every discovered endpoint that has ever answered, and
+ * nothing but an identity purge ever shortens it — so a network with churn of reachable
+ * one-off peers inflates it for the lifetime of the process, and zero-connection recovery
+ * walks the whole thing.
+ */
+describe('the autodial address list is bounded', () => {
+	const discovered = (i: number): string => `/ip4/198.51.100.${i % 254}/tcp/${9000 + i}/p2p/${PEER_ID}`;
+	const CONFIGURED = `/ip4/203.0.113.1/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork(configured: string[] = []) {
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).configuredBootstrapAddresses = new Set(configured.map(a => normalizeMultiaddrForCompare(a)));
+		for (const address of configured) (network as any).rememberBootstrapAddress(multiaddr(address));
+		return network;
+	}
+
+	const remember = (network: Network, count: number): void => {
+		for (let i = 0; i < count; i++) (network as any).rememberBootstrapAddress(multiaddr(discovered(i)));
+	};
+	const addresses = (network: Network): string[] => (network as any).bootstrapMultiaddrs.map((m: { toString(): string }) => m.toString());
+
+	it('stops growing past the ceiling', () => {
+		const network = bareNetwork();
+		remember(network, 600);
+		expect((network as any).bootstrapMultiaddrs).toHaveLength(512);
+	});
+
+	it('drops the oldest discovered entry, keeping the newest', () => {
+		const network = bareNetwork();
+		remember(network, 600);
+		expect(addresses(network)).not.toContain(multiaddr(discovered(0)).toString());
+		expect(addresses(network)).toContain(multiaddr(discovered(599)).toString());
+	});
+
+	/** Configured entries are the user's way back into a network and are never evicted. */
+	it('never drops a configured address to make room', () => {
+		const network = bareNetwork([CONFIGURED]);
+		remember(network, 600);
+		expect(addresses(network)).toContain(multiaddr(CONFIGURED).toString());
+	});
+});
