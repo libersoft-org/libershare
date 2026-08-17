@@ -148,6 +148,17 @@ describe('windowsApplyIPv4Command, executed', () => {
 		expect(result.calls).toContain('New-NetIPAddress:ActiveStore+PersistentStore');
 	});
 
+	// A rollback may only undo what the apply actually did. This one fails at the very
+	// first removal, long before Set-DnsClientServerAddress is reached, so restoring
+	// the snapshot's resolvers would overwrite a DNS change some other process made
+	// between the snapshot and the failure — a change this apply never touched.
+	it.skipIf(windowsOnly)('leaves the resolvers alone when the DNS write never started', async () => {
+		const host = staticHost(GUID, { failOn: 'Remove-NetIPAddress' });
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24, gateway: '198.51.100.1', dns: ['198.51.100.53'] }), host);
+		expect(result.error).toContain('injected failure');
+		expect(result.calls.filter(call => call.startsWith('Set-DnsClientServerAddress'))).toEqual([]);
+	});
+
 	// Duplicate address detection hangs off the same flag: with no new address there
 	// is nothing to wait for, and the wait would have been reading the old one.
 	it.skipIf(windowsOnly)('runs no duplicate address detection when nothing was created', async () => {

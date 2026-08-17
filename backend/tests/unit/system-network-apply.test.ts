@@ -528,7 +528,7 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('if (-not $addressingUnchanged) { $addressingChanged = $true; $keptAddress =');
 		// The resolvers and the state check are outside that branch: they are the
 		// part a DNS-only change is actually asking for.
-		expect(command).toContain('-Confirm:$false } }; Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses 198.51.100.1');
+		expect(command).toContain('-Confirm:$false } }; $dnsWriteStarted = $true; Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses 198.51.100.1');
 		expect(command.indexOf('AddressState')).toBeGreaterThan(command.indexOf('-ServerAddresses 198.51.100.1'));
 	});
 
@@ -537,20 +537,23 @@ describe('windowsApplyIPv4Command', () => {
 	// every address and default route on an interface the apply had not touched.
 	it('scopes the rollback to the half of the apply that actually ran', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['198.51.100.1'] });
-		expect(command).toContain('$addressingChanged = $false; try {');
+		expect(command).toContain('$addressingChanged = $false; $dnsWriteStarted = $false; try {');
 		// Raised at the first destructive step, not after the last write — a rewrite
 		// that failed halfway still has to be undone.
 		expect(command).toContain('if (-not $addressingUnchanged) { $addressingChanged = $true; $keptAddress =');
 		// The resolvers are rewritten by every apply, so they always go back; the
 		// addressing goes back only when it was disturbed.
 		expect(command).toContain('catch { $applyError = $_; try { if ($addressingChanged) { try { Remove-NetIPAddress');
-		expect(command).toContain('}; if ($oldDnsManual.Count -gt 0) { Set-DnsClientServerAddress');
+		// ...and the resolvers go back only if this apply had started writing them. A
+		// failure at the first address removal never reached the DNS setter, so putting
+		// the snapshot back there would revert somebody else's change instead.
+		expect(command).toContain('}; if ($dnsWriteStarted) { if ($oldDnsManual.Count -gt 0) { Set-DnsClientServerAddress');
 		// Nothing to wait for when no address was created.
 		expect(command).toContain('if ($addressingChanged) { $deadline =');
 	});
 
 	it('always rewrites, and so always guards, a DHCP config', () => {
-		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).toContain('$addressingChanged = $false; try { $addressingChanged = $true; try { Remove-NetIPAddress');
+		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).toContain('$addressingChanged = $false; $dnsWriteStarted = $false; try { $addressingChanged = $true; try { Remove-NetIPAddress');
 	});
 
 	it('compares against no default route when the config has no gateway', () => {

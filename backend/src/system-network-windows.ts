@@ -1120,6 +1120,12 @@ export function windowsAddressStateWait(address: string): string {
  * detection hangs off the same flag — there is no new address to check when none
  * was created.
  *
+ * `$dnsWriteStarted` is the same idea for the other half. The resolvers used to be
+ * restored unconditionally, so an apply that failed before ever calling
+ * `Set-DnsClientServerAddress` — at the first address removal, say — still wrote the
+ * snapshot's DNS back, overwriting a resolver change some other process had made in
+ * between. A rollback may only undo what this apply actually did.
+ *
  * Every interpolated value has been through the shared validator, so each one is
  * a dotted-quad literal, a small integer, or a GUID. No quoting rule protects
  * this string — the validation does.
@@ -1128,8 +1134,14 @@ export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): st
 	const preamble = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', `$adapter = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq '${guid}' }`, 'if (-not $adapter) { throw "interface not found" }', '$i = $adapter.ifIndex'];
 	const removals = windowsRemovalSteps();
 	const mutation: string[] = [];
+	// Raised immediately before the resolvers are written, and read by the rollback
+	// for the same reason `$addressingChanged` is: an apply that failed at, say, the
+	// first address removal never reached the DNS setter, so writing the snapshot
+	// back would undo somebody ELSE's resolver change made since the snapshot was
+	// taken — a change this apply had not touched and has no business reverting.
+	const writeDns = (setter: string): string => `$dnsWriteStarted = $true; ${setter}`;
 	if (config.mode === 'dhcp') {
-		mutation.push('$addressingChanged = $true', ...removals, 'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses');
+		mutation.push('$addressingChanged = $true', ...removals, 'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', writeDns('Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses'));
 	} else {
 		const gateway = config.gateway ? ` -DefaultGateway ${config.gateway}` : '';
 		const dns = config.dns ?? [];
@@ -1137,11 +1149,11 @@ export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): st
 		// point on the interface is mid-change and the rollback has work to do however
 		// far the rewrite got.
 		const rewrite = ['$addressingChanged = $true', ...keepAddressProperties(config), ...removals, 'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} @keptAddressProperties | Out-Null`, ...keepRouteProperties(config)].join('; ');
-		mutation.push(windowsAddressingUnchanged(config), `if (-not $addressingUnchanged) { ${rewrite} }`, dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses', `if ($addressingChanged) { ${windowsAddressStateWait(config.address as string)} }`);
+		mutation.push(windowsAddressingUnchanged(config), `if (-not $addressingUnchanged) { ${rewrite} }`, writeDns(dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses'), `if ($addressingChanged) { ${windowsAddressStateWait(config.address as string)} }`);
 	}
-	const rollback = [`if ($addressingChanged) { ${windowsRestoreAddressingSteps().join('; ')} }`, WINDOWS_RESTORE_DNS].join('; ');
+	const rollback = [`if ($addressingChanged) { ${windowsRestoreAddressingSteps().join('; ')} }`, `if ($dnsWriteStarted) { ${WINDOWS_RESTORE_DNS} }`].join('; ');
 	const guarded = `try { ${mutation.join('; ')} } catch { $applyError = $_; try { ${rollback} } catch { throw "the change failed ($($applyError.Exception.Message)) and rolling it back also failed ($($_.Exception.Message))" }; throw $applyError }`;
-	return [...preamble, ...windowsSnapshotSteps(), WINDOWS_ALIAS_GUARD, WINDOWS_ROUTE_GUARD, WINDOWS_ORIGIN_GUARD, '$addressingChanged = $false', guarded].join('; ');
+	return [...preamble, ...windowsSnapshotSteps(), WINDOWS_ALIAS_GUARD, WINDOWS_ROUTE_GUARD, WINDOWS_ORIGIN_GUARD, '$addressingChanged = $false', '$dnsWriteStarted = $false', guarded].join('; ');
 }
 
 /**
