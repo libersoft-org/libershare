@@ -629,7 +629,8 @@ export class Network {
 				// Leaving either behind is what made a failed start unrecoverable without
 				// restarting the process: the SQLite file stayed locked and `this.node`
 				// stayed set, so the next start reported "already running" forever.
-				await this.teardown();
+				// A teardown failure must not replace the reason the start failed.
+				await this.teardown().catch(() => {});
 				this.lifecycle = 'stopped';
 				throw err;
 			}
@@ -2902,6 +2903,7 @@ export class Network {
 		this.delayedPeerCountTimers.clear();
 		this.redialSuppressedByNet.clear();
 		this.pxIngressLogKeys.clear();
+		let stopError: unknown = null;
 		try {
 			if (this.node) {
 				await this.node.stop();
@@ -2909,6 +2911,7 @@ export class Network {
 			}
 		} catch (err: any) {
 			trace(`[NET] node.stop() failed: ${err?.message ?? err}`);
+			stopError = err;
 		} finally {
 			try {
 				if (this.datastore) {
@@ -2923,6 +2926,12 @@ export class Network {
 			this.datastore = null;
 			this.currentPrivateKey = null;
 		}
+		// A node that refused to stop may still hold its listener, its connection manager
+		// and its port — and we have just dropped the last reference to it, so nobody can
+		// retry. Reporting success is what let the caller go on to start a second node over
+		// the same identity, datastore and port, or swap the identity under a live one.
+		// The cleanup above still happened; only the verdict changes.
+		if (stopError) throw stopError;
 	}
 
 	async cliFindPeer(peerID: string): Promise<void> {

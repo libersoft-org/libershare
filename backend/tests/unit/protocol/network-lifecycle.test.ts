@@ -118,7 +118,7 @@ describe('Network lifecycle', () => {
 		expect(net.getLifecycle()).toBe('stopped');
 	});
 
-	it('a node that refuses to stop still costs neither the datastore nor the reset', async () => {
+	it('a node that refuses to stop reports it, but still releases everything', async () => {
 		const net = bareNetwork();
 		let closed = 0;
 		(net as any).node = {
@@ -132,7 +132,10 @@ describe('Network lifecycle', () => {
 			},
 		};
 
-		await net.stop();
+		// The failure has to reach the caller: we have dropped the last reference to a node
+		// that may still hold its listener and port, and only the caller can decide not to
+		// start a second one over the same identity.
+		await expect(net.stop()).rejects.toThrow('node.stop failed');
 
 		expect(closed).toBe(1);
 		expect((net as any).node).toBeNull();
