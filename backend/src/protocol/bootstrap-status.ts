@@ -36,10 +36,28 @@ const BATCH_FLUSH_INTERVAL_MS = 75;
 type TrackedPeer = BootstrapPeerStatus & { staleSince: number };
 
 /**
+ * Which spelling of an endpoint the UI should show.
+ *
+ * The row is keyed canonically, so several spellings can land on it. A configured one
+ * always wins — it is what the user typed into the form and what they will look for when
+ * fixing it — and otherwise the first spelling seen is kept, so a row does not visibly
+ * change address every time gossip restates it differently.
+ */
+function displaySpelling(previous: TrackedPeer | undefined, incoming: string, origin: BootstrapPeerOrigin): string {
+	if (!previous || origin === 'configured') return incoming;
+	return previous.multiaddr;
+}
+
+/**
  * Tracks per-network, per-bootstrap-peer dial outcome status.
  *
- * Outer key is networkID; inner key is the exact multiaddr string from the network
- * config. Populated by markBootstrapPending / recordBootstrapOutcome when called
+ * Outer key is networkID; inner key is the CANONICAL form of the multiaddr, while the
+ * row keeps the spelling as written for display. Keying by the raw string let two
+ * spellings of one endpoint — DNS case, a trailing dot, an expanded IPv6 literal — open
+ * two rows that then contradicted each other, spent the row budget twice and survived a
+ * delete aimed at only one of them.
+ *
+ * Populated by markBootstrapPending / recordBootstrapOutcome when called
  * with a networkID context. Lets the UI surface which SPECIFIC bootstrap entry is
  * stale (identity-mismatch) or unreachable (timeout), rather than flagging the
  * whole network.
@@ -186,11 +204,13 @@ export class BootstrapStatusTracker {
 	markPending(networkID: string | null, multiaddr: string, expectedPeerID: string | null, origin: BootstrapPeerOrigin): void {
 		if (!networkID) return;
 		const net = this.ensureNetwork(networkID);
+		const key = canonicalMultiaddr(multiaddr);
 		// Preserve a stronger origin classification — once we know an entry is in
 		// the saved config ('configured'), an inbound peer-announce later restating
 		// the same multiaddr must not downgrade it to 'discovered'.
-		const previous = net.get(multiaddr);
+		const previous = net.get(key);
 		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
+		const display = displaySpelling(previous, multiaddr, origin);
 		// Keep the existing staleness clock (see sweepStale). Reaching this point means
 		// someone MENTIONED the peer again — gossip repeating an address it still
 		// remembers — which is evidence about the announcer, not about the peer. Letting
@@ -198,7 +218,7 @@ export class BootstrapStatusTracker {
 		// is far shorter than the sweep TTL, so the row was refreshed long before it
 		// could expire, no matter how many dials to it had already failed. Only a dial
 		// that actually CONNECTED advances it, in recordOutcome below.
-		net.set(multiaddr, { multiaddr, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: null, lastError: null, updatedAt: previous?.updatedAt ?? new Date().toISOString(), staleSince: previous?.staleSince ?? Date.now() });
+		net.set(key, { multiaddr: display, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: null, lastError: null, updatedAt: previous?.updatedAt ?? new Date().toISOString(), staleSince: previous?.staleSince ?? Date.now() });
 		this.capDiscovered(net);
 		this.notify(networkID);
 	}
@@ -207,14 +227,16 @@ export class BootstrapStatusTracker {
 	recordOutcome(networkID: string | null, multiaddr: string, expectedPeerID: string | null, status: BootstrapPeerDialStatus, message: string | null, actualPeerID: string | null, origin: BootstrapPeerOrigin): void {
 		if (!networkID) return;
 		const net = this.ensureNetwork(networkID);
+		const key = canonicalMultiaddr(multiaddr);
 		const truncated = message ? (message.length > 200 ? message.slice(0, 200) + '…' : message) : null;
-		const previous = net.get(multiaddr);
+		const previous = net.get(key);
 		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
+		const display = displaySpelling(previous, multiaddr, origin);
 		// Only success restarts the staleness clock. A FAILING outcome is the node's own
 		// reaction to somebody else's mention of a dead peer, so letting it advance the
 		// clock kept exactly the rows this sweep exists to remove: gossip mentions the
 		// peer, the dial fails, the row is refreshed, and the TTL is never reached.
-		net.set(multiaddr, { multiaddr, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' ? Date.now() : (previous?.staleSince ?? Date.now()) });
+		net.set(key, { multiaddr: display, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' ? Date.now() : (previous?.staleSince ?? Date.now()) });
 		this.capDiscovered(net);
 		this.notify(networkID);
 	}
@@ -234,13 +256,10 @@ export class BootstrapStatusTracker {
 	recordAddressReachable(address: string): void {
 		const target = canonicalMultiaddr(address);
 		for (const [networkID, peers] of this.stats) {
-			let changed = false;
-			for (const [addr, peer] of peers) {
-				if (peer.status === 'connected' || canonicalMultiaddr(addr) !== target) continue;
-				peers.set(addr, { ...peer, status: 'connected', lastError: null, actualPeerID: null, updatedAt: new Date().toISOString(), staleSince: Date.now() });
-				changed = true;
-			}
-			if (changed) this.notify(networkID);
+			const peer = peers.get(target);
+			if (!peer || peer.status === 'connected') continue;
+			peers.set(target, { ...peer, status: 'connected', lastError: null, actualPeerID: null, updatedAt: new Date().toISOString(), staleSince: Date.now() });
+			this.notify(networkID);
 		}
 	}
 
@@ -257,7 +276,7 @@ export class BootstrapStatusTracker {
 	deletePeer(networkID: string, multiaddr: string): void {
 		const net = this.stats.get(networkID);
 		if (!net) return;
-		net.delete(multiaddr);
+		net.delete(canonicalMultiaddr(multiaddr));
 		if (net.size === 0) this.stats.delete(networkID);
 		this.notify(networkID);
 	}
@@ -324,7 +343,9 @@ export class BootstrapStatusTracker {
 	pruneEntries(networkID: string, keepMultiaddrs: string[]): void {
 		const peers = this.stats.get(networkID);
 		if (!peers) return;
-		const keep = new Set(keepMultiaddrs);
+		// Canonical, like the keys themselves: a configured entry re-typed in a different
+		// but equivalent spelling is the same entry, not a removed one.
+		const keep = new Set(keepMultiaddrs.map(canonicalMultiaddr));
 		for (const [addr, peer] of [...peers.entries()]) {
 			if (peer.origin === 'configured' && !keep.has(addr)) peers.delete(addr);
 		}

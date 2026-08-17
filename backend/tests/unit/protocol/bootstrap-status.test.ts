@@ -588,3 +588,64 @@ describe('BootstrapStatusTracker.recordAddressReachable', () => {
 		expect(seen).toEqual([]);
 	});
 });
+
+/**
+ * Rows are keyed by the canonical form of the endpoint. Keying by the raw string let two
+ * spellings of one address — DNS case, a trailing dot, an expanded IPv6 literal — open
+ * two contradictory rows, spend the discovered budget twice, and survive a delete aimed
+ * at only one of them.
+ */
+describe('BootstrapStatusTracker — one row per endpoint, whatever the spelling', () => {
+	const PID = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+	const UPPER = `/dns4/BOOTSTRAP.EXAMPLE.ORG./tcp/9090/p2p/${PID}`;
+	const LOWER = `/dns4/bootstrap.example.org/tcp/9090/p2p/${PID}`;
+	const NET = 'net-a';
+
+	it('folds two spellings into a single row', () => {
+		const tracker = new BootstrapStatusTracker();
+
+		tracker.recordOutcome(NET, UPPER, PID, 'error', 'boom', null, 'discovered');
+		tracker.recordOutcome(NET, LOWER, PID, 'connected', null, null, 'discovered');
+
+		const peers = tracker.getStatus(NET)!.peers;
+		expect(peers).toHaveLength(1);
+		expect(peers[0]!.status).toBe('connected');
+	});
+
+	it('keeps the first spelling for display, and lets a configured one replace it', () => {
+		const tracker = new BootstrapStatusTracker();
+
+		tracker.recordOutcome(NET, LOWER, PID, 'error', 'boom', null, 'discovered');
+		expect(tracker.getStatus(NET)!.peers[0]!.multiaddr).toBe(LOWER);
+
+		tracker.markPending(NET, UPPER, PID, 'configured');
+		expect(tracker.getStatus(NET)!.peers[0]!.multiaddr).toBe(UPPER);
+	});
+
+	it('deletes the row whichever spelling names it', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, LOWER, PID, 'error', 'boom', null, 'discovered');
+
+		tracker.deletePeer(NET, UPPER);
+
+		expect(tracker.getStatus(NET)).toBeNull();
+	});
+
+	it('keeps a configured row that was re-typed in another spelling', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, LOWER, PID, 'connected', null, null, 'configured');
+
+		tracker.pruneEntries(NET, [UPPER]);
+
+		expect(tracker.getStatus(NET)!.peers).toHaveLength(1);
+	});
+
+	it('marks the row reachable when the probe names another spelling', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, LOWER, PID, 'timeout', 'no answer', null, 'configured');
+
+		tracker.recordAddressReachable(UPPER);
+
+		expect(tracker.getStatus(NET)!.peers[0]!.status).toBe('connected');
+	});
+});
