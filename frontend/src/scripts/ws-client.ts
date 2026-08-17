@@ -123,6 +123,15 @@ void checkBackendStatus();
 const UPLOAD_CHUNK_SIZE = MAX_UPLOAD_CHUNK_SIZE;
 
 /**
+ * How long one upload step may wait for its acknowledgement. Every step here is
+ * a single small round trip against a local-ish backend — a chunk write and a
+ * flush — so a minute is generous. It exists because a reply can be lost
+ * without this socket ever closing (a proxy losing its backend session, say),
+ * and the upload dialog is modal: without a bound it simply never goes away.
+ */
+const UPLOAD_STEP_TIMEOUT_MS = 60_000;
+
+/**
  * Send a locally picked file to the backend in chunks over the API WebSocket and
  * return the id it is held under. The file is never read into memory whole and
  * never travels as one message — that is what used to take the socket down once
@@ -138,13 +147,13 @@ export async function uploadImportFile(file: File): Promise<string> {
 	// Checked up front so a file that could never be accepted fails immediately
 	// instead of after uploading its way to the ceiling.
 	if (file.size > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.UPLOAD_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
-	const { uploadID } = await wsClient.call<{ uploadID: string }>('upload.begin', { name: file.name });
+	const { uploadID } = await wsClient.call<{ uploadID: string }>('upload.begin', { name: file.name }, UPLOAD_STEP_TIMEOUT_MS);
 	try {
 		for (let offset = 0; offset < file.size; offset += UPLOAD_CHUNK_SIZE) {
 			const slice = await file.slice(offset, offset + UPLOAD_CHUNK_SIZE).arrayBuffer();
-			await wsClient.callBinary('upload.chunk', { uploadID }, new Uint8Array(slice));
+			await wsClient.callBinary('upload.chunk', { uploadID }, new Uint8Array(slice), UPLOAD_STEP_TIMEOUT_MS);
 		}
-		await wsClient.call('upload.end', { uploadID });
+		await wsClient.call('upload.end', { uploadID }, UPLOAD_STEP_TIMEOUT_MS);
 		return uploadID;
 	} catch (err) {
 		// Nothing half-written is left behind. If the socket is what failed, the

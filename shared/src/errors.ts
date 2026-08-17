@@ -6,6 +6,7 @@ const errorCodes = [
 	'PARSE_ERROR',
 	'METHOD_REQUIRED',
 	'UNKNOWN_METHOD',
+	'REQUEST_TIMEOUT',
 
 	// LISH
 	'LISH_NOT_FOUND',

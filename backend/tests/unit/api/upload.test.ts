@@ -557,6 +557,24 @@ describe('chunked upload over the websocket', () => {
 		}
 	}, 30000);
 
+	it('gives up on a call whose reply never comes', async () => {
+		// A server that accepts the frame and answers nothing: the socket stays
+		// open, so the disconnect path that normally settles pending requests never
+		// runs and without a timeout the caller waits forever.
+		const silent = Bun.serve<Record<string, never>, never>({
+			port: 0,
+			fetch: (req, s) => (s.upgrade(req, { data: {} }) ? undefined : new Response('expected websocket', { status: 400 })),
+			websocket: { message: (): void => {} },
+		});
+		const client = new WsClient(`ws://localhost:${silent.port}`, () => {});
+		try {
+			await expectRejection(client.call('upload.begin', { name: 'void.lish' }, 300), ErrorCodes.REQUEST_TIMEOUT);
+		} finally {
+			client.stopReconnect();
+			silent.stop(true);
+		}
+	}, 30000);
+
 	it('rejects a chunk for an upload id nobody started', async () => {
 		const srv = startUploadServer();
 		const client = new WsClient(srv.url, () => {});
