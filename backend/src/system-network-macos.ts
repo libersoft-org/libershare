@@ -432,15 +432,75 @@ export function netmaskFromPrefix(prefixLength: number): string {
 	return [(mask >>> 24) & 0xff, (mask >>> 16) & 0xff, (mask >>> 8) & 0xff, mask & 0xff].join('.');
 }
 
+/** True for a resolver the IPv4 editor cannot express, and so must not silently drop. */
+function isIPv6Server(server: string): boolean {
+	return server.includes(':');
+}
+
+/**
+ * The IPv4 configuration and resolvers of one service, taken before an apply.
+ *
+ * `networksetup` changes the address and the resolvers through two separate
+ * commands, and nothing ties them together — so if the second fails the first has
+ * already happened. This is what makes it undoable.
+ */
+export interface MacServiceSnapshot {
+	readonly mode: NetInterfaceInfo['ipv4Mode'];
+	readonly address: string | null;
+	readonly mask: string | null;
+	readonly router: string | null;
+	/** Every resolver the service holds, BOTH families, in the order macOS listed them. */
+	readonly dns: readonly string[];
+}
+
+/** `networksetup` prints the literal "none" for a value a service does not have. */
+function presentValue(value: string | undefined): string | null {
+	return value && value !== 'none' ? value : null;
+}
+
+/** Read a snapshot out of `networksetup -getinfo` and `-getdnsservers` output. */
+export function parseMacServiceSnapshot(info: string, dns: string): MacServiceSnapshot {
+	return {
+		mode: parseServiceInfo(info),
+		address: presentValue(info.match(/^\s*IP address:\s*(\S+)/m)?.[1]),
+		mask: presentValue(info.match(/^\s*Subnet mask:\s*(\S+)/m)?.[1]),
+		router: parseServiceRouter(info),
+		dns: parseServiceDns(dns),
+	};
+}
+
+/**
+ * The two commands that put a snapshot back, or null when it cannot be expressed.
+ *
+ * Null is a real answer rather than a failure to try: a service that was static
+ * with no router has no `networksetup -setmanual` spelling (the parameter is
+ * mandatory), and a mode macOS did not name cannot be restored to something
+ * specific. Saying so lets the caller report an un-undone change honestly instead
+ * of guessing at one.
+ */
+export function macRestoreArgs(service: string, snapshot: MacServiceSnapshot): [string[], string[]] | null {
+	const dnsArgs = ['-setdnsservers', service, ...(snapshot.dns.length > 0 ? [...snapshot.dns] : ['Empty'])];
+	if (snapshot.mode === 'dhcp') return [['-setdhcp', service], dnsArgs];
+	if (snapshot.mode === 'static' && snapshot.address && snapshot.mask && snapshot.router) return [['-setmanual', service, snapshot.address, snapshot.mask, snapshot.router], dnsArgs];
+	return null;
+}
+
 /**
  * Build the `networksetup` argument lists that apply one IPv4 configuration.
  *
  * Two calls, not one: the address and the resolvers are separate settings, and
  * `-setdhcp` deliberately does NOT reset the resolvers — a manual DNS entry
  * survives a switch back to DHCP unless it is cleared with the `Empty` sentinel.
+ *
+ * `existingDns` is the service's CURRENT resolver list, both families. It has to
+ * be passed in because `-setdnsservers` replaces the whole list at once while the
+ * editor only ever holds IPv4 servers: writing the form's list verbatim deleted
+ * every manually configured IPv6 resolver, even when the user had changed nothing
+ * but an address. The servers the form cannot express are carried through
+ * unchanged, after the ones it can.
  */
-export function macApplyArgs(service: string, config: NetIPv4Config): string[][] {
-	const dns = config.dns ?? [];
+export function macApplyArgs(service: string, config: NetIPv4Config, existingDns: readonly string[] = []): [string[], string[]] {
+	const dns = [...(config.dns ?? []), ...existingDns.filter(isIPv6Server)];
 	const dnsArgs = ['-setdnsservers', service, ...(dns.length > 0 ? dns : ['Empty'])];
 	if (config.mode === 'dhcp') return [['-setdhcp', service], dnsArgs];
 	// `networksetup -setmanual` is documented as taking FOUR mandatory values —
@@ -462,8 +522,49 @@ async function serviceForDevice(device: string): Promise<string> {
 	return service;
 }
 
-/** Apply an IPv4 configuration to one device. Requires root, which is how networksetup guards every write. */
+/**
+ * Apply an IPv4 configuration to one device. Requires membership of `admin`,
+ * which is how networksetup guards every write.
+ *
+ * The address and the resolvers are two commands and nothing joins them, so the
+ * second failing used to leave the machine on the new address with the old
+ * resolvers and no way back. The snapshot taken first serves twice: it supplies
+ * the IPv6 resolvers the editor cannot express, and it is what the address is
+ * put back to when the second command fails.
+ */
 export async function applyMacIPv4(device: string, config: NetIPv4Config): Promise<void> {
 	const service = await serviceForDevice(device);
-	for (const args of macApplyArgs(service, config)) await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);
+	const snapshot = await readMacServiceSnapshot(service);
+	const [addressArgs, dnsArgs] = macApplyArgs(service, config, snapshot?.dns ?? []);
+	await run(NETWORKSETUP, addressArgs, APPLY_TIMEOUT_MS);
+	try {
+		await run(NETWORKSETUP, dnsArgs, APPLY_TIMEOUT_MS);
+	} catch (err) {
+		const rollback = await restoreMacService(service, snapshot);
+		// Both, not just the first: the address has already changed, and reporting
+		// only the resolver failure would suggest it had not.
+		if (rollback) throw new Error(`${(err as Error).message} — and undoing the change failed: ${rollback}`);
+		throw err;
+	}
+}
+
+/** The service's IPv4 configuration and resolvers, or null when they could not be read. */
+async function readMacServiceSnapshot(service: string): Promise<MacServiceSnapshot | null> {
+	const [info, dns] = await Promise.all([runOptional(NETWORKSETUP, ['-getinfo', service]), runOptional(NETWORKSETUP, ['-getdnsservers', service])]);
+	return info ? parseMacServiceSnapshot(info, dns) : null;
+}
+
+/** Put the service's addressing and resolvers back. Returns what went wrong, or null. */
+async function restoreMacService(service: string, snapshot: MacServiceSnapshot | null): Promise<string | null> {
+	if (!snapshot) return 'the previous configuration could not be read before the change was made';
+	const restore = macRestoreArgs(service, snapshot);
+	if (!restore) return 'the previous configuration has no networksetup form and cannot be written back';
+	for (const args of restore) {
+		try {
+			await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);
+		} catch (err) {
+			return (err as Error).message;
+		}
+	}
+	return null;
 }

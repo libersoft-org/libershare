@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { CodedError, ErrorCodes } from '@shared';
-import { macApplyArgs, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceDns, parseServiceInfo, parseServiceOrder, parseServiceRouter, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { macApplyArgs, macDbmToQuality, macRestoreArgs, parseMacServiceSnapshot, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceDns, parseServiceInfo, parseServiceOrder, parseServiceRouter, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -307,6 +307,71 @@ describe('macApplyArgs', () => {
 
 	it('passes a service name with spaces as one argument', () => {
 		expect(macApplyArgs('Thunderbolt Bridge', { mode: 'dhcp' })[0]).toEqual(['-setdhcp', 'Thunderbolt Bridge']);
+	});
+
+	// `-setdnsservers` replaces the whole resolver list, both families at once,
+	// while the editor only ever holds IPv4 servers. Writing the form's list
+	// verbatim deleted every manually configured IPv6 resolver — even when the
+	// user had changed nothing but an address.
+	it('keeps the IPv6 resolvers the editor cannot express', () => {
+		const args = macApplyArgs('Wi-Fi', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.1'] }, ['198.51.100.1', '2001:db8::1', '2001:db8::2']);
+		expect(args[1]).toEqual(['-setdnsservers', 'Wi-Fi', '192.0.2.1', '2001:db8::1', '2001:db8::2']);
+	});
+
+	it('drops the IPv4 resolvers it is replacing, keeping only the IPv6 ones', () => {
+		const args = macApplyArgs('Wi-Fi', { mode: 'dhcp' }, ['198.51.100.1', '2001:db8::1']);
+		expect(args[1]).toEqual(['-setdnsservers', 'Wi-Fi', '2001:db8::1']);
+	});
+
+	it('still clears the list entirely when there is nothing at all to keep', () => {
+		expect(macApplyArgs('Wi-Fi', { mode: 'dhcp' }, ['198.51.100.1'])[1]).toEqual(['-setdnsservers', 'Wi-Fi', 'Empty']);
+	});
+});
+
+/**
+ * The address and the resolvers are two separate `networksetup` commands with
+ * nothing joining them, so the second failing leaves the first already applied.
+ */
+describe('parseMacServiceSnapshot', () => {
+	const MANUAL = 'Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\nEthernet Address: 00:11:22:33:44:55\n';
+	const DHCP = 'DHCP Configuration\nIP address: 198.51.100.24\nSubnet mask: 255.255.255.0\nRouter: 198.51.100.1\n';
+
+	it('captures the whole manual configuration, mask and router included', () => {
+		const snapshot = parseMacServiceSnapshot(MANUAL, '192.0.2.1\n2001:db8::1\n');
+		expect(snapshot).toEqual({ mode: 'static', address: '192.0.2.10', mask: '255.255.255.0', router: '192.0.2.1', dns: ['192.0.2.1', '2001:db8::1'] });
+	});
+
+	it('captures a DHCP service as DHCP rather than as its current lease', () => {
+		expect(parseMacServiceSnapshot(DHCP, "There aren't any DNS Servers set.\n")).toEqual({ mode: 'dhcp', address: '198.51.100.24', mask: '255.255.255.0', router: '198.51.100.1', dns: [] });
+	});
+
+	it('reads the literal "none" as absent rather than as a value', () => {
+		const snapshot = parseMacServiceSnapshot('Manual Configuration\nIP address: none\nSubnet mask: none\nRouter: none\n', '');
+		expect([snapshot.address, snapshot.mask, snapshot.router]).toEqual([null, null, null]);
+	});
+});
+
+describe('macRestoreArgs', () => {
+	it('puts a manual configuration back exactly, resolvers of both families included', () => {
+		const snapshot = parseMacServiceSnapshot('Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\n', '192.0.2.1\n2001:db8::1\n');
+		expect(macRestoreArgs('Wi-Fi', snapshot)).toEqual([
+			['-setmanual', 'Wi-Fi', '192.0.2.10', '255.255.255.0', '192.0.2.1'],
+			['-setdnsservers', 'Wi-Fi', '192.0.2.1', '2001:db8::1'],
+		]);
+	});
+
+	it('puts a DHCP service back as DHCP, not as the address it happened to hold', () => {
+		const snapshot = parseMacServiceSnapshot('DHCP Configuration\nIP address: 198.51.100.24\nRouter: 198.51.100.1\n', '');
+		expect(macRestoreArgs('Wi-Fi', snapshot)?.[0]).toEqual(['-setdhcp', 'Wi-Fi']);
+		expect(macRestoreArgs('Wi-Fi', snapshot)?.[1]).toEqual(['-setdnsservers', 'Wi-Fi', 'Empty']);
+	});
+
+	// Null is a real answer: `-setmanual` takes a router as a mandatory value, so
+	// a static service without one cannot be written back at all. Saying so lets
+	// the caller report an un-undone change rather than guess at one.
+	it('reports that a configuration with no networksetup form cannot be restored', () => {
+		expect(macRestoreArgs('Wi-Fi', parseMacServiceSnapshot('Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: none\n', ''))).toBeNull();
+		expect(macRestoreArgs('Wi-Fi', parseMacServiceSnapshot('Automatic Configuration\n', ''))).toBeNull();
 	});
 });
 
