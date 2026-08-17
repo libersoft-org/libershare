@@ -727,6 +727,19 @@ describe('competingNtpUnits', () => {
 		expect(competingNtpUnits(['vendor-ntp.service'], states)).not.toContain('vendor-ntp.service');
 	});
 
+	/**
+	 * The same rule, applied to the hardcoded names rather than to the ordering. A host that
+	 * aliases `chronyd.service` onto timesyncd answers for it with timesyncd's own
+	 * `ActiveState`, so a perfectly ordinary running timesyncd read as chrony holding the
+	 * clock and the server could not be configured.
+	 */
+	it('drops a hardcoded name that is an alias of timesyncd', () => {
+		const states = parseUnitLoadStates(`Id=${TIMESYNCD_UNIT}\nNames=${TIMESYNCD_UNIT} chronyd.service\nLoadState=loaded\n`);
+		expect(competingNtpUnits([TIMESYNCD_UNIT], states)).not.toContain('chronyd.service');
+		// The other hardcoded names are about other daemons and stay.
+		expect(competingNtpUnits([TIMESYNCD_UNIT], states)).toContain('ntpd.service');
+	});
+
 	it('keeps an alias that names another daemon', () => {
 		const states = parseUnitLoadStates('Id=chronyd.service\nNames=vendor-ntp.service chronyd.service\nLoadState=loaded\n');
 		expect(competingNtpUnits(['vendor-ntp.service'], states)).toContain('vendor-ntp.service');

@@ -562,10 +562,21 @@ export const COMPETING_NTP_UNITS: string[] = ['chronyd.service', 'chrony.service
  * timesyncd: an alias for it is a different string and excluding by text alone kept the
  * alias on the list, so timesyncd running normally answered as a competing daemon and the
  * capability went false on a host that is ours to configure.
+ *
+ * That test applies to the hardcoded names as well, and not only to the ordering. A host
+ * where `chronyd.service` is an ALIAS of timesyncd answers for it with timesyncd's own
+ * `ActiveState`, so a running timesyncd was read as chrony holding the clock — safe, in that
+ * nothing is written to the wrong daemon, but the server could not be configured on a host
+ * that has no other NTP daemon at all.
+ *
+ * Each name is kept as the host spelled it and only JUDGED by its canonical form: it is the
+ * spelling that came off the host's own files, and the one `systemctl show` is asked about.
  */
 export function competingNtpUnits(ordered: string[] | null, states: Map<string, UnitState> | null = null): string[] {
-	const units = new Set(COMPETING_NTP_UNITS);
-	for (const unit of ordered ?? []) if (canonicalUnitName(states, unit) !== TIMESYNCD_UNIT) units.add(unit);
+	const units = new Set<string>();
+	for (const unit of [...COMPETING_NTP_UNITS, ...(ordered ?? [])]) {
+		if (canonicalUnitName(states, unit) !== TIMESYNCD_UNIT) units.add(unit);
+	}
 	return [...units];
 }
 
