@@ -5,6 +5,8 @@ import { installBootstrapRegistry, registryAddresses, type IRegistrySeed } from 
 import { createEmptyPeerStore, createRealPeerStore, storedAddresses, FaultyDatastore } from '../helpers/real-peer-store.ts';
 import { peerIdFromString } from '@libp2p/peer-id';
 import { KEEP_ALIVE } from '@libp2p/interface';
+import { createLibp2p } from 'libp2p';
+import { MemoryDatastore } from 'datastore-core';
 
 /**
  * Guards on the DESTRUCTIVE peer-eviction paths. The pure decision helpers are covered
@@ -2003,5 +2005,63 @@ describe('shouldKeepDialResult — provenance of an address that lost its owner'
 		const entry = (network as any).bootstrapByAddress.get(CANON) as IBootstrapEntry;
 		(network as any).bootstrapByAddress.delete(CANON);
 		expect(keep(network, entry)).toBe(false);
+	});
+});
+
+/**
+ * The same removal, against the peerStore a real `createLibp2p()` builds rather than a
+ * standalone `persistentPeerStore()`.
+ *
+ * Everything this path needs — the per-peer lock, the unlocked inner load/patch, the
+ * emitter — is private to libp2p, so the only shape that settles the question is the one
+ * a real node hands out. The node is never started and listens on nothing: what is under
+ * test is the peerStore wiring, not the transports.
+ */
+describe('removePeerStoreAddresses — against a real libp2p peerStore', () => {
+	const KEPT = `/ip4/203.0.113.21/tcp/9090/p2p/${PEER_ID}`;
+	const DROPPED = `/ip4/203.0.113.22/tcp/9090/p2p/${PEER_ID}`;
+
+	it('removes one address, keeps the rest of the record and raises peer:update', async () => {
+		const node = await createLibp2p({
+			start: false,
+			addresses: { listen: [] },
+			transports: [],
+			connectionEncrypters: [],
+			streamMuxers: [],
+			// Cast: two copies of interface-datastore are installed and their Key classes
+			// are structurally incompatible. Runtime is one class.
+			datastore: new MemoryDatastore() as any,
+		});
+		try {
+			const pid = peerIdFromString(PEER_ID);
+			await node.peerStore.patch(pid, {
+				addresses: [
+					{ multiaddr: multiaddr(KEPT), isCertified: true },
+					{ multiaddr: multiaddr(DROPPED), isCertified: false },
+				],
+				protocols: ['/lish/1.0.0'],
+				tags: { [KEEP_ALIVE]: { value: 1 }, 'keep-alive-fleet': { value: 50 } },
+			});
+			// Going around the public wrapper must not go around its event — libp2p's own
+			// registrar is on the other end of this listener.
+			const updates: unknown[] = [];
+			node.addEventListener('peer:update', evt => updates.push(evt));
+
+			const network = Object.create(Network.prototype) as Network;
+			(network as any).runEpoch = 1;
+			(network as any).node = node;
+			const result = await (network as any).removePeerStoreAddresses(pid, (a: string) => a.includes('203.0.113.22'));
+
+			expect(result).toEqual({ kind: 'updated', remaining: 1 });
+			const after = await node.peerStore.get(pid);
+			expect(after.addresses).toEqual([{ multiaddr: multiaddr('/ip4/203.0.113.21/tcp/9090'), isCertified: true }]);
+			// The tags drive the reconnect queue and the protocols drive the registrar —
+			// neither is the removal's to lose.
+			expect([...after.tags.keys()].sort()).toEqual([KEEP_ALIVE, 'keep-alive-fleet'].sort());
+			expect(after.protocols).toEqual(['/lish/1.0.0']);
+			expect(updates).toHaveLength(1);
+		} finally {
+			await node.stop();
+		}
 	});
 });
