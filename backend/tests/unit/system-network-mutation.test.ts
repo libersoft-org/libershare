@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { applyIPv4, connectWifi, ipv4EditObjection, networkStateGeneration, readNetworkStateUnlocked, readSettledNetworkState, resetNetworkStateCache, runHostMutation, withVolatileCapabilities } from '../../src/system-network.ts';
+import { applyIPv4, connectWifi, ipv4EditObjection, isCapabilityProbeStale, networkStateGeneration, readNetworkStateUnlocked, readSettledNetworkState, resetNetworkStateCache, runHostMutation, withVolatileCapabilities } from '../../src/system-network.ts';
 import { windowsIPv4Objection } from '../../src/system-network-windows.ts';
 import { CodedError, ErrorCodes, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
 
@@ -101,13 +101,13 @@ describe('runHostMutation', () => {
 });
 
 /**
- * The half of the capability probe that must not be remembered.
+ * How long each half of the capability probe may be believed.
  *
- * The probe is cached for the whole process, which is right for an elevated
- * token and for `admin` group membership — neither can change without a new
- * process — and wrong for the Windows radio: a USB adapter plugged in after
- * start, or WLAN AutoConfig restarted, left the entire Wi-Fi section hidden
- * until the app was restarted.
+ * Remembering the whole answer for the life of the process is right for an
+ * elevated token and for `admin` group membership — neither can change without a
+ * new process — and wrong twice over. The Windows radio moves under a running
+ * app, so it is re-asked on every read; the Linux polkit verdict moves too, more
+ * slowly, so it expires on a timer.
  */
 describe('withVolatileCapabilities', () => {
 	const remembered = { ipv4: true, wifi: false, staticGatewayRequired: false } as const;
@@ -121,6 +121,25 @@ describe('withVolatileCapabilities', () => {
 		const fresh = withVolatileCapabilities(remembered, 'win32', () => true);
 		expect(fresh.ipv4).toBe(true);
 		expect(fresh.staticGatewayRequired).toBe(false);
+	});
+
+	// The Linux verdict was remembered for the life of the process on the grounds
+	// that NetworkManager cannot appear or disappear under a running app — but the
+	// answer is a polkit verdict, and a daemon started after the app, a first nmcli
+	// call that simply failed, or a rule granted in the meantime all change it. A
+	// restart was the only way to notice any of them.
+	it('lets the linux probe expire so a later answer can differ', () => {
+		const justProbed = Date.now();
+		expect(isCapabilityProbeStale(justProbed, 'linux')).toBe(false);
+		expect(isCapabilityProbeStale(justProbed - 30_000, 'linux')).toBe(false);
+		expect(isCapabilityProbeStale(justProbed - 61_000, 'linux')).toBe(true);
+	});
+
+	it('never expires an answer a new process is the only way to change', () => {
+		// An elevated token lasts as long as the process and `admin` group membership
+		// as long as the login; the one Windows answer that does move is re-asked on
+		// every read instead, for free.
+		for (const platform of ['win32', 'darwin', 'freebsd']) expect(isCapabilityProbeStale(Date.now() - 86_400_000, platform)).toBe(false);
 	});
 
 	it('does not re-probe where the answer costs a spawn and cannot change', () => {

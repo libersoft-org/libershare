@@ -313,54 +313,84 @@ export async function runHostMutation<T>(action: () => Promise<T>): Promise<T> {
 /**
  * What this host lets the app change.
  *
- * Probed once and remembered: on Linux the answer is an `nmcli` spawn, and it
- * cannot change without the daemon being installed or stopped, which does not
- * happen inside one run of the app.
+ * Remembered rather than asked on every read, because two of the three probes
+ * cost a child process. What "remembered" means differs by platform, and each
+ * difference is a property of the answer rather than a policy:
  *
- * The one answer that DOES change under the app is the Windows Wi-Fi one — a USB
- * adapter plugged in after start, or the WLAN AutoConfig service restarted, and
- * the whole Wi-Fi section stays hidden until the app is restarted. That probe is
- * an in-process wlanapi enumeration the read performs anyway, so it is taken
- * fresh every time instead of being remembered with the rest.
+ *  - Windows Wi-Fi is re-asked every time. It is an in-process wlanapi
+ *    enumeration, and it genuinely changes under a running app — a USB adapter
+ *    plugged in, or WLAN AutoConfig restarted, used to leave the whole Wi-Fi
+ *    section hidden until a restart. See {@link withVolatileCapabilities}.
+ *  - Windows IPv4 and macOS are remembered for good. An elevated token is fixed
+ *    for the life of a process and `admin` group membership for the life of a
+ *    login; neither can be re-answered differently without a new process.
+ *  - Linux expires after {@link CAPABILITIES_TTL_MS}. That answer is a polkit
+ *    verdict about a daemon, and all of "NetworkManager was not running yet",
+ *    "the first `nmcli` call failed" and "a polkit rule changed" are ordinary
+ *    events inside one run — remembering the first answer for the life of the
+ *    process meant a restart was the only way to pick any of them up.
  */
-let capabilities: NetCapabilities | null = null;
+let capabilities: { at: number; value: NetCapabilities } | null = null;
+
+/**
+ * How long a probe that can go stale is remembered.
+ *
+ * Long enough that the 5 s read cadence does not pay for an `nmcli` spawn again
+ * and again — the reason the answer was remembered for ever in the first place —
+ * and short enough that starting NetworkManager, or being granted the polkit
+ * rule, shows up without restarting the app.
+ */
+const CAPABILITIES_TTL_MS = 60000;
 
 /**
  * Re-answer the parts of a remembered probe that can change while the app runs.
  *
- * Only the Windows Wi-Fi answer can. An elevated token is fixed for the life of a
- * process, `admin` group membership is fixed for the life of a login, and the
- * Linux answer costs an `nmcli` spawn that a 5 s read cadence must not pay for
- * again — while the Windows one is an in-process wlanapi enumeration.
+ * Only the Windows Wi-Fi answer can be re-asked for free: it is an in-process
+ * wlanapi enumeration. An elevated token is fixed for the life of a process and
+ * `admin` group membership for the life of a login, so neither is worth asking
+ * twice, and the Linux answer costs an `nmcli` spawn that a 5 s read cadence must
+ * not pay for on every tick — that one expires on a timer instead, see
+ * {@link isCapabilityProbeStale}.
  */
 export function withVolatileCapabilities(remembered: NetCapabilities, platform: string, probeWifi: () => boolean): NetCapabilities {
 	return platform === 'win32' ? { ...remembered, wifi: probeWifi() } : remembered;
 }
 
+/**
+ * True when a remembered probe is old enough to be worth asking again.
+ *
+ * Only the Linux one is: see the platform notes on {@link capabilities}. Ageing
+ * the Windows set would buy nothing and cost a PowerShell spawn a minute, since
+ * the only Windows answer that can change is already re-asked on every read.
+ */
+export function isCapabilityProbeStale(at: number, platform: string): boolean {
+	return platform === 'linux' && Date.now() - at >= CAPABILITIES_TTL_MS;
+}
+
 async function readCapabilities(): Promise<NetCapabilities> {
-	if (capabilities) return withVolatileCapabilities(capabilities, process.platform, isWindowsWifiConfigurable);
+	if (capabilities && !isCapabilityProbeStale(capabilities.at, process.platform)) return withVolatileCapabilities(capabilities.value, process.platform, isWindowsWifiConfigurable);
 	if (process.platform === 'win32') {
 		// The Get/Set-Net* cmdlets refuse outright without an elevated token, so the
 		// capability is that token — probed once here rather than discovered by the
 		// user when Save fails. Wi-Fi goes through wlanapi instead, which asks for no
 		// elevation at all, so the two are probed separately.
-		capabilities = { ipv4: await isWindowsElevated(), wifi: isWindowsWifiConfigurable(), staticGatewayRequired: false };
+		capabilities = { at: Date.now(), value: { ipv4: await isWindowsElevated(), wifi: isWindowsWifiConfigurable(), staticGatewayRequired: false } };
 	} else if (process.platform === 'linux') {
 		const managed = await isLinuxWritable();
-		capabilities = { ipv4: managed, wifi: managed, staticGatewayRequired: false };
+		capabilities = { at: Date.now(), value: { ipv4: managed, wifi: managed, staticGatewayRequired: false } };
 	} else if (process.platform === 'darwin') {
 		// networksetup persists a change and is present on every macOS install, so
 		// addressing is editable. Wi-Fi is not: see isMacWifiConfigurable. The
 		// gateway requirement is macOS's alone — `-setmanual` takes the router as a
 		// mandatory value, and the form has to know that before the user presses Save.
-		capabilities = { ipv4: await isMacWritable(), wifi: isMacWifiConfigurable(), staticGatewayRequired: true };
+		capabilities = { at: Date.now(), value: { ipv4: await isMacWritable(), wifi: isMacWifiConfigurable(), staticGatewayRequired: true } };
 	} else {
 		// Everything else reads through os.networkInterfaces(), which cannot even
 		// report whether an address came from DHCP. Offering to edit a configuration
 		// we cannot describe would be worse than not offering it.
-		capabilities = { ipv4: false, wifi: false, staticGatewayRequired: false };
+		capabilities = { at: Date.now(), value: { ipv4: false, wifi: false, staticGatewayRequired: false } };
 	}
-	return capabilities;
+	return capabilities.value;
 }
 
 /** True when this process can actually run the privileged cmdlets. One spawn, cached with the capabilities. */
