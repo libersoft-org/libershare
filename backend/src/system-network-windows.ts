@@ -605,6 +605,27 @@ function ignoringMissing(statement: string): string {
  * adapter that is simply unconfigured, which is `ObjectNotFound` and only that;
  * every other failure aborts the apply before anything has been removed.
  *
+ * Each object is captured with the properties a restore has to hand back, not
+ * merely the ones that identify it. An address re-created from `IPAddress` and
+ * `PrefixLength` alone comes back with `SkipAsSource` false and an infinite
+ * lifetime whatever it had before, and a default route re-created from `NextHop`
+ * and `RouteMetric` alone comes back as an ordinary published-by-nobody NetMgmt
+ * route — so a rollback reported as "the change was undone" left the host in a
+ * measurably different state. `New-NetIPAddress` and `New-NetRoute` both accept
+ * exactly these back (verified against their parameter binding on Windows 11,
+ * including an infinite `TimeSpan.MaxValue` lifetime), and the objects never
+ * leave PowerShell, so they need no projection to survive the round trip.
+ *
+ * `PrefixOrigin` and `SuffixOrigin` are captured for a different purpose: they
+ * cannot be written back at all — Windows decides them — so they are what
+ * {@link WINDOWS_ORIGIN_GUARD} refuses on rather than what the restore replays.
+ *
+ * The one property still not round-tripped is store membership. Measured on
+ * Windows 11, `New-NetIPAddress` writes to the active AND the persistent store
+ * unless told otherwise, so an address that was persistent comes back persistent;
+ * an address that had been active-only comes back persistent too, which is the
+ * harmless direction of that difference.
+ *
  * The resolver snapshot deliberately does NOT use `Get-DnsClientServerAddress`.
  * That cmdlet reports the EFFECTIVE list, which on a DHCP interface is the one
  * the lease handed out — and writing an effective list back with
@@ -619,9 +640,9 @@ function windowsSnapshotSteps(): string[] {
 	return [
 		'$oldDhcp = (Get-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop).Dhcp',
 		'$oldAddresses = @()',
-		ignoringMissing('$oldAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop | Select-Object IPAddress, PrefixLength)'),
+		ignoringMissing('$oldAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop | Select-Object IPAddress, PrefixLength, PrefixOrigin, SuffixOrigin, SkipAsSource, ValidLifetime, PreferredLifetime)'),
 		'$oldRoutes = @()',
-		ignoringMissing("$oldRoutes = @(Get-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop | Select-Object NextHop, RouteMetric)"),
+		ignoringMissing("$oldRoutes = @(Get-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop | Select-Object NextHop, RouteMetric, Protocol, Publish)"),
 		// Empty for an interface on automatic DNS, and only then. Windows writes the
 		// value comma-separated but has historically also used spaces, so both split.
 		//
@@ -651,7 +672,7 @@ function windowsSnapshotSteps(): string[] {
  * {@link windowsSnapshotSteps}.
  */
 function windowsRestoreSteps(): string[] {
-	const restoreStatic = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', 'foreach ($a in $oldAddresses) { New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $a.IPAddress -PrefixLength $a.PrefixLength -ErrorAction Stop | Out-Null }', "foreach ($r in $oldRoutes) { New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop $r.NextHop -RouteMetric $r.RouteMetric -Confirm:$false -ErrorAction Stop | Out-Null }"].join('; ');
+	const restoreStatic = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', 'foreach ($a in $oldAddresses) { New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $a.IPAddress -PrefixLength $a.PrefixLength -SkipAsSource $a.SkipAsSource -ValidLifetime $a.ValidLifetime -PreferredLifetime $a.PreferredLifetime -ErrorAction Stop | Out-Null }', "foreach ($r in $oldRoutes) { New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop $r.NextHop -RouteMetric $r.RouteMetric -Protocol $r.Protocol -Publish $r.Publish -Confirm:$false -ErrorAction Stop | Out-Null }"].join('; ');
 	return [tolerateMissing('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false'), tolerateMissing("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false"), `if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled } else { ${restoreStatic} }`, 'if ($oldDnsManual.Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $oldDnsManual } else { Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses }'];
 }
 
@@ -702,6 +723,27 @@ export const WINDOWS_ALIAS_GUARD: string = `if (@($oldAddresses).Count -gt 1) { 
 export const WINDOWS_ROUTE_GUARD: string = `if (@($oldRoutes).Count -gt 1) { throw "this interface carries several IPv4 default routes, which this app cannot preserve" }`;
 
 /**
+ * Refuse an interface holding a static address whose provenance the restore
+ * cannot reproduce.
+ *
+ * {@link windowsRestoreSteps} re-creates a static interface's addresses with
+ * `New-NetIPAddress`, and everything Windows makes that way is `Manual` in both
+ * `PrefixOrigin` and `SuffixOrigin`. There is no parameter for either — the stack
+ * assigns them from HOW the address came to exist — so an address that got its
+ * prefix from a router advertisement, or its suffix from the link layer, comes
+ * back as a different object however carefully the rest is replayed.
+ *
+ * Only the static branch is checked, because the DHCP branch does not re-create
+ * anything: it re-enables DHCP and lets the lease put the addresses back.
+ *
+ * Measured on Windows 11: a hand-configured address reports Manual/Manual, a
+ * lease reports Dhcp/Dhcp, and an automatic APIPA address reports
+ * WellKnown/LinkLayerAddress — which is also the pair that tells that address
+ * apart from a link-local one a user set by hand.
+ */
+export const WINDOWS_ORIGIN_GUARD: string = `if ($oldDhcp -ne 'Enabled') { foreach ($a in $oldAddresses) { if ($a.PrefixOrigin -ne 'Manual' -or $a.SuffixOrigin -ne 'Manual') { throw "this interface carries an IPv4 address this app could not put back if the change failed" } } }`;
+
+/**
  * Build the PowerShell one-shot that applies an IPv4 configuration.
  *
  * The interface is resolved by GUID rather than by name because `netsh` and the
@@ -739,7 +781,7 @@ export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): st
 		mutation.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`, dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses', `if (-not (Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq '${config.address}' })) { throw "the address was accepted but is not on the interface" }`);
 	}
 	const guarded = `try { ${mutation.join('; ')} } catch { $applyError = $_; try { ${windowsRestoreSteps().join('; ')} } catch { throw "the change failed ($($applyError.Exception.Message)) and rolling it back also failed ($($_.Exception.Message))" }; throw $applyError }`;
-	return [...preamble, ...windowsSnapshotSteps(), WINDOWS_ALIAS_GUARD, WINDOWS_ROUTE_GUARD, guarded].join('; ');
+	return [...preamble, ...windowsSnapshotSteps(), WINDOWS_ALIAS_GUARD, WINDOWS_ROUTE_GUARD, WINDOWS_ORIGIN_GUARD, guarded].join('; ');
 }
 
 /**

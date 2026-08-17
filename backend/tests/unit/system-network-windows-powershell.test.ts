@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { WINDOWS_ALIAS_GUARD, WINDOWS_ROUTE_GUARD } from '../../src/system-network-windows.ts';
+import { WINDOWS_ALIAS_GUARD, WINDOWS_ORIGIN_GUARD, WINDOWS_ROUTE_GUARD } from '../../src/system-network-windows.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -85,6 +85,28 @@ describe.skipIf(process.platform !== 'win32')('windows apply fragments (live Pow
 			const result = await run(`${routes(10, 100)}; ${WINDOWS_ROUTE_GUARD}`);
 			expect(result.failed).toBe(true);
 			expect(result.stderr).toContain('several IPv4 default routes');
+		});
+	});
+
+	describe('the address-provenance guard', () => {
+		it('lets a hand-configured address through', async () => {
+			expect((await run(`$oldDhcp = 'Disabled'; ${addresses({ ip: '192.0.2.10' })}; ${WINDOWS_ORIGIN_GUARD}`)).failed).toBe(false);
+		});
+
+		// The restore re-creates these with New-NetIPAddress, which has no parameter
+		// for either origin — so an address Windows derived some other way comes back
+		// as a different object and the rollback's claim to have undone the change is
+		// not true.
+		it('refuses a static interface holding an address it could not re-create', async () => {
+			const result = await run(`$oldDhcp = 'Disabled'; ${addresses({ ip: '169.254.10.20', origin: 'WellKnown' })}; ${WINDOWS_ORIGIN_GUARD}`);
+			expect(result.failed).toBe(true);
+			expect(result.stderr).toContain('could not put back if the change failed');
+		});
+
+		// A DHCP interface is restored by re-enabling the lease, which puts the
+		// addresses back itself — nothing is re-created by hand, so nothing is lost.
+		it('says nothing about a DHCP interface, whose addresses it never re-creates', async () => {
+			expect((await run(`$oldDhcp = 'Enabled'; ${addresses({ ip: '192.0.2.10', origin: 'Dhcp' })}; ${WINDOWS_ORIGIN_GUARD}`)).failed).toBe(false);
 		});
 	});
 });

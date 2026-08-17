@@ -594,6 +594,31 @@ describe('windowsApplyIPv4Command', () => {
 		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).toContain('Select-Object NextHop, RouteMetric');
 	});
 
+	// A rollback that reports "the change was undone" has to leave the object it
+	// puts back equal to the one it removed. Re-creating an address from its value
+	// and prefix alone returns it with SkipAsSource false and an infinite lifetime
+	// whatever it had, and a route from its next hop and metric alone loses the
+	// protocol that created it and whether it was published.
+	it('snapshots and restores the properties a re-created object would otherwise lose', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
+		expect(command).toContain('Select-Object IPAddress, PrefixLength, PrefixOrigin, SuffixOrigin, SkipAsSource, ValidLifetime, PreferredLifetime');
+		expect(command).toContain('Select-Object NextHop, RouteMetric, Protocol, Publish');
+		expect(command).toContain('-SkipAsSource $a.SkipAsSource -ValidLifetime $a.ValidLifetime -PreferredLifetime $a.PreferredLifetime');
+		expect(command).toContain('-RouteMetric $r.RouteMetric -Protocol $r.Protocol -Publish $r.Publish');
+	});
+
+	// PrefixOrigin and SuffixOrigin have no parameter on New-NetIPAddress at all —
+	// Windows derives them from how the address came to exist — so an address that
+	// is not Manual/Manual cannot be handed back as the object it was. The DHCP
+	// branch is exempt because it re-creates nothing: it re-enables the lease.
+	it('refuses a static interface whose address provenance cannot be replayed', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
+		expect(command).toContain("if ($oldDhcp -ne 'Enabled') { foreach ($a in $oldAddresses)");
+		expect(command).toContain("$a.PrefixOrigin -ne 'Manual' -or $a.SuffixOrigin -ne 'Manual'");
+		expect(command).toContain('could not put back if the change failed');
+		expect(command.indexOf('could not put back')).toBeLessThan(command.indexOf('try { try { Remove-NetIPAddress'));
+	});
+
 	it('rolls the snapshot back when any step of the change fails', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
 		// The mutation runs inside a guard, and the guard restores before rethrowing.
