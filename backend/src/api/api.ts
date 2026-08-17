@@ -1,4 +1,5 @@
 import { type ServerWebSocket } from 'bun';
+import { Mutex } from 'async-mutex';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import type { PeerCountEntry } from '../protocol/network.ts';
@@ -140,6 +141,24 @@ export class APIServer {
 	private readonly dataServer: DataServer;
 	private readonly networks: Networks;
 	private readonly _upload: ReturnType<typeof initUploadHandlers>;
+	/**
+	 * Serialises parsing an import, however the file arrived. Parsing is where the
+	 * memory actually goes: the file is held as a buffer, decompressed into a
+	 * second buffer, decoded into a string and then parsed into an object graph,
+	 * and the last two are usually several times the file. Chunking bounds what
+	 * arrives on the wire, not that.
+	 *
+	 * Shared by every `parseFrom*` entry point, uploaded or not — it used to sit
+	 * inside the upload handlers and cover only `parseFromUpload`, so any number of
+	 * direct parses could still run side by side with it.
+	 *
+	 * What it guarantees is one parse body at a time, which is not the same as a
+	 * ceiling on peak memory: the previous import's object graph is still being
+	 * serialised into its reply when the next parse starts, so two imports' worth
+	 * can briefly overlap. Bounding that as well would mean holding the lock across
+	 * the response write.
+	 */
+	private readonly importLock = new Mutex();
 	private _search: ReturnType<typeof import('./search.ts').initSearchManager> | null = null;
 	private _system: ReturnType<typeof import('./system.ts').initSystemHandlers> | null = null;
 
@@ -161,7 +180,15 @@ export class APIServer {
 		const _settings = initSettingsHandlers(this.settings);
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
-		this._upload = initUploadHandlers(dataDir);
+		this._upload = initUploadHandlers(dataDir, {}, this.importLock);
+		// Every way of parsing an import queues on the same lock. `parseFromUpload`
+		// reaches it through `withFile`; the rest are wrapped here. The inner calls
+		// below go straight to the domain handlers, never back through this table, so
+		// nothing re-enters the lock it is already holding.
+		const serialiseImport =
+			<P, T>(handler: (p: P, client: ClientSocket) => T | Promise<T>) =>
+			(p: P, client: ClientSocket): Promise<T> =>
+				this.importLock.runExclusive(async () => handler(p, client));
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn, this.settings);
 		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifest);
 		const _identity = initIdentityHandlers(this.networks);
@@ -206,18 +233,18 @@ export class APIServer {
 			'settings.reset': _settings.reset,
 			'settings.factoryReset': factoryReset,
 			'settings.exportToFile': _settings.exportToFile,
-			'settings.parseFromFile': _settings.parseFromFile,
+			'settings.parseFromFile': serialiseImport(_settings.parseFromFile),
 			'settings.parseFromUpload': (p, client) => this._upload.withFile(p, client, filePath => _settings.parseFromFile({ filePath })),
-			'settings.parseFromJSON': _settings.parseFromJSON,
-			'settings.parseFromURL': _settings.parseFromURL,
+			'settings.parseFromJSON': serialiseImport(_settings.parseFromJSON),
+			'settings.parseFromURL': serialiseImport(_settings.parseFromURL),
 			'settings.applyImported': _settings.applyImported,
 			// Identity
 			'identity.get': _identity.get,
 			'identity.exportToFile': _identity.exportToFile,
-			'identity.parseFromFile': _identity.parseFromFile,
+			'identity.parseFromFile': serialiseImport(_identity.parseFromFile),
 			'identity.parseFromUpload': (p, client) => this._upload.withFile(p, client, filePath => _identity.parseFromFile({ filePath })),
-			'identity.parseFromJSON': _identity.parseFromJSON,
-			'identity.parseFromURL': _identity.parseFromURL,
+			'identity.parseFromJSON': serialiseImport(_identity.parseFromJSON),
+			'identity.parseFromURL': serialiseImport(_identity.parseFromURL),
 			'identity.applyImported': _identity.applyImported,
 			'identity.regenerate': _identity.regenerate,
 			// LISH Networks
@@ -233,10 +260,10 @@ export class APIServer {
 			'lishnets.exportToFile': _lishnets.exportToFile,
 			'lishnets.exportAllToFile': _lishnets.exportAllToFile,
 			'lishnets.importFromFile': _lishnets.importFromFile,
-			'lishnets.parseFromFile': _lishnets.parseFromFile,
+			'lishnets.parseFromFile': serialiseImport(_lishnets.parseFromFile),
 			'lishnets.parseFromUpload': (p, client) => this._upload.withFile(p, client, path => _lishnets.parseFromFile({ path })),
-			'lishnets.parseFromJSON': _lishnets.parseFromJSON,
-			'lishnets.parseFromURL': _lishnets.parseFromURL,
+			'lishnets.parseFromJSON': serialiseImport(_lishnets.parseFromJSON),
+			'lishnets.parseFromURL': serialiseImport(_lishnets.parseFromURL),
 			'lishnets.setEnabled': _lishnets.setEnabled,
 			'lishnets.connect': _lishnets.connect,
 			'lishnets.findPeer': _lishnets.findPeer,
@@ -265,10 +292,10 @@ export class APIServer {
 			'lishs.importFromFile': _lishs.importFromFile,
 			'lishs.importFromJSON': _lishs.importFromJSON,
 			'lishs.importFromURL': _lishs.importFromURL,
-			'lishs.parseFromFile': _lishs.parseFromFile,
+			'lishs.parseFromFile': serialiseImport(_lishs.parseFromFile),
 			'lishs.parseFromUpload': (p, client) => this._upload.withFile(p, client, filePath => _lishs.parseFromFile({ filePath })),
-			'lishs.parseFromJSON': _lishs.parseFromJSON,
-			'lishs.parseFromURL': _lishs.parseFromURL,
+			'lishs.parseFromJSON': serialiseImport(_lishs.parseFromJSON),
+			'lishs.parseFromURL': serialiseImport(_lishs.parseFromURL),
 			'lishs.verify': _lishs.verify,
 			'lishs.verifyAll': _lishs.verifyAll,
 			'lishs.stopVerify': _lishs.stopVerify,

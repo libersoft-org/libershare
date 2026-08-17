@@ -1,4 +1,5 @@
 import { describe, expect, it, afterAll } from 'bun:test';
+import { Mutex } from 'async-mutex';
 import { mkdir, readdir, rm, utimes } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -174,9 +175,20 @@ describe('decodeBinaryRequest', () => {
 function startUploadServer(limits: UploadLimits = {}, swallowOnce: Set<string> = new Set()): { url: string; dataDir: string; uploadDir: string; stop: () => void } {
 	const dataDir = join(tmpdir(), `lish-upload-test-${crypto.randomUUID()}`);
 	tempDirs.push(dataDir);
-	const handlers = initUploadHandlers(dataDir, limits);
+	// The same lock the real server shares between the upload handlers and every
+	// direct `parseFrom*` entry, so both kinds of import are exercised against it.
+	const importLock = new Mutex();
+	const handlers = initUploadHandlers(dataDir, limits, importLock);
 	let concurrentReads = 0;
 	let peakConcurrentReads = 0;
+	/** Body of a slow import, counting how many were ever running together. */
+	async function slowImport(): Promise<{ peak: number }> {
+		concurrentReads++;
+		peakConcurrentReads = Math.max(peakConcurrentReads, concurrentReads);
+		await Bun.sleep(150);
+		concurrentReads--;
+		return { peak: peakConcurrentReads };
+	}
 	const table: Record<string, (p: any, client: unknown) => unknown> = {
 		'upload.begin': handlers.begin,
 		'upload.chunk': handlers.chunk,
@@ -193,14 +205,10 @@ function startUploadServer(limits: UploadLimits = {}, swallowOnce: Set<string> =
 		'upload.text': (p, client) => handlers.withFile(p, client, path => Utils.readFileCompressed(path)),
 		// A read slow enough for a concurrent one to overlap it, reporting the
 		// highest number that were ever in flight together.
-		'upload.slowRead': (p, client) =>
-			handlers.withFile(p, client, async () => {
-				concurrentReads++;
-				peakConcurrentReads = Math.max(peakConcurrentReads, concurrentReads);
-				await Bun.sleep(150);
-				concurrentReads--;
-				return { peak: peakConcurrentReads };
-			}),
+		'upload.slowRead': (p, client) => handlers.withFile(p, client, slowImport),
+		// Stand-in for a direct `settings.parseFromFile` — an import that never went
+		// through an upload at all. Wrapped the way `APIServer` wraps the real ones.
+		'settings.slowParse': () => importLock.runExclusive(slowImport),
 	};
 	const server = Bun.serve<Record<string, never>, never>({
 		port: 0,
@@ -1204,6 +1212,25 @@ describe('chunked upload over the websocket', () => {
 			for (const result of overlaps) expect(result.peak).toBe(1);
 		} finally {
 			for (const client of clients) client.stopReconnect();
+			srv.stop();
+		}
+	}, 30000);
+
+	it('does not let a direct parse run alongside an uploaded one', async () => {
+		const srv = startUploadServer();
+		const uploader = new WsClient(srv.url, () => {});
+		const direct = new WsClient(srv.url, () => {});
+		try {
+			const uploadID = await upload(uploader, 'via-upload.lish', pattern(64 * 1024), 64 * 1024);
+			// The lock used to live inside the upload handlers and cover only the
+			// uploaded path, so a direct parse — the same buffers, the same object
+			// graph — ran straight through beside it.
+			const [viaUpload, viaPath] = await Promise.all([uploader.call<{ peak: number }>('upload.slowRead', { uploadID }), direct.call<{ peak: number }>('settings.slowParse')]);
+			expect(viaUpload.peak).toBe(1);
+			expect(viaPath.peak).toBe(1);
+		} finally {
+			uploader.stopReconnect();
+			direct.stopReconnect();
 			srv.stop();
 		}
 	}, 30000);

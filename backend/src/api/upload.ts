@@ -153,7 +153,7 @@ interface UploadHandlers {
  * The limits are only ever overridden by tests, which would otherwise have to
  * write the real ceilings to disk to reach them.
  */
-export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): UploadHandlers {
+export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, importLock: Mutex = new Mutex()): UploadHandlers {
 	const maxUploadSize = limits.maxUploadSize ?? MAX_API_MESSAGE_SIZE;
 	const maxTotalBytes = limits.maxTotalBytes ?? MAX_TOTAL_UPLOAD_BYTES;
 	const maxTotalUploads = limits.maxTotalUploads ?? MAX_TOTAL_UPLOADS;
@@ -168,17 +168,6 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 	 * the slow part of receiving a file.
 	 */
 	let totalBytes = 0;
-
-	/**
-	 * Serialises reading an upload. Parsing an import is where the memory actually
-	 * goes: the file is held as a buffer, decompressed into a second buffer, decoded
-	 * into a string and then parsed into an object graph, and the last two are
-	 * usually several times the file. Chunking bounds what arrives on the wire, not
-	 * that. One at a time keeps peak memory at one import's worth however many
-	 * clients ask at once — the alternative is a multiple of it with no bound but
-	 * the socket count.
-	 */
-	const parseLock = new Mutex();
 
 	/**
 	 * Drop uploads nobody finished and files nobody owns. Two separate problems:
@@ -533,7 +522,7 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 		// before its parse had even started.
 		upload.state = 'queued';
 		try {
-			return await parseLock.runExclusive(async () => {
+			return await importLock.runExclusive(async () => {
 				// The wait above is unbounded, so the owner may well be gone by the time
 				// the lock comes free. Parsing an import nobody is listening for is pure
 				// cost, and it is the expensive part of the whole operation.
