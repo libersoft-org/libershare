@@ -2768,7 +2768,12 @@ export class Network {
 		// (see {@link bareDialEndpoint}), while a configured entry always carries the ID.
 		// Comparing the two canonical forms as-is matched nothing, so the trim this whole
 		// teardown is built on silently did nothing for every ordinary address.
-		const removed = new Set(removedAddresses.map(bareDialEndpoint));
+		// Only the addresses the registry has actually LET GO. An address another network
+		// still claims, or one gossip announced and a dial verified, survives the drop
+		// (see {@link dropConfiguredOwnership}) and is still dialed from the registry —
+		// while the peerStore is not per network, so trimming it there would take away
+		// an address on behalf of an owner that never asked.
+		const removed = new Set(removedAddresses.filter(a => !this.bootstrapByAddress.has(normalizeMultiaddrForCompare(a))).map(bareDialEndpoint));
 		if (removed.size > 0) {
 			try {
 				const rec = await this.node.peerStore.get(pid);

@@ -1309,6 +1309,24 @@ describe('reconcilePeerAfterBootstrapRemoval', () => {
 	});
 
 	/**
+	 * The removal list is what the EDITING network let go of. An address of it that
+	 * another network still claims, or that gossip announced and a dial verified,
+	 * stayed in the registry and is still dialed from there — so taking it out of the
+	 * peerStore, which has no notion of owners, disarms an address nobody dropped.
+	 */
+	it('leaves an address another network still claims in the peerStore', async () => {
+		const { network, patched } = bareNetwork(true, [OLD, OTHER], [{ address: OLD, configuredBy: ['net-b'] }]);
+		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [OLD], 'net-a');
+		expect(patched).toEqual([]);
+	});
+
+	it('leaves an address gossip still vouches for in the peerStore', async () => {
+		const { network, patched } = bareNetwork(true, [OLD, OTHER], [{ address: OLD, discovered: true, lastVerifiedAt: Date.now() }]);
+		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [OLD], 'net-a');
+		expect(patched).toEqual([]);
+	});
+
+	/**
 	 * The edit removed ONE address; whatever else the registry holds of this peer —
 	 * another network's claim, or a discovered address a dial verified — is untouched by
 	 * it, and the open connection is as likely to be running over one of those. Tearing
