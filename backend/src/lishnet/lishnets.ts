@@ -124,11 +124,28 @@ export class Networks {
 	private readonly activeReconciles = new Set<Promise<unknown>>();
 
 	/**
-	 * True from the synchronous start of {@link stopAllNetworks} until the next
-	 * {@link startEnabledNetworks}. Startup joins consult it because the node's own
-	 * `isRunning()` cannot answer for the window before `stop()` has taken its mutex.
+	 * A stop has been ASKED for — set synchronously by {@link stopAllNetworks}, cleared by
+	 * the next successful {@link startEnabledNetworks}.
+	 *
+	 * Only ever an intent. Runtime work still under way consults it so it does not build
+	 * anything new on a node about to go down — {@link canJoin} needs it because the node's
+	 * own `isRunning()` cannot answer for the window before `stop()` has taken its mutex.
+	 * It deliberately does NOT gate admission; see {@link reconcileAdmissionClosed}.
 	 */
-	private shuttingDown = false;
+	private stopRequested = false;
+	/**
+	 * No further convergence may be RESERVED — set inside the stop's own catalog section.
+	 *
+	 * Set from the intent instead, it closed the door ahead of writers that were already
+	 * queued on the catalog: such a writer reached its database write before the stop reached
+	 * the catalog at all, and {@link reconcileLater} then handed it neither a reservation nor
+	 * a ticket, so the barrier had nothing to drain and its row never reached the runtime.
+	 * Set here, every writer that got the catalog first is drained, and only writers that
+	 * arrive after the stop's catalog section are deferred — by which point the drain has
+	 * finished and no convergence can be in flight, which is what makes {@link currentState}
+	 * a stable answer for them.
+	 */
+	private reconcileAdmissionClosed = false;
 
 	// Callback for peer count changes
 	private _onPeerCountChange: ((counts: { networkID: string; count: number }[]) => void) | null = null;
@@ -206,7 +223,8 @@ export class Networks {
 	 * The node always starts, even if no lishnets are enabled.
 	 */
 	async startEnabledNetworks(): Promise<void> {
-		this.shuttingDown = false;
+		this.stopRequested = false;
+		this.reconcileAdmissionClosed = false;
 
 		// Start the node with no preset bootstrap list — bootstrap dials happen
 		// per-network below via addBootstrapPeers so per-network status tracking
@@ -257,13 +275,13 @@ export class Networks {
 	/**
 	 * Whether a runtime join may go ahead right now.
 	 *
-	 * Both halves matter. `shuttingDown` is set synchronously by {@link stopAllNetworks},
+	 * Both halves matter. `stopRequested` is set synchronously by {@link stopAllNetworks},
 	 * so it covers the window before `Network.stop()` has even reached its own mutex, in
 	 * which `isRunning()` still answers true; `isRunning()` covers a node that is down for
 	 * any other reason, including a stop whose teardown failed.
 	 */
 	private canJoin(): boolean {
-		return !this.shuttingDown && this.network.isRunning();
+		return !this.stopRequested && this.network.isRunning();
 	}
 
 	/**
@@ -323,14 +341,16 @@ export class Networks {
 	 * catalog, so nothing can slip in front of it on any of them.
 	 *
 	 * The reservation is also the shutdown's ticket — see {@link activeReconciles}. Both the
-	 * enqueue and the registration are synchronous, so a job is known to the barrier from the
-	 * moment its database write happened, never from some later turn of the loop.
+	 * enqueue and the registration are synchronous, and both happen in the same catalog
+	 * section as the database write, so every write admitted after the last stop closed its
+	 * door is known to the barrier from the moment it happened.
 	 */
 	private reconcileLater(id: string): Promise<ReconcileOutcome> {
-		// {@link stopAllNetworks} closes the door here and then drains what is already
-		// through it. A convergence started now would work on a node about to go down, and
-		// the stop clears the runtime state anyway; the database write it belongs to stands.
-		if (this.shuttingDown) {
+		// {@link stopAllNetworks} closes the door here — from inside its own catalog section,
+		// see {@link reconcileAdmissionClosed} — and drains what is already through it. A
+		// convergence reserved now would work on a node that is down or terminally failed;
+		// the database write it belongs to stands and the next start converges on it.
+		if (this.reconcileAdmissionClosed) {
 			this.forgetIfGone(id);
 			return Promise.resolve(this.currentState(id));
 		}
@@ -355,7 +375,13 @@ export class Networks {
 		return job;
 	}
 
-	/** The lishnet as it stands right now, for a convergence that was never run. */
+	/**
+	 * The lishnet as it stands right now, for a convergence that was never run.
+	 *
+	 * Read without the per-lishnet lock, which is only sound where it is used: the single
+	 * caller holds the catalog with admission already closed, so the drain has finished and
+	 * nothing can reserve a convergence that would move `joinedNetworks` underneath it.
+	 */
 	private currentState(id: string): ReconcileOutcome {
 		const row = this.get(id);
 		const outcome: ReconcileOutcome = { transitioned: false, joined: this.joinedNetworks.has(id) };
@@ -683,13 +709,15 @@ export class Networks {
 		// Set before anything is awaited — `Network.stop()` does not reach its own mutex
 		// until the next microtask, so `isRunning()` alone still reads true for a moment
 		// and a startup loop in that moment would subscribe onto a node about to die.
-		this.shuttingDown = true;
-		// Taking the catalog closes the door on new work in both phases at once: no further
-		// row can be written, and {@link reconcileLater} — which reserves only from inside a
-		// catalog body — can no longer register a convergence. Everything already through
-		// that door is in {@link activeReconciles} and is waited for below, so the node is
-		// stopped with no join or leave still holding a subscription, a peer or a dial.
+		this.stopRequested = true;
+		// The door is closed from INSIDE the catalog, not here: a writer already queued on
+		// the catalog reaches its database write before this call reaches the catalog at
+		// all, and it has to get its reservation so the drain below covers it — see
+		// {@link reconcileAdmissionClosed}. Everything through that door is in
+		// {@link activeReconciles} and is waited for below, so the node is stopped with no
+		// join or leave still holding a subscription, a peer or a dial.
 		await this.catalogMutex.runExclusive(async () => {
+			this.reconcileAdmissionClosed = true;
 			// A join parked on a sequential walk of unreachable bootstrap addresses would hold
 			// the drain for one connection timeout per address. Cancelling first is what keeps
 			// waiting for it from presenting as a frozen shutdown.
@@ -709,7 +737,8 @@ export class Networks {
 				// subscriptions, so this layer has to go on managing it — leaving the flag set
 				// would make every later write refuse its runtime half, and a disable would
 				// once again write `enabled=false` over a network we are demonstrably still in.
-				this.shuttingDown = false;
+				this.stopRequested = false;
+				this.reconcileAdmissionClosed = false;
 				throw err;
 			}
 			// Per-run, like `joinedNetworks` itself. Surviving a stop left the map claiming

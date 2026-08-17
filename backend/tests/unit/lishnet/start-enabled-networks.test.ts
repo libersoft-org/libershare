@@ -33,6 +33,7 @@ function makeMockNet(startGate: Promise<void>) {
 		},
 		async stop(): Promise<void> {
 			this.running = false;
+			this.events.push('stop');
 		},
 		isRunning(): boolean {
 			return this.running;
@@ -43,7 +44,10 @@ function makeMockNet(startGate: Promise<void>) {
 		},
 		unsubscribeTopic(id: string): void {
 			this.unsubscribed.push(id);
+			this.events.push(`unsubscribe:${id}`);
 		},
+		/** Ordered log of the runtime calls a shutdown has to sequence correctly. */
+		events: [] as string[],
 		getTopicPeers: (): string[] => [],
 		getRecentTopicMembers: (): string[] => [],
 		isBootstrapOrRelayPeer: (): boolean => false,
@@ -78,7 +82,8 @@ function makeNetworks(net: ReturnType<typeof makeMockNet>, db: Database): Networ
 	(networks as any).activeReconciles = new Set();
 	(networks as any).announcedJoined = new Map<string, boolean>();
 	(networks as any).appliedBootstrap = new Map<string, string[]>();
-	(networks as any).shuttingDown = false;
+	(networks as any).stopRequested = false;
+	(networks as any).reconcileAdmissionClosed = false;
 	(networks as any)._onNetworkJoined = null;
 	(networks as any)._onNetworkLeft = null;
 	return networks;
@@ -200,6 +205,33 @@ describe('Networks.startEnabledNetworks — coordinated with concurrent changes'
 
 		expect(net.running).toBe(false);
 		expect(net.subscribed).toEqual(subscribedBefore);
+		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
+	});
+
+	/**
+	 * Admission used to close from the SYNCHRONOUS start of the stop, ahead of the catalog.
+	 * A writer already queued on the catalog then reached its database write first and still
+	 * got neither a reservation nor a ticket, so the barrier had nothing to drain: the row it
+	 * had just written never reached the runtime and the node went down still subscribed.
+	 */
+	it('drains a writer that reached the catalog before the stop did', async () => {
+		const net = makeMockNet(Promise.resolve());
+		const networks = makeNetworks(net, db);
+		await networks.startEnabledNetworks();
+		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
+
+		// Hold the catalog, so the disable queues on it and the stop queues behind the disable.
+		const release = await (networks as any).catalogMutex.acquire();
+		const disabling = networks.setEnabled(NET, false);
+		const stopping = networks.stopAllNetworks();
+		await settle();
+		release();
+		const [result] = await Promise.all([disabling, stopping]);
+
+		// The disable was admitted and drained: its leave ran, and it ran before the node went
+		// down rather than being dropped on the floor by the barrier.
+		expect(net.events).toEqual([`unsubscribe:${NET}`, 'stop']);
+		expect(result).toMatchObject({ found: true, transitioned: true, joined: false });
 		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
 	});
 
