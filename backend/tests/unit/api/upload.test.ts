@@ -251,6 +251,44 @@ async function entriesAfterSettle(uploadDir: string): Promise<string[]> {
 	return readdir(uploadDir).catch(() => [] as string[]);
 }
 
+/**
+ * The handlers on their own, with a plain object standing in for the socket.
+ * Driving them directly is the only way to land inside a specific await — over a
+ * real socket the close can arrive before the server has even read the request,
+ * so the window under test is never entered.
+ */
+function directHandlers(): { handlers: ReturnType<typeof initUploadHandlers>; uploadDir: string } {
+	const dataDir = join(tmpdir(), `lish-upload-direct-${crypto.randomUUID()}`);
+	tempDirs.push(dataDir);
+	return { handlers: initUploadHandlers(dataDir), uploadDir: join(dataDir, 'tmp') };
+}
+
+describe('upload lifecycle races', () => {
+	it('leaves no file behind when the socket closes during begin', async () => {
+		const { handlers, uploadDir } = directHandlers();
+		const client = {};
+		// Started but not awaited, so `closeClient` runs while `begin` is still
+		// inside its mkdir await — the window where the upload does not exist yet
+		// and the cleanup sweep therefore finds nothing to remove.
+		const started = handlers.begin({ name: 'orphan.lish' }, client).catch(() => null);
+		handlers.closeClient(client);
+		await started;
+		expect(await entriesAfterSettle(uploadDir)).toEqual([]);
+	});
+
+	it('leaves no file behind when the socket closes mid-chunk', async () => {
+		const { handlers, uploadDir } = directHandlers();
+		const client = {};
+		const { uploadID } = await handlers.begin({ name: 'midchunk.lish' }, client);
+		// The chunk is still writing when the close arrives; the cleanup must not
+		// end the writer underneath it.
+		const writing = handlers.chunk({ uploadID, data: pattern(2 * 1024 * 1024) }, client).catch(() => null);
+		handlers.closeClient(client);
+		await writing;
+		expect(await entriesAfterSettle(uploadDir)).toEqual([]);
+	});
+});
+
 describe('chunked upload over the websocket', () => {
 	it('assembles a file far larger than the old 16 MiB frame limit', async () => {
 		const srv = startUploadServer();
@@ -446,6 +484,50 @@ describe('chunked upload over the websocket', () => {
 			srv.stop();
 		}
 	});
+
+	it('does not let parallel begins exceed the per-socket cap', async () => {
+		const srv = startUploadServer();
+		const client = new WsClient(srv.url, () => {});
+		try {
+			// Fired without awaiting each other, which is what a client that ignores
+			// the acks looks like. The cap is computed before an await, so without
+			// serialisation every one of these sees `open === 0` and succeeds.
+			const results = await Promise.allSettled(Array.from({ length: 12 }, (_, i) => client.call<{ uploadID: string }>('upload.begin', { name: `p${i}.lish` })));
+			const started = results.filter(r => r.status === 'fulfilled').length;
+			expect(started).toBeLessThanOrEqual(4);
+			// Every rejection is one of the two limits, never an internal error.
+			for (const r of results) {
+				if (r.status === 'rejected') expect([ErrorCodes.TOO_MANY_UPLOADS, ErrorCodes.UPLOAD_BUSY]).toContain((r.reason as any).code);
+			}
+			expect((await readdir(srv.uploadDir)).length).toBe(started);
+		} finally {
+			client.stopReconnect();
+			srv.stop();
+		}
+	}, 30000);
+
+	it('refuses a second upload operation while one is in flight', async () => {
+		const srv = startUploadServer();
+		const client = new WsClient(srv.url, () => {});
+		try {
+			const { uploadID } = await client.call<{ uploadID: string }>('upload.begin', { name: 'pipelined.lish' });
+			// Pipelined chunks would otherwise interleave on one FileSink and race
+			// the size counter.
+			const results = await Promise.allSettled([client.callBinary('upload.chunk', { uploadID }, pattern(1024 * 1024, 1)), client.callBinary('upload.chunk', { uploadID }, pattern(1024 * 1024, 2)), client.callBinary('upload.chunk', { uploadID }, pattern(1024 * 1024, 3))]);
+			const accepted = results.filter(r => r.status === 'fulfilled').length;
+			expect(accepted).toBeGreaterThanOrEqual(1);
+			for (const r of results) {
+				if (r.status === 'rejected') expect((r.reason as any).code).toBe(ErrorCodes.UPLOAD_BUSY);
+			}
+			// The file holds exactly the chunks that were acknowledged — no partial
+			// or interleaved write survived.
+			const { path } = await client.call<{ path: string }>('upload.end', { uploadID });
+			expect(Bun.file(path).size).toBe(accepted * 1024 * 1024);
+		} finally {
+			client.stopReconnect();
+			srv.stop();
+		}
+	}, 30000);
 
 	it('reads a compressed upload back through the same path an import takes', async () => {
 		const srv = startUploadServer();

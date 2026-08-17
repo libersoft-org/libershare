@@ -70,6 +70,7 @@
 		"errorTooManyUploads": "Souběžně běží příliš mnoho nahrávání (maximum {detail})",
 		"errorUploadInvalidChunk": "Nahrávání odeslalo neplatnou část dat",
 		"errorUploadChunkTooLarge": "Jedna část nahrávaného souboru nesmí přesáhnout {detail}",
+		"errorUploadBusy": "Na tomto spojení stále běží jiný krok nahrávání",
 		"errorParseError": "Neplatný formát požadavku",
 		"errorMethodRequired": "Metoda je povinná",
 		"errorUnknownMethod": "Neznámá metoda: {detail}",

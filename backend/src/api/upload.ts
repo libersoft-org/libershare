@@ -94,6 +94,58 @@ export function initUploadHandlers(dataDir: string, maxUploadSize: number = MAX_
 		return upload;
 	}
 
+	/**
+	 * The operation currently running for a socket, and the sockets that have
+	 * disconnected. Both are keyed by the socket object itself, so the entries
+	 * disappear with the socket rather than accumulating.
+	 */
+	const inFlight = new WeakMap<object, Promise<void>>();
+	const disconnected = new WeakSet<object>();
+
+	/** The socket as a weak-collection key, or null for a non-object caller (tests). */
+	function clientKey(client: unknown): object | null {
+		return typeof client === 'object' && client !== null ? client : null;
+	}
+
+	/** True once the owning socket has closed, so work started before that must stop. */
+	function isGone(client: unknown): boolean {
+		const key = clientKey(client);
+		return key !== null && disconnected.has(key);
+	}
+
+	/**
+	 * Run one upload operation for a socket, refusing a second while it is in
+	 * flight. `Bun.serve` does not await an async `websocket.message` handler — it
+	 * dispatches the next frame straight away (measured: five pipelined frames all
+	 * entered the handler before the first returned) — so without this every
+	 * handler below could run concurrently against the same `Upload`, racing the
+	 * size counter, the shared `FileSink` and the map entry itself.
+	 *
+	 * Refusing rather than queueing is deliberate: a queue has no bound, and the
+	 * only client that trips this is one ignoring the ack it is supposed to wait
+	 * for.
+	 */
+	async function exclusive<T>(client: unknown, run: () => Promise<T>): Promise<T> {
+		const key = clientKey(client);
+		if (!key) return run();
+		if (inFlight.has(key)) throw new CodedError(ErrorCodes.UPLOAD_BUSY);
+		const result = run();
+		// Stored as a promise that always resolves, so disconnect cleanup can wait
+		// for the operation to finish without inheriting its rejection.
+		inFlight.set(
+			key,
+			result.then(
+				() => {},
+				() => {}
+			)
+		);
+		try {
+			return await result;
+		} finally {
+			inFlight.delete(key);
+		}
+	}
+
 	/** Close and delete a partial transfer. Safe to call on one that is already gone. */
 	async function discard(uploadID: string): Promise<void> {
 		const upload = uploads.get(uploadID);
@@ -107,21 +159,31 @@ export function initUploadHandlers(dataDir: string, maxUploadSize: number = MAX_
 		await rm(upload.path, { force: true }).catch(() => {});
 	}
 
-	async function begin(p: { name?: string }, client: unknown): Promise<{ uploadID: string }> {
-		let open = 0;
-		for (const upload of uploads.values()) if (upload.client === client) open++;
-		if (open >= MAX_CONCURRENT_UPLOADS) throw new CodedError(ErrorCodes.TOO_MANY_UPLOADS, String(MAX_CONCURRENT_UPLOADS));
-		await mkdir(uploadDir, { recursive: true });
-		await sweep();
-		const uploadID = randomUUID();
-		const path = join(uploadDir, uploadFileName(p.name ?? 'upload'));
-		uploads.set(uploadID, { path, writer: Bun.file(path).writer(), written: 0, client });
-		console.log(`[API] Upload started: ${uploadID} → ${path}`);
-		return { uploadID };
+	function begin(p: { name?: string }, client: unknown): Promise<{ uploadID: string }> {
+		return exclusive(client, async () => {
+			let open = 0;
+			for (const upload of uploads.values()) if (upload.client === client) open++;
+			if (open >= MAX_CONCURRENT_UPLOADS) throw new CodedError(ErrorCodes.TOO_MANY_UPLOADS, String(MAX_CONCURRENT_UPLOADS));
+			await mkdir(uploadDir, { recursive: true });
+			await sweep();
+			// The socket can close while the two awaits above run, and `closeClient`
+			// would have found nothing to clean up. Registering the upload now would
+			// leave one owned by a dead socket that nobody can finish or abort.
+			if (isGone(client)) throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, 'client disconnected');
+			const uploadID = randomUUID();
+			const path = join(uploadDir, uploadFileName(p.name ?? 'upload'));
+			uploads.set(uploadID, { path, writer: Bun.file(path).writer(), written: 0, client });
+			console.log(`[API] Upload started: ${uploadID} → ${path}`);
+			return { uploadID };
+		});
 	}
 
-	async function chunk(p: { uploadID: string; data: Uint8Array }, client: unknown): Promise<{ received: number }> {
+	function chunk(p: { uploadID: string; data: Uint8Array }, client: unknown): Promise<{ received: number }> {
 		assert(p, ['uploadID', 'data']);
+		return exclusive(client, () => receiveChunk(p, client));
+	}
+
+	async function receiveChunk(p: { uploadID: string; data: Uint8Array }, client: unknown): Promise<{ received: number }> {
 		// Ownership first: the discard below must not be reachable for a stranger
 		// who merely guessed someone else's upload id.
 		const upload = owned(p.uploadID, client);
@@ -159,26 +221,41 @@ export function initUploadHandlers(dataDir: string, maxUploadSize: number = MAX_
 		return { received: upload.written };
 	}
 
-	async function end(p: { uploadID: string }, client: unknown): Promise<{ path: string }> {
+	function end(p: { uploadID: string }, client: unknown): Promise<{ path: string }> {
 		assert(p, ['uploadID']);
-		const upload = owned(p.uploadID, client);
-		uploads.delete(p.uploadID);
-		await upload.writer.end();
-		console.log(`[API] Upload stored: ${upload.path} (${upload.written} bytes)`);
-		return { path: upload.path };
+		return exclusive(client, async () => {
+			const upload = owned(p.uploadID, client);
+			uploads.delete(p.uploadID);
+			await upload.writer.end();
+			console.log(`[API] Upload stored: ${upload.path} (${upload.written} bytes)`);
+			return { path: upload.path };
+		});
 	}
 
-	async function abort(p: { uploadID: string }, client: unknown): Promise<void> {
+	function abort(p: { uploadID: string }, client: unknown): Promise<void> {
 		assert(p, ['uploadID']);
-		// A transfer that is already gone is not an error: the client aborts on any
-		// failure, including one that discarded the transfer on its way out.
-		const upload = uploads.get(p.uploadID);
-		if (!upload || upload.client !== client) return;
-		await discard(p.uploadID);
+		return exclusive(client, async () => {
+			// A transfer that is already gone is not an error: the client aborts on any
+			// failure, including one that discarded the transfer on its way out.
+			const upload = uploads.get(p.uploadID);
+			if (!upload || upload.client !== client) return;
+			await discard(p.uploadID);
+		});
 	}
 
 	function closeClient(client: unknown): void {
-		for (const [uploadID, upload] of uploads) if (upload.client === client) void discard(uploadID);
+		const key = clientKey(client);
+		// Recorded before anything else, so an operation still mid-await can see
+		// that its socket is gone and stop rather than register an orphan.
+		if (key) disconnected.add(key);
+		const pending = key ? inFlight.get(key) : undefined;
+		void (async () => {
+			// An operation can still be mid-await when the socket closes. Discarding
+			// underneath it would end the writer while that operation is writing to
+			// it, so wait for it to finish first.
+			if (pending) await pending;
+			for (const [uploadID, upload] of uploads) if (upload.client === client) await discard(uploadID);
+		})();
 	}
 
 	function wipe(): void {
