@@ -442,10 +442,14 @@ interface IStoredAddress {
  * both halves is what closes that window. Calling the public methods while holding it
  * would deadlock, hence the unlocked inner pair.
  *
- * It is a lock, not a transaction, and it does not cover everything the store does:
- * `all()` deletes records it finds expired straight through the datastore, with no lock
- * at all, and this node walks `peerStore.all()` on a timer. What the lock guarantees is
- * that no ordinary `get`/`save`/`patch`/`merge`/`delete` for THIS peer interleaves.
+ * It is a lock, not a transaction, and it does not cover everything the store does. What
+ * it guarantees is that no ordinary `get`/`save`/`patch`/`merge`/`delete` for THIS peer
+ * interleaves. `peerStore.all()`, which this node walks on a timer, used to delete
+ * records it judged expired straight through the datastore under no lock at all — from a
+ * snapshot taken before any of those writes — and the local dependency patch stops it (it
+ * skips instead, leaving the cleanup to the next locked read or write of that peer).
+ * `load()` still deletes an expired record it reads, so a record CAN still disappear
+ * between two reads of a locked read-modify-write; that is what `patchExisting` is for.
  */
 interface IPeerStoreInternals {
 	getWriteLock(peerID: PeerID): Promise<() => void>;
