@@ -674,9 +674,15 @@ describe('windowsApplyIPv4Command', () => {
 		// The active-only branches say so; the both-stores branches say nothing, which
 		// is what writes both.
 		expect(command).toContain('-PreferredLifetime $a.PreferredLifetime -PolicyStore ActiveStore -ErrorAction Stop');
-		expect(command).toContain('-PreferredLifetime $a.PreferredLifetime -PolicyStore PersistentStore -ErrorAction Stop');
 		expect(command).toContain('-Confirm:$false -PolicyStore ActiveStore -ErrorAction Stop');
-		expect(command).toContain('-Confirm:$false -PolicyStore PersistentStore -ErrorAction Stop');
+		// A persistent-only object is created into both and its active copy taken away,
+		// because neither creating cmdlet can be pointed at the persistent store —
+		// New-NetIPAddress is documented "Specify ActiveStore only" and New-NetRoute says
+		// of PersistentStore "Cannot be used".
+		expect(command).toContain('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $a.IPAddress -PolicyStore ActiveStore -Confirm:$false -ErrorAction Stop');
+		expect(command).toContain("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop $r.NextHop -PolicyStore ActiveStore -Confirm:$false -ErrorAction Stop");
+		expect(command).not.toContain('New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $a.IPAddress -PrefixLength $a.PrefixLength -Type $a.Type -SkipAsSource $a.SkipAsSource -ValidLifetime $a.ValidLifetime -PreferredLifetime $a.PreferredLifetime -PolicyStore PersistentStore');
+		expect(command).not.toContain('-Confirm:$false -PolicyStore PersistentStore -ErrorAction Stop | Out-Null');
 	});
 
 	it('keeps the route metrics in the snapshot, not just the next hops', () => {

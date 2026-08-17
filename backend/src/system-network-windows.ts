@@ -723,8 +723,8 @@ function windowsSnapshotSteps(): string[] {
  * `$addressingChanged` in {@link windowsApplyIPv4Command}.
  */
 function windowsRestoreAddressingSteps(): string[] {
-	const restoreStatic = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', ...restorePerStore('$a', '$oldActiveAddresses', '$oldPersistentAddresses', 'IPAddress', NEW_ADDRESS), ...restorePerStore('$r', '$oldActiveRoutes', '$oldPersistentRoutes', 'NextHop', NEW_ROUTE)].join('; ');
-	const restoreDhcp = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', ...restorePerStore('$r', '$oldActiveRoutes', '$oldPersistentRoutes', 'NextHop', NEW_ROUTE, NOT_FROM_A_LEASE)].join('; ');
+	const restoreStatic = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', ...restorePerStore('$a', '$oldActiveAddresses', '$oldPersistentAddresses', 'IPAddress', NEW_ADDRESS, REMOVE_ACTIVE_ADDRESS), ...restorePerStore('$r', '$oldActiveRoutes', '$oldPersistentRoutes', 'NextHop', NEW_ROUTE, REMOVE_ACTIVE_ROUTE)].join('; ');
+	const restoreDhcp = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', ...restorePerStore('$r', '$oldActiveRoutes', '$oldPersistentRoutes', 'NextHop', NEW_ROUTE, REMOVE_ACTIVE_ROUTE, NOT_FROM_A_LEASE)].join('; ');
 	return [...windowsRemovalSteps(), `if ($oldDhcp -eq 'Enabled') { ${restoreDhcp} } else { ${restoreStatic} }`];
 }
 
@@ -772,6 +772,18 @@ const NEW_ADDRESS = 'New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IP
  */
 const NEW_ROUTE = "New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop $r.NextHop -RouteMetric $r.RouteMetric -Protocol $r.Protocol -Publish $r.Publish -ValidLifetime $r.ValidLifetime -PreferredLifetime $r.PreferredLifetime -Confirm:$false";
 
+/**
+ * Take away one object's ActiveStore copy, leaving its persistent one — the second
+ * half of restoring something that was persistent-only. See {@link restorePerStore}.
+ *
+ * Addressed by identity rather than by interface, because this runs while the
+ * restore has already put other objects back and must take only the one it just
+ * created. Unlike the creating cmdlets, both removals genuinely accept either store.
+ */
+const REMOVE_ACTIVE_ADDRESS = 'Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $a.IPAddress -PolicyStore ActiveStore -Confirm:$false';
+/** The same for a default route. */
+const REMOVE_ACTIVE_ROUTE = "Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop $r.NextHop -PolicyStore ActiveStore -Confirm:$false";
+
 /** Put the resolvers back — a manual override as itself, anything else as automatic. */
 const WINDOWS_RESTORE_DNS = 'if ($oldDnsManual.Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $oldDnsManual } else { Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses }';
 
@@ -785,10 +797,25 @@ const WINDOWS_RESTORE_DNS = 'if ($oldDnsManual.Count -gt 0) { Set-DnsClientServe
  * can hold something a DHCP lease produced — see {@link NOT_FROM_A_LEASE}. An
  * object in the persistent store is always this machine's own and always goes
  * back.
+ *
+ * The persistent-only case cannot be written the way it reads. There is no
+ * `-PolicyStore PersistentStore` to create with: `New-NetIPAddress` is documented
+ * "Specify ActiveStore only", and `New-NetRoute` says of PersistentStore, in as
+ * many words, "Cannot be used" — on both cmdlets the parameter exists to create an
+ * object in JUST the active store, and omitting it is the only way to reach the
+ * persistent one at all. Emitting it anyway made the rollback fail exactly when it
+ * was needed: the removals ahead of it had already cleared both stores, so an
+ * interface whose address was persistent-only came out of a failed apply with no
+ * address in either. So the object is created into both stores and its active copy
+ * taken away again, which leaves the persistent store holding it and the active
+ * store as it was. The interface carries that address for the moment in between,
+ * which is the whole of the difference and is not observable outside the rollback.
  */
-function restorePerStore(item: string, active: string, persistent: string, identity: string, create: string, activeOnlyCondition: string = ''): string[] {
+function restorePerStore(item: string, active: string, persistent: string, identity: string, create: string, removeActive: string, activeOnlyCondition: string = ''): string[] {
+	const inBothStores = `${create} -ErrorAction Stop | Out-Null`;
 	const activeOnly = `${create} -PolicyStore ActiveStore -ErrorAction Stop | Out-Null`;
-	return [`foreach (${item} in ${active}) { if (${persistent}.${identity} -contains ${item}.${identity}) { ${create} -ErrorAction Stop | Out-Null } else { ${activeOnlyCondition ? `if (${activeOnlyCondition}) { ${activeOnly} }` : activeOnly} } }`, `foreach (${item} in ${persistent}) { if (${active}.${identity} -notcontains ${item}.${identity}) { ${create} -PolicyStore PersistentStore -ErrorAction Stop | Out-Null } }`];
+	const persistentOnly = `${inBothStores}; ${tolerateMissing(removeActive)}`;
+	return [`foreach (${item} in ${active}) { if (${persistent}.${identity} -contains ${item}.${identity}) { ${inBothStores} } else { ${activeOnlyCondition ? `if (${activeOnlyCondition}) { ${activeOnly} }` : activeOnly} } }`, `foreach (${item} in ${persistent}) { if (${active}.${identity} -notcontains ${item}.${identity}) { ${persistentOnly} } }`];
 }
 
 /**

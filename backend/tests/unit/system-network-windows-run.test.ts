@@ -78,6 +78,12 @@ describe('windowsApplyIPv4Command, executed', () => {
 		expect(result.error).toContain('injected failure');
 		expect(result.addresses.map(a => a.IPAddress)).toEqual(['192.0.2.10']);
 		expect(result.addresses.map(a => a.Stores)).toEqual([['PersistentStore']]);
+		// And it got there the only way the provider allows: created into both stores,
+		// then the active copy taken away. Neither creating cmdlet can be pointed at the
+		// persistent store, so a rollback that tries lands in the catch that reports the
+		// apply as unrecoverable.
+		expect(result.calls).toContain('New-NetIPAddress:ActiveStore+PersistentStore');
+		expect(result.calls.filter(call => call.startsWith('New-') && call.includes('PersistentStore') && !call.includes('+'))).toEqual([]);
 	});
 
 	// The form posts the whole configuration whichever field was edited, so the

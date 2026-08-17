@@ -81,6 +81,12 @@ $script:newState = $fixture.newAddressState
 function ToSpan($value) { if ($null -eq $value) { [TimeSpan]::MaxValue } else { [TimeSpan]::Parse($value) } }
 function Live($item, $store) { $item.Stores -contains $store }
 
+# A removal that matched nothing, in the one category the apply is allowed to
+# ignore. The real cmdlets raise ObjectNotFound for it and anything else for a
+# genuine failure, and the whole of the apply's missing-object tolerance turns on
+# that distinction — stubs that never threw at all left it untested.
+function NotFound($message) { New-Object System.Management.Automation.ErrorRecord ([Exception]::new($message)), 'NotFound', ([System.Management.Automation.ErrorCategory]::ObjectNotFound), $null }
+
 function Note($name) {
 	[void]$script:log.Add($name)
 	$base = $name.Split(':')[0]
@@ -127,15 +133,19 @@ function Remove-NetIPAddress {
 	[CmdletBinding(SupportsShouldProcess = $true)] param($InterfaceIndex, $AddressFamily, $PolicyStore, $IPAddress)
 	$store = if ($PolicyStore) { $PolicyStore } else { 'ActiveStore' }
 	Note "Remove-NetIPAddress:$store"
-	foreach ($a in $script:addresses) { $a.Stores = @($a.Stores | Where-Object { $_ -ne $store }) }
+	$hit = @($script:addresses | Where-Object { (Live $_ $store) -and ($null -eq $IPAddress -or $_.IPAddress -eq $IPAddress) })
+	if ($hit.Count -eq 0) { throw (NotFound 'no matching MSFT_NetIPAddress objects found') }
+	foreach ($a in $hit) { $a.Stores = @($a.Stores | Where-Object { $_ -ne $store }) }
 	$script:addresses = @($script:addresses | Where-Object { $_.Stores.Count -gt 0 })
 }
 
 function Remove-NetRoute {
-	[CmdletBinding(SupportsShouldProcess = $true)] param($InterfaceIndex, $DestinationPrefix, $PolicyStore)
+	[CmdletBinding(SupportsShouldProcess = $true)] param($InterfaceIndex, $DestinationPrefix, $PolicyStore, $NextHop)
 	$store = if ($PolicyStore) { $PolicyStore } else { 'ActiveStore' }
 	Note "Remove-NetRoute:$store"
-	foreach ($r in $script:routes) { $r.Stores = @($r.Stores | Where-Object { $_ -ne $store }) }
+	$hit = @($script:routes | Where-Object { (Live $_ $store) -and ($null -eq $NextHop -or $_.NextHop -eq $NextHop) })
+	if ($hit.Count -eq 0) { throw (NotFound 'no matching MSFT_NetRoute objects found') }
+	foreach ($r in $hit) { $r.Stores = @($r.Stores | Where-Object { $_ -ne $store }) }
 	$script:routes = @($script:routes | Where-Object { $_.Stores.Count -gt 0 })
 }
 
