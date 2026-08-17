@@ -2492,12 +2492,12 @@ export class Network {
 			// deliberately tore down.
 			//
 			// A restore that already happened is followed up whatever the peer is doing now:
-			// the entry is back on disk, and a leave-network landing inside that write is
-			// honoured by the same path that would have taken back a restore made here.
+			// the entry is back on disk, and a peer that has since dropped again — or been
+			// left — is honoured by the same path, which takes the entry back rather than
+			// building dial state on top of it.
 			if (epoch !== this.runEpoch) return;
-			const after = node.getConnections(pid);
-			if (restoredWith !== null || (after.length > 0 && !this.isRedialSuppressed(peerID))) {
-				await this.restorePurgedPeerState(node, pid, after.length > 0 ? after : (restoredWith ?? []), epoch, snapshot, restoredWith !== null);
+			if (restoredWith !== null || (node.getConnections(pid).length > 0 && !this.isRedialSuppressed(peerID))) {
+				await this.restorePurgedPeerState(node, pid, epoch, snapshot, restoredWith !== null);
 			}
 		} catch (err: any) {
 			// An explicit teardown has no next cycle to fix this, and everything else it
@@ -2535,58 +2535,72 @@ export class Network {
 	 * `recordRestored` says the purge already wrote the record back inside the lock it held
 	 * for the delete, which is the better place for it — then only the in-memory state is
 	 * left to rebuild here.
+	 *
+	 * Everything here hangs off ONE question, asked under the peer's write lock: is the peer
+	 * connected right now and not suppressed? Only that answer entitles anything to go back.
+	 * A record already written for a connection that has since ended is taken back instead —
+	 * restoring dial state for it would leave recovery an address to dial, a peer in
+	 * `bootstrapPeerIDs` that promotion then skips, and no quarantine to hold any of it.
 	 */
-	private async restorePurgedPeerState(node: Libp2p, pid: PeerID, connections: Array<{ remoteAddr: any }>, epoch: number, snapshot: IStoredPeerRecord | null, recordRestored: boolean): Promise<void> {
+	private async restorePurgedPeerState(node: Libp2p, pid: PeerID, epoch: number, snapshot: IStoredPeerRecord | null, recordRestored: boolean): Promise<void> {
 		const peerID = pid.toString();
-		if (!recordRestored) {
-			const { store, events } = peerStoreInternals(node.peerStore);
-			const release = await store.getWriteLock(pid);
-			try {
-				// The caller decided to heal before this lock existed; the write acts on that
-				// decision, so every part of it is asked again under the lock that makes the
-				// answer hold. A peer that dropped again in between is not healed at all — the
-				// purge was right about it, and there is no live connection left to contradict it.
-				if (node !== this.node || epoch !== this.runEpoch) return;
-				if (node.getConnections(pid).length === 0 || this.isRedialSuppressed(peerID)) return;
+		const { store, events } = peerStoreInternals(node.peerStore);
+		const release = await store.getWriteLock(pid);
+		try {
+			// The caller decided to heal before this lock existed; the write acts on that
+			// decision, so every part of it is asked again under the lock that makes the
+			// answer hold.
+			if (node !== this.node || epoch !== this.runEpoch) return;
+			let onDisk = recordRestored;
+			const connections = node.getConnections(pid);
+			if (!onDisk && connections.length > 0 && !this.isRedialSuppressed(peerID)) {
 				await this.restorePurgedRecord(store, events, pid, connections, snapshot);
-			} finally {
-				release();
+				onDisk = true;
 			}
-		}
-		this.unreachableQuarantine.delete(peerID);
-		// Whichever of the two places wrote the record, it checked suppression before the
-		// write rather than after it. A leave-network completing inside that write makes the
-		// restore the older intent, and putting the entry back with a keep-alive tag is
-		// exactly what the leave had just undone — so take it back.
-		if (epoch !== this.runEpoch || node !== this.node) return;
-		if (this.isRedialSuppressed(peerID)) {
-			trace(`[NET] purge healing raced a leave, dropping the restored entry: ${peerID.slice(0, 16)}`);
-			try {
-				await node.peerStore.delete(pid);
-			} catch {
-				// Already gone — the outcome we were after.
+			// Whichever of the two places wrote the record, it asked before the write rather
+			// than after it. Ask again here — and nothing below awaits, so this answer still
+			// holds for every write it authorises.
+			if (node !== this.node || epoch !== this.runEpoch) return;
+			const live = node.getConnections(pid);
+			if (live.length === 0 || this.isRedialSuppressed(peerID)) {
+				// The purge was right after all: the connection that contradicted it has ended,
+				// or a leave-network has claimed the peer since. Either way the record that went
+				// back is the older intent and goes again — through the inner delete, because
+				// the public one takes the read lock this call already holds the write half of.
+				if (onDisk) {
+					trace(`[NET] purge healing outlived its connection, dropping the restored entry: ${peerID.slice(0, 16)}`);
+					try {
+						await store.delete(pid);
+					} catch (err: unknown) {
+						// Already gone — the outcome we were after.
+						if (!isPeerStoreNotFound(err)) throw err;
+					}
+				}
+				return;
 			}
-			return;
-		}
-		for (const c of connections) {
-			const remote = c.remoteAddr;
-			if (!remote) continue;
-			try {
-				// A live connection is the strongest possible proof of an endpoint, so the
-				// entry goes back verified — that is also what its TTL runs from. The address
-				// gets this peer's `/p2p` suffix when it lacks one, matching the shape
-				// promotion builds, or the registry would key it without an identity.
-				const ma = extractDestinationPeerID(remote) === peerID ? remote : Multiaddr(`${remote.toString()}/p2p/${peerID}`);
-				this.rememberBootstrapAddress(ma, null);
-				this.markBootstrapAddressVerified(ma);
-			} catch {
-				// Unparseable remote address — nothing to put back in the registry for it.
+			this.unreachableQuarantine.delete(peerID);
+			for (const c of live) {
+				const remote = c.remoteAddr;
+				if (!remote) continue;
+				try {
+					// A live connection is the strongest possible proof of an endpoint, so the
+					// entry goes back verified — that is also what its TTL runs from. The address
+					// gets this peer's `/p2p` suffix when it lacks one, matching the shape
+					// promotion builds, or the registry would key it without an identity.
+					const ma = extractDestinationPeerID(remote) === peerID ? remote : Multiaddr(`${remote.toString()}/p2p/${peerID}`);
+					this.rememberBootstrapAddress(ma, null);
+					this.markBootstrapAddressVerified(ma);
+				} catch {
+					// Unparseable remote address — nothing to put back in the registry for it.
+				}
 			}
+			const gossipsub: any = this.pubsub;
+			if (gossipsub?.direct && typeof gossipsub.direct.add === 'function') gossipsub.direct.add(peerID);
+			this.bootstrapPeerIDs.add(peerID);
+			console.log(`[NET] purge raced an inbound connection — restored ${peerID.slice(0, 16)}…`);
+		} finally {
+			release();
 		}
-		const gossipsub: any = this.pubsub;
-		if (gossipsub?.direct && typeof gossipsub.direct.add === 'function') gossipsub.direct.add(peerID);
-		this.bootstrapPeerIDs.add(peerID);
-		console.log(`[NET] purge raced an inbound connection — restored ${peerID.slice(0, 16)}…`);
 	}
 
 	/**

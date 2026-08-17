@@ -1811,7 +1811,7 @@ describe('peerStore writes that race a leave-network', () => {
 		const { network, real } = await bareNetwork(net => {
 			(net as any).redialSuppressedByNet = new Map([['net-a', new Set([PEER_ID])]]);
 		});
-		await (network as any).restorePurgedPeerState((network as any).node, real.pid, [{ remoteAddr: multiaddr(LIVE) }], 1, null, false);
+		await (network as any).restorePurgedPeerState((network as any).node, real.pid, 1, null, false);
 		expect(await real.store.has(real.pid)).toBe(false);
 		// And nothing of the bootstrap state was rebuilt on top of the leave.
 		expect(registryAddresses(network)).toEqual([]);
@@ -1819,7 +1819,7 @@ describe('peerStore writes that race a leave-network', () => {
 
 	it('keeps the restore when no leave interfered', async () => {
 		const { network, real } = await bareNetwork(() => {});
-		await (network as any).restorePurgedPeerState((network as any).node, real.pid, [{ remoteAddr: multiaddr(LIVE) }], 1, null, false);
+		await (network as any).restorePurgedPeerState((network as any).node, real.pid, 1, null, false);
 		expect(await real.store.has(real.pid)).toBe(true);
 		expect(registryAddresses(network)).toEqual([normalizeMultiaddrForCompare(LIVE)]);
 	});
@@ -1855,10 +1855,80 @@ describe('peerStore writes that race a leave-network', () => {
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		await (real.store as any).delete(real.pid);
 		(network as any).node.getConnections = () => [];
-		await (network as any).restorePurgedPeerState((network as any).node, real.pid, [{ remoteAddr: multiaddr(LIVE) }], 1, null, false);
+		await (network as any).restorePurgedPeerState((network as any).node, real.pid, 1, null, false);
 		expect(await real.store.has(real.pid)).toBe(false);
 		expect(registryAddresses(network)).toEqual([]);
 		expect((network as any).bootstrapPeerIDs.has(PEER_ID)).toBe(false);
+	});
+});
+
+/**
+ * Two purges of the SAME peer at once. The bootstrap single-flight is per ENDPOINT, so two
+ * addresses of one peer can both fail their identity check, both find no address left and
+ * both purge. Each strips the peer from `bootstrapPeerIDs`, the registry and
+ * `gossipsub.direct` before it waits for the peerStore lock, so the one that heals can put
+ * that state back after the other has already finished removing it — and the other then
+ * deletes the record, leaving dial state pointing at a peer with no record and no
+ * connection. Whichever purge wins, no in-memory trace of the peer may survive it.
+ */
+describe('purgeStalePeer — two purges of one peer', () => {
+	const LIVE = `/ip4/203.0.113.71/tcp/9090/p2p/${PEER_ID}`;
+
+	/**
+	 * A network whose peer is disconnected except for one window: the connection lands right
+	 * after the FIRST purge deletes the record — inside the lock, which is where the purge
+	 * puts the record back — and ends again the moment that lock is released, before the
+	 * healing outside it runs.
+	 */
+	async function bareNetwork() {
+		const real = await createRealPeerStore(PEER_ID, [LIVE]);
+		let connected = false;
+		let deletes = 0;
+		const inner = (real.store as any).store;
+		const innerDelete = inner.delete.bind(inner);
+		inner.delete = async (...args: any[]): Promise<void> => {
+			await innerDelete(...args);
+			// Only the first purge's delete is raced — the second one is what must find the
+			// peer gone for good.
+			if (++deletes === 1) connected = true;
+		};
+		const getWriteLock = inner.getWriteLock.bind(inner);
+		inner.getWriteLock = async (...args: any[]): Promise<() => void> => {
+			const release = await getWriteLock(...args);
+			return () => {
+				release();
+				connected = false;
+			};
+		};
+		const direct = new Set<string>();
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map([[PEER_ID, Date.now()]]);
+		(network as any).pubsub = { direct };
+		installBootstrapRegistry(network, [{ address: LIVE }]);
+		(network as any).node = {
+			getConnections: () => (connected ? [{ remoteAddr: multiaddr(LIVE), async close(): Promise<void> {} }] : []),
+			peerStore: real.store,
+		};
+		return { network, real, direct };
+	}
+
+	it('leaves no dial state behind for a connection that ended before the healing', async () => {
+		const { network, real, direct } = await bareNetwork();
+		await Promise.all([(network as any).purgeStalePeer(PEER_ID, 'first', 1), (network as any).purgeStalePeer(PEER_ID, 'second', 1)]);
+		expect(await real.store.has(real.pid)).toBe(false);
+		// Every place the purge takes the peer out of, in one assertion, so this cannot pass by
+		// checking three of the four. The quarantine belongs in it: the connection the healing
+		// would have lifted it for had already ended, so nothing earned its removal.
+		expect({
+			bootstrapPeerIDs: [...((network as any).bootstrapPeerIDs as Set<string>)],
+			registry: registryAddresses(network),
+			direct: [...direct],
+			quarantined: (network as any).unreachableQuarantine.has(PEER_ID),
+		}).toEqual({ bootstrapPeerIDs: [], registry: [], direct: [], quarantined: true });
 	});
 });
 
@@ -2520,7 +2590,7 @@ describe('removePeerStoreAddresses — against a real libp2p peerStore', () => {
 			const updates: unknown[] = [];
 			node.addEventListener('peer:update', evt => updates.push(evt));
 			(node as any).getConnections = () => [{ remoteAddr: multiaddr(DROPPED) }];
-			await (network as any).restorePurgedPeerState(node, pid, [{ remoteAddr: multiaddr(DROPPED) }], 1, snapshot, false);
+			await (network as any).restorePurgedPeerState(node, pid, 1, snapshot, false);
 
 			expect(updates).toHaveLength(1);
 			const after = await node.peerStore.get(pid);
