@@ -535,14 +535,101 @@ export function nmcliActivateArgs(uuid: string, device: string): string[] {
 	return ['connection', 'up', 'uuid', uuid, 'ifname', device];
 }
 
-/** Apply an IPv4 configuration to one device and bring the profile back up. Throws when NetworkManager does not own the device. */
+/**
+ * The IPv4 properties an apply rewrites, and so the ones worth reading first.
+ *
+ * Exactly the set {@link nmcliModifyArgs} writes: restoring a subset would leave
+ * the profile a mixture of the old configuration and the failed new one, which is
+ * a third state that was never true of the machine.
+ */
+const NM_IPV4_FIELDS = ['ipv4.method', 'ipv4.addresses', 'ipv4.gateway', 'ipv4.dns', 'ipv4.ignore-auto-dns'] as const;
+
+/**
+ * Read the requested properties out of `nmcli -t -f <fields> connection show`.
+ *
+ * Terse mode prints one `key:value` line per field. An unset property prints as
+ * empty or as nmcli's `--` placeholder, and both become an empty string — which
+ * is also how a value is CLEARED on the way back in, so the round trip is exact.
+ */
+export function parseNmcliProperties(text: string): Map<string, string> {
+	const result = new Map<string, string>();
+	for (const line of text.split(/\r?\n/)) {
+		if (!line.trim()) continue;
+		const [key, ...rest] = splitNmcliFields(line);
+		if (!key) continue;
+		const value = rest.join(':');
+		result.set(key, value === '--' ? '' : value);
+	}
+	return result;
+}
+
+/** Build the `nmcli connection modify` arguments that put a snapshot back verbatim. */
+export function nmcliRestoreArgs(uuid: string, snapshot: Map<string, string>): string[] {
+	const args = ['connection', 'modify', 'uuid', uuid];
+	for (const field of NM_IPV4_FIELDS) args.push(field, snapshot.get(field) ?? '');
+	return args;
+}
+
+/** The profile's current IPv4 properties, or null when they could not be read. */
+async function readLinuxIPv4Properties(uuid: string): Promise<Map<string, string> | null> {
+	try {
+		return parseNmcliProperties(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', NM_IPV4_FIELDS.join(','), 'connection', 'show', 'uuid', uuid]));
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Apply an IPv4 configuration to one device and bring the profile back up.
+ * Throws when NetworkManager does not own the device.
+ *
+ * `connection modify` rewrites the stored profile immediately and permanently,
+ * before `connection up` has had a chance to prove the new configuration works.
+ * A failed activation therefore used to leave the profile on disk permanently
+ * changed — and because the connection that was already running often keeps
+ * working, the damage only surfaced at the next reconnect or reboot, far from
+ * anything the user could connect it to. Reading the properties first is what
+ * makes the change undoable.
+ */
 export async function applyLinuxIPv4(device: string, config: NetIPv4Config): Promise<void> {
 	const connection = await activeConnection(device);
 	if (!connection) throw new Error(`no NetworkManager profile is active on ${device}`);
+	const snapshot = await readLinuxIPv4Properties(connection);
 	await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connection, config), APPLY_TIMEOUT_MS);
-	// `connection up` re-applies the edited profile in place. The device drops for
-	// a moment either way — that is inherent to changing an address, not to this.
-	await runFirst(NMCLI_CANDIDATES, nmcliActivateArgs(connection, device), APPLY_TIMEOUT_MS);
+	try {
+		// `connection up` re-applies the edited profile in place. The device drops for
+		// a moment either way — that is inherent to changing an address, not to this.
+		await runFirst(NMCLI_CANDIDATES, nmcliActivateArgs(connection, device), APPLY_TIMEOUT_MS);
+	} catch (err) {
+		const rollback = await restoreLinuxIPv4(connection, device, snapshot);
+		// Both, not just the first: a rollback that failed leaves the profile in a
+		// state the activation error says nothing about.
+		if (rollback) throw new Error(`${(err as Error).message} — and undoing the change failed: ${rollback}`);
+		throw err;
+	}
+}
+
+/**
+ * Put the profile's IPv4 properties back and bring it up again. Returns what
+ * went wrong, or null when there was nothing left to undo.
+ *
+ * Re-activating is part of the rollback, not an extra: the failed `connection up`
+ * may well have torn the old connection down before it gave up, so restoring the
+ * file alone would leave the device configured correctly and switched off.
+ */
+async function restoreLinuxIPv4(uuid: string, device: string, snapshot: Map<string, string> | null): Promise<string | null> {
+	if (!snapshot) return 'the previous configuration could not be read before the change was made';
+	try {
+		await runFirst(NMCLI_CANDIDATES, nmcliRestoreArgs(uuid, snapshot), APPLY_TIMEOUT_MS);
+	} catch (err) {
+		return `the profile still holds the rejected configuration (${(err as Error).message})`;
+	}
+	try {
+		await runFirst(NMCLI_CANDIDATES, nmcliActivateArgs(uuid, device), APPLY_TIMEOUT_MS);
+	} catch (err) {
+		return `the profile was restored but could not be brought back up (${(err as Error).message})`;
+	}
+	return null;
 }
 
 /**

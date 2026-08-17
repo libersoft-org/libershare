@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { isIPv4, isValidSSID, isValidWifiKey, isWifiHexKey, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { nmcliActivateArgs, nmcliModifyArgs, parseNmcliActiveUUID, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
+import { nmcliActivateArgs, nmcliModifyArgs, nmcliRestoreArgs, parseNmcliProperties, parseNmcliActiveUUID, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { firstLine } from '../../src/system-network.ts';
 
@@ -342,6 +342,63 @@ describe('nmcliActivateArgs', () => {
 		const args = nmcliActivateArgs(uuid, 'wlan0');
 		expect(args[2]).toBe('uuid');
 		expect(args[3]).toBe(uuid);
+	});
+});
+
+/**
+ * `nmcli connection modify` rewrites the stored profile permanently, before
+ * `connection up` has proved the new configuration works. A failed activation
+ * used to leave that rewrite standing — and since the connection already running
+ * often keeps working, the damage surfaced only at the next reboot.
+ */
+describe('parseNmcliProperties', () => {
+	const SHOW = 'ipv4.method:manual\nipv4.addresses:192.0.2.10/24\nipv4.gateway:192.0.2.1\nipv4.dns:192.0.2.1,198.51.100.1\nipv4.ignore-auto-dns:yes\n';
+
+	it('reads every field of the profile as it stands', () => {
+		const props = parseNmcliProperties(SHOW);
+		expect(props.get('ipv4.method')).toBe('manual');
+		expect(props.get('ipv4.addresses')).toBe('192.0.2.10/24');
+		expect(props.get('ipv4.dns')).toBe('192.0.2.1,198.51.100.1');
+		expect(props.get('ipv4.ignore-auto-dns')).toBe('yes');
+	});
+
+	it('reads an unset property as empty, which is also how it is written back', () => {
+		// nmcli prints `--` for a property that has no value; handing that back
+		// verbatim would set the literal two dashes as the address.
+		const props = parseNmcliProperties('ipv4.method:auto\nipv4.addresses:--\nipv4.gateway:\n');
+		expect(props.get('ipv4.addresses')).toBe('');
+		expect(props.get('ipv4.gateway')).toBe('');
+	});
+
+	it('keeps a value that contains a colon in one piece', () => {
+		// Terse mode escapes a colon inside a value; splitting naively would cut an
+		// IPv6 resolver into fields and shift every column after it.
+		expect(parseNmcliProperties('ipv4.dns:2001\\:db8\\:\\:1\n').get('ipv4.dns')).toBe('2001:db8::1');
+	});
+});
+
+describe('nmcliRestoreArgs', () => {
+	const uuid = '4b8a1f2c-0000-4000-8000-000000000001';
+
+	it('writes back every field the apply rewrites, and no fewer', () => {
+		// Restoring a subset would leave the profile a mixture of the old
+		// configuration and the rejected new one — a third state never true of the host.
+		const args = nmcliRestoreArgs(uuid, parseNmcliProperties('ipv4.method:manual\nipv4.addresses:192.0.2.10/24\nipv4.gateway:192.0.2.1\nipv4.dns:192.0.2.1\nipv4.ignore-auto-dns:yes\n'));
+		expect(args.slice(0, 4)).toEqual(['connection', 'modify', 'uuid', uuid]);
+		for (const field of ['ipv4.method', 'ipv4.addresses', 'ipv4.gateway', 'ipv4.dns', 'ipv4.ignore-auto-dns']) expect(args).toContain(field);
+		expect(args[args.indexOf('ipv4.addresses') + 1]).toBe('192.0.2.10/24');
+		expect(args[args.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('yes');
+	});
+
+	it('clears a field the snapshot did not hold rather than leaving it behind', () => {
+		const args = nmcliRestoreArgs(uuid, parseNmcliProperties('ipv4.method:auto\n'));
+		expect(args[args.indexOf('ipv4.addresses') + 1]).toBe('');
+		expect(args[args.indexOf('ipv4.gateway') + 1]).toBe('');
+		expect(args[args.indexOf('ipv4.dns') + 1]).toBe('');
+	});
+
+	it('still addresses the profile by uuid rather than by name', () => {
+		expect(nmcliRestoreArgs(uuid, new Map()).slice(2, 4)).toEqual(['uuid', uuid]);
 	});
 });
 
