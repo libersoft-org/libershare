@@ -329,15 +329,25 @@ export function orderBootstrapEntriesForRecovery<T extends { configuredBy: Reado
 export function pruneBootstrapEntries<T extends Pick<IBootstrapEntry, 'firstSeenAt' | 'lastVerifiedAt' | 'lastDisconnectedAt' | 'peerID'> & { configuredBy: ReadonlySet<string> }>(entries: readonly T[], now: number, ttlMs: number, maxDiscovered: number, isConnected: (peerID: string) => boolean = () => false): T[] {
 	const pinned = (e: T): boolean => e.configuredBy.size > 0 || (e.peerID !== null && isConnected(e.peerID));
 	const fresh = entries.filter(e => pinned(e) || now - bootstrapEntryLastActivity(e) < ttlMs);
-	let toDrop = fresh.reduce((n, e) => (pinned(e) ? n : n + 1), 0) - maxDiscovered;
+	const toDrop = fresh.reduce((n, e) => (pinned(e) ? n : n + 1), 0) - maxDiscovered;
 	if (toDrop <= 0) return fresh;
-	// Drop the oldest droppable entries first: the registry preserves insertion
-	// order, so skipping the leading overflow keeps the newest.
-	return fresh.filter(e => {
-		if (pinned(e) || toDrop === 0) return true;
-		toDrop--;
-		return false;
-	});
+	// Drop the LEAST RECENTLY ACTIVE droppable entries, not simply the ones inserted
+	// first. Insertion order records when we first heard an address named; the TTL
+	// above already measures from last activity, and the cap has to agree with it.
+	// Ranking by insertion dropped an entry whose peer had just disconnected — the
+	// moment its recovery address matters most — ahead of a newer one that nothing
+	// had touched for hours. Ties fall back to position so the result is stable.
+	const doomed = new Set(
+		fresh
+			.map((entry, index) => ({ entry, index }))
+			.filter(({ entry }) => !pinned(entry))
+			.sort((a, b) => bootstrapEntryLastActivity(a.entry) - bootstrapEntryLastActivity(b.entry) || a.index - b.index)
+			.slice(0, toDrop)
+			.map(({ index }) => index)
+	);
+	// Survivors keep their original order — the registry's insertion order is what
+	// recovery walks within each priority group.
+	return fresh.filter((_entry, index) => !doomed.has(index));
 }
 
 /**

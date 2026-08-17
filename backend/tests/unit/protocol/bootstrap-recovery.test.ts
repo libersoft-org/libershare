@@ -350,6 +350,29 @@ describe('pruneBootstrapEntries', () => {
 		expect(pruneBootstrapEntries(entries, now, 100, 2).map(e => e.tag)).toEqual(['mid', 'newest']);
 	});
 
+	/**
+	 * The cap used to drop in insertion order while the TTL measured from last activity.
+	 * A peer known for hours that JUST disconnected — precisely when its recovery address
+	 * is needed — was therefore evicted ahead of a newer entry nothing had touched.
+	 */
+	it('caps by last activity, not by when the entry was inserted', () => {
+		const entries = [
+			{ ...discovered({ firstSeenAt: now - 10, lastDisconnectedAt: now - 1 }), tag: 'old-but-just-dropped' },
+			{ ...discovered({ firstSeenAt: now - 9, lastVerifiedAt: now - 2 }), tag: 'old-but-just-verified' },
+			{ ...discovered({ firstSeenAt: now - 8 }), tag: 'newer-but-idle' },
+		];
+		expect(pruneBootstrapEntries(entries, now, 100, 2).map(e => e.tag)).toEqual(['old-but-just-dropped', 'old-but-just-verified']);
+	});
+
+	it('breaks ties on activity by position so the result is stable', () => {
+		const entries = [
+			{ ...discovered({ firstSeenAt: now - 5 }), tag: 'a' },
+			{ ...discovered({ firstSeenAt: now - 5 }), tag: 'b' },
+			{ ...discovered({ firstSeenAt: now - 5 }), tag: 'c' },
+		];
+		expect(pruneBootstrapEntries(entries, now, 100, 2).map(e => e.tag)).toEqual(['b', 'c']);
+	});
+
 	it('does not count configured entries against the bound nor drop them', () => {
 		const entries = [
 			{ ...discovered({ firstSeenAt: now - 9 }), configuredBy: new Set(['net-a']), tag: 'cfg1' },
