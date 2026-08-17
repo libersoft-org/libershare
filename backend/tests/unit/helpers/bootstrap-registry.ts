@@ -7,6 +7,8 @@ export interface IRegistrySeed {
 	address: string;
 	/** Network IDs configuring this address. Omit or leave empty for a gossip-discovered entry. */
 	configuredBy?: string[];
+	/** Whether gossip also announced this address. Defaults to true for an unowned seed. */
+	discovered?: boolean;
 	/** Epoch ms the entry first entered the registry. Defaults to now. */
 	firstSeenAt?: number;
 	/** Epoch ms a dial last proved this endpoint. Defaults to never. */
@@ -35,6 +37,7 @@ export function installBootstrapRegistry(network: unknown, seeds: readonly IRegi
 			ma,
 			peerID,
 			configuredBy: new Set(seed.configuredBy ?? []),
+			discovered: seed.discovered ?? (seed.configuredBy ?? []).length === 0,
 			firstSeenAt: seed.firstSeenAt ?? Date.now(),
 			lastVerifiedAt: seed.lastVerifiedAt ?? null,
 			lastDisconnectedAt: seed.lastDisconnectedAt ?? null,
@@ -55,6 +58,7 @@ export function installBootstrapRegistry(network: unknown, seeds: readonly IRegi
 	// the registry loops read has to be seeded here alongside the registry itself.
 	(network as any).recoveryCursors ??= { configured: null, discovered: null };
 	(network as any).inFlightBootstrapDials ??= new Set<string>();
+	(network as any).quarantineProbeInFlight ??= new Set<string>();
 	return byAddress;
 }
 
