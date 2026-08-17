@@ -1645,8 +1645,13 @@ describe('post-dial validation of the remaining dial paths', () => {
 describe('peerStore writes that race a leave-network', () => {
 	const LIVE = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
 
-	function bareNetwork() {
-		const deleted: string[] = [];
+	/**
+	 * A real store: the restore decides what it may write against the record that is there
+	 * at the time, under the store's own per-peer write lock, and only the real store has
+	 * either of those. `onRestoreWrite` runs inside that write — the window a leave lands in.
+	 */
+	async function bareNetwork(onRestoreWrite: (network: Network) => void) {
+		const real = await createRealPeerStore(PEER_ID, [LIVE]);
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
 		(network as any).bootstrapPeerIDs = new Set([PEER_ID]);
@@ -1655,36 +1660,33 @@ describe('peerStore writes that race a leave-network', () => {
 		(network as any).redialBackoff = new Map();
 		(network as any).pubsub = { direct: new Set<string>() };
 		installBootstrapRegistry(network, []);
+		const inner = (real.store as any).store;
+		const merge = inner.merge.bind(inner);
+		inner.merge = async (...args: unknown[]): Promise<unknown> => {
+			onRestoreWrite(network);
+			return merge(...args);
+		};
 		(network as any).node = {
 			getConnections: () => [{ remoteAddr: multiaddr(LIVE), async close(): Promise<void> {} }],
-			peerStore: {
-				// The leave lands while this write is pending — the exact window.
-				async merge(): Promise<void> {
-					(network as any).redialSuppressedByNet = new Map([['net-a', new Set([PEER_ID])]]);
-				},
-				async delete(pid: { toString(): string }): Promise<void> {
-					deleted.push(pid.toString());
-				},
-			},
+			peerStore: real.store,
 		};
-		return { network, deleted };
+		return { network, real };
 	}
 
 	it('drops the entry a purge-healing restore put back', async () => {
-		const { network, deleted } = bareNetwork();
-		const pid = peerIdLike(PEER_ID);
-		await (network as any).restorePurgedPeerState((network as any).node, pid, [{ remoteAddr: multiaddr(LIVE) }], 1, null);
-		expect(deleted).toEqual([PEER_ID]);
+		const { network, real } = await bareNetwork(net => {
+			(net as any).redialSuppressedByNet = new Map([['net-a', new Set([PEER_ID])]]);
+		});
+		await (network as any).restorePurgedPeerState((network as any).node, real.pid, [{ remoteAddr: multiaddr(LIVE) }], 1, null, false);
+		expect(await real.store.has(real.pid)).toBe(false);
 		// And nothing of the bootstrap state was rebuilt on top of the leave.
 		expect(registryAddresses(network)).toEqual([]);
 	});
 
 	it('keeps the restore when no leave interfered', async () => {
-		const { network, deleted } = bareNetwork();
-		(network as any).node.peerStore.merge = async (): Promise<void> => {};
-		const pid = peerIdLike(PEER_ID);
-		await (network as any).restorePurgedPeerState((network as any).node, pid, [{ remoteAddr: multiaddr(LIVE) }], 1, null);
-		expect(deleted).toEqual([]);
+		const { network, real } = await bareNetwork(() => {});
+		await (network as any).restorePurgedPeerState((network as any).node, real.pid, [{ remoteAddr: multiaddr(LIVE) }], 1, null, false);
+		expect(await real.store.has(real.pid)).toBe(true);
 		expect(registryAddresses(network)).toEqual([normalizeMultiaddrForCompare(LIVE)]);
 	});
 });

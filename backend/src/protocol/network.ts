@@ -503,6 +503,12 @@ interface IPeerStoreInternals {
 	 * the peer alone".
 	 */
 	patchExisting(peerID: PeerID, data: { addresses: IStoredAddress[] }): Promise<{ updated: boolean }>;
+	/**
+	 * `merge()` without the lock the public wrapper takes — same reason as `delete()`.
+	 * A merge whose CONTENT depends on what the record holds right now has to read and
+	 * write inside one lock, and the public wrapper would deadlock against it.
+	 */
+	merge(peerID: PeerID, data: Record<string, unknown>): Promise<{ updated: boolean }>;
 }
 
 /** The emitter the peerStore's public methods notify after every record they change. */
@@ -529,8 +535,8 @@ interface IPeerStoreEvents {
  */
 function peerStoreInternals(peerStore: unknown): { store: IPeerStoreInternals; events: IPeerStoreEvents } {
 	const { store, events } = (peerStore as { store?: Partial<IPeerStoreInternals>; events?: Partial<IPeerStoreEvents> }) ?? {};
-	if (typeof store?.getWriteLock !== 'function' || typeof store?.load !== 'function' || typeof store?.patchExisting !== 'function' || typeof store?.delete !== 'function') {
-		throw new Error('peerStore does not expose its per-peer lock, unlocked delete and require-existing patch — refusing to rewrite a record without them');
+	if (typeof store?.getWriteLock !== 'function' || typeof store?.load !== 'function' || typeof store?.patchExisting !== 'function' || typeof store?.delete !== 'function' || typeof store?.merge !== 'function') {
+		throw new Error('peerStore does not expose its per-peer lock, unlocked delete/merge and require-existing patch — refusing to rewrite a record without them');
 	}
 	if (typeof events?.safeDispatchEvent !== 'function') {
 		throw new Error('peerStore does not expose its update emitter — refusing to write an address change nothing would hear');
@@ -2418,13 +2424,16 @@ export class Network {
 			// Closing connections yields; bail before the irreversible delete if this
 			// run no longer owns the node.
 			if (epoch !== this.runEpoch) return;
-			const { store } = peerStoreInternals(node.peerStore);
+			const { store, events } = peerStoreInternals(node.peerStore);
 			// The whole record as it stood at the delete, or null if there was nothing to
 			// delete. The healing below puts THIS back — rebuilding an entry out of the live
 			// connections alone is what dropped the peer's protocols, metadata, tags, public
 			// key, signed record and address certification.
 			let snapshot: IStoredPeerRecord | null = null;
 			let keptAlive = false;
+			// True once the record has been put back INSIDE the lock below, so the healing
+			// after it only has the in-memory state left to rebuild.
+			let recordRestored = false;
 			const release = await store.getWriteLock(pid);
 			try {
 				if (node !== this.node || epoch !== this.runEpoch) return;
@@ -2451,6 +2460,17 @@ export class Network {
 						// asked for it. Anything else is a real datastore failure.
 						if (!isPeerStoreNotFound(err)) throw err;
 					}
+					// The load and the delete both yield, so a connection can arrive between
+					// this check and the one that decided to delete — but it is still INSIDE
+					// the lock, and putting the record back here means the identify write that
+					// follows such a connection lands after the restore rather than before it.
+					// Healing outside the lock can only add the live endpoints to whatever that
+					// write left, which loses the rest of the snapshot; here nothing is lost.
+					const arrived = node.getConnections(pid);
+					if (arrived.length > 0 && !this.isRedialSuppressed(peerID)) {
+						await this.restorePurgedRecord(store, events, pid, arrived, snapshot);
+						recordRestored = true;
+					}
 				}
 			} finally {
 				release();
@@ -2460,8 +2480,10 @@ export class Network {
 			// TOCTOU healing: an inbound connection can still land after the lock is
 			// released. The peer:connect handler resets failure counters but cannot restore
 			// the bootstrap/keep-alive state this purge removed — so if the peer is
-			// connected NOW, rebuild its dial state from the live connections and its record
-			// from the snapshot; otherwise reconnect would silently die with the first drop.
+			// connected NOW, rebuild its dial state from the live connections, and its
+			// record from the snapshot as far as whatever was written in the meantime allows
+			// (see restorePurgedRecord); otherwise reconnect would silently die with the
+			// first drop.
 			//
 			// Not for a peer leave-network hung up: it is meant to be forgotten, and a
 			// connection racing the purge is no reason to rebuild what the leave
@@ -2469,7 +2491,7 @@ export class Network {
 			if (epoch !== this.runEpoch) return;
 			const after = node.getConnections(pid);
 			if (after.length > 0 && !this.isRedialSuppressed(peerID)) {
-				await this.restorePurgedPeerState(node, pid, after, epoch, snapshot);
+				await this.restorePurgedPeerState(node, pid, after, epoch, snapshot, recordRestored);
 			}
 		} catch (err: any) {
 			// An explicit teardown has no next cycle to fix this, and everything else it
@@ -2496,37 +2518,39 @@ export class Network {
 	 * as "this peer is handled"; setting it first is what let promotion observe a
 	 * half-restored peer and walk away from it.
 	 *
-	 * `snapshot` is the record the purge deleted, or null when it deleted nothing. It goes
-	 * back whole. Rebuilding the entry from the live connections and a keep-alive tag alone
-	 * — all this used to do — permanently dropped the peer's protocols, metadata, other
-	 * tags, public key and signed peer record, and put its addresses back UNCERTIFIED,
-	 * which is the same partial-overwrite the address trim was fixed not to do.
+	 * `snapshot` is the record the purge deleted, or null when it deleted nothing. Whether
+	 * it may go back whole is decided against the record that is there NOW, under the peer's
+	 * write lock — see {@link restorePurgedRecord}. Rebuilding the entry from the live
+	 * connections and a keep-alive tag alone — all this used to do — permanently dropped the
+	 * peer's protocols, metadata, other tags, public key and signed peer record, and put its
+	 * addresses back UNCERTIFIED, which is the same partial-overwrite the address trim was
+	 * fixed not to do.
+	 *
+	 * `recordRestored` says the purge already wrote the record back inside the lock it held
+	 * for the delete, which is the better place for it — then only the in-memory state is
+	 * left to rebuild here.
 	 */
-	private async restorePurgedPeerState(node: Libp2p, pid: PeerID, connections: Array<{ remoteAddr: any }>, epoch: number, snapshot: IStoredPeerRecord | null): Promise<void> {
+	private async restorePurgedPeerState(node: Libp2p, pid: PeerID, connections: Array<{ remoteAddr: any }>, epoch: number, snapshot: IStoredPeerRecord | null, recordRestored: boolean): Promise<void> {
 		const peerID = pid.toString();
+		if (!recordRestored) {
+			const { store, events } = peerStoreInternals(node.peerStore);
+			const release = await store.getWriteLock(pid);
+			try {
+				// The caller decided to heal before this lock existed; the write acts on that
+				// decision, so every part of it is asked again under the lock that makes the
+				// answer hold. A peer that dropped again in between is not healed at all — the
+				// purge was right about it, and there is no live connection left to contradict it.
+				if (node !== this.node || epoch !== this.runEpoch) return;
+				if (node.getConnections(pid).length === 0 || this.isRedialSuppressed(peerID)) return;
+				await this.restorePurgedRecord(store, events, pid, connections, snapshot);
+			} finally {
+				release();
+			}
+		}
 		this.unreachableQuarantine.delete(peerID);
-		// Merge, not patch: whatever landed in the window keeps what it brought, and the
-		// snapshot fills the rest back in. The addresses go back as `addresses` so each one
-		// keeps the `isCertified` flag it was stored with; the live remotes go in as
-		// `multiaddrs`, which is what an observed endpoint with no signed record is.
-		const tags = new Map(snapshot?.tags ?? []);
-		tags.set(KEEP_ALIVE, { value: 1 });
-		await node.peerStore.merge(pid, {
-			multiaddrs: connections.map(c => c.remoteAddr),
-			tags,
-			...(snapshot
-				? {
-						addresses: snapshot.addresses,
-						protocols: snapshot.protocols,
-						metadata: snapshot.metadata,
-						...(snapshot.peerRecordEnvelope ? { peerRecordEnvelope: snapshot.peerRecordEnvelope } : {}),
-						...(snapshot.id?.publicKey ? { publicKey: snapshot.id.publicKey } : {}),
-					}
-				: {}),
-		} as any);
-		// The caller checked suppression before this merge. A leave-network completing
-		// inside it makes the restore the older intent, and putting the entry back with a
-		// keep-alive tag is exactly what the leave had just undone — so take it back.
+		// The suppression check above happened before the write completed. A leave-network
+		// completing inside it makes the restore the older intent, and putting the entry back
+		// with a keep-alive tag is exactly what the leave had just undone — so take it back.
 		if (epoch !== this.runEpoch || node !== this.node) return;
 		if (this.isRedialSuppressed(peerID)) {
 			trace(`[NET] purge healing raced a leave, dropping the restored entry: ${peerID.slice(0, 16)}`);
@@ -2556,6 +2580,65 @@ export class Network {
 		if (gossipsub?.direct && typeof gossipsub.direct.add === 'function') gossipsub.direct.add(peerID);
 		this.bootstrapPeerIDs.add(peerID);
 		console.log(`[NET] purge raced an inbound connection — restored ${peerID.slice(0, 16)}…`);
+	}
+
+	/**
+	 * Write a purged peer's record back, having decided what may go into it against the
+	 * record that is there right now. THE CALLER MUST HOLD `pid`'s peerStore write lock:
+	 * the read and the write below are one decision, and the answer only holds if nothing
+	 * else writes between them.
+	 *
+	 * The snapshot may not simply be handed to `merge()`. In `merge(existing, incoming)`
+	 * the INCOMING side wins on every metadata value, every tag value and the peer record
+	 * envelope, and unions protocols and addresses. Replaying an old snapshot over a record
+	 * written after the delete therefore puts back metadata and tag values that write had
+	 * changed, resurrects tags and protocols it had removed, brings back addresses it no
+	 * longer holds, and swaps its signed peer record for an older one — going around the
+	 * sequence-number check `consumePeerRecord()` enforces, which is the one thing that
+	 * keeps a replayed envelope out of the store.
+	 *
+	 * So the snapshot goes back WHOLE only while the record is still absent, which is the
+	 * state the purge left and where there is nothing newer to lose. If a record exists it
+	 * was written after the delete and is the newer truth: all that may be added to it then
+	 * is the live endpoints and the keep-alive tag the purge itself removed.
+	 *
+	 * That split cannot express "keep what the newer write added AND restore what only the
+	 * snapshot has". A merge carries no revision and no tombstone, so a field missing from
+	 * the newer record is indistinguishable from a field it deliberately removed, and
+	 * guessing wrong resurrects data the peer retracted. The newer record wins outright.
+	 */
+	private async restorePurgedRecord(store: IPeerStoreInternals, events: IPeerStoreEvents, pid: PeerID, connections: Array<{ remoteAddr: any }>, snapshot: IStoredPeerRecord | null): Promise<void> {
+		let current: IStoredPeerRecord | null = null;
+		try {
+			current = await store.load(pid);
+		} catch (err: unknown) {
+			// Not stored, or stored and expired — either way there is no newer record here
+			// whose values the snapshot could roll back.
+			if (!isPeerStoreNotFound(err)) throw err;
+		}
+		// Only the keep-alive tag when a newer record exists. Any other tag out of the
+		// snapshot would overwrite the value that write chose, or bring back one it deleted.
+		const tags = new Map<string, { value?: number; expiry?: bigint }>(current === null ? (snapshot?.tags ?? []) : []);
+		tags.set(KEEP_ALIVE, { value: 1 });
+		const result = await store.merge(pid, {
+			// A live remote is an observed endpoint with no signed record behind it, which is
+			// exactly what `multiaddrs` means. The snapshot's own addresses go in as
+			// `addresses`, so each keeps the `isCertified` flag it was stored with.
+			multiaddrs: connections.map(c => c.remoteAddr).filter(remote => remote != null),
+			tags,
+			...(current === null && snapshot !== null
+				? {
+						addresses: snapshot.addresses,
+						protocols: snapshot.protocols,
+						metadata: snapshot.metadata,
+						...(snapshot.peerRecordEnvelope ? { peerRecordEnvelope: snapshot.peerRecordEnvelope } : {}),
+						...(snapshot.id?.publicKey ? { publicKey: snapshot.id.publicKey } : {}),
+					}
+				: {}),
+		});
+		// The public wrapper raises this after every write it makes, and libp2p's own
+		// registrar listens for it. Going around the wrapper must not go around the event.
+		if (result.updated) events.safeDispatchEvent('peer:update', { detail: result });
 	}
 
 	/**
