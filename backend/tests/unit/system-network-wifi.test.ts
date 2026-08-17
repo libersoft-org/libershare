@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { ptr, type Pointer } from 'bun:ffi';
-import { encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readUtf16z, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
+import { assertWindowsWifiKey, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readUtf16z, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
 
 /**
  * The Windows Wi-Fi surface is FFI, so most of what can go wrong is a struct
@@ -360,6 +360,38 @@ describe('windowsWifiProfileXml', () => {
 		expect(xml).toContain('<name>A &amp; B &lt;net&gt;</name>');
 		expect(xml).toContain('<keyMaterial>p&quot;a&apos;ss&lt;</keyMaterial>');
 		expect(xml).not.toContain('<net>');
+	});
+});
+
+/**
+ * On Windows the profile is written to disk BEFORE the association is attempted,
+ * so a credential that could never work replaces a saved network's real one on
+ * its way to failing. These are the two constraints the shared validator cannot
+ * apply, because only this module knows which mechanism the access point runs
+ * and which subset of 802.11i the Microsoft profile schema accepts.
+ */
+describe('assertWindowsWifiKey', () => {
+	it('accepts an ordinary printable passphrase under either mechanism', () => {
+		for (const sae of [false, true]) expect(() => assertWindowsWifiKey('hunter2000', sae)).not.toThrow();
+	});
+
+	it('accepts a raw 64-hex key only where WPA2 is in use', () => {
+		const psk = '0123456789abcdef'.repeat(4);
+		expect(() => assertWindowsWifiKey(psk, false)).not.toThrow();
+		// SAE derives its key from a passphrase: announced as key material it is
+		// written, accepted, and then never authenticates.
+		expect(() => assertWindowsWifiKey(psk, true)).toThrow('WPA3');
+	});
+
+	it('refuses a passphrase Windows cannot express in its profile schema', () => {
+		// `passPhrase` key material is 8-63 PRINTABLE ASCII. Anything else comes back
+		// from WlanSetProfile as an opaque reason code, after the overwrite.
+		expect(() => assertWindowsWifiKey('heslíčko123', false)).toThrow('printable ASCII');
+		expect(() => assertWindowsWifiKey('pass word', false)).not.toThrow();
+	});
+
+	it('refuses a passphrase of the wrong length before anything is written', () => {
+		for (const key of ['short', 'x'.repeat(64)]) expect(() => assertWindowsWifiKey(key, false)).toThrow();
 	});
 });
 

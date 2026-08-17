@@ -1,5 +1,5 @@
 import { dlopen, FFIType, ptr, read, toArrayBuffer, type Pointer } from 'bun:ffi';
-import { isWifiHexKey, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetMedium, type NetLink, type NetAddressMode, type NetWifiInfo, type NetWifiNetwork } from '@shared';
+import { isValidWifiKey, isWifiHexKey, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetMedium, type NetLink, type NetAddressMode, type NetWifiInfo, type NetWifiNetwork } from '@shared';
 
 /**
  * Windows host network state.
@@ -306,7 +306,9 @@ interface WlanApi {
 	WlanGetAvailableNetworkList: (handle: WlanHandle, guid: Pointer, flags: number, reserved: null, list: Pointer) => number;
 	WlanSetProfile: (handle: WlanHandle, guid: Pointer, flags: number, xml: Pointer, security: null, overwrite: number, reserved: null, reasonCode: Pointer) => number;
 	WlanGetProfile: (handle: WlanHandle, guid: Pointer, name: Pointer, reserved: null, xml: Pointer, flags: Pointer, access: null) => number;
+	WlanDeleteProfile: (handle: WlanHandle, guid: Pointer, name: Pointer, reserved: null) => number;
 	WlanConnect: (handle: WlanHandle, guid: Pointer, parameters: Pointer, reserved: null) => number;
+	WlanReasonCodeToString: (reason: number, size: number, buffer: Pointer, reserved: null) => number;
 	WlanFreeMemory: (memory: Pointer) => void;
 }
 
@@ -335,7 +337,11 @@ export const WLAN_SYMBOLS: Record<keyof WlanApi, WlanSymbol> = {
 	WlanGetAvailableNetworkList: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 	WlanSetProfile: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 	WlanGetProfile: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanDeleteProfile: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 	WlanConnect: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	// The one entry point here that takes no handle at all: a reason code is
+	// translated by the DLL itself, so the first argument is the code.
+	WlanReasonCodeToString: { args: [FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 	WlanFreeMemory: { args: [FFIType.ptr], returns: FFIType.void },
 };
 
@@ -677,6 +683,12 @@ const BSS_TYPE_INFRASTRUCTURE = 1;
 const ERROR_ALREADY_EXISTS = 183;
 /** DOT11_AUTH_ALGO_WPA3_SAE — WPA3-Personal, which needs a different profile than WPA2. */
 const AUTH_ALGO_WPA3_SAE = 9;
+/** WLAN_PROFILE_GROUP_POLICY — pushed by policy. Not this app's to replace, and not restorable if it were. */
+const WLAN_PROFILE_GROUP_POLICY = 0x00000001;
+/** WLAN_PROFILE_USER — visible to this account only, which is all a one-off join needs. */
+const WLAN_PROFILE_USER = 0x00000002;
+/** Buffer given to WlanReasonCodeToString. Microsoft's own samples use this size. */
+const WLAN_REASON_TEXT_CHARS = 256;
 
 /**
  * How long to let the radio sweep before reading the network list.
@@ -1020,6 +1032,16 @@ export async function scanWindowsWifi(guid: string): Promise<NetWifiNetwork[]> {
  * adapter has associated, and a wrong password produces no error from it at all.
  * So the association is confirmed by re-reading it, and a join that never lands
  * is reported as a failure rather than as the success WlanConnect claimed.
+ *
+ * EVERY step that can change stored state is inside one try/catch, and the catch
+ * undoes exactly what was done. This used to be three separate concerns and none
+ * of them held: the profile overwrite and the synchronous WlanConnect happened
+ * BEFORE the guard, so an immediately-refused connect threw past the restore
+ * entirely; a profile this attempt had CREATED was never deleted, only "restored"
+ * to nothing; and the restoring write ignored its own return code, its reason
+ * code and the profile's original flags alike. One failed attempt could therefore
+ * leave a network's stored configuration permanently changed or a dead profile
+ * behind, and report neither.
  */
 export async function connectWindowsWifi(guid: string, ssid: string, password: string): Promise<void> {
 	const guidBytes = guidToBytes(guid);
@@ -1041,62 +1063,103 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 	// the transition mode most access points run advertises, and it is also what an
 	// out-of-date list would have said.
 	const sae = scanned?.auth === AUTH_ALGO_WPA3_SAE;
+	if (password) assertWindowsWifiKey(password, sae);
 	// Held in a local of its own: WLAN_CONNECTION_PARAMETERS stores only the
 	// ADDRESS of the profile name, so the array behind it has to outlive the call.
 	const profileNameW = utf16z(profileName);
 	const parameters = encodeConnectionParameters(BigInt(ptr(profileNameW)));
-	// The document Windows held for this network before we touched it, kept so a
-	// join that never lands can put it back. Null when there was nothing stored.
-	let replacedProfile: string | null = null;
-	withWlanHandle((api, handle) => {
-		const connect = (): number => api.WlanConnect(handle, ptr(guidBytes), ptr(parameters), null);
-		const writeProfile = (overwrite: number): number => {
-			const xml = utf16z(windowsWifiProfileXml(profileName, ssidBytes, password, sae));
-			const reasonCode = new Uint32Array(1);
-			return api.WlanSetProfile(handle, ptr(guidBytes), 0, ptr(xml), null, overwrite, null, ptr(reasonCode));
-		};
-		if (password) {
-			// Read before overwriting: the typed key may be wrong, and the profile
-			// being replaced may be the working one the user has had for years.
-			replacedProfile = readStoredProfile(api, handle, guidBytes, profileName);
-			const set = writeProfile(1);
-			if (set !== 0) throw new Error(wlanErrorMessage(set));
-			const rc = connect();
-			if (rc !== 0) throw new Error(wlanErrorMessage(rc));
-			return;
-		}
-		const rc = connect();
-		if (rc === 0) return;
-		// Nothing stored for this name. The only network that can be joined without a
-		// key is an open one, so give Windows an open profile to work from — but
-		// never in place of one it already holds. When one does already exist, the
-		// failed connect is the real story and its code is the one worth reporting.
-		const set = writeProfile(0);
-		if (set !== 0) throw new Error(wlanErrorMessage(set === ERROR_ALREADY_EXISTS ? rc : set));
-		const retry = connect();
-		if (retry !== 0) throw new Error(wlanErrorMessage(retry));
-	});
+	const profileXml = windowsWifiProfileXml(profileName, ssidBytes, password, sae);
+	/** What Windows held under this profile name before the attempt. Null when it held nothing. */
+	let replaced: StoredProfile | null = null;
+	/** True once this attempt has written a profile that did not exist before it. */
+	let created = false;
 	try {
+		withWlanHandle((api, handle) => {
+			if (password) {
+				// Read before overwriting: the typed key may be wrong, and the profile
+				// being replaced may be the working one the user has had for years. The
+				// FLAGS come back with it, because restoring an all-user or a per-user
+				// profile as flags 0 changes its scope — a different profile in all but
+				// name, and a rollback that fails for that reason alone.
+				replaced = readStoredProfile(api, handle, guidBytes, profileName);
+				// A group-policy profile is not this app's to replace. The overwrite is
+				// refused on most hosts, and where it is not, nothing here can put a
+				// policy profile back afterwards.
+				if (replaced !== null && (replaced.flags & WLAN_PROFILE_GROUP_POLICY) !== 0) throw new Error('this network is managed by group policy and cannot be changed here');
+				// An existing profile is rewritten with the flags it already had; a new
+				// one is created per-user, because creating one for every account on the
+				// machine needs a privilege the Wi-Fi capability never established, and
+				// a one-off join has no business reaching outside this account.
+				writeProfile(api, handle, guidBytes, profileXml, replaced === null ? WLAN_PROFILE_USER : replaced.flags, 1);
+				created = replaced === null;
+				connectByProfile(api, handle, guidBytes, parameters);
+				return;
+			}
+			const rc = api.WlanConnect(handle, ptr(guidBytes), ptr(parameters), null);
+			if (rc === 0) return;
+			// Nothing stored for this name. The only network that can be joined without a
+			// key is an open one, so give Windows an open profile to work from — but
+			// never in place of one it already holds. When one does already exist, the
+			// failed connect is the real story and its code is the one worth reporting.
+			if (writeProfile(api, handle, guidBytes, profileXml, WLAN_PROFILE_USER, 0) === ERROR_ALREADY_EXISTS) throw new Error(wlanErrorMessage(rc));
+			created = true;
+			connectByProfile(api, handle, guidBytes, parameters);
+		});
 		await waitForAssociation(guid, ssid);
 	} catch (err) {
-		// The join failed, and the profile we wrote to attempt it is now standing
-		// where a working one used to. Put the old one back: the usual reason to be
-		// here is a mistyped key, and losing a saved network to a typo would be a
-		// worse outcome than the failure the user is about to be told about.
-		if (replacedProfile) restoreStoredProfile(guidBytes, replacedProfile);
+		const rollback = undoWifiProfileChange(guidBytes, profileName, replaced, created);
+		// Both errors, not just the first. A rollback that failed leaves the machine
+		// in a state neither error describes on its own, and reporting only the
+		// original one would claim the attempt had been undone.
+		if (rollback) throw new Error(`${(err as Error).message} — and undoing the attempt failed: ${rollback}`);
 		throw err;
 	}
 }
 
 /**
- * The stored profile document for one profile name, or null when Windows holds none.
+ * Refuse a credential the chosen mechanism or the Windows profile schema could
+ * not accept, before anything is written.
+ *
+ * Two constraints the shared validator cannot apply. It does not know whether
+ * this access point runs WPA3 SAE, where a raw 64-hex PSK is written, accepted
+ * and then simply never authenticates. And the Microsoft profile schema is
+ * narrower than 802.11i: `passPhrase` key material is 8 to 63 PRINTABLE ASCII
+ * characters, so a passphrase carrying an accented letter is refused by
+ * WlanSetProfile with an opaque reason code rather than by anything that can
+ * explain itself — and on Windows the profile is written BEFORE the association
+ * is attempted, so that refusal comes after a working profile was replaced.
+ */
+export function assertWindowsWifiKey(password: string, sae: boolean): void {
+	if (isWifiHexKey(password)) {
+		if (sae) throw new Error('this network uses WPA3, which takes a passphrase rather than a raw 64-digit key');
+		return;
+	}
+	if (!isValidWifiKey(password, sae)) throw new Error('the password is not one a WPA2 or WPA3 personal network could accept');
+	if (!/^[\x20-\x7e]+$/.test(password)) throw new Error('Windows accepts only printable ASCII characters in a Wi-Fi passphrase');
+}
+
+/** A stored WLAN profile, as {@link readStoredProfile} found it. */
+interface StoredProfile {
+	/** The document exactly as Windows holds it, key material still encrypted. */
+	readonly xml: string;
+	/** WLAN_PROFILE_* flags. Writing it back with any others changes its scope. */
+	readonly flags: number;
+}
+
+/**
+ * The stored profile for one profile name, or null when Windows holds none.
  *
  * The key material comes back encrypted (reading it in the clear needs elevation
- * this app does not have), which is exactly what {@link restoreStoredProfile}
- * needs: the same user on the same machine can hand that ciphertext straight
- * back, so the saved key survives without ever being seen.
+ * this app does not have), which is exactly what a restore needs: the same user
+ * on the same machine can hand that ciphertext straight back, so the saved key
+ * survives without ever being seen.
+ *
+ * The flags matter as much as the document. `WlanGetProfile` reports whether the
+ * profile is all-user, per-user or pushed by group policy, and those are not
+ * interchangeable — a per-user profile written back as all-user is a different
+ * object, and a policy profile must not be touched at all.
  */
-function readStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string): string | null {
+function readStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string): StoredProfile | null {
 	const name = utf16z(profileName);
 	const xmlOut = new BigUint64Array(1);
 	// In/out: zero asks for the profile as stored, without the plaintext key.
@@ -1105,30 +1168,84 @@ function readStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Arr
 	if (rc !== 0 || xmlOut[0] === 0n) return null;
 	const xmlPointer = Number(xmlOut[0]) as Pointer;
 	try {
-		return readUtf16z(xmlPointer);
+		return { xml: readUtf16z(xmlPointer), flags: flags[0] ?? 0 };
 	} finally {
 		api.WlanFreeMemory(xmlPointer);
 	}
 }
 
 /**
- * Write a profile document back, replacing whatever stands in its place.
- *
- * Best-effort by design: this runs while an error is already on its way to the
- * user, and a failure to restore must not replace that error with one about the
- * restore. It opens its own handle because the one used for the join is long
- * closed by the time the association times out.
+ * Write a profile document, turning a refusal into an error that carries the
+ * reason code. Returns the raw result so the caller can tell the one tolerable
+ * outcome — ERROR_ALREADY_EXISTS after asking not to overwrite — from a failure.
  */
-function restoreStoredProfile(guidBytes: Uint8Array, profileXml: string): void {
+function writeProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileXml: string, flags: number, overwrite: number): number {
+	const document = utf16z(profileXml);
+	const reason = new Uint32Array(1);
+	const rc = api.WlanSetProfile(handle, ptr(guidBytes), flags, ptr(document), null, overwrite, null, ptr(reason));
+	if (rc !== 0 && rc !== ERROR_ALREADY_EXISTS) throw new Error(describeProfileFailure(api, rc, reason[0] ?? 0));
+	return rc;
+}
+
+/** Queue an association through a stored profile, or fail with the code Windows gave. */
+function connectByProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, parameters: Uint8Array): void {
+	const rc = api.WlanConnect(handle, ptr(guidBytes), ptr(parameters), null);
+	if (rc !== 0) throw new Error(wlanErrorMessage(rc));
+}
+
+/**
+ * Undo whatever the failed attempt wrote. Returns a description of a rollback
+ * that itself failed, or null when there was nothing to undo or it worked.
+ *
+ * The two cases are different actions, not one with a null in it. A profile this
+ * attempt CREATED has to be deleted — "restoring what was there before" would
+ * mean writing nothing and leaving the new one standing, which is how a failed
+ * join used to leave a dead profile behind. A profile it OVERWROTE goes back with
+ * the flags it had, so its scope is unchanged.
+ */
+function undoWifiProfileChange(guidBytes: Uint8Array, profileName: string, replaced: StoredProfile | null, created: boolean): string | null {
+	if (!created && !replaced) return null;
 	try {
-		withWlanHandle((api, handle) => {
-			const xml = utf16z(profileXml);
-			const reasonCode = new Uint32Array(1);
-			api.WlanSetProfile(handle, ptr(guidBytes), 0, ptr(xml), null, 1, null, ptr(reasonCode));
+		// Its own handle: the one used for the join is long closed by the time an
+		// association times out.
+		return withWlanHandle((api, handle) => {
+			const name = utf16z(profileName);
+			if (created) {
+				const rc = api.WlanDeleteProfile(handle, ptr(guidBytes), ptr(name), null);
+				return rc === 0 ? null : `the profile this attempt created could not be deleted (${wlanErrorMessage(rc)})`;
+			}
+			const document = utf16z((replaced as StoredProfile).xml);
+			const reason = new Uint32Array(1);
+			const rc = api.WlanSetProfile(handle, ptr(guidBytes), (replaced as StoredProfile).flags, ptr(document), null, 1, null, ptr(reason));
+			return rc === 0 ? null : `the previous profile could not be restored (${describeProfileFailure(api, rc, reason[0] ?? 0)})`;
 		});
-	} catch {
-		// Nothing better to do: the join failure is the error worth reporting.
+	} catch (err) {
+		return `the WLAN service could not be reached to undo it (${(err as Error).message})`;
 	}
+}
+
+/**
+ * Describe a refused WlanSetProfile, reason code included.
+ *
+ * The reason code is the whole point of the out-parameter that used to be
+ * allocated and then discarded: WlanSetProfile answers the same Win32 code for
+ * an unsupported cipher, a schema violation and a policy restriction alike, and
+ * only the reason code separates them. Windows can put it into words in the
+ * user's own language, so it is asked rather than printing a bare number.
+ */
+function describeProfileFailure(api: WlanApi, rc: number, reason: number): string {
+	const text = wlanReasonText(api, reason);
+	return text ? `${wlanErrorMessage(rc)}: ${text}` : wlanErrorMessage(rc);
+}
+
+/** Windows' own wording for a WLAN reason code, or null when it has none for it. */
+function wlanReasonText(api: WlanApi, reason: number): string | null {
+	if (reason === 0) return null;
+	const buffer = new Uint16Array(WLAN_REASON_TEXT_CHARS);
+	if (api.WlanReasonCodeToString(reason, buffer.length, ptr(buffer), null) !== 0) return null;
+	const end = buffer.indexOf(0);
+	const text = String.fromCharCode(...buffer.subarray(0, end === -1 ? buffer.length : end)).trim();
+	return text.length > 0 ? text : null;
 }
 
 /**

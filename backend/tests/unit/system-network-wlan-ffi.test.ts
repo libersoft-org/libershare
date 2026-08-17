@@ -12,11 +12,22 @@ import { isWindowsInterfaceID, readWindowsWifi, WLAN_SYMBOLS } from '../../src/s
  * checked; `WlanOpenHandle` receives a pointer to the caller's output buffer
  * instead and is the one function that legitimately declares `ptr` there.
  */
-const HANDLE_FIRST = ['WlanCloseHandle', 'WlanEnumInterfaces', 'WlanQueryInterface', 'WlanScan', 'WlanGetAvailableNetworkList', 'WlanSetProfile', 'WlanGetProfile', 'WlanConnect'] as const;
+const HANDLE_FIRST = ['WlanCloseHandle', 'WlanEnumInterfaces', 'WlanQueryInterface', 'WlanScan', 'WlanGetAvailableNetworkList', 'WlanSetProfile', 'WlanGetProfile', 'WlanDeleteProfile', 'WlanConnect'] as const;
 
 describe('WLAN_SYMBOLS', () => {
 	it('declares every HANDLE parameter as u64 rather than ptr', () => {
 		for (const name of HANDLE_FIRST) expect({ name, arg0: WLAN_SYMBOLS[name].args[0] }).toEqual({ name, arg0: FFIType.u64 });
+	});
+
+	// Deleting is the only way to undo a profile this app CREATED: writing back
+	// "what was there before" would be writing nothing and leaving it standing.
+	it('declares WlanDeleteProfile, without which a failed join cannot be undone', () => {
+		expect(WLAN_SYMBOLS.WlanDeleteProfile.args).toEqual([FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr]);
+	});
+
+	it('declares WlanReasonCodeToString with the code first, not a handle', () => {
+		// The one entry point here that takes no client handle at all.
+		expect(WLAN_SYMBOLS.WlanReasonCodeToString.args).toEqual([FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.ptr]);
 	});
 
 	it('still declares the WlanOpenHandle output buffer as a pointer', () => {
