@@ -14,6 +14,7 @@ import { initLISHnetsHandlers } from './lishnets.ts';
 import { initIdentityHandlers } from './identity.ts';
 import { initDatasetsHandlers } from './datasets.ts';
 import { initFsHandlers } from './fs.ts';
+import { initUploadHandlers } from './upload.ts';
 import { initLISHsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
 import { initEventsHandlers } from './events.ts';
@@ -129,6 +130,7 @@ export class APIServer {
 	private readonly uploadDir: string;
 	private readonly dataServer: DataServer;
 	private readonly networks: Networks;
+	private readonly _upload: ReturnType<typeof initUploadHandlers>;
 	private _search: ReturnType<typeof import('./search.ts').initSearchManager> | null = null;
 	private _system: ReturnType<typeof import('./system.ts').initSystemHandlers> | null = null;
 
@@ -151,6 +153,7 @@ export class APIServer {
 		const _settings = initSettingsHandlers(this.settings);
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
+		this._upload = initUploadHandlers(dataDir);
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn, this.settings);
 		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifest);
 		const _identity = initIdentityHandlers(this.networks);
@@ -286,6 +289,11 @@ export class APIServer {
 			'fs.exists': _fs.exists,
 			'fs.writeText': _fs.writeText,
 			'fs.writeCompressed': _fs.writeCompressed,
+			// Import file upload
+			'upload.begin': this._upload.begin,
+			'upload.chunk': this._upload.chunk,
+			'upload.end': this._upload.end,
+			'upload.abort': this._upload.abort,
 			// System
 			'system.ram': _system.ram,
 			'system.storage': _system.storage,
@@ -346,6 +354,9 @@ export class APIServer {
 				close(ws): void {
 					self.clients.delete(ws);
 					unsubscribeAllPeers(ws);
+					// A socket that drops mid-transfer leaves a half-written temp
+					// file with nobody able to finish or delete it.
+					self._upload.closeClient(ws);
 					console.log(`[API] Client disconnected (${self.clients.size} total)`);
 				},
 				async message(ws, message): Promise<void> {

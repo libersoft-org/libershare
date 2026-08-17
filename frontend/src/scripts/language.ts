@@ -160,6 +160,9 @@ const errorCodeKeys: Record<string, string> = {
 	MESSAGE_TOO_LARGE: 'common.errorMessageTooLarge',
 	HTTP_ERROR: 'common.errorHTTP',
 	INVALID_SIZE_FORMAT: 'common.errorInvalidSizeFormat',
+	UPLOAD_TOO_LARGE: 'common.errorUploadTooLarge',
+	UPLOAD_NOT_FOUND: 'common.errorUploadNotFound',
+	TOO_MANY_UPLOADS: 'common.errorTooManyUploads',
 	// Filesystem (FileBrowser) → fileBrowser
 	FS_NOT_FOUND: 'fileBrowser.errorNotFound',
 	FS_ACCESS_DENIED: 'fileBrowser.errorAccessDenied',

@@ -37,39 +37,6 @@ function getStatusURL(): string {
 	return parsed.toString();
 }
 
-function getUploadURL(name: string): string {
-	const parsed = new URL(apiURL);
-	parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:';
-	parsed.pathname = '/upload';
-	parsed.search = '';
-	parsed.searchParams.set('name', name);
-	if (backendToken) parsed.searchParams.set('token', backendToken);
-	return parsed.toString();
-}
-
-/**
- * Send a locally picked file to the backend over plain HTTP and return the temp
- * path it landed in. The bytes cross the wire once and raw; pushing them through
- * the WebSocket instead would mean base64 inside a single frame, which caps an
- * import at a fraction of the file sizes this handles.
- */
-export async function uploadImportFile(file: File): Promise<string> {
-	// Checked before sending: the backend rejects an oversized body by resetting
-	// the connection, which surfaces as an unreadable network error rather than
-	// as the size problem it actually is.
-	if (file.size > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.MESSAGE_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
-	const response = await fetch(getUploadURL(file.name), { method: 'POST', body: file });
-	const data = await response.json().catch(() => undefined);
-	if (response.ok && data?.path) return data.path as string;
-	if (response.status === 413) throw new CodedError(ErrorCodes.MESSAGE_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
-	// Keep the shape translateError() expects, so an upload failure reads like
-	// any other backend error instead of a raw HTTP status.
-	const error = new Error(data?.error ?? `HTTP ${response.status}`);
-	(error as any).code = data?.error ?? 'HTTP_ERROR';
-	(error as any).detail = data?.errorDetail ?? String(response.status);
-	throw error;
-}
-
 export const apiURL = getAPIURL();
 export const connected = writable(false);
 export const backendConnectionStatus = writable<BackendConnectionStatus>('connecting');
@@ -148,3 +115,39 @@ wsClient.onError = () => {
 	else void checkBackendStatus();
 };
 void checkBackendStatus();
+
+/**
+ * Bytes per chunk. Twenty-five round trips for a 100 MB import, and small enough
+ * that a chunk is nowhere near the frame limit however the envelope grows.
+ */
+const UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024;
+
+/**
+ * Send a locally picked file to the backend in chunks over the API WebSocket and
+ * return the temp path it landed in. The file is never read into memory whole
+ * and never travels as one message — that is what used to take the socket down
+ * once an import grew past the frame limit. Each chunk is a binary frame, so the
+ * bytes cost their own size rather than a third more as base64, and the next one
+ * is only sent once the backend has acknowledged the last, which keeps the send
+ * buffer from growing without bound.
+ */
+export async function uploadImportFile(file: File): Promise<string> {
+	// Checked up front so a file that could never be accepted fails immediately
+	// instead of after uploading its way to the ceiling.
+	if (file.size > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.UPLOAD_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
+	const { uploadID } = await wsClient.call<{ uploadID: string }>('upload.begin', { name: file.name });
+	try {
+		for (let offset = 0; offset < file.size; offset += UPLOAD_CHUNK_SIZE) {
+			const slice = await file.slice(offset, offset + UPLOAD_CHUNK_SIZE).arrayBuffer();
+			await wsClient.callBinary('upload.chunk', { uploadID }, new Uint8Array(slice));
+		}
+		const { path } = await wsClient.call<{ path: string }>('upload.end', { uploadID });
+		return path;
+	} catch (err) {
+		// Nothing half-written is left behind. If the socket is what failed, the
+		// backend has already dropped the transfer on its own, so a failed abort
+		// is not worth reporting over the error that caused it.
+		void wsClient.call('upload.abort', { uploadID }).catch(() => {});
+		throw err;
+	}
+}

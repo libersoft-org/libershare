@@ -85,6 +85,11 @@ const errorCodes = [
 	'HTTP_ERROR',
 	'INVALID_SIZE_FORMAT',
 
+	// Upload
+	'UPLOAD_TOO_LARGE',
+	'UPLOAD_NOT_FOUND',
+	'TOO_MANY_UPLOADS',
+
 	// Download events
 	'DOWNLOAD_ERROR',
 
