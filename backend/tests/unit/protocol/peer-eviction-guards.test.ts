@@ -1859,6 +1859,44 @@ describe('bootstrap ownership belongs to the network that claimed it', () => {
 		expect(registryAddresses(network)).toEqual([CANON]);
 	});
 
+	/**
+	 * The registry saying "still a startup bootstrap" and the exemption set saying "an
+	 * ordinary peer" is not a cosmetic disagreement: the exemption set is what a leave or
+	 * an unreachable sweep asks, so the peer the application still configures gets hung
+	 * up and purged.
+	 */
+	it('keeps the infrastructure status the startup list still grants', () => {
+		const network = bareNetwork();
+		network.pruneConfiguredBootstrapPeer(PEER_ID, 'net-a');
+		expect(network.isBootstrapOrRelayPeer(PEER_ID)).toBe(true);
+	});
+
+	it('gives the status up once the startup list drops it too', () => {
+		const network = bareNetwork();
+		network.pruneConfiguredBootstrapPeer(PEER_ID, 'net-a');
+		network.pruneConfiguredBootstrapPeer(PEER_ID, '@startup');
+		expect(network.isBootstrapOrRelayPeer(PEER_ID)).toBe(false);
+	});
+
+	/** And the sweep that reads it leaves the peer alone, end to end. */
+	it('survives an unreachable sweep after the lishnet drops it', async () => {
+		const purged: string[] = [];
+		const network = bareNetwork();
+		(network as any).runEpoch = 1;
+		(network as any).redialBackoff = new Map();
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).noReachableSince = new Map([[PEER_ID, Date.now() - 45 * 60_000]]);
+		(network as any).bootstrapTracker = { deleteDiscoveredByPeerID() {} };
+		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
+		(network as any).node = { getConnections: () => [] };
+		(network as any).hasConnectionOtherThan = (): boolean => true;
+		(network as any).purgeStalePeer = async (pid: string): Promise<void> => void purged.push(pid);
+		network.pruneConfiguredBootstrapPeer(PEER_ID, 'net-a');
+		await (network as any).runRedialMaintenance([], [{ id: peerIdLike(PEER_ID), addresses: NO_ADDRESSES }], 1);
+		expect(purged).toEqual([]);
+	});
+
 	it('forgets the address once its last owner is gone', () => {
 		const network = bareNetwork();
 		network.pruneBootstrapAddresses([SHARED], 'net-a');

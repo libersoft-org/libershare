@@ -2619,13 +2619,15 @@ export class Network {
 	 * leave-network must keep connected — and so the unreachable-eviction exemption
 	 * ends with it.
 	 *
-	 * Both callers already establish that the peer is configured in NO joined network
-	 * before calling, so the identity-level part needs no refcount of its own. The
-	 * ADDRESS-level part still does: `networkID` names the claim being released, and
-	 * each of the peer's addresses survives until its last claimant is gone.
+	 * Both callers establish that no joined LISHNET configures the peer before calling —
+	 * but the application's own startup list is an owner too, and no lishnet edit speaks
+	 * for it. So the exemption is dropped only once the registry holds no configured
+	 * claim on any address of this peer, which is what `isBootstrapOrRelayPeer` would
+	 * answer if it read the registry directly. Deleting it unconditionally left the two
+	 * disagreeing: the registry still called the peer a startup bootstrap while an
+	 * eviction sweep saw an ordinary peer and hung it up.
 	 */
 	pruneConfiguredBootstrapPeer(peerID: string, networkID: string): void {
-		this.configuredBootstrapPeerIDs.delete(peerID);
 		// Forget its addresses too. They entered the registry when the entry was first
 		// configured, and that registry is what zero-connection recovery walks — leaving
 		// them means a bootstrap the user has just deleted keeps being dialed whenever
@@ -2633,6 +2635,9 @@ export class Network {
 		// This network's claim only — the startup list is an owner of its own, see
 		// {@link pruneBootstrapAddresses}.
 		for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) this.dropConfiguredOwnership(key, networkID);
+		// Released last, and only if nothing configures the peer any more — the startup
+		// list survives a lishnet edit, and with it the peer's infrastructure status.
+		if (!this.hasConfiguredAddressClaim(peerID)) this.configuredBootstrapPeerIDs.delete(peerID);
 		// The dedup set has to let go as well, or a later re-add would be treated as
 		// already known and the peer could never come back. Only once nothing of it is
 		// left in the registry: a gossip-learned address that earned its place by
