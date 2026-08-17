@@ -1,6 +1,6 @@
 import { type Database } from 'bun:sqlite';
 import { Mutex } from 'async-mutex';
-import { Network, normalizeMultiaddrForCompare } from '../protocol/network.ts';
+import { Network, normalizeMultiaddrForCompare, type BootstrapDialResult } from '../protocol/network.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
@@ -48,6 +48,17 @@ interface ReconcileOutcome {
 	joined: boolean;
 	/** Identity of the row this convergence actually converged on, if it still exists. */
 	network?: { networkID: string; name: string };
+}
+
+/**
+ * What one membership put on the running node, and whether the run that put it there
+ * finished — see {@link Networks.appliedBootstrap}.
+ */
+interface InstalledBootstrap {
+	/** The list the dials were started for: the cleanup baseline, whatever the run reached. */
+	readonly addresses: string[];
+	/** Whether a dial run walked this whole list. Until it has, the list is not converged. */
+	complete: boolean;
 }
 
 /**
@@ -109,8 +120,16 @@ export class Networks {
 	 * Per-run, like {@link joinedNetworks}: only a joined lishnet installs anything (the
 	 * configured dials all run behind a membership), so an entry exists exactly while there
 	 * is something to take back off.
+	 *
+	 * `addresses` is the CLEANUP baseline and is therefore recorded before the dials: any of
+	 * them may have been installed by the time a run ends, so a leave has to be able to take
+	 * all of them back off. It is not evidence that the dial loop ever reached them, which is
+	 * what `complete` is for — see {@link BootstrapDialResult}. Read as convergence, a list of
+	 * `[A, B]` whose run was cancelled after A left B undialed for the rest of the run: the
+	 * next reconcile compared the desired list against itself, found no difference and did
+	 * nothing.
 	 */
-	private readonly appliedBootstrap = new Map<string, string[]>();
+	private readonly appliedBootstrap = new Map<string, InstalledBootstrap>();
 	/**
 	 * Every reconcile that has been RESERVED and not yet finished — the shutdown barrier.
 	 *
@@ -262,12 +281,13 @@ export class Networks {
 					// The startup join installs this list just as {@link joinNetwork} does, so it
 					// has to record it the same way or the first leave of the run finds nothing to
 					// take back off — see {@link appliedBootstrap}.
-					this.appliedBootstrap.set(row.networkID, configured);
+					const installed = this.beginBootstrapInstall(row.networkID, configured);
 					if (configured.length > 0) {
 						// Fire-and-forget so a slow / unreachable network does not delay startup of the others.
-						this.network.addBootstrapPeers(configured, row.networkID, 'configured').catch(err => {
-							console.error(`[Networks] addBootstrapPeers for ${row.networkID} failed:`, err?.message ?? err);
-						});
+						this.network.addBootstrapPeers(configured, row.networkID, 'configured').then(
+							result => Networks.finishBootstrapInstall(installed, result),
+							err => console.error(`[Networks] addBootstrapPeers for ${row.networkID} failed:`, err?.message ?? err)
+						);
 					}
 					console.log(`✓ Joined lishnet: ${row.name} (${row.networkID})`);
 				});
@@ -412,6 +432,30 @@ export class Networks {
 		if (lock && !lock.isLocked()) this.networkOperations.delete(id);
 	}
 
+	/**
+	 * Record the list a dial run is about to install and hand back the entry it reports to.
+	 *
+	 * An empty list is converged as soon as it is recorded: there is nothing to walk, and no
+	 * dial will ever be started to say so.
+	 */
+	private beginBootstrapInstall(id: string, addresses: string[]): InstalledBootstrap {
+		const entry: InstalledBootstrap = { addresses, complete: addresses.length === 0 };
+		this.appliedBootstrap.set(id, entry);
+		return entry;
+	}
+
+	/**
+	 * Record that a dial run walked its whole list.
+	 *
+	 * Written to the entry that run STARTED with, never to whatever the map holds now: a run
+	 * whose list has since been replaced is reporting about a list nothing reads any more, and
+	 * writing `complete` from it would declare the new list converged on the strength of the
+	 * old one's dials.
+	 */
+	private static finishBootstrapInstall(entry: InstalledBootstrap, result: BootstrapDialResult): void {
+		if (result === 'completed') entry.complete = true;
+	}
+
 	/** The lock guarding one lishnet's whole transition — see {@link networkOperations}. */
 	private operationLock(id: string): Mutex {
 		let lock = this.networkOperations.get(id);
@@ -449,6 +493,11 @@ export class Networks {
 	 * joined: a join installs the current list itself, and a leave takes back exactly what is
 	 * recorded as installed.
 	 *
+	 * A list that has not been walked to the end is re-run even when it is IDENTICAL to the
+	 * stored one. Equality of the two lists says the node was asked for the right addresses,
+	 * not that anything was ever dialed for the later ones — a run cancelled by a shutdown, or
+	 * one that rejected part-way, leaves exactly that: the right list, half of it attempted.
+	 *
 	 * Callers hold the lishnet's operation lock, and the whole outcome is assembled before it
 	 * is released — see {@link ReconcileOutcome}.
 	 */
@@ -456,11 +505,12 @@ export class Networks {
 		const next = this.get(id);
 		const wantJoined = next?.enabled === true;
 		const joined = this.joinedNetworks.has(id);
-		const installed = this.appliedBootstrap.get(id) ?? [];
+		const entry = this.appliedBootstrap.get(id);
+		const installed = entry?.addresses ?? [];
 		const after = Networks.cleanBootstrapList(next?.bootstrapPeers ?? []);
 		// Only for a membership that stays: a leave resets the whole status anyway and a dial
 		// on the way out is pure waste, and a join has nothing installed yet to reconcile.
-		if (joined && wantJoined && installed.join('\n') !== after.join('\n')) this.syncBootstrapRuntime(id, installed, after);
+		if (joined && wantJoined && (installed.join('\n') !== after.join('\n') || entry?.complete === false)) this.syncBootstrapRuntime(id, installed, after);
 		if (joined !== wantJoined) {
 			if (wantJoined) await this.joinNetwork(id);
 			else await this.leaveNetwork(id, installed);
@@ -538,8 +588,8 @@ export class Networks {
 		// Recorded BEFORE the dials, not after them: a dial that lands installs its address
 		// whether or not the loop ever reaches the end, so an abandoned or failed run must
 		// still leave a leave with something to clean up — see {@link appliedBootstrap}.
-		this.appliedBootstrap.set(id, configured);
-		if (configured.length > 0) await this.network.addBootstrapPeers(configured, id, 'configured');
+		const installed = this.beginBootstrapInstall(id, configured);
+		if (configured.length > 0) Networks.finishBootstrapInstall(installed, await this.network.addBootstrapPeers(configured, id, 'configured'));
 
 		// The dials above take seconds. A node that went DOWN during them owns neither the
 		// subscription nor the connections this join was building, so the membership claim
@@ -1071,11 +1121,12 @@ export class Networks {
 		const dropped = Networks.cleanBootstrapList(installed).filter(a => !keptAddresses.has(normalizeMultiaddrForCompare(a)) && !elsewhereAddresses.has(normalizeMultiaddrForCompare(a)));
 		this.network.pruneBootstrapAddresses(dropped);
 		this.network.pruneBootstrapStatus(id, cleaned);
-		this.appliedBootstrap.set(id, cleaned);
+		const entry = this.beginBootstrapInstall(id, cleaned);
 		if (this.joinedNetworks.has(id) && cleaned.length > 0) {
-			this.network.addBootstrapPeers(cleaned, id, 'configured').catch(err => {
-				console.error(`[Networks] bootstrap re-dial after config change failed:`, err?.message ?? err);
-			});
+			this.network.addBootstrapPeers(cleaned, id, 'configured').then(
+				result => Networks.finishBootstrapInstall(entry, result),
+				err => console.error(`[Networks] bootstrap re-dial after config change failed:`, err?.message ?? err)
+			);
 		}
 	}
 }

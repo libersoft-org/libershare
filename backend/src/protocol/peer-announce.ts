@@ -169,8 +169,12 @@ export interface PeerAnnounceManagerDeps {
 	 * finished run's payload onto the new node.
 	 */
 	broadcast(topic: string, msg: Record<string, any>, pubsub: any): Promise<void>;
-	/** Process an inbound peer-announce payload: dial/tag discovered peers. */
-	addBootstrapPeers(multiaddrs: string[], networkID: string, origin: BootstrapPeerOrigin): Promise<void>;
+	/**
+	 * Process an inbound peer-announce payload: dial/tag discovered peers. Whether the run
+	 * walked the whole list is the concern of the caller that records what it installed;
+	 * gossip intake has nothing to reconcile against and ignores it.
+	 */
+	addBootstrapPeers(multiaddrs: string[], networkID: string, origin: BootstrapPeerOrigin): Promise<unknown>;
 }
 
 /**

@@ -237,6 +237,20 @@ const MAX_PUBSUB_PAYLOAD_BYTES = 256 * 1024;
 export type NetworkLifecycle = 'stopped' | 'starting' | 'running' | 'stopping' | 'failed';
 
 /**
+ * Whether a bootstrap dial run walked its WHOLE list.
+ *
+ * `'completed'` says every address was processed by the run that started it — reached,
+ * skipped as non-routable, backed off, or dialed and failed. An ordinary unreachable
+ * address is processed; nothing more will be attempted for it until the list changes.
+ *
+ * `'incomplete'` says the run ended early: the node was replaced, the shutdown cancelled
+ * this run's dials, or the network's configured list was superseded. Addresses past that
+ * point were never touched, and no comparison of "what we asked for" against "what we
+ * asked for" can discover it — see {@link Networks.appliedBootstrap}.
+ */
+export type BootstrapDialResult = 'completed' | 'incomplete';
+
+/**
  * Single shared libp2p node.
  * LISH networks are logical groups represented as pubsub topics on this one node.
  */
@@ -496,7 +510,7 @@ export class Network {
 			getNode: (): Libp2p | null => this.node,
 			getPubsub: (): any => this.pubsub,
 			broadcast: (topic, msg, pubsub): Promise<void> => Network.publishOn(pubsub, topic, msg),
-			addBootstrapPeers: (multiaddrs, networkID, origin): Promise<void> => this.addBootstrapPeers(multiaddrs, networkID, origin),
+			addBootstrapPeers: (multiaddrs, networkID, origin): Promise<BootstrapDialResult> => this.addBootstrapPeers(multiaddrs, networkID, origin),
 		});
 	}
 
@@ -1748,15 +1762,19 @@ export class Network {
 	 * peer-announce gossip passes the networkID of the topic the announce arrived
 	 * on, so discovered peers are tracked per-network too. Pass `null` only for
 	 * additions with no owning network, in which case stats are skipped.
+	 *
+	 * Reports whether the whole list was PROCESSED — see {@link BootstrapDialResult}. A
+	 * caller that records what it installed needs to know the difference: an address the
+	 * loop never reached is not installed and no comparison of lists will ever say so.
 	 */
-	async addBootstrapPeers(peers: string[], networkID: string | null = null, origin: BootstrapPeerOrigin = 'discovered'): Promise<void> {
+	async addBootstrapPeers(peers: string[], networkID: string | null = null, origin: BootstrapPeerOrigin = 'discovered'): Promise<BootstrapDialResult> {
 		// Group the run's status writes. Intake performs two per address — a pending mark
 		// and an outcome — and each rebuilds and publishes the network's whole peer list,
 		// so one 128-address announce used to cost 256 snapshots and 256 WebSocket pushes
 		// of which the UI kept the last. The frame flushes periodically rather than only
 		// at close, so a list of slow dials still reports progress as it goes.
 		if (networkID === null) return this.dialBootstrapEntries(peers, networkID, origin);
-		await this.bootstrapTracker.batchDebounced(networkID, () => this.dialBootstrapEntries(peers, networkID, origin));
+		return await this.bootstrapTracker.batchDebounced(networkID, () => this.dialBootstrapEntries(peers, networkID, origin));
 	}
 
 	/**
@@ -1772,10 +1790,10 @@ export class Network {
 	}
 
 	/** The dial loop behind {@link addBootstrapPeers}; see there for the batching wrapper. */
-	private async dialBootstrapEntries(peers: string[], networkID: string | null, origin: BootstrapPeerOrigin): Promise<void> {
+	private async dialBootstrapEntries(peers: string[], networkID: string | null, origin: BootstrapPeerOrigin): Promise<BootstrapDialResult> {
 		if (!this.node) {
 			console.error('Network not started - cannot add bootstrap peers');
-			return;
+			return 'incomplete';
 		}
 		const myPeerID = this.node.peerId.toString();
 		const localCidrs = getLocalCidrs();
@@ -1801,7 +1819,7 @@ export class Network {
 		const abort = this.dialAbort;
 		const superseded = (): boolean => epoch !== this.runEpoch || abort.signal.aborted || generation !== this.bootstrapGenerationOf(networkID);
 		for (const peer of peers) {
-			if (superseded()) return;
+			if (superseded()) return 'incomplete';
 			let probeAfterQuarantine = false;
 			try {
 				const ma = Multiaddr(peer);
@@ -1964,13 +1982,13 @@ export class Network {
 					// opposite case — the network was left or its list replaced on the SAME
 					// node, which is precisely when this connection needs closing, so it may
 					// not short-circuit ahead of it.
-					if (epoch !== this.runEpoch) return;
+					if (epoch !== this.runEpoch) return 'incomplete';
 					if (peerID && networkID && (this.isRedialSuppressed(peerID) || !this.isTopicSubscribed(networkID)) && !this.isPeerNeededByJoinedNetwork(peerID)) {
 						trace(`[NET] bootstrap dial landed after leave, disconnecting: ${peerID.slice(0, 16)}`);
 						await this.disconnectPeer(peerID, networkID, epoch);
-						return;
+						return 'incomplete';
 					}
-					if (superseded()) return;
+					if (superseded()) return 'incomplete';
 					// The peer answered, so the identity behind this address is real and
 					// wanted — the point at which a discovered ID has earned its place in
 					// the set (see the claim above for why it may not have it yet).
@@ -1987,7 +2005,7 @@ export class Network {
 					// Re-check after the merge await too: stop() may have cleared the
 					// tracker while it was pending, and recordOutcome would otherwise
 					// resurrect a network row for the old (or next) node instance.
-					if (superseded()) return;
+					if (superseded()) return 'incomplete';
 					// `force: true` defeats connection REUSE, but not a dial to the same peer
 					// ID already in libp2p's queue: this call joins that job and can be handed
 					// the connection its other address won. For a CONFIGURED entry the row
@@ -2012,7 +2030,7 @@ export class Network {
 					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, conn?.remotePeer?.toString() ?? null, effectiveOrigin);
 					console.log('✓ Connected to new bootstrap peer');
 				} catch (err: any) {
-					if (superseded()) return;
+					if (superseded()) return 'incomplete';
 					const message = err?.message ?? String(err);
 					const kind = classifyBootstrapError(message);
 					// The probe the expired quarantine allowed has failed, so close the window
@@ -2072,7 +2090,7 @@ export class Network {
 						} catch {
 							/* peer not in store — nothing to trim, and nothing left either */
 						}
-						if (superseded()) return;
+						if (superseded()) return 'incomplete';
 						// Only once the peer has neither a live connection nor a single address we
 						// have not disproved is there anything left to purge.
 						if (this.node.getConnections(pid).length === 0 && remainingAddresses === 0) {
@@ -2099,6 +2117,7 @@ export class Network {
 				console.log('⚠️  Skipping invalid multiaddr:', peer, '-', error.message);
 			}
 		}
+		return 'completed';
 	}
 
 	/**

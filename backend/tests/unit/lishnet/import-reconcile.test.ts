@@ -53,8 +53,9 @@ function makeMockNet() {
 		unsubscribeTopic(id: string): void {
 			this.unsubscribed.push(id);
 		},
-		async addBootstrapPeers(peers: string[], networkID: string, origin: string): Promise<void> {
+		async addBootstrapPeers(peers: string[], networkID: string, origin: string): Promise<'completed' | 'incomplete'> {
 			this.dialledLists.push({ networkID, peers, origin });
+			return 'completed';
 		},
 	};
 }
@@ -69,7 +70,7 @@ function bare(db: Database, mock: ReturnType<typeof makeMockNet>, joined: string
 	(networks as any).activeReconciles = new Set();
 	(networks as any).announcedJoined = new Map(joined.map(id => [id, true]));
 	// The bootstrap list each already-joined network installed, as a startup join would.
-	(networks as any).appliedBootstrap = new Map(joined.map(id => [id, getLISHnet(db, id)?.bootstrapPeers ?? []]));
+	(networks as any).appliedBootstrap = new Map(joined.map(id => [id, { addresses: getLISHnet(db, id)?.bootstrapPeers ?? [], complete: true }]));
 	return networks;
 }
 

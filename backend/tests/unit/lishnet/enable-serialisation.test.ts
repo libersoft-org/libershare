@@ -77,9 +77,10 @@ function makeMockNet() {
 		getRunEpoch(): number {
 			return 1;
 		},
-		async addBootstrapPeers(peers: string[] = []): Promise<void> {
+		async addBootstrapPeers(peers: string[] = []): Promise<'completed' | 'incomplete'> {
 			if (this.dialGate) await this.dialGate;
 			for (const peer of peers) this.configured.add(peer);
+			return 'completed';
 		},
 	};
 }
@@ -94,7 +95,7 @@ function makeNetworks(net: ReturnType<typeof makeMockNet>, db: Database, joined:
 	(networks as any).activeReconciles = new Set();
 	(networks as any).announcedJoined = new Map<string, boolean>(joined.map(id => [id, true]));
 	// The bootstrap list each already-joined network installed, as a startup join would.
-	(networks as any).appliedBootstrap = new Map<string, string[]>(joined.map(id => [id, getLISHnet(db, id)?.bootstrapPeers ?? []]));
+	(networks as any).appliedBootstrap = new Map(joined.map(id => [id, { addresses: getLISHnet(db, id)?.bootstrapPeers ?? [], complete: true }]));
 	const events: string[] = [];
 	(networks as any)._onNetworkJoined = (id: string): void => {
 		events.push(`joined:${id}`);

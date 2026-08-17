@@ -71,10 +71,13 @@ function makeMockNet(startGate: Promise<void>) {
 		/** Set to hold the bootstrap dial of a join open. */
 		dialGate: null as null | Promise<void>,
 		bootstrapDials: [] as string[][],
-		async addBootstrapPeers(peers: string[]): Promise<void> {
+		async addBootstrapPeers(peers: string[]): Promise<'completed' | 'incomplete'> {
 			this.bootstrapDials.push(peers);
 			if (this.dialGate) await this.dialGate;
+			return this.dialResult;
 		},
+		/** What the dial run reports back: `'incomplete'` models a list it never walked. */
+		dialResult: 'completed' as 'completed' | 'incomplete',
 	};
 }
 
@@ -87,7 +90,7 @@ function makeNetworks(net: ReturnType<typeof makeMockNet>, db: Database): Networ
 	(networks as any).catalogMutex = new Mutex();
 	(networks as any).activeReconciles = new Set();
 	(networks as any).announcedJoined = new Map<string, boolean>();
-	(networks as any).appliedBootstrap = new Map<string, string[]>();
+	(networks as any).appliedBootstrap = new Map();
 	(networks as any).stopRequested = false;
 	(networks as any).reconcileAdmissionClosed = false;
 	(networks as any)._onNetworkJoined = null;
@@ -399,6 +402,36 @@ describe('Networks.startEnabledNetworks — coordinated with concurrent changes'
 
 		expect(net.subscribed).toContain(NET);
 		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
+	});
+
+	/**
+	 * What a membership installed was recorded as the whole target list before the dials ran —
+	 * right as a cleanup baseline, wrong as proof of convergence. A run cut short after the
+	 * first address left the rest undialed, and the next reconcile compared the desired list
+	 * against itself, found no difference and attempted nothing: the remaining addresses were
+	 * never dialed again for the life of the run.
+	 */
+	it('re-runs an identical bootstrap list its last run never finished', async () => {
+		const net = makeMockNet(Promise.resolve());
+		const networks = makeNetworks(net, db);
+		setLISHnetEnabled(db, NET, false);
+		await networks.startEnabledNetworks();
+		reseedWithBootstrap(db);
+
+		net.dialResult = 'incomplete';
+		await networks.setEnabled(NET, true);
+		expect(net.bootstrapDials).toEqual([[BOOTSTRAP]]);
+
+		// Same list, so nothing about the CONFIG has changed — only that nobody ever walked it.
+		net.dialResult = 'completed';
+		await networks.updateBootstrapPeers(NET, [BOOTSTRAP]);
+		await settle();
+		expect(net.bootstrapDials).toEqual([[BOOTSTRAP], [BOOTSTRAP]]);
+
+		// And once a run has walked it, an identical write is the no-op it always was.
+		await networks.updateBootstrapPeers(NET, [BOOTSTRAP]);
+		await settle();
+		expect(net.bootstrapDials).toEqual([[BOOTSTRAP], [BOOTSTRAP]]);
 	});
 
 	it('an undisturbed startup still joins every enabled network', async () => {

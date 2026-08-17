@@ -42,7 +42,7 @@ interface MockNet {
 	prunedAddresses: string[][];
 	pruneBootstrapStatus(networkID: string, keep: string[]): void;
 	prunedStatus: Array<{ networkID: string; keep: string[] }>;
-	addBootstrapPeers(peers: string[], networkID: string, origin: string): Promise<void>;
+	addBootstrapPeers(peers: string[], networkID: string, origin: string): Promise<'completed' | 'incomplete'>;
 	dialledLists: Array<{ networkID: string; peers: string[]; origin: string }>;
 	clearRedialSuppressionForNetwork(networkID: string): void;
 	suppressionClearedFor: string[];
@@ -112,6 +112,7 @@ function makeMockNet(): MockNet {
 		},
 		async addBootstrapPeers(peers, networkID, origin) {
 			this.dialledLists.push({ networkID, peers, origin });
+			return 'completed' as const;
 		},
 		clearRedialSuppressionForNetwork(networkID) {
 			this.suppressionClearedFor.push(networkID);
@@ -134,7 +135,7 @@ function makeNetworks(net: MockNet, joined: string[], configs: Record<string, st
 	// Same seeding startEnabledNetworks does: already-joined at construction time.
 	(networks as any).announcedJoined = new Map(joined.map(id => [id, true]));
 	// The list each joined network installed when it was joined.
-	(networks as any).appliedBootstrap = new Map(joined.map(id => [id, configs[id] ?? []]));
+	(networks as any).appliedBootstrap = new Map(joined.map(id => [id, { addresses: configs[id] ?? [], complete: true }]));
 	(networks as any)._onNetworkLeft = null;
 	(networks as any)._onNetworkJoined = null;
 	(networks as any).get = (id: string) => rows.get(id);
@@ -445,7 +446,7 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		(networks as any).activeReconciles = new Set();
 		(networks as any).announcedJoined = new Map(enabled ? [[NET, true]] : []);
 		// What a startup join would have installed for an already-joined network.
-		(networks as any).appliedBootstrap = new Map(enabled ? [[NET, bootstrapPeers]] : []);
+		(networks as any).appliedBootstrap = new Map(enabled ? [[NET, { addresses: bootstrapPeers, complete: true }]] : []);
 		return { networks, mock, db };
 	}
 
@@ -580,7 +581,7 @@ describe('Networks — leaving cleans the configuration it is leaving, not the n
 		(networks as any).activeReconciles = new Set();
 		(networks as any).announcedJoined = new Map([[NET, true]]);
 		// What a startup join would have installed for an already-joined network.
-		(networks as any).appliedBootstrap = new Map([[NET, bootstrapPeers]]);
+		(networks as any).appliedBootstrap = new Map([[NET, { addresses: bootstrapPeers, complete: true }]]);
 		return { networks, mock, db };
 	}
 
