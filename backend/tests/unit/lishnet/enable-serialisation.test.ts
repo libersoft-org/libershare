@@ -196,6 +196,25 @@ describe('Networks.setEnabled — serialised per lishnet', () => {
 		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
 	});
 
+	/**
+	 * The transfer-layer observers iterate downloaders and mutate them, and one that throws
+	 * used to come back out as a failed RPC — with the row written, the topic subscribed and
+	 * `announcedJoined` already holding the new state. Retrying found nothing left to
+	 * announce, so the event never reached the client for a network that really had joined.
+	 */
+	it('an observer that throws does not fail the transition it was told about', async () => {
+		const { networks } = makeNetworks(net, db, []);
+		(networks as any)._onNetworkJoined = (): void => {
+			throw new Error('downloader blew up');
+		};
+
+		const result = await networks.setEnabled(NET, true);
+
+		expect(result).toEqual({ found: true, transitioned: true, joined: true, network: NAMED });
+		expect(net.subscribed).toEqual([NET]);
+		expect(getLISHnet(db, NET)!.enabled).toBe(true);
+	});
+
 	it('an uncontested enable still joins and announces it', async () => {
 		const { networks, events } = makeNetworks(net, db, []);
 

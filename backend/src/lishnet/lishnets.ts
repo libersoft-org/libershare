@@ -322,12 +322,24 @@ export class Networks {
 	 * Tell higher layers about a settled join/leave, once per actual change. Returns whether
 	 * this call was that change — the single source of truth for "something transitioned",
 	 * which the API needs before it broadcasts a join or leave of its own.
+	 *
+	 * The observers run synchronously here, still under the lishnet's operation lock, so they
+	 * stay in the order the transitions happened. What they may NOT do is change the outcome:
+	 * the transfer-layer callbacks iterate downloaders and mutate them, and a throw used to
+	 * come back out of the whole operation as a failed RPC — after the database and the
+	 * runtime had already moved and `announcedJoined` already held the new state. Retrying
+	 * the request then found nothing left to announce, so the observer was never re-run and
+	 * the event never reached the client, for a network that really had joined or left.
 	 */
 	private announce(id: string, joined: boolean): boolean {
 		if ((this.announcedJoined.get(id) ?? false) === joined) return false;
 		this.announcedJoined.set(id, joined);
-		if (joined) this._onNetworkJoined?.(id);
-		else this._onNetworkLeft?.(id);
+		try {
+			if (joined) this._onNetworkJoined?.(id);
+			else this._onNetworkLeft?.(id);
+		} catch (err: any) {
+			console.error(`[Networks] ${joined ? 'onNetworkJoined' : 'onNetworkLeft'} observer for ${id} threw:`, err?.message ?? err);
+		}
 		return true;
 	}
 
