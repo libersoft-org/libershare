@@ -224,8 +224,14 @@ const MAX_PUBSUB_PAYLOAD_BYTES = 256 * 1024;
  * object that never started looking exactly like a running one, and a caller starting
  * during a stop was told "already running" and then had its node torn down under it.
  * Only a fully successful start reaches `running`.
+ *
+ * `failed` is the terminal state of a stop whose `node.stop()` threw. The run is neither
+ * running nor over: the node may still hold its listener, its connections and its port,
+ * and nothing has proved otherwise. Reporting `stopped` there is what allowed a second
+ * node over the same identity, port and datastore, and a datastore wipe underneath a live
+ * one. Only another {@link Network.stop} may leave `failed` — by succeeding.
  */
-export type NetworkLifecycle = 'stopped' | 'starting' | 'running' | 'stopping';
+export type NetworkLifecycle = 'stopped' | 'starting' | 'running' | 'stopping' | 'failed';
 
 /**
  * Single shared libp2p node.
@@ -616,6 +622,10 @@ export class Network {
 		// nodes over one datastore, or into a start whose node a concurrent stop tears
 		// down while its caller is told the start succeeded.
 		await this.lifecycleMutex.runExclusive(async () => {
+			// A previous run that could not be stopped may still own this identity, this
+			// port and this datastore. Starting a second node over it is the one thing
+			// that state exists to prevent, and "already running" would be a lie.
+			if (this.lifecycle === 'failed') throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network is in a failed state: the previous node could not be stopped');
 			if (this.lifecycle !== 'stopped') {
 				console.log('Network node is already running');
 				return;
@@ -629,8 +639,16 @@ export class Network {
 				// Leaving either behind is what made a failed start unrecoverable without
 				// restarting the process: the SQLite file stayed locked and `this.node`
 				// stayed set, so the next start reported "already running" forever.
-				// A teardown failure must not replace the reason the start failed.
-				await this.teardown().catch(() => {});
+				try {
+					await this.teardown();
+				} catch (teardownErr) {
+					// The cleanup could not prove the half-built node is down, so the next
+					// start must be refused rather than opening a second one over the same
+					// identity. Both reasons are kept: the start error explains what went
+					// wrong, the teardown error explains why the instance is now unusable.
+					this.lifecycle = 'failed';
+					throw new AggregateError([err, teardownErr], 'network start failed and its cleanup could not complete');
+				}
 				this.lifecycle = 'stopped';
 				throw err;
 			}
@@ -2875,8 +2893,15 @@ export class Network {
 			this.lifecycle = 'stopping';
 			try {
 				await this.teardown();
-			} finally {
 				this.lifecycle = 'stopped';
+			} catch (err) {
+				// teardown kept the node and the datastore precisely because it could not
+				// prove the node is down. Setting `stopped` here regardless is what let the
+				// caller go on to start a second node over the same identity, port and
+				// datastore, and let a factory reset wipe a datastore still in use. A retry
+				// of stop() is allowed and is the only way out of `failed`.
+				this.lifecycle = 'failed';
+				throw err;
 			}
 		});
 	}
@@ -2886,9 +2911,11 @@ export class Network {
 	 * {@link start}, because a half-built start holds the same resources a finished one
 	 * does — and leaving them behind is what made a failed start unrecoverable.
 	 *
-	 * Every step is best-effort and the field nulling happens in a `finally`: a node that
-	 * refuses to stop must not also cost us the datastore handle and leave the instance
-	 * permanently wedged in "running".
+	 * The per-run bookkeeping below is cleared unconditionally, but the node, the datastore
+	 * and the identity are released only once `node.stop()` has actually returned. A stop
+	 * that threw has not shown the node to be down, and everything that follows — closing
+	 * its datastore, dropping the reference, permitting a new start or a wipe — is only safe
+	 * once it has. That failure propagates and leaves the instance in `failed`.
 	 */
 	private async teardown(): Promise<void> {
 		this.runEpoch++; // invalidate any in-flight status tick before touching state
@@ -2950,7 +2977,6 @@ export class Network {
 		this.delayedPeerCountTimers.clear();
 		this.redialSuppressedByNet.clear();
 		this.pxIngressLogKeys.clear();
-		let stopError: unknown = null;
 		try {
 			if (this.node) {
 				await this.node.stop();
@@ -2958,27 +2984,25 @@ export class Network {
 			}
 		} catch (err: any) {
 			trace(`[NET] node.stop() failed: ${err?.message ?? err}`);
-			stopError = err;
-		} finally {
-			try {
-				if (this.datastore) {
-					await this.datastore.close();
-					console.log('Datastore closed');
-				}
-			} catch (err: any) {
-				trace(`[NET] datastore.close() failed: ${err?.message ?? err}`);
-			}
-			this.node = null;
-			this.pubsub = null;
-			this.datastore = null;
-			this.currentPrivateKey = null;
+			// A node that refused to stop may still hold its listener, its connection
+			// manager and its port. Closing the datastore it is working over, and dropping
+			// the last reference to it, made the damage permanent AND invisible: nobody
+			// could retry the shutdown, and the caller was free to start a second node over
+			// the same identity, port and datastore. Keep both, and let stop() be retried.
+			throw err;
 		}
-		// A node that refused to stop may still hold its listener, its connection manager
-		// and its port — and we have just dropped the last reference to it, so nobody can
-		// retry. Reporting success is what let the caller go on to start a second node over
-		// the same identity, datastore and port, or swap the identity under a live one.
-		// The cleanup above still happened; only the verdict changes.
-		if (stopError) throw stopError;
+		try {
+			if (this.datastore) {
+				await this.datastore.close();
+				console.log('Datastore closed');
+			}
+		} catch (err: any) {
+			trace(`[NET] datastore.close() failed: ${err?.message ?? err}`);
+		}
+		this.node = null;
+		this.pubsub = null;
+		this.datastore = null;
+		this.currentPrivateKey = null;
 	}
 
 	async cliFindPeer(peerID: string): Promise<void> {

@@ -8,7 +8,11 @@ import { Network } from '../../../src/protocol/network.ts';
  * half-way through start(), and for the whole of stop(). That made four things
  * possible, each covered below: a phantom running state after a failed start, a
  * leaked datastore handle, two concurrent starts both building a node, and a stop
- * that abandoned the datastore when node.stop() threw.
+ * that reported success while node.stop() had thrown.
+ *
+ * The last one is what `failed` exists for: a node that would not stop keeps its
+ * reference and its datastore, refuses a new start and every destructive operation,
+ * and can only be left by a stop that actually succeeds.
  */
 
 /** A Network with no libp2p behind it — start()/stop() orchestration only. */
@@ -118,12 +122,63 @@ describe('Network lifecycle', () => {
 		expect(net.getLifecycle()).toBe('stopped');
 	});
 
-	it('a node that refuses to stop reports it, but still releases everything', async () => {
+	it('a node that refuses to stop leaves the instance failed, not stopped', async () => {
 		const net = bareNetwork();
 		let closed = 0;
+		const node = {
+			stop: async (): Promise<void> => {
+				throw new Error('node.stop failed');
+			},
+		};
+		(net as any).node = node;
+		(net as any).datastore = {
+			close: async (): Promise<void> => {
+				closed++;
+			},
+		};
+
+		await expect(net.stop()).rejects.toThrow('node.stop failed');
+
+		// The node may still hold its listener, its connections and its port. Closing the
+		// datastore under it and dropping the reference would make that both permanent and
+		// unretryable, and `stopped` would invite a second node over the same identity.
+		expect(closed).toBe(0);
+		expect((net as any).node).toBe(node);
+		expect((net as any).datastore).not.toBeNull();
+		expect(net.getLifecycle()).toBe('failed');
+		expect(net.isRunning()).toBe(false);
+	});
+
+	it('a failed stop refuses a new start and every destructive operation', async () => {
+		const net = bareNetwork();
 		(net as any).node = {
 			stop: async (): Promise<void> => {
 				throw new Error('node.stop failed');
+			},
+		};
+		(net as any).datastore = { close: async (): Promise<void> => {} };
+		await expect(net.stop()).rejects.toThrow('node.stop failed');
+
+		let started = 0;
+		(net as any).startLocked = async (): Promise<void> => {
+			started++;
+		};
+		await expect(net.start([])).rejects.toThrow('failed state');
+		expect(started).toBe(0);
+
+		await expect(net.clearDatastore()).rejects.toThrow('Network must be stopped');
+		await expect(net.clearPeerstore()).rejects.toThrow('Network must be stopped');
+		await expect(net.clearIdentityKey()).rejects.toThrow('Network must be stopped');
+		await expect(net.writeIdentityKey(new Uint8Array([1, 2, 3]))).rejects.toThrow('Network must be stopped');
+	});
+
+	it('a retried stop that succeeds releases everything and clears the failed state', async () => {
+		const net = bareNetwork();
+		let attempts = 0;
+		let closed = 0;
+		(net as any).node = {
+			stop: async (): Promise<void> => {
+				if (++attempts === 1) throw new Error('node.stop failed');
 			},
 		};
 		(net as any).datastore = {
@@ -132,16 +187,42 @@ describe('Network lifecycle', () => {
 			},
 		};
 
-		// The failure has to reach the caller: we have dropped the last reference to a node
-		// that may still hold its listener and port, and only the caller can decide not to
-		// start a second one over the same identity.
 		await expect(net.stop()).rejects.toThrow('node.stop failed');
+		expect(net.getLifecycle()).toBe('failed');
 
+		// Retrying the shutdown is the only way out — and it has to be possible, which is
+		// exactly what dropping the node reference used to take away.
+		await net.stop();
+		expect(attempts).toBe(2);
 		expect(closed).toBe(1);
 		expect((net as any).node).toBeNull();
-		expect((net as any).datastore).toBeNull();
 		expect(net.getLifecycle()).toBe('stopped');
-		expect(net.isRunning()).toBe(false);
+	});
+
+	it('a failed start whose cleanup also fails refuses the next start', async () => {
+		const net = bareNetwork();
+		(net as any).teardown = async (): Promise<void> => {
+			throw new Error('node.stop failed');
+		};
+		(net as any).startLocked = async (): Promise<void> => {
+			throw new Error('createLibp2p exploded');
+		};
+
+		// Both reasons survive: what broke the start, and why the instance is now unusable.
+		const err = await net.start([]).then(
+			() => null,
+			(e: unknown) => e
+		);
+		expect(err).toBeInstanceOf(AggregateError);
+		expect((err as AggregateError).errors.map((e: unknown) => String((e as Error).message))).toEqual(['createLibp2p exploded', 'node.stop failed']);
+		expect(net.getLifecycle()).toBe('failed');
+
+		let started = 0;
+		(net as any).startLocked = async (): Promise<void> => {
+			started++;
+		};
+		await expect(net.start([])).rejects.toThrow('failed state');
+		expect(started).toBe(0);
 	});
 
 	it('a start() that arrives while stop() is inside node.stop() is not answered "already running"', async () => {
