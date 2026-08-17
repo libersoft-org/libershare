@@ -2,7 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
 import { Network, isRecoveryDialDue, isSameDialEndpoint, normalizeMultiaddrForCompare, type IBootstrapEntry } from '../../../src/protocol/network.ts';
 import { installBootstrapRegistry, registryAddresses, type IRegistrySeed } from '../helpers/bootstrap-registry.ts';
-import { createEmptyPeerStore, createRealPeerStore, storedAddresses, FaultyDatastore } from '../helpers/real-peer-store.ts';
+import { createEmptyPeerStore, createRealPeerStore, storedAddresses, FaultyDatastore, SnapshotBarrierDatastore } from '../helpers/real-peer-store.ts';
 import { peerIdFromString } from '@libp2p/peer-id';
 import { KEEP_ALIVE } from '@libp2p/interface';
 import { createLibp2p } from 'libp2p';
@@ -1867,6 +1867,42 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 		};
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [ADDR], 'net-a');
 		expect(disconnected).toEqual([]);
+	});
+});
+
+/**
+ * `peerStore.all()` judges each peer against a snapshot the datastore took before the
+ * iteration started — the SQLite one materialises every matching row up front — and
+ * upstream then DELETED any row it read as expired, straight through the datastore, under
+ * no lock at all. An ordinary locked write landing after the snapshot loses its whole
+ * record that way: the delete removes the NEW value on the strength of the OLD one. This
+ * node walks `all()` on a timer, and the same interleaving is what makes a peer vanish
+ * halfway through a locked read-modify-write elsewhere in this file.
+ */
+describe('peerStore.all — an expired snapshot must not delete a fresh record', () => {
+	const ADDR = `/ip4/203.0.113.41/tcp/9090/p2p/${PEER_ID}`;
+
+	it('keeps a record rewritten after the snapshot was taken', async () => {
+		const datastore = new SnapshotBarrierDatastore();
+		// Two stores over ONE datastore: the writer works with ordinary ages, the walker
+		// stands in for the timer sweep and reads everything it snapshots as long expired.
+		// Two stores rather than one precisely because `all()` takes no per-peer lock —
+		// there is nothing for the writer to wait on, which is the whole bug.
+		const writer = createEmptyPeerStore(datastore);
+		const walker = createEmptyPeerStore(datastore, { maxPeerAge: 1, maxAddressAge: 1 });
+		const pid = peerIdFromString(PEER_ID);
+		await writer.patch(pid, { multiaddrs: [multiaddr(ADDR)] });
+		// `#peerIsExpired` needs the record AND its addresses to be older than the walker's
+		// ages, both of which are stamped at write time — so the snapshot has to be taken
+		// after a real gap, or nothing in it reads as expired and the test proves nothing.
+		await new Promise(resolve => setTimeout(resolve, 20));
+		datastore.onSnapshot = async (): Promise<void> => {
+			await writer.merge(pid, { multiaddrs: [multiaddr(ADDR)], tags: { [KEEP_ALIVE]: { value: 1 } } });
+		};
+		await walker.all();
+		expect(await writer.has(pid)).toBe(true);
+		// The reconnect queue runs off this tag, so losing the record is not cosmetic.
+		expect([...(await writer.get(pid)).tags.keys()]).toEqual([KEEP_ALIVE]);
 	});
 });
 
