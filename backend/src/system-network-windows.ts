@@ -594,9 +594,9 @@ const ADDRESS_QUERY = 'Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4';
 /** The same for its IPv4 default routes. */
 const ROUTE_QUERY = "Get-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0'";
 /** Everything a restored address has to carry, plus the origins the guard reads. */
-const ADDRESS_PROPERTIES = 'IPAddress, PrefixLength, PrefixOrigin, SuffixOrigin, SkipAsSource, ValidLifetime, PreferredLifetime';
+const ADDRESS_PROPERTIES = 'IPAddress, PrefixLength, PrefixOrigin, SuffixOrigin, SkipAsSource, ValidLifetime, PreferredLifetime, Type';
 /** The same for a route. */
-const ROUTE_PROPERTIES = 'NextHop, RouteMetric, Protocol, Publish';
+const ROUTE_PROPERTIES = 'NextHop, RouteMetric, Protocol, Publish, ValidLifetime, PreferredLifetime';
 
 /**
  * Read one policy store's worth of objects into a variable, leaving it empty when
@@ -722,10 +722,26 @@ function windowsRestoreAddressingSteps(): string[] {
 	return [...windowsRemovalSteps(), `if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled } else { ${restoreStatic} }`];
 }
 
-/** Re-create an address out of the snapshot, minus the store it belongs in. */
-const NEW_ADDRESS = 'New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $a.IPAddress -PrefixLength $a.PrefixLength -SkipAsSource $a.SkipAsSource -ValidLifetime $a.ValidLifetime -PreferredLifetime $a.PreferredLifetime';
-/** The same for a default route. */
-const NEW_ROUTE = "New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop $r.NextHop -RouteMetric $r.RouteMetric -Protocol $r.Protocol -Publish $r.Publish -Confirm:$false";
+/**
+ * Re-create an address out of the snapshot, minus the store it belongs in.
+ *
+ * `-Type` is there because Windows supports Anycast as well as Unicast and
+ * defaults to Unicast: an Anycast address passes the Manual/Manual origin guard —
+ * it is configured by hand like any other — and would come back as a Unicast one,
+ * which is a different object on an interface the rollback claimed to have left
+ * alone. Verified on Windows 11 that `Get-NetIPAddress` hands its `Type` straight
+ * back to `New-NetIPAddress -Type`.
+ */
+const NEW_ADDRESS = 'New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $a.IPAddress -PrefixLength $a.PrefixLength -Type $a.Type -SkipAsSource $a.SkipAsSource -ValidLifetime $a.ValidLifetime -PreferredLifetime $a.PreferredLifetime';
+/**
+ * The same for a default route, lifetimes included.
+ *
+ * A route left to `New-NetRoute`'s defaults comes back with an infinite lifetime
+ * whatever it had, so a temporary route — one a VPN client or a lease installed
+ * with a countdown on it — was made permanent by the very rollback that reported
+ * having changed nothing.
+ */
+const NEW_ROUTE = "New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop $r.NextHop -RouteMetric $r.RouteMetric -Protocol $r.Protocol -Publish $r.Publish -ValidLifetime $r.ValidLifetime -PreferredLifetime $r.PreferredLifetime -Confirm:$false";
 
 /** Put the resolvers back — a manual override as itself, anything else as automatic. */
 const WINDOWS_RESTORE_DNS = 'if ($oldDnsManual.Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $oldDnsManual } else { Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses }';

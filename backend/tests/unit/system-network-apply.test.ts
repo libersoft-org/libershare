@@ -675,8 +675,8 @@ describe('windowsApplyIPv4Command', () => {
 		// is what writes both.
 		expect(command).toContain('-PreferredLifetime $a.PreferredLifetime -PolicyStore ActiveStore -ErrorAction Stop');
 		expect(command).toContain('-PreferredLifetime $a.PreferredLifetime -PolicyStore PersistentStore -ErrorAction Stop');
-		expect(command).toContain('-Publish $r.Publish -Confirm:$false -PolicyStore ActiveStore -ErrorAction Stop');
-		expect(command).toContain('-Publish $r.Publish -Confirm:$false -PolicyStore PersistentStore -ErrorAction Stop');
+		expect(command).toContain('-Confirm:$false -PolicyStore ActiveStore -ErrorAction Stop');
+		expect(command).toContain('-Confirm:$false -PolicyStore PersistentStore -ErrorAction Stop');
 	});
 
 	it('keeps the route metrics in the snapshot, not just the next hops', () => {
@@ -692,10 +692,20 @@ describe('windowsApplyIPv4Command', () => {
 	// protocol that created it and whether it was published.
 	it('snapshots and restores the properties a re-created object would otherwise lose', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
-		expect(command).toContain('Select-Object IPAddress, PrefixLength, PrefixOrigin, SuffixOrigin, SkipAsSource, ValidLifetime, PreferredLifetime');
-		expect(command).toContain('Select-Object NextHop, RouteMetric, Protocol, Publish');
+		expect(command).toContain('Select-Object IPAddress, PrefixLength, PrefixOrigin, SuffixOrigin, SkipAsSource, ValidLifetime, PreferredLifetime, Type');
+		expect(command).toContain('Select-Object NextHop, RouteMetric, Protocol, Publish, ValidLifetime, PreferredLifetime');
 		expect(command).toContain('-SkipAsSource $a.SkipAsSource -ValidLifetime $a.ValidLifetime -PreferredLifetime $a.PreferredLifetime');
 		expect(command).toContain('-RouteMetric $r.RouteMetric -Protocol $r.Protocol -Publish $r.Publish');
+	});
+
+	// Two more properties with no parameter of their own until now. An Anycast
+	// address is configured by hand, so it passes the Manual/Manual origin guard and
+	// used to come back Unicast; a route with a countdown on it came back permanent,
+	// because New-NetRoute's default lifetime is infinite.
+	it('restores an address type and a route lifetime rather than defaulting them', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
+		expect(command).toContain('-PrefixLength $a.PrefixLength -Type $a.Type -SkipAsSource');
+		expect(command).toContain('-Publish $r.Publish -ValidLifetime $r.ValidLifetime -PreferredLifetime $r.PreferredLifetime -Confirm:$false');
 	});
 
 	// PrefixOrigin and SuffixOrigin have no parameter on New-NetIPAddress at all —

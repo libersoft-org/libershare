@@ -95,6 +95,20 @@ describe('windowsApplyIPv4Command, executed', () => {
 		expect(result.calls).toEqual(['Get-NetIPInterface', 'Get-NetIPAddress:ActiveStore', 'Get-NetIPAddress:PersistentStore', 'Get-NetRoute:ActiveStore', 'Get-NetRoute:PersistentStore', 'Get-ItemProperty', 'Set-DnsClientServerAddress:set']);
 	});
 
+	// A rollback that reports "the change was undone" has to hand back the object it
+	// removed, not one that merely has the same address on it.
+	it.skipIf(windowsOnly)('hands back an anycast address and a temporary route unchanged', async () => {
+		const host = staticHost(GUID, { failOn: 'Set-DnsClientServerAddress' });
+		host.addresses[0]!.Type = 'Anycast';
+		host.routes[0]!.ValidLifetime = '00:30:00';
+		host.routes[0]!.PreferredLifetime = '00:30:00';
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '198.51.100.20', prefixLength: 24, gateway: '198.51.100.1' }), host);
+		expect(result.error).toContain('injected failure');
+		expect(result.addresses[0]?.Type).toBe('Anycast');
+		expect(result.routes[0]?.ValidLifetime).toBe('00:30:00');
+		expect(result.routes[0]?.RouteMetric).toBe(25);
+	});
+
 	// Counted across both stores, and deduplicated: one address held in both is one
 	// address, while an interface whose second address exists only in the persistent
 	// store is still an interface this app cannot preserve.
