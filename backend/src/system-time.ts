@@ -569,8 +569,10 @@ export const COMPETING_NTP_UNITS: string[] = ['chronyd.service', 'chrony.service
  * nothing is written to the wrong daemon, but the server could not be configured on a host
  * that has no other NTP daemon at all.
  *
- * Each name is kept as the host spelled it and only JUDGED by its canonical form: it is the
- * spelling that came off the host's own files, and the one `systemctl show` is asked about.
+ * Every name is queried under the spelling we hold — the host's own for an entry of the
+ * ordering, ours for the five above — and only JUDGED by its canonical form. `systemctl show`
+ * answers for an alias just as well as for the real name, so there is nothing to gain by
+ * rewriting the ordering's entries into names the host never wrote.
  */
 export function competingNtpUnits(ordered: string[] | null, states: Map<string, UnitState> | null = null): string[] {
 	const units = new Set<string>();
@@ -813,7 +815,7 @@ export async function readTimedatedEnvironment(exec: CommandRunner = run): Promi
 	// entries whitespace-separated on one. Both are quoted by systemd, so both are read with
 	// systemd's own word parser rather than by splitting on whitespace.
 	//
-	// A value that value parser refuses is an environment we did not read: the words after the
+	// A value that parser refuses is an environment we did not read: the words after the
 	// error are lost, and the override deciding the provider may be exactly one of them. Same
 	// answer as a source that did not answer at all.
 	let malformed = false;
@@ -1710,9 +1712,12 @@ export async function syncDirectory(dir: string): Promise<void> {
  *
  * The walk stops at the first level that already exists, INCLUDING it — that one is flushed,
  * everything above it is not. It has to be included, because it is the level a previous
- * attempt may have created and failed to commit. Above it nothing can be owed: whatever
- * created those levels is older than any attempt of ours, and walking on to `/` would fsync
- * directories we never touch and let an error from one of them fail a write that is fine.
+ * attempt may have created and failed to commit. Above it nothing is owed by any attempt of
+ * OURS: this function stops at the first flush that fails, so a level we created always has
+ * an unflushed parent no higher than the one just below the first existing level. What it
+ * does not repair is a whole chain some other process created without flushing its own
+ * parents — walking to `/` for that would fsync directories we never touch and let an error
+ * from one of them fail a write that is otherwise fine, which is the worse trade.
  *
  * `dir` itself is deliberately not flushed here — it has no entry in it yet. The rename
  * that follows puts one there and flushes it.
