@@ -1968,6 +1968,18 @@ function describeRestore(failure: string | null): string {
 }
 
 /**
+ * Whether two custom-data snapshots are the same blob, BY CONTENT.
+ *
+ * Reference equality would answer no to two identical reads, since each one copies
+ * the bytes out of a buffer the WLAN service then frees — so the fingerprint would
+ * report a conflict on every profile that has custom data at all.
+ */
+function sameCustomUserData(a: Uint8Array | null, b: Uint8Array | null): boolean {
+	if (a === null || b === null) return a === b;
+	return a.length === b.length && a.every((byte, index) => byte === b[index]);
+}
+
+/**
  * Write a profile document, turning a refusal into an error that carries the
  * reason code. Returns the raw result so the caller can tell the one tolerable
  * outcome — ERROR_ALREADY_EXISTS after asking not to overwrite — from a failure.
@@ -2011,6 +2023,15 @@ function connectByProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Arra
  * not be taken — means the third party's version stands and this reports the
  * conflict instead of resolving it.
  *
+ * ALL THREE parts of the fingerprint are compared, the custom user data included.
+ * Comparing only the document and the flags left the one part another WLAN client
+ * can change on its own out of the test: during the same twenty-second window a
+ * vendor's connection manager can write its blob and touch nothing else, and the
+ * rollback then judged the profile still its own — deleting the newly created
+ * profile along with the foreign blob, or overwriting the profile and putting the
+ * older blob back over the newer one. (This is not the deferred race between two
+ * adjacent wlanapi calls; it is the long window this whole function exists for.)
+ *
  * The one exception is a profile this attempt created that has since been
  * deleted: the undo's whole goal was for it not to exist, and it does not.
  */
@@ -2019,7 +2040,7 @@ export function undoProfileChange(api: WlanApi, handle: WlanHandle, guidBytes: U
 	const current = readStoredProfile(api, handle, guidBytes, profileName);
 	if (current.kind === 'error') return `this network's saved configuration could not be re-read, so it was left as it stands (${current.message})`;
 	if (current.kind === 'notFound') return change.created ? null : 'another process removed this network while it was being joined, so the previous configuration was not put back';
-	if (current.profile.xml !== change.written.xml || current.profile.flags !== change.written.flags) return 'another process changed this network while it was being joined, so its configuration was left as it stands';
+	if (current.profile.xml !== change.written.xml || current.profile.flags !== change.written.flags || !sameCustomUserData(current.profile.customUserData, change.written.customUserData)) return 'another process changed this network while it was being joined, so its configuration was left as it stands';
 	const name = utf16z(profileName);
 	if (change.created) {
 		const rc = api.WlanDeleteProfile(handle, ptr(guidBytes), ptr(name), null);

@@ -821,6 +821,28 @@ describe('undoProfileChange', () => {
 		expect(writes).toEqual([]);
 	});
 
+	// The custom user data is the one part of the profile another WLAN client can
+	// change on its own, leaving the document and the flags untouched. Comparing only
+	// those two judged the profile still ours, so the rollback deleted the new profile
+	// along with the foreign blob — or put the older blob back over the newer one.
+	it('treats a changed custom data blob as somebody else having been here', () => {
+		const written = { ...WRITTEN, customUserData: new TextEncoder().encode('ours') };
+		const { api, deletes, writes } = undoApi({ rc: 0, xml: WRITTEN.xml, flags: WRITTEN.flags, custom: 'theirs, written since' });
+		expect(undoProfileChange(api, 1n, ANY_GUID, 'Example', { replaced: null, created: true, written })).toContain('another process changed');
+		expect(deletes).toEqual([]);
+		expect(writes).toEqual([]);
+	});
+
+	// ...and a blob that has NOT changed still matches, though it is a different array
+	// each time it is read. Compared by content, not by reference — otherwise every
+	// profile carrying custom data would look like a conflict.
+	it('matches an unchanged custom data blob read back as a fresh array', () => {
+		const written = { ...WRITTEN, customUserData: new TextEncoder().encode('vendor-metadata') };
+		const { api, deletes } = undoApi({ rc: 0, xml: WRITTEN.xml, flags: WRITTEN.flags, custom: 'vendor-metadata' });
+		expect(undoProfileChange(api, 1n, ANY_GUID, 'Example', { replaced: null, created: true, written })).toBeNull();
+		expect(deletes).toEqual([1]);
+	});
+
 	// A blob that cannot be READ is a conflict too: there is then no way to tell
 	// whether the profile is still this attempt's, and acting anyway is the guess the
 	// whole fingerprint exists to avoid.
