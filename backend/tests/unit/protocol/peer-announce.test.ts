@@ -470,3 +470,81 @@ describe('PeerAnnounceManager.handle raw input bound', () => {
 		expect(forwarded).toEqual([[named]]);
 	});
 });
+
+/**
+ * The emitter's lifecycle is a boolean plus a single timer handle, and scheduleNext()
+ * awaits peerStore.all() before arming that timer. A loop parked in that await across
+ * a stop() AND a start() used to find the flag reset and carry on, so two loops armed
+ * timers into one field and the next stop() cancelled only one of them.
+ */
+describe('PeerAnnounceManager lifecycle — one loop per start', () => {
+	function gatedNode(gate: Promise<void>) {
+		return {
+			peerId: { toString: (): string => SELF_ID },
+			getMultiaddrs: (): unknown[] => [Multiaddr(SELF_ADDR)],
+			peerStore: {
+				all: async (): Promise<unknown[]> => {
+					await gate;
+					return peersWithFillers();
+				},
+			},
+		};
+	}
+
+	it('a loop parked across a stop/start does not arm a second timer', async () => {
+		let release!: () => void;
+		const gate = new Promise<void>(res => {
+			release = res;
+		});
+		const pubsub = { getTopics: (): string[] => [TOPIC_A], getSubscribers: (): unknown[] => [] };
+		const { mgr } = buildManager(gatedNode(gate), pubsub);
+
+		const realSetTimeout = globalThis.setTimeout;
+		let armed = 0;
+		globalThis.setTimeout = ((fn: () => void, ms?: number) => {
+			armed++;
+			return realSetTimeout(fn, ms);
+		}) as typeof globalThis.setTimeout;
+		try {
+			mgr.start(); // loop A parks in peerStore.all()
+			await Promise.resolve();
+			mgr.stop();
+			mgr.start(); // loop B parks in its own peerStore.all()
+			release();
+			// Let both awaits settle.
+			for (let i = 0; i < 8; i++) await Promise.resolve();
+			expect(armed).toBe(1);
+		} finally {
+			globalThis.setTimeout = realSetTimeout;
+			mgr.stop();
+		}
+	});
+
+	it('an emit whose run ended mid-await publishes nothing', async () => {
+		let release!: () => void;
+		const gate = new Promise<void>(res => {
+			release = res;
+		});
+		const pubsub = { getTopics: (): string[] => [TOPIC_A], getSubscribers: (): unknown[] => [fakeSubscriber(PA_ID)] };
+		const { mgr, broadcasts } = buildManager(gatedNode(gate), pubsub);
+
+		mgr.start();
+		const emitting = (mgr as any).emit((mgr as any).generation);
+		mgr.stop();
+		release();
+		await emitting;
+
+		expect(broadcasts).toEqual([]);
+	});
+
+	it('an uninterrupted emit still publishes', async () => {
+		const pubsub = { getTopics: (): string[] => [TOPIC_A], getSubscribers: (): unknown[] => [fakeSubscriber(PA_ID)] };
+		const { mgr, broadcasts } = buildManager(gatedNode(Promise.resolve()), pubsub);
+
+		mgr.start();
+		await (mgr as any).emit((mgr as any).generation);
+		mgr.stop();
+
+		expect(broadcasts).toHaveLength(1);
+	});
+});

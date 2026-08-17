@@ -181,6 +181,16 @@ export class PeerAnnounceManager {
 	private timer: NodeJS.Timeout | null = null;
 	private stopped = false;
 	/**
+	 * Which start() a tick belongs to, bumped by both start() and stop().
+	 *
+	 * The `stopped` flag alone cannot tell a tick apart from its successor: a loop parked
+	 * in `await peerStore.all()` across a stop() AND a start() found the flag false again
+	 * and carried on, so two loops armed timers into one `timer` field and the next stop()
+	 * cancelled only the last of them. A generation is not reusable, so the parked loop
+	 * ends where it stands.
+	 */
+	private generation = 0;
+	/**
 	 * Per-topic recently-seen subscribers (peerID → last-seen ms). Lets a
 	 * momentarily-disconnected same-network peer stay an eligible transitive-announce
 	 * target (see PEER_ANNOUNCE_MEMBER_TTL_MS) without ever admitting a peer of
@@ -255,7 +265,8 @@ export class PeerAnnounceManager {
 	/** Start the periodic emitter. Safe to call only once per start/stop cycle. */
 	start(): void {
 		this.stopped = false;
-		this.scheduleNext().catch(() => {
+		const generation = ++this.generation;
+		this.scheduleNext(generation).catch(() => {
 			/* first-tick scheduling failure would leave emitter stopped — acceptable fallback */
 		});
 	}
@@ -273,6 +284,7 @@ export class PeerAnnounceManager {
 	 */
 	stop(): void {
 		this.stopped = true;
+		this.generation++;
 		if (this.timer) {
 			clearTimeout(this.timer);
 			this.timer = null;
@@ -371,8 +383,9 @@ export class PeerAnnounceManager {
 		await this.deps.addBootstrapPeers(filtered, networkID, 'discovered');
 	}
 
-	private async scheduleNext(): Promise<void> {
-		if (this.stopped) return;
+	/** Arm the next announce tick for `generation`; see {@link generation}. */
+	private async scheduleNext(generation: number): Promise<void> {
+		if (this.isSuperseded(generation)) return;
 		const node = this.deps.getNode();
 		const pubsub = this.deps.getPubsub();
 		if (!node || !pubsub) return;
@@ -386,26 +399,33 @@ export class PeerAnnounceManager {
 		} catch {
 			base = PEER_ANNOUNCE_INTERVAL_STEADY_MS;
 		}
-		if (this.stopped) return;
+		// Checked before the timer is armed, not only before the work: a superseded loop
+		// that still armed one would leave two timers behind a single `timer` field.
+		if (this.isSuperseded(generation)) return;
 		const jitter = Math.floor((Math.random() * 2 - 1) * base * PEER_ANNOUNCE_JITTER_RATIO);
 		const delay = Math.max(5_000, base + jitter);
 		this.timer = setTimeout(async () => {
 			// Guard: stop() may have been called while we were sleeping.
-			if (this.stopped) return;
+			if (this.isSuperseded(generation)) return;
 			try {
-				await this.emit();
+				await this.emit(generation);
 			} catch (err: any) {
 				trace(`[NET] peer-announce emit error: ${err?.message ?? err}`);
 			}
 			// Guard again before scheduling the next tick.
-			if (this.stopped) return;
-			this.scheduleNext().catch(() => {
+			if (this.isSuperseded(generation)) return;
+			this.scheduleNext(generation).catch(() => {
 				/* schedule is async but errors handled inline */
 			});
 		}, delay);
 	}
 
-	private async emit(): Promise<void> {
+	/** True once this tick's start() has been superseded by a stop() or a newer start(). */
+	private isSuperseded(generation: number): boolean {
+		return this.stopped || generation !== this.generation;
+	}
+
+	private async emit(generation: number = this.generation): Promise<void> {
 		const node = this.deps.getNode();
 		const pubsub = this.deps.getPubsub();
 		if (!node || !pubsub) return;
@@ -415,6 +435,10 @@ export class PeerAnnounceManager {
 		// threshold below. Broadcasting is what the threshold gates, not tracking.
 		this.refreshMembers(lishTopics, pubsub);
 		const allPeers = await node.peerStore.all();
+		// The node and pubsub captured above belong to the run this tick started in; a
+		// restart landing in that await would otherwise have us publish the previous run's
+		// addresses onto the new node's topics.
+		if (this.isSuperseded(generation)) return;
 		if (allPeers.length < PEER_ANNOUNCE_MIN_PEER_STORE) return;
 		if (lishTopics.length === 0) return;
 		const localCidrs = getLocalCidrs();
