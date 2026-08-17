@@ -25,6 +25,7 @@ import { trace } from '../logger.ts';
 import { normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial, extractFirstIPv4 } from './address-filter.ts';
 import { peerIdFromString } from '@libp2p/peer-id';
+import { extractDestinationPeerID } from './multiaddr-utils.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 
 /**
@@ -56,7 +57,7 @@ function buildDirectPeersFromBootstrap(uniquePeers: string[]): DirectPeer[] {
 	for (const ma of uniquePeers) {
 		try {
 			const parsed = Multiaddr(ma);
-			const pid = parsed.getComponents().find((c: any) => c.code === 421)?.value;
+			const pid = extractDestinationPeerID(parsed);
 			if (!pid) continue;
 			direct.push({ id: peerIdFromString(pid), addrs: [parsed] });
 		} catch {
@@ -221,8 +222,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				// trusted peers blocked when their advertised addr lives on a LAN segment
 				// different from our own. Trusted peers are by policy known-good
 				// destinations, so dial them regardless of CIDR match.
-				const pidComponent = ma?.getComponents?.()?.find?.((c: any) => c.code === 421);
-				const pid = pidComponent?.value ?? null;
+				const pid = extractDestinationPeerID(ma);
 				if (pid && (bootstrapPeerIDs.has(pid) || trustedPXPeerIDs.has(pid))) return false;
 				const deny = shouldDenyDial(ma, getLocalCidrs());
 				if (deny) {
@@ -421,7 +421,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			console.log('  -', peer);
 			try {
 				const ma = Multiaddr(peer);
-				const peerID = ma.getComponents().find(c => c.code === 421)?.value ?? null;
+				const peerID = extractDestinationPeerID(ma);
 				if (peerID) {
 					bootstrapPeerIDs.add(peerID);
 					bootstrapMultiaddrs.push(ma);

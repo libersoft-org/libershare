@@ -21,6 +21,7 @@ import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
 import { type MeshPeer } from '@chainsafe/libp2p-gossipsub';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
 import { applyGossipsubPatches } from './gossipsub-patches.ts';
+import { canonicalMultiaddr, extractDestinationPeerID } from './multiaddr-utils.ts';
 import { BootstrapStatusTracker } from './bootstrap-status.ts';
 import { logStatusDebug, dumpGossipsubScores } from './status-logger.ts';
 import { classifyConnection as classifyConnectionFn, dialProtocol as dialProtocolFn, dialProtocolByPeerId as dialProtocolByPeerIdFn, connectToPeer as connectToPeerFn } from './dial-helpers.ts';
@@ -2850,19 +2851,22 @@ export class Network {
 	}
 }
 
+// Re-exported so callers and tests that already reach for this here keep working; the
+// implementation lives in multiaddr-utils so network-config can share it without
+// importing this module.
+export { extractDestinationPeerID };
+
 /**
- * Normalize a multiaddr STRING for equality comparison. Multiaddr.toString()
- * already compresses IPv6, but leaves DNS host case and the FQDN root dot intact —
- * `/dns4/EXAMPLE.COM./tcp/...` and `/dns4/example.com/tcp/...` address the same
- * endpoint.
+ * Normalize a multiaddr STRING for equality comparison.
  *
- * Only the HOST of a DNS component is folded, never the whole address. A circuit
- * multiaddr carries `/p2p/<relay>` in the middle, and a base58 peer ID is
- * case-significant — case-folding an identifier is a different question from
- * case-folding a hostname, and this function is only entitled to the second.
+ * Delegates to {@link canonicalMultiaddr}, which parses the address first — that is
+ * what folds an expanded IPv6 literal into its compressed form. Doing it with a regex
+ * over the raw text, as this used to, left `/ip6/2001:0db8:0000:...:0001` and
+ * `/ip6/2001:db8::1` looking like two different addresses even though they are one,
+ * so a configuration edit could leave the old spelling behind in the registry.
  */
 export function normalizeMultiaddrForCompare(s: string): string {
-	return s.replace(/\/(dns|dns4|dns6|dnsaddr)\/([^/]+)/gi, (_match, protocol: string, host: string) => `/${protocol.toLowerCase()}/${host.toLowerCase().replace(/\.+$/, '')}`);
+	return canonicalMultiaddr(s);
 }
 
 /**
@@ -2878,26 +2882,6 @@ export function isSameDialEndpoint(a: string, b: string): boolean {
 	const strip = (s: string): string => normalizeMultiaddrForCompare(s).replace(/\/p2p\/[^/]+$/, '');
 	const left = strip(a);
 	return left.length > 0 && left === strip(b);
-}
-
-/**
- * Extract the DESTINATION peer ID from a multiaddr. A circuit-relay address has
- * the shape `/.../p2p/<relay>/p2p-circuit/p2p/<destination>` — taking the FIRST
- * /p2p/ component would return the relay's identity, so eviction and configured
- * protection would target the wrong peer. The last /p2p/ component is always
- * the dial target. Returns null when the multiaddr carries no peer ID at all.
- */
-export function extractDestinationPeerID(ma: any): string | null {
-	try {
-		const components: Array<{ code: number; value?: string }> = ma?.getComponents?.() ?? [];
-		for (let i = components.length - 1; i >= 0; i--) {
-			const c = components[i]!;
-			if (c.code === 421 && typeof c.value === 'string') return c.value;
-		}
-	} catch {
-		/* unparseable multiaddr — no ID */
-	}
-	return null;
 }
 
 /**
