@@ -64,6 +64,8 @@ function bare(db: Database, mock: ReturnType<typeof makeMockNet>, joined: string
 	(networks as any).networkOperations = new Map();
 	(networks as any).catalogMutex = new Mutex();
 	(networks as any).announcedJoined = new Map(joined.map(id => [id, true]));
+	// The bootstrap list each already-joined network installed, as a startup join would.
+	(networks as any).appliedBootstrap = new Map(joined.map(id => [id, getLISHnet(db, id)?.bootstrapPeers ?? []]));
 	return networks;
 }
 

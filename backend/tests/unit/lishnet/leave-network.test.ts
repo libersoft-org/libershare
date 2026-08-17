@@ -118,6 +118,8 @@ function makeNetworks(net: MockNet, joined: string[], configs: Record<string, st
 	(networks as any).catalogMutex = new Mutex();
 	// Same seeding startEnabledNetworks does: already-joined at construction time.
 	(networks as any).announcedJoined = new Map(joined.map(id => [id, true]));
+	// The list each joined network installed when it was joined.
+	(networks as any).appliedBootstrap = new Map(joined.map(id => [id, configs[id] ?? []]));
 	(networks as any)._onNetworkLeft = null;
 	(networks as any)._onNetworkJoined = null;
 	(networks as any).get = (id: string) => rows.get(id);
@@ -403,6 +405,8 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		(networks as any).networkOperations = new Map();
 		(networks as any).catalogMutex = new Mutex();
 		(networks as any).announcedJoined = new Map(enabled ? [[NET, true]] : []);
+		// What a startup join would have installed for an already-joined network.
+		(networks as any).appliedBootstrap = new Map(enabled ? [[NET, bootstrapPeers]] : []);
 		return { networks, mock, db };
 	}
 
@@ -474,11 +478,19 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		expect(mock.prunedAddresses).toEqual([[]]);
 	});
 
-	it('does not dial for a network that is not joined', async () => {
+	/**
+	 * A lishnet we are not in has installed nothing — the configured dials all run behind a
+	 * membership — so editing its list is a pure database change. It used to prune the status
+	 * and bump the bootstrap generation anyway, over rows a leave had already reset and jobs
+	 * that had already been abandoned.
+	 */
+	it('touches nothing at runtime for a network that is not joined', async () => {
 		const { networks, mock } = seeded([ADDR_A], false);
 		await edit(networks, [ADDR_B], false);
 		expect(mock.dialledLists).toEqual([]);
-		expect(mock.prunedStatus).toHaveLength(1);
+		expect(mock.prunedStatus).toEqual([]);
+		expect(mock.prunedBootstrap).toEqual([]);
+		expect(mock.prunedAddresses).toEqual([]);
 	});
 
 	/**
@@ -527,8 +539,36 @@ describe('Networks — leaving cleans the configuration it is leaving, not the n
 		(networks as any).networkOperations = new Map();
 		(networks as any).catalogMutex = new Mutex();
 		(networks as any).announcedJoined = new Map([[NET, true]]);
+		// What a startup join would have installed for an already-joined network.
+		(networks as any).appliedBootstrap = new Map([[NET, bootstrapPeers]]);
 		return { networks, mock, db };
 	}
+
+	/**
+	 * The cleanup used to be computed from the row as it stood before one particular write,
+	 * so a convergence that failed took its baseline away with it: the next writer's
+	 * `previous` was the row the FAILED one had written, and the list actually installed on
+	 * the node was never mentioned again by any delta. Converging from what the membership
+	 * really installed makes the repair the next write's job automatically.
+	 */
+	it('still cleans up the installed list after a failed convergence', async () => {
+		const MID = `/ip4/203.0.113.50/tcp/9090/p2p/${PEER_B}`;
+		const { networks, mock } = joined([ADDR_A]);
+		mock.pruneBootstrapStatus = (): never => {
+			throw new Error('status prune blew up');
+		};
+
+		await expect((networks as any).update(ROW([MID], true))).rejects.toThrow('status prune blew up');
+		mock.pruneBootstrapStatus = (networkID, keep): void => {
+			mock.prunedStatus.push({ networkID, keep });
+		};
+		mock.prunedAddresses.length = 0;
+		await (networks as any).update(ROW([ADDR_B], true));
+
+		// ADDR_A is what the node was actually dialing. A baseline of MID — a list that never
+		// reached the runtime — would have pruned nothing and left it installed for good.
+		expect(mock.prunedAddresses.flat()).toContain(ADDR_A);
+	});
 
 	it('an edit that swaps the list and disables at once still prunes the old address', async () => {
 		const { networks, mock } = joined([ADDR_A]);

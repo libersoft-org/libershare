@@ -96,6 +96,21 @@ export class Networks {
 	 * has a `true` to change away from.
 	 */
 	private readonly announcedJoined = new Map<string, boolean>();
+	/**
+	 * The bootstrap list each JOINED lishnet has actually installed on the running node.
+	 *
+	 * The stored row says what the runtime should hold; nothing said what it does hold, so
+	 * the cleanup of entries that left the list was computed from a `previous` its caller
+	 * had captured — the row as it stood before one particular database write, which is not
+	 * the same thing. Two writes over one lishnet then each cleaned up against their own
+	 * snapshot, and a reconcile that threw or was skipped took its baseline with it, leaving
+	 * addresses installed that no later delta would ever mention again.
+	 *
+	 * Per-run, like {@link joinedNetworks}: only a joined lishnet installs anything (the
+	 * configured dials all run behind a membership), so an entry exists exactly while there
+	 * is something to take back off.
+	 */
+	private readonly appliedBootstrap = new Map<string, string[]>();
 
 	/**
 	 * True from the synchronous start of {@link stopAllNetworks} until the next
@@ -211,9 +226,14 @@ export class Networks {
 					// Startup itself announces nothing, but a later disable has to have a joined
 					// state to change away from — otherwise its leave looks like a no-op.
 					this.announcedJoined.set(row.networkID, true);
-					if (row.bootstrapPeers.length > 0) {
+					const configured = Networks.cleanBootstrapList(row.bootstrapPeers);
+					// The startup join installs this list just as {@link joinNetwork} does, so it
+					// has to record it the same way or the first leave of the run finds nothing to
+					// take back off — see {@link appliedBootstrap}.
+					this.appliedBootstrap.set(row.networkID, configured);
+					if (configured.length > 0) {
 						// Fire-and-forget so a slow / unreachable network does not delay startup of the others.
-						this.network.addBootstrapPeers(row.bootstrapPeers, row.networkID, 'configured').catch(err => {
+						this.network.addBootstrapPeers(configured, row.networkID, 'configured').catch(err => {
 							console.error(`[Networks] addBootstrapPeers for ${row.networkID} failed:`, err?.message ?? err);
 						});
 					}
@@ -241,11 +261,10 @@ export class Networks {
 	async setEnabled(id: string, enabled: boolean): Promise<SetEnabledResult> {
 		const staged = await this.inCatalog(() => {
 			if (!lishnetExists(this.db, id)) return undefined;
-			const previous = this.get(id);
 			setLISHnetEnabled(this.db, id, enabled);
 			// Named from the row this write landed on, not from a read the caller took outside
 			// the lock — see {@link SetEnabledResult.network}.
-			return { row: this.get(id), job: this.reconcileLater(id, previous) };
+			return { row: this.get(id), job: this.reconcileLater(id) };
 		});
 		if (!staged) return { found: false, transitioned: false, joined: false };
 		const outcome = await staged.job;
@@ -292,12 +311,12 @@ export class Networks {
 	 * success. `replace()` reserves every network it touches before it lets go of the
 	 * catalog, so nothing can slip in front of it on any of them.
 	 */
-	private reconcileLater(id: string, previous: LISHNetworkConfig | undefined): Promise<ReconcileOutcome> {
+	private reconcileLater(id: string): Promise<ReconcileOutcome> {
 		const reservation = this.operationLock(id).acquire();
 		const job = (async () => {
 			const release = await reservation;
 			try {
-				return await this.reconcileLocked(id, previous);
+				return await this.reconcileLocked(id);
 			} finally {
 				release();
 				this.forgetIfGone(id);
@@ -362,26 +381,27 @@ export class Networks {
 	 * network nobody is in installed with nobody left to remove them. Finishing and then
 	 * applying the next request costs one redundant pass over a rare user action.
 	 *
-	 * `previous` is the row as it was before the write. It says whether the bootstrap list
-	 * moved, and a leave needs it because the cleanup has to run over the list the network
-	 * was joined WITH, which the new row no longer holds — and may not exist at all.
+	 * The bootstrap side converges {@link appliedBootstrap} — what this membership really put
+	 * on the node — onto the stored row, rather than a `previous` row its caller captured.
+	 * Only a lishnet we are IN has anything installed, so a change of list matters only while
+	 * joined: a join installs the current list itself, and a leave takes back exactly what is
+	 * recorded as installed.
 	 *
 	 * Callers hold the lishnet's operation lock, and the whole outcome is assembled before it
 	 * is released — see {@link ReconcileOutcome}.
 	 */
-	private async reconcileLocked(id: string, previous: LISHNetworkConfig | undefined): Promise<ReconcileOutcome> {
+	private async reconcileLocked(id: string): Promise<ReconcileOutcome> {
 		const next = this.get(id);
 		const wantJoined = next?.enabled === true;
 		const joined = this.joinedNetworks.has(id);
-		const before = Networks.cleanBootstrapList(previous?.bootstrapPeers ?? []);
+		const installed = this.appliedBootstrap.get(id) ?? [];
 		const after = Networks.cleanBootstrapList(next?.bootstrapPeers ?? []);
-		// A list change is picked up first so a network that is about to be joined is
-		// joined against the pruned state — except when we are on our way OUT of it, where
-		// the leave resets the whole status anyway and a dial would be pure waste.
-		if (!(joined && !wantJoined) && before.join('\n') !== after.join('\n')) this.syncBootstrapRuntime(id, previous?.bootstrapPeers ?? [], after);
+		// Only for a membership that stays: a leave resets the whole status anyway and a dial
+		// on the way out is pure waste, and a join has nothing installed yet to reconcile.
+		if (joined && wantJoined && installed.join('\n') !== after.join('\n')) this.syncBootstrapRuntime(id, installed, after);
 		if (joined !== wantJoined) {
 			if (wantJoined) await this.joinNetwork(id);
-			else await this.leaveNetwork(id, previous ? before : undefined);
+			else await this.leaveNetwork(id, installed);
 		}
 		const settled = this.joinedNetworks.has(id);
 		const outcome: ReconcileOutcome = { transitioned: this.announce(id, settled), joined: settled };
@@ -452,13 +472,19 @@ export class Networks {
 		this.network.clearRedialSuppressionForNetwork(id);
 
 		const net = this.get(id);
-		if (net && net.bootstrapPeers.length > 0) await this.network.addBootstrapPeers(net.bootstrapPeers, id, 'configured');
+		const configured = Networks.cleanBootstrapList(net?.bootstrapPeers ?? []);
+		// Recorded BEFORE the dials, not after them: a dial that lands installs its address
+		// whether or not the loop ever reaches the end, so an abandoned or failed run must
+		// still leave a leave with something to clean up — see {@link appliedBootstrap}.
+		this.appliedBootstrap.set(id, configured);
+		if (configured.length > 0) await this.network.addBootstrapPeers(configured, id, 'configured');
 
 		// The dials above take seconds. A node that went down during them owns neither the
 		// subscription nor the connections this join was building, so the membership claim
 		// has to go with it rather than survive into the next run.
 		if (!this.canJoin()) {
 			this.joinedNetworks.delete(id);
+			this.appliedBootstrap.delete(id);
 			console.log(`Abandoning join of lishnet ${id}: the node went down during its bootstrap dials`);
 			return;
 		}
@@ -510,15 +536,16 @@ export class Networks {
 	 * request had arrived and return if so, which left the cleanup half-done for a successor
 	 * that then had nothing to do — see {@link reconcileLocked}.
 	 */
-	private async leaveNetwork(id: string, outgoingBootstrap?: string[]): Promise<void> {
+	private async leaveNetwork(id: string, outgoingBootstrap: string[]): Promise<void> {
 		if (!this.joinedNetworks.has(id)) return;
 
-		// The list we are leaving, NOT whatever the database holds now. Every caller on the
-		// disable path writes the row before the runtime catches up — an edit that swaps the
-		// bootstraps and disables in one go, or a `replace()`/`delete()` that removes the row
-		// outright — so re-reading here cleaned up the INCOMING list (or nothing at all) and
-		// left the outgoing addresses installed: still exempt from eviction, still redialled.
-		const outgoing = Networks.cleanBootstrapList(outgoingBootstrap ?? this.get(id)?.bootstrapPeers ?? []);
+		// The list this membership INSTALLED, not whatever the database holds now. Every
+		// caller on the disable path writes the row before the runtime catches up — an edit
+		// that swaps the bootstraps and disables in one go, or a `replace()`/`delete()` that
+		// removes the row outright — so reading the row here cleaned up the INCOMING list (or
+		// nothing at all) and left the outgoing addresses installed: still exempt from
+		// eviction, still redialled.
+		const outgoing = Networks.cleanBootstrapList(outgoingBootstrap);
 
 		// Snapshot the topic subscribers BEFORE unsubscribing — unsubscribeTopic
 		// tears the topic out of pubsub, after which getTopicPeers(id) returns [].
@@ -531,6 +558,9 @@ export class Networks {
 
 		this.network.unsubscribeTopic(id);
 		this.joinedNetworks.delete(id);
+		// Nothing of this membership is installed from here on — the cleanup below works from
+		// the local copy, and a reconcile that runs after it must not find a stale claim.
+		this.appliedBootstrap.delete(id);
 		// Abandon any bootstrap job still walking this network's list — left half-way
 		// through, it would keep dialing peers of a network we just left and clear the
 		// redial suppression the loop below is about to apply — and drop the status rows
@@ -631,6 +661,9 @@ export class Networks {
 			// either — the runtime had changed and nobody was told.
 			this.joinedNetworks.clear();
 			this.announcedJoined.clear();
+			// Per-run for the same reason: a stopped node holds none of the bootstrap state
+			// these lists describe, and the next run installs its own.
+			this.appliedBootstrap.clear();
 			console.log('✓ All lishnets left and node stopped');
 		});
 	}
@@ -705,9 +738,8 @@ export class Networks {
 		const config: LISHNetworkConfig = { ...definition, enabled };
 		// An upsert can bring a network into existence — see {@link catalogMutex}.
 		const job = await this.inCatalog(() => {
-			const row = this.get(config.networkID);
 			upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
-			return this.reconcileLater(config.networkID, row);
+			return this.reconcileLater(config.networkID);
 		});
 		await job;
 		return config;
@@ -754,7 +786,7 @@ export class Networks {
 		// that already exists writes nothing and reconciles nothing: it used to claim a
 		// revision anyway on the way in, which cancelled a queued enable of that very network
 		// — a request that changed nothing discarding one that meant something.
-		const job = await this.inCatalog(() => (addLISHnet(this.db, network) ? this.reconcileLater(network.networkID, undefined) : undefined));
+		const job = await this.inCatalog(() => (addLISHnet(this.db, network) ? this.reconcileLater(network.networkID) : undefined));
 		if (!job) return false;
 		await job;
 		return true;
@@ -768,12 +800,11 @@ export class Networks {
 		// the database and the live node would keep dialing the previous list — or stay in a
 		// network the edit had just disabled — until restart.
 		const job = await this.inCatalog(() => {
-			const existing = this.get(network.networkID);
 			// Store the cleaned list, not the raw one: blank rows from the form would
 			// otherwise be persisted while the runtime worked from the filtered copy, and
 			// the two would disagree about what this network's bootstrap list even is.
 			const cleaned = Networks.cleanBootstrapList(network.bootstrapPeers ?? []);
-			return updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned }) ? this.reconcileLater(network.networkID, existing) : undefined;
+			return updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned }) ? this.reconcileLater(network.networkID) : undefined;
 		});
 		if (!job) return false;
 		await job;
@@ -794,9 +825,8 @@ export class Networks {
 	async delete(id: string): Promise<boolean> {
 		const job = await this.inCatalog(() => {
 			if (!lishnetExists(this.db, id)) return undefined;
-			const previous = this.get(id);
 			deleteLISHnet(this.db, id);
-			return this.reconcileLater(id, previous);
+			return this.reconcileLater(id);
 		});
 		if (!job) return false;
 		await job;
@@ -845,7 +875,7 @@ export class Networks {
 		const jobs = await this.inCatalog(() => {
 			const rows = new Map(this.list().map(n => [n.networkID, n]));
 			replaceLISHnets(this.db, networks);
-			return [...new Set([...rows.keys(), ...networks.map(n => n.networkID)])].map(id => this.reconcileLater(id, rows.get(id)));
+			return [...new Set([...rows.keys(), ...networks.map(n => n.networkID)])].map(id => this.reconcileLater(id));
 		});
 		// One lishnet at a time, each under its own lock and none of them under the catalog.
 		// Reconciling the whole set under the global lock meant a rewrite of a long list held
@@ -882,7 +912,7 @@ export class Networks {
 			// write would leave the node dialing a list the database never accepted, and the
 			// old one would come back at the next restart with nothing to explain the change.
 			if (!updateLISHnet(this.db, next)) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, id);
-			return { next, job: this.reconcileLater(id, existing) };
+			return { next, job: this.reconcileLater(id) };
 		});
 		if (!staged) return null;
 		await staged.job;
@@ -909,11 +939,16 @@ export class Networks {
 	 * removed entry lingers as infrastructure a later leave refuses to disconnect),
 	 * the status rows are pruned — which also invalidates any bootstrap job still
 	 * walking the old list — and the new entries are dialed.
+	 *
+	 * `installedPeers` is what this membership put on the node, taken from
+	 * {@link appliedBootstrap}, and the new list replaces it there. Only a joined lishnet
+	 * gets here, so the dial below always runs and the record always describes something
+	 * real.
 	 */
-	private syncBootstrapRuntime(id: string, previousPeers: string[], cleaned: string[]): void {
+	private syncBootstrapRuntime(id: string, installed: string[], cleaned: string[]): void {
 		const nextIDs = new Set(Networks.bootstrapPeerIDsOf(cleaned));
 		const elsewhere = this.configuredBootstrapPeerIDsElsewhere(id);
-		for (const pid of Networks.bootstrapPeerIDsOf(previousPeers)) {
+		for (const pid of Networks.bootstrapPeerIDsOf(installed)) {
 			if (!nextIDs.has(pid) && !elsewhere.has(pid)) this.network.pruneConfiguredBootstrapPeer(pid);
 		}
 		// Addresses that left the list while their peer ID stayed — the user edited a
@@ -924,9 +959,10 @@ export class Networks {
 		// different entries here and as the same one during the prune below.
 		const keptAddresses = new Set(cleaned.map(normalizeMultiaddrForCompare));
 		const elsewhereAddresses = this.configuredBootstrapAddressesElsewhere(id);
-		const dropped = Networks.cleanBootstrapList(previousPeers).filter(a => !keptAddresses.has(normalizeMultiaddrForCompare(a)) && !elsewhereAddresses.has(normalizeMultiaddrForCompare(a)));
+		const dropped = Networks.cleanBootstrapList(installed).filter(a => !keptAddresses.has(normalizeMultiaddrForCompare(a)) && !elsewhereAddresses.has(normalizeMultiaddrForCompare(a)));
 		this.network.pruneBootstrapAddresses(dropped);
 		this.network.pruneBootstrapStatus(id, cleaned);
+		this.appliedBootstrap.set(id, cleaned);
 		if (this.joinedNetworks.has(id) && cleaned.length > 0) {
 			this.network.addBootstrapPeers(cleaned, id, 'configured').catch(err => {
 				console.error(`[Networks] bootstrap re-dial after config change failed:`, err?.message ?? err);
