@@ -138,7 +138,7 @@ describe('windowsApplyIPv4Command, executed', () => {
 	// them. Asked of the union of both stores, this branch was skipped and the apply
 	// reported success on an interface still holding no IPv4 address at all.
 	it.skipIf(windowsOnly)('applies a configuration the persistent store alone already holds', async () => {
-		const host = staticHost(GUID, { failOn: undefined });
+		const host = staticHost(GUID);
 		host.addresses = inStore(host.addresses, 'PersistentStore');
 		host.routes = inStore(host.routes, 'PersistentStore');
 		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['198.51.100.53'] }), host);
