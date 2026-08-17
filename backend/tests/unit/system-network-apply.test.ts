@@ -521,10 +521,11 @@ describe('windowsApplyIPv4Command', () => {
 	// re-make the default route, which then came back with a different metric.
 	it('does not rewrite the addressing a static config leaves unchanged', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['198.51.100.1'] });
-		// Read out of the ACTIVE store alone: a persistent-only address is what the
-		// interface comes up with at the next boot, not what is in force now, and
-		// counting it as already-applied skipped the creation entirely.
-		expect(command).toContain("$addressingUnchanged = ($oldDhcp -ne 'Enabled') -and (@($oldActiveAddresses).Count -eq 1) -and ($oldActiveAddresses[0].IPAddress -eq '192.0.2.10') -and ($oldActiveAddresses[0].PrefixLength -eq 24) -and (@($oldActiveRoutes).Count -eq 1) -and ($oldActiveRoutes[0].NextHop -eq '192.0.2.1')");
+		// Each store asked separately and both required to agree. The skipped write
+		// would have reached both, so "already applied" is "in force now AND at the next
+		// boot"; the active store alone cannot answer the second half and the union
+		// cannot answer the first.
+		expect(command).toContain("$addressingUnchanged = ($oldDhcp -ne 'Enabled') -and ((@($oldActiveAddresses).Count -eq 1) -and ($oldActiveAddresses[0].IPAddress -eq '192.0.2.10') -and ($oldActiveAddresses[0].PrefixLength -eq 24) -and (@($oldActiveRoutes).Count -eq 1) -and ($oldActiveRoutes[0].NextHop -eq '192.0.2.1')) -and ((@($oldPersistentAddresses).Count -eq 1) -and ($oldPersistentAddresses[0].IPAddress -eq '192.0.2.10') -and ($oldPersistentAddresses[0].PrefixLength -eq 24) -and (@($oldPersistentRoutes).Count -eq 1) -and ($oldPersistentRoutes[0].NextHop -eq '192.0.2.1'))");
 		expect(command).toContain('if (-not $addressingUnchanged) { $addressingChanged = $true; $keptAddress =');
 		// The resolvers and the state check are outside that branch: they are the
 		// part a DNS-only change is actually asking for.
@@ -557,7 +558,9 @@ describe('windowsApplyIPv4Command', () => {
 	});
 
 	it('compares against no default route when the config has no gateway', () => {
-		expect(windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 })).toContain('-and (@($oldActiveRoutes).Count -eq 0)');
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
+		expect(command).toContain('-and (@($oldActiveRoutes).Count -eq 0)');
+		expect(command).toContain('-and (@($oldPersistentRoutes).Count -eq 0)');
 	});
 
 	it('still rewrites unconditionally for a DHCP config', () => {

@@ -985,21 +985,34 @@ export function windowsIPv4Objection(config: NetIPv4Config): string | null {
  * {@link WINDOWS_ROUTE_GUARD} having already refused more than one default route,
  * which is what makes "the gateway" a single value worth comparing.
  *
- * The ACTIVE store alone answers it, not the union the guards count. The question
- * here is "is this configuration in force right now?", and a persistent-only object
- * is precisely one that is not: it is what the interface will come up with at the
- * next boot and has no effect until then. Asked of the union, an interface whose
+ * Each store is asked SEPARATELY and both have to agree, because the write this
+ * skips would have reached both. `New-NetIPAddress` and `New-NetRoute` with no
+ * `-PolicyStore` create the object in the active AND the persistent store, so
+ * "already applied" means "in force now AND at the next boot" — two questions with
+ * two answers.
+ *
+ * Neither store may answer for the other. Asked of the UNION, an interface whose
  * address and gateway existed only in the persistent store — an ordinary state, and
  * one this code treats as legitimate everywhere else — looked already-configured to
- * a user submitting those same values while changing a DNS server. Nothing was
- * created, duplicate address detection never ran, and the apply reported success
- * and broadcast an interface still holding no active IPv4 address or default route.
+ * a user submitting those same values while changing a DNS server: nothing was
+ * created, duplicate address detection never ran, and the apply reported success on
+ * an interface still holding no active IPv4 address at all. Asked of the ACTIVE
+ * store alone, the mirror image: an interface configured active-only, or whose
+ * persistent copy is an OLDER address or gateway, reported success and came back at
+ * the next boot as nothing, or as the old configuration. Requiring both is what
+ * makes the skipped rewrite equivalent to the rewrite — and where the persistent
+ * copy is missing or stale the rewrite runs, which repairs it: the removals clear
+ * both stores and the create writes both.
+ *
  * The union stays where it belongs: counting what the destructive steps will take,
  * and deciding what the rollback puts back.
  */
 export function windowsAddressingUnchanged(config: NetIPv4Config): string {
-	const route = config.gateway ? `(@($oldActiveRoutes).Count -eq 1) -and ($oldActiveRoutes[0].NextHop -eq '${config.gateway}')` : '(@($oldActiveRoutes).Count -eq 0)';
-	return `$addressingUnchanged = ($oldDhcp -ne 'Enabled') -and (@($oldActiveAddresses).Count -eq 1) -and ($oldActiveAddresses[0].IPAddress -eq '${config.address}') -and ($oldActiveAddresses[0].PrefixLength -eq ${config.prefixLength}) -and ${route}`;
+	const inStore = (addresses: string, routes: string): string => {
+		const route = config.gateway ? `(@(${routes}).Count -eq 1) -and (${routes}[0].NextHop -eq '${config.gateway}')` : `(@(${routes}).Count -eq 0)`;
+		return `(@(${addresses}).Count -eq 1) -and (${addresses}[0].IPAddress -eq '${config.address}') -and (${addresses}[0].PrefixLength -eq ${config.prefixLength}) -and ${route}`;
+	};
+	return `$addressingUnchanged = ($oldDhcp -ne 'Enabled') -and (${inStore('$oldActiveAddresses', '$oldActiveRoutes')}) -and (${inStore('$oldPersistentAddresses', '$oldPersistentRoutes')})`;
 }
 
 /**

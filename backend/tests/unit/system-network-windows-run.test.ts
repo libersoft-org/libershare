@@ -148,6 +148,62 @@ describe('windowsApplyIPv4Command, executed', () => {
 		expect(result.calls).toContain('New-NetIPAddress:ActiveStore+PersistentStore');
 	});
 
+	// ...and the mirror image of that, which is the one a no-op gets wrong in the
+	// direction nobody notices until a reboot. The active store holds exactly what was
+	// asked for, so "is this in force?" answers yes — but the write being skipped would
+	// have reached the PERSISTENT store too, and there the configuration is absent. The
+	// apply reported success on an interface that came up at the next boot with no IPv4
+	// address at all.
+	//
+	// No DNS change in any of the three: the resolvers are already empty and the config
+	// carries none, so the only write worth asserting on is the addressing one.
+	it.skipIf(windowsOnly)('rewrites a configuration the active store alone already holds', async () => {
+		const host = staticHost(GUID, { nameServer: '' });
+		host.addresses = inStore(host.addresses, 'ActiveStore');
+		host.routes = inStore(host.routes, 'ActiveStore');
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }), host);
+		expect(result.error).toBeNull();
+		expect(result.calls).toContain('New-NetIPAddress:ActiveStore+PersistentStore');
+		expect(inStore(result.addresses, 'PersistentStore').map(a => a.IPAddress)).toEqual(['192.0.2.10']);
+		expect(inStore(result.routes, 'PersistentStore').map(r => r.NextHop)).toEqual(['192.0.2.1']);
+	});
+
+	// The half-present variant: the address survives a reboot but the default route
+	// does not, so the interface comes up addressed and unable to reach anything off
+	// its own subnet.
+	it.skipIf(windowsOnly)('rewrites when only the persistent default route is missing', async () => {
+		const host = staticHost(GUID, { nameServer: '' });
+		host.routes = inStore(host.routes, 'ActiveStore');
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }), host);
+		expect(result.error).toBeNull();
+		expect(result.calls).toContain('New-NetIPAddress:ActiveStore+PersistentStore');
+		expect(inStore(result.routes, 'PersistentStore').map(r => r.NextHop)).toEqual(['192.0.2.1']);
+	});
+
+	// A persistent copy that is merely STALE rather than absent. The prefix is the one
+	// property of an older copy that reaches the comparison at all: the union
+	// deduplicates on the address itself, so a persistent copy carrying a different
+	// ADDRESS, or a different next hop, is counted as a second object and refused by
+	// the alias and route guards long before the no-op decision is taken.
+	it.skipIf(windowsOnly)('rewrites when the persistent copy holds an older prefix', async () => {
+		const host = staticHost(GUID, { nameServer: '' });
+		for (const address of inStore(host.addresses, 'PersistentStore')) address.PrefixLength = 16;
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }), host);
+		expect(result.error).toBeNull();
+		expect(inStore(result.addresses, 'PersistentStore').map(a => a.PrefixLength)).toEqual([24]);
+	});
+
+	// The refusal the test above leans on, for the route half — an interface whose
+	// startup configuration points at a different gateway is one this app cannot
+	// express, and it is refused rather than silently normalised.
+	it.skipIf(windowsOnly)('refuses a default route that exists only in the persistent store', async () => {
+		const host = staticHost(GUID, { nameServer: '' });
+		for (const route of inStore(host.routes, 'PersistentStore')) route.NextHop = '192.0.2.254';
+		const result = await runWindowsApplyScript(windowsApplyIPv4Command(GUID, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }), host);
+		expect(result.error).toContain('several IPv4 default routes');
+		expect(result.calls).not.toContain('Remove-NetRoute:ActiveStore');
+	});
+
 	// A rollback may only undo what the apply actually did. This one fails at the very
 	// first removal, long before Set-DnsClientServerAddress is reached, so restoring
 	// the snapshot's resolvers would overwrite a DNS change some other process made
