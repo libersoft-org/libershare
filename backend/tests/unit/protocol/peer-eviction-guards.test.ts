@@ -660,6 +660,30 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		expect((network as any).configuredBootstrapPeerIDs.has(PEER_ID)).toBe(false);
 	});
 
+	/**
+	 * A peer that survives the edit still wrote a STALE ADDRESS: the merge that landed
+	 * after the cleanup put the superseded address in the peerStore, and redial
+	 * maintenance dials from the peerStore without consulting the registry. The
+	 * connection is the part the "still needed" answer governs — the address is not.
+	 */
+	it('removes the stale address even from a peer that stays', async () => {
+		const closed: string[] = [];
+		const patched: string[][] = [];
+		const { network } = bareNetwork();
+		(network as any).isPeerNeededByJoinedNetwork = (): boolean => true;
+		// The store holds it in its own shape — without the trailing /p2p/<id>.
+		(network as any).node.peerStore.get = async (): Promise<unknown> => ({ addresses: [{ multiaddr: multiaddr('/ip4/203.0.113.9/tcp/9090') }] });
+		(network as any).node.peerStore.patch = async (_pid: unknown, data: { multiaddrs: Array<{ toString(): string }> }): Promise<void> => void patched.push(data.multiaddrs.map(m => m.toString()));
+		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
+			(network as any).pruneBootstrapAddresses([ADDR_A], 'net-a');
+			(network as any).bumpBootstrapGeneration('net-a');
+			return { remoteAddr: { toString: () => ma.toString() }, close: async (): Promise<void> => void closed.push(ma.toString()) };
+		};
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
+		expect(patched).toEqual([[]]);
+		expect(closed).toEqual([]);
+	});
+
 	it('keeps a superseded connection a joined network still needs', async () => {
 		const closed: string[] = [];
 		const { network } = bareNetwork(n => n.bumpBootstrapGeneration('net-a'));

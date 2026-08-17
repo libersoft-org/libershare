@@ -2036,17 +2036,23 @@ export class Network {
 					// returns — an edit landing during the merge await leaves the tag and the
 					// address written on top of a cleanup that has already finished.
 					const abandonSuperseded = async (): Promise<void> => {
-						if (!peerID || this.isPeerNeededByJoinedNetwork(peerID, true)) return;
-						trace(`[NET] bootstrap dial superseded, closing connection: ${peerID.slice(0, 16)}`);
+						if (!peerID) return;
+						const needed = this.isPeerNeededByJoinedNetwork(peerID, true);
 						// The exemption this iteration claimed up front is stale for the same
 						// reason: no address of the peer is configured any more. Leaving it
 						// would keep the peer un-evictable for the life of the process.
-						this.configuredBootstrapPeerIDs.delete(peerID);
-						// Undo the peerStore side too, not just the connection. Redial
-						// maintenance takes its candidates from the peerStore and does not
-						// care about tags, so an address left behind by a merge that landed
-						// after the cleanup is enough on its own to bring the peer back.
+						if (!needed) this.configuredBootstrapPeerIDs.delete(peerID);
+						// Undo the peerStore side too, not just the connection — and do it even
+						// for a peer that stays. THE ADDRESS is what this iteration wrote on top
+						// of a finished cleanup, and redial maintenance takes its candidates from
+						// the peerStore without ever reading the registry: an address left there
+						// goes on being dialed after the configuration dropped it, whether or not
+						// its peer is still wanted for some other reason. The reconcile is the
+						// safe form of that undo — it only tears the peer down when nothing is
+						// left that wants it.
 						await this.reconcilePeerAfterBootstrapRemoval(peerID, [ma.toString()], networkID ?? STARTUP_BOOTSTRAP_OWNER);
+						if (needed) return;
+						trace(`[NET] bootstrap dial superseded, closing connection: ${peerID.slice(0, 16)}`);
 						try {
 							await conn?.close();
 						} catch {
