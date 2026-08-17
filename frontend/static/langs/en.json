@@ -64,6 +64,7 @@
 		"errorDecompressedTooLarge": "The decompressed file exceeds the maximum size of {detail}",
 		"errorMessageTooLarge": "The data exceeds the maximum message size of {detail}",
 		"errorHTTP": "HTTP error: {detail}",
+		"errorResponseTooLarge": "The downloaded response exceeds the maximum size of {detail}",
 		"errorInvalidSizeFormat": "Invalid size format. Use number with optional suffix: K, M, G, T, P, E, Z, Y",
 		"errorUploadTooLarge": "The file exceeds the maximum upload size of {detail}",
 		"errorUploadNotFound": "The upload is no longer available. Please select the file again",

@@ -64,6 +64,7 @@
 		"errorDecompressedTooLarge": "Rozbalený soubor přesahuje maximální velikost {detail}",
 		"errorMessageTooLarge": "Data přesahují maximální velikost zprávy {detail}",
 		"errorHTTP": "HTTP chyba: {detail}",
+		"errorResponseTooLarge": "Stažená odpověď přesahuje maximální velikost {detail}",
 		"errorInvalidSizeFormat": "Neplatný formát velikosti. Použijte číslo s volitelnou příponou: K, M, G, T, P, E, Z, Y",
 		"errorUploadTooLarge": "Soubor přesahuje maximální velikost pro nahrání {detail}",
 		"errorUploadNotFound": "Nahrávaný soubor už není k dispozici. Vyberte soubor znovu",

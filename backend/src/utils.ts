@@ -125,8 +125,46 @@ export class Utils {
 	}
 
 	/**
+	 * Read a response body into memory, giving up as soon as more than `limit`
+	 * bytes have arrived.
+	 *
+	 * `fetch()` undoes HTTP `Content-Encoding` on the way in, so a few hundred
+	 * kilobytes on the wire can become gigabytes here — and neither the encoding
+	 * header nor `Content-Length` can be trusted to say so in advance. Counting
+	 * the decoded bytes as they stream is the only cap that holds whatever the
+	 * remote server sends; checking a body that is already in memory is not a cap.
+	 */
+	private static async readBodyCapped(response: Response, limit: number): Promise<Uint8Array<ArrayBuffer>> {
+		if (!response.body) return new Uint8Array(0);
+		const reader = response.body.getReader();
+		const chunks: Uint8Array[] = [];
+		let total = 0;
+		try {
+			for (;;) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				// Check before keeping the chunk, so the retained bytes never pass the limit.
+				if (total + value.byteLength > limit) throw new CodedError(ErrorCodes.RESPONSE_TOO_LARGE, formatBytes(limit));
+				chunks.push(value);
+				total += value.byteLength;
+			}
+		} finally {
+			// Releases the connection whether we finished, gave up, or were aborted.
+			await reader.cancel().catch(() => {});
+		}
+		const body = new Uint8Array(total);
+		let offset = 0;
+		for (const chunk of chunks) {
+			body.set(chunk, offset);
+			offset += chunk.byteLength;
+		}
+		return body;
+	}
+
+	/**
 	 * Fetch a URL and return the response body as a string.
 	 * Automatically decompresses compressed URLs (.gz, .br, .zst, …). Throws on non-OK responses.
+	 * The body is capped at {@link MAX_API_MESSAGE_SIZE}, both as it arrives and again on expansion.
 	 */
 	static async fetchURL(url: string, timeoutMs: number = 10000): Promise<string> {
 		const controller = new AbortController();
@@ -142,12 +180,9 @@ export class Utils {
 			// fetch() has already undone it — decompressing a second time would fail.
 			const contentEncoding = response.headers.get('content-encoding')?.toLowerCase() ?? '';
 			const alreadyDecoded = algorithm !== null && contentEncoding.includes(CONTENT_ENCODING_TOKENS[algorithm]);
-			if (algorithm && !alreadyDecoded) {
-				const compressed = await response.arrayBuffer();
-				const decompressed = Utils.decompress(new Uint8Array(compressed), algorithm);
-				return new TextDecoder().decode(decompressed);
-			}
-			return response.text();
+			const body = await Utils.readBodyCapped(response, MAX_API_MESSAGE_SIZE);
+			if (algorithm && !alreadyDecoded) return new TextDecoder().decode(Utils.decompress(body, algorithm));
+			return new TextDecoder().decode(body);
 		} finally {
 			clearTimeout(timeout);
 		}

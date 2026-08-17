@@ -156,6 +156,23 @@ describe('Utils.fetchURL', () => {
 		}
 	});
 
+	it('caps a body that HTTP transfer encoding expands past the limit', async () => {
+		// The URL carries no compression extension, so nothing routes this body through
+		// Utils.decompress — but fetch() still undoes Content-Encoding, and Content-Length
+		// is whatever the server feels like claiming. Only counting arriving bytes catches it.
+		const bomb = Utils.compress(new Uint8Array(MAX_API_MESSAGE_SIZE + 1024 * 1024) as Uint8Array<ArrayBuffer>, 'gzip');
+		expect(bomb.byteLength).toBeLessThan(1024 * 1024);
+		const server = Bun.serve({
+			port: 0,
+			fetch: (): Response => new Response(bomb, { headers: { 'content-encoding': 'gzip', 'content-length': '17' } }),
+		});
+		try {
+			await expect(Utils.fetchURL(`http://localhost:${server.port}/settings.json`)).rejects.toThrow(ErrorCodes.RESPONSE_TOO_LARGE);
+		} finally {
+			await server.stop(true);
+		}
+	});
+
 	it('falls back to the requested URL when the redirect target has no extension', async () => {
 		const json = '{"cdn":true}';
 		const body = Utils.compress(new TextEncoder().encode(json) as Uint8Array<ArrayBuffer>, 'gzip');

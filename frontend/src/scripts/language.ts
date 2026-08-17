@@ -159,6 +159,7 @@ const errorCodeKeys: Record<string, string> = {
 	DECOMPRESSED_TOO_LARGE: 'common.errorDecompressedTooLarge',
 	MESSAGE_TOO_LARGE: 'common.errorMessageTooLarge',
 	HTTP_ERROR: 'common.errorHTTP',
+	RESPONSE_TOO_LARGE: 'common.errorResponseTooLarge',
 	INVALID_SIZE_FORMAT: 'common.errorInvalidSizeFormat',
 	UPLOAD_TOO_LARGE: 'common.errorUploadTooLarge',
 	UPLOAD_NOT_FOUND: 'common.errorUploadNotFound',
