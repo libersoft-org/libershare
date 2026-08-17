@@ -117,12 +117,13 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 	async function setEnabled(p: { networkID: string; enabled: boolean }): Promise<SuccessResponse> {
 		assert(p, ['networkID', 'enabled']);
 		const net = networks.get(p.networkID);
-		const success = await networks.setEnabled(p.networkID, p.enabled);
-		if (success && net) {
-			const event = p.enabled ? 'lishnets:joined' : 'lishnets:left';
-			broadcast(event, { networkID: p.networkID, name: net.name });
-		}
-		return { success };
+		const result = await networks.setEnabled(p.networkID, p.enabled);
+		// Only a settled transition is broadcast, and the event names the state the network
+		// actually ended in. Broadcasting on "the network exists" plus the REQUESTED flag
+		// announced a join for a request a newer one had already overruled, and repeated the
+		// event for an enable of an already-enabled network.
+		if (result.transitioned && net) broadcast(result.joined ? 'lishnets:joined' : 'lishnets:left', { networkID: p.networkID, name: net.name });
+		return { success: result.found };
 	}
 	async function connect(p: { multiaddr: string }): Promise<SuccessResponse> {
 		assert(p, ['multiaddr']);

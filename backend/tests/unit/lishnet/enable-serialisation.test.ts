@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { Mutex } from 'async-mutex';
-import { initLISHnetsTables, addLISHnet, getLISHnet } from '../../../src/db/lishnets.ts';
+import { initLISHnetsTables, addLISHnet, getLISHnet, setLISHnetEnabled } from '../../../src/db/lishnets.ts';
 import { Networks } from '../../../src/lishnet/lishnets.ts';
 
 /**
@@ -218,7 +218,7 @@ describe('Networks.delete — terminal against a concurrent enable', () => {
 		const [deleted, enabled] = await Promise.all([deleting, enabling]);
 
 		expect(deleted).toBe(true);
-		expect(enabled).toBe(false);
+		expect(enabled).toEqual({ found: false, transitioned: false, joined: false });
 		expect(getLISHnet(db, NET)).toBeUndefined();
 		// The three things that must agree: no row, not joined, not subscribed.
 		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
@@ -229,6 +229,55 @@ describe('Networks.delete — terminal against a concurrent enable', () => {
 	it('deleting an unknown lishnet reports it rather than pretending', async () => {
 		const { networks } = makeNetworks(net, db, []);
 		expect(await networks.delete('no-such-net')).toBe(false);
+	});
+});
+
+/**
+ * The API turns this result into a `lishnets:joined` / `lishnets:left` broadcast, so it
+ * has to say what actually happened. A bare "the network exists" made an overruled
+ * request and an idempotent one both look like a settled transition, and the client was
+ * told the network had joined when it had just been disabled.
+ */
+describe('Networks.setEnabled — what the result claims', () => {
+	let db: Database;
+	let net: ReturnType<typeof makeMockNet>;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		initLISHnetsTables(db);
+		addLISHnet(db, { networkID: NET, name: 'A', description: '', bootstrapPeers: [BOOTSTRAP], enabled: true, created: new Date().toISOString() });
+		net = makeMockNet();
+	});
+
+	it('an enable overruled by a later disable reports no transition', async () => {
+		net.topicPeers.set(NET, ['p-only-a']);
+		const gate = deferred();
+		net.disconnectGate = gate.promise;
+		const { networks } = makeNetworks(net, db, [NET]);
+
+		const holding = networks.setEnabled(NET, false);
+		for (let i = 0; i < 10; i++) await Promise.resolve();
+		const older = networks.setEnabled(NET, true);
+		const newer = networks.setEnabled(NET, false);
+		gate.resolve();
+		const [, olderResult, newerResult] = await Promise.all([holding, older, newer]);
+
+		expect(olderResult).toEqual({ found: true, transitioned: false, joined: false });
+		expect(newerResult.joined).toBe(false);
+		expect(getLISHnet(db, NET)!.enabled).toBe(false);
+	});
+
+	it('an enable of an already-joined network reports no transition', async () => {
+		const { networks } = makeNetworks(net, db, [NET]);
+
+		expect(await networks.setEnabled(NET, true)).toEqual({ found: true, transitioned: false, joined: true });
+	});
+
+	it('a real enable reports the transition it settled', async () => {
+		setLISHnetEnabled(db, NET, false);
+		const { networks } = makeNetworks(net, db, []);
+
+		expect(await networks.setEnabled(NET, true)).toEqual({ found: true, transitioned: true, joined: true });
 	});
 });
 

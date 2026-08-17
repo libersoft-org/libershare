@@ -8,6 +8,23 @@ import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, 
 import { cleanBootstrapList, lishnetExists, getLISHnet, listLISHnets, listEnabledLISHnets, addLISHnet, updateLISHnet, deleteLISHnet, setLISHnetEnabled, addLISHnetIfNotExists, importLISHnets, upsertLISHnet, replaceLISHnets } from '../db/lishnets.ts';
 
 /**
+ * Outcome of {@link Networks.setEnabled}.
+ *
+ * A bare boolean could not say what happened. It meant "the network exists", and callers
+ * read it as "your change was applied" — so a request superseded by a newer one, and an
+ * idempotent one that changed nothing, both looked like a settled transition and made the
+ * API broadcast a join or leave that had not occurred.
+ */
+export interface SetEnabledResult {
+	/** Whether the lishnet exists at all. */
+	found: boolean;
+	/** Whether this call actually settled a change of join state. */
+	transitioned: boolean;
+	/** The join state the lishnet is in now, whoever settled it. */
+	joined: boolean;
+}
+
+/**
  * Manages lishnets (logical network groups) on top of a single shared Network (libp2p) node.
  * Each lishnet is represented as a pubsub topic on the shared node.
  */
@@ -208,17 +225,17 @@ export class Networks {
 	/**
 	 * Enable/disable a lishnet. Starts the node if needed, subscribes/unsubscribes topics.
 	 */
-	async setEnabled(id: string, enabled: boolean): Promise<boolean> {
+	async setEnabled(id: string, enabled: boolean): Promise<SetEnabledResult> {
 		const revision = this.claimRevision(id);
 		return await this.withCatalog(id, async () => {
-			if (!lishnetExists(this.db, id)) return false;
+			if (!lishnetExists(this.db, id)) return { found: false, transitioned: false, joined: false };
 			// Superseded before we got the lock: the newer request owns both the row and the
 			// runtime, and writing our value here would leave the database describing an
-			// intent nobody holds any more.
-			if (!this.isCurrentRevision(id, revision)) return true;
+			// intent nobody holds any more. Nothing was applied, so nothing may be announced.
+			if (!this.isCurrentRevision(id, revision)) return { found: true, transitioned: false, joined: this.joinedNetworks.has(id) };
 			setLISHnetEnabled(this.db, id, enabled);
-			await this.reconcileLocked(id, enabled, undefined, revision);
-			return true;
+			const transitioned = await this.reconcileLocked(id, enabled, undefined, revision);
+			return { found: true, transitioned, joined: this.joinedNetworks.has(id) };
 		});
 	}
 
@@ -283,13 +300,15 @@ export class Networks {
 	 *
 	 * Callers hold the lishnet's operation lock: their database write belongs in the same
 	 * critical section as the runtime change it implies, or a toggle slips between the two.
+	 *
+	 * Returns whether this call settled an actual change of join state.
 	 */
-	private async reconcileLocked(id: string, enabled: boolean, outgoingBootstrap: string[] | undefined, revision: number | undefined): Promise<void> {
-		if (!this.isCurrentRevision(id, revision)) return;
+	private async reconcileLocked(id: string, enabled: boolean, outgoingBootstrap: string[] | undefined, revision: number | undefined): Promise<boolean> {
+		if (!this.isCurrentRevision(id, revision)) return false;
 		if (enabled) await this.joinNetwork(id);
 		else await this.leaveNetwork(id, revision, outgoingBootstrap);
-		if (!this.isCurrentRevision(id, revision)) return;
-		this.announce(id, this.joinedNetworks.has(id));
+		if (!this.isCurrentRevision(id, revision)) return false;
+		return this.announce(id, this.joinedNetworks.has(id));
 	}
 
 	/**
@@ -339,12 +358,17 @@ export class Networks {
 		return revision === undefined || this.desiredRevisions.get(id) === revision;
 	}
 
-	/** Tell higher layers about a settled join/leave, once per actual change. */
-	private announce(id: string, joined: boolean): void {
-		if ((this.announcedJoined.get(id) ?? false) === joined) return;
+	/**
+	 * Tell higher layers about a settled join/leave, once per actual change. Returns whether
+	 * this call was that change — the single source of truth for "something transitioned",
+	 * which the API needs before it broadcasts a join or leave of its own.
+	 */
+	private announce(id: string, joined: boolean): boolean {
+		if ((this.announcedJoined.get(id) ?? false) === joined) return false;
 		this.announcedJoined.set(id, joined);
 		if (joined) this._onNetworkJoined?.(id);
 		else this._onNetworkLeft?.(id);
+		return true;
 	}
 
 	/**
