@@ -164,6 +164,92 @@ describe('runRedialMaintenance — a peer with no reachable address', () => {
 });
 
 /**
+ * A stretch with no route to the peer breaks the CONTINUITY the eviction window claims,
+ * so the failures recorded before it must not count towards the one after it.
+ *
+ * The dangerous shape: a peer fails a few genuine dials, our LAN/VPN route to it then
+ * disappears for longer than the window, and the first transient failure once the route
+ * is back completes a count that started before the outage — purging a live peer.
+ */
+describe('runRedialMaintenance — failures either side of a no-route stretch', () => {
+	function bareNetwork() {
+		const purged: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialBackoff = new Map();
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).bootstrapTracker = {
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			deleteDiscoveredByPeerID() {},
+		};
+		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
+		(network as any).node = {
+			getConnections: () => [],
+			async dial(): Promise<void> {
+				throw new Error('connection refused');
+			},
+		};
+		// We hold connections to others throughout: the outage is in the route to THIS
+		// peer, which is exactly the case "are we online at all" cannot see.
+		(network as any).hasConnectionOtherThan = () => true;
+		(network as any).purgeStalePeer = async (pid: string): Promise<void> => {
+			purged.push(pid);
+		};
+		return { network, purged };
+	}
+
+	/** Documentation-range address: the gater lets it through, so the dial runs and fails. */
+	const ROUTABLE = [{ multiaddr: multiaddr('/ip4/203.0.113.9/tcp/9090') }];
+	/** Same peer with nothing the gater will try — the deterministic form of "no route". */
+	const peerWith = (addresses: unknown[]) => ({ id: peerIdLike(PEER_ID), addresses });
+
+	/** Five genuine failures already banked, the window older than the 30-min minimum. */
+	function seedOneFailureShortOfEviction(network: Network): void {
+		(network as any).redialBackoff.set(PEER_ID, { nextAttempt: Date.now() - 1, failCount: 5, firstFailure: Date.now() - 45 * 60_000, evictionFails: 5 });
+	}
+
+	const run = (network: Network, addresses: unknown[]): Promise<void> => (network as any).runRedialMaintenance([], [peerWith(addresses)], 1);
+
+	it('purges a peer whose whole run of failures had a route', async () => {
+		// The control: without an outage in between, the sixth failure still evicts.
+		const { network, purged } = bareNetwork();
+		seedOneFailureShortOfEviction(network);
+		await run(network, ROUTABLE);
+		expect(purged).toEqual([PEER_ID]);
+	});
+
+	it('does not purge one whose failures straddle a period with no route', async () => {
+		const { network, purged } = bareNetwork();
+		seedOneFailureShortOfEviction(network);
+		for (let tick = 0; tick < 5; tick++) await run(network, []); // the route is gone
+		await run(network, ROUTABLE); // back, and the live peer blips once
+		expect(purged).toEqual([]);
+	});
+
+	it('starts a brand new window after the route returns', async () => {
+		const { network } = bareNetwork();
+		seedOneFailureShortOfEviction(network);
+		await run(network, []);
+		await run(network, ROUTABLE);
+		expect((network as any).redialBackoff.get(PEER_ID).evictionFails).toBe(1);
+	});
+
+	it('keeps the backoff pacing across the no-route stretch', async () => {
+		// Forgetting failCount here would re-dial every parked peer from a 30 s backoff
+		// the moment a route came back.
+		const { network } = bareNetwork();
+		seedOneFailureShortOfEviction(network);
+		await run(network, []);
+		expect((network as any).redialBackoff.get(PEER_ID).failCount).toBe(5);
+	});
+});
+
+/**
  * An address may enter the address book only once libp2p has actually connected over
  * it. Deciding that up-front from "do we have any connection to this peer" was too
  * coarse — it skipped relay→direct upgrades and left bad addresses untested — so the

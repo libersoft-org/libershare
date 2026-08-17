@@ -1273,6 +1273,17 @@ export class Network {
 				// discovered rows expire on their own staleness clock, and libp2p's own
 				// maxPeerAge retires the peerStore entry. Eviction stays with the dial-failure
 				// path below, which at least tried addresses this host could route to.
+				//
+				// The stretch also invalidates the evidence collected BEFORE it. That window
+				// means CONTINUOUS unreachability of the peer, and nothing observed while we
+				// had no route to it can be attributed to the peer — so the run of failures
+				// ends here and a fresh window starts once a route returns. Re-stamped on
+				// every no-route tick, which costs one map write and keeps the restart point
+				// at the end of the outage rather than its beginning. Pacing (nextAttempt,
+				// failCount) is deliberately kept: the peer still is not answering, and
+				// dropping it would dial every parked peer at once the moment a route
+				// appears.
+				if (bo) this.redialBackoff.set(pid, { ...bo, firstFailure: now, evictionFails: 0 });
 				continue;
 			}
 			candidates.push({ peer, pid, addrSummary: reachable.join(' | '), failCount: bo?.failCount ?? 0 });
