@@ -5,7 +5,7 @@ import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type Ne
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
-import { applyIPv4, connectWifi, readNetworkState, scanWifi } from '../system-network.ts';
+import { applyIPv4, connectWifi, hostMutationInProgress, readNetworkState, scanWifi } from '../system-network.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -70,6 +70,24 @@ export async function applyAndPublish(mutate: () => Promise<void>, readState: ()
 	}
 	if (failure) throw failure;
 	return state as NetworkStateInfo;
+}
+
+/**
+ * Broadcast the host's network state on the poll tick — unless a reconfiguration
+ * is running.
+ *
+ * Checked twice, because the two failures are different: a mutation already
+ * running when the tick fires means the read would be taken mid-apply, and a
+ * mutation that starts while the read is in flight (a Windows read takes 1.4-1.8 s)
+ * means the answer became a mid-apply reading between the request and the reply.
+ * Either way the tick is dropped rather than corrected — see
+ * {@link hostMutationInProgress}.
+ */
+export async function publishNetworkState(readState: () => Promise<NetworkStateInfo>, broadcast: BroadcastFn, mutating: () => boolean = hostMutationInProgress): Promise<void> {
+	if (mutating()) return;
+	const state = await readState();
+	if (mutating()) return;
+	broadcast('system:network', state);
 }
 
 /** A single CPU-times sample: accumulated idle ticks and total ticks across all cores. */
@@ -350,8 +368,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 			}
 			if (++networkTick % NETWORK_POLL_EVERY_N_TICKS === 0 && hasSubscribers('system:network') && !networkReadInFlight) {
 				networkReadInFlight = true;
-				void getNetworkState()
-					.then(state => broadcast('system:network', state))
+				void publishNetworkState(getNetworkState, broadcast)
 					.catch(() => {})
 					.finally(() => {
 						networkReadInFlight = false;

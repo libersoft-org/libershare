@@ -224,6 +224,25 @@ export function resetNetworkStateCache(): void {
 }
 
 /**
+ * True while a host reconfiguration holds the lock.
+ *
+ * The generation counter discards a read that STARTED before a mutation, but not
+ * one that starts during it: such a read carries the current generation, is
+ * accepted when it finishes, and describes an interface halfway through the
+ * change — no address yet, or an address with no route. The 10 s poll hits that
+ * window on any apply that outlasts one tick, and the two-attempt retry in
+ * {@link readNetworkState} walks straight into it, because the attempt that gets
+ * discarded is followed by one taken mid-apply.
+ *
+ * There is no reading of a half-applied interface worth broadcasting, so the
+ * publisher skips the tick instead. Nothing is lost: `applyAndPublish` reads and
+ * broadcasts the settled state the moment the mutation is done.
+ */
+export function hostMutationInProgress(): boolean {
+	return applyLock.isLocked();
+}
+
+/**
  * The current cache generation. Exported so a test can observe that a mutation
  * invalidated the cache on both sides of the platform action, which is otherwise
  * only visible as the absence of a stale reading several seconds later.
