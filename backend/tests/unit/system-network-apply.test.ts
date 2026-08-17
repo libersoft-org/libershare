@@ -1087,14 +1087,16 @@ describe('connectLinuxWifi', () => {
 	const SAVED = 'a2df06d1-0000-4000-8000-000000000001';
 	const OTHER = 'a2df06d1-0000-4000-8000-000000000002';
 	const OLD_KEY = 'old-passphrase-that-works';
+	const SECOND_KEY = 'other-passphrase-that-works';
 	const NEW_KEY = 'wrong-passphrase-typed';
 
-	/** `nmcli -t -f UUID,TYPE connection show`: one Wi-Fi profile, one wired. */
-	const PROFILE_LIST = `${SAVED}:802-11-wireless\n${OTHER}:802-3-ethernet\n`;
+	const SECOND = 'a2df06d1-0000-4000-8000-000000000003';
 
 	interface HostState {
 		/** What each profile currently holds under `802-11-wireless-security.psk`. */
 		keys: Map<string, string>;
+		/** The SSID each saved Wi-Fi profile carries — and so which of them exist. */
+		ssids: Map<string, string>;
 		/** Commands nmcli was asked to run, in order. */
 		calls: string[][];
 		/** Argument shapes that make this nmcli fail. */
@@ -1103,15 +1105,18 @@ describe('connectLinuxWifi', () => {
 		hidden?: boolean;
 		/** The profile carries no `802-11-wireless-security` setting, so nmcli reports none of its properties. */
 		noSecurity?: boolean;
+		/** What `device wifi connect` writes to disk before the association fails. */
+		onConnect?: (state: HostState) => void;
 	}
 
 	function nmcli(state: HostState): (args: string[]) => Promise<string> {
 		return async args => {
 			state.calls.push(args);
 			if (state.fail?.(args)) throw new Error('nmcli said no');
-			if (args[2] === 'UUID,TYPE') return PROFILE_LIST;
-			if (args.includes('802-11-wireless.ssid')) return `802-11-wireless.ssid:${SSID}\n`;
+			// One wired profile alongside them, so the type filter stays exercised.
+			if (args[2] === 'UUID,TYPE') return [...[...state.ssids.keys()].map(uuid => `${uuid}:802-11-wireless`), `${OTHER}:802-3-ethernet`, ''].join('\n');
 			const uuid = args[args.indexOf('uuid') + 1] ?? '';
+			if (args.includes('802-11-wireless.ssid')) return `802-11-wireless.ssid:${state.ssids.get(uuid) ?? ''}\n`;
 			if (args[0] === '--show-secrets') return state.noSecurity ? '' : `802-11-wireless-security.psk:${state.hidden ? '<hidden>' : (state.keys.get(uuid) ?? '')}\n802-11-wireless-security.wep-key0:\n802-11-wireless-security.wep-key-type:\n`;
 			if (args[1] === 'modify') {
 				state.keys.set(uuid, args[args.indexOf('802-11-wireless-security.psk') + 1] ?? '');
@@ -1119,13 +1124,28 @@ describe('connectLinuxWifi', () => {
 			}
 			// `device wifi connect`: nmcli persists the key into the profile it found,
 			// and only then tries to associate.
-			state.keys.set(SAVED, NEW_KEY);
+			(state.onConnect ?? ((s: HostState) => s.keys.set(SAVED, NEW_KEY)))(state);
 			throw new Error('Secrets were required, but not provided');
 		};
 	}
 
 	function hostWithSavedKey(over: Partial<HostState> = {}): HostState {
-		return { keys: new Map([[SAVED, OLD_KEY]]), calls: [], ...over };
+		return { keys: new Map([[SAVED, OLD_KEY]]), ssids: new Map([[SAVED, SSID]]), calls: [], ...over };
+	}
+
+	/** Two saved profiles for the same network, of which nmcli picks the first. */
+	function twoSavedProfiles(over: Partial<HostState> = {}): HostState {
+		return hostWithSavedKey({
+			keys: new Map([
+				[SAVED, OLD_KEY],
+				[SECOND, SECOND_KEY],
+			]),
+			ssids: new Map([
+				[SAVED, SSID],
+				[SECOND, SSID],
+			]),
+			...over,
+		});
 	}
 
 	it('puts the working password back when the attempt fails with a wrong one', async () => {
@@ -1232,8 +1252,38 @@ describe('connectLinuxWifi', () => {
 		expect(state.keys.get(SAVED)).toBe('');
 	});
 
+	it('puts back the one clobbered profile and leaves the other saved one alone', async () => {
+		const state = twoSavedProfiles();
+		await expect(connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state))).rejects.toThrow('Secrets were required');
+		expect(state.keys.get(SAVED)).toBe(OLD_KEY);
+		expect(state.keys.get(SECOND)).toBe(SECOND_KEY);
+	});
+
+	it('reverts nothing when another tool set a second profile to the same password', async () => {
+		// The collision the value check cannot see through: both profiles now hold the
+		// password this attempt supplied, one because nmcli wrote it and one because
+		// another program did, and nmcli exposes nothing that says which is which.
+		// Writing both back would silently discard that program's change, so neither is
+		// touched — including the one that really was clobbered, which the message says.
+		const state = twoSavedProfiles({
+			onConnect: s => {
+				s.keys.set(SAVED, NEW_KEY);
+				s.keys.set(SECOND, NEW_KEY);
+			},
+		});
+		const err = await connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state)).then(
+			() => new Error('the join should not have succeeded'),
+			(e: Error) => e
+		);
+		expect(state.keys.get(SECOND)).toBe(NEW_KEY);
+		expect(state.keys.get(SAVED)).toBe(NEW_KEY);
+		expect(err.message).toContain('more than one saved profile');
+		expect(err.message).not.toContain(NEW_KEY);
+		expect(err.message).not.toContain(SECOND_KEY);
+	});
+
 	it('skips the snapshot entirely for an open network', async () => {
-		const state: HostState = { keys: new Map(), calls: [] };
+		const state: HostState = { keys: new Map(), ssids: new Map(), calls: [] };
 		await connectLinuxWifi(DEVICE, SSID, '', async args => {
 			state.calls.push(args);
 			return '';

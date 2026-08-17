@@ -882,6 +882,20 @@ async function readWifiSecrets(run: NmcliRunner, uuid: string): Promise<string> 
 	return run(['--show-secrets', '-t', '-f', NM_WIFI_SECRET_FIELDS.join(','), 'connection', 'show', 'uuid', uuid]);
 }
 
+/** One profile's security properties, or null when nmcli refused either the read or a secret in it. */
+async function readWifiSecretsOrNull(run: NmcliRunner, uuid: string): Promise<Map<string, string> | null> {
+	try {
+		return parseLinuxWifiSecrets(await readWifiSecrets(run, uuid));
+	} catch {
+		return null;
+	}
+}
+
+/** Whether a profile's current properties hold the password an attempt supplied. */
+function holdsWifiPassword(properties: Map<string, string>, password: string): boolean {
+	return NM_WIFI_SECRET_FIELDS.some(field => properties.get(field) === password);
+}
+
 /**
  * Snapshot every saved profile this join could overwrite, before it is attempted.
  *
@@ -923,12 +937,7 @@ async function snapshotLinuxWifiProfiles(run: NmcliRunner, ssid: string): Promis
 			throw new Error('a saved Wi-Fi network could not be read, so no saved password will be changed');
 		}
 		if (saved !== ssid) continue;
-		let snapshot: Map<string, string> | null;
-		try {
-			snapshot = parseLinuxWifiSecrets(await readWifiSecrets(run, uuid));
-		} catch {
-			snapshot = null;
-		}
+		const snapshot = await readWifiSecretsOrNull(run, uuid);
 		if (!snapshot) throw new Error('the password already saved for this network could not be read, so it will not be replaced');
 		if (snapshot.size > 0) profiles.push({ uuid, snapshot });
 	}
@@ -940,12 +949,26 @@ async function snapshotLinuxWifiProfiles(run: NmcliRunner, ssid: string): Promis
  * the undo succeeded or there was nothing to undo.
  *
  * Every profile is re-read first, and only one that now holds the password THIS
- * attempt supplied is written back. Two things follow. A join that failed before
- * nmcli ever reached a profile — the ordinary case, a network out of range or an
- * association that never came up — leaves every keyfile exactly as it was rather
- * than rewriting each one with its own values. And a profile some other tool
- * changed before that re-read keeps that change: it does not hold this attempt's
- * password, so it is not this attempt's to undo.
+ * attempt supplied is a candidate. A join that failed before nmcli ever reached a
+ * profile — the ordinary case, a network out of range or an association that never
+ * came up — matches nothing and leaves every keyfile exactly as it was, rather
+ * than rewriting each one with its own values.
+ *
+ * Holding that password is evidence, not proof. Another tool writing the same
+ * value into a different profile leaves one indistinguishable from a profile this
+ * attempt wrote, and nmcli exposes nothing that separates them: not its output,
+ * which names no profile when an activation fails, and not the profile itself,
+ * whose timestamp only moves on a successful activation. So the single-candidate
+ * case is not identified, it is assumed — one profile holding the attempt's
+ * password is taken to be the attempt's work and put back.
+ *
+ * What that assumption cannot cover is the case where it is provably wrong. nmcli
+ * writes ONE profile per join, so two profiles holding this attempt's password
+ * means at least one of them belongs to something else, and which one is exactly
+ * what cannot be read. Nothing is written then, and the caller is told. That
+ * leaves the profile this attempt really did clobber still holding the failed
+ * password — a network the user has to re-enter — which is the lesser of the two
+ * against silently discarding an edit another program made and reported as saved.
  *
  * The re-read is a check, not a lock, and the gap between it and the write is
  * real: a change another tool commits inside that gap is overwritten by the
@@ -969,31 +992,33 @@ async function snapshotLinuxWifiProfiles(run: NmcliRunner, ssid: string): Promis
  */
 async function restoreLinuxWifiSecrets(run: NmcliRunner, profiles: readonly WifiProfileSnapshot[], password: string): Promise<string | null> {
 	const unreadable: string[] = [];
-	const unrestored: string[] = [];
-	for (const { uuid, snapshot } of profiles) {
-		let current: Map<string, string> | null;
-		try {
-			current = parseLinuxWifiSecrets(await readWifiSecrets(run, uuid));
-		} catch {
-			current = null;
-		}
-		if (!current) {
-			unreadable.push(uuid);
-			continue;
-		}
-		// Written by this attempt, and not already the value it replaced — a password
-		// that matches the saved one destroyed nothing by being written over it.
-		if (!NM_WIFI_SECRET_FIELDS.some(field => current.get(field) === password && snapshot.get(field) !== password)) continue;
-		// Nothing may be awaited between that check and this write. The check is the
-		// only thing standing between the restore and a concurrent edit, and every
-		// suspension point added here widens the window in which one is lost.
-		try {
-			await run(nmcliWifiRestoreArgs(uuid, snapshot), APPLY_TIMEOUT_MS);
-		} catch {
-			unrestored.push(uuid);
+	const candidates: WifiProfileSnapshot[] = [];
+	for (const profile of profiles) {
+		const current = await readWifiSecretsOrNull(run, profile.uuid);
+		if (!current) unreadable.push(profile.uuid);
+		else if (holdsWifiPassword(current, password)) candidates.push(profile);
+	}
+	if (candidates.length > 1) return `more than one saved profile for this network now holds the password that just failed, so which of them this attempt changed cannot be told from which another program changed — none of them were put back (${candidates.map(p => p.uuid).join(', ')})`;
+	const target = candidates[0];
+	if (target) {
+		// Re-read rather than reuse what the loop above read: with more than one saved
+		// profile that reading is several nmcli invocations old, and this check is only
+		// worth what its age allows.
+		const current = await readWifiSecretsOrNull(run, target.uuid);
+		if (!current) unreadable.push(target.uuid);
+		// Still this attempt's, and not already what it replaced — a password matching
+		// the saved one destroyed nothing by being written over it.
+		else if (holdsWifiPassword(current, password) && NM_WIFI_SECRET_FIELDS.some(field => current.get(field) !== target.snapshot.get(field))) {
+			// Nothing may be awaited between that check and this write. The check is the
+			// only thing standing between the restore and a concurrent edit, and every
+			// suspension point added here widens the window in which one is lost.
+			try {
+				await run(nmcliWifiRestoreArgs(target.uuid, target.snapshot), APPLY_TIMEOUT_MS);
+			} catch {
+				return `this network's previous password could not be put back, so the one that just failed is the one now saved for it (${target.uuid})`;
+			}
 		}
 	}
-	if (unrestored.length > 0) return `this network's previous password could not be put back, so the one that just failed is the one now saved for it (${unrestored.join(', ')})`;
 	if (unreadable.length > 0) return `this network's saved password could not be re-read, so whether the one that just failed replaced it is not known (${unreadable.join(', ')})`;
 	return null;
 }
