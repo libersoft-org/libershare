@@ -1174,12 +1174,21 @@ export class Network {
 		if (!node || node !== this.node || epoch !== this.runEpoch) return;
 		if (node.getPeers().length > 0) return;
 		console.log('⚠️  Bootstrap module failed - dialing directly...');
-		for (const { ma } of orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values())) {
+		for (const entry of orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values())) {
+			const { ma, key, peerID } = entry;
 			if (node !== this.node || epoch !== this.runEpoch) break;
 			try {
 				// An explicit deadline, like every other dial path: without one this loop
 				// inherits libp2p's default and can sit on a single dead address.
-				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
+				const conn = await node.dial(ma, { signal: AbortSignal.timeout(10000) });
+				// Startup is exactly when a user is most likely to be editing lishnets, and
+				// this dial can be ten seconds long: recording success and stopping would
+				// leave a connection to an address the edit had already removed.
+				if (!this.shouldKeepDialResult({ node, epoch, peerID, key, entry })) {
+					trace(`[NET] startup dial result no longer wanted, closing: ${ma.toString()}`);
+					await this.closeUnwantedDial(conn, peerID);
+					continue;
+				}
 				console.log('✓ Connected to bootstrap peer via direct dial');
 				break;
 			} catch (err: any) {
@@ -1272,6 +1281,42 @@ export class Network {
 		for (const set of this.redialSuppressedByNet.values()) set.delete(peerID);
 	}
 
+	/**
+	 * Whether a dial that has just resolved may keep its connection.
+	 *
+	 * Every dial path holds the node for seconds, and the world moves underneath it: a
+	 * stop()/start() swaps the node, a leave-network suppresses the peer, a config edit
+	 * takes the address out of the registry. `hangUp` at cleanup time finds nothing to
+	 * close because the connection does not exist yet, so the late result is the one
+	 * that has to check — otherwise it lands a connection nobody asked for, and the
+	 * tags it stamps make libp2p keep it alive.
+	 *
+	 * `entry`/`key` express registry identity: the loops walk a snapshot, so the entry
+	 * must still be the SAME OBJECT under the same key. `requireConfigured` adds that a
+	 * dial started for a configured address must still find it configured — a discovered
+	 * entry legitimately has no owner and must not be judged by that rule.
+	 */
+	private shouldKeepDialResult(opts: { node: Libp2p | null; epoch: number; peerID?: string | null; key?: string; entry?: IBootstrapEntry; requireConfigured?: boolean }): boolean {
+		if (!opts.node || opts.node !== this.node || opts.epoch !== this.runEpoch) return false;
+		if (opts.peerID && this.isRedialSuppressed(opts.peerID)) return false;
+		if (opts.key !== undefined) {
+			const current = this.bootstrapByAddress.get(opts.key);
+			if (opts.entry !== undefined && current !== opts.entry) return false;
+			if (opts.requireConfigured && (current?.configuredBy.size ?? 0) === 0) return false;
+		}
+		return true;
+	}
+
+	/** Close a connection a late dial may not keep. Best-effort: it may already be gone. */
+	private async closeUnwantedDial(conn: { close?: () => Promise<void> } | null | undefined, peerID: string | null | undefined): Promise<void> {
+		try {
+			if (conn?.close) await conn.close();
+			else if (peerID) await this.node?.hangUp(peerIDFromString(peerID));
+		} catch {
+			// Already closed, or the node is gone — either way there is nothing to close.
+		}
+	}
+
 	private async runRedialMaintenance(connectedPeers: any[], allPeers: any[], epoch: number = this.runEpoch): Promise<void> {
 		// Dial known peers not currently connected (maintains relay connections to NATed peers)
 		const connectedSet = new Set(connectedPeers.map(p => p.toString()));
@@ -1356,10 +1401,16 @@ export class Network {
 				const c = candidates[idx++]!;
 				console.debug(`   ↻ Re-dial attempt peer=${c.pid} addrs=${c.addrSummary} fails=${c.failCount}`);
 				try {
-					await this.node!.dial(c.peer.id, { signal: AbortSignal.timeout(5000) });
-					// Same guard as the failure path: a dial resolving after stop() must
-					// not write into the next run's state or the next node's peerStore.
-					if (epoch !== this.runEpoch) return;
+					const conn = await this.node!.dial(c.peer.id, { signal: AbortSignal.timeout(5000) });
+					// A five-second dial outlives a lot. Suppression was checked when the
+					// candidate list was built, so a leave-network landing since then found no
+					// connection to hang up — and this late success would restore the very
+					// keep-alive tag that leave removed, putting the peer back in the runtime.
+					if (!this.shouldKeepDialResult({ node: this.node, epoch, peerID: c.pid })) {
+						trace(`[NET] re-dial result no longer wanted, closing: ${c.pid.slice(0, 16)}`);
+						await this.closeUnwantedDial(conn, c.pid);
+						continue;
+					}
 					const conns = this.node!.getConnections(c.peer.id);
 					const connDetail = conns
 						.map(conn => {
@@ -1527,7 +1578,14 @@ export class Network {
 				// to ten seconds, and a stop()/start() inside that window makes this the
 				// old run's result: the canonical key is stable across runs, so writing it
 				// would refresh the TTL and clear the backoff of the NEW run's entry.
-				if (epoch !== this.runEpoch || node !== this.node) return;
+				if (!this.shouldKeepDialResult({ node, epoch, peerID, key, entry, requireConfigured: configured })) {
+					// A leave or a config edit inside the ten-second window leaves this loop
+					// holding a connection to an address nothing lists any more, and the cleanup
+					// found nothing to hang up because the connection did not exist yet.
+					trace(`[NET] recovery result no longer wanted, closing: ${maStr}`);
+					await this.closeUnwantedDial(conn, peerID);
+					continue;
+				}
 				// libp2p coalesces dials by peer ID, so this call can be handed the
 				// connection a SIBLING address won — which is why addBootstrapPeers reads
 				// verification off the result rather than off the dial resolving. Recovery
@@ -1600,9 +1658,9 @@ export class Network {
 				// dropped from the registry. Left unchecked, a bootstrap the user has just
 				// removed keeps the connection this probe opened, and the verification below
 				// lands on an entry nobody owns any more.
-				if (this.bootstrapByAddress.get(key) !== entry || entry.configuredBy.size === 0 || this.isRedialSuppressed(pid)) {
+				if (!this.shouldKeepDialResult({ node, epoch, peerID: pid, key, entry, requireConfigured: true })) {
 					trace(`[NET] parked probe result no longer wanted, closing: ${ma.toString()}`);
-					await conn?.close?.();
+					await this.closeUnwantedDial(conn, pid);
 					continue;
 				}
 				if (!isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString())) {

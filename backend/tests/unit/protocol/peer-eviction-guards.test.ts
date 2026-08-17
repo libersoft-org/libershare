@@ -1270,3 +1270,121 @@ describe('reconcilePeerAfterBootstrapRemoval', () => {
 		expect(patched).toEqual([[OTHER]]);
 	});
 });
+
+/**
+ * The other three dial paths, driven with a DEFERRED dial so a leave / config edit
+ * lands while the connection genuinely does not exist yet — the window in which
+ * `hangUp` finds nothing to close and the late result is the only thing that can.
+ */
+describe('post-dial validation of the remaining dial paths', () => {
+	const ADDR = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+
+	/** Resolves the dial only once the caller has interleaved its own change. */
+	function deferred() {
+		let release!: () => void;
+		const gate = new Promise<void>(r => (release = r));
+		return { gate, release };
+	}
+
+	function bareNetwork(seeds: Array<{ address: string; configuredBy?: string[] }> = []) {
+		const closed: string[] = [];
+		const tagged: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).recoveryBackoff = new Map();
+		(network as any).noReachableSince = new Map();
+		(network as any).recentDisconnects = [];
+		(network as any).bootstrapTracker = { entries: () => [], deleteDiscoveredByPeerID() {} };
+		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
+		installBootstrapRegistry(network, seeds);
+		(network as any).node = {
+			getPeers: () => [],
+			getConnections: () => [],
+			peerStore: {
+				async merge(pid: { toString(): string }): Promise<void> {
+					tagged.push(pid.toString());
+				},
+			},
+		};
+		const connection = {
+			remoteAddr: multiaddr(ADDR),
+			close: async (): Promise<void> => void closed.push(ADDR),
+		};
+		return { network, closed, tagged, connection };
+	}
+
+	/** A late re-dial success used to re-stamp keep-alive-fleet on a peer leave hung up. */
+	it('closes a re-dial that a leave-network overtook, and does not re-tag', async () => {
+		const { network, closed, tagged, connection } = bareNetwork();
+		const { gate, release } = deferred();
+		(network as any).node.dial = async (): Promise<unknown> => {
+			await gate;
+			return connection;
+		};
+		const peer = { id: peerIdLike(PEER_ID), addresses: [{ multiaddr: multiaddr(ADDR) }] };
+		const run = (network as any).runRedialMaintenance([], [peer], 1);
+		(network as any).redialSuppressedByNet = new Map([['net-a', new Set([PEER_ID])]]);
+		release();
+		await run;
+		expect(closed).toEqual([ADDR]);
+		expect(tagged).toEqual([]);
+	});
+
+	it('keeps a re-dial nothing interfered with', async () => {
+		const { network, closed, tagged, connection } = bareNetwork();
+		(network as any).node.dial = async (): Promise<unknown> => connection;
+		const peer = { id: peerIdLike(PEER_ID), addresses: [{ multiaddr: multiaddr(ADDR) }] };
+		await (network as any).runRedialMaintenance([], [peer], 1);
+		expect(closed).toEqual([]);
+		expect(tagged).toEqual([PEER_ID]);
+	});
+
+	it('closes a zero-connection recovery dial whose address left the config', async () => {
+		const { network, closed, connection } = bareNetwork([{ address: ADDR, configuredBy: ['net-a'] }]);
+		const { gate, release } = deferred();
+		(network as any).node.dial = async (): Promise<unknown> => {
+			await gate;
+			return connection;
+		};
+		const run = (network as any).runZeroConnectionRecovery([], 1);
+		(network as any).pruneBootstrapAddresses([ADDR], 'net-a');
+		release();
+		await run;
+		expect(closed).toEqual([ADDR]);
+	});
+
+	it('keeps a recovery dial of an address that is still configured', async () => {
+		const { network, closed, connection } = bareNetwork([{ address: ADDR, configuredBy: ['net-a'] }]);
+		(network as any).node.dial = async (): Promise<unknown> => connection;
+		await (network as any).runZeroConnectionRecovery([], 1);
+		expect(closed).toEqual([]);
+		expect(((network as any).bootstrapByAddress.get(normalizeMultiaddrForCompare(ADDR)) as IBootstrapEntry).lastVerifiedAt).not.toBe(null);
+	});
+
+	it('closes a startup dial that a stop overtook', async () => {
+		const { network, closed, connection } = bareNetwork([{ address: ADDR, configuredBy: ['net-a'] }]);
+		const { gate, release } = deferred();
+		const node = (network as any).node;
+		node.dial = async (): Promise<unknown> => {
+			await gate;
+			return connection;
+		};
+		const run = (network as any).runBootstrapWorkaround(node, 1);
+		(network as any).runEpoch = 2; // stop()/start() while the dial was in flight
+		release();
+		await run;
+		expect(closed).toEqual([ADDR]);
+	});
+
+	it('keeps a startup dial nothing interfered with', async () => {
+		const { network, closed, connection } = bareNetwork([{ address: ADDR, configuredBy: ['net-a'] }]);
+		const node = (network as any).node;
+		node.dial = async (): Promise<unknown> => connection;
+		await (network as any).runBootstrapWorkaround(node, 1);
+		expect(closed).toEqual([]);
+	});
+});
