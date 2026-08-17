@@ -832,6 +832,23 @@ describe('readNtpUnitsList', () => {
 		expect(await readNtpUnitsList({ SYSTEMD_TIMEDATED_NTP_SERVICES: 'weird\\:name.service:chronyd.service' }, [lib])).toEqual(['weird:name.service', 'chronyd.service']);
 	});
 
+	/**
+	 * `UNIT_NAME_PLAIN` is what timedated validates against, and it is narrower than "looks
+	 * like a unit name". An instance or template name is ignored outright upstream, so
+	 * accepting one here named a first usable provider timedated would never start — and an
+	 * unknown suffix fails the shared `systemctl show`, turning the capability off on a
+	 * healthy host where timedated would simply have moved on to the next entry.
+	 */
+	it('rejects instance names, template names and unknown unit types', async () => {
+		const lib = await dir('lib', { '50-a.list': 'foo@bar.service\nfoo@.service\nfoo.waldo\n.service\nchronyd.service\n' });
+		expect(await readNtpUnitsList({}, [lib])).toEqual(['chronyd.service']);
+	});
+
+	it('accepts the unit types systemd has', async () => {
+		const lib = await dir('lib', { '50-a.list': 'a.service\nb.socket\nc.target\nd.timer\ne.path\nf.slice\n' });
+		expect(await readNtpUnitsList({}, [lib])).toEqual(['a.service', 'b.socket', 'c.target', 'd.timer', 'e.path', 'f.slice']);
+	});
+
 	it('coalesces empty entries in the override the way systemd does', async () => {
 		const lib = await dir('lib', {});
 		expect(await readNtpUnitsList({ SYSTEMD_TIMEDATED_NTP_SERVICES: ':chronyd.service::ntpd.service:' }, [lib])).toEqual(['chronyd.service', 'ntpd.service']);

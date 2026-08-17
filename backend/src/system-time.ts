@@ -602,19 +602,41 @@ const NTP_SERVICES_ENV = 'SYSTEMD_TIMEDATED_NTP_SERVICES';
 /** The unit whose environment decides the override — timedated's own, not ours. */
 const TIMEDATED_UNIT = 'systemd-timedated.service';
 
-/**
- * A syntactically valid systemd unit name: the permitted characters plus a type suffix.
- *
- * timedated validates every entry of its ordered list and ignores the ones that fail, so
- * an invalid line is not part of the ordering. Passing it on would also fail the whole
- * `systemctl show` that follows — one malformed line in a vendor's `.list` file would take
- * the provider read with it and turn the capability off on a host that is perfectly fine.
- */
-const UNIT_NAME_RE = /^[A-Za-z0-9:_.@\\-]+\.[a-z]+$/;
+/** The unit types systemd knows; a name whose suffix is not one of them is not a unit name. */
+const UNIT_TYPES: string[] = ['service', 'socket', 'target', 'device', 'mount', 'automount', 'swap', 'timer', 'path', 'slice', 'scope'];
 
-/** Same rule timedated applies before it will look a unit up at all. */
+/** `UNIT_NAME_MAX` upstream, counted without the terminator. */
+const UNIT_NAME_MAX = 255;
+
+/**
+ * The characters a unit name may be built from, `@` deliberately excluded — see
+ * {@link isValidUnitName}.
+ */
+const UNIT_NAME_PREFIX_RE = /^[A-Za-z0-9:_.\\-]+$/;
+
+/**
+ * A syntactically valid PLAIN systemd unit name, which is what timedated demands.
+ *
+ * Every entry of the ordered list goes through `unit_name_is_valid(s, UNIT_NAME_PLAIN)`
+ * upstream, and the entries that fail are not part of the ordering — so they must not be
+ * part of ours either. Passing one on would also fail the whole `systemctl show` that
+ * follows, and one malformed line in a vendor's `.list` file would take the provider read
+ * down with it and turn the capability off on a host that is perfectly fine.
+ *
+ * `UNIT_NAME_PLAIN` is narrower than "looks like a unit name". It rejects instance and
+ * template names — anything containing `@` — which we used to accept: such an entry could be
+ * named as the first usable provider here while timedated ignores it outright and hands the
+ * clock to the next daemon down, the one that never reads our drop-in. And the suffix has to
+ * be a type systemd actually has: any lowercase word was accepted before, so `foo.waldo`
+ * reached `systemctl show`, which fails the whole call over it.
+ */
 function isValidUnitName(name: string): boolean {
-	return name.length <= 255 && UNIT_NAME_RE.test(name);
+	if (name.length === 0 || name.length > UNIT_NAME_MAX) return false;
+	const dot = name.lastIndexOf('.');
+	// `e == n` upstream: a name that is nothing but a suffix is not a name.
+	if (dot <= 0) return false;
+	if (!UNIT_TYPES.includes(name.slice(dot + 1))) return false;
+	return UNIT_NAME_PREFIX_RE.test(name.slice(0, dot));
 }
 
 /** The whitespace `extract_first_word()` separates on when nothing else is asked for. */
@@ -1183,15 +1205,17 @@ async function readLinuxStatus(): Promise<PlatformStatus> {
 	// `Names` comes along because an entry of the ordering may be an alias, and systemd
 	// answers for an alias under the aliased unit's `Id` — with only `Id` asked for, the
 	// name we looked the state up by was in no answer at all.
+	// `--` because those names come off the host's own files and a valid unit name may begin
+	// with a dash: without the separator systemctl reads it as an option instead.
 	const ordered = canNtp ? await readNtpUnitsList(await readTimedatedEnvironment()) : [];
-	const unit = canNtp ? await tryRead('systemctl', ['show', '-p', 'Id', '-p', 'Names', '-p', 'LoadState', ...(ordered !== null && ordered.length > 0 ? ordered : [TIMESYNCD_UNIT])]) : null;
+	const unit = canNtp ? await tryRead('systemctl', ['show', '-p', 'Id', '-p', 'Names', '-p', 'LoadState', '--', ...(ordered !== null && ordered.length > 0 ? ordered : [TIMESYNCD_UNIT])]) : null;
 	// timedated manages several NTP implementations; a host where chrony is the active
 	// one would ignore our drop-in entirely (see canConfigureTimesyncdServer). The units to
 	// ask about come from the host's own ordering as well as the known names, so a provider
 	// nobody hardcoded is still seen — with the aliases resolved, or timesyncd under another
 	// name would be counted as a daemon competing with itself.
 	const states = unit === null ? null : parseUnitLoadStates(unit);
-	const competing = canNtp ? await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', ...competingNtpUnits(ordered, states)]) : null;
+	const competing = canNtp ? await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', '--', ...competingNtpUnits(ordered, states)]) : null;
 	return {
 		// `timedatectl show` was read above and already carries it — no extra probe.
 		timezone: map['Timezone'] ?? null,
