@@ -339,6 +339,125 @@ describe('upload lifecycle races', () => {
 	});
 });
 
+describe('queued imports', () => {
+	/** Handlers with the sweep timer off and a small byte budget, driven directly. */
+	function queueHandlers(limits: UploadLimits): { handlers: ReturnType<typeof initUploadHandlers>; uploadDir: string } {
+		const dataDir = join(tmpdir(), `lish-upload-queue-${crypto.randomUUID()}`);
+		tempDirs.push(dataDir);
+		return { handlers: initUploadHandlers(dataDir, { sweepIntervalMs: 0, ...limits }), uploadDir: join(dataDir, 'tmp') };
+	}
+
+	/** A promise plus the function that settles it, for holding an import open. */
+	function gate(): { wait: Promise<void>; open: () => void } {
+		let open!: () => void;
+		const wait = new Promise<void>(resolve => (open = resolve));
+		return { wait, open };
+	}
+
+	/** Push a finished upload of the given size onto a socket and return its id. */
+	async function finished(handlers: ReturnType<typeof initUploadHandlers>, client: unknown, name: string, size: number): Promise<string> {
+		const { uploadID } = await handlers.begin({ name }, client);
+		await handlers.chunk({ uploadID, data: pattern(size) }, client);
+		await handlers.end({ uploadID }, client);
+		return uploadID;
+	}
+
+	it('keeps an import waiting for the lock counted and unswept', async () => {
+		// Both cutoffs at zero: anything the sweep is allowed to touch, it will.
+		const { handlers, uploadDir } = queueHandlers({ idleMs: 0, maxAgeMs: 0, maxTotalBytes: 256 * 1024 });
+		const [first, second, third] = [{}, {}, {}];
+		const idA = await finished(handlers, first, 'a.lish', 100 * 1024);
+		const idB = await finished(handlers, second, 'b.lish', 100 * 1024);
+		const held = gate();
+		const entered: string[] = [];
+
+		const parseA = handlers.withFile({ uploadID: idA }, first, async path => {
+			entered.push('a');
+			await held.wait;
+			return Bun.file(path).size;
+		});
+		await Bun.sleep(20);
+		const parseB = handlers.withFile({ uploadID: idB }, second, async path => {
+			entered.push('b');
+			return Bun.file(path).size;
+		});
+		await Bun.sleep(20);
+		// One at a time, so B is sitting on the lock with its file untouched.
+		expect(entered).toEqual(['a']);
+
+		await handlers.sweep();
+		// Neither file may be judged an orphan. B's parse has not started, so before
+		// the fix its record was already gone and the sweep deleted it outright.
+		expect((await readdir(uploadDir)).length).toBe(2);
+		// And both still count: 200 KiB of a 256 KiB budget is spoken for, so this
+		// third file does not fit. Released early, the queue was free disk.
+		const idC = (await handlers.begin({ name: 'c.lish' }, third)).uploadID;
+		await expect(handlers.chunk({ uploadID: idC, data: pattern(200 * 1024) }, third)).rejects.toThrow(ErrorCodes.UPLOAD_QUOTA_EXCEEDED);
+
+		held.open();
+		expect(await parseA).toBe(100 * 1024);
+		expect(await parseB).toBe(100 * 1024);
+		expect(await readdir(uploadDir)).toEqual([]);
+		handlers.stop();
+	});
+
+	it('bounds the parse queue by the same upload cap as everything else', async () => {
+		const { handlers } = queueHandlers({ maxTotalUploads: 2 });
+		const [first, second, third] = [{}, {}, {}];
+		const idA = await finished(handlers, first, 'a.lish', 1024);
+		const idB = await finished(handlers, second, 'b.lish', 1024);
+		const held = gate();
+		const parseA = handlers.withFile({ uploadID: idA }, first, async () => {
+			await held.wait;
+			return 1;
+		});
+		await Bun.sleep(20);
+		const parseB = handlers.withFile({ uploadID: idB }, second, async () => 2);
+		await Bun.sleep(20);
+		// Both records are still in the map, so the cap is reached and nothing new
+		// may start. Dropping them at the head of the queue is what made the cap
+		// stop applying to queued work at all.
+		await expect(handlers.begin({ name: 'c.lish' }, third)).rejects.toThrow(ErrorCodes.UPLOAD_QUOTA_EXCEEDED);
+		held.open();
+		await parseA;
+		await parseB;
+		expect(await handlers.begin({ name: 'c.lish' }, third)).toHaveProperty('uploadID');
+		handlers.stop();
+	});
+
+	it('does not parse an upload whose socket left while it waited for the lock', async () => {
+		const { handlers, uploadDir } = queueHandlers({});
+		const [first, second] = [{}, {}];
+		const idA = await finished(handlers, first, 'a.lish', 1024);
+		const idB = await finished(handlers, second, 'b.lish', 1024);
+		const held = gate();
+		let parsedB = false;
+
+		const parseA = handlers.withFile({ uploadID: idA }, first, async () => {
+			await held.wait;
+			return 'a';
+		});
+		await Bun.sleep(20);
+		const parseB = handlers
+			.withFile({ uploadID: idB }, second, async () => {
+				parsedB = true;
+				return 'b';
+			})
+			.catch(() => 'gone');
+		await Bun.sleep(20);
+		// The socket goes while its parse is still queued behind A's.
+		handlers.closeClient(second);
+		held.open();
+
+		expect(await parseA).toBe('a');
+		expect(await parseB).toBe('gone');
+		// The work was never done, and the file did not survive it either.
+		expect(parsedB).toBe(false);
+		expect(await entriesAfterSettle(uploadDir)).toEqual([]);
+		handlers.stop();
+	});
+});
+
 describe('upload sweep', () => {
 	/** Handlers with the timer off, so a sweep only happens when a test asks for one. */
 	function sweepHandlers(limits: UploadLimits): { handlers: ReturnType<typeof initUploadHandlers>; uploadDir: string } {

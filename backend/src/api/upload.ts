@@ -83,11 +83,12 @@ export function uploadFileName(originalName: string): string {
  * `ready` upload stays in the map on purpose: the record is what proves the file
  * is finished, whose it is, and how much disk it holds, and dropping it the
  * moment `end()` returns leaves a file nobody is accountable for until a sweep
- * happens to notice it. `cleanup` is the tail of every path: the client can no
- * longer reach the upload, but the file is still on the disk and so the record
- * still answers for it.
+ * happens to notice it. `queued` and `parsing` are an import waiting for the
+ * shared lock and then running under it. `cleanup` is the tail of every path:
+ * the client can no longer reach the upload, but the file is still on the disk
+ * and so the record still answers for it.
  */
-type UploadState = 'receiving' | 'finalizing' | 'ready' | 'cleanup';
+type UploadState = 'receiving' | 'finalizing' | 'ready' | 'queued' | 'parsing' | 'cleanup';
 
 /**
  * States in which nothing of ours is running and the client is the one who
@@ -447,23 +448,38 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 	/**
 	 * Hand a finished upload to a reader, then delete it. The file is identified
 	 * by upload id rather than by path, so the client never learns where it lives
-	 * and cannot race anything against it; the record is removed before the read
-	 * so a second call cannot consume the same file twice.
+	 * and cannot race anything against it; the state moves on before the read so a
+	 * second call cannot consume the same file twice.
 	 */
 	function withFile<T>(p: { uploadID: string }, client: unknown, read: (path: string) => Promise<T>): Promise<T> {
 		assert(p, ['uploadID']);
 		return exclusive(client, async () => {
 			const upload = owned(p.uploadID, client);
 			if (upload.state !== 'ready') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, p.uploadID);
-			uploads.delete(p.uploadID);
-			totalBytes -= upload.written;
+			// Claimed synchronously so a second consume cannot get past the check
+			// above, but deliberately still in the map and still charged for. The
+			// record used to be dropped here, before the wait for the import lock:
+			// a queued file then counted towards neither ceiling, so a client could
+			// park an unbounded number of them by simply calling parse and uploading
+			// again — and the sweep, which only ever knew about the map, would judge
+			// the file an orphan and delete it before its parse had even started.
+			upload.state = 'queued';
 			try {
-				return await parseLock.runExclusive(() => read(upload.path));
+				return await parseLock.runExclusive(async () => {
+					// The wait above is unbounded, so the owner may well be gone by the
+					// time the lock comes free. Parsing an import nobody is listening for
+					// is pure cost, and it is the expensive part of the whole operation.
+					if (isGone(client) || uploads.get(p.uploadID) !== upload) throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, p.uploadID);
+					upload.state = 'parsing';
+					return await read(upload.path);
+				});
 			} finally {
 				// Removed whether or not the read worked: a file that failed to parse
 				// is no more use than one that succeeded, and leaving it would let a
-				// bad import linger until a sweep.
-				await rm(upload.path, { force: true }).catch(err => console.error(`[API] Upload cleanup failed for ${upload.path}: ${err.message}`));
+				// bad import linger until a sweep. The bytes come back with the file,
+				// not before it.
+				upload.state = 'cleanup';
+				await release(p.uploadID, upload);
 			}
 		});
 	}
