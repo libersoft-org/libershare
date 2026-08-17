@@ -74,12 +74,16 @@
 		input.value = '';
 		if (!file) return;
 		// Picking a second file abandons the first one on the backend's disk.
-		if (uploadID) void api.upload.abort(uploadID).catch(() => {});
+		const previous = uploadID;
 		uploadID = '';
 		uploadFileName = file.name;
 		errorMessage = '';
 		busyLabel = $t('import.uploading');
 		try {
+			// Awaited rather than fired off. The next transfer starts on this same
+			// socket immediately afterwards, and the old file has to be off the disk
+			// and out of the quota before the new one starts claiming both.
+			if (previous) await api.upload.abort(previous).catch(() => {});
 			// The file goes to the backend as-is and is parsed there. Reading it here
 			// would also mean decompressing it here, and the browser only knows gzip
 			// and deflate — a .br or .zst upload has no chance.
