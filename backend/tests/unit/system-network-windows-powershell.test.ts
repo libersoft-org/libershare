@@ -113,43 +113,70 @@ describe.skipIf(process.platform !== 'win32')('windows apply fragments (live Pow
 	describe('the unchanged-addressing test', () => {
 		const config = { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' } as const;
 
+		/** One store's worth of scripted snapshot, as the four `$old*` variables hold it. */
+		interface ScriptedStore {
+			address: string;
+			prefix: number;
+			nextHops: string[];
+		}
+
+		/** The requested configuration, as both stores would hold it once applied. */
+		const applied: ScriptedStore = { address: '192.0.2.10', prefix: 24, nextHops: ['192.0.2.1'] };
+
 		/**
-		 * Run the assignment against a scripted snapshot and report what it decided.
+		 * Run the assignment against a scripted per-store snapshot and report what it
+		 * decided.
 		 *
-		 * The snapshot scripted here is the ACTIVE store's, which is the only one the
-		 * decision may read: a persistent-only object is what the interface will come up
-		 * with next boot, not what it is on now.
+		 * Both stores are scripted, and both are read: the write this decision skips
+		 * would have reached both, so it is only a no-op when both already agree. An
+		 * empty store is `@()`, which is not what an unset variable gives — `@($null)`
+		 * counts one — so every case names all four variables.
 		 */
-		async function decide(dhcp: string, address: string, prefix: number, nextHops: string[]): Promise<boolean> {
-			const state = [`$oldDhcp = '${dhcp}'`, `$oldActiveAddresses = @([pscustomobject]@{ IPAddress='${address}'; PrefixLength=${prefix} })`, `$oldActiveRoutes = @(${nextHops.map(hop => `[pscustomobject]@{ NextHop='${hop}' }`).join(', ')})`].join('; ');
+		async function decide(dhcp: string, active: ScriptedStore | null, persistent: ScriptedStore | null): Promise<boolean> {
+			const rows = (store: ScriptedStore | null, addresses: string, routes: string): string[] => [`${addresses} = @(${store ? `[pscustomobject]@{ IPAddress='${store.address}'; PrefixLength=${store.prefix} }` : ''})`, `${routes} = @(${(store?.nextHops ?? []).map(hop => `[pscustomobject]@{ NextHop='${hop}' }`).join(', ')})`];
+			const state = [`$oldDhcp = '${dhcp}'`, ...rows(active, '$oldActiveAddresses', '$oldActiveRoutes'), ...rows(persistent, '$oldPersistentAddresses', '$oldPersistentRoutes')].join('; ');
 			const result = await run(`${state}; ${windowsAddressingUnchanged(config)}; if ($addressingUnchanged) { exit 0 } else { exit 3 }`);
 			return !result.failed;
 		}
+
+		it('recognises the configuration already in both stores', async () => {
+			expect(await decide('Disabled', applied, applied)).toBe(true);
+		});
 
 		// The union of both stores used to answer this, so an interface holding the
 		// requested address and gateway only in the persistent store — with an empty
 		// active store — was called already-configured. Nothing was created, and the
 		// apply reported success on an interface with no address in force.
 		it('does not recognise a configuration only the persistent store holds', async () => {
-			const state = ["$oldDhcp = 'Disabled'", '$oldActiveAddresses = @()', '$oldActiveRoutes = @()', "$oldAddresses = @([pscustomobject]@{ IPAddress='192.0.2.10'; PrefixLength=24 })", "$oldRoutes = @([pscustomobject]@{ NextHop='192.0.2.1' })"].join('; ');
-			expect((await run(`${state}; ${windowsAddressingUnchanged(config)}; if ($addressingUnchanged) { exit 0 } else { exit 3 }`)).failed).toBe(true);
+			expect(await decide('Disabled', null, applied)).toBe(false);
 		});
 
-		it('recognises the configuration already on the interface', async () => {
-			expect(await decide('Disabled', '192.0.2.10', 24, ['192.0.2.1'])).toBe(true);
+		// ...and the mirror image, which reading the active store alone got wrong. The
+		// configuration is in force and survives nothing: the interface comes up at the
+		// next boot with no IPv4 address, and the apply had reported success.
+		it('does not recognise a configuration only the active store holds', async () => {
+			expect(await decide('Disabled', applied, null)).toBe(false);
+		});
+
+		// A persistent copy that is merely out of date is the same problem: the next
+		// boot comes up on the old configuration, not the one that was just saved.
+		it('does not recognise a stale persistent copy', async () => {
+			expect(await decide('Disabled', applied, { ...applied, prefix: 16 })).toBe(false);
+			expect(await decide('Disabled', applied, { ...applied, nextHops: [] })).toBe(false);
+			expect(await decide('Disabled', applied, { ...applied, nextHops: ['192.0.2.2'] })).toBe(false);
 		});
 
 		it('does not recognise a different address, prefix or gateway', async () => {
-			expect(await decide('Disabled', '192.0.2.11', 24, ['192.0.2.1'])).toBe(false);
-			expect(await decide('Disabled', '192.0.2.10', 25, ['192.0.2.1'])).toBe(false);
-			expect(await decide('Disabled', '192.0.2.10', 24, ['192.0.2.2'])).toBe(false);
-			expect(await decide('Disabled', '192.0.2.10', 24, [])).toBe(false);
+			expect(await decide('Disabled', { ...applied, address: '192.0.2.11' }, applied)).toBe(false);
+			expect(await decide('Disabled', { ...applied, prefix: 25 }, applied)).toBe(false);
+			expect(await decide('Disabled', { ...applied, nextHops: ['192.0.2.2'] }, applied)).toBe(false);
+			expect(await decide('Disabled', { ...applied, nextHops: [] }, applied)).toBe(false);
 		});
 
 		// The address may read the same and still have to be rewritten: it came from
 		// a lease, and the change is to pin it.
 		it('does not recognise the same address held by DHCP', async () => {
-			expect(await decide('Enabled', '192.0.2.10', 24, ['192.0.2.1'])).toBe(false);
+			expect(await decide('Enabled', applied, applied)).toBe(false);
 		});
 	});
 
