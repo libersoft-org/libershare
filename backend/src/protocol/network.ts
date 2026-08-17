@@ -225,11 +225,14 @@ const MAX_PUBSUB_PAYLOAD_BYTES = 256 * 1024;
  * during a stop was told "already running" and then had its node torn down under it.
  * Only a fully successful start reaches `running`.
  *
- * `failed` is the terminal state of a stop whose `node.stop()` threw. The run is neither
+ * `failed` is the state of a stop that could not prove the node down. The run is neither
  * running nor over: the node may still hold its listener, its connections and its port,
  * and nothing has proved otherwise. Reporting `stopped` there is what allowed a second
  * node over the same identity, port and datastore, and a datastore wipe underneath a live
- * one. Only another {@link Network.stop} may leave `failed` — by succeeding.
+ * one. A `failed` whose libp2p stop was interrupted is permanent — libp2p cannot resume
+ * one, see {@link Network.teardown} — and only a process restart clears it. A `failed`
+ * whose libp2p stop succeeded and whose cleanup then failed can be left by a stop that
+ * completes the remaining cleanup.
  */
 export type NetworkLifecycle = 'stopped' | 'starting' | 'running' | 'stopping' | 'failed';
 
@@ -246,6 +249,12 @@ export class Network {
 	 * one identity and one SQLite datastore.
 	 */
 	private readonly lifecycleMutex = new Mutex();
+	/**
+	 * Set once a `node.stop()` has failed to leave libp2p in `stopped`. Permanent: libp2p
+	 * has no way to resume an interrupted stop, so every later attempt would be a no-op
+	 * dressed up as success. See {@link teardown}.
+	 */
+	private nodeStopUnrecoverable = false;
 	private node: Libp2p | null = null;
 	private pubsub: PubSub | null = null;
 	private datastore: SqliteDatastore | null = null;
@@ -2896,16 +2905,19 @@ export class Network {
 		// Same mutex as start(): a stop that overlapped a start used to tear down a node
 		// the start had just handed back to its caller as successfully started.
 		await this.lifecycleMutex.runExclusive(async () => {
+			// An interrupted libp2p stop cannot be resumed, so a retry would do nothing and
+			// report success — the exact no-op that let a half-stopped node be treated as
+			// down. Refusing is the honest answer; the process has to be restarted.
+			if (this.nodeStopUnrecoverable) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network is in a terminal failed state: its libp2p node could not be stopped and cannot be stopped again — restart the process');
 			this.lifecycle = 'stopping';
 			try {
 				await this.teardown();
 				this.lifecycle = 'stopped';
 			} catch (err) {
-				// teardown kept the node and the datastore precisely because it could not
-				// prove the node is down. Setting `stopped` here regardless is what let the
-				// caller go on to start a second node over the same identity, port and
-				// datastore, and let a factory reset wipe a datastore still in use. A retry
-				// of stop() is allowed and is the only way out of `failed`.
+				// teardown kept whatever it could not prove released. Setting `stopped` here
+				// regardless is what let the caller go on to start a second node over the same
+				// identity, port and datastore, and let a factory reset wipe a datastore still
+				// in use. A retry of stop() repeats only the phases that are still outstanding.
 				this.lifecycle = 'failed';
 				throw err;
 			}
@@ -2917,11 +2929,14 @@ export class Network {
 	 * {@link start}, because a half-built start holds the same resources a finished one
 	 * does — and leaving them behind is what made a failed start unrecoverable.
 	 *
-	 * The per-run bookkeeping below is cleared unconditionally, but the node, the datastore
-	 * and the identity are released only once `node.stop()` has actually returned. A stop
-	 * that threw has not shown the node to be down, and everything that follows — closing
-	 * its datastore, dropping the reference, permitting a new start or a wipe — is only safe
-	 * once it has. That failure propagates and leaves the instance in `failed`.
+	 * The per-run bookkeeping below is cleared unconditionally, but each owned resource is
+	 * released only once it is provably gone: the node, the pubsub handle and the identity
+	 * after libp2p has reached `stopped`, the datastore after its own close returned. A stop
+	 * that could not prove the node down has not shown it to be down, and everything that
+	 * follows — closing its datastore, dropping the reference, permitting a new start or a
+	 * wipe — is only safe once it has. That failure propagates and leaves the instance in
+	 * `failed`; because libp2p cannot resume an interrupted stop, that particular `failed`
+	 * is permanent and {@link stop} refuses to pretend otherwise.
 	 */
 	private async teardown(): Promise<void> {
 		this.runEpoch++; // invalidate any in-flight status tick before touching state
@@ -2986,6 +3001,13 @@ export class Network {
 		try {
 			if (this.node) {
 				await this.node.stop();
+				// A resolved stop() is NOT proof the node is down. libp2p sets `status` to
+				// 'stopping' before its own stop phases and to 'stopped' only after all of them
+				// returned; a phase that throws leaves the status at 'stopping' permanently, and
+				// every later stop() call sees a status that is not 'started' and returns at once
+				// without doing any more work. Taking that silent no-op for success is what let a
+				// node still holding its listener, its connections and its port be reported down.
+				if (this.node.status !== 'stopped') throw new CodedError(ErrorCodes.INTERNAL_ERROR, `libp2p did not reach 'stopped' (status: ${this.node.status}) and cannot resume an interrupted stop`);
 				console.log('Network stopped');
 			}
 		} catch (err: any) {
@@ -2993,10 +3015,16 @@ export class Network {
 			// A node that refused to stop may still hold its listener, its connection
 			// manager and its port. Closing the datastore it is working over, and dropping
 			// the last reference to it, made the damage permanent AND invisible: nobody
-			// could retry the shutdown, and the caller was free to start a second node over
-			// the same identity, port and datastore. Keep both, and let stop() be retried.
+			// could see the shutdown had not happened, and the caller was free to start a
+			// second node over the same identity, port and datastore. Keep both.
+			this.nodeStopUnrecoverable = true;
 			throw err;
 		}
+		// Released only now, with the node provably down: everything below and everything a
+		// later start or wipe may do is safe only once it is.
+		this.node = null;
+		this.pubsub = null;
+		this.currentPrivateKey = null;
 		try {
 			if (this.datastore) {
 				await this.datastore.close();
@@ -3005,10 +3033,7 @@ export class Network {
 		} catch (err: any) {
 			trace(`[NET] datastore.close() failed: ${err?.message ?? err}`);
 		}
-		this.node = null;
-		this.pubsub = null;
 		this.datastore = null;
-		this.currentPrivateKey = null;
 	}
 
 	async cliFindPeer(peerID: string): Promise<void> {

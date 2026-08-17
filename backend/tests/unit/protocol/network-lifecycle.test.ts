@@ -20,6 +20,28 @@ function bareNetwork(): Network {
 	return new Network('/nonexistent/data-dir', {} as any, { list: (): any => ({}) } as any);
 }
 
+/**
+ * A stand-in for libp2p that follows its real stop state machine (libp2p 3.3.3,
+ * `libp2p.js`): `stop()` returns immediately unless the status is 'started', sets
+ * 'stopping', runs its phases and only then sets 'stopped'. A phase that throws leaves
+ * the status at 'stopping' for good, so every later call returns without doing anything.
+ * A mock that simply completes the second time cannot show the bug this models.
+ */
+function fakeNode(body: () => Promise<void> = async () => {}): { status: string; stop: () => Promise<void>; calls: number } {
+	const node = {
+		status: 'started',
+		calls: 0,
+		stop: async (): Promise<void> => {
+			node.calls++;
+			if (node.status !== 'started') return;
+			node.status = 'stopping';
+			await body();
+			node.status = 'stopped';
+		},
+	};
+	return node;
+}
+
 /** A promise plus the handles to settle it, so a test can hold a step open. */
 function deferred<T = void>(): { promise: Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void } {
 	let resolve!: (v: T) => void;
@@ -125,11 +147,9 @@ describe('Network lifecycle', () => {
 	it('a node that refuses to stop leaves the instance failed, not stopped', async () => {
 		const net = bareNetwork();
 		let closed = 0;
-		const node = {
-			stop: async (): Promise<void> => {
-				throw new Error('node.stop failed');
-			},
-		};
+		const node = fakeNode(async () => {
+			throw new Error('node.stop failed');
+		});
 		(net as any).node = node;
 		(net as any).datastore = {
 			close: async (): Promise<void> => {
@@ -151,11 +171,9 @@ describe('Network lifecycle', () => {
 
 	it('a failed stop refuses a new start and every destructive operation', async () => {
 		const net = bareNetwork();
-		(net as any).node = {
-			stop: async (): Promise<void> => {
-				throw new Error('node.stop failed');
-			},
-		};
+		(net as any).node = fakeNode(async () => {
+			throw new Error('node.stop failed');
+		});
 		(net as any).datastore = { close: async (): Promise<void> => {} };
 		await expect(net.stop()).rejects.toThrow('node.stop failed');
 
@@ -172,31 +190,57 @@ describe('Network lifecycle', () => {
 		await expect(net.writeIdentityKey(new Uint8Array([1, 2, 3]))).rejects.toThrow('Network must be stopped');
 	});
 
-	it('a retried stop that succeeds releases everything and clears the failed state', async () => {
+	it('a stop that reaches "stopped" releases the node and the datastore', async () => {
 		const net = bareNetwork();
-		let attempts = 0;
 		let closed = 0;
-		(net as any).node = {
-			stop: async (): Promise<void> => {
-				if (++attempts === 1) throw new Error('node.stop failed');
-			},
-		};
+		const node = fakeNode();
+		(net as any).node = node;
 		(net as any).datastore = {
 			close: async (): Promise<void> => {
 				closed++;
 			},
 		};
 
-		await expect(net.stop()).rejects.toThrow('node.stop failed');
-		expect(net.getLifecycle()).toBe('failed');
-
-		// Retrying the shutdown is the only way out — and it has to be possible, which is
-		// exactly what dropping the node reference used to take away.
 		await net.stop();
-		expect(attempts).toBe(2);
+		expect(node.status).toBe('stopped');
 		expect(closed).toBe(1);
 		expect((net as any).node).toBeNull();
+		expect((net as any).datastore).toBeNull();
 		expect(net.getLifecycle()).toBe('stopped');
+	});
+
+	it('an interrupted libp2p stop is terminal — a retry is refused, not faked', async () => {
+		const net = bareNetwork();
+		let closed = 0;
+		const node = fakeNode(async () => {
+			throw new Error('transport close failed');
+		});
+		(net as any).node = node;
+		(net as any).datastore = {
+			close: async (): Promise<void> => {
+				closed++;
+			},
+		};
+
+		await expect(net.stop()).rejects.toThrow('transport close failed');
+		expect(node.status).toBe('stopping');
+		expect(net.getLifecycle()).toBe('failed');
+
+		// What a "retry" would actually reach: libp2p returns at once because the status is
+		// not 'started', having done nothing more. Reading that silent no-op as a successful
+		// shutdown is what handed back a node still holding its listener, port and connections.
+		await node.stop();
+		expect(node.calls).toBe(2);
+		expect(node.status).toBe('stopping');
+
+		// So the wrapper refuses to try rather than report a shutdown it cannot perform.
+		await expect(net.stop()).rejects.toThrow('restart the process');
+		expect(node.calls).toBe(2);
+		expect(closed).toBe(0);
+		expect((net as any).node).toBe(node);
+		expect((net as any).datastore).not.toBeNull();
+		expect(net.getLifecycle()).toBe('failed');
+		await expect(net.start([])).rejects.toThrow('failed state');
 	});
 
 	it('a failed start whose cleanup also fails refuses the next start', async () => {
@@ -229,12 +273,8 @@ describe('Network lifecycle', () => {
 		const net = bareNetwork();
 		const gate = deferred();
 		let started = 0;
-		(net as any).node = {
-			stop: async (): Promise<void> => {
-				// The window in which `this.node` is still set but the run is over.
-				await gate.promise;
-			},
-		};
+		// The window in which `this.node` is still set but the run is over.
+		(net as any).node = fakeNode(() => gate.promise);
 		(net as any).startLocked = async (): Promise<void> => {
 			started++;
 		};
