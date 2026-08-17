@@ -112,6 +112,24 @@ describe('validateIPv4Config', () => {
 		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '0.0.0.0' })).toBe('gateway');
 	});
 
+	// Both are inside the prefix, so the on-link test accepts them — and a router
+	// cannot live at either. The interface then configures cleanly with a default
+	// route to an address that can never answer ARP.
+	it('rejects a gateway that is the network or broadcast address of the prefix', () => {
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.0' })).toBe('gateway');
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.255' })).toBe('gateway');
+		// A /25 has its own boundaries, which are ordinary addresses in a /24.
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 25, gateway: '192.0.2.127' })).toBe('gateway');
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.127' })).toBeNull();
+	});
+
+	it('still allows both addresses of a point-to-point /31 as a gateway', () => {
+		// RFC 3021 again: no network or broadcast address exists to collide with, and
+		// the peer is normally the other of the two.
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.0', prefixLength: 31, gateway: '192.0.2.1' })).toBeNull();
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.1', prefixLength: 31, gateway: '192.0.2.0' })).toBeNull();
+	});
+
 	it('rejects a gateway the interface has no route to', () => {
 		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '198.51.100.1' })).toBe('gateway');
 		// ...and accepts one inside the prefix.

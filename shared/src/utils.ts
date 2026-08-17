@@ -119,11 +119,12 @@ export function validateIPv4Config(config: NetIPv4Config, staticGatewayRequired:
 	if (host === 0 || host === 0xffffffff) return 'address';
 	// The all-zero and all-ones host parts belong to the subnet itself. A /31 is a
 	// point-to-point link where RFC 3021 makes both usable, and a /32 has no host
-	// part at all, so neither has a network or broadcast address to collide with.
-	if (prefix <= 30) {
-		const network = (host & mask) >>> 0;
-		if (host === network || host === (network | (~mask >>> 0)) >>> 0) return 'address';
-	}
+	// part at all, so neither has a network or broadcast address to collide with —
+	// which is what `subnetReserved` is false for at those two lengths.
+	const network = (host & mask) >>> 0;
+	const broadcast = (network | (~mask >>> 0)) >>> 0;
+	const subnetReserved = (value: number): boolean => prefix <= 30 && (value === network || value === broadcast);
+	if (subnetReserved(host)) return 'address';
 	// An interface on an isolated segment legitimately has no gateway, so an absent
 	// one is only an error where the platform has no way to express it —
 	// `networksetup -setmanual` takes the router as a mandatory value, which the
@@ -136,6 +137,11 @@ export function validateIPv4Config(config: NetIPv4Config, staticGatewayRequired:
 	// A gateway of 0.0.0.0, or one that is the interface's own address, is a
 	// routing loop rather than a route.
 	if (gateway === 0 || gateway === host) return 'gateway';
+	// A router cannot live at the subnet's own network or broadcast address, and
+	// the on-link test below happily accepts both — they are in the prefix. The
+	// result is a default route to an address that can never answer ARP, so the
+	// interface configures cleanly and then reaches nothing off-link.
+	if (subnetReserved(gateway)) return 'gateway';
 	// A gateway has to be reachable without already having a route to it. The
 	// exception is a /32, where nothing at all is on-link and an off-link
 	// gateway is the normal arrangement.
