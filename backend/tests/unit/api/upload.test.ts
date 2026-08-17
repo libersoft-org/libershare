@@ -166,8 +166,12 @@ describe('decodeBinaryRequest', () => {
  * framing, dispatch, acks, and the error path — rather than by calling the
  * handlers directly. The dispatch mirrors `APIServer.handleMessage`; wiring the
  * methods into the live server is covered by running the app itself.
+ *
+ * `swallowOnce` names methods whose first reply is dropped after the handler has
+ * already run. That is what an RPC timeout actually is: not a call that did not
+ * happen, but one whose acknowledgement never came back.
  */
-function startUploadServer(limits: UploadLimits = {}): { url: string; dataDir: string; uploadDir: string; stop: () => void } {
+function startUploadServer(limits: UploadLimits = {}, swallowOnce: Set<string> = new Set()): { url: string; dataDir: string; uploadDir: string; stop: () => void } {
 	const dataDir = join(tmpdir(), `lish-upload-test-${crypto.randomUUID()}`);
 	tempDirs.push(dataDir);
 	const handlers = initUploadHandlers(dataDir, limits);
@@ -216,9 +220,12 @@ function startUploadServer(limits: UploadLimits = {}): { url: string; dataDir: s
 					ws.send(JSON.stringify({ id, error: coded?.code ?? ErrorCodes.PARSE_ERROR, errorDetail: coded?.detail }));
 					return;
 				}
+				const swallow = swallowOnce.delete(req.method);
 				try {
-					ws.send(JSON.stringify({ id: req.id, result: await table[req.method]!(req.params ?? {}, ws) }));
+					const result = await table[req.method]!(req.params ?? {}, ws);
+					if (!swallow) ws.send(JSON.stringify({ id: req.id, result }));
 				} catch (err: any) {
+					if (swallow) return;
 					if (err instanceof CodedError) ws.send(JSON.stringify({ id: req.id, error: err.code, errorDetail: err.detail }));
 					else ws.send(JSON.stringify({ id: req.id, error: ErrorCodes.INTERNAL_ERROR, errorDetail: err.message }));
 				}
@@ -845,6 +852,77 @@ describe('chunked upload over the websocket', () => {
 			expect((await client.call<{ size: number }>('upload.digest', { uploadID })).size).toBe(accepted * 1024 * 1024);
 		} finally {
 			client.stopReconnect();
+			srv.stop();
+		}
+	}, 30000);
+
+	for (const step of ['upload.begin', 'upload.chunk', 'upload.end']) {
+		it(`leaves nothing behind when the reply to ${step} is lost`, async () => {
+			const srv = startUploadServer({}, new Set([step]));
+			const client = new WsClient(srv.url, () => {});
+			try {
+				// The frontend's own sequence, with the id it chose itself. That is the
+				// whole point of a client id: a lost `begin` reply used to leave a file
+				// this side could not name, so the abort below had nothing to send.
+				const uploadID = crypto.randomUUID();
+				await expectRejection(
+					(async () => {
+						await client.call('upload.begin', { uploadID, name: 'lost.lish' }, 300);
+						await client.callBinary('upload.chunk', { uploadID }, pattern(1024), 300);
+						await client.call('upload.end', { uploadID }, 300);
+					})(),
+					ErrorCodes.REQUEST_TIMEOUT
+				);
+				// The abort has to get through. Under a socket-wide gate this came back
+				// UPLOAD_BUSY whenever the original call was still holding it.
+				await client.call('upload.abort', { uploadID });
+				expect(await entriesAfterSettle(srv.uploadDir)).toEqual([]);
+				// And the socket is not left unusable: a fresh transfer still works.
+				const next = await upload(client, 'after.lish', pattern(2048), 1024);
+				expect((await client.call<{ size: number }>('upload.digest', { uploadID: next })).size).toBe(2048);
+			} finally {
+				client.stopReconnect();
+				srv.stop();
+			}
+		}, 30000);
+	}
+
+	it('resumes the same transfer when a begin is retried with its id', async () => {
+		const srv = startUploadServer({}, new Set(['upload.begin']));
+		const client = new WsClient(srv.url, () => {});
+		try {
+			const uploadID = crypto.randomUUID();
+			// First reply swallowed, so the client only knows the call may or may not
+			// have landed. It did, and the retry must find that same transfer rather
+			// than start a second one beside it.
+			await expectRejection(client.call('upload.begin', { uploadID, name: 'twice.lish' }, 300), ErrorCodes.REQUEST_TIMEOUT);
+			expect(await client.call<{ uploadID: string }>('upload.begin', { uploadID, name: 'twice.lish' })).toEqual({ uploadID });
+			expect((await readdir(srv.uploadDir)).length).toBe(1);
+			await client.callBinary('upload.chunk', { uploadID }, pattern(1024));
+			await client.call('upload.end', { uploadID });
+			expect((await client.call<{ size: number }>('upload.digest', { uploadID })).size).toBe(1024);
+		} finally {
+			client.stopReconnect();
+			srv.stop();
+		}
+	}, 30000);
+
+	it('will not let a client name an upload another socket already holds', async () => {
+		const srv = startUploadServer();
+		const owner = new WsClient(srv.url, () => {});
+		const intruder = new WsClient(srv.url, () => {});
+		try {
+			const uploadID = crypto.randomUUID();
+			await owner.call('upload.begin', { uploadID, name: 'mine.lish' });
+			// Naming someone else's transfer must not adopt it, and the answer says no
+			// more than that it is not one this socket may touch.
+			await expectRejection(intruder.call('upload.begin', { uploadID, name: 'yours.lish' }), ErrorCodes.UPLOAD_NOT_FOUND);
+			// A malformed id never reaches the map at all.
+			await expectRejection(owner.call('upload.begin', { uploadID: 'x'.repeat(5000), name: 'junk.lish' }), ErrorCodes.UPLOAD_NOT_FOUND);
+			await owner.callBinary('upload.chunk', { uploadID }, pattern(16));
+		} finally {
+			owner.stopReconnect();
+			intruder.stopReconnect();
 			srv.stop();
 		}
 	}, 30000);

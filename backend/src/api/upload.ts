@@ -15,6 +15,14 @@ const assert = Utils.assertParams;
  */
 const MAX_UPLOAD_NAME_BYTES = 100;
 
+/**
+ * Shape an id must have for a client to name its own upload with it. The id
+ * never reaches the filesystem — the temp file carries its own random prefix —
+ * but it is a key in a long-lived map, which is not somewhere a client gets to
+ * put strings of its own choosing and length.
+ */
+const UPLOAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** How long a file with no upload record behind it is kept before it is swept. */
 const UPLOAD_MAX_AGE_MS = 60 * 60 * 1000;
 
@@ -361,8 +369,13 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 		totalBytes -= upload.written;
 	}
 
-	function begin(p: { name?: string }, client: unknown): Promise<{ uploadID: string }> {
+	function begin(p: { uploadID?: string; name?: string }, client: unknown): Promise<{ uploadID: string }> {
 		return track(client, async () => {
+			// A client may name its own transfer, and that is what makes this call safe
+			// to retry. The reply to a `begin` can go missing without the socket ever
+			// noticing; with a server-chosen id that leaves a file on our disk the
+			// client cannot name, finish or abort, and only the sweep ever clears it.
+			if (p.uploadID !== undefined && !UPLOAD_ID_PATTERN.test(p.uploadID)) throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, 'malformed upload id');
 			await mkdir(uploadDir, { recursive: true });
 			// The socket can close while the await above runs, and `closeClient`
 			// would have found nothing to clean up. Registering the upload now would
@@ -373,11 +386,20 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 			// short of the global cap every concurrent begin passed the check, stalled
 			// on the mkdir together and then all inserted. Checking and inserting in
 			// one synchronous run is what makes the cap a cap.
+			const uploadID = p.uploadID ?? randomUUID();
+			const existing = uploads.get(uploadID);
+			if (existing) {
+				// The retry of a lost reply, answered with the id it already carries and
+				// no second file. Anything else — another socket's transfer, or one of
+				// this socket's that has moved past `receiving` — is not something this
+				// call may start or resume, and the answer says no more than that.
+				if (existing.client !== client || existing.state !== 'receiving') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, uploadID);
+				return { uploadID };
+			}
 			let open = 0;
 			for (const upload of uploads.values()) if (upload.client === client) open++;
 			if (open >= MAX_CONCURRENT_UPLOADS) throw new CodedError(ErrorCodes.TOO_MANY_UPLOADS, String(MAX_CONCURRENT_UPLOADS));
 			if (uploads.size >= maxTotalUploads) throw new CodedError(ErrorCodes.UPLOAD_QUOTA_EXCEEDED, String(maxTotalUploads));
-			const uploadID = randomUUID();
 			const path = join(uploadDir, uploadFileName(p.name ?? 'upload'));
 			uploads.set(uploadID, { path, writer: Bun.file(path).writer(), written: 0, client, state: 'receiving', lastActivityAt: Date.now(), busy: false, cancelled: false });
 			console.log(`[API] Upload started: ${uploadID} → ${path}`);

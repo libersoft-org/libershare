@@ -147,8 +147,14 @@ export async function uploadImportFile(file: File): Promise<string> {
 	// Checked up front so a file that could never be accepted fails immediately
 	// instead of after uploading its way to the ceiling.
 	if (file.size > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.UPLOAD_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
-	const { uploadID } = await wsClient.call<{ uploadID: string }>('upload.begin', { name: file.name }, UPLOAD_STEP_TIMEOUT_MS);
+	// Named here rather than by the server, and the begin is inside the try. A
+	// reply can be lost without this socket noticing, and with a server-chosen id
+	// a lost `begin` reply left a transfer on the backend's disk that this side had
+	// no id for — so it could neither finish nor abort it, and only the sweep ever
+	// cleared it. The backend treats a repeat of the same id as the same transfer.
+	const uploadID = crypto.randomUUID();
 	try {
+		await wsClient.call('upload.begin', { uploadID, name: file.name }, UPLOAD_STEP_TIMEOUT_MS);
 		for (let offset = 0; offset < file.size; offset += UPLOAD_CHUNK_SIZE) {
 			const slice = await file.slice(offset, offset + UPLOAD_CHUNK_SIZE).arrayBuffer();
 			await wsClient.callBinary('upload.chunk', { uploadID }, new Uint8Array(slice), UPLOAD_STEP_TIMEOUT_MS);
