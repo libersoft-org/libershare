@@ -130,20 +130,53 @@ async function readWindows(): Promise<NetInterfaceInfo[]> {
 }
 
 /**
- * Read the current network state.
+ * Read the current network state WITHOUT waiting for a reconfiguration to
+ * finish.
  *
  * Results are cached for {@link CACHE_TTL_MS} and concurrent callers share the
  * one in-flight read, so a poll tick and an RPC call arriving together cost a
  * single spawn. A failed platform read degrades to the address-only reader
  * rather than throwing — a settings screen showing addresses beats an error.
+ *
+ * The name is a warning. This is the read a mutation performs on ITSELF, to
+ * establish its own premise from inside {@link runHostMutation} — it cannot wait
+ * for a lock its own caller is holding. Every other caller wants
+ * {@link readSettledNetworkState}: called during a mutation this one reaches the
+ * platform between two destructive steps and answers with an interface that has
+ * no address yet, or an address with no route.
  */
-export async function readNetworkState(primaryInterface: string = ''): Promise<NetworkStateInfo> {
+export async function readNetworkStateUnlocked(primaryInterface: string = ''): Promise<NetworkStateInfo> {
 	// Two attempts at most. An apply landing mid-read invalidates that read — its
 	// answer describes the host before the change — which leaves the cache empty,
 	// and the caller deserves the state after the change rather than "unknown".
 	for (let attempt = 0; attempt < 2 && isCacheStale(); attempt++) await startOrJoinRead();
 	const interfaces = cached?.interfaces ?? [];
 	return { interfaces, primaryID: resolvePrimaryID(interfaces, primaryInterface), detail: cached?.detail ?? 'addressesOnly', known: cached !== null, capabilities: await readCapabilities() };
+}
+
+/**
+ * Read the network state a reconfiguration has SETTLED on — the read every
+ * caller outside a mutation wants.
+ *
+ * Taking the same lock the mutations take is the whole of it: a read that
+ * arrives while one is running waits for it instead of describing the host
+ * halfway through, and a mutation that would start while this read is in flight
+ * waits for the read. Skipping the poll tick was only ever half the answer,
+ * because a direct `system.network` request never consulted the lock at all —
+ * and a Windows Wi-Fi join holds it for far longer than {@link CACHE_TTL_MS}, so
+ * the cache expires mid-join and the next request reads the machine between the
+ * old profile going and the new association arriving.
+ *
+ * Waiting is bounded by the mutation itself ({@link APPLY_TIMEOUT_MS}, or the
+ * association timeout for a join), and the answer is worth the wait: the reading
+ * it replaces was not slower, it was wrong.
+ *
+ * NEVER call this from inside {@link runHostMutation} — the lock is not
+ * reentrant and the mutation would wait on itself. That path has
+ * {@link readNetworkStateUnlocked}.
+ */
+export function readSettledNetworkState(primaryInterface: string = ''): Promise<NetworkStateInfo> {
+	return applyLock.runExclusive(() => readNetworkStateUnlocked(primaryInterface));
 }
 
 function isCacheStale(): boolean {
@@ -231,7 +264,7 @@ export function resetNetworkStateCache(): void {
  * accepted when it finishes, and describes an interface halfway through the
  * change — no address yet, or an address with no route. The 10 s poll hits that
  * window on any apply that outlasts one tick, and the two-attempt retry in
- * {@link readNetworkState} walks straight into it, because the attempt that gets
+ * {@link readNetworkStateUnlocked} walks straight into it, because the attempt that gets
  * discarded is followed by one taken mid-apply.
  *
  * There is no reading of a half-applied interface worth broadcasting, so the
@@ -384,7 +417,7 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Pro
 		// Inside the lock and after `runHostMutation` has invalidated the cache, so
 		// this reaches the platform: the premise is the host as it is now, not as
 		// some earlier reading described it.
-		const objection = ipv4EditObjection(await readNetworkState(), interfaceID);
+		const objection = ipv4EditObjection(await readNetworkStateUnlocked(), interfaceID);
 		if (objection) throw objection;
 		return run(async () => {
 			if (process.platform === 'win32') {
@@ -451,7 +484,7 @@ function assertWindowsGuid(interfaceID: string): string {
 async function assertWirelessInterface(interfaceID: string, capability: 'wifiScannable' | 'wifiConnectable'): Promise<NetInterfaceInfo> {
 	const supported = await readCapabilities();
 	if (!supported.wifi) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host cannot configure Wi-Fi');
-	const state = await readNetworkState();
+	const state = await readNetworkStateUnlocked();
 	const target = state.interfaces.find(i => i.id === interfaceID);
 	if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
 	if (target.medium !== 'wireless') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'not a wireless interface');

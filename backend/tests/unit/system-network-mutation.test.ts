@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { applyIPv4, connectWifi, ipv4EditObjection, networkStateGeneration, resetNetworkStateCache, runHostMutation, withVolatileCapabilities } from '../../src/system-network.ts';
+import { applyIPv4, connectWifi, ipv4EditObjection, networkStateGeneration, readNetworkStateUnlocked, readSettledNetworkState, resetNetworkStateCache, runHostMutation, withVolatileCapabilities } from '../../src/system-network.ts';
 import { windowsIPv4Objection } from '../../src/system-network-windows.ts';
 import { CodedError, ErrorCodes, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
 
@@ -42,6 +42,46 @@ describe('runHostMutation', () => {
 			duringAction = networkStateGeneration();
 		});
 		expect(networkStateGeneration()).toBeGreaterThan(duringAction);
+	});
+
+	// The half the poll-tick skip did not cover. A direct `system.network` request
+	// never consulted the lock: it went through the ordinary cached read, and a
+	// Windows Wi-Fi join holds the lock for far longer than the 5 s cache lives —
+	// so the cache expired mid-join and the next request read the machine between
+	// the old configuration going and the new one arriving.
+	it('makes a direct read wait for a reconfiguration instead of reading through it', async () => {
+		let answered = false;
+		let stillWaiting = false;
+		let request: Promise<unknown> = Promise.resolve();
+		await runHostMutation(async () => {
+			// Issued from inside the mutation, which is where the lock is held — the
+			// position an RPC request arriving mid-apply is in.
+			request = readSettledNetworkState().then(() => {
+				answered = true;
+			});
+			// A whole platform read, taken the way a mutation is allowed to take one.
+			// Its completing HERE is what makes the assertion below about the lock
+			// rather than about the clock: the request outside has had at least as long
+			// as a read costs, and has still not been served.
+			await readNetworkStateUnlocked();
+			// And a further pause, because the two reads share one in-flight platform
+			// call: without the lock they would settle within microtasks of each other,
+			// which is a difference too small to assert on.
+			await new Promise(resolve => setTimeout(resolve, 200));
+			stillWaiting = !answered;
+		});
+		await request;
+		expect(stillWaiting).toBe(true);
+		expect(answered).toBe(true);
+		resetNetworkStateCache();
+	});
+
+	// The mutation's own premise read cannot wait for the lock its caller holds, so
+	// the two reads are deliberately different functions — and the settled one must
+	// never be the one a mutation reaches for.
+	it('keeps a mutation off the lock-taking read, which would deadlock it', () => {
+		expect(applyIPv4.toString()).toContain('readNetworkStateUnlocked');
+		for (const body of [applyIPv4.toString(), connectWifi.toString()]) expect(body).not.toContain('readSettledNetworkState');
 	});
 
 	it('serializes two mutations rather than interleaving their steps', async () => {
@@ -141,7 +181,7 @@ describe('windowsIPv4Objection', () => {
  * Where the join's premise is established.
  *
  * Both conditions a join rests on — this interface can be driven over Wi-Fi, and
- * it is not already on that network — come from {@link readNetworkState}, which
+ * it is not already on that network — come from {@link readNetworkStateUnlocked}, which
  * serves a reading up to CACHE_TTL_MS old. Checked BEFORE the lock, that reading
  * predates both the cache invalidation and any mutation queued ahead of this one,
  * so it can approve a join against a state the machine has already left. Checked

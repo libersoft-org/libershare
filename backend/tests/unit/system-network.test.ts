@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { ptr, type Pointer } from 'bun:ffi';
 import { parseWindowsNetworkState, readConnectionAttributes, WINDOWS_STATE_COMMAND } from '../../src/system-network-windows.ts';
 import { dbmToQuality, parseIwLink, parseLinuxNetworkState } from '../../src/system-network-linux.ts';
-import { assertReadProducedSomething, isAlreadyJoined, prefixFromNetmask, readGenericInterfaces, readNetworkState, resolvePrimaryID, resetNetworkStateCache } from '../../src/system-network.ts';
+import { assertReadProducedSomething, isAlreadyJoined, prefixFromNetmask, readGenericInterfaces, readNetworkStateUnlocked, resolvePrimaryID, resetNetworkStateCache } from '../../src/system-network.ts';
 import type { NetInterfaceInfo } from '@shared';
 
 /**
@@ -555,7 +555,7 @@ describe('readGenericInterfaces (every platform, including macOS)', () => {
 
 // Live shape-only smoke test. It asserts the document is well formed, never a
 // specific address, so it is stable on any machine and leaks nothing. Read-only:
-// readNetworkState has no code path that changes configuration.
+// readNetworkStateUnlocked has no code path that changes configuration.
 //
 // A cold read on Windows spawns PowerShell twice — the state document and the
 // elevation probe — and the code allows each of them 15 s. The default per-test
@@ -563,12 +563,12 @@ describe('readGenericInterfaces (every platform, including macOS)', () => {
 // waiting on, so these two cases carry their own, wider than what they wait for.
 const LIVE_READ_TIMEOUT_MS = 40_000;
 
-describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('readNetworkState (live)', () => {
+describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('readNetworkStateUnlocked (live)', () => {
 	it(
 		'returns a valid, internally consistent document',
 		async () => {
 			resetNetworkStateCache();
-			const state = await readNetworkState('');
+			const state = await readNetworkStateUnlocked('');
 			expect(state.known).toBe(true);
 			expect(['full', 'addressesOnly']).toContain(state.detail);
 			const ids = state.interfaces.map(i => i.id);
@@ -597,9 +597,9 @@ describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('r
 		'serves a second read from cache instead of spawning again',
 		async () => {
 			resetNetworkStateCache();
-			await readNetworkState('');
+			await readNetworkStateUnlocked('');
 			const started = Date.now();
-			await readNetworkState('');
+			await readNetworkStateUnlocked('');
 			expect(Date.now() - started).toBeLessThan(100);
 		},
 		LIVE_READ_TIMEOUT_MS

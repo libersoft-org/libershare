@@ -5,7 +5,7 @@ import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type Ne
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
-import { applyIPv4, connectWifi, hostMutationInProgress, readNetworkState, scanWifi } from '../system-network.ts';
+import { applyIPv4, connectWifi, hostMutationInProgress, readSettledNetworkState, scanWifi } from '../system-network.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -50,9 +50,13 @@ export function assertString(value: unknown, name: string, maxLength: number, mi
  *
  * The read is uncached by construction: `runHostMutation` invalidates the cache
  * in its own `finally`, so this reaches the platform rather than returning the
- * reading the mutation displaced. A read that fails as well is swallowed when
- * there is already a mutation error to report — replacing it would hide the
- * reason the user actually needs.
+ * reading the mutation displaced. It is also taken through
+ * `readSettledNetworkState`, which re-acquires the mutation lock — the mutation
+ * has released it by the time this runs, so what that buys is the guarantee that
+ * a second reconfiguration queued behind this one cannot be halfway through when
+ * the state is read. A read that fails as well is swallowed when there is already
+ * a mutation error to report — replacing it would hide the reason the user
+ * actually needs.
  */
 export async function applyAndPublish(mutate: () => Promise<void>, readState: () => Promise<NetworkStateInfo>, broadcast: BroadcastFn): Promise<NetworkStateInfo> {
 	let failure: unknown = null;
@@ -321,7 +325,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 
 	/** Live host network state, with the user's primary-interface preference applied. */
 	function getNetworkState(): Promise<NetworkStateInfo> {
-		return readNetworkState(settings.get('network.primaryInterface') ?? '');
+		return readSettledNetworkState(settings.get('network.primaryInterface') ?? '');
 	}
 
 	/**
