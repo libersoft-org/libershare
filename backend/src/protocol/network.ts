@@ -1461,6 +1461,18 @@ export class Network {
 					} catch {
 						/* non-fatal */
 					}
+					// Suppression was checked when the candidate list was built and again
+					// before this write; a cleanup finishing INSIDE the write is the window
+					// left. It matters more here than anywhere else: the merge does not only
+					// re-stamp the tag, it recreates the peerStore entry the cleanup deleted —
+					// and this loop takes its candidates from the peerStore, so the peer would
+					// be dialed and tagged again on every following tick.
+					if (epoch !== this.runEpoch) return;
+					if (this.isRedialSuppressed(c.pid)) {
+						trace(`[NET] re-dial keep-alive write raced a cleanup, undoing: ${c.pid.slice(0, 16)}`);
+						await this.purgeStalePeer(c.pid, 'keep-alive write raced a cleanup', epoch);
+						continue;
+					}
 				} catch (err: any) {
 					// A dial aborted by stop() looks like any other failure — do not let
 					// it repopulate maps that stop() just cleared, or evict against the

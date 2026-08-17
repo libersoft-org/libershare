@@ -1583,3 +1583,59 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 		expect((await store.get(pid)).addresses.map(a => a.multiaddr.toString())).toEqual(['/ip4/203.0.113.21/tcp/9090']);
 	});
 });
+
+/**
+ * Re-dial maintenance is the resurrection path the config-removal teardown has to
+ * survive: it takes its candidates from the peerStore and re-stamps keep-alive on every
+ * success, so a peer torn down while one of its dials was in flight comes back — entry,
+ * tag and all — unless the write itself looks again afterwards.
+ */
+describe('runRedialMaintenance — cleanup landing inside the keep-alive write', () => {
+	const LIVE_ADDR = '/ip4/203.0.113.31/tcp/9090';
+
+	function bareNetwork(suppressDuringMerge: boolean) {
+		const deleted: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).noReachableSince = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).pubsub = null;
+		installBootstrapRegistry(network, []);
+		(network as any).bootstrapTracker = { deleteDiscoveredByPeerID: (): void => {} };
+		(network as any).node = {
+			getPeers: () => [],
+			getConnections: () => [],
+			async dial(): Promise<unknown> {
+				return {};
+			},
+			peerStore: {
+				async merge(): Promise<void> {
+					// The teardown finishes here: disconnectPeer records the suppression
+					// before its own awaits, exactly so a late writer can see it.
+					if (suppressDuringMerge) (network as any).redialSuppressedByNet = new Map([['net-a', new Set([PEER_ID])]]);
+				},
+				async delete(pid: { toString(): string }): Promise<void> {
+					deleted.push(pid.toString());
+				},
+			},
+		};
+		const peer = { id: peerIdLike(PEER_ID), addresses: [{ multiaddr: multiaddr(LIVE_ADDR) }] };
+		return { network, deleted, peer };
+	}
+
+	it('takes back the entry the re-tag recreated', async () => {
+		const { network, deleted, peer } = bareNetwork(true);
+		await (network as any).runRedialMaintenance([], [peer], 1);
+		expect(deleted).toEqual([PEER_ID]);
+	});
+
+	it('keeps a re-dial no cleanup interfered with', async () => {
+		const { network, deleted, peer } = bareNetwork(false);
+		await (network as any).runRedialMaintenance([], [peer], 1);
+		expect(deleted).toEqual([]);
+	});
+});
