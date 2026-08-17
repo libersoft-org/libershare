@@ -2403,6 +2403,14 @@ export class Network {
 			trace(`[NET] disconnectPeer: invalid peerID ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 			return;
 		}
+		// Suppression is claimed BEFORE the first await, not after the hangUp. The two
+		// awaits below yield, and a dial started in that window — by redial maintenance,
+		// by peer:discovery, by a bootstrap job — used to read "not suppressed", go
+		// ahead, and complete after the hangUp had already looked for connections and
+		// found none: the peer ends up connected and re-tagged with the leave apparently
+		// finished. Recording the intent up front makes the window harmless, because
+		// every one of those paths re-checks suppression before it keeps its result.
+		this.addRedialSuppression(networkID, peerID);
 		// Remove the keep-alive tags FIRST so the imminent hangUp does not race
 		// the ReconnectQueue back into a re-dial. Both tags matter: the custom
 		// 'keep-alive-fleet' tag (peer-announce intake) and the native KEEP_ALIVE
@@ -2424,10 +2432,6 @@ export class Network {
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: hangUp failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
-		// Keep redial maintenance from re-dialing this just-left peer on the next
-		// status tick. Keyed by the left lishnet so rejoin lifts exactly its peers;
-		// cleared automatically once it reconnects legitimately.
-		this.addRedialSuppression(networkID, peerID);
 		// Forget the persisted peerStore entry so the disconnect survives a restart —
 		// suppression is in-memory only, but the peerStore is on disk.
 		await this.purgeStalePeer(peerID, 'left-network exclusive peer');

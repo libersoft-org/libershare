@@ -82,6 +82,40 @@ describe('Network.disconnectPeer — keep-alive tag removal', () => {
 		await network.disconnectPeer(PEER_ID, NET);
 		expect(deleted).toEqual([PEER_ID]);
 	});
+
+	/**
+	 * Suppression used to be recorded only AFTER the tag removal and the hangUp, both of
+	 * which yield. A dial started inside that window read "not suppressed", went ahead,
+	 * and landed after hangUp had already found no connection to close — leaving the
+	 * peer connected and re-tagged with the leave apparently complete.
+	 */
+	it('claims suppression before the first await, not after the hangUp', async () => {
+		const { network, suppressed } = makeNetwork();
+		const observedDuringMerge: boolean[] = [];
+		let release = (): void => {};
+		const gate = new Promise<void>(resolve => {
+			release = resolve;
+		});
+		(network as any).node.peerStore.merge = async (): Promise<void> => {
+			observedDuringMerge.push(suppressed(PEER_ID));
+			await gate;
+		};
+		const pending = network.disconnectPeer(PEER_ID, NET);
+		// The tag-removal await is where every racing dial path reads the flag.
+		expect(observedDuringMerge).toEqual([true]);
+		release();
+		await pending;
+		expect(suppressed(PEER_ID)).toBe(true);
+	});
+
+	it('claims it even when the hangUp itself throws', async () => {
+		const { network, suppressed } = makeNetwork();
+		(network as any).node.hangUp = async (): Promise<never> => {
+			throw new Error('hangUp failed');
+		};
+		await network.disconnectPeer(PEER_ID, NET);
+		expect(suppressed(PEER_ID)).toBe(true);
+	});
 });
 
 /**
