@@ -77,6 +77,12 @@ export interface LinuxNetworkSources {
 	 * for a device with no active profile, where the kernel is all there is.
 	 */
 	ipv4Methods?: Map<string, NetAddressMode> | undefined;
+	/**
+	 * Devices that currently have an active NetworkManager profile. The apply path
+	 * edits that profile, so a device without one cannot be configured however
+	 * thoroughly NetworkManager manages it.
+	 */
+	activeProfiles?: Set<string> | undefined;
 }
 
 /**
@@ -231,7 +237,13 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 			// when it could not be asked at all, the honest answer is still "no": an
 			// unknown permission is not a permission, and `isLinuxWritable()` has
 			// already reported the host read-only in that case anyway.
-			configurable: sources.managed?.has(entry.ifname) ?? false,
+			//
+			// Being managed is necessary but not sufficient. `applyLinuxIPv4` edits the
+			// profile ACTIVE on the device, so a managed device that is disconnected or
+			// unavailable — which "managed" happily includes — has nothing to edit, and
+			// offering Configure there showed a working Save that failed every time
+			// with "no NetworkManager profile is active". Both conditions, or neither.
+			configurable: (sources.managed?.has(entry.ifname) ?? false) && (sources.activeProfiles?.has(entry.ifname) ?? false),
 			// NetworkManager knows the resolvers PER LINK, which is the only correct
 			// answer on a systemd-resolved host: there /etc/resolv.conf holds the
 			// 127.0.0.53 stub, so reporting it would show every machine the same
@@ -328,7 +340,8 @@ export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
 			// rather than being guessed from anything else.
 		}
 	}
-	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: await readNetworkManagerDns(), managed: await readManagedDevices(), ipv4Methods: await readLinuxIPv4Methods() });
+	const active = await readLinuxActiveProfiles();
+	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: await readNetworkManagerDns(), managed: await readManagedDevices(), ipv4Methods: active?.methods, activeProfiles: active?.devices });
 }
 
 /**
@@ -526,29 +539,34 @@ export function nmcliMethodToMode(method: string): NetAddressMode {
 }
 
 /**
- * The `ipv4.method` of the profile active on each device.
+ * The NetworkManager profiles currently active, and each one's `ipv4.method`.
  *
- * One `nmcli` call to list the active profiles, then one per profile — a host has
+ * Two answers from one read because both come from the same list. The set of
+ * devices decides whether an interface can be edited at all — the apply edits the
+ * ACTIVE profile, so a device without one has nothing to edit — and the methods
+ * decide what addressing mode to report for those that can.
+ *
+ * One `nmcli` call to list the active profiles, then one per profile: a host has
  * a handful of them, and the read already spawns `iw` once per wireless device.
  * Undefined when NetworkManager cannot be asked at all, so the caller falls back
  * to the kernel rather than reporting every interface as unknown.
  */
-async function readLinuxIPv4Methods(): Promise<Map<string, NetAddressMode> | undefined> {
+async function readLinuxActiveProfiles(): Promise<{ devices: Set<string>; methods: Map<string, NetAddressMode> } | undefined> {
 	let active: Map<string, string>;
 	try {
 		active = parseNmcliActiveUUIDs(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'UUID,DEVICE', 'connection', 'show', '--active']));
 	} catch {
 		return undefined;
 	}
-	const result = new Map<string, NetAddressMode>();
+	const methods = new Map<string, NetAddressMode>();
 	for (const [device, uuid] of active) {
 		try {
-			result.set(device, nmcliMethodToMode(parseNmcliProperties(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'ipv4.method', 'connection', 'show', 'uuid', uuid])).get('ipv4.method') ?? ''));
+			methods.set(device, nmcliMethodToMode(parseNmcliProperties(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'ipv4.method', 'connection', 'show', 'uuid', uuid])).get('ipv4.method') ?? ''));
 		} catch {
 			// This one profile could not be read; the kernel inference stands for it.
 		}
 	}
-	return result;
+	return { devices: new Set(active.keys()), methods };
 }
 
 /**

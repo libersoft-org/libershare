@@ -184,9 +184,8 @@ describe('parseLinuxNetworkState', () => {
 	it('marks a device NetworkManager does not own as not configurable', () => {
 		// The interface list comes from the kernel, so it holds devices another stack
 		// manages. Offering Configure for those shows an action that can only fail.
-		const parsed = parseLinuxNetworkState({ ...sources, managed: new Set(['eth0']) });
+		const parsed = parseLinuxNetworkState({ ...sources, managed: new Set(['eth0', 'docker0']), activeProfiles: new Set(['eth0']) });
 		expect(byID(parsed, 'eth0').configurable).toBe(true);
-		expect(byID(parsed, 'docker0').configurable).toBe(false);
 	});
 
 	it('withholds configurability when NetworkManager could not be asked', () => {
@@ -196,6 +195,20 @@ describe('parseLinuxNetworkState', () => {
 		// be asked has already reported itself read-only through isLinuxWritable.
 		const parsed = parseLinuxNetworkState(sources);
 		expect(byID(parsed, 'eth0').configurable).toBe(false);
+	});
+
+	// Being managed is not enough. `applyLinuxIPv4` edits the profile ACTIVE on the
+	// device, and "managed" happily includes disconnected and unavailable devices —
+	// which showed a working Save that failed every time with "no NetworkManager
+	// profile is active".
+	it('refuses to offer an edit on a managed device with no active profile', () => {
+		const managed = new Set(['eth0', 'docker0']);
+		const parsed = parseLinuxNetworkState({ ...sources, managed, activeProfiles: new Set(['eth0']) });
+		expect(byID(parsed, 'eth0').configurable).toBe(true);
+		expect(byID(parsed, 'docker0').configurable).toBe(false);
+		// ...and an active profile on a device NetworkManager does not own is not
+		// permission either. Both conditions, or neither.
+		expect(byID(parseLinuxNetworkState({ ...sources, managed: new Set(['eth0']), activeProfiles: managed }), 'docker0').configurable).toBe(false);
 	});
 
 	it('keeps a secondary interface own gateway, not just the default route one', () => {
