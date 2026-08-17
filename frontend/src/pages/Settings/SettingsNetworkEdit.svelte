@@ -159,15 +159,20 @@
 
 	async function join(): Promise<void> {
 		if (!joinSSID || !canEditWifi) return;
+		// Read once, before the await, and used for both the request and the report.
+		// `joinSSID` is a live binding the user can move while the join is in flight, so
+		// reading it again afterwards let the success message name a network the backend
+		// was never asked about.
+		const submitted = joinSSID;
 		busy = true;
 		message = '';
 		try {
 			// The interface is on a different network now, very possibly with a different
 			// addressing mode. Whatever the form held describes the network that was left,
 			// so the state the join answered with becomes the new basis outright.
-			form.seedFromState(await joinWifiNetwork(interfaceID, joinSSID, password), interfaceID);
+			form.seedFromState(await joinWifiNetwork(interfaceID, submitted, password), interfaceID);
 			failed = false;
-			message = $t('settings.network.joined', { ssid: joinSSID });
+			message = $t('settings.network.joined', { ssid: submitted });
 			password = '';
 		} catch (error) {
 			failed = true;
@@ -242,7 +247,11 @@
 
 		{#if canEditIPv4}
 			<div role="group" data-mouse-activate-area={areaID}>
-				<Select bind:value={form.mode} label={$t('settings.network.addressing')} position={[0, 0]} flex>
+				<!-- Held shut for the whole operation, not just the button. An edit made
+				     while the RPC was in flight was thrown away the moment it answered:
+				     the handler seeds the form from the state the host returned, which is
+				     the older operation's result overwriting the newer typing. -->
+				<Select bind:value={form.mode} label={$t('settings.network.addressing')} position={[0, 0]} disabled={busy} flex>
 					<!-- Offered only while it is what the host reported, so the form can
 					     show the truth without inviting the user to select it back. -->
 					{#if form.mode === 'unknown'}<SelectOption value="unknown" label={$t('settings.network.modeUnknown')} />{/if}
@@ -256,10 +265,10 @@
 
 			{#if form.mode === 'static'}
 				<div role="group" data-mouse-activate-area={areaID}>
-					<Input bind:value={form.address} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, 1]} flex />
-					<Input bind:value={form.prefix} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, 2]} flex />
-					<Input bind:value={form.gateway} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, 3]} flex />
-					<Input bind:value={form.dns} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 1.1.1.1" position={[0, 4]} flex />
+					<Input bind:value={form.address} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, 1]} disabled={busy} flex />
+					<Input bind:value={form.prefix} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, 2]} disabled={busy} flex />
+					<Input bind:value={form.gateway} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, 3]} disabled={busy} flex />
+					<Input bind:value={form.dns} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 1.1.1.1" position={[0, 4]} disabled={busy} flex />
 				</div>
 			{/if}
 
@@ -289,7 +298,7 @@
 			{#if joinSSID}
 				{#if joinSecured}
 					<div role="group" data-mouse-activate-area={areaID}>
-						<Input bind:value={password} label={$t('settings.network.passwordFor', { ssid: joinSSID })} type="password" position={[0, wifiBaseY + 1 + networks.length]} flex />
+						<Input bind:value={password} label={$t('settings.network.passwordFor', { ssid: joinSSID })} type="password" position={[0, wifiBaseY + 1 + networks.length]} disabled={busy} flex />
 					</div>
 				{:else}
 					<!-- An open network has no key to type, so this is the whole of the
