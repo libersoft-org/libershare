@@ -1,5 +1,5 @@
 diff --git a/dist/src/store.js b/dist/src/store.js
-index 103fcc357761a56be2576e7bb4cf7cc2b3858f6f..8ceab661af8acfd602f4b4c0b4830c3078cea38a 100644
+index 103fcc357761a56be2576e7bb4cf7cc2b3858f6f..f66bd5b08ba8ea0d07cd5b052edf4afde59ea23f 100644
 --- a/dist/src/store.js
 +++ b/dist/src/store.js
 @@ -146,6 +146,26 @@ export class PersistentStore {
@@ -29,24 +29,43 @@ index 103fcc357761a56be2576e7bb4cf7cc2b3858f6f..8ceab661af8acfd602f4b4c0b4830c30
      async merge(peerId, data, options) {
          const existingPeer = await this.#findExistingPeer(peerId, options);
          const peerPb = await toPeerPB(peerId, data, 'merge', {
-@@ -162,9 +182,14 @@ export class PersistentStore {
+@@ -162,9 +182,33 @@ export class PersistentStore {
                  continue;
              }
              const peer = PeerPB.decode(value);
 -            // remove expired peer
-+            // Upstream DELETES here. The rows come from a snapshot the datastore took at
-+            // the start of the iteration, and this runs under no lock at all — so an
-+            // ordinary locked save/patch/merge landing after the snapshot refreshes the
-+            // record, and this delete then removes the NEW value on the strength of the
-+            // OLD one. Skipping is enough: the next load() or write for that peer sees
-+            // the current row and deletes it under the peer's own lock if it is still
-+            // expired.
++            // Upstream DELETES the snapshotted row here. The rows come from a snapshot the
++            // datastore took at the start of the iteration, and this runs under no lock at
++            // all — so an ordinary locked save/patch/merge landing after the snapshot
++            // refreshes the record, and the delete then removes the NEW value on the
++            // strength of the OLD one. Skipping the delete altogether is not the answer
++            // either: a peer that never comes back is never load()ed nor written again, so
++            // its row would stay here for good and be re-read and decoded by every sweep.
++            // Take the peer's own write lock, re-read the CURRENT row under it, and delete
++            // only that — and only while it is still expired.
              if (this.#peerIsExpired(peerId, peer)) {
 -                await this.datastore.delete(key, options);
++                const release = await this.getWriteLock(peerId, options);
++                try {
++                    const current = await this.datastore.get(key, options);
++                    if (this.#peerIsExpired(peerId, PeerPB.decode(current))) {
++                        await this.delete(peerId, options);
++                    }
++                }
++                catch (err) {
++                    // Already gone is the outcome this wanted. Anything else is a real
++                    // datastore fault and upstream let it out of here too.
++                    if (err?.name !== 'NotFoundError' && err?.code !== 'ERR_NOT_FOUND') {
++                        throw err;
++                    }
++                }
++                finally {
++                    release();
++                }
                  continue;
              }
              yield pbToPeer(peerId, peer, this.peerId.equals(peerId) ? Infinity : this.maxAddressAge);
-@@ -186,9 +211,15 @@ export class PersistentStore {
+@@ -186,9 +230,15 @@ export class PersistentStore {
              };
          }
          catch (err) {

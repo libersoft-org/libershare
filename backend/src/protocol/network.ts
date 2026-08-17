@@ -446,9 +446,10 @@ interface IStoredAddress {
  * it guarantees is that no ordinary `get`/`save`/`patch`/`merge`/`delete` for THIS peer
  * interleaves. `peerStore.all()`, which this node walks on a timer, used to delete
  * records it judged expired straight through the datastore under no lock at all — from a
- * snapshot taken before any of those writes — and the local dependency patch stops it (it
- * skips instead, leaving the cleanup to the next locked read or write of that peer).
- * `load()` still deletes an expired record it reads, so a record CAN still disappear
+ * snapshot taken before any of those writes — and the local dependency patch makes it take
+ * this same lock, re-read the current row under it and delete only what is still expired.
+ * So the sweep still frees dead rows, it just no longer deletes a record that was rewritten
+ * after its snapshot. `load()` still deletes an expired record it reads, so a record CAN still disappear
  * between two reads of a locked read-modify-write; that is what `patchExisting` is for.
  */
 interface IPeerStoreInternals {
