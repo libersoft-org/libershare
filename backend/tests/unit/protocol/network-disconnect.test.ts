@@ -139,14 +139,19 @@ describe('Network.disconnectPeer — keep-alive tag removal', () => {
 describe('Network.disconnectPeer — a failed durable delete must not report success', () => {
 	const ADDR = `/ip4/203.0.113.71/tcp/9090/p2p/${PEER_ID}`;
 
-	async function leavingNetwork(onDelete: () => never) {
+	async function leavingNetwork(onDelete: (removeTheRow: () => Promise<void>) => Promise<never>) {
 		// One datastore, two stores: the second one stands in for the next process start,
 		// which is where a surviving row does its damage.
 		const datastore = new MemoryDatastore();
 		const peerStore = createEmptyPeerStore(datastore);
 		const pid = peerIdFromString(PEER_ID);
 		await peerStore.patch(pid, { multiaddrs: [multiaddr(ADDR)], tags: { [KEEP_ALIVE]: { value: 1 } } });
-		(peerStore as any).store.delete = async (): Promise<never> => onDelete();
+		// The removal goes through a SECOND store over the same datastore — the shape of
+		// something outside this call having got there first, rather than of this delete
+		// half-succeeding. Through that store's inner, unlocked delete: mortice locks are
+		// keyed by peer id across every store in the process, and the public wrapper would
+		// queue behind the write lock this very call is holding.
+		(peerStore as any).store.delete = async (): Promise<never> => onDelete(async () => (createEmptyPeerStore(datastore) as any).store.delete(pid));
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
@@ -162,7 +167,7 @@ describe('Network.disconnectPeer — a failed durable delete must not report suc
 	}
 
 	it('rejects, and the row is still there for the next start to find', async () => {
-		const { network, datastore, pid } = await leavingNetwork(() => {
+		const { network, datastore, pid } = await leavingNetwork(async () => {
 			throw Object.assign(new Error('database is locked'), { name: 'SqliteError' });
 		});
 		await expect(network.disconnectPeer(PEER_ID, NET)).rejects.toThrow('database is locked');
@@ -171,13 +176,14 @@ describe('Network.disconnectPeer — a failed durable delete must not report suc
 	});
 
 	it('reports success when the record turns out to be gone already', async () => {
-		const { network, datastore, pid } = await leavingNetwork(() => {
+		const { network, datastore, pid } = await leavingNetwork(async removeTheRow => {
+			await removeTheRow();
 			throw Object.assign(new Error('not found'), { name: 'NotFoundError', code: 'ERR_NOT_FOUND' });
 		});
 		await network.disconnectPeer(PEER_ID, NET);
-		// Nothing removed it here, but "already gone" is the outcome the leave asked for and
-		// must not be reported as a failure.
-		expect(await createEmptyPeerStore(datastore).has(pid)).toBe(true);
+		// The row really is gone — which is the outcome the leave asked for, so the delete
+		// that found nothing left to remove must not be reported as a failure.
+		expect(await createEmptyPeerStore(datastore).has(pid)).toBe(false);
 	});
 });
 
