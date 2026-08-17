@@ -745,6 +745,30 @@ export const WINDOWS_ROUTE_GUARD: string = `if (@($oldRoutes).Count -gt 1) { thr
  */
 export const WINDOWS_ORIGIN_GUARD: string = `if ($oldDhcp -ne 'Enabled') { foreach ($a in $oldAddresses) { if ($a.PrefixOrigin -ne 'Manual' -or $a.SuffixOrigin -ne 'Manual') { throw "this interface carries an IPv4 address this app could not put back if the change failed" } } }`;
 
+/**
+ * Decide, on the machine, whether the requested addressing is already in place —
+ * so a change to the resolvers alone does not rewrite it.
+ *
+ * The removal and re-creation exist because `New-NetIPAddress` adds rather than
+ * replaces. When the address, the prefix and the gateway are all already what was
+ * asked for there is nothing to replace, and running the rewrite anyway destroys
+ * and re-makes objects for no gain: the new default route comes back with the
+ * metric `New-NetIPAddress` picks rather than the one it had, and every step in
+ * between is a window in which the interface has no configuration at all. The
+ * user need not even have looked at the addressing — the settings form sends the
+ * whole configuration back whichever field was edited, so this was the ordinary
+ * cost of changing a DNS server.
+ *
+ * The comparison is against the snapshot rather than against the reading the
+ * client sent, so it describes the host as it is now. It leans on
+ * {@link WINDOWS_ROUTE_GUARD} having already refused more than one default route,
+ * which is what makes "the gateway" a single value worth comparing.
+ */
+export function windowsAddressingUnchanged(config: NetIPv4Config): string {
+	const route = config.gateway ? `(@($oldRoutes).Count -eq 1) -and ($oldRoutes[0].NextHop -eq '${config.gateway}')` : '(@($oldRoutes).Count -eq 0)';
+	return `$addressingUnchanged = ($oldDhcp -ne 'Enabled') -and (@($oldAddresses).Count -eq 1) -and ($oldAddresses[0].IPAddress -eq '${config.address}') -and ($oldAddresses[0].PrefixLength -eq ${config.prefixLength}) -and ${route}`;
+}
+
 /** How long duplicate address detection may run before the apply gives up on it. */
 const DAD_TIMEOUT_MS = 15000;
 /** How often the address state is re-read while duplicate address detection runs. */
@@ -809,13 +833,15 @@ export function windowsAddressStateWait(address: string): string {
  */
 export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): string {
 	const preamble = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', `$adapter = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq '${guid}' }`, 'if (-not $adapter) { throw "interface not found" }', '$i = $adapter.ifIndex'];
-	const mutation = [tolerateMissing('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false'), tolerateMissing("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false")];
+	const removals = [tolerateMissing('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false'), tolerateMissing("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false")];
+	const mutation: string[] = [];
 	if (config.mode === 'dhcp') {
-		mutation.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses');
+		mutation.push(...removals, 'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses');
 	} else {
 		const gateway = config.gateway ? ` -DefaultGateway ${config.gateway}` : '';
 		const dns = config.dns ?? [];
-		mutation.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`, dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses', windowsAddressStateWait(config.address as string));
+		const rewrite = [...removals, 'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`].join('; ');
+		mutation.push(windowsAddressingUnchanged(config), `if (-not $addressingUnchanged) { ${rewrite} }`, dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses', windowsAddressStateWait(config.address as string));
 	}
 	const guarded = `try { ${mutation.join('; ')} } catch { $applyError = $_; try { ${windowsRestoreSteps().join('; ')} } catch { throw "the change failed ($($applyError.Exception.Message)) and rolling it back also failed ($($_.Exception.Message))" }; throw $applyError }`;
 	return [...preamble, ...windowsSnapshotSteps(), WINDOWS_ALIAS_GUARD, WINDOWS_ROUTE_GUARD, WINDOWS_ORIGIN_GUARD, guarded].join('; ');

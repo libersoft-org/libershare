@@ -514,6 +514,33 @@ describe('windowsApplyIPv4Command', () => {
 		}
 	});
 
+	// The removal exists because New-NetIPAddress adds rather than replaces. When
+	// the address, prefix and gateway are already the requested ones there is
+	// nothing to replace — and the settings form posts the whole configuration
+	// whichever field was edited, so a changed DNS server used to destroy and
+	// re-make the default route, which then came back with a different metric.
+	it('does not rewrite the addressing a static config leaves unchanged', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['198.51.100.1'] });
+		expect(command).toContain("$addressingUnchanged = ($oldDhcp -ne 'Enabled') -and (@($oldAddresses).Count -eq 1) -and ($oldAddresses[0].IPAddress -eq '192.0.2.10') -and ($oldAddresses[0].PrefixLength -eq 24) -and (@($oldRoutes).Count -eq 1) -and ($oldRoutes[0].NextHop -eq '192.0.2.1')");
+		expect(command).toContain('if (-not $addressingUnchanged) { try { Remove-NetIPAddress');
+		// The resolvers and the state check are outside that branch: they are the
+		// part a DNS-only change is actually asking for.
+		expect(command).toContain('| Out-Null }; Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses 198.51.100.1');
+		expect(command.indexOf('AddressState')).toBeGreaterThan(command.indexOf('-ServerAddresses 198.51.100.1'));
+	});
+
+	it('compares against no default route when the config has no gateway', () => {
+		expect(windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 })).toContain('-and (@($oldRoutes).Count -eq 0)');
+	});
+
+	it('still rewrites unconditionally for a DHCP config', () => {
+		// There is no addressing to compare: the point of the change is to hand the
+		// interface back to the lease, which starts by clearing what is there.
+		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
+		expect(command).not.toContain('$addressingUnchanged');
+		expect(command).toContain('try { try { Remove-NetIPAddress');
+	});
+
 	// The removals above are destructive and irreversible on their own: between
 	// them and the last step the interface holds no usable configuration, so a
 	// failure in between used to leave the machine with no address, no gateway and
@@ -564,7 +591,7 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('@($oldAddresses).Count -gt 1');
 		expect(command.slice(0, command.indexOf('several IPv4 addresses'))).not.toContain('AddressState');
 		// Before anything is removed, so the refusal costs nothing and undoes nothing.
-		expect(command.indexOf('several IPv4 addresses')).toBeLessThan(command.indexOf('try { try { Remove-NetIPAddress'));
+		expect(command.indexOf('several IPv4 addresses')).toBeLessThan(command.indexOf('Remove-NetIPAddress'));
 	});
 
 	// A `169.254.*` address is not necessarily APIPA. Windows lets one be configured
@@ -585,7 +612,7 @@ describe('windowsApplyIPv4Command', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
 		expect(command).toContain('if (@($oldRoutes).Count -gt 1) { throw');
 		expect(command).toContain('several IPv4 default routes');
-		expect(command.indexOf('several IPv4 default routes')).toBeLessThan(command.indexOf('try { try { Remove-NetIPAddress'));
+		expect(command.indexOf('several IPv4 default routes')).toBeLessThan(command.indexOf('Remove-NetIPAddress'));
 	});
 
 	it('keeps the route metrics in the snapshot, not just the next hops', () => {
@@ -616,7 +643,7 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain("if ($oldDhcp -ne 'Enabled') { foreach ($a in $oldAddresses)");
 		expect(command).toContain("$a.PrefixOrigin -ne 'Manual' -or $a.SuffixOrigin -ne 'Manual'");
 		expect(command).toContain('could not put back if the change failed');
-		expect(command.indexOf('could not put back')).toBeLessThan(command.indexOf('try { try { Remove-NetIPAddress'));
+		expect(command.indexOf('could not put back')).toBeLessThan(command.indexOf('Remove-NetIPAddress'));
 	});
 
 	it('rolls the snapshot back when any step of the change fails', () => {
@@ -627,8 +654,8 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('foreach ($a in $oldAddresses)');
 		expect(command).toContain('foreach ($r in $oldRoutes)');
 		expect(command).toContain('$oldDnsManual.Count -gt 0');
-		// New-NetIPAddress must be inside the guard, not before it.
-		expect(command.indexOf('try { try { Remove-NetIPAddress')).toBeGreaterThan(-1);
+		// The mutation must be inside the guard, not before it.
+		expect(command).toContain('try { $addressingUnchanged =');
 	});
 
 	// A rollback that writes the EFFECTIVE resolver list back turns DHCP-supplied
@@ -680,7 +707,7 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('Windows is still checking the new address for duplicates');
 		// Inside the guarded mutation, so a duplicate rolls the change back rather
 		// than leaving the interface on an address it cannot use.
-		expect(command.indexOf('AddressState')).toBeGreaterThan(command.indexOf('try { try { Remove-NetIPAddress'));
+		expect(command.indexOf('AddressState')).toBeGreaterThan(command.indexOf('Remove-NetIPAddress'));
 		expect(command.indexOf('AddressState')).toBeLessThan(command.indexOf('catch { $applyError = $_;'));
 	});
 

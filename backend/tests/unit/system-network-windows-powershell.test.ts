@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { WINDOWS_ALIAS_GUARD, WINDOWS_ORIGIN_GUARD, WINDOWS_ROUTE_GUARD, windowsAddressStateWait } from '../../src/system-network-windows.ts';
+import { WINDOWS_ALIAS_GUARD, WINDOWS_ORIGIN_GUARD, WINDOWS_ROUTE_GUARD, windowsAddressingUnchanged, windowsAddressStateWait } from '../../src/system-network-windows.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -107,6 +107,34 @@ describe.skipIf(process.platform !== 'win32')('windows apply fragments (live Pow
 		// addresses back itself — nothing is re-created by hand, so nothing is lost.
 		it('says nothing about a DHCP interface, whose addresses it never re-creates', async () => {
 			expect((await run(`$oldDhcp = 'Enabled'; ${addresses({ ip: '192.0.2.10', origin: 'Dhcp' })}; ${WINDOWS_ORIGIN_GUARD}`)).failed).toBe(false);
+		});
+	});
+
+	describe('the unchanged-addressing test', () => {
+		const config = { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' } as const;
+
+		/** Run the assignment against a scripted snapshot and report what it decided. */
+		async function decide(dhcp: string, address: string, prefix: number, nextHops: string[]): Promise<boolean> {
+			const state = [`$oldDhcp = '${dhcp}'`, `$oldAddresses = @([pscustomobject]@{ IPAddress='${address}'; PrefixLength=${prefix} })`, `$oldRoutes = @(${nextHops.map(hop => `[pscustomobject]@{ NextHop='${hop}' }`).join(', ')})`].join('; ');
+			const result = await run(`${state}; ${windowsAddressingUnchanged(config)}; if ($addressingUnchanged) { exit 0 } else { exit 3 }`);
+			return !result.failed;
+		}
+
+		it('recognises the configuration already on the interface', async () => {
+			expect(await decide('Disabled', '192.0.2.10', 24, ['192.0.2.1'])).toBe(true);
+		});
+
+		it('does not recognise a different address, prefix or gateway', async () => {
+			expect(await decide('Disabled', '192.0.2.11', 24, ['192.0.2.1'])).toBe(false);
+			expect(await decide('Disabled', '192.0.2.10', 25, ['192.0.2.1'])).toBe(false);
+			expect(await decide('Disabled', '192.0.2.10', 24, ['192.0.2.2'])).toBe(false);
+			expect(await decide('Disabled', '192.0.2.10', 24, [])).toBe(false);
+		});
+
+		// The address may read the same and still have to be rewritten: it came from
+		// a lease, and the change is to pin it.
+		it('does not recognise the same address held by DHCP', async () => {
+			expect(await decide('Enabled', '192.0.2.10', 24, ['192.0.2.1'])).toBe(false);
 		});
 	});
 
