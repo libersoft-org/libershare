@@ -4,6 +4,7 @@ import { MemoryDatastore } from 'datastore-core';
 import { defaultLogger } from '@libp2p/logger';
 import { peerIdFromString } from '@libp2p/peer-id';
 import { TypedEventEmitter } from 'main-event';
+import { isPeerStoreNotFound } from '../../../src/protocol/network.ts';
 
 /**
  * A real `@libp2p/peer-store` over an in-memory datastore.
@@ -44,12 +45,18 @@ export async function createRealPeerStore(peerID: string, addresses: readonly st
 	return { store, pid };
 }
 
-/** The addresses the store currently holds for the peer, as strings. */
+/**
+ * The addresses the store currently holds for the peer, as strings.
+ *
+ * Only "the peer is not stored" reads as an empty list. Swallowing every read error the
+ * way production once did would let a test asserting an empty result pass on a datastore
+ * fault or a corrupt record — the exact conflation these tests exist to catch.
+ */
 export async function storedAddresses(realStore: IRealPeerStore): Promise<string[]> {
 	try {
 		return (await realStore.store.get(realStore.pid)).addresses.map((a: { multiaddr: { toString(): string } }) => a.multiaddr.toString());
-	} catch {
-		// No record at all — the same observable outcome as holding no addresses.
+	} catch (err: unknown) {
+		if (!isPeerStoreNotFound(err)) throw err;
 		return [];
 	}
 }
