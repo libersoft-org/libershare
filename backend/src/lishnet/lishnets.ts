@@ -28,6 +28,21 @@ export class Networks {
 	 */
 	private readonly networkOperations = new Map<string, Mutex>();
 	/**
+	 * Serialises every operation that can change WHICH lishnets exist — add, delete,
+	 * import/upsert, replace.
+	 *
+	 * The per-ID locks cannot cover this on their own: a multi-network write has to know
+	 * which IDs it touches before it can lock them, so an ID created while it waited was
+	 * then reconciled without its lock held — a join and a leave of the same network
+	 * running at once, or a joined network left with no row to explain it.
+	 *
+	 * Lock order is always this mutex first, then the per-ID locks in sorted ID order.
+	 * Operations that only mutate an EXISTING network (setEnabled, update,
+	 * updateBootstrapPeers) take the per-ID lock alone and never reach for this one, so
+	 * no cycle is possible.
+	 */
+	private readonly catalogMutex = new Mutex();
+	/**
 	 * The revision of the LAST enable/disable requested for a network, bumped
 	 * synchronously when the request arrives.
 	 *
@@ -207,9 +222,8 @@ export class Networks {
 	 * Acquired in sorted ID order, which is what stops two overlapping writes over
 	 * intersecting sets from deadlocking on each other.
 	 *
-	 * ponytail: an ID that appears only AFTER the locks are taken (a concurrent add of a
-	 * brand-new network) is reconciled without its lock held. A single global write lock
-	 * would close that too, at the cost of serialising every unrelated network.
+	 * Callers must already hold {@link catalogMutex}: the set of IDs is read before the
+	 * locks are taken, so nothing may create a new one in between.
 	 */
 	private async withNetworks<T>(ids: Iterable<string>, body: () => Promise<T>): Promise<T> {
 		const releases: Array<() => void> = [];
@@ -548,10 +562,13 @@ export class Networks {
 	async importFromLISHnet(data: ILISHNetwork, enabled: boolean = false): Promise<LISHNetworkConfig> {
 		const definition = this.validateNetwork(data);
 		const config: LISHNetworkConfig = { ...definition, enabled };
-		await this.operationLock(config.networkID).runExclusive(async () => {
-			const previous = this.get(config.networkID);
-			upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
-			await this.reconcileStoredLocked(config.networkID, previous);
+		// An upsert can bring a network into existence — see {@link catalogMutex}.
+		await this.catalogMutex.runExclusive(async () => {
+			await this.operationLock(config.networkID).runExclusive(async () => {
+				const previous = this.get(config.networkID);
+				upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
+				await this.reconcileStoredLocked(config.networkID, previous);
+			});
 		});
 		return config;
 	}
@@ -593,11 +610,13 @@ export class Networks {
 	}
 
 	async add(network: LISHNetworkConfig): Promise<boolean> {
-		return await this.operationLock(network.networkID).runExclusive(async () => {
-			const ok = addLISHnet(this.db, network);
-			// A network added as enabled has to be joined, not merely written down.
-			if (ok) await this.reconcileStoredLocked(network.networkID, undefined);
-			return ok;
+		return await this.catalogMutex.runExclusive(async () => {
+			return await this.operationLock(network.networkID).runExclusive(async () => {
+				const ok = addLISHnet(this.db, network);
+				// A network added as enabled has to be joined, not merely written down.
+				if (ok) await this.reconcileStoredLocked(network.networkID, undefined);
+				return ok;
+			});
 		});
 	}
 
@@ -633,12 +652,14 @@ export class Networks {
 	 * queued finds no row and answers "not found" instead of rejoining a deleted network.
 	 */
 	async delete(id: string): Promise<boolean> {
-		return await this.operationLock(id).runExclusive(async () => {
-			if (!lishnetExists(this.db, id)) return false;
-			const previous = this.get(id);
-			setLISHnetEnabled(this.db, id, false);
-			await this.reconcileLocked(id, false, previous?.bootstrapPeers, undefined);
-			return deleteLISHnet(this.db, id);
+		return await this.catalogMutex.runExclusive(async () => {
+			return await this.operationLock(id).runExclusive(async () => {
+				if (!lishnetExists(this.db, id)) return false;
+				const previous = this.get(id);
+				setLISHnetEnabled(this.db, id, false);
+				await this.reconcileLocked(id, false, previous?.bootstrapPeers, undefined);
+				return deleteLISHnet(this.db, id);
+			});
 		});
 	}
 
@@ -666,11 +687,17 @@ export class Networks {
 	 * otherwise stay in its topic with no row left to explain it.
 	 */
 	async replace(networks: LISHNetworkConfig[]): Promise<void> {
-		const affected = [...this.list().map(n => n.networkID), ...networks.map(n => n.networkID)];
-		await this.withNetworks(affected, async () => {
-			const before = new Map(this.list().map(n => [n.networkID, n]));
-			replaceLISHnets(this.db, networks);
-			for (const id of new Set([...before.keys(), ...networks.map(n => n.networkID)])) await this.reconcileStoredLocked(id, before.get(id));
+		// Under the catalog mutex the ID set cannot move underneath us, so the list read
+		// here is the list the per-ID locks below will actually cover. Reading it outside
+		// meant a network created while we waited was reconciled with nobody holding its
+		// lock, against the add that was still joining it.
+		await this.catalogMutex.runExclusive(async () => {
+			const affected = [...this.list().map(n => n.networkID), ...networks.map(n => n.networkID)];
+			await this.withNetworks(affected, async () => {
+				const before = new Map(this.list().map(n => [n.networkID, n]));
+				replaceLISHnets(this.db, networks);
+				for (const id of new Set([...before.keys(), ...networks.map(n => n.networkID)])) await this.reconcileStoredLocked(id, before.get(id));
+			});
 		});
 	}
 

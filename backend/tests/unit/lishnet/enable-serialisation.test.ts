@@ -72,6 +72,7 @@ function makeNetworks(net: ReturnType<typeof makeMockNet>, db: Database, joined:
 	(networks as any).network = net;
 	(networks as any).joinedNetworks = new Set(joined);
 	(networks as any).networkOperations = new Map<string, Mutex>();
+	(networks as any).catalogMutex = new Mutex();
 	(networks as any).desiredRevisions = new Map<string, number>();
 	(networks as any).announcedJoined = new Map<string, boolean>(joined.map(id => [id, true]));
 	const events: string[] = [];
@@ -221,5 +222,52 @@ describe('Networks.delete — terminal against a concurrent enable', () => {
 	it('deleting an unknown lishnet reports it rather than pretending', async () => {
 		const { networks } = makeNetworks(net, db, []);
 		expect(await networks.delete('no-such-net')).toBe(false);
+	});
+});
+
+/**
+ * replace() decides which per-ID locks it needs from a snapshot of the ID set, so an ID
+ * that comes into existence while it waits was reconciled — and could be deleted from the
+ * database — with nobody holding its lock, right through the add that was still joining
+ * it. The catalog mutex is what stops the set from moving between the snapshot and the
+ * locks.
+ */
+describe('Networks — operations that change the set of lishnets', () => {
+	const NET_B = 'net-b';
+	let db: Database;
+	let net: ReturnType<typeof makeMockNet>;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		initLISHnetsTables(db);
+		addLISHnet(db, { networkID: NET, name: 'A', description: '', bootstrapPeers: [BOOTSTRAP], enabled: false, created: new Date().toISOString() });
+		net = makeMockNet();
+	});
+
+	async function settle(): Promise<void> {
+		for (let i = 0; i < 10; i++) await Promise.resolve();
+	}
+
+	it('a network added while replace waits is not wiped out behind its back', async () => {
+		const gate = deferred();
+		net.dialGate = gate.promise;
+		const { networks } = makeNetworks(net, db, []);
+
+		// Something is holding net-a's lock, so replace() parks with a snapshot of the ID
+		// set that predates net-b entirely.
+		const holdingA = networks.setEnabled(NET, true);
+		await settle();
+		const replacing = networks.replace([{ networkID: NET, name: 'A', description: '', bootstrapPeers: [BOOTSTRAP], enabled: true, created: new Date().toISOString() }]);
+		await settle();
+		const adding = networks.add({ networkID: NET_B, name: 'B', description: '', bootstrapPeers: [BOOTSTRAP], enabled: true, created: new Date().toISOString() });
+		await settle();
+
+		gate.resolve();
+		await Promise.all([holdingA, replacing, adding]);
+
+		// Without the catalog mutex, replace's rewrite of the list dropped net-b's row while
+		// the add was still joining it: subscribed, in joinedNetworks, and no row at all.
+		expect(getLISHnet(db, NET_B)).toBeDefined();
+		expect((networks as any).joinedNetworks.has(NET_B)).toBe(true);
 	});
 });

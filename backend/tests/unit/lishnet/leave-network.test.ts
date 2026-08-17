@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { Mutex } from 'async-mutex';
 import { initLISHnetsTables, addLISHnet, getLISHnet } from '../../../src/db/lishnets.ts';
 import { Networks } from '../../../src/lishnet/lishnets.ts';
 
@@ -105,6 +106,7 @@ function makeNetworks(net: MockNet, joined: string[], configs: Record<string, st
 	(networks as any).network = net;
 	(networks as any).joinedNetworks = new Set(joined);
 	(networks as any).networkOperations = new Map();
+	(networks as any).catalogMutex = new Mutex();
 	(networks as any).desiredRevisions = new Map();
 	// Same seeding startEnabledNetworks does: already-joined at construction time.
 	(networks as any).announcedJoined = new Map(joined.map(id => [id, true]));
@@ -388,6 +390,7 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		(networks as any).db = db;
 		(networks as any).joinedNetworks = new Set(enabled ? [NET] : []);
 		(networks as any).networkOperations = new Map();
+		(networks as any).catalogMutex = new Mutex();
 		(networks as any).desiredRevisions = new Map();
 		(networks as any).announcedJoined = new Map(enabled ? [[NET, true]] : []);
 		return { networks, mock, db };
@@ -512,6 +515,7 @@ describe('Networks — leaving cleans the configuration it is leaving, not the n
 		(networks as any).db = db;
 		(networks as any).joinedNetworks = new Set([NET]);
 		(networks as any).networkOperations = new Map();
+		(networks as any).catalogMutex = new Mutex();
 		(networks as any).desiredRevisions = new Map();
 		(networks as any).announcedJoined = new Map([[NET, true]]);
 		return { networks, mock, db };

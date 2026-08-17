@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { Mutex } from 'async-mutex';
 import { initLISHnetsTables, addLISHnet, getLISHnet } from '../../../src/db/lishnets.ts';
 import { Networks } from '../../../src/lishnet/lishnets.ts';
 
@@ -57,6 +58,7 @@ function bare(db: Database, mock: ReturnType<typeof makeMockNet>, joined: string
 	(networks as any).network = mock;
 	(networks as any).joinedNetworks = new Set(joined);
 	(networks as any).networkOperations = new Map();
+	(networks as any).catalogMutex = new Mutex();
 	(networks as any).desiredRevisions = new Map();
 	(networks as any).announcedJoined = new Map(joined.map(id => [id, true]));
 	return networks;
