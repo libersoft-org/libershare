@@ -452,8 +452,13 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}): 
 	}
 
 	async function finish(uploadID: string, upload: Upload): Promise<{ uploadID: string }> {
-		// Finishing twice is not a resend of the first answer: the second call would
-		// re-close a closed writer.
+		// A second call on a finished upload is a retry of a reply that went missing,
+		// not a second finish. The file is already closed and complete, so answering
+		// with the same id is both true and the only way a client can recover from a
+		// timeout on this step — a chunk cannot be retried, but this can.
+		if (upload.state === 'ready') return { uploadID };
+		// Any other state is a call at the wrong moment, and re-closing the writer
+		// underneath it is not something to paper over.
 		if (upload.state !== 'receiving') throw new CodedError(ErrorCodes.UPLOAD_NOT_FOUND, uploadID);
 		// Claimed before the first await, or the sweep can find a record that still
 		// looks like an untouched transfer while its writer is mid-close, discard it,

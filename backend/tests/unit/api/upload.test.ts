@@ -849,6 +849,25 @@ describe('chunked upload over the websocket', () => {
 		}
 	}, 30000);
 
+	it('answers a repeated end with the same id rather than an error', async () => {
+		const srv = startUploadServer();
+		const client = new WsClient(srv.url, () => {});
+		try {
+			const { uploadID } = await client.call<{ uploadID: string }>('upload.begin', { name: 'retried.lish' });
+			await client.callBinary('upload.chunk', { uploadID }, pattern(2048));
+			expect(await client.call<{ uploadID: string }>('upload.end', { uploadID })).toEqual({ uploadID });
+			// A reply can go missing without the socket noticing, and the frontend then
+			// retries this step. The file is already whole, so the retry has to succeed
+			// — refusing it strands a finished upload the client can no longer name.
+			expect(await client.call<{ uploadID: string }>('upload.end', { uploadID })).toEqual({ uploadID });
+			// And it really is the same upload, not an empty one left by a re-close.
+			expect((await client.call<{ size: number }>('upload.digest', { uploadID })).size).toBe(2048);
+		} finally {
+			client.stopReconnect();
+			srv.stop();
+		}
+	});
+
 	it('lets a socket abort one upload and begin the next in the same breath', async () => {
 		const srv = startUploadServer();
 		const client = new WsClient(srv.url, () => {});
@@ -979,7 +998,6 @@ describe('chunked upload over the websocket', () => {
 			const uploadID = await upload(client, 'late.lish', pattern(1024), 1024);
 			// The writer is closed; a late chunk must not look accepted.
 			await expectRejection(client.callBinary('upload.chunk', { uploadID }, pattern(16)), ErrorCodes.UPLOAD_NOT_FOUND);
-			await expectRejection(client.call('upload.end', { uploadID }), ErrorCodes.UPLOAD_NOT_FOUND);
 		} finally {
 			client.stopReconnect();
 			srv.stop();
