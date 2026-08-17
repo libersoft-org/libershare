@@ -45,6 +45,12 @@ type ClientData = {
 	 */
 	upstreamOpened: boolean;
 	/**
+	 * Incremented on every dial. Callbacks captured by an earlier dial compare
+	 * against it and do nothing when they no longer match, so a socket that was
+	 * superseded cannot forward traffic or schedule further reconnects.
+	 */
+	upstreamGeneration: number;
+	/**
 	 * Upstream URL with the client's original query string preserved so the
 	 * backend sees `?token=…` (and any future query params) when
 	 * authentication is enabled. Computed at upgrade time and reused on
@@ -82,17 +88,39 @@ function pendingByteSize(pending: ClientData['pending']): number {
 
 function connectUpstream(ws: import('bun').ServerWebSocket<ClientData>): void {
 	if (ws.data.closed) return;
+	// Any socket from an earlier dial is abandoned here rather than left to linger:
+	// one that opened after being superseded would otherwise stay connected,
+	// holding a backend session nothing routes to.
+	ws.data.upstream?.close();
+	const generation = ++ws.data.upstreamGeneration;
+	/** True once a newer dial has replaced this one, whose callbacks must then go quiet. */
+	const superseded = (): boolean => ws.data.upstreamGeneration !== generation;
 	const upstream = new WebSocket(ws.data.upstreamUrl);
 	ws.data.upstream = upstream;
 	upstream.onopen = () => {
+		// A dial that lost the race must not become the live socket: `ws.data.upstream`
+		// already points at a newer one, so anything sent here would go out on a
+		// connection no later message will ever use.
+		if (superseded()) {
+			upstream.close();
+			return;
+		}
 		ws.data.upstreamOpened = true;
 		ws.data.reconnectAttempt = 0;
 		for (const message of ws.data.pending.splice(0)) upstream.send(message);
 	};
 	upstream.onmessage = event => {
+		if (superseded()) return;
 		if (ws.readyState === WebSocket.OPEN) ws.send(event.data);
 	};
+	// An ordinary failure fires both `onerror` and `onclose`, so without this each
+	// drop would be handled twice: two attempts counted, two timers scheduled, and
+	// only the later one kept in `reconnectTimer` — leaving the earlier to fire
+	// unchecked and produce a second live upstream.
+	let handled = false;
 	const handleDrop = (): void => {
+		if (handled || superseded()) return;
+		handled = true;
 		if (ws.data.closed) return;
 		// Once a session has been established, a silent reconnect is a lie: the
 		// backend has already torn down everything keyed to the old socket —
@@ -134,7 +162,7 @@ Bun.serve({
 		const url = new URL(request.url);
 		if (url.pathname === '/ws') {
 			const upgraded = server.upgrade<ClientData>(request, {
-				data: { pending: [], closed: false, reconnectAttempt: 0, upstreamOpened: false, upstreamUrl: buildUpstreamUrl(url) },
+				data: { pending: [], closed: false, reconnectAttempt: 0, upstreamOpened: false, upstreamGeneration: 0, upstreamUrl: buildUpstreamUrl(url) },
 			});
 			if (upgraded) return undefined;
 			return new Response('Expected WebSocket', { status: 400 });

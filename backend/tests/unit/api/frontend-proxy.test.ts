@@ -92,6 +92,54 @@ describe('frontend websocket proxy', () => {
 		}
 	}, 30000);
 
+	it('holds only one upstream connection once a late backend appears', async () => {
+		// A failed dial fires both onerror and onclose (verified on this Bun), and
+		// each used to schedule its own retry while `reconnectTimer` kept only the
+		// later one. When the backend finally answers, every pending timer's dial
+		// succeeds — and the client ends up with more than one live upstream, of
+		// which only the last is the one `ws.data.upstream` routes to. An upload
+		// begun on one and chunked over the other is the failure that follows.
+		const placeholder = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { data: () => {} } });
+		const port = placeholder.port;
+		placeholder.stop(true);
+
+		const proxy = await startProxy(`ws://127.0.0.1:${port}`);
+		let live = 0;
+		let peak = 0;
+		let backend: ReturnType<typeof Bun.serve> | null = null;
+		try {
+			const client = new WebSocket(`${proxy.url}/ws`);
+			await new Promise<void>((resolve, reject) => {
+				client.onopen = () => resolve();
+				client.onerror = () => reject(new Error('client failed to connect'));
+			});
+			// Long enough for several backoff rounds to queue up while nothing answers.
+			await Bun.sleep(1500);
+			backend = Bun.serve<Record<string, never>, never>({
+				port,
+				fetch: (req, s) => (s.upgrade(req, { data: {} }) ? undefined : new Response('expected websocket', { status: 400 })),
+				websocket: {
+					open(): void {
+						live++;
+						peak = Math.max(peak, live);
+					},
+					close(): void {
+						live--;
+					},
+					message(ws, message): void {
+						ws.send(message);
+					},
+				},
+			});
+			await Bun.sleep(3000);
+			expect(peak).toBe(1);
+			client.close();
+		} finally {
+			proxy.stop();
+			backend?.stop(true);
+		}
+	}, 30000);
+
 	it('reconnects transparently while the backend has never come up', async () => {
 		// Nothing is listening on this port yet, so the proxy's first dials fail —
 		// there is no session to lose and the browser socket must survive.
