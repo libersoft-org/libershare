@@ -406,6 +406,25 @@ export function pruneBootstrapEntries<T extends Pick<IBootstrapEntry, 'firstSeen
 }
 
 /**
+ * Outcome of {@link Network.removePeerStoreAddresses}.
+ *
+ * Only `updated` carries a trustworthy count. Collapsing everything else into a number
+ * was how a datastore hiccup came to read as "this peer has no addresses left" — the one
+ * answer that lets the caller escalate to a full purge.
+ */
+export type PeerStoreAddressRemoval = { kind: 'updated'; remaining: number } | { kind: 'not-found' };
+
+/**
+ * True for the error the peerStore raises when the peer simply is not stored — the one
+ * failure that is an answer rather than a fault. Everything else (a datastore read
+ * error, a closed store, a programming error) must reach the caller as an exception.
+ */
+export function isPeerStoreNotFound(err: unknown): boolean {
+	const e = err as { name?: string; code?: string } | null;
+	return e?.name === 'NotFoundError' || e?.code === 'ERR_NOT_FOUND';
+}
+
+/**
  * Single shared libp2p node.
  * LISH networks are logical groups represented as pubsub topics on this one node.
  */
@@ -2163,8 +2182,18 @@ export class Network {
 						for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) {
 							if (matches(key)) this.forgetBootstrapAddress(key);
 						}
-						const remainingInStore = (await this.removePeerStoreAddresses(pid, matches)) ?? 0;
+						// A failure here leaves the peer's real address set unknown. The only safe
+						// reading of "unknown" on this path is "do not purge": the follow-up
+						// deletes the whole peer record, and a datastore hiccup is no evidence
+						// that a peer has run out of addresses.
+						let removal: PeerStoreAddressRemoval | null = null;
+						try {
+							removal = await this.removePeerStoreAddresses(pid, matches);
+						} catch (removalErr: any) {
+							console.log(`[NET] could not trim the disproved address of ${peerID.slice(0, 16)}, leaving the peer record alone: ${removalErr?.message ?? removalErr}`);
+						}
 						if (superseded()) return;
+						const remainingInStore = removal?.kind === 'updated' ? removal.remaining : 0;
 						// Survivors are counted across BOTH stores. A configured LAN or VPN
 						// bootstrap deliberately sits in the registry alone while its interface
 						// is down — it never reaches the peerStore — so a peerStore-only count
@@ -2175,7 +2204,7 @@ export class Network {
 						const remainingAddresses = remainingInStore + (this.addressesByPeer.get(peerID)?.size ?? 0);
 						// Only once the peer has neither a live connection nor a single address we
 						// have not disproved is there anything left to purge.
-						if (this.node.getConnections(pid).length === 0 && remainingAddresses === 0) {
+						if (removal !== null && this.node.getConnections(pid).length === 0 && remainingAddresses === 0) {
 							await this.purgeStalePeer(peerID, `${origin} dial identity mismatch, no usable address left`, epoch);
 						} else {
 							console.log(`[NET] dropped stale addr of peer ${peerID.slice(0, 16)}: ${ma.toString()}`);
@@ -2420,8 +2449,12 @@ export class Network {
 
 	/**
 	 * Take matching addresses out of a peer's peerStore record, keeping everything
-	 * else about them. Returns how many addresses the record still holds, or null when
-	 * the peer is not in the store at all.
+	 * else about them.
+	 *
+	 * Only a `not-found` or an `updated` count is an answer. Any other failure — a
+	 * datastore read error, a store closed under us, a bug — is rethrown, because the
+	 * callers act destructively on "no addresses left" and a swallowed error reaching
+	 * them as zero is what turns a transient hiccup into a deleted peer record.
 	 *
 	 * The store has no "remove one address" call, so this reads and writes back — but
 	 * it patches `addresses`, the field it actually filtered, and puts back the very
@@ -2433,16 +2466,17 @@ export class Network {
 	 * lost. Fixing that needs a peerStore that can remove an address in one operation —
 	 * libp2p has no such API today.
 	 */
-	private async removePeerStoreAddresses(pid: PeerID, matches: (address: string) => boolean): Promise<number | null> {
+	private async removePeerStoreAddresses(pid: PeerID, matches: (address: string) => boolean): Promise<PeerStoreAddressRemoval> {
+		let rec;
 		try {
-			const rec = await this.node!.peerStore.get(pid);
-			const keep = rec.addresses.filter(a => !matches(a.multiaddr.toString()));
-			if (keep.length < rec.addresses.length) await this.node!.peerStore.patch(pid, { addresses: keep });
-			return keep.length;
-		} catch {
-			// Not in the peerStore — there is nothing to trim.
-			return null;
+			rec = await this.node!.peerStore.get(pid);
+		} catch (err: unknown) {
+			if (isPeerStoreNotFound(err)) return { kind: 'not-found' };
+			throw err;
 		}
+		const keep = rec.addresses.filter(a => !matches(a.multiaddr.toString()));
+		if (keep.length < rec.addresses.length) await this.node!.peerStore.patch(pid, { addresses: keep });
+		return { kind: 'updated', remaining: keep.length };
 	}
 
 	/** Remove one address from the registry, its reverse index and its pacing state. */
@@ -2805,7 +2839,17 @@ export class Network {
 		// while the peerStore is not per network, so trimming it there would take away
 		// an address on behalf of an owner that never asked.
 		const removed = new Set(removedAddresses.filter(a => !this.bootstrapByAddress.has(normalizeMultiaddrForCompare(a))).map(bareDialEndpoint));
-		if (removed.size > 0) await this.removePeerStoreAddresses(pid, address => removed.has(bareDialEndpoint(address)));
+		if (removed.size > 0) {
+			try {
+				await this.removePeerStoreAddresses(pid, address => removed.has(bareDialEndpoint(address)));
+			} catch (err: any) {
+				// The trim is the reason this runs at all, and disconnectPeer below is the
+				// destructive half — it hangs up, suppresses re-dials and deletes the record.
+				// Failing to remove one address is no licence to remove everything.
+				trace(`[NET] reconcile after removal: peerStore trim failed for ${peerID.slice(0, 16)}, leaving the peer alone: ${err?.message ?? err}`);
+				return;
+			}
+		}
 		// One address left the configuration; the peer may have others. The registry is
 		// where that question is settled — an address of this peer still in it is one
 		// another network claims, or one gossip announced and a dial verified, and it is

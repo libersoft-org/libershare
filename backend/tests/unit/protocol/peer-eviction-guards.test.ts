@@ -538,8 +538,11 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 			},
 			peerStore: {
 				async merge(): Promise<void> {},
+				// Shaped like the real store's miss: the code tells a genuine absence from
+				// an operational failure by the error's name, and only the former is an
+				// answer it may act on.
 				async get(): Promise<unknown> {
-					throw new Error('not in store');
+					throw Object.assign(new Error('not found'), { name: 'NotFoundError' });
 				},
 				async delete(): Promise<void> {},
 			},
@@ -1106,6 +1109,40 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
 		expect(registryAddresses(network)).toEqual([]);
 	});
+
+	/**
+	 * A peerStore that cannot answer is not a peer without addresses. Reading every
+	 * failure as "nothing left" let a datastore hiccup during the trim of ONE disproved
+	 * address end in the deletion of the whole peer record — the opposite of what a
+	 * cleanup under uncertainty may do.
+	 */
+	it('does not purge when the peerStore read fails', async () => {
+		const { network, purged } = bareNetwork([BAD]);
+		(network as any).node.peerStore.get = async (): Promise<unknown> => {
+			throw new Error('database is locked');
+		};
+		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
+		expect(purged).toEqual([]);
+	});
+
+	it('does not purge when the peerStore write fails', async () => {
+		const { network, purged } = bareNetwork([BAD]);
+		(network as any).node.peerStore.patch = async (): Promise<unknown> => {
+			throw new Error('datastore closed');
+		};
+		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
+		expect(purged).toEqual([]);
+	});
+
+	/** A peer genuinely absent from the store is still an answer, and still purgeable. */
+	it('still purges when the peer really is not stored', async () => {
+		const { network, purged } = bareNetwork([BAD]);
+		(network as any).node.peerStore.get = async (): Promise<unknown> => {
+			throw Object.assign(new Error('not found'), { name: 'NotFoundError' });
+		};
+		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
+		expect(purged).toEqual([PEER_ID]);
+	});
 });
 
 /**
@@ -1663,6 +1700,26 @@ describe('reconcilePeerAfterBootstrapRemoval — peerStore address shape', () =>
 		const network = networkOver(store);
 		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [`/ip4/203.0.113.99/tcp/9090/p2p/${PEER_ID}`], 'net-a');
 		expect((await store.get(pid)).addresses.map(a => a.multiaddr.toString())).toEqual(['/ip4/203.0.113.21/tcp/9090']);
+	});
+
+	/**
+	 * disconnectPeer is the destructive half of this teardown — it hangs up, suppresses
+	 * re-dials and deletes the peerStore entry. Reaching it after the trim failed would
+	 * remove everything precisely because we could not remove one thing.
+	 */
+	it('does not tear the peer down when the trim fails', async () => {
+		const { store } = await realPeerStore();
+		const network = networkOver(store);
+		// No configured claim left, so the teardown WOULD proceed if the trim had worked.
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
+		const disconnected: string[] = [];
+		(network as any).disconnectPeer = async (id: string): Promise<void> => void disconnected.push(id);
+		(store as any).get = async (): Promise<unknown> => {
+			throw new Error('database is locked');
+		};
+		await network.reconcilePeerAfterBootstrapRemoval(PEER_ID, [ADDR], 'net-a');
+		expect(disconnected).toEqual([]);
 	});
 });
 
