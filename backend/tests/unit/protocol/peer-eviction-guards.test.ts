@@ -168,6 +168,7 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
+		(network as any).inFlightBootstrapDials = new Set<string>();
 		const outcomes: string[] = [];
 		(network as any).bootstrapTracker = {
 			markPending() {},
@@ -332,6 +333,7 @@ describe('addBootstrapPeers — forced probe only for configured addresses', () 
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
+		(network as any).inFlightBootstrapDials = new Set<string>();
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
@@ -466,6 +468,7 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
+		(network as any).inFlightBootstrapDials = new Set<string>();
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
@@ -529,6 +532,7 @@ describe('addBootstrapPeers — a dial that lands after leave-network', () => {
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
+		(network as any).inFlightBootstrapDials = new Set<string>();
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
 		(network as any).disconnectPeer = async (peerID: string): Promise<void> => {
 			disconnected.push(peerID);
@@ -623,6 +627,7 @@ describe('addBootstrapPeers — only a working discovered address joins the auto
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
+		(network as any).inFlightBootstrapDials = new Set<string>();
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
@@ -711,6 +716,7 @@ describe('addBootstrapPeers — a non-routable configured entry is still configu
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
+		(network as any).inFlightBootstrapDials = new Set<string>();
 		(network as any).bootstrapTracker = {
 			markPending() {},
 			recordOutcome(_n: unknown, _a: unknown, _p: unknown, status: string, message: string | null) {
@@ -784,6 +790,7 @@ describe('addBootstrapPeers — quarantine after the probe it allowed', () => {
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
+		(network as any).inFlightBootstrapDials = new Set<string>();
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
@@ -870,6 +877,7 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [multiaddr(BAD)];
 		(network as any).bootstrapGeneration = new Map();
+		(network as any).inFlightBootstrapDials = new Set<string>();
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {}, deletePeer() {} };
 		(network as any).purgeStalePeer = async (id: string): Promise<void> => {
 			purged.push(id);
@@ -1093,8 +1101,8 @@ describe('configured origin is a property of the address, not the peer', () => {
 describe('Network.stop — per-run state really is per run', () => {
 	function bareNetwork() {
 		const network = Object.create(Network.prototype) as Network;
-		for (const field of ['lastWantResponseTime', 'seenSearchIDs', 'topicHandlers', 'dcutrPeers', 'bootstrapPeerIDs', 'bootstrapGeneration', '_lastPeerCounts', '_lastScores', 'redialBackoff', 'unreachableQuarantine', 'addressProbeBackoff', 'noReachableSince', 'configuredBootstrapPeerIDs', 'configuredBootstrapAddresses', 'redialSuppressedByNet', 'pxIngressLogKeys']) {
-			(network as any)[field] = field === 'seenSearchIDs' || field === 'dcutrPeers' || field === 'bootstrapPeerIDs' || field === 'configuredBootstrapPeerIDs' || field === 'configuredBootstrapAddresses' ? new Set() : new Map();
+		for (const field of ['lastWantResponseTime', 'seenSearchIDs', 'topicHandlers', 'dcutrPeers', 'bootstrapPeerIDs', 'bootstrapGeneration', '_lastPeerCounts', '_lastScores', 'redialBackoff', 'unreachableQuarantine', 'addressProbeBackoff', 'noReachableSince', 'configuredBootstrapPeerIDs', 'configuredBootstrapAddresses', 'redialSuppressedByNet', 'pxIngressLogKeys', 'inFlightBootstrapDials']) {
+			(network as any)[field] = field === 'seenSearchIDs' || field === 'dcutrPeers' || field === 'bootstrapPeerIDs' || field === 'configuredBootstrapPeerIDs' || field === 'configuredBootstrapAddresses' || field === 'inFlightBootstrapDials' ? new Set() : new Map();
 		}
 		(network as any).runEpoch = 1;
 		(network as any).statusInterval = null;
@@ -1401,6 +1409,7 @@ describe('addBootstrapPeers — a gossip announce of a configured address', () =
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
+		(network as any).inFlightBootstrapDials = new Set<string>();
 		(network as any).bootstrapTracker = {
 			markPending() {},
 			recordOutcome(_net: unknown, _addr: unknown, _pid: unknown, status: string) {
@@ -1559,6 +1568,7 @@ describe('addBootstrapPeers — discovered dials are paced by the per-peer backo
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
+		(network as any).inFlightBootstrapDials = new Set<string>();
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {}, deletePeer() {} };
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
@@ -1607,5 +1617,92 @@ describe('addBootstrapPeers — discovered dials are paced by the per-peer backo
 		const { network } = bareNetwork('ok');
 		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
 		expect((network as any).redialBackoff.has(PEER_ID)).toBe(false);
+	});
+});
+
+/**
+ * The pubsub dispatcher does not await the announce handler, so two announces naming the
+ * same address run their intake concurrently. Each used to spend its own 10 s dial
+ * timeout on one endpoint, and the peer backoff cannot help — it is only written once a
+ * dial has already failed.
+ */
+describe('addBootstrapPeers — one dial per address at a time', () => {
+	const ADDR = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+	const OTHER_ADDR = `/ip4/203.0.113.10/tcp/9090/p2p/${PEER_ID}`;
+
+	function bareNetwork() {
+		const dialled: string[] = [];
+		// Every dial parks here until released, so a second intake run genuinely overlaps
+		// the first instead of merely following it.
+		const pending: Array<() => void> = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).bootstrapGeneration = new Map();
+		(network as any).inFlightBootstrapDials = new Set<string>();
+		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {}, deletePeer() {} };
+		(network as any).node = {
+			peerId: { toString: () => 'selfID' },
+			getConnections: () => [],
+			async dial(ma: { toString(): string }): Promise<unknown> {
+				dialled.push(ma.toString());
+				await new Promise<void>(resolve => pending.push(resolve));
+				return { remoteAddr: { toString: () => ma.toString() } };
+			},
+			peerStore: { async merge(): Promise<void> {} },
+		};
+		return {
+			network,
+			dialled,
+			releaseDials: (): void => {
+				for (const resolve of pending.splice(0)) resolve();
+			},
+		};
+	}
+
+	it('drops a second intake run while the first is still dialing the address', async () => {
+		const { network, dialled, releaseDials } = bareNetwork();
+		const first = (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		await Bun.sleep(1); // let the first run reach its dial
+		// Not awaited: without the claim the second run parks on its own dial, and awaiting
+		// it here would hang the test instead of failing the assertion below.
+		const second = (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		await Bun.sleep(1);
+
+		expect(dialled).toEqual([ADDR]);
+		releaseDials();
+		await Promise.all([first, second]);
+	});
+
+	it('still dials a different address of the same peer concurrently', async () => {
+		const { network, dialled, releaseDials } = bareNetwork();
+		const first = (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		await Bun.sleep(1);
+		const second = (network as any).addBootstrapPeers([OTHER_ADDR], 'net-a', 'discovered');
+		await Bun.sleep(1);
+
+		expect(dialled).toEqual([ADDR, OTHER_ADDR]);
+		releaseDials();
+		await Promise.all([first, second]);
+	});
+
+	it('releases the claim once the dial settles, so a later mention can dial again', async () => {
+		const { network, dialled, releaseDials } = bareNetwork();
+		const first = (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		await Bun.sleep(1);
+		releaseDials();
+		await first;
+		const second = (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		await Bun.sleep(1);
+		releaseDials();
+		await second;
+
+		expect(dialled).toEqual([ADDR, ADDR]);
 	});
 });

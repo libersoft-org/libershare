@@ -20,6 +20,7 @@ function makeNetwork() {
 	const network = Object.create(Network.prototype) as Network;
 	(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
 	(network as any).bootstrapGeneration = new Map();
+	(network as any).inFlightBootstrapDials = new Set<string>();
 	(network as any).bootstrapPeerIDs = new Set<string>();
 	(network as any).bootstrapMultiaddrs = [];
 	(network as any).redialBackoff = new Map();
@@ -264,6 +265,7 @@ describe('Network.addBootstrapPeers — rejoin clears suppression', () => {
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapGeneration = new Map();
+		(network as any).inFlightBootstrapDials = new Set<string>();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };

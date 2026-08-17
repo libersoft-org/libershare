@@ -369,6 +369,17 @@ export class Network {
 	 */
 	private readonly addressProbeBackoff = new Map<string, { nextAttempt: number; failCount: number }>();
 	/**
+	 * Canonical multiaddrs with an {@link addBootstrapPeers} dial currently outstanding.
+	 *
+	 * The pubsub dispatcher does not await the announce handler, so several announces
+	 * naming the same address start several intake runs that overlap. Each spends its own
+	 * 10 s dial timeout on the same endpoint and records its own outcome over the other's,
+	 * and the peer-level backoff cannot help — it is only written once a dial has already
+	 * failed. Claiming the address for the duration of the dial makes the second run a
+	 * no-op instead: the first one is about to record the outcome both were after.
+	 */
+	private readonly inFlightBootstrapDials = new Set<string>();
+	/**
 	 * peerID → time we first saw the peer disconnected with ZERO reachable
 	 * addresses. Such peers never enter the re-dial path (nothing to dial), so
 	 * the failure counter cannot evict them — without this they would sit in
@@ -1609,6 +1620,16 @@ export class Network {
 						probeAfterQuarantine = true;
 					}
 				}
+				// Single-flight, keyed by the endpoint rather than the peer: two addresses of
+				// one peer are two different questions and both deserve their own dial, while
+				// two runs asking about the SAME address duplicate a 10 s timeout for one
+				// answer. Claimed after every skip above so a refused candidate never blocks
+				// the run that would actually dial it.
+				if (this.inFlightBootstrapDials.has(canonicalAddress)) {
+					trace(`[NET] addBootstrapPeers skip in-flight: ${peer}`);
+					continue;
+				}
+				this.inFlightBootstrapDials.add(canonicalAddress);
 				// The identity set is the dedup that stops every gossip mention of the same
 				// peer from costing another dial, so it is claimed up front either way.
 				if (peerID) this.bootstrapPeerIDs.add(peerID);
@@ -1759,6 +1780,11 @@ export class Network {
 							this.bootstrapTracker.deletePeer(networkID, peer);
 						}
 					}
+				} finally {
+					// Every exit from the dial block releases the claim, `return` included —
+					// a leave landing mid-dial would otherwise lock the address out for the
+					// lifetime of the node.
+					this.inFlightBootstrapDials.delete(canonicalAddress);
 				}
 			} catch (error: any) {
 				this.bootstrapTracker.recordOutcome(networkID, peer, null, 'error', error?.message ?? String(error), null, origin);
@@ -2598,6 +2624,9 @@ export class Network {
 		this.bootstrapTracker.clear();
 		this.bootstrapMultiaddrs = [];
 		this.bootstrapGeneration.clear();
+		// Claims belong to the node being torn down; a dial still settling on the old node
+		// must not lock the address out for the next one.
+		this.inFlightBootstrapDials.clear();
 		this._lastPeerCounts.clear();
 		this._lastScores.clear();
 		this.redialBackoff.clear();
