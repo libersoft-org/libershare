@@ -280,6 +280,36 @@ describe('Networks.delete — terminal against a concurrent enable', () => {
 		expect(net.unsubscribed).toEqual([NET]);
 	});
 
+	/**
+	 * Both maps are keyed by arbitrary network IDs and nothing used to remove an entry, so a
+	 * node that creates and deletes networks over a long uptime grew them for ever.
+	 */
+	it('a deleted lishnet leaves no per-lishnet state behind', async () => {
+		const { networks } = makeNetworks(net, db, [NET]);
+
+		await networks.delete(NET);
+
+		expect((networks as any).networkOperations.size).toBe(0);
+		expect((networks as any).announcedJoined.size).toBe(0);
+	});
+
+	it('keeps the lock of a deleted lishnet while something is still queued on it', async () => {
+		const { networks } = makeNetworks(net, db, [NET]);
+		const lock = (networks as any).operationLock(NET);
+		const release = await lock.acquire();
+
+		const deleting = networks.delete(NET);
+		await settle();
+		// The delete's own reconcile is queued on the lock held here. Dropping the mutex out
+		// of the map now would give the next caller a second, independent one for this
+		// lishnet — two locks guarding one transition, which is worse than the leak.
+		expect((networks as any).networkOperations.get(NET)).toBe(lock);
+
+		release();
+		await deleting;
+		expect((networks as any).networkOperations.size).toBe(0);
+	});
+
 	it('deleting an unknown lishnet reports it rather than pretending', async () => {
 		const { networks } = makeNetworks(net, db, []);
 		expect(await networks.delete('no-such-net')).toBe(false);

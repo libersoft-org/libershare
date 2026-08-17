@@ -260,7 +260,29 @@ export class Networks {
 	 * order the two finished their network work in.
 	 */
 	private async reconcile(id: string, previous: LISHNetworkConfig | undefined): Promise<boolean> {
-		return await this.operationLock(id).runExclusive(() => this.reconcileLocked(id, previous));
+		const transitioned = await this.operationLock(id).runExclusive(() => this.reconcileLocked(id, previous));
+		this.forgetIfGone(id);
+		return transitioned;
+	}
+
+	/**
+	 * Drop the per-lishnet bookkeeping of a lishnet that no longer exists.
+	 *
+	 * {@link networkOperations} and {@link announcedJoined} are keyed by arbitrary network
+	 * IDs and nothing used to remove an entry, so creating and deleting networks over a long
+	 * uptime grew both without bound.
+	 *
+	 * Called with the lock already RELEASED, and only when nothing holds or waits on it —
+	 * `isLocked()` covers both. Deleting a mutex somebody is queued on would hand the next
+	 * caller a second, independent mutex for the same lishnet, which is worse than a leak.
+	 */
+	private forgetIfGone(id: string): void {
+		// A lishnet still joined has runtime state to describe, however little the database
+		// has left to say about it.
+		if (this.get(id) !== undefined || this.joinedNetworks.has(id)) return;
+		this.announcedJoined.delete(id);
+		const lock = this.networkOperations.get(id);
+		if (lock && !lock.isLocked()) this.networkOperations.delete(id);
 	}
 
 	/** The lock guarding one lishnet's whole transition — see {@link networkOperations}. */
