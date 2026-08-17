@@ -223,14 +223,17 @@ export class Networks {
 	 * The node always starts, even if no lishnets are enabled.
 	 */
 	async startEnabledNetworks(): Promise<void> {
-		this.stopRequested = false;
-		this.reconcileAdmissionClosed = false;
-
 		// Start the node with no preset bootstrap list — bootstrap dials happen
 		// per-network below via addBootstrapPeers so per-network status tracking
 		// can record which specific peers connected / mismatched / timed out.
 		// (Previous behaviour used a flat preset list that bypassed our tracking.)
 		await this.network.start([]);
+		// Reopened only by a start that SUCCEEDED. Clearing the flags first admitted work onto
+		// a node that then failed to come up — including one refused because the previous stop
+		// left the instance in `failed`, where reopening would undo exactly what that stop's
+		// failure closed.
+		this.stopRequested = false;
+		this.reconcileAdmissionClosed = false;
 
 		// The enabled list is read AFTER the start, not before it. Reading it first meant
 		// startup worked from a snapshot taken before a long await: an API disable or
@@ -733,12 +736,18 @@ export class Networks {
 			try {
 				await this.network.stop();
 			} catch (err) {
-				// The shutdown did not happen. The node is still up and still owns its
-				// subscriptions, so this layer has to go on managing it — leaving the flag set
-				// would make every later write refuse its runtime half, and a disable would
-				// once again write `enabled=false` over a network we are demonstrably still in.
-				this.stopRequested = false;
-				this.reconcileAdmissionClosed = false;
+				// Admission stays CLOSED, and the membership below stays untouched.
+				//
+				// Reopening it assumed a failed stop leaves an operable node. It never does:
+				// `Network.stop()` leaves the instance `failed`, which refuses `start()` and
+				// reads as not running, and its dial controller stays aborted with no path to a
+				// fresh one — so a bootstrap change admitted after this would be written to the
+				// database, reach `addBootstrapPeers()`, end on the aborted controller and
+				// report success for a runtime that never converged. A retried stop is the only
+				// thing that can still make progress, and only where the failure was in the
+				// cleanup AFTER libp2p went down; see {@link Network.isStopTerminal}.
+				const terminal = this.network.isStopTerminal();
+				console.error(`[Networks] the node could not be stopped (${terminal ? 'terminal — the process must be restarted' : 'cleanup incomplete — the stop can be retried'}); lishnet writes are stored but no longer reach the runtime`);
 				throw err;
 			}
 			// Per-run, like `joinedNetworks` itself. Surviving a stop left the map claiming

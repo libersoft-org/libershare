@@ -35,6 +35,10 @@ function makeMockNet(startGate: Promise<void>) {
 			this.running = false;
 			this.events.push('stop');
 		},
+		stopTerminal: false,
+		isStopTerminal(): boolean {
+			return this.stopTerminal;
+		},
 		isRunning(): boolean {
 			return this.running;
 		},
@@ -66,7 +70,9 @@ function makeMockNet(startGate: Promise<void>) {
 		},
 		/** Set to hold the bootstrap dial of a join open. */
 		dialGate: null as null | Promise<void>,
-		async addBootstrapPeers(): Promise<void> {
+		bootstrapDials: [] as string[][],
+		async addBootstrapPeers(peers: string[]): Promise<void> {
+			this.bootstrapDials.push(peers);
 			if (this.dialGate) await this.dialGate;
 		},
 	};
@@ -90,6 +96,24 @@ function makeNetworks(net: ReturnType<typeof makeMockNet>, db: Database): Networ
 }
 
 const BOOTSTRAP = '/ip4/192.0.2.1/tcp/9090/p2p/12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+
+/**
+ * Make the next stop fail the way the real one does.
+ *
+ * A mock that merely threw and left `running` true described a node that survives its own
+ * failed shutdown, which `Network.stop()` never produces: it leaves the instance `failed` —
+ * refusing `start()`, reading as not running, with its dial controller aborted for good. A
+ * `terminal` failure is one libp2p itself could not be stopped from; otherwise the node is
+ * down and only the cleanup after it is outstanding, which a retried stop finishes.
+ */
+function breakStop(net: ReturnType<typeof makeMockNet>, terminal: boolean): void {
+	net.stop = async (): Promise<void> => {
+		net.running = false;
+		net.stopTerminal = terminal;
+		net.events.push('stop-failed');
+		throw new Error('node.stop failed');
+	};
+}
 
 /** Give the row a bootstrap peer, so a join has a dial to park on. Leaves it disabled. */
 function reseedWithBootstrap(db: Database): void {
@@ -241,18 +265,82 @@ describe('Networks.startEnabledNetworks — coordinated with concurrent changes'
 		await networks.startEnabledNetworks();
 		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
 
-		net.stop = async (): Promise<void> => {
-			throw new Error('node.stop failed');
-		};
+		breakStop(net, false);
 		await expect(networks.stopAllNetworks()).rejects.toThrow('node.stop failed');
 
-		// Discarding the membership before the node was proved down left `leaveNetwork()`
-		// with "not joined, nothing to do", so the disable below wrote `enabled=false` and
-		// then unsubscribed nothing on a node that is still alive and still in the topic.
+		// Discarding it would claim a leave that never happened — and a retried stop, the one
+		// thing that can still make progress here, would then have nothing to release.
 		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
-		await networks.setEnabled(NET, false);
-		expect(net.unsubscribed).toEqual([NET]);
+	});
+
+	/**
+	 * The failed stop used to REOPEN admission, on the assumption that the node was still
+	 * operable. It never is: the instance is left `failed`, refusing start() and reading as not
+	 * running, with its dial controller aborted for good. So the write below was stored, sent
+	 * to a runtime that can no longer dial anything, and reported as applied.
+	 */
+	it('a stop that fails does not admit work back onto the broken runtime', async () => {
+		const net = makeMockNet(Promise.resolve());
+		const networks = makeNetworks(net, db);
+		await networks.startEnabledNetworks();
+		breakStop(net, true);
+		await expect(networks.stopAllNetworks()).rejects.toThrow('node.stop failed');
+		const dialsBefore = net.bootstrapDials.length;
+
+		// A bootstrap change is stored — the row is the desired state and the next start
+		// converges on it — but nothing pretends it reached the node.
+		const updated = await networks.updateBootstrapPeers(NET, [BOOTSTRAP]);
+		expect(updated?.bootstrapPeers).toEqual([BOOTSTRAP]);
+		expect(net.bootstrapDials.length).toBe(dialsBefore);
+
+		// And a disable does not tear down peer state on a half-stopped node.
+		const result = await networks.setEnabled(NET, false);
+		expect(result).toMatchObject({ found: true, transitioned: false, joined: true });
+		expect(net.unsubscribed).toEqual([]);
+	});
+
+	/**
+	 * Where libp2p itself went down and only the cleanup after it failed, a retried stop
+	 * finishes the job — which is the whole reason the membership above is kept.
+	 */
+	it('a retried stop finishes a shutdown whose cleanup failed', async () => {
+		const net = makeMockNet(Promise.resolve());
+		const networks = makeNetworks(net, db);
+		await networks.startEnabledNetworks();
+		breakStop(net, false);
+		await expect(networks.stopAllNetworks()).rejects.toThrow('node.stop failed');
+
+		net.stop = async (): Promise<void> => {
+			net.running = false;
+			net.events.push('stop');
+		};
+		await networks.stopAllNetworks();
 		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
+		expect((networks as any).announcedJoined.size).toBe(0);
+	});
+
+	/**
+	 * A start that throws leaves no node at all, so clearing the flags before it — as the
+	 * reopening path did — admitted work onto nothing. Most sharply after a failed stop:
+	 * `Network.start()` refuses a `failed` instance outright, and the refusal would have
+	 * reopened the door that the stop's failure closed.
+	 */
+	it('a start that fails leaves admission closed', async () => {
+		const net = makeMockNet(Promise.resolve());
+		const networks = makeNetworks(net, db);
+		await networks.startEnabledNetworks();
+		breakStop(net, false);
+		await expect(networks.stopAllNetworks()).rejects.toThrow('node.stop failed');
+
+		net.start = async (): Promise<void> => {
+			throw new Error('network is in a failed state');
+		};
+		await expect(networks.startEnabledNetworks()).rejects.toThrow('failed state');
+		expect((networks as any).reconcileAdmissionClosed).toBe(true);
+
+		const before = [...net.unsubscribed];
+		await networks.setEnabled(NET, false);
+		expect(net.unsubscribed).toEqual(before);
 	});
 
 	/**
@@ -287,9 +375,9 @@ describe('Networks.startEnabledNetworks — coordinated with concurrent changes'
 
 	/**
 	 * The join used to drop its own membership claim as soon as a stop had been ASKED for.
-	 * With a stop that then fails, the node stays alive and subscribed while nothing records
-	 * that we are in the lishnet at all — so the next disable finds "not joined, nothing to
-	 * do" and unsubscribes nobody, on a node that is demonstrably still in the topic.
+	 * A stop that then fails is not a stop that happened: the topic subscription this join
+	 * made was never undone by anyone, so nothing would record that we are in the lishnet —
+	 * and a retried stop would find no membership to release.
 	 */
 	it('a stop that fails keeps the membership of the join it interrupted', async () => {
 		const net = makeMockNet(Promise.resolve());
@@ -302,20 +390,15 @@ describe('Networks.startEnabledNetworks — coordinated with concurrent changes'
 		net.dialGate = gate.promise;
 		const enabling = networks.setEnabled(NET, true);
 		await settle();
-		net.stop = async (): Promise<void> => {
-			throw new Error('node.stop failed');
-		};
+		breakStop(net, false);
 		const stopping = networks.stopAllNetworks();
 		await settle();
 		gate.resolve();
 		await expect(stopping).rejects.toThrow('node.stop failed');
 		await enabling;
 
-		expect(net.running).toBe(true);
+		expect(net.subscribed).toContain(NET);
 		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
-		// And the membership is worth something: the disable really leaves.
-		await networks.setEnabled(NET, false);
-		expect(net.unsubscribed).toEqual([NET]);
 	});
 
 	it('an undisturbed startup still joins every enabled network', async () => {

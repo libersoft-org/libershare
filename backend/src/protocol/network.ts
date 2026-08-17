@@ -1698,6 +1698,23 @@ export class Network {
 		return this.lifecycle === 'running';
 	}
 
+	/**
+	 * Whether a failed {@link stop} is PERMANENT.
+	 *
+	 * True means libp2p itself could not be stopped: it cannot resume an interrupted stop, so
+	 * every later `stop()` is refused and only a process restart clears the state. False after
+	 * a failed stop means the node is provably down and the failure was in the cleanup that
+	 * follows it, which a retried `stop()` completes.
+	 *
+	 * NEITHER answer makes the instance usable. A failed stop leaves the lifecycle `failed`,
+	 * which refuses `start()` and reads as not running, and leaves {@link dialAbort} aborted
+	 * with no path to a fresh controller — so anything dial-shaped ends the moment it begins.
+	 * This exists only so a caller can say whether retrying the stop is worth anything.
+	 */
+	isStopTerminal(): boolean {
+		return this.nodeStopUnrecoverable;
+	}
+
 	/** Current start/stop phase. Exposed for tests and diagnostics. */
 	getLifecycle(): NetworkLifecycle {
 		return this.lifecycle;
