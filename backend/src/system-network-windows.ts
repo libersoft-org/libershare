@@ -685,6 +685,14 @@ const CONNECTION_MODE_PROFILE = 0;
 const BSS_TYPE_INFRASTRUCTURE = 1;
 /** WlanSetProfile with bOverwrite FALSE: this network is already saved, and we asked not to replace it. */
 const ERROR_ALREADY_EXISTS = 183;
+/**
+ * ERROR_NOT_FOUND — the ONLY `WlanGetProfile` result that means "Windows holds
+ * nothing under this name". Every other non-zero code (access denied, invalid
+ * handle, out of memory, an RPC failure) leaves the question unanswered, and
+ * reading one as absence is how a profile that did exist gets overwritten with no
+ * backup and then deleted by the rollback.
+ */
+const ERROR_NOT_FOUND = 1168;
 /** DOT11_AUTH_ALGO_WPA3_SAE — WPA3-Personal, which needs a different profile than WPA2. */
 const AUTH_ALGO_WPA3_SAE = 9;
 /** WLAN_PROFILE_GROUP_POLICY — pushed by policy. Not this app's to replace, and not restorable if it were. */
@@ -1098,7 +1106,13 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 				// FLAGS come back with it, because restoring an all-user or a per-user
 				// profile as flags 0 changes its scope — a different profile in all but
 				// name, and a rollback that fails for that reason alone.
-				replaced = readStoredProfile(api, handle, guidBytes, profileName);
+				const stored = readStoredProfile(api, handle, guidBytes, profileName);
+				// A read that FAILED is not a read that found nothing. Proceeding on one
+				// would overwrite a profile with no backup taken, and the rollback would
+				// then delete a network the user had saved for years. Only a provable
+				// absence lets this attempt create a profile of its own.
+				if (stored.kind === 'error') throw new Error(`the saved configuration of this network could not be read, so it will not be replaced (${stored.message})`);
+				replaced = stored.kind === 'found' ? stored.profile : null;
 				// A group-policy profile is not this app's to replace. The overwrite is
 				// refused on most hosts, and where it is not, nothing here can put a
 				// policy profile back afterwards.
@@ -1156,7 +1170,7 @@ export function assertWindowsWifiKey(password: string, sae: boolean): void {
 }
 
 /** A stored WLAN profile, as {@link readStoredProfile} found it. */
-interface StoredProfile {
+export interface StoredProfile {
 	/** The document exactly as Windows holds it, key material still encrypted. */
 	readonly xml: string;
 	/** WLAN_PROFILE_* flags. Writing it back with any others changes its scope. */
@@ -1164,7 +1178,20 @@ interface StoredProfile {
 }
 
 /**
- * The stored profile for one profile name, or null when Windows holds none.
+ * What {@link readStoredProfile} found: the profile, its PROVABLE absence, or a
+ * failure that is neither.
+ *
+ * The third case is the whole reason this is a union rather than a nullable
+ * profile. `WlanGetProfile` answers ERROR_NOT_FOUND for a name Windows holds
+ * nothing under, but it also answers access-denied, an invalid handle, out of
+ * memory and RPC failures — and collapsing all of those to `null` told the caller
+ * the profile did not exist. It then overwrote a profile it had no backup of and,
+ * on failure, DELETED one it had never created.
+ */
+export type StoredProfileResult = { readonly kind: 'found'; readonly profile: StoredProfile } | { readonly kind: 'notFound' } | { readonly kind: 'error'; readonly message: string };
+
+/**
+ * The stored profile for one profile name.
  *
  * The key material comes back encrypted (reading it in the clear needs elevation
  * this app does not have), which is exactly what a restore needs: the same user
@@ -1175,17 +1202,26 @@ interface StoredProfile {
  * profile is all-user, per-user or pushed by group policy, and those are not
  * interchangeable — a per-user profile written back as all-user is a different
  * object, and a policy profile must not be touched at all.
+ *
+ * Only ERROR_NOT_FOUND is absence. A success that hands back a null document is
+ * an error too: there is then nothing to restore from, which is exactly the
+ * situation the caller must not proceed into.
  */
-function readStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string): StoredProfile | null {
+export function readStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string): StoredProfileResult {
 	const name = utf16z(profileName);
 	const xmlOut = new BigUint64Array(1);
 	// In/out: zero asks for the profile as stored, without the plaintext key.
 	const flags = new Uint32Array(1);
 	const rc = api.WlanGetProfile(handle, ptr(guidBytes), ptr(name), null, ptr(xmlOut), ptr(flags), null);
-	if (rc !== 0 || xmlOut[0] === 0n) return null;
+	if (rc === ERROR_NOT_FOUND) return { kind: 'notFound' };
+	if (rc !== 0) return { kind: 'error', message: wlanErrorMessage(rc) };
+	if (xmlOut[0] === 0n) return { kind: 'error', message: 'the WLAN service reported a saved profile but returned no document for it' };
 	const xmlPointer = Number(xmlOut[0]) as Pointer;
 	try {
-		return { xml: readUtf16z(xmlPointer), flags: flags[0] ?? 0 };
+		return { kind: 'found', profile: { xml: readUtf16z(xmlPointer), flags: flags[0] ?? 0 } };
+	} catch (err) {
+		// A document that cannot be read back is a document that cannot be restored.
+		return { kind: 'error', message: (err as Error).message };
 	} finally {
 		api.WlanFreeMemory(xmlPointer);
 	}

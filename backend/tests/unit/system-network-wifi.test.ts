@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-import { ptr, type Pointer } from 'bun:ffi';
-import { assertWindowsWifiKey, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readUtf16z, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
+import { ptr, toArrayBuffer, type Pointer } from 'bun:ffi';
+import { assertWindowsWifiKey, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readStoredProfile, readUtf16z, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
 
 /**
  * The Windows Wi-Fi surface is FFI, so most of what can go wrong is a struct
@@ -439,5 +439,63 @@ describe('wlanScanErrorMessage', () => {
 	it('leaves every other code with its ordinary description', () => {
 		expect(wlanScanErrorMessage(1062)).toBe(wlanErrorMessage(1062));
 		expect(wlanScanErrorMessage(2150899714)).toBe('the Wi-Fi radio is switched off');
+	});
+});
+
+/**
+ * A WlanApi whose WlanGetProfile answers one canned outcome, writing into the
+ * caller's out-parameters exactly as the real one does. Only the two entry points
+ * {@link readStoredProfile} uses are provided; anything else reaching this stub
+ * would be a call the function has no business making.
+ */
+function getProfileApi(rc: number, xml: string | null, flags: number = 0): Parameters<typeof readStoredProfile>[0] {
+	const document = xml === null ? null : utf16z(xml);
+	if (document) retainedProfiles.push(document);
+	return {
+		WlanGetProfile: (_handle: bigint, _guid: Pointer, _name: Pointer, _reserved: null, xmlOut: Pointer, flagsOut: Pointer) => {
+			new BigUint64Array(toArrayBuffer(xmlOut, 0, 8))[0] = document ? BigInt(ptr(document)) : 0n;
+			new Uint32Array(toArrayBuffer(flagsOut, 0, 4))[0] = flags;
+			return rc;
+		},
+		// The stub owns its buffer, so freeing is a no-op — but it must exist, since
+		// a real read frees the document whichever way it ends.
+		WlanFreeMemory: () => {},
+	} as unknown as Parameters<typeof readStoredProfile>[0];
+}
+
+/** Profile documents must outlive the pointers handed back through the out-parameter. */
+const retainedProfiles: Uint16Array[] = [];
+
+const ANY_GUID = guidToBytes('{11111111-2222-3333-4444-555555555555}');
+
+describe('readStoredProfile', () => {
+	it('reports a stored profile with the flags Windows gave it', () => {
+		const result = readStoredProfile(getProfileApi(0, '<WLANProfile/>', 2), 1n, ANY_GUID, 'Example');
+		expect(result).toEqual({ kind: 'found', profile: { xml: '<WLANProfile/>', flags: 2 } });
+	});
+
+	// The one code that really means "Windows holds nothing under this name".
+	it('reports a genuine absence for ERROR_NOT_FOUND', () => {
+		expect(readStoredProfile(getProfileApi(1168, null), 1n, ANY_GUID, 'Example')).toEqual({ kind: 'notFound' });
+	});
+
+	// The regression this union exists for: every one of these used to read as
+	// "no profile existed", which let the join overwrite a profile with no backup
+	// and the rollback then delete it.
+	it.each([
+		[5, 'access denied'],
+		[6, 'an invalid handle'],
+		[8, 'out of memory'],
+		[1727, 'an RPC failure'],
+	])('reports code %i (%s) as an error, never as an absence', code => {
+		const result = readStoredProfile(getProfileApi(code, null), 1n, ANY_GUID, 'Example');
+		expect(result.kind).toBe('error');
+	});
+
+	// A success that hands back no document leaves nothing to restore from, which
+	// is the same hazard by another route.
+	it('refuses a success that returned no document', () => {
+		const result = readStoredProfile(getProfileApi(0, null), 1n, ANY_GUID, 'Example');
+		expect(result.kind).toBe('error');
 	});
 });
