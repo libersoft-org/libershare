@@ -696,8 +696,11 @@ export class Networks {
 		// never heard of this lishnet.
 		const epoch = this.network.getRunEpoch();
 
-		// Snapshot the topic subscribers BEFORE unsubscribing — unsubscribeTopic
-		// tears the topic out of pubsub, after which getTopicPeers(id) returns [].
+		// Snapshot the topic subscribers BEFORE unsubscribing, and read them through the
+		// protocol layer: the wrapper on this class answers [] the moment `joinedNetworks`
+		// loses the id, and these are exactly the peers this leave has to act on. (Our own
+		// unsubscribe does not clear gossipsub's view of who else is in the topic — that is
+		// remote state, and it outlives us in the topic for as long as the connection does.)
 		// Union with recently-seen members (TTL) so a content peer that is momentarily
 		// disconnected at leave time — but still holds a peerStore entry — is also
 		// suppressed; a live-subscriber-only snapshot would miss it and maintenance
