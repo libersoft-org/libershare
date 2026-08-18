@@ -53,7 +53,7 @@ function makeDeps(
 		dataServerOverride?: Record<string, () => any>;
 		stopVerifyAll?: () => Promise<any>;
 		clearAllTransfers?: () => Promise<any>;
-		broadcastFn?: (event: string, data: any) => void;
+		broadcastFn?: (event: string, data: any, except?: unknown) => void;
 		log?: string[];
 	} = {}
 ): FactoryResetOrchestratorDeps {
@@ -371,5 +371,32 @@ describe('buildFactoryResetHandler — broadcast', () => {
 		const handler = buildFactoryResetHandler(deps);
 		await handler({ downloads: true, settings: false, identity: false, networks: false, peers: false });
 		expect(emitted.some(e => e.event === 'system:factoryReset')).toBe(true);
+	});
+});
+
+/**
+ * The reset event says "somebody else wiped this instance, reload". The caller is not
+ * somebody else: it has the response and a screen listing what failed, which a reload
+ * would throw away before it could be read.
+ */
+describe('buildFactoryResetHandler — who hears about the reset', () => {
+	it('skips the calling client and tells the rest', async () => {
+		const sent: Array<{ event: string; except: unknown }> = [];
+		const caller = { id: 'the-tab-that-asked' };
+		const deps = makeDeps({ broadcastFn: (event, _data, except) => sent.push({ event, except }) });
+		await buildFactoryResetHandler(deps)({ settings: true }, caller);
+		expect(sent).toHaveLength(1);
+		expect(sent[0]!.except).toBe(caller);
+	});
+
+	it('says nothing at all when prepare failed and no category ran', async () => {
+		const sent: string[] = [];
+		const deps = makeDeps({
+			stopVerifyAll: () => Promise.reject(new Error('transfers are stuck')),
+			broadcastFn: event => sent.push(event),
+		});
+		const response = await buildFactoryResetHandler(deps)({ identity: true }, { id: 'caller' });
+		expect(response.phases.some(phase => phase.phase === 'prepare' && !phase.ok)).toBe(true);
+		expect(sent).toEqual([]);
 	});
 });

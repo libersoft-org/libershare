@@ -81,6 +81,7 @@ export class APIServer {
 		this.localAddresses = getLocalAddresses();
 		const emitTo = (client: ClientSocket, event: string, data: any): void => this.emit(client, event, data);
 		const broadcastFn = (event: string, data: any): void => this.broadcast(event, data);
+		const broadcastExceptFn = (event: string, data: any, except?: unknown): void => this.broadcast(event, data, except as ClientSocket | undefined);
 		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
 		const _settings = initSettingsHandlers(this.settings);
 		const _datasets = initDatasetsHandlers(this.dataServer);
@@ -114,7 +115,7 @@ export class APIServer {
 			settings: this.settings,
 			stopVerifyAll: _lishs.stopVerifyAll,
 			clearAllTransfers: _transfer.clearAll,
-			broadcastFn,
+			broadcastFn: broadcastExceptFn,
 		});
 
 		this.handlers = {
@@ -410,10 +411,18 @@ export class APIServer {
 		this.broadcast(event, data);
 	}
 
-	private broadcast(event: string, data: any): void {
+	/**
+	 * Send `event` to every subscribed client, optionally skipping one.
+	 *
+	 * `except` exists for events whose whole point is "somebody else did this": the client
+	 * that asked gets the RPC answer and acts on that, and would only be talked over by the
+	 * broadcast — a factory reset reloading the very tab that is about to show its result.
+	 */
+	private broadcast(event: string, data: any, except?: ClientSocket): void {
 		const msg = JSON.stringify({ event, data });
 		let sent = 0;
 		for (const client of this.clients) {
+			if (client === except) continue;
 			if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) {
 				client.send(msg);
 				sent++;

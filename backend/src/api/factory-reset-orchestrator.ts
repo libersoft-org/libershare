@@ -26,9 +26,9 @@ export interface FactoryResetOrchestratorDeps {
 	 */
 	readonly clearAllTransfers: () => Promise<any>;
 	/**
-	 * Broadcasts a WebSocket event to all subscribed clients.
+	 * Broadcasts a WebSocket event to subscribed clients, skipping `except` when given.
 	 */
-	readonly broadcastFn: (event: string, data: any) => void;
+	readonly broadcastFn: (event: string, data: any, except?: unknown) => void;
 }
 
 /**
@@ -41,10 +41,10 @@ export interface FactoryResetOrchestratorDeps {
  * inside APIServer's constructor. Moving it here keeps api.ts focused on
  * wiring and makes the reset logic independently testable.
  */
-export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean; peers?: boolean }) => Promise<FactoryResetResponse> {
+export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean; peers?: boolean }, client?: unknown) => Promise<FactoryResetResponse> {
 	const { dataServer, networks, settings, stopVerifyAll, clearAllTransfers, broadcastFn } = deps;
 
-	return async (p?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean; peers?: boolean }): Promise<FactoryResetResponse> => {
+	return async (p?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean; peers?: boolean }, client?: unknown): Promise<FactoryResetResponse> => {
 		const wipeSettings = p?.settings ?? true;
 		const wipeIdentity = p?.identity ?? true;
 		const wipeDownloads = p?.downloads ?? true;
@@ -101,7 +101,13 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 			restart: restartNode ? restartNodeAndTransfers : undefined,
 		});
 
-		broadcastFn('system:factoryReset', {});
+		// Everyone else is told to reload, because identity, networks and state moved under
+		// them. The caller is not: it gets this response and its own screen showing which
+		// category failed, and a reload here would replace that with a fresh page before it
+		// could be read. And when `prepare` failed nothing was wiped at all — announcing a
+		// reset would send every other window to a clean slate over an operation that did
+		// not happen.
+		if (response.phases.every(phase => phase.phase !== 'prepare' || phase.ok)) broadcastFn('system:factoryReset', {}, client);
 		return response;
 	};
 }
