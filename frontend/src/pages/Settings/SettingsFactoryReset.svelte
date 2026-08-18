@@ -19,9 +19,10 @@
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 
-	// Each category defaults to ON so a plain confirm wipes everything.
-	// "peers" defaults to OFF: it is an advanced-use option and does not
-	// require wiping the identity, so it is opt-in rather than opt-out.
+	// Every category starts ON, "peers" included, so a plain confirm wipes everything —
+	// which is what "factory reset" reads as, and how the backend defaults for a call that
+	// names no categories. Wiping the peerstore only discards peers this node discovered;
+	// they come back from gossip, so it costs the user nothing they typed in themselves.
 	let resetSettings = $state(true);
 	let resetIdentity = $state(true);
 	let resetDownloads = $state(true);
