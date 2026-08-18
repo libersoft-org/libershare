@@ -906,17 +906,26 @@ export class Networks {
 	}
 
 	/**
-	 * Get peers for a specific lishnet (topic subscribers).
+	 * Peers subscribed to a lishnet's topic — empty for one this node is not in.
+	 *
+	 * gossipsub tracks a REMOTE subscription on its own, independent of ours: a peer
+	 * that stays in the topic keeps being returned after we unsubscribe, for as long
+	 * as the connection lasts. Reported unfiltered, a network the user just disabled
+	 * still lists participants, which states a membership we no longer hold. Asking
+	 * {@link joinedNetworks} first is what makes the answer about US.
+	 *
+	 * The leave path is unaffected: it snapshots {@link Network.getTopicPeers} while
+	 * still subscribed, and needs those peers precisely because it is leaving them.
 	 */
 	getTopicPeers(id: string): string[] {
-		return this.network.getTopicPeers(id);
+		return this.joinedNetworks.has(id) ? this.network.getTopicPeers(id) : [];
 	}
 
 	/**
-	 * Get peers with connection type info for a specific lishnet.
+	 * As {@link getTopicPeers}, with connection type info, and empty on the same terms.
 	 */
 	getTopicPeersInfo(id: string): PeerConnectionInfo[] {
-		return this.network.getTopicPeersInfo(id);
+		return this.joinedNetworks.has(id) ? this.network.getTopicPeersInfo(id) : [];
 	}
 
 	/**
