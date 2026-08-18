@@ -759,7 +759,7 @@ describe('BootstrapStatusTracker.markPending — timestamps', () => {
 	const ADDR = '/ip4/192.0.2.10/tcp/9090/p2p/12D3KooWTimestampsFixtureAAAAAAAAAAAAAAAAAAAAAAAA';
 
 	it('stamps a new attempt rather than carrying the previous time', async () => {
-		const tracker = new BootstrapStatusTracker(() => {});
+		const tracker = new BootstrapStatusTracker();
 		tracker.recordOutcome(NET, ADDR, null, 'connected', null, null, 'discovered');
 		const before = tracker.getStatus(NET)!.peers[0]!.updatedAt;
 		await new Promise(resolve => setTimeout(resolve, 5));
@@ -770,13 +770,13 @@ describe('BootstrapStatusTracker.markPending — timestamps', () => {
 	it('still expires on the clock the last success set, not on the attempt', () => {
 		// staleSince is deliberately not on the wire, so the proof is behavioural: the row
 		// must still be swept on the old clock however many attempts have restamped it.
-		const tracker = new BootstrapStatusTracker(() => {});
-		const success = 1_000_000;
+		const tracker = new BootstrapStatusTracker();
 		tracker.recordOutcome(NET, ADDR, null, 'connected', null, null, 'discovered');
+		const connectedAt = Date.parse(tracker.getStatus(NET)!.peers[0]!.updatedAt);
 		tracker.markPending(NET, ADDR, null, 'discovered');
-		tracker.sweepStale(60_000, () => false, success + 30_000);
+		tracker.sweepStale(60_000, () => false, connectedAt + 30_000);
 		expect(tracker.getStatus(NET)!.peers).toHaveLength(1);
-		tracker.sweepStale(60_000, () => false, Date.now() + 60_001);
+		tracker.sweepStale(60_000, () => false, connectedAt + 60_001);
 		expect(tracker.getStatus(NET)?.peers ?? []).toHaveLength(0);
 	});
 });
