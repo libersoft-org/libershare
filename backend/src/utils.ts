@@ -34,6 +34,22 @@ function hasZlibHeader(data: Uint8Array<ArrayBuffer>): boolean {
 }
 
 /**
+ * The zlib result codes that are a verdict on the *data*: these bytes are not a raw DEFLATE
+ * stream. `Z_DATA_ERROR` is a block the format does not allow, `Z_BUF_ERROR` a stream whose
+ * input ends before it closes; both are reached only by reading the bytes, and neither is
+ * reachable for a raw stream that is valid and complete — trailing bytes past the final block
+ * are ignored, and an empty result is still a result.
+ *
+ * Every other failure describes the environment or our own call instead. `Z_MEM_ERROR` is an
+ * allocation that failed, `Z_STREAM_ERROR` an inconsistent call, `ERR_BUFFER_TOO_LARGE` a raw
+ * reading too large for the cap rather than an absent one. None of them disprove the raw
+ * reading — they only say the check could not be completed — so none may license returning the
+ * zlib one. `Z_NEED_DICT` is not here either: raw inflate reads no header that could ask for a
+ * dictionary, and a dictionary-compressed raw stream fails as `Z_DATA_ERROR` instead.
+ */
+const RAW_DEFLATE_REJECTIONS = new Set(['Z_DATA_ERROR', 'Z_BUF_ERROR']);
+
+/**
  * Inflate an HTTP `deflate` body. The name covers two wire formats: RFC 9110 asks for
  * the zlib wrapper (RFC 1950) and most servers send it, while a long tail sends bare
  * DEFLATE (RFC 1951). Only the leading bytes tell them apart, so the header check above
@@ -56,10 +72,12 @@ function hasZlibHeader(data: Uint8Array<ArrayBuffer>): boolean {
  * check can add is one more capped inflate.
  *
  * Overrunning that cap is a raw reading that exists and is large, not one that is absent, so
- * it cannot license returning the zlib content: only a decoder verdict — a `Z_*` code — says
- * these bytes are not a raw stream at all. When the *zlib* reading is the oversized one, that
- * decode throws before the check is reached and the cap error stands: it is accurate whatever
- * the raw reading would have said, and it costs no second decode.
+ * it cannot license returning the zlib content: only a verdict on the data itself — one of
+ * {@link RAW_DEFLATE_REJECTIONS} — says these bytes are not a raw stream at all, and anything
+ * else the decode throws leaves the question open, which is a refusal. When the *zlib* reading
+ * is the oversized one, that decode throws before the check is reached and the cap error
+ * stands: it is accurate whatever the raw reading would have said, and it costs no second
+ * decode.
  */
 function inflateDeflate(data: Uint8Array<ArrayBuffer>, options: ZlibOptions): Buffer {
 	if (!hasZlibHeader(data)) return inflateRawSync(data, options);
@@ -67,7 +85,7 @@ function inflateDeflate(data: Uint8Array<ArrayBuffer>, options: ZlibOptions): Bu
 	try {
 		inflateRawSync(data, options);
 	} catch (err: any) {
-		if (typeof err?.code === 'string' && err.code.startsWith('Z_')) return inflated;
+		if (RAW_DEFLATE_REJECTIONS.has(err?.code)) return inflated;
 	}
 	throw new CodedError(ErrorCodes.AMBIGUOUS_DEFLATE);
 }

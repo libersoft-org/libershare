@@ -1,4 +1,5 @@
-import { describe, it, expect, afterAll } from 'bun:test';
+import { describe, it, expect, afterAll, mock } from 'bun:test';
+import * as zlib from 'node:zlib';
 import { deflateRawSync, deflateSync, inflateRawSync, inflateSync } from 'node:zlib';
 import { rm } from 'fs/promises';
 import { tmpdir } from 'os';
@@ -6,6 +7,13 @@ import { join } from 'path';
 import { Utils } from '../../src/utils.ts';
 import { initFsHandlers } from '../../src/api/fs.ts';
 import { COMPRESSION_ALGORITHMS, compressionExtension, detectCompression, stripCompressionExtension, withCompressionExtensions, isCompressed, ErrorCodes, MAX_API_MESSAGE_SIZE } from '@shared';
+
+/**
+ * The real `node:zlib` exports, captured before any test can replace them. `mock.module`
+ * swaps the module for the whole process, so restoring has to hand back a snapshot taken
+ * while the module was still untouched rather than re-spreading a namespace already mocked.
+ */
+const realZlib = { ...zlib };
 
 /** Mixed binary + UTF-8 payload — catches encoding-sensitive round-trip bugs. */
 function samplePayload(): Uint8Array<ArrayBuffer> {
@@ -73,6 +81,20 @@ function zlibOverCapDeflate(): Uint8Array<ArrayBuffer> {
 	const header = [0x78, 0x01, 0x00, 0xfe, 0xff, 0x01, 0x00]; // zlib header, then a stored block of 65 534
 	// No Adler-32: the zlib reading hits the cap inside the bomb and never reaches a trailer.
 	return Buffer.concat([Buffer.from(header), payload, rawDeflateBomb()]) as Uint8Array<ArrayBuffer>;
+}
+
+/**
+ * A complete, valid zlib body whose raw reading is a stored block declaring more bytes than
+ * the body holds, so the raw decode fails with `Z_BUF_ERROR` instead of `Z_DATA_ERROR`. The
+ * zlib header bytes are `0x78 0xda` — a legal CMF/FLG pair with no preset dictionary — and
+ * read as DEFLATE bits the first of them opens a stored block whose LEN and NLEN are the four
+ * bytes behind it: 32 986, self-consistent and 426 bytes past the end of the buffer.
+ */
+function rawTruncatedDeflate(): Uint8Array<ArrayBuffer> {
+	const payload = new Uint8Array(32549).fill(0x41);
+	const header = [0x78, 0xda, 0x80, 0x25, 0x7f, 0xda, 0x80]; // zlib header, then a stored block of 32 549
+	const trailer = [0x01, 0x00, 0x00, 0xff, 0xff, ...adler32Trailer(payload)]; // final empty block + Adler-32
+	return new Uint8Array([...header, ...payload, ...trailer]) as Uint8Array<ArrayBuffer>;
 }
 
 const tempFiles: string[] = [];
@@ -219,6 +241,50 @@ describe('Utils.compress / Utils.decompress', () => {
 		// accurate answer and a valid raw reading beside it cannot make returning anything safe.
 		expect(Array.from(inflateRawSync(body, { maxOutputLength: MAX_API_MESSAGE_SIZE }))).toEqual([0x01]);
 		expect(() => Utils.decompress(body, 'deflate')).toThrow(ErrorCodes.DECOMPRESSED_TOO_LARGE);
+	});
+
+	it('deflate: decodes a body whose raw reading runs off the end of the buffer', () => {
+		const body = rawTruncatedDeflate();
+		// The raw decode fails here with Z_BUF_ERROR, not Z_DATA_ERROR: the block header it
+		// reads is well-formed and only the bytes behind it are missing. That is still the data
+		// saying it is not a raw stream, so the zlib reading stands. Dropping this code from the
+		// allowlist would refuse an ordinary body as ambiguous — and the pair of length fields a
+		// raw reader needs lines up by chance often enough to matter at internet scale.
+		let rawFailure: any;
+		try {
+			inflateRawSync(body, { maxOutputLength: MAX_API_MESSAGE_SIZE });
+		} catch (err) {
+			rawFailure = err;
+		}
+		expect(rawFailure?.code).toBe('Z_BUF_ERROR');
+		expect(Utils.decompress(body, 'deflate').byteLength).toBe(32549);
+	});
+
+	it('deflate: refuses when the raw decode fails for a reason that is not about the data', () => {
+		// Z_MEM_ERROR is an allocation that failed, not a verdict that these bytes are not a raw
+		// stream: the raw reading was never disproven, only left unchecked. Testing for a `Z_`
+		// prefix would return the zlib content here and silently pick one of two readings.
+		// zlib cannot be starved on demand, so the failure is injected at the node:zlib seam —
+		// what is faked is the decoder running out of memory, not the outcome being asserted.
+		const body = deflateSync(samplePayload()) as Uint8Array<ArrayBuffer>;
+		const decoded = samplePayload().byteLength;
+		expect(Utils.decompress(body, 'deflate').byteLength).toBe(decoded);
+		mock.module('node:zlib', () => ({
+			...realZlib,
+			inflateRawSync: () => {
+				const err: any = new Error('Out of memory');
+				err.code = 'Z_MEM_ERROR';
+				err.errno = realZlib.constants.Z_MEM_ERROR;
+				throw err;
+			},
+		}));
+		try {
+			expect(() => Utils.decompress(body, 'deflate')).toThrow(ErrorCodes.AMBIGUOUS_DEFLATE);
+		} finally {
+			mock.module('node:zlib', () => realZlib);
+		}
+		// The seam is shared with every other test in the run, so prove it really came back.
+		expect(Utils.decompress(body, 'deflate').byteLength).toBe(decoded);
 	});
 
 	it('rejects an unsupported algorithm instead of silently passing data through', () => {
