@@ -53,16 +53,21 @@ function hasZlibHeader(data: Uint8Array<ArrayBuffer>): boolean {
  * Only a zlib-headered body pays for a second decode, and on a real zlib body that decode
  * normally stops at the first stored-block length field, well under a millisecond. The bound
  * when it does not is `maxOutputLength`, which both decodes carry: the worst an ambiguity
- * check can add is one more capped inflate, and a raw reading that overruns the cap counts
- * as no reading rather than as ambiguity.
+ * check can add is one more capped inflate.
+ *
+ * Overrunning that cap is a raw reading that exists and is large, not one that is absent, so
+ * it cannot license returning the zlib content: only a decoder verdict — a `Z_*` code — says
+ * these bytes are not a raw stream at all. When the *zlib* reading is the oversized one, that
+ * decode throws before the check is reached and the cap error stands: it is accurate whatever
+ * the raw reading would have said, and it costs no second decode.
  */
 function inflateDeflate(data: Uint8Array<ArrayBuffer>, options: ZlibOptions): Buffer {
 	if (!hasZlibHeader(data)) return inflateRawSync(data, options);
 	const inflated = inflateSync(data, options);
 	try {
 		inflateRawSync(data, options);
-	} catch {
-		return inflated;
+	} catch (err: any) {
+		if (typeof err?.code === 'string' && err.code.startsWith('Z_')) return inflated;
 	}
 	throw new CodedError(ErrorCodes.AMBIGUOUS_DEFLATE);
 }

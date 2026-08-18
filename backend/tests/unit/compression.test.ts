@@ -26,15 +26,53 @@ function dualValidDeflate(): Uint8Array<ArrayBuffer> {
 	const payload = new Uint8Array(65534).fill(0x41);
 	payload.set([0x00, 0x00, 0xff, 0xff], 0); // raw reading: empty stored block, non-final
 	payload.set([0x01, 0x00, 0x00, 0xff, 0xff], 4); // raw reading: empty stored block, final
+	const header = [0x78, 0x01, 0x00, 0xfe, 0xff, 0x01, 0x00]; // zlib header, then a stored block of 65 534
+	const trailer = [0x01, 0x00, 0x00, 0xff, 0xff, ...adler32Trailer(payload)]; // final empty block + Adler-32
+	return new Uint8Array([...header, ...payload, ...trailer]) as Uint8Array<ArrayBuffer>;
+}
+
+/** The four big-endian Adler-32 bytes that close a zlib stream over `data`. */
+function adler32Trailer(data: Uint8Array): number[] {
 	let a = 1;
 	let b = 0;
-	for (const byte of payload) {
+	for (const byte of data) {
 		a = (a + byte) % 65521;
 		b = (b + a) % 65521;
 	}
+	return [(b >>> 8) & 0xff, b & 0xff, (a >>> 8) & 0xff, a & 0xff];
+}
+
+/** A complete raw DEFLATE stream that expands past the output cap. */
+function rawDeflateBomb(): Buffer {
+	return deflateRawSync(Buffer.alloc(MAX_API_MESSAGE_SIZE + 1024 * 1024));
+}
+
+/**
+ * A `deflate` body whose zlib reading is a complete 65 278-byte stored block, and whose raw
+ * reading stops only at the output cap. Read as raw DEFLATE the zlib header itself opens a
+ * 257-byte stored block; a second stored block then covers the rest of the payload and the
+ * Adler-32 along with it, and the block after that is a bomb appended behind the finished
+ * zlib stream — trailing bytes the zlib reading ignores.
+ */
+function rawOverCapDeflate(): Uint8Array<ArrayBuffer> {
+	const payload = Buffer.alloc(65278, 0x41);
+	payload.set([0x00, 0xfe, 0xfd, 0x01, 0x02], 255); // raw reading: stored block of 65 022, non-final
+	const header = [0x78, 0x01, 0x01, 0xfe, 0xfe, 0x01, 0x01]; // zlib header, then a final stored block of 65 278
+	return Buffer.concat([Buffer.from(header), payload, Buffer.from(adler32Trailer(payload)), rawDeflateBomb()]) as Uint8Array<ArrayBuffer>;
+}
+
+/**
+ * The mirror of {@link rawOverCapDeflate}, on the layout of {@link dualValidDeflate}: the
+ * zlib reading runs on into a bomb instead of ending after the stored block, so it is the
+ * oversized one, while the raw reading is still the same valid single byte.
+ */
+function zlibOverCapDeflate(): Uint8Array<ArrayBuffer> {
+	const payload = Buffer.alloc(65534, 0x41);
+	payload.set([0x00, 0x00, 0xff, 0xff], 0); // raw reading: empty stored block, non-final
+	payload.set([0x01, 0x00, 0x00, 0xff, 0xff], 4); // raw reading: empty stored block, final
 	const header = [0x78, 0x01, 0x00, 0xfe, 0xff, 0x01, 0x00]; // zlib header, then a stored block of 65 534
-	const trailer = [0x01, 0x00, 0x00, 0xff, 0xff, (b >>> 8) & 0xff, b & 0xff, (a >>> 8) & 0xff, a & 0xff]; // final empty block + Adler-32
-	return new Uint8Array([...header, ...payload, ...trailer]) as Uint8Array<ArrayBuffer>;
+	// No Adler-32: the zlib reading hits the cap inside the bomb and never reaches a trailer.
+	return Buffer.concat([Buffer.from(header), payload, rawDeflateBomb()]) as Uint8Array<ArrayBuffer>;
 }
 
 const tempFiles: string[] = [];
@@ -156,6 +194,31 @@ describe('Utils.compress / Utils.decompress', () => {
 		expect(inflateSync(bothWays).byteLength).toBe(65534);
 		expect(Array.from(inflateRawSync(bothWays))).toEqual([0x01]);
 		expect(() => Utils.decompress(bothWays, 'deflate')).toThrow(ErrorCodes.AMBIGUOUS_DEFLATE);
+	});
+
+	it('deflate: refuses a body whose raw reading stops only at the output cap', () => {
+		const body = rawOverCapDeflate();
+		const options = { maxOutputLength: MAX_API_MESSAGE_SIZE };
+		// The zlib reading is complete and small, so handing it back looks safe. It is not: the
+		// raw decode did not reject these bytes, it ran out of budget on them, which is a second
+		// reading existing and being large. Returning the first would be a silent pick between two.
+		expect(inflateSync(body, options).byteLength).toBe(65278);
+		let rawFailure: any;
+		try {
+			inflateRawSync(body, options);
+		} catch (err) {
+			rawFailure = err;
+		}
+		expect(rawFailure?.code).toBe('ERR_BUFFER_TOO_LARGE');
+		expect(() => Utils.decompress(body, 'deflate')).toThrow(ErrorCodes.AMBIGUOUS_DEFLATE);
+	});
+
+	it('deflate: reports the cap when the zlib reading is the oversized one', () => {
+		const body = zlibOverCapDeflate();
+		// The mirror case. Here the overrun is in the reading RFC 9110 names, so the cap is the
+		// accurate answer and a valid raw reading beside it cannot make returning anything safe.
+		expect(Array.from(inflateRawSync(body, { maxOutputLength: MAX_API_MESSAGE_SIZE }))).toEqual([0x01]);
+		expect(() => Utils.decompress(body, 'deflate')).toThrow(ErrorCodes.DECOMPRESSED_TOO_LARGE);
 	});
 
 	it('rejects an unsupported algorithm instead of silently passing data through', () => {
