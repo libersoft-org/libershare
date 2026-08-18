@@ -48,11 +48,13 @@ function hasZlibHeader(data: Uint8Array<ArrayBuffer>): boolean {
  * such a body as raw, so the spec and the runtime we sit on disagree, and either pick hands
  * the caller content nobody sent. Refusing is the only answer that cannot do that.
  *
- * A body without the zlib header is decoded once — node's inflate rejects the same two bytes
- * this file does, so the zlib reading cannot exist and there is nothing to be ambiguous with.
- * Only a zlib-headered body pays for the second decode, and it ends at the first stored-block
- * length field. Both decodes carry the same `maxOutputLength`, which is also this check's
- * ceiling: a raw reading that overruns the cap counts as no reading rather than as ambiguity.
+ * A body without the zlib header is decoded once — node's inflate rejects every header this
+ * check rejects, so the zlib reading cannot exist and there is nothing to be ambiguous with.
+ * Only a zlib-headered body pays for a second decode, and on a real zlib body that decode
+ * normally stops at the first stored-block length field, well under a millisecond. The bound
+ * when it does not is `maxOutputLength`, which both decodes carry: the worst an ambiguity
+ * check can add is one more capped inflate, and a raw reading that overruns the cap counts
+ * as no reading rather than as ambiguity.
  */
 function inflateDeflate(data: Uint8Array<ArrayBuffer>, options: ZlibOptions): Buffer {
 	if (!hasZlibHeader(data)) return inflateRawSync(data, options);
