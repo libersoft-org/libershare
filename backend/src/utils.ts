@@ -25,23 +25,29 @@ type DecompressAlgorithm = CompressionAlgorithm | 'deflate';
 const CONTENT_ENCODING_ALGORITHMS: Record<string, DecompressAlgorithm> = { gzip: 'gzip', br: 'brotli', zstd: 'zstd', deflate: 'deflate' };
 
 /**
+ * Whether `data` opens with an RFC 1950 zlib header: the low nibble of the first byte is
+ * the compression method, which must be 8 (deflate), and the two header bytes read as a
+ * big-endian 16-bit value must be a multiple of 31.
+ */
+function hasZlibHeader(data: Uint8Array<ArrayBuffer>): boolean {
+	return data.byteLength >= 2 && (data[0]! & 0x0f) === 8 && ((data[0]! << 8) | data[1]!) % 31 === 0;
+}
+
+/**
  * Inflate an HTTP `deflate` body. The name covers two wire formats: RFC 9110 asks for
  * the zlib wrapper (RFC 1950) and most servers send it, while a long tail sends bare
- * DEFLATE (RFC 1951). Only the leading bytes tell them apart, so read it as zlib and
- * retry raw when that header turns out not to be there. Both variants decoded before
- * this path stopped using the runtime's own decoder, so both keep working.
+ * DEFLATE (RFC 1951). Only the leading bytes tell them apart, so the header check above
+ * picks the decoder and whichever one it picks is the only one that runs.
  *
- * A rejected zlib header is the only reason to retry: hitting the output cap says the
- * wrapper was read just fine, and inflating a second time would double the work the
- * cap just refused.
+ * Deciding this from the bytes rather than from a failed decode is what keeps a broken
+ * zlib stream broken. The errors do not separate the two cases — a rejected header and a
+ * corrupt body are both `Z_DATA_ERROR` — so retrying raw after any failure reinterprets a
+ * truncated or tampered zlib body from byte zero, and bytes exist whose raw reading is
+ * valid and ends on its own final block. That decodes to content the server never sent,
+ * with no error anywhere. Two bytes settle it before any decompression starts.
  */
 function inflateDeflate(data: Uint8Array<ArrayBuffer>, options: ZlibOptions): Buffer {
-	try {
-		return inflateSync(data, options);
-	} catch (err: any) {
-		if (err?.code === 'ERR_BUFFER_TOO_LARGE') throw err;
-		return inflateRawSync(data, options);
-	}
+	return hasZlibHeader(data) ? inflateSync(data, options) : inflateRawSync(data, options);
 }
 
 export class Utils {

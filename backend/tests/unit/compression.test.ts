@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from 'bun:test';
-import { deflateRawSync, deflateSync } from 'node:zlib';
+import { deflateRawSync, deflateSync, inflateRawSync } from 'node:zlib';
 import { rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -104,6 +104,27 @@ describe('Utils.compress / Utils.decompress', () => {
 			}
 			expect(failure?.code).toMatch(/^Z_/);
 		}
+	});
+
+	it('deflate: a failed zlib stream is not re-read as raw DEFLATE', () => {
+		// Bytes that are simultaneously a valid RFC 1950 header and a complete raw DEFLATE
+		// stream. 0x78 is a legal zlib CMF, and read as DEFLATE bits it opens a non-final
+		// stored block, so the byte after it — the FLG the % 31 check runs on — doubles as
+		// the low byte of that block's length. Pad the payload to 94 so both readings hold.
+		const payload = new TextEncoder().encode('{"maxChunkSize":1048576}'.padEnd(94, ' '));
+		const len = payload.byteLength;
+		const bothWays = new Uint8Array([0x78, len & 0xff, len >> 8, ~len & 0xff, (~len >> 8) & 0xff, ...payload, 0x01, 0x00, 0x00, 0xff, 0xff]) as Uint8Array<ArrayBuffer>;
+		// As zlib the header is accepted and the body underneath it is not a stream at all;
+		// as raw DEFLATE the whole thing decodes cleanly to the payload. Only the second
+		// reading succeeds, and taking it would hand the caller content no server sent.
+		expect(new TextDecoder().decode(inflateRawSync(bothWays)).trim()).toBe('{"maxChunkSize":1048576}');
+		let failure: any;
+		try {
+			Utils.decompress(bothWays, 'deflate');
+		} catch (err) {
+			failure = err;
+		}
+		expect(failure?.code).toBe('Z_DATA_ERROR');
 	});
 
 	it('rejects an unsupported algorithm instead of silently passing data through', () => {
