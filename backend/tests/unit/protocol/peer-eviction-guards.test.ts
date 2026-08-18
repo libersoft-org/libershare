@@ -2236,3 +2236,38 @@ describe('the autodial address list is bounded', () => {
 		expect(addresses(network)).toContain(multiaddr(CONFIGURED).toString());
 	});
 });
+
+/**
+ * The keep-alive strip runs in its own turn, so the answer it was scheduled on can be stale.
+ * A peer that joins a lishnet in that window is one somebody now needs connected.
+ */
+describe('clearBootstrapKeepAlive — re-checks in the write turn', () => {
+	function bare(neededAfterSchedule: boolean) {
+		const merged: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		let asked = 0;
+		(network as any).node = {
+			peerStore: {
+				async merge(pid: any) {
+					merged.push(pid.toString());
+				},
+			},
+		};
+		(network as any).isPeerNeededByJoinedNetwork = (): boolean => (asked++ === 0 ? false : neededAfterSchedule);
+		return { network, merged };
+	}
+
+	it('strips the tag when nobody claimed the peer in between', async () => {
+		const { network, merged } = bare(false);
+		(network as any).clearBootstrapKeepAlive(PEER_ID);
+		await Bun.sleep(5);
+		expect(merged).toHaveLength(1);
+	});
+
+	it('leaves the tag alone when a lishnet claimed the peer in between', async () => {
+		const { network, merged } = bare(true);
+		(network as any).clearBootstrapKeepAlive(PEER_ID);
+		await Bun.sleep(5);
+		expect(merged).toEqual([]);
+	});
+});

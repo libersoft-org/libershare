@@ -1699,6 +1699,12 @@ export class Network {
 		if (this.isPeerNeededByJoinedNetwork(peerID)) return;
 		void (async (): Promise<void> => {
 			try {
+				// Asked again inside the write's own turn. The check above ran before this
+				// callback was even scheduled, and a peer that joins a network in between is
+				// one another lishnet is now keeping alive — stripping the tag on the strength
+				// of the earlier answer would let libp2p drop a connection somebody needs.
+				// The node is re-read for the same reason a stale run must not write.
+				if (this.node !== node || this.isPeerNeededByJoinedNetwork(peerID)) return;
 				await node.peerStore.merge(peerIDFromString(peerID), { tags: { [KEEP_ALIVE]: undefined } });
 			} catch (err: any) {
 				trace(`[NET] clearBootstrapKeepAlive failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
