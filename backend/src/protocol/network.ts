@@ -2794,8 +2794,14 @@ export class Network {
 				});
 			}
 		};
-		if (!this.topicHandlers.has(topic)) this.topicHandlers.set(topic, new Set());
-		this.topicHandlers.get(topic)!.add(handler);
+		// One handler per topic, replacing rather than joining any earlier one. The set is
+		// keyed by function identity and every call builds a fresh closure, so a second
+		// subscribe to a topic already held used to leave TWO handlers behind — and the
+		// dispatch loop runs all of them, which means every WANT, search and peer-announce
+		// on that topic was answered twice. Two maintenance operations that each stop and
+		// start the node (identity import, factory reset) reach exactly that: both run
+		// startEnabledNetworks and both subscribe the same topics, milliseconds apart.
+		this.topicHandlers.set(topic, new Set([handler]));
 		console.log(`✓ Subscribed to lishnet topic: ${topic}`);
 		// GossipSub mesh needs time to rebuild after subscribe — schedule delayed peer count checks
 		for (const delay of [2000, 5000, 15000]) this.armDelayedPeerCountCheck(delay);

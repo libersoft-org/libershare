@@ -363,3 +363,46 @@ describe('Network lifecycle', () => {
 		await expect(net.writeIdentityKey(new Uint8Array([1, 2, 3]))).rejects.toThrow('Network must be stopped');
 	});
 });
+
+/**
+ * Two maintenance operations that each stop and start the node — an identity import and a
+ * factory reset, say — both run startEnabledNetworks and both subscribe the same topics.
+ * Handlers are held in a set keyed by identity and every subscribe builds a fresh closure,
+ * so without care the second one joins the first and the dispatch loop answers every WANT,
+ * search and peer-announce twice.
+ */
+describe('Network.subscribeTopic — one handler per topic', () => {
+	function bare() {
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).topicHandlers = new Map();
+		(network as any).pubsub = { subscribe() {}, getTopics: () => [], score: null };
+		(network as any).lishHandlers = { handleWant: async () => {}, handleSearchLishs: async () => {} };
+		(network as any).peerAnnounce = { handle: async () => {} };
+		(network as any).delayedPeerCountTimers = new Set();
+		(network as any).runEpoch = 1;
+		(network as any).checkPeerCounts = () => {};
+		return network;
+	}
+	const handlersOf = (network: Network, topic: string): number => ((network as any).topicHandlers.get(topic) as Set<unknown> | undefined)?.size ?? 0;
+	const stopTimers = (network: Network): void => {
+		for (const timer of (network as any).delayedPeerCountTimers) clearTimeout(timer as any);
+	};
+
+	it('keeps exactly one handler however often the same topic is subscribed', () => {
+		const network = bare();
+		network.subscribeTopic('net-a');
+		network.subscribeTopic('net-a');
+		network.subscribeTopic('net-a');
+		expect(handlersOf(network, 'lish/net-a')).toBe(1);
+		stopTimers(network);
+	});
+
+	it('still keeps the topics apart', () => {
+		const network = bare();
+		network.subscribeTopic('net-a');
+		network.subscribeTopic('net-b');
+		expect(handlersOf(network, 'lish/net-a')).toBe(1);
+		expect(handlersOf(network, 'lish/net-b')).toBe(1);
+		stopTimers(network);
+	});
+});
