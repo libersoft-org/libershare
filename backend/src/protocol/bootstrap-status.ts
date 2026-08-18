@@ -223,7 +223,10 @@ export class BootstrapStatusTracker {
 		const previous = net.get(key);
 		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
 		const display = displaySpelling(previous, multiaddr, origin);
-		// Keep the existing staleness clock (see sweepStale). Reaching this point means
+		// Only the staleness clock is kept — `updatedAt` is this row's "when did anything
+		// about it last change", and a new attempt IS a change: the UI shows it, and the
+		// row-cap tiebreak reads it, where a frozen value makes an actively retried row
+		// look older than rows nobody has touched. See sweepStale. Reaching this point means
 		// someone MENTIONED the peer again — gossip repeating an address it still
 		// remembers — which is evidence about the announcer, not about the peer. Letting
 		// a mention move the clock made a dead peer's row immortal: every announce cycle
@@ -235,7 +238,7 @@ export class BootstrapStatusTracker {
 		// re-mentions an address constantly — so a verified member's row was demoted to an
 		// ordinary one within an announce cycle of being verified. A new dial result
 		// overwrites it in recordOutcome; only that can change who is behind the address.
-		net.set(key, { multiaddr: display, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: previous?.actualPeerID ?? null, lastError: null, updatedAt: previous?.updatedAt ?? new Date().toISOString(), staleSince: previous?.staleSince ?? Date.now() });
+		net.set(key, { multiaddr: display, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: previous?.actualPeerID ?? null, lastError: null, updatedAt: new Date().toISOString(), staleSince: previous?.staleSince ?? Date.now() });
 		this.capDiscovered(networkID, net);
 		this.notify(networkID);
 	}

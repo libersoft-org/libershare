@@ -220,7 +220,9 @@ describe('BootstrapStatusTracker.sweepStale', () => {
 
 		tracker.markPending(NET, DEAD_ADDR, DEAD_ID, 'discovered'); // gossip mentions it again
 
-		expect(clockOf(tracker)).toBe(outcomeAt); // clock untouched by the mention
+		// The staleness clock is internal, so the mention is judged by what it does to the
+		// sweep, not by `updatedAt` — that one tracks "anything changed" and a fresh attempt
+		// legitimately moves it. Aging the row from the last OUTCOME is the whole claim here.
 		tracker.sweepStale(TTL, () => false, Date.parse(outcomeAt) + TTL + 2);
 		expect(tracker.getStatus(NET)).toBe(null); // ages out from the last real outcome
 	});
@@ -744,5 +746,37 @@ describe('BootstrapStatusTracker — the cap evicts the least useful row', () =>
 		floodToCap(tracker, 300);
 
 		expect(survivors(tracker)).toHaveLength(256);
+	});
+});
+
+/**
+ * `updatedAt` answers "when did anything about this row last change" and a new attempt is
+ * a change; only `staleSince` may survive one. A frozen `updatedAt` both misreports the row
+ * in the UI and makes an actively retried row lose the cap tiebreak to untouched ones.
+ */
+describe('BootstrapStatusTracker.markPending — timestamps', () => {
+	const NET = 'net-timestamps';
+	const ADDR = '/ip4/192.0.2.10/tcp/9090/p2p/12D3KooWTimestampsFixtureAAAAAAAAAAAAAAAAAAAAAAAA';
+
+	it('stamps a new attempt rather than carrying the previous time', async () => {
+		const tracker = new BootstrapStatusTracker(() => {});
+		tracker.recordOutcome(NET, ADDR, null, 'connected', null, null, 'discovered');
+		const before = tracker.getStatus(NET)!.peers[0]!.updatedAt;
+		await new Promise(resolve => setTimeout(resolve, 5));
+		tracker.markPending(NET, ADDR, null, 'discovered');
+		expect(Date.parse(tracker.getStatus(NET)!.peers[0]!.updatedAt)).toBeGreaterThan(Date.parse(before));
+	});
+
+	it('still expires on the clock the last success set, not on the attempt', () => {
+		// staleSince is deliberately not on the wire, so the proof is behavioural: the row
+		// must still be swept on the old clock however many attempts have restamped it.
+		const tracker = new BootstrapStatusTracker(() => {});
+		const success = 1_000_000;
+		tracker.recordOutcome(NET, ADDR, null, 'connected', null, null, 'discovered');
+		tracker.markPending(NET, ADDR, null, 'discovered');
+		tracker.sweepStale(60_000, () => false, success + 30_000);
+		expect(tracker.getStatus(NET)!.peers).toHaveLength(1);
+		tracker.sweepStale(60_000, () => false, Date.now() + 60_001);
+		expect(tracker.getStatus(NET)?.peers ?? []).toHaveLength(0);
 	});
 });
