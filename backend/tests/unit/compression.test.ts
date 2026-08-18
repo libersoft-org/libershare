@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from 'bun:test';
-import { deflateRawSync, deflateSync, inflateRawSync } from 'node:zlib';
+import { deflateRawSync, deflateSync, inflateRawSync, inflateSync } from 'node:zlib';
 import { rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -14,6 +14,27 @@ function samplePayload(): Uint8Array<ArrayBuffer> {
 	bytes.set(text, 0);
 	for (let i = 0; i < 256; i++) bytes[text.length + i] = i;
 	return bytes as Uint8Array<ArrayBuffer>;
+}
+
+/**
+ * A `deflate` body that is a complete, valid stream under *both* wire readings and means
+ * something different under each. As zlib it is one stored block holding 65 534 bytes; as
+ * raw DEFLATE the header bytes themselves open a one-byte stored block, and two empty
+ * blocks inside that payload — the second of them final — end the stream after that byte.
+ */
+function dualValidDeflate(): Uint8Array<ArrayBuffer> {
+	const payload = new Uint8Array(65534).fill(0x41);
+	payload.set([0x00, 0x00, 0xff, 0xff], 0); // raw reading: empty stored block, non-final
+	payload.set([0x01, 0x00, 0x00, 0xff, 0xff], 4); // raw reading: empty stored block, final
+	let a = 1;
+	let b = 0;
+	for (const byte of payload) {
+		a = (a + byte) % 65521;
+		b = (b + a) % 65521;
+	}
+	const header = [0x78, 0x01, 0x00, 0xfe, 0xff, 0x01, 0x00]; // zlib header, then a stored block of 65 534
+	const trailer = [0x01, 0x00, 0x00, 0xff, 0xff, (b >>> 8) & 0xff, b & 0xff, (a >>> 8) & 0xff, a & 0xff]; // final empty block + Adler-32
+	return new Uint8Array([...header, ...payload, ...trailer]) as Uint8Array<ArrayBuffer>;
 }
 
 const tempFiles: string[] = [];
@@ -125,6 +146,16 @@ describe('Utils.compress / Utils.decompress', () => {
 			failure = err;
 		}
 		expect(failure?.code).toBe('Z_DATA_ERROR');
+	});
+
+	it('deflate: refuses a body that decodes cleanly under both readings', () => {
+		const bothWays = dualValidDeflate();
+		// Genuinely dual-valid: neither decoder complains, and they disagree about the content.
+		// Guessing either way would hand the caller bytes the sender never meant, so the only
+		// honest answer is to refuse — and it has to be our error, not a decoder failure.
+		expect(inflateSync(bothWays).byteLength).toBe(65534);
+		expect(Array.from(inflateRawSync(bothWays))).toEqual([0x01]);
+		expect(() => Utils.decompress(bothWays, 'deflate')).toThrow(ErrorCodes.AMBIGUOUS_DEFLATE);
 	});
 
 	it('rejects an unsupported algorithm instead of silently passing data through', () => {

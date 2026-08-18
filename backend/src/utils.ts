@@ -37,17 +37,32 @@ function hasZlibHeader(data: Uint8Array<ArrayBuffer>): boolean {
  * Inflate an HTTP `deflate` body. The name covers two wire formats: RFC 9110 asks for
  * the zlib wrapper (RFC 1950) and most servers send it, while a long tail sends bare
  * DEFLATE (RFC 1951). Only the leading bytes tell them apart, so the header check above
- * picks the decoder and whichever one it picks is the only one that runs.
+ * picks the decoder. Deciding that from the bytes rather than from a failed decode is what
+ * keeps a broken zlib stream broken: the errors do not separate the two cases — a rejected
+ * header and a corrupt body are both `Z_DATA_ERROR` — so retrying raw after any failure
+ * reinterprets a truncated or tampered zlib body from byte zero.
  *
- * Deciding this from the bytes rather than from a failed decode is what keeps a broken
- * zlib stream broken. The errors do not separate the two cases — a rejected header and a
- * corrupt body are both `Z_DATA_ERROR` — so retrying raw after any failure reinterprets a
- * truncated or tampered zlib body from byte zero, and bytes exist whose raw reading is
- * valid and ends on its own final block. That decodes to content the server never sent,
- * with no error anywhere. Two bytes settle it before any decompression starts.
+ * A body can also be complete and valid under *both* readings at once, and then each one
+ * decodes to different content with no error on either side. Nothing settles which the
+ * sender meant: RFC 9110 names the zlib wrapper, but Bun's own native `fetch` decoder reads
+ * such a body as raw, so the spec and the runtime we sit on disagree, and either pick hands
+ * the caller content nobody sent. Refusing is the only answer that cannot do that.
+ *
+ * A body without the zlib header is decoded once — node's inflate rejects the same two bytes
+ * this file does, so the zlib reading cannot exist and there is nothing to be ambiguous with.
+ * Only a zlib-headered body pays for the second decode, and it ends at the first stored-block
+ * length field. Both decodes carry the same `maxOutputLength`, which is also this check's
+ * ceiling: a raw reading that overruns the cap counts as no reading rather than as ambiguity.
  */
 function inflateDeflate(data: Uint8Array<ArrayBuffer>, options: ZlibOptions): Buffer {
-	return hasZlibHeader(data) ? inflateSync(data, options) : inflateRawSync(data, options);
+	if (!hasZlibHeader(data)) return inflateRawSync(data, options);
+	const inflated = inflateSync(data, options);
+	try {
+		inflateRawSync(data, options);
+	} catch {
+		return inflated;
+	}
+	throw new CodedError(ErrorCodes.AMBIGUOUS_DEFLATE);
 }
 
 export class Utils {

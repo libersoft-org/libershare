@@ -61,6 +61,7 @@
 		"errorMissingParameter": "Chybí povinný parametr: {detail}",
 		"errorUnsupportedCompression": "Nepodporovaný kompresní algoritmus: {detail}",
 		"errorUnsupportedDecompression": "Nepodporovaný dekompresní algoritmus: {detail}",
+		"errorAmbiguousDeflate": "Odpověď v kódování deflate se podle předpokládaného formátu čte jako dva různé soubory, nelze ji tedy jednoznačně dekódovat",
 		"errorDecompressedTooLarge": "Rozbalený soubor přesahuje maximální velikost {detail}",
 		"errorMessageTooLarge": "Data přesahují maximální velikost zprávy {detail}",
 		"errorHTTP": "HTTP chyba: {detail}",

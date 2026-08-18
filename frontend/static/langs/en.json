@@ -61,6 +61,7 @@
 		"errorMissingParameter": "Missing required parameter: {detail}",
 		"errorUnsupportedCompression": "Unsupported compression algorithm: {detail}",
 		"errorUnsupportedDecompression": "Unsupported decompression algorithm: {detail}",
+		"errorAmbiguousDeflate": "The deflate response reads as two different files depending on the format assumed, so it cannot be decoded unambiguously",
 		"errorDecompressedTooLarge": "The decompressed file exceeds the maximum size of {detail}",
 		"errorMessageTooLarge": "The data exceeds the maximum message size of {detail}",
 		"errorHTTP": "HTTP error: {detail}",
