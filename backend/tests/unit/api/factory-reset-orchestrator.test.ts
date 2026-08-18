@@ -118,7 +118,7 @@ describe('buildFactoryResetHandler — category ordering', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildFactoryResetHandler — restart behaviour', () => {
-	it('does NOT stop the node when only settings or downloads are wiped', async () => {
+	it('does NOT stop the node when only downloads are wiped', async () => {
 		const stopped: string[] = [];
 		const deps = makeDeps({
 			networkOverride: {
@@ -129,8 +129,30 @@ describe('buildFactoryResetHandler — restart behaviour', () => {
 			},
 		});
 		const handler = buildFactoryResetHandler(deps);
-		await handler({ settings: true, downloads: true, identity: false, networks: false, peers: false });
+		await handler({ downloads: true, settings: false, identity: false, networks: false, peers: false });
 		expect(stopped).toHaveLength(0);
+	});
+
+	it('stops and restarts the node when only settings are wiped', async () => {
+		// Restoring the defaults rewrites values the node only reads while it is being
+		// built — port, mDNS, UPnP, relay — so without the restart the running node keeps
+		// the old ones and disagrees with everything that reads the settings afterwards.
+		const actions: string[] = [];
+		const deps = makeDeps({
+			networkOverride: {
+				stopAllNetworks: () => {
+					actions.push('stop');
+					return Promise.resolve();
+				},
+				startEnabledNetworks: () => {
+					actions.push('start');
+					return Promise.resolve();
+				},
+			},
+		});
+		const handler = buildFactoryResetHandler(deps);
+		await handler({ settings: true, downloads: false, identity: false, networks: false, peers: false });
+		expect(actions).toEqual(['stop', 'start']);
 	});
 
 	it('stops and restarts the node when identity is wiped', async () => {

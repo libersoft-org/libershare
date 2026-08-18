@@ -55,7 +55,13 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 		// networks are removed. A node restart also tears down every live transfer.
 		// Wiping only the peerstore (wipePeers) does not require an identity change
 		// but still needs the node stopped so the datastore is not in use.
-		const restartNode = wipeIdentity || wipeNetworks || wipePeers;
+		//
+		// Settings belong here too. Part of them is read when the node is BUILT — the
+		// listening port, mDNS, UPnP, relay, peer exchange — so restoring the defaults
+		// without a restart leaves the running node on the old ones while the UI, and
+		// every later read of the settings, already shows the new. The two would only
+		// agree again after some unrelated restart.
+		const restartNode = wipeIdentity || wipeNetworks || wipePeers || wipeSettings;
 
 		const restartNodeAndTransfers = async (): Promise<void> => {
 			await networks.startEnabledNetworks();
