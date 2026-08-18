@@ -1,8 +1,8 @@
 // Product info
-export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL } from './product.ts';
+export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE } from './product.ts';
 
 // Utils
-export { formatBytes, parseBytes, sanitizeFilename } from './utils.ts';
+export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End } from './utils.ts';
 
 // Compression
 

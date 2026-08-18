@@ -1,5 +1,5 @@
-import { brotliCompressSync, brotliDecompressSync, constants as zlibConstants } from 'node:zlib';
-import { type CompressionAlgorithm, detectCompression, CodedError, ErrorCodes } from '@shared';
+import { brotliCompressSync, brotliDecompressSync, gunzipSync, inflateRawSync, inflateSync, zstdDecompressSync, type ZlibOptions, constants as zlibConstants } from 'node:zlib';
+import { type CompressionAlgorithm, detectCompression, formatBytes, CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE } from '@shared';
 
 /**
  * Brotli encoder quality. The library default is 11 (maximum), which costs about
@@ -14,8 +14,81 @@ function asBytes(data: Uint8Array): Uint8Array<ArrayBuffer> {
 	return new Uint8Array(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength);
 }
 
-/** HTTP `Content-Encoding` token that corresponds to each compression algorithm. */
-const CONTENT_ENCODING_TOKENS: Record<CompressionAlgorithm, string> = { gzip: 'gzip', brotli: 'br', zstd: 'zstd' };
+/**
+ * Everything {@link Utils.decompress} can read. `deflate` is decode-only: it arrives
+ * as an HTTP `Content-Encoding`, but nothing here ever writes it, so it stays out of
+ * {@link CompressionAlgorithm} and out of the file extensions and the UI selector.
+ */
+type DecompressAlgorithm = CompressionAlgorithm | 'deflate';
+
+/** Compression algorithm each HTTP `Content-Encoding` token names. */
+const CONTENT_ENCODING_ALGORITHMS: Record<string, DecompressAlgorithm> = { gzip: 'gzip', br: 'brotli', zstd: 'zstd', deflate: 'deflate' };
+
+/**
+ * Whether `data` opens with an RFC 1950 zlib header: the low nibble of the first byte is
+ * the compression method, which must be 8 (deflate), and the two header bytes read as a
+ * big-endian 16-bit value must be a multiple of 31.
+ */
+function hasZlibHeader(data: Uint8Array<ArrayBuffer>): boolean {
+	return data.byteLength >= 2 && (data[0]! & 0x0f) === 8 && ((data[0]! << 8) | data[1]!) % 31 === 0;
+}
+
+/**
+ * The zlib result codes that are a verdict on the *data*: these bytes are not a raw DEFLATE
+ * stream. `Z_DATA_ERROR` is a block the format does not allow, `Z_BUF_ERROR` a stream whose
+ * input ends before it closes; both are reached only by reading the bytes, and neither is
+ * reachable for a raw stream that is valid and complete — trailing bytes past the final block
+ * are ignored, and an empty result is still a result.
+ *
+ * Every other failure describes the environment or our own call instead. `Z_MEM_ERROR` is an
+ * allocation that failed, `Z_STREAM_ERROR` an inconsistent call, `ERR_BUFFER_TOO_LARGE` a raw
+ * reading too large for the cap rather than an absent one. None of them disprove the raw
+ * reading — they only say the check could not be completed — so none may license returning the
+ * zlib one. `Z_NEED_DICT` is not here either: raw inflate reads no header that could ask for a
+ * dictionary, and a dictionary-compressed raw stream fails as `Z_DATA_ERROR` instead.
+ */
+const RAW_DEFLATE_REJECTIONS = new Set(['Z_DATA_ERROR', 'Z_BUF_ERROR']);
+
+/**
+ * Inflate an HTTP `deflate` body. The name covers two wire formats: RFC 9110 asks for
+ * the zlib wrapper (RFC 1950) and most servers send it, while a long tail sends bare
+ * DEFLATE (RFC 1951). Only the leading bytes tell them apart, so the header check above
+ * picks the decoder. Deciding that from the bytes rather than from a failed decode is what
+ * keeps a broken zlib stream broken: the errors do not separate the two cases — a rejected
+ * header and a corrupt body are both `Z_DATA_ERROR` — so retrying raw after any failure
+ * reinterprets a truncated or tampered zlib body from byte zero.
+ *
+ * A body can also be complete and valid under *both* readings at once, and then each one
+ * decodes to different content with no error on either side. Nothing settles which the
+ * sender meant: RFC 9110 names the zlib wrapper, but Bun's own native `fetch` decoder reads
+ * such a body as raw, so the spec and the runtime we sit on disagree, and either pick hands
+ * the caller content nobody sent. Refusing is the only answer that cannot do that.
+ *
+ * A body without the zlib header is decoded once — node's inflate rejects every header this
+ * check rejects, so the zlib reading cannot exist and there is nothing to be ambiguous with.
+ * Only a zlib-headered body pays for a second decode, and on a real zlib body that decode
+ * normally stops at the first stored-block length field, well under a millisecond. The bound
+ * when it does not is `maxOutputLength`, which both decodes carry: the worst an ambiguity
+ * check can add is one more capped inflate.
+ *
+ * Overrunning that cap is a raw reading that exists and is large, not one that is absent, so
+ * it cannot license returning the zlib content: only a verdict on the data itself — one of
+ * {@link RAW_DEFLATE_REJECTIONS} — says these bytes are not a raw stream at all, and anything
+ * else the decode throws leaves the question open, which is a refusal. When the *zlib* reading
+ * is the oversized one, that decode throws before the check is reached and the cap error
+ * stands: it is accurate whatever the raw reading would have said, and it costs no second
+ * decode.
+ */
+function inflateDeflate(data: Uint8Array<ArrayBuffer>, options: ZlibOptions): Buffer {
+	if (!hasZlibHeader(data)) return inflateRawSync(data, options);
+	const inflated = inflateSync(data, options);
+	try {
+		inflateRawSync(data, options);
+	} catch (err: any) {
+		if (RAW_DEFLATE_REJECTIONS.has(err?.code)) return inflated;
+	}
+	throw new CodedError(ErrorCodes.AMBIGUOUS_DEFLATE);
+}
 
 export class Utils {
 	static expandHome(path: string): string {
@@ -67,17 +140,31 @@ export class Utils {
 	/**
 	 * Decompress data using the specified algorithm.
 	 * Single unified decompression point for the entire project.
+	 *
+	 * Output is capped at {@link MAX_API_MESSAGE_SIZE}: a small compressed file
+	 * can expand to gigabytes, and every caller here decompresses synchronously,
+	 * so an uncapped expansion is an out-of-memory kill rather than an error.
+	 * Every algorithm goes through node:zlib because Bun's own
+	 * `gunzipSync` / `zstdDecompressSync` accept no options.
 	 */
-	static decompress(data: Uint8Array<ArrayBuffer>, algorithm: CompressionAlgorithm = 'gzip'): Uint8Array<ArrayBuffer> {
-		switch (algorithm) {
-			case 'gzip':
-				return Bun.gunzipSync(data);
-			case 'brotli':
-				return asBytes(brotliDecompressSync(data));
-			case 'zstd':
-				return asBytes(Bun.zstdDecompressSync(data));
-			default:
-				throw new CodedError(ErrorCodes.UNSUPPORTED_DECOMPRESSION, algorithm);
+	static decompress(data: Uint8Array<ArrayBuffer>, algorithm: DecompressAlgorithm = 'gzip'): Uint8Array<ArrayBuffer> {
+		const options = { maxOutputLength: MAX_API_MESSAGE_SIZE };
+		try {
+			switch (algorithm) {
+				case 'gzip':
+					return asBytes(gunzipSync(data, options));
+				case 'brotli':
+					return asBytes(brotliDecompressSync(data, options));
+				case 'zstd':
+					return asBytes(zstdDecompressSync(data, options));
+				case 'deflate':
+					return asBytes(inflateDeflate(data, options));
+				default:
+					throw new CodedError(ErrorCodes.UNSUPPORTED_DECOMPRESSION, algorithm);
+			}
+		} catch (err: any) {
+			if (err?.code === 'ERR_BUFFER_TOO_LARGE') throw new CodedError(ErrorCodes.DECOMPRESSED_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
+			throw err;
 		}
 	}
 
@@ -113,29 +200,89 @@ export class Utils {
 	}
 
 	/**
+	 * Read a response body into memory, giving up as soon as more than `limit`
+	 * bytes have arrived.
+	 *
+	 * Neither `Content-Length` nor any other header can be trusted to say how much
+	 * a remote server is about to send: it can lie, or send a chunked body with no
+	 * length at all. Counting the bytes as they stream is the only cap that holds;
+	 * checking a body that is already in memory is not a cap. The caller must have
+	 * disabled automatic decompression, or these are post-expansion bytes counted
+	 * after the allocation they were supposed to prevent.
+	 */
+	private static async readBodyCapped(response: Response, limit: number): Promise<Uint8Array<ArrayBuffer>> {
+		if (!response.body) return new Uint8Array(0);
+		const reader = response.body.getReader();
+		const chunks: Uint8Array[] = [];
+		let total = 0;
+		try {
+			for (;;) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				// Check before keeping the chunk, so the retained bytes never pass the limit.
+				if (total + value.byteLength > limit) throw new CodedError(ErrorCodes.RESPONSE_TOO_LARGE, formatBytes(limit));
+				chunks.push(value);
+				total += value.byteLength;
+			}
+		} finally {
+			// Releases the connection whether we finished, gave up, or were aborted.
+			await reader.cancel().catch(() => {});
+		}
+		const body = new Uint8Array(total);
+		let offset = 0;
+		for (const chunk of chunks) {
+			body.set(chunk, offset);
+			offset += chunk.byteLength;
+		}
+		return body;
+	}
+
+	/**
+	 * Compression algorithm named by an HTTP `Content-Encoding` header, or null when the
+	 * header is absent, empty or `identity`.
+	 *
+	 * Throws for any other value, including a multi-codec list. With automatic
+	 * decompression off we are the only decoder in the path, so a codec we cannot read
+	 * has to be an error — decoding it as text would hand the caller binary garbage.
+	 */
+	private static contentEncodingAlgorithm(header: string | null): DecompressAlgorithm | null {
+		const token = header?.trim().toLowerCase() ?? '';
+		if (token === '' || token === 'identity') return null;
+		const algorithm = CONTENT_ENCODING_ALGORITHMS[token];
+		if (!algorithm) throw new CodedError(ErrorCodes.UNSUPPORTED_DECOMPRESSION, token);
+		return algorithm;
+	}
+
+	/**
 	 * Fetch a URL and return the response body as a string.
 	 * Automatically decompresses compressed URLs (.gz, .br, .zst, …). Throws on non-OK responses.
+	 * Every expansion on the way is capped at {@link MAX_API_MESSAGE_SIZE}, as are the
+	 * compressed bytes themselves while they arrive.
 	 */
 	static async fetchURL(url: string, timeoutMs: number = 10000): Promise<string> {
 		const controller = new AbortController();
 		const timeout = setTimeout(() => controller.abort(), timeoutMs);
 		try {
-			const response = await fetch(url, { signal: controller.signal });
+			// `decompress: false` keeps Bun from undoing Content-Encoding inside its native
+			// HTTP layer, where no check we write can reach: a few kilobytes of zstd expand to
+			// hundreds of megabytes there before the first byte is handed to JS, so a cap that
+			// runs on the arriving chunk runs too late. It also drops `Accept-Encoding` from the
+			// request, which asks for nothing rather than for plain bytes: with the field absent
+			// every content coding is acceptable (RFC 9110), so an encoded body is exactly what a
+			// compliant server is allowed to send back, and undoing it below is ours to do.
+			const response = await fetch(url, { signal: controller.signal, decompress: false });
 			if (!response.ok) throw new CodedError(ErrorCodes.HTTP_ERROR, String(response.status));
 			// Detect on the final URL's path first — a redirect can change the extension, and a
 			// query string or fragment would hide it. Fall back to the requested URL, because a
 			// CDN or release redirect often lands on an opaque blob path that carries no extension.
 			const algorithm = detectCompression(Utils.urlPath(response.url || url)) ?? detectCompression(Utils.urlPath(url));
-			// When the server serves the file with the same codec as a transfer encoding,
-			// fetch() has already undone it — decompressing a second time would fail.
-			const contentEncoding = response.headers.get('content-encoding')?.toLowerCase() ?? '';
-			const alreadyDecoded = algorithm !== null && contentEncoding.includes(CONTENT_ENCODING_TOKENS[algorithm]);
-			if (algorithm && !alreadyDecoded) {
-				const compressed = await response.arrayBuffer();
-				const decompressed = Utils.decompress(new Uint8Array(compressed), algorithm);
-				return new TextDecoder().decode(decompressed);
-			}
-			return response.text();
+			const transport = Utils.contentEncodingAlgorithm(response.headers.get('content-encoding'));
+			let body = await Utils.readBodyCapped(response, MAX_API_MESSAGE_SIZE);
+			if (transport) body = Utils.decompress(body, transport);
+			// A `.gz` served as `Content-Encoding: gzip` is one layer labelled twice, not two:
+			// the extension still means something only when it names a different codec.
+			if (algorithm && algorithm !== transport) body = Utils.decompress(body, algorithm);
+			return new TextDecoder().decode(body);
 		} finally {
 			clearTimeout(timeout);
 		}
