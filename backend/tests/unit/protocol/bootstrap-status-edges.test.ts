@@ -112,4 +112,28 @@ describe('bootstrap status — edges of the publish rule', () => {
 		tracker.recordAddressUnreachable(ADDR, 'connect ECONNREFUSED');
 		expect(tracker.getStatus(NET)!.peers[0]!.status).toBe('connected');
 	});
+
+	it('starts from nothing after the node is restarted', () => {
+		// The list is per-run by design: a restarted node has no history to be wrong about,
+		// and re-learns the network the same way a fresh one does. What must not happen is
+		// a row surviving into the next run and speaking for a peer nobody has contacted.
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, ADDR, PEER, 'connected', null, PEER, 'discovered');
+		tracker.clear();
+		expect(tracker.getStatus(NET)).toBe(null);
+		expect(stored(tracker)).toBe(0);
+		// And the first thing the new run hears is still just a claim.
+		tracker.markPending(NET, ADDR, PEER, 'discovered');
+		expect(shown(tracker)).toEqual([]);
+	});
+
+	it('re-earns its place after the network is left and joined again', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, ADDR, PEER, 'connected', null, PEER, 'discovered');
+		tracker.resetNetwork(NET);
+		tracker.markPending(NET, ADDR, PEER, 'discovered');
+		expect(shown(tracker)).toEqual([]);
+		tracker.recordOutcome(NET, ADDR, PEER, 'connected', null, PEER, 'discovered');
+		expect(shown(tracker)).toEqual([ADDR]);
+	});
 });
