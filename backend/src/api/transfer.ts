@@ -111,6 +111,76 @@ export function triggerEnableDownload(lishID: string): void {
 	}
 }
 
+/** What {@link LeftDownloaderDeps} the handler below needs from the transfer handlers. */
+export interface LeftDownloaderDeps {
+	readonly networks: Pick<Networks, 'isJoined'>;
+	readonly downloadEnabledLishs: Set<string>;
+	readonly networkSuspended: Map<string, Set<string>>;
+	readonly activeDownloaders: Map<string, Downloader>;
+	readonly recovery: Pick<ErrorRecovery, 'stop'>;
+	readonly broadcast?: ((event: string, data: any) => void) | undefined;
+}
+
+/**
+ * What leaving a lishnet does to ONE download — see the observer in
+ * {@link initTransferHandlers} for why each is handled on its own.
+ *
+ * Lifted out of that closure so the isolation it exists for can be exercised directly:
+ * the observer's whole point is that one download blowing up must not cost the ones
+ * behind it their cleanup, and that is not something the surrounding handlers can be
+ * asked to demonstrate.
+ */
+export function handleLeftDownloader(deps: LeftDownloaderDeps, networkID: string, lishID: string, dl: Downloader): void {
+	const ids = dl.getNetworkIDs?.() ?? [];
+	if (!ids.includes(networkID)) return;
+	if (ids.some(id => deps.networks.isJoined(id))) {
+		// Another joined lishnet can still source this download — keep it
+		// running but stop using the network we just left, otherwise the
+		// downloader keeps broadcasting WANTs and probing peers on a topic
+		// we are no longer part of.
+		dl.removeNetwork?.(networkID);
+		return;
+	}
+	// Drop the left lishnet here too. The download is about to be disabled, but
+	// disabled is not discarded: rejoining a DIFFERENT lishnet of this download
+	// resumes it, and anything left in the set would then be broadcast on
+	// again — a topic we are no longer part of.
+	dl.removeNetwork?.(networkID);
+	// Drop the runtime enabled flag (no DB persist) so `lishs.list` reports the
+	// download as stopped and restartDownloadIfEnabled cannot silently revive it
+	// while no usable lishnet is joined. The DB flag stays untouched, so an app
+	// restart with the lishnet re-joined resumes the download.
+	const wasEnabled = deps.downloadEnabledLishs.has(lishID);
+	deps.downloadEnabledLishs.delete(lishID);
+	// Cancel any pending error-recovery timer for this LISH — otherwise
+	// ErrorRecovery, holding the captured downloadWasEnabled=true, could
+	// re-enable the download once the IO condition clears even though the
+	// user just stopped it by leaving the network.
+	deps.recovery.stop(lishID);
+	if (wasEnabled) {
+		// Persisted download — retain the disabled downloader and remember it as
+		// suspended-by-leave so onNetworkJoined can resume it after rejoin.
+		console.log(`[Transfer] ${lishID.slice(0, 8)}: last joined lishnet left, disabling download`);
+		dl.disable();
+		// Bind resume to the download's ORIGINAL lishnets (not the current set,
+		// which removeNetwork may have shrunk) so only a re-join of a lishnet this
+		// download actually belongs to resumes it.
+		deps.networkSuspended.set(lishID, new Set(dl.getOriginalNetworkIDs?.() ?? dl.getNetworkIDs?.() ?? []));
+	} else {
+		// Transient download (from the `download` handler, never enabled/persisted)
+		// has no resume claim — destroy it and drop it from the map instead of
+		// leaking a disabled downloader with a dangling download() promise and
+		// registered network handlers (a fresh start of the same LISH would
+		// otherwise overwrite the map entry without disposing this one).
+		console.log(`[Transfer] ${lishID.slice(0, 8)}: last joined lishnet left, dropping transient download`);
+		dl.destroy().catch(err => console.error(`[Transfer] ${lishID.slice(0, 8)}: destroy on leave failed:`, err?.message ?? err));
+		deps.activeDownloaders.delete(lishID);
+	}
+	// dl.disable() alone emits nothing over WS — tell the FE the download
+	// stopped.
+	deps.broadcast?.('transfer.download:disabled', { lishID });
+}
+
 export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn, broadcast?: BroadcastFn, settings?: Settings, triggerVerification?: (lishID: string) => void, finalizeDownload?: (lishID: string) => Promise<{ success: boolean }>): TransferHandlers {
 	const activeDownloaders = new Map<string, Downloader>();
 	setActiveDownloadersRef(activeDownloaders);
@@ -146,56 +216,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		}
 	};
 
-	/** What {@link networks.onNetworkLeft} does to one downloader — see there for the isolation. */
+	/** See {@link handleLeftDownloader}; this only supplies what that needs. */
 	function handleLeftFor(networkID: string, lishID: string, dl: Downloader): void {
-		const ids = dl.getNetworkIDs?.() ?? [];
-		if (!ids.includes(networkID)) return;
-		if (ids.some(id => networks.isJoined(id))) {
-			// Another joined lishnet can still source this download — keep it
-			// running but stop using the network we just left, otherwise the
-			// downloader keeps broadcasting WANTs and probing peers on a topic
-			// we are no longer part of.
-			dl.removeNetwork?.(networkID);
-			return;
-		}
-		// Drop the left lishnet here too. The download is about to be disabled, but
-		// disabled is not discarded: rejoining a DIFFERENT lishnet of this download
-		// resumes it, and anything left in the set would then be broadcast on
-		// again — a topic we are no longer part of.
-		dl.removeNetwork?.(networkID);
-		// Drop the runtime enabled flag (no DB persist) so `lishs.list` reports the
-		// download as stopped and restartDownloadIfEnabled cannot silently revive it
-		// while no usable lishnet is joined. The DB flag stays untouched, so an app
-		// restart with the lishnet re-joined resumes the download.
-		const wasEnabled = downloadEnabledLishs.has(lishID);
-		downloadEnabledLishs.delete(lishID);
-		// Cancel any pending error-recovery timer for this LISH — otherwise
-		// ErrorRecovery, holding the captured downloadWasEnabled=true, could
-		// re-enable the download once the IO condition clears even though the
-		// user just stopped it by leaving the network.
-		recovery.stop(lishID);
-		if (wasEnabled) {
-			// Persisted download — retain the disabled downloader and remember it as
-			// suspended-by-leave so onNetworkJoined can resume it after rejoin.
-			console.log(`[Transfer] ${lishID.slice(0, 8)}: last joined lishnet left, disabling download`);
-			dl.disable();
-			// Bind resume to the download's ORIGINAL lishnets (not the current set,
-			// which removeNetwork may have shrunk) so only a re-join of a lishnet this
-			// download actually belongs to resumes it.
-			networkSuspended.set(lishID, new Set(dl.getOriginalNetworkIDs?.() ?? dl.getNetworkIDs?.() ?? []));
-		} else {
-			// Transient download (from the `download` handler, never enabled/persisted)
-			// has no resume claim — destroy it and drop it from the map instead of
-			// leaking a disabled downloader with a dangling download() promise and
-			// registered network handlers (a fresh start of the same LISH would
-			// otherwise overwrite the map entry without disposing this one).
-			console.log(`[Transfer] ${lishID.slice(0, 8)}: last joined lishnet left, dropping transient download`);
-			dl.destroy().catch(err => console.error(`[Transfer] ${lishID.slice(0, 8)}: destroy on leave failed:`, err?.message ?? err));
-			activeDownloaders.delete(lishID);
-		}
-		// dl.disable() alone emits nothing over WS — tell the FE the download
-		// stopped.
-		broadcast?.('transfer.download:disabled', { lishID });
+		handleLeftDownloader({ networks, downloadEnabledLishs, networkSuspended, activeDownloaders, recovery, broadcast }, networkID, lishID, dl);
 	}
 
 	// When a previously-left lishnet is re-joined in-process, resume downloads that
