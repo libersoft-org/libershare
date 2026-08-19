@@ -631,3 +631,60 @@ describe('PeerAnnounceManager.emit — transitive addresses must name their own 
 		expect(broadcasts[0]!.msg.multiaddrs).toContain(`${PA_ADDR}/p2p/${PA_ID}`);
 	});
 });
+
+/**
+ * What one peer in the store can push into everybody else's dial queue. The emitter
+ * relays addresses it did not verify, so the two things it can still control are how
+ * MANY a single peer contributes and whether the address really terminates at that peer.
+ */
+describe('PeerAnnounceManager.emit — what one peer may contribute', () => {
+	function emitWith(peers: ReturnType<typeof fakePeer>[], subscriberIDs: string[]) {
+		const node = {
+			peerId: { toString: () => SELF_ID },
+			getMultiaddrs: () => [Multiaddr(SELF_ADDR)],
+			peerStore: { all: async () => peers },
+		};
+		const pubsub = {
+			getTopics: () => [TOPIC_A],
+			getSubscribers: () => subscriberIDs.map(fakeSubscriber),
+		};
+		return buildManager(node as any, pubsub as any);
+	}
+
+	it('takes at most three addresses from any one peer', async () => {
+		// A peer with a long address list must not fill the announce on its own — the rest
+		// of the network still has to fit, and the list is relayed unverified.
+		const many = { id: { toString: () => PA_ID }, addresses: Array.from({ length: 12 }, (_, i) => ({ multiaddr: Multiaddr(`/ip4/192.0.2.${50 + i}/tcp/9090`) })) };
+		const { mgr, broadcasts } = emitWith(peersWithFillers(many as any), [PA_ID]);
+
+		await (mgr as any).emit();
+
+		const mine = broadcasts.find(b => b.topic === TOPIC_A)!.msg.multiaddrs;
+		const fromPA = mine.filter(a => a.includes(`/p2p/${PA_ID}`));
+		expect(fromPA).toHaveLength(3);
+	});
+
+	it('refuses to relay an address of one peer that resolves to another', async () => {
+		// A poisoned or stale peerStore entry: filed under A, but the address terminates at
+		// B. Relaying it verbatim would teach the whole topic to dial the wrong identity.
+		const poisoned = { id: { toString: () => PA_ID }, addresses: [{ multiaddr: Multiaddr(`${PB_ADDR}/p2p/${PB_ID}`) }, { multiaddr: Multiaddr(PA_ADDR) }] };
+		const { mgr, broadcasts } = emitWith(peersWithFillers(poisoned as any), [PA_ID]);
+
+		await (mgr as any).emit();
+
+		const mine = broadcasts.find(b => b.topic === TOPIC_A)!.msg.multiaddrs.join(' ');
+		expect(mine).not.toContain(PB_ID);
+		expect(mine).toContain('192.0.2.10/'); // its own address still goes out
+	});
+
+	it('never relays a relay-circuit address, whoever it belongs to', async () => {
+		// A circuit address names a hop we have no reason to send anyone else through.
+		const viaRelay = { id: { toString: () => PA_ID }, addresses: [{ multiaddr: Multiaddr(`/ip4/192.0.2.77/tcp/9090/p2p/${PC_ID}/p2p-circuit/p2p/${PA_ID}`) }, { multiaddr: Multiaddr(PA_ADDR) }] };
+		const { mgr, broadcasts } = emitWith(peersWithFillers(viaRelay as any), [PA_ID]);
+
+		await (mgr as any).emit();
+
+		const mine = broadcasts.find(b => b.topic === TOPIC_A)!.msg.multiaddrs.join(' ');
+		expect(mine).not.toContain('p2p-circuit');
+	});
+});
