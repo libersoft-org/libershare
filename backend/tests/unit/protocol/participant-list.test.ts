@@ -118,6 +118,8 @@ function testNetwork() {
 		rejoinsTheTopic: (): void => {
 			members = [PEER];
 		},
+		/** The user saves this very address as a bootstrap of THIS lishnet. */
+		configureHere: (): Promise<unknown> => (network as any).addBootstrapPeers([ADDRESS], NETWORK, 'configured'),
 		/** The user saves this same address as a bootstrap of a DIFFERENT lishnet. */
 		configureInAnotherNetwork: (): Promise<unknown> => (network as any).addBootstrapPeers([ADDRESS], 'net-somewhere-else', 'configured'),
 		bringPeerBack: (): void => {
@@ -275,6 +277,25 @@ describe('participant list — a peer that goes away stops being listed', () => 
 		net.rejoinsTheTopic();
 		net.reachableOverAnotherAddress();
 		await net.gossip();
+		expect(net.listed()).toEqual([ADDRESS]);
+	});
+
+	it('shows an expired peer again the moment the user configures its address', async () => {
+		// Configured rows are the user's own data and are never hidden: they have to be on
+		// the screen, red if that is what they are, or there is nothing to fix.
+		const net = await upToExpiry();
+		net.pacingExpires();
+		await net.configureHere();
+		expect(net.listed()).toEqual([ADDRESS]);
+	});
+
+	it('lists a member that came back even when nothing announces it', async () => {
+		// A small network may never send a peer announce at all, so waiting for one to carry
+		// the good news leaves a live member off the list for as long as that lasts. The
+		// sweep runs on its own and can see the membership.
+		const net = await upToExpiry();
+		net.rejoinsTheTopic();
+		net.sweepAt(Date.now() + 60 * 60_000);
 		expect(net.listed()).toEqual([ADDRESS]);
 	});
 

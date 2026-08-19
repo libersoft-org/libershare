@@ -831,4 +831,21 @@ describe('BootstrapStatusTracker.capDiscovered — a row pushed out is still rem
 		tracker.markPending(NETWORK, DEAD_ADDRESS, GONE, 'discovered');
 		expect((tracker.getStatus(NETWORK)?.peers ?? []).map(p => p.multiaddr)).not.toContain(DEAD_ADDRESS);
 	});
+
+	it('keeps the tombstone of a peer whose mentions never reach markPending', async () => {
+		// The intake drops a re-announced dead peer at the backoff and quarantine gates,
+		// before markPending — so noteMention is the only thing that records that somebody
+		// is still naming it, and the budget has to honour that.
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NETWORK, DEAD_ADDRESS, GONE, 'connected', null, GONE, 'discovered');
+		tracker.sweepStale(30 * 60_000, () => false, Date.now() + 45 * 60_000);
+		for (let i = 0; i < 300; i++) tracker.recordOutcome(NETWORK, addrOf(i), FLOODER, 'connected', null, FLOODER, 'discovered');
+		await Bun.sleep(5);
+		// Gossip names it on every cycle; every one of those is refused by the pacing.
+		tracker.noteMention(NETWORK, DEAD_ADDRESS);
+		tracker.sweepStale(30 * 60_000, () => false, Date.now() + 90 * 60_000);
+		tracker.markPending(NETWORK, addrOf(999), FLOODER, 'discovered');
+		tracker.markPending(NETWORK, DEAD_ADDRESS, GONE, 'discovered');
+		expect((tracker.getStatus(NETWORK)?.peers ?? []).map(p => p.multiaddr)).not.toContain(DEAD_ADDRESS);
+	});
 });
