@@ -382,7 +382,6 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		(network as any).bootstrapMultiaddrs = bootstrapMaStrs.map(s => multiaddr(s));
 		(network as any).recentDisconnects = [];
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -468,7 +467,6 @@ describe('Network.addBootstrapPeers — rejoin clears suppression', () => {
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},

@@ -48,6 +48,30 @@ type TrackedPeer = BootstrapPeerStatus & {
 	hidden: boolean;
 };
 
+/*
+ * WHO TOUCHES `hidden`, AND WHY
+ *
+ * The rule is one sentence: a DISCOVERED row is published only while the endpoint has
+ * answered for itself, or its proven identity is taking part in the network right now.
+ * Everything below is that sentence applied to each path, and the table is here because
+ * the earlier design — hide only on expiry — needed the same rule enforced in five
+ * separate places and lost it in a new one every time somebody added a sixth.
+ *
+ *   created (markPending)      hidden, always. Being named by gossip is not evidence.
+ *   verified connect           shown. The endpoint answered as itself.
+ *   connect, unverified        unchanged, unless the peer is a member (then shown).
+ *   failed dial                unchanged. A failure is not evidence about the identity.
+ *   expiry sweep               hidden. It answered once, and that was too long ago.
+ *   sweep, peer is a member    shown. Membership does not need an announce to arrive.
+ *   row cap                    deleted outright — a hidden row holds no claim, and
+ *                              re-learning it costs one dial.
+ *   configured, any path       never hidden. User data stays on screen, red if broken.
+ *
+ * The two directions matter equally. Hiding too eagerly loses a live participant, which
+ * is the same complaint as the ticket's, only inverted — so every guard here has a test
+ * for what it must NOT block.
+ */
+
 /**
  * The one thing that is true of every row, wherever it is written.
  *
@@ -266,28 +290,9 @@ export class BootstrapStatusTracker {
 		// overwrites it in recordOutcome; only that can change who is behind the address.
 		// A mention does not unhide an expired row either — the dial it precedes has not
 		// happened yet, and being talked about is not evidence about the peer.
-		net.set(key, { multiaddr: display, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: previous?.actualPeerID ?? null, lastError: null, updatedAt: new Date().toISOString(), staleSince: previous?.staleSince ?? Date.now(), hidden: hiddenFor(finalOrigin, previous?.hidden ?? false) });
+		net.set(key, { multiaddr: display, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: previous?.actualPeerID ?? null, lastError: null, updatedAt: new Date().toISOString(), staleSince: previous?.staleSince ?? Date.now(), hidden: hiddenFor(finalOrigin, previous?.hidden ?? true) });
 		this.capDiscovered(networkID, net);
 		this.notify(networkID);
-	}
-
-	/**
-	 * Somebody named this address again, whatever we then decided to do about it.
-	 *
-	 * The tombstone budget gives up the rows nobody is naming any more, and until now the
-	 * only thing that recorded a naming was {@link markPending} — which the intake reaches
-	 * only after the backoff and quarantine gates. Those gates exist precisely for a peer
-	 * that keeps being announced and keeps failing, so the tombstones under the most
-	 * pressure were the ones whose mentions were never counted. Nothing else about the row
-	 * changes: this is not evidence about the peer, only about who is still talking.
-	 */
-	noteMention(networkID: string, multiaddr: string): void {
-		const peers = this.stats.get(networkID);
-		if (!peers) return;
-		const key = canonicalMultiaddr(multiaddr);
-		const p = peers.get(key);
-		if (!p || !p.hidden) return;
-		peers.set(key, { ...p, updatedAt: new Date().toISOString() });
 	}
 
 	/** Record a dial outcome (connected, timeout, error, identity-mismatch). */
@@ -299,6 +304,13 @@ export class BootstrapStatusTracker {
 		const previous = net.get(key);
 		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
 		const display = displaySpelling(previous, multiaddr, origin);
+		// A dial that failed says nothing about WHO is behind the address, so it may not
+		// erase an identity an earlier dial actually proved. The failure paths pass null
+		// here, and letting that through cost the row the only identity the sweep trusts —
+		// after which a peer that came back and rejoined the topic could not be recognised
+		// as the member it was, and stayed off the list for good. Overwritten only by new
+		// identity evidence: a connection, or a mismatch that names somebody else.
+		const provenIdentity = actualPeerID ?? previous?.actualPeerID ?? null;
 		// Only a VERIFIED success restarts the staleness clock. A FAILING outcome is the
 		// node's own reaction to somebody else's mention of a dead peer, so letting it
 		// advance the clock kept exactly the rows this sweep exists to remove: gossip
@@ -311,7 +323,7 @@ export class BootstrapStatusTracker {
 		// still taking part in THIS network. A peer that left one lishnet while staying
 		// connected through another was kept in the list it had left by exactly that: every
 		// gossip mention produced a 'connected' its other membership had earned.
-		net.set(key, { multiaddr: display, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' && verified ? Date.now() : (previous?.staleSince ?? Date.now()), hidden: hiddenFor(finalOrigin, status === 'connected' && (verified || this.isMemberNow(networkID, actualPeerID)) ? false : (previous?.hidden ?? false)) });
+		net.set(key, { multiaddr: display, expectedPeerID, status, origin: finalOrigin, actualPeerID: provenIdentity, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' && verified ? Date.now() : (previous?.staleSince ?? Date.now()), hidden: hiddenFor(finalOrigin, status === 'connected' && (verified || this.isMemberNow(networkID, provenIdentity)) ? false : (previous?.hidden ?? true)) });
 		this.capDiscovered(networkID, net);
 		this.notify(networkID);
 	}
@@ -387,11 +399,13 @@ export class BootstrapStatusTracker {
 		// invented addresses pushed the memory out and let every peer it was holding back
 		// return. Each is bounded on its own.
 		let discovered = 0;
-		for (const p of net.values()) if (p.origin === 'discovered' && !p.hidden) discovered++;
-		this.trimHidden(net);
+		for (const p of net.values()) if (p.origin === 'discovered') discovered++;
 		if (discovered <= MAX_DISCOVERED_PER_NETWORK) return;
 		const members = this.membersProvider?.(networkID) ?? new Set<string>();
 		const rankOf = (p: TrackedPeer): number => {
+			// A row nobody can see is the cheapest thing to give up: it holds no claim the
+			// list would miss, and re-learning it costs one dial.
+			if (p.hidden) return -1;
 			if (p.actualPeerID && members.has(p.actualPeerID)) return 3;
 			if (p.status === 'connected') return 2;
 			if (p.status === 'pending') return 1;
@@ -400,39 +414,14 @@ export class BootstrapStatusTracker {
 		// Ranked once per row, not inside the comparator — the member lookup would
 		// otherwise run O(n log n) times over the same snapshot.
 		const victims = [...net.entries()]
-			.filter(([, p]) => p.origin === 'discovered' && !p.hidden)
+			.filter(([, p]) => p.origin === 'discovered')
 			.map(([key, p]) => ({ key, rank: rankOf(p), age: Date.parse(p.updatedAt) }))
 			.sort((a, b) => a.rank - b.rank || a.age - b.age);
 		// Taken out of the list, so the same rule applies as everywhere else: hidden, not
 		// forgotten. Deleting here was the last way a peer this node had already written off
 		// could come back on the next announce — under exactly the pressure (an address
 		// flood) where that matters most.
-		for (let i = 0; i < discovered - MAX_DISCOVERED_PER_NETWORK; i++) {
-			const key = victims[i]!.key;
-			const p = net.get(key);
-			if (p) this.removeRow(net, key, p);
-		}
-		this.trimHidden(net);
-	}
-
-	/**
-	 * Bound the tombstones — see {@link capDiscovered} for why they have their own budget.
-	 *
-	 * Dropped in order of when the address was last MENTIONED, not when it last answered.
-	 * The two point opposite ways here. A tombstone only does any work while somebody is
-	 * still announcing that address, and `markPending` stamps `updatedAt` on every mention
-	 * even while the row stays hidden — so the ones nobody has named for a while are the
-	 * ones whose loss costs nothing, and the peer being actively re-announced keeps the
-	 * memory that holds it back. Ordering by `staleSince` did the exact opposite: it gave
-	 * up the longest-dead peers first, which is precisely who a flood of fresh addresses
-	 * would be trying to smuggle back in.
-	 */
-	private trimHidden(net: Map<string, TrackedPeer>): void {
-		let hidden = 0;
-		for (const p of net.values()) if (p.origin === 'discovered' && p.hidden) hidden++;
-		if (hidden <= MAX_DISCOVERED_PER_NETWORK) return;
-		const leastMentioned = [...net.entries()].filter(([, p]) => p.origin === 'discovered' && p.hidden).sort((a, b) => Date.parse(a[1].updatedAt) - Date.parse(b[1].updatedAt));
-		for (let i = 0; i < hidden - MAX_DISCOVERED_PER_NETWORK; i++) net.delete(leastMentioned[i]![0]);
+		for (let i = 0; i < discovered - MAX_DISCOVERED_PER_NETWORK; i++) net.delete(victims[i]!.key);
 	}
 
 	/**

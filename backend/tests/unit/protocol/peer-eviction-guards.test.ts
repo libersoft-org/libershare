@@ -106,7 +106,6 @@ describe('runRedialMaintenance — a peer with no reachable address', () => {
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -185,7 +184,6 @@ describe('runRedialMaintenance — failures either side of a no-route stretch', 
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -296,7 +294,6 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 		const outcomes: string[] = [];
 		const actualPeerIDs: Array<string | null> = [];
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -479,7 +476,6 @@ describe('addBootstrapPeers — forced probe only for configured addresses', () 
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -540,7 +536,6 @@ describe('configured exemption ends when the peer leaves the config', () => {
 		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).addressProbeBackoff = new Map();
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -641,7 +636,6 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -750,7 +744,6 @@ describe('addBootstrapPeers — a dial that lands after leave-network', () => {
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -855,7 +848,6 @@ describe('addBootstrapPeers — only a working discovered address joins the auto
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -953,7 +945,6 @@ describe('addBootstrapPeers — a non-routable configured entry is still configu
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1033,7 +1024,6 @@ describe('addBootstrapPeers — quarantine after the probe it allowed', () => {
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1129,7 +1119,6 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1205,7 +1194,6 @@ describe('probeParkedConfiguredBootstraps', () => {
 		(network as any).bootstrapMultiaddrs = addresses.map(a => multiaddr(a));
 		const repaired: string[] = [];
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			recordAddressReachable(address: string) {
 				repaired.push(address);
 			},
@@ -1336,7 +1324,6 @@ describe('configured origin is a property of the address, not the peer', () => {
 		(network as any).bootstrapMultiaddrs = [multiaddr(CONFIGURED), multiaddr(DISCOVERED)];
 		(network as any).recentDisconnects = [];
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1402,7 +1389,6 @@ describe('Network.stop — per-run state really is per run', () => {
 		(network as any).delayedPeerCountTimers = new Set();
 		(network as any).peerAnnounce = { stop() {} };
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1483,7 +1469,6 @@ describe('runZeroConnectionRecovery — connectivity is read, not remembered', (
 		(network as any).bootstrapMultiaddrs = (opts.addresses ?? [ADDR_A]).map(a => multiaddr(a));
 		(network as any).recentDisconnects = [];
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1551,7 +1536,6 @@ describe('runZeroConnectionRecovery — a failed dial paces the next one', () =>
 		(network as any).bootstrapMultiaddrs = [multiaddr(opts.address)];
 		(network as any).recentDisconnects = [];
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1654,7 +1638,6 @@ describe('runRedialMaintenance — quarantined peers are not candidates', () => 
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1729,7 +1712,6 @@ describe('addBootstrapPeers — a gossip announce of a configured address', () =
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1894,7 +1876,6 @@ describe('addBootstrapPeers — discovered dials are paced by the per-peer backo
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1981,7 +1962,6 @@ describe('addBootstrapPeers — one dial per address at a time', () => {
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -2073,7 +2053,6 @@ describe('addBootstrapPeers — an identity joins the bootstrap set only once it
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
-			noteMention(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},

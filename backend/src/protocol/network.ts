@@ -1940,10 +1940,6 @@ export class Network {
 					if (effectiveOrigin === 'configured') this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'error', 'address is not routable from this host', null, effectiveOrigin);
 					continue;
 				}
-				// Count the mention before any gate can drop it: the tombstone budget keeps the
-				// rows somebody is still announcing, and these gates are exactly what stops a
-				// re-announced dead peer from ever reaching markPending.
-				if (networkID) this.bootstrapTracker.noteMention(networkID, peer);
 				// Pacing, before the quarantine is consulted: gossip mentions a dead peer
 				// on every announce cycle, and this path used to answer each one with a
 				// fresh 10 s dial because it read the quarantine and nothing else. The
