@@ -338,16 +338,8 @@ export class BootstrapStatusTracker {
 		// invented addresses pushed the memory out and let every peer it was holding back
 		// return. Each is bounded on its own.
 		let discovered = 0;
-		let hidden = 0;
-		for (const p of net.values()) {
-			if (p.origin !== 'discovered') continue;
-			if (p.hidden) hidden++;
-			else discovered++;
-		}
-		if (hidden > MAX_DISCOVERED_PER_NETWORK) {
-			const oldest = [...net.entries()].filter(([, p]) => p.origin === 'discovered' && p.hidden).sort((a, b) => a[1].staleSince - b[1].staleSince);
-			for (let i = 0; i < hidden - MAX_DISCOVERED_PER_NETWORK; i++) net.delete(oldest[i]![0]);
-		}
+		for (const p of net.values()) if (p.origin === 'discovered' && !p.hidden) discovered++;
+		this.trimHidden(net);
 		if (discovered <= MAX_DISCOVERED_PER_NETWORK) return;
 		const members = this.membersProvider?.(networkID) ?? new Set<string>();
 		const rankOf = (p: TrackedPeer): number => {
@@ -362,7 +354,36 @@ export class BootstrapStatusTracker {
 			.filter(([, p]) => p.origin === 'discovered' && !p.hidden)
 			.map(([key, p]) => ({ key, rank: rankOf(p), age: Date.parse(p.updatedAt) }))
 			.sort((a, b) => a.rank - b.rank || a.age - b.age);
-		for (let i = 0; i < discovered - MAX_DISCOVERED_PER_NETWORK; i++) net.delete(victims[i]!.key);
+		// Taken out of the list, so the same rule applies as everywhere else: hidden, not
+		// forgotten. Deleting here was the last way a peer this node had already written off
+		// could come back on the next announce — under exactly the pressure (an address
+		// flood) where that matters most.
+		for (let i = 0; i < discovered - MAX_DISCOVERED_PER_NETWORK; i++) {
+			const key = victims[i]!.key;
+			const p = net.get(key);
+			if (p) this.removeRow(net, key, p);
+		}
+		this.trimHidden(net);
+	}
+
+	/**
+	 * Bound the tombstones — see {@link capDiscovered} for why they have their own budget.
+	 *
+	 * Dropped in order of when the address was last MENTIONED, not when it last answered.
+	 * The two point opposite ways here. A tombstone only does any work while somebody is
+	 * still announcing that address, and `markPending` stamps `updatedAt` on every mention
+	 * even while the row stays hidden — so the ones nobody has named for a while are the
+	 * ones whose loss costs nothing, and the peer being actively re-announced keeps the
+	 * memory that holds it back. Ordering by `staleSince` did the exact opposite: it gave
+	 * up the longest-dead peers first, which is precisely who a flood of fresh addresses
+	 * would be trying to smuggle back in.
+	 */
+	private trimHidden(net: Map<string, TrackedPeer>): void {
+		let hidden = 0;
+		for (const p of net.values()) if (p.origin === 'discovered' && p.hidden) hidden++;
+		if (hidden <= MAX_DISCOVERED_PER_NETWORK) return;
+		const leastMentioned = [...net.entries()].filter(([, p]) => p.origin === 'discovered' && p.hidden).sort((a, b) => Date.parse(a[1].updatedAt) - Date.parse(b[1].updatedAt));
+		for (let i = 0; i < hidden - MAX_DISCOVERED_PER_NETWORK; i++) net.delete(leastMentioned[i]![0]);
 	}
 
 	/**
