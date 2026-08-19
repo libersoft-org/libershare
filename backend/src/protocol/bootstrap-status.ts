@@ -278,6 +278,13 @@ export class BootstrapStatusTracker {
 		for (const [networkID, peers] of this.stats) {
 			const peer = peers.get(target);
 			if (!peer || peer.status === 'connected') continue;
+			// Only the rows the probe speaks for. The probe walks the CONFIGURED addresses
+			// of this node, so all it establishes is that a saved entry answers — nothing
+			// about whether the peer is still a participant of some other network that once
+			// heard the same address over gossip. Refreshing a discovered row here restarted
+			// its staleness clock on evidence that had nothing to do with that network, and
+			// the row then outlived every sweep.
+			if (peer.origin !== 'configured') continue;
 			// The probe knows the endpoint answered, not who answered — so it neither sets
 			// nor clears the verified identity a real dial may already have established.
 			peers.set(target, { ...peer, status: 'connected', lastError: null, updatedAt: new Date().toISOString(), staleSince: Date.now() });
