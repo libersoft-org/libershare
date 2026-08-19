@@ -279,9 +279,26 @@ export class BootstrapStatusTracker {
 		// still taking part in THIS network. A peer that left one lishnet while staying
 		// connected through another was kept in the list it had left by exactly that: every
 		// gossip mention produced a 'connected' its other membership had earned.
-		net.set(key, { multiaddr: display, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' && verified ? Date.now() : (previous?.staleSince ?? Date.now()), hidden: status === 'connected' && verified ? false : (previous?.hidden ?? false) });
+		net.set(key, { multiaddr: display, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' && verified ? Date.now() : (previous?.staleSince ?? Date.now()), hidden: status === 'connected' && (verified || this.isMemberNow(networkID, actualPeerID)) ? false : (previous?.hidden ?? false) });
 		this.capDiscovered(networkID, net);
 		this.notify(networkID);
+	}
+
+	/**
+	 * Is this identity taking part in the network right now?
+	 *
+	 * The one piece of evidence that is network-scoped without needing a verified endpoint,
+	 * which is why the sweep already trusts it to exempt a row. Hiding needs it for the
+	 * opposite direction: a peer that came back and connected to US is a participant, but a
+	 * discovered dial to its address gets handed the connection we already hold and so never
+	 * verifies. Without this the row it once had stays hidden for as long as that lasts, and
+	 * a live member is missing from the list — the ticket's own complaint, inverted.
+	 *
+	 * The identity has to be the one a dial PROVED, never the one an address claims;
+	 * see the sweep for what reading the claim costs.
+	 */
+	private isMemberNow(networkID: string, actualPeerID: string | null): boolean {
+		return actualPeerID !== null && (this.membersProvider?.(networkID)?.has(actualPeerID) ?? false);
 	}
 
 	/**
