@@ -244,7 +244,7 @@ export class BootstrapStatusTracker {
 	}
 
 	/** Record a dial outcome (connected, timeout, error, identity-mismatch). */
-	recordOutcome(networkID: string | null, multiaddr: string, expectedPeerID: string | null, status: BootstrapPeerDialStatus, message: string | null, actualPeerID: string | null, origin: BootstrapPeerOrigin): void {
+	recordOutcome(networkID: string | null, multiaddr: string, expectedPeerID: string | null, status: BootstrapPeerDialStatus, message: string | null, actualPeerID: string | null, origin: BootstrapPeerOrigin, verified: boolean = true): void {
 		if (!networkID) return;
 		const net = this.ensureNetwork(networkID);
 		const key = canonicalMultiaddr(multiaddr);
@@ -252,11 +252,19 @@ export class BootstrapStatusTracker {
 		const previous = net.get(key);
 		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
 		const display = displaySpelling(previous, multiaddr, origin);
-		// Only success restarts the staleness clock. A FAILING outcome is the node's own
-		// reaction to somebody else's mention of a dead peer, so letting it advance the
-		// clock kept exactly the rows this sweep exists to remove: gossip mentions the
-		// peer, the dial fails, the row is refreshed, and the TTL is never reached.
-		net.set(key, { multiaddr: display, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' ? Date.now() : (previous?.staleSince ?? Date.now()) });
+		// Only a VERIFIED success restarts the staleness clock. A FAILING outcome is the
+		// node's own reaction to somebody else's mention of a dead peer, so letting it
+		// advance the clock kept exactly the rows this sweep exists to remove: gossip
+		// mentions the peer, the dial fails, the row is refreshed, and the TTL is never
+		// reached.
+		//
+		// `verified` closes the same hole from the other side. A discovered dial does not
+		// force, so libp2p may answer it with a connection it already holds to that peer
+		// over a DIFFERENT address — which says the peer is alive somewhere, not that it is
+		// still taking part in THIS network. A peer that left one lishnet while staying
+		// connected through another was kept in the list it had left by exactly that: every
+		// gossip mention produced a 'connected' its other membership had earned.
+		net.set(key, { multiaddr: display, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' && verified ? Date.now() : (previous?.staleSince ?? Date.now()) });
 		this.capDiscovered(networkID, net);
 		this.notify(networkID);
 	}

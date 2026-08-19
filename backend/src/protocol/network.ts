@@ -2086,7 +2086,7 @@ export class Network {
 					// passing null here left an active, verified member ranked as an ordinary
 					// connected row — evictable by age alongside the invented addresses the
 					// ranking exists to drop.
-					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, conn?.remotePeer?.toString() ?? null, effectiveOrigin);
+					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, conn?.remotePeer?.toString() ?? null, effectiveOrigin, verifiedThisAddr);
 					console.log('✓ Connected to new bootstrap peer');
 				} catch (err: any) {
 					if (superseded()) return 'incomplete';
