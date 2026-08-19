@@ -55,9 +55,11 @@ function testNetwork() {
 	(network as any).configuredBootstrapAddressesByNet = new Map();
 	(network as any).isTopicSubscribed = () => true;
 	(network as any).isPeerNeededByJoinedNetwork = () => true;
-	// Nobody is subscribed to the topic in this test, so the sweep's membership exemption
+	// Nobody is subscribed to the topic to begin with, so the sweep's membership exemption
 	// never fires and the row is judged purely on its staleness clock.
-	(network as any).getTopicPeers = () => [];
+	let members: string[] = [];
+	(network as any).getTopicPeers = () => members;
+	tracker.setMembersProvider(() => new Set(members));
 	(network as any).node = {
 		peerId: { toString: () => 'selfID' },
 		getConnections: () => [],
@@ -111,6 +113,10 @@ function testNetwork() {
 			(network as any).purgeStalePeer = async (): Promise<void> => {};
 			const dead = { id: peerIdLike(PEER), addresses: [{ multiaddr: { toString: () => '/ip4/203.0.113.7/tcp/9090' } }] };
 			await (network as any).runRedialMaintenance([], [dead], 1);
+		},
+		/** The peer takes part in the network again — it is back on the topic. */
+		rejoinsTheTopic: (): void => {
+			members = [PEER];
 		},
 		/** The user saves this same address as a bootstrap of a DIFFERENT lishnet. */
 		configureInAnotherNetwork: (): Promise<unknown> => (network as any).addBootstrapPeers([ADDRESS], 'net-somewhere-else', 'configured'),
@@ -256,6 +262,19 @@ describe('participant list — a peer that goes away stops being listed', () => 
 		await net.gossip();
 		expect(net.listed()).toEqual([ADDRESS]);
 		net.sweepAt(answeredAt + STALE_TTL_MS + JUST_PAST_THE_WINDOW_MS);
+		expect(net.listed()).toEqual([ADDRESS]);
+	});
+
+	it('lists a member again even when our dial keeps landing on an existing connection', async () => {
+		// The mirror of the bug above, and the one hiding the row can cause: the peer comes
+		// back and connects to US, so every dial we make to its address is answered with the
+		// connection we already hold — over some other address, so nothing ever verifies this
+		// endpoint. Taking part in the network is the evidence that settles it.
+		const net = await upToExpiry();
+		net.pacingExpires();
+		net.rejoinsTheTopic();
+		net.reachableOverAnotherAddress();
+		await net.gossip();
 		expect(net.listed()).toEqual([ADDRESS]);
 	});
 
