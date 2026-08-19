@@ -780,3 +780,55 @@ describe('BootstrapStatusTracker.markPending — timestamps', () => {
 		expect(tracker.getStatus(NET)?.peers ?? []).toHaveLength(0);
 	});
 });
+
+describe('BootstrapStatusTracker.capDiscovered — a row pushed out is still remembered', () => {
+	const FLOODER = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+	const GONE = '12D3KooWAnfqA6Wap96ixVfxhHeGUDMriBG4Nncp5tqu8q71EVv2';
+	const NETWORK = 'net-cap';
+	const DEAD_ADDRESS = `/ip4/203.0.113.11/tcp/9090/p2p/${GONE}`;
+	const addrOf = (n: number): string => `/ip4/198.51.100.${n % 200}/tcp/${9000 + n}/p2p/${FLOODER}`;
+
+	it('does not let an address flood buy a written-off peer its way back in', () => {
+		const tracker = new BootstrapStatusTracker();
+		// The list is already full of live addresses somebody announced.
+		for (let i = 0; i < 256; i++) tracker.recordOutcome(NETWORK, addrOf(i), FLOODER, 'connected', null, FLOODER, 'discovered');
+		// A peer answers, then stops. Its row is the least useful thing on a full list, so
+		// the cap is what takes it out — not the staleness sweep.
+		tracker.recordOutcome(NETWORK, DEAD_ADDRESS, GONE, 'connected', null, GONE, 'discovered');
+		tracker.recordOutcome(NETWORK, DEAD_ADDRESS, GONE, 'timeout', 'timed out', null, 'discovered');
+		// More of the flood arrives. Now that the row is a failed one it is the lowest-ranked
+		// thing on the list, so this is the round that gives it up.
+		for (let i = 256; i < 262; i++) tracker.recordOutcome(NETWORK, addrOf(i), FLOODER, 'connected', null, FLOODER, 'discovered');
+		expect((tracker.getStatus(NETWORK)?.peers ?? []).map(p => p.multiaddr)).not.toContain(DEAD_ADDRESS);
+		// The flood ages out, so there is room on the list again.
+		tracker.sweepStale(30 * 60_000, () => false, Date.now() + 45 * 60_000);
+		// The next announce of the dead peer must not read as a first sighting.
+		tracker.markPending(NETWORK, DEAD_ADDRESS, GONE, 'discovered');
+		expect((tracker.getStatus(NETWORK)?.peers ?? []).map(p => p.multiaddr)).not.toContain(DEAD_ADDRESS);
+	});
+
+	it('keeps the tombstone of the peer the flood keeps naming', async () => {
+		const tracker = new BootstrapStatusTracker();
+		// A peer answers, stops, and expires out of the list.
+		tracker.recordOutcome(NETWORK, DEAD_ADDRESS, GONE, 'connected', null, GONE, 'discovered');
+		tracker.sweepStale(30 * 60_000, () => false, Date.now() + 45 * 60_000);
+		expect(tracker.getStatus(NETWORK)).toBe(null);
+		// Somebody floods the tombstone budget with addresses that expire too, while STILL
+		// naming the dead peer on every cycle — the shape an attacker would use to push the
+		// memory of it out.
+		for (let i = 0; i < 300; i++) tracker.recordOutcome(NETWORK, addrOf(i), FLOODER, 'connected', null, FLOODER, 'discovered');
+		// Still naming the dead peer, as gossip does on every announce cycle. The row stays
+		// hidden, but the mention is what marks the tombstone as one still doing work.
+		await Bun.sleep(5);
+		tracker.markPending(NETWORK, DEAD_ADDRESS, GONE, 'discovered');
+		// The flood ages out as well, so the tombstone budget overflows and has to give
+		// something up. It must not be the one being actively announced.
+		tracker.sweepStale(30 * 60_000, () => false, Date.now() + 90 * 60_000);
+		// This mention is what makes the budget trim run.
+		tracker.markPending(NETWORK, DEAD_ADDRESS, GONE, 'discovered');
+		// And this is the one that would read as a first sighting if the trim had thrown the
+		// tombstone away.
+		tracker.markPending(NETWORK, DEAD_ADDRESS, GONE, 'discovered');
+		expect((tracker.getStatus(NETWORK)?.peers ?? []).map(p => p.multiaddr)).not.toContain(DEAD_ADDRESS);
+	});
+});
