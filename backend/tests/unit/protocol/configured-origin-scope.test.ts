@@ -105,3 +105,60 @@ describe('a configured install must not be swallowed by an in-flight discovered 
 		expect(rowIn(tracker, NET_A)?.origin).toBe('configured');
 	});
 });
+
+describe('an unverified endpoint must not refresh a discovered row', () => {
+	/** Age the row so only a refresh of its clock can save it from the sweep below. */
+	function age(tracker: BootstrapStatusTracker, net: string, byMs: number): void {
+		const rows = (tracker as any).stats.get(net);
+		const key = [...rows.keys()][0];
+		rows.set(key, { ...rows.get(key), staleSince: Date.now() - byMs });
+	}
+
+	it('does not restart the staleness clock when the connection came back on another address', async () => {
+		const { network, tracker } = harness();
+		// libp2p hands back the connection it already holds to this peer, over a DIFFERENT
+		// address — the peer is reachable, but nothing was proved about this endpoint or
+		// about the peer still taking part in this network.
+		(network as any).node.dial = async (): Promise<any> => ({ remotePeer: { toString: () => PEER_ID }, remoteAddr: multiaddr(`/ip4/198.51.100.4/tcp/9090/p2p/${PEER_ID}`), close: async () => {} });
+		await network.addBootstrapPeers([SHARED], NET_B, 'discovered');
+		age(tracker, NET_B, 29 * 60_000);
+		// Gossip mentions the departed peer again, as it does on every announce cycle.
+		await network.addBootstrapPeers([SHARED], NET_B, 'discovered');
+		tracker.sweepStale(30 * 60_000, () => false, Date.now() + 5 * 60_000);
+		expect(rowIn(tracker, NET_B)).toBeUndefined();
+	});
+
+	it('still restarts it when the connection really is on the address', async () => {
+		const { network, tracker } = harness();
+		await network.addBootstrapPeers([SHARED], NET_B, 'discovered');
+		age(tracker, NET_B, 29 * 60_000);
+		await network.addBootstrapPeers([SHARED], NET_B, 'discovered');
+		tracker.sweepStale(30 * 60_000, () => false, Date.now() + 5 * 60_000);
+		expect(rowIn(tracker, NET_B)?.status).toBe('connected');
+	});
+});
+
+describe('a configured install must not be swallowed by another network dial', () => {
+	it('gives network A its configured row while gossip in B holds the claim', async () => {
+		const { network, tracker } = harness();
+		let release: () => void = () => {};
+		const held = new Promise<void>(r => (release = r));
+		let first = true;
+		(network as any).node.dial = async (ma: any): Promise<any> => {
+			if (first) {
+				first = false;
+				await held;
+			}
+			return { remotePeer: { toString: () => PEER_ID }, remoteAddr: multiaddr(ma.toString()), close: async () => {} };
+		};
+		const gossipInB = network.addBootstrapPeers([SHARED], NET_B, 'discovered');
+		await Bun.sleep(20);
+		const installInA = await network.addBootstrapPeers([SHARED], NET_A, 'configured');
+		release();
+		await gossipInB;
+		// Either A gets its row, or the install has to report that it did not finish — what
+		// it may not do is claim success and leave A with nothing.
+		if (installInA === 'completed') expect(rowIn(tracker, NET_A)?.origin).toBe('configured');
+		else expect(installInA).not.toBe('completed');
+	});
+});
