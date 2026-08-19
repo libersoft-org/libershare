@@ -41,7 +41,7 @@ describe('bootstrap status — edges of the publish rule', () => {
 		tracker.recordOutcome(NET, ADDR, PEER, 'connected', null, PEER, 'discovered');
 		tracker.recordOutcome(NET, ADDR, PEER, 'identity-mismatch', 'expected one, got another', OTHER, 'discovered');
 		const row = ((tracker as any).stats.get(NET) as Map<string, { actualPeerID: string }>).values().next().value;
-		expect(row.actualPeerID).toBe(OTHER);
+		expect(row?.actualPeerID).toBe(OTHER);
 	});
 
 	it('does not let a hidden flood push a live participant off the list', () => {
@@ -80,5 +80,36 @@ describe('bootstrap status — edges of the publish rule', () => {
 		// only as good as its NEW clock, and a sweep a moment later must not undo the return.
 		tracker.sweepStale(TTL, () => false, Date.now() + TTL - 60_000);
 		expect(shown(tracker)).toEqual([ADDR]);
+	});
+
+	it('stops calling a configured peer connected once the recovery dial is refused', () => {
+		// Found live: the node went to zero connections, dialled its configured bootstrap
+		// every 30 s, got ECONNREFUSED every time — and the participant list kept the row
+		// green, because that loop walks addresses and had nowhere to report to.
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, ADDR, PEER, 'connected', null, PEER, 'configured');
+		expect(tracker.getStatus(NET)!.peers[0]!.status).toBe('connected');
+
+		tracker.recordAddressUnreachable(ADDR, 'connect ECONNREFUSED');
+
+		const row = tracker.getStatus(NET)!.peers[0]!;
+		expect(row.status).toBe('timeout');
+		expect(row.lastError).toBe('connect ECONNREFUSED');
+	});
+
+	it('leaves the staleness clock alone when a recovery dial fails', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, ADDR, PEER, 'connected', null, PEER, 'configured');
+		const clockBefore = (((tracker as any).stats.get(NET) as Map<string, { staleSince: number }>).values().next().value as { staleSince: number }).staleSince;
+		tracker.recordAddressUnreachable(ADDR, 'connect ECONNREFUSED');
+		const clockAfter = (((tracker as any).stats.get(NET) as Map<string, { staleSince: number }>).values().next().value as { staleSince: number }).staleSince;
+		expect(clockAfter).toBe(clockBefore);
+	});
+
+	it('says nothing about a discovered row, which this loop does not speak for', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, ADDR, PEER, 'connected', null, PEER, 'discovered');
+		tracker.recordAddressUnreachable(ADDR, 'connect ECONNREFUSED');
+		expect(tracker.getStatus(NET)!.peers[0]!.status).toBe('connected');
 	});
 });

@@ -106,6 +106,8 @@ describe('runRedialMaintenance — a peer with no reachable address', () => {
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -184,6 +186,8 @@ describe('runRedialMaintenance — failures either side of a no-route stretch', 
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -294,6 +298,8 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 		const outcomes: string[] = [];
 		const actualPeerIDs: Array<string | null> = [];
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -476,6 +482,8 @@ describe('addBootstrapPeers — forced probe only for configured addresses', () 
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -536,6 +544,8 @@ describe('configured exemption ends when the peer leaves the config', () => {
 		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).addressProbeBackoff = new Map();
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -636,6 +646,8 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -744,6 +756,8 @@ describe('addBootstrapPeers — a dial that lands after leave-network', () => {
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -848,6 +862,8 @@ describe('addBootstrapPeers — only a working discovered address joins the auto
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -945,6 +961,8 @@ describe('addBootstrapPeers — a non-routable configured entry is still configu
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1024,6 +1042,8 @@ describe('addBootstrapPeers — quarantine after the probe it allowed', () => {
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1119,6 +1139,8 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1194,6 +1216,7 @@ describe('probeParkedConfiguredBootstraps', () => {
 		(network as any).bootstrapMultiaddrs = addresses.map(a => multiaddr(a));
 		const repaired: string[] = [];
 		(network as any).bootstrapTracker = {
+			recordAddressUnreachable(): void {},
 			recordAddressReachable(address: string) {
 				repaired.push(address);
 			},
@@ -1324,6 +1347,8 @@ describe('configured origin is a property of the address, not the peer', () => {
 		(network as any).bootstrapMultiaddrs = [multiaddr(CONFIGURED), multiaddr(DISCOVERED)];
 		(network as any).recentDisconnects = [];
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1389,6 +1414,8 @@ describe('Network.stop — per-run state really is per run', () => {
 		(network as any).delayedPeerCountTimers = new Set();
 		(network as any).peerAnnounce = { stop() {} };
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1469,6 +1496,8 @@ describe('runZeroConnectionRecovery — connectivity is read, not remembered', (
 		(network as any).bootstrapMultiaddrs = (opts.addresses ?? [ADDR_A]).map(a => multiaddr(a));
 		(network as any).recentDisconnects = [];
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1535,7 +1564,12 @@ describe('runZeroConnectionRecovery — a failed dial paces the next one', () =>
 		(network as any).configuredBootstrapAddresses = new Set(opts.configured ? [normalizeMultiaddrForCompare(opts.address)] : []);
 		(network as any).bootstrapMultiaddrs = [multiaddr(opts.address)];
 		(network as any).recentDisconnects = [];
+		const reportedUnreachable: string[] = [];
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(address: string): void {
+				reportedUnreachable.push(address);
+			},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1548,10 +1582,26 @@ describe('runZeroConnectionRecovery — a failed dial paces the next one', () =>
 				throw new Error('dial timeout');
 			},
 		};
-		return { network, dialed };
+		return { network, dialed, reportedUnreachable };
 	}
 
 	const run = (network: Network): Promise<void> => (network as any).runZeroConnectionRecovery(1);
+
+	it('tells the status row when a configured address refuses the recovery dial', async () => {
+		// Found live: the node dialled its configured bootstrap every 30 s, was refused every
+		// time, and the participant list went on showing the peer as connected. This loop
+		// walks addresses rather than a network's list, so reporting is the only way the
+		// screen ever hears about it.
+		const { network, reportedUnreachable } = bareNetwork({ address: CONFIGURED, configured: true });
+		await run(network);
+		expect(reportedUnreachable).toEqual([multiaddr(CONFIGURED).toString()]);
+	});
+
+	it('says nothing about a discovered address, which other loops own', async () => {
+		const { network, reportedUnreachable } = bareNetwork({ address: DISCOVERED, configured: false });
+		await run(network);
+		expect(reportedUnreachable).toEqual([]);
+	});
 
 	it('writes the full four-field backoff record for a discovered address', async () => {
 		const { network } = bareNetwork({ address: DISCOVERED, configured: false });
@@ -1638,6 +1688,8 @@ describe('runRedialMaintenance — quarantined peers are not candidates', () => 
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1712,6 +1764,8 @@ describe('addBootstrapPeers — a gossip announce of a configured address', () =
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1876,6 +1930,8 @@ describe('addBootstrapPeers — discovered dials are paced by the per-peer backo
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -1962,6 +2018,8 @@ describe('addBootstrapPeers — one dial per address at a time', () => {
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -2053,6 +2111,8 @@ describe('addBootstrapPeers — an identity joins the bootstrap set only once it
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
