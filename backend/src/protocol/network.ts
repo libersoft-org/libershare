@@ -1537,14 +1537,20 @@ export class Network {
 				console.log(`   → Dialing ${maStr}`);
 				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
 				if (epoch !== this.runEpoch) return;
-				if (configured) this.addressProbeBackoff.delete(canonical);
-				else if (pid) this.redialBackoff.delete(pid);
+				if (configured) {
+					this.addressProbeBackoff.delete(canonical);
+					// Tell the UI as well — this loop is the one that gets a node talking again
+					// after a total outage, and its result is exactly what the status row is for.
+					this.bootstrapTracker.recordAddressReachable(maStr);
+				} else if (pid) this.redialBackoff.delete(pid);
 				console.log(`   ✓ Connected via ${maStr}`);
 				break;
 			} catch (err: any) {
 				if (epoch !== this.runEpoch) return;
-				if (configured) this.noteAddressProbeFailure(canonical);
-				else if (pid) this.noteRecoveryDialFailure(pid);
+				if (configured) {
+					this.noteAddressProbeFailure(canonical);
+					this.bootstrapTracker.recordAddressUnreachable(maStr, err?.message ?? String(err));
+				} else if (pid) this.noteRecoveryDialFailure(pid);
 				console.log(`   ✗ Failed ${maStr}: ${err.message ?? err}`);
 			}
 		}

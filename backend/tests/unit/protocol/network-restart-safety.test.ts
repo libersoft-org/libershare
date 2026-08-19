@@ -131,6 +131,8 @@ describe('Network.addBootstrapPeers — a dial that lands after a restart', () =
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},
@@ -241,6 +243,8 @@ describe('Network.addBootstrapPeers — configured bootstraps become direct peer
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
 			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
 				return fn();
 			},

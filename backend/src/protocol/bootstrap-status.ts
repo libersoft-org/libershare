@@ -377,6 +377,30 @@ export class BootstrapStatusTracker {
 	}
 
 	/**
+	 * The other half of {@link recordAddressReachable}: the endpoint did not answer.
+	 *
+	 * Zero-connection recovery walks ADDRESSES rather than a network's list, so like the
+	 * parked probe it has no network to report to and speaks to every row for that
+	 * endpoint. Without this it dialled a dead bootstrap every 30 seconds, watched the
+	 * connection be refused, and left the participant list showing it as connected — the
+	 * node knew, and the screen did not.
+	 *
+	 * Configured rows only, for the same reason as its counterpart, and the staleness clock
+	 * does not move: a failure is not evidence that anything answered.
+	 */
+	recordAddressUnreachable(address: string, message: string): void {
+		const target = canonicalMultiaddr(address);
+		const truncated = message.length > 200 ? message.slice(0, 200) + '…' : message;
+		for (const [networkID, peers] of this.stats) {
+			const peer = peers.get(target);
+			if (!peer || peer.origin !== 'configured') continue;
+			if (peer.status === 'timeout' && peer.lastError === truncated) continue;
+			peers.set(target, { ...peer, status: 'timeout', lastError: truncated, updatedAt: new Date().toISOString() });
+			this.notify(networkID);
+		}
+	}
+
+	/**
 	 * Bound discovered rows per network — see MAX_DISCOVERED_PER_NETWORK.
 	 *
 	 * Age alone is the wrong order. It looks at neither the row's state nor whether the
