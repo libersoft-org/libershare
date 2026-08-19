@@ -33,7 +33,20 @@ const BATCH_FLUSH_INTERVAL_MS = 75;
  * `updatedAt` meant a dead row was refreshed by its own failures and could never expire.
  * `staleSince` moves only when the address actually answered.
  */
-type TrackedPeer = BootstrapPeerStatus & { staleSince: number };
+type TrackedPeer = BootstrapPeerStatus & {
+	staleSince: number;
+	/**
+	 * Expired out of the published list, but still remembered.
+	 *
+	 * The sweep used to delete the row, which threw away the one thing that kept the peer
+	 * out: its `staleSince`. The next gossip mention then created a fresh row with a fresh
+	 * clock, so a peer nobody had reached for hours was back in the list for another full
+	 * TTL — on nothing but somebody else's memory of it. Hiding instead of deleting keeps
+	 * the clock, so only a real connection can bring the row back. The row-cap drops hidden
+	 * rows before anything else, which is what bounds them.
+	 */
+	hidden: boolean;
+};
 
 /**
  * Which spelling of an endpoint the UI should show.
@@ -238,7 +251,9 @@ export class BootstrapStatusTracker {
 		// re-mentions an address constantly — so a verified member's row was demoted to an
 		// ordinary one within an announce cycle of being verified. A new dial result
 		// overwrites it in recordOutcome; only that can change who is behind the address.
-		net.set(key, { multiaddr: display, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: previous?.actualPeerID ?? null, lastError: null, updatedAt: new Date().toISOString(), staleSince: previous?.staleSince ?? Date.now() });
+		// A mention does not unhide an expired row either — the dial it precedes has not
+		// happened yet, and being talked about is not evidence about the peer.
+		net.set(key, { multiaddr: display, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: previous?.actualPeerID ?? null, lastError: null, updatedAt: new Date().toISOString(), staleSince: previous?.staleSince ?? Date.now(), hidden: previous?.hidden ?? false });
 		this.capDiscovered(networkID, net);
 		this.notify(networkID);
 	}
@@ -264,7 +279,7 @@ export class BootstrapStatusTracker {
 		// still taking part in THIS network. A peer that left one lishnet while staying
 		// connected through another was kept in the list it had left by exactly that: every
 		// gossip mention produced a 'connected' its other membership had earned.
-		net.set(key, { multiaddr: display, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' && verified ? Date.now() : (previous?.staleSince ?? Date.now()) });
+		net.set(key, { multiaddr: display, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' && verified ? Date.now() : (previous?.staleSince ?? Date.now()), hidden: status === 'connected' && verified ? false : (previous?.hidden ?? false) });
 		this.capDiscovered(networkID, net);
 		this.notify(networkID);
 	}
@@ -322,6 +337,8 @@ export class BootstrapStatusTracker {
 		if (discovered <= MAX_DISCOVERED_PER_NETWORK) return;
 		const members = this.membersProvider?.(networkID) ?? new Set<string>();
 		const rankOf = (p: TrackedPeer): number => {
+			// Nothing is more expendable than a row already expired out of the list.
+			if (p.hidden) return -1;
 			if (p.actualPeerID && members.has(p.actualPeerID)) return 3;
 			if (p.status === 'connected') return 2;
 			if (p.status === 'pending') return 1;
@@ -390,8 +407,11 @@ export class BootstrapStatusTracker {
 				// and never expired. The cap bounds how many such rows exist; this is what
 				// stops them from occupying the budget permanently.
 				if (p.actualPeerID && isMember(networkID, p.actualPeerID)) continue;
+				if (p.hidden) continue;
 				if (now - p.staleSince < ttlMs) continue;
-				peers.delete(addr);
+				// Hidden, not deleted — see TrackedPeer.hidden. The clock is deliberately left
+				// where it is: it is the evidence that nothing has answered here.
+				peers.set(addr, { ...p, hidden: true });
 				changed = true;
 			}
 			if (!changed) continue;
@@ -453,7 +473,12 @@ export class BootstrapStatusTracker {
 	private buildStatus(networkID: string): BootstrapStatus | null {
 		const peers = this.stats.get(networkID);
 		if (!peers) return null;
-		// staleSince is internal bookkeeping, not part of the wire contract.
-		return { networkID, peers: [...peers.values()].map(({ staleSince: _staleSince, ...p }) => p) };
+		// staleSince and hidden are internal bookkeeping, not part of the wire contract.
+		const visible = [...peers.values()].filter(p => !p.hidden);
+		// A network whose rows have all expired reads exactly as one that was never heard
+		// of — which is what callers already expect, since the sweep used to drop the whole
+		// entry. The notify path turns this back into an empty list for the UI.
+		if (visible.length === 0) return null;
+		return { networkID, peers: visible.map(({ staleSince: _staleSince, hidden: _hidden, ...p }) => p) };
 	}
 }
