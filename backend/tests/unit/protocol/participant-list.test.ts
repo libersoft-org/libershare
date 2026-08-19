@@ -299,6 +299,37 @@ describe('participant list — a peer that goes away stops being listed', () => 
 		expect(net.listed()).toEqual([ADDRESS]);
 	});
 
+	it('never lists an address gossip invented, however often it is named', async () => {
+		// The rule the rest of the expiry rests on. Nothing here ever answers, so nothing
+		// here belongs on a list of participants — and because the row is never published,
+		// losing it to the cap costs nothing either.
+		const net = testNetwork();
+		net.takePeerDown();
+		for (let cycle = 0; cycle < 5; cycle++) {
+			net.pacingExpires();
+			await net.gossip();
+		}
+		expect(net.listed()).toEqual([]);
+	});
+
+	it('recognises the member it once verified, even after failed dials in between', async () => {
+		// A failed dial says nothing about who is behind the address, so it must not erase
+		// the identity an earlier dial proved — that identity is the only thing the sweep
+		// will accept as "this is the member that came back".
+		const net = testNetwork();
+		await net.gossip();
+		const answeredAt = Date.now();
+		net.takePeerDown();
+		await sleep(AFTER_THE_ANSWER_MS);
+		net.pacingExpires();
+		await net.gossip(); // fails — in production this used to null the proven identity
+		net.sweepAt(answeredAt + STALE_TTL_MS + JUST_PAST_THE_WINDOW_MS);
+		expect(net.listed()).toEqual([]);
+		net.rejoinsTheTopic();
+		net.sweepAt(answeredAt + STALE_TTL_MS + 60_000);
+		expect(net.listed()).toEqual([ADDRESS]);
+	});
+
 	it('does not become immortal here just because the user configured it elsewhere', async () => {
 		// A configured row is exempt from the sweep — but only in the network it was
 		// configured for. Reading that exemption from a node-wide set made the same address

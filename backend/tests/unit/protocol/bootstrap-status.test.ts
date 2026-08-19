@@ -195,11 +195,12 @@ describe('BootstrapStatusTracker.sweepStale', () => {
 
 	it('keeps rows within the TTL even for a non-member', () => {
 		const tracker = new BootstrapStatusTracker();
-		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
+		// It answered, so it is on the list; membership is not what is keeping it there.
+		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'connected', null, DEAD_ID, 'discovered');
 
 		tracker.sweepStale(TTL, () => false); // real clock — row was written moments ago
 
-		expect(tracker.getStatus(NET)?.peers.length).toBe(1);
+		expect(expired(tracker)).toBe(false);
 	});
 
 	/**
@@ -210,7 +211,12 @@ describe('BootstrapStatusTracker.sweepStale', () => {
 	// Rows are stamped with `new Date()`, which no Date.now stub can steer, so these
 	// read the real timestamp the tracker wrote and drive sweepStale relative to it.
 	// The short sleep only guarantees a measurable gap between the two writes.
-	const clockOf = (tracker: BootstrapStatusTracker): string => tracker.getStatus(NET)!.peers[0]!.updatedAt;
+	// A discovered row is only PUBLISHED once the endpoint has been verified, so these
+	// clock tests — which work with rows that never answered — read what is stored.
+	const stored = (tracker: BootstrapStatusTracker): Array<{ updatedAt: string; hidden: boolean }> => [...((tracker as any).stats.get(NET) ?? new Map()).values()] as Array<{ updatedAt: string; hidden: boolean }>;
+	const clockOf = (tracker: BootstrapStatusTracker): string => stored(tracker)[0]!.updatedAt;
+	/** Expired = gone from the list, whether it was dropped or merely hidden. */
+	const expired = (tracker: BootstrapStatusTracker): boolean => stored(tracker).every(p => p.hidden);
 
 	it('does not let a re-mention refresh the staleness clock', async () => {
 		const tracker = new BootstrapStatusTracker();
@@ -224,7 +230,7 @@ describe('BootstrapStatusTracker.sweepStale', () => {
 		// sweep, not by `updatedAt` — that one tracks "anything changed" and a fresh attempt
 		// legitimately moves it. Aging the row from the last OUTCOME is the whole claim here.
 		tracker.sweepStale(TTL, () => false, Date.parse(outcomeAt) + TTL + 2);
-		expect(tracker.getStatus(NET)).toBe(null); // ages out from the last real outcome
+		expect(expired(tracker)).toBe(true); // ages out from the last real outcome
 	});
 
 	/**
@@ -242,7 +248,7 @@ describe('BootstrapStatusTracker.sweepStale', () => {
 
 		expect(Date.parse(clockOf(tracker))).toBeGreaterThan(Date.parse(firstAt)); // display clock moves
 		tracker.sweepStale(TTL, () => false, Date.parse(firstAt) + TTL + 2);
-		expect(tracker.getStatus(NET)).toBe(null); // staleness clock did not
+		expect(expired(tracker)).toBe(true); // staleness clock did not
 	});
 
 	it('lets a successful dial refresh the staleness clock', async () => {
@@ -254,7 +260,7 @@ describe('BootstrapStatusTracker.sweepStale', () => {
 		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'connected', null, null, 'discovered');
 
 		tracker.sweepStale(TTL, () => false, Date.parse(firstAt) + TTL + 2);
-		expect(tracker.getStatus(NET)?.peers.length).toBe(1); // survives — the address answered
+		expect(expired(tracker)).toBe(false); // survives — the address answered
 	});
 
 	/** The clock is bookkeeping, not part of what the API hands out. */
@@ -265,16 +271,20 @@ describe('BootstrapStatusTracker.sweepStale', () => {
 		expect(tracker.getStatus(NET)!.peers[0]!).not.toHaveProperty('staleSince');
 	});
 
-	it('starts the clock on a first mention that has no prior row', () => {
+	it('does not publish a first mention nobody has answered yet', () => {
+		// The rule the whole expiry rests on: being named by gossip is not evidence. The row
+		// is remembered so the clock and the dial history have somewhere to live, but the
+		// participant list only ever shows an endpoint that answered — which is also why
+		// forgetting such a row costs nothing.
 		const tracker = new BootstrapStatusTracker();
 		tracker.markPending(NET, DEAD_ADDR, DEAD_ID, 'discovered');
-		const mentionAt = clockOf(tracker);
 
-		tracker.sweepStale(TTL, () => false, Date.parse(mentionAt) + TTL - 60_000);
-		expect(tracker.getStatus(NET)?.peers.length).toBe(1); // inside the TTL
+		expect(tracker.getStatus(NET)).toBe(null);
+		expect(stored(tracker)).toHaveLength(1);
 
-		tracker.sweepStale(TTL, () => false, Date.parse(mentionAt) + TTL + 2);
-		expect(tracker.getStatus(NET)).toBe(null); // and expires once past it
+		// And a dial that fails leaves it exactly where it was.
+		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
+		expect(tracker.getStatus(NET)).toBe(null);
 	});
 });
 
@@ -634,7 +644,7 @@ describe('BootstrapStatusTracker — one row per endpoint, whatever the spelling
 	it('keeps the first spelling for display, and lets a configured one replace it', () => {
 		const tracker = new BootstrapStatusTracker();
 
-		tracker.recordOutcome(NET, LOWER, PID, 'error', 'boom', null, 'discovered');
+		tracker.recordOutcome(NET, LOWER, PID, 'connected', null, PID, 'discovered');
 		expect(tracker.getStatus(NET)!.peers[0]!.multiaddr).toBe(LOWER);
 
 		tracker.markPending(NET, UPPER, PID, 'configured');
@@ -685,8 +695,10 @@ describe('BootstrapStatusTracker — the cap evicts the least useful row', () =>
 		for (let i = 0; i < count; i++) tracker.recordOutcome(NET, `/ip4/198.51.100.${i % 254}/tcp/${9000 + i}/p2p/${GHOST}`, GHOST, 'timeout', 'no answer', null, 'discovered');
 	}
 
+	// The cap bounds what is STORED, and a flood of addresses that never answered is stored
+	// without being published — so this reads the map rather than the snapshot.
 	function survivors(tracker: BootstrapStatusTracker): string[] {
-		return (tracker.getStatus(NET)?.peers ?? []).map(p => p.multiaddr);
+		return [...((tracker as any).stats.get(NET) ?? new Map()).values()].map((p: { multiaddr: string }) => p.multiaddr);
 	}
 
 	it('drops a fresh dead address before an older connected one', () => {
@@ -828,23 +840,6 @@ describe('BootstrapStatusTracker.capDiscovered — a row pushed out is still rem
 		tracker.markPending(NETWORK, DEAD_ADDRESS, GONE, 'discovered');
 		// And this is the one that would read as a first sighting if the trim had thrown the
 		// tombstone away.
-		tracker.markPending(NETWORK, DEAD_ADDRESS, GONE, 'discovered');
-		expect((tracker.getStatus(NETWORK)?.peers ?? []).map(p => p.multiaddr)).not.toContain(DEAD_ADDRESS);
-	});
-
-	it('keeps the tombstone of a peer whose mentions never reach markPending', async () => {
-		// The intake drops a re-announced dead peer at the backoff and quarantine gates,
-		// before markPending — so noteMention is the only thing that records that somebody
-		// is still naming it, and the budget has to honour that.
-		const tracker = new BootstrapStatusTracker();
-		tracker.recordOutcome(NETWORK, DEAD_ADDRESS, GONE, 'connected', null, GONE, 'discovered');
-		tracker.sweepStale(30 * 60_000, () => false, Date.now() + 45 * 60_000);
-		for (let i = 0; i < 300; i++) tracker.recordOutcome(NETWORK, addrOf(i), FLOODER, 'connected', null, FLOODER, 'discovered');
-		await Bun.sleep(5);
-		// Gossip names it on every cycle; every one of those is refused by the pacing.
-		tracker.noteMention(NETWORK, DEAD_ADDRESS);
-		tracker.sweepStale(30 * 60_000, () => false, Date.now() + 90 * 60_000);
-		tracker.markPending(NETWORK, addrOf(999), FLOODER, 'discovered');
 		tracker.markPending(NETWORK, DEAD_ADDRESS, GONE, 'discovered');
 		expect((tracker.getStatus(NETWORK)?.peers ?? []).map(p => p.multiaddr)).not.toContain(DEAD_ADDRESS);
 	});
