@@ -1830,7 +1830,11 @@ export class Network {
 	/**
 	 * What a status row in THIS network should call the address.
 	 *
-	 * Scoped deliberately — see {@link configuredBootstrapAddressesByNet}.
+	 * Scoped deliberately — see {@link configuredBootstrapAddressesByNet}. Re-read after a
+	 * dial as well as before it: a configured install that arrives while gossip already
+	 * holds the single-flight claim registers the address and then skips, so the dial in
+	 * flight is the one that has to answer for it, and it decided its classification
+	 * before that registration existed.
 	 */
 	private classifyBootstrapOrigin(origin: BootstrapPeerOrigin, networkID: string | null, canonicalAddress: string): BootstrapPeerOrigin {
 		if (origin === 'configured') return 'configured';
@@ -2014,6 +2018,12 @@ export class Network {
 					// that many timeouts before anyone can stop the node.
 					const conn = await this.node.dial(ma, effectiveOrigin === 'configured' ? { force: true, signal: abort.signal } : { signal: abort.signal });
 					const verifiedThisAddr = isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString());
+					// A configured install may have landed while this dial was open and skipped
+					// on the single-flight claim, leaving this run to answer for it. Re-reading
+					// the classification hands it the configured rules it never got to apply —
+					// including the one below that refuses to turn a configured row green on a
+					// connection that came back on some other address.
+					effectiveOrigin = this.classifyBootstrapOrigin(origin, networkID, canonicalAddress);
 					// A dial already in flight cannot be called back: hangUp only closes
 					// connections that ALREADY exist, so a leave-network landing mid-dial finds
 					// nothing to close and this connection surfaces a moment after the cleanup
