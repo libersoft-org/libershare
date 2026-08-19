@@ -6,7 +6,9 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { localFilesystem } from '../../scripts/localFilesystem.ts';
+	import { isCompressed } from '@shared';
 	import { normalizePath } from '../../scripts/utils.ts';
+	import { api } from '../../scripts/api.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import ButtonBar from '../Buttons/ButtonBar.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -57,6 +59,19 @@
 		fileInput?.click();
 	}
 
+	/** Base64 of the file content, via FileReader so large uploads do not blow the call stack. */
+	function readAsBase64(file: File): Promise<string> {
+		return new Promise((resolve, reject) => {
+			const reader = new FileReader();
+			reader.onload = () => {
+				const dataURL = String(reader.result);
+				resolve(dataURL.slice(dataURL.indexOf(',') + 1));
+			};
+			reader.onerror = () => reject(reader.error);
+			reader.readAsDataURL(file);
+		});
+	}
+
 	async function handleFileSelected(e: Event): Promise<void> {
 		const input = e.target as HTMLInputElement;
 		const file = input.files?.[0];
@@ -64,13 +79,10 @@
 		uploadFileName = file.name;
 		errorMessage = '';
 		try {
-			if (file.name.endsWith('.gz') || file.name.endsWith('.gzip')) {
-				const buffer = await file.arrayBuffer();
-				const decompressed = new Response(new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip')));
-				uploadContent = await decompressed.text();
-			} else {
-				uploadContent = await file.text();
-			}
+			// Decompression belongs to the backend — the browser only knows gzip and deflate,
+			// so a .br or .zst upload could never be handled here.
+			if (isCompressed(file.name)) uploadContent = await api.fs.decompressText(await readAsBase64(file), file.name);
+			else uploadContent = await file.text();
 		} catch (err) {
 			errorMessage = translateError(err);
 			uploadContent = '';

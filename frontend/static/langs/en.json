@@ -303,6 +303,7 @@
 			"minimizeToTray": "Minimize to system tray",
 			"defaultMinifyJSON": "Minify JSON (default)",
 			"defaultCompress": "Compress (default)",
+			"defaultCompressionAlgorithm": "Compression algorithm (default)",
 			"notificationTimeout": "Notification timeout (in seconds, 0 = unlimited)"
 		},
 		"download": {
@@ -348,6 +349,7 @@
 			"connectedPeers": "Peers: {count}",
 			"minifyJSON": "Minify JSON",
 			"compress": "Compress",
+			"compressionAlgorithm": "Compression algorithm",
 			"errorNotFound": "LISH network not found: {detail}",
 			"errorNoNetworks": "No LISH networks to export",
 			"errorNotJoined": "LISH network not joined",

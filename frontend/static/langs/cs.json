@@ -303,6 +303,7 @@
 			"minimizeToTray": "Minimalizovat do oznamovací oblasti",
 			"defaultMinifyJSON": "Minifikovat JSON (výchozí hodnota)",
 			"defaultCompress": "Komprimovat (výchozí hodnota)",
+			"defaultCompressionAlgorithm": "Kompresní algoritmus (výchozí hodnota)",
 			"notificationTimeout": "Časový limit notifikací (ve vteřinách, 0 = neomezeno)"
 		},
 		"download": {
@@ -348,6 +349,7 @@
 			"connectedPeers": "Účastníků: {count}",
 			"minifyJSON": "Minifikovat JSON",
 			"compress": "Komprimovat",
+			"compressionAlgorithm": "Kompresní algoritmus",
 			"errorNotFound": "Síť LISH nebyla nalezena: {detail}",
 			"errorNoNetworks": "Žádné sítě LISH k exportu",
 			"errorNotJoined": "Síť LISH není připojena",
