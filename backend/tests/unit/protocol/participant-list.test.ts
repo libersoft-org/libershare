@@ -29,6 +29,15 @@ function peerIdLike(id: string) {
 /** A node whose peer is up (dials succeed) or down (dials are refused). */
 function testNetwork() {
 	let peerIsUp = true;
+	/**
+	 * Whether the connection libp2p hands back is on the address we asked for.
+	 *
+	 * A discovered dial does not force, so libp2p may answer it with a connection it
+	 * already holds to that peer over some other address. That proves the peer is alive
+	 * somewhere — it proves nothing about this endpoint, and nothing about the peer still
+	 * taking part in THIS network.
+	 */
+	let answersOnTheAddress = true;
 	const network = Object.create(Network.prototype) as Network;
 	const tracker = new BootstrapStatusTracker();
 	(network as any).runEpoch = 1;
@@ -54,7 +63,8 @@ function testNetwork() {
 		getConnections: () => [],
 		async dial(ma: { toString(): string }): Promise<unknown> {
 			if (!peerIsUp) throw new Error('connection refused');
-			return { remoteAddr: { toString: () => ma.toString() }, remotePeer: peerIdLike(PEER) };
+			const answeredOn = answersOnTheAddress ? ma.toString() : `/ip4/203.0.113.250/tcp/9090/p2p/${PEER}`;
+			return { remoteAddr: { toString: () => answeredOn }, remotePeer: peerIdLike(PEER) };
 		},
 		peerStore: { async merge(): Promise<void> {} },
 	};
@@ -69,8 +79,28 @@ function testNetwork() {
 		takePeerDown: (): void => {
 			peerIsUp = false;
 		},
+		/**
+		 * The peer is reachable again, but only over some other route — the case where a
+		 * mention produces a connection this address did nothing to earn.
+		 */
+		reachableOverAnotherAddress: (): void => {
+			peerIsUp = true;
+			answersOnTheAddress = false;
+		},
+		/**
+		 * Let the next mention through without saying anything about the peer: production
+		 * paces failed dials, and the point of these steps is what happens when a mention
+		 * is actually acted on again.
+		 */
+		pacingExpires: (): void => {
+			(network as any).redialBackoff.clear();
+			(network as any).unreachableQuarantine.clear();
+		},
+		/** The user saves this same address as a bootstrap of a DIFFERENT lishnet. */
+		configureInAnotherNetwork: (): Promise<unknown> => (network as any).addBootstrapPeers([ADDRESS], 'net-somewhere-else', 'configured'),
 		bringPeerBack: (): void => {
 			peerIsUp = true;
+			answersOnTheAddress = true;
 			// A returning peer is dialable again: clear the pacing its failures earned, the
 			// way an inbound connection or an expired backoff would in production.
 			(network as any).redialBackoff.clear();
@@ -145,5 +175,66 @@ describe('participant list — a peer that goes away stops being listed', () => 
 		await net.gossip();
 		net.sweepAt(Date.now() + STALE_TTL_MS - 60_000);
 		expect(net.listed()).toEqual([ADDRESS]);
+	});
+
+	/** The story so far, up to the moment the peer has expired out of the list. */
+	async function upToExpiry() {
+		const net = testNetwork();
+		await net.gossip();
+		const answeredAt = Date.now();
+		net.takePeerDown();
+		await sleep(AFTER_THE_ANSWER_MS);
+		net.sweepAt(answeredAt + STALE_TTL_MS + JUST_PAST_THE_WINDOW_MS);
+		expect(net.listed()).toEqual([]);
+		return net;
+	}
+
+	it('stays gone when the network keeps naming it after it expired', async () => {
+		// The dangerous step: the row is gone, so there is nothing left holding the old
+		// staleness clock. A mention that created a fresh row would put a peer nobody has
+		// reached for half an hour back in the list for another full window.
+		const net = await upToExpiry();
+		net.pacingExpires();
+		for (let cycle = 0; cycle < 3; cycle++) await net.gossip();
+		expect(net.listed()).toEqual([]);
+	});
+
+	it('stays gone when it answers only over some other address', async () => {
+		// Alive somewhere is not the same as taking part here. The connection came back on
+		// an address this network never asked about, so it says nothing about this row.
+		const net = await upToExpiry();
+		net.pacingExpires();
+		net.reachableOverAnotherAddress();
+		await net.gossip();
+		expect(net.listed()).toEqual([]);
+	});
+
+	it('comes back only when it answers on the address itself', async () => {
+		const net = await upToExpiry();
+		net.pacingExpires();
+		net.reachableOverAnotherAddress();
+		await net.gossip();
+		expect(net.listed()).toEqual([]);
+		net.bringPeerBack();
+		await net.gossip();
+		expect(net.listed()).toEqual([ADDRESS]);
+	});
+
+	it('does not become immortal here just because the user configured it elsewhere', async () => {
+		// A configured row is exempt from the sweep — but only in the network it was
+		// configured for. Reading that exemption from a node-wide set made the same address
+		// unsweepable in every network that had ever heard of it.
+		const net = testNetwork();
+		await net.gossip();
+		const answeredAt = Date.now();
+		await net.configureInAnotherNetwork();
+		net.takePeerDown();
+		await sleep(AFTER_THE_ANSWER_MS);
+		// The mention AFTER the address became configured somewhere else is the one that
+		// matters: it is where the row is classified again, and where a node-wide reading
+		// of "configured" would stamp this network's row exempt.
+		await net.gossip();
+		net.sweepAt(answeredAt + STALE_TTL_MS + JUST_PAST_THE_WINDOW_MS);
+		expect(net.listed()).toEqual([]);
 	});
 });
