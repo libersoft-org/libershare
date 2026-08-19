@@ -344,6 +344,18 @@ export class Network {
 	 * and the gossip-learned one must not inherit the exemption from its sibling.
 	 */
 	private readonly configuredBootstrapAddresses: Set<string> = new Set();
+	/**
+	 * The same addresses, split by the network whose config they came from.
+	 *
+	 * The set above answers "is this address configured ANYWHERE", which is the right
+	 * question for the node-wide concerns — probe pacing, the autodial list, recovery.
+	 * It is the wrong question for the status row, because a row belongs to one network:
+	 * reading the union there let an address configured in network A land as CONFIGURED
+	 * in network B, where gossip had merely mentioned it. Configured rows are exempt from
+	 * the stale sweep, so that peer then sat in B's participant list forever — the very
+	 * thing this work exists to prevent.
+	 */
+	private readonly configuredBootstrapAddressesByNet: Map<string, Set<string>> = new Map();
 	private dcutrPeers: Set<string> = new Set();
 	private bootstrapMultiaddrs: any[] = [];
 	/**
@@ -1805,6 +1817,26 @@ export class Network {
 		this.dialAbort.abort();
 	}
 
+	/** The per-network configured-address set, created on first use. */
+	private configuredIn(networkID: string): Set<string> {
+		let set = this.configuredBootstrapAddressesByNet.get(networkID);
+		if (!set) {
+			set = new Set<string>();
+			this.configuredBootstrapAddressesByNet.set(networkID, set);
+		}
+		return set;
+	}
+
+	/**
+	 * What a status row in THIS network should call the address.
+	 *
+	 * Scoped deliberately — see {@link configuredBootstrapAddressesByNet}.
+	 */
+	private classifyBootstrapOrigin(origin: BootstrapPeerOrigin, networkID: string | null, canonicalAddress: string): BootstrapPeerOrigin {
+		if (origin === 'configured') return 'configured';
+		return networkID !== null && this.configuredBootstrapAddressesByNet.get(networkID)?.has(canonicalAddress) ? 'configured' : 'discovered';
+	}
+
 	/** The dial loop behind {@link addBootstrapPeers}; see there for the batching wrapper. */
 	private async dialBootstrapEntries(peers: string[], networkID: string | null, origin: BootstrapPeerOrigin): Promise<BootstrapDialResult> {
 		if (!this.node) {
@@ -1859,7 +1891,7 @@ export class Network {
 				// discovered branch recorded 'connected' on a configured row whose address had
 				// never been contacted. The user then saw a green light on a broken entry.
 				const canonicalAddress = normalizeMultiaddrForCompare(ma.toString());
-				const effectiveOrigin: BootstrapPeerOrigin = origin === 'configured' || this.configuredBootstrapAddresses.has(canonicalAddress) ? 'configured' : 'discovered';
+				let effectiveOrigin: BootstrapPeerOrigin = this.classifyBootstrapOrigin(origin, networkID, canonicalAddress);
 				// Claiming the peer as configured stays keyed on what the CALLER declared:
 				// this branch also lifts leave-network suppression, which is the user's
 				// decision to reverse, never gossip's.
@@ -1884,6 +1916,7 @@ export class Network {
 				// list for good, since an ordinary timeout has nothing that takes it off.
 				if (origin === 'configured') {
 					this.configuredBootstrapAddresses.add(canonicalAddress);
+					if (networkID) this.configuredIn(networkID).add(canonicalAddress);
 					this.rememberBootstrapAddress(ma);
 				}
 				// Safety net: refuse to dial loopback / unreachable-private bootstrap entries
@@ -2329,6 +2362,10 @@ export class Network {
 		this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(ma => !drop.has(normalizeMultiaddrForCompare(ma.toString())));
 		for (const address of drop) {
 			this.configuredBootstrapAddresses.delete(address);
+			// Callers only prune what is configured in no network at all (they filter on
+			// "configured elsewhere" first), so dropping it from every per-network set is
+			// the same statement made in the scoped map.
+			for (const set of this.configuredBootstrapAddressesByNet.values()) set.delete(address);
 			// The pacing record goes with the address it paces. Left behind, it accumulates
 			// across every configuration change until stop(), and — worse — a re-added
 			// address inherits the old failCount and its multi-minute nextAttempt, so a user
@@ -2363,6 +2400,7 @@ export class Network {
 			const canonical = normalizeMultiaddrForCompare(ma.toString());
 			if (!this.configuredBootstrapAddresses.has(canonical)) return true;
 			this.configuredBootstrapAddresses.delete(canonical);
+			for (const set of this.configuredBootstrapAddressesByNet.values()) set.delete(canonical);
 			// Same reason as in pruneBootstrapAddresses: the pacing record belongs to the
 			// address, so a re-add must not inherit the deleted entry's backoff.
 			this.addressProbeBackoff.delete(canonical);
@@ -3193,6 +3231,7 @@ export class Network {
 		this.addressProbeBackoff.clear();
 		this.configuredBootstrapPeerIDs.clear();
 		this.configuredBootstrapAddresses.clear();
+		this.configuredBootstrapAddressesByNet.clear();
 		// Per-run like the rest of this state: a fresh node must not inherit a count that
 		// makes its very first tick the slow-cadence one.
 		this.statusTickCount = 0;

@@ -43,6 +43,7 @@ function testNetwork() {
 	(network as any).redialSuppressedByNet = new Map();
 	(network as any).configuredBootstrapPeerIDs = new Set<string>();
 	(network as any).configuredBootstrapAddresses = new Set<string>();
+	(network as any).configuredBootstrapAddressesByNet = new Map();
 	(network as any).isTopicSubscribed = () => true;
 	(network as any).isPeerNeededByJoinedNetwork = () => true;
 	// Nobody is subscribed to the topic in this test, so the sweep's membership exemption

@@ -122,6 +122,7 @@ describe('Network.addBootstrapPeers — a dial that lands after a restart', () =
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set([PEER_ID])]]);
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapGeneration = new Map();
@@ -231,6 +232,7 @@ describe('Network.addBootstrapPeers — configured bootstraps become direct peer
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set(suppressed)]]);
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapGeneration = new Map();
@@ -300,6 +302,7 @@ describe('Network.pruneConfiguredBootstrapPeer — gives back what the entry was
 		(network as any).bootstrapPeerIDs = new Set<string>([PEER_ID]);
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).addressProbeBackoff = new Map();
 		(network as any).isPeerNeededByJoinedNetwork = (): boolean => neededByJoined;
 		(network as any).isRedialSuppressed = (): boolean => false;

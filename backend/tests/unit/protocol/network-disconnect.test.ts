@@ -318,6 +318,7 @@ describe('Network.runRedialMaintenance — leave-peer suppression', () => {
 		(network as any).redialBackoff = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).configuredBootstrapAddressesByNet = new Map();
 		// A reconnected peer's suppression is lifted only if it currently shares a joined
 		// topic — model that via a pubsub whose subscribers list the "back on topic" peers.
 		(network as any).pubsub = {
@@ -377,6 +378,7 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		(network as any).redialBackoff = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).bootstrapMultiaddrs = bootstrapMaStrs.map(s => multiaddr(s));
 		(network as any).recentDisconnects = [];
 		(network as any).bootstrapTracker = {
@@ -424,6 +426,7 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000 }]]);
 		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
 		(network as any).configuredBootstrapAddresses = new Set([normalizeMultiaddrForCompare(multiaddr(ma).toString())]);
+		(network as any).configuredBootstrapAddressesByNet = new Map();
 		await run(network);
 		expect(dialed).toEqual([multiaddr(ma).toString()]);
 	});
@@ -455,6 +458,7 @@ describe('Network.addBootstrapPeers — rejoin clears suppression', () => {
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set<string>(suppressed)]]);
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapGeneration = new Map();
