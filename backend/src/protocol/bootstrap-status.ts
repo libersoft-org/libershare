@@ -332,13 +332,25 @@ export class BootstrapStatusTracker {
 	 * from a connection we actually made, is evidence of anything.
 	 */
 	private capDiscovered(networkID: string, net: Map<string, TrackedPeer>): void {
+		// Two budgets, because the rows answer two different questions. The visible ones are
+		// what the UI renders and what the cap was written for. The hidden ones are the memory
+		// that keeps a dead peer out; counting them against the same budget meant a flood of
+		// invented addresses pushed the memory out and let every peer it was holding back
+		// return. Each is bounded on its own.
 		let discovered = 0;
-		for (const p of net.values()) if (p.origin === 'discovered') discovered++;
+		let hidden = 0;
+		for (const p of net.values()) {
+			if (p.origin !== 'discovered') continue;
+			if (p.hidden) hidden++;
+			else discovered++;
+		}
+		if (hidden > MAX_DISCOVERED_PER_NETWORK) {
+			const oldest = [...net.entries()].filter(([, p]) => p.origin === 'discovered' && p.hidden).sort((a, b) => a[1].staleSince - b[1].staleSince);
+			for (let i = 0; i < hidden - MAX_DISCOVERED_PER_NETWORK; i++) net.delete(oldest[i]![0]);
+		}
 		if (discovered <= MAX_DISCOVERED_PER_NETWORK) return;
 		const members = this.membersProvider?.(networkID) ?? new Set<string>();
 		const rankOf = (p: TrackedPeer): number => {
-			// Nothing is more expendable than a row already expired out of the list.
-			if (p.hidden) return -1;
 			if (p.actualPeerID && members.has(p.actualPeerID)) return 3;
 			if (p.status === 'connected') return 2;
 			if (p.status === 'pending') return 1;
@@ -347,17 +359,37 @@ export class BootstrapStatusTracker {
 		// Ranked once per row, not inside the comparator — the member lookup would
 		// otherwise run O(n log n) times over the same snapshot.
 		const victims = [...net.entries()]
-			.filter(([, p]) => p.origin === 'discovered')
+			.filter(([, p]) => p.origin === 'discovered' && !p.hidden)
 			.map(([key, p]) => ({ key, rank: rankOf(p), age: Date.parse(p.updatedAt) }))
 			.sort((a, b) => a.rank - b.rank || a.age - b.age);
 		for (let i = 0; i < discovered - MAX_DISCOVERED_PER_NETWORK; i++) net.delete(victims[i]!.key);
+	}
+
+	/**
+	 * Take one row out of the list.
+	 *
+	 * A DISCOVERED row is hidden, never deleted — see {@link TrackedPeer.hidden}. Every way
+	 * a row can leave the list is a statement that nothing answers there, and forgetting it
+	 * hands the next gossip mention a clean slate: a new row, a new clock, and a peer nobody
+	 * has reached in hours back on the list. There is more than one such way — the staleness
+	 * sweep, unreachable eviction, an identity that turned out to be somebody else — and the
+	 * memory has to survive all of them, not just the first one that got fixed.
+	 *
+	 * Configured rows are deleted outright: they leave only when the user removes them from
+	 * the config, which is not evidence about the peer at all.
+	 */
+	private removeRow(peers: Map<string, TrackedPeer>, addr: string, p: TrackedPeer): void {
+		if (p.origin === 'configured') peers.delete(addr);
+		else peers.set(addr, { ...p, hidden: true });
 	}
 
 	/** Drop a single peer entry directly (used after identity-mismatch purge of discovered peers). */
 	deletePeer(networkID: string, multiaddr: string): void {
 		const net = this.stats.get(networkID);
 		if (!net) return;
-		net.delete(canonicalMultiaddr(multiaddr));
+		const key = canonicalMultiaddr(multiaddr);
+		const p = net.get(key);
+		if (p) this.removeRow(net, key, p);
 		if (net.size === 0) this.stats.delete(networkID);
 		this.notify(networkID);
 	}
@@ -374,7 +406,7 @@ export class BootstrapStatusTracker {
 			for (const [addr, p] of [...peers]) {
 				if (p.origin !== 'discovered') continue;
 				if (p.expectedPeerID !== peerID && p.actualPeerID !== peerID) continue;
-				peers.delete(addr);
+				this.removeRow(peers, addr, p);
 				changed = true;
 			}
 			if (!changed) continue;
@@ -409,9 +441,9 @@ export class BootstrapStatusTracker {
 				if (p.actualPeerID && isMember(networkID, p.actualPeerID)) continue;
 				if (p.hidden) continue;
 				if (now - p.staleSince < ttlMs) continue;
-				// Hidden, not deleted — see TrackedPeer.hidden. The clock is deliberately left
-				// where it is: it is the evidence that nothing has answered here.
-				peers.set(addr, { ...p, hidden: true });
+				// The clock is deliberately left where it is: it is the evidence that nothing
+				// has answered here.
+				this.removeRow(peers, addr, p);
 				changed = true;
 			}
 			if (!changed) continue;
