@@ -49,6 +49,19 @@ type TrackedPeer = BootstrapPeerStatus & {
 };
 
 /**
+ * The one thing that is true of every row, wherever it is written.
+ *
+ * A CONFIGURED row is user data: the user typed the address in and needs to see what it is
+ * doing, especially when that is nothing. Hiding is for rows this node learned from gossip
+ * and has since written off — a discovered row that expired can be promoted to configured
+ * the moment the user saves that same address, and it has to become visible again in the
+ * same breath, red if that is what it is.
+ */
+function hiddenFor(origin: BootstrapPeerOrigin, wouldHide: boolean): boolean {
+	return origin === 'configured' ? false : wouldHide;
+}
+
+/**
  * Which spelling of an endpoint the UI should show.
  *
  * The row is keyed canonically, so several spellings can land on it. A configured one
@@ -253,9 +266,28 @@ export class BootstrapStatusTracker {
 		// overwrites it in recordOutcome; only that can change who is behind the address.
 		// A mention does not unhide an expired row either — the dial it precedes has not
 		// happened yet, and being talked about is not evidence about the peer.
-		net.set(key, { multiaddr: display, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: previous?.actualPeerID ?? null, lastError: null, updatedAt: new Date().toISOString(), staleSince: previous?.staleSince ?? Date.now(), hidden: previous?.hidden ?? false });
+		net.set(key, { multiaddr: display, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: previous?.actualPeerID ?? null, lastError: null, updatedAt: new Date().toISOString(), staleSince: previous?.staleSince ?? Date.now(), hidden: hiddenFor(finalOrigin, previous?.hidden ?? false) });
 		this.capDiscovered(networkID, net);
 		this.notify(networkID);
+	}
+
+	/**
+	 * Somebody named this address again, whatever we then decided to do about it.
+	 *
+	 * The tombstone budget gives up the rows nobody is naming any more, and until now the
+	 * only thing that recorded a naming was {@link markPending} — which the intake reaches
+	 * only after the backoff and quarantine gates. Those gates exist precisely for a peer
+	 * that keeps being announced and keeps failing, so the tombstones under the most
+	 * pressure were the ones whose mentions were never counted. Nothing else about the row
+	 * changes: this is not evidence about the peer, only about who is still talking.
+	 */
+	noteMention(networkID: string, multiaddr: string): void {
+		const peers = this.stats.get(networkID);
+		if (!peers) return;
+		const key = canonicalMultiaddr(multiaddr);
+		const p = peers.get(key);
+		if (!p || !p.hidden) return;
+		peers.set(key, { ...p, updatedAt: new Date().toISOString() });
 	}
 
 	/** Record a dial outcome (connected, timeout, error, identity-mismatch). */
@@ -279,7 +311,7 @@ export class BootstrapStatusTracker {
 		// still taking part in THIS network. A peer that left one lishnet while staying
 		// connected through another was kept in the list it had left by exactly that: every
 		// gossip mention produced a 'connected' its other membership had earned.
-		net.set(key, { multiaddr: display, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' && verified ? Date.now() : (previous?.staleSince ?? Date.now()), hidden: status === 'connected' && (verified || this.isMemberNow(networkID, actualPeerID)) ? false : (previous?.hidden ?? false) });
+		net.set(key, { multiaddr: display, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' && verified ? Date.now() : (previous?.staleSince ?? Date.now()), hidden: hiddenFor(finalOrigin, status === 'connected' && (verified || this.isMemberNow(networkID, actualPeerID)) ? false : (previous?.hidden ?? false)) });
 		this.capDiscovered(networkID, net);
 		this.notify(networkID);
 	}
@@ -418,7 +450,7 @@ export class BootstrapStatusTracker {
 	 */
 	private removeRow(peers: Map<string, TrackedPeer>, addr: string, p: TrackedPeer): void {
 		if (p.origin === 'configured') peers.delete(addr);
-		else peers.set(addr, { ...p, hidden: true });
+		else peers.set(addr, { ...p, hidden: hiddenFor(p.origin, true) });
 	}
 
 	/** Drop a single peer entry directly (used after identity-mismatch purge of discovered peers). */
@@ -476,8 +508,20 @@ export class BootstrapStatusTracker {
 				// /p2p/<a-live-member> was treated as that member's, never dialed successfully,
 				// and never expired. The cap bounds how many such rows exist; this is what
 				// stops them from occupying the budget permanently.
-				if (p.actualPeerID && isMember(networkID, p.actualPeerID)) continue;
-				if (p.hidden) continue;
+				const member = p.actualPeerID !== null && isMember(networkID, p.actualPeerID);
+				// Taking part in the network is proof enough to undo a hiding, and this sweep is
+				// the only place that can act on it on its own. The unhide in recordOutcome needs
+				// a dial, which needs an announce — and a small network may never send one
+				// (peer-announce holds off below a handful of peers), so a peer that came back
+				// and grafted onto the topic would have stayed out of the list indefinitely.
+				if (p.hidden) {
+					if (member) {
+						peers.set(addr, { ...p, hidden: false });
+						changed = true;
+					}
+					continue;
+				}
+				if (member) continue;
 				if (now - p.staleSince < ttlMs) continue;
 				// The clock is deliberately left where it is: it is the evidence that nothing
 				// has answered here.
