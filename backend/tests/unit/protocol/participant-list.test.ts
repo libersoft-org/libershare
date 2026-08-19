@@ -96,6 +96,22 @@ function testNetwork() {
 			(network as any).redialBackoff.clear();
 			(network as any).unreachableQuarantine.clear();
 		},
+		/**
+		 * Let unreachable eviction actually run and reach its verdict on this peer.
+		 *
+		 * The decision and everything it does to the participant list are the real thing;
+		 * only the libp2p teardown behind `purgeStalePeer` is stubbed, since closing sockets
+		 * is not what this story is about. The backoff is armed one failure short of the
+		 * threshold and dated past the window, so the dial this tick makes is the one that
+		 * decides — the same shape the eviction guards tests use.
+		 */
+		evictAsUnreachable: async (): Promise<void> => {
+			(network as any).redialBackoff = new Map([[PEER, { nextAttempt: Date.now() - 1, failCount: 5, firstFailure: Date.now() - 45 * 60_000, evictionFails: 5 }]]);
+			(network as any).hasConnectionOtherThan = () => true;
+			(network as any).purgeStalePeer = async (): Promise<void> => {};
+			const dead = { id: peerIdLike(PEER), addresses: [{ multiaddr: { toString: () => '/ip4/203.0.113.7/tcp/9090' } }] };
+			await (network as any).runRedialMaintenance([], [dead], 1);
+		},
 		/** The user saves this same address as a bootstrap of a DIFFERENT lishnet. */
 		configureInAnotherNetwork: (): Promise<unknown> => (network as any).addBootstrapPeers([ADDRESS], 'net-somewhere-else', 'configured'),
 		bringPeerBack: (): void => {
@@ -217,6 +233,29 @@ describe('participant list — a peer that goes away stops being listed', () => 
 		expect(net.listed()).toEqual([]);
 		net.bringPeerBack();
 		await net.gossip();
+		expect(net.listed()).toEqual([ADDRESS]);
+	});
+
+	it('stays gone after unreachable eviction, too', async () => {
+		// Eviction is the other way a row leaves the list, and it used to leave it by
+		// deleting — so the memory that kept the peer out died with it and the next
+		// announce, once the quarantine expired, put the peer straight back.
+		const net = testNetwork();
+		await net.gossip();
+		const answeredAt = Date.now();
+		net.takePeerDown();
+		await sleep(AFTER_THE_ANSWER_MS);
+		await net.evictAsUnreachable();
+		expect(net.listed()).toEqual([]);
+		// The quarantine runs out and the network still remembers the address.
+		net.pacingExpires();
+		for (let cycle = 0; cycle < 3; cycle++) await net.gossip();
+		expect(net.listed()).toEqual([]);
+		// Only a real answer on the endpoint brings it back.
+		net.bringPeerBack();
+		await net.gossip();
+		expect(net.listed()).toEqual([ADDRESS]);
+		net.sweepAt(answeredAt + STALE_TTL_MS + JUST_PAST_THE_WINDOW_MS);
 		expect(net.listed()).toEqual([ADDRESS]);
 	});
 
