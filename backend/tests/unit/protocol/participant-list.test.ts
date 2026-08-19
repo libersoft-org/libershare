@@ -36,7 +36,7 @@ function testNetwork() {
 	(network as any).bootstrapPeerIDs = new Set<string>();
 	(network as any).bootstrapMultiaddrs = [];
 	(network as any).bootstrapGeneration = new Map();
-	(network as any).inFlightBootstrapDials = new Set<string>();
+	(network as any).inFlightBootstrapDials = new Map();
 	(network as any).dialAbort = new AbortController();
 	(network as any).redialBackoff = new Map();
 	(network as any).unreachableQuarantine = new Map();

@@ -460,12 +460,17 @@ export class Network {
 	 * failed. Claiming the address for the duration of the dial makes the second run a
 	 * no-op instead: the first one is about to record the outcome both were after.
 	 *
-	 * Replaced with a FRESH Set on teardown rather than cleared, and captured by reference
-	 * for the length of a dial. Clearing a shared Set let a dial still settling on the old
+	 * Replaced with a FRESH map on teardown rather than cleared, and captured by reference
+	 * for the length of a dial. Clearing a shared one let a dial still settling on the old
 	 * node release a claim the new node's dial of the same address had just taken — after
 	 * which a third request saw the address free and duplicated the live dial.
+	 *
+	 * The value is the network the claim was taken for, because only that network's run can
+	 * answer for it: the classification applied when the dial returns is scoped to itself, so
+	 * a run belonging to some OTHER network leaves this one without a row at all. Skipping on
+	 * such a claim is work not done, and the caller has to hear about it.
 	 */
-	private inFlightBootstrapDials = new Set<string>();
+	private inFlightBootstrapDials = new Map<string, string | null>();
 	/**
 	 * Peer IDs with a `peer:discovery` dial currently outstanding.
 	 *
@@ -1870,6 +1875,8 @@ export class Network {
 		// on, and a controller replaced by a later start is not the one that can stop it.
 		const abort = this.dialAbort;
 		const superseded = (): boolean => epoch !== this.runEpoch || abort.signal.aborted || generation !== this.bootstrapGenerationOf(networkID);
+		// Set when an entry was left to somebody who cannot answer for this network.
+		let unfinished = false;
 		for (const peer of peers) {
 			if (superseded()) return 'incomplete';
 			let probeAfterQuarantine = false;
@@ -1972,9 +1979,13 @@ export class Network {
 				// the run that would actually dial it.
 				if (inFlight.has(canonicalAddress)) {
 					trace(`[NET] addBootstrapPeers skip in-flight: ${peer}`);
+					// A claim held for a DIFFERENT network cannot stand in for this one — see the
+					// field docs. Report the run as unfinished so the install is not recorded as
+					// done and the retry walks the list again.
+					if (inFlight.get(canonicalAddress) !== networkID) unfinished = true;
 					continue;
 				}
-				inFlight.add(canonicalAddress);
+				inFlight.set(canonicalAddress, networkID);
 				// A CONFIGURED identity is user data and enters the set on the strength of the
 				// saved config alone. A DISCOVERED one waits for the dial: it arrived in a
 				// gossip message and nothing has yet shown that the identity exists, let
@@ -2176,7 +2187,7 @@ export class Network {
 				console.log('⚠️  Skipping invalid multiaddr:', peer, '-', error.message);
 			}
 		}
-		return 'completed';
+		return unfinished ? 'incomplete' : 'completed';
 	}
 
 	/**
@@ -3232,7 +3243,7 @@ export class Network {
 		// Claims belong to the node being torn down; a dial still settling on the old node
 		// must not lock the address out for the next one — nor, by releasing into a shared
 		// Set, steal the claim the next one has taken. A new object does both.
-		this.inFlightBootstrapDials = new Set<string>();
+		this.inFlightBootstrapDials = new Map<string, string | null>();
 		this.inFlightDiscoveryDials = new Set<string>();
 		this._lastPeerCounts.clear();
 		this._lastScores.clear();

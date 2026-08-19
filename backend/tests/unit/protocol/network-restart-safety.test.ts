@@ -126,7 +126,7 @@ describe('Network.addBootstrapPeers — a dial that lands after a restart', () =
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapGeneration = new Map();
-		(network as any).inFlightBootstrapDials = new Set<string>();
+		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
@@ -183,7 +183,7 @@ describe('Network.addBootstrapPeers — a dial that lands after a restart', () =
 		expect(dials).toBe(1);
 
 		// Teardown hands the next run a fresh claim table; run B takes the address in it.
-		(network as any).inFlightBootstrapDials = new Set<string>();
+		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).runEpoch = 2;
 		const runB = (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
@@ -236,7 +236,7 @@ describe('Network.addBootstrapPeers — configured bootstraps become direct peer
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapGeneration = new Map();
-		(network as any).inFlightBootstrapDials = new Set<string>();
+		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];

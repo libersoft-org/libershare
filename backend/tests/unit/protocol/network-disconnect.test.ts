@@ -22,7 +22,7 @@ function makeNetwork() {
 	(network as any).configuredBootstrapPeerIDs = new Set<string>();
 	(network as any).pubsub = null;
 	(network as any).bootstrapGeneration = new Map();
-	(network as any).inFlightBootstrapDials = new Set<string>();
+	(network as any).inFlightBootstrapDials = new Map();
 	(network as any).dialAbort = new AbortController();
 	(network as any).bootstrapPeerIDs = new Set<string>();
 	(network as any).bootstrapMultiaddrs = [];
@@ -462,7 +462,7 @@ describe('Network.addBootstrapPeers — rejoin clears suppression', () => {
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapGeneration = new Map();
-		(network as any).inFlightBootstrapDials = new Set<string>();
+		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];

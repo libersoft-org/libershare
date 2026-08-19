@@ -24,7 +24,7 @@ function harness() {
 	(network as any).unreachableQuarantine = new Map();
 	(network as any).redialSuppressedByNet = new Map();
 	(network as any).bootstrapGeneration = new Map();
-	(network as any).inFlightBootstrapDials = new Set();
+	(network as any).inFlightBootstrapDials = new Map();
 	(network as any).recentDisconnects = [];
 	(network as any).dialAbort = new AbortController();
 	(network as any).node = {
