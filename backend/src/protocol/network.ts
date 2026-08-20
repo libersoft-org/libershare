@@ -136,6 +136,19 @@ const UNREACHABLE_QUARANTINE_MS = 30 * 60_000;
  * permanently dead one costs one dial per five minutes instead of one per 30 s tick.
  */
 const CONFIGURED_PROBE_BACKOFF_MAX_MS = 5 * 60_000;
+/**
+ * How long one bootstrap dial may take before the intake gives up on it.
+ *
+ * An address that is merely unreachable answers quickly — the connection is refused, or
+ * DNS says no. One that is BLACK-HOLED answers not at all: the packets are dropped and TCP
+ * waits out the operating system's own connect timeout, which is minutes. Without a bound
+ * of our own the row stayed 'pending' for all of it, so a configured entry the user had
+ * typed wrong sat on the participant screen saying "working on it" instead of turning red,
+ * and the single-flight claim on that address was held for just as long.
+ *
+ * Matches the parked-probe dial, which has always been bounded this way.
+ */
+const BOOTSTRAP_DIAL_TIMEOUT_MS = 10_000;
 
 /**
  * Ceiling on the autodial list zero-connection recovery walks.
@@ -2033,7 +2046,10 @@ export class Network {
 					// racing it: without it, abandoning the run still leaves the current dial
 					// running to its full timeout, and a list of unreachable addresses costs
 					// that many timeouts before anyone can stop the node.
-					const conn = await this.node.dial(ma, effectiveOrigin === 'configured' ? { force: true, signal: abort.signal } : { signal: abort.signal });
+					// Both signals: the run's, so a shutdown can stop waiting, and a timeout, so a
+					// black-holed address cannot hold the entry open — see BOOTSTRAP_DIAL_TIMEOUT_MS.
+					const dialSignal = AbortSignal.any([abort.signal, AbortSignal.timeout(BOOTSTRAP_DIAL_TIMEOUT_MS)]);
+					const conn = await this.node.dial(ma, effectiveOrigin === 'configured' ? { force: true, signal: dialSignal } : { signal: dialSignal });
 					const verifiedThisAddr = isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString());
 					// A configured install may have landed while this dial was open and skipped
 					// on the single-flight claim, leaving this run to answer for it. Re-reading
