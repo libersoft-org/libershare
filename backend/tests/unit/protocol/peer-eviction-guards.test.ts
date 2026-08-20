@@ -1228,7 +1228,7 @@ describe('probeParkedConfiguredBootstraps', () => {
 	/** A second configured address of the SAME peer — the sibling finding 4 is about. */
 	const SIBLING = `/ip4/198.51.100.7/tcp/9090/p2p/${PEER_ID}`;
 
-	function bareNetwork(opts: { configured?: boolean; addresses?: string[]; connectionAddrs?: string[]; failAddresses?: string[] } = {}) {
+	function bareNetwork(opts: { configured?: boolean; addresses?: string[]; connectionAddrs?: string[]; failAddresses?: string[]; dialResultAddress?: string } = {}) {
 		const dialed: string[] = [];
 		const addresses = opts.addresses ?? [PARKED];
 		const network = Object.create(Network.prototype) as Network;
@@ -1241,20 +1241,24 @@ describe('probeParkedConfiguredBootstraps', () => {
 		(network as any).addressProbeBackoff = new Map();
 		(network as any).bootstrapMultiaddrs = addresses.map(a => multiaddr(a));
 		const repaired: string[] = [];
+		const rejected: Array<{ address: string; message: string }> = [];
 		(network as any).bootstrapTracker = {
-			recordAddressUnreachable(): void {},
+			recordAddressUnreachable(address: string, message: string): void {
+				rejected.push({ address, message });
+			},
 			recordAddressReachable(address: string) {
 				repaired.push(address);
 			},
 		};
 		(network as any).node = {
 			getConnections: () => (opts.connectionAddrs ?? []).map(a => ({ remoteAddr: { toString: () => a } })),
-			async dial(ma: { toString(): string }): Promise<void> {
+			async dial(ma: { toString(): string }): Promise<unknown> {
 				dialed.push(ma.toString());
 				if (opts.failAddresses?.includes(ma.toString())) throw new Error('dial timeout');
+				return { remoteAddr: { toString: () => opts.dialResultAddress ?? ma.toString() } };
 			},
 		};
-		return { network, dialed, repaired };
+		return { network, dialed, repaired, rejected };
 	}
 
 	const run = (network: Network): Promise<void> => (network as any).probeParkedConfiguredBootstraps(1);
@@ -1274,6 +1278,19 @@ describe('probeParkedConfiguredBootstraps', () => {
 		const { network, repaired } = bareNetwork();
 		await run(network);
 		expect(repaired).toEqual([multiaddr(PARKED).toString()]);
+	});
+
+	it('rejects a dial that completed on a sibling endpoint', async () => {
+		const { network, repaired, rejected } = bareNetwork({ dialResultAddress: SIBLING });
+		await run(network);
+		expect(repaired).toEqual([]);
+		expect(rejected).toEqual([
+			{
+				address: multiaddr(PARKED).toString(),
+				message: 'Dial completed on another endpoint',
+			},
+		]);
+		expect((network as any).addressProbeBackoff.has(normalizeMultiaddrForCompare(PARKED))).toBe(true);
 	});
 
 	it('leaves the row alone while the address is still failing', async () => {
@@ -1340,8 +1357,9 @@ describe('probeParkedConfiguredBootstraps', () => {
 	it('forces the dial so the address itself is contacted', async () => {
 		const forced: boolean[] = [];
 		const { network } = bareNetwork();
-		(network as any).node.dial = async (_ma: unknown, opts?: { force?: boolean }): Promise<void> => {
+		(network as any).node.dial = async (_ma: unknown, opts?: { force?: boolean }): Promise<unknown> => {
 			forced.push(opts?.force === true);
+			return { remoteAddr: { toString: () => PARKED } };
 		};
 		await run(network);
 		expect(forced).toEqual([true]);
@@ -1565,6 +1583,51 @@ describe('runZeroConnectionRecovery — connectivity is read, not remembered', (
 		});
 		await run(network);
 		expect(dialed).toEqual([multiaddr(ADDR_A).toString()]);
+	});
+});
+
+describe('runZeroConnectionRecovery — status requires the requested endpoint', () => {
+	const REQUESTED = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+	const SIBLING = `/ip4/198.51.100.7/tcp/9090/p2p/${PEER_ID}`;
+
+	it('does not mark the requested address reachable when a sibling endpoint won', async () => {
+		const reachable: string[] = [];
+		const unreachable: Array<{ address: string; message: string }> = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).addressProbeBackoff = new Map();
+		(network as any).configuredBootstrapAddresses = new Set([normalizeMultiaddrForCompare(REQUESTED)]);
+		(network as any).bootstrapMultiaddrs = [multiaddr(REQUESTED)];
+		(network as any).recentDisconnects = [];
+		(network as any).bootstrapTracker = {
+			entries: () => [],
+			recordAddressReachable(address: string): void {
+				reachable.push(address);
+			},
+			recordAddressUnreachable(address: string, message: string): void {
+				unreachable.push({ address, message });
+			},
+		};
+		(network as any).node = {
+			getPeers: () => [],
+			async dial(): Promise<unknown> {
+				return { remoteAddr: { toString: () => SIBLING } };
+			},
+		};
+
+		await (network as any).runZeroConnectionRecovery(1);
+
+		expect(reachable).toEqual([]);
+		expect(unreachable).toEqual([
+			{
+				address: multiaddr(REQUESTED).toString(),
+				message: 'Dial completed on another endpoint',
+			},
+		]);
+		expect((network as any).addressProbeBackoff.has(normalizeMultiaddrForCompare(REQUESTED))).toBe(true);
 	});
 });
 

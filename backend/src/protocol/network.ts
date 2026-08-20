@@ -149,6 +149,7 @@ const CONFIGURED_PROBE_BACKOFF_MAX_MS = 5 * 60_000;
  * Matches the parked-probe dial, which has always been bounded this way.
  */
 const BOOTSTRAP_DIAL_TIMEOUT_MS = 10_000;
+const DIAL_RETURNED_ANOTHER_ENDPOINT = 'Dial completed on another endpoint';
 
 /**
  * Ceiling on the autodial list zero-connection recovery walks.
@@ -1548,15 +1549,22 @@ export class Network {
 			if (node.getPeers().length > 0) return;
 			try {
 				console.log(`   → Dialing ${maStr}`);
-				await node.dial(ma, { signal: AbortSignal.timeout(10000) });
+				const conn = await node.dial(ma, { signal: AbortSignal.timeout(10000) });
 				if (epoch !== this.runEpoch) return;
+				const returnedAddr = String(conn?.remoteAddr ?? '');
+				const verifiedThisAddr = isSameDialEndpoint(returnedAddr, maStr);
 				if (configured) {
-					this.addressProbeBackoff.delete(canonical);
-					// Tell the UI as well — this loop is the one that gets a node talking again
-					// after a total outage, and its result is exactly what the status row is for.
-					this.bootstrapTracker.recordAddressReachable(maStr);
+					if (verifiedThisAddr) {
+						this.addressProbeBackoff.delete(canonical);
+						// Tell the UI as well — this loop is the one that gets a node talking again
+						// after a total outage, and its result is exactly what the status row is for.
+						this.bootstrapTracker.recordAddressReachable(maStr);
+					} else {
+						this.noteAddressProbeFailure(canonical);
+						this.bootstrapTracker.recordAddressUnreachable(maStr, DIAL_RETURNED_ANOTHER_ENDPOINT);
+					}
 				} else if (pid) this.redialBackoff.delete(pid);
-				console.log(`   ✓ Connected via ${maStr}`);
+				console.log(verifiedThisAddr ? `   ✓ Connected via ${maStr}` : `   ✓ Connected via ${returnedAddr || 'another endpoint'}`);
 				break;
 			} catch (err: any) {
 				if (epoch !== this.runEpoch) return;
@@ -1603,8 +1611,13 @@ export class Network {
 				// Forced for the same reason the configured branch of addBootstrapPeers
 				// forces: without it libp2p hands back whatever connection it already holds
 				// to this peer and the probe proves nothing about the address.
-				await node.dial(ma, { signal: AbortSignal.timeout(10000), force: true });
+				const conn = await node.dial(ma, { signal: AbortSignal.timeout(10000), force: true });
 				if (epoch !== this.runEpoch) return;
+				if (!isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString())) {
+					this.noteAddressProbeFailure(canonical);
+					this.bootstrapTracker.recordAddressUnreachable(ma.toString(), DIAL_RETURNED_ANOTHER_ENDPOINT);
+					continue;
+				}
 				this.addressProbeBackoff.delete(canonical);
 				// Tell the UI as well. This probe is the ONLY thing that retries an address
 				// the routability filter rejected at configure time, so without this the row
