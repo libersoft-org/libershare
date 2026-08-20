@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { handleLeftDownloader, type LeftDownloaderDeps } from '../../../src/api/transfer.ts';
+import { getJoinedEnabledNetworkIDs, handleLeftDownloader, destroyAllDownloaders, initDownloadState, removeDownloadState, setActiveDownloadersRef, setNetworkSuspendedRef, type LeftDownloaderDeps } from '../../../src/api/transfer.ts';
 
 const NET = 'net-left';
 const OTHER = 'net-other';
@@ -117,5 +117,56 @@ describe('leaving a lishnet — one broken download does not take the rest with 
 		expect(healthy.calls).toEqual(['removeNetwork', 'disable']);
 		expect(d.downloadEnabledLishs.has('lish-b')).toBe(false);
 		expect(broadcasts).toEqual(['transfer.download:disabled']);
+	});
+});
+
+describe('download lifecycle state', () => {
+	it('removes a deleted LISH from suspended rejoin state', async () => {
+		const suspended = new Map<string, Set<string>>([['lish-a', new Set([NET])]]);
+		const active = new Map<string, any>();
+		initDownloadState(new Set(['lish-a']), () => {});
+		setActiveDownloadersRef(active);
+		setNetworkSuspendedRef(suspended);
+
+		await removeDownloadState('lish-a');
+
+		expect(suspended.has('lish-a')).toBe(false);
+	});
+
+	it('tries every downloader and reports teardown failures to the reset barrier', async () => {
+		const calls: string[] = [];
+		const downloaders = new Map<string, any>([
+			[
+				'broken',
+				{
+					destroy: async () => {
+						calls.push('broken');
+						throw new Error('close failed');
+					},
+				},
+			],
+			[
+				'healthy',
+				{
+					destroy: async () => {
+						calls.push('healthy');
+					},
+				},
+			],
+		]);
+
+		await expect(destroyAllDownloaders(downloaders)).rejects.toThrow('Failed to stop 1 active download');
+		expect(calls).toEqual(['broken', 'healthy']);
+		expect(downloaders.has('broken')).toBe(true);
+		expect(downloaders.has('healthy')).toBe(false);
+	});
+
+	it('uses only networks that are both enabled and actually joined', () => {
+		const networks = {
+			getEnabled: () => [{ networkID: NET }, { networkID: OTHER }],
+			isJoined: (networkID: string) => networkID === OTHER,
+		};
+
+		expect(getJoinedEnabledNetworkIDs(networks as never)).toEqual([OTHER]);
 	});
 });

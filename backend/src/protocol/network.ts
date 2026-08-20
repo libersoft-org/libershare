@@ -3152,7 +3152,7 @@ export class Network {
 	/**
 	 * Wipe the entire datastore — peerstore (discovered peers, addresses) and the
 	 * identity private key. The network must be stopped. Next start regenerates a
-	 * fresh identity and an empty peerstore. Used by the factory reset.
+	 * fresh identity and an empty peerstore.
 	 */
 	async clearDatastore(): Promise<void> {
 		await this.runWhenStopped('clearing datastore', () => clearDatastoreDir(this.dataDir));

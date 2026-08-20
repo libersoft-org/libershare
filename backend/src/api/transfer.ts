@@ -34,6 +34,8 @@ interface TransferHandlers {
 	findPeers: (p: { lishID: string }) => { success: boolean };
 	/** Tear down all in-memory transfer state (factory reset). Not a WS endpoint. */
 	clearAll: () => Promise<void>;
+	/** Re-open transfer admission after factory-reset orchestration finishes. */
+	resumeAll: () => void;
 }
 
 type PersistDownloadFn = (lishID: string, enabled: boolean) => void;
@@ -56,11 +58,16 @@ export function markDownloadEnabled(lishID: string): void {
 	persistDownloadEnabled?.(lishID, true);
 }
 let _activeDownloaders: Map<string, any> | null = null;
+let _networkSuspended: Map<string, Set<string>> | null = null;
 export function setActiveDownloadersRef(ref: Map<string, any>): void {
 	_activeDownloaders = ref;
 }
+export function setNetworkSuspendedRef(ref: Map<string, Set<string>>): void {
+	_networkSuspended = ref;
+}
 export async function forceDisableDownload(lishID: string): Promise<void> {
 	downloadEnabledLishs.delete(lishID);
+	_networkSuspended?.delete(lishID);
 	persistDownloadEnabled?.(lishID, false);
 	await destroyActiveDownloader(lishID);
 }
@@ -74,10 +81,36 @@ export async function destroyActiveDownloader(lishID: string): Promise<void> {
 	}
 }
 
+/**
+ * Destroy every downloader without hiding failures. Successfully destroyed entries are
+ * removed, while failed ones stay reachable so a later cleanup attempt can retry them.
+ */
+export async function destroyAllDownloaders(activeDownloaders: Map<string, Downloader>): Promise<void> {
+	const errors: unknown[] = [];
+	for (const [lishID, downloader] of [...activeDownloaders]) {
+		try {
+			await downloader.destroy();
+			activeDownloaders.delete(lishID);
+		} catch (error) {
+			errors.push(error);
+		}
+	}
+	if (errors.length > 0) throw new AggregateError(errors, `Failed to stop ${errors.length} active download(s)`);
+}
+
 /** Remove in-memory download state without DB persist (for LISH deletion). */
 export async function removeDownloadState(lishID: string): Promise<void> {
 	downloadEnabledLishs.delete(lishID);
+	_networkSuspended?.delete(lishID);
 	await destroyActiveDownloader(lishID);
+}
+
+/** Return only configured lishnets that are also joined by this running node. */
+export function getJoinedEnabledNetworkIDs(networks: Pick<Networks, 'getEnabled' | 'isJoined'>): string[] {
+	return networks
+		.getEnabled()
+		.filter(network => networks.isJoined(network.networkID))
+		.map(network => network.networkID);
 }
 
 /** Stop error recovery for a LISH (call when LISH is deleted). */
@@ -183,6 +216,7 @@ export function handleLeftDownloader(deps: LeftDownloaderDeps, networkID: string
 
 export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn, broadcast?: BroadcastFn, settings?: Settings, triggerVerification?: (lishID: string) => void, finalizeDownload?: (lishID: string) => Promise<{ success: boolean }>): TransferHandlers {
 	const activeDownloaders = new Map<string, Downloader>();
+	let transfersPaused = false;
 	setActiveDownloadersRef(activeDownloaders);
 
 	// LISHs whose download was suspended because their last joined lishnet was left,
@@ -194,6 +228,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	// user explicitly enables/disables the download so a rejoin never overrides a
 	// deliberate user action.
 	const networkSuspended = new Map<string, Set<string>>();
+	setNetworkSuspendedRef(networkSuspended);
 
 	// When a lishnet is left, stop any download bound EXCLUSIVELY to it: a
 	// downloader keeps running as long as at least one of its networks is still
@@ -287,6 +322,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	async function download(p: { networkID: string; lishPath: string }, client: any): Promise<DownloadResponse> {
 		assert(p, ['networkID', 'lishPath']);
+		if (transfersPaused) throw new CodedError(ErrorCodes.DOWNLOAD_ERROR, 'Transfers are paused during factory reset');
 		const network = networks.getRunningNetwork();
 		const downloadDir = join(dataDir, 'downloads', Date.now().toString());
 		const downloader = new Downloader(downloadDir, network, dataServer, p.networkID);
@@ -341,6 +377,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	async function enableDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
 		assert(p, ['lishID']);
+		if (transfersPaused) return { success: false };
 		if (isBusy(p.lishID)) return { success: false };
 		if (pendingDownloads.has(p.lishID)) return { success: true };
 		dataServer.clearError(p.lishID);
@@ -422,7 +459,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		pendingDownloads.add(p.lishID);
 		try {
 			const network = networks.getRunningNetwork();
-			const joinedNetworks = networks.getEnabled().map(n => n.networkID);
+			const joinedNetworks = getJoinedEnabledNetworkIDs(networks);
 			if (joinedNetworks.length === 0) {
 				// No lishnet is joined to source this download. Keep the DB enabled flag
 				// ON — clearing it would permanently forget the user's intent so a later
@@ -575,6 +612,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	function enableUploadHandler(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
+		if (transfersPaused) return { success: false };
 		if (isBusy(p.lishID)) return { success: false };
 		recovery.stop(p.lishID);
 		dataServer.clearError(p.lishID);
@@ -650,19 +688,19 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * pending error recovery. Does not touch the DB or on-disk files.
 	 */
 	async function clearAllTransfers(): Promise<void> {
-		for (const [, dl] of activeDownloaders) {
-			try {
-				await dl.destroy();
-			} catch {
-				// Best effort — everything is being wiped anyway.
-			}
-		}
-		activeDownloaders.clear();
+		// Close admission before the first await so another WebSocket request cannot
+		// start a transfer between teardown and the destructive database wipe.
+		transfersPaused = true;
+		await destroyAllDownloaders(activeDownloaders);
 		downloadEnabledLishs.clear();
 		networkSuspended.clear();
 		clearAllUploads();
 		recovery.stopAll();
 	}
 
-	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers, subscribePeers: subscribePeersHandler, unsubscribePeers: unsubscribePeersHandler, debugPeers: debugPeersHandler, findPeers: findPeersHandler, clearAll: clearAllTransfers };
+	function resumeAllTransfers(): void {
+		transfersPaused = false;
+	}
+
+	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers, subscribePeers: subscribePeersHandler, unsubscribePeers: unsubscribePeersHandler, debugPeers: debugPeersHandler, findPeers: findPeersHandler, clearAll: clearAllTransfers, resumeAll: resumeAllTransfers };
 }

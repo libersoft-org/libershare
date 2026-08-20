@@ -6,6 +6,7 @@ import { initUploadState } from '../protocol/lish-protocol.ts';
 import { applyNetworkLimits } from '../protocol/network-limits.ts';
 import { runFactoryReset } from './factory-reset.ts';
 import { initDownloadState, triggerEnableDownload } from './transfer.ts';
+import { Mutex } from 'async-mutex';
 
 /**
  * Dependencies consumed by the factory-reset orchestration. Provided by
@@ -25,6 +26,8 @@ export interface FactoryResetOrchestratorDeps {
 	 * provided by the transfer handler module. Return value is ignored.
 	 */
 	readonly clearAllTransfers: () => Promise<any>;
+	/** Re-opens transfer admission after the reset barrier is no longer active. */
+	readonly resumeAllTransfers: () => void;
 	/**
 	 * Broadcasts a WebSocket event to subscribed clients, skipping `except` when given.
 	 */
@@ -42,72 +45,96 @@ export interface FactoryResetOrchestratorDeps {
  * wiring and makes the reset logic independently testable.
  */
 export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean; peers?: boolean }, client?: unknown) => Promise<FactoryResetResponse> {
-	const { dataServer, networks, settings, stopVerifyAll, clearAllTransfers, broadcastFn } = deps;
+	const { dataServer, networks, settings, stopVerifyAll, clearAllTransfers, resumeAllTransfers, broadcastFn } = deps;
+	const resetMutex = new Mutex();
 
-	return async (p?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean; peers?: boolean }, client?: unknown): Promise<FactoryResetResponse> => {
-		const wipeSettings = p?.settings ?? true;
-		const wipeIdentity = p?.identity ?? true;
-		const wipeDownloads = p?.downloads ?? true;
-		const wipeNetworks = p?.networks ?? true;
-		const wipePeers = p?.peers ?? true;
+	return (p?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean; peers?: boolean }, client?: unknown): Promise<FactoryResetResponse> =>
+		resetMutex.runExclusive(async () => {
+			const wipeSettings = p?.settings ?? true;
+			const wipeIdentity = p?.identity ?? true;
+			const wipeDownloads = p?.downloads ?? true;
+			const wipeNetworks = p?.networks ?? true;
+			const wipePeers = p?.peers ?? true;
 
-		// The libp2p node must restart when its identity is regenerated or its joined
-		// networks are removed. A node restart also tears down every live transfer.
-		// Wiping only the peerstore (wipePeers) does not require an identity change
-		// but still needs the node stopped so the datastore is not in use.
-		//
-		// Settings belong here too. Part of them is read when the node is BUILT — the
-		// listening port, mDNS, UPnP, relay, peer exchange — so restoring the defaults
-		// without a restart leaves the running node on the old ones while the UI, and
-		// every later read of the settings, already shows the new. The two would only
-		// agree again after some unrelated restart.
-		const restartNode = wipeIdentity || wipeNetworks || wipePeers || wipeSettings;
+			// The libp2p node must restart when its identity is regenerated or its joined
+			// networks are removed. A node restart also tears down every live transfer.
+			// Wiping only the peerstore (wipePeers) does not require an identity change
+			// but still needs the node stopped so the datastore is not in use.
+			//
+			// Settings belong here too. Part of them is read when the node is BUILT — the
+			// listening port, mDNS, UPnP, relay, peer exchange — so restoring the defaults
+			// without a restart leaves the running node on the old ones while the UI, and
+			// every later read of the settings, already shows the new. The two would only
+			// agree again after some unrelated restart.
+			// Downloads include data currently served by upload streams. Stopping the node
+			// closes those streams before their database rows are removed; clearing only the
+			// in-memory counters would still leave an in-flight stream using wiped state.
+			const restartNode = wipeDownloads || wipeIdentity || wipeNetworks || wipePeers || wipeSettings;
+			let transferAdmissionClosed = false;
+			const resumeTransfers = (): void => {
+				if (!transferAdmissionClosed) return;
+				transferAdmissionClosed = false;
+				resumeAllTransfers();
+			};
 
-		const restartNodeAndTransfers = async (): Promise<void> => {
-			await networks.startEnabledNetworks();
-			// Re-establish transfers that survived the wipe (e.g. downloads kept when
-			// only identity/networks/peers were reset) — they were torn down for the
-			// node restart.
-			const enabledDownloads = dataServer.getDownloadEnabledLishs();
-			initDownloadState(enabledDownloads, (id, en) => dataServer.setDownloadEnabled(id, en));
-			initUploadState(dataServer.getUploadEnabledLishs(), (id, en) => dataServer.setUploadEnabled(id, en));
-			for (const id of enabledDownloads) triggerEnableDownload(id);
-		};
+			const restartNodeAndTransfers = async (): Promise<void> => {
+				await networks.startEnabledNetworks();
+				resumeTransfers();
+				// Re-establish transfers that survived the wipe (e.g. downloads kept when
+				// only identity/networks/peers were reset) — they were torn down for the
+				// node restart.
+				const enabledDownloads = dataServer.getDownloadEnabledLishs();
+				initDownloadState(enabledDownloads, (id, en) => dataServer.setDownloadEnabled(id, en));
+				initUploadState(dataServer.getUploadEnabledLishs(), (id, en) => dataServer.setUploadEnabled(id, en));
+				for (const id of enabledDownloads) triggerEnableDownload(id);
+			};
 
-		// `prepare` is a barrier: if the transfers or the node cannot be stopped, every
-		// wipe that works on state the node owns is skipped and nothing is restarted.
-		// Categories that do run are independent of each other. Per-category and
-		// per-phase outcomes go to the FE, one notification each. See runFactoryReset.
-		const response = await runFactoryReset({
-			prepare: async () => {
-				if (wipeDownloads || restartNode) {
-					await stopVerifyAll();
-					await clearAllTransfers();
-				}
-				if (restartNode) await networks.stopAllNetworks();
-			},
-			// Table-level wipes (cascade clears children).
-			downloads: wipeDownloads ? () => dataServer.clearLishs() : undefined,
-			networks: wipeNetworks ? () => dataServer.clearLishnets() : undefined,
-			peers: wipePeers ? () => networks.getNetwork().clearPeerstore() : undefined,
-			identity: wipeIdentity ? () => networks.getNetwork().clearDatastore() : undefined,
-			settings: wipeSettings
-				? async () => {
-						const defaults = await settings.reset();
-						// Re-apply runtime knobs from the restored defaults (limits are module state).
-						applyNetworkLimits(defaults.network);
-					}
-				: undefined,
-			restart: restartNode ? restartNodeAndTransfers : undefined,
+			// `prepare` is a barrier: if the transfers or the node cannot be stopped, every
+			// wipe that works on state the node owns is skipped and nothing is restarted.
+			// Categories that do run are independent of each other. Per-category and
+			// per-phase outcomes go to the FE, one notification each. See runFactoryReset.
+			let response: FactoryResetResponse;
+			try {
+				response = await runFactoryReset({
+					prepare: async () => {
+						if (wipeDownloads || restartNode) {
+							await stopVerifyAll();
+							// clearAll closes transfer admission before teardown. Remember that even
+							// when teardown throws so the finally block always re-opens it.
+							transferAdmissionClosed = true;
+							await clearAllTransfers();
+						}
+						if (restartNode) await networks.stopAllNetworks();
+					},
+					// Table-level wipes (cascade clears children).
+					downloads: wipeDownloads ? () => dataServer.clearLishs() : undefined,
+					networks: wipeNetworks ? () => dataServer.clearLishnets() : undefined,
+					peers: wipePeers ? () => networks.getNetwork().clearPeerstore() : undefined,
+					// Identity and discovered peers are separate UI/API categories. Regenerating
+					// the private key must not silently wipe the peerstore when peers=false.
+					identity: wipeIdentity ? () => networks.getNetwork().clearIdentityKey() : undefined,
+					settings: wipeSettings
+						? async () => {
+								const defaults = await settings.reset();
+								// Re-apply runtime knobs from the restored defaults (limits are module state).
+								applyNetworkLimits(defaults.network);
+							}
+						: undefined,
+					restart: restartNode ? restartNodeAndTransfers : undefined,
+				});
+			} finally {
+				resumeTransfers();
+			}
+
+			// Everyone else is told to reload, because identity, networks and state moved under
+			// them. The caller is not: it gets this response and its own screen showing which
+			// category failed, and a reload here would replace that with a fresh page before it
+			// could be read. And when `prepare` failed nothing was wiped at all — announcing a
+			// reset would send every other window to a clean slate over an operation that did
+			// not happen.
+			if (response.results.length > 0 && response.phases.every(phase => phase.phase !== 'prepare' || phase.ok)) {
+				broadcastFn('system:factoryReset', {}, client);
+			}
+			return response;
 		});
-
-		// Everyone else is told to reload, because identity, networks and state moved under
-		// them. The caller is not: it gets this response and its own screen showing which
-		// category failed, and a reload here would replace that with a fresh page before it
-		// could be read. And when `prepare` failed nothing was wiped at all — announcing a
-		// reset would send every other window to a clean slate over an operation that did
-		// not happen.
-		if (response.phases.every(phase => phase.phase !== 'prepare' || phase.ok)) broadcastFn('system:factoryReset', {}, client);
-		return response;
-	};
 }

@@ -10,6 +10,7 @@ import type { FactoryResetOrchestratorDeps } from '../../../src/api/factory-rese
 function makeNetworks(overrides: Record<string, () => any> = {}): FactoryResetOrchestratorDeps['networks'] {
 	const network = {
 		clearDatastore: overrides['clearDatastore'] ?? (() => Promise.resolve()),
+		clearIdentityKey: overrides['clearIdentityKey'] ?? (() => Promise.resolve()),
 		clearPeerstore: overrides['clearPeerstore'] ?? (() => Promise.resolve()),
 	};
 	return {
@@ -53,6 +54,7 @@ function makeDeps(
 		dataServerOverride?: Record<string, () => any>;
 		stopVerifyAll?: () => Promise<any>;
 		clearAllTransfers?: () => Promise<any>;
+		resumeAllTransfers?: () => void;
 		broadcastFn?: (event: string, data: any, except?: unknown) => void;
 		log?: string[];
 	} = {}
@@ -63,6 +65,7 @@ function makeDeps(
 		settings: makeSettings(overrides.settingsOverride ?? {}),
 		stopVerifyAll: overrides.stopVerifyAll ?? (() => Promise.resolve()),
 		clearAllTransfers: overrides.clearAllTransfers ?? (() => Promise.resolve()),
+		resumeAllTransfers: overrides.resumeAllTransfers ?? (() => {}),
 		broadcastFn: overrides.broadcastFn ?? (() => {}),
 	};
 }
@@ -84,7 +87,7 @@ describe('buildFactoryResetHandler — category ordering', () => {
 				},
 			},
 			networkOverride: {
-				clearDatastore: () => {
+				clearIdentityKey: () => {
 					order.push('identity');
 					return Promise.resolve();
 				},
@@ -118,19 +121,23 @@ describe('buildFactoryResetHandler — category ordering', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildFactoryResetHandler — restart behaviour', () => {
-	it('does NOT stop the node when only downloads are wiped', async () => {
-		const stopped: string[] = [];
+	it('stops and restarts the node when only downloads are wiped', async () => {
+		const actions: string[] = [];
 		const deps = makeDeps({
 			networkOverride: {
 				stopAllNetworks: () => {
-					stopped.push('stopped');
+					actions.push('stop');
+					return Promise.resolve();
+				},
+				startEnabledNetworks: () => {
+					actions.push('start');
 					return Promise.resolve();
 				},
 			},
 		});
 		const handler = buildFactoryResetHandler(deps);
 		await handler({ downloads: true, settings: false, identity: false, networks: false, peers: false });
-		expect(stopped).toHaveLength(0);
+		expect(actions).toEqual(['stop', 'start']);
 	});
 
 	it('stops and restarts the node when only settings are wiped', async () => {
@@ -193,6 +200,75 @@ describe('buildFactoryResetHandler — restart behaviour', () => {
 		await handler({ peers: true, identity: false, settings: false, downloads: false, networks: false });
 		expect(actions).toContain('stop');
 		expect(actions).toContain('start');
+	});
+
+	it('keeps transfer admission closed through the wipe and re-opens it once', async () => {
+		const actions: string[] = [];
+		const deps = makeDeps({
+			clearAllTransfers: async () => {
+				actions.push('pause');
+			},
+			resumeAllTransfers: () => actions.push('resume'),
+			dataServerOverride: {
+				clearLishs: () => actions.push('wipe'),
+			},
+		});
+
+		await buildFactoryResetHandler(deps)({ downloads: true, settings: false, identity: false, networks: false, peers: false });
+
+		expect(actions).toEqual(['pause', 'wipe', 'resume']);
+	});
+
+	it('re-opens transfer admission when teardown fails and blocks the wipe', async () => {
+		const actions: string[] = [];
+		const deps = makeDeps({
+			clearAllTransfers: async () => {
+				actions.push('pause');
+				throw new Error('download teardown failed');
+			},
+			resumeAllTransfers: () => actions.push('resume'),
+			dataServerOverride: {
+				clearLishs: () => actions.push('wipe'),
+			},
+		});
+
+		const response = await buildFactoryResetHandler(deps)({ downloads: true, settings: false, identity: false, networks: false, peers: false });
+
+		expect(response.success).toBe(false);
+		expect(actions).toEqual(['pause', 'resume']);
+	});
+
+	it('serializes concurrent resets so their transfer barriers cannot overlap', async () => {
+		let releaseFirst!: () => void;
+		const firstMayFinish = new Promise<void>(resolve => {
+			releaseFirst = resolve;
+		});
+		let entered = 0;
+		let firstEntered!: () => void;
+		const firstStarted = new Promise<void>(resolve => {
+			firstEntered = resolve;
+		});
+		const deps = makeDeps({
+			clearAllTransfers: async () => {
+				entered++;
+				if (entered === 1) {
+					firstEntered();
+					await firstMayFinish;
+				}
+			},
+		});
+		const handler = buildFactoryResetHandler(deps);
+		const options = { downloads: true, settings: false, identity: false, networks: false, peers: false };
+
+		const first = handler(options);
+		await firstStarted;
+		const second = handler(options);
+		await Promise.resolve();
+		expect(entered).toBe(1);
+
+		releaseFirst();
+		await Promise.all([first, second]);
+		expect(entered).toBe(2);
 	});
 });
 
@@ -281,8 +357,8 @@ describe('buildFactoryResetHandler — partial failure', () => {
 					called.push('restart');
 					return Promise.resolve();
 				},
-				clearDatastore: () => {
-					called.push('clearDatastore');
+				clearIdentityKey: () => {
+					called.push('clearIdentityKey');
 					return Promise.resolve();
 				},
 				clearPeerstore: () => {
@@ -354,6 +430,36 @@ describe('buildFactoryResetHandler — peers category', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Identity category — selective private-key wipe
+// ---------------------------------------------------------------------------
+
+describe('buildFactoryResetHandler — identity category', () => {
+	it('calls clearIdentityKey without wiping the peerstore', async () => {
+		const called: string[] = [];
+		const deps = makeDeps({
+			networkOverride: {
+				clearIdentityKey: () => {
+					called.push('clearIdentityKey');
+					return Promise.resolve();
+				},
+				clearDatastore: () => {
+					called.push('clearDatastore');
+					return Promise.resolve();
+				},
+				clearPeerstore: () => {
+					called.push('clearPeerstore');
+					return Promise.resolve();
+				},
+			},
+		});
+
+		await buildFactoryResetHandler(deps)({ identity: true, peers: false, settings: false, downloads: false, networks: false });
+
+		expect(called).toEqual(['clearIdentityKey']);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // broadcast
 // ---------------------------------------------------------------------------
 
@@ -397,6 +503,15 @@ describe('buildFactoryResetHandler — who hears about the reset', () => {
 		});
 		const response = await buildFactoryResetHandler(deps)({ identity: true }, { id: 'caller' });
 		expect(response.phases.some(phase => phase.phase === 'prepare' && !phase.ok)).toBe(true);
+		expect(sent).toEqual([]);
+	});
+
+	it('does not announce a reset when every category is disabled', async () => {
+		const sent: string[] = [];
+		const deps = makeDeps({ broadcastFn: event => sent.push(event) });
+		const response = await buildFactoryResetHandler(deps)({ settings: false, identity: false, downloads: false, networks: false, peers: false });
+		expect(response.success).toBe(true);
+		expect(response.results).toEqual([]);
 		expect(sent).toEqual([]);
 	});
 });

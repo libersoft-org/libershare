@@ -128,6 +128,7 @@ export class APIServer {
 			settings: this.settings,
 			stopVerifyAll: _lishs.stopVerifyAll,
 			clearAllTransfers: _transfer.clearAll,
+			resumeAllTransfers: _transfer.resumeAll,
 			broadcastFn: broadcastExceptFn,
 		});
 
