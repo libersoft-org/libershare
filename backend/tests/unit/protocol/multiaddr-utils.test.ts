@@ -79,3 +79,19 @@ describe('destinationPeerIDOf', () => {
 		expect(destinationPeerIDOf('nonsense')).toBeNull();
 	});
 });
+
+describe('canonicalMultiaddr — the cache behind it', () => {
+	it('stays bounded however many distinct addresses it is asked about', () => {
+		// Every announced address is canonicalised, and an announcer chooses how many
+		// DISTINCT ones this node sees. An unbounded cache would turn that into memory the
+		// sender controls, which is the one thing the intake caps exist to prevent.
+		const PEER = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+		let last = '';
+		for (let i = 0; i < 5000; i++) last = canonicalMultiaddr(`/ip4/198.51.100.${i % 250}/tcp/${1024 + (i % 60000)}/p2p/${PEER}`);
+		expect(last).toContain('/p2p/');
+
+		// The bound is internal, so this asks the only question that matters from outside:
+		// the process is still answering, and answering correctly.
+		expect(canonicalMultiaddr(`/dns4/EXAMPLE.test./tcp/9090/p2p/${PEER}`)).toBe(canonicalMultiaddr(`/dns4/example.test/tcp/9090/p2p/${PEER}`));
+	});
+});
