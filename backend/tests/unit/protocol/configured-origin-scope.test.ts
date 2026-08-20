@@ -162,3 +162,30 @@ describe('a configured install must not be swallowed by another network dial', (
 		else expect(installInA).not.toBe('completed');
 	});
 });
+
+describe('bootstrap intake — our own address', () => {
+	it('never dials an entry that targets this node', async () => {
+		const { network, tracker } = harness();
+		const dialed: string[] = [];
+		(network as any).node.dial = async (ma: any): Promise<any> => {
+			dialed.push(ma.toString());
+			throw new Error('should not be dialled');
+		};
+		await network.addBootstrapPeers([`/ip4/203.0.113.9/tcp/9090/p2p/${SELF_ID}`], NET_A, 'configured');
+		expect(dialed).toEqual([]);
+		expect(tracker.getStatus(NET_A)).toBe(null);
+	});
+
+	it('still dials an entry that merely passes through us on the way to somebody else', async () => {
+		// A relayed address names us as the HOP. Reading "the string mentions us" as "this is
+		// our own address" threw away every peer reachable only through this node.
+		const { network } = harness();
+		const dialed: string[] = [];
+		(network as any).node.dial = async (ma: any): Promise<any> => {
+			dialed.push(ma.toString());
+			return { remotePeer: { toString: () => PEER_ID }, remoteAddr: multiaddr(ma.toString()), close: async () => {} };
+		};
+		await network.addBootstrapPeers([`/ip4/203.0.113.9/tcp/9090/p2p/${SELF_ID}/p2p-circuit/p2p/${PEER_ID}`], NET_A, 'configured');
+		expect(dialed).toHaveLength(1);
+	});
+});
