@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { Network } from '../../../src/protocol/network.ts';
+import { multiaddr } from '@multiformats/multiaddr';
 
 /**
  * Unit tests for the transactional start()/stop() lifecycle.
@@ -200,12 +201,20 @@ describe('Network lifecycle', () => {
 				closed++;
 			},
 		};
+		(net as any).lastMeshChange.set('lish/net-a', 123);
+		(net as any)._lastMeshSizes.set('net-a', 4);
+		(net as any).recentDisconnects.push({ ts: 123, peerID: 'peer-a', remaining: 0, wasBootstrap: false });
+		(net as any).bootstrapWorkaroundTimer = setTimeout(() => {}, 60_000);
 
 		await net.stop();
 		expect(node.status).toBe('stopped');
 		expect(closed).toBe(1);
 		expect((net as any).node).toBeNull();
 		expect((net as any).datastore).toBeNull();
+		expect((net as any).lastMeshChange.size).toBe(0);
+		expect((net as any)._lastMeshSizes.size).toBe(0);
+		expect((net as any).recentDisconnects).toEqual([]);
+		expect((net as any).bootstrapWorkaroundTimer).toBeNull();
 		expect(net.getLifecycle()).toBe('stopped');
 	});
 
@@ -364,6 +373,134 @@ describe('Network lifecycle', () => {
 	});
 });
 
+describe('Network periodic work stays bound to its run', () => {
+	it('an old status tick stops immediately after its first await', async () => {
+		const network = bareNetwork();
+		const gate = deferred<unknown[]>();
+		const nodeA = {
+			getPeers: (): unknown[] => [],
+			peerStore: { all: (): Promise<unknown[]> => gate.promise },
+			getConnections: (): unknown[] => [],
+			getMultiaddrs: (): unknown[] => [],
+		};
+		const nodeB = {
+			getPeers: (): unknown[] => [],
+			peerStore: { all: async (): Promise<unknown[]> => [] },
+			getConnections: (): unknown[] => [],
+			getMultiaddrs: (): unknown[] => [],
+		};
+		const pubsub = { getTopics: (): string[] => [], getSubscribers: (): unknown[] => [] };
+		(network as any).runEpoch = 1;
+		(network as any).node = nodeA;
+		(network as any).pubsub = pubsub;
+		let peerCountChecks = 0;
+		let maintenanceRuns = 0;
+		(network as any).checkPeerCounts = (): void => {
+			peerCountChecks++;
+		};
+		(network as any).runRedialMaintenance = async (): Promise<void> => {
+			maintenanceRuns++;
+		};
+
+		const realSetInterval = globalThis.setInterval;
+		let tick!: () => Promise<void>;
+		globalThis.setInterval = ((fn: () => Promise<void>) => {
+			tick = fn;
+			return 1 as any;
+		}) as typeof globalThis.setInterval;
+		try {
+			(network as any).setupStatusInterval();
+		} finally {
+			globalThis.setInterval = realSetInterval;
+		}
+
+		const running = tick();
+		await Promise.resolve();
+		(network as any).runEpoch = 2;
+		(network as any).node = nodeB;
+		(network as any).pubsub = pubsub;
+		gate.resolve([]);
+		await running;
+
+		expect(peerCountChecks).toBe(0);
+		expect(maintenanceRuns).toBe(0);
+		(network as any).statusInterval = null;
+	});
+
+	it('a bootstrap fallback timer from an old run never dials the successor node', async () => {
+		const network = bareNetwork();
+		let oldDials = 0;
+		let newDials = 0;
+		const nodeA = { getPeers: (): unknown[] => [], dial: async (): Promise<void> => void oldDials++ };
+		const nodeB = { getPeers: (): unknown[] => [], dial: async (): Promise<void> => void newDials++ };
+		(network as any).runEpoch = 1;
+		(network as any).node = nodeA;
+		(network as any).bootstrapMultiaddrs = [multiaddr('/ip4/192.0.2.10/tcp/9090')];
+
+		const realSetTimeout = globalThis.setTimeout;
+		let fire!: () => void;
+		globalThis.setTimeout = ((fn: () => void) => {
+			fire = fn;
+			return 1 as any;
+		}) as typeof globalThis.setTimeout;
+		try {
+			(network as any).setupBootstrapWorkaround();
+		} finally {
+			globalThis.setTimeout = realSetTimeout;
+		}
+
+		(network as any).runEpoch = 2;
+		(network as any).node = nodeB;
+		fire();
+		for (let i = 0; i < 4; i++) await Promise.resolve();
+
+		expect(oldDials).toBe(0);
+		expect(newDials).toBe(0);
+		expect((network as any).bootstrapWorkaroundTimer).toBeNull();
+	});
+});
+
+describe('Network periodic bootstrap promotion validates stored destinations', () => {
+	const TARGET = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+	const OTHER = '12D3KooWAnfqA6Wap96ixVfxhHeGUDMriBG4Nncp5tqu8q71EVv2';
+
+	function promotionHarness(address: string) {
+		const network = Object.create(Network.prototype) as Network;
+		const promoted: string[][] = [];
+		(network as any).runEpoch = 1;
+		(network as any).redialSuppressedByNet = new Map();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).pubsub = { direct: new Set<string>() };
+		(network as any).node = {
+			peerId: { toString: (): string => 'self' },
+			getPeers: (): Array<{ toString(): string }> => [{ toString: (): string => TARGET }],
+			peerStore: {
+				all: async () => [{ id: { toString: (): string => TARGET }, addresses: [{ multiaddr: multiaddr(address) }] }],
+			},
+		};
+		(network as any).addBootstrapPeers = async (addresses: string[]): Promise<void> => {
+			promoted.push(addresses);
+		};
+		return { network, promoted };
+	}
+
+	it('skips a direct address that already names another peer', async () => {
+		const { network, promoted } = promotionHarness(`/ip4/192.0.2.10/tcp/9090/p2p/${OTHER}`);
+
+		await (network as any).promoteKnownPeersToBootstrap(1);
+
+		expect(promoted).toEqual([]);
+	});
+
+	it('completes a relay circuit with the actual target identity', async () => {
+		const { network, promoted } = promotionHarness(`/ip4/192.0.2.10/tcp/9090/p2p/${OTHER}/p2p-circuit`);
+
+		await (network as any).promoteKnownPeersToBootstrap(1);
+
+		expect(promoted).toEqual([[`/ip4/192.0.2.10/tcp/9090/p2p/${OTHER}/p2p-circuit/p2p/${TARGET}`]]);
+	});
+});
+
 /**
  * Two maintenance operations that each stop and start the node — an identity import and a
  * factory reset, say — both run startEnabledNetworks and both subscribe the same topics.
@@ -404,5 +541,39 @@ describe('Network.subscribeTopic — one handler per topic', () => {
 		expect(handlersOf(network, 'lish/net-a')).toBe(1);
 		expect(handlersOf(network, 'lish/net-b')).toBe(1);
 		stopTimers(network);
+	});
+
+	it('rolls back the pubsub, score and handler state when setup fails', () => {
+		const network = bare();
+		const topic = 'lish/net-a';
+		const oldHandler = (): void => {};
+		const handlers = new Map<string, Set<unknown>>([[topic, new Set([oldHandler])]]);
+		const realSet = handlers.set.bind(handlers);
+		let failNextSet = true;
+		handlers.set = ((key: string, value: Set<unknown>) => {
+			realSet(key, value);
+			if (failNextSet) {
+				failNextSet = false;
+				throw new Error('handler install failed');
+			}
+			return handlers;
+		}) as typeof handlers.set;
+		(network as any).topicHandlers = handlers;
+		const scoreTopics: Record<string, unknown> = { [topic]: { old: true } };
+		const unsubscribed: string[] = [];
+		(network as any).pubsub = {
+			subscribe() {},
+			unsubscribe(value: string) {
+				unsubscribed.push(value);
+			},
+			getTopics: () => [],
+			score: { params: { topics: scoreTopics } },
+		};
+
+		expect(() => network.subscribeTopic('net-a')).toThrow('handler install failed');
+		expect(unsubscribed).toEqual([topic]);
+		expect((handlers.get(topic) as Set<unknown>).has(oldHandler)).toBe(true);
+		expect(scoreTopics[topic]).toEqual({ old: true });
+		expect((network as any).delayedPeerCountTimers.size).toBe(0);
 	});
 });

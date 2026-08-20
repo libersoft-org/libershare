@@ -1446,16 +1446,18 @@ describe('configured origin is a property of the address, not the peer', () => {
 describe('Network.stop — per-run state really is per run', () => {
 	function bareNetwork() {
 		const network = Object.create(Network.prototype) as Network;
-		for (const field of ['lastWantResponseTime', 'seenSearchIDs', 'topicHandlers', 'dcutrPeers', 'bootstrapPeerIDs', 'bootstrapGeneration', '_lastPeerCounts', '_lastScores', 'redialBackoff', 'unreachableQuarantine', 'addressProbeBackoff', 'configuredBootstrapPeerIDs', 'configuredBootstrapAddresses', 'configuredBootstrapAddressesByNet', 'redialSuppressedByNet', 'pxIngressLogKeys', 'inFlightBootstrapDials']) {
+		for (const field of ['lastWantResponseTime', 'seenSearchIDs', 'topicHandlers', 'dcutrPeers', 'bootstrapPeerIDs', 'bootstrapGeneration', '_lastPeerCounts', '_lastMeshSizes', 'lastMeshChange', '_lastScores', 'redialBackoff', 'unreachableQuarantine', 'addressProbeBackoff', 'configuredBootstrapPeerIDs', 'configuredBootstrapAddresses', 'configuredBootstrapAddressesByNet', 'redialSuppressedByNet', 'pxIngressLogKeys', 'inFlightBootstrapDials']) {
 			(network as any)[field] = field === 'seenSearchIDs' || field === 'dcutrPeers' || field === 'bootstrapPeerIDs' || field === 'configuredBootstrapPeerIDs' || field === 'configuredBootstrapAddresses' ? new Set() : new Map();
 		}
 		(network as any).runEpoch = 1;
 		(network as any).statusInterval = null;
+		(network as any).bootstrapWorkaroundTimer = null;
 		(network as any).wantResponseCleanupInterval = null;
 		(network as any)._peerCountDebounceTimer = null;
 		(network as any).listeners = [];
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).delayedPeerCountTimers = new Set();
+		(network as any).recentDisconnects = [];
 		(network as any).peerAnnounce = { stop() {} };
 		(network as any).bootstrapTracker = {
 			recordAddressReachable(): void {},
@@ -2172,6 +2174,32 @@ describe('addBootstrapPeers — one dial per address at a time', () => {
 		releaseDials();
 		await second;
 
+		expect(dialled).toEqual([ADDR, ADDR]);
+	});
+
+	it('retries under the current generation instead of trusting a superseded dial', async () => {
+		const { network, dialled, releaseDials } = bareNetwork();
+		const first = (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
+		await Bun.sleep(1);
+		(network as any).bootstrapGeneration.set('net-a', 1);
+
+		let secondSettled = false;
+		const second = (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured').then((result: unknown) => {
+			secondSettled = true;
+			return result;
+		});
+		await Bun.sleep(1);
+		expect(secondSettled).toBe(false);
+		expect(dialled).toEqual([ADDR]);
+
+		releaseDials();
+		for (let i = 0; i < 20 && dialled.length < 2; i++) await Bun.sleep(1);
+		expect(dialled).toHaveLength(2);
+		expect(secondSettled).toBe(false);
+		releaseDials();
+
+		expect(await first).toBe('incomplete');
+		expect(await second).toBe('completed');
 		expect(dialled).toEqual([ADDR, ADDR]);
 	});
 });

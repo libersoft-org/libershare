@@ -70,6 +70,7 @@ function errMsg(e: unknown): string {
  * when every one of them passed.
  */
 export async function runFactoryReset(ops: FactoryResetOps): Promise<FactoryResetResponse> {
+	if (!CATEGORY_ORDER.some(category => ops[category] !== undefined)) return { success: true, noop: true, results: [], phases: [] };
 	const phases: FactoryResetPhaseResult[] = [];
 	const requiresPrepare = new Set<FactoryResetCategory>([...REQUIRES_PREPARE, ...(ops.requiresPrepare ?? [])]);
 	let prepared = false;
@@ -121,5 +122,5 @@ export async function runFactoryReset(ops: FactoryResetOps): Promise<FactoryRese
 			}
 		}
 	}
-	return { success: results.every(r => r.ok) && phases.every(p => p.ok), results, phases };
+	return { success: results.every(r => r.ok) && phases.every(p => p.ok), noop: false, results, phases };
 }

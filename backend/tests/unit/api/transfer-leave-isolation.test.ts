@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { getJoinedEnabledNetworkIDs, handleLeftDownloader, destroyAllDownloaders, initDownloadState, removeDownloadState, setActiveDownloadersRef, setNetworkSuspendedRef, type LeftDownloaderDeps } from '../../../src/api/transfer.ts';
+import { getJoinedEnabledNetworkIDs, handleLeftDownloader, destroyAllDownloaders, initDownloadState, removeDownloadState, setActiveDownloadersRef, setNetworkSuspendedRef, TransferAdmissionGate, TransferTeardownError, type LeftDownloaderDeps } from '../../../src/api/transfer.ts';
 import { runFactoryReset } from '../../../src/api/factory-reset.ts';
 
 const NET = 'net-left';
@@ -82,15 +82,29 @@ describe('leaving a lishnet — one broken download does not take the rest with 
 		expect(broadcasts).toEqual([]);
 	});
 
-	it('drops a transient download instead of keeping a disabled one around', () => {
+	it('drops a transient download only after its runtime cleanup succeeds', async () => {
 		const { d } = deps();
 		const a = fakeDownloader();
 		d.activeDownloaders.set('lish-a', a.dl);
 
-		handleLeftDownloader(d, NET, 'lish-a', a.dl);
+		await handleLeftDownloader(d, NET, 'lish-a', a.dl);
 
 		expect(a.calls).toContain('destroy');
 		expect(d.activeDownloaders.has('lish-a')).toBe(false);
+	});
+
+	it('keeps a transient downloader registered when cleanup fails', async () => {
+		const { d } = deps();
+		const downloader = {
+			getNetworkIDs: () => [NET],
+			getOriginalNetworkIDs: () => [NET],
+			removeNetwork: () => {},
+			destroy: () => Promise.reject(new Error('cleanup failed')),
+		} as never;
+		d.activeDownloaders.set('lish-a', downloader);
+
+		await expect(handleLeftDownloader(d, NET, 'lish-a', downloader)).rejects.toThrow('cleanup failed');
+		expect(d.activeDownloaders.get('lish-a')).toBe(downloader);
 	});
 
 	it('cleans up the second download even when the first one throws', () => {
@@ -122,6 +136,36 @@ describe('leaving a lishnet — one broken download does not take the rest with 
 });
 
 describe('download lifecycle state', () => {
+	it('closes admission before waiting for an in-flight transfer operation', async () => {
+		const gate = new TransferAdmissionGate();
+		const leave = gate.tryEnter();
+		expect(leave).not.toBeNull();
+
+		let drained = false;
+		const closing = gate.closeAndDrain().then(() => {
+			drained = true;
+		});
+		await Promise.resolve();
+
+		expect(gate.tryEnter()).toBeNull();
+		expect(drained).toBe(false);
+
+		leave!();
+		await closing;
+		expect(drained).toBe(true);
+	});
+
+	it('re-opens transfer admission only when explicitly resumed', async () => {
+		const gate = new TransferAdmissionGate();
+		await gate.closeAndDrain();
+		expect(gate.tryEnter()).toBeNull();
+
+		gate.open();
+		const leave = gate.tryEnter();
+		expect(leave).not.toBeNull();
+		leave!();
+	});
+
 	it('removes a deleted LISH from suspended rejoin state', async () => {
 		const suspended = new Map<string, Set<string>>([['lish-a', new Set([NET])]]);
 		const active = new Map<string, any>();
@@ -192,6 +236,26 @@ describe('download lifecycle state', () => {
 		expect(downloaders.get('b')).toBe(replacements.get('b'));
 		expect(downloaders.get('a')?.running).toBe(true);
 		expect(downloaders.get('b')?.running).toBe(true);
+	});
+
+	it('marks a failed partial teardown unsafe when runtime restoration also fails', async () => {
+		const downloaders = new Map<string, any>([
+			['a', { destroy: async () => {} }],
+			['b', { destroy: async () => Promise.reject(new Error('close failed')) }],
+		]);
+
+		let caught: unknown;
+		try {
+			await destroyAllDownloaders(downloaders, async lishID => {
+				if (lishID === 'a') throw new Error('restore failed');
+				return { destroy: async () => {} } as any;
+			});
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(caught).toBeInstanceOf(TransferTeardownError);
+		expect((caught as TransferTeardownError).runtimeRestored).toBe(false);
 	});
 
 	it('uses only networks that are both enabled and actually joined', () => {

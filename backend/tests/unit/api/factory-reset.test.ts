@@ -2,6 +2,21 @@ import { describe, it, expect } from 'bun:test';
 import { runFactoryReset } from '../../../src/api/factory-reset.ts';
 
 describe('runFactoryReset', () => {
+	it('returns an explicit no-op without running prepare or restart', async () => {
+		const ran: string[] = [];
+		const res = await runFactoryReset({
+			prepare: () => {
+				ran.push('prepare');
+			},
+			restart: () => {
+				ran.push('restart');
+			},
+		});
+
+		expect(ran).toEqual([]);
+		expect(res).toEqual({ success: true, noop: true, results: [], phases: [] });
+	});
+
 	it('runs EVERY selected category even when some fail — no category is skipped because a previous one threw', async () => {
 		const ran: string[] = [];
 		const res = await runFactoryReset({

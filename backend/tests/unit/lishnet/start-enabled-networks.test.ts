@@ -320,7 +320,7 @@ describe('Networks.startEnabledNetworks — coordinated with concurrent changes'
 
 		// And a disable does not tear down peer state on a half-stopped node.
 		const result = await networks.setEnabled(NET, false);
-		expect(result).toMatchObject({ found: true, transitioned: false, joined: true });
+		expect(result).toMatchObject({ found: true, transitioned: false, joined: true, applied: false });
 		expect(net.unsubscribed).toEqual([]);
 	});
 
@@ -494,6 +494,51 @@ describe('Networks.startEnabledNetworks — coordinated with concurrent changes'
 		expect(net.subscribed).toEqual([NET]);
 		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
 		expect((networks as any).announcedJoined.get(NET)).toBe(true);
+	});
+
+	it('rolls back every earlier membership when a later subscription fails', async () => {
+		const second = 'net-b';
+		addLISHnet(db, { networkID: second, name: 'B', description: '', bootstrapPeers: [], enabled: true, created: '2026-01-01T00:00:00.000Z' });
+		const net = makeMockNet(Promise.resolve());
+		const realSubscribe = net.subscribeTopic.bind(net);
+		net.subscribeTopic = (id: string): boolean => {
+			if (id === second) throw new Error('subscribe failed');
+			return realSubscribe(id);
+		};
+		const networks = makeNetworks(net, db);
+
+		await expect(networks.startEnabledNetworks()).rejects.toThrow('subscribe failed');
+
+		expect(net.unsubscribed).toContain(NET);
+		expect(net.running).toBe(false);
+		expect((networks as any).joinedNetworks.size).toBe(0);
+		expect((networks as any).announcedJoined.size).toBe(0);
+		expect((networks as any).reconcileAdmissionClosed).toBe(true);
+	});
+
+	it('announces a later real join after rollback on an already-running node', async () => {
+		const second = 'net-b';
+		addLISHnet(db, { networkID: second, name: 'B', description: '', bootstrapPeers: [], enabled: true, created: '2026-01-01T00:00:00.000Z' });
+		const net = makeMockNet(Promise.resolve());
+		net.running = true;
+		const realSubscribe = net.subscribeTopic.bind(net);
+		net.subscribeTopic = (id: string): boolean => {
+			if (id === second) throw new Error('subscribe failed');
+			return realSubscribe(id);
+		};
+		const networks = makeNetworks(net, db);
+		const joined: string[] = [];
+		networks.onNetworkJoined = id => joined.push(id);
+
+		await expect(networks.startEnabledNetworks()).rejects.toThrow('subscribe failed');
+
+		expect(net.running).toBe(true);
+		expect((networks as any).joinedNetworks.size).toBe(0);
+		expect((networks as any).announcedJoined.has(NET)).toBe(false);
+
+		net.subscribeTopic = realSubscribe;
+		await networks.setEnabled(NET, true);
+		expect(joined).toEqual([NET]);
 	});
 
 	it('does not claim a membership for a network it reached after a stop was asked for', async () => {

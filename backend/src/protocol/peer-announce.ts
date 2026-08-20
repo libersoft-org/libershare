@@ -209,6 +209,8 @@ export class PeerAnnounceManager {
 	private readonly topicMembers = new Map<string, Map<string, number>>();
 	/** Per-announcing-peer intake budget — see {@link AnnounceRateLimiter}. */
 	private readonly rateLimiter = new AnnounceRateLimiter();
+	/** Raw parsing-work budget, spent before any attacker-controlled address is parsed. */
+	private readonly workLimiter = new AnnounceRateLimiter();
 
 	constructor(deps: PeerAnnounceManagerDeps) {
 		this.deps = deps;
@@ -300,11 +302,22 @@ export class PeerAnnounceManager {
 		}
 		this.topicMembers.clear();
 		this.rateLimiter.clear();
+		this.workLimiter.clear();
 	}
 
 	/** Handle an inbound peer-announce pubsub message. */
 	async handle(data: PeerAnnounceMessage, networkID: string, fromPeerID?: string): Promise<void> {
 		if (!Array.isArray(data.multiaddrs) || data.multiaddrs.length === 0) return;
+		const source = fromPeerID ?? PEER_ANNOUNCE_UNKNOWN_SOURCE;
+		const rawCount = data.multiaddrs.length;
+		// The admitted-address limiter below is intentionally after deduplication, but
+		// parsing also costs CPU. Without a separate preflight budget, an already-throttled
+		// source could still force 1024 parses per message at an unlimited message rate.
+		const rawAllowance = this.workLimiter.take(source, Math.min(rawCount, PEER_ANNOUNCE_MAX_RAW_ADDRS));
+		if (rawAllowance === 0) {
+			trace(`[NET] peer-announce from ${source.slice(0, 16)}: parsing budget exhausted, dropped ${rawCount} raw addrs`);
+			return;
+		}
 		// Two-stage filter: shape (non-empty string) THEN routability (drop
 		// loopback + non-local private through shouldDenyDial). Without the
 		// routability stage, broadcasters with buggy emitters can inject their
@@ -313,7 +326,6 @@ export class PeerAnnounceManager {
 		// these out on our side, we cannot trust older peers in the fleet to
 		// do the same — every receiver must be defensive.
 		const localCidrs = getLocalCidrs();
-		const rawCount = data.multiaddrs.length;
 		// Third stage: collapse addresses that mean the same thing. The cap counts
 		// UNIQUE addresses, so a message repeating one address 128 times no longer
 		// consumes the whole budget — and, more to the point, no longer turns into
@@ -329,7 +341,7 @@ export class PeerAnnounceManager {
 		for (const a of data.multiaddrs) {
 			// Counted over RAW entries, so duplicates and junk are spent from the same
 			// budget as anything else — the unique cap alone bounds only what survives.
-			if (++examined > PEER_ANNOUNCE_MAX_RAW_ADDRS) break;
+			if (++examined > rawAllowance) break;
 			if (typeof a !== 'string' || a.length === 0 || a.length > PEER_ANNOUNCE_MAX_ADDR_LENGTH) continue;
 			if (unique.size >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
 			try {
@@ -368,7 +380,6 @@ export class PeerAnnounceManager {
 		}
 		// Rate-limit AFTER dedup: a duplicate flood must not be able to drain the
 		// sender's budget and starve the addresses it announced legitimately.
-		const source = fromPeerID ?? PEER_ANNOUNCE_UNKNOWN_SOURCE;
 		const admitted = this.rateLimiter.take(source, unique.size);
 		if (admitted === 0) {
 			trace(`[NET] peer-announce from ${source.slice(0, 16)}: rate limited, dropped all ${unique.size} addrs`);

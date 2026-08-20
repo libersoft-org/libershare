@@ -22,6 +22,8 @@ export interface SetEnabledResult {
 	transitioned: boolean;
 	/** The join state the lishnet is in now, whoever settled it. */
 	joined: boolean;
+	/** Whether the stored state is also reflected by the running node. */
+	applied: boolean;
 	/**
 	 * Identity of the row as it stood inside the critical section, for the event the API
 	 * broadcasts. The handler used to read the row itself before awaiting this call, which
@@ -46,8 +48,59 @@ interface ReconcileOutcome {
 	transitioned: boolean;
 	/** The join state as it stood when this convergence finished. */
 	joined: boolean;
+	/** Whether the desired database state is reflected by the running node. */
+	applied: boolean;
 	/** Identity of the row this convergence actually converged on, if it still exists. */
 	network?: { networkID: string; name: string };
+}
+
+/**
+ * Lets ordinary lishnet writes run concurrently, while an exclusive maintenance pass
+ * closes admission and drains every write that entered before it. Writes arriving during
+ * maintenance wait and begin only after the exclusive owner releases the gate.
+ */
+export class NetworkMutationGate {
+	private maintenance = false;
+	private active = 0;
+	private drainWaiters = new Set<() => void>();
+	private openWaiters = new Set<() => void>();
+
+	enter(): (() => void) | Promise<() => void> {
+		if (this.maintenance) return this.enterAfterMaintenance();
+		return this.take();
+	}
+
+	private async enterAfterMaintenance(): Promise<() => void> {
+		while (this.maintenance) await new Promise<void>(resolve => this.openWaiters.add(resolve));
+		return this.take();
+	}
+
+	private take(): () => void {
+		this.active++;
+		let left = false;
+		return () => {
+			if (left) return;
+			left = true;
+			this.active--;
+			if (this.active !== 0) return;
+			for (const resolve of this.drainWaiters) resolve();
+			this.drainWaiters.clear();
+		};
+	}
+
+	async beginMaintenance(): Promise<() => void> {
+		while (this.maintenance) await new Promise<void>(resolve => this.openWaiters.add(resolve));
+		this.maintenance = true;
+		if (this.active !== 0) await new Promise<void>(resolve => this.drainWaiters.add(resolve));
+		let released = false;
+		return () => {
+			if (released) return;
+			released = true;
+			this.maintenance = false;
+			for (const resolve of this.openWaiters) resolve();
+			this.openWaiters.clear();
+		};
+	}
 }
 
 /**
@@ -92,10 +145,15 @@ export class Networks {
 	 * writer enqueues here before it awaits anything else, so one gate for everyone makes
 	 * arrival order and write order the same.
 	 *
-	 * Held for the DATABASE phase only — see {@link inCatalog} and {@link reconcileLater}. It is
-	 * never held while a per-ID lock is taken, so no cycle is possible.
+	 * Normal writes hold it for the DATABASE phase only — see {@link inCatalog} and
+	 * {@link reconcileLater}. Startup is the deliberate exception: it holds the catalog while
+	 * taking per-ID locks so the enabled snapshot cannot change underneath the join loop.
+	 * The lock order is always catalog first, then per-ID; no path takes the catalog while it
+	 * already owns a per-ID lock, so no cycle is possible.
 	 */
 	private readonly catalogMutex = new Mutex();
+	/** Lazily initialised because a few focused unit fixtures instantiate the prototype. */
+	private mutationAdmission?: NetworkMutationGate;
 	/**
 	 * The join/leave state last announced to higher layers, per lishnet.
 	 *
@@ -242,68 +300,128 @@ export class Networks {
 	 * The node always starts, even if no lishnets are enabled.
 	 */
 	async startEnabledNetworks(): Promise<void> {
+		const nodeWasRunning = this.network.isRunning();
+		const stopRequestedBefore = this.stopRequested;
+		const admissionClosedBefore = this.reconcileAdmissionClosed;
+		const joinedThisStart: string[] = [];
+		let startupError: unknown;
+
 		// Start the node with no preset bootstrap list — bootstrap dials happen
 		// per-network below via addBootstrapPeers so per-network status tracking
 		// can record which specific peers connected / mismatched / timed out.
 		// (Previous behaviour used a flat preset list that bypassed our tracking.)
-		await this.network.start([]);
+		try {
+			await this.network.start([]);
 
-		// The enabled list is read AFTER the start, not before it. Reading it first meant
-		// startup worked from a snapshot taken before a long await: an API disable or
-		// delete arriving during the start reconciled against a runtime that had joined
-		// nothing yet — so it had nothing to leave — and then this loop subscribed the
-		// network anyway, from a copy of a row that no longer said what it used to.
-		// Under the catalog mutex for the whole loop, so no API write and no shutdown can
-		// interleave with the networks coming up — see {@link catalogMutex}.
-		await this.catalogMutex.runExclusive(async () => {
-			// Admission reopens HERE, on a node observed running while the catalog is held, and
-			// never on the strength of `start()` having returned. A stop that arrives during the
-			// start takes the free catalog first, closes the door and drains, then blocks in
-			// `Network.stop()` behind the start's own lifecycle mutex — so it finishes AFTER the
-			// start it overtook. Reopening on the return would hand every later write a runtime
-			// that had just been torn down, and report it as converged: the failure the stop's
-			// own error path exists to prevent, arriving through the start door instead.
-			//
-			// Reopening here rather than before the catalog also closes the window in which a
-			// writer got in between the two and joined a lishnet this loop then subscribed a
-			// second time.
-			if (!this.network.isRunning()) {
-				console.log('Not joining any lishnet: the node is no longer running by the time startup reached them');
-				return;
-			}
-			this.stopRequested = false;
-			this.reconcileAdmissionClosed = false;
-			for (const net of this.getEnabled()) {
-				await this.operationLock(net.networkID).runExclusive(() => {
-					// Re-read under the lock as well: an earlier network's turn is another await.
-					const row = this.get(net.networkID);
-					if (row?.enabled !== true) return;
-					// A stop between the start above and this subscribe leaves the call a no-op on
-					// a dead node, but `joinedNetworks` would still claim membership — the wrapper
-					// reporting a joined network whose node is not running and whose topic is not
-					// subscribed.
-					if (!this.canJoin()) return;
-					if (!this.network.subscribeTopic(row.networkID)) return;
-					this.joinedNetworks.add(row.networkID);
-					// Startup itself announces nothing, but a later disable has to have a joined
-					// state to change away from — otherwise its leave looks like a no-op.
-					this.announcedJoined.set(row.networkID, true);
-					const configured = Networks.cleanBootstrapList(row.bootstrapPeers);
-					// The startup join installs this list just as {@link joinNetwork} does, so it
-					// has to record it the same way or the first leave of the run finds nothing to
-					// take back off — see {@link appliedBootstrap}.
-					const installed = this.beginBootstrapInstall(row.networkID, configured);
-					if (configured.length > 0) {
-						// Fire-and-forget so a slow / unreachable network does not delay startup of the others.
-						this.network.addBootstrapPeers(configured, row.networkID, 'configured').then(
-							result => Networks.finishBootstrapInstall(installed, result),
-							err => console.error(`[Networks] addBootstrapPeers for ${row.networkID} failed:`, err?.message ?? err)
-						);
+			// The enabled list is read AFTER the start, not before it. Reading it first meant
+			// startup worked from a snapshot taken before a long await: an API disable or
+			// delete arriving during the start reconciled against a runtime that had joined
+			// nothing yet — so it had nothing to leave — and then this loop subscribed the
+			// network anyway, from a copy of a row that no longer said what it used to.
+			// Under the catalog mutex for the whole loop, so no API write and no shutdown can
+			// interleave with the networks coming up — see {@link catalogMutex}.
+			await this.catalogMutex.runExclusive(async () => {
+				// Admission reopens HERE, on a node observed running while the catalog is held, and
+				// never on the strength of `start()` having returned. A stop that arrives during the
+				// start takes the free catalog first, closes the door and drains, then blocks in
+				// `Network.stop()` behind the start's own lifecycle mutex — so it finishes AFTER the
+				// start it overtook. Reopening on the return would hand every later write a runtime
+				// that had just been torn down, and report it as converged: the failure the stop's
+				// own error path exists to prevent, arriving through the start door instead.
+				//
+				// Reopening here rather than before the catalog also closes the window in which a
+				// writer got in between the two and joined a lishnet this loop then subscribed a
+				// second time.
+				if (!this.network.isRunning()) {
+					console.log('Not joining any lishnet: the node is no longer running by the time startup reached them');
+					return;
+				}
+				this.stopRequested = false;
+				this.reconcileAdmissionClosed = false;
+				try {
+					for (const net of this.getEnabled()) {
+						await this.operationLock(net.networkID).runExclusive(() => {
+							// Re-read under the lock as well: an earlier network's turn is another await.
+							const row = this.get(net.networkID);
+							if (row?.enabled !== true) return;
+							if (this.joinedNetworks.has(row.networkID)) return;
+							// A stop between the start above and this subscribe leaves the call a no-op on
+							// a dead node, but `joinedNetworks` would still claim membership — the wrapper
+							// reporting a joined network whose node is not running and whose topic is not
+							// subscribed.
+							if (!this.canJoin()) return;
+							if (!this.network.subscribeTopic(row.networkID)) throw new Error(`Could not subscribe to lishnet ${row.networkID}`);
+							this.joinedNetworks.add(row.networkID);
+							joinedThisStart.push(row.networkID);
+							// Startup itself announces nothing, but a later disable has to have a joined
+							// state to change away from — otherwise its leave looks like a no-op.
+							this.announcedJoined.set(row.networkID, true);
+							const configured = Networks.cleanBootstrapList(row.bootstrapPeers);
+							// The startup join installs this list just as {@link joinNetwork} does, so it
+							// has to record it the same way or the first leave of the run finds nothing to
+							// take back off — see {@link appliedBootstrap}.
+							const installed = this.beginBootstrapInstall(row.networkID, configured);
+							if (configured.length > 0) {
+								// Fire-and-forget so a slow / unreachable network does not delay startup of the others.
+								this.network.addBootstrapPeers(configured, row.networkID, 'configured').then(
+									result => Networks.finishBootstrapInstall(installed, result),
+									err => console.error(`[Networks] addBootstrapPeers for ${row.networkID} failed:`, err?.message ?? err)
+								);
+							}
+							console.log(`✓ Joined lishnet: ${row.name} (${row.networkID})`);
+						});
 					}
-					console.log(`✓ Joined lishnet: ${row.name} (${row.networkID})`);
-				});
+				} catch (err) {
+					// Close admission before releasing the catalog. A queued writer may still store
+					// its desired state, but it must not report convergence onto a partially-started
+					// runtime while this call is rolling that runtime back.
+					this.reconcileAdmissionClosed = true;
+					const rollbackErrors: unknown[] = [];
+					for (const id of [...joinedThisStart].reverse()) {
+						try {
+							await this.operationLock(id).runExclusive(async () => {
+								await this.leaveNetwork(id, this.appliedBootstrap.get(id)?.addresses ?? []);
+								// Startup joins are silent. If this one is rolled back, its seeded
+								// announcement state must be rolled back with it; otherwise a later real
+								// join looks idempotent and onNetworkJoined is never fired.
+								this.announcedJoined.delete(id);
+							});
+						} catch (rollbackError) {
+							rollbackErrors.push(rollbackError);
+						}
+					}
+					if (nodeWasRunning && !this.stopRequested) {
+						this.stopRequested = stopRequestedBefore;
+						this.reconcileAdmissionClosed = admissionClosedBefore;
+					}
+					if (rollbackErrors.length > 0) {
+						throw new AggregateError([err, ...rollbackErrors], `LISH network startup failed and ${rollbackErrors.length} membership rollback(s) also failed`);
+					}
+					throw err;
+				}
+			});
+		} catch (err) {
+			startupError = err;
+		}
+
+		if (startupError === undefined) return;
+
+		// If this call brought the shared node up, a failed membership phase must take it
+		// back down. Keeping an otherwise healthy node with only the prefix of enabled
+		// lishnets joined makes startup look successful to every later API call.
+		if (!nodeWasRunning) {
+			this.stopRequested = true;
+			this.reconcileAdmissionClosed = true;
+			try {
+				if (this.network.isRunning()) await this.network.stop();
+				this.joinedNetworks.clear();
+				this.announcedJoined.clear();
+				this.appliedBootstrap.clear();
+			} catch (stopError) {
+				throw new AggregateError([startupError, stopError], 'LISH network startup failed and the shared node could not be stopped');
 			}
-		});
+		}
+		throw startupError;
 	}
 
 	/**
@@ -322,26 +440,28 @@ export class Networks {
 	 * Enable/disable a lishnet. Starts the node if needed, subscribes/unsubscribes topics.
 	 */
 	async setEnabled(id: string, enabled: boolean): Promise<SetEnabledResult> {
-		const staged = await this.inCatalog(() => {
-			if (!lishnetExists(this.db, id)) return undefined;
-			setLISHnetEnabled(this.db, id, enabled);
-			// Named from the row this write landed on, not from a read the caller took outside
-			// the lock — see {@link SetEnabledResult.network}.
-			return { row: this.get(id), job: this.reconcileLater(id) };
+		return await this.inMutation(async () => {
+			const staged = await this.inCatalog(() => {
+				if (!lishnetExists(this.db, id)) return undefined;
+				setLISHnetEnabled(this.db, id, enabled);
+				// Named from the row this write landed on, not from a read the caller took outside
+				// the lock — see {@link SetEnabledResult.network}.
+				return { row: this.get(id), job: this.reconcileLater(id) };
+			});
+			if (!staged) return { found: false, transitioned: false, joined: false, applied: false };
+			const outcome = await staged.job;
+			// Everything transition-related comes out of the outcome, which was assembled under
+			// the lishnet's lock. Nothing here may re-read the runtime: by now the next waiter
+			// has had the lock, so a second look answers for its transition, not for this one.
+			const result: SetEnabledResult = { found: true, transitioned: outcome.transitioned, joined: outcome.joined, applied: outcome.applied };
+			// The row the convergence worked from, so the event carries the name the transition
+			// actually used rather than a snapshot a queued rename has since replaced. A row that
+			// no longer exists falls back to the one this call's own catalog phase wrote — there
+			// is no later truth to name it by.
+			const named = outcome.network ?? staged.row;
+			if (named) result.network = { networkID: named.networkID, name: named.name };
+			return result;
 		});
-		if (!staged) return { found: false, transitioned: false, joined: false };
-		const outcome = await staged.job;
-		// Everything transition-related comes out of the outcome, which was assembled under
-		// the lishnet's lock. Nothing here may re-read the runtime: by now the next waiter
-		// has had the lock, so a second look answers for its transition, not for this one.
-		const result: SetEnabledResult = { found: true, transitioned: outcome.transitioned, joined: outcome.joined };
-		// The row the convergence worked from, so the event carries the name the transition
-		// actually used rather than a snapshot a queued rename has since replaced. A row that
-		// no longer exists falls back to the one this call's own catalog phase wrote — there
-		// is no later truth to name it by.
-		const named = outcome.network ?? staged.row;
-		if (named) result.network = { networkID: named.networkID, name: named.name };
-		return result;
 	}
 
 	/**
@@ -356,6 +476,35 @@ export class Networks {
 	 */
 	private async inCatalog<T>(body: () => T): Promise<T> {
 		return await this.catalogMutex.runExclusive(async () => body());
+	}
+
+	private getMutationAdmission(): NetworkMutationGate {
+		return (this.mutationAdmission ??= new NetworkMutationGate());
+	}
+
+	private async inMutation<T>(body: () => Promise<T>): Promise<T> {
+		const admission = this.getMutationAdmission().enter();
+		if (typeof admission === 'function') {
+			try {
+				return await body();
+			} finally {
+				admission();
+			}
+		}
+		const leave = await admission;
+		try {
+			return await body();
+		} finally {
+			leave();
+		}
+	}
+
+	/**
+	 * Block new lishnet writes and wait until every older write has finished its runtime
+	 * convergence. The caller owns the returned release function through the full reset.
+	 */
+	async beginMaintenance(): Promise<() => void> {
+		return await this.getMutationAdmission().beginMaintenance();
 	}
 
 	/**
@@ -431,7 +580,8 @@ export class Networks {
 	 */
 	private currentState(id: string): ReconcileOutcome {
 		const row = this.get(id);
-		const outcome: ReconcileOutcome = { transitioned: false, joined: this.joinedNetworks.has(id) };
+		const joined = this.joinedNetworks.has(id);
+		const outcome: ReconcileOutcome = { transitioned: false, joined, applied: joined === (row?.enabled === true) };
 		if (row) outcome.network = { networkID: row.networkID, name: row.name };
 		return outcome;
 	}
@@ -540,7 +690,7 @@ export class Networks {
 			else await this.leaveNetwork(id, installed);
 		}
 		const settled = this.joinedNetworks.has(id);
-		const outcome: ReconcileOutcome = { transitioned: this.announce(id, settled), joined: settled };
+		const outcome: ReconcileOutcome = { transitioned: this.announce(id, settled), joined: settled, applied: settled === wantJoined };
 		if (next) outcome.network = { networkID: next.networkID, name: next.name };
 		return outcome;
 	}
@@ -958,13 +1108,15 @@ export class Networks {
 	async importFromLISHnet(data: ILISHNetwork, enabled: boolean = false): Promise<LISHNetworkConfig> {
 		const definition = this.validateNetwork(data);
 		const config: LISHNetworkConfig = { ...definition, enabled };
-		// An upsert can bring a network into existence — see {@link catalogMutex}.
-		const job = await this.inCatalog(() => {
-			upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
-			return this.reconcileLater(config.networkID);
+		return await this.inMutation(async () => {
+			// An upsert can bring a network into existence — see {@link catalogMutex}.
+			const job = await this.inCatalog(() => {
+				upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
+				return this.reconcileLater(config.networkID);
+			});
+			await job;
+			return config;
 		});
-		await job;
-		return config;
 	}
 
 	// Parse JSON string and return validated network definitions (without storing).
@@ -1008,10 +1160,12 @@ export class Networks {
 		// that already exists writes nothing and reconciles nothing: it used to claim a
 		// revision anyway on the way in, which cancelled a queued enable of that very network
 		// — a request that changed nothing discarding one that meant something.
-		const job = await this.inCatalog(() => (addLISHnet(this.db, network) ? this.reconcileLater(network.networkID) : undefined));
-		if (!job) return false;
-		await job;
-		return true;
+		return await this.inMutation(async () => {
+			const job = await this.inCatalog(() => (addLISHnet(this.db, network) ? this.reconcileLater(network.networkID) : undefined));
+			if (!job) return false;
+			await job;
+			return true;
+		});
 	}
 
 	async update(network: LISHNetworkConfig): Promise<boolean> {
@@ -1021,16 +1175,18 @@ export class Networks {
 		// can change either one. Without the runtime reconciliation the edit would reach only
 		// the database and the live node would keep dialing the previous list — or stay in a
 		// network the edit had just disabled — until restart.
-		const job = await this.inCatalog(() => {
-			// Store the cleaned list, not the raw one: blank rows from the form would
-			// otherwise be persisted while the runtime worked from the filtered copy, and
-			// the two would disagree about what this network's bootstrap list even is.
-			const cleaned = Networks.cleanBootstrapList(network.bootstrapPeers ?? []);
-			return updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned }) ? this.reconcileLater(network.networkID) : undefined;
+		return await this.inMutation(async () => {
+			const job = await this.inCatalog(() => {
+				// Store the cleaned list, not the raw one: blank rows from the form would
+				// otherwise be persisted while the runtime worked from the filtered copy, and
+				// the two would disagree about what this network's bootstrap list even is.
+				const cleaned = Networks.cleanBootstrapList(network.bootstrapPeers ?? []);
+				return updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned }) ? this.reconcileLater(network.networkID) : undefined;
+			});
+			if (!job) return false;
+			await job;
+			return true;
 		});
-		if (!job) return false;
-		await job;
-		return true;
 	}
 
 	/**
@@ -1045,14 +1201,16 @@ export class Networks {
 	 * either.
 	 */
 	async delete(id: string): Promise<boolean> {
-		const job = await this.inCatalog(() => {
-			if (!lishnetExists(this.db, id)) return undefined;
-			deleteLISHnet(this.db, id);
-			return this.reconcileLater(id);
+		return await this.inMutation(async () => {
+			const job = await this.inCatalog(() => {
+				if (!lishnetExists(this.db, id)) return undefined;
+				deleteLISHnet(this.db, id);
+				return this.reconcileLater(id);
+			});
+			if (!job) return false;
+			await job;
+			return true;
 		});
-		if (!job) return false;
-		await job;
-		return true;
 	}
 
 	exists(id: string): boolean {
@@ -1067,7 +1225,7 @@ export class Networks {
 	 * its affected list from moved underneath it.
 	 */
 	async addIfNotExists(network: LISHNetworkDefinition): Promise<boolean> {
-		return await this.inCatalog(() => addLISHnetIfNotExists(this.db, network));
+		return await this.inMutation(() => this.inCatalog(() => addLISHnetIfNotExists(this.db, network)));
 	}
 
 	/**
@@ -1077,7 +1235,7 @@ export class Networks {
 	 * {@link addIfNotExists} for why the write is still not the caller's to do unlocked.
 	 */
 	async importNetworks(networks: LISHNetworkDefinition[]): Promise<number> {
-		return await this.inCatalog(() => importLISHnets(this.db, networks));
+		return await this.inMutation(() => this.inCatalog(() => importLISHnets(this.db, networks)));
 	}
 
 	/**
@@ -1094,15 +1252,20 @@ export class Networks {
 		// Every affected network's turn is reserved before the catalog is released, so a
 		// single-network write issued after this one cannot converge ahead of it on any of
 		// them — see {@link reconcileLater}.
-		const jobs = await this.inCatalog(() => {
-			const rows = new Map(this.list().map(n => [n.networkID, n]));
-			replaceLISHnets(this.db, networks);
-			return [...new Set([...rows.keys(), ...networks.map(n => n.networkID)])].map(id => this.reconcileLater(id));
+		await this.inMutation(async () => {
+			const jobs = await this.inCatalog(() => {
+				const rows = new Map(this.list().map(n => [n.networkID, n]));
+				replaceLISHnets(this.db, networks);
+				return [...new Set([...rows.keys(), ...networks.map(n => n.networkID)])].map(id => this.reconcileLater(id));
+			});
+			const outcomes = await Promise.allSettled(jobs);
+			const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
+			if (failures.length > 0)
+				throw new AggregateError(
+					failures.map(failure => failure.reason),
+					`${failures.length} lishnet reconciliation failed`
+				);
 		});
-		// One lishnet at a time, each under its own lock and none of them under the catalog.
-		// Reconciling the whole set under the global lock meant a rewrite of a long list held
-		// it across every affected network's dials and disconnects in turn.
-		for (const job of jobs) await job;
 	}
 
 	/**
@@ -1126,19 +1289,21 @@ export class Networks {
 	 * recorded. Returns the updated config or null if the network is unknown.
 	 */
 	async updateBootstrapPeers(id: string, bootstrapPeers: string[]): Promise<LISHNetworkConfig | null> {
-		const staged = await this.inCatalog(() => {
-			const existing = this.get(id);
-			if (!existing) return undefined;
-			const next: LISHNetworkConfig = { ...existing, bootstrapPeers: Networks.cleanBootstrapList(bootstrapPeers) };
-			// Persist first and believe the answer. Switching the runtime over after a failed
-			// write would leave the node dialing a list the database never accepted, and the
-			// old one would come back at the next restart with nothing to explain the change.
-			if (!updateLISHnet(this.db, next)) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, id);
-			return { next, job: this.reconcileLater(id) };
+		return await this.inMutation(async () => {
+			const staged = await this.inCatalog(() => {
+				const existing = this.get(id);
+				if (!existing) return undefined;
+				const next: LISHNetworkConfig = { ...existing, bootstrapPeers: Networks.cleanBootstrapList(bootstrapPeers) };
+				// Persist first and believe the answer. Switching the runtime over after a failed
+				// write would leave the node dialing a list the database never accepted, and the
+				// old one would come back at the next restart with nothing to explain the change.
+				if (!updateLISHnet(this.db, next)) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, id);
+				return { next, job: this.reconcileLater(id) };
+			});
+			if (!staged) return null;
+			await staged.job;
+			return staged.next;
 		});
-		if (!staged) return null;
-		await staged.job;
-		return staged.next;
 	}
 
 	/**

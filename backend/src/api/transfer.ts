@@ -32,10 +32,54 @@ interface TransferHandlers {
 	unsubscribePeers: (p: { lishID: string }, client: any) => boolean;
 	debugPeers: (p: { lishID?: string }) => ReturnType<typeof getDebugSnapshot>;
 	findPeers: (p: { lishID: string }) => { success: boolean };
+	/** Close transfer admission and wait for handlers already past the gate. */
+	pauseAll: () => Promise<void>;
 	/** Tear down all in-memory transfer state (factory reset). Not a WS endpoint. */
 	clearAll: () => Promise<void>;
+	/** Restore persisted downloads while public transfer admission remains closed. */
+	restoreAll: (lishIDs: Set<string>) => Promise<void>;
 	/** Re-open transfer admission after factory-reset orchestration finishes. */
 	resumeAll: () => void;
+}
+
+/**
+ * Synchronous admission plus an asynchronous drain barrier. A factory reset closes the
+ * gate before its first await, so a handler that already passed the gate is counted and
+ * every later handler is rejected until the reset explicitly re-opens admission.
+ */
+export class TransferAdmissionGate {
+	private closed = false;
+	private active = 0;
+	private drainWaiters = new Set<() => void>();
+
+	tryEnter(): (() => void) | null {
+		if (this.closed) return null;
+		this.active++;
+		let left = false;
+		return () => {
+			if (left) return;
+			left = true;
+			this.active--;
+			if (this.active !== 0) return;
+			for (const resolve of this.drainWaiters) resolve();
+			this.drainWaiters.clear();
+		};
+	}
+
+	async closeAndDrain(): Promise<void> {
+		this.closed = true;
+		if (this.active === 0) return;
+		await new Promise<void>(resolve => this.drainWaiters.add(resolve));
+	}
+
+	open(): void {
+		if (this.active !== 0) throw new Error('Cannot open transfer admission before active operations drain');
+		this.closed = false;
+	}
+
+	get isClosed(): boolean {
+		return this.closed;
+	}
 }
 
 type PersistDownloadFn = (lishID: string, enabled: boolean) => void;
@@ -81,6 +125,16 @@ export async function destroyActiveDownloader(lishID: string): Promise<void> {
 	}
 }
 
+export class TransferTeardownError extends AggregateError {
+	readonly runtimeRestored: boolean;
+
+	constructor(errors: unknown[], message: string, runtimeRestored: boolean) {
+		super(errors, message);
+		this.name = 'TransferTeardownError';
+		this.runtimeRestored = runtimeRestored;
+	}
+}
+
 /**
  * Destroy every downloader without hiding failures. Without a restore callback, successful
  * entries are removed and failed ones remain. Factory reset supplies a restore callback so
@@ -115,7 +169,7 @@ export async function destroyAllDownloaders<T extends Pick<Downloader, 'destroy'
 	}
 
 	const restoreDetail = restoreErrors.length > 0 ? `; failed to restore ${restoreErrors.length} download(s)` : '';
-	throw new AggregateError([...errors, ...restoreErrors], `Failed to stop ${errors.length} active download(s)${restoreDetail}`);
+	throw new TransferTeardownError([...errors, ...restoreErrors], `Failed to stop ${errors.length} active download(s)${restoreDetail}`, restore !== undefined && restoreErrors.length === 0);
 }
 
 /** Remove in-memory download state without DB persist (for LISH deletion). */
@@ -183,7 +237,7 @@ export interface LeftDownloaderDeps {
  * behind it their cleanup, and that is not something the surrounding handlers can be
  * asked to demonstrate.
  */
-export function handleLeftDownloader(deps: LeftDownloaderDeps, networkID: string, lishID: string, dl: Downloader): void {
+export function handleLeftDownloader(deps: LeftDownloaderDeps, networkID: string, lishID: string, dl: Downloader): Promise<void> | undefined {
 	const ids = dl.getNetworkIDs?.() ?? [];
 	if (!ids.includes(networkID)) return;
 	if (ids.some(id => deps.networks.isJoined(id))) {
@@ -210,6 +264,7 @@ export function handleLeftDownloader(deps: LeftDownloaderDeps, networkID: string
 	// re-enable the download once the IO condition clears even though the
 	// user just stopped it by leaving the network.
 	deps.recovery.stop(lishID);
+	let cleanup: Promise<void> | undefined;
 	if (wasEnabled) {
 		// Persisted download — retain the disabled downloader and remember it as
 		// suspended-by-leave so onNetworkJoined can resume it after rejoin.
@@ -226,17 +281,20 @@ export function handleLeftDownloader(deps: LeftDownloaderDeps, networkID: string
 		// registered network handlers (a fresh start of the same LISH would
 		// otherwise overwrite the map entry without disposing this one).
 		console.log(`[Transfer] ${lishID.slice(0, 8)}: last joined lishnet left, dropping transient download`);
-		dl.destroy().catch(err => console.error(`[Transfer] ${lishID.slice(0, 8)}: destroy on leave failed:`, err?.message ?? err));
-		deps.activeDownloaders.delete(lishID);
+		cleanup = dl.destroy().then(() => {
+			if (deps.activeDownloaders.get(lishID) === dl) deps.activeDownloaders.delete(lishID);
+		});
 	}
 	// dl.disable() alone emits nothing over WS — tell the FE the download
 	// stopped.
 	deps.broadcast?.('transfer.download:disabled', { lishID });
+	return cleanup;
 }
 
 export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn, broadcast?: BroadcastFn, settings?: Settings, triggerVerification?: (lishID: string) => void, finalizeDownload?: (lishID: string) => Promise<{ success: boolean }>): TransferHandlers {
 	const activeDownloaders = new Map<string, Downloader>();
-	let transfersPaused = false;
+	const transferAdmission = new TransferAdmissionGate();
+	const pendingDownloaderCleanups = new Set<Promise<void>>();
 	setActiveDownloadersRef(activeDownloaders);
 
 	// LISHs whose download was suspended because their last joined lishnet was left,
@@ -273,7 +331,10 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	/** See {@link handleLeftDownloader}; this only supplies what that needs. */
 	function handleLeftFor(networkID: string, lishID: string, dl: Downloader): void {
-		handleLeftDownloader({ networks, downloadEnabledLishs, networkSuspended, activeDownloaders, recovery, broadcast }, networkID, lishID, dl);
+		const cleanup = handleLeftDownloader({ networks, downloadEnabledLishs, networkSuspended, activeDownloaders, recovery, broadcast }, networkID, lishID, dl);
+		if (!cleanup) return;
+		pendingDownloaderCleanups.add(cleanup);
+		void cleanup.catch(err => console.error(`[Transfer] ${lishID.slice(0, 8)}: destroy on leave failed:`, err?.message ?? err)).finally(() => pendingDownloaderCleanups.delete(cleanup));
 	}
 
 	// When a previously-left lishnet is re-joined in-process, resume downloads that
@@ -341,8 +402,17 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	}
 
 	async function download(p: { networkID: string; lishPath: string }, client: any): Promise<DownloadResponse> {
+		const leave = transferAdmission.tryEnter();
+		if (!leave) throw new CodedError(ErrorCodes.DOWNLOAD_ERROR, 'Transfers are paused during factory reset');
+		try {
+			return await downloadAdmitted(p, client);
+		} finally {
+			leave();
+		}
+	}
+
+	async function downloadAdmitted(p: { networkID: string; lishPath: string }, client: any): Promise<DownloadResponse> {
 		assert(p, ['networkID', 'lishPath']);
-		if (transfersPaused) throw new CodedError(ErrorCodes.DOWNLOAD_ERROR, 'Transfers are paused during factory reset');
 		const network = networks.getRunningNetwork();
 		const downloadDir = join(dataDir, 'downloads', Date.now().toString());
 		const downloader = new Downloader(downloadDir, network, dataServer, p.networkID);
@@ -382,6 +452,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	function disableDownload(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
+		if (transferAdmission.isClosed) return { success: false };
 		networkSuspended.delete(p.lishID);
 		recovery.stop(p.lishID);
 		downloadEnabledLishs.delete(p.lishID);
@@ -444,8 +515,17 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	}
 
 	async function enableDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
+		const leave = transferAdmission.tryEnter();
+		if (!leave) return { success: false };
+		try {
+			return await enableDownloadAdmitted(p, client);
+		} finally {
+			leave();
+		}
+	}
+
+	async function enableDownloadAdmitted(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
 		assert(p, ['lishID']);
-		if (transfersPaused) return { success: false };
 		if (isBusy(p.lishID)) return { success: false };
 		if (pendingDownloads.has(p.lishID)) return { success: true };
 		dataServer.clearError(p.lishID);
@@ -466,8 +546,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			// If downloader is in error state, destroy it and create a fresh one
 			if (dl.getError()) {
 				console.debug(`[Transfer] ${p.lishID.slice(0, 8)}: destroying error-state downloader, will create fresh`);
-				dl.destroy();
-				activeDownloaders.delete(p.lishID);
+				await dl.destroy();
+				if (activeDownloaders.get(p.lishID) === dl) activeDownloaders.delete(p.lishID);
 				// Fall through to create new downloader below
 			} else {
 				await dl.enable();
@@ -638,6 +718,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	function disableUploadHandler(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
+		if (transferAdmission.isClosed) return { success: false };
 		recovery.stop(p.lishID);
 		disableUpload(p.lishID);
 		return { success: true };
@@ -645,7 +726,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	function enableUploadHandler(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
-		if (transfersPaused) return { success: false };
+		if (transferAdmission.isClosed) return { success: false };
 		if (isBusy(p.lishID)) return { success: false };
 		recovery.stop(p.lishID);
 		dataServer.clearError(p.lishID);
@@ -709,6 +790,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 */
 	function findPeersHandler(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
+		if (transferAdmission.isClosed) return { success: false };
 		const dl = activeDownloaders.get(p.lishID);
 		if (!dl) return { success: false };
 		dl.triggerPeerDiscovery();
@@ -720,10 +802,13 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * downloader, clear the enabled-download set, wipe upload state, and stop all
 	 * pending error recovery. Does not touch the DB or on-disk files.
 	 */
+	async function pauseAllTransfers(): Promise<void> {
+		await transferAdmission.closeAndDrain();
+		if (pendingDownloaderCleanups.size > 0) await Promise.allSettled([...pendingDownloaderCleanups]);
+	}
+
 	async function clearAllTransfers(): Promise<void> {
-		// Close admission before the first await so another WebSocket request cannot
-		// start a transfer between teardown and the destructive database wipe.
-		transfersPaused = true;
+		await pauseAllTransfers();
 		const downloaderState = new Map(
 			[...activeDownloaders].map(([lishID, downloader]) => [
 				lishID,
@@ -745,9 +830,22 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		recovery.stopAll();
 	}
 
-	function resumeAllTransfers(): void {
-		transfersPaused = false;
+	async function restoreAllTransfers(lishIDs: Set<string>): Promise<void> {
+		const failures: string[] = [];
+		for (const lishID of [...lishIDs]) {
+			const result = await enableDownloadAdmitted({ lishID });
+			if (!result.success && !networkSuspended.has(lishID)) failures.push(lishID);
+		}
+		if (failures.length > 0)
+			throw new AggregateError(
+				failures.map(lishID => new Error(`Failed to restore download ${lishID}`)),
+				`Failed to restore ${failures.length} persisted download(s)`
+			);
 	}
 
-	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers, subscribePeers: subscribePeersHandler, unsubscribePeers: unsubscribePeersHandler, debugPeers: debugPeersHandler, findPeers: findPeersHandler, clearAll: clearAllTransfers, resumeAll: resumeAllTransfers };
+	function resumeAllTransfers(): void {
+		transferAdmission.open();
+	}
+
+	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers, subscribePeers: subscribePeersHandler, unsubscribePeers: unsubscribePeersHandler, debugPeers: debugPeersHandler, findPeers: findPeersHandler, pauseAll: pauseAllTransfers, clearAll: clearAllTransfers, restoreAll: restoreAllTransfers, resumeAll: resumeAllTransfers };
 }

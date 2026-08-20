@@ -264,6 +264,13 @@ export type NetworkLifecycle = 'stopped' | 'starting' | 'running' | 'stopping' |
  */
 export type BootstrapDialResult = 'completed' | 'incomplete';
 
+interface BootstrapDialClaim {
+	readonly networkID: string | null;
+	readonly generation: number;
+	readonly settled: Promise<void>;
+	release(): void;
+}
+
 /**
  * Single shared libp2p node.
  * LISH networks are logical groups represented as pubsub topics on this one node.
@@ -290,6 +297,8 @@ export class Network {
 	private readonly dataServer: DataServer;
 	private readonly dataDir: string;
 	private statusInterval: NodeJS.Timeout | null = null;
+	/** Startup fallback dial, owned by the current run and cancelled by teardown. */
+	private bootstrapWorkaroundTimer: ReturnType<typeof setTimeout> | null = null;
 	/** Monotonic counter for status-interval ticks. Used by the periodic autodial promotion. */
 	private statusTickCount = 0;
 	/**
@@ -479,12 +488,11 @@ export class Network {
 	 * node release a claim the new node's dial of the same address had just taken — after
 	 * which a third request saw the address free and duplicated the live dial.
 	 *
-	 * The value is the network the claim was taken for, because only that network's run can
-	 * answer for it: the classification applied when the dial returns is scoped to itself, so
-	 * a run belonging to some OTHER network leaves this one without a row at all. Skipping on
-	 * such a claim is work not done, and the caller has to hear about it.
+	 * A claim carries the network generation and a completion promise. A duplicate in the
+	 * same generation can trust the existing dial; a newer generation must wait for the old
+	 * owner to release and then perform its own verification.
 	 */
-	private inFlightBootstrapDials = new Map<string, string | null>();
+	private inFlightBootstrapDials = new Map<string, BootstrapDialClaim>();
 	/**
 	 * Peer IDs with a `peer:discovery` dial currently outstanding.
 	 *
@@ -1122,17 +1130,23 @@ export class Network {
 
 	private setupBootstrapWorkaround(): void {
 		if (!AUTODIAL_WORKAROUND || this.bootstrapMultiaddrs.length === 0) return;
+		const epoch = this.runEpoch;
+		const node = this.node;
+		const addresses = [...this.bootstrapMultiaddrs];
+		if (!node) return;
 		// setTimeout discards the Promise returned by async callbacks, so throws escape
 		// as unhandledRejection. Plus this.node can be null if stop() fires within 2s.
 		// Null-check at entry, wrap inner async work, attach .catch() to surface errors.
-		setTimeout(() => {
-			if (!this.node || this.node.getPeers().length > 0) return;
+		this.bootstrapWorkaroundTimer = setTimeout(() => {
+			this.bootstrapWorkaroundTimer = null;
+			if (epoch !== this.runEpoch || this.node !== node || node.getPeers().length > 0) return;
 			(async () => {
 				console.log('⚠️  Bootstrap module failed - dialing directly...');
-				for (const ma of this.bootstrapMultiaddrs) {
-					if (!this.node) break;
+				for (const ma of addresses) {
+					if (epoch !== this.runEpoch || this.node !== node) break;
 					try {
-						await this.node.dial(ma);
+						await node.dial(ma);
+						if (epoch !== this.runEpoch || this.node !== node) return;
 						console.log('✓ Connected to bootstrap peer via direct dial');
 						break;
 					} catch (err: any) {
@@ -1153,10 +1167,17 @@ export class Network {
 			this.statusTickInFlight = true;
 			const epoch = this.runEpoch;
 			try {
-				const connectedPeers = this.node!.getPeers();
-				const allPeers = await this.node!.peerStore.all();
-				logStatusDebug({ node: this.node, pubsub: this.pubsub, settings: this.settings, lastScores: this._lastScores }, connectedPeers, allPeers);
-				dumpGossipsubScores({ node: this.node, pubsub: this.pubsub, settings: this.settings, lastScores: this._lastScores }, connectedPeers);
+				const node = this.node;
+				const pubsub = this.pubsub;
+				if (!node || !pubsub) return;
+				const connectedPeers = node.getPeers();
+				const allPeers = await node.peerStore.all();
+				// The first await is already long enough for stop()+start() to replace both
+				// handles. Nothing below may log, publish counts or mutate maintenance state
+				// from the outgoing run after that replacement.
+				if (epoch !== this.runEpoch || this.node !== node || this.pubsub !== pubsub) return;
+				logStatusDebug({ node, pubsub, settings: this.settings, lastScores: this._lastScores }, connectedPeers, allPeers);
+				dumpGossipsubScores({ node, pubsub, settings: this.settings, lastScores: this._lastScores }, connectedPeers);
 				// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
 				this.checkPeerCounts();
 				await this.runRedialMaintenance(connectedPeers, allPeers, epoch);
@@ -1682,10 +1703,16 @@ export class Network {
 			if (peer.addresses.length === 0) continue;
 			const addr = peer.addresses[0]!;
 			const base = addr.multiaddr.toString();
-			// Ensure the address terminates in THIS peer's /p2p/<id> — a bare address
-			// gets the suffix appended, and so does a relay address whose only /p2p/
-			// component is the relay's own identity.
-			const maStr = extractDestinationPeerID(addr.multiaddr) === pid ? base : `${base}/p2p/${pid}`;
+			// A bare transport address can be completed with this peer's identity. A relay
+			// circuit ending at the relay can likewise receive its target after p2p-circuit.
+			// Any other address that already names a DIFFERENT destination is poisoned or
+			// stale: appending another /p2p segment would create an invalid direct address.
+			const destination = extractDestinationPeerID(addr.multiaddr);
+			if (destination !== null && destination !== pid && !base.endsWith('/p2p-circuit')) {
+				trace(`[NET] periodic autodial: skipping addr of ${pid.slice(0, 16)} that resolves to ${destination.slice(0, 16)}: ${base}`);
+				continue;
+			}
+			const maStr = destination === pid ? base : `${base}/p2p/${pid}`;
 			maStrings.push(maStr);
 		}
 		if (maStrings.length > 0) {
@@ -1907,9 +1934,7 @@ export class Network {
 		// on, and a controller replaced by a later start is not the one that can stop it.
 		const abort = this.dialAbort;
 		const superseded = (): boolean => epoch !== this.runEpoch || abort.signal.aborted || generation !== this.bootstrapGenerationOf(networkID);
-		// Set when an entry was left to somebody who cannot answer for this network.
-		let unfinished = false;
-		for (const peer of peers) {
+		peerLoop: for (const peer of peers) {
 			if (superseded()) return 'incomplete';
 			let probeAfterQuarantine = false;
 			try {
@@ -2009,15 +2034,23 @@ export class Network {
 				// two runs asking about the SAME address duplicate a 10 s timeout for one
 				// answer. Claimed after every skip above so a refused candidate never blocks
 				// the run that would actually dial it.
-				if (inFlight.has(canonicalAddress)) {
-					trace(`[NET] addBootstrapPeers skip in-flight: ${peer}`);
-					// A claim held for a DIFFERENT network cannot stand in for this one — see the
-					// field docs. Report the run as unfinished so the install is not recorded as
-					// done and the retry walks the list again.
-					if (inFlight.get(canonicalAddress) !== networkID) unfinished = true;
-					continue;
+				while (true) {
+					const existingClaim = inFlight.get(canonicalAddress);
+					if (!existingClaim) break;
+					if (existingClaim.networkID === networkID && existingClaim.generation === generation) {
+						trace(`[NET] addBootstrapPeers share in-flight result: ${peer}`);
+						continue peerLoop;
+					}
+					trace(`[NET] addBootstrapPeers wait for superseded in-flight dial: ${peer}`);
+					await existingClaim.settled;
+					if (superseded()) return 'incomplete';
 				}
-				inFlight.set(canonicalAddress, networkID);
+				let releaseClaim!: () => void;
+				const settled = new Promise<void>(resolve => {
+					releaseClaim = resolve;
+				});
+				const claim: BootstrapDialClaim = { networkID, generation, settled, release: releaseClaim };
+				inFlight.set(canonicalAddress, claim);
 				// A CONFIGURED identity is user data and enters the set on the strength of the
 				// saved config alone. A DISCOVERED one waits for the dial: it arrived in a
 				// gossip message and nothing has yet shown that the identity exists, let
@@ -2215,14 +2248,15 @@ export class Network {
 					// Every exit from the dial block releases the claim, `return` included —
 					// a leave landing mid-dial would otherwise lock the address out for the
 					// lifetime of the node.
-					inFlight.delete(canonicalAddress);
+					if (inFlight.get(canonicalAddress) === claim) inFlight.delete(canonicalAddress);
+					claim.release();
 				}
 			} catch (error: any) {
 				this.bootstrapTracker.recordOutcome(networkID, peer, null, 'error', error?.message ?? String(error), null, origin);
 				console.log('⚠️  Skipping invalid multiaddr:', peer, '-', error.message);
 			}
 		}
-		return unfinished ? 'incomplete' : 'completed';
+		return 'completed';
 	}
 
 	/**
@@ -2826,80 +2860,121 @@ export class Network {
 			return false;
 		}
 		const topic = lishTopic(networkID);
-		this.pubsub.subscribe(topic);
-		// Register per-topic score parameters so gossipsub can measure peer behaviour
-		// (P1 timeInMesh, P2 firstMessageDeliveries, P4 invalidMessageDeliveries) for
-		// this topic. Without this, per-topic score is always 0 → acceptPXThreshold
-		// unreachable for non-bootstrap peers → PX limited to bootstrap-sourced peers only.
-		// P3 (meshMessageDeliveries) intentionally disabled: false-positive killer in
-		// low-traffic topics per Ethereum consensus research.
-		const scoreSvc = (this.pubsub as any).score;
-		if (scoreSvc?.params?.topics) {
-			// Use createTopicScoreParams() helper from gossipsub: it merges our overrides
-			// onto defaultTopicScoreParams. This guarantees every numeric field is defined
-			// (including any new fields a future library upgrade may add), preventing the
-			// `0 * undefined = NaN` propagation in PeerScore.refreshScores() that
-			// previously surfaced as NaN per-peer scores → silent exclusion from
-			// gossipsub floodPublish (NaN >= publishThreshold === false in JS).
-			scoreSvc.params.topics[topic] = createTopicScoreParams({
-				topicWeight: 0.5,
-				timeInMeshWeight: 0.01,
-				timeInMeshQuantum: 1000,
-				timeInMeshCap: 300,
-				firstMessageDeliveriesWeight: 0.5,
-				firstMessageDeliveriesDecay: 0.998,
-				firstMessageDeliveriesCap: 100,
-				// P3 (meshMessageDeliveries) and P3b (meshFailurePenalty) intentionally
-				// disabled via weight=0 — defaults supply finite numbers for the related
-				// decay/cap/threshold/activation/window fields so the unused arithmetic
-				// in refreshScores still yields 0 instead of NaN.
-				meshMessageDeliveriesWeight: 0,
-				meshFailurePenaltyWeight: 0,
-				// invalidMessageDeliveriesWeight tuned to -5 (default would be -1, but
-				// even -1 multiplied by topicWeight=0.5 plus quadratic invalidMessages²
-				// quickly produces -320 scores that graylist half the fleet after every
-				// coordinated restart. Invalid messages during warmup are frequently
-				// caused by signature races at peer:connect, not malicious publishers —
-				// the severe default penalty is inappropriate for trusted-fleet setups.
-				invalidMessageDeliveriesWeight: -5,
-				invalidMessageDeliveriesDecay: 0.9,
-			});
-			console.log(`[NET] gossipsub score registered for ${topic}`);
-		} else {
-			trace(`[NET] gossipsub score service not available for ${topic}`);
-		}
-		// Register the Want handler for this network. TopicHandler is sync (returns void) but
-		// handleWant is async — a rejection from any async operation inside it (dial failure,
-		// CodedError from closed stream, etc.) would otherwise propagate as unhandledRejection.
-		// Catch here so the pubsub dispatch loop remains isolated from per-handler failures.
-		const handler: TopicHandler = (data, from): void => {
-			trace(`[NET] pubsub ${topic}: ${data['type']}`);
-			if (data['type'] === 'want') {
-				this.lishHandlers.handleWant(data as WantMessage, networkID, from).catch(err => {
-					trace(`[NET] handleWant failed: ${err?.message ?? err}`);
+		const pubsub = this.pubsub;
+		const wasSubscribed = pubsub.getTopics().includes(topic);
+		const previousHandlers = this.topicHandlers.get(topic);
+		const scoreTopics = (pubsub as any).score?.params?.topics;
+		const hadScoreParams = scoreTopics ? Object.prototype.hasOwnProperty.call(scoreTopics, topic) : false;
+		const previousScoreParams = scoreTopics?.[topic];
+		const timersBefore = new Set(this.delayedPeerCountTimers);
+		let subscriptionMayHaveChanged = false;
+		try {
+			subscriptionMayHaveChanged = true;
+			pubsub.subscribe(topic);
+			// Register per-topic score parameters so gossipsub can measure peer behaviour
+			// (P1 timeInMesh, P2 firstMessageDeliveries, P4 invalidMessageDeliveries) for
+			// this topic. Without this, per-topic score is always 0 → acceptPXThreshold
+			// unreachable for non-bootstrap peers → PX limited to bootstrap-sourced peers only.
+			// P3 (meshMessageDeliveries) intentionally disabled: false-positive killer in
+			// low-traffic topics per Ethereum consensus research.
+			const scoreSvc = (pubsub as any).score;
+			if (scoreSvc?.params?.topics) {
+				// Use createTopicScoreParams() helper from gossipsub: it merges our overrides
+				// onto defaultTopicScoreParams. This guarantees every numeric field is defined
+				// (including any new fields a future library upgrade may add), preventing the
+				// `0 * undefined = NaN` propagation in PeerScore.refreshScores() that
+				// previously surfaced as NaN per-peer scores → silent exclusion from
+				// gossipsub floodPublish (NaN >= publishThreshold === false in JS).
+				scoreSvc.params.topics[topic] = createTopicScoreParams({
+					topicWeight: 0.5,
+					timeInMeshWeight: 0.01,
+					timeInMeshQuantum: 1000,
+					timeInMeshCap: 300,
+					firstMessageDeliveriesWeight: 0.5,
+					firstMessageDeliveriesDecay: 0.998,
+					firstMessageDeliveriesCap: 100,
+					// P3 (meshMessageDeliveries) and P3b (meshFailurePenalty) intentionally
+					// disabled via weight=0 — defaults supply finite numbers for the related
+					// decay/cap/threshold/activation/window fields so the unused arithmetic
+					// in refreshScores still yields 0 instead of NaN.
+					meshMessageDeliveriesWeight: 0,
+					meshFailurePenaltyWeight: 0,
+					// invalidMessageDeliveriesWeight tuned to -5 (default would be -1, but
+					// even -1 multiplied by topicWeight=0.5 plus quadratic invalidMessages²
+					// quickly produces -320 scores that graylist half the fleet after every
+					// coordinated restart. Invalid messages during warmup are frequently
+					// caused by signature races at peer:connect, not malicious publishers —
+					// the severe default penalty is inappropriate for trusted-fleet setups.
+					invalidMessageDeliveriesWeight: -5,
+					invalidMessageDeliveriesDecay: 0.9,
 				});
-			} else if (data['type'] === 'peer-announce') {
-				this.peerAnnounce.handle(data as unknown as PeerAnnounceMessage, networkID, from).catch(err => {
-					trace(`[NET] handlePeerAnnounce failed: ${err?.message ?? err}`);
-				});
-			} else if (data['type'] === 'searchLishs') {
-				this.lishHandlers.handleSearchLishs(data as SearchLishsMessage, networkID, from).catch(err => {
-					trace(`[NET] handleSearchLishs failed: ${err?.message ?? err}`);
-				});
+				console.log(`[NET] gossipsub score registered for ${topic}`);
+			} else {
+				trace(`[NET] gossipsub score service not available for ${topic}`);
 			}
-		};
-		// One handler per topic, replacing rather than joining any earlier one. The set is
-		// keyed by function identity and every call builds a fresh closure, so a second
-		// subscribe to a topic already held used to leave TWO handlers behind — and the
-		// dispatch loop runs all of them, which means every WANT, search and peer-announce
-		// on that topic was answered twice. Two maintenance operations that each stop and
-		// start the node (identity import, factory reset) reach exactly that: both run
-		// startEnabledNetworks and both subscribe the same topics, milliseconds apart.
-		this.topicHandlers.set(topic, new Set([handler]));
-		console.log(`✓ Subscribed to lishnet topic: ${topic}`);
-		// GossipSub mesh needs time to rebuild after subscribe — schedule delayed peer count checks
-		for (const delay of [2000, 5000, 15000]) this.armDelayedPeerCountCheck(delay);
-		return true;
+			// Register the Want handler for this network. TopicHandler is sync (returns void) but
+			// handleWant is async — a rejection from any async operation inside it (dial failure,
+			// CodedError from closed stream, etc.) would otherwise propagate as unhandledRejection.
+			// Catch here so the pubsub dispatch loop remains isolated from per-handler failures.
+			const handler: TopicHandler = (data, from): void => {
+				trace(`[NET] pubsub ${topic}: ${data['type']}`);
+				if (data['type'] === 'want') {
+					this.lishHandlers.handleWant(data as WantMessage, networkID, from).catch(err => {
+						trace(`[NET] handleWant failed: ${err?.message ?? err}`);
+					});
+				} else if (data['type'] === 'peer-announce') {
+					this.peerAnnounce.handle(data as unknown as PeerAnnounceMessage, networkID, from).catch(err => {
+						trace(`[NET] handlePeerAnnounce failed: ${err?.message ?? err}`);
+					});
+				} else if (data['type'] === 'searchLishs') {
+					this.lishHandlers.handleSearchLishs(data as SearchLishsMessage, networkID, from).catch(err => {
+						trace(`[NET] handleSearchLishs failed: ${err?.message ?? err}`);
+					});
+				}
+			};
+			// One handler per topic, replacing rather than joining any earlier one. The set is
+			// keyed by function identity and every call builds a fresh closure, so a second
+			// subscribe to a topic already held used to leave TWO handlers behind — and the
+			// dispatch loop runs all of them, which means every WANT, search and peer-announce
+			// on that topic was answered twice. Two maintenance operations that each stop and
+			// start the node (identity import, factory reset) reach exactly that: both run
+			// startEnabledNetworks and both subscribe the same topics, milliseconds apart.
+			this.topicHandlers.set(topic, new Set([handler]));
+			console.log(`✓ Subscribed to lishnet topic: ${topic}`);
+			// GossipSub mesh needs time to rebuild after subscribe — schedule delayed peer count checks
+			for (const delay of [2000, 5000, 15000]) this.armDelayedPeerCountCheck(delay);
+			return true;
+		} catch (err) {
+			const rollbackErrors: unknown[] = [];
+			for (const timer of this.delayedPeerCountTimers) {
+				if (timersBefore.has(timer)) continue;
+				clearTimeout(timer);
+				this.delayedPeerCountTimers.delete(timer);
+			}
+			try {
+				if (previousHandlers) this.topicHandlers.set(topic, previousHandlers);
+				else this.topicHandlers.delete(topic);
+			} catch (rollbackError) {
+				rollbackErrors.push(rollbackError);
+			}
+			if (scoreTopics) {
+				try {
+					if (hadScoreParams) scoreTopics[topic] = previousScoreParams;
+					else delete scoreTopics[topic];
+				} catch (rollbackError) {
+					rollbackErrors.push(rollbackError);
+				}
+			}
+			if (subscriptionMayHaveChanged && !wasSubscribed) {
+				try {
+					pubsub.unsubscribe(topic);
+				} catch (rollbackError) {
+					rollbackErrors.push(rollbackError);
+				}
+			}
+			if (rollbackErrors.length > 0) throw new AggregateError([err, ...rollbackErrors], `Subscribing to ${topic} failed and rollback was incomplete`);
+			throw err;
+		}
 	}
 
 	/**
@@ -3241,6 +3316,10 @@ export class Network {
 			clearInterval(this.statusInterval);
 			this.statusInterval = null;
 		}
+		if (this.bootstrapWorkaroundTimer) {
+			clearTimeout(this.bootstrapWorkaroundTimer);
+			this.bootstrapWorkaroundTimer = null;
+		}
 		// The epoch bump makes an in-flight tick bail out, but its `finally` runs
 		// asynchronously — a fast restart would otherwise find the flag still set and
 		// skip its own first tick. The tick only clears the flag for its own epoch, so
@@ -3278,10 +3357,13 @@ export class Network {
 		// Claims belong to the node being torn down; a dial still settling on the old node
 		// must not lock the address out for the next one — nor, by releasing into a shared
 		// Set, steal the claim the next one has taken. A new object does both.
-		this.inFlightBootstrapDials = new Map<string, string | null>();
+		this.inFlightBootstrapDials = new Map<string, BootstrapDialClaim>();
 		this.inFlightDiscoveryDials = new Set<string>();
 		this._lastPeerCounts.clear();
+		this._lastMeshSizes.clear();
+		this.lastMeshChange.clear();
 		this._lastScores.clear();
+		this.recentDisconnects.length = 0;
 		this.redialBackoff.clear();
 		this.unreachableQuarantine.clear();
 		this.addressProbeBackoff.clear();

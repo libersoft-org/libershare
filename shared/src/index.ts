@@ -290,6 +290,8 @@ export interface FactoryResetPhaseResult {
  * `phases` the prepare/restart outcome. */
 export interface FactoryResetResponse {
 	success: boolean;
+	/** True when the request selected no categories and intentionally changed nothing. */
+	noop: boolean;
 	results: FactoryResetResult[];
 	phases: FactoryResetPhaseResult[];
 }
@@ -341,6 +343,13 @@ export interface IWriteResult {
 // API response wrappers
 export interface SuccessResponse {
 	success: boolean;
+}
+
+/** Outcome of changing one lishnet's enabled state in storage and at runtime. */
+export interface SetLISHNetworkEnabledResponse extends SuccessResponse {
+	applied: boolean;
+	transitioned: boolean;
+	joined: boolean;
 }
 
 // Result of `settings.applyImported`: how many keys were applied vs. skipped.

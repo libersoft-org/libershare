@@ -153,13 +153,11 @@ describe('a configured install must not be swallowed by another network dial', (
 		};
 		const gossipInB = network.addBootstrapPeers([SHARED], NET_B, 'discovered');
 		await Bun.sleep(20);
-		const installInA = await network.addBootstrapPeers([SHARED], NET_A, 'configured');
+		const installInA = network.addBootstrapPeers([SHARED], NET_A, 'configured');
 		release();
-		await gossipInB;
-		// Either A gets its row, or the install has to report that it did not finish — what
-		// it may not do is claim success and leave A with nothing.
-		if (installInA === 'completed') expect(rowIn(tracker, NET_A)?.origin).toBe('configured');
-		else expect(installInA).not.toBe('completed');
+		const [, installResult] = await Promise.all([gossipInB, installInA]);
+		expect(installResult).toBe('completed');
+		expect(rowIn(tracker, NET_A)?.origin).toBe('configured');
 	});
 });
 

@@ -5,7 +5,7 @@ import { type FactoryResetResponse } from '@shared';
 import { initUploadState } from '../protocol/lish-protocol.ts';
 import { applyNetworkLimits } from '../protocol/network-limits.ts';
 import { runFactoryReset } from './factory-reset.ts';
-import { initDownloadState, triggerEnableDownload } from './transfer.ts';
+import { initDownloadState } from './transfer.ts';
 import { Mutex } from 'async-mutex';
 
 /**
@@ -21,11 +21,15 @@ export interface FactoryResetOrchestratorDeps {
 	 * by the lishs handler module. Return value is ignored.
 	 */
 	readonly stopVerifyAll: () => Promise<any>;
+	/** Close public transfer admission and drain handlers already past the gate. */
+	readonly pauseAllTransfers: () => Promise<void>;
 	/**
 	 * Tears down all active download/upload transfers before the wipe. Must be
 	 * provided by the transfer handler module. Return value is ignored.
 	 */
 	readonly clearAllTransfers: () => Promise<any>;
+	/** Restore persisted downloads while public transfer admission is still closed. */
+	readonly restoreAllTransfers: (lishIDs: Set<string>) => Promise<void>;
 	/** Re-opens transfer admission after the reset barrier is no longer active. */
 	readonly resumeAllTransfers: () => void;
 	/**
@@ -45,7 +49,7 @@ export interface FactoryResetOrchestratorDeps {
  * wiring and makes the reset logic independently testable.
  */
 export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean; peers?: boolean }, client?: unknown) => Promise<FactoryResetResponse> {
-	const { dataServer, networks, settings, stopVerifyAll, clearAllTransfers, resumeAllTransfers, broadcastFn } = deps;
+	const { dataServer, networks, settings, stopVerifyAll, pauseAllTransfers, clearAllTransfers, restoreAllTransfers, resumeAllTransfers, broadcastFn } = deps;
 	const resetMutex = new Mutex();
 
 	return (p?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean; peers?: boolean }, client?: unknown): Promise<FactoryResetResponse> =>
@@ -70,23 +74,31 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 			// closes those streams before their database rows are removed; clearing only the
 			// in-memory counters would still leave an in-flight stream using wiped state.
 			const restartNode = wipeDownloads || wipeIdentity || wipeNetworks || wipePeers || wipeSettings;
+			const releaseNetworkMaintenance = restartNode ? await networks.beginMaintenance() : undefined;
 			let transferAdmissionClosed = false;
+			let transferRuntimeSafe = true;
 			const resumeTransfers = (): void => {
-				if (!transferAdmissionClosed) return;
+				if (!transferAdmissionClosed || !transferRuntimeSafe) return;
 				transferAdmissionClosed = false;
 				resumeAllTransfers();
 			};
 
 			const restartNodeAndTransfers = async (): Promise<void> => {
-				await networks.startEnabledNetworks();
-				resumeTransfers();
 				// Re-establish transfers that survived the wipe (e.g. downloads kept when
 				// only identity/networks/peers were reset) — they were torn down for the
 				// node restart.
 				const enabledDownloads = dataServer.getDownloadEnabledLishs();
 				initDownloadState(enabledDownloads, (id, en) => dataServer.setDownloadEnabled(id, en));
 				initUploadState(dataServer.getUploadEnabledLishs(), (id, en) => dataServer.setUploadEnabled(id, en));
-				for (const id of enabledDownloads) triggerEnableDownload(id);
+				await networks.startEnabledNetworks();
+				try {
+					await restoreAllTransfers(enabledDownloads);
+					transferRuntimeSafe = true;
+				} catch (error) {
+					transferRuntimeSafe = false;
+					throw error;
+				}
+				resumeTransfers();
 			};
 
 			// `prepare` is a barrier: if the transfers or the node cannot be stopped, every
@@ -99,13 +111,30 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 					requiresPrepare: wipeSettings ? ['settings'] : undefined,
 					prepare: async () => {
 						if (wipeDownloads || restartNode) {
-							await stopVerifyAll();
-							// clearAll closes transfer admission before teardown. Remember that even
-							// when teardown throws so the finally block always re-opens it.
+							// Close admission before verification is stopped. Both verification and
+							// downloader initialisation await I/O, so a boolean checked only at handler
+							// entry is not a barrier unless already-admitted handlers are drained too.
 							transferAdmissionClosed = true;
-							await clearAllTransfers();
+							await pauseAllTransfers();
+							await stopVerifyAll();
+							transferRuntimeSafe = false;
+							try {
+								await clearAllTransfers();
+							} catch (error) {
+								transferRuntimeSafe = (error as { runtimeRestored?: boolean })?.runtimeRestored === true;
+								throw error;
+							}
 						}
-						if (restartNode) await networks.stopAllNetworks();
+						if (restartNode) {
+							try {
+								await networks.stopAllNetworks();
+							} catch (error) {
+								// The transfer runtime is already gone and the node's lifecycle is now
+								// uncertain. Keep admission closed until a clean process restart.
+								transferRuntimeSafe = false;
+								throw error;
+							}
+						}
 					},
 					// Table-level wipes (cascade clears children).
 					downloads: wipeDownloads ? () => dataServer.clearLishs() : undefined,
@@ -125,6 +154,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 				});
 			} finally {
 				resumeTransfers();
+				releaseNetworkMaintenance?.();
 			}
 
 			// Everyone else is told to reload, because identity, networks and state moved under
@@ -133,8 +163,8 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 			// could be read. And when `prepare` failed nothing was wiped at all — announcing a
 			// reset would send every other window to a clean slate over an operation that did
 			// not happen.
-			if (response.results.length > 0 && response.phases.every(phase => phase.phase !== 'prepare' || phase.ok)) {
-				broadcastFn('system:factoryReset', {}, client);
+			if (response.results.some(result => result.ok) && response.phases.every(phase => phase.phase !== 'prepare' || phase.ok)) {
+				broadcastFn('system:factoryReset', response, client);
 			}
 			return response;
 		});

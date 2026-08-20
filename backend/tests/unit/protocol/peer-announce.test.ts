@@ -440,6 +440,19 @@ describe('PeerAnnounceManager.stop clears per-run state', () => {
  * of thousands of duplicates or junk values bought that work unbounded.
  */
 describe('PeerAnnounceManager.handle raw input bound', () => {
+	it('spends a per-source work budget before parsing junk', async () => {
+		const { mgr, forwarded } = intakeManager();
+		const junk = Array(128).fill('not-a-multiaddr');
+		for (let i = 0; i < 3; i++) await mgr.handle({ type: 'peer-announce', multiaddrs: junk }, 'netAAAA', SRC_ID);
+
+		// The three junk messages consumed the 384-entry parsing burst without consuming
+		// any admitted-address tokens. The next valid value must still be rejected before
+		// parsing; a post-dedup limiter alone would let it through.
+		await mgr.handle({ type: 'peer-announce', multiaddrs: [withID('/ip4/203.0.113.5/tcp/9090')] }, 'netAAAA', SRC_ID);
+
+		expect(forwarded).toEqual([]);
+	});
+
 	it('stops examining a flood of duplicates long before the end of the list', async () => {
 		// The unique address sits past the raw budget, so reaching it would mean the walk
 		// went all the way through the padding.

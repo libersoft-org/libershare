@@ -127,7 +127,9 @@ export class APIServer {
 			networks: this.networks,
 			settings: this.settings,
 			stopVerifyAll: _lishs.stopVerifyAll,
+			pauseAllTransfers: _transfer.pauseAll,
 			clearAllTransfers: _transfer.clearAll,
+			restoreAllTransfers: _transfer.restoreAll,
 			resumeAllTransfers: _transfer.resumeAll,
 			broadcastFn: broadcastExceptFn,
 		});

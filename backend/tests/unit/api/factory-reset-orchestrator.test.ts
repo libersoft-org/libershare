@@ -14,6 +14,7 @@ function makeNetworks(overrides: Record<string, () => any> = {}): FactoryResetOr
 		clearPeerstore: overrides['clearPeerstore'] ?? (() => Promise.resolve()),
 	};
 	return {
+		beginMaintenance: overrides['beginMaintenance'] ?? (() => Promise.resolve(() => {})),
 		stopAllNetworks: overrides['stopAllNetworks'] ?? (() => Promise.resolve()),
 		startEnabledNetworks: overrides['startEnabledNetworks'] ?? (() => Promise.resolve()),
 		getNetwork: () => network,
@@ -25,8 +26,8 @@ function makeDataServer(overrides: Record<string, () => any> = {}): FactoryReset
 	return {
 		clearLishs: overrides['clearLishs'] ?? (() => {}),
 		clearLishnets: overrides['clearLishnets'] ?? (() => {}),
-		getDownloadEnabledLishs: () => new Set<string>(),
-		getUploadEnabledLishs: () => new Set<string>(),
+		getDownloadEnabledLishs: overrides['getDownloadEnabledLishs'] ?? (() => new Set<string>()),
+		getUploadEnabledLishs: overrides['getUploadEnabledLishs'] ?? (() => new Set<string>()),
 		setDownloadEnabled: () => {},
 		setUploadEnabled: () => {},
 	} as any;
@@ -53,7 +54,9 @@ function makeDeps(
 		networkOverride?: Record<string, () => any>;
 		dataServerOverride?: Record<string, () => any>;
 		stopVerifyAll?: () => Promise<any>;
+		pauseAllTransfers?: () => Promise<void>;
 		clearAllTransfers?: () => Promise<any>;
+		restoreAllTransfers?: (lishIDs: Set<string>) => Promise<void>;
 		resumeAllTransfers?: () => void;
 		broadcastFn?: (event: string, data: any, except?: unknown) => void;
 		log?: string[];
@@ -64,7 +67,9 @@ function makeDeps(
 		dataServer: makeDataServer(overrides.dataServerOverride ?? {}),
 		settings: makeSettings(overrides.settingsOverride ?? {}),
 		stopVerifyAll: overrides.stopVerifyAll ?? (() => Promise.resolve()),
+		pauseAllTransfers: overrides.pauseAllTransfers ?? (() => Promise.resolve()),
 		clearAllTransfers: overrides.clearAllTransfers ?? (() => Promise.resolve()),
+		restoreAllTransfers: overrides.restoreAllTransfers ?? (() => Promise.resolve()),
 		resumeAllTransfers: overrides.resumeAllTransfers ?? (() => {}),
 		broadcastFn: overrides.broadcastFn ?? (() => {}),
 	};
@@ -121,6 +126,31 @@ describe('buildFactoryResetHandler — category ordering', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildFactoryResetHandler — restart behaviour', () => {
+	it('holds exclusive lishnet maintenance through the wipe and restart', async () => {
+		const actions: string[] = [];
+		const deps = makeDeps({
+			networkOverride: {
+				beginMaintenance: async () => {
+					actions.push('maintenance-acquire');
+					return () => actions.push('maintenance-release');
+				},
+				stopAllNetworks: async () => {
+					actions.push('stop');
+				},
+				startEnabledNetworks: async () => {
+					actions.push('start');
+				},
+			},
+			dataServerOverride: {
+				clearLishnets: () => actions.push('wipe-networks'),
+			},
+		});
+
+		await buildFactoryResetHandler(deps)({ downloads: false, settings: false, identity: false, networks: true, peers: false });
+
+		expect(actions).toEqual(['maintenance-acquire', 'stop', 'wipe-networks', 'start', 'maintenance-release']);
+	});
+
 	it('stops and restarts the node when only downloads are wiped', async () => {
 		const actions: string[] = [];
 		const deps = makeDeps({
@@ -205,8 +235,11 @@ describe('buildFactoryResetHandler — restart behaviour', () => {
 	it('keeps transfer admission closed through the wipe and re-opens it once', async () => {
 		const actions: string[] = [];
 		const deps = makeDeps({
-			clearAllTransfers: async () => {
+			pauseAllTransfers: async () => {
 				actions.push('pause');
+			},
+			clearAllTransfers: async () => {
+				actions.push('clear');
 			},
 			resumeAllTransfers: () => actions.push('resume'),
 			dataServerOverride: {
@@ -216,14 +249,68 @@ describe('buildFactoryResetHandler — restart behaviour', () => {
 
 		await buildFactoryResetHandler(deps)({ downloads: true, settings: false, identity: false, networks: false, peers: false });
 
-		expect(actions).toEqual(['pause', 'wipe', 'resume']);
+		expect(actions).toEqual(['pause', 'clear', 'wipe', 'resume']);
 	});
 
-	it('re-opens transfer admission when teardown fails and blocks the wipe', async () => {
+	it('closes transfer admission before stopping verification', async () => {
 		const actions: string[] = [];
 		const deps = makeDeps({
-			clearAllTransfers: async () => {
+			pauseAllTransfers: async () => {
 				actions.push('pause');
+			},
+			stopVerifyAll: async () => {
+				actions.push('stop-verification');
+			},
+			clearAllTransfers: async () => {
+				actions.push('clear');
+			},
+		});
+
+		await buildFactoryResetHandler(deps)({ downloads: true, settings: false, identity: false, networks: false, peers: false });
+
+		expect(actions.slice(0, 3)).toEqual(['pause', 'stop-verification', 'clear']);
+	});
+
+	it('waits for persisted downloads to be restored before re-opening admission', async () => {
+		const actions: string[] = [];
+		let finishRestore!: () => void;
+		const restoreMayFinish = new Promise<void>(resolve => {
+			finishRestore = resolve;
+		});
+		const deps = makeDeps({
+			dataServerOverride: {
+				getDownloadEnabledLishs: () => new Set(['lish-a']),
+			},
+			restoreAllTransfers: async ids => {
+				actions.push(`restore:${[...ids].join(',')}`);
+				await restoreMayFinish;
+			},
+			resumeAllTransfers: () => actions.push('resume'),
+		});
+
+		let settled = false;
+		const resetting = buildFactoryResetHandler(deps)({ downloads: false, settings: true, identity: false, networks: false, peers: false }).then(result => {
+			settled = true;
+			return result;
+		});
+		while (!actions.some(action => action.startsWith('restore:'))) await Promise.resolve();
+
+		expect(settled).toBe(false);
+		expect(actions).toEqual(['restore:lish-a']);
+		finishRestore();
+		const response = await resetting;
+		expect(response.success).toBe(true);
+		expect(actions).toEqual(['restore:lish-a', 'resume']);
+	});
+
+	it('keeps transfer admission closed when teardown safety is unknown', async () => {
+		const actions: string[] = [];
+		const deps = makeDeps({
+			pauseAllTransfers: async () => {
+				actions.push('pause');
+			},
+			clearAllTransfers: async () => {
+				actions.push('clear');
 				throw new Error('download teardown failed');
 			},
 			resumeAllTransfers: () => actions.push('resume'),
@@ -235,7 +322,7 @@ describe('buildFactoryResetHandler — restart behaviour', () => {
 		const response = await buildFactoryResetHandler(deps)({ downloads: true, settings: false, identity: false, networks: false, peers: false });
 
 		expect(response.success).toBe(false);
-		expect(actions).toEqual(['pause', 'resume']);
+		expect(actions).toEqual(['pause', 'clear']);
 	});
 
 	it('serializes concurrent resets so their transfer barriers cannot overlap', async () => {
@@ -372,8 +459,18 @@ describe('buildFactoryResetHandler — partial failure', () => {
 	it('a node that cannot be stopped blocks every destructive wipe and the restart', async () => {
 		const called: string[] = [];
 		const deps = makeDeps({
+			pauseAllTransfers: async () => {
+				called.push('pause');
+			},
+			clearAllTransfers: async () => {
+				called.push('clear-transfers');
+			},
+			resumeAllTransfers: () => called.push('resume-transfers'),
 			networkOverride: {
-				stopAllNetworks: () => Promise.reject(new Error('node.stop failed')),
+				stopAllNetworks: () => {
+					called.push('stop-node');
+					return Promise.reject(new Error('node.stop failed'));
+				},
 				startEnabledNetworks: () => {
 					called.push('restart');
 					return Promise.resolve();
@@ -402,7 +499,7 @@ describe('buildFactoryResetHandler — partial failure', () => {
 		// The node may still own its datastore, its peerstore and its identity. Wiping any
 		// of them here — and then bringing a second node up over the result — is exactly
 		// what the barrier exists to stop.
-		expect(called).toEqual([]);
+		expect(called).toEqual(['pause', 'clear-transfers', 'stop-node']);
 		expect(res.success).toBe(false);
 		expect(res.results.every(r => !r.ok)).toBe(true);
 	});
@@ -485,7 +582,7 @@ describe('buildFactoryResetHandler — identity category', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildFactoryResetHandler — broadcast', () => {
-	it('emits system:factoryReset after the wipe regardless of category outcomes', async () => {
+	it('does not announce a reset when no selected category changed', async () => {
 		const emitted: Array<{ event: string; data: any }> = [];
 		const deps = makeDeps({
 			broadcastFn: (event, data) => emitted.push({ event, data }),
@@ -497,7 +594,26 @@ describe('buildFactoryResetHandler — broadcast', () => {
 		});
 		const handler = buildFactoryResetHandler(deps);
 		await handler({ downloads: true, settings: false, identity: false, networks: false, peers: false });
-		expect(emitted.some(e => e.event === 'system:factoryReset')).toBe(true);
+		expect(emitted).toEqual([]);
+	});
+
+	it('broadcasts the complete outcome when at least one category changed', async () => {
+		const emitted: Array<{ event: string; data: any }> = [];
+		const deps = makeDeps({
+			broadcastFn: (event, data) => emitted.push({ event, data }),
+			dataServerOverride: {
+				clearLishs: () => {
+					throw new Error('downloads failed');
+				},
+				clearLishnets: () => {},
+			},
+		});
+
+		const response = await buildFactoryResetHandler(deps)({ downloads: true, networks: true, settings: false, identity: false, peers: false });
+
+		expect(emitted).toHaveLength(1);
+		expect(emitted[0]?.event).toBe('system:factoryReset');
+		expect(emitted[0]?.data).toEqual(response);
 	});
 });
 

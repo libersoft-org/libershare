@@ -1,7 +1,7 @@
-import { type Networks } from '../lishnet/lishnets.ts';
+import { type Networks, type SetEnabledResult } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ManifestProgressEvent, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, type BootstrapStatus, CodedError, ErrorCodes, productName } from '@shared';
+import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type SetLISHNetworkEnabledResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ManifestProgressEvent, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, type BootstrapStatus, CodedError, ErrorCodes, productName } from '@shared';
 import { LISHClient, LISH_PROTOCOL } from '../protocol/lish-protocol.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
@@ -21,7 +21,7 @@ interface LISHnetsHandlers {
 	parseFromFile: (p: { path: string }) => Promise<LISHNetworkDefinition[]>;
 	parseFromJSON: (p: { json: string }) => LISHNetworkDefinition[];
 	parseFromURL: (p: { url: string }) => Promise<LISHNetworkDefinition[]>;
-	setEnabled: (p: { networkID: string; enabled: boolean }) => Promise<SuccessResponse>;
+	setEnabled: (p: { networkID: string; enabled: boolean }) => Promise<SetLISHNetworkEnabledResponse>;
 	connect: (p: { multiaddr: string }) => Promise<SuccessResponse>;
 	findPeer: (p: { peerID: string }) => Promise<void>;
 	getAddresses: () => string[];
@@ -37,6 +37,10 @@ interface LISHnetsHandlers {
 	updateBootstrapPeers: (p: { networkID: string; bootstrapPeers: string[] }) => Promise<LISHNetworkConfig>;
 }
 type ImportManifestFn = (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
+
+export function toSetEnabledResponse(result: SetEnabledResult): SetLISHNetworkEnabledResponse {
+	return { success: result.found && result.applied, applied: result.applied, transitioned: result.transitioned, joined: result.joined };
+}
 
 export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void, settings: Settings, importManifest: ImportManifestFn): LISHnetsHandlers {
 	function list(): LISHNetworkConfig[] {
@@ -114,7 +118,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['url']);
 		return networks.parseFromURL(p.url);
 	}
-	async function setEnabled(p: { networkID: string; enabled: boolean }): Promise<SuccessResponse> {
+	async function setEnabled(p: { networkID: string; enabled: boolean }): Promise<SetLISHNetworkEnabledResponse> {
 		assert(p, ['networkID', 'enabled']);
 		const result = await networks.setEnabled(p.networkID, p.enabled);
 		// Only a settled transition is broadcast, and the event names the state the network
@@ -128,7 +132,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		// when an edit was queued ahead of the enable. Reading it after the await races the
 		// next write instead.
 		if (result.transitioned && result.network) broadcast(result.joined ? 'lishnets:joined' : 'lishnets:left', result.network);
-		return { success: result.found };
+		return toSetEnabledResponse(result);
 	}
 	async function connect(p: { multiaddr: string }): Promise<SuccessResponse> {
 		assert(p, ['multiaddr']);
