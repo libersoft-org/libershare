@@ -495,4 +495,65 @@ describe('Networks.startEnabledNetworks — coordinated with concurrent changes'
 		expect((networks as any).joinedNetworks.has(NET)).toBe(true);
 		expect((networks as any).announcedJoined.get(NET)).toBe(true);
 	});
+
+	it('does not claim a membership for a network it reached after a stop was asked for', async () => {
+		// The window the guard is written for: stopAllNetworks sets the flag SYNCHRONOUSLY,
+		// long before Network.stop() reaches its own mutex — so pubsub is still alive and
+		// subscribeTopic still succeeds. Recording the join anyway leaves joinedNetworks
+		// claiming a membership with no subscription behind it, which the next startup reads
+		// as "already joined" and skips for the rest of the run.
+		const SECOND = 'net-b';
+		addLISHnet(db, { networkID: SECOND, name: 'B', description: '', bootstrapPeers: [], enabled: true, created: '2026-01-01T00:00:00.000Z' });
+		const net = makeMockNet(Promise.resolve());
+		const networks = makeNetworks(net, db);
+		// A shutdown is requested while startup is between the two networks.
+		const realSubscribe = net.subscribeTopic.bind(net);
+		net.subscribeTopic = (id: string): boolean => {
+			(networks as any).stopRequested = true;
+			return realSubscribe(id);
+		};
+
+		await networks.startEnabledNetworks();
+
+		expect(net.subscribed).toHaveLength(1); // only the one that got in first
+		expect((networks as any).joinedNetworks.size).toBe(1);
+	});
+
+	it('does not join on an enable that was queued behind a shutdown', async () => {
+		// Same window, reached the other way: the enable waits on a slow operation, and by
+		// the time it runs the node has been told to stop.
+		reseedWithBootstrap(db);
+		const net = makeMockNet(Promise.resolve());
+		const networks = makeNetworks(net, db);
+		await networks.startEnabledNetworks();
+		net.subscribed.length = 0;
+
+		(networks as any).stopRequested = true;
+		await networks.setEnabled(NET, true);
+
+		expect(net.subscribed).toEqual([]);
+		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
+	});
+
+	it('skips a network that was disabled while startup was busy with an earlier one', async () => {
+		// The startup loop reads the enabled list once and then takes a lock per network, and
+		// every earlier network's turn is another await. Re-reading the row under the lock is
+		// what keeps a disable that landed in between from being joined anyway.
+		const SECOND = 'net-b';
+		addLISHnet(db, { networkID: SECOND, name: 'B', description: '', bootstrapPeers: [], enabled: true, created: '2026-01-01T00:00:00.000Z' });
+		const net = makeMockNet(Promise.resolve());
+		const networks = makeNetworks(net, db);
+		const realSubscribe = net.subscribeTopic.bind(net);
+		net.subscribeTopic = (id: string): boolean => {
+			// The user turns the other one off while this one is being joined.
+			const other = id === NET ? SECOND : NET;
+			setLISHnetEnabled(db, other, false);
+			return realSubscribe(id);
+		};
+
+		await networks.startEnabledNetworks();
+
+		expect(net.subscribed).toHaveLength(1);
+		expect((networks as any).joinedNetworks.size).toBe(1);
+	});
 });
