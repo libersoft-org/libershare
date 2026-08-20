@@ -721,7 +721,10 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 	});
 
 	/** The signal reaches libp2p itself, so the dial in flight ends rather than timing out. */
-	it('hands the cancellation signal to every dial it makes', async () => {
+	it('gives every dial a signal the run can cancel', async () => {
+		// Asserted by behaviour rather than identity: the signal handed to the dial is a
+		// composite — the run's abort AND a timeout, so a black-holed address cannot hold
+		// the entry open either. What matters is that cancelling the run still aborts it.
 		const signals: Array<AbortSignal | undefined> = [];
 		const { network } = bareNetwork();
 		(network as any).node.dial = async (_ma: unknown, opts?: { signal?: AbortSignal }): Promise<unknown> => {
@@ -730,7 +733,15 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		};
 
 		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
-		expect(signals[0]).toBe((network as any).dialAbort.signal);
+
+		expect(signals[0]).toBeDefined();
+		// Not the run's own signal: a black-holed address is never refused, so the dial also
+		// needs something that fires on its own — see BOOTSTRAP_DIAL_TIMEOUT_MS. Handing the
+		// raw run signal down left such an entry 'pending' for the OS connect timeout.
+		expect(signals[0]).not.toBe((network as any).dialAbort.signal);
+		expect(signals[0]!.aborted).toBe(false);
+		(network as any).dialAbort.abort();
+		expect(signals[0]!.aborted).toBe(true);
 	});
 
 	/** An abort belongs to the run it was raised for — the next start must dial again. */
