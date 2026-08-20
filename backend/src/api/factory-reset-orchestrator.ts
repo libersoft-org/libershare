@@ -96,6 +96,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 			let response: FactoryResetResponse;
 			try {
 				response = await runFactoryReset({
+					requiresPrepare: wipeSettings ? ['settings'] : undefined,
 					prepare: async () => {
 						if (wipeDownloads || restartNode) {
 							await stopVerifyAll();

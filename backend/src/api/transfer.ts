@@ -82,12 +82,14 @@ export async function destroyActiveDownloader(lishID: string): Promise<void> {
 }
 
 /**
- * Destroy every downloader without hiding failures. Successfully destroyed entries are
- * removed, while failed ones stay reachable so a later cleanup attempt can retry them.
+ * Destroy every downloader without hiding failures. Without a restore callback, successful
+ * entries are removed and failed ones remain. Factory reset supplies a restore callback so
+ * any partial teardown is replaced with a complete fresh runtime set before the error escapes.
  */
-export async function destroyAllDownloaders(activeDownloaders: Map<string, Downloader>): Promise<void> {
+export async function destroyAllDownloaders<T extends Pick<Downloader, 'destroy'>>(activeDownloaders: Map<string, T>, restore?: (lishID: string, previous: T) => Promise<T>): Promise<void> {
+	const previousDownloaders = [...activeDownloaders];
 	const errors: unknown[] = [];
-	for (const [lishID, downloader] of [...activeDownloaders]) {
+	for (const [lishID, downloader] of previousDownloaders) {
 		try {
 			await downloader.destroy();
 			activeDownloaders.delete(lishID);
@@ -95,7 +97,25 @@ export async function destroyAllDownloaders(activeDownloaders: Map<string, Downl
 			errors.push(error);
 		}
 	}
-	if (errors.length > 0) throw new AggregateError(errors, `Failed to stop ${errors.length} active download(s)`);
+	if (errors.length === 0) return;
+
+	const restoreErrors: unknown[] = [];
+	if (restore) {
+		// destroy() is not reversible: even a call that throws may already have aborted the
+		// downloader and disposed its handlers. Replace the whole original set so callers
+		// never receive a half-live mixture after a failed reset barrier.
+		for (const [lishID, previous] of previousDownloaders) {
+			activeDownloaders.delete(lishID);
+			try {
+				activeDownloaders.set(lishID, await restore(lishID, previous));
+			} catch (error) {
+				restoreErrors.push(error);
+			}
+		}
+	}
+
+	const restoreDetail = restoreErrors.length > 0 ? `; failed to restore ${restoreErrors.length} download(s)` : '';
+	throw new AggregateError([...errors, ...restoreErrors], `Failed to stop ${errors.length} active download(s)${restoreDetail}`);
 }
 
 /** Remove in-memory download state without DB persist (for LISH deletion). */
@@ -375,6 +395,54 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	const pendingDownloads = new Set<string>();
 
+	async function startStoredDownloader(lishID: string, networkIDs: string[], originalNetworkIDs: string[], disabled: boolean, client?: any): Promise<Downloader> {
+		const lish = dataServer.get(lishID);
+		if (!lish) throw new Error(`Cannot restore download ${lishID}: LISH is missing`);
+		const downloadDir = lish.directory ?? join(dataDir, 'downloads', Date.now().toString());
+		if (lish.directory) {
+			const hasChunks = dataServer.getAllChunkCount(lishID) > dataServer.getMissingChunks(lishID).length;
+			await access(hasChunks ? downloadDir : dirname(downloadDir), constants.R_OK | constants.W_OK);
+		}
+
+		const downloader = new Downloader(downloadDir, networks.getRunningNetwork(), dataServer, networkIDs, originalNetworkIDs);
+		await downloader.initFromManifest(lish);
+		activeDownloaders.set(lishID, downloader);
+		const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
+		downloader.setProgressCallback?.((info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => {
+			send('transfer.download:progress', { lishID, ...info });
+		});
+		downloader.setRetryCallback?.(info => {
+			if (info.resolved) send('transfer.download:resumed', { lishID });
+			else send('transfer.download:retrying', { lishID, ...info });
+		});
+		if (disabled) downloader.disable();
+		const running = downloader.download();
+		running
+			.then(async () => {
+				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
+				send('transfer.download:complete', { downloadDir, lishID });
+				if (finalizeDownload) {
+					try {
+						await finalizeDownload(lishID);
+					} catch (err) {
+						console.error(`[Transfer] ${lishID.slice(0, 8)}: finalizeDownload failed`, err);
+					}
+				}
+			})
+			.catch(err => {
+				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
+				if (err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CANCELLED) return;
+				const code = err instanceof CodedError ? err.code : ErrorCodes.DOWNLOAD_ERROR;
+				const detail = err instanceof CodedError ? err.detail : err.message;
+				dataServer.setError(lishID, code, detail);
+				downloadEnabledLishs.delete(lishID);
+				persistDownloadEnabled?.(lishID, false);
+				send('transfer.download:error', { error: code, errorDetail: detail, lishID });
+				startRecoveryIfEnabled(lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(lishID) });
+			});
+		return downloader;
+	}
+
 	async function enableDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
 		assert(p, ['lishID']);
 		if (transfersPaused) return { success: false };
@@ -458,7 +526,6 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		}
 		pendingDownloads.add(p.lishID);
 		try {
-			const network = networks.getRunningNetwork();
 			const joinedNetworks = getJoinedEnabledNetworkIDs(networks);
 			if (joinedNetworks.length === 0) {
 				// No lishnet is joined to source this download. Keep the DB enabled flag
@@ -492,43 +559,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 					return { success: false };
 				}
 			}
-			const downloader = new Downloader(downloadDir, network, dataServer, joinedNetworks);
-			await downloader.initFromManifest(lish);
-			activeDownloaders.set(p.lishID, downloader);
-			const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
-			downloader.setProgressCallback?.((info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => {
-				send('transfer.download:progress', { lishID: p.lishID, ...info });
-			});
-			downloader.setRetryCallback?.(info => {
-				if (info.resolved) send('transfer.download:resumed', { lishID: p.lishID });
-				else send('transfer.download:retrying', { lishID: p.lishID, ...info });
-			});
-			downloader
-				.download()
-				.then(async () => {
-					if (activeDownloaders.get(p.lishID) === downloader) activeDownloaders.delete(p.lishID);
-					send('transfer.download:complete', { downloadDir, lishID: p.lishID });
-					// If this LISH was imported into temp, move it to its final directory.
-					if (finalizeDownload) {
-						try {
-							await finalizeDownload(p.lishID);
-						} catch (err) {
-							console.error(`[Transfer] ${p.lishID.slice(0, 8)}: finalizeDownload failed`, err);
-						}
-					}
-				})
-				.catch(err => {
-					if (activeDownloaders.get(p.lishID) === downloader) activeDownloaders.delete(p.lishID);
-					if (err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CANCELLED) return;
-					const code = err instanceof CodedError ? err.code : ErrorCodes.DOWNLOAD_ERROR;
-					const detail = err instanceof CodedError ? err.detail : err.message;
-					dataServer.setError(p.lishID, code, detail);
-					downloadEnabledLishs.delete(p.lishID);
-					persistDownloadEnabled?.(p.lishID, false);
-					send('transfer.download:error', { error: code, errorDetail: detail, lishID: p.lishID });
-					startRecoveryIfEnabled(p.lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(p.lishID) });
-				});
+			await startStoredDownloader(p.lishID, joinedNetworks, joinedNetworks, false, client);
 			recovery.stop(p.lishID);
+			const send = broadcast ?? (() => {});
 			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };
 		} catch (err: any) {
@@ -691,7 +724,21 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		// Close admission before the first await so another WebSocket request cannot
 		// start a transfer between teardown and the destructive database wipe.
 		transfersPaused = true;
-		await destroyAllDownloaders(activeDownloaders);
+		const downloaderState = new Map(
+			[...activeDownloaders].map(([lishID, downloader]) => [
+				lishID,
+				{
+					networkIDs: downloader.getNetworkIDs?.() ?? [],
+					originalNetworkIDs: downloader.getOriginalNetworkIDs?.() ?? downloader.getNetworkIDs?.() ?? [],
+					disabled: downloader.isDisabled?.() ?? false,
+				},
+			])
+		);
+		await destroyAllDownloaders(activeDownloaders, async lishID => {
+			const state = downloaderState.get(lishID);
+			if (!state) throw new Error(`Cannot restore download ${lishID}: reset snapshot is missing`);
+			return startStoredDownloader(lishID, state.networkIDs, state.originalNetworkIDs, state.disabled);
+		});
 		downloadEnabledLishs.clear();
 		networkSuspended.clear();
 		clearAllUploads();

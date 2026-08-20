@@ -379,13 +379,13 @@ export class Downloader {
 		this.peerManager.remove(peerID, 'disconnect');
 	}
 
-	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkIDs: string | string[]) {
+	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkIDs: string | string[], originalNetworkIDs?: string[]) {
 		this.downloadDir = downloadDir;
 		this.network = network;
 		this.dataServer = dataServer;
 		const ids = Array.isArray(networkIDs) ? [...networkIDs] : [networkIDs];
 		this.networkIDs = ids;
-		this.originalNetworkIDs = [...ids];
+		this.originalNetworkIDs = originalNetworkIDs ? [...originalNetworkIDs] : [...ids];
 		this.fileAllocator = new FileAllocator(downloadDir);
 	}
 
@@ -473,6 +473,7 @@ export class Downloader {
 
 	async doWork(): Promise<void> {
 		if (this.destroyed) return;
+		if (this.disabled) return;
 		// Throttle: don't re-enter within 10s of last exhausted cycle
 		if (this.lastExhaustedTime > 0 && Date.now() - this.lastExhaustedTime < 10000) {
 			trace(`[DL] doWork throttled (${Math.round((Date.now() - this.lastExhaustedTime) / 1000)}s since exhaust)`);

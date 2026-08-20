@@ -81,6 +81,23 @@ describe('runFactoryReset', () => {
 		expect(res.results).toEqual([{ category: 'settings', ok: true }]);
 	});
 
+	it('lets a caller require preparation for settings that need a node restart', async () => {
+		const ran: string[] = [];
+		const res = await runFactoryReset({
+			requiresPrepare: ['settings'],
+			prepare: () => {
+				throw new Error('stop failed');
+			},
+			settings: () => {
+				ran.push('settings');
+			},
+		});
+
+		expect(ran).toEqual([]);
+		expect(res.results).toEqual([{ category: 'settings', ok: false, detail: 'skipped: transfers and the node could not be stopped safely' }]);
+		expect(res.success).toBe(false);
+	});
+
 	it('runs prepare before the wipes and restart after, reporting both as phases', async () => {
 		const order: string[] = [];
 		const res = await runFactoryReset({

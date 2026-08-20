@@ -348,6 +348,27 @@ describe('buildFactoryResetHandler — partial failure', () => {
 		expect(res.phases[0]).toEqual({ phase: 'prepare', ok: false, detail: 'verify-stop boom' });
 	});
 
+	it('does not reset node-backed settings when preparation fails', async () => {
+		const ran: string[] = [];
+		const deps = makeDeps({
+			stopVerifyAll: async () => {
+				throw new Error('verify-stop boom');
+			},
+			settingsOverride: {
+				reset: () => {
+					ran.push('settings');
+					return Promise.resolve({ network: { maxDownloadSpeed: 0, maxUploadSpeed: 0, maxDownloadPeersPerLISH: 30, maxUploadPeersPerLISH: 30, maxMessageSize: 0 } });
+				},
+			},
+		});
+
+		const res = await buildFactoryResetHandler(deps)({ settings: true, downloads: false, networks: false, identity: false, peers: false });
+
+		expect(ran).toEqual([]);
+		expect(res.results.find(result => result.category === 'settings')?.ok).toBe(false);
+		expect(res.success).toBe(false);
+	});
+
 	it('a node that cannot be stopped blocks every destructive wipe and the restart', async () => {
 		const called: string[] = [];
 		const deps = makeDeps({

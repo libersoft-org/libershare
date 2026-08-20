@@ -14,6 +14,8 @@ export interface FactoryResetOps {
 	prepare?: (() => Promise<void> | void) | undefined;
 	/** Bring the node + surviving transfers back after the wipes. Skipped if `prepare` failed. */
 	restart?: (() => Promise<void> | void) | undefined;
+	/** Extra categories that this caller cannot run safely unless `prepare` succeeds. */
+	requiresPrepare?: readonly FactoryResetCategory[] | undefined;
 	settings?: (() => Promise<void> | void) | undefined;
 	identity?: (() => Promise<void> | void) | undefined;
 	downloads?: (() => Promise<void> | void) | undefined;
@@ -28,10 +30,9 @@ const CATEGORY_ORDER: FactoryResetCategory[] = ['downloads', 'networks', 'peers'
 
 /**
  * Categories that may only run once `prepare` has actually stopped the transfers and the
- * node. Four of the five wipe state the running node owns — its datastore, its peerstore,
- * its identity, the files live transfers are writing — so running them over a node that
- * could not be stopped is the corruption this barrier exists to prevent. `settings` is the
- * only wipe that touches neither the node nor the transfers.
+ * node. Four categories always wipe state the running node owns. A caller may add categories
+ * whose safety depends on its own runtime wiring — the app-level factory reset does this for
+ * settings because several network settings only take effect when the node is rebuilt.
  */
 const REQUIRES_PREPARE: ReadonlySet<FactoryResetCategory> = new Set<FactoryResetCategory>(['downloads', 'networks', 'peers', 'identity']);
 
@@ -59,8 +60,9 @@ function errMsg(e: unknown): string {
  * category without a barrier records a failed prepare phase and skips that category. The
  * absence of a barrier used to count as a passed one, so this function would happily wipe
  * downloads, networks, peers and the identity out from under a running node and report
- * `success: true`. `prepare` stays optional only so a settings-only reset — which touches
- * neither the node nor the transfers — need not stop anything.
+ * `success: true`. `prepare` stays optional so a caller may still run categories that do
+ * not depend on its runtime; callers add any stricter requirements through
+ * `requiresPrepare`.
  *
  * Categories that DO run are independent of each other: a failure in one is recorded and
  * never stops the rest. Returns one {@link FactoryResetResult} per selected category, one
@@ -69,6 +71,7 @@ function errMsg(e: unknown): string {
  */
 export async function runFactoryReset(ops: FactoryResetOps): Promise<FactoryResetResponse> {
 	const phases: FactoryResetPhaseResult[] = [];
+	const requiresPrepare = new Set<FactoryResetCategory>([...REQUIRES_PREPARE, ...(ops.requiresPrepare ?? [])]);
 	let prepared = false;
 	if (ops.prepare) {
 		try {
@@ -80,7 +83,7 @@ export async function runFactoryReset(ops: FactoryResetOps): Promise<FactoryRese
 			console.error(`[factoryReset] prepare failed — destructive categories skipped: ${detail}`);
 			phases.push({ phase: 'prepare', ok: false, detail });
 		}
-	} else if (CATEGORY_ORDER.some(category => ops[category] && REQUIRES_PREPARE.has(category))) {
+	} else if (CATEGORY_ORDER.some(category => ops[category] && requiresPrepare.has(category))) {
 		console.error(`[factoryReset] ${PREPARE_MISSING} — destructive categories skipped`);
 		phases.push({ phase: 'prepare', ok: false, detail: PREPARE_MISSING });
 	}
@@ -88,7 +91,7 @@ export async function runFactoryReset(ops: FactoryResetOps): Promise<FactoryRese
 	for (const category of CATEGORY_ORDER) {
 		const fn = ops[category];
 		if (!fn) continue; // category not selected
-		if (!prepared && REQUIRES_PREPARE.has(category)) {
+		if (!prepared && requiresPrepare.has(category)) {
 			results.push({ category, ok: false, detail: PREPARE_FAILED_SKIP });
 			continue;
 		}

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { getJoinedEnabledNetworkIDs, handleLeftDownloader, destroyAllDownloaders, initDownloadState, removeDownloadState, setActiveDownloadersRef, setNetworkSuspendedRef, type LeftDownloaderDeps } from '../../../src/api/transfer.ts';
+import { runFactoryReset } from '../../../src/api/factory-reset.ts';
 
 const NET = 'net-left';
 const OTHER = 'net-other';
@@ -159,6 +160,38 @@ describe('download lifecycle state', () => {
 		expect(calls).toEqual(['broken', 'healthy']);
 		expect(downloaders.has('broken')).toBe(true);
 		expect(downloaders.has('healthy')).toBe(false);
+	});
+
+	it('restores every downloader when teardown only partly succeeds', async () => {
+		const restored: string[] = [];
+		let downloadsWiped = false;
+		const replacements = new Map<string, any>();
+		const downloaders = new Map<string, any>([
+			['a', { destroy: async () => {} }],
+			['b', { destroy: async () => Promise.reject(new Error('close failed')) }],
+		]);
+
+		const result = await runFactoryReset({
+			prepare: () =>
+				destroyAllDownloaders(downloaders, async lishID => {
+					restored.push(lishID);
+					const replacement = { running: true, destroy: async () => {} };
+					replacements.set(lishID, replacement);
+					return replacement;
+				}),
+			downloads: () => {
+				downloadsWiped = true;
+			},
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.phases[0]?.detail).toContain('Failed to stop 1 active download');
+		expect(downloadsWiped).toBe(false);
+		expect(restored).toEqual(['a', 'b']);
+		expect(downloaders.get('a')).toBe(replacements.get('a'));
+		expect(downloaders.get('b')).toBe(replacements.get('b'));
+		expect(downloaders.get('a')?.running).toBe(true);
+		expect(downloaders.get('b')?.running).toBe(true);
 	});
 
 	it('uses only networks that are both enabled and actually joined', () => {

@@ -417,11 +417,8 @@ export class BootstrapStatusTracker {
 	 * from a connection we actually made, is evidence of anything.
 	 */
 	private capDiscovered(networkID: string, net: Map<string, TrackedPeer>): void {
-		// Two budgets, because the rows answer two different questions. The visible ones are
-		// what the UI renders and what the cap was written for. The hidden ones are the memory
-		// that keeps a dead peer out; counting them against the same budget meant a flood of
-		// invented addresses pushed the memory out and let every peer it was holding back
-		// return. Each is bounded on its own.
+		// Visible and hidden discovered rows share one hard budget. Hidden rows are cheapest
+		// to evict because they are not published; configured rows are never counted.
 		let discovered = 0;
 		for (const p of net.values()) if (p.origin === 'discovered') discovered++;
 		if (discovered <= MAX_DISCOVERED_PER_NETWORK) return;
@@ -441,10 +438,8 @@ export class BootstrapStatusTracker {
 			.filter(([, p]) => p.origin === 'discovered')
 			.map(([key, p]) => ({ key, rank: rankOf(p), age: Date.parse(p.updatedAt) }))
 			.sort((a, b) => a.rank - b.rank || a.age - b.age);
-		// Taken out of the list, so the same rule applies as everywhere else: hidden, not
-		// forgotten. Deleting here was the last way a peer this node had already written off
-		// could come back on the next announce — under exactly the pressure (an address
-		// flood) where that matters most.
+		// The cap is the deliberate exception to normal hiding: overflow rows are forgotten
+		// outright so hostile gossip cannot grow the tracker without bound.
 		for (let i = 0; i < discovered - MAX_DISCOVERED_PER_NETWORK; i++) net.delete(victims[i]!.key);
 	}
 
