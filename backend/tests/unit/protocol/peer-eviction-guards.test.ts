@@ -576,6 +576,21 @@ describe('configured exemption ends when the peer leaves the config', () => {
 		expect(purged).toEqual([]);
 	});
 
+	it('does not purge a peer that connected while this pass was failing on it', async () => {
+		// purgeStalePeer closes connections, so evicting a peer that has just come back —
+		// over an inbound dial, or any other path this loop cannot see — would cut a live
+		// connection on the strength of stale evidence. The check has to be made in the
+		// moment of acting, not when the candidate list was built.
+		const { network, purged } = bareNetwork();
+		network.pruneConfiguredBootstrapPeer(PEER_ID); // remove the exemption, so only liveness is left
+		(network as any).node.getConnections = (): unknown[] => [{ remotePeer: peerIdLike(PEER_ID) }];
+
+		await run(network);
+
+		expect(purged).toEqual([]);
+		expect((network as any).redialBackoff.has(PEER_ID)).toBe(false); // and its failure history is dropped
+	});
+
 	it('stops protecting it once the config entry is gone', async () => {
 		const { network, purged } = bareNetwork();
 		network.pruneConfiguredBootstrapPeer(PEER_ID);
