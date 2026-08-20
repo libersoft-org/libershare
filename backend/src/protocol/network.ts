@@ -1960,6 +1960,21 @@ export class Network {
 				// never been contacted. The user then saw a green light on a broken entry.
 				const canonicalAddress = normalizeMultiaddrForCompare(ma.toString());
 				let effectiveOrigin: BootstrapPeerOrigin = this.classifyBootstrapOrigin(origin, networkID, canonicalAddress);
+				// Gossip does not get to turn a configured address into an unpaced forced
+				// probe. The configured classification is still the right one for the status
+				// row and for exact-endpoint verification, but a fleet can repeat the same
+				// address on every announce cycle. If the endpoint is already connected there
+				// is nothing left to prove; after a failure, share the same per-address backoff
+				// used by the configured recovery loops. An explicit configured write still
+				// bypasses this gate and probes immediately.
+				const gossipReprobeOfConfiguredAddress = origin === 'discovered' && effectiveOrigin === 'configured';
+				if (gossipReprobeOfConfiguredAddress) {
+					if (this.hasConnectionOnEndpoint(ma)) {
+						this.bootstrapTracker.recordAddressReachable(peer);
+						continue;
+					}
+					if (!this.isAddressProbeDue(canonicalAddress, Date.now())) continue;
+				}
 				// Claiming the peer as configured stays keyed on what the CALLER declared:
 				// this branch also lifts leave-network suppression, which is the user's
 				// decision to reverse, never gossip's.
@@ -1994,7 +2009,10 @@ export class Network {
 				// row instead: the user wrote it down and needs to see why nothing happens with it.
 				if (shouldDenyDial(ma, localCidrs)) {
 					trace(`[NET] addBootstrapPeers skip non-routable: ${peer}`);
-					if (effectiveOrigin === 'configured') this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'error', 'address is not routable from this host', null, effectiveOrigin);
+					if (effectiveOrigin === 'configured') {
+						this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'error', 'address is not routable from this host', null, effectiveOrigin);
+						if (gossipReprobeOfConfiguredAddress) this.noteAddressProbeFailure(canonicalAddress);
+					}
 					continue;
 				}
 				// Pacing, before the quarantine is consulted: gossip mentions a dead peer
@@ -2153,6 +2171,7 @@ export class Network {
 					// Discovered rows carry the weaker "the peer answered" meaning and are
 					// recorded either way.
 					if (effectiveOrigin === 'configured' && !verifiedThisAddr) {
+						this.noteAddressProbeFailure(canonicalAddress);
 						trace(`[NET] bootstrap addr unverified (connection came back on another address), left pending: ${peer}`);
 						continue;
 					}
@@ -2160,6 +2179,7 @@ export class Network {
 					// it has earned its place in the autodial list. Unverified ones never get
 					// there, which is what keeps a flood of invented addresses off it.
 					if (effectiveOrigin === 'discovered' && verifiedThisAddr) this.rememberBootstrapAddress(ma);
+					if (effectiveOrigin === 'configured' && verifiedThisAddr) this.addressProbeBackoff.delete(canonicalAddress);
 					// The identity Noise actually proved on this connection, not the one the
 					// address claimed. It is the only evidence the row-cap ranking accepts, and
 					// passing null here left an active, verified member ranked as an ordinary
@@ -2180,7 +2200,8 @@ export class Network {
 					// maintenance never sees it either and every announce bought another dial.
 					// Same accounting as the recovery loop — pacing only, no eviction credit,
 					// since a failed announce dial says nothing about who is the broken side.
-					if (peerID && effectiveOrigin === 'discovered') this.noteRecoveryDialFailure(peerID);
+					if (effectiveOrigin === 'configured') this.noteAddressProbeFailure(canonicalAddress);
+					else if (peerID) this.noteRecoveryDialFailure(peerID);
 					const actualPeerID = kind === 'identity-mismatch' ? extractActualPeerID(message) : null;
 					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, kind, message, actualPeerID, effectiveOrigin);
 					// [NET-MISMATCH] richer log for identity-mismatch — single line containing

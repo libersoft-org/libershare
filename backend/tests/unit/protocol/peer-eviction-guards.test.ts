@@ -290,6 +290,7 @@ describe('addBootstrapPeers — only a verified address enters the peerStore', (
 		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
+		(network as any).addressProbeBackoff = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
@@ -476,6 +477,7 @@ describe('addBootstrapPeers — forced probe only for configured addresses', () 
 		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
+		(network as any).addressProbeBackoff = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapGeneration = new Map();
@@ -1159,6 +1161,7 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
+		(network as any).addressProbeBackoff = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [multiaddr(BAD)];
 		(network as any).bootstrapGeneration = new Map();
@@ -1847,6 +1850,7 @@ describe('addBootstrapPeers — a gossip announce of a configured address', () =
 		(network as any).configuredBootstrapPeerIDs = new Set(knownConfigured.length > 0 ? [PEER_ID] : []);
 		(network as any).configuredBootstrapAddresses = new Set(knownConfigured.map(a => normalizeMultiaddrForCompare(a)));
 		(network as any).configuredBootstrapAddressesByNet = new Map([['net-a', new Set(knownConfigured.map(a => normalizeMultiaddrForCompare(a)))]]);
+		(network as any).addressProbeBackoff = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapPeerIDs = new Set<string>();
@@ -1887,6 +1891,36 @@ describe('addBootstrapPeers — a gossip announce of a configured address', () =
 	it('probes the address for real, as the configured branch would', async () => {
 		const { network, forced } = bareNetwork([CONFIGURED_A]);
 		await (network as any).addBootstrapPeers([CONFIGURED_A], 'net-a', 'discovered');
+		expect(forced).toEqual([true]);
+	});
+
+	it('paces repeated gossip probes of the configured address after failure', async () => {
+		const { network, forced } = bareNetwork([CONFIGURED_A]);
+		await (network as any).addBootstrapPeers([CONFIGURED_A], 'net-a', 'discovered');
+		await (network as any).addBootstrapPeers([CONFIGURED_A], 'net-a', 'discovered');
+		expect(forced).toEqual([true]);
+		expect((network as any).addressProbeBackoff.get(normalizeMultiaddrForCompare(CONFIGURED_A))?.nextAttempt).toBeGreaterThan(Date.now());
+	});
+
+	it('re-probes the configured address once its address backoff expires', async () => {
+		const { network, forced } = bareNetwork([CONFIGURED_A]);
+		await (network as any).addBootstrapPeers([CONFIGURED_A], 'net-a', 'discovered');
+		(network as any).addressProbeBackoff.set(normalizeMultiaddrForCompare(CONFIGURED_A), { nextAttempt: Date.now() - 1, failCount: 1 });
+		await (network as any).addBootstrapPeers([CONFIGURED_A], 'net-a', 'discovered');
+		expect(forced).toEqual([true, true]);
+	});
+
+	it('does not force another gossip probe while that endpoint is connected', async () => {
+		const { network, forced } = bareNetwork([CONFIGURED_A]);
+		(network as any).node.getConnections = () => [{ remoteAddr: { toString: () => CONFIGURED_A } }];
+		await (network as any).addBootstrapPeers([CONFIGURED_A], 'net-a', 'discovered');
+		expect(forced).toEqual([]);
+	});
+
+	it('still lets an explicit configured write bypass the address backoff', async () => {
+		const { network, forced } = bareNetwork([CONFIGURED_A]);
+		(network as any).addressProbeBackoff.set(normalizeMultiaddrForCompare(CONFIGURED_A), { nextAttempt: Date.now() + 600_000, failCount: 5 });
+		await (network as any).addBootstrapPeers([CONFIGURED_A], 'net-a', 'configured');
 		expect(forced).toEqual([true]);
 	});
 
