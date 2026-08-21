@@ -12,9 +12,17 @@ function makeNetworks(overrides: Record<string, () => any> = {}): FactoryResetOr
 		clearDatastore: overrides['clearDatastore'] ?? (() => Promise.resolve()),
 		clearIdentityKey: overrides['clearIdentityKey'] ?? (() => Promise.resolve()),
 		clearPeerstore: overrides['clearPeerstore'] ?? (() => Promise.resolve()),
+		cancelRunOperations: overrides['cancelRunOperations'] ?? (() => {}),
 	};
 	return {
 		beginMaintenance: overrides['beginMaintenance'] ?? (() => Promise.resolve(() => {})),
+		prepareMaintenance:
+			overrides['prepareMaintenance'] ??
+			(() =>
+				Promise.resolve({
+					drain: () => Promise.resolve(),
+					release: () => {},
+				})),
 		stopAllNetworks: overrides['stopAllNetworks'] ?? (() => Promise.resolve()),
 		startEnabledNetworks: overrides['startEnabledNetworks'] ?? (() => Promise.resolve()),
 		getNetwork: () => network,
@@ -132,13 +140,59 @@ describe('buildFactoryResetHandler — category ordering', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildFactoryResetHandler — restart behaviour', () => {
+	it('cancels stalled lishnet work only after admission closes and before waiting for its drain', async () => {
+		const actions: string[] = [];
+		let cancelled = false;
+		let releaseDrain!: () => void;
+		const cancelledRun = new Promise<void>(resolve => {
+			releaseDrain = resolve;
+		});
+		const deps = makeDeps({
+			networkOverride: {
+				// The old one-phase orchestration waits here forever and can never reach
+				// cancelRunOperations. The two-phase lease must be used instead.
+				beginMaintenance: () => new Promise<never>(() => {}),
+				prepareMaintenance: async () => {
+					actions.push('maintenance-close');
+					return {
+						drain: async () => {
+							actions.push('maintenance-drain');
+							await cancelledRun;
+						},
+						release: () => actions.push('maintenance-release'),
+					};
+				},
+				cancelRunOperations: () => {
+					cancelled = true;
+					actions.push('cancel-runs');
+					releaseDrain();
+				},
+				stopAllNetworks: async () => {
+					actions.push('stop');
+				},
+			},
+		});
+
+		const outcome = await Promise.race([
+			buildFactoryResetHandler(deps)({ downloads: false, settings: false, identity: true, networks: false, peers: false }).then(() => 'settled'),
+			Bun.sleep(250).then(() => 'timeout'),
+		]);
+
+		expect(outcome).toBe('settled');
+		expect(cancelled).toBe(true);
+		expect(actions).toEqual(['maintenance-close', 'cancel-runs', 'maintenance-drain', 'stop', 'maintenance-release']);
+	});
+
 	it('holds exclusive lishnet maintenance through the wipe and restart', async () => {
 		const actions: string[] = [];
 		const deps = makeDeps({
 			networkOverride: {
-				beginMaintenance: async () => {
+				prepareMaintenance: async () => {
 					actions.push('maintenance-acquire');
-					return () => actions.push('maintenance-release');
+					return {
+						drain: async () => {},
+						release: () => actions.push('maintenance-release'),
+					};
 				},
 				stopAllNetworks: async () => {
 					actions.push('stop');

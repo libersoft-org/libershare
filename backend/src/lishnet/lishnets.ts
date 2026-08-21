@@ -59,6 +59,13 @@ interface ReconcileOutcome {
  * closes admission and drains every write that entered before it. Writes arriving during
  * maintenance wait and begin only after the exclusive owner releases the gate.
  */
+export interface NetworkMaintenanceLease {
+	/** Wait until every mutation admitted before this lease has finished. */
+	drain: () => Promise<void>;
+	/** Re-open mutation admission. May be used without draining when preparation fails. */
+	release: () => void;
+}
+
 export class NetworkMutationGate {
 	private maintenance = false;
 	private active = 0;
@@ -88,18 +95,30 @@ export class NetworkMutationGate {
 		};
 	}
 
-	async beginMaintenance(): Promise<() => void> {
+	async prepareMaintenance(): Promise<NetworkMaintenanceLease> {
 		while (this.maintenance) await new Promise<void>(resolve => this.openWaiters.add(resolve));
 		this.maintenance = true;
-		if (this.active !== 0) await new Promise<void>(resolve => this.drainWaiters.add(resolve));
 		let released = false;
-		return () => {
+		const release = (): void => {
 			if (released) return;
 			released = true;
 			this.maintenance = false;
 			for (const resolve of this.openWaiters) resolve();
 			this.openWaiters.clear();
 		};
+		return {
+			drain: async () => {
+				if (released) throw new Error('Cannot drain released network maintenance');
+				if (this.active !== 0) await new Promise<void>(resolve => this.drainWaiters.add(resolve));
+			},
+			release,
+		};
+	}
+
+	async beginMaintenance(): Promise<() => void> {
+		const lease = await this.prepareMaintenance();
+		await lease.drain();
+		return lease.release;
 	}
 }
 
@@ -505,6 +524,15 @@ export class Networks {
 	 */
 	async beginMaintenance(): Promise<() => void> {
 		return await this.getMutationAdmission().beginMaintenance();
+	}
+
+	/**
+	 * Close lishnet mutation admission without waiting for an older runtime operation.
+	 * Factory reset uses the lease to finish its fallible transfer preparation first,
+	 * then cancels network run operations immediately before draining and stopping.
+	 */
+	async prepareMaintenance(): Promise<NetworkMaintenanceLease> {
+		return await this.getMutationAdmission().prepareMaintenance();
 	}
 
 	/**

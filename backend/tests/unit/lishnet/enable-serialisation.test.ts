@@ -523,6 +523,38 @@ describe('Networks — operations that change the set of lishnets', () => {
 		releaseMaintenance();
 	});
 
+	it('closes admission before a stalled older write is drained', async () => {
+		const gate = deferred();
+		net.dialGate = gate.promise;
+		const { networks } = makeNetworks(net, db, []);
+		const enabling = networks.setEnabled(NET, true);
+		await settle();
+
+		const maintenance = await networks.prepareMaintenance();
+		let addSettled = false;
+		const adding = networks.add({ ...rowOf(NET_B), name: 'B' }).then(result => {
+			addSettled = true;
+			return result;
+		});
+		let drained = false;
+		const draining = maintenance.drain().then(() => {
+			drained = true;
+		});
+		await settle();
+
+		expect(drained).toBe(false);
+		expect(addSettled).toBe(false);
+		expect(getLISHnet(db, NET_B)).toBeUndefined();
+
+		gate.resolve();
+		await enabling;
+		await draining;
+		expect(drained).toBe(true);
+
+		maintenance.release();
+		expect(await adding).toBe(true);
+	});
+
 	it('admits a file import before parsing so maintenance drains the whole request', async () => {
 		const parseGate = deferred();
 		const { networks } = makeNetworks(net, db, []);

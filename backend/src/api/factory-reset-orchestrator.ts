@@ -80,7 +80,11 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 			// closes those streams before their database rows are removed; clearing only the
 			// in-memory counters would still leave an in-flight stream using wiped state.
 			const restartNode = wipeDownloads || wipeIdentity || wipeNetworks || wipePeers || wipeSettings;
-			const releaseNetworkMaintenance = restartNode ? await networks.beginMaintenance() : undefined;
+			// Close lishnet writes now, but do not wait for an older join/leave yet. A stalled
+			// runtime operation is cancelled only after the fallible transfer preparation has
+			// succeeded, so a failed prepare can safely release admission without poisoning the
+			// still-running node's dial controller.
+			const networkMaintenance = restartNode ? await networks.prepareMaintenance() : undefined;
 			let transferAdmissionClosed = false;
 			let lishMutationAdmissionClosed = false;
 			let transferRuntimeSafe = true;
@@ -138,6 +142,8 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 						}
 						if (restartNode) {
 							try {
+								networks.getNetwork().cancelRunOperations();
+								await networkMaintenance?.drain();
 								await networks.stopAllNetworks();
 								clearUploadRuntime();
 							} catch (error) {
@@ -166,7 +172,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 				});
 			} finally {
 				resumeTransfers();
-				releaseNetworkMaintenance?.();
+				networkMaintenance?.release();
 			}
 
 			// Everyone else is told to reload, because identity, networks and state moved under
