@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, LISHClient, toManifest, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
+import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, LISHClient, toManifest, handleLISHProtocol, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
 import { encode as codecEncode, decode as codecDecode } from '../../../src/protocol/codec.ts';
 import { encode as lpEncode } from 'it-length-prefixed';
 import { DEFAULT_MAX_CHUNK_SIZE, DEFAULT_MAX_MESSAGE_SIZE, useNetworkSettings, type SettingsData } from '../../../src/settings.ts';
@@ -40,6 +40,42 @@ function seedActiveUpload(lishID: string, chunks: number, bytes: number): void {
 		speedSamples: [],
 	});
 }
+
+describe('lish-protocol – reset cancellation', () => {
+	it('stops an idle handler even when the stream source never wakes after abort', async () => {
+		let releaseRead!: () => void;
+		const source = {
+			[Symbol.asyncIterator]() {
+				return {
+					next: () =>
+						new Promise<IteratorResult<Uint8Array>>(resolve => {
+							releaseRead = () => resolve({ done: true, value: undefined as never });
+						}),
+					return: async () => ({ done: true, value: undefined as never }),
+				};
+			},
+		};
+		const stream = {
+			[Symbol.asyncIterator]: source[Symbol.asyncIterator],
+			status: 'open',
+			abort() {
+				this.status = 'aborted';
+			},
+			close: async () => {},
+			send: () => {},
+		} as any;
+		const abort = new AbortController();
+		const handler = handleLISHProtocol(stream, {} as any, 'peer-id', 'DIRECT', undefined, undefined, abort.signal);
+
+		await Promise.resolve();
+		abort.abort();
+		const outcome = await Promise.race([handler.then(() => 'stopped'), Bun.sleep(250).then(() => 'timeout')]);
+		releaseRead?.();
+		await handler;
+
+		expect(outcome).toBe('stopped');
+	});
+});
 
 // ---------------------------------------------------------------------------
 // Tests

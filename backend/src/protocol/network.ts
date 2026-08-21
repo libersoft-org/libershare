@@ -328,6 +328,16 @@ export class Network {
 	 */
 	private dialAbort = new AbortController();
 	/**
+	 * Admission and drain state for inbound LISH protocol handlers. libp2p closes
+	 * streams during stop(), but it does not await the application Promise that is
+	 * serving them. A factory reset must therefore close this gate, abort the streams
+	 * and wait for every handler before upload counters or database rows are cleared.
+	 */
+	private lishProtocolAdmissionClosed = false;
+	private lishProtocolAbort = new AbortController();
+	private readonly activeLISHProtocolHandlers = new Set<Promise<void>>();
+	private readonly activeLISHProtocolStreams = new Set<Stream>();
+	/**
 	 * Per-(peer,lish) timestamp of the last `have` response we sent.
 	 * Used to rate-limit responses to repeated `want` queries from the same peer for the same LISH:
 	 * we respond at most once per WANT_RESPONSE_COOLDOWN_MS. Periodic cleanup removes stale entries.
@@ -694,10 +704,14 @@ export class Network {
 				console.log('Network node is already running');
 				return;
 			}
+			if (this.activeLISHProtocolHandlers.size > 0 || this.activeLISHProtocolStreams.size > 0) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Cannot start a network while handlers from the previous LISH protocol run are still active');
 			this.lifecycle = 'starting';
 			// A fresh one per run — an abort raised for the previous shutdown would otherwise
 			// refuse this run's dials before it made any. See {@link dialAbort}.
 			this.dialAbort = new AbortController();
+			// Kept separate from admission: a factory-reset restart builds the node while
+			// the external gate is still closed, then opens it only after runtime restore.
+			this.lishProtocolAbort = new AbortController();
 			try {
 				await this.startLocked(bootstrapPeers);
 				this.lifecycle = 'running';
@@ -799,50 +813,7 @@ export class Network {
 		applyGossipsubPatches(this.pubsub, { settings: this.settings, getBootstrapPeerIDs: (): Set<string> => this.bootstrapPeerIDs, pxIngressLogKeys: this.pxIngressLogKeys }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
 
 		// Register lish protocol handler
-		await this.node.handle(
-			LISH_PROTOCOL,
-			async (data: any) => {
-				// libp2p does NOT attach .catch() to the Promise returned by the registered
-				// protocol handler. Any throw from here (including TypeError when this.node
-				// is nulled by stop() racing with the 50ms await below) escapes as an
-				// unhandledRejection. Wrap the full body so the handler can never leak.
-				try {
-					const stream = data.stream ?? data;
-					const connection = data.connection;
-					let remotePeerID = connection?.remotePeer?.toString?.();
-					let isRelay = connection?.remoteAddr ? Circuit.matches(connection.remoteAddr) : false;
-					if (!remotePeerID && this.node) {
-						for (let attempt = 0; attempt < 3 && !remotePeerID; attempt++) {
-							if (attempt > 0) await new Promise(r => setTimeout(r, 50));
-							if (!this.node) break; // node stopped during the sleep
-							for (const peer of this.node.getPeers()) {
-								for (const conn of this.node.getConnections(peer)) {
-									try {
-										if (conn.streams.some((s: any) => s.id === stream.id)) {
-											remotePeerID = peer.toString();
-											isRelay = Circuit.matches(conn.remoteAddr);
-										}
-									} catch {}
-								}
-								if (remotePeerID) break;
-							}
-						}
-					}
-					const connType = remotePeerID ? classifyConnectionFn(remotePeerID, isRelay, this.dcutrPeers) : 'DIRECT';
-					await handleLISHProtocol(
-						stream,
-						this.dataServer,
-						remotePeerID,
-						connType,
-						pid => this.sharesJoinedTopicWith(pid),
-						pid => this.canListSharesTo(pid)
-					);
-				} catch (err: any) {
-					trace(`[NET] LISH handler error: ${err?.message ?? err}`);
-				}
-			},
-			{ runOnLimitedConnection: true }
-		);
+		await this.node.handle(LISH_PROTOCOL, (data: any) => this.handleInboundLISHProtocol(data), { runOnLimitedConnection: true });
 		console.log(`✓ Registered ${LISH_PROTOCOL} protocol handler`);
 
 		// DHT removed; only bootstrap + gossipsub for discovery
@@ -869,6 +840,99 @@ export class Network {
 		this.setupStatusInterval();
 		this.setupWantResponseCleanup();
 		this.peerAnnounce.start();
+	}
+
+	/**
+	 * Close inbound LISH admission and wait until every handler admitted by the
+	 * current run has stopped. The gate remains closed across a node restart until
+	 * {@link resumeLISHProtocolHandlers} is called after transfer state is restored.
+	 */
+	async pauseLISHProtocolHandlersAndDrain(): Promise<void> {
+		this.lishProtocolAdmissionClosed = true;
+		await this.abortAndDrainLISHProtocolHandlers();
+	}
+
+	/** Re-open inbound LISH admission after a factory-reset barrier completes. */
+	resumeLISHProtocolHandlers(): void {
+		if (this.activeLISHProtocolHandlers.size > 0 || this.activeLISHProtocolStreams.size > 0) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Cannot resume LISH protocol admission while handlers from the previous run are still active');
+		if (this.lishProtocolAbort.signal.aborted) this.lishProtocolAbort = new AbortController();
+		this.lishProtocolAdmissionClosed = false;
+	}
+
+	/**
+	 * Track the complete application Promise returned to libp2p. Stopping the node
+	 * closes transports, but libp2p does not wait for this Promise itself.
+	 */
+	private handleInboundLISHProtocol(data: any): Promise<void> {
+		const stream = (data.stream ?? data) as Stream;
+		const runAbort = this.lishProtocolAbort;
+		const runNode = this.node;
+		if (this.lishProtocolAdmissionClosed || runAbort.signal.aborted || !runNode) {
+			try {
+				stream.abort(new Error('LISH protocol admission is closed'));
+			} catch {}
+			return Promise.resolve();
+		}
+
+		let handler!: Promise<void>;
+		handler = Promise.resolve()
+			.then(async () => {
+				try {
+					const connection = data.connection;
+					let remotePeerID = connection?.remotePeer?.toString?.();
+					let isRelay = connection?.remoteAddr ? Circuit.matches(connection.remoteAddr) : false;
+					if (!remotePeerID) {
+						for (let attempt = 0; attempt < 3 && !remotePeerID && !runAbort.signal.aborted; attempt++) {
+							if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 50));
+							if (runAbort.signal.aborted) break;
+							for (const peer of runNode.getPeers()) {
+								for (const conn of runNode.getConnections(peer)) {
+									try {
+										if (conn.streams.some((candidate: any) => candidate.id === stream.id)) {
+											remotePeerID = peer.toString();
+											isRelay = Circuit.matches(conn.remoteAddr);
+										}
+									} catch {}
+								}
+								if (remotePeerID) break;
+							}
+						}
+					}
+					if (runAbort.signal.aborted) return;
+					const connType = remotePeerID ? classifyConnectionFn(remotePeerID, isRelay, this.dcutrPeers) : 'DIRECT';
+					await handleLISHProtocol(
+						stream,
+						this.dataServer,
+						remotePeerID,
+						connType,
+						pid => this.sharesJoinedTopicWith(pid),
+						pid => this.canListSharesTo(pid),
+						runAbort.signal
+					);
+				} catch (err: any) {
+					trace(`[NET] LISH handler error: ${err?.message ?? err}`);
+				}
+			})
+			.finally(() => {
+				this.activeLISHProtocolHandlers.delete(handler);
+				this.activeLISHProtocolStreams.delete(stream);
+			});
+		this.activeLISHProtocolHandlers.add(handler);
+		this.activeLISHProtocolStreams.add(stream);
+		return handler;
+	}
+
+	/** Abort every current stream and drain its tracked application handler. */
+	private async abortAndDrainLISHProtocolHandlers(): Promise<void> {
+		this.lishProtocolAbort.abort();
+		for (const stream of [...this.activeLISHProtocolStreams]) {
+			try {
+				stream.abort(new Error('Network LISH protocol handler stopped'));
+			} catch (err: any) {
+				trace(`[NET] LISH stream abort failed: ${err?.message ?? err}`);
+			}
+		}
+		while (this.activeLISHProtocolHandlers.size > 0) await Promise.allSettled([...this.activeLISHProtocolHandlers]);
 	}
 
 	// =========================================================================
@@ -3333,6 +3397,7 @@ export class Network {
 	 */
 	private async teardown(): Promise<void> {
 		this.runEpoch++; // invalidate any in-flight status tick before touching state
+		await this.abortAndDrainLISHProtocolHandlers();
 		if (this.statusInterval) {
 			clearInterval(this.statusInterval);
 			this.statusInterval = null;
@@ -3400,6 +3465,16 @@ export class Network {
 		this.pxIngressLogKeys.clear();
 		try {
 			if (this.node) {
+				// An active protocol stream can keep a libp2p service stop parked before the
+				// connection manager reaches its own close timeout. Application handlers are
+				// already drained above, so force the remaining transports down first.
+				for (const connection of this.node.getConnections()) {
+					try {
+						connection.abort(new Error('Network stopping'));
+					} catch (err: any) {
+						trace(`[NET] connection abort during stop failed: ${err?.message ?? err}`);
+					}
+				}
 				await this.node.stop();
 				// A resolved stop() is NOT proof the node is down. libp2p sets `status` to
 				// 'stopping' before its own stop phases and to 'stopped' only after all of them

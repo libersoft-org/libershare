@@ -28,10 +28,11 @@ function bareNetwork(): Network {
  * the status at 'stopping' for good, so every later call returns without doing anything.
  * A mock that simply completes the second time cannot show the bug this models.
  */
-function fakeNode(body: () => Promise<void> = async () => {}): { status: string; stop: () => Promise<void>; calls: number } {
+function fakeNode(body: () => Promise<void> = async () => {}): { status: string; stop: () => Promise<void>; getConnections: () => []; calls: number } {
 	const node = {
 		status: 'started',
 		calls: 0,
+		getConnections: (): [] => [],
 		stop: async (): Promise<void> => {
 			node.calls++;
 			if (node.status !== 'started') return;
@@ -216,6 +217,29 @@ describe('Network lifecycle', () => {
 		expect((net as any).recentDisconnects).toEqual([]);
 		expect((net as any).bootstrapWorkaroundTimer).toBeNull();
 		expect(net.getLifecycle()).toBe('stopped');
+	});
+
+	it('aborts remaining connections before stopping the libp2p node', async () => {
+		const net = bareNetwork();
+		const order: string[] = [];
+		const node = {
+			status: 'started',
+			getConnections: () => [
+				{
+					abort: () => order.push('abort'),
+				},
+			],
+			stop: async (): Promise<void> => {
+				order.push('stop');
+				node.status = 'stopped';
+			},
+		};
+		(net as any).node = node;
+		(net as any).datastore = { close: async (): Promise<void> => {} };
+
+		await net.stop();
+
+		expect(order).toEqual(['abort', 'stop']);
 	});
 
 	it('a datastore that will not close leaves the instance failed, and the retry only closes it', async () => {
