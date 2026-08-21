@@ -2614,6 +2614,7 @@ export class Network {
 		const peerId = detail?.peerId;
 		if (!topic?.startsWith(LISH_TOPIC_PREFIX) || !peerId) return;
 		this.peerAnnounce.noteMember(topic, peerId);
+		this.bootstrapTracker.recordNetworkMember(topic.slice(LISH_TOPIC_PREFIX.length), peerId);
 	}
 
 	/** Recently-seen subscribers of a lishnet's topic (TTL union, not just the live snapshot). */

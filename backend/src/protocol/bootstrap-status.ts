@@ -31,7 +31,8 @@ const BATCH_FLUSH_INTERVAL_MS = 75;
  * included. Gossip re-announces a dead peer far more often than the sweep TTL, and this
  * node answers each mention with a dial that fails, so measuring staleness from
  * `updatedAt` meant a dead row was refreshed by its own failures and could never expire.
- * `staleSince` moves only when the address actually answered.
+ * `staleSince` moves only when the address actually answered or its previously
+ * verified identity is observed taking part in this network.
  */
 type TrackedPeer = BootstrapPeerStatus & {
 	staleSince: number;
@@ -62,7 +63,7 @@ type TrackedPeer = BootstrapPeerStatus & {
  *   connect, unverified        unchanged, unless the peer is a member (then shown).
  *   failed dial                unchanged. A failure is not evidence about the identity.
  *   expiry sweep               hidden. It answered once, and that was too long ago.
- *   sweep, peer is a member    shown. Membership does not need an announce to arrive.
+ *   sweep, peer is a member    shown, and the last-contact clock is refreshed.
  *   row cap                    deleted outright — a hidden row holds no claim, and
  *                              re-learning it costs one dial.
  *   configured, any path       never hidden. User data stays on screen, red if broken.
@@ -311,6 +312,7 @@ export class BootstrapStatusTracker {
 		// as the member it was, and stayed off the list for good. Overwritten only by new
 		// identity evidence: a connection, or a mismatch that names somebody else.
 		const provenIdentity = actualPeerID ?? previous?.actualPeerID ?? null;
+		const memberContact = status === 'connected' && this.isMemberNow(networkID, provenIdentity);
 		// Only a VERIFIED success restarts the staleness clock. A FAILING outcome is the
 		// node's own reaction to somebody else's mention of a dead peer, so letting it
 		// advance the clock kept exactly the rows this sweep exists to remove: gossip
@@ -323,9 +325,22 @@ export class BootstrapStatusTracker {
 		// still taking part in THIS network. A peer that left one lishnet while staying
 		// connected through another was kept in the list it had left by exactly that: every
 		// gossip mention produced a 'connected' its other membership had earned.
-		net.set(key, { multiaddr: display, expectedPeerID, status, origin: finalOrigin, actualPeerID: provenIdentity, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' && verified ? Date.now() : (previous?.staleSince ?? Date.now()), hidden: hiddenFor(finalOrigin, status === 'connected' && (verified || this.isMemberNow(networkID, provenIdentity)) ? false : (previous?.hidden ?? true)) });
+		net.set(key, { multiaddr: display, expectedPeerID, status, origin: finalOrigin, actualPeerID: provenIdentity, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' && (verified || memberContact) ? Date.now() : (previous?.staleSince ?? Date.now()), hidden: hiddenFor(finalOrigin, status === 'connected' && (verified || memberContact) ? false : (previous?.hidden ?? true)) });
 		this.capDiscovered(networkID, net);
 		this.notify(networkID);
+	}
+
+	/** Record immediate, network-scoped contact with a previously verified identity. */
+	recordNetworkMember(networkID: string, peerID: string, now: number = Date.now()): void {
+		const peers = this.stats.get(networkID);
+		if (!peers) return;
+		let revealed = false;
+		for (const [addr, peer] of peers) {
+			if (peer.origin !== 'discovered' || peer.actualPeerID !== peerID) continue;
+			peers.set(addr, { ...peer, staleSince: now, hidden: false });
+			if (peer.hidden) revealed = true;
+		}
+		if (revealed) this.notify(networkID);
 	}
 
 	/**
@@ -494,8 +509,8 @@ export class BootstrapStatusTracker {
 	}
 
 	/**
-	 * Drop discovered-origin entries that have gone stale: nothing has CONNECTED on the
-	 * address within `ttlMs` AND the peer is not an active member of THAT network. A peer
+	 * Drop discovered-origin entries that have gone stale: neither the endpoint nor its
+	 * verified identity in THIS network has been observed within `ttlMs`. A peer
 	 * that dies stops answering, so its clock freezes and the row expires here — whether
 	 * gossip keeps naming it or not, and whether the row is frozen at 'connected' or
 	 * cycling through failures that this node produces itself. See {@link TrackedPeer}. The
@@ -517,19 +532,17 @@ export class BootstrapStatusTracker {
 				// and never expired. The cap bounds how many such rows exist; this is what
 				// stops them from occupying the budget permanently.
 				const member = p.actualPeerID !== null && isMember(networkID, p.actualPeerID);
-				// Taking part in the network is proof enough to undo a hiding, and this sweep is
-				// the only place that can act on it on its own. The unhide in recordOutcome needs
-				// a dial, which needs an announce — and a small network may never send one
-				// (peer-announce holds off below a handful of peers), so a peer that came back
-				// and grafted onto the topic would have stayed out of the list indefinitely.
-				if (p.hidden) {
-					if (member) {
-						peers.set(addr, { ...p, hidden: false });
-						changed = true;
-					}
+				// Taking part in THIS network is verified contact with this participant. Besides
+				// undoing a hiding, it must restart the full quiet window: otherwise a peer that
+				// genuinely returned shortly before its old endpoint timestamp expired vanished
+				// only minutes after disconnecting again. The proven actualPeerID above prevents
+				// an announcer from buying this refresh merely by claiming a live member's ID.
+				if (member) {
+					peers.set(addr, { ...p, staleSince: now, hidden: false });
+					if (p.hidden) changed = true;
 					continue;
 				}
-				if (member) continue;
+				if (p.hidden) continue;
 				if (now - p.staleSince < ttlMs) continue;
 				// The clock is deliberately left where it is: it is the evidence that nothing
 				// has answered here.

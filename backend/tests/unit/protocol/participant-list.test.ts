@@ -48,6 +48,7 @@ function testNetwork() {
 	(network as any).inFlightBootstrapDials = new Map();
 	(network as any).dialAbort = new AbortController();
 	(network as any).redialBackoff = new Map();
+	(network as any).addressProbeBackoff = new Map();
 	(network as any).unreachableQuarantine = new Map();
 	(network as any).redialSuppressedByNet = new Map();
 	(network as any).configuredBootstrapPeerIDs = new Set<string>();
@@ -117,6 +118,9 @@ function testNetwork() {
 		/** The peer takes part in the network again — it is back on the topic. */
 		rejoinsTheTopic: (): void => {
 			members = [PEER];
+		},
+		leavesTheTopic: (): void => {
+			members = [];
 		},
 		/** The user saves this very address as a bootstrap of THIS lishnet. */
 		configureHere: (): Promise<unknown> => (network as any).addBootstrapPeers([ADDRESS], NETWORK, 'configured'),
@@ -278,6 +282,10 @@ describe('participant list — a peer that goes away stops being listed', () => 
 		net.reachableOverAnotherAddress();
 		await net.gossip();
 		expect(net.listed()).toEqual([ADDRESS]);
+		const returnedAt = Date.now();
+		net.leavesTheTopic();
+		net.sweepAt(returnedAt + STALE_TTL_MS - 60_000);
+		expect(net.listed()).toEqual([ADDRESS]);
 	});
 
 	it('shows an expired peer again the moment the user configures its address', async () => {
@@ -297,6 +305,25 @@ describe('participant list — a peer that goes away stops being listed', () => 
 		net.rejoinsTheTopic();
 		net.sweepAt(Date.now() + 60 * 60_000);
 		expect(net.listed()).toEqual([ADDRESS]);
+	});
+
+	it('gives a genuinely returned member a full quiet window after it leaves again', async () => {
+		// The row is still visible when the peer returns. Production observes that return
+		// through this network's topic membership even when libp2p reuses an inbound
+		// connection and never verifies the advertised listening endpoint again.
+		const net = testNetwork();
+		await net.gossip();
+		const returnedAt = Date.now() + 20 * 60_000;
+		net.rejoinsTheTopic();
+		net.sweepAt(returnedAt);
+
+		// Once the peer leaves again, it must get a fresh 30-minute quiet window measured
+		// from the real return, not inherit the endpoint timestamp from before it returned.
+		net.leavesTheTopic();
+		net.sweepAt(returnedAt + STALE_TTL_MS - 60_000);
+		expect(net.listed()).toEqual([ADDRESS]);
+		net.sweepAt(returnedAt + STALE_TTL_MS + JUST_PAST_THE_WINDOW_MS);
+		expect(net.listed()).toEqual([]);
 	});
 
 	it('never lists an address gossip invented, however often it is named', async () => {
