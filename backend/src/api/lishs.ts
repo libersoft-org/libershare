@@ -89,6 +89,8 @@ interface LISHsHandlers {
 	move: (p: MoveParams) => Promise<SuccessResponse>;
 	startVerification: (lishID: string) => void;
 	finalizeDownload: (lishID: string) => Promise<SuccessResponse>; // Move from temp to final directory after download completes
+	/** Continue finalization for a transfer lifecycle admitted before mutation shutdown. */
+	finalizeDownloadAdmitted: (lishID: string) => Promise<SuccessResponse>;
 	importManifest: (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>; // Shared import entrypoint (used by peer add-to-downloads)
 	pauseMutations: () => Promise<void>;
 	resumeMutations: () => void;
@@ -888,5 +890,5 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		mutationAdmission.open();
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, move, startVerification, finalizeDownload, importManifest, pauseMutations, resumeMutations, runMutation };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, move, startVerification, finalizeDownload, finalizeDownloadAdmitted, importManifest, pauseMutations, resumeMutations, runMutation };
 }

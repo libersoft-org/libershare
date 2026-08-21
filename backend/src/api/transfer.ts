@@ -324,7 +324,7 @@ export function handleLeftDownloader(deps: LeftDownloaderDeps, networkID: string
 	return cleanup;
 }
 
-export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn, broadcast?: BroadcastFn, settings?: Settings, triggerVerification?: (lishID: string) => void, finalizeDownload?: (lishID: string) => Promise<{ success: boolean }>): TransferHandlers {
+export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn, broadcast?: BroadcastFn, settings?: Settings, triggerVerification?: (lishID: string) => void, finalizeDownloadAdmitted?: (lishID: string) => Promise<{ success: boolean }>): TransferHandlers {
 	const activeDownloaders = new Map<string, Downloader>();
 	const transferAdmission = new TransferAdmissionGate();
 	const pendingDownloaderCleanups = new Set<Promise<void>>();
@@ -537,9 +537,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			.then(async () => {
 				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
 				send('transfer.download:complete', { downloadDir, lishID });
-				if (finalizeDownload) {
+				if (finalizeDownloadAdmitted) {
 					try {
-						await finalizeDownload(lishID);
+						await finalizeDownloadAdmitted(lishID);
 					} catch (err) {
 						console.error(`[Transfer] ${lishID.slice(0, 8)}: finalizeDownload failed`, err);
 					}

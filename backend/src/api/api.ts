@@ -102,7 +102,7 @@ export class APIServer {
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn, this.settings);
 		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifest, _lishs.runMutation);
 		const _identity = initIdentityHandlers(this.networks);
-		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification, _lishs.finalizeDownload);
+		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification, _lishs.finalizeDownloadAdmitted);
 		const hasSubscribers = (event: string): boolean => {
 			for (const client of this.clients) {
 				if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) return true;
