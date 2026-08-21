@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { getJoinedEnabledNetworkIDs, handleLeftDownloader, destroyAllDownloaders, initDownloadState, removeDownloadState, setActiveDownloadersRef, setNetworkSuspendedRef, TransferAdmissionGate, TransferTeardownError, type LeftDownloaderDeps } from '../../../src/api/transfer.ts';
+import { claimActiveDownloader, getJoinedEnabledNetworkIDs, handleLeftDownloader, destroyAllDownloaders, initDownloadState, removeDownloadState, setActiveDownloadersRef, setNetworkSuspendedRef, TransferAdmissionGate, TransferTeardownError, type LeftDownloaderDeps } from '../../../src/api/transfer.ts';
 import { runFactoryReset } from '../../../src/api/factory-reset.ts';
 
 const NET = 'net-left';
@@ -136,6 +136,22 @@ describe('leaving a lishnet — one broken download does not take the rest with 
 });
 
 describe('download lifecycle state', () => {
+	it('keeps one downloader per LISH and destroys the candidate that loses the slot', async () => {
+		const active = new Map<string, any>();
+		const destroyed: string[] = [];
+		const winner = { destroy: async () => destroyed.push('winner') };
+		const loser = { destroy: async () => destroyed.push('loser') };
+
+		const firstClaim = claimActiveDownloader(active, 'same-lish', winner as never);
+		const secondClaim = claimActiveDownloader(active, 'same-lish', loser as never);
+		const [first, second] = await Promise.all([firstClaim, secondClaim]);
+
+		expect(first).toEqual({ downloader: winner, claimed: true });
+		expect(second).toEqual({ downloader: winner, claimed: false });
+		expect(active.get('same-lish')).toBe(winner);
+		expect(destroyed).toEqual(['loser']);
+	});
+
 	it('closes admission before waiting for an in-flight transfer operation', async () => {
 		const gate = new TransferAdmissionGate();
 		const leave = gate.tryEnter();

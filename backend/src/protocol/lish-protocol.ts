@@ -111,13 +111,18 @@ export interface HaveAnnouncement {
 type HaveAnnouncementHandler = (ann: HaveAnnouncement) => void;
 const haveAnnouncementHandlers = new Map<string, HaveAnnouncementHandler>();
 
-/** Register a handler for incoming unicast HAVE announcements for a given lishID. Only one handler per lishID. */
-export function registerHaveAnnouncementHandler(lishID: string, handler: HaveAnnouncementHandler): void {
+/**
+ * Register the single handler for a LISH and return an ownership-aware disposer.
+ * A stale downloader may only remove its own registration, never a newer owner's.
+ */
+export function registerHaveAnnouncementHandler(lishID: string, handler: HaveAnnouncementHandler): () => boolean {
 	haveAnnouncementHandlers.set(lishID, handler);
+	return () => unregisterHaveAnnouncementHandler(lishID, handler);
 }
 
-export function unregisterHaveAnnouncementHandler(lishID: string): void {
-	haveAnnouncementHandlers.delete(lishID);
+export function unregisterHaveAnnouncementHandler(lishID: string, owner?: HaveAnnouncementHandler): boolean {
+	if (owner && haveAnnouncementHandlers.get(lishID) !== owner) return false;
+	return haveAnnouncementHandlers.delete(lishID);
 }
 
 /**

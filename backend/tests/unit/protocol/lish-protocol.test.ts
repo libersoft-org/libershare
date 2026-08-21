@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, LISHClient, toManifest, handleLISHProtocol, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
+import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, registerHaveAnnouncementHandler, LISHClient, toManifest, handleLISHProtocol, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
 import { encode as codecEncode, decode as codecDecode } from '../../../src/protocol/codec.ts';
 import { encode as lpEncode } from 'it-length-prefixed';
 import { DEFAULT_MAX_CHUNK_SIZE, DEFAULT_MAX_MESSAGE_SIZE, useNetworkSettings, type SettingsData } from '../../../src/settings.ts';
@@ -74,6 +74,16 @@ describe('lish-protocol – reset cancellation', () => {
 		await handler;
 
 		expect(outcome).toBe('stopped');
+	});
+});
+
+describe('lish-protocol – HAVE handler ownership', () => {
+	it('does not let an older downloader unregister the newer owner', () => {
+		const releaseOlder = registerHaveAnnouncementHandler('same-lish', () => {});
+		const releaseNewer = registerHaveAnnouncementHandler('same-lish', () => {});
+
+		expect(releaseOlder()).toBe(false);
+		expect(releaseNewer()).toBe(true);
 	});
 });
 

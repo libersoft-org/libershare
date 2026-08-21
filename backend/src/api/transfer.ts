@@ -137,6 +137,18 @@ export class TransferTeardownError extends AggregateError {
 	}
 }
 
+/** Atomically install one downloader per LISH and fully dispose a losing candidate. */
+export async function claimActiveDownloader<T extends Pick<Downloader, 'destroy'>>(activeDownloaders: Map<string, T>, lishID: string, candidate: T): Promise<{ downloader: T; claimed: boolean }> {
+	const current = activeDownloaders.get(lishID);
+	if (current) {
+		if (current === candidate) return { downloader: current, claimed: true };
+		await candidate.destroy();
+		return { downloader: current, claimed: false };
+	}
+	activeDownloaders.set(lishID, candidate);
+	return { downloader: candidate, claimed: true };
+}
+
 /**
  * Destroy every downloader without hiding failures. Without a restore callback, successful
  * entries are removed and failed ones remain. Factory reset supplies a restore callback so
@@ -429,7 +441,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		const downloader = new Downloader(downloadDir, network, dataServer, p.networkID);
 		await downloader.init(p.lishPath);
 		const lishID = downloader.getLISHID();
-		activeDownloaders.set(lishID, downloader);
+		const claim = await claimActiveDownloader(activeDownloaders, lishID, downloader);
+		if (!claim.claimed) return { downloadDir: claim.downloader.getDownloadDirectory() };
 
 		const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
 
@@ -489,7 +502,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 		const downloader = new Downloader(downloadDir, networks.getRunningNetwork(), dataServer, networkIDs, originalNetworkIDs);
 		await downloader.initFromManifest(lish);
-		activeDownloaders.set(lishID, downloader);
+		const claim = await claimActiveDownloader(activeDownloaders, lishID, downloader);
+		if (!claim.claimed) return claim.downloader;
 		const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
 		downloader.setProgressCallback?.((info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => {
 			send('transfer.download:progress', { lishID, ...info });

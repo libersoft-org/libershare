@@ -7,7 +7,7 @@ import { lishTopic } from './constants.ts';
 import { Utils } from '../utils.ts';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
 import { Circuit } from '@multiformats/multiaddr-matcher';
-import { type HaveAnnouncement, type HaveChunks, LISH_PROTOCOL, LISHClient, registerHaveAnnouncementHandler, unregisterHaveAnnouncementHandler } from './lish-protocol.ts';
+import { type HaveAnnouncement, type HaveChunks, LISH_PROTOCOL, LISHClient, registerHaveAnnouncementHandler } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
 import { trace } from '../logger.ts';
@@ -83,6 +83,7 @@ export class Downloader {
 	private retryTimer: ReturnType<typeof setTimeout> | undefined;
 	// Disposer for the network `peer:disconnect` subscription; called in destroy().
 	private peerDisconnectDisposer: (() => void) | undefined;
+	private haveAnnouncementDisposer: (() => boolean) | undefined;
 	private needsManifest = false;
 	private disabled = false;
 	private destroyed = false;
@@ -114,6 +115,10 @@ export class Downloader {
 
 	getLISHID(): string {
 		return this.lishID;
+	}
+
+	getDownloadDirectory(): string {
+		return this.downloadDir;
 	}
 
 	/**
@@ -323,7 +328,8 @@ export class Downloader {
 	private disposeNetworkHandlers(): void {
 		this.peerDisconnectDisposer?.();
 		this.peerDisconnectDisposer = undefined;
-		if (this.lishID) unregisterHaveAnnouncementHandler(this.lishID);
+		this.haveAnnouncementDisposer?.();
+		this.haveAnnouncementDisposer = undefined;
 	}
 
 	async destroy(): Promise<void> {
@@ -353,7 +359,8 @@ export class Downloader {
 	 * Called once per init/initFromManifest; unregistered in destroy/setError.
 	 */
 	private registerAnnouncementHandler(): void {
-		registerHaveAnnouncementHandler(this.lishID, ann => {
+		this.haveAnnouncementDisposer?.();
+		this.haveAnnouncementDisposer = registerHaveAnnouncementHandler(this.lishID, ann => {
 			this.onHaveAnnouncement(ann).catch(e => trace(`[DL] onHaveAnnouncement error: ${e?.message ?? e}`));
 		});
 	}
@@ -402,7 +409,6 @@ export class Downloader {
 		this.chunkDownloader = this.createChunkDownloader();
 		console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), ${this.dataServer.getMissingChunks(this.lishID).length} chunks to download`);
 		this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
-		this.registerAnnouncementHandler();
 		this.registerPeerDisconnectHandler();
 		this.transitionTo('initialized', 'init() done');
 	}
@@ -422,7 +428,6 @@ export class Downloader {
 			this.needsManifest = true;
 			console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), awaiting manifest from peer`);
 		}
-		this.registerAnnouncementHandler();
 		this.registerPeerDisconnectHandler();
 		this.transitionTo('initialized', 'initFromManifest() done');
 	}
@@ -453,6 +458,10 @@ export class Downloader {
 		trace(`[DL] download() state=${this.state}, destroyed=${this.destroyed}, disabled=${this.disabled}`);
 		if (this.destroyed) throw new CodedError(ErrorCodes.DOWNLOAD_CANCELLED);
 		if (this.state !== 'initialized') throw new CodedError(ErrorCodes.DOWNLOADER_NOT_INITIALIZED);
+		// Initialization discovers the LISH ID. Registration of the exclusive HAVE owner
+		// starts only after the transfer layer atomically gives this downloader the LISH slot;
+		// peer-disconnect subscriptions are independently owned per downloader.
+		this.registerAnnouncementHandler();
 		if (this.needsManifest) {
 			this.transitionTo('awaiting-manifest', 'download() needs manifest');
 			await this.callForPeers();
