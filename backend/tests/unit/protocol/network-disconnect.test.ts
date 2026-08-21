@@ -463,6 +463,7 @@ describe('Network.addBootstrapPeers — rejoin clears suppression', () => {
 		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
+		(network as any).addressProbeBackoff = new Map();
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();

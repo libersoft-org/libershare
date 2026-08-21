@@ -230,6 +230,7 @@ describe('Network.addBootstrapPeers — a dial that lands after a restart', () =
 describe('Network.addBootstrapPeers — configured bootstraps become direct peers at once', () => {
 	function harness(suppressed: string[] = []) {
 		const network = Object.create(Network.prototype) as Network;
+		const outcomes: string[] = [];
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set(suppressed)]]);
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
@@ -237,6 +238,7 @@ describe('Network.addBootstrapPeers — configured bootstraps become direct peer
 		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
+		(network as any).addressProbeBackoff = new Map();
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
@@ -249,7 +251,9 @@ describe('Network.addBootstrapPeers — configured bootstraps become direct peer
 				return fn();
 			},
 			markPending(): void {},
-			recordOutcome(): void {},
+			recordOutcome(_networkID: string, _address: string, _peerID: string | null, outcome: string): void {
+				outcomes.push(outcome);
+			},
 		};
 		const direct = new Set<string>();
 		(network as any).pubsub = { direct };
@@ -262,23 +266,25 @@ describe('Network.addBootstrapPeers — configured bootstraps become direct peer
 		(network as any).isPeerNeededByJoinedNetwork = (): boolean => false;
 		(network as any).isTopicSubscribed = (): boolean => true;
 		(network as any).rememberBootstrapAddress = (): void => {};
-		return { network, direct };
+		return { network, direct, outcomes };
 	}
 
 	it('adds a configured bootstrap on the dial that accepts it', async () => {
-		const { network, direct } = harness();
+		const { network, direct, outcomes } = harness();
 
 		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'configured');
 
 		expect([...direct]).toEqual([PEER_ID]);
+		expect(outcomes).toEqual(['connected']);
 	});
 
 	it('leaves a merely discovered peer to the periodic promotion', async () => {
-		const { network, direct } = harness();
+		const { network, direct, outcomes } = harness();
 
 		await (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
 
 		expect([...direct]).toEqual([]);
+		expect(outcomes).toEqual(['connected']);
 	});
 });
 
