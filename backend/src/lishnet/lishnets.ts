@@ -1106,16 +1106,28 @@ export class Networks {
 	}
 
 	async importFromLISHnet(data: ILISHNetwork, enabled: boolean = false): Promise<LISHNetworkConfig> {
+		return await this.inMutation(() => this.importFromLISHnetAdmitted(data, enabled));
+	}
+
+	private async importFromLISHnetAdmitted(data: ILISHNetwork, enabled: boolean): Promise<LISHNetworkConfig> {
 		const definition = this.validateNetwork(data);
 		const config: LISHNetworkConfig = { ...definition, enabled };
+		// An upsert can bring a network into existence — see {@link catalogMutex}.
+		const job = await this.inCatalog(() => {
+			upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
+			return this.reconcileLater(config.networkID);
+		});
+		await job;
+		return config;
+	}
+
+	/** Parse and import a file under one mutation admission held from before I/O. */
+	async importFromFile(filePath: string, enabled: boolean = false): Promise<LISHNetworkConfig[]> {
 		return await this.inMutation(async () => {
-			// An upsert can bring a network into existence — see {@link catalogMutex}.
-			const job = await this.inCatalog(() => {
-				upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
-				return this.reconcileLater(config.networkID);
-			});
-			await job;
-			return config;
+			const definitions = await this.parseFromFile(filePath);
+			const results: LISHNetworkConfig[] = [];
+			for (const definition of definitions) results.push(await this.importFromLISHnetAdmitted(definition as ILISHNetwork, enabled));
+			return results;
 		});
 	}
 

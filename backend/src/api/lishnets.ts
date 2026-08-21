@@ -37,12 +37,13 @@ interface LISHnetsHandlers {
 	updateBootstrapPeers: (p: { networkID: string; bootstrapPeers: string[] }) => Promise<LISHNetworkConfig>;
 }
 type ImportManifestFn = (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
+type RunLISHMutationFn = <T>(operation: () => Promise<T>) => Promise<T>;
 
 export function toSetEnabledResponse(result: SetEnabledResult): SetLISHNetworkEnabledResponse {
 	return { success: result.found && result.applied, applied: result.applied, transitioned: result.transitioned, joined: result.joined };
 }
 
-export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void, settings: Settings, importManifest: ImportManifestFn): LISHnetsHandlers {
+export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void, settings: Settings, importManifest: ImportManifestFn, runLISHMutation: RunLISHMutationFn): LISHnetsHandlers {
 	function list(): LISHNetworkConfig[] {
 		return networks.list();
 	}
@@ -101,10 +102,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 
 	async function importFromFile(p: { path: string; enabled?: boolean }): Promise<LISHNetworkConfig[]> {
 		assert(p, ['path']);
-		const definitions = await networks.parseFromFile(p.path);
-		const results: LISHNetworkConfig[] = [];
-		for (const def of definitions) results.push(await networks.importFromLISHnet(def as any, p.enabled ?? false));
-		return results;
+		return networks.importFromFile(p.path, p.enabled ?? false);
 	}
 	async function parseFromFile(p: { path: string }): Promise<LISHNetworkDefinition[]> {
 		assert(p, ['path']);
@@ -251,6 +249,10 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		}
 	}
 	async function addPeerLish(p: { lishID: string; peerID: string; networkID: string }): Promise<{ lishID: string }> {
+		return runLISHMutation(() => addPeerLishAdmitted(p));
+	}
+
+	async function addPeerLishAdmitted(p: { lishID: string; peerID: string; networkID: string }): Promise<{ lishID: string }> {
 		assert(p, ['lishID', 'peerID', 'networkID']);
 		const network = networks.getRunningNetwork();
 		let manifest;

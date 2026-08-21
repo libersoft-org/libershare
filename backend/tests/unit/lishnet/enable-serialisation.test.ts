@@ -523,6 +523,35 @@ describe('Networks — operations that change the set of lishnets', () => {
 		releaseMaintenance();
 	});
 
+	it('admits a file import before parsing so maintenance drains the whole request', async () => {
+		const parseGate = deferred();
+		const { networks } = makeNetworks(net, db, []);
+		let parsing = false;
+		(networks as any).parseFromFile = async () => {
+			parsing = true;
+			await parseGate.promise;
+			return [{ ...rowOf(NET_B), name: 'B' }];
+		};
+
+		const importing = networks.importFromFile('ignored.lishnet', false);
+		while (!parsing) await Promise.resolve();
+		let maintenanceGranted = false;
+		const maintenance = networks.beginMaintenance().then(release => {
+			maintenanceGranted = true;
+			return release;
+		});
+		await settle();
+
+		expect(maintenanceGranted).toBe(false);
+		expect(getLISHnet(db, NET_B)).toBeUndefined();
+
+		parseGate.resolve();
+		await importing;
+		const releaseMaintenance = await maintenance;
+		expect(getLISHnet(db, NET_B)).toBeDefined();
+		releaseMaintenance();
+	});
+
 	it('waits for every replace reconciliation before reporting failures', async () => {
 		addLISHnet(db, { ...rowOf(NET_B), name: 'B' });
 		const { networks } = makeNetworks(net, db, []);

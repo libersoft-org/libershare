@@ -54,8 +54,11 @@ function makeDeps(
 		networkOverride?: Record<string, () => any>;
 		dataServerOverride?: Record<string, () => any>;
 		stopVerifyAll?: () => Promise<any>;
+		pauseAllLISHMutations?: () => Promise<void>;
+		resumeAllLISHMutations?: () => void;
 		pauseAllTransfers?: () => Promise<void>;
 		clearAllTransfers?: () => Promise<any>;
+		clearUploadRuntime?: () => void;
 		restoreAllTransfers?: (lishIDs: Set<string>) => Promise<void>;
 		resumeAllTransfers?: () => void;
 		broadcastFn?: (event: string, data: any, except?: unknown) => void;
@@ -67,8 +70,11 @@ function makeDeps(
 		dataServer: makeDataServer(overrides.dataServerOverride ?? {}),
 		settings: makeSettings(overrides.settingsOverride ?? {}),
 		stopVerifyAll: overrides.stopVerifyAll ?? (() => Promise.resolve()),
+		pauseAllLISHMutations: overrides.pauseAllLISHMutations ?? (() => Promise.resolve()),
+		resumeAllLISHMutations: overrides.resumeAllLISHMutations ?? (() => {}),
 		pauseAllTransfers: overrides.pauseAllTransfers ?? (() => Promise.resolve()),
 		clearAllTransfers: overrides.clearAllTransfers ?? (() => Promise.resolve()),
+		clearUploadRuntime: overrides.clearUploadRuntime ?? (() => {}),
 		restoreAllTransfers: overrides.restoreAllTransfers ?? (() => Promise.resolve()),
 		resumeAllTransfers: overrides.resumeAllTransfers ?? (() => {}),
 		broadcastFn: overrides.broadcastFn ?? (() => {}),
@@ -269,6 +275,45 @@ describe('buildFactoryResetHandler — restart behaviour', () => {
 		await buildFactoryResetHandler(deps)({ downloads: true, settings: false, identity: false, networks: false, peers: false });
 
 		expect(actions.slice(0, 3)).toEqual(['pause', 'stop-verification', 'clear']);
+	});
+
+	it('drains every writer before wiping and clears uploads only after the node stops', async () => {
+		const actions: string[] = [];
+		const deps = makeDeps({
+			pauseAllTransfers: async () => {
+				actions.push('pause-transfers');
+			},
+			pauseAllLISHMutations: async () => {
+				actions.push('pause-lish');
+			},
+			stopVerifyAll: async () => {
+				actions.push('drain-verification');
+			},
+			clearAllTransfers: async () => {
+				actions.push('drain-downloads');
+			},
+			networkOverride: {
+				stopAllNetworks: async () => {
+					actions.push('stop-node');
+				},
+				startEnabledNetworks: async () => {
+					actions.push('start-node');
+				},
+			},
+			clearUploadRuntime: () => actions.push('clear-uploads'),
+			dataServerOverride: {
+				clearLishs: () => actions.push('wipe'),
+			},
+			restoreAllTransfers: async () => {
+				actions.push('restore-transfers');
+			},
+			resumeAllLISHMutations: () => actions.push('resume-lish'),
+			resumeAllTransfers: () => actions.push('resume-transfers'),
+		});
+
+		await buildFactoryResetHandler(deps)({ downloads: true, settings: false, identity: false, networks: false, peers: false });
+
+		expect(actions).toEqual(['pause-transfers', 'pause-lish', 'drain-verification', 'drain-downloads', 'stop-node', 'clear-uploads', 'wipe', 'start-node', 'restore-transfers', 'resume-lish', 'resume-transfers']);
 	});
 
 	it('waits for persisted downloads to be restored before re-opening admission', async () => {

@@ -21,6 +21,10 @@ export interface FactoryResetOrchestratorDeps {
 	 * by the lishs handler module. Return value is ignored.
 	 */
 	readonly stopVerifyAll: () => Promise<any>;
+	/** Close LISH mutation admission and drain operations already past the gate. */
+	readonly pauseAllLISHMutations: () => Promise<void>;
+	/** Re-open LISH mutation admission after reset orchestration finishes. */
+	readonly resumeAllLISHMutations: () => void;
 	/** Close public transfer admission and drain handlers already past the gate. */
 	readonly pauseAllTransfers: () => Promise<void>;
 	/**
@@ -28,6 +32,8 @@ export interface FactoryResetOrchestratorDeps {
 	 * provided by the transfer handler module. Return value is ignored.
 	 */
 	readonly clearAllTransfers: () => Promise<any>;
+	/** Clear upload runtime after inbound handlers and the node are fully stopped. */
+	readonly clearUploadRuntime: () => void;
 	/** Restore persisted downloads while public transfer admission is still closed. */
 	readonly restoreAllTransfers: (lishIDs: Set<string>) => Promise<void>;
 	/** Re-opens transfer admission after the reset barrier is no longer active. */
@@ -49,7 +55,7 @@ export interface FactoryResetOrchestratorDeps {
  * wiring and makes the reset logic independently testable.
  */
 export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean; peers?: boolean }, client?: unknown) => Promise<FactoryResetResponse> {
-	const { dataServer, networks, settings, stopVerifyAll, pauseAllTransfers, clearAllTransfers, restoreAllTransfers, resumeAllTransfers, broadcastFn } = deps;
+	const { dataServer, networks, settings, stopVerifyAll, pauseAllLISHMutations, resumeAllLISHMutations, pauseAllTransfers, clearAllTransfers, clearUploadRuntime, restoreAllTransfers, resumeAllTransfers, broadcastFn } = deps;
 	const resetMutex = new Mutex();
 
 	return (p?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean; peers?: boolean }, client?: unknown): Promise<FactoryResetResponse> =>
@@ -76,9 +82,14 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 			const restartNode = wipeDownloads || wipeIdentity || wipeNetworks || wipePeers || wipeSettings;
 			const releaseNetworkMaintenance = restartNode ? await networks.beginMaintenance() : undefined;
 			let transferAdmissionClosed = false;
+			let lishMutationAdmissionClosed = false;
 			let transferRuntimeSafe = true;
 			const resumeTransfers = (): void => {
 				if (!transferAdmissionClosed || !transferRuntimeSafe) return;
+				if (lishMutationAdmissionClosed) {
+					lishMutationAdmissionClosed = false;
+					resumeAllLISHMutations();
+				}
 				transferAdmissionClosed = false;
 				resumeAllTransfers();
 			};
@@ -111,11 +122,11 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 					requiresPrepare: wipeSettings ? ['settings'] : undefined,
 					prepare: async () => {
 						if (wipeDownloads || restartNode) {
-							// Close admission before verification is stopped. Both verification and
-							// downloader initialisation await I/O, so a boolean checked only at handler
-							// entry is not a barrier unless already-admitted handlers are drained too.
+							// Close both gates before the first await. Creation/import/move/finalize and
+							// transfer initialisation all await I/O before their final state writes.
 							transferAdmissionClosed = true;
-							await pauseAllTransfers();
+							lishMutationAdmissionClosed = true;
+							await Promise.all([pauseAllTransfers(), pauseAllLISHMutations()]);
 							await stopVerifyAll();
 							transferRuntimeSafe = false;
 							try {
@@ -128,6 +139,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 						if (restartNode) {
 							try {
 								await networks.stopAllNetworks();
+								clearUploadRuntime();
 							} catch (error) {
 								// The transfer runtime is already gone and the node's lifecycle is now
 								// uncertain. Keep admission closed until a clean process restart.
