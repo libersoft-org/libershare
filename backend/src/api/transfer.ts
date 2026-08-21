@@ -36,6 +36,8 @@ interface TransferHandlers {
 	pauseAll: () => Promise<void>;
 	/** Tear down all in-memory transfer state (factory reset). Not a WS endpoint. */
 	clearAll: () => Promise<void>;
+	/** Clear upload runtime after inbound protocol handlers and the node are stopped. */
+	clearUploads: () => void;
 	/** Restore persisted downloads while public transfer admission remains closed. */
 	restoreAll: (lishIDs: Set<string>) => Promise<void>;
 	/** Re-open transfer admission after factory-reset orchestration finishes. */
@@ -295,7 +297,16 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	const activeDownloaders = new Map<string, Downloader>();
 	const transferAdmission = new TransferAdmissionGate();
 	const pendingDownloaderCleanups = new Set<Promise<void>>();
+	const pendingDownloadLifecycles = new Set<Promise<void>>();
 	setActiveDownloadersRef(activeDownloaders);
+
+	function trackDownloadLifecycle(lifecycle: Promise<void>): void {
+		pendingDownloadLifecycles.add(lifecycle);
+		lifecycle.then(
+			() => pendingDownloadLifecycles.delete(lifecycle),
+			() => pendingDownloadLifecycles.delete(lifecycle)
+		);
+	}
 
 	// LISHs whose download was suspended because their last joined lishnet was left,
 	// mapped to the lishnets they were bound to. Their DB enabled flag stays on (see
@@ -384,7 +395,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				const result = await enableDownload({ lishID });
 				if (!result.success) ok = false;
 			}
-			if (uploadWasEnabled && ok) enableUploadHandler({ lishID });
+			if (uploadWasEnabled && ok) ok = enableUploadHandler({ lishID }).success;
 			return ok;
 		},
 		broadcast: (event, data): void => {
@@ -430,7 +441,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			else send('transfer.download:retrying', { lishID, ...info });
 		});
 
-		downloader
+		const lifecycle = downloader
 			.download()
 			.then(() => {
 				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
@@ -447,6 +458,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				send('transfer.download:error', { error: code, errorDetail: detail, lishID });
 				startRecoveryIfEnabled(lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(lishID) });
 			});
+		trackDownloadLifecycle(lifecycle);
 		return { downloadDir };
 	}
 
@@ -488,7 +500,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		});
 		if (disabled) downloader.disable();
 		const running = downloader.download();
-		running
+		const lifecycle = running
 			.then(async () => {
 				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
 				send('transfer.download:complete', { downloadDir, lishID });
@@ -511,6 +523,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				send('transfer.download:error', { error: code, errorDetail: detail, lishID });
 				startRecoveryIfEnabled(lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(lishID) });
 			});
+		trackDownloadLifecycle(lifecycle);
 		return downloader;
 	}
 
@@ -727,6 +740,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	function enableUploadHandler(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
 		if (transferAdmission.isClosed) return { success: false };
+		if (!dataServer.get(p.lishID)) return { success: false };
 		if (isBusy(p.lishID)) return { success: false };
 		recovery.stop(p.lishID);
 		dataServer.clearError(p.lishID);
@@ -798,15 +812,19 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	}
 
 	/**
-	 * Tear down all in-memory transfer state (factory reset): destroy every active
-	 * downloader, clear the enabled-download set, wipe upload state, and stop all
-	 * pending error recovery. Does not touch the DB or on-disk files.
+	 * Close public transfer admission together with inbound LISH protocol admission,
+	 * then wait for every operation already past either gate.
 	 */
 	async function pauseAllTransfers(): Promise<void> {
-		await transferAdmission.closeAndDrain();
+		const network = networks.getNetwork();
+		await Promise.all([transferAdmission.closeAndDrain(), network.pauseLISHProtocolHandlersAndDrain()]);
 		if (pendingDownloaderCleanups.size > 0) await Promise.allSettled([...pendingDownloaderCleanups]);
 	}
 
+	/**
+	 * Tear down downloader and recovery runtime before the node is stopped. Upload
+	 * state is cleared separately only after inbound handlers and libp2p are down.
+	 */
 	async function clearAllTransfers(): Promise<void> {
 		await pauseAllTransfers();
 		const downloaderState = new Map(
@@ -824,10 +842,15 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			if (!state) throw new Error(`Cannot restore download ${lishID}: reset snapshot is missing`);
 			return startStoredDownloader(lishID, state.networkIDs, state.originalNetworkIDs, state.disabled);
 		});
+		while (pendingDownloadLifecycles.size > 0) await Promise.allSettled([...pendingDownloadLifecycles]);
 		downloadEnabledLishs.clear();
 		networkSuspended.clear();
+		Downloader.resetDownloadSpeedLimiter();
+		await recovery.stopAllAndDrain();
+	}
+
+	function clearUploadRuntime(): void {
 		clearAllUploads();
-		recovery.stopAll();
 	}
 
 	async function restoreAllTransfers(lishIDs: Set<string>): Promise<void> {
@@ -844,8 +867,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	}
 
 	function resumeAllTransfers(): void {
+		networks.getNetwork().resumeLISHProtocolHandlers();
 		transferAdmission.open();
 	}
 
-	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers, subscribePeers: subscribePeersHandler, unsubscribePeers: unsubscribePeersHandler, debugPeers: debugPeersHandler, findPeers: findPeersHandler, pauseAll: pauseAllTransfers, clearAll: clearAllTransfers, restoreAll: restoreAllTransfers, resumeAll: resumeAllTransfers };
+	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers, subscribePeers: subscribePeersHandler, unsubscribePeers: unsubscribePeersHandler, debugPeers: debugPeersHandler, findPeers: findPeersHandler, pauseAll: pauseAllTransfers, clearAll: clearAllTransfers, clearUploads: clearUploadRuntime, restoreAll: restoreAllTransfers, resumeAll: resumeAllTransfers };
 }

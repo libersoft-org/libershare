@@ -88,6 +88,8 @@ export class Downloader {
 	private destroyed = false;
 	private lastExhaustedTime = 0;
 	private downloadActive = false; // true while downloadChunks is running inside workMutex
+	/** Async work that must settle before this downloader no longer owns runtime state. */
+	private readonly activeLifecyclePromises = new Set<Promise<unknown>>();
 	// Pause/resume coordination — owns enableResolvers, writePauseResolvers, writePaused, progressPaused.
 	// Reads `disabled`/`destroyed` via callbacks so those flags remain single-source on this class.
 	private readonly pauseController = new PauseController(
@@ -332,13 +334,14 @@ export class Downloader {
 		this.clearRetryTimer();
 		this.clearPeerDiscoveryTimer();
 		this.disposeNetworkHandlers();
-		await this.peerManager.closeAllAwait('destroy', true);
-		// Notify frontend to reset peers/speed immediately
-		const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
-		this.progressReporter.emit({ downloadedChunks: 0, totalChunks: total, peers: 0, bytesPerSecond: 0 });
 		this.downloadReject?.(new CodedError(ErrorCodes.DOWNLOAD_CANCELLED));
 		this.downloadResolve = undefined;
 		this.downloadReject = undefined;
+		await this.peerManager.closeAllAwait('destroy', true);
+		while (this.activeLifecyclePromises.size > 0) await Promise.allSettled([...this.activeLifecyclePromises]);
+		// Notify frontend to reset peers/speed immediately
+		const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
+		this.progressReporter.emit({ downloadedChunks: 0, totalChunks: total, peers: 0, bytesPerSecond: 0 });
 		this.pauseController.notifyStateChange();
 		this.progressReporter.clearCallback();
 		delete this.onManifestImported;
@@ -448,6 +451,7 @@ export class Downloader {
 	// Main download loop — returns only when fully downloaded (or throws on error)
 	async download(): Promise<void> {
 		trace(`[DL] download() state=${this.state}, destroyed=${this.destroyed}, disabled=${this.disabled}`);
+		if (this.destroyed) throw new CodedError(ErrorCodes.DOWNLOAD_CANCELLED);
 		if (this.state !== 'initialized') throw new CodedError(ErrorCodes.DOWNLOADER_NOT_INITIALIZED);
 		if (this.needsManifest) {
 			this.transitionTo('awaiting-manifest', 'download() needs manifest');
@@ -458,6 +462,7 @@ export class Downloader {
 			await this.doWork();
 			trace(`[DL] doWork returned, state=${this.state}, peers=${this.peerManager.size()}`);
 		}
+		if (this.destroyed) throw new CodedError(ErrorCodes.DOWNLOAD_CANCELLED);
 		// Wait until state reaches 'downloaded' — doWork may change state asynchronously
 		if ((this.state as State) !== 'downloaded') {
 			await new Promise<void>((resolve, reject) => {
@@ -472,6 +477,19 @@ export class Downloader {
 	}
 
 	async doWork(): Promise<void> {
+		return this.trackLifecycle(this.doWorkInternal());
+	}
+
+	private trackLifecycle<T>(operation: Promise<T>): Promise<T> {
+		this.activeLifecyclePromises.add(operation);
+		operation.then(
+			() => this.activeLifecyclePromises.delete(operation),
+			() => this.activeLifecyclePromises.delete(operation)
+		);
+		return operation;
+	}
+
+	private async doWorkInternal(): Promise<void> {
 		if (this.destroyed) return;
 		if (this.disabled) return;
 		// Throttle: don't re-enter within 10s of last exhausted cycle
@@ -498,6 +516,7 @@ export class Downloader {
 					try {
 						manifest = await client.requestManifest(this.lishID);
 					} catch (error: any) {
+						if (this.destroyed) return;
 						if (error instanceof CodedError && error.code === ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) {
 							// The peer delivered a well-formed manifest for the LISH we asked for and it
 							// declares a chunk size above our limit. Chunk size is a property of the LISH
@@ -518,6 +537,7 @@ export class Downloader {
 						}
 						console.warn(`[DL] Manifest request failed: ${error.message?.slice(0, 120) ?? error}`);
 					}
+					if (this.destroyed) return;
 					if (manifest && manifest.files && manifest.files.length > 0) {
 						// The manifest is sanitized (no peer-supplied local paths). Keep our own
 						// local state: the download directory, and any post-download move target
@@ -543,10 +563,12 @@ export class Downloader {
 				try {
 					await access(checkPath, constants.R_OK | constants.W_OK);
 				} catch (err: any) {
+					if (this.destroyed) return;
 					const code = err.code === 'EACCES' || err.code === 'EPERM' ? ErrorCodes.DIRECTORY_ACCESS_DENIED : ErrorCodes.IO_NOT_FOUND;
 					this.setError(code, this.downloadDir);
 					return;
 				}
+				if (this.destroyed) return;
 				const totalChunksForProgress = this.dataServer.getAllChunkCount(this.lishID) || this.missingChunks.length;
 				const downloadedForProgress = totalChunksForProgress - this.missingChunks.length;
 				console.debug(`[DL] preparing ${this.lishID.slice(0, 8)}: ${downloadedForProgress}/${totalChunksForProgress}, missing=${this.missingChunks.length}`);
@@ -559,6 +581,7 @@ export class Downloader {
 					this.transitionTo('awaiting-manifest', 'doWork phase 2: empty manifest, re-fetch');
 				}
 				const missingBeforeAlloc = await this.fileAllocator.findMissingFiles(this.lish);
+				if (this.destroyed) return;
 				if (missingBeforeAlloc.length > 0) {
 					console.debug(`[DL] allocating files for ${this.lishID.slice(0, 8)}`);
 					this.progressReporter.emit({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });
@@ -575,6 +598,7 @@ export class Downloader {
 			if (this.state === 'downloading') {
 				if (this.missingChunks.length === 0) {
 					const missingFileIndexes = await this.fileAllocator.findMissingFiles(this.lish);
+					if (this.destroyed) return;
 					if (missingFileIndexes.length === 0) {
 						console.log(`[DL] Complete: ${this.lishID.slice(0, 8)}`);
 						this.transitionTo('downloaded', 'doWork() all chunks present');
@@ -585,6 +609,7 @@ export class Downloader {
 					console.warn(`[DL] ${this.lishID.slice(0, 8)}: ${missingFileIndexes.length} files missing on disk, resetting their chunks`);
 					for (const fi of missingFileIndexes) {
 						await this.fileAllocator.allocateFile(this.lish, fi, this.abortController.signal);
+						if (this.destroyed) return;
 						this.dataServer.resetFileChunks(this.lishID, fi);
 					}
 					this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
@@ -593,8 +618,10 @@ export class Downloader {
 				if (this.peerManager.size() === 0) {
 					console.debug(`[DL] no peers, calling for peers (banned: ${this.peerManager.bannedSize()})`);
 					await this.callForPeers();
+					if (this.destroyed) return;
 					// Wait briefly for have responses via GossipSub before giving up
 					if (this.peerManager.size() === 0) await new Promise(r => setTimeout(r, 2000));
+					if (this.destroyed) return;
 					if (this.peerManager.size() === 0) {
 						console.debug(`[DL] no peers found, retry in 10s`);
 						this.lastExhaustedTime = Date.now();
@@ -613,9 +640,11 @@ export class Downloader {
 						// but stays reset here to preserve the original semantics (separate audit item).
 						this.lastServingPeerCount = 0;
 					}
+					if (this.destroyed) return;
 					const remaining = this.dataServer.getMissingChunks(this.lishID);
 					if (remaining.length === 0) {
 						const missingFiles = await this.fileAllocator.findMissingFiles(this.lish);
+						if (this.destroyed) return;
 						if (missingFiles.length === 0) {
 							console.log(`[DL] Complete: ${this.lishID.slice(0, 8)}`);
 							this.transitionTo('downloaded', 'doWork() complete after downloadChunks');
@@ -625,6 +654,7 @@ export class Downloader {
 						console.warn(`[DL] ${this.lishID.slice(0, 8)}: ${missingFiles.length} files missing on disk after downloadChunks, resetting`);
 						for (const fi of missingFiles) {
 							await this.fileAllocator.allocateFile(this.lish, fi, this.abortController.signal);
+							if (this.destroyed) return;
 							this.dataServer.resetFileChunks(this.lishID, fi);
 						}
 						// Fall through to retry with reset chunks
@@ -643,13 +673,25 @@ export class Downloader {
 		downloadLimiter.setLimit(kbPerSec);
 	}
 
-	private async callForPeers(): Promise<void> {
+	/** Drop timing debt left by a transfer runtime that has been fully drained. */
+	static resetDownloadSpeedLimiter(): void {
+		downloadLimiter.reset();
+	}
+
+	private callForPeers(): Promise<void> {
+		return this.trackLifecycle(this.callForPeersInternal());
+	}
+
+	private async callForPeersInternal(): Promise<void> {
+		if (this.destroyed) return;
 		console.debug(`[DL] callForPeers: ${this.lishID.slice(0, 8)} on ${this.networkIDs.length} networks, peers: ${this.peerManager.size()}`);
 		// GossipSub broadcast — seeders respond with a unicast HAVE over the LISH protocol
 		// (see network.handleWant → LISHClient.announceHave → Downloader.onHaveAnnouncement).
 		const msg: WantMessage = { type: 'want', lishID: this.lishID };
 		for (const nid of this.networkIDs) {
+			if (this.destroyed) return;
 			await this.network.broadcast(lishTopic(nid), msg).catch((err: any) => trace(`[DL] broadcast WANT on ${nid}: ${err?.message ?? err}`));
+			if (this.destroyed) return;
 		}
 		// probeTopicPeers runs only via the adaptive peer-discovery timer (scheduleNextPeerDiscovery), not here
 		// — avoids stale stream issues.
@@ -657,7 +699,11 @@ export class Downloader {
 		this.scheduleNextPeerDiscovery();
 	}
 
-	private async probeTopicPeers(): Promise<void> {
+	private probeTopicPeers(): Promise<void> {
+		return this.trackLifecycle(this.probeTopicPeersInternal());
+	}
+
+	private async probeTopicPeersInternal(): Promise<void> {
 		if (this.destroyed) return;
 		const topicPeers = new Set<string>();
 		for (const nid of this.networkIDs) {
@@ -725,7 +771,7 @@ export class Downloader {
 				if (this.needsManifest && manifest.files && manifest.files.length > 0) {
 					// Protect manifest import with workMutex to prevent race with doWork()
 					await this.workMutex.runExclusive(async () => {
-						if (!this.needsManifest) return; // double-check after acquiring lock
+						if (this.destroyed || !this.needsManifest) return; // double-check after acquiring lock
 						// The manifest is sanitized (no peer-supplied local paths). Keep our own
 						// local state: the download directory, and any post-download move target
 						// the LISH was created with — the incoming manifest never carries it.
@@ -738,6 +784,7 @@ export class Downloader {
 						console.log(`[DL] Got manifest from ${peerID.slice(0, 12)}: ${manifest.files?.length ?? 0} files, ${this.missingChunks.length} chunks`);
 					});
 				}
+				if (this.destroyed) return;
 
 				const { stream: dlStream, connectionType } = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
 				if (this.destroyed) {
@@ -819,7 +866,11 @@ export class Downloader {
 		this.runPeerDiscoveryCycle().catch(e => trace(`[DL] manual discovery cycle error: ${e?.message ?? e}`));
 	}
 
-	private async runPeerDiscoveryCycle(): Promise<void> {
+	private runPeerDiscoveryCycle(): Promise<void> {
+		return this.trackLifecycle(this.runPeerDiscoveryCycleInternal());
+	}
+
+	private async runPeerDiscoveryCycleInternal(): Promise<void> {
 		if (this.destroyed) return;
 		if (this.state === 'downloaded') return;
 		if (this.state !== 'downloading' && this.state !== 'awaiting-manifest') {
@@ -833,6 +884,7 @@ export class Downloader {
 		this.lastExhaustedTime = 0;
 		// Broadcast want so all peers (including probe-only) respond with have + chunk availability.
 		await this.callForPeers().catch((err: any) => trace(`[DL] cycle callForPeers failed (will retry): ${err?.message ?? err}`));
+		if (this.destroyed) return;
 		await this.probeTopicPeers();
 		if (!this.downloadActive && !this.destroyed && this.peerManager.size() > before)
 			this.doWork().catch(e => {
@@ -841,7 +893,11 @@ export class Downloader {
 		this.scheduleNextPeerDiscovery();
 	}
 
-	private async onHaveAnnouncement(ann: HaveAnnouncement): Promise<void> {
+	private onHaveAnnouncement(ann: HaveAnnouncement): Promise<void> {
+		return this.trackLifecycle(this.onHaveAnnouncementInternal(ann));
+	}
+
+	private async onHaveAnnouncementInternal(ann: HaveAnnouncement): Promise<void> {
 		if (this.destroyed) return;
 		if (this.disabled) return;
 		if (ann.lishID !== this.lishID) return;
@@ -873,6 +929,7 @@ export class Downloader {
 			console.debug(`[DL] connectToPeer failed: ${peerIDShort}: ${err.message?.slice(0, 80)}`);
 			return;
 		}
+		if (this.destroyed) return;
 		this.lastExhaustedTime = 0;
 		if (!this.downloadActive && !this.destroyed)
 			this.doWork().catch(e => {
