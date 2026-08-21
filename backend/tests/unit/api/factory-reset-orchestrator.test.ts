@@ -67,7 +67,7 @@ function makeDeps(
 		pauseAllTransfers?: () => Promise<void>;
 		clearAllTransfers?: () => Promise<any>;
 		clearUploadRuntime?: () => void;
-		restoreAllTransfers?: (lishIDs: Set<string>) => Promise<void>;
+		restoreAllTransfers?: (lishIDs: Set<string>, snapshot?: unknown) => Promise<void>;
 		resumeAllTransfers?: () => void;
 		broadcastFn?: (event: string, data: any, except?: unknown) => void;
 		log?: string[];
@@ -173,10 +173,7 @@ describe('buildFactoryResetHandler — restart behaviour', () => {
 			},
 		});
 
-		const outcome = await Promise.race([
-			buildFactoryResetHandler(deps)({ downloads: false, settings: false, identity: true, networks: false, peers: false }).then(() => 'settled'),
-			Bun.sleep(250).then(() => 'timeout'),
-		]);
+		const outcome = await Promise.race([buildFactoryResetHandler(deps)({ downloads: false, settings: false, identity: true, networks: false, peers: false }).then(() => 'settled'), Bun.sleep(250).then(() => 'timeout')]);
 
 		expect(outcome).toBe('settled');
 		expect(cancelled).toBe(true);
@@ -400,6 +397,34 @@ describe('buildFactoryResetHandler — restart behaviour', () => {
 		const response = await resetting;
 		expect(response.success).toBe(true);
 		expect(actions).toEqual(['restore:lish-a', 'resume']);
+	});
+
+	it('passes the pre-reset transfer binding snapshot into post-restart restore', async () => {
+		const snapshot = new Map([
+			[
+				'lish-a',
+				{
+					networkIDs: [],
+					originalNetworkIDs: ['net-a'],
+					disabled: true,
+					suspended: true,
+				},
+			],
+		]);
+		let restoredSnapshot: unknown;
+		const deps = makeDeps({
+			dataServerOverride: {
+				getDownloadEnabledLishs: () => new Set(['lish-a']),
+			},
+			clearAllTransfers: async () => snapshot,
+			restoreAllTransfers: async (_ids, receivedSnapshot) => {
+				restoredSnapshot = receivedSnapshot;
+			},
+		});
+
+		await buildFactoryResetHandler(deps)({ downloads: false, settings: true, identity: false, networks: false, peers: false });
+
+		expect(restoredSnapshot).toBe(snapshot);
 	});
 
 	it('keeps transfer admission closed when teardown safety is unknown', async () => {

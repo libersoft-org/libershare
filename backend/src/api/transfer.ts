@@ -35,11 +35,11 @@ interface TransferHandlers {
 	/** Close transfer admission and wait for handlers already past the gate. */
 	pauseAll: () => Promise<void>;
 	/** Tear down all in-memory transfer state (factory reset). Not a WS endpoint. */
-	clearAll: () => Promise<void>;
+	clearAll: () => Promise<TransferRestoreSnapshot>;
 	/** Clear upload runtime after inbound protocol handlers and the node are stopped. */
 	clearUploads: () => void;
 	/** Restore persisted downloads while public transfer admission remains closed. */
-	restoreAll: (lishIDs: Set<string>) => Promise<void>;
+	restoreAll: (lishIDs: Set<string>, snapshot?: TransferRestoreSnapshot) => Promise<void>;
 	/** Re-open transfer admission after factory-reset orchestration finishes. */
 	resumeAll: () => void;
 }
@@ -199,6 +199,25 @@ export function getJoinedEnabledNetworkIDs(networks: Pick<Networks, 'getEnabled'
 		.getEnabled()
 		.filter(network => networks.isJoined(network.networkID))
 		.map(network => network.networkID);
+}
+
+export interface TransferRestoreState {
+	readonly networkIDs: string[];
+	readonly originalNetworkIDs: string[];
+	readonly disabled: boolean;
+	readonly suspended: boolean;
+}
+
+export type TransferRestoreSnapshot = Map<string, TransferRestoreState>;
+
+export type DownloadRestorePlan = { kind: 'resume'; networkIDs: string[] } | { kind: 'suspend'; networkIDs: string[] };
+
+/** Keep a restored download on its original lishnets instead of rebinding it. */
+export function planDownloadRestore(state: TransferRestoreState, isJoined: (networkID: string) => boolean): DownloadRestorePlan {
+	const originalNetworkIDs = [...new Set(state.originalNetworkIDs.length > 0 ? state.originalNetworkIDs : state.networkIDs)];
+	const joinedNetworkIDs = originalNetworkIDs.filter(isJoined);
+	if (joinedNetworkIDs.length > 0) return { kind: 'resume', networkIDs: joinedNetworkIDs };
+	return { kind: 'suspend', networkIDs: originalNetworkIDs };
 }
 
 /** Stop error recovery for a LISH (call when LISH is deleted). */
@@ -590,6 +609,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 					return { success: false };
 				}
 				const send = broadcast ?? (() => {});
+				networkSuspended.delete(p.lishID);
 				recovery.stop(p.lishID);
 				send('transfer.download:enabled', { lishID: p.lishID });
 				return { success: true };
@@ -633,7 +653,26 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		}
 		pendingDownloads.add(p.lishID);
 		try {
-			const joinedNetworks = getJoinedEnabledNetworkIDs(networks);
+			let joinedNetworks = getJoinedEnabledNetworkIDs(networks);
+			let originalNetworkIDs = joinedNetworks;
+			const suspendedNetworkIDs = networkSuspended.get(p.lishID);
+			if (suspendedNetworkIDs && suspendedNetworkIDs.size > 0) {
+				originalNetworkIDs = [...suspendedNetworkIDs];
+				const restorePlan = planDownloadRestore(
+					{
+						networkIDs: [],
+						originalNetworkIDs,
+						disabled: true,
+						suspended: true,
+					},
+					networkID => joinedNetworks.includes(networkID)
+				);
+				if (restorePlan.kind === 'suspend') {
+					downloadEnabledLishs.delete(p.lishID);
+					return { success: false };
+				}
+				joinedNetworks = restorePlan.networkIDs;
+			}
 			if (joinedNetworks.length === 0) {
 				// No lishnet is joined to source this download. Keep the DB enabled flag
 				// ON — clearing it would permanently forget the user's intent so a later
@@ -666,7 +705,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 					return { success: false };
 				}
 			}
-			await startStoredDownloader(p.lishID, joinedNetworks, joinedNetworks, false, client);
+			await startStoredDownloader(p.lishID, joinedNetworks, originalNetworkIDs, false, client);
+			networkSuspended.delete(p.lishID);
 			recovery.stop(p.lishID);
 			const send = broadcast ?? (() => {});
 			send('transfer.download:enabled', { lishID: p.lishID });
@@ -839,18 +879,26 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * Tear down downloader and recovery runtime before the node is stopped. Upload
 	 * state is cleared separately only after inbound handlers and libp2p are down.
 	 */
-	async function clearAllTransfers(): Promise<void> {
+	async function clearAllTransfers(): Promise<TransferRestoreSnapshot> {
 		await pauseAllTransfers();
-		const downloaderState = new Map(
-			[...activeDownloaders].map(([lishID, downloader]) => [
-				lishID,
-				{
-					networkIDs: downloader.getNetworkIDs?.() ?? [],
-					originalNetworkIDs: downloader.getOriginalNetworkIDs?.() ?? downloader.getNetworkIDs?.() ?? [],
-					disabled: downloader.isDisabled?.() ?? false,
-				},
-			])
-		);
+		const downloaderState: TransferRestoreSnapshot = new Map();
+		for (const [lishID, downloader] of activeDownloaders) {
+			downloaderState.set(lishID, {
+				networkIDs: [...(downloader.getNetworkIDs?.() ?? [])],
+				originalNetworkIDs: [...(downloader.getOriginalNetworkIDs?.() ?? downloader.getNetworkIDs?.() ?? [])],
+				disabled: downloader.isDisabled?.() ?? false,
+				suspended: networkSuspended.has(lishID),
+			});
+		}
+		for (const [lishID, networkIDs] of networkSuspended) {
+			if (downloaderState.has(lishID)) continue;
+			downloaderState.set(lishID, {
+				networkIDs: [],
+				originalNetworkIDs: [...networkIDs],
+				disabled: true,
+				suspended: true,
+			});
+		}
 		await destroyAllDownloaders(activeDownloaders, async lishID => {
 			const state = downloaderState.get(lishID);
 			if (!state) throw new Error(`Cannot restore download ${lishID}: reset snapshot is missing`);
@@ -861,17 +909,39 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		networkSuspended.clear();
 		Downloader.resetDownloadSpeedLimiter();
 		await recovery.stopAllAndDrain();
+		return downloaderState;
 	}
 
 	function clearUploadRuntime(): void {
 		clearAllUploads();
 	}
 
-	async function restoreAllTransfers(lishIDs: Set<string>): Promise<void> {
+	async function restoreAllTransfers(lishIDs: Set<string>, snapshot: TransferRestoreSnapshot = new Map()): Promise<void> {
 		const failures: string[] = [];
 		for (const lishID of [...lishIDs]) {
-			const result = await enableDownloadAdmitted({ lishID });
-			if (!result.success && !networkSuspended.has(lishID)) failures.push(lishID);
+			const state = snapshot.get(lishID);
+			if (!state) {
+				const result = await enableDownloadAdmitted({ lishID });
+				if (!result.success && !networkSuspended.has(lishID)) failures.push(lishID);
+				continue;
+			}
+
+			const plan = planDownloadRestore(state, networkID => networks.isJoined(networkID));
+			if (plan.kind === 'suspend') {
+				downloadEnabledLishs.delete(lishID);
+				networkSuspended.set(lishID, new Set(plan.networkIDs));
+				continue;
+			}
+
+			try {
+				networkSuspended.delete(lishID);
+				const originalNetworkIDs = state.originalNetworkIDs.length > 0 ? state.originalNetworkIDs : state.networkIDs;
+				await startStoredDownloader(lishID, plan.networkIDs, originalNetworkIDs, false);
+				recovery.stop(lishID);
+				broadcast?.('transfer.download:enabled', { lishID });
+			} catch {
+				failures.push(lishID);
+			}
 		}
 		if (failures.length > 0)
 			throw new AggregateError(

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { claimActiveDownloader, getJoinedEnabledNetworkIDs, handleLeftDownloader, destroyAllDownloaders, initDownloadState, removeDownloadState, setActiveDownloadersRef, setNetworkSuspendedRef, TransferAdmissionGate, TransferTeardownError, type LeftDownloaderDeps } from '../../../src/api/transfer.ts';
+import { claimActiveDownloader, getJoinedEnabledNetworkIDs, handleLeftDownloader, destroyAllDownloaders, initDownloadState, planDownloadRestore, removeDownloadState, setActiveDownloadersRef, setNetworkSuspendedRef, TransferAdmissionGate, TransferTeardownError, type LeftDownloaderDeps } from '../../../src/api/transfer.ts';
 import { runFactoryReset } from '../../../src/api/factory-reset.ts';
 
 const NET = 'net-left';
@@ -150,6 +150,34 @@ describe('download lifecycle state', () => {
 		expect(second).toEqual({ downloader: winner, claimed: false });
 		expect(active.get('same-lish')).toBe(winner);
 		expect(destroyed).toEqual(['loser']);
+	});
+
+	it('keeps a suspended download bound to its original network after reset', () => {
+		const plan = planDownloadRestore(
+			{
+				networkIDs: [],
+				originalNetworkIDs: ['net-a'],
+				disabled: true,
+				suspended: true,
+			},
+			networkID => networkID === 'net-b'
+		);
+
+		expect(plan).toEqual({ kind: 'suspend', networkIDs: ['net-a'] });
+	});
+
+	it('restores a download only on joined networks from its original binding', () => {
+		const plan = planDownloadRestore(
+			{
+				networkIDs: ['net-a'],
+				originalNetworkIDs: ['net-a', 'net-c'],
+				disabled: false,
+				suspended: false,
+			},
+			networkID => networkID === 'net-a' || networkID === 'net-b'
+		);
+
+		expect(plan).toEqual({ kind: 'resume', networkIDs: ['net-a'] });
 	});
 
 	it('closes admission before waiting for an in-flight transfer operation', async () => {

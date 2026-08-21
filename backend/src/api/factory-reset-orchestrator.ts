@@ -5,7 +5,7 @@ import { type FactoryResetResponse } from '@shared';
 import { initUploadState } from '../protocol/lish-protocol.ts';
 import { applyNetworkLimits } from '../protocol/network-limits.ts';
 import { runFactoryReset } from './factory-reset.ts';
-import { initDownloadState } from './transfer.ts';
+import { initDownloadState, type TransferRestoreSnapshot } from './transfer.ts';
 import { Mutex } from 'async-mutex';
 
 /**
@@ -28,14 +28,14 @@ export interface FactoryResetOrchestratorDeps {
 	/** Close public transfer admission and drain handlers already past the gate. */
 	readonly pauseAllTransfers: () => Promise<void>;
 	/**
-	 * Tears down all active download/upload transfers before the wipe. Must be
-	 * provided by the transfer handler module. Return value is ignored.
+	 * Tears down all active download/upload transfers before the wipe and returns
+	 * the exact network bindings needed after the node restart.
 	 */
-	readonly clearAllTransfers: () => Promise<any>;
+	readonly clearAllTransfers: () => Promise<TransferRestoreSnapshot>;
 	/** Clear upload runtime after inbound handlers and the node are fully stopped. */
 	readonly clearUploadRuntime: () => void;
 	/** Restore persisted downloads while public transfer admission is still closed. */
-	readonly restoreAllTransfers: (lishIDs: Set<string>) => Promise<void>;
+	readonly restoreAllTransfers: (lishIDs: Set<string>, snapshot?: TransferRestoreSnapshot) => Promise<void>;
 	/** Re-opens transfer admission after the reset barrier is no longer active. */
 	readonly resumeAllTransfers: () => void;
 	/**
@@ -65,6 +65,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 			const wipeDownloads = p?.downloads ?? true;
 			const wipeNetworks = p?.networks ?? true;
 			const wipePeers = p?.peers ?? true;
+			let transferRestoreSnapshot: TransferRestoreSnapshot | undefined;
 
 			// The libp2p node must restart when its identity is regenerated or its joined
 			// networks are removed. A node restart also tears down every live transfer.
@@ -107,7 +108,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 				initUploadState(dataServer.getUploadEnabledLishs(), (id, en) => dataServer.setUploadEnabled(id, en));
 				await networks.startEnabledNetworks();
 				try {
-					await restoreAllTransfers(enabledDownloads);
+					await restoreAllTransfers(enabledDownloads, transferRestoreSnapshot);
 					transferRuntimeSafe = true;
 				} catch (error) {
 					transferRuntimeSafe = false;
@@ -134,7 +135,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 							await stopVerifyAll();
 							transferRuntimeSafe = false;
 							try {
-								await clearAllTransfers();
+								transferRestoreSnapshot = await clearAllTransfers();
 							} catch (error) {
 								transferRuntimeSafe = (error as { runtimeRestored?: boolean })?.runtimeRestored === true;
 								throw error;
