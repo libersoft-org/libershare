@@ -16,6 +16,7 @@ import { buildLibp2pConfig, PEERSTORE_MAX_PEER_AGE_MS } from './network-config.t
 import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
+import { canonicalMultiaddr, extractDestinationPeerID } from './multiaddr-utils.ts';
 import { CodedError, ErrorCodes, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
@@ -123,6 +124,47 @@ const BOOTSTRAP_STATUS_STALE_MS = 30 * 60_000;
  * only for peers that cannot initiate inbound connections).
  */
 const UNREACHABLE_QUARANTINE_MS = 30 * 60_000;
+
+/**
+ * Backoff ceiling for the loops that probe ONE CONFIGURED ADDRESS.
+ *
+ * A configured entry is exempt from eviction and from quarantine — it is user data and
+ * the way back into the network — but "never given up on" is not "dialed without limit".
+ * Each attempt spends a 10 s dial timeout, so a handful of dead configured addresses
+ * could occupy a status tick end to end, every tick, forever.
+ *
+ * Half the general re-dial ceiling (10 min) deliberately: a configured address deserves
+ * to be retried more often than a gossip-learned one, so a bootstrap that comes back is
+ * picked up within five minutes without the operator touching anything, while a
+ * permanently dead one costs one dial per five minutes instead of one per 30 s tick.
+ */
+const CONFIGURED_PROBE_BACKOFF_MAX_MS = 5 * 60_000;
+/**
+ * How long one bootstrap dial may take before the intake gives up on it.
+ *
+ * An address that is merely unreachable answers quickly — the connection is refused, or
+ * DNS says no. One that is BLACK-HOLED answers not at all: the packets are dropped and TCP
+ * waits out the operating system's own connect timeout, which is minutes. Without a bound
+ * of our own the row stayed 'pending' for all of it, so a configured entry the user had
+ * typed wrong sat on the participant screen saying "working on it" instead of turning red,
+ * and the single-flight claim on that address was held for just as long.
+ *
+ * Matches the parked-probe dial, which has always been bounded this way.
+ */
+const BOOTSTRAP_DIAL_TIMEOUT_MS = 10_000;
+const DIAL_RETURNED_ANOTHER_ENDPOINT = 'Dial completed on another endpoint';
+
+/**
+ * Ceiling on the autodial list zero-connection recovery walks.
+ *
+ * A discovered address earns its place by answering a dial, so the list grows with the
+ * number of distinct endpoints that have ever worked — unbounded on a fleet with churn,
+ * and the array is otherwise only ever shortened by an identity purge. Over the ceiling
+ * the OLDEST DISCOVERED entry goes: configured entries are finite user data and the way
+ * back into a network, so they are never the ones dropped. 512 is far above any real
+ * node's working set while keeping the list, and the walk over it, bounded.
+ */
+const MAX_BOOTSTRAP_ADDRESSES = 512;
 
 /**
  * Where the eviction window should run from after a re-dial failure.
@@ -551,6 +593,20 @@ function peerStoreInternals(peerStore: unknown): { store: IPeerStoreInternals; e
  * LISH networks are logical groups represented as pubsub topics on this one node.
  */
 export class Network {
+	private lifecycle: NetworkLifecycle = 'stopped';
+	/**
+	 * Serialises start() against stop(). Both mutate the same fields across several
+	 * awaits, and without this two concurrent start() calls could both pass the
+	 * "already running" check before either created a node — two libp2p instances over
+	 * one identity and one SQLite datastore.
+	 */
+	private readonly lifecycleMutex = new Mutex();
+	/**
+	 * Set once a `node.stop()` has failed to leave libp2p in `stopped`. Permanent: libp2p
+	 * has no way to resume an interrupted stop, so every later attempt would be a no-op
+	 * dressed up as success. See {@link teardown}.
+	 */
+	private nodeStopUnrecoverable = false;
 	private node: Libp2p | null = null;
 	private pubsub: PubSub | null = null;
 	private datastore: SqliteDatastore | null = null;
@@ -562,6 +618,13 @@ export class Network {
 	private bootstrapWorkaroundTimer: NodeJS.Timeout | null = null;
 	/** Monotonic counter for status-interval ticks. Used by the periodic autodial promotion. */
 	private statusTickCount = 0;
+	/**
+	 * Delayed peer-count probes armed by subscribeTopic. Tracked so stop() can cancel
+	 * them: without that they keep a closure on this instance alive and can fire against
+	 * a node the run no longer owns, which is exactly the ownership the epoch guards
+	 * elsewhere are there to enforce.
+	 */
+	private readonly delayedPeerCountTimers: Set<ReturnType<typeof setTimeout>> = new Set();
 	/** Guards against overlapping status ticks — see setupStatusInterval. */
 	private statusTickInFlight = false;
 	/**
@@ -572,6 +635,25 @@ export class Network {
 	 * loaded yet) after a quick stop/start such as a factory reset.
 	 */
 	private runEpoch = 0;
+	/**
+	 * Aborts the bootstrap dial loop, for a shutdown that has to wait for it.
+	 *
+	 * The loop dials sequentially and one unreachable address costs a full connection
+	 * timeout, so a caller that waits for a join to finish before stopping the node would
+	 * otherwise wait out the whole list. Replaced on every {@link start}: an abort belongs to
+	 * the run it was raised for and must not refuse the next run's first dial.
+	 */
+	private dialAbort = new AbortController();
+	/**
+	 * Admission and drain state for inbound LISH protocol handlers. libp2p closes
+	 * streams during stop(), but it does not await the application Promise that is
+	 * serving them. A factory reset must therefore close this gate, abort the streams
+	 * and wait for every handler before upload counters or database rows are cleared.
+	 */
+	private lishProtocolAdmissionClosed = false;
+	private lishProtocolAbort = new AbortController();
+	private readonly activeLISHProtocolHandlers = new Set<Promise<void>>();
+	private readonly activeLISHProtocolStreams = new Set<Stream>();
 	/**
 	 * Per-(peer,lish) timestamp of the last `have` response we sent.
 	 * Used to rate-limit responses to repeated `want` queries from the same peer for the same LISH:
@@ -730,12 +812,46 @@ export class Network {
 	/** peerID → its purge lock and how many purges hold or await it. See {@link withPurgeLock}. */
 	private purgeLocks?: Map<string, { mutex: Mutex; waiting: number }>;
 	/**
-	 * peerID → time we first saw the peer disconnected with ZERO reachable
-	 * addresses. Such peers never enter the re-dial path (nothing to dial), so
-	 * the failure counter cannot evict them — without this they would sit in
-	 * peerStore/bootstrap sets until maxPeerAge while every tick re-scans them.
+	 * Canonical multiaddr → pacing record for the loops that probe ONE CONFIGURED ADDRESS
+	 * (zero-connection recovery and the parked-bootstrap probe).
+	 *
+	 * Keyed by ADDRESS, not by peer, because those loops ask an address-level question.
+	 * One peer can hold a dead configured address and a working one at the same time;
+	 * with a peer-keyed record the dead address's failure puts the whole peer into
+	 * backoff, the working address is skipped for the rest of the pass, and the next pass
+	 * starts at the dead one again — so the working address could go untried indefinitely.
 	 */
-	private readonly noReachableSince = new Map<string, number>();
+	private readonly addressProbeBackoff = new Map<string, { nextAttempt: number; failCount: number }>();
+	/**
+	 * Canonical multiaddrs with an {@link addBootstrapPeers} dial currently outstanding.
+	 *
+	 * The pubsub dispatcher does not await the announce handler, so several announces
+	 * naming the same address start several intake runs that overlap. Each spends its own
+	 * 10 s dial timeout on the same endpoint and records its own outcome over the other's,
+	 * and the peer-level backoff cannot help — it is only written once a dial has already
+	 * failed. Claiming the address for the duration of the dial makes the second run a
+	 * no-op instead: the first one is about to record the outcome both were after.
+	 *
+	 * Replaced with a FRESH map on teardown rather than cleared, and captured by reference
+	 * for the length of a dial. Clearing a shared one let a dial still settling on the old
+	 * node release a claim the new node's dial of the same address had just taken — after
+	 * which a third request saw the address free and duplicated the live dial.
+	 *
+	 * A claim carries the network generation and a completion promise. A duplicate in the
+	 * same generation can trust the existing dial; a newer generation must wait for the old
+	 * owner to release and then perform its own verification.
+	 */
+	private inFlightBootstrapDials = new Map<string, BootstrapDialClaim>();
+	/**
+	 * Peer IDs with a `peer:discovery` dial currently outstanding.
+	 *
+	 * Keyed by PEER, not by address, because that is the question discovery asks: mDNS,
+	 * identify and PX all raise an event for the same arrival, each carrying its own
+	 * address list, and the per-peer backoff cannot separate them — it is written only
+	 * after a dial has already failed. Replaced on teardown for the same reason as
+	 * {@link inFlightBootstrapDials}.
+	 */
+	private inFlightDiscoveryDials = new Set<string>();
 	/**
 	 * Peers deliberately hung up by {@link disconnectPeer} (leave-network), keyed by
 	 * the lishnet they were left with. Redial maintenance / discovery must NOT
@@ -769,11 +885,13 @@ export class Network {
 			getNode: (): Libp2p | null => this.node,
 			dialByPeerId: (peerID, protocol): Promise<IDialResult> => this.dialProtocolByPeerId(peerID, protocol),
 		});
+		// Lets the discovered-row cap keep live participants and drop dead addresses first.
+		this.bootstrapTracker.setMembersProvider((networkID): Set<string> => new Set(this.getTopicPeers(networkID)));
 		this.peerAnnounce = new PeerAnnounceManager({
 			getNode: (): Libp2p | null => this.node,
 			getPubsub: (): any => this.pubsub,
-			broadcast: (topic, msg): Promise<void> => this.broadcast(topic, msg),
-			addBootstrapPeers: (multiaddrs, networkID, origin): Promise<void> => this.addBootstrapPeers(multiaddrs, networkID, origin),
+			broadcast: (topic, msg, pubsub): Promise<void> => Network.publishOn(pubsub, topic, msg),
+			addBootstrapPeers: (multiaddrs, networkID, origin): Promise<BootstrapDialResult> => this.addBootstrapPeers(multiaddrs, networkID, origin),
 		});
 	}
 
@@ -849,6 +967,17 @@ export class Network {
 	/**
 	 * Schedule a debounced check of peer counts for all subscribed topics.
 	 */
+	/** Arm a one-shot peer-count probe that stop() can still cancel. */
+	private armDelayedPeerCountCheck(delayMs: number): void {
+		const epoch = this.runEpoch;
+		const timer = setTimeout(() => {
+			this.delayedPeerCountTimers.delete(timer);
+			if (epoch !== this.runEpoch) return;
+			this.schedulePeerCountCheck();
+		}, delayMs);
+		this.delayedPeerCountTimers.add(timer);
+	}
+
 	private schedulePeerCountCheck(): void {
 		if (this._peerCountDebounceTimer) clearTimeout(this._peerCountDebounceTimer);
 		this._peerCountDebounceTimer = setTimeout(() => {
@@ -901,11 +1030,53 @@ export class Network {
 	 * @param bootstrapPeers - merged list of bootstrap peers from all enabled lishnets
 	 */
 	async start(bootstrapPeers: string[] = []): Promise<void> {
-		if (this.node) {
-			console.log('Network node is already running');
-			return;
-		}
+		// Serialised against stop() and against another start(): every field below is
+		// touched across awaits by both, so overlapping runs would interleave into two
+		// nodes over one datastore, or into a start whose node a concurrent stop tears
+		// down while its caller is told the start succeeded.
+		await this.lifecycleMutex.runExclusive(async () => {
+			// A previous run that could not be stopped may still own this identity, this
+			// port and this datastore. Starting a second node over it is the one thing
+			// that state exists to prevent, and "already running" would be a lie.
+			if (this.lifecycle === 'failed') throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network is in a failed state: the previous node could not be stopped');
+			if (this.lifecycle !== 'stopped') {
+				console.log('Network node is already running');
+				return;
+			}
+			if (this.activeLISHProtocolHandlers.size > 0 || this.activeLISHProtocolStreams.size > 0) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Cannot start a network while handlers from the previous LISH protocol run are still active');
+			this.lifecycle = 'starting';
+			// A fresh one per run — an abort raised for the previous shutdown would otherwise
+			// refuse this run's dials before it made any. See {@link dialAbort}.
+			this.dialAbort = new AbortController();
+			// Kept separate from admission: a factory-reset restart builds the node while
+			// the external gate is still closed, then opens it only after runtime restore.
+			this.lishProtocolAbort = new AbortController();
+			try {
+				await this.startLocked(bootstrapPeers);
+				this.lifecycle = 'running';
+			} catch (err) {
+				// A half-built start owns a datastore handle and possibly a libp2p node.
+				// Leaving either behind is what made a failed start unrecoverable without
+				// restarting the process: the SQLite file stayed locked and `this.node`
+				// stayed set, so the next start reported "already running" forever.
+				try {
+					await this.teardown();
+				} catch (teardownErr) {
+					// The cleanup could not prove the half-built node is down, so the next
+					// start must be refused rather than opening a second one over the same
+					// identity. Both reasons are kept: the start error explains what went
+					// wrong, the teardown error explains why the instance is now unusable.
+					this.lifecycle = 'failed';
+					throw new AggregateError([err, teardownErr], 'network start failed and its cleanup could not complete');
+				}
+				this.lifecycle = 'stopped';
+				throw err;
+			}
+		});
+	}
 
+	/** The body of {@link start}, run under the lifecycle mutex. */
+	private async startLocked(bootstrapPeers: string[]): Promise<void> {
 		// Read settings
 		const allSettings = this.settings.list();
 
@@ -983,50 +1154,7 @@ export class Network {
 		applyGossipsubPatches(this.pubsub, { settings: this.settings, getBootstrapPeerIDs: (): Set<string> => this.bootstrapPeerIDs, pxIngressLogKeys: this.pxIngressLogKeys }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
 
 		// Register lish protocol handler
-		await this.node.handle(
-			LISH_PROTOCOL,
-			async (data: any) => {
-				// libp2p does NOT attach .catch() to the Promise returned by the registered
-				// protocol handler. Any throw from here (including TypeError when this.node
-				// is nulled by stop() racing with the 50ms await below) escapes as an
-				// unhandledRejection. Wrap the full body so the handler can never leak.
-				try {
-					const stream = data.stream ?? data;
-					const connection = data.connection;
-					let remotePeerID = connection?.remotePeer?.toString?.();
-					let isRelay = connection?.remoteAddr ? Circuit.matches(connection.remoteAddr) : false;
-					if (!remotePeerID && this.node) {
-						for (let attempt = 0; attempt < 3 && !remotePeerID; attempt++) {
-							if (attempt > 0) await new Promise(r => setTimeout(r, 50));
-							if (!this.node) break; // node stopped during the sleep
-							for (const peer of this.node.getPeers()) {
-								for (const conn of this.node.getConnections(peer)) {
-									try {
-										if (conn.streams.some((s: any) => s.id === stream.id)) {
-											remotePeerID = peer.toString();
-											isRelay = Circuit.matches(conn.remoteAddr);
-										}
-									} catch {}
-								}
-								if (remotePeerID) break;
-							}
-						}
-					}
-					const connType = remotePeerID ? classifyConnectionFn(remotePeerID, isRelay, this.dcutrPeers) : 'DIRECT';
-					await handleLISHProtocol(
-						stream,
-						this.dataServer,
-						remotePeerID,
-						connType,
-						pid => this.sharesJoinedTopicWith(pid),
-						pid => this.canListSharesTo(pid)
-					);
-				} catch (err: any) {
-					trace(`[NET] LISH handler error: ${err?.message ?? err}`);
-				}
-			},
-			{ runOnLimitedConnection: true }
-		);
+		await this.node.handle(LISH_PROTOCOL, (data: any) => this.handleInboundLISHProtocol(data), { runOnLimitedConnection: true });
 		console.log(`✓ Registered ${LISH_PROTOCOL} protocol handler`);
 
 		// DHT removed; only bootstrap + gossipsub for discovery
@@ -1053,6 +1181,99 @@ export class Network {
 		this.setupStatusInterval();
 		this.setupWantResponseCleanup();
 		this.peerAnnounce.start();
+	}
+
+	/**
+	 * Close inbound LISH admission and wait until every handler admitted by the
+	 * current run has stopped. The gate remains closed across a node restart until
+	 * {@link resumeLISHProtocolHandlers} is called after transfer state is restored.
+	 */
+	async pauseLISHProtocolHandlersAndDrain(): Promise<void> {
+		this.lishProtocolAdmissionClosed = true;
+		await this.abortAndDrainLISHProtocolHandlers();
+	}
+
+	/** Re-open inbound LISH admission after a factory-reset barrier completes. */
+	resumeLISHProtocolHandlers(): void {
+		if (this.activeLISHProtocolHandlers.size > 0 || this.activeLISHProtocolStreams.size > 0) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Cannot resume LISH protocol admission while handlers from the previous run are still active');
+		if (this.lishProtocolAbort.signal.aborted) this.lishProtocolAbort = new AbortController();
+		this.lishProtocolAdmissionClosed = false;
+	}
+
+	/**
+	 * Track the complete application Promise returned to libp2p. Stopping the node
+	 * closes transports, but libp2p does not wait for this Promise itself.
+	 */
+	private handleInboundLISHProtocol(data: any): Promise<void> {
+		const stream = (data.stream ?? data) as Stream;
+		const runAbort = this.lishProtocolAbort;
+		const runNode = this.node;
+		if (this.lishProtocolAdmissionClosed || runAbort.signal.aborted || !runNode) {
+			try {
+				stream.abort(new Error('LISH protocol admission is closed'));
+			} catch {}
+			return Promise.resolve();
+		}
+
+		let handler!: Promise<void>;
+		handler = Promise.resolve()
+			.then(async () => {
+				try {
+					const connection = data.connection;
+					let remotePeerID = connection?.remotePeer?.toString?.();
+					let isRelay = connection?.remoteAddr ? Circuit.matches(connection.remoteAddr) : false;
+					if (!remotePeerID) {
+						for (let attempt = 0; attempt < 3 && !remotePeerID && !runAbort.signal.aborted; attempt++) {
+							if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 50));
+							if (runAbort.signal.aborted) break;
+							for (const peer of runNode.getPeers()) {
+								for (const conn of runNode.getConnections(peer)) {
+									try {
+										if (conn.streams.some((candidate: any) => candidate.id === stream.id)) {
+											remotePeerID = peer.toString();
+											isRelay = Circuit.matches(conn.remoteAddr);
+										}
+									} catch {}
+								}
+								if (remotePeerID) break;
+							}
+						}
+					}
+					if (runAbort.signal.aborted) return;
+					const connType = remotePeerID ? classifyConnectionFn(remotePeerID, isRelay, this.dcutrPeers) : 'DIRECT';
+					await handleLISHProtocol(
+						stream,
+						this.dataServer,
+						remotePeerID,
+						connType,
+						pid => this.sharesJoinedTopicWith(pid),
+						pid => this.canListSharesTo(pid),
+						runAbort.signal
+					);
+				} catch (err: any) {
+					trace(`[NET] LISH handler error: ${err?.message ?? err}`);
+				}
+			})
+			.finally(() => {
+				this.activeLISHProtocolHandlers.delete(handler);
+				this.activeLISHProtocolStreams.delete(stream);
+			});
+		this.activeLISHProtocolHandlers.add(handler);
+		this.activeLISHProtocolStreams.add(stream);
+		return handler;
+	}
+
+	/** Abort every current stream and drain its tracked application handler. */
+	private async abortAndDrainLISHProtocolHandlers(): Promise<void> {
+		this.lishProtocolAbort.abort();
+		for (const stream of [...this.activeLISHProtocolStreams]) {
+			try {
+				stream.abort(new Error('Network LISH protocol handler stopped'));
+			} catch (err: any) {
+				trace(`[NET] LISH stream abort failed: ${err?.message ?? err}`);
+			}
+		}
+		while (this.activeLISHProtocolHandlers.size > 0) await Promise.allSettled([...this.activeLISHProtocolHandlers]);
 	}
 
 	// =========================================================================
@@ -1147,7 +1368,6 @@ export class Network {
 				// gets evicted as "unreachable for 30 minutes" despite never being
 				// gone that long.
 				this.redialBackoff.delete(peerID);
-				this.noReachableSince.delete(peerID);
 				const connections = this.node!.getConnections(evt.detail);
 				const connTypes = connections.map(c => {
 					const isRelay = Circuit.matches(c.remoteAddr);
@@ -1378,33 +1598,26 @@ export class Network {
 			this.statusTickInFlight = true;
 			const epoch = this.runEpoch;
 			try {
-				const connectedPeers = this.node!.getPeers();
-				const allPeers = await this.node!.peerStore.all();
-				logStatusDebug({ node: this.node, pubsub: this.pubsub, settings: this.settings, lastScores: this._lastScores }, connectedPeers, allPeers);
-				dumpGossipsubScores({ node: this.node, pubsub: this.pubsub, settings: this.settings, lastScores: this._lastScores }, connectedPeers);
+				const node = this.node;
+				const pubsub = this.pubsub;
+				if (!node || !pubsub) return;
+				const connectedPeers = node.getPeers();
+				const allPeers = await node.peerStore.all();
+				// The first await is already long enough for stop()+start() to replace both
+				// handles. Nothing below may log, publish counts or mutate maintenance state
+				// from the outgoing run after that replacement.
+				if (epoch !== this.runEpoch || this.node !== node || this.pubsub !== pubsub) return;
+				logStatusDebug({ node, pubsub, settings: this.settings, lastScores: this._lastScores }, connectedPeers, allPeers);
+				dumpGossipsubScores({ node, pubsub, settings: this.settings, lastScores: this._lastScores }, connectedPeers);
 				// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
 				this.checkPeerCounts();
 				await this.runRedialMaintenance(connectedPeers, allPeers, epoch);
 				if (epoch !== this.runEpoch) return;
-				await this.runZeroConnectionRecovery(connectedPeers, epoch);
+				await this.runZeroConnectionRecovery(epoch);
 				if (epoch !== this.runEpoch) return;
 				await this.maybePromotePeers(epoch);
 				if (epoch !== this.runEpoch) return;
-				// Sweep by per-network membership (topic subscribers), not global
-				// connectivity: a peer that left this network but stays connected via
-				// another must still have its stale row here expire. Snapshot per topic
-				// lazily and freshly — the tick-start state is stale after the re-dial
-				// phase, and a peer that (re)subscribed during it must not be swept.
-				const topicMembers = new Map<string, Set<string>>();
-				const isMember = (networkID: string, pid: string): boolean => {
-					let set = topicMembers.get(networkID);
-					if (!set) {
-						set = new Set(this.getTopicPeers(networkID));
-						topicMembers.set(networkID, set);
-					}
-					return set.has(pid);
-				};
-				this.bootstrapTracker.sweepStale(BOOTSTRAP_STATUS_STALE_MS, isMember);
+				this.sweepStaleBootstrapRows();
 			} catch (err: any) {
 				trace(`[NET] statusInterval error: ${err?.message ?? err}`);
 			} finally {
@@ -1416,6 +1629,30 @@ export class Network {
 		// Status interval 30 s. promoteKnownPeersToBootstrap + gossipsub.direct
 		// mutations run on the 5th tick (~150 s) — fast enough to absorb peer
 		// churn at N≈100 without flooding logs or burning CPU on per-second probes.
+	}
+
+	/**
+	 * Expire discovered status rows whose peer has stopped answering — the participant
+	 * list forgetting a peer that went away.
+	 *
+	 * Swept by per-network membership (topic subscribers), not global connectivity: a peer
+	 * that left this network but stays connected via another must still have its stale row
+	 * here expire. The per-topic snapshot is taken lazily and freshly — the tick-start
+	 * state is stale by the time the re-dial phase is done, and a peer that (re)subscribed
+	 * during it must not be swept. `now` is injectable, like the sweep's own, so a test can
+	 * age rows without waiting out the window.
+	 */
+	private sweepStaleBootstrapRows(now: number = Date.now()): void {
+		const topicMembers = new Map<string, Set<string>>();
+		const isMember = (networkID: string, pid: string): boolean => {
+			let set = topicMembers.get(networkID);
+			if (!set) {
+				set = new Set(this.getTopicPeers(networkID));
+				topicMembers.set(networkID, set);
+			}
+			return set.has(pid);
+		};
+		this.bootstrapTracker.sweepStale(BOOTSTRAP_STATUS_STALE_MS, isMember, now);
 	}
 
 	/**
@@ -1505,6 +1742,7 @@ export class Network {
 		let skippedBackoff = 0;
 		let skippedNoReachable = 0;
 		let skippedSuppressed = 0;
+		let skippedQuarantined = 0;
 		const localCidrs = getLocalCidrs(now);
 		for (const peer of allPeers) {
 			if (epoch !== this.runEpoch) return; // stop() hit — this run's state is gone
@@ -1512,7 +1750,6 @@ export class Network {
 			if (connectedSet.has(pid)) {
 				this.redialBackoff.delete(pid); // clear on observed connection
 				this.unreachableQuarantine.delete(pid);
-				this.noReachableSince.delete(pid);
 				if (this.sharesJoinedTopicWith(pid)) this.clearRedialSuppressionForPeer(pid); // back on a shared topic → resume
 				continue;
 			}
@@ -1522,15 +1759,29 @@ export class Network {
 				skippedSuppressed++;
 				continue;
 			}
-			const bo = this.redialBackoff.get(pid);
-			if (bo && bo.nextAttempt > now) {
-				skippedBackoff++;
+			// A peer evicted as unreachable is normally gone from the peerStore and so
+			// cannot be a candidate at all — but that delete is best-effort, and mDNS,
+			// identify and peer-announce can all put the entry back. Honour the quarantine
+			// here too, or the very next tick dials the peer we just wrote off. Configured
+			// peers are never quarantined; the check is stated anyway so no future writer
+			// can hold user data back by adding one.
+			const quarantinedAt = this.unreachableQuarantine.get(pid);
+			if (quarantinedAt !== undefined && now - quarantinedAt < UNREACHABLE_QUARANTINE_MS && !this.configuredBootstrapPeerIDs.has(pid)) {
+				skippedQuarantined++;
 				continue;
 			}
+			const bo = this.redialBackoff.get(pid);
 			// Pre-filter peerStore multiaddrs through the dial gater. If every
 			// known address is unreachable from this node (e.g. only LAN addrs
 			// of a foreign subnet), skip the dial entirely — otherwise libp2p
 			// returns "no valid addresses" after still spending a slot on us.
+			//
+			// Deliberately ahead of the backoff gate below: a peer waiting out a
+			// backoff is precisely the one the reset has to reach, since it carries
+			// the accumulated window that would evict it on the first failure after
+			// the route returns. The cost is one gater pass per parked peer per tick
+			// — address parsing and integer compares against a cached CIDR list,
+			// nothing next to the 5 s dial it guards.
 			const entries = peer.addresses ?? [];
 			const reachable: string[] = [];
 			for (const a of entries) {
@@ -1540,31 +1791,33 @@ export class Network {
 			}
 			if (reachable.length === 0) {
 				skippedNoReachable++;
-				// No dialable address ⇒ the failure counter can never fire for this
-				// peer. Track how long it has been in this state; a disconnected peer
-				// with zero reachable addrs for the whole eviction window is as gone
-				// as one that failed every dial.
+				// Skipped, never evicted. "Unreachable" here means the dial gater rejects
+				// every stored address FROM WHERE WE STAND, which says nothing about the
+				// peer: one reachable only over a LAN or VPN subnet looks exactly like this
+				// the moment that interface drops. No dial happens on this path, so there is
+				// no failure evidence to weigh either — and "we hold some other connection"
+				// does not supply any, since the Ethernet link stays up while the VPN dies.
+				// The peer is therefore parked, not purged: it stops being dialled, its
+				// discovered rows expire on their own staleness clock, and libp2p's own
+				// maxPeerAge retires the peerStore entry. Eviction stays with the dial-failure
+				// path below, which at least tried addresses this host could route to.
 				//
-				// "Unreachable" here means the dial gater rejects every stored address
-				// from where WE stand, which is not the same as the peer being gone: a
-				// peer reachable only over a LAN or VPN subnet stops passing the filter
-				// the moment that interface drops, through no fault of its own. So this
-				// path takes the same two safeguards as the dial-failure path below —
-				// evidence that we are online at all, and a liveness re-check right
-				// before acting — on top of the configured-peer exemption.
-				const weAreOnline = this.hasConnectionOtherThan(peer.id);
-				const since = nextEvictionWindowStart(weAreOnline, this.noReachableSince.get(pid), now);
-				this.noReachableSince.set(pid, since);
-				if (weAreOnline && now - since >= REDIAL_EVICT_MIN_MS && !this.configuredBootstrapPeerIDs.has(pid) && this.node?.getConnections(peer.id).length === 0) {
-					this.noReachableSince.delete(pid);
-					this.unreachableQuarantine.set(pid, now);
-					this.redialBackoff.delete(pid);
-					this.bootstrapTracker.deleteDiscoveredByPeerID(pid);
-					await this.purgeStalePeer(pid, `no reachable addresses for ${Math.round((now - since) / 60_000)} min`, epoch);
-				}
+				// The stretch also invalidates the evidence collected BEFORE it. That window
+				// means CONTINUOUS unreachability of the peer, and nothing observed while we
+				// had no route to it can be attributed to the peer — so the run of failures
+				// ends here and a fresh window starts once a route returns. Re-stamped on
+				// every tick that finds no route — backoff or not, see the ordering note
+				// above — which costs one map write and keeps the restart point at the end
+				// of the outage rather than its beginning. Pacing (nextAttempt, failCount)
+				// is deliberately kept: the peer still is not answering, and dropping it
+				// would dial every parked peer at once the moment a route appears.
+				if (bo) this.redialBackoff.set(pid, { ...bo, firstFailure: now, evictionFails: 0 });
 				continue;
 			}
-			this.noReachableSince.delete(pid); // addresses came back — reset the clock
+			if (bo && bo.nextAttempt > now) {
+				skippedBackoff++;
+				continue;
+			}
 			candidates.push({ peer, pid, addrSummary: reachable.join(' | '), failCount: bo?.failCount ?? 0 });
 		}
 		// Parallel dial with concurrency=10 via rolling promise pool; caps worst-case
@@ -1662,8 +1915,8 @@ export class Network {
 		};
 		const workers = Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, () => worker());
 		await Promise.all(workers);
-		if (candidates.length > 0 || skippedBackoff > 0 || skippedNoReachable > 0 || skippedSuppressed > 0) {
-			console.debug(`   Re-dial: ${redialSuccess}/${candidates.length} succeeded (${skippedBackoff} skipped by backoff, ${skippedNoReachable} skipped no-reachable-addrs, ${skippedSuppressed} skipped left-peer)`);
+		if (candidates.length > 0 || skippedBackoff > 0 || skippedNoReachable > 0 || skippedSuppressed > 0 || skippedQuarantined > 0) {
+			console.debug(`   Re-dial: ${redialSuccess}/${candidates.length} succeeded (${skippedBackoff} skipped by backoff, ${skippedNoReachable} skipped no-reachable-addrs, ${skippedSuppressed} skipped left-peer, ${skippedQuarantined} skipped quarantined)`);
 		}
 		// Prune backoff entries for peers no longer in peerStore to prevent unbounded growth.
 		// Suppression is NOT pruned this way: leave-network purges the peer from the
@@ -1672,7 +1925,6 @@ export class Network {
 		// bounded by clear-on-rejoin / clear-on-reconnect / stop().
 		const storeSet = new Set(allPeers.map(p => p.id.toString()));
 		for (const pid of this.redialBackoff.keys()) if (!storeSet.has(pid)) this.redialBackoff.delete(pid);
-		for (const pid of this.noReachableSince.keys()) if (!storeSet.has(pid)) this.noReachableSince.delete(pid);
 		// Quarantine entries for peers gossip never mentions again would leak — drop
 		// them once they are far past the window (re-entry from gossip self-cleans).
 		const quarantineCutoff = now - 2 * UNREACHABLE_QUARANTINE_MS;
@@ -1786,6 +2038,11 @@ export class Network {
 				else trace(`[NET] recovery connected on another address of the same peer — ${maStr} left unverified`);
 				break;
 			} catch (err: any) {
+				if (epoch !== this.runEpoch) return;
+				if (configured) {
+					this.noteAddressProbeFailure(canonical);
+					this.bootstrapTracker.recordAddressUnreachable(maStr, err?.message ?? String(err));
+				} else if (pid) this.noteRecoveryDialFailure(pid);
 				console.log(`   ✗ Failed ${maStr}: ${err.message ?? err}`);
 				// Pace this ADDRESS. Re-dial maintenance cannot do it for us: it walks the
 				// peerStore, and a peer that aged out of it never becomes a candidate there
@@ -1809,8 +2066,9 @@ export class Network {
 	 * recovery would pick it up, but only while the node has NO connections at all, so a
 	 * node happily talking to someone else would never notice the tunnel came back.
 	 *
-	 * Runs on the slow promote cadence and honours the same pacing as every other loop,
-	 * so a permanently broken entry costs one dial per window, not one per tick.
+	 * Runs on the slow promote cadence and paces itself per ADDRESS, so a permanently
+	 * broken entry costs one dial per window and cannot starve a sibling address of the
+	 * same peer that does work.
 	 */
 	private async probeParkedConfiguredBootstraps(epoch: number = this.runEpoch): Promise<void> {
 		const node = this.node;
@@ -1918,10 +2176,16 @@ export class Network {
 			if (peer.addresses.length === 0) continue;
 			const addr = peer.addresses[0]!;
 			const base = addr.multiaddr.toString();
-			// Ensure the address terminates in THIS peer's /p2p/<id> — a bare address
-			// gets the suffix appended, and so does a relay address whose only /p2p/
-			// component is the relay's own identity.
-			const maStr = extractDestinationPeerID(addr.multiaddr) === pid ? base : `${base}/p2p/${pid}`;
+			// A bare transport address can be completed with this peer's identity. A relay
+			// circuit ending at the relay can likewise receive its target after p2p-circuit.
+			// Any other address that already names a DIFFERENT destination is poisoned or
+			// stale: appending another /p2p segment would create an invalid direct address.
+			const destination = extractDestinationPeerID(addr.multiaddr);
+			if (destination !== null && destination !== pid && !base.endsWith('/p2p-circuit')) {
+				trace(`[NET] periodic autodial: skipping addr of ${pid.slice(0, 16)} that resolves to ${destination.slice(0, 16)}: ${base}`);
+				continue;
+			}
+			const maStr = destination === pid ? base : `${base}/p2p/${pid}`;
 			maStrings.push(maStr);
 		}
 		if (maStrings.length > 0) {
@@ -1934,24 +2198,67 @@ export class Network {
 		// heartbeatInterval). KEEP_ALIVE handles the TCP layer; gossipsub.direct
 		// handles the gossipsub-stream layer. Evicted peers are removed from the
 		// set in purgeStalePeer, so it no longer grows monotonically.
-		const gossipsub: any = this.pubsub;
-		if (gossipsub?.direct && typeof gossipsub.direct.add === 'function') {
-			let added = 0;
-			for (const peer of allPeers) {
-				const pid = peer.id.toString();
-				if (pid === myID) continue;
-				if (!connectedIDs.has(pid)) continue;
-				// A left-network peer that lingers/reappears in the peerStore must not be
-				// added to the direct set either — its fast reconnect cadence would undo the
-				// leave-network disconnect (same guard as the bootstrap promotion above).
-				if (this.isRedialSuppressed(pid)) continue;
-				if (!gossipsub.direct.has(pid)) {
-					gossipsub.direct.add(pid);
-					added++;
-				}
-			}
-			if (added > 0) trace(`[NET] gossipsub direct: added ${added} connected peer(s) to fast-reconnect set`);
+		let added = 0;
+		for (const peer of allPeers) {
+			const pid = peer.id.toString();
+			if (pid === myID) continue;
+			if (!connectedIDs.has(pid)) continue;
+			if (this.addGossipsubDirectPeer(pid)) added++;
 		}
+		if (added > 0) trace(`[NET] gossipsub direct: added ${added} connected peer(s) to fast-reconnect set`);
+	}
+
+	/**
+	 * Put a peer into the gossipsub `direct` set — never PRUNEd, and reconnected on its
+	 * own fast cadence (directConnectTicks × heartbeatInterval). Removed again by
+	 * {@link purgeStalePeer}. Returns whether this call was the one that added it.
+	 *
+	 * A left-network peer that lingers or reappears in the peerStore is refused: the fast
+	 * reconnect cadence would undo the leave-network disconnect.
+	 */
+	private addGossipsubDirectPeer(peerID: string): boolean {
+		const gossipsub: any = this.pubsub;
+		if (!gossipsub?.direct || typeof gossipsub.direct.add !== 'function') return false;
+		if (this.isRedialSuppressed(peerID)) return false;
+		if (gossipsub.direct.has(peerID)) return false;
+		gossipsub.direct.add(peerID);
+		return true;
+	}
+
+	/** Undo {@link addGossipsubDirectPeer}: no more never-PRUNE, no more fast redial. */
+	private removeGossipsubDirectPeer(peerID: string): void {
+		const gossipsub: any = this.pubsub;
+		if (gossipsub?.direct && typeof gossipsub.direct.delete === 'function') gossipsub.direct.delete(peerID);
+	}
+
+	/**
+	 * Drop the KEEP_ALIVE tag a bootstrap entry earned by answering a dial.
+	 *
+	 * libp2p re-dials anything carrying a keep-alive tag and the connection manager will
+	 * not evict it, so a configured entry the user has deleted stays pinned for the life
+	 * of the run unless the tag goes with it. Kept if a joined network still wants the
+	 * peer — the tag is then no longer the bootstrap lifecycle's to take away.
+	 *
+	 * The merge is bound to the node captured here rather than `this.node`, so a restart
+	 * landing in it cannot untag the same identity on the successor run.
+	 */
+	private clearBootstrapKeepAlive(peerID: string): void {
+		const node = this.node;
+		if (!node) return;
+		if (this.isPeerNeededByJoinedNetwork(peerID)) return;
+		void (async (): Promise<void> => {
+			try {
+				// Asked again inside the write's own turn. The check above ran before this
+				// callback was even scheduled, and a peer that joins a network in between is
+				// one another lishnet is now keeping alive — stripping the tag on the strength
+				// of the earlier answer would let libp2p drop a connection somebody needs.
+				// The node is re-read for the same reason a stale run must not write.
+				if (this.node !== node || this.isPeerNeededByJoinedNetwork(peerID)) return;
+				await node.peerStore.merge(peerIDFromString(peerID), { tags: { [KEEP_ALIVE]: undefined } });
+			} catch (err: any) {
+				trace(`[NET] clearBootstrapKeepAlive failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+			}
+		})();
 	}
 
 	// =========================================================================
@@ -1962,7 +2269,42 @@ export class Network {
 	 * Whether the node is running.
 	 */
 	isRunning(): boolean {
-		return this.node !== null;
+		return this.lifecycle === 'running';
+	}
+
+	/**
+	 * Whether a failed {@link stop} is PERMANENT.
+	 *
+	 * True means libp2p itself could not be stopped: it cannot resume an interrupted stop, so
+	 * every later `stop()` is refused and only a process restart clears the state. False after
+	 * a failed stop means the node is provably down and the failure was in the cleanup that
+	 * follows it, which a retried `stop()` completes.
+	 *
+	 * NEITHER answer makes the instance usable: a failed stop leaves the lifecycle `failed`,
+	 * which refuses `start()` and reads as not running. A shutdown that came through
+	 * {@link cancelRunOperations} has also left {@link dialAbort} aborted, and only a start
+	 * installs a fresh one — so for that caller anything dial-shaped now ends the moment it
+	 * begins. This exists only so a caller can say whether retrying the stop is worth
+	 * anything.
+	 */
+	isStopTerminal(): boolean {
+		return this.nodeStopUnrecoverable;
+	}
+
+	/** Current start/stop phase. Exposed for tests and diagnostics. */
+	getLifecycle(): NetworkLifecycle {
+		return this.lifecycle;
+	}
+
+	/**
+	 * The run this node instance belongs to — see {@link runEpoch}.
+	 *
+	 * For a caller whose SEQUENCE of destructive calls has to answer to one node: taking the
+	 * default epoch per call binds each of them to whatever run is current at that moment, so
+	 * a sequence that outlives a stop finishes against the node that replaced it.
+	 */
+	getRunEpoch(): number {
+		return this.runEpoch;
 	}
 
 	/**
@@ -1982,11 +2324,65 @@ export class Network {
 	 * peer-announce gossip passes the networkID of the topic the announce arrived
 	 * on, so discovered peers are tracked per-network too. Pass `null` only for
 	 * additions with no owning network, in which case stats are skipped.
+	 *
+	 * Reports whether the whole list was PROCESSED — see {@link BootstrapDialResult}. A
+	 * caller that records what it installed needs to know the difference: an address the
+	 * loop never reached is not installed and no comparison of lists will ever say so.
 	 */
-	async addBootstrapPeers(peers: string[], networkID: string | null = null, origin: BootstrapPeerOrigin = 'discovered'): Promise<void> {
+	async addBootstrapPeers(peers: string[], networkID: string | null = null, origin: BootstrapPeerOrigin = 'discovered'): Promise<BootstrapDialResult> {
+		// Group the run's status writes. Intake performs two per address — a pending mark
+		// and an outcome — and each rebuilds and publishes the network's whole peer list,
+		// so one 128-address announce used to cost 256 snapshots and 256 WebSocket pushes
+		// of which the UI kept the last. The frame flushes periodically rather than only
+		// at close, so a list of slow dials still reports progress as it goes.
+		if (networkID === null) return this.dialBootstrapEntries(peers, networkID, origin);
+		return await this.bootstrapTracker.batchDebounced(networkID, () => this.dialBootstrapEntries(peers, networkID, origin));
+	}
+
+	/**
+	 * Abandon this run's outstanding network work, without stopping the node.
+	 *
+	 * For a shutdown that WAITS for the operations already under way. Neither half of that
+	 * work ends by itself: a join parked on a sequential walk of unreachable bootstrap
+	 * addresses costs one connection timeout per address, and a leave's per-peer teardown
+	 * awaits a `hangUp` and peerStore writes that have no deadline at all — so a single
+	 * unresponsive peer used to hold the shutdown, and the catalog behind it, indefinitely.
+	 *
+	 * Idempotent, and only ever the current run: {@link start} installs a fresh controller.
+	 */
+	cancelRunOperations(): void {
+		this.dialAbort.abort();
+	}
+
+	/** The per-network configured-address set, created on first use. */
+	private configuredIn(networkID: string): Set<string> {
+		let set = this.configuredBootstrapAddressesByNet.get(networkID);
+		if (!set) {
+			set = new Set<string>();
+			this.configuredBootstrapAddressesByNet.set(networkID, set);
+		}
+		return set;
+	}
+
+	/**
+	 * What a status row in THIS network should call the address.
+	 *
+	 * Scoped deliberately — see {@link configuredBootstrapAddressesByNet}. Re-read after a
+	 * dial as well as before it: a configured install that arrives while gossip already
+	 * holds the single-flight claim registers the address and then skips, so the dial in
+	 * flight is the one that has to answer for it, and it decided its classification
+	 * before that registration existed.
+	 */
+	private classifyBootstrapOrigin(origin: BootstrapPeerOrigin, networkID: string | null, canonicalAddress: string): BootstrapPeerOrigin {
+		if (origin === 'configured') return 'configured';
+		return networkID !== null && this.configuredBootstrapAddressesByNet.get(networkID)?.has(canonicalAddress) ? 'configured' : 'discovered';
+	}
+
+	/** The dial loop behind {@link addBootstrapPeers}; see there for the batching wrapper. */
+	private async dialBootstrapEntries(peers: string[], networkID: string | null, origin: BootstrapPeerOrigin): Promise<BootstrapDialResult> {
 		if (!this.node) {
 			console.error('Network not started - cannot add bootstrap peers');
-			return;
+			return 'incomplete';
 		}
 		const myPeerID = this.node.peerId.toString();
 		const localCidrs = getLocalCidrs();
@@ -2003,6 +2399,9 @@ export class Network {
 		// sweep until restart. Exactly the resurrection this eviction work exists to
 		// prevent.
 		const epoch = this.runEpoch;
+		// Captured, not re-read: the claims this run takes have to be released back into
+		// the same object it took them from, whatever teardown has since put in the field.
+		const inFlight = this.inFlightBootstrapDials;
 		const generation = this.bootstrapGenerationOf(networkID);
 		const superseded = (): boolean => epoch !== this.runEpoch || generation !== this.bootstrapGenerationOf(networkID);
 		for (const peer of peers) {
@@ -2024,6 +2423,34 @@ export class Network {
 				// string: `/p2p/<us>/p2p-circuit/p2p/<remote>` contains our ID as the
 				// relay hop yet targets a remote peer and must not be dropped as self.
 				if (peerID === myPeerID) continue;
+				// What this address IS outranks what this caller calls it. The status tracker
+				// already keeps the stronger classification when a row is overwritten, so a
+				// gossip re-announcement of an address the user configured lands on a
+				// CONFIGURED row — and the dial has to follow the same rule or the two
+				// disagree. They did: the announce dialed without `force`, libp2p handed back
+				// the connection the peer happened to hold on a DIFFERENT address, and the
+				// discovered branch recorded 'connected' on a configured row whose address had
+				// never been contacted. The user then saw a green light on a broken entry.
+				const canonicalAddress = normalizeMultiaddrForCompare(ma.toString());
+				let effectiveOrigin: BootstrapPeerOrigin = this.classifyBootstrapOrigin(origin, networkID, canonicalAddress);
+				// Gossip does not get to turn a configured address into an unpaced forced
+				// probe. The configured classification is still the right one for the status
+				// row and for exact-endpoint verification, but a fleet can repeat the same
+				// address on every announce cycle. If the endpoint is already connected there
+				// is nothing left to prove; after a failure, share the same per-address backoff
+				// used by the configured recovery loops. An explicit configured write still
+				// bypasses this gate and probes immediately.
+				const gossipReprobeOfConfiguredAddress = origin === 'discovered' && effectiveOrigin === 'configured';
+				if (gossipReprobeOfConfiguredAddress) {
+					if (this.hasConnectionOnEndpoint(ma)) {
+						this.bootstrapTracker.recordAddressReachable(peer);
+						continue;
+					}
+					if (!this.isAddressProbeDue(canonicalAddress, Date.now())) continue;
+				}
+				// Claiming the peer as configured stays keyed on what the CALLER declared:
+				// this branch also lifts leave-network suppression, which is the user's
+				// decision to reverse, never gossip's.
 				if (peerID && origin === 'configured') {
 					this.configuredBootstrapPeerIDs.add(peerID);
 					// A re-configured bootstrap peer means its network was (re-)joined — it
@@ -2051,8 +2478,24 @@ export class Network {
 				// row instead: the user wrote it down and needs to see why nothing happens with it.
 				if (shouldDenyDial(ma, localCidrs)) {
 					trace(`[NET] addBootstrapPeers skip non-routable: ${peer}`);
-					if (origin === 'configured') this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'error', 'address is not routable from this host', null, origin);
+					if (effectiveOrigin === 'configured') {
+						this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'error', 'address is not routable from this host', null, effectiveOrigin);
+						if (gossipReprobeOfConfiguredAddress) this.noteAddressProbeFailure(canonicalAddress);
+					}
 					continue;
+				}
+				// Pacing, before the quarantine is consulted: gossip mentions a dead peer
+				// on every announce cycle, and this path used to answer each one with a
+				// fresh 10 s dial because it read the quarantine and nothing else. The
+				// backoff is the record every other dial path already waits on, and
+				// checking it FIRST matters — an expired quarantine buys exactly one probe,
+				// which must not be spent by a dial the backoff was going to refuse.
+				if (peerID && effectiveOrigin === 'discovered') {
+					const backoff = this.redialBackoff.get(peerID);
+					if (backoff !== undefined && backoff.nextAttempt > Date.now()) {
+						trace(`[NET] addBootstrapPeers skip backoff: ${peerID.slice(0, 16)}`);
+						continue;
+					}
 				}
 				// Skip peers recently evicted as unreachable — nodes that still remember
 				// them keep gossiping their addrs, and without this window every mention
@@ -2121,7 +2564,7 @@ export class Network {
 				// quarantine above do that.
 				if (peerID && origin === 'configured') this.bootstrapPeerIDs.add(peerID);
 				console.debug('Adding bootstrap peer:', peer);
-				this.bootstrapTracker.markPending(networkID, peer, peerID, origin);
+				this.bootstrapTracker.markPending(networkID, peer, peerID, effectiveOrigin);
 				try {
 					// Always hand the address to libp2p and let IT decide whether a dial is
 					// needed. Skipping the call whenever any connection to the peer existed
@@ -2154,6 +2597,12 @@ export class Network {
 					const dialOptions = { signal: AbortSignal.timeout(BOOTSTRAP_DIAL_TIMEOUT_MS), ...(origin === 'configured' ? { force: true } : {}) };
 					const conn = await this.node.dial(ma, dialOptions);
 					const verifiedThisAddr = isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString());
+					// A configured install may have landed while this dial was open and skipped
+					// on the single-flight claim, leaving this run to answer for it. Re-reading
+					// the classification hands it the configured rules it never got to apply —
+					// including the one below that refuses to turn a configured row green on a
+					// connection that came back on some other address.
+					effectiveOrigin = this.classifyBootstrapOrigin(origin, networkID, canonicalAddress);
 					// A dial already in flight cannot be called back: hangUp only closes
 					// connections that ALREADY exist, so a leave-network landing mid-dial finds
 					// nothing to close and this connection surfaces a moment after the cleanup
@@ -2163,10 +2612,19 @@ export class Network {
 					// by leave-network and sits in the suppression set, or we left the network
 					// this dial belonged to before ever seeing the peer as one of its members,
 					// in which case it never entered that set at all.
+					//
+					// The EPOCH is checked first and separately from the full `superseded()`:
+					// a different node instance means none of this run's suppression or
+					// subscription state describes the node that would be torn at, so the
+					// destructive branch must not run at all. A bumped GENERATION is the
+					// opposite case — the network was left or its list replaced on the SAME
+					// node, which is precisely when this connection needs closing, so it may
+					// not short-circuit ahead of it.
+					if (epoch !== this.runEpoch) return 'incomplete';
 					if (peerID && networkID && (this.isRedialSuppressed(peerID) || !this.isTopicSubscribed(networkID)) && !this.isPeerNeededByJoinedNetwork(peerID)) {
 						trace(`[NET] bootstrap dial landed after leave, disconnecting: ${peerID.slice(0, 16)}`);
-						await this.disconnectPeer(peerID, networkID);
-						return;
+						await this.disconnectPeer(peerID, networkID, epoch);
+						return 'incomplete';
 					}
 					// The configuration this dial belonged to was replaced while the dial was
 					// still in flight. Returning alone leaks the connection just opened: the
@@ -2237,7 +2695,8 @@ export class Network {
 					// survive through another route is exactly what the row exists to expose.
 					// Discovered rows carry the weaker "the peer answered" meaning and are
 					// recorded either way.
-					if (origin === 'configured' && !verifiedThisAddr) {
+					if (effectiveOrigin === 'configured' && !verifiedThisAddr) {
+						this.noteAddressProbeFailure(canonicalAddress);
 						trace(`[NET] bootstrap addr unverified (connection came back on another address), left pending: ${peer}`);
 						continue;
 					}
@@ -2255,21 +2714,21 @@ export class Network {
 					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, null, origin);
 					console.log('✓ Connected to new bootstrap peer');
 				} catch (err: any) {
-					if (superseded()) return;
+					if (superseded()) return 'incomplete';
 					const message = err?.message ?? String(err);
 					const kind = classifyBootstrapError(message);
 					// The probe the expired quarantine allowed has failed, so close the window
 					// again rather than letting the next announce buy another dial.
 					if (consumedQuarantineAt !== null && peerID) this.unreachableQuarantine.set(peerID, Date.now());
 					const actualPeerID = kind === 'identity-mismatch' ? extractActualPeerID(message) : null;
-					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, kind, message, actualPeerID, origin);
+					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, kind, message, actualPeerID, effectiveOrigin);
 					// [NET-MISMATCH] richer log for identity-mismatch — single line containing
 					// origin (configured / discovered from peer-announce), multiaddr,
 					// expected peerID and the actual peerID Noise reported. Makes it
 					// trivial to grep `[NET-MISMATCH]` and diff what the catalog has
 					// vs reality, even before the UI shows the same data.
 					if (kind === 'identity-mismatch') {
-						console.log(`[NET-MISMATCH] origin=${origin} net=${networkID?.slice(0, 8) ?? 'none'} addr=${peer} expected=${peerID ?? 'none'} actual=${actualPeerID ?? 'unparsed'}`);
+						console.log(`[NET-MISMATCH] origin=${effectiveOrigin} net=${networkID?.slice(0, 8) ?? 'none'} addr=${peer} expected=${peerID ?? 'none'} actual=${actualPeerID ?? 'unparsed'}`);
 					} else {
 						console.log(`⚠️  Could not connect to bootstrap peer (${kind}): ${peer} — ${message}`);
 					}
@@ -2339,7 +2798,7 @@ export class Network {
 						// status entry — there's no saved config row to "fix" and leaving
 						// it visible just adds UI noise. For CONFIGURED entries, keep
 						// it so the user can decide to update or remove the saved row.
-						if (origin === 'discovered' && networkID) {
+						if (effectiveOrigin === 'discovered' && networkID) {
 							this.bootstrapTracker.deletePeer(networkID, peer);
 						}
 					}
@@ -2357,6 +2816,7 @@ export class Network {
 				console.log('⚠️  Skipping invalid multiaddr:', peer, '-', error.message);
 			}
 		}
+		return 'completed';
 	}
 
 	/**
@@ -2371,10 +2831,14 @@ export class Network {
 	 * True when this node holds a live connection to somebody OTHER than the given
 	 * peer.
 	 *
-	 * This is the difference between "that peer is gone" and "we are the ones who
-	 * are offline", and eviction is only ever entitled to the first reading. The
-	 * peer being judged is excluded because a connection to it would make the
-	 * question moot — that case is handled separately, right before the purge.
+	 * It tells a total local outage from a working link, no more than that: a host whose
+	 * VPN dropped still answers true off its LAN connections. So it can only ever DISCOUNT
+	 * evidence — a dial that failed while we could reach nobody proves nothing about the
+	 * peer — and never stand in for evidence on its own. Eviction is decided by the dial
+	 * failures themselves; this is the veto over counting them.
+	 *
+	 * The peer being judged is excluded because a connection to it would make the question
+	 * moot — that case is handled separately, right before the purge.
 	 */
 	private hasConnectionOtherThan(peer: PeerID): boolean {
 		return !!this.node && this.node.getConnections().some(connection => !connection.remotePeer.equals(peer));
@@ -3029,6 +3493,7 @@ export class Network {
 		const peerId = detail?.peerId;
 		if (!topic?.startsWith(LISH_TOPIC_PREFIX) || !peerId) return;
 		this.peerAnnounce.noteMember(topic, peerId);
+		this.bootstrapTracker.recordNetworkMember(topic.slice(LISH_TOPIC_PREFIX.length), peerId);
 	}
 
 	/** Recently-seen subscribers of a lishnet's topic (TTL union, not just the live snapshot). */
@@ -3160,9 +3625,41 @@ export class Network {
 	 *
 	 * `networkID` is the lishnet the peer is being left with — the peer is suppressed
 	 * under it so rejoining that lishnet lifts exactly its peers.
+	 *
+	 * `epoch` binds THIS CALL to the node instance it started on, for the same reason
+	 * {@link purgeStalePeer} takes one: this awaits twice, and re-reading `this.node` after a
+	 * stop()/start() used to hand back the NEW node — so the hangUp and the purge landed on
+	 * an instance that had never heard of this leave. It binds one call for one peer and
+	 * nothing more: a caller walking several peers has to capture {@link getRunEpoch} once
+	 * and pass it in, or the default re-reads the counter per peer and the later peers of a
+	 * leave that outlived a restart are torn off the node that replaced it.
+	 *
+	 * Cancelling either await is safe to do MID-CALL, which is the property that makes binding
+	 * them to a signal sound at all. `peerStore.merge` gates only its per-peer write lock and
+	 * its read of the existing record on the signal; the write itself is one whole-record
+	 * `datastore.put` that the peer store never passes options to, so an aborted merge has
+	 * either written the complete new record or written nothing — never half of one. And
+	 * `hangUp` funnels into `closeConnections`, which catches the abort and calls
+	 * `connection.abort()`, so a cancelled hangUp force-closes the connection rather than
+	 * leaving a half-open one for a later path to read as live.
+	 *
+	 * Every step is bound to this run's cancellation as well — see {@link cancelRunOperations}.
+	 * A shutdown waits for the leave that is running, and the peer teardown a leave is made of
+	 * has no deadline of its own: one `hangUp` on a peer that never acknowledges held the whole
+	 * stop, and the catalog with it, for as long as that peer felt like it. Cancelled, the
+	 * remaining peers are given up on. The cost is real but small: their peerStore records and
+	 * keep-alive tags outlive the run, so libp2p may redial them after a restart. Nothing here
+	 * comes back to tidy that up — they are ordinary non-configured peers, so eviction and the
+	 * next leave of that lishnet are what eventually reach them. The alternative is a shutdown
+	 * that never returns at all.
 	 */
-	async disconnectPeer(peerID: string, networkID: string): Promise<void> {
-		if (!this.node) return;
+	async disconnectPeer(peerID: string, networkID: string, epoch: number = this.runEpoch): Promise<void> {
+		const node = this.node;
+		if (!node || epoch !== this.runEpoch) return;
+		// Captured beside the node and for the same reason: a controller a later start
+		// installed does not speak for the run this call belongs to.
+		const signal = this.dialAbort.signal;
+		if (signal.aborted) return;
 		let pid: PeerID;
 		try {
 			pid = peerIDFromString(peerID);
@@ -3187,14 +3684,17 @@ export class Network {
 		// undefined as the tag value removes it (per @libp2p/interface PeerStore
 		// merge semantics).
 		try {
-			await this.node.peerStore.merge(pid, {
-				tags: { 'keep-alive-fleet': undefined, [KEEP_ALIVE]: undefined },
-			});
+			await node.peerStore.merge(pid, { tags: { 'keep-alive-fleet': undefined, [KEEP_ALIVE]: undefined } }, { signal });
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: tag removal failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
+		if (epoch !== this.runEpoch) return;
+		if (await this.releaseIfClaimed(node, pid, peerID, networkID, signal)) return;
+		// The recheck itself awaits, so the run can end inside it — and a `false` from it is
+		// permission to go on tearing down, which must not be spent on the next node instance.
+		if (epoch !== this.runEpoch) return;
 		try {
-			await this.node.hangUp(pid);
+			await node.hangUp(pid, { signal });
 			trace(`[NET] disconnectPeer: hung up ${peerID.slice(0, 16)}`);
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: hangUp failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
@@ -3279,15 +3779,19 @@ export class Network {
 		return this.bootstrapTracker.getStatus(networkID);
 	}
 
-	/** Drop bootstrap status entries no longer in the configured peer list (after an update). */
+	/** Replace one network's configured addresses and drop status entries removed by the update. */
 	pruneBootstrapStatus(networkID: string, keepMultiaddrs: string[]): void {
 		this.bumpBootstrapGeneration(networkID);
+		const configured = new Set(keepMultiaddrs.map(normalizeMultiaddrForCompare));
+		if (configured.size === 0) this.configuredBootstrapAddressesByNet.delete(networkID);
+		else this.configuredBootstrapAddressesByNet.set(networkID, configured);
 		this.bootstrapTracker.pruneEntries(networkID, keepMultiaddrs);
 	}
 
 	/** Reset the bootstrap status for a single network (used when re-joining). */
 	resetBootstrapStatus(networkID: string): void {
 		this.bumpBootstrapGeneration(networkID);
+		this.configuredBootstrapAddressesByNet.delete(networkID);
 		this.bootstrapTracker.resetNetwork(networkID);
 	}
 
@@ -3315,82 +3819,133 @@ export class Network {
 
 	/**
 	 * Subscribe to a lishnet topic. The node will receive pubsub messages for this network.
+	 *
+	 * Returns whether the subscription actually happened. Reporting nothing let the caller
+	 * record a network as joined after a no-op on a stopped node: `joinedNetworks` claiming
+	 * membership of a topic nobody is subscribed to, which a later rejoin then treated as
+	 * "already joined" and skipped.
 	 */
-	subscribeTopic(networkID: string): void {
+	subscribeTopic(networkID: string): boolean {
 		if (!this.pubsub) {
 			console.error('Network not started - cannot subscribe to topic');
-			return;
+			return false;
 		}
 		const topic = lishTopic(networkID);
-		this.pubsub.subscribe(topic);
-		// Register per-topic score parameters so gossipsub can measure peer behaviour
-		// (P1 timeInMesh, P2 firstMessageDeliveries, P4 invalidMessageDeliveries) for
-		// this topic. Without this, per-topic score is always 0 → acceptPXThreshold
-		// unreachable for non-bootstrap peers → PX limited to bootstrap-sourced peers only.
-		// P3 (meshMessageDeliveries) intentionally disabled: false-positive killer in
-		// low-traffic topics per Ethereum consensus research.
-		const scoreSvc = (this.pubsub as any).score;
-		if (scoreSvc?.params?.topics) {
-			// Use createTopicScoreParams() helper from gossipsub: it merges our overrides
-			// onto defaultTopicScoreParams. This guarantees every numeric field is defined
-			// (including any new fields a future library upgrade may add), preventing the
-			// `0 * undefined = NaN` propagation in PeerScore.refreshScores() that
-			// previously surfaced as NaN per-peer scores → silent exclusion from
-			// gossipsub floodPublish (NaN >= publishThreshold === false in JS).
-			scoreSvc.params.topics[topic] = createTopicScoreParams({
-				topicWeight: 0.5,
-				timeInMeshWeight: 0.01,
-				timeInMeshQuantum: 1000,
-				timeInMeshCap: 300,
-				firstMessageDeliveriesWeight: 0.5,
-				firstMessageDeliveriesDecay: 0.998,
-				firstMessageDeliveriesCap: 100,
-				// P3 (meshMessageDeliveries) and P3b (meshFailurePenalty) intentionally
-				// disabled via weight=0 — defaults supply finite numbers for the related
-				// decay/cap/threshold/activation/window fields so the unused arithmetic
-				// in refreshScores still yields 0 instead of NaN.
-				meshMessageDeliveriesWeight: 0,
-				meshFailurePenaltyWeight: 0,
-				// invalidMessageDeliveriesWeight tuned to -5 (default would be -1, but
-				// even -1 multiplied by topicWeight=0.5 plus quadratic invalidMessages²
-				// quickly produces -320 scores that graylist half the fleet after every
-				// coordinated restart. Invalid messages during warmup are frequently
-				// caused by signature races at peer:connect, not malicious publishers —
-				// the severe default penalty is inappropriate for trusted-fleet setups.
-				invalidMessageDeliveriesWeight: -5,
-				invalidMessageDeliveriesDecay: 0.9,
-			});
-			console.log(`[NET] gossipsub score registered for ${topic}`);
-		} else {
-			trace(`[NET] gossipsub score service not available for ${topic}`);
-		}
-		// Register the Want handler for this network. TopicHandler is sync (returns void) but
-		// handleWant is async — a rejection from any async operation inside it (dial failure,
-		// CodedError from closed stream, etc.) would otherwise propagate as unhandledRejection.
-		// Catch here so the pubsub dispatch loop remains isolated from per-handler failures.
-		const handler: TopicHandler = (data, from): void => {
-			trace(`[NET] pubsub ${topic}: ${data['type']}`);
-			if (data['type'] === 'want') {
-				this.lishHandlers.handleWant(data as WantMessage, networkID, from).catch(err => {
-					trace(`[NET] handleWant failed: ${err?.message ?? err}`);
+		const pubsub = this.pubsub;
+		const wasSubscribed = pubsub.getTopics().includes(topic);
+		const previousHandlers = this.topicHandlers.get(topic);
+		const scoreTopics = (pubsub as any).score?.params?.topics;
+		const hadScoreParams = scoreTopics ? Object.prototype.hasOwnProperty.call(scoreTopics, topic) : false;
+		const previousScoreParams = scoreTopics?.[topic];
+		const timersBefore = new Set(this.delayedPeerCountTimers);
+		let subscriptionMayHaveChanged = false;
+		try {
+			subscriptionMayHaveChanged = true;
+			pubsub.subscribe(topic);
+			// Register per-topic score parameters so gossipsub can measure peer behaviour
+			// (P1 timeInMesh, P2 firstMessageDeliveries, P4 invalidMessageDeliveries) for
+			// this topic. Without this, per-topic score is always 0 → acceptPXThreshold
+			// unreachable for non-bootstrap peers → PX limited to bootstrap-sourced peers only.
+			// P3 (meshMessageDeliveries) intentionally disabled: false-positive killer in
+			// low-traffic topics per Ethereum consensus research.
+			const scoreSvc = (pubsub as any).score;
+			if (scoreSvc?.params?.topics) {
+				// Use createTopicScoreParams() helper from gossipsub: it merges our overrides
+				// onto defaultTopicScoreParams. This guarantees every numeric field is defined
+				// (including any new fields a future library upgrade may add), preventing the
+				// `0 * undefined = NaN` propagation in PeerScore.refreshScores() that
+				// previously surfaced as NaN per-peer scores → silent exclusion from
+				// gossipsub floodPublish (NaN >= publishThreshold === false in JS).
+				scoreSvc.params.topics[topic] = createTopicScoreParams({
+					topicWeight: 0.5,
+					timeInMeshWeight: 0.01,
+					timeInMeshQuantum: 1000,
+					timeInMeshCap: 300,
+					firstMessageDeliveriesWeight: 0.5,
+					firstMessageDeliveriesDecay: 0.998,
+					firstMessageDeliveriesCap: 100,
+					// P3 (meshMessageDeliveries) and P3b (meshFailurePenalty) intentionally
+					// disabled via weight=0 — defaults supply finite numbers for the related
+					// decay/cap/threshold/activation/window fields so the unused arithmetic
+					// in refreshScores still yields 0 instead of NaN.
+					meshMessageDeliveriesWeight: 0,
+					meshFailurePenaltyWeight: 0,
+					// invalidMessageDeliveriesWeight tuned to -5 (default would be -1, but
+					// even -1 multiplied by topicWeight=0.5 plus quadratic invalidMessages²
+					// quickly produces -320 scores that graylist half the fleet after every
+					// coordinated restart. Invalid messages during warmup are frequently
+					// caused by signature races at peer:connect, not malicious publishers —
+					// the severe default penalty is inappropriate for trusted-fleet setups.
+					invalidMessageDeliveriesWeight: -5,
+					invalidMessageDeliveriesDecay: 0.9,
 				});
-			} else if (data['type'] === 'peer-announce') {
-				this.peerAnnounce.handle(data as unknown as PeerAnnounceMessage, networkID, from).catch(err => {
-					trace(`[NET] handlePeerAnnounce failed: ${err?.message ?? err}`);
-				});
-			} else if (data['type'] === 'searchLishs') {
-				this.lishHandlers.handleSearchLishs(data as SearchLishsMessage, networkID, from).catch(err => {
-					trace(`[NET] handleSearchLishs failed: ${err?.message ?? err}`);
-				});
+				console.log(`[NET] gossipsub score registered for ${topic}`);
+			} else {
+				trace(`[NET] gossipsub score service not available for ${topic}`);
 			}
-		};
-		if (!this.topicHandlers.has(topic)) this.topicHandlers.set(topic, new Set());
-		this.topicHandlers.get(topic)!.add(handler);
-		console.log(`✓ Subscribed to lishnet topic: ${topic}`);
-		// GossipSub mesh needs time to rebuild after subscribe — schedule delayed peer count checks
-		setTimeout(() => this.schedulePeerCountCheck(), 2000);
-		setTimeout(() => this.schedulePeerCountCheck(), 5000);
-		setTimeout(() => this.schedulePeerCountCheck(), 15000);
+			// Register the Want handler for this network. TopicHandler is sync (returns void) but
+			// handleWant is async — a rejection from any async operation inside it (dial failure,
+			// CodedError from closed stream, etc.) would otherwise propagate as unhandledRejection.
+			// Catch here so the pubsub dispatch loop remains isolated from per-handler failures.
+			const handler: TopicHandler = (data, from): void => {
+				trace(`[NET] pubsub ${topic}: ${data['type']}`);
+				if (data['type'] === 'want') {
+					this.lishHandlers.handleWant(data as WantMessage, networkID, from).catch(err => {
+						trace(`[NET] handleWant failed: ${err?.message ?? err}`);
+					});
+				} else if (data['type'] === 'peer-announce') {
+					this.peerAnnounce.handle(data as unknown as PeerAnnounceMessage, networkID, from).catch(err => {
+						trace(`[NET] handlePeerAnnounce failed: ${err?.message ?? err}`);
+					});
+				} else if (data['type'] === 'searchLishs') {
+					this.lishHandlers.handleSearchLishs(data as SearchLishsMessage, networkID, from).catch(err => {
+						trace(`[NET] handleSearchLishs failed: ${err?.message ?? err}`);
+					});
+				}
+			};
+			// One handler per topic, replacing rather than joining any earlier one. The set is
+			// keyed by function identity and every call builds a fresh closure, so a second
+			// subscribe to a topic already held used to leave TWO handlers behind — and the
+			// dispatch loop runs all of them, which means every WANT, search and peer-announce
+			// on that topic was answered twice. Two maintenance operations that each stop and
+			// start the node (identity import, factory reset) reach exactly that: both run
+			// startEnabledNetworks and both subscribe the same topics, milliseconds apart.
+			this.topicHandlers.set(topic, new Set([handler]));
+			console.log(`✓ Subscribed to lishnet topic: ${topic}`);
+			// GossipSub mesh needs time to rebuild after subscribe — schedule delayed peer count checks
+			for (const delay of [2000, 5000, 15000]) this.armDelayedPeerCountCheck(delay);
+			return true;
+		} catch (err) {
+			const rollbackErrors: unknown[] = [];
+			for (const timer of this.delayedPeerCountTimers) {
+				if (timersBefore.has(timer)) continue;
+				clearTimeout(timer);
+				this.delayedPeerCountTimers.delete(timer);
+			}
+			try {
+				if (previousHandlers) this.topicHandlers.set(topic, previousHandlers);
+				else this.topicHandlers.delete(topic);
+			} catch (rollbackError) {
+				rollbackErrors.push(rollbackError);
+			}
+			if (scoreTopics) {
+				try {
+					if (hadScoreParams) scoreTopics[topic] = previousScoreParams;
+					else delete scoreTopics[topic];
+				} catch (rollbackError) {
+					rollbackErrors.push(rollbackError);
+				}
+			}
+			if (subscriptionMayHaveChanged && !wasSubscribed) {
+				try {
+					pubsub.unsubscribe(topic);
+				} catch (rollbackError) {
+					rollbackErrors.push(rollbackError);
+				}
+			}
+			if (rollbackErrors.length > 0) throw new AggregateError([err, ...rollbackErrors], `Subscribing to ${topic} failed and rollback was incomplete`);
+			throw err;
+		}
 	}
 
 	/**
@@ -3535,9 +4090,23 @@ export class Network {
 			console.error('Network not started');
 			return;
 		}
+		await Network.publishOn(this.pubsub, topic, data);
+	}
+
+	/**
+	 * Publish over a SPECIFIC pubsub instance rather than whatever `this.pubsub` is now.
+	 *
+	 * A long-running emitter captures the pubsub of the run it started in and then awaits
+	 * — repeatedly, once per topic. Routing those later publishes through
+	 * {@link broadcast} re-reads the field, so a stop/start landing in one of the awaits
+	 * put the OLD run's payload (its identity, its addresses, its peerStore snapshot) onto
+	 * the NEW node's topics. Binding the publish to the captured transport makes that
+	 * impossible instead of merely unlikely.
+	 */
+	static async publishOn(pubsub: any, topic: string, data: Record<string, any>): Promise<void> {
 		trace(`[NET] broadcast ${topic}: ${data['type']}`);
 		const encoded = new TextEncoder().encode(JSON.stringify(data));
-		const result = await this.pubsub.publish(topic, encoded);
+		const result = await pubsub.publish(topic, encoded);
 		const recips = (result as any)?.recipients?.map((p: any) => p.toString().slice(0, 12)) ?? [];
 		trace(`[NET] broadcast ${topic.slice(0, 28)}: ${data['type']} → recipients=[${recips.join(',')}] count=${recips.length}`);
 	}
@@ -3594,12 +4163,28 @@ export class Network {
 	}
 
 	/**
+	 * Run a destructive identity/datastore operation with the run provably over.
+	 *
+	 * `if (this.node) throw` was not that check. For the whole first half of
+	 * {@link startLocked} the datastore file is already open and the identity already
+	 * read while `this.node` is still null, so the guard passed and the wipe landed
+	 * underneath an in-progress start — a deleted peerstore mid-open, or an identity
+	 * overwritten after it was read but before the node existed. Holding the same
+	 * lifecycle mutex and demanding `stopped` inside it covers every await of a start.
+	 */
+	private async runWhenStopped<T>(what: string, op: () => Promise<T>): Promise<T> {
+		return await this.lifecycleMutex.runExclusive(async () => {
+			if (this.lifecycle !== 'stopped') throw new CodedError(ErrorCodes.INTERNAL_ERROR, `Network must be stopped before ${what}`);
+			return await op();
+		});
+	}
+
+	/**
 	 * Write a new identity private key into the datastore. The network must be stopped.
 	 * Validates the protobuf bytes by attempting to decode them.
 	 */
 	async writeIdentityKey(privateKeyBytes: Uint8Array): Promise<void> {
-		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before writing identity key');
-		await writeIdentityKeyToDatastore(this.dataDir, privateKeyBytes);
+		await this.runWhenStopped('writing identity key', () => writeIdentityKeyToDatastore(this.dataDir, privateKeyBytes));
 	}
 
 	/**
@@ -3607,18 +4192,16 @@ export class Network {
 	 * Next start will generate a fresh key.
 	 */
 	async clearIdentityKey(): Promise<void> {
-		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before clearing identity key');
-		await clearIdentityKeyFromDatastore(this.dataDir);
+		await this.runWhenStopped('clearing identity key', () => clearIdentityKeyFromDatastore(this.dataDir));
 	}
 
 	/**
 	 * Wipe the entire datastore — peerstore (discovered peers, addresses) and the
 	 * identity private key. The network must be stopped. Next start regenerates a
-	 * fresh identity and an empty peerstore. Used by the factory reset.
+	 * fresh identity and an empty peerstore.
 	 */
 	async clearDatastore(): Promise<void> {
-		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before clearing datastore');
-		await clearDatastoreDir(this.dataDir);
+		await this.runWhenStopped('clearing datastore', () => clearDatastoreDir(this.dataDir));
 	}
 
 	/**
@@ -3627,8 +4210,7 @@ export class Network {
 	 * but discovers peers fresh. Used by the factory reset "peers" category.
 	 */
 	async clearPeerstore(): Promise<void> {
-		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before clearing peerstore');
-		await clearPeerstoreOnly(this.dataDir);
+		await this.runWhenStopped('clearing peerstore', () => clearPeerstoreOnly(this.dataDir));
 	}
 
 	/**
@@ -3663,6 +4245,43 @@ export class Network {
 	}
 
 	async stop(): Promise<void> {
+		// Same mutex as start(): a stop that overlapped a start used to tear down a node
+		// the start had just handed back to its caller as successfully started.
+		await this.lifecycleMutex.runExclusive(async () => {
+			// An interrupted libp2p stop cannot be resumed, so a retry would do nothing and
+			// report success — the exact no-op that let a half-stopped node be treated as
+			// down. Refusing is the honest answer; the process has to be restarted.
+			if (this.nodeStopUnrecoverable) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network is in a terminal failed state: its libp2p node could not be stopped and cannot be stopped again — restart the process');
+			this.lifecycle = 'stopping';
+			try {
+				await this.teardown();
+				this.lifecycle = 'stopped';
+			} catch (err) {
+				// teardown kept whatever it could not prove released. Setting `stopped` here
+				// regardless is what let the caller go on to start a second node over the same
+				// identity, port and datastore, and let a factory reset wipe a datastore still
+				// in use. A retry of stop() repeats only the phases that are still outstanding.
+				this.lifecycle = 'failed';
+				throw err;
+			}
+		});
+	}
+
+	/**
+	 * Release everything a run owns. Shared by {@link stop} and by the failure path of
+	 * {@link start}, because a half-built start holds the same resources a finished one
+	 * does — and leaving them behind is what made a failed start unrecoverable.
+	 *
+	 * The per-run bookkeeping below is cleared unconditionally, but each owned resource is
+	 * released only once it is provably gone: the node, the pubsub handle and the identity
+	 * after libp2p has reached `stopped`, the datastore after its own close returned. A stop
+	 * that could not prove the node down has not shown it to be down, and everything that
+	 * follows — closing its datastore, dropping the reference, permitting a new start or a
+	 * wipe — is only safe once it has. That failure propagates and leaves the instance in
+	 * `failed`; because libp2p cannot resume an interrupted stop, that particular `failed`
+	 * is permanent and {@link stop} refuses to pretend otherwise.
+	 */
+	private async teardown(): Promise<void> {
 		this.runEpoch++; // invalidate any in-flight status tick before touching state
 		// The startup workaround is a one-shot timer that can still be pending: left
 		// armed, it fires two seconds into the NEXT run and dials on the old node's behalf.
@@ -3673,6 +4292,10 @@ export class Network {
 		if (this.statusInterval) {
 			clearInterval(this.statusInterval);
 			this.statusInterval = null;
+		}
+		if (this.bootstrapWorkaroundTimer) {
+			clearTimeout(this.bootstrapWorkaroundTimer);
+			this.bootstrapWorkaroundTimer = null;
 		}
 		// The epoch bump makes an in-flight tick bail out, but its `finally` runs
 		// asynchronously — a fast restart would otherwise find the flag still set and
@@ -3714,26 +4337,75 @@ export class Network {
 		this.recoveryCursors.discovered = null;
 		this.recoveryBackoff.clear();
 		this.bootstrapGeneration.clear();
+		// Claims belong to the node being torn down; a dial still settling on the old node
+		// must not lock the address out for the next one — nor, by releasing into a shared
+		// Set, steal the claim the next one has taken. A new object does both.
+		this.inFlightBootstrapDials = new Map<string, BootstrapDialClaim>();
+		this.inFlightDiscoveryDials = new Set<string>();
 		this._lastPeerCounts.clear();
+		this._lastMeshSizes.clear();
+		this.lastMeshChange.clear();
 		this._lastScores.clear();
+		this.recentDisconnects.length = 0;
 		this.redialBackoff.clear();
 		this.unreachableQuarantine.clear();
-		this.noReachableSince.clear();
+		this.addressProbeBackoff.clear();
 		this.configuredBootstrapPeerIDs.clear();
 		this.redialSuppressedByNet.clear();
 		this.pxIngressLogKeys.clear();
-		if (this.node) {
-			await this.node.stop();
-			console.log('Network stopped');
+		try {
+			if (this.node) {
+				// An active protocol stream can keep a libp2p service stop parked before the
+				// connection manager reaches its own close timeout. Application handlers are
+				// already drained above, so force the remaining transports down first.
+				for (const connection of this.node.getConnections()) {
+					try {
+						connection.abort(new Error('Network stopping'));
+					} catch (err: any) {
+						trace(`[NET] connection abort during stop failed: ${err?.message ?? err}`);
+					}
+				}
+				await this.node.stop();
+				// A resolved stop() is NOT proof the node is down. libp2p sets `status` to
+				// 'stopping' before its own stop phases and to 'stopped' only after all of them
+				// returned; a phase that throws leaves the status at 'stopping' permanently, and
+				// every later stop() call sees a status that is not 'started' and returns at once
+				// without doing any more work. Taking that silent no-op for success is what let a
+				// node still holding its listener, its connections and its port be reported down.
+				if (this.node.status !== 'stopped') throw new CodedError(ErrorCodes.INTERNAL_ERROR, `libp2p did not reach 'stopped' (status: ${this.node.status}) and cannot resume an interrupted stop`);
+				console.log('Network stopped');
+			}
+		} catch (err: any) {
+			trace(`[NET] node.stop() failed: ${err?.message ?? err}`);
+			// A node that refused to stop may still hold its listener, its connection
+			// manager and its port. Closing the datastore it is working over, and dropping
+			// the last reference to it, made the damage permanent AND invisible: nobody
+			// could see the shutdown had not happened, and the caller was free to start a
+			// second node over the same identity, port and datastore. Keep both.
+			this.nodeStopUnrecoverable = true;
+			throw err;
 		}
-		if (this.datastore) {
-			await this.datastore.close();
-			console.log('Datastore closed');
-		}
+		// Released only now, with the node provably down: everything below and everything a
+		// later start or wipe may do is safe only once it is.
 		this.node = null;
 		this.pubsub = null;
-		this.datastore = null;
 		this.currentPrivateKey = null;
+		try {
+			if (this.datastore) {
+				await this.datastore.close();
+				console.log('Datastore closed');
+			}
+		} catch (err: any) {
+			trace(`[NET] datastore.close() failed: ${err?.message ?? err}`);
+			// SqliteDatastore.close() closes the database handle directly and can throw.
+			// Swallowing that and reporting a clean stop lost the reference to a database
+			// still open: the close could never be retried, a new start would open a second
+			// handle on the same file, and clearDatastore / clearPeerstore / an identity
+			// change were all permitted over it. The node above is provably down and stays
+			// released, so a retried stop() repeats only this close.
+			throw err;
+		}
+		this.datastore = null;
 	}
 
 	async cliFindPeer(peerID: string): Promise<void> {

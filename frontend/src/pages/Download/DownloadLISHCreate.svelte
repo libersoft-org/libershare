@@ -6,9 +6,9 @@
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { navigateBack, navigateToAbsolutePath } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { sanitizeFilename } from '@shared';
+	import { sanitizeFilename, compressionExtension, stripCompressionExtension, type CompressionAlgorithm } from '@shared';
 	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm, parseBytes } from '@shared';
-	import { storageLISHPath, storagePath, autoStartSharing, autoStartDownloading, defaultMinifyJSON, defaultCompress } from '../../scripts/settings.ts';
+	import { storageLISHPath, storagePath, autoStartSharing, autoStartDownloading, defaultMinifyJSON, defaultCompress, defaultCompressionAlgorithm } from '../../scripts/settings.ts';
 
 	/** Basename of a shared file/directory path (last segment, trailing separators stripped). */
 	function shareBaseName(path: string): string {
@@ -74,6 +74,7 @@
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
+	import CompressionAlgorithmRow from '../../components/Export/CompressionAlgorithmRow.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	import DownloadLISHProgress from './DownloadLISHProgress.svelte';
@@ -123,6 +124,7 @@
 	let saveToFile = $state(true);
 	let minifyJSON = $state($defaultMinifyJSON);
 	let compress = $state($defaultCompress);
+	let compressionAlgorithm = $state<CompressionAlgorithm>($defaultCompressionAlgorithm);
 	let showAdvanced = $state(false);
 	// Prefill the LISH name from the shared file/directory basename (if any).
 	let name = $state(untrack(() => (initialDataPath ? shareBaseName(initialDataPath) : '')));
@@ -137,7 +139,7 @@
 			const sanitized = newName ? sanitizeFilename(newName) : '';
 			if (sanitized) {
 				const { directory } = splitPath(lishFile || $storageLISHPath, $storageLISHPath);
-				lishFile = joinPath(directory, sanitized + (compress ? '.lish.gz' : '.lish'));
+				lishFile = joinPath(directory, sanitized + '.lish' + (compress ? compressionExtension(compressionAlgorithm) : ''));
 			} else {
 				const { directory } = splitPath(lishFile || $storageLISHPath, $storageLISHPath);
 				const sep = directory.includes('\\') ? '\\' : '/';
@@ -152,12 +154,26 @@
 		handleNameChange(newName);
 	}
 
+	// Keep the compression suffix of the .lish file name in sync with the switch and the
+	// chosen algorithm. A name the user rewrote to something else is left untouched.
+	function updateLISHFileExtension(): void {
+		// Match on the trimmed name — a stray trailing space would hide the extension and
+		// the file would be compressed without a suffix, so no import could detect it.
+		const base = stripCompressionExtension(lishFile.trim());
+		// Case-insensitive, like stripCompressionExtension — otherwise "REPORT.LISH.GZ" keeps
+		// its .GZ suffix while brotli bytes are written under it and no import can read it back.
+		if (!base.toLowerCase().endsWith('.lish')) return;
+		lishFile = compress ? base + compressionExtension(compressionAlgorithm) : base;
+	}
+
 	function handleCompressToggle(): void {
 		compress = !compress;
-		if (lishFile.endsWith('.lish') || lishFile.endsWith('.lish.gz')) {
-			if (compress && lishFile.endsWith('.lish')) lishFile = lishFile + '.gz';
-			else if (!compress && lishFile.endsWith('.lish.gz')) lishFile = lishFile.slice(0, -3);
-		}
+		updateLISHFileExtension();
+	}
+
+	function handleAlgorithmSelect(algorithm: CompressionAlgorithm): void {
+		compressionAlgorithm = algorithm;
+		updateLISHFileExtension();
 	}
 
 	// When the name was prefilled from a shared path, derive the .lish filename from it too.
@@ -173,6 +189,9 @@
 	let errorMessage = $state('');
 
 	async function handleCreate(): Promise<void> {
+		// Imports detect the algorithm from the extension, so a hand-edited path must not
+		// keep a suffix that contradicts the selected algorithm.
+		if (saveToFile) updateLISHFileExtension();
 		const validationError = validateLISHCreateForm({ dataPath, saveToFile, lishFile: saveToFile ? lishFile || undefined : undefined, chunkSize, threads });
 		errorMessage = validationError ? getLISHCreateErrorMessage(validationError, $t) : '';
 		if (!errorMessage) {
@@ -202,6 +221,7 @@
 			if (saveToFile) {
 				params['minifyJSON'] = minifyJSON;
 				params['compress'] = compress;
+				params['compressionAlgorithm'] = compressionAlgorithm;
 			}
 			// Apply global auto-start settings — controlled in Settings → Download.
 			if ($autoStartSharing) params['addToSharing'] = true;
@@ -370,24 +390,27 @@
 					<SwitchRow label={$t('settings.lishNetwork.minifyJSON') + ':'} checked={minifyJSON} position={[0, 6]} onConfirm={() => (minifyJSON = !minifyJSON)} />
 					<!-- Compress Switch -->
 					<SwitchRow label={$t('settings.lishNetwork.compress') + ':'} checked={compress} position={[0, 7]} onConfirm={handleCompressToggle} />
+					{#if compress}
+						<CompressionAlgorithmRow label={$t('settings.lishNetwork.compressionAlgorithm')} value={compressionAlgorithm} row={8} onSelect={handleAlgorithmSelect} />
+					{/if}
 				{/if}
 				<!-- Chunk Size -->
-				<Input bind:value={chunkSize} label={$t('lish.create.chunkSize')} position={[0, 8]} />
+				<Input bind:value={chunkSize} label={$t('lish.create.chunkSize')} position={[0, 9]} />
 				<!-- Hash Algorithm -->
 				<div>
 					<div class="label">{$t('lish.create.algorithm')}:</div>
 					<div class="algo-selector">
 						{#each SUPPORTED_ALGOS as algo, i}
-							<Button label={algo} position={[i, 9]} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+							<Button label={algo} position={[i, 10]} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
 						{/each}
 					</div>
 				</div>
 				<!-- Threads -->
-				<Input bind:value={threads} label={$t('lish.create.threads')} type="number" min={0} position={[0, 10]} />
+				<Input bind:value={threads} label={$t('lish.create.threads')} type="number" min={0} position={[0, 11]} />
 			{/if}
 			<Alert type="error" message={errorMessage} />
 		</div>
-		<ButtonBar justify="center" basePosition={[0, 11]}>
+		<ButtonBar justify="center" basePosition={[0, 12]}>
 			<Button icon="/img/plus.svg" label={$t('common.createLISH')} onConfirm={handleCreate} />
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={goBack} />
 		</ButtonBar>

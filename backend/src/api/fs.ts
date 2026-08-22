@@ -4,7 +4,7 @@ import { homedir, platform } from 'os';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { Utils } from '../utils.ts';
-import { CodedError, ErrorCodes, type ErrorCode, type FsInfo, type FsEntry, type FsListResult, type IPathExistsResult, type SuccessResponse, type CompressionAlgorithm } from '@shared';
+import { CodedError, ErrorCodes, detectCompression, type ErrorCode, type FsInfo, type FsEntry, type FsListResult, type IPathExistsResult, type SuccessResponse, type CompressionAlgorithm } from '@shared';
 import { isContainer } from '../container.ts';
 const assert = Utils.assertParams;
 const isWindows = platform() === 'win32';
@@ -43,6 +43,15 @@ function wrapFsError(err: any, path?: string): CodedError {
 	return new CodedError(code, detail);
 }
 
+/** Re-indent a JSON document with tabs; non-JSON content is returned untouched. */
+function prettyPrintJSON(content: string): string {
+	try {
+		return JSON.stringify(JSON.parse(content), null, '\t');
+	} catch {
+		return content;
+	}
+}
+
 async function fsCall<T>(path: string | undefined, fn: () => Promise<T>): Promise<T> {
 	try {
 		return await fn();
@@ -61,7 +70,8 @@ interface FsHandlers {
 	info: (p: any, client?: any) => Promise<FsInfo>;
 	list: (p: { path?: string }) => Promise<FsListResult>;
 	readText: (p: { path: string }) => Promise<{ content: string }>;
-	readCompressed: (p: { path: string; algorithm?: CompressionAlgorithm }) => Promise<{ content: string }>;
+	readCompressed: (p: { path: string; algorithm?: CompressionAlgorithm; prettyJSON?: boolean }) => Promise<{ content: string }>;
+	decompressText: (p: { data: string; fileName?: string; algorithm?: CompressionAlgorithm; prettyJSON?: boolean }) => Promise<{ content: string }>;
 	delete: (p: { path: string }) => Promise<void>;
 	mkdir: (p: { path: string }) => Promise<void>;
 	open: (p: { path: string }) => Promise<void>;
@@ -134,13 +144,31 @@ export function initFsHandlers(): FsHandlers {
 		});
 	}
 
-	async function readCompressed(p: { path: string; algorithm?: CompressionAlgorithm }): Promise<{ content: string }> {
+	/**
+	 * Read a file, decompressing it when the path (or the explicit `algorithm`)
+	 * says it is compressed. With `prettyJSON` the JSON body is re-indented,
+	 * so the frontend never has to parse or re-serialise it for display.
+	 */
+	async function readCompressed(p: { path: string; algorithm?: CompressionAlgorithm; prettyJSON?: boolean }): Promise<{ content: string }> {
 		assert(p, ['path']);
 		return fsCall(p.path, async () => {
-			const compressed = await Bun.file(p.path).arrayBuffer();
-			const decompressed = Utils.decompress(new Uint8Array(compressed), p.algorithm);
-			return { content: new TextDecoder().decode(decompressed) };
+			const content = await Utils.readFileCompressed(p.path, p.algorithm);
+			return { content: p.prettyJSON ? prettyPrintJSON(content) : content };
 		});
+	}
+
+	/**
+	 * Decompress a base64-encoded file uploaded from the client's own machine.
+	 * The algorithm is taken from `algorithm`, else detected from `fileName`;
+	 * an uncompressed upload is returned as-is.
+	 */
+	async function decompressText(p: { data: string; fileName?: string; algorithm?: CompressionAlgorithm; prettyJSON?: boolean }): Promise<{ content: string }> {
+		assert(p, ['data']);
+		const bytes = Buffer.from(p.data, 'base64');
+		const algorithm = p.algorithm ?? detectCompression(p.fileName ?? '');
+		const decoded = algorithm ? Utils.decompress(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength), algorithm) : bytes;
+		const content = new TextDecoder().decode(decoded);
+		return { content: p.prettyJSON ? prettyPrintJSON(content) : content };
 	}
 
 	async function del(p: { path: string }): Promise<void> {
@@ -209,5 +237,5 @@ export function initFsHandlers(): FsHandlers {
 		});
 	}
 
-	return { info, list, readText, readCompressed, delete: del, mkdir: mkdirFn, open, rename: renameFn, exists, writeText, writeCompressed };
+	return { info, list, readText, readCompressed, decompressText, delete: del, mkdir: mkdirFn, open, rename: renameFn, exists, writeText, writeCompressed };
 }
