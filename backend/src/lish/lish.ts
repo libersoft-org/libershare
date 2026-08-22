@@ -482,6 +482,10 @@ export async function runVerification(dataServer: DataServer, lishID: string, on
 		const fileStart = Date.now();
 		const file = Bun.file(filePath);
 		const fileExists = await file.exists();
+		if (signal?.aborted) {
+			console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)} after ${totalVerified + totalFailed}/${totalChunks} chunks`);
+			return;
+		}
 		if (!fileExists) {
 			console.log(`[Verify] MISSING ${fileEntry.path} (${fileEntry.checksums.length} chunks) at ${filePath}`);
 			dataServer.markAllFileChunksFailed(fileEntry.fileInternalID);
@@ -507,6 +511,10 @@ export async function runVerification(dataServer: DataServer, lishID: string, on
 			}
 			try {
 				const actualChecksum = await calculateChecksum(file, offset, meta.chunkSize, meta.checksumAlgo);
+				if (signal?.aborted) {
+					console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)} after ${totalVerified + totalFailed}/${totalChunks} chunks`);
+					return;
+				}
 				if (actualChecksum === expectedChecksum) {
 					dataServer.markChunkVerified(chunkRowID);
 					fileVerified++;
@@ -516,6 +524,10 @@ export async function runVerification(dataServer: DataServer, lishID: string, on
 					fileFailed++;
 				}
 			} catch (err: any) {
+				if (signal?.aborted) {
+					console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)} after ${totalVerified + totalFailed}/${totalChunks} chunks`);
+					return;
+				}
 				dataServer.markChunkFailed(chunkRowID);
 				fileFailed++;
 			}

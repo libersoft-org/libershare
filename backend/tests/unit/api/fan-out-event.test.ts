@@ -28,6 +28,17 @@ describe('fanOutEvent', () => {
 		expect(a).toEqual(['payload']);
 	});
 
+	it('skips the excepted client without weakening delivery isolation', () => {
+		const skipped: string[] = [];
+		const received: string[] = [];
+		const excepted = client(['e'], skipped);
+		const clients = [excepted, client(['e'], [], true), client(['e'], received)];
+
+		expect(fanOutEvent(clients, 'e', 'payload', excepted)).toBe(1);
+		expect(skipped).toEqual([]);
+		expect(received).toEqual(['payload']);
+	});
+
 	/**
 	 * The isolation this exists for. Without it the throw aborts the loop, so every
 	 * client behind the dead one silently misses the event and the exception escapes

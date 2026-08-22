@@ -1256,6 +1256,90 @@ describe('Downloader — inline ENOENT recovery', () => {
 	});
 });
 
+describe('Downloader — destroy drain', () => {
+	it('waits for active work and cancels download before its completion waiter is installed', async () => {
+		const dataServer = new MockDataServer();
+		const lish = makeLISH();
+		dataServer.completeLishs.add(lish.id);
+		const downloader = new Downloader('/tmp/test', new MockNetwork() as never, dataServer as never, ['net1']);
+		await downloader.initFromManifest(lish);
+
+		let workStarted!: () => void;
+		let releaseWork!: () => void;
+		const workEntered = new Promise<void>(resolve => {
+			workStarted = resolve;
+		});
+		const workBlocked = new Promise<void>(resolve => {
+			releaseWork = resolve;
+		});
+		(priv(downloader) as any).doWorkInternal = async () => {
+			workStarted();
+			await workBlocked;
+		};
+
+		const download = downloader.download();
+		const outcome = download.then(
+			() => null,
+			error => error
+		);
+		await workEntered;
+		let destroyed = false;
+		const destroying = downloader.destroy().then(() => {
+			destroyed = true;
+		});
+		await Promise.resolve();
+		expect(destroyed).toBe(false);
+
+		releaseWork();
+		await destroying;
+		const error = await outcome;
+
+		expect(error).toBeInstanceOf(CodedError);
+		expect((error as CodedError).code).toBe(ErrorCodes.DOWNLOAD_CANCELLED);
+		expect(priv(downloader)['downloadReject']).toBeUndefined();
+	}, 5000);
+
+	it('drains peer discovery and never publishes the next WANT after destroy', async () => {
+		const dataServer = new MockDataServer();
+		const lish = makeLISH();
+		dataServer.completeLishs.add(lish.id);
+		const network = new MockNetwork();
+		const topics: string[] = [];
+		let firstBroadcastStarted!: () => void;
+		let releaseFirstBroadcast!: () => void;
+		const firstBroadcastEntered = new Promise<void>(resolve => {
+			firstBroadcastStarted = resolve;
+		});
+		const firstBroadcastBlocked = new Promise<void>(resolve => {
+			releaseFirstBroadcast = resolve;
+		});
+		network.broadcast = async topic => {
+			topics.push(topic);
+			if (topics.length === 1) {
+				firstBroadcastStarted();
+				await firstBroadcastBlocked;
+				throw new Error('old network stopped');
+			}
+		};
+		const downloader = new Downloader('/tmp/test', network as never, dataServer as never, ['net-a', 'net-b']);
+		await downloader.initFromManifest(lish);
+
+		const discovery = (priv(downloader)['callForPeers'] as () => Promise<void>).call(downloader);
+		await firstBroadcastEntered;
+		let destroyed = false;
+		const destroying = downloader.destroy().then(() => {
+			destroyed = true;
+		});
+		await Promise.resolve();
+		expect(destroyed).toBe(false);
+
+		releaseFirstBroadcast();
+		await Promise.all([discovery, destroying]);
+
+		expect(topics).toEqual(['lish/net-a']);
+	}, 5000);
+});
+
 describe('Downloader — inline ENOSPC retry', () => {
 	let dataServer: MockDataServer;
 	let network: MockNetwork;

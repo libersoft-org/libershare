@@ -1,4 +1,4 @@
-import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type IPathExistsResult, type IWriteResult, type ILISHListResult, type ISettingsImportResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type FactoryResetResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm, type BootstrapStatus } from './index.ts';
+import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type IPathExistsResult, type IWriteResult, type ILISHListResult, type ISettingsImportResult, type SuccessResponse, type SetLISHNetworkEnabledResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type FactoryResetResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm, type BootstrapStatus } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -309,8 +309,8 @@ class LISHnetsAPI {
 		return this.client.call<LISHNetworkDefinition[]>('lishnets.parseFromURL', { url });
 	}
 
-	setEnabled(networkID: string, enabled: boolean): Promise<SuccessResponse> {
-		return this.client.call<SuccessResponse>('lishnets.setEnabled', { networkID, enabled });
+	setEnabled(networkID: string, enabled: boolean): Promise<SetLISHNetworkEnabledResponse> {
+		return this.client.call<SetLISHNetworkEnabledResponse>('lishnets.setEnabled', { networkID, enabled });
 	}
 
 	connect(networkID: string, multiaddr: string): Promise<SuccessResponse> {
