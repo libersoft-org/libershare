@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { Network } from '../../../src/protocol/network.ts';
 import { BootstrapStatusTracker } from '../../../src/protocol/bootstrap-status.ts';
+import { installBootstrapRegistry } from '../helpers/bootstrap-registry.ts';
 
 /**
  * The whole user-visible story in one test: a peer shows up under the network's
@@ -40,20 +41,18 @@ function testNetwork() {
 	let answersOnTheAddress = true;
 	const network = Object.create(Network.prototype) as Network;
 	const tracker = new BootstrapStatusTracker();
+	installBootstrapRegistry(network, []);
 	(network as any).runEpoch = 1;
 	(network as any).bootstrapTracker = tracker;
 	(network as any).bootstrapPeerIDs = new Set<string>();
-	(network as any).bootstrapMultiaddrs = [];
 	(network as any).bootstrapGeneration = new Map();
 	(network as any).inFlightBootstrapDials = new Map();
 	(network as any).dialAbort = new AbortController();
 	(network as any).redialBackoff = new Map();
-	(network as any).addressProbeBackoff = new Map();
 	(network as any).unreachableQuarantine = new Map();
+	(network as any).noReachableSince = new Map();
 	(network as any).redialSuppressedByNet = new Map();
 	(network as any).configuredBootstrapPeerIDs = new Set<string>();
-	(network as any).configuredBootstrapAddresses = new Set<string>();
-	(network as any).configuredBootstrapAddressesByNet = new Map();
 	(network as any).isTopicSubscribed = () => true;
 	(network as any).isPeerNeededByJoinedNetwork = () => true;
 	// Nobody is subscribed to the topic to begin with, so the sweep's membership exemption

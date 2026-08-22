@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { Network } from '../../../src/protocol/network.ts';
 import { multiaddr } from '@multiformats/multiaddr';
+import { installBootstrapRegistry } from '../helpers/bootstrap-registry.ts';
 
 /**
  * Unit tests for the transactional start()/stop() lifecycle.
@@ -459,7 +460,7 @@ describe('Network periodic work stays bound to its run', () => {
 		const nodeB = { getPeers: (): unknown[] => [], dial: async (): Promise<void> => void newDials++ };
 		(network as any).runEpoch = 1;
 		(network as any).node = nodeA;
-		(network as any).bootstrapMultiaddrs = [multiaddr('/ip4/192.0.2.10/tcp/9090')];
+		installBootstrapRegistry(network, [{ address: '/ip4/192.0.2.10/tcp/9090', configuredBy: ['startup'] }]);
 
 		const realSetTimeout = globalThis.setTimeout;
 		let fire!: () => void;

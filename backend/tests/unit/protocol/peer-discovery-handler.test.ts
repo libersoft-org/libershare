@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { Network } from '../../../src/protocol/network.ts';
+import { installBootstrapRegistry } from '../helpers/bootstrap-registry.ts';
+import { createEmptyPeerStore } from '../helpers/real-peer-store.ts';
 
 /**
  * The `peer:discovery` handler. libp2p delivers these events from mDNS, identify and
@@ -19,6 +21,7 @@ function bareNetwork(opts: { connected?: boolean; dialFails?: boolean } = {}) {
 	const tagged: string[] = [];
 	const handlers = new Map<string, Handler>();
 	const network = Object.create(Network.prototype) as Network;
+	installBootstrapRegistry(network, []);
 	(network as any).runEpoch = 1;
 	// A prototype-only instance has no field initializers: disconnectPeer binds itself to
 	// this run's cancellation and needs a controller to read.
@@ -34,6 +37,10 @@ function bareNetwork(opts: { connected?: boolean; dialFails?: boolean } = {}) {
 	(network as any).recentDisconnects = [];
 	(network as any).lastMeshChange = new Map();
 	(network as any).pubsub = null;
+	const peerStore = createEmptyPeerStore();
+	peerStore.merge = async (_pid: unknown, patch: { tags?: Record<string, unknown> }): Promise<void> => {
+		for (const key of Object.keys(patch.tags ?? {})) tagged.push(key);
+	};
 	(network as any).node = {
 		peerId: { toString: () => 'selfID' },
 		addEventListener(event: string, handler: Handler) {
@@ -46,11 +53,7 @@ function bareNetwork(opts: { connected?: boolean; dialFails?: boolean } = {}) {
 			if (opts.dialFails) throw new Error('dial timed out');
 			return {};
 		},
-		peerStore: {
-			async merge(_pid: unknown, patch: { tags?: Record<string, unknown> }): Promise<void> {
-				for (const key of Object.keys(patch.tags ?? {})) tagged.push(key);
-			},
-		},
+		peerStore,
 	};
 	(network as any).setupEventListeners();
 	const fire = async (): Promise<void> => {
@@ -115,6 +118,26 @@ describe('peer:discovery — keep-alive tagging', () => {
 		expect(tagged).toEqual(['keep-alive-fleet']);
 	});
 
+	it('does not let an old discovery run tag the replacement node', async () => {
+		const { network, fire } = bareNetwork();
+		const oldNode = (network as any).node;
+		const replacementTags: string[] = [];
+		oldNode.dial = async (): Promise<unknown> => {
+			(network as any).node = {
+				...oldNode,
+				peerStore: {
+					async merge(_pid: unknown, patch: { tags?: Record<string, unknown> }): Promise<void> {
+						replacementTags.push(...Object.keys(patch.tags ?? {}));
+					},
+				},
+			};
+			return {};
+		};
+
+		await fire();
+		expect(replacementTags).toEqual([]);
+	});
+
 	it('tags a peer we are already connected to, without dialing again', async () => {
 		const { dialled, tagged, fire } = bareNetwork({ connected: true });
 		await fire();
@@ -136,6 +159,7 @@ describe('peer:discovery — a dial that lands after leave-network', () => {
 		const handlers = new Map<string, Handler>();
 		let releaseDial: () => void = () => {};
 		const network = Object.create(Network.prototype) as Network;
+		installBootstrapRegistry(network, []);
 		(network as any).runEpoch = 1;
 		// A prototype-only instance has no field initializers: disconnectPeer binds itself to
 		// this run's cancellation and needs a controller to read.
@@ -149,11 +173,24 @@ describe('peer:discovery — a dial that lands after leave-network', () => {
 		(network as any).peerDisconnectHandlers = new Set();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
-		(network as any).bootstrapMultiaddrs = [];
 		(network as any).recentDisconnects = [];
 		(network as any).lastMeshChange = new Map();
 		(network as any).pubsub = { getTopics: () => [] };
 		(network as any).peerAnnounce = { getRecentMembers: () => [] };
+		const peerStore = createEmptyPeerStore();
+		peerStore.merge = async (_pid: unknown, patch: { tags?: Record<string, unknown> }): Promise<void> => {
+			// Only STAMPS count — leave-network merges the same keys with `undefined`
+			// to remove them, and that is the opposite of what these tests watch for.
+			const removing = Object.values(patch.tags ?? {}).some(value => value === undefined);
+			for (const [key, value] of Object.entries(patch.tags ?? {})) if (value !== undefined) tagged.push(key);
+			// This merge is disconnectPeer's first await. Letting the parked discovery
+			// dial finish HERE is the actual race: the handler resumes before hangUp
+			// has run, which is the window the ordering fix has to cover.
+			if (removing && resumeDialInsideLeave) {
+				releaseDial();
+				await Bun.sleep(0);
+			}
+		};
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
 			addEventListener(event: string, handler: Handler) {
@@ -170,22 +207,7 @@ describe('peer:discovery — a dial that lands after leave-network', () => {
 			async hangUp(pid: { toString(): string }): Promise<void> {
 				hungUp.push(pid.toString());
 			},
-			peerStore: {
-				async merge(_pid: unknown, patch: { tags?: Record<string, unknown> }): Promise<void> {
-					// Only STAMPS count — leave-network merges the same keys with `undefined`
-					// to remove them, and that is the opposite of what these tests watch for.
-					const removing = Object.values(patch.tags ?? {}).some(value => value === undefined);
-					for (const [key, value] of Object.entries(patch.tags ?? {})) if (value !== undefined) tagged.push(key);
-					// This merge is disconnectPeer's first await. Letting the parked discovery
-					// dial finish HERE is the actual race: the handler resumes before hangUp
-					// has run, which is the window the ordering fix has to cover.
-					if (removing && resumeDialInsideLeave) {
-						releaseDial();
-						await Bun.sleep(0);
-					}
-				},
-				async delete(): Promise<void> {},
-			},
+			peerStore,
 		};
 		(network as any).setupEventListeners();
 		const fire = (): Promise<void> => handlers.get('peer:discovery')!({ detail: { id: { toString: () => PEER_ID }, multiaddrs: [ADDR] } }) as Promise<void>;

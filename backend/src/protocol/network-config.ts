@@ -25,18 +25,10 @@ import { trace } from '../logger.ts';
 import { normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial, extractFirstIPv4 } from './address-filter.ts';
 import { peerIdFromString } from '@libp2p/peer-id';
-import { extractDestinationPeerID } from './multiaddr-utils.ts';
+import { extractDestinationPeerID, destinationPeerIDOf } from './multiaddr-utils.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 
-/**
- * How long libp2p keeps a peer in its peerStore without hearing from it.
- *
- * Exported because the bootstrap registry has to age its own entries out on the
- * same clock: past this point libp2p has itself forgotten the peer, so re-dial
- * maintenance — which walks the peerStore — can no longer produce or evict an
- * entry for it, and anything still on the recovery list is an orphan nothing
- * else will ever clean up.
- */
+/** Keep the bootstrap registry and libp2p peer-store retention on the same clock. */
 export const PEERSTORE_MAX_PEER_AGE_MS = 7_200_000;
 
 /** A gossipsub direct-peer entry: a peer id and its multiaddrs. */

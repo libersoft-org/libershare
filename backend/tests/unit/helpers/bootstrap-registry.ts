@@ -28,6 +28,8 @@ export interface IRegistrySeed {
 export function installBootstrapRegistry(network: unknown, seeds: readonly IRegistrySeed[]): Map<string, IBootstrapEntry> {
 	const byAddress = new Map<string, IBootstrapEntry>();
 	const byPeer = new Map<string, Set<string>>();
+	const configuredAddresses = new Set<string>();
+	const configuredByNetwork = new Map<string, Set<string>>();
 	for (const seed of seeds) {
 		const ma = multiaddr(seed.address);
 		const key = normalizeMultiaddrForCompare(ma.toString());
@@ -42,6 +44,15 @@ export function installBootstrapRegistry(network: unknown, seeds: readonly IRegi
 			lastVerifiedAt: seed.lastVerifiedAt ?? null,
 			lastDisconnectedAt: seed.lastDisconnectedAt ?? null,
 		});
+		for (const networkID of seed.configuredBy ?? []) {
+			configuredAddresses.add(key);
+			let addresses = configuredByNetwork.get(networkID);
+			if (!addresses) {
+				addresses = new Set<string>();
+				configuredByNetwork.set(networkID, addresses);
+			}
+			addresses.add(key);
+		}
 		if (peerID) {
 			let keys = byPeer.get(peerID);
 			if (!keys) {
@@ -54,10 +65,15 @@ export function installBootstrapRegistry(network: unknown, seeds: readonly IRegi
 	(network as any).bootstrapByAddress = byAddress;
 	(network as any).addressesByPeer = byPeer;
 	(network as any).recoveryBackoff ??= new Map();
+	(network as any).addressProbeBackoff ??= new Map();
+	(network as any).configuredBootstrapAddresses = configuredAddresses;
+	(network as any).configuredBootstrapAddressesByNet = configuredByNetwork;
+	(network as any).bootstrapMultiaddrs ??= [...byAddress.values()].map(entry => entry.ma);
+	(network as any).dialAbort ??= new AbortController();
 	// Object.create(Network.prototype) never runs field initializers, so the walk state
 	// the registry loops read has to be seeded here alongside the registry itself.
 	(network as any).recoveryCursors ??= { configured: null, discovered: null };
-	(network as any).inFlightBootstrapDials ??= new Set<string>();
+	(network as any).inFlightBootstrapDials ??= new Map();
 	(network as any).quarantineProbeInFlight ??= new Set<string>();
 	return byAddress;
 }

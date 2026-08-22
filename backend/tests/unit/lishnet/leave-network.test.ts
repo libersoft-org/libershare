@@ -36,15 +36,13 @@ interface MockNet {
 	pruneConfiguredBootstrapPeer(pid: string): void;
 	bumpBootstrapGeneration(networkID: string): void;
 	generationBumps: string[];
-	pruneBootstrapAddresses(addresses: string[], networkID: string): void;
+	resetBootstrapStatus(networkID: string): void;
+	statusResets: string[];
+	pruneBootstrapAddresses(addresses: string[]): void;
 	prunedAddresses: string[][];
-	/** Address releases with the owning network that is giving them up. */
-	addressReleases: Array<{ addresses: string[]; networkID: string }>;
-	reconcilePeerAfterBootstrapRemoval(pid: string, addresses: string[], networkID: string): Promise<void>;
-	/** Peer reconciliations requested after a config change, in call order. */
-	reconciled: Array<{ pid: string; addresses: string[]; networkID: string }>;
 	pruneBootstrapStatus(networkID: string, keep: string[]): void;
 	prunedStatus: Array<{ networkID: string; keep: string[] }>;
+	reconcilePeerAfterBootstrapRemoval(peerID: string, addresses: string[], networkID: string): Promise<void>;
 	addBootstrapPeers(peers: string[], networkID: string, origin: string): Promise<'completed' | 'incomplete'>;
 	dialledLists: Array<{ networkID: string; peers: string[]; origin: string }>;
 	clearRedialSuppressionForNetwork(networkID: string): void;
@@ -64,8 +62,6 @@ function makeMockNet(): MockNet {
 		generationBumps: [],
 		statusResets: [],
 		prunedAddresses: [],
-		addressReleases: [],
-		reconciled: [],
 		prunedStatus: [],
 		dialledLists: [],
 		getTopicPeers(id) {
@@ -106,16 +102,16 @@ function makeMockNet(): MockNet {
 		bumpBootstrapGeneration(networkID) {
 			this.generationBumps.push(networkID);
 		},
-		pruneBootstrapAddresses(addresses, networkID) {
-			this.prunedAddresses.push(addresses);
-			this.addressReleases.push({ addresses, networkID });
+		resetBootstrapStatus(networkID) {
+			this.statusResets.push(networkID);
 		},
-		async reconcilePeerAfterBootstrapRemoval(pid, addresses, networkID) {
-			this.reconciled.push({ pid, addresses, networkID });
+		pruneBootstrapAddresses(addresses) {
+			this.prunedAddresses.push(addresses);
 		},
 		pruneBootstrapStatus(networkID, keep) {
 			this.prunedStatus.push({ networkID, keep });
 		},
+		async reconcilePeerAfterBootstrapRemoval(): Promise<void> {},
 		async addBootstrapPeers(peers, networkID, origin) {
 			this.dialledLists.push({ networkID, peers, origin });
 			return 'completed' as const;
@@ -375,7 +371,9 @@ describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 			'net-b': ['/ip4/192.0.2.1/tcp/9090/p2p/pShared'],
 		});
 		await leave(networks, 'net-a');
-		expect(net.prunedAddresses).toEqual([[]]);
+		// The registry owns per-network provenance, so the lishnet layer releases A's
+		// claim even though B still owns the same address.
+		expect(net.prunedAddresses).toEqual([['/ip4/192.0.2.1/tcp/9090/p2p/pShared']]);
 	});
 
 	it('drops every address of a network left with nothing else configured', async () => {
@@ -409,47 +407,6 @@ describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 		expect(net.disconnected).toEqual([]);
 		// Exemption is still pruned — the relay status alone keeps it connected.
 		expect(net.prunedBootstrap).toEqual(['pRelayNode']);
-	});
-});
-
-/**
- * Address ownership is per (address, network); the identity-level cleanup is per peer.
- * Deciding the whole cleanup by peer ID skipped the address release whenever the same
- * IDENTITY was configured somewhere else, so the left network's own claim survived —
- * pinning the address against expiry and keeping the parked probe force-dialing it.
- */
-describe('Networks.leaveNetwork — configured address release', () => {
-	let net: MockNet;
-
-	beforeEach(() => {
-		net = makeMockNet();
-	});
-
-	it('releases the left network claim on an address a second network also lists', async () => {
-		// Case (a): both networks list the SAME address of the same peer. The
-		// identity-level loop sees "still configured elsewhere" and skips, so nothing
-		// ever released net-a's claim and the address stayed pinned by it forever.
-		const shared = '/ip4/192.0.2.5/tcp/9090/p2p/pShared';
-		const networks = makeNetworks(net, ['net-a', 'net-b'], { 'net-a': [shared], 'net-b': [shared] });
-		await leave(networks, 'net-a');
-		expect(net.addressReleases).toContainEqual({ addresses: [shared], networkID: 'net-a' });
-	});
-
-	it('releases the left network address when the peer is listed elsewhere under another one', async () => {
-		// Case (b): same peer ID, different addresses. net-a's address was never
-		// released, so recovery and the parked probe went on dialing it.
-		const onlyA = '/ip4/192.0.2.5/tcp/9090/p2p/pShared';
-		const networks = makeNetworks(net, ['net-a', 'net-b'], { 'net-a': [onlyA], 'net-b': ['/ip4/192.0.2.6/tcp/9090/p2p/pShared'] });
-		await leave(networks, 'net-a');
-		expect(net.addressReleases).toContainEqual({ addresses: [onlyA], networkID: 'net-a' });
-	});
-
-	it('names the leaving network as the owner giving the claim up', async () => {
-		// Releasing under the wrong network id would drop somebody else's claim.
-		const address = '/ip4/192.0.2.5/tcp/9090/p2p/pBootA';
-		const networks = makeNetworks(net, ['net-a'], { 'net-a': [address] });
-		await leave(networks, 'net-a');
-		expect(net.addressReleases.every(r => r.networkID === 'net-a')).toBe(true);
 	});
 });
 
@@ -518,7 +475,7 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		return { networks, mock, db };
 	}
 
-	const edit = async (networks: Networks, bootstrapPeers: string[]): Promise<boolean> => (networks as any).update({ networkID: NET, name: 'A', description: '', bootstrapPeers, enabled: true, created: '2026-01-01T00:00:00.000Z' });
+	const edit = (networks: Networks, bootstrapPeers: string[], enabled = true): Promise<boolean> => (networks as any).update({ networkID: NET, name: 'A', description: '', bootstrapPeers, enabled, created: '2026-01-01T00:00:00.000Z' });
 
 	it('prunes the status and dials the new list when the entries change', async () => {
 		const { networks, mock } = seeded([ADDR_A]);
@@ -565,16 +522,13 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		expect(mock.prunedBootstrap).toEqual([]);
 	});
 
-	/**
-	 * Releasing a claim is not a delete. Another joined network listing the same address
-	 * holds its own claim and keeps the entry alive, so there is no reason to skip this
-	 * network's release — skipping it left a claim nothing could ever drop.
-	 */
-	it('releases this network claim on an address another network also configures', async () => {
+	it('keeps an address that is still configured for another joined network', async () => {
 		const { networks, mock } = seeded([ADDR_A]);
 		(networks as any).get = (nid: string) => (nid === 'net-other' ? { networkID: nid, bootstrapPeers: [ADDR_A] } : { networkID: NET, bootstrapPeers: [ADDR_A] });
 		(networks as any).joinedNetworks = new Set([NET, 'net-other']);
 		await edit(networks, [ADDR_B]);
+		// The address is handed to the registry with NET as the owner being removed;
+		// the other network's ownership keeps the entry alive there.
 		expect(mock.prunedAddresses).toEqual([[ADDR_A]]);
 	});
 
@@ -592,40 +546,14 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 	});
 
 	/**
-	 * Releasing the registry claim is not enough: the address stays in the peerStore
-	 * with its keep-alive tags, and redial maintenance takes its candidates FROM the
-	 * peerStore — so the deleted bootstrap came back on the next tick.
+	 * A lishnet we are not in has installed nothing — the configured dials all run behind a
+	 * membership — so editing its list is a pure database change. It used to prune the status
+	 * and bump the bootstrap generation anyway, over rows a leave had already reset and jobs
+	 * that had already been abandoned.
 	 */
-	it('reconciles the peer of every address that left the list', async () => {
-		const { networks, mock } = seeded([ADDR_A, ADDR_B]);
-		await edit(networks, [ADDR_A]);
-		expect(mock.reconciled).toEqual([{ pid: PEER_B, addresses: [ADDR_B], networkID: NET }]);
-	});
-
-	it('reconciles only the replaced address when the peer ID stayed', async () => {
-		const moved = `/ip4/203.0.113.99/tcp/9090/p2p/${PEER_A}`;
-		const { networks, mock } = seeded([ADDR_A]);
-		await edit(networks, [moved]);
-		expect(mock.reconciled).toEqual([{ pid: PEER_A, addresses: [ADDR_A], networkID: NET }]);
-	});
-
-	/**
-	 * Order matters: the teardown suppresses re-dials, so running it after the new list
-	 * was dialed would tear down the connection that dial had just established.
-	 */
-	it('reconciles before dialing the new list', async () => {
-		const order: string[] = [];
-		const { networks, mock } = seeded([ADDR_A]);
-		mock.reconcilePeerAfterBootstrapRemoval = async (): Promise<void> => void order.push('reconcile');
-		mock.addBootstrapPeers = async (): Promise<void> => void order.push('dial');
-		await edit(networks, [ADDR_B]);
-		expect(order).toEqual(['reconcile', 'dial']);
-	});
-
-	it('does not dial for a network that is not joined', async () => {
-		const { networks, mock } = seeded([ADDR_A]);
-		(networks as any).joinedNetworks = new Set<string>();
-		await edit(networks, [ADDR_B]);
+	it('touches nothing at runtime for a network that is not joined', async () => {
+		const { networks, mock } = seeded([ADDR_A], false);
+		await edit(networks, [ADDR_B], false);
 		expect(mock.dialledLists).toEqual([]);
 		expect(mock.prunedStatus).toEqual([]);
 		expect(mock.prunedBootstrap).toEqual([]);
