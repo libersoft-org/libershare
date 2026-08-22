@@ -42,7 +42,17 @@ function bareNetwork(opts: { seeds?: IRegistrySeed[]; suppressed?: string[]; liv
 	installBootstrapRegistry(network, opts.seeds ?? []);
 	(network as any).bootstrapPeerIDs = new Set([...(network as any).addressesByPeer.keys()]);
 	(network as any).recentDisconnects = [];
-	(network as any).bootstrapTracker = { entries: () => [], markPending() {}, recordOutcome() {}, deletePeer() {} };
+	(network as any).bootstrapTracker = {
+		entries: () => [],
+		markPending() {},
+		recordOutcome() {},
+		recordAddressReachable() {},
+		recordAddressUnreachable() {},
+		deletePeer() {},
+		async batchDebounced(_networkID: string, work: () => Promise<unknown>): Promise<unknown> {
+			return work();
+		},
+	};
 	(network as any).node = {
 		peerId: { toString: () => 'selfID' },
 		getPeers: () => livePeers.map(p => ({ toString: () => p })),
@@ -189,11 +199,11 @@ describe('bootstrap dials — one probe per expired quarantine', () => {
 	it('spends exactly one dial across concurrent announces of different addresses', async () => {
 		// Different addresses on purpose: the address-level single flight cannot collapse
 		// these, so only the peer-level probe reservation can.
-		let release = (): void => {};
+		const { network, dialed } = quarantined();
+		let release!: () => void;
 		const gate = new Promise<void>(resolve => {
 			release = resolve;
 		});
-		const { network, dialed } = quarantined();
 		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
 			dialed.push(ma.toString());
 			await gate;
@@ -226,34 +236,15 @@ describe('bootstrap dials — one probe per expired quarantine', () => {
 	it('hands the window back untouched when the address is already in flight', async () => {
 		// Refusing a duplicate must not spend the probe, and must not restamp the
 		// quarantine either — restamping would silently extend it on every mention.
-		let release = (): void => {};
-		const gate = new Promise<void>(resolve => {
-			release = resolve;
-		});
 		const { network, dialed } = quarantined();
-		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
-			dialed.push(ma.toString());
-			await gate;
-			return { remoteAddr: ma };
-		};
 		// Another run already holds the ADDRESS lock — reached here without a quarantine,
 		// so the peer reservation is free. This run therefore passes the peer check and
 		// consumes the window, then finds the address in flight and must hand the window
 		// back with its ORIGINAL timestamp: a refused probe was never spent.
-		let releaseOther = (): void => {};
-		(network as any).inFlightBootstrapDials = new Map([
-			[
-				key(ADDR_A),
-				new Promise<void>(resolve => {
-					releaseOther = (): void => resolve();
-				}),
-			],
-		]);
+		(network as any).inFlightBootstrapDials = new Map([[key(ADDR_A), { networkID: 'net-a', generation: 0, settled: new Promise<void>(() => {}), release: (): void => {} }]]);
 		const refused = (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
 		expect((network as any).unreachableQuarantine.get(PEER_A)).toBe(EXPIRED);
 		expect((network as any).quarantineProbeInFlight.has(PEER_A)).toBe(false);
-		releaseOther();
-		release();
 		await refused;
 		expect(dialed.length).toBe(0);
 	});

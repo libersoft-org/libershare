@@ -712,7 +712,7 @@ export class Networks {
 		const after = Networks.cleanBootstrapList(next?.bootstrapPeers ?? []);
 		// Only for a membership that stays: a leave resets the whole status anyway and a dial
 		// on the way out is pure waste, and a join has nothing installed yet to reconcile.
-		if (joined && wantJoined && (installed.join('\n') !== after.join('\n') || entry?.complete === false)) this.syncBootstrapRuntime(id, installed, after);
+		if (joined && wantJoined && (installed.join('\n') !== after.join('\n') || entry?.complete === false)) await this.syncBootstrapRuntime(id, installed, after);
 		if (joined !== wantJoined) {
 			if (wantJoined) await this.joinNetwork(id);
 			else await this.leaveNetwork(id, installed);
@@ -916,16 +916,12 @@ export class Networks {
 		// relay we depend on. disconnectPeer is a safe no-op hangUp for an unconnected
 		// peer and always strips keep-alive + suppresses redial.
 		// Address-level cleanup first, because the identity-level loop below cannot do it.
-		// Ownership of an address is held per NETWORK, but that loop is keyed by peer ID
-		// and `continue`s the moment the identity is configured somewhere else — so the
-		// left network's own claim was never released. Two ways that bit: A and B listing
-		// the SAME address left A's claim pinning it for the lifetime of the node, and A
-		// and B listing the same peer under DIFFERENT addresses left A's address being
-		// force-dialed by the parked probe and exempt from the stale sweep.
-		// Releasing a claim is not a delete: an address another joined network still
-		// lists keeps its own claim and survives, which is why no elsewhere-filter is
-		// needed here.
-		this.network.pruneBootstrapAddresses(Networks.cleanBootstrapList(this.get(id)?.bootstrapPeers ?? []), id);
+		// One peer can be configured in two networks under two DIFFERENT addresses; on
+		// leaving the first, `stillConfigured` says the identity is in use elsewhere and
+		// skips its cleanup entirely — so the left network's own address went on counting
+		// as a configured bootstrap: force-dialed by the parked probe, exempt from the
+		// stale sweep, and disagreeing with what the UI shows as configured.
+		this.network.pruneBootstrapAddresses(outgoing, id);
 
 		const stillConfigured = this.configuredBootstrapPeerIDsElsewhere(id);
 		for (const pid of new Set(Networks.bootstrapPeerIDsOf(outgoing))) {
@@ -1202,20 +1198,24 @@ export class Networks {
 	}
 
 	async update(network: LISHNetworkConfig): Promise<boolean> {
-		const existing = this.get(network.networkID);
-		// Store the cleaned list, not the raw one: blank rows from the form would
-		// otherwise be persisted while the runtime worked from the filtered copy, and
-		// the two would disagree about what this network's bootstrap list even is.
-		const cleaned = Networks.cleanBootstrapList(network.bootstrapPeers ?? []);
-		const ok = updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned });
-		// The general edit form carries the bootstrap list as well, so this path can
-		// change it just like updateBootstrapPeers does. Without the same runtime
-		// synchronisation the edit would reach only the database and the live node
-		// would keep dialing the previous list until restart.
-		if (!ok || !existing) return ok;
-		const previous = Networks.cleanBootstrapList(existing.bootstrapPeers);
-		if (previous.join('\n') !== cleaned.join('\n')) await this.syncBootstrapRuntime(network.networkID, existing.bootstrapPeers, cleaned);
-		return ok;
+		// Row read and write in ONE critical section. With the read outside it, a toggle
+		// could slip between the two and be overwritten by a row this edit had already read.
+		// The general edit form carries the bootstrap list AND the enabled flag, so this path
+		// can change either one. Without the runtime reconciliation the edit would reach only
+		// the database and the live node would keep dialing the previous list — or stay in a
+		// network the edit had just disabled — until restart.
+		return await this.inMutation(async () => {
+			const job = await this.inCatalog(() => {
+				// Store the cleaned list, not the raw one: blank rows from the form would
+				// otherwise be persisted while the runtime worked from the filtered copy, and
+				// the two would disagree about what this network's bootstrap list even is.
+				const cleaned = Networks.cleanBootstrapList(network.bootstrapPeers ?? []);
+				return updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned }) ? this.reconcileLater(network.networkID) : undefined;
+			});
+			if (!job) return false;
+			await job;
+			return true;
+		});
 	}
 
 	/**
@@ -1318,13 +1318,21 @@ export class Networks {
 	 * recorded. Returns the updated config or null if the network is unknown.
 	 */
 	async updateBootstrapPeers(id: string, bootstrapPeers: string[]): Promise<LISHNetworkConfig | null> {
-		const existing = this.get(id);
-		if (!existing) return null;
-		const cleaned = Networks.cleanBootstrapList(bootstrapPeers);
-		const next: LISHNetworkConfig = { ...existing, bootstrapPeers: cleaned };
-		updateLISHnet(this.db, next);
-		await this.syncBootstrapRuntime(id, existing.bootstrapPeers, cleaned);
-		return next;
+		return await this.inMutation(async () => {
+			const staged = await this.inCatalog(() => {
+				const existing = this.get(id);
+				if (!existing) return undefined;
+				const next: LISHNetworkConfig = { ...existing, bootstrapPeers: Networks.cleanBootstrapList(bootstrapPeers) };
+				// Persist first and believe the answer. Switching the runtime over after a failed
+				// write would leave the node dialing a list the database never accepted, and the
+				// old one would come back at the next restart with nothing to explain the change.
+				if (!updateLISHnet(this.db, next)) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, id);
+				return { next, job: this.reconcileLater(id) };
+			});
+			if (!staged) return null;
+			await staged.job;
+			return staged.next;
+		});
 	}
 
 	/**
@@ -1353,10 +1361,10 @@ export class Networks {
 	 * gets here, so the dial below always runs and the record always describes something
 	 * real.
 	 */
-	private async syncBootstrapRuntime(id: string, previousPeers: string[], cleaned: string[]): Promise<void> {
+	private async syncBootstrapRuntime(id: string, installed: string[], cleaned: string[]): Promise<void> {
 		const nextIDs = new Set(Networks.bootstrapPeerIDsOf(cleaned));
 		const elsewhere = this.configuredBootstrapPeerIDsElsewhere(id);
-		for (const pid of Networks.bootstrapPeerIDsOf(previousPeers)) {
+		for (const pid of Networks.bootstrapPeerIDsOf(installed)) {
 			if (!nextIDs.has(pid) && !elsewhere.has(pid)) this.network.pruneConfiguredBootstrapPeer(pid, id);
 		}
 		// Addresses that left the list while their peer ID stayed — the user edited a
@@ -1365,31 +1373,20 @@ export class Networks {
 		// Compare canonically, the same way the autodial list itself does. Raw string
 		// equality would treat two spellings of one address (DNS case, IPv6 form) as
 		// different entries here and as the same one during the prune below.
-		// No elsewhere-filter, for the same reason the leave path has none: ownership is
-		// held per network, so pruneBootstrapAddresses releases only THIS network's claim
-		// and an address another joined network still lists survives on its own claim.
-		// Skipping the prune because someone else uses the address left this network's
-		// claim on it forever — the address then read as configured long after the user
-		// removed it, escaping the discovered TTL and cap.
 		const keptAddresses = new Set(cleaned.map(normalizeMultiaddrForCompare));
-		const dropped = Networks.cleanBootstrapList(previousPeers).filter(a => !keptAddresses.has(normalizeMultiaddrForCompare(a)));
+		const dropped = Networks.cleanBootstrapList(installed).filter(a => !keptAddresses.has(normalizeMultiaddrForCompare(a)));
 		this.network.pruneBootstrapAddresses(dropped, id);
 		this.network.pruneBootstrapStatus(id, cleaned);
-		// Registry bookkeeping alone left the removed entry alive where it counts: its
-		// address stayed in the peerStore with the keep-alive tags, and redial
-		// maintenance walks the peerStore — so the next tick dialed and re-tagged a
-		// bootstrap the user had just deleted. Runs AFTER the prunes above, because the
-		// reconciliation asks whether anything still needs the peer and the answer has
-		// to be read from the NEW configuration.
 		const droppedByPeer = new Map<string, string[]>();
 		for (const address of dropped) {
-			const pid = Networks.bootstrapPeerIDsOf([address])[0];
-			if (!pid) continue;
-			const forPeer = droppedByPeer.get(pid);
-			if (forPeer) forPeer.push(address);
-			else droppedByPeer.set(pid, [address]);
+			const peerID = Networks.bootstrapPeerIDsOf([address])[0];
+			if (!peerID) continue;
+			const addresses = droppedByPeer.get(peerID);
+			if (addresses) addresses.push(address);
+			else droppedByPeer.set(peerID, [address]);
 		}
-		for (const [pid, addresses] of droppedByPeer) await this.network.reconcilePeerAfterBootstrapRemoval(pid, addresses, id);
+		for (const [peerID, addresses] of droppedByPeer) await this.network.reconcilePeerAfterBootstrapRemoval(peerID, addresses, id);
+		const entry = this.beginBootstrapInstall(id, cleaned);
 		if (this.joinedNetworks.has(id) && cleaned.length > 0) {
 			this.network.addBootstrapPeers(cleaned, id, 'configured').then(
 				result => Networks.finishBootstrapInstall(entry, result),
