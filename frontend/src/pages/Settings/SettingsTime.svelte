@@ -121,8 +121,6 @@
 		if (failure) errorMessage = failure;
 	}
 
-	void reload();
-
 	let offTimeChanged: (() => void) | void;
 
 	onMount(() => {
@@ -144,8 +142,13 @@
 			// needs a revision on the status and a precondition on the write.
 			if (!busy && !hasChanges) applyStatus(next);
 		});
-		// Best-effort: with the WS down the call rejects — swallow it, the event just stays unsubscribed.
-		api.subscribe('system:timeChanged').catch(() => {});
+		// Subscribe before the first read, just like after a reconnect. Reading first leaves
+		// a gap where another window can change the host after our snapshot was taken but
+		// before the server starts sending us events, leaving this form stale indefinitely.
+		void api
+			.subscribe('system:timeChanged')
+			.catch(() => {})
+			.then(() => void reload());
 		// The backend keeps subscriptions per connection, so a dropped socket takes this
 		// one with it and the page would sit there silently stale for as long as it is
 		// open. Re-subscribe on every reconnect and re-read what was missed while down —
