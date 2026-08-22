@@ -2898,15 +2898,19 @@ export class Network {
 		return this.bootstrapTracker.getStatus(networkID);
 	}
 
-	/** Drop bootstrap status entries no longer in the configured peer list (after an update). */
+	/** Replace one network's configured addresses and drop status entries removed by the update. */
 	pruneBootstrapStatus(networkID: string, keepMultiaddrs: string[]): void {
 		this.bumpBootstrapGeneration(networkID);
+		const configured = new Set(keepMultiaddrs.map(normalizeMultiaddrForCompare));
+		if (configured.size === 0) this.configuredBootstrapAddressesByNet.delete(networkID);
+		else this.configuredBootstrapAddressesByNet.set(networkID, configured);
 		this.bootstrapTracker.pruneEntries(networkID, keepMultiaddrs);
 	}
 
 	/** Reset the bootstrap status for a single network (used when re-joining). */
 	resetBootstrapStatus(networkID: string): void {
 		this.bumpBootstrapGeneration(networkID);
+		this.configuredBootstrapAddressesByNet.delete(networkID);
 		this.bootstrapTracker.resetNetwork(networkID);
 	}
 

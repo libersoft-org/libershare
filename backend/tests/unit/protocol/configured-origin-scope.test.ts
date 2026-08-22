@@ -6,6 +6,7 @@ import { BootstrapStatusTracker } from '../../../src/protocol/bootstrap-status.t
 const PEER_ID = '12D3KooWAnfqA6Wap96ixVfxhHeGUDMriBG4Nncp5tqu8q71EVv2';
 const SELF_ID = '12D3KooWMztFaEQCMchucczv2c7D1PY8LRWVVJLU9MWkdfU4zg9C';
 const SHARED = `/ip4/203.0.113.9/tcp/9090/p2p/${PEER_ID}`;
+const RETAINED = `/ip4/203.0.113.10/tcp/9090/p2p/${PEER_ID}`;
 const NET_A = 'aaaaaaaa-0000-0000-0000-000000000001';
 const NET_B = 'bbbbbbbb-0000-0000-0000-000000000002';
 
@@ -39,7 +40,8 @@ function harness() {
 	return { network, tracker };
 }
 
-const rowIn = (tracker: BootstrapStatusTracker, net: string) => (tracker.getStatus(net)?.peers ?? []).find(p => normalizeMultiaddrForCompare(p.multiaddr) === normalizeMultiaddrForCompare(SHARED));
+const rowFor = (tracker: BootstrapStatusTracker, net: string, address: string) => (tracker.getStatus(net)?.peers ?? []).find(p => normalizeMultiaddrForCompare(p.multiaddr) === normalizeMultiaddrForCompare(address));
+const rowIn = (tracker: BootstrapStatusTracker, net: string) => rowFor(tracker, net, SHARED);
 
 describe('configured origin must not leak between LISH networks', () => {
 	it('keeps a gossip-learned address discovered in B while it is configured in A', async () => {
@@ -57,6 +59,31 @@ describe('configured origin must not leak between LISH networks', () => {
 		tracker.sweepStale(30 * 60_000, () => false, Date.now() + 45 * 60_000);
 		expect(rowIn(tracker, NET_A)).toBeDefined();
 		expect(rowIn(tracker, NET_B)).toBeUndefined();
+	});
+
+	it('forgets A origin when a shared address is removed only from A', async () => {
+		const { network, tracker } = harness();
+		await network.addBootstrapPeers([SHARED, RETAINED], NET_A, 'configured');
+		await network.addBootstrapPeers([SHARED], NET_B, 'configured');
+
+		network.pruneBootstrapStatus(NET_A, [RETAINED]);
+		await network.addBootstrapPeers([SHARED], NET_A, 'discovered');
+
+		expect(rowIn(tracker, NET_A)?.origin).toBe('discovered');
+		expect(rowFor(tracker, NET_A, RETAINED)?.origin).toBe('configured');
+		expect(rowIn(tracker, NET_B)?.origin).toBe('configured');
+	});
+
+	it('forgets A origin after A is left', async () => {
+		const { network, tracker } = harness();
+		await network.addBootstrapPeers([SHARED], NET_A, 'configured');
+		await network.addBootstrapPeers([SHARED], NET_B, 'configured');
+
+		network.resetBootstrapStatus(NET_A);
+		await network.addBootstrapPeers([SHARED], NET_A, 'discovered');
+
+		expect(rowIn(tracker, NET_A)?.origin).toBe('discovered');
+		expect(rowIn(tracker, NET_B)?.origin).toBe('configured');
 	});
 
 	it('does not let a probe in A restart the staleness clock of a dead B row', async () => {
