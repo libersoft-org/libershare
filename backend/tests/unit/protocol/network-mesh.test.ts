@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { LISH_TOPIC_PREFIX, DEFAULT_ACCEPT_PX_THRESHOLD, lishTopic, normalizeTrustedPeerIds, parseAcceptPXThreshold } from '../../../src/protocol/constants.ts';
+import { Network } from '../../../src/protocol/network.ts';
 import { logStatusDebug } from '../../../src/protocol/status-logger.ts';
 
 const NETWORK_TS = readFileSync(join(__dirname, '../../../src/protocol/network.ts'), 'utf-8');
@@ -348,19 +349,57 @@ describe('lishTopic helper', () => {
 // Peer count check scheduling — source code verification
 // ---------------------------------------------------------------------------
 
-describe('subscribeTopic — peer count scheduling', () => {
-	it('schedules 3 delayed peer count checks after subscribe', () => {
-		const subscribeBlock = NETWORK_TS.slice(NETWORK_TS.indexOf('subscribeTopic(networkID: string)'), NETWORK_TS.indexOf('unsubscribeHandler'));
-		const matches = subscribeBlock.match(/setTimeout\(\(\) => this\.schedulePeerCountCheck\(\)/g);
-		expect(matches).not.toBeNull();
-		expect(matches!.length).toBe(3);
+/**
+ * These used to grep the source for three literal setTimeout calls, which said nothing
+ * about what actually happens and broke the moment the calls were factored into a loop.
+ * The delayed probes matter for a different reason now: they used to be untracked, so
+ * they kept a closure on the instance alive and could fire against a node the run no
+ * longer owned.
+ */
+describe('subscribeTopic — delayed peer count probes', () => {
+	function bareNetwork() {
+		const checks: number[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		(network as any).delayedPeerCountTimers = new Set();
+		(network as any).schedulePeerCountCheck = () => checks.push(Date.now());
+		return { network, checks };
+	}
+
+	it('tracks every probe it arms, so stop can cancel them', () => {
+		const { network } = bareNetwork();
+		for (const delay of [2000, 5000, 15000]) (network as any).armDelayedPeerCountCheck(delay);
+		expect((network as any).delayedPeerCountTimers.size).toBe(3);
+		for (const timer of (network as any).delayedPeerCountTimers) clearTimeout(timer);
 	});
 
-	it('uses delays 2s, 5s, 15s for mesh rebuild', () => {
+	it('still uses the 2s, 5s and 15s mesh-rebuild delays', () => {
 		const subscribeBlock = NETWORK_TS.slice(NETWORK_TS.indexOf('subscribeTopic(networkID: string)'), NETWORK_TS.indexOf('unsubscribeHandler'));
 		expect(subscribeBlock).toContain('2000');
 		expect(subscribeBlock).toContain('5000');
 		expect(subscribeBlock).toContain('15000');
+	});
+
+	it('does not check peer counts once the probe fires for a superseded run', async () => {
+		const { network, checks } = bareNetwork();
+		(network as any).armDelayedPeerCountCheck(1);
+		(network as any).runEpoch = 2; // a stop()/start() landed while the probe was pending
+		await new Promise(resolve => setTimeout(resolve, 20));
+		expect(checks).toEqual([]);
+	});
+
+	it('checks peer counts when the run is still the same', async () => {
+		const { network, checks } = bareNetwork();
+		(network as any).armDelayedPeerCountCheck(1);
+		await new Promise(resolve => setTimeout(resolve, 20));
+		expect(checks).toHaveLength(1);
+	});
+
+	it('forgets a timer once it has fired', async () => {
+		const { network } = bareNetwork();
+		(network as any).armDelayedPeerCountCheck(1);
+		await new Promise(resolve => setTimeout(resolve, 20));
+		expect((network as any).delayedPeerCountTimers.size).toBe(0);
 	});
 });
 

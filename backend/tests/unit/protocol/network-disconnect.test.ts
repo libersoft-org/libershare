@@ -37,7 +37,11 @@ function makeNetwork() {
 	};
 	const network = Object.create(Network.prototype) as Network;
 	(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+	(network as any).configuredBootstrapPeerIDs = new Set<string>();
+	(network as any).pubsub = null;
 	(network as any).bootstrapGeneration = new Map();
+	(network as any).inFlightBootstrapDials = new Map();
+	(network as any).dialAbort = new AbortController();
 	(network as any).bootstrapPeerIDs = new Set<string>();
 	installBootstrapRegistry(network, []);
 	(network as any).redialBackoff = new Map();
@@ -307,6 +311,190 @@ describe('Network.handleDiscoveredPeer — post-await re-checks', () => {
 });
 
 /**
+ * A shutdown WAITS for the lishnet operations already under way, and a leave is a walk of
+ * per-peer teardowns with no deadline of their own — one `hangUp` on a peer that never
+ * acknowledges used to hold the whole stop, and the lishnet catalog behind it, indefinitely.
+ * A deadline would be the wrong answer (the abandoned teardown would come back on a stopped
+ * node); ending the work is the right one.
+ */
+describe('Network.disconnectPeer — bounded by the run it belongs to', () => {
+	it('does nothing once this run has been cancelled', async () => {
+		const { network, merges, hungUp, deleted } = makeNetwork();
+		network.cancelRunOperations();
+
+		await network.disconnectPeer(PEER_ID, NET);
+
+		expect(merges).toEqual([]);
+		expect(hungUp).toEqual([]);
+		expect(deleted).toEqual([]);
+	});
+
+	it('hands the run signal to the awaits a cancellation has to reach', async () => {
+		const { network } = makeNetwork();
+		const signals: unknown[] = [];
+		(network as any).node.peerStore.merge = async (_pid: unknown, _patch: unknown, opts?: { signal?: AbortSignal }): Promise<void> => {
+			signals.push(opts?.signal);
+		};
+		(network as any).node.hangUp = async (_pid: unknown, opts?: { signal?: AbortSignal }): Promise<void> => {
+			signals.push(opts?.signal);
+		};
+
+		await network.disconnectPeer(PEER_ID, NET);
+
+		// The tag removal and the hangUp: the two awaits between the start of a teardown and
+		// the point where it can no longer block anything.
+		expect(signals.length).toBe(2);
+		for (const signal of signals) expect(signal).toBe((network as any).dialAbort.signal);
+	});
+});
+
+/**
+ * Join and leave of DIFFERENT lishnets run concurrently, but the peerStore, the keep-alive
+ * tags, the connections and the redial suppression they work on are global. `leaveNetwork`
+ * snapshots which peers are exclusive to the lishnet it is leaving and then works through
+ * them one await at a time, so a lishnet joined half-way down that list — or a remote
+ * SUBSCRIBE on a topic we are already in — is invisible to the snapshot. The claim it
+ * missed has to be noticed here instead.
+ */
+describe('Network.disconnectPeer — a peer claimed while it is being let go', () => {
+	/** A network whose pubsub starts empty and can gain a subscriber mid-disconnect. */
+	function claimable() {
+		const merges: Array<{ tags: Record<string, unknown> }> = [];
+		const hungUp: string[] = [];
+		const deleted: string[] = [];
+		const subscribers: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).runEpoch = 1;
+		// A prototype-only instance has no field initializers: disconnectPeer binds itself to
+		// this run's cancellation and needs a controller to read.
+		(network as any).dialAbort = new AbortController();
+		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).redialBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).pubsub = {
+			getTopics: (): string[] => ['lish/net-b'],
+			getSubscribers: (): Array<{ toString(): string }> => subscribers.map(p => ({ toString: () => p })),
+		};
+		(network as any).peerAnnounce = { getRecentMembers: (): string[] => [] };
+		(network as any).node = {
+			getConnections: (): unknown[] => [],
+			peerStore: {
+				async merge(_pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> {
+					merges.push(patch);
+				},
+				async delete(pid: { toString(): string }): Promise<void> {
+					deleted.push(pid.toString());
+				},
+			},
+			async hangUp(pid: { toString(): string }): Promise<void> {
+				hungUp.push(pid.toString());
+			},
+		};
+		return { network, merges, hungUp, deleted, subscribers };
+	}
+
+	it('leaves a peer alone when a joined lishnet already needs it', async () => {
+		const { network, merges, hungUp, deleted, subscribers } = claimable();
+		subscribers.push(PEER_ID);
+
+		await network.disconnectPeer(PEER_ID, NET);
+
+		expect(merges).toEqual([]);
+		expect(hungUp).toEqual([]);
+		expect(deleted).toEqual([]);
+		expect((network as any).isRedialSuppressed(PEER_ID)).toBe(false);
+	});
+
+	it('gives the peer back when the claim lands during the tag removal', async () => {
+		const { network, hungUp, deleted, merges, subscribers } = claimable();
+		// The other lishnet's join completes while this disconnect is inside peerStore.merge.
+		(network as any).node.peerStore.merge = async (_pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> => {
+			merges.push(patch);
+			if (merges.length === 1) subscribers.push(PEER_ID);
+		};
+
+		await network.disconnectPeer(PEER_ID, NET);
+
+		// Neither destructive step ran, and the two global effects already applied are undone:
+		// the suppression that would stop every maintenance path from dialing the peer back,
+		// and the keep-alive tag libp2p needs to hold the connection open.
+		expect(hungUp).toEqual([]);
+		expect(deleted).toEqual([]);
+		expect((network as any).isRedialSuppressed(PEER_ID)).toBe(false);
+		expect(merges[1]?.tags).toHaveProperty(KEEP_ALIVE);
+		expect(merges[1]!.tags[KEEP_ALIVE]).toEqual({ value: 1 });
+	});
+
+	it('gives the peer back when the claim lands during the hangUp', async () => {
+		const { network, deleted, subscribers } = claimable();
+		(network as any).node.hangUp = async (): Promise<void> => {
+			subscribers.push(PEER_ID);
+		};
+
+		await network.disconnectPeer(PEER_ID, NET);
+
+		// The connection is gone, but the peerStore record — the only thing that survives a
+		// restart — is not purged, and nothing is left suppressing the reconnect.
+		expect(deleted).toEqual([]);
+		expect((network as any).isRedialSuppressed(PEER_ID)).toBe(false);
+	});
+
+	it('lifts the suppression when the claim lands during the purge', async () => {
+		const { network, deleted, subscribers } = claimable();
+		(network as any).node.peerStore.delete = async (pid: { toString(): string }): Promise<void> => {
+			deleted.push(pid.toString());
+			subscribers.push(PEER_ID);
+		};
+
+		await network.disconnectPeer(PEER_ID, NET);
+
+		// Too late to keep the record, but the suppression is global and would otherwise make
+		// every maintenance path refuse the peer a joined lishnet is now asking for.
+		expect(deleted).toEqual([PEER_ID]);
+		expect((network as any).isRedialSuppressed(PEER_ID)).toBe(false);
+	});
+
+	/**
+	 * The mirror image of the race above, and the one the first fix opened. The claim was read
+	 * only BEFORE the keep-alive restore, so the last owner leaving while that merge was in
+	 * flight got its own cleanup finished and then had this restore land on top of it — a
+	 * keep-alive tag put back on a peer nobody is in a lishnet with, and the caller told to
+	 * stop, so the hangUp and the purge never happened.
+	 */
+	it('carries on when the claim disappears again during the restore', async () => {
+		const { network, hungUp, deleted, merges, subscribers } = claimable();
+		// Another lishnet claims the peer during the tag removal, and its own leave finishes
+		// while the keep-alive restore that claim triggered is still in flight.
+		(network as any).node.peerStore.merge = async (_pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> => {
+			merges.push(patch);
+			if (merges.length === 1) subscribers.push(PEER_ID);
+			else if (patch.tags[KEEP_ALIVE] !== undefined) subscribers.length = 0;
+		};
+
+		await network.disconnectPeer(PEER_ID, NET);
+
+		// The disconnect ran to the end, and the tag the restore put back is off again.
+		expect(hungUp).toEqual([PEER_ID]);
+		expect(deleted).toEqual([PEER_ID]);
+		expect((network as any).isRedialSuppressed(PEER_ID)).toBe(true);
+		expect(merges[merges.length - 1]!.tags[KEEP_ALIVE]).toBeUndefined();
+	});
+
+	it('still tears down a peer nobody claims', async () => {
+		const { network, hungUp, deleted } = claimable();
+
+		await network.disconnectPeer(PEER_ID, NET);
+
+		expect(hungUp).toEqual([PEER_ID]);
+		expect(deleted).toEqual([PEER_ID]);
+		expect((network as any).isRedialSuppressed(PEER_ID)).toBe(true);
+	});
+});
+
+/**
  * Per-network suppression: rejoining one lishnet must lift only ITS left peers,
  * a legitimate reconnect lifts a peer from all lishnets.
  */
@@ -314,6 +502,8 @@ describe('Network per-network redial suppression', () => {
 	function bareNetwork() {
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).pubsub = null;
 		return network;
 	}
 
@@ -348,7 +538,7 @@ describe('Network.runRedialMaintenance — leave-peer suppression', () => {
 		(network as any).redialBackoff = new Map();
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
 		(network as any).unreachableQuarantine = new Map();
-		(network as any).noReachableSince = new Map();
+		(network as any).redialBackoff = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		// A reconnected peer's suppression is lifted only if it currently shares a joined
 		// topic — model that via a pubsub whose subscribers list the "back on topic" peers.
@@ -406,11 +596,19 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		(network as any).redialBackoff = new Map();
 		(network as any).recoveryBackoff = new Map();
 		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		installBootstrapRegistry(network, seeds);
 		(network as any).recentDisconnects = [];
-		(network as any).bootstrapTracker = { entries: () => [] };
+		(network as any).bootstrapTracker = {
+			recordAddressReachable(): void {},
+			recordAddressUnreachable(): void {},
+			batchDebounced<T>(_net: string, fn: () => Promise<T>): Promise<T> {
+				return fn();
+			},
+			entries: () => [],
+		};
 		(network as any).node = {
 			getPeers: () => [],
 			async dial(ma: { toString(): string }): Promise<void> {
@@ -459,7 +657,7 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 	it('skips a discovered bootstrap peer still inside its unreachable quarantine', async () => {
 		const { network, dialed } = bareNetwork([], [{ address: ADDR }]);
 		(network as any).unreachableQuarantine = new Map([[PEER_ID, Date.now() - 60_000]]);
-		await run(network, []);
+		await run(network);
 		expect(dialed).toEqual([]);
 	});
 
@@ -481,7 +679,11 @@ describe('Network.addBootstrapPeers — rejoin clears suppression', () => {
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set<string>(suppressed)]]);
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).addressProbeBackoff = new Map();
 		(network as any).bootstrapGeneration = new Map();
+		(network as any).inFlightBootstrapDials = new Map();
+		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		installBootstrapRegistry(network, []);
 		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };

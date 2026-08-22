@@ -1,4 +1,5 @@
 import { type BootstrapStatus, type BootstrapPeerStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
+import { canonicalMultiaddr } from './multiaddr-utils.ts';
 
 /**
  * Hard ceiling on DISCOVERED (gossip-learned) rows kept per network. A hostile
@@ -10,10 +11,104 @@ import { type BootstrapStatus, type BootstrapPeerStatus, type BootstrapPeerDialS
 const MAX_DISCOVERED_PER_NETWORK = 256;
 
 /**
+ * While a {@link BootstrapStatusTracker.batchDebounced} frame is open, how often the
+ * changes accumulated so far are published.
+ *
+ * A plain batch frame publishes once, at close — which is wrong for a body that awaits a
+ * dial per address: the frame would stay open for the whole list, one 10 s timeout at a
+ * time, and the UI would show nothing until the last address settled. Flushing on this
+ * interval keeps the run visible while still collapsing the burst of intake mutations
+ * (two per address, each rebuilding the whole snapshot) into a handful of emissions.
+ */
+const BATCH_FLUSH_INTERVAL_MS = 75;
+
+/**
+ * A stored row: the status the UI sees, plus the clock {@link BootstrapStatusTracker.sweepStale}
+ * measures against.
+ *
+ * `updatedAt` cannot serve as that clock. It is "when did anything about this row last
+ * change", which is what the UI wants, and it moves on every dial outcome — failures
+ * included. Gossip re-announces a dead peer far more often than the sweep TTL, and this
+ * node answers each mention with a dial that fails, so measuring staleness from
+ * `updatedAt` meant a dead row was refreshed by its own failures and could never expire.
+ * `staleSince` moves only when the address actually answered or its previously
+ * verified identity is observed taking part in this network.
+ */
+type TrackedPeer = BootstrapPeerStatus & {
+	staleSince: number;
+	/**
+	 * Expired out of the published list, but still remembered.
+	 *
+	 * The sweep used to delete the row, which threw away the one thing that kept the peer
+	 * out: its `staleSince`. The next gossip mention then created a fresh row with a fresh
+	 * clock, so a peer nobody had reached for hours was back in the list for another full
+	 * TTL — on nothing but somebody else's memory of it. Hiding instead of deleting keeps
+	 * the clock, so only a real connection can bring the row back. The row-cap drops hidden
+	 * rows before anything else, which is what bounds them.
+	 */
+	hidden: boolean;
+};
+
+/*
+ * WHO TOUCHES `hidden`, AND WHY
+ *
+ * The rule is one sentence: a DISCOVERED row is published only while the endpoint has
+ * answered for itself, or its proven identity is taking part in the network right now.
+ * Everything below is that sentence applied to each path, and the table is here because
+ * the earlier design — hide only on expiry — needed the same rule enforced in five
+ * separate places and lost it in a new one every time somebody added a sixth.
+ *
+ *   created (markPending)      hidden, always. Being named by gossip is not evidence.
+ *   verified connect           shown. The endpoint answered as itself.
+ *   connect, unverified        unchanged, unless the peer is a member (then shown).
+ *   failed dial                unchanged. A failure is not evidence about the identity.
+ *   expiry sweep               hidden. It answered once, and that was too long ago.
+ *   sweep, peer is a member    shown, and the last-contact clock is refreshed.
+ *   row cap                    deleted outright — a hidden row holds no claim, and
+ *                              re-learning it costs one dial.
+ *   configured, any path       never hidden. User data stays on screen, red if broken.
+ *
+ * The two directions matter equally. Hiding too eagerly loses a live participant, which
+ * is the same complaint as the ticket's, only inverted — so every guard here has a test
+ * for what it must NOT block.
+ */
+
+/**
+ * The one thing that is true of every row, wherever it is written.
+ *
+ * A CONFIGURED row is user data: the user typed the address in and needs to see what it is
+ * doing, especially when that is nothing. Hiding is for rows this node learned from gossip
+ * and has since written off — a discovered row that expired can be promoted to configured
+ * the moment the user saves that same address, and it has to become visible again in the
+ * same breath, red if that is what it is.
+ */
+function hiddenFor(origin: BootstrapPeerOrigin, wouldHide: boolean): boolean {
+	return origin === 'configured' ? false : wouldHide;
+}
+
+/**
+ * Which spelling of an endpoint the UI should show.
+ *
+ * The row is keyed canonically, so several spellings can land on it. A configured one
+ * always wins — it is what the user typed into the form and what they will look for when
+ * fixing it — and otherwise the first spelling seen is kept, so a row does not visibly
+ * change address every time gossip restates it differently.
+ */
+function displaySpelling(previous: TrackedPeer | undefined, incoming: string, origin: BootstrapPeerOrigin): string {
+	if (!previous || origin === 'configured') return incoming;
+	return previous.multiaddr;
+}
+
+/**
  * Tracks per-network, per-bootstrap-peer dial outcome status.
  *
- * Outer key is networkID; inner key is the exact multiaddr string from the network
- * config. Populated by markBootstrapPending / recordBootstrapOutcome when called
+ * Outer key is networkID; inner key is the CANONICAL form of the multiaddr, while the
+ * row keeps the spelling as written for display. Keying by the raw string let two
+ * spellings of one endpoint — DNS case, a trailing dot, an expanded IPv6 literal — open
+ * two rows that then contradicted each other, spent the row budget twice and survived a
+ * delete aimed at only one of them.
+ *
+ * Populated by markBootstrapPending / recordBootstrapOutcome when called
  * with a networkID context. Lets the UI surface which SPECIFIC bootstrap entry is
  * stale (identity-mismatch) or unreachable (timeout), rather than flagging the
  * whole network.
@@ -24,16 +119,137 @@ const MAX_DISCOVERED_PER_NETWORK = 256;
  * under the network through which they were learned.
  */
 export class BootstrapStatusTracker {
-	private readonly stats: Map<string, Map<string, BootstrapPeerStatus>> = new Map();
+	private readonly stats: Map<string, Map<string, TrackedPeer>> = new Map();
 	private onStatusChange: ((networkID: string, status: BootstrapStatus) => void) | null = null;
+	/** Open {@link batch} frames, keyed by networkID. See that method for why. */
+	private readonly batches: Map<string, { depth: number; dirty: boolean }> = new Map();
+	/** Current members of a network, for {@link capDiscovered}. See {@link setMembersProvider}. */
+	private membersProvider: ((networkID: string) => Set<string>) | null = null;
 
 	/** Register a callback that fires on every status mutation. */
 	setOnChange(cb: ((networkID: string, status: BootstrapStatus) => void) | null): void {
 		this.onStatusChange = cb;
 	}
 
+	/**
+	 * Supply the current member set of a network, so {@link capDiscovered} can tell a row
+	 * that describes a live participant from one that describes an address nobody answers
+	 * on. Asked for the whole set rather than per peer because the cap ranks every row at
+	 * once and a per-peer question would rebuild the same snapshot for each of them.
+	 */
+	setMembersProvider(fn: ((networkID: string) => Set<string>) | null): void {
+		this.membersProvider = fn;
+	}
+
+	/**
+	 * Group many mutations of one network into a SINGLE status emission.
+	 *
+	 * Every mutation otherwise rebuilds and emits the whole peer list, and a caller
+	 * that walks a list of addresses performs two of them per address (pending, then
+	 * outcome) — so intake of one large announce costs a snapshot per row per address,
+	 * each copying every row, all but the last of which is thrown away by the UI.
+	 *
+	 * The frame closes on every exit path, throw included, so a body that fails still
+	 * publishes what it managed to change — the tracker is already mutated by then and
+	 * silence would leave the UI showing pre-batch state indefinitely. An async body is
+	 * held open until its promise settles, because the caller this exists for awaits a
+	 * dial between mutations; the return value keeps the body's own type either way.
+	 * Nested calls for the same network collapse into the outermost frame, and a batch
+	 * in which nothing actually changed emits nothing.
+	 */
+	batch<T>(networkID: string, fn: () => T): T {
+		let frame = this.batches.get(networkID);
+		if (!frame) {
+			frame = { depth: 0, dirty: false };
+			this.batches.set(networkID, frame);
+		}
+		frame.depth++;
+		const open = frame;
+		let result: T;
+		try {
+			result = fn();
+		} catch (err) {
+			this.closeBatch(networkID, open);
+			throw err;
+		}
+		if (result instanceof Promise) {
+			return result.then(
+				value => {
+					this.closeBatch(networkID, open);
+					return value;
+				},
+				err => {
+					this.closeBatch(networkID, open);
+					throw err;
+				}
+			) as T;
+		}
+		this.closeBatch(networkID, open);
+		return result;
+	}
+
+	/**
+	 * Like {@link batch}, but for an async body long enough that holding every change to
+	 * the end would leave the UI stale: what has accumulated is published every
+	 * {@link BATCH_FLUSH_INTERVAL_MS} while the frame is open, and once more at close.
+	 *
+	 * This is the shape bootstrap intake needs — it awaits a dial between each address's
+	 * pending mark and its outcome, so the alternatives are one emission per mutation
+	 * (what it used to do) or one emission for the entire list (a frozen UI).
+	 */
+	async batchDebounced<T>(networkID: string, fn: () => Promise<T>): Promise<T> {
+		let frame = this.batches.get(networkID);
+		if (!frame) {
+			frame = { depth: 0, dirty: false };
+			this.batches.set(networkID, frame);
+		}
+		frame.depth++;
+		const open = frame;
+		const timer = setInterval(() => {
+			// A frame replaced by clear() belongs to a torn-down run; publishing its
+			// leftovers under the same networkID would speak for whatever came next.
+			if (!open.dirty || this.batches.get(networkID) !== open) return;
+			open.dirty = false;
+			this.onStatusChange?.(networkID, this.buildStatus(networkID) ?? { networkID, peers: [] });
+		}, BATCH_FLUSH_INTERVAL_MS);
+		timer.unref?.();
+		try {
+			return await fn();
+		} finally {
+			clearInterval(timer);
+			this.closeBatch(networkID, open);
+		}
+	}
+
+	/** Leave one {@link batch} frame, emitting the grouped snapshot when the last one exits. */
+	private closeBatch(networkID: string, frame: { depth: number; dirty: boolean }): void {
+		frame.depth--;
+		if (frame.depth > 0) return;
+		// clear() drops open frames on teardown; a pending emission from before it
+		// belongs to the run that was torn down, not to whatever comes next.
+		if (this.batches.get(networkID) !== frame) return;
+		this.batches.delete(networkID);
+		if (frame.dirty) this.onStatusChange?.(networkID, this.buildStatus(networkID) ?? { networkID, peers: [] });
+	}
+
+	/**
+	 * Publish one network's current status, or defer to the end of the open batch.
+	 *
+	 * Deferring skips {@link buildStatus} as well as the callback — building the
+	 * snapshot is the part that copies every row, so suppressing only the callback
+	 * would leave the cost in place.
+	 */
+	private notify(networkID: string): void {
+		const frame = this.batches.get(networkID);
+		if (frame) {
+			frame.dirty = true;
+			return;
+		}
+		this.onStatusChange?.(networkID, this.buildStatus(networkID) ?? { networkID, peers: [] });
+	}
+
 	/** Iterate over all tracked network IDs and their peer maps. Used for NET-CHURN dump. */
-	entries(): IterableIterator<[string, Map<string, BootstrapPeerStatus>]> {
+	entries(): IterableIterator<[string, Map<string, TrackedPeer>]> {
 		return this.stats.entries();
 	}
 
@@ -51,47 +267,224 @@ export class BootstrapStatusTracker {
 	markPending(networkID: string | null, multiaddr: string, expectedPeerID: string | null, origin: BootstrapPeerOrigin): void {
 		if (!networkID) return;
 		const net = this.ensureNetwork(networkID);
+		const key = canonicalMultiaddr(multiaddr);
 		// Preserve a stronger origin classification — once we know an entry is in
 		// the saved config ('configured'), an inbound peer-announce later restating
 		// the same multiaddr must not downgrade it to 'discovered'.
-		const previous = net.get(multiaddr);
+		const previous = net.get(key);
 		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
-		net.set(multiaddr, { multiaddr, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: null, lastError: null, updatedAt: new Date().toISOString() });
-		this.capDiscovered(net);
-		const snapshot = this.buildStatus(networkID);
-		if (snapshot) this.onStatusChange?.(networkID, snapshot);
+		const display = displaySpelling(previous, multiaddr, origin);
+		// Only the staleness clock is kept — `updatedAt` is this row's "when did anything
+		// about it last change", and a new attempt IS a change: the UI shows it, and the
+		// row-cap tiebreak reads it, where a frozen value makes an actively retried row
+		// look older than rows nobody has touched. See sweepStale. Reaching this point means
+		// someone MENTIONED the peer again — gossip repeating an address it still
+		// remembers — which is evidence about the announcer, not about the peer. Letting
+		// a mention move the clock made a dead peer's row immortal: every announce cycle
+		// is far shorter than the sweep TTL, so the row was refreshed long before it
+		// could expire, no matter how many dials to it had already failed. Only a dial
+		// that actually CONNECTED advances it, in recordOutcome below.
+		// Keep any identity a previous dial actually PROVED on this endpoint. Clearing it
+		// here threw away the one piece of evidence the row-cap ranking trusts, and gossip
+		// re-mentions an address constantly — so a verified member's row was demoted to an
+		// ordinary one within an announce cycle of being verified. A new dial result
+		// overwrites it in recordOutcome; only that can change who is behind the address.
+		// A mention does not unhide an expired row either — the dial it precedes has not
+		// happened yet, and being talked about is not evidence about the peer.
+		net.set(key, { multiaddr: display, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: previous?.actualPeerID ?? null, lastError: null, updatedAt: new Date().toISOString(), staleSince: previous?.staleSince ?? Date.now(), hidden: hiddenFor(finalOrigin, previous?.hidden ?? true) });
+		this.capDiscovered(networkID, net);
+		this.notify(networkID);
 	}
 
 	/** Record a dial outcome (connected, timeout, error, identity-mismatch). */
-	recordOutcome(networkID: string | null, multiaddr: string, expectedPeerID: string | null, status: BootstrapPeerDialStatus, message: string | null, actualPeerID: string | null, origin: BootstrapPeerOrigin): void {
+	recordOutcome(networkID: string | null, multiaddr: string, expectedPeerID: string | null, status: BootstrapPeerDialStatus, message: string | null, actualPeerID: string | null, origin: BootstrapPeerOrigin, verified: boolean = true): void {
 		if (!networkID) return;
 		const net = this.ensureNetwork(networkID);
+		const key = canonicalMultiaddr(multiaddr);
 		const truncated = message ? (message.length > 200 ? message.slice(0, 200) + '…' : message) : null;
-		const previous = net.get(multiaddr);
+		const previous = net.get(key);
 		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
-		net.set(multiaddr, { multiaddr, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString() });
-		this.capDiscovered(net);
-		const snapshot = this.buildStatus(networkID);
-		if (snapshot) this.onStatusChange?.(networkID, snapshot);
+		const display = displaySpelling(previous, multiaddr, origin);
+		// A dial that failed says nothing about WHO is behind the address, so it may not
+		// erase an identity an earlier dial actually proved. The failure paths pass null
+		// here, and letting that through cost the row the only identity the sweep trusts —
+		// after which a peer that came back and rejoined the topic could not be recognised
+		// as the member it was, and stayed off the list for good. Overwritten only by new
+		// identity evidence: a connection, or a mismatch that names somebody else.
+		const provenIdentity = actualPeerID ?? previous?.actualPeerID ?? null;
+		const memberContact = status === 'connected' && this.isMemberNow(networkID, provenIdentity);
+		// Only a VERIFIED success restarts the staleness clock. A FAILING outcome is the
+		// node's own reaction to somebody else's mention of a dead peer, so letting it
+		// advance the clock kept exactly the rows this sweep exists to remove: gossip
+		// mentions the peer, the dial fails, the row is refreshed, and the TTL is never
+		// reached.
+		//
+		// `verified` closes the same hole from the other side. A discovered dial does not
+		// force, so libp2p may answer it with a connection it already holds to that peer
+		// over a DIFFERENT address — which says the peer is alive somewhere, not that it is
+		// still taking part in THIS network. A peer that left one lishnet while staying
+		// connected through another was kept in the list it had left by exactly that: every
+		// gossip mention produced a 'connected' its other membership had earned.
+		net.set(key, { multiaddr: display, expectedPeerID, status, origin: finalOrigin, actualPeerID: provenIdentity, lastError: truncated, updatedAt: new Date().toISOString(), staleSince: status === 'connected' && (verified || memberContact) ? Date.now() : (previous?.staleSince ?? Date.now()), hidden: hiddenFor(finalOrigin, status === 'connected' && (verified || memberContact) ? false : (previous?.hidden ?? true)) });
+		this.capDiscovered(networkID, net);
+		this.notify(networkID);
 	}
 
-	/** Bound discovered rows per network (drop the oldest) — see MAX_DISCOVERED_PER_NETWORK. */
-	private capDiscovered(net: Map<string, BootstrapPeerStatus>): void {
+	/** Record immediate, network-scoped contact with a previously verified identity. */
+	recordNetworkMember(networkID: string, peerID: string, now: number = Date.now()): void {
+		const peers = this.stats.get(networkID);
+		if (!peers) return;
+		let revealed = false;
+		for (const [addr, peer] of peers) {
+			if (peer.origin !== 'discovered' || peer.actualPeerID !== peerID) continue;
+			peers.set(addr, { ...peer, staleSince: now, hidden: false });
+			if (peer.hidden) revealed = true;
+		}
+		if (revealed) this.notify(networkID);
+	}
+
+	/**
+	 * Is this identity taking part in the network right now?
+	 *
+	 * The one piece of evidence that is network-scoped without needing a verified endpoint,
+	 * which is why the sweep already trusts it to exempt a row. Hiding needs it for the
+	 * opposite direction: a peer that came back and connected to US is a participant, but a
+	 * discovered dial to its address gets handed the connection we already hold and so never
+	 * verifies. Without this the row it once had stays hidden for as long as that lasts, and
+	 * a live member is missing from the list — the ticket's own complaint, inverted.
+	 *
+	 * The identity has to be the one a dial PROVED, never the one an address claims;
+	 * see the sweep for what reading the claim costs.
+	 */
+	private isMemberNow(networkID: string, actualPeerID: string | null): boolean {
+		return actualPeerID !== null && (this.membersProvider?.(networkID)?.has(actualPeerID) ?? false);
+	}
+
+	/**
+	 * Mark every row for one endpoint reachable, in every network that has one.
+	 *
+	 * For the loops that probe an ADDRESS rather than a network's list: they know the
+	 * endpoint answered but not who was waiting to hear it. The parked-bootstrap probe is
+	 * the case that matters — it is the only thing that ever retries an address the
+	 * routability filter rejected at configure time, and it used to keep its success to
+	 * itself, so the row stayed red for an address that had been working for hours.
+	 *
+	 * Matching is canonical, not by string identity: the probe walks parsed multiaddrs
+	 * while the rows are keyed by the spelling the user typed.
+	 */
+	recordAddressReachable(address: string): void {
+		const target = canonicalMultiaddr(address);
+		for (const [networkID, peers] of this.stats) {
+			const peer = peers.get(target);
+			if (!peer || peer.status === 'connected') continue;
+			// Only the rows the probe speaks for. The probe walks the CONFIGURED addresses
+			// of this node, so all it establishes is that a saved entry answers — nothing
+			// about whether the peer is still a participant of some other network that once
+			// heard the same address over gossip. Refreshing a discovered row here restarted
+			// its staleness clock on evidence that had nothing to do with that network, and
+			// the row then outlived every sweep.
+			if (peer.origin !== 'configured') continue;
+			// The probe knows the endpoint answered, not who answered — so it neither sets
+			// nor clears the verified identity a real dial may already have established.
+			peers.set(target, { ...peer, status: 'connected', lastError: null, updatedAt: new Date().toISOString(), staleSince: Date.now() });
+			this.notify(networkID);
+		}
+	}
+
+	/**
+	 * The other half of {@link recordAddressReachable}: the endpoint did not answer.
+	 *
+	 * Zero-connection recovery walks ADDRESSES rather than a network's list, so like the
+	 * parked probe it has no network to report to and speaks to every row for that
+	 * endpoint. Without this it dialled a dead bootstrap every 30 seconds, watched the
+	 * connection be refused, and left the participant list showing it as connected — the
+	 * node knew, and the screen did not.
+	 *
+	 * Configured rows only, for the same reason as its counterpart, and the staleness clock
+	 * does not move: a failure is not evidence that anything answered.
+	 */
+	recordAddressUnreachable(address: string, message: string): void {
+		const target = canonicalMultiaddr(address);
+		const truncated = message.length > 200 ? message.slice(0, 200) + '…' : message;
+		for (const [networkID, peers] of this.stats) {
+			const peer = peers.get(target);
+			if (!peer || peer.origin !== 'configured') continue;
+			if (peer.status === 'timeout' && peer.lastError === truncated) continue;
+			peers.set(target, { ...peer, status: 'timeout', lastError: truncated, updatedAt: new Date().toISOString() });
+			this.notify(networkID);
+		}
+	}
+
+	/**
+	 * Bound discovered rows per network — see MAX_DISCOVERED_PER_NETWORK.
+	 *
+	 * Age alone is the wrong order. It looks at neither the row's state nor whether the
+	 * peer is actually in the network, so a flood of freshly invented dead addresses could
+	 * push a live, connected participant out of the list — the stale sweep protects an
+	 * active member deliberately, and this used to undo that. Least useful goes first:
+	 * a row whose address failed, then one that has never answered, then one that once
+	 * connected, and rows belonging to a VERIFIED member last.
+	 *
+	 * Verified is the operative word. Ranking on `expectedPeerID` — the identity the
+	 * ADDRESS claims — handed the protection to whoever was making the claim: invented
+	 * addresses that all named a live member each took the top rank, and the member's own
+	 * genuine row, being the oldest of them, was the one evicted. Only `actualPeerID`, set
+	 * from a connection we actually made, is evidence of anything.
+	 */
+	private capDiscovered(networkID: string, net: Map<string, TrackedPeer>): void {
+		// Visible and hidden discovered rows share one hard budget. Hidden rows are cheapest
+		// to evict because they are not published; configured rows are never counted.
 		let discovered = 0;
 		for (const p of net.values()) if (p.origin === 'discovered') discovered++;
 		if (discovered <= MAX_DISCOVERED_PER_NETWORK) return;
-		const oldestFirst = [...net.entries()].filter(([, p]) => p.origin === 'discovered').sort((a, b) => Date.parse(a[1].updatedAt) - Date.parse(b[1].updatedAt));
-		for (let i = 0; i < discovered - MAX_DISCOVERED_PER_NETWORK; i++) net.delete(oldestFirst[i]![0]);
+		const members = this.membersProvider?.(networkID) ?? new Set<string>();
+		const rankOf = (p: TrackedPeer): number => {
+			// A row nobody can see is the cheapest thing to give up: it holds no claim the
+			// list would miss, and re-learning it costs one dial.
+			if (p.hidden) return -1;
+			if (p.actualPeerID && members.has(p.actualPeerID)) return 3;
+			if (p.status === 'connected') return 2;
+			if (p.status === 'pending') return 1;
+			return 0;
+		};
+		// Ranked once per row, not inside the comparator — the member lookup would
+		// otherwise run O(n log n) times over the same snapshot.
+		const victims = [...net.entries()]
+			.filter(([, p]) => p.origin === 'discovered')
+			.map(([key, p]) => ({ key, rank: rankOf(p), age: Date.parse(p.updatedAt) }))
+			.sort((a, b) => a.rank - b.rank || a.age - b.age);
+		// The cap is the deliberate exception to normal hiding: overflow rows are forgotten
+		// outright so hostile gossip cannot grow the tracker without bound.
+		for (let i = 0; i < discovered - MAX_DISCOVERED_PER_NETWORK; i++) net.delete(victims[i]!.key);
+	}
+
+	/**
+	 * Take one row out of the list.
+	 *
+	 * A DISCOVERED row is hidden, never deleted — see {@link TrackedPeer.hidden}. Every way
+	 * a row can leave the list is a statement that nothing answers there, and forgetting it
+	 * hands the next gossip mention a clean slate: a new row, a new clock, and a peer nobody
+	 * has reached in hours back on the list. There is more than one such way — the staleness
+	 * sweep, unreachable eviction, an identity that turned out to be somebody else — and the
+	 * memory has to survive all of them, not just the first one that got fixed.
+	 *
+	 * Configured rows are deleted outright: they leave only when the user removes them from
+	 * the config, which is not evidence about the peer at all.
+	 */
+	private removeRow(peers: Map<string, TrackedPeer>, addr: string, p: TrackedPeer): void {
+		if (p.origin === 'configured') peers.delete(addr);
+		else peers.set(addr, { ...p, hidden: hiddenFor(p.origin, true) });
 	}
 
 	/** Drop a single peer entry directly (used after identity-mismatch purge of discovered peers). */
 	deletePeer(networkID: string, multiaddr: string): void {
 		const net = this.stats.get(networkID);
 		if (!net) return;
-		net.delete(multiaddr);
+		const key = canonicalMultiaddr(multiaddr);
+		const p = net.get(key);
+		if (p) this.removeRow(net, key, p);
 		if (net.size === 0) this.stats.delete(networkID);
-		const snap = this.buildStatus(networkID) ?? { networkID, peers: [] };
-		this.onStatusChange?.(networkID, snap);
+		this.notify(networkID);
 	}
 
 	/**
@@ -106,40 +499,59 @@ export class BootstrapStatusTracker {
 			for (const [addr, p] of [...peers]) {
 				if (p.origin !== 'discovered') continue;
 				if (p.expectedPeerID !== peerID && p.actualPeerID !== peerID) continue;
-				peers.delete(addr);
+				this.removeRow(peers, addr, p);
 				changed = true;
 			}
 			if (!changed) continue;
 			if (peers.size === 0) this.stats.delete(networkID);
-			this.onStatusChange?.(networkID, this.buildStatus(networkID) ?? { networkID, peers: [] });
+			this.notify(networkID);
 		}
 	}
 
 	/**
-	 * Drop discovered-origin entries that have gone stale: no status refresh within
-	 * `ttlMs` AND the peer is not an active member of THAT network. Dead peers stop
-	 * being mentioned by gossip, so their rows stop refreshing and expire here —
-	 * including rows frozen at 'connected' for a peer that silently died. The
+	 * Drop discovered-origin entries that have gone stale: neither the endpoint nor its
+	 * verified identity in THIS network has been observed within `ttlMs`. A peer
+	 * that dies stops answering, so its clock freezes and the row expires here — whether
+	 * gossip keeps naming it or not, and whether the row is frozen at 'connected' or
+	 * cycling through failures that this node produces itself. See {@link TrackedPeer}. The
 	 * liveness predicate is scoped to the network (its topic subscribers), NOT the
 	 * shared libp2p connection: a peer that left network B but is still connected
-	 * through network A must not keep a stale row under B. Configured entries are
-	 * exempt (user data). `now` is injectable for tests.
+	 * through network A must not keep a stale row under B. Membership is judged on the
+	 * VERIFIED identity only — see the check below. Configured entries are exempt (user
+	 * data). `now` is injectable for tests.
 	 */
 	sweepStale(ttlMs: number, isMember: (networkID: string, peerID: string) => boolean, now: number = Date.now()): void {
 		for (const [networkID, peers] of [...this.stats]) {
 			let changed = false;
 			for (const [addr, p] of [...peers]) {
 				if (p.origin !== 'discovered') continue;
-				const pid = p.expectedPeerID ?? p.actualPeerID;
-				if (pid && isMember(networkID, pid)) continue;
-				const updated = Date.parse(p.updatedAt);
-				if (Number.isFinite(updated) && now - updated < ttlMs) continue;
-				peers.delete(addr);
+				// Only a VERIFIED identity exempts a row. `expectedPeerID` is whatever the
+				// address claims, and a discovered multiaddr practically always carries one —
+				// so reading it here handed the exemption to the announcer: any address ending
+				// /p2p/<a-live-member> was treated as that member's, never dialed successfully,
+				// and never expired. The cap bounds how many such rows exist; this is what
+				// stops them from occupying the budget permanently.
+				const member = p.actualPeerID !== null && isMember(networkID, p.actualPeerID);
+				// Taking part in THIS network is verified contact with this participant. Besides
+				// undoing a hiding, it must restart the full quiet window: otherwise a peer that
+				// genuinely returned shortly before its old endpoint timestamp expired vanished
+				// only minutes after disconnecting again. The proven actualPeerID above prevents
+				// an announcer from buying this refresh merely by claiming a live member's ID.
+				if (member) {
+					peers.set(addr, { ...p, staleSince: now, hidden: false });
+					if (p.hidden) changed = true;
+					continue;
+				}
+				if (p.hidden) continue;
+				if (now - p.staleSince < ttlMs) continue;
+				// The clock is deliberately left where it is: it is the evidence that nothing
+				// has answered here.
+				this.removeRow(peers, addr, p);
 				changed = true;
 			}
 			if (!changed) continue;
 			if (peers.size === 0) this.stats.delete(networkID);
-			this.onStatusChange?.(networkID, this.buildStatus(networkID) ?? { networkID, peers: [] });
+			this.notify(networkID);
 		}
 	}
 
@@ -156,7 +568,9 @@ export class BootstrapStatusTracker {
 	pruneEntries(networkID: string, keepMultiaddrs: string[]): void {
 		const peers = this.stats.get(networkID);
 		if (!peers) return;
-		const keep = new Set(keepMultiaddrs);
+		// Canonical, like the keys themselves: a configured entry re-typed in a different
+		// but equivalent spelling is the same entry, not a removed one.
+		const keep = new Set(keepMultiaddrs.map(canonicalMultiaddr));
 		for (const [addr, peer] of [...peers.entries()]) {
 			if (peer.origin === 'configured' && !keep.has(addr)) peers.delete(addr);
 		}
@@ -165,21 +579,24 @@ export class BootstrapStatusTracker {
 		// returns null for a dropped network, and skipping the callback would leave the
 		// UI showing the very row that was just removed. Same fallback the other
 		// removal paths use.
-		this.onStatusChange?.(networkID, this.buildStatus(networkID) ?? { networkID, peers: [] });
+		this.notify(networkID);
 	}
 
 	/** Reset the bootstrap status for a single network (used when re-joining). */
 	resetNetwork(networkID: string): void {
 		this.stats.delete(networkID);
-		this.onStatusChange?.(networkID, { networkID, peers: [] });
+		this.notify(networkID);
 	}
 
 	/** Clear all tracked state (called from Network.stop()). */
 	clear(): void {
 		this.stats.clear();
+		// An in-flight batch belongs to the run being torn down; its pending emission
+		// would publish the next run's (empty) state under the old run's networkID.
+		this.batches.clear();
 	}
 
-	private ensureNetwork(networkID: string): Map<string, BootstrapPeerStatus> {
+	private ensureNetwork(networkID: string): Map<string, TrackedPeer> {
 		let net = this.stats.get(networkID);
 		if (!net) {
 			net = new Map();
@@ -191,6 +608,12 @@ export class BootstrapStatusTracker {
 	private buildStatus(networkID: string): BootstrapStatus | null {
 		const peers = this.stats.get(networkID);
 		if (!peers) return null;
-		return { networkID, peers: [...peers.values()].map(p => ({ ...p })) };
+		// staleSince and hidden are internal bookkeeping, not part of the wire contract.
+		const visible = [...peers.values()].filter(p => !p.hidden);
+		// A network whose rows have all expired reads exactly as one that was never heard
+		// of — which is what callers already expect, since the sweep used to drop the whole
+		// entry. The notify path turns this back into an empty list for the UI.
+		if (visible.length === 0) return null;
+		return { networkID, peers: visible.map(({ staleSince: _staleSince, hidden: _hidden, ...p }) => p) };
 	}
 }

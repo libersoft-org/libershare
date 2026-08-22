@@ -86,7 +86,10 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	const bootstrapMultiaddrs: any[] = [];
 	// Unique bootstrap peers computed up-front so gossipsub config below can
 	// pre-populate directPeers from them.
-	const uniqueBootstrapPeers = [...new Set(bootstrapPeers)].filter(p => !p.includes(myPeerID));
+	// Self is decided by the DESTINATION identity, not by "the string mentions us". A
+	// relayed entry `/…/p2p/<us>/p2p-circuit/p2p/<remote>` names us as the RELAY hop while
+	// targeting somebody else, and the substring test threw it away as our own address.
+	const uniqueBootstrapPeers = [...new Set(bootstrapPeers)].filter(p => destinationPeerIDOf(p) !== myPeerID);
 	const peerExchange = allSettings.network?.peerExchange;
 	const pxEnabled = peerExchange?.enabled === true;
 	const parsedThreshold = parseAcceptPXThreshold(peerExchange?.acceptPXThreshold);
