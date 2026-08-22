@@ -75,6 +75,29 @@ describe('PeerAnnounceManager topic membership', () => {
 		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-grafted']);
 	});
 
+	/**
+	 * The manager instance outlives a node restart, but membership does not: entries have
+	 * a nine-minute TTL, so after a fast restart, rejoin and immediate leave the cache
+	 * could still hand leaveNetwork peer IDs from the PREVIOUS run — peers this node has
+	 * never spoken to, which it then suppresses and purges.
+	 */
+	it('forgets membership from the previous run on stop', () => {
+		const { mgr } = makeManager([], 2);
+		mgr.noteMember(TOPIC, 'peer-from-old-run');
+		mgr.stop();
+		expect(mgr.getRecentMembers(TOPIC)).toEqual([]);
+	});
+
+	it('records members again after a restart', () => {
+		const { mgr } = makeManager([], 2);
+		mgr.noteMember(TOPIC, 'peer-from-old-run');
+		mgr.stop();
+		mgr.start();
+		mgr.noteMember(TOPIC, 'peer-from-new-run');
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-from-new-run']);
+		mgr.stop();
+	});
+
 	it('keeps a GRAFT member that the live subscriber snapshot does not list', async () => {
 		const { mgr } = makeManager([], 2);
 		mgr.noteMember(TOPIC, 'peer-grafted');

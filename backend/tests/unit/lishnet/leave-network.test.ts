@@ -42,6 +42,7 @@ interface MockNet {
 	prunedAddresses: string[][];
 	pruneBootstrapStatus(networkID: string, keep: string[]): void;
 	prunedStatus: Array<{ networkID: string; keep: string[] }>;
+	reconcilePeerAfterBootstrapRemoval(peerID: string, addresses: string[], networkID: string): Promise<void>;
 	addBootstrapPeers(peers: string[], networkID: string, origin: string): Promise<'completed' | 'incomplete'>;
 	dialledLists: Array<{ networkID: string; peers: string[]; origin: string }>;
 	clearRedialSuppressionForNetwork(networkID: string): void;
@@ -110,6 +111,7 @@ function makeMockNet(): MockNet {
 		pruneBootstrapStatus(networkID, keep) {
 			this.prunedStatus.push({ networkID, keep });
 		},
+		async reconcilePeerAfterBootstrapRemoval(): Promise<void> {},
 		async addBootstrapPeers(peers, networkID, origin) {
 			this.dialledLists.push({ networkID, peers, origin });
 			return 'completed' as const;
@@ -369,7 +371,9 @@ describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 			'net-b': ['/ip4/192.0.2.1/tcp/9090/p2p/pShared'],
 		});
 		await leave(networks, 'net-a');
-		expect(net.prunedAddresses).toEqual([[]]);
+		// The registry owns per-network provenance, so the lishnet layer releases A's
+		// claim even though B still owns the same address.
+		expect(net.prunedAddresses).toEqual([['/ip4/192.0.2.1/tcp/9090/p2p/pShared']]);
 	});
 
 	it('drops every address of a network left with nothing else configured', async () => {
@@ -523,7 +527,9 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		(networks as any).get = (nid: string) => (nid === 'net-other' ? { networkID: nid, bootstrapPeers: [ADDR_A] } : { networkID: NET, bootstrapPeers: [ADDR_A] });
 		(networks as any).joinedNetworks = new Set([NET, 'net-other']);
 		await edit(networks, [ADDR_B]);
-		expect(mock.prunedAddresses).toEqual([[]]);
+		// The address is handed to the registry with NET as the owner being removed;
+		// the other network's ownership keeps the entry alive there.
+		expect(mock.prunedAddresses).toEqual([[ADDR_A]]);
 	});
 
 	/**
