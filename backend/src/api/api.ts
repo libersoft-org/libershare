@@ -247,6 +247,10 @@ export class APIServer {
 			'system.cpu': _system.cpu,
 			'system.setVolume': _system.setVolume,
 			'system.getVolume': _system.getVolume,
+			'system.network': _system.network,
+			'system.networkApply': _system.networkApply,
+			'system.wifiScan': _system.wifiScan,
+			'system.wifiConnect': _system.wifiConnect,
 			// Relay
 			'relay.stats': _relay.stats,
 		};
