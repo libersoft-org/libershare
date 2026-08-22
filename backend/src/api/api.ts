@@ -94,14 +94,15 @@ export class APIServer {
 		this.localAddresses = getLocalAddresses();
 		const emitTo = (client: ClientSocket, event: string, data: any): void => this.emit(client, event, data);
 		const broadcastFn = (event: string, data: any): void => this.broadcast(event, data);
+		const broadcastExceptFn = (event: string, data: any, except?: unknown): void => this.broadcast(event, data, except as ClientSocket | undefined);
 		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
 		const _settings = initSettingsHandlers(this.settings);
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn, this.settings);
-		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifest);
+		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifest, _lishs.runMutation);
 		const _identity = initIdentityHandlers(this.networks);
-		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification, _lishs.finalizeDownload);
+		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification, _lishs.finalizeDownloadAdmitted);
 		const hasSubscribers = (event: string): boolean => {
 			for (const client of this.clients) {
 				if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) return true;
@@ -126,8 +127,14 @@ export class APIServer {
 			networks: this.networks,
 			settings: this.settings,
 			stopVerifyAll: _lishs.stopVerifyAll,
+			pauseAllLISHMutations: _lishs.pauseMutations,
+			resumeAllLISHMutations: _lishs.resumeMutations,
+			pauseAllTransfers: _transfer.pauseAll,
 			clearAllTransfers: _transfer.clearAll,
-			broadcastFn,
+			clearUploadRuntime: _transfer.clearUploads,
+			restoreAllTransfers: _transfer.restoreAll,
+			resumeAllTransfers: _transfer.resumeAll,
+			broadcastFn: broadcastExceptFn,
 		});
 
 		this.handlers = {
@@ -424,10 +431,18 @@ export class APIServer {
 		this.broadcast(event, data);
 	}
 
-	private broadcast(event: string, data: any): void {
+	/**
+	 * Send `event` to every subscribed client, optionally skipping one.
+	 *
+	 * `except` exists for events whose whole point is "somebody else did this": the client
+	 * that asked gets the RPC answer and acts on that, and would only be talked over by the
+	 * broadcast — a factory reset reloading the very tab that is about to show its result.
+	 */
+	private broadcast(event: string, data: any, except?: ClientSocket): void {
 		const msg = JSON.stringify({ event, data });
 		let sent = 0;
 		for (const client of this.clients) {
+			if (client === except) continue;
 			if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) {
 				client.send(msg);
 				sent++;
