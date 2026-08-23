@@ -73,7 +73,6 @@ function makeMockNet() {
 			for (const address of addresses) this.configured.delete(address);
 		},
 		pruneBootstrapStatus(): void {},
-		async reconcilePeerAfterBootstrapRemoval(): Promise<void> {},
 		clearRedialSuppressionForNetwork(): void {},
 		getRunEpoch(): number {
 			return 1;

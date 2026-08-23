@@ -158,7 +158,7 @@ const DIAL_RETURNED_ANOTHER_ENDPOINT = 'Dial completed on another endpoint';
  * number of distinct endpoints that have ever worked — unbounded on a fleet with churn,
  * and the array is otherwise only ever shortened by an identity purge. Over the ceiling
  * the OLDEST DISCOVERED entry goes: configured entries are finite user data and the way
- * back into a network, so they are never the ones dropped. 512 is far above any real
+ * back into a network, so they are never the ones dropped. 200 is far above any real
  * node's working set while keeping the list, and the walk over it, bounded.
  */
 const DISCOVERED_BOOTSTRAP_TTL_MS = PEERSTORE_MAX_PEER_AGE_MS;
@@ -169,16 +169,6 @@ const CONFIGURED_RECOVERY_BACKOFF_MAX_MS = 120_000;
 const RECOVERY_DIALS_PER_TICK = 8;
 const STARTUP_BOOTSTRAP_OWNER = '@startup';
 
-/**
- * Where the eviction window should run from after a re-dial failure.
- *
- * A failure only says something about the PEER when this node can reach anyone
- * at all. While we are the disconnected one — laptop asleep, Wi-Fi off, VPN
- * dropped — every dial fails, so the window is slid forward instead of
- * accumulating. Without this, a local outage longer than REDIAL_EVICT_MIN_MS
- * would evict the whole non-configured peerStore on the first dial after the
- * connection came back.
- */
 /**
  * Whether zero-connection recovery may dial a DISCOVERED address this tick.
  *
@@ -258,50 +248,16 @@ export function pruneBootstrapEntries<T extends Pick<IBootstrapEntry, 'firstSeen
 	return fresh.filter((_entry, index) => !doomed.has(index));
 }
 
-export function isPeerStoreNotFound(err: unknown): boolean {
-	const error = err as { name?: string; code?: string } | null;
-	return error?.name === 'NotFoundError' || error?.code === 'ERR_NOT_FOUND';
-}
-
-export type PeerStoreAddressRemoval = { kind: 'updated'; remaining: number } | { kind: 'not-found' } | { kind: 'superseded' };
-
-export type PeerPurgeMode = 'best-effort' | 'durable';
-
-interface IStoredAddress {
-	multiaddr: { toString(): string };
-	isCertified?: boolean;
-}
-
-interface IStoredPeerRecord {
-	id: { publicKey?: unknown };
-	addresses: IStoredAddress[];
-	protocols: string[];
-	metadata: Map<string, Uint8Array>;
-	tags: Map<string, { value?: number; expiry?: bigint }>;
-	peerRecordEnvelope?: Uint8Array;
-}
-
-interface IPeerStoreInternals {
-	getWriteLock(peerID: PeerID): Promise<() => void>;
-	load(peerID: PeerID): Promise<IStoredPeerRecord>;
-	delete(peerID: PeerID): Promise<void>;
-	patchExisting(peerID: PeerID, data: { addresses: IStoredAddress[] }): Promise<{ updated: boolean }>;
-	merge(peerID: PeerID, data: Record<string, unknown>): Promise<{ updated: boolean }>;
-}
-
-interface IPeerStoreEvents {
-	safeDispatchEvent(type: string, detail: unknown): void;
-}
-
-function peerStoreInternals(peerStore: unknown): { store: IPeerStoreInternals; events: IPeerStoreEvents } {
-	const { store, events } = (peerStore as { store?: Partial<IPeerStoreInternals>; events?: Partial<IPeerStoreEvents> }) ?? {};
-	if (typeof store?.getWriteLock !== 'function' || typeof store?.load !== 'function' || typeof store?.patchExisting !== 'function' || typeof store?.delete !== 'function' || typeof store?.merge !== 'function') {
-		throw new Error('peerStore does not expose its per-peer lock, unlocked delete/merge and require-existing patch — refusing to rewrite a record without them');
-	}
-	if (typeof events?.safeDispatchEvent !== 'function') throw new Error('peerStore does not expose its update emitter — refusing to write an address change nothing would hear');
-	return { store: store as IPeerStoreInternals, events: events as IPeerStoreEvents };
-}
-
+/**
+ * Where the eviction window should run from after a re-dial failure.
+ *
+ * A failure only says something about the PEER when this node can reach anyone
+ * at all. While we are the disconnected one — laptop asleep, Wi-Fi off, VPN
+ * dropped — every dial fails, so the window is slid forward instead of
+ * accumulating. Without this, a local outage longer than REDIAL_EVICT_MIN_MS
+ * would evict the whole non-configured peerStore on the first dial after the
+ * connection came back.
+ */
 export function nextEvictionWindowStart(reachable: boolean, previous: number | undefined, now: number): number {
 	return reachable ? (previous ?? now) : now;
 }
@@ -514,10 +470,6 @@ export class Network {
 	private readonly recoveryCursors: IRecoveryCursors = { configured: null, discovered: null };
 	/** One post-quarantine probe at a time per peer. */
 	private readonly quarantineProbeInFlight = new Set<string>();
-	/** Per-peer serialization for destructive peerStore purges. */
-	private purgeLocks?: Map<string, { mutex: Mutex; waiting: number }>;
-	/** Temporary compatibility mirror; recovery itself reads bootstrapByAddress. */
-	private bootstrapMultiaddrs: any[] = [];
 	/**
 	 * Per-network bootstrap-config version, bumped on every replace / reset / leave.
 	 * Read by {@link addBootstrapPeers} so a job started for a superseded list stops
@@ -597,8 +549,6 @@ export class Network {
 	 * re-dial pool every 30s. Successful dial clears the entry.
 	 */
 	private readonly redialBackoff = new Map<string, { nextAttempt: number; failCount: number; firstFailure: number; evictionFails: number }>();
-	/** First tick that found a disconnected peer with no locally routable address. */
-	private readonly noReachableSince = new Map<string, number>();
 	/** peerID → eviction time. Blocks re-adding a just-evicted unreachable peer from gossip for UNREACHABLE_QUARANTINE_MS. */
 	private readonly unreachableQuarantine = new Map<string, number>();
 	/**
@@ -611,7 +561,6 @@ export class Network {
 	 * backoff, the working address is skipped for the rest of the pass, and the next pass
 	 * starts at the dead one again — so the working address could go untried indefinitely.
 	 */
-	private readonly addressProbeBackoff = new Map<string, { nextAttempt: number; failCount: number }>();
 	/**
 	 * Canonical multiaddrs with an {@link addBootstrapPeers} dial currently outstanding.
 	 *
@@ -895,7 +844,6 @@ export class Network {
 		this.bootstrapPeerIDs = bootstrapPeerIDs;
 		// Config-time bootstrap entries are by definition 'configured'.
 		this.configuredBootstrapPeerIDs = new Set(bootstrapPeerIDs);
-		this.bootstrapMultiaddrs = bootstrapMultiaddrs;
 		for (const ma of bootstrapMultiaddrs) this.rememberBootstrapAddress(ma, STARTUP_BOOTSTRAP_OWNER);
 
 		console.log('Creating libp2p node...');
@@ -1518,34 +1466,12 @@ export class Network {
 			}
 			if (reachable.length === 0) {
 				skippedNoReachable++;
-				// "Unreachable" here means the dial gater rejects every stored address FROM
-				// WHERE WE STAND. A LAN- or VPN-only peer looks exactly like this while that
-				// interface is down, so one observation is not enough to purge it. Park it for
-				// a full eviction window; only a node that demonstrably still has another
-				// connection may retire a non-configured peer after that grace period.
-				//
-				// The stretch also invalidates the evidence collected BEFORE it. That window
-				// means CONTINUOUS unreachability of the peer, and nothing observed while we
-				// had no route to it can be attributed to the peer — so the run of failures
-				// ends here and a fresh window starts once a route returns. Re-stamped on
-				// every tick that finds no route — backoff or not, see the ordering note
-				// above — which costs one map write and keeps the restart point at the end
-				// of the outage rather than its beginning. Pacing (nextAttempt, failCount)
-				// is deliberately kept: the peer still is not answering, and dropping it
-				// would dial every parked peer at once the moment a route appears.
-				const weAreOnline = this.hasConnectionOtherThan(peer.id);
-				const since = nextEvictionWindowStart(weAreOnline, this.noReachableSince.get(pid), now);
-				this.noReachableSince.set(pid, since);
-				if (weAreOnline && now - since >= REDIAL_EVICT_MIN_MS && !this.configuredBootstrapPeerIDs.has(pid) && this.node?.getConnections(peer.id).length === 0) {
-					this.noReachableSince.delete(pid);
-					this.unreachableQuarantine.set(pid, now);
-					this.redialBackoff.delete(pid);
-					this.bootstrapTracker.deleteDiscoveredByPeerID(pid);
-					await this.purgeStalePeer(pid, `no reachable addresses for ${Math.round((now - since) / 60_000)} min`, epoch);
-				}
+				// The dial gater rejects these addresses from this host. That says nothing
+				// about the peer itself: a LAN/VPN-only peer looks the same while our route
+				// is down. Park it and reset the destructive eviction evidence.
+				if (bo) this.redialBackoff.set(pid, { ...bo, firstFailure: now, evictionFails: 0 });
 				continue;
 			}
-			this.noReachableSince.delete(pid);
 			if (bo && bo.nextAttempt > now) {
 				skippedBackoff++;
 				continue;
@@ -1675,17 +1601,6 @@ export class Network {
 		this.recoveryBackoff.set(canonicalAddress, nextRecoveryBackoff(this.recoveryBackoff.get(canonicalAddress)?.failCount ?? 0, Date.now(), true));
 	}
 
-	/**
-	 * Record a failed recovery dial of a DISCOVERED address against the shared per-peer
-	 * backoff, in the same four-field shape every other writer uses.
-	 *
-	 * Without this the recovery loop was the one dial path that paced nothing: for an
-	 * address whose peer is not in the peerStore, re-dial maintenance never sees the peer
-	 * either, so a dead entry was re-dialed on every tick for as long as the node stayed
-	 * isolated. `evictionFails` deliberately does not grow — at zero connections there is
-	 * no evidence the remote is the broken side, which is exactly what
-	 * {@link nextEvictionFailCount} resets on.
-	 */
 	private noteRecoveryDialFailure(peerID: string): void {
 		const now = Date.now();
 		const previous = this.redialBackoff.get(peerID);
@@ -1696,9 +1611,6 @@ export class Network {
 			firstFailure: previous?.firstFailure ?? now,
 			evictionFails: previous?.evictionFails ?? 0,
 		});
-		// An expired quarantine is what let this dial through, and it buys exactly one
-		// probe: re-arm it on failure or every later pass spends another dial on a peer
-		// that has already been written off once.
 		if (this.unreachableQuarantine.has(peerID)) this.unreachableQuarantine.set(peerID, now);
 	}
 
@@ -1721,14 +1633,16 @@ export class Network {
 		}
 	}
 
-	private async runZeroConnectionRecovery(connectedPeers: any[] = [], epoch: number = this.runEpoch): Promise<void> {
+	private async runZeroConnectionRecovery(_connectedPeers: any[] = [], epoch: number = this.runEpoch): Promise<void> {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return;
+		if (!AUTODIAL_WORKAROUND) return;
+		// Expiry and the discovered-entry cap are registry invariants, not a recovery
+		// side effect. Keep enforcing them while the node is healthy and connected too.
+		this.pruneBootstrapRegistry();
 		// Read connectivity here rather than trusting the snapshot the status tick opened
 		// with: re-dial maintenance runs in between and may already have reconnected us,
 		// in which case the node is not isolated and every dial below is pure churn.
-		if (!AUTODIAL_WORKAROUND || connectedPeers.length !== 0) return;
-		this.pruneBootstrapRegistry();
 		if (node.getPeers().length !== 0 || this.bootstrapByAddress.size === 0) return;
 		console.log(`   ⚠️  No connections - dialing ${this.bootstrapByAddress.size} bootstrap address(es) directly...`);
 		// [NET-CHURN] dump: who left in the run-up to this zero-connection
@@ -1750,11 +1664,23 @@ export class Network {
 			console.log(`   [NET-CHURN] bootstrap stats net=${networkID.slice(0, 8)}: ${parts}`);
 		}
 		let attempted = 0;
+		let configuredAttempts = 0;
 		const localCidrs = getLocalCidrs();
-		for (const entry of orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values(), this.recoveryCursors)) {
+		const ordered = orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values(), this.recoveryCursors);
+		const isEligible = (entry: IBootstrapEntry): boolean => {
+			if (entry.peerID && this.isRedialSuppressed(entry.peerID)) return false;
+			if (!isRecoveryDialDue(entry.key, entry.configuredBy.size > 0 ? null : entry.peerID, Date.now(), this.recoveryBackoff, this.unreachableQuarantine)) return false;
+			return !shouldDenyDial(entry.ma, localCidrs);
+		};
+		const hasEligibleDiscovered = ordered.some(entry => entry.configuredBy.size === 0 && isEligible(entry));
+		for (const entry of ordered) {
 			const { ma, peerID: pid, key } = entry;
 			const configured = entry.configuredBy.size > 0;
-			if (pid && this.isRedialSuppressed(pid)) continue; // deliberately left — don't resurrect it here
+			if (!isEligible(entry)) continue;
+			// Configured addresses retain priority, but one eligible discovered address
+			// always gets a slot. Without the reservation, nine configured failures could
+			// consume the eight-dial budget forever and starve every discovered recovery.
+			if (configured && hasEligibleDiscovered && configuredAttempts >= RECOVERY_DIALS_PER_TICK - 1) continue;
 			// A CONFIGURED entry is the user's way back in, so it is never held back by the
 			// quarantine or by the per-peer eviction backoff — but it is still paced, on its
 			// own much shorter ADDRESS-level window. Without any pacing, several dead
@@ -1766,12 +1692,7 @@ export class Network {
 			// isolated node re-dialed a dead discovered peer every 30 s forever, since
 			// maintenance stops counting failures the moment we have no other connection to
 			// prove we are online.
-			if (!isRecoveryDialDue(key, configured ? null : pid, Date.now(), this.recoveryBackoff, this.unreachableQuarantine)) continue;
-			// Routability is re-checked here, not just at configure time: a LAN or VPN
-			// bootstrap is on this list while its interface is down, and becomes dialable
-			// again the moment it returns.
-			if (shouldDenyDial(ma, localCidrs)) continue;
-			if (attempted >= RECOVERY_DIALS_PER_TICK) continue;
+			if (attempted >= RECOVERY_DIALS_PER_TICK) break;
 			const maStr = ma?.toString?.() ?? String(ma);
 			// Each dial awaits for up to 10s, so a stop() can land mid-loop; the
 			// remaining dials belong to a node this run no longer owns.
@@ -1781,6 +1702,7 @@ export class Network {
 			// connections the node no longer needs.
 			if (node.getPeers().length > 0) return;
 			attempted++;
+			if (configured) configuredAttempts++;
 			this.recoveryCursors[configured ? 'configured' : 'discovered'] = key;
 			try {
 				console.log(`   → Dialing ${maStr}`);
@@ -1792,6 +1714,7 @@ export class Network {
 				}
 				const returnedAddr = String(conn?.remoteAddr ?? '');
 				const verifiedThisAddr = isSameDialEndpoint(returnedAddr, maStr);
+				if (pid) this.unreachableQuarantine.delete(pid);
 				if (verifiedThisAddr) this.markBootstrapAddressVerified(ma);
 				if (configured) {
 					if (verifiedThisAddr) this.bootstrapTracker.recordAddressReachable(maStr);
@@ -1802,7 +1725,9 @@ export class Network {
 				break;
 			} catch (err: any) {
 				if (epoch !== this.runEpoch) return;
-				this.recoveryBackoff.set(key, nextRecoveryBackoff(this.recoveryBackoff.get(key)?.failCount ?? 0, Date.now(), configured));
+				const failedAt = Date.now();
+				this.recoveryBackoff.set(key, nextRecoveryBackoff(this.recoveryBackoff.get(key)?.failCount ?? 0, failedAt, configured));
+				if (!configured && pid && this.unreachableQuarantine.has(pid)) this.unreachableQuarantine.set(pid, failedAt);
 				if (configured) this.bootstrapTracker.recordAddressUnreachable(maStr, err?.message ?? String(err));
 				console.log(`   ✗ Failed ${maStr}: ${err.message ?? err}`);
 			}
@@ -2229,6 +2154,10 @@ export class Network {
 				// would re-create the status row and burn a dial. Configured entries are
 				// exempt: the user asked for them explicitly.
 				if (peerID && effectiveOrigin === 'discovered') {
+					if (!isRecoveryDialDue(canonicalAddress, peerID, Date.now(), this.recoveryBackoff, this.unreachableQuarantine)) {
+						trace(`[NET] addBootstrapPeers skip discovered address in backoff or quarantine: ${canonicalAddress}`);
+						continue;
+					}
 					if (this.quarantineProbeInFlight.has(peerID)) {
 						trace(`[NET] addBootstrapPeers skip quarantine probe in flight: ${peerID.slice(0, 16)}`);
 						continue;
@@ -2239,13 +2168,13 @@ export class Network {
 							trace(`[NET] addBootstrapPeers skip quarantined: ${peerID.slice(0, 16)}`);
 							continue;
 						}
-						this.unreachableQuarantine.delete(peerID);
 						// This dial is the ONE probe an expired quarantine buys. If it fails the
 						// window has to close again — otherwise every later gossip mention spends
 						// another dial and refreshes the status row, which is exactly the churn
 						// the quarantine exists to stop.
 						this.quarantineProbeInFlight.add(peerID);
 						consumedQuarantineAt = quarantinedAt;
+						this.unreachableQuarantine.delete(peerID);
 					}
 				}
 				// Single-flight, keyed by the endpoint rather than the peer: two addresses of
@@ -2368,7 +2297,6 @@ export class Network {
 						}
 						const needed = this.isPeerNeededByJoinedNetwork(peerID, true);
 						if (!needed) this.configuredBootstrapPeerIDs.delete(peerID);
-						await this.reconcilePeerAfterBootstrapRemoval(peerID, [ma.toString()], networkID ?? STARTUP_BOOTSTRAP_OWNER);
 						if (!needed) await this.closeUnwantedDial(conn, peerID);
 					};
 					if (!this.shouldKeepDialResult({ node: this.node, epoch, peerID, key: canonicalAddress, entry: dialEntry, requireConfigured: effectiveOrigin === 'configured' })) {
@@ -2425,7 +2353,12 @@ export class Network {
 					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, conn?.remotePeer?.toString() ?? null, effectiveOrigin, verifiedThisAddr);
 					console.log('✓ Connected to new bootstrap peer');
 				} catch (err: any) {
-					if (superseded()) return 'incomplete';
+					if (superseded()) {
+						// A failed probe must not consume an expired quarantine permanently merely
+						// because the network configuration changed while its dial was settling.
+						if (consumedQuarantineAt !== null && peerID) this.unreachableQuarantine.set(peerID, Date.now());
+						return 'incomplete';
+					}
 					const message = err?.message ?? String(err);
 					const kind = classifyBootstrapError(message);
 					// The probe the expired quarantine allowed has failed, so close the window
@@ -2478,12 +2411,12 @@ export class Network {
 						this.forgetBootstrapAddress(canonicalAddress);
 						let remainingAddresses = 0;
 						try {
-							const removal = await this.removePeerStoreAddresses(pid, matches);
-							if (removal.kind === 'superseded') return 'incomplete';
-							remainingAddresses = removal.kind === 'not-found' ? 0 : removal.remaining;
-						} catch (trimError: any) {
-							trace(`[NET] identity mismatch trim failed for ${peerID.slice(0, 16)}, leaving peer intact: ${trimError?.message ?? trimError}`);
-							continue peerLoop;
+							const record = await this.node.peerStore.get(pid);
+							const keep = record.addresses.filter((address: any) => !matches(address.multiaddr.toString()));
+							if (keep.length < record.addresses.length) await this.node.peerStore.patch(pid, { multiaddrs: keep.map((address: any) => address.multiaddr) });
+							remainingAddresses = keep.length;
+						} catch {
+							/* peer not in store — nothing to trim */
 						}
 						if (superseded()) return 'incomplete';
 						// Only once the peer has neither a live connection nor a single address we
@@ -2563,43 +2496,15 @@ export class Network {
 	 * instance never had a problem with. The node reference is captured once for the
 	 * same reason: re-reading `this.node` after an await can hand back a different node.
 	 */
-	async purgeStalePeer(peerID: string, reason: string, epoch: number = this.runEpoch, mode: PeerPurgeMode = 'best-effort'): Promise<void> {
-		await this.withPurgeLock(peerID, () => this.runPurge(peerID, reason, epoch, mode));
-	}
-
-	private async withPurgeLock(peerID: string, purge: () => Promise<void>): Promise<void> {
-		const locks = (this.purgeLocks ??= new Map());
-		let held = locks.get(peerID);
-		if (!held) {
-			held = { mutex: new Mutex(), waiting: 0 };
-			locks.set(peerID, held);
-		}
-		held.waiting++;
-		try {
-			await held.mutex.runExclusive(purge);
-		} finally {
-			if (--held.waiting === 0) locks.delete(peerID);
-		}
-	}
-
-	private async runPurge(peerID: string, reason: string, epoch: number, mode: PeerPurgeMode): Promise<void> {
+	async purgeStalePeer(peerID: string, reason: string, epoch: number = this.runEpoch): Promise<void> {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return;
+		this.bootstrapPeerIDs.delete(peerID);
+		for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) this.forgetBootstrapAddress(key);
+		this.removeGossipsubDirectPeer(peerID);
+		this.redialBackoff.delete(peerID);
 		try {
 			const pid = peerIDFromString(peerID);
-			// Every purge decision can become stale while its lock is acquired. A live,
-			// unsuppressed connection disproves an opportunistic purge and must be healed.
-			if (node.getConnections(pid).length > 0 && !this.isRedialSuppressed(peerID)) {
-				trace(`[NET] purge of ${peerID.slice(0, 16)}… dropped, the peer is connected (reason was: ${reason})`);
-				await this.restorePurgedPeerState(node, pid, epoch, null, false);
-				return;
-			}
-
-			this.bootstrapPeerIDs.delete(peerID);
-			for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) this.forgetBootstrapAddress(key);
-			this.removeGossipsubDirectPeer(peerID);
-			this.redialBackoff.delete(peerID);
-
 			for (const connection of node.getConnections(pid)) {
 				try {
 					await connection.close();
@@ -2607,47 +2512,13 @@ export class Network {
 					/* connection may already be closing */
 				}
 			}
-			if (node !== this.node || epoch !== this.runEpoch) return;
-
-			const { store, events } = peerStoreInternals(node.peerStore);
-			let snapshot: IStoredPeerRecord | null = null;
-			let keptAlive = false;
-			let restoredWith: Array<{ remoteAddr: any }> | null = null;
-			const release = await store.getWriteLock(pid);
-			try {
-				if (node !== this.node || epoch !== this.runEpoch) return;
-				if (node.getConnections(pid).length > 0 && !this.isRedialSuppressed(peerID)) {
-					keptAlive = true;
-				} else {
-					try {
-						snapshot = await store.load(pid);
-					} catch (err: unknown) {
-						if (!isPeerStoreNotFound(err)) throw err;
-					}
-					try {
-						await store.delete(pid);
-					} catch (err: unknown) {
-						if (!isPeerStoreNotFound(err)) throw err;
-					}
-					const arrived = node.getConnections(pid);
-					if (arrived.length > 0 && !this.isRedialSuppressed(peerID)) {
-						await this.restorePurgedRecord(store, events, pid, arrived, snapshot);
-						restoredWith = arrived;
-					}
-				}
-			} finally {
-				release();
-			}
-
-			if (keptAlive) trace(`[NET] purge found ${peerID.slice(0, 16)}… connected again, kept its peerStore record`);
-			else console.log(`[NET] purged stale peerStore entry ${peerID.slice(0, 16)}… (reason: ${reason})`);
-
-			if (node !== this.node || epoch !== this.runEpoch) return;
-			if (restoredWith !== null || (node.getConnections(pid).length > 0 && !this.isRedialSuppressed(peerID))) {
-				await this.restorePurgedPeerState(node, pid, epoch, snapshot, restoredWith !== null);
-			}
+			if (epoch !== this.runEpoch) return;
+			await node.peerStore.delete(pid);
+			console.log(`[NET] purged stale peerStore entry ${peerID.slice(0, 16)}… (reason: ${reason})`);
+			if (epoch !== this.runEpoch) return;
+			const after = node.getConnections(pid);
+			if (after.length > 0 && !this.isRedialSuppressed(peerID)) await this.restorePurgedPeerState(node, pid, after, epoch);
 		} catch (err: any) {
-			if (mode === 'durable') throw err;
 			trace(`[NET] purgeStalePeer ${peerID.slice(0, 16)} failed: ${err?.message ?? err}`);
 		}
 	}
@@ -2667,104 +2538,31 @@ export class Network {
 	 * as "this peer is handled"; setting it first is what let promotion observe a
 	 * half-restored peer and walk away from it.
 	 */
-	private async restorePurgedPeerState(node: Libp2p, pid: PeerID, epoch: number, snapshot: IStoredPeerRecord | null, recordRestored: boolean): Promise<void> {
+	private async restorePurgedPeerState(node: Libp2p, pid: PeerID, connections: Array<{ remoteAddr: any }>, epoch: number): Promise<void> {
 		const peerID = pid.toString();
-		const { store, events } = peerStoreInternals(node.peerStore);
-		const release = await store.getWriteLock(pid);
-		try {
-			if (node !== this.node || epoch !== this.runEpoch) return;
-			let onDisk = recordRestored;
-			const connections = node.getConnections(pid);
-			if (!onDisk && connections.length > 0 && !this.isRedialSuppressed(peerID)) {
-				await this.restorePurgedRecord(store, events, pid, connections, snapshot);
-				onDisk = true;
-			}
-			if (node !== this.node || epoch !== this.runEpoch) return;
-			const live = node.getConnections(pid);
-			if (live.length === 0 || this.isRedialSuppressed(peerID)) {
-				if (onDisk) {
-					trace(`[NET] purge healing outlived its connection, dropping the restored entry: ${peerID.slice(0, 16)}`);
-					try {
-						await store.delete(pid);
-					} catch (err: unknown) {
-						if (!isPeerStoreNotFound(err)) throw err;
-					}
-				}
-				return;
-			}
-
-			this.unreachableQuarantine.delete(peerID);
-			for (const connection of live) {
-				const remote = connection.remoteAddr;
-				if (!remote) continue;
-				try {
-					const ma = extractDestinationPeerID(remote) === peerID ? remote : Multiaddr(`${remote.toString()}/p2p/${peerID}`);
-					this.rememberBootstrapAddress(ma, null);
-					this.markBootstrapAddressVerified(ma);
-				} catch {
-					/* unparseable remote address */
-				}
-			}
-			const gossipsub: any = this.pubsub;
-			if (gossipsub?.direct && typeof gossipsub.direct.add === 'function') gossipsub.direct.add(peerID);
-			this.bootstrapPeerIDs.add(peerID);
-			console.log(`[NET] purge raced an inbound connection — restored ${peerID.slice(0, 16)}…`);
-		} finally {
-			release();
-		}
-	}
-
-	private async restorePurgedRecord(store: IPeerStoreInternals, events: IPeerStoreEvents, pid: PeerID, connections: Array<{ remoteAddr: any }>, snapshot: IStoredPeerRecord | null): Promise<void> {
-		let current: IStoredPeerRecord | null = null;
-		try {
-			current = await store.load(pid);
-		} catch (err: unknown) {
-			if (!isPeerStoreNotFound(err)) throw err;
-		}
-		const tags = new Map<string, { value?: number; expiry?: bigint }>(current === null ? (snapshot?.tags ?? []) : []);
-		tags.set(KEEP_ALIVE, { value: 1 });
-		const result = await store.merge(pid, {
-			multiaddrs: connections.map(connection => connection.remoteAddr).filter(remote => remote != null),
-			tags,
-			...(current === null && snapshot !== null
-				? {
-						addresses: snapshot.addresses,
-						protocols: snapshot.protocols,
-						metadata: snapshot.metadata,
-						...(snapshot.peerRecordEnvelope ? { peerRecordEnvelope: snapshot.peerRecordEnvelope } : {}),
-						...(snapshot.id?.publicKey ? { publicKey: snapshot.id.publicKey } : {}),
-					}
-				: {}),
+		this.unreachableQuarantine.delete(peerID);
+		await node.peerStore.merge(pid, {
+			multiaddrs: connections.map(connection => connection.remoteAddr),
+			tags: { [KEEP_ALIVE]: { value: 1 } },
 		});
-		if (result.updated) events.safeDispatchEvent('peer:update', { detail: result });
+		if (epoch !== this.runEpoch) return;
+		for (const connection of connections) {
+			const remote = connection.remoteAddr;
+			if (!remote) continue;
+			try {
+				const ma = extractDestinationPeerID(remote) === peerID ? remote : Multiaddr(`${remote.toString()}/p2p/${peerID}`);
+				this.rememberBootstrapAddress(ma, null);
+				this.markBootstrapAddressVerified(ma);
+			} catch {
+				/* unparseable remote address */
+			}
+		}
+		const gossipsub: any = this.pubsub;
+		if (gossipsub?.direct && typeof gossipsub.direct.add === 'function') gossipsub.direct.add(peerID);
+		this.bootstrapPeerIDs.add(peerID);
+		console.log(`[NET] purge raced an inbound connection — restored ${peerID.slice(0, 16)}…`);
 	}
 
-	/**
-	 * True if the peer is one we must never voluntarily disconnect because it
-	 * provides infrastructure rather than being a plain content peer: an
-	 * explicitly configured bootstrap peer, or a relay some of our circuit
-	 * connections are routed THROUGH (dropping it would also kill transit for
-	 * any NAT'd peers reachable only via that relay).
-	 *
-	 * Peer-announce-discovered bootstrap entries and peers merely REACHED over
-	 * a relay are plain content peers — hanging those up touches only their own
-	 * connection, so lishnet leave may disconnect them.
-	 *
-	 * Used by lishnet leave to decide which topic peers are safe to hang up —
-	 * leaving an empty lishnet must not tear down shared bootstrap/relay links
-	 * that other still-joined lishnets depend on.
-	 */
-	/**
-	 * Drop a peer from the configured-bootstrap exemption set. Called by the
-	 * lishnet layer when a bootstrap entry is removed from config or belongs only
-	 * to a lishnet being left, so `isBootstrapOrRelayPeer` stops treating a peer
-	 * that is no longer configured (nor shared with another joined network) as
-	 * infrastructure that leave-network must keep connected — and so the
-	 * unreachable-eviction exemption ends with it.
-	 *
-	 * Both callers already establish that the peer is configured in NO joined
-	 * network before calling, so this needs no refcount of its own.
-	 */
 	/**
 	 * Put an address on the autodial list that zero-connection recovery walks, unless
 	 * it is already there.
@@ -2774,33 +2572,6 @@ export class Network {
 	 * check would treat the new address as already known and never add it — leaving
 	 * recovery dialing the address that was replaced.
 	 */
-	private async removePeerStoreAddresses(pid: PeerID, matches: (address: string) => boolean): Promise<PeerStoreAddressRemoval> {
-		const node = this.node;
-		const epoch = this.runEpoch;
-		if (!node) return { kind: 'superseded' };
-		const { store, events } = peerStoreInternals(node.peerStore);
-		const release = await store.getWriteLock(pid);
-		try {
-			if (node !== this.node || epoch !== this.runEpoch) return { kind: 'superseded' };
-			let record: IStoredPeerRecord;
-			try {
-				record = await store.load(pid);
-			} catch (err: unknown) {
-				if (isPeerStoreNotFound(err)) return { kind: 'not-found' };
-				throw err;
-			}
-			const keep = record.addresses.filter(address => !matches(address.multiaddr.toString()));
-			if (keep.length === record.addresses.length) return { kind: 'updated', remaining: keep.length };
-			if (node !== this.node || epoch !== this.runEpoch) return { kind: 'superseded' };
-			const result = await store.patchExisting(pid, { addresses: keep });
-			if (result.updated) events.safeDispatchEvent('peer:update', { detail: result });
-			if (node !== this.node || epoch !== this.runEpoch) return { kind: 'superseded' };
-			return { kind: 'updated', remaining: keep.length };
-		} finally {
-			release();
-		}
-	}
-
 	private rememberBootstrapAddress(ma: any, configuredBy: string | null = null): IBootstrapEntry {
 		const key = normalizeMultiaddrForCompare(ma.toString());
 		let entry = this.bootstrapByAddress.get(key);
@@ -2816,7 +2587,6 @@ export class Network {
 				lastDisconnectedAt: null,
 			};
 			this.bootstrapByAddress.set(key, entry);
-			this.bootstrapMultiaddrs.push(ma);
 			if (entry.peerID) {
 				let keys = this.addressesByPeer.get(entry.peerID);
 				if (!keys) {
@@ -2855,10 +2625,8 @@ export class Network {
 		if (!entry) return;
 		this.bootstrapByAddress.delete(key);
 		this.recoveryBackoff.delete(key);
-		this.addressProbeBackoff.delete(key);
 		this.configuredBootstrapAddresses.delete(key);
 		for (const addresses of this.configuredBootstrapAddressesByNet.values()) addresses.delete(key);
-		this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(ma => normalizeMultiaddrForCompare(ma.toString()) !== key);
 		if (!entry.peerID) return;
 		const keys = this.addressesByPeer.get(entry.peerID);
 		if (!keys) return;
@@ -2876,15 +2644,21 @@ export class Network {
 	}
 
 	private pruneBootstrapRegistry(): void {
+		const now = Date.now();
 		const connected = new Set((this.node?.getPeers() ?? []).map(peer => peer.toString()));
 		const entries = [...this.bootstrapByAddress.values()];
-		const kept = pruneBootstrapEntries(entries, Date.now(), DISCOVERED_BOOTSTRAP_TTL_MS, MAX_DISCOVERED_BOOTSTRAP_ENTRIES, peerID => connected.has(peerID));
-		if (kept.length === entries.length) return;
+		const kept = pruneBootstrapEntries(entries, now, DISCOVERED_BOOTSTRAP_TTL_MS, MAX_DISCOVERED_BOOTSTRAP_ENTRIES, peerID => connected.has(peerID));
 		const keptKeys = new Set(kept.map(entry => entry.key));
 		for (const entry of entries) {
 			if (keptKeys.has(entry.key)) continue;
 			this.forgetBootstrapAddress(entry.key);
 			if (entry.peerID && !this.addressesByPeer.has(entry.peerID)) this.bootstrapPeerIDs.delete(entry.peerID);
+		}
+		// Failed, never-verified announces do not enter the registry. Their pacing
+		// records still need a finite lifetime, otherwise a one-off flood leaks one
+		// map entry per invented endpoint forever.
+		for (const [key, backoff] of this.recoveryBackoff) {
+			if (!this.bootstrapByAddress.has(key) && backoff.nextAttempt <= now) this.recoveryBackoff.delete(key);
 		}
 	}
 
@@ -2899,6 +2673,11 @@ export class Network {
 		for (const address of addresses) this.dropConfiguredOwnership(normalizeMultiaddrForCompare(address), networkID);
 	}
 
+	/**
+	 * Release one lishnet's configured ownership of a peer. Once no configured
+	 * owner remains, also remove the reconnect and eviction exemptions earned by
+	 * that configured role. A discovered claim may still keep the address itself.
+	 */
 	pruneConfiguredBootstrapPeer(peerID: string, networkID: string = STARTUP_BOOTSTRAP_OWNER): void {
 		for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) this.dropConfiguredOwnership(key, networkID);
 		const configured = [...(this.addressesByPeer.get(peerID) ?? [])].some(key => (this.bootstrapByAddress.get(key)?.configuredBy.size ?? 0) > 0);
@@ -2921,6 +2700,11 @@ export class Network {
 		if (!this.addressesByPeer.has(peerID)) this.bootstrapPeerIDs.delete(peerID);
 	}
 
+	/**
+	 * Whether a peer provides infrastructure that leave-network must preserve:
+	 * an explicitly configured bootstrap or a relay carrying a circuit connection.
+	 * Discovered bootstraps and peers reached through a relay are ordinary peers.
+	 */
 	isBootstrapOrRelayPeer(peerID: string): boolean {
 		if (this.configuredBootstrapPeerIDs.has(peerID)) return true;
 		return this.isActiveRelayPeer(peerID);
@@ -2972,16 +2756,6 @@ export class Network {
 	}
 
 	/**
-	 * True if we currently share at least one joined lishnet topic with the
-	 * given peer — i.e. some lish topic WE are subscribed to lists the peer
-	 * among its subscribers.
-	 *
-	 * Coarse serve-gate for unicast LISH discovery: a peer we no longer
-	 * share any lishnet with must not be able to browse or search our shared
-	 * LISHs just because a transport connection exists (e.g. the peer's
-	 * keep-alive re-dialed us right after we left its network).
-	 */
-	/**
 	 * Whether a lishnet we are STILL in has any claim on this peer.
 	 *
 	 * Leaving one network says nothing about the others — the same peer can be a member
@@ -3003,6 +2777,16 @@ export class Network {
 		return false;
 	}
 
+	/**
+	 * True if we currently share at least one joined lishnet topic with the
+	 * given peer — i.e. some lish topic WE are subscribed to lists the peer
+	 * among its subscribers.
+	 *
+	 * Coarse serve-gate for unicast LISH discovery: a peer we no longer
+	 * share any lishnet with must not be able to browse or search our shared
+	 * LISHs just because a transport connection exists (e.g. the peer's
+	 * keep-alive re-dialed us right after we left its network).
+	 */
 	sharesJoinedTopicWith(peerID: string): boolean {
 		if (!this.pubsub) return false;
 		for (const topic of this.pubsub.getTopics()) {
@@ -3181,7 +2965,7 @@ export class Network {
 		if (epoch !== this.runEpoch || signal.aborted) return;
 		// Forget the persisted peerStore entry so the disconnect survives a restart —
 		// suppression is in-memory only, but the peerStore is on disk.
-		await this.purgeStalePeer(peerID, 'left-network exclusive peer', epoch, 'durable');
+		await this.purgeStalePeer(peerID, 'left-network exclusive peer', epoch);
 		// A claim can still land during the purge, and by then the record is gone. What must
 		// not survive is the suppression: it is global, so leaving it in place would make
 		// every maintenance path refuse to dial a peer a joined lishnet is now asking for.
@@ -3235,34 +3019,6 @@ export class Network {
 		}
 		trace(`[NET] disconnectPeer: ${peerID.slice(0, 16)} was claimed by a joined lishnet mid-disconnect, released`);
 		return true;
-	}
-
-	/** Reconcile peerStore and connection state after configured addresses were removed. */
-	async reconcilePeerAfterBootstrapRemoval(peerID: string, removedAddresses: string[], networkID: string): Promise<void> {
-		const node = this.node;
-		const epoch = this.runEpoch;
-		if (!node) return;
-		let pid: PeerID;
-		try {
-			pid = peerIDFromString(peerID);
-		} catch (err: any) {
-			trace(`[NET] reconcile after removal: invalid peerID ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
-			return;
-		}
-		const removed = new Set(removedAddresses.filter(address => !this.bootstrapByAddress.has(normalizeMultiaddrForCompare(address))).map(bareDialEndpoint));
-		if (removed.size > 0) {
-			try {
-				const result = await this.removePeerStoreAddresses(pid, address => removed.has(bareDialEndpoint(address)));
-				if (result.kind === 'superseded') return;
-			} catch (err: any) {
-				trace(`[NET] reconcile after removal: peerStore trim failed for ${peerID.slice(0, 16)}, leaving the peer alone: ${err?.message ?? err}`);
-				return;
-			}
-		}
-		if (node !== this.node || epoch !== this.runEpoch) return;
-		if (this.addressesByPeer.has(peerID)) return;
-		if (this.isPeerNeededByJoinedNetwork(peerID)) return;
-		await this.disconnectPeer(peerID, networkID, epoch);
 	}
 
 	/** Snapshot of all per-network bootstrap statuses. */
@@ -3820,7 +3576,6 @@ export class Network {
 		this.dcutrPeers.clear();
 		this.bootstrapPeerIDs.clear();
 		this.bootstrapTracker.clear();
-		this.bootstrapMultiaddrs = [];
 		this.bootstrapByAddress.clear();
 		this.addressesByPeer.clear();
 		this.recoveryBackoff.clear();
@@ -3839,9 +3594,7 @@ export class Network {
 		this._lastScores.clear();
 		this.recentDisconnects.length = 0;
 		this.redialBackoff.clear();
-		this.noReachableSince.clear();
 		this.unreachableQuarantine.clear();
-		this.addressProbeBackoff.clear();
 		this.configuredBootstrapPeerIDs.clear();
 		this.configuredBootstrapAddresses.clear();
 		this.configuredBootstrapAddressesByNet.clear();

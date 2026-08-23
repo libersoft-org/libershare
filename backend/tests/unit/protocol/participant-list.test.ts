@@ -41,7 +41,6 @@ function testNetwork() {
 	let answersOnTheAddress = true;
 	const network = Object.create(Network.prototype) as Network;
 	const tracker = new BootstrapStatusTracker();
-	installBootstrapRegistry(network, []);
 	(network as any).runEpoch = 1;
 	(network as any).bootstrapTracker = tracker;
 	(network as any).bootstrapPeerIDs = new Set<string>();
@@ -50,9 +49,11 @@ function testNetwork() {
 	(network as any).dialAbort = new AbortController();
 	(network as any).redialBackoff = new Map();
 	(network as any).unreachableQuarantine = new Map();
-	(network as any).noReachableSince = new Map();
 	(network as any).redialSuppressedByNet = new Map();
 	(network as any).configuredBootstrapPeerIDs = new Set<string>();
+	(network as any).configuredBootstrapAddresses = new Set<string>();
+	(network as any).configuredBootstrapAddressesByNet = new Map();
+	installBootstrapRegistry(network, []);
 	(network as any).isTopicSubscribed = () => true;
 	(network as any).isPeerNeededByJoinedNetwork = () => true;
 	// Nobody is subscribed to the topic to begin with, so the sweep's membership exemption
@@ -96,6 +97,7 @@ function testNetwork() {
 		 */
 		pacingExpires: (): void => {
 			(network as any).redialBackoff.clear();
+			(network as any).recoveryBackoff.clear();
 			(network as any).unreachableQuarantine.clear();
 		},
 		/**
@@ -131,6 +133,7 @@ function testNetwork() {
 			// A returning peer is dialable again: clear the pacing its failures earned, the
 			// way an inbound connection or an expired backoff would in production.
 			(network as any).redialBackoff.clear();
+			(network as any).recoveryBackoff.clear();
 			(network as any).unreachableQuarantine.clear();
 		},
 	};

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { Network } from '../../../src/protocol/network.ts';
 import { installBootstrapRegistry } from '../helpers/bootstrap-registry.ts';
-import { createEmptyPeerStore } from '../helpers/real-peer-store.ts';
 
 /**
  * A destructive operation started on one libp2p node must never finish against the
@@ -24,7 +23,6 @@ function deferred<T = void>(): { promise: Promise<T>; resolve: (v: T) => void } 
 describe('Network.disconnectPeer — bound to the node it started on', () => {
 	function harness() {
 		const network = Object.create(Network.prototype) as Network;
-		installBootstrapRegistry(network, []);
 		(network as any).runEpoch = 1;
 		// A prototype-only instance has no field initializers: disconnectPeer binds itself to
 		// this run's cancellation and needs a controller to read.
@@ -35,24 +33,23 @@ describe('Network.disconnectPeer — bound to the node it started on', () => {
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).redialBackoff = new Map();
 		(network as any).unreachableQuarantine = new Map();
+		installBootstrapRegistry(network, []);
 
 		const gate = deferred();
 		const touchedByOld: string[] = [];
-		const oldPeerStore = createEmptyPeerStore();
-		oldPeerStore.merge = async (): Promise<void> => {
-			await gate.promise;
-		};
-		const deleteOldPeer = oldPeerStore.store.delete.bind(oldPeerStore.store);
-		oldPeerStore.store.delete = async (pid: unknown): Promise<void> => {
-			touchedByOld.push('A.delete');
-			await deleteOldPeer(pid);
-		};
 		const nodeA = {
 			getConnections: (): unknown[] => [],
 			async hangUp(): Promise<void> {
 				touchedByOld.push('A.hangUp');
 			},
-			peerStore: oldPeerStore,
+			peerStore: {
+				async merge(): Promise<void> {
+					await gate.promise;
+				},
+				async delete(): Promise<void> {
+					touchedByOld.push('A.delete');
+				},
+			},
 		};
 		const touchedByNew: string[] = [];
 		const nodeB = {
@@ -120,19 +117,20 @@ describe('Network.disconnectPeer — bound to the node it started on', () => {
 describe('Network.addBootstrapPeers — a dial that lands after a restart', () => {
 	function harness() {
 		const network = Object.create(Network.prototype) as Network;
-		installBootstrapRegistry(network, []);
 		(network as any).runEpoch = 1;
 		// The peer is suppressed, so a dial landing on THIS run would legitimately take
 		// the destructive "landed after leave" branch. After a restart it must not.
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set([PEER_ID])]]);
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
-		(network as any).recoveryBackoff = new Map();
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapPeerIDs = new Set<string>();
+		installBootstrapRegistry(network, []);
 		(network as any).bootstrapTracker = {
 			recordAddressReachable(): void {},
 			recordAddressUnreachable(): void {},
@@ -233,18 +231,19 @@ describe('Network.addBootstrapPeers — a dial that lands after a restart', () =
 describe('Network.addBootstrapPeers — configured bootstraps become direct peers at once', () => {
 	function harness(suppressed: string[] = []) {
 		const network = Object.create(Network.prototype) as Network;
-		installBootstrapRegistry(network, []);
 		const outcomes: string[] = [];
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set(suppressed)]]);
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
-		(network as any).recoveryBackoff = new Map();
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapPeerIDs = new Set<string>();
+		installBootstrapRegistry(network, []);
 		(network as any).bootstrapTracker = {
 			recordAddressReachable(): void {},
 			recordAddressUnreachable(): void {},
@@ -298,7 +297,6 @@ describe('Network.addBootstrapPeers — configured bootstraps become direct peer
 describe('Network.pruneConfiguredBootstrapPeer — gives back what the entry was granted', () => {
 	function harness(neededByJoined: boolean) {
 		const network = Object.create(Network.prototype) as Network;
-		installBootstrapRegistry(network, []);
 		const direct = new Set<string>();
 		const merges: Array<Record<string, unknown>> = [];
 		(network as any).pubsub = { direct };
@@ -311,6 +309,9 @@ describe('Network.pruneConfiguredBootstrapPeer — gives back what the entry was
 		};
 		(network as any).configuredBootstrapPeerIDs = new Set<string>([PEER_ID]);
 		(network as any).bootstrapPeerIDs = new Set<string>([PEER_ID]);
+		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).configuredBootstrapAddressesByNet = new Map();
+		installBootstrapRegistry(network, [{ address: ADDR, configuredBy: ['@startup'] }]);
 		(network as any).isPeerNeededByJoinedNetwork = (): boolean => neededByJoined;
 		(network as any).isRedialSuppressed = (): boolean => false;
 		(network as any).addGossipsubDirectPeer(PEER_ID);

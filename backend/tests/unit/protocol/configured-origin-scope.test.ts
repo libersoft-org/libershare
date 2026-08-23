@@ -17,6 +17,8 @@ function harness() {
 	installBootstrapRegistry(network, []);
 	(network as any).runEpoch = 1;
 	(network as any).bootstrapTracker = tracker;
+	(network as any).configuredBootstrapAddresses = new Set<string>();
+	(network as any).configuredBootstrapAddressesByNet = new Map();
 	(network as any).configuredBootstrapPeerIDs = new Set<string>();
 	(network as any).bootstrapPeerIDs = new Set<string>();
 	(network as any).redialBackoff = new Map();

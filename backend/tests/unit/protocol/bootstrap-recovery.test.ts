@@ -2,7 +2,6 @@ import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
 import { Network, bootstrapEntryLastActivity, nextRecoveryBackoff, normalizeMultiaddrForCompare, orderBootstrapEntriesForRecovery, pruneBootstrapEntries, type IBootstrapEntry } from '../../../src/protocol/network.ts';
 import { installBootstrapRegistry, registryAddresses, type IRegistrySeed } from '../helpers/bootstrap-registry.ts';
-import { createEmptyPeerStore } from '../helpers/real-peer-store.ts';
 
 /**
  * The bootstrap registry is what zero-connection recovery walks. It is keyed by the
@@ -21,6 +20,36 @@ const ADDR_A2 = `/ip4/192.0.2.2/tcp/9090/p2p/${PEER_A}`;
 const ADDR_B = `/ip4/198.51.100.7/tcp/9090/p2p/${PEER_B}`;
 
 const key = (address: string): string => normalizeMultiaddrForCompare(multiaddr(address).toString());
+
+function createTestPeerStore() {
+	const records = new Map<string, { addresses: Array<{ multiaddr: any }>; tags: Record<string, unknown> }>();
+	const keyOf = (id: { toString(): string }): string => id.toString();
+	const asAddresses = (multiaddrs: any[] | undefined): Array<{ multiaddr: any }> => (multiaddrs ?? []).map(ma => ({ multiaddr: ma }));
+	return {
+		async get(id: { toString(): string }) {
+			const record = records.get(keyOf(id));
+			if (!record) throw new Error('peer not found');
+			return record;
+		},
+		async merge(id: { toString(): string }, update: { multiaddrs?: any[]; tags?: Record<string, unknown> }): Promise<void> {
+			const current = records.get(keyOf(id)) ?? { addresses: [], tags: {} };
+			const addresses = update.multiaddrs
+				? [...new Map([...current.addresses, ...asAddresses(update.multiaddrs)].map(address => [address.multiaddr.toString(), address])).values()]
+				: current.addresses;
+			records.set(keyOf(id), { addresses, tags: { ...current.tags, ...update.tags } });
+		},
+		async patch(id: { toString(): string }, update: { multiaddrs?: any[]; tags?: Record<string, unknown> }): Promise<void> {
+			const current = records.get(keyOf(id)) ?? { addresses: [], tags: {} };
+			records.set(keyOf(id), {
+				addresses: update.multiaddrs ? asAddresses(update.multiaddrs) : current.addresses,
+				tags: update.tags ? { ...current.tags, ...update.tags } : current.tags,
+			});
+		},
+		async delete(id: { toString(): string }): Promise<void> {
+			records.delete(keyOf(id));
+		},
+	};
+}
 
 /**
  * A Network carrying only the fields the bootstrap paths touch, plus a fake node
@@ -57,9 +86,7 @@ function bareNetwork(opts: { seeds?: IRegistrySeed[]; suppressed?: string[]; liv
 		peerId: { toString: () => 'selfID' },
 		getPeers: () => livePeers.map(p => ({ toString: () => p })),
 		getConnections: () => [],
-		// Real store, empty: every peer here reads as absent from it, which is what these
-		// tests are about — the registry, not the peerStore, is the survivor count.
-		peerStore: createEmptyPeerStore(),
+		peerStore: createTestPeerStore(),
 		async dial(ma: { toString(): string }): Promise<unknown> {
 			dialed.push(ma.toString());
 			opts.onDial?.(ma.toString());
@@ -153,9 +180,12 @@ describe('bootstrap dials — single flight per address', () => {
 		expect(dialed.length).toBe(1);
 	});
 
-	it('releases the claim so a later announce of the same address can dial again', async () => {
+	it('paces a later failed announce and retries it after the backoff expires', async () => {
 		const { network, dialed } = bareNetwork({ failDial: true });
 		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
+		expect(dialed.length).toBe(1);
+		(network as any).recoveryBackoff.set(key(ADDR_A), { nextAttempt: Date.now() - 1, failCount: 1 });
 		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
 		expect(dialed.length).toBe(2);
 	});
@@ -247,6 +277,18 @@ describe('bootstrap dials — one probe per expired quarantine', () => {
 		expect((network as any).quarantineProbeInFlight.has(PEER_A)).toBe(false);
 		await refused;
 		expect(dialed.length).toBe(0);
+	});
+
+	it('re-arms the window when a failing probe is superseded mid-dial', async () => {
+		const { network } = quarantined();
+		(network as any).node.dial = async (): Promise<never> => {
+			(network as any).bootstrapGeneration.set('net-a', 1);
+			throw new Error('dial failed after config changed');
+		};
+		const result = await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
+		expect(result).toBe('incomplete');
+		expect((network as any).unreachableQuarantine.get(PEER_A)).toBeGreaterThan(EXPIRED);
+		expect((network as any).quarantineProbeInFlight.has(PEER_A)).toBe(false);
 	});
 });
 
@@ -423,6 +465,12 @@ describe('Network.runZeroConnectionRecovery — liveness and budget', () => {
 		expect(dialed).toEqual([]);
 	});
 
+	it('runs when the old snapshot still names a peer that has since disconnected', async () => {
+		const { network, dialed } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }] });
+		await (network as any).runZeroConnectionRecovery([PEER_B], 1);
+		expect(dialed).toEqual([multiaddr(ADDR_A).toString()]);
+	});
+
 	it('stops mid-pass as soon as a connection appears', async () => {
 		// An inbound connection lands while the pass is between dials. Continuing would
 		// keep hammering bootstrap addresses for a node that is no longer isolated.
@@ -442,6 +490,15 @@ describe('Network.runZeroConnectionRecovery — liveness and budget', () => {
 		const { dialed, run } = bareNetwork({ seeds: deadAddresses(20), failDial: true });
 		await run();
 		expect(dialed.length).toBe(8);
+	});
+
+	it('reserves one budget slot for a discovered address behind nine configured entries', async () => {
+		const configured = deadAddresses(9).map(seed => ({ ...seed, configuredBy: ['net-a'] }));
+		const { dialed, run } = bareNetwork({ seeds: [...configured, { address: ADDR_B }], failDial: true });
+		await run();
+		expect(dialed).toHaveLength(8);
+		expect(dialed.slice(0, 7)).toEqual(configured.slice(0, 7).map(seed => multiaddr(seed.address).toString()));
+		expect(dialed[7]).toBe(multiaddr(ADDR_B).toString());
 	});
 
 	/**
@@ -639,6 +696,35 @@ describe('pruneBootstrapEntries', () => {
 
 	it('expires that same entry once the peer is no longer connected', () => {
 		expect(pruneBootstrapEntries([discovered({ firstSeenAt: now - 10_000, peerID: PEER_A })], now, 100, 10, () => false)).toEqual([]);
+	});
+});
+
+describe('Network bootstrap registry pruning', () => {
+	const expiredAt = Date.now() - 3 * 60 * 60_000;
+
+	it('prunes an expired discovered entry while another live connection keeps recovery idle', async () => {
+		const { network, run } = bareNetwork({
+			seeds: [{ address: ADDR_A, firstSeenAt: expiredAt }],
+			livePeers: [PEER_B],
+		});
+		await run();
+		expect(registryAddresses(network)).toEqual([]);
+	});
+
+	it('keeps an expired discovered entry while its own peer is connected', async () => {
+		const { network, run } = bareNetwork({
+			seeds: [{ address: ADDR_A, firstSeenAt: expiredAt }],
+			livePeers: [PEER_A],
+		});
+		await run();
+		expect(registryAddresses(network)).toEqual([key(ADDR_A)]);
+	});
+
+	it('removes an expired backoff whose address never entered the registry', async () => {
+		const { network, run } = bareNetwork({ livePeers: [PEER_B] });
+		(network as any).recoveryBackoff.set(key(ADDR_A), { nextAttempt: Date.now() - 1, failCount: 3 });
+		await run();
+		expect((network as any).recoveryBackoff.has(key(ADDR_A))).toBe(false);
 	});
 });
 

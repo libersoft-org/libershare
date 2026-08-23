@@ -28,7 +28,7 @@ import { peerIdFromString } from '@libp2p/peer-id';
 import { extractDestinationPeerID, destinationPeerIDOf } from './multiaddr-utils.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 
-/** Keep the bootstrap registry and libp2p peer-store retention on the same clock. */
+/** Keep recovery metadata only as long as libp2p can keep the peer itself. */
 export const PEERSTORE_MAX_PEER_AGE_MS = 7_200_000;
 
 /** A gossipsub direct-peer entry: a peer id and its multiaddrs. */

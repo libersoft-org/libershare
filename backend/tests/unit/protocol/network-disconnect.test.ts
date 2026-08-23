@@ -3,7 +3,6 @@ import { KEEP_ALIVE } from '@libp2p/interface';
 import { multiaddr } from '@multiformats/multiaddr';
 import { Network, normalizeMultiaddrForCompare } from '../../../src/protocol/network.ts';
 import { installBootstrapRegistry } from '../helpers/bootstrap-registry.ts';
-import { createEmptyPeerStore } from '../helpers/real-peer-store.ts';
 
 /**
  * Unit tests for Network.disconnectPeer tag hygiene: hanging up a peer must
@@ -29,18 +28,16 @@ function makeNetwork() {
 	(network as any).dialAbort = new AbortController();
 	(network as any).bootstrapPeerIDs = new Set<string>();
 	(network as any).redialBackoff = new Map();
-	const peerStore = createEmptyPeerStore();
-	peerStore.merge = async (_pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> => {
-		merges.push(patch);
-	};
-	const deleteStoredPeer = peerStore.store.delete.bind(peerStore.store);
-	peerStore.store.delete = async (pid: { toString(): string }): Promise<void> => {
-		deleted.push(pid.toString());
-		await deleteStoredPeer(pid);
-	};
 	(network as any).node = {
 		getConnections: () => [],
-		peerStore,
+		peerStore: {
+			async merge(_pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> {
+				merges.push(patch);
+			},
+			async delete(pid: { toString(): string }): Promise<void> {
+				deleted.push(pid.toString());
+			},
+		},
 		async hangUp(pid: { toString(): string }): Promise<void> {
 			hungUp.push(pid.toString());
 		},
@@ -160,18 +157,16 @@ describe('Network.disconnectPeer — a peer claimed while it is being let go', (
 			getSubscribers: (): Array<{ toString(): string }> => subscribers.map(p => ({ toString: () => p })),
 		};
 		(network as any).peerAnnounce = { getRecentMembers: (): string[] => [] };
-		const peerStore = createEmptyPeerStore();
-		peerStore.merge = async (_pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> => {
-			merges.push(patch);
-		};
-		const deleteStoredPeer = peerStore.store.delete.bind(peerStore.store);
-		peerStore.store.delete = async (pid: { toString(): string }): Promise<void> => {
-			deleted.push(pid.toString());
-			await deleteStoredPeer(pid);
-		};
 		(network as any).node = {
 			getConnections: (): unknown[] => [],
-			peerStore,
+			peerStore: {
+				async merge(_pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> {
+					merges.push(patch);
+				},
+				async delete(pid: { toString(): string }): Promise<void> {
+					deleted.push(pid.toString());
+				},
+			},
 			async hangUp(pid: { toString(): string }): Promise<void> {
 				hungUp.push(pid.toString());
 			},
@@ -227,7 +222,7 @@ describe('Network.disconnectPeer — a peer claimed while it is being let go', (
 
 	it('lifts the suppression when the claim lands during the purge', async () => {
 		const { network, deleted, subscribers } = claimable();
-		(network as any).node.peerStore.store.delete = async (pid: { toString(): string }): Promise<void> => {
+		(network as any).node.peerStore.delete = async (pid: { toString(): string }): Promise<void> => {
 			deleted.push(pid.toString());
 			subscribers.push(PEER_ID);
 		};
@@ -369,7 +364,7 @@ describe('Network.runRedialMaintenance — leave-peer suppression', () => {
 });
 
 /**
- * Zero-connection recovery dials bootstrapMultiaddrs when the node has no
+ * Zero-connection recovery walks the bootstrap address registry when the node has no
  * connections. It must skip peers leave-network deliberately hung up, or a left
  * bootstrap comes straight back the moment connections briefly hit zero.
  */
@@ -377,14 +372,17 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 	function bareNetwork(suppressed: string[], bootstrapMaStrs: string[]) {
 		const dialed: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
-		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
-		(network as any).recoveryBackoff = new Map();
-		(network as any).unreachableQuarantine = new Map();
-		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		installBootstrapRegistry(
 			network,
 			bootstrapMaStrs.map(address => ({ address }))
 		);
+		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
+		(network as any).redialBackoff = new Map();
+		(network as any).unreachableQuarantine = new Map();
+		(network as any).redialBackoff = new Map();
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).recentDisconnects = [];
 		(network as any).bootstrapTracker = {
 			recordAddressReachable(): void {},
@@ -397,9 +395,8 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		(network as any).node = {
 			// Recovery reads connectivity itself rather than trusting the tick's snapshot.
 			getPeers: () => [],
-			async dial(ma: { toString(): string }): Promise<{ remoteAddr: { toString(): string } }> {
+			async dial(ma: { toString(): string }): Promise<void> {
 				dialed.push(ma.toString());
-				return { remoteAddr: ma };
 			},
 		};
 		return { network, dialed };
@@ -428,14 +425,16 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		expect(dialed).toEqual([]);
 	});
 
-	it('paces a CONFIGURED peer by address inside its shorter backoff window', async () => {
+	it('still dials a CONFIGURED peer inside a backoff window — it is the way back in', async () => {
 		const ma = `/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`;
 		const { network, dialed } = bareNetwork([], [ma]);
+		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000 }]]);
 		installBootstrapRegistry(network, [{ address: ma, configuredBy: ['net-x'] }]);
-		(network as any).recoveryBackoff = new Map([[normalizeMultiaddrForCompare(ma), { nextAttempt: Date.now() + 60_000, failCount: 1 }]]);
 		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
+		(network as any).configuredBootstrapAddresses = new Set([normalizeMultiaddrForCompare(multiaddr(ma).toString())]);
+		(network as any).configuredBootstrapAddressesByNet = new Map();
 		await run(network);
-		expect(dialed).toEqual([]);
+		expect(dialed).toEqual([multiaddr(ma).toString()]);
 	});
 
 	it('skips a discovered bootstrap peer still inside its unreachable quarantine', async () => {
@@ -465,6 +464,8 @@ describe('Network.addBootstrapPeers — rejoin clears suppression', () => {
 		installBootstrapRegistry(network, []);
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set<string>(suppressed)]]);
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).configuredBootstrapAddresses = new Set<string>();
+		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
 		(network as any).bootstrapGeneration = new Map();

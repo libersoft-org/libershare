@@ -39,7 +39,6 @@ function makeMockNet() {
 		pruneBootstrapStatus(networkID: string, keep: string[]): void {
 			this.prunedStatus.push({ networkID, keep });
 		},
-		async reconcilePeerAfterBootstrapRemoval(): Promise<void> {},
 		clearRedialSuppressionForNetwork(): void {},
 		getRunEpoch(): number {
 			return 1;

@@ -460,7 +460,7 @@ describe('Network periodic work stays bound to its run', () => {
 		const nodeB = { getPeers: (): unknown[] => [], dial: async (): Promise<void> => void newDials++ };
 		(network as any).runEpoch = 1;
 		(network as any).node = nodeA;
-		installBootstrapRegistry(network, [{ address: '/ip4/192.0.2.10/tcp/9090', configuredBy: ['startup'] }]);
+		installBootstrapRegistry(network, [{ address: '/ip4/192.0.2.10/tcp/9090' }]);
 
 		const realSetTimeout = globalThis.setTimeout;
 		let fire!: () => void;
