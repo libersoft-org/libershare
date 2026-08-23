@@ -1336,6 +1336,16 @@ describe('probeParkedConfiguredBootstraps', () => {
 		expect(repaired).toEqual([]);
 	});
 
+	it('does not recreate backoff after the configured address was removed mid-dial', async () => {
+		const { network } = bareNetwork();
+		(network as any).node.dial = async (): Promise<never> => {
+			network.pruneBootstrapAddresses([PARKED], 'net-a');
+			throw new Error('dial failed after removal');
+		};
+		await run(network);
+		expect((network as any).recoveryBackoff.has(normalizeMultiaddrForCompare(PARKED))).toBe(false);
+	});
+
 	it('leaves a discovered address to the loops that own it', async () => {
 		const { network, dialed } = bareNetwork({ configured: false });
 		await run(network);
@@ -1416,10 +1426,7 @@ describe('configured origin is a property of the address, not the peer', () => {
 	function bareNetwork() {
 		const dialed: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
-		installBootstrapRegistry(network, [
-			{ address: CONFIGURED, configuredBy: ['net-a'] },
-			{ address: DISCOVERED },
-		]);
+		installBootstrapRegistry(network, [{ address: CONFIGURED, configuredBy: ['net-a'] }, { address: DISCOVERED }]);
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
@@ -1886,7 +1893,10 @@ describe('addBootstrapPeers — a gossip announce of a configured address', () =
 		const outcomes: string[] = [];
 		const forced: boolean[] = [];
 		const network = Object.create(Network.prototype) as Network;
-		installBootstrapRegistry(network, knownConfigured.map(address => ({ address, configuredBy: ['net-a'] })));
+		installBootstrapRegistry(
+			network,
+			knownConfigured.map(address => ({ address, configuredBy: ['net-a'] }))
+		);
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set(knownConfigured.length > 0 ? [PEER_ID] : []);
@@ -2393,10 +2403,7 @@ describe('configured bootstrap removal releases the address probe backoff', () =
 	/** A gossip-learned address of the same peer is not the user's to lose — nor its pacing. */
 	it('leaves a discovered address of the removed peer alone', () => {
 		const network = bareNetwork();
-		installBootstrapRegistry(network, [
-			{ address: ADDR, configuredBy: ['@startup'] },
-			{ address: OTHER },
-		]);
+		installBootstrapRegistry(network, [{ address: ADDR, configuredBy: ['@startup'] }, { address: OTHER }]);
 		network.pruneConfiguredBootstrapPeer(PEER_ID);
 		expect((network as any).recoveryBackoff.has(normalizeMultiaddrForCompare(OTHER))).toBe(true);
 	});
@@ -2486,7 +2493,10 @@ describe('the autodial address list is bounded', () => {
 
 	function bareNetwork(configured: string[] = []) {
 		const network = Object.create(Network.prototype) as Network;
-		installBootstrapRegistry(network, configured.map(address => ({ address, configuredBy: ['@startup'] })));
+		installBootstrapRegistry(
+			network,
+			configured.map(address => ({ address, configuredBy: ['@startup'] }))
+		);
 		(network as any).configuredBootstrapAddresses = new Set(configured.map(a => normalizeMultiaddrForCompare(a)));
 		for (const address of configured) (network as any).rememberBootstrapAddress(multiaddr(address));
 		return network;

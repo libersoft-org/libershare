@@ -33,9 +33,7 @@ function createTestPeerStore() {
 		},
 		async merge(id: { toString(): string }, update: { multiaddrs?: any[]; tags?: Record<string, unknown> }): Promise<void> {
 			const current = records.get(keyOf(id)) ?? { addresses: [], tags: {} };
-			const addresses = update.multiaddrs
-				? [...new Map([...current.addresses, ...asAddresses(update.multiaddrs)].map(address => [address.multiaddr.toString(), address])).values()]
-				: current.addresses;
+			const addresses = update.multiaddrs ? [...new Map([...current.addresses, ...asAddresses(update.multiaddrs)].map(address => [address.multiaddr.toString(), address])).values()] : current.addresses;
 			records.set(keyOf(id), { addresses, tags: { ...current.tags, ...update.tags } });
 		},
 		async patch(id: { toString(): string }, update: { multiaddrs?: any[]; tags?: Record<string, unknown> }): Promise<void> {
@@ -60,6 +58,7 @@ function createTestPeerStore() {
 function bareNetwork(opts: { seeds?: IRegistrySeed[]; suppressed?: string[]; livePeers?: string[]; failDial?: boolean; onDial?: (address: string) => void } = {}) {
 	const dialed: string[] = [];
 	const livePeers = [...(opts.livePeers ?? [])];
+	const handlers = new Map<string, (evt: any) => void | Promise<void>>();
 	const network = Object.create(Network.prototype) as Network;
 	(network as any).runEpoch = 1;
 	(network as any).redialBackoff = new Map();
@@ -84,6 +83,9 @@ function bareNetwork(opts: { seeds?: IRegistrySeed[]; suppressed?: string[]; liv
 	};
 	(network as any).node = {
 		peerId: { toString: () => 'selfID' },
+		addEventListener(event: string, handler: (evt: any) => void | Promise<void>): void {
+			handlers.set(event, handler);
+		},
 		getPeers: () => livePeers.map(p => ({ toString: () => p })),
 		getConnections: () => [],
 		peerStore: createTestPeerStore(),
@@ -95,7 +97,7 @@ function bareNetwork(opts: { seeds?: IRegistrySeed[]; suppressed?: string[]; liv
 		},
 	};
 	const run = (): Promise<void> => (network as any).runZeroConnectionRecovery([]);
-	return { network, dialed, livePeers, run };
+	return { network, dialed, handlers, livePeers, run };
 }
 
 describe('bootstrap registry — address identity', () => {
@@ -307,6 +309,16 @@ describe('bootstrap registry — per-network ownership', () => {
 		expect(registryAddresses(network)).toEqual([]);
 	});
 
+	it('keeps an independently discovered claim after its configured owner is removed', () => {
+		const { network } = bareNetwork({
+			seeds: [{ address: ADDR_A, configuredBy: ['net-a'], discovered: true, lastVerifiedAt: Date.now() }],
+		});
+		network.pruneBootstrapAddresses([ADDR_A], 'net-a');
+		const entry = (network as any).bootstrapByAddress.get(key(ADDR_A)) as IBootstrapEntry;
+		expect(entry.discovered).toBe(true);
+		expect(entry.configuredBy.size).toBe(0);
+	});
+
 	it('never recovery-dials a removed configured address again', async () => {
 		const { network, dialed, run } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }] });
 		network.pruneBootstrapAddresses([ADDR_A], 'net-a');
@@ -494,6 +506,35 @@ describe('Network.runZeroConnectionRecovery — liveness and budget', () => {
 		expect(dialed.length).toBe(8);
 	});
 
+	it('does not dial an entry removed while the previous dial was settling', async () => {
+		let network!: Network;
+		const holder = bareNetwork({
+			seeds: [
+				{ address: ADDR_A, configuredBy: ['net-a'] },
+				{ address: ADDR_B, configuredBy: ['net-b'] },
+			],
+			failDial: true,
+			onDial: address => {
+				if (address === multiaddr(ADDR_A).toString()) network.pruneBootstrapAddresses([ADDR_B], 'net-b');
+			},
+		});
+		network = holder.network;
+		await holder.run();
+		expect(holder.dialed).toEqual([multiaddr(ADDR_A).toString()]);
+	});
+
+	it('does not recreate backoff for an address removed during its failed dial', async () => {
+		let network!: Network;
+		const holder = bareNetwork({
+			seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }],
+			failDial: true,
+			onDial: () => network.pruneBootstrapAddresses([ADDR_A], 'net-a'),
+		});
+		network = holder.network;
+		await holder.run();
+		expect((network as any).recoveryBackoff.has(key(ADDR_A))).toBe(false);
+	});
+
 	it('reserves one budget slot for a discovered address behind nine configured entries', async () => {
 		const configured = deadAddresses(9).map(seed => ({ ...seed, configuredBy: ['net-a'] }));
 		const { dialed, run } = bareNetwork({ seeds: [...configured, { address: ADDR_B }], failDial: true });
@@ -579,6 +620,56 @@ describe('Network.runBootstrapWorkaround — lifecycle fence', () => {
 		net = network;
 		await run(network, (network as any).node, 1);
 		expect(dialed.length).toBe(1);
+	});
+
+	it('uses the recovery backoff instead of redialing immediately', async () => {
+		const { network, dialed } = bareNetwork({ seeds: [{ address: ADDR_A }], failDial: true });
+		(network as any).recoveryBackoff.set(key(ADDR_A), { nextAttempt: Date.now() + 60_000, failCount: 1 });
+		await run(network, (network as any).node, 1);
+		expect(dialed).toEqual([]);
+	});
+
+	it('uses the same bounded dial budget as periodic recovery', async () => {
+		const seeds = Array.from({ length: 20 }, (_unused, i) => ({ address: `/ip4/192.0.2.${i + 10}/tcp/9090/p2p/${PEER_A}` }));
+		const { network, dialed } = bareNetwork({ seeds, failDial: true });
+		await run(network, (network as any).node, 1);
+		expect(dialed).toHaveLength(8);
+	});
+});
+
+describe('bootstrap registry — live size bound', () => {
+	it('enforces the discovered-entry cap as addresses are remembered', () => {
+		const { network } = bareNetwork();
+		const addresses = Array.from({ length: 201 }, (_unused, i) => `/ip4/198.51.100.1/tcp/${9000 + i}/p2p/${PEER_A}`);
+		for (const address of addresses) (network as any).rememberBootstrapAddress(multiaddr(address));
+		expect((network as any).bootstrapByAddress.size).toBe(200);
+	});
+});
+
+describe('bootstrap registry — disconnect activity', () => {
+	it('refreshes only the endpoint whose connection closed', () => {
+		const { network, handlers } = bareNetwork({
+			seeds: [
+				{ address: ADDR_A, lastVerifiedAt: 1 },
+				{ address: ADDR_A2, lastVerifiedAt: 1 },
+			],
+		});
+		(network as any).listeners = [];
+		(network as any).dcutrPeers = new Set<string>();
+		(network as any).peerDisconnectHandlers = new Set();
+		(network as any).lastMeshChange = new Map();
+		(network as any).pubsub = null;
+		(network as any).setupEventListeners();
+
+		handlers.get('connection:close')!({
+			detail: { remoteAddr: multiaddr(ADDR_A), remotePeer: { toString: () => PEER_A } },
+		});
+		handlers.get('peer:disconnect')!({ detail: { toString: () => PEER_A } });
+
+		const first = (network as any).bootstrapByAddress.get(key(ADDR_A)) as IBootstrapEntry;
+		const sibling = (network as any).bootstrapByAddress.get(key(ADDR_A2)) as IBootstrapEntry;
+		expect(first.lastDisconnectedAt).toBeNumber();
+		expect(sibling.lastDisconnectedAt).toBe(null);
 	});
 });
 

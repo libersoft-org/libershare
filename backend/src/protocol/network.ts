@@ -123,20 +123,6 @@ const BOOTSTRAP_STATUS_STALE_MS = 30 * 60_000;
 const UNREACHABLE_QUARANTINE_MS = 30 * 60_000;
 
 /**
- * Backoff ceiling for the loops that probe ONE CONFIGURED ADDRESS.
- *
- * A configured entry is exempt from eviction and from quarantine — it is user data and
- * the way back into the network — but "never given up on" is not "dialed without limit".
- * Each attempt spends a 10 s dial timeout, so a handful of dead configured addresses
- * could occupy a status tick end to end, every tick, forever.
- *
- * Half the general re-dial ceiling (10 min) deliberately: a configured address deserves
- * to be retried more often than a gossip-learned one, so a bootstrap that comes back is
- * picked up within five minutes without the operator touching anything, while a
- * permanently dead one costs one dial per five minutes instead of one per 30 s tick.
- */
-const CONFIGURED_PROBE_BACKOFF_MAX_MS = 5 * 60_000;
-/**
  * How long one bootstrap dial may take before the intake gives up on it.
  *
  * An address that is merely unreachable answers quickly — the connection is refused, or
@@ -1133,11 +1119,6 @@ export class Network {
 
 		this.addListener(this.node!, 'peer:disconnect', (evt: any) => {
 			const peerID = evt.detail.toString();
-			const disconnectedAt = Date.now();
-			for (const key of this.addressesByPeer.get(peerID) ?? []) {
-				const entry = this.bootstrapByAddress.get(key);
-				if (entry) entry.lastDisconnectedAt = disconnectedAt;
-			}
 			const remaining = this.node!.getPeers().length;
 			const wasBootstrap = this.bootstrapPeerIDs.has(peerID);
 			console.debug(`❌ Peer disconnected: ${peerID.slice(0, 16)}, remaining: ${remaining}`);
@@ -1210,6 +1191,15 @@ export class Network {
 		// Connection close/abort events for relay debugging
 		this.addListener(this.node!, 'connection:close', (evt: any) => {
 			const conn = evt.detail;
+			const peerID = conn?.remotePeer?.toString?.() ?? null;
+			const remoteAddr = String(conn?.remoteAddr ?? '');
+			if (peerID && remoteAddr) {
+				const disconnectedAt = Date.now();
+				for (const key of this.addressesByPeer.get(peerID) ?? []) {
+					const entry = this.bootstrapByAddress.get(key);
+					if (entry && isSameDialEndpoint(remoteAddr, entry.ma.toString())) entry.lastDisconnectedAt = disconnectedAt;
+				}
+			}
 			if (conn?.remoteAddr && Circuit.matches(conn.remoteAddr)) {
 				trace(`[NET] Relay connection closed: ${conn.remotePeer?.toString?.()?.slice(0, 16)} addr=${conn.remoteAddr.toString()}`);
 			}
@@ -1267,22 +1257,7 @@ export class Network {
 	private async runBootstrapWorkaround(node: Libp2p | null, epoch: number): Promise<void> {
 		if (!node || node !== this.node || epoch !== this.runEpoch || node.getPeers().length > 0) return;
 		console.log('⚠️  Bootstrap module failed - dialing directly...');
-		for (const entry of orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values())) {
-			if (node !== this.node || epoch !== this.runEpoch) return;
-			try {
-				const conn = await node.dial(entry.ma, { signal: AbortSignal.timeout(BOOTSTRAP_DIAL_TIMEOUT_MS) });
-				if (!this.shouldKeepDialResult({ node, epoch, peerID: entry.peerID, key: entry.key, entry })) {
-					trace(`[NET] startup dial result no longer wanted, closing: ${entry.ma.toString()}`);
-					await this.closeUnwantedDial(conn, entry.peerID);
-					continue;
-				}
-				if (isSameDialEndpoint(String(conn?.remoteAddr ?? ''), entry.ma.toString())) this.markBootstrapAddressVerified(entry.ma);
-				console.log('✓ Connected to bootstrap peer via direct dial');
-				break;
-			} catch (err: any) {
-				console.log('✗ Direct dial failed:', err.message);
-			}
-		}
+		await this.runZeroConnectionRecovery([], epoch);
 	}
 
 	private setupStatusInterval(): void {
@@ -1599,7 +1574,7 @@ export class Network {
 
 	/**
 	 * Record a failed probe of a configured ADDRESS: 30 s × 2^fails, capped at
-	 * {@link CONFIGURED_PROBE_BACKOFF_MAX_MS}.
+	 * {@link CONFIGURED_RECOVERY_BACKOFF_MAX_MS}.
 	 *
 	 * Paces and nothing more — a configured entry is exempt from eviction and from
 	 * quarantine, so this record must never become the evidence that removes one.
@@ -1675,12 +1650,14 @@ export class Network {
 		const localCidrs = getLocalCidrs();
 		const ordered = orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values(), this.recoveryCursors);
 		const isEligible = (entry: IBootstrapEntry): boolean => {
+			if (this.bootstrapByAddress.get(entry.key) !== entry) return false;
 			if (entry.peerID && this.isRedialSuppressed(entry.peerID)) return false;
 			if (!isRecoveryDialDue(entry.key, entry.configuredBy.size > 0 ? null : entry.peerID, Date.now(), this.recoveryBackoff, this.unreachableQuarantine)) return false;
 			return !shouldDenyDial(entry.ma, localCidrs);
 		};
 		const hasEligibleDiscovered = ordered.some(entry => entry.configuredBy.size === 0 && isEligible(entry));
 		for (const entry of ordered) {
+			if (this.bootstrapByAddress.get(entry.key) !== entry) continue;
 			const { ma, peerID: pid, key } = entry;
 			const configured = entry.configuredBy.size > 0;
 			if (!isEligible(entry)) continue;
@@ -1721,21 +1698,24 @@ export class Network {
 				}
 				const returnedAddr = String(conn?.remoteAddr ?? '');
 				const verifiedThisAddr = isSameDialEndpoint(returnedAddr, maStr);
+				const currentlyConfigured = entry.configuredBy.size > 0;
 				if (pid) this.unreachableQuarantine.delete(pid);
 				if (verifiedThisAddr) this.markBootstrapAddressVerified(ma);
-				if (configured) {
+				if (currentlyConfigured) {
 					if (verifiedThisAddr) this.bootstrapTracker.recordAddressReachable(maStr);
 					else this.bootstrapTracker.recordAddressUnreachable(maStr, DIAL_RETURNED_ANOTHER_ENDPOINT);
 				}
-				if (!verifiedThisAddr) this.recoveryBackoff.set(key, nextRecoveryBackoff(this.recoveryBackoff.get(key)?.failCount ?? 0, Date.now(), configured));
+				if (!verifiedThisAddr) this.recoveryBackoff.set(key, nextRecoveryBackoff(this.recoveryBackoff.get(key)?.failCount ?? 0, Date.now(), currentlyConfigured));
 				console.log(verifiedThisAddr ? `   ✓ Connected via ${maStr}` : `   ✓ Connected via ${returnedAddr || 'another endpoint'}`);
 				break;
 			} catch (err: any) {
 				if (epoch !== this.runEpoch) return;
+				if (this.bootstrapByAddress.get(key) !== entry) continue;
 				const failedAt = Date.now();
-				this.recoveryBackoff.set(key, nextRecoveryBackoff(this.recoveryBackoff.get(key)?.failCount ?? 0, failedAt, configured));
-				if (!configured && pid && this.unreachableQuarantine.has(pid)) this.unreachableQuarantine.set(pid, failedAt);
-				if (configured) this.bootstrapTracker.recordAddressUnreachable(maStr, err?.message ?? String(err));
+				const currentlyConfigured = entry.configuredBy.size > 0;
+				this.recoveryBackoff.set(key, nextRecoveryBackoff(this.recoveryBackoff.get(key)?.failCount ?? 0, failedAt, currentlyConfigured));
+				if (!currentlyConfigured && pid && this.unreachableQuarantine.has(pid)) this.unreachableQuarantine.set(pid, failedAt);
+				if (currentlyConfigured) this.bootstrapTracker.recordAddressUnreachable(maStr, err?.message ?? String(err));
 				console.log(`   ✗ Failed ${maStr}: ${err.message ?? err}`);
 			}
 		}
@@ -1762,6 +1742,7 @@ export class Network {
 			if (epoch !== this.runEpoch) return;
 			const { ma, key: canonical, peerID: pid } = entry;
 			if (!pid || entry.configuredBy.size === 0) continue;
+			if (this.bootstrapByAddress.get(canonical) !== entry) continue;
 			if (this.isRedialSuppressed(pid)) continue;
 			// Still unreachable from here — leave it parked for a later pass.
 			if (shouldDenyDial(ma, localCidrs)) continue;
@@ -1781,13 +1762,14 @@ export class Network {
 					continue;
 				}
 				if (!isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString())) {
-					this.recoveryBackoff.set(canonical, nextRecoveryBackoff(this.recoveryBackoff.get(canonical)?.failCount ?? 0, Date.now(), true));
-					this.bootstrapTracker.recordAddressUnreachable(ma.toString(), DIAL_RETURNED_ANOTHER_ENDPOINT);
+					const currentlyConfigured = entry.configuredBy.size > 0;
+					this.recoveryBackoff.set(canonical, nextRecoveryBackoff(this.recoveryBackoff.get(canonical)?.failCount ?? 0, Date.now(), currentlyConfigured));
+					if (currentlyConfigured) this.bootstrapTracker.recordAddressUnreachable(ma.toString(), DIAL_RETURNED_ANOTHER_ENDPOINT);
 					trace(`[NET] parked configured bootstrap answered on another address: ${ma.toString()}`);
 					continue;
 				}
 				this.markBootstrapAddressVerified(ma);
-				this.bootstrapTracker.recordAddressReachable(ma.toString());
+				if (entry.configuredBy.size > 0) this.bootstrapTracker.recordAddressReachable(ma.toString());
 				// Tell the UI as well. This probe is the ONLY thing that retries an address
 				// the routability filter rejected at configure time, so without this the row
 				// written when the interface was down stayed red for as long as the node ran,
@@ -1795,7 +1777,8 @@ export class Network {
 				console.log(`[NET] parked configured bootstrap reachable again: ${ma.toString()}`);
 			} catch (err: any) {
 				if (epoch !== this.runEpoch) return;
-				this.recoveryBackoff.set(canonical, nextRecoveryBackoff(this.recoveryBackoff.get(canonical)?.failCount ?? 0, Date.now(), true));
+				if (this.bootstrapByAddress.get(canonical) !== entry) continue;
+				this.recoveryBackoff.set(canonical, nextRecoveryBackoff(this.recoveryBackoff.get(canonical)?.failCount ?? 0, Date.now(), entry.configuredBy.size > 0));
 				trace(`[NET] parked configured bootstrap still failing: ${ma.toString()} — ${err?.message ?? err}`);
 			}
 		}
@@ -2616,6 +2599,7 @@ export class Network {
 		}
 		if (configuredBy === null) {
 			entry.discovered = true;
+			this.pruneBootstrapRegistry();
 		} else {
 			entry.configuredBy.add(configuredBy);
 			this.configuredBootstrapAddresses.add(key);
@@ -2663,7 +2647,8 @@ export class Network {
 
 	private pruneBootstrapRegistry(): void {
 		const now = Date.now();
-		const connected = new Set((this.node?.getPeers() ?? []).map(peer => peer.toString()));
+		const peers = this.node && typeof this.node.getPeers === 'function' ? this.node.getPeers() : [];
+		const connected = new Set(peers.map(peer => peer.toString()));
 		const entries = [...this.bootstrapByAddress.values()];
 		const kept = pruneBootstrapEntries(entries, now, DISCOVERED_BOOTSTRAP_TTL_MS, MAX_DISCOVERED_BOOTSTRAP_ENTRIES, peerID => connected.has(peerID));
 		const keptKeys = new Set(kept.map(entry => entry.key));
