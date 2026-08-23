@@ -331,7 +331,7 @@ describe('bootstrap registry — identity mismatch', () => {
 				{ address: ADDR_A2, configuredBy: ['net-a'] },
 			],
 		});
-		(network as any).purgeStalePeer = async (): Promise<void> => {};
+		(network as any).purgeStalePeer = async () => 'purged' as const;
 		(network as any).node.dial = async (): Promise<never> => {
 			throw new Error(MISMATCH);
 		};
@@ -348,8 +348,9 @@ describe('bootstrap registry — identity mismatch', () => {
 		// taking the configured address nothing had disproved with it.
 		const { network } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }, { address: ADDR_A2 }] });
 		const purged: string[] = [];
-		(network as any).purgeStalePeer = async (peerID: string): Promise<void> => {
+		(network as any).purgeStalePeer = async (peerID: string) => {
 			purged.push(peerID);
+			return 'purged' as const;
 		};
 		(network as any).node.dial = async (): Promise<never> => {
 			throw new Error(MISMATCH);
@@ -362,8 +363,9 @@ describe('bootstrap registry — identity mismatch', () => {
 	it('still purges once nothing undisproved is left anywhere', async () => {
 		const { network } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }] });
 		const purged: string[] = [];
-		(network as any).purgeStalePeer = async (peerID: string): Promise<void> => {
+		(network as any).purgeStalePeer = async (peerID: string) => {
 			purged.push(peerID);
+			return 'purged' as const;
 		};
 		(network as any).node.dial = async (): Promise<never> => {
 			throw new Error(MISMATCH);
@@ -374,7 +376,7 @@ describe('bootstrap registry — identity mismatch', () => {
 
 	it('stops recovery dialing a disproved CONFIGURED address', async () => {
 		const { network, dialed } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }] });
-		(network as any).purgeStalePeer = async (): Promise<void> => {};
+		(network as any).purgeStalePeer = async () => 'purged' as const;
 		(network as any).node.dial = async (): Promise<never> => {
 			throw new Error(MISMATCH);
 		};

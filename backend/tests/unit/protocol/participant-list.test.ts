@@ -112,7 +112,7 @@ function testNetwork() {
 		evictAsUnreachable: async (): Promise<void> => {
 			(network as any).redialBackoff = new Map([[PEER, { nextAttempt: Date.now() - 1, failCount: 5, firstFailure: Date.now() - 45 * 60_000, evictionFails: 5 }]]);
 			(network as any).hasConnectionOtherThan = () => true;
-			(network as any).purgeStalePeer = async (): Promise<void> => {};
+			(network as any).purgeStalePeer = async () => 'purged' as const;
 			const dead = { id: peerIdLike(PEER), addresses: [{ multiaddr: { toString: () => '/ip4/203.0.113.7/tcp/9090' } }] };
 			await (network as any).runRedialMaintenance([], [dead], 1);
 		},

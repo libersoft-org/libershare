@@ -25,6 +25,8 @@ function peerIdLike(id: string) {
 }
 
 describe('purgeStalePeer — epoch guard', () => {
+	const CONFIGURED_ADDRESS = `/ip4/203.0.113.40/tcp/9090/p2p/${PEER_ID}`;
+
 	function bareNetwork(onClose?: () => void) {
 		const deleted: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
@@ -80,6 +82,27 @@ describe('purgeStalePeer — epoch guard', () => {
 		await (network as any).purgeStalePeer(PEER_ID, 'test', 1);
 		expect(deleted).toEqual([]);
 	});
+
+	it('keeps a peer that a joined network already configures', async () => {
+		const { network, deleted } = bareNetwork();
+		installBootstrapRegistry(network, [{ address: CONFIGURED_ADDRESS, configuredBy: ['net-b'] }]);
+
+		await (network as any).purgeStalePeer(PEER_ID, 'test', 1);
+
+		expect(deleted).toEqual([]);
+		expect(registryAddresses(network)).toEqual([CONFIGURED_ADDRESS]);
+	});
+
+	it('keeps a configured claim that arrives while connections are closing', async () => {
+		const { network, deleted } = bareNetwork(() => {
+			(network as any).rememberBootstrapAddress(multiaddr(CONFIGURED_ADDRESS), 'net-b');
+		});
+
+		await (network as any).purgeStalePeer(PEER_ID, 'test', 1);
+
+		expect(deleted).toEqual([]);
+		expect(registryAddresses(network)).toEqual([CONFIGURED_ADDRESS]);
+	});
 });
 
 /**
@@ -122,8 +145,9 @@ describe('runRedialMaintenance — a peer with no reachable address', () => {
 		// Only the peer itself is ever asked about; "online" means we hold a connection
 		// to somebody else.
 		(network as any).hasConnectionOtherThan = () => opts.weAreOnline;
-		(network as any).purgeStalePeer = async (pid: string): Promise<void> => {
+		(network as any).purgeStalePeer = async (pid: string) => {
 			purged.push(pid);
+			return 'purged' as const;
 		};
 		return { network, purged, dropped };
 	}
@@ -206,8 +230,9 @@ describe('runRedialMaintenance — failures either side of a no-route stretch', 
 		// We hold connections to others throughout: the outage is in the route to THIS
 		// peer, which is exactly the case "are we online at all" cannot see.
 		(network as any).hasConnectionOtherThan = () => true;
-		(network as any).purgeStalePeer = async (pid: string): Promise<void> => {
+		(network as any).purgeStalePeer = async (pid: string) => {
 			purged.push(pid);
+			return 'purged' as const;
 		};
 		return { network, purged };
 	}
@@ -563,8 +588,9 @@ describe('configured exemption ends when the peer leaves the config', () => {
 			},
 		};
 		(network as any).hasConnectionOtherThan = () => true;
-		(network as any).purgeStalePeer = async (pid: string): Promise<void> => {
+		(network as any).purgeStalePeer = async (pid: string) => {
 			purged.push(pid);
+			return 'purged' as const;
 		};
 		return { network, purged };
 	}
@@ -1182,8 +1208,9 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 			recordOutcome() {},
 			deletePeer() {},
 		};
-		(network as any).purgeStalePeer = async (id: string): Promise<void> => {
+		(network as any).purgeStalePeer = async (id: string) => {
 			purged.push(id);
+			return 'purged' as const;
 		};
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
@@ -1967,6 +1994,8 @@ describe('purgeStalePeer — healing an inbound race restores the whole dial sta
 		(network as any).redialSuppressedByNet = new Map(suppressed.length > 0 ? [['net-a', new Set(suppressed)]] : []);
 		const direct = new Set<string>();
 		(network as any).pubsub = {
+			getTopics: () => [],
+			getSubscribers: () => [],
 			direct: {
 				add(id: string) {
 					// Ordering probe: bootstrapPeerIDs is the flag other paths read as

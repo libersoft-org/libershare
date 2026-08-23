@@ -1553,10 +1553,17 @@ export class Network {
 							this.redialBackoff.delete(c.pid);
 							continue;
 						}
+						const previousQuarantine = this.unreachableQuarantine.get(c.pid);
 						this.unreachableQuarantine.set(c.pid, Date.now());
 						this.redialBackoff.delete(c.pid);
-						this.bootstrapTracker.deleteDiscoveredByPeerID(c.pid);
-						await this.purgeStalePeer(c.pid, `unreachable after ${evictionFails} re-dial failures over ${Math.round((Date.now() - firstFailure) / 60_000)} min`, epoch);
+						const purgeResult = await this.purgeStalePeer(c.pid, `unreachable after ${evictionFails} re-dial failures over ${Math.round((Date.now() - firstFailure) / 60_000)} min`, epoch);
+						if (purgeResult === 'purged') {
+							this.bootstrapTracker.deleteDiscoveredByPeerID(c.pid);
+						} else if (previousQuarantine === undefined) {
+							this.unreachableQuarantine.delete(c.pid);
+						} else {
+							this.unreachableQuarantine.set(c.pid, previousQuarantine);
+						}
 					}
 				}
 			}
@@ -2496,9 +2503,14 @@ export class Network {
 	 * instance never had a problem with. The node reference is captured once for the
 	 * same reason: re-reading `this.node` after an await can hand back a different node.
 	 */
-	async purgeStalePeer(peerID: string, reason: string, epoch: number = this.runEpoch): Promise<void> {
+	async purgeStalePeer(peerID: string, reason: string, epoch: number = this.runEpoch): Promise<'purged' | 'kept' | 'failed'> {
 		const node = this.node;
-		if (!node || epoch !== this.runEpoch) return;
+		if (!node || epoch !== this.runEpoch) return 'kept';
+		// A purge is scheduled from stale evidence, but a joined lishnet can claim the
+		// peer before this call gets its turn. Configuration ownership is recorded
+		// synchronously before any dial or peerStore write, so it is the authoritative
+		// veto over all destructive cleanup below.
+		if (this.isPeerNeededByJoinedNetwork(peerID, true)) return 'kept';
 		this.bootstrapPeerIDs.delete(peerID);
 		for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) this.forgetBootstrapAddress(key);
 		this.removeGossipsubDirectPeer(peerID);
@@ -2512,14 +2524,20 @@ export class Network {
 					/* connection may already be closing */
 				}
 			}
-			if (epoch !== this.runEpoch) return;
+			if (epoch !== this.runEpoch) return 'kept';
+			// Closing connections yields. A configuration write may have claimed the
+			// peer while they were closing; do not let stale cleanup delete the record
+			// that the new owner is about to merge into.
+			if (this.isPeerNeededByJoinedNetwork(peerID, true)) return 'kept';
 			await node.peerStore.delete(pid);
 			console.log(`[NET] purged stale peerStore entry ${peerID.slice(0, 16)}… (reason: ${reason})`);
-			if (epoch !== this.runEpoch) return;
+			if (epoch !== this.runEpoch) return 'purged';
 			const after = node.getConnections(pid);
 			if (after.length > 0 && !this.isRedialSuppressed(peerID)) await this.restorePurgedPeerState(node, pid, after, epoch);
+			return 'purged';
 		} catch (err: any) {
 			trace(`[NET] purgeStalePeer ${peerID.slice(0, 16)} failed: ${err?.message ?? err}`);
+			return 'failed';
 		}
 	}
 
