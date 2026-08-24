@@ -336,7 +336,7 @@ describe('bootstrap registry — per-network ownership', () => {
 describe('bootstrap registry — identity mismatch', () => {
 	const MISMATCH = `Payload identity key ${PEER_B} does not match expected remote identity key ${PEER_A}`;
 
-	it('removes the disproved address from the registry', async () => {
+	it('parks a disproved configured address without losing its saved ownership', async () => {
 		const { network } = bareNetwork({
 			seeds: [
 				{ address: ADDR_A, configuredBy: ['net-a'] },
@@ -348,8 +348,12 @@ describe('bootstrap registry — identity mismatch', () => {
 			throw new Error(MISMATCH);
 		};
 		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
-		// Only the address Noise disproved goes; the sibling was never tested.
-		expect(registryAddresses(network)).toEqual([key(ADDR_A2)]);
+		const disproved = (network as any).bootstrapByAddress.get(key(ADDR_A)) as IBootstrapEntry;
+		expect(disproved.disproved).toBe(true);
+		expect([...disproved.configuredBy]).toEqual(['net-a']);
+		expect((network as any).configuredBootstrapAddressesByNet.get('net-a').has(key(ADDR_A))).toBe(true);
+		// The sibling was never tested and remains usable.
+		expect(registryAddresses(network)).toEqual([key(ADDR_A), key(ADDR_A2)]);
 	});
 
 	it('keeps a configured address that lives only in the registry', async () => {
@@ -396,6 +400,46 @@ describe('bootstrap registry — identity mismatch', () => {
 		dialed.length = 0;
 		await (network as any).runZeroConnectionRecovery([]);
 		expect(dialed).toEqual([]);
+	});
+
+	it('does not let later gossip turn the configured mismatch green through a sibling endpoint', async () => {
+		const { network } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }] });
+		const outcomes: Array<{ status: string; origin: string }> = [];
+		(network as any).bootstrapTracker.recordOutcome = (_networkID: string, _address: string, _peerID: string | null, status: string, _message: string | null, _actualPeerID: string | null, origin: string): void => {
+			outcomes.push({ status, origin });
+		};
+		let first = true;
+		(network as any).node.dial = async (): Promise<unknown> => {
+			if (first) {
+				first = false;
+				throw new Error(MISMATCH);
+			}
+			return { remoteAddr: multiaddr(ADDR_A2) };
+		};
+
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
+		(network as any).recoveryBackoff.delete(key(ADDR_A));
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
+
+		expect(outcomes).toEqual([{ status: 'identity-mismatch', origin: 'configured' }]);
+	});
+
+	it('reports a mismatch learned elsewhere to every network that configures the address', async () => {
+		const { network } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }] });
+		const outcomes: Array<{ networkID: string; status: string; origin: string }> = [];
+		(network as any).bootstrapTracker.recordOutcome = (networkID: string, _address: string, _peerID: string | null, status: string, _message: string | null, _actualPeerID: string | null, origin: string): void => {
+			outcomes.push({ networkID, status, origin });
+		};
+		(network as any).node.dial = async (): Promise<never> => {
+			throw new Error(MISMATCH);
+		};
+
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-b', 'discovered');
+
+		expect(outcomes).toEqual([
+			{ networkID: 'net-b', status: 'identity-mismatch', origin: 'discovered' },
+			{ networkID: 'net-a', status: 'identity-mismatch', origin: 'configured' },
+		]);
 	});
 });
 
@@ -533,6 +577,44 @@ describe('Network.runZeroConnectionRecovery — liveness and budget', () => {
 		network = holder.network;
 		await holder.run();
 		expect((network as any).recoveryBackoff.has(key(ADDR_A))).toBe(false);
+	});
+
+	it('keeps a sibling connection still owned by another network after removal mid-dial', async () => {
+		const { network, run } = bareNetwork({
+			seeds: [
+				{ address: ADDR_A, configuredBy: ['net-a'] },
+				{ address: ADDR_A2, configuredBy: ['net-b'] },
+			],
+		});
+		let closed = 0;
+		(network as any).node.dial = async (): Promise<unknown> => {
+			network.pruneBootstrapAddresses([ADDR_A], 'net-a');
+			return { remoteAddr: multiaddr(ADDR_A2), close: async (): Promise<void> => void closed++ };
+		};
+
+		await run();
+
+		expect(closed).toBe(0);
+		expect(registryAddresses(network)).toEqual([key(ADDR_A2)]);
+	});
+
+	it('closes only the stale connection when a restart replaces the node mid-dial', async () => {
+		const { network, run } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }] });
+		const oldNode = (network as any).node;
+		let closed = 0;
+		let newNodeHangUps = 0;
+		oldNode.dial = async (): Promise<unknown> => {
+			(network as any).runEpoch = 2;
+			(network as any).node = {
+				hangUp: async (): Promise<void> => void newNodeHangUps++,
+			};
+			return { remoteAddr: multiaddr(ADDR_A), close: async (): Promise<void> => void closed++ };
+		};
+
+		await run();
+
+		expect(closed).toBe(1);
+		expect(newNodeHangUps).toBe(0);
 	});
 
 	it('reserves one budget slot for a discovered address behind nine configured entries', async () => {

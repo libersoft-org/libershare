@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
 import { Mutex } from 'async-mutex';
-import { Network, isRecoveryDialDue, isSameDialEndpoint, normalizeMultiaddrForCompare } from '../../../src/protocol/network.ts';
+import { Network, isRecoveryDialDue, isSameDialEndpoint, normalizeMultiaddrForCompare, type IBootstrapEntry } from '../../../src/protocol/network.ts';
 import { BootstrapStatusTracker } from '../../../src/protocol/bootstrap-status.ts';
 import { installBootstrapRegistry, registryAddresses } from '../helpers/bootstrap-registry.ts';
 
@@ -1244,10 +1244,12 @@ describe('addBootstrapPeers — identity mismatch trims the address, not the pee
 		expect(purged).toEqual([PEER_ID]);
 	});
 
-	it('drops the disproved address from the autodial list either way', async () => {
+	it('parks the disproved address so automatic recovery will skip it', async () => {
 		const { network } = bareNetwork([BAD, GOOD]);
 		await (network as any).addBootstrapPeers([BAD], 'net-a', 'configured');
-		expect(registryAddresses(network)).toEqual([]);
+		const entry = (network as any).bootstrapByAddress.get(normalizeMultiaddrForCompare(BAD)) as IBootstrapEntry;
+		expect(entry.disproved).toBe(true);
+		expect([...entry.configuredBy]).toEqual(['net-a']);
 	});
 });
 
@@ -1344,6 +1346,22 @@ describe('probeParkedConfiguredBootstraps', () => {
 		};
 		await run(network);
 		expect((network as any).recoveryBackoff.has(normalizeMultiaddrForCompare(PARKED))).toBe(false);
+	});
+
+	it('keeps a sibling connection still owned by another network after removal mid-dial', async () => {
+		const { network } = bareNetwork({ addresses: [PARKED, SIBLING] });
+		const sibling = (network as any).bootstrapByAddress.get(normalizeMultiaddrForCompare(SIBLING)) as IBootstrapEntry;
+		sibling.configuredBy.clear();
+		sibling.configuredBy.add('net-b');
+		let closed = 0;
+		(network as any).node.dial = async (ma: { toString(): string }): Promise<unknown> => {
+			network.pruneBootstrapAddresses([ma.toString()], 'net-a');
+			return { remoteAddr: { toString: () => SIBLING }, close: async (): Promise<void> => void closed++ };
+		};
+
+		await run(network);
+
+		expect(closed).toBe(0);
 	});
 
 	it('leaves a discovered address to the loops that own it', async () => {

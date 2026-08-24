@@ -178,6 +178,7 @@ export interface IBootstrapEntry {
 	readonly peerID: string | null;
 	readonly configuredBy: Set<string>;
 	discovered: boolean;
+	disproved: boolean;
 	firstSeenAt: number;
 	lastVerifiedAt: number | null;
 	lastDisconnectedAt: number | null;
@@ -1381,6 +1382,20 @@ export class Network {
 		}
 	}
 
+	/** Close a superseded bootstrap result only when no joined network still needs its peer. */
+	private async closeUnwantedBootstrapDial(connection: { close?: () => Promise<void> } | null | undefined, peerID: string | null | undefined, node: Libp2p, epoch: number): Promise<void> {
+		// Ownership on a replacement node says nothing about a connection returned by the
+		// previous one. Close only that connection and never fall back to hanging up the
+		// current node's peer.
+		if (node !== this.node || epoch !== this.runEpoch) {
+			await this.closeUnwantedDial(connection, null);
+			return;
+		}
+		if (peerID && this.isPeerNeededByJoinedNetwork(peerID, true)) return;
+		if (peerID) this.configuredBootstrapPeerIDs.delete(peerID);
+		await this.closeUnwantedDial(connection, peerID);
+	}
+
 	private async runRedialMaintenance(connectedPeers: any[], allPeers: any[], epoch: number = this.runEpoch): Promise<void> {
 		// Dial known peers not currently connected (maintains relay connections to NATed peers)
 		const connectedSet = new Set(connectedPeers.map(p => p.toString()));
@@ -1651,6 +1666,7 @@ export class Network {
 		const ordered = orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values(), this.recoveryCursors);
 		const isEligible = (entry: IBootstrapEntry): boolean => {
 			if (this.bootstrapByAddress.get(entry.key) !== entry) return false;
+			if (entry.disproved) return false;
 			if (entry.peerID && this.isRedialSuppressed(entry.peerID)) return false;
 			if (!isRecoveryDialDue(entry.key, entry.configuredBy.size > 0 ? null : entry.peerID, Date.now(), this.recoveryBackoff, this.unreachableQuarantine)) return false;
 			return !shouldDenyDial(entry.ma, localCidrs);
@@ -1693,7 +1709,7 @@ export class Network {
 				const conn = await node.dial(ma, { signal: AbortSignal.timeout(10000) });
 				if (!this.shouldKeepDialResult({ node, epoch, peerID: pid, key, entry, requireConfigured: configured })) {
 					trace(`[NET] recovery result no longer wanted, closing: ${maStr}`);
-					await this.closeUnwantedDial(conn, pid);
+					await this.closeUnwantedBootstrapDial(conn, pid, node, epoch);
 					continue;
 				}
 				const returnedAddr = String(conn?.remoteAddr ?? '');
@@ -1741,7 +1757,7 @@ export class Network {
 		for (const entry of [...this.bootstrapByAddress.values()]) {
 			if (epoch !== this.runEpoch) return;
 			const { ma, key: canonical, peerID: pid } = entry;
-			if (!pid || entry.configuredBy.size === 0) continue;
+			if (!pid || entry.configuredBy.size === 0 || entry.disproved) continue;
 			if (this.bootstrapByAddress.get(canonical) !== entry) continue;
 			if (this.isRedialSuppressed(pid)) continue;
 			// Still unreachable from here — leave it parked for a later pass.
@@ -1758,7 +1774,7 @@ export class Network {
 				const conn = await node.dial(ma, { signal: AbortSignal.timeout(10000), force: true });
 				if (!this.shouldKeepDialResult({ node, epoch, peerID: pid, key: canonical, entry, requireConfigured: true })) {
 					trace(`[NET] parked probe result no longer wanted, closing: ${ma.toString()}`);
-					await this.closeUnwantedDial(conn, pid);
+					await this.closeUnwantedBootstrapDial(conn, pid, node, epoch);
 					continue;
 				}
 				if (!isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString())) {
@@ -2391,6 +2407,15 @@ export class Network {
 							const n = normalizeMultiaddrForCompare(str);
 							return n === canonical || n === canonicalBare;
 						};
+						// The Noise proof belongs to the endpoint, not only to the network whose
+						// intake happened to perform this dial. Reflect it in every saved row that
+						// owns the same address; otherwise a mismatch learned through network B can
+						// leave network A's configured row green.
+						const registryEntry = this.bootstrapByAddress.get(canonicalAddress);
+						for (const owner of registryEntry?.configuredBy ?? []) {
+							if (owner === STARTUP_BOOTSTRAP_OWNER || owner === networkID) continue;
+							this.bootstrapTracker.recordOutcome(owner, peer, peerID, kind, message, actualPeerID, 'configured');
+						}
 						// Noise proves exactly one thing: THIS address no longer leads to the peer
 						// we expected. It says nothing about the peer's other addresses, so the bad
 						// one goes first and unconditionally — whether or not the peer happens to be
@@ -2398,7 +2423,7 @@ export class Network {
 						// away addresses that were never disproved.
 						// Restrict the autodial-list filter to entries of THIS peer so a
 						// case-insensitive compare can never drop a different peer's addr.
-						this.forgetBootstrapAddress(canonicalAddress);
+						this.disproveBootstrapAddress(canonicalAddress);
 						let remainingAddresses = 0;
 						try {
 							const record = await this.node.peerStore.get(pid);
@@ -2413,7 +2438,7 @@ export class Network {
 						// have not disproved is there anything left to purge. The registry can own a
 						// configured address that is deliberately absent from peerStore while its
 						// interface is down, so both stores contribute evidence here.
-						const hasRegistryAddress = this.addressesByPeer.has(peerID);
+						const hasRegistryAddress = [...(this.addressesByPeer.get(peerID) ?? [])].some(key => this.bootstrapByAddress.get(key)?.disproved !== true);
 						if (this.node.getConnections(pid).length === 0 && remainingAddresses === 0 && !hasRegistryAddress) {
 							await this.purgeStalePeer(peerID, `${effectiveOrigin} dial identity mismatch, no usable address left`, epoch);
 						} else {
@@ -2495,7 +2520,14 @@ export class Network {
 		// veto over all destructive cleanup below.
 		if (this.isPeerNeededByJoinedNetwork(peerID, true)) return 'kept';
 		this.bootstrapPeerIDs.delete(peerID);
-		for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) this.forgetBootstrapAddress(key);
+		for (const key of [...(this.addressesByPeer.get(peerID) ?? [])]) {
+			const entry = this.bootstrapByAddress.get(key);
+			// A Noise mismatch disproves the endpoint but not the fact that the user saved
+			// it. Keep that ownership for status classification and future explicit edits;
+			// recovery skips the parked entry through its `disproved` flag.
+			if (entry?.disproved && entry.configuredBy.size > 0) continue;
+			this.forgetBootstrapAddress(key);
+		}
 		this.removeGossipsubDirectPeer(peerID);
 		this.redialBackoff.delete(peerID);
 		try {
@@ -2583,6 +2615,7 @@ export class Network {
 				peerID: extractDestinationPeerID(ma),
 				configuredBy: new Set<string>(),
 				discovered: false,
+				disproved: false,
 				firstSeenAt: Date.now(),
 				lastVerifiedAt: null,
 				lastDisconnectedAt: null,
@@ -2601,6 +2634,7 @@ export class Network {
 			entry.discovered = true;
 			this.pruneBootstrapRegistry();
 		} else {
+			entry.disproved = false;
 			entry.configuredBy.add(configuredBy);
 			this.configuredBootstrapAddresses.add(key);
 			if (configuredBy !== STARTUP_BOOTSTRAP_OWNER) {
@@ -2619,7 +2653,22 @@ export class Network {
 		const entry = this.bootstrapByAddress.get(normalizeMultiaddrForCompare(ma.toString()));
 		if (!entry) return;
 		entry.lastVerifiedAt = Date.now();
+		entry.disproved = false;
 		this.recoveryBackoff.delete(entry.key);
+	}
+
+	/** Stop automatic recovery of a disproved endpoint without losing its saved ownership. */
+	private disproveBootstrapAddress(key: string): void {
+		const entry = this.bootstrapByAddress.get(key);
+		if (!entry) return;
+		entry.discovered = false;
+		if (entry.configuredBy.size === 0) {
+			this.forgetBootstrapAddress(key);
+			return;
+		}
+		entry.disproved = true;
+		entry.lastVerifiedAt = null;
+		entry.lastDisconnectedAt = null;
 	}
 
 	private forgetBootstrapAddress(key: string): void {
@@ -2715,7 +2764,8 @@ export class Network {
 
 	private hasConfiguredAddressClaim(peerID: string): boolean {
 		for (const key of this.addressesByPeer.get(peerID) ?? []) {
-			if ((this.bootstrapByAddress.get(key)?.configuredBy.size ?? 0) > 0) return true;
+			const entry = this.bootstrapByAddress.get(key);
+			if (entry && !entry.disproved && entry.configuredBy.size > 0) return true;
 		}
 		return false;
 	}

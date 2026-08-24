@@ -9,6 +9,8 @@ export interface IRegistrySeed {
 	configuredBy?: string[];
 	/** Whether gossip also announced this address. Defaults to true for an unowned seed. */
 	discovered?: boolean;
+	/** Whether Noise proved that this endpoint no longer serves its claimed peer. */
+	disproved?: boolean;
 	/** Epoch ms the entry first entered the registry. Defaults to now. */
 	firstSeenAt?: number;
 	/** Epoch ms a dial last proved this endpoint. Defaults to never. */
@@ -40,6 +42,7 @@ export function installBootstrapRegistry(network: unknown, seeds: readonly IRegi
 			peerID,
 			configuredBy: new Set(seed.configuredBy ?? []),
 			discovered: seed.discovered ?? (seed.configuredBy ?? []).length === 0,
+			disproved: seed.disproved ?? false,
 			firstSeenAt: seed.firstSeenAt ?? Date.now(),
 			lastVerifiedAt: seed.lastVerifiedAt ?? null,
 			lastDisconnectedAt: seed.lastDisconnectedAt ?? null,
