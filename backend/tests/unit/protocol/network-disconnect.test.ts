@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { KEEP_ALIVE } from '@libp2p/interface';
 import { multiaddr } from '@multiformats/multiaddr';
 import { Network, normalizeMultiaddrForCompare } from '../../../src/protocol/network.ts';
+import { installBootstrapRegistry } from '../helpers/bootstrap-registry.ts';
 
 /**
  * Unit tests for Network.disconnectPeer tag hygiene: hanging up a peer must
@@ -18,6 +19,7 @@ function makeNetwork() {
 	const hungUp: string[] = [];
 	const deleted: string[] = [];
 	const network = Object.create(Network.prototype) as Network;
+	installBootstrapRegistry(network, []);
 	(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
 	(network as any).configuredBootstrapPeerIDs = new Set<string>();
 	(network as any).pubsub = null;
@@ -25,7 +27,6 @@ function makeNetwork() {
 	(network as any).inFlightBootstrapDials = new Map();
 	(network as any).dialAbort = new AbortController();
 	(network as any).bootstrapPeerIDs = new Set<string>();
-	(network as any).bootstrapMultiaddrs = [];
 	(network as any).redialBackoff = new Map();
 	(network as any).node = {
 		getConnections: () => [],
@@ -141,6 +142,7 @@ describe('Network.disconnectPeer — a peer claimed while it is being let go', (
 		const deleted: string[] = [];
 		const subscribers: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
+		installBootstrapRegistry(network, []);
 		(network as any).runEpoch = 1;
 		// A prototype-only instance has no field initializers: disconnectPeer binds itself to
 		// this run's cancellation and needs a controller to read.
@@ -148,7 +150,6 @@ describe('Network.disconnectPeer — a peer claimed while it is being let go', (
 		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapPeerIDs = new Set<string>();
-		(network as any).bootstrapMultiaddrs = [];
 		(network as any).redialBackoff = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).pubsub = {
@@ -363,7 +364,7 @@ describe('Network.runRedialMaintenance — leave-peer suppression', () => {
 });
 
 /**
- * Zero-connection recovery dials bootstrapMultiaddrs when the node has no
+ * Zero-connection recovery walks the bootstrap address registry when the node has no
  * connections. It must skip peers leave-network deliberately hung up, or a left
  * bootstrap comes straight back the moment connections briefly hit zero.
  */
@@ -371,15 +372,17 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 	function bareNetwork(suppressed: string[], bootstrapMaStrs: string[]) {
 		const dialed: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
+		installBootstrapRegistry(
+			network,
+			bootstrapMaStrs.map(address => ({ address }))
+		);
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
 		(network as any).redialBackoff = new Map();
-		(network as any).addressProbeBackoff = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).configuredBootstrapAddressesByNet = new Map();
-		(network as any).bootstrapMultiaddrs = bootstrapMaStrs.map(s => multiaddr(s));
 		(network as any).recentDisconnects = [];
 		(network as any).bootstrapTracker = {
 			recordAddressReachable(): void {},
@@ -417,7 +420,7 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 	it('skips a discovered bootstrap peer inside its backoff window', async () => {
 		const ma = `/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`;
 		const { network, dialed } = bareNetwork([], [ma]);
-		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000 }]]);
+		(network as any).recoveryBackoff = new Map([[normalizeMultiaddrForCompare(ma), { nextAttempt: Date.now() + 60_000, failCount: 1 }]]);
 		await run(network);
 		expect(dialed).toEqual([]);
 	});
@@ -426,6 +429,7 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		const ma = `/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`;
 		const { network, dialed } = bareNetwork([], [ma]);
 		(network as any).redialBackoff = new Map([[PEER_ID, { nextAttempt: Date.now() + 60_000 }]]);
+		installBootstrapRegistry(network, [{ address: ma, configuredBy: ['net-x'] }]);
 		(network as any).configuredBootstrapPeerIDs = new Set([PEER_ID]);
 		(network as any).configuredBootstrapAddresses = new Set([normalizeMultiaddrForCompare(multiaddr(ma).toString())]);
 		(network as any).configuredBootstrapAddressesByNet = new Map();
@@ -457,18 +461,17 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 describe('Network.addBootstrapPeers — rejoin clears suppression', () => {
 	function bareNetwork(suppressed: string[]) {
 		const network = Object.create(Network.prototype) as Network;
+		installBootstrapRegistry(network, []);
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set<string>(suppressed)]]);
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).configuredBootstrapAddressesByNet = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
-		(network as any).addressProbeBackoff = new Map();
 		(network as any).bootstrapGeneration = new Map();
 		(network as any).inFlightBootstrapDials = new Map();
 		(network as any).dialAbort = new AbortController();
 		(network as any).bootstrapPeerIDs = new Set<string>();
-		(network as any).bootstrapMultiaddrs = [];
 		(network as any).bootstrapTracker = {
 			recordAddressReachable(): void {},
 			recordAddressUnreachable(): void {},

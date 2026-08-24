@@ -33,13 +33,15 @@ interface MockNet {
 	disconnectGate: Promise<void> | null;
 	runEpoch: number;
 	getRunEpoch(): number;
-	pruneConfiguredBootstrapPeer(pid: string): void;
+	pruneConfiguredBootstrapPeer(pid: string, networkID?: string): void;
+	prunedBootstrapOwners: Array<string | undefined>;
 	bumpBootstrapGeneration(networkID: string): void;
 	generationBumps: string[];
 	resetBootstrapStatus(networkID: string): void;
 	statusResets: string[];
-	pruneBootstrapAddresses(addresses: string[]): void;
+	pruneBootstrapAddresses(addresses: string[], networkID?: string): void;
 	prunedAddresses: string[][];
+	prunedAddressOwners: Array<string | undefined>;
 	pruneBootstrapStatus(networkID: string, keep: string[]): void;
 	prunedStatus: Array<{ networkID: string; keep: string[] }>;
 	addBootstrapPeers(peers: string[], networkID: string, origin: string): Promise<'completed' | 'incomplete'>;
@@ -57,10 +59,12 @@ function makeMockNet(): MockNet {
 		disconnected: [],
 		bootstrapOrRelay: new Set(),
 		prunedBootstrap: [],
+		prunedBootstrapOwners: [],
 		suppressionClearedFor: [],
 		generationBumps: [],
 		statusResets: [],
 		prunedAddresses: [],
+		prunedAddressOwners: [],
 		prunedStatus: [],
 		dialledLists: [],
 		getTopicPeers(id) {
@@ -95,8 +99,9 @@ function makeMockNet(): MockNet {
 			this.disconnected.push(pid);
 			this.disconnectEpochs.push(epoch);
 		},
-		pruneConfiguredBootstrapPeer(pid) {
+		pruneConfiguredBootstrapPeer(pid, networkID) {
 			this.prunedBootstrap.push(pid);
+			this.prunedBootstrapOwners.push(networkID);
 		},
 		bumpBootstrapGeneration(networkID) {
 			this.generationBumps.push(networkID);
@@ -104,8 +109,9 @@ function makeMockNet(): MockNet {
 		resetBootstrapStatus(networkID) {
 			this.statusResets.push(networkID);
 		},
-		pruneBootstrapAddresses(addresses) {
+		pruneBootstrapAddresses(addresses, networkID) {
 			this.prunedAddresses.push(addresses);
+			this.prunedAddressOwners.push(networkID);
 		},
 		pruneBootstrapStatus(networkID, keep) {
 			this.prunedStatus.push({ networkID, keep });
@@ -369,7 +375,8 @@ describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 			'net-b': ['/ip4/192.0.2.1/tcp/9090/p2p/pShared'],
 		});
 		await leave(networks, 'net-a');
-		expect(net.prunedAddresses).toEqual([[]]);
+		expect(net.prunedAddresses).toEqual([['/ip4/192.0.2.1/tcp/9090/p2p/pShared']]);
+		expect(net.prunedAddressOwners).toEqual(['net-a']);
 	});
 
 	it('drops every address of a network left with nothing else configured', async () => {
@@ -523,7 +530,8 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		(networks as any).get = (nid: string) => (nid === 'net-other' ? { networkID: nid, bootstrapPeers: [ADDR_A] } : { networkID: NET, bootstrapPeers: [ADDR_A] });
 		(networks as any).joinedNetworks = new Set([NET, 'net-other']);
 		await edit(networks, [ADDR_B]);
-		expect(mock.prunedAddresses).toEqual([[]]);
+		expect(mock.prunedAddresses).toEqual([[ADDR_A]]);
+		expect(mock.prunedAddressOwners).toEqual([NET]);
 	});
 
 	/**
