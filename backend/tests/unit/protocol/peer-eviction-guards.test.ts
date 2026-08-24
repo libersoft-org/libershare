@@ -1290,7 +1290,11 @@ describe('probeParkedConfiguredBootstraps', () => {
 			},
 		};
 		(network as any).node = {
-			getConnections: () => (opts.connectionAddrs ?? []).map(a => ({ remoteAddr: { toString: () => a } })),
+			getConnections: () =>
+				(opts.connectionAddrs ?? []).map(a => ({
+					remoteAddr: { toString: () => a },
+					remotePeer: { toString: () => PEER_ID },
+				})),
 			async dial(ma: { toString(): string }): Promise<unknown> {
 				dialed.push(ma.toString());
 				if (opts.failAddresses?.includes(ma.toString())) throw new Error('dial timeout');
@@ -1980,9 +1984,27 @@ describe('addBootstrapPeers — a gossip announce of a configured address', () =
 
 	it('does not force another gossip probe while that endpoint is connected', async () => {
 		const { network, forced } = bareNetwork([CONFIGURED_A]);
-		(network as any).node.getConnections = () => [{ remoteAddr: { toString: () => CONFIGURED_A } }];
+		(network as any).node.getConnections = () => [
+			{
+				remoteAddr: { toString: () => CONFIGURED_A },
+				remotePeer: { toString: () => PEER_ID },
+			},
+		];
 		await (network as any).addBootstrapPeers([CONFIGURED_A], 'net-a', 'discovered');
 		expect(forced).toEqual([]);
+	});
+
+	it('does not reuse another peer connected on the configured endpoint', async () => {
+		const { network, forced } = bareNetwork([CONFIGURED_A]);
+		const otherPeer = '12D3KooWAnfqA6Wap96ixVfxhHeGUDMriBG4Nncp5tqu8q71EVv2';
+		(network as any).node.getConnections = () => [
+			{
+				remoteAddr: { toString: () => CONFIGURED_A.replace(PEER_ID, otherPeer) },
+				remotePeer: { toString: () => otherPeer },
+			},
+		];
+		await (network as any).addBootstrapPeers([CONFIGURED_A], 'net-a', 'discovered');
+		expect(forced).toEqual([true]);
 	});
 
 	it('still lets an explicit configured write bypass the address backoff', async () => {

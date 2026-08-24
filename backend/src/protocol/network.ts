@@ -1612,8 +1612,8 @@ export class Network {
 	}
 
 	/**
-	 * Whether some open connection already terminates on the exact endpoint an address
-	 * names.
+	 * Whether some open connection to the expected peer already terminates on the exact
+	 * endpoint an address names.
 	 *
 	 * The peer-level question — "are we connected to them at all" — is the wrong one for a
 	 * per-address probe: a peer reachable through a second address would mask a broken
@@ -1623,8 +1623,10 @@ export class Network {
 	private hasConnectionOnEndpoint(ma: any): boolean {
 		if (!this.node) return false;
 		const target = ma.toString();
+		const expectedPeerID = extractDestinationPeerID(ma);
+		if (!expectedPeerID) return false;
 		try {
-			return this.node.getConnections().some(c => isSameDialEndpoint(String(c.remoteAddr ?? ''), target));
+			return this.node.getConnections().some(c => String(c.remotePeer ?? '') === expectedPeerID && isSameDialEndpoint(String(c.remoteAddr ?? ''), target));
 		} catch {
 			return false;
 		}
@@ -2105,7 +2107,8 @@ export class Network {
 				// bypasses this gate and probes immediately.
 				const gossipReprobeOfConfiguredAddress = origin === 'discovered' && effectiveOrigin === 'configured';
 				if (gossipReprobeOfConfiguredAddress) {
-					if (this.hasConnectionOnEndpoint(ma)) {
+					const entry = this.bootstrapByAddress.get(canonicalAddress);
+					if (entry?.disproved !== true && this.hasConnectionOnEndpoint(ma)) {
 						this.bootstrapTracker.recordAddressReachable(peer);
 						continue;
 					}

@@ -424,6 +424,72 @@ describe('bootstrap registry — identity mismatch', () => {
 		expect(outcomes).toEqual([{ status: 'identity-mismatch', origin: 'configured' }]);
 	});
 
+	it('re-probes when another peer is connected on the disproved endpoint', async () => {
+		const { network } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }] });
+		const reachable: string[] = [];
+		const outcomes: string[] = [];
+		let dials = 0;
+		(network as any).purgeStalePeer = async () => 'purged' as const;
+		(network as any).bootstrapTracker.recordAddressReachable = (address: string): void => {
+			reachable.push(address);
+		};
+		(network as any).bootstrapTracker.recordOutcome = (_networkID: string, _address: string, _peerID: string | null, status: string): void => {
+			outcomes.push(status);
+		};
+		(network as any).node.getConnections = () =>
+			dials === 0
+				? []
+				: [
+						{
+							remoteAddr: multiaddr(`/ip4/192.0.2.1/tcp/9090/p2p/${PEER_B}`),
+							remotePeer: { toString: () => PEER_B },
+						},
+					];
+		(network as any).node.dial = async (): Promise<never> => {
+			dials++;
+			throw new Error(MISMATCH);
+		};
+
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
+		(network as any).recoveryBackoff.delete(key(ADDR_A));
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
+
+		expect(dials).toBe(2);
+		expect(reachable).toEqual([]);
+		expect(outcomes).toEqual(['identity-mismatch', 'identity-mismatch']);
+		expect(((network as any).bootstrapByAddress.get(key(ADDR_A)) as IBootstrapEntry).disproved).toBe(true);
+	});
+
+	it('re-probes a disproved endpoint even when an older connection has the expected peer', async () => {
+		const { network } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }] });
+		const reachable: string[] = [];
+		let dials = 0;
+		(network as any).purgeStalePeer = async () => 'purged' as const;
+		(network as any).bootstrapTracker.recordAddressReachable = (address: string): void => {
+			reachable.push(address);
+		};
+		(network as any).node.getConnections = () =>
+			dials === 0
+				? []
+				: [
+						{
+							remoteAddr: multiaddr(ADDR_A),
+							remotePeer: { toString: () => PEER_A },
+						},
+					];
+		(network as any).node.dial = async (): Promise<never> => {
+			dials++;
+			throw new Error(MISMATCH);
+		};
+
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'configured');
+		(network as any).recoveryBackoff.delete(key(ADDR_A));
+		await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
+
+		expect(dials).toBe(2);
+		expect(reachable).toEqual([]);
+	});
+
 	it('reports a mismatch learned elsewhere to every network that configures the address', async () => {
 		const { network } = bareNetwork({ seeds: [{ address: ADDR_A, configuredBy: ['net-a'] }] });
 		const outcomes: Array<{ networkID: string; status: string; origin: string }> = [];
