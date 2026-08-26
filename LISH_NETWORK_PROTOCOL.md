@@ -12,7 +12,7 @@ The LISH network protocol is a peer-to-peer communication protocol for sharing c
 The protocol has two planes:
 
 - **Control plane** — small broadcast messages exchanged over gossipsub topics (one topic per network), JSON-encoded
-- **Data plane** — request / response messages exchanged over direct libp2p streams using the `/lish/0.0.1` protocol, MessagePack-encoded
+- **Data plane** — request / response messages exchanged over libp2p streams between two peers using the `/lish/0.0.1` protocol, MessagePack-encoded
 
 ## Architecture
 
@@ -180,8 +180,8 @@ Requests the full manifest (LISH data format structure) of a single LISH.
 - The manifest contains the complete LISH data format structure — directory tree, file list, chunk checksums — and MUST NOT include responder-local state (local paths, per-chunk possession)
 - A LISH that is not shared is answered with `PEER_LISH_NOT_SHARED`; a LISH the peer does not have at all is answered with the same code, so possession is not revealed
 - A temporarily busy LISH (verification, data move, or deletion in progress) is likewise answered with `PEER_LISH_NOT_SHARED` — `PEER_BUSY` is only used for chunk requests
-- The requester MUST check that the returned manifest's `id` equals the requested `lishID` — otherwise a peer could answer with a different LISH and have it stored under the requested id
-- Every received manifest MUST pass structural validation before it is persisted or allocated. The reference implementation checks field types, supported checksum algorithms, non-negative integer file sizes, a positive integer `chunkSize` no larger than the configured limit (100 MiB by default), the exact checksum count `ceil(size / chunkSize)`, and consistent expected lengths for duplicate checksums
+- The requester MUST check that the returned manifest's `id` equals the requested `lishID` — otherwise a peer could substitute an unrelated LISH for the one requested
+- Every received manifest MUST pass the request ID check and structural validation before it is persisted or allocated. The reference implementation validates the required transfer fields and the following invariants: supported checksum algorithms, non-negative integer file sizes, a positive integer `chunkSize` no larger than the configured limit (100 MiB by default), the exact checksum count `ceil(size / chunkSize)`, and consistent expected lengths for duplicate checksums
 - The requester strips responder-local paths and per-chunk possession state at the trust boundary. These fields are never authoritative on the wire
 
 ### getChunk — fetch chunk data
@@ -266,13 +266,13 @@ Sent by a peer in reply to a pubsub `searchLishs`, over a fresh stream to the se
 
 Wire error codes returned in the `error` field:
 
-| Code                   | Meaning                                                                                                                                 |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Code                   | Meaning                                                                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `PEER_INVALID_REQUEST` | Undecodable MessagePack, a non-object payload, or an unknown request type; known request types do not all enforce a uniform field schema |
-| `PEER_LISH_NOT_SHARED` | The LISH is not shared by this peer (also returned when the peer does not have it — deliberately indistinguishable)                     |
-| `PEER_CHUNK_NOT_FOUND` | The peer does not have the requested chunk (partial seeder)                                                                             |
-| `PEER_BUSY`            | Transient rejection, returned for chunk requests only — verification, data move, deletion, or upload peer capacity reached; retry later |
-| `PEER_IO_ERROR`        | The peer failed to read the requested data from disk                                                                                    |
+| `PEER_LISH_NOT_SHARED` | The LISH is not shared by this peer (also returned when the peer does not have it — deliberately indistinguishable)                      |
+| `PEER_CHUNK_NOT_FOUND` | The peer does not have the requested chunk (partial seeder)                                                                              |
+| `PEER_BUSY`            | Transient rejection, returned for chunk requests only — verification, data move, deletion, or upload peer capacity reached; retry later  |
+| `PEER_IO_ERROR`        | The peer failed to read the requested data from disk                                                                                     |
 
 ## Transfer flow
 
