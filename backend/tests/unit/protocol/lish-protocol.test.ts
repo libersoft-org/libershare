@@ -490,12 +490,16 @@ describe('LISHClient.requestManifest – manifest validation', () => {
 	 * `send()` is a no-op (requestManifest only writes the request); iteration yields the
 	 * length-prefixed response the decoder reads back.
 	 */
-	function fakeStream(manifest: unknown): any {
-		const frame = lpEncode.single(codecEncode({ manifest })).subarray();
+	function fakeResponse(response: unknown): any {
+		const frame = lpEncode.single(codecEncode(response)).subarray();
 		async function* source() {
 			yield frame;
 		}
 		return { status: 'open', send() {}, close: async () => {}, [Symbol.asyncIterator]: source };
+	}
+
+	function fakeStream(manifest: unknown): any {
+		return fakeResponse({ manifest });
 	}
 
 	function makeManifest(chunkSize: number): IStoredLISH {
@@ -508,8 +512,8 @@ describe('LISHClient.requestManifest – manifest validation', () => {
 		};
 	}
 
-	async function getManifestError(manifest: unknown, requestedID = 'lish-manifest-test'): Promise<CodedError> {
-		const client = new LISHClient(fakeStream(manifest));
+	async function getResponseError(response: unknown, requestedID = 'lish-manifest-test'): Promise<CodedError> {
+		const client = new LISHClient(fakeResponse(response));
 		try {
 			await client.requestManifest(requestedID);
 		} catch (error) {
@@ -517,6 +521,10 @@ describe('LISHClient.requestManifest – manifest validation', () => {
 			throw error;
 		}
 		throw new Error('Expected requestManifest to reject');
+	}
+
+	function getManifestError(manifest: unknown, requestedID = 'lish-manifest-test'): Promise<CodedError> {
+		return getResponseError({ manifest }, requestedID);
 	}
 
 	afterEach(() => {
@@ -588,5 +596,24 @@ describe('LISHClient.requestManifest – manifest validation', () => {
 		expect(error.message).not.toContain('\u2028');
 		expect(error.message).not.toContain('\u2029');
 		expect(error.message).toContain('requested\\r\\n\\u0085\\u2028\\u2029fake-line-');
+	});
+
+	it('escapes Unicode bidirectional controls in peer-supplied ids', async () => {
+		const bidiControls = '\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069';
+		const error = await getManifestError({ ...makeManifest(1024), id: `left${bidiControls}right` });
+
+		for (const control of bidiControls) expect(error.message).not.toContain(control);
+		expect(error.message).toContain('left\\u061c\\u200e\\u200f\\u202a\\u202b\\u202c\\u202d\\u202e\\u2066\\u2067\\u2068\\u2069right');
+	});
+
+	it('escapes a hostile requested id when the response has no manifest', async () => {
+		const hostileID = 'requested\r\n\u202efake-line';
+		const error = await getResponseError({}, hostileID);
+
+		expect(error).toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+		expect(error.message).toContain('getLish "requested\\r\\n\\u202efake-line": missing manifest');
+		expect(error.message).not.toContain('\r');
+		expect(error.message).not.toContain('\n');
+		expect(error.message).not.toContain('\u202e');
 	});
 });

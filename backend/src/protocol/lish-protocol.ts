@@ -148,7 +148,7 @@ export function unregisterSearchResultHandler(searchID: string): void {
 
 function summarizeManifestID(value: unknown): string {
 	if (typeof value !== 'string') return value === null ? 'null' : typeof value;
-	return JSON.stringify(value.slice(0, 64)).replace(/[\u007f-\u009f\u2028\u2029]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
+	return JSON.stringify(value.slice(0, 64)).replace(/[\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
 // Client-side stream wrapper that can send multiple requests
