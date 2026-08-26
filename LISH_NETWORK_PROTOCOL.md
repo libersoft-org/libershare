@@ -69,7 +69,7 @@ Broadcast by a peer that wants to download a LISH. Every subscriber that shares 
 
 **Receiver behavior**:
 
-- Ignore when the LISH is not shared (upload disabled), temporarily busy (verification or data move in progress), or its data directory is missing on disk
+- Ignore when the LISH is not shared (upload disabled), temporarily busy (verification, data move, or deletion in progress), or its data directory is missing on disk
 - Ignore when the responder has no verified chunks of the LISH yet (nothing to serve)
 - After an `announceHave` is sent successfully, start a 60-second cooldown for that (peer, lishID) pair. Requests that arrive concurrently before the first send completes are not coalesced
 
@@ -114,7 +114,7 @@ Periodic peer-discovery broadcast. Contains the sender's own directly dialable m
 - Drop unparseable, loopback, non-local private, anonymous (no trailing `/p2p/<peerID>`), or overlong addresses — every receiver must filter defensively regardless of sender-side filtering
 - Bound intake before dialing. The reference implementation has a 1,024-entry hard walk cap, accepts at most 128 unique addresses per message, limits each address to 512 characters, and applies per-announcing-peer token buckets to both raw parsing work and admitted addresses (384-entry initial burst, refilling at 256 entries per minute). Both bucket maps use a 1,024-source LRU cap
 - Treat every announced address as an unverified claim. The reference implementation dials it but does not persist or keep-alive-tag the peer until a successful Noise-authenticated connection proves the identity
-- A cryptographically proven identity mismatch (the Noise handshake reports a different peer ID than the address claims) is definitive — the receiver purges the announced entry so the dead identity is not re-dialed or re-gossiped
+- A cryptographically proven identity mismatch definitively disproves only the announced address. The receiver removes it from the expected peer's usable addresses. A saved configuration remains only as a disproved entry; the implementation may purge the whole peer only after neither a live connection nor any other usable address remains
 
 ## Data plane (`/lish/0.0.1` stream protocol)
 
@@ -181,7 +181,7 @@ Requests the full manifest (LISH data format structure) of a single LISH.
 - A LISH that is not shared is answered with `PEER_LISH_NOT_SHARED`; a LISH the peer does not have at all is answered with the same code, so possession is not revealed
 - A temporarily busy LISH (verification, data move, or deletion in progress) is likewise answered with `PEER_LISH_NOT_SHARED` — `PEER_BUSY` is only used for chunk requests
 - The requester MUST check that the returned manifest's `id` equals the requested `lishID` — otherwise a peer could substitute an unrelated LISH for the one requested
-- Every received manifest MUST pass the request ID check and structural validation before it is persisted or allocated. The reference implementation validates the required transfer fields and the following invariants: supported checksum algorithms, non-negative integer file sizes, a positive integer `chunkSize` no larger than the configured limit (100 MiB by default), the exact checksum count `ceil(size / chunkSize)`, and consistent expected lengths for duplicate checksums
+- Every received manifest MUST pass the request ID check and structural validation before it is persisted or allocated. The reference implementation validates the manifest object, the array shape of `files`, `directories`, and `links`, file path / size / checksum types, and the following invariants: supported checksum algorithms, non-negative integer file sizes, a positive integer `chunkSize` no larger than the configured limit (100 MiB by default), the exact checksum count `ceil(size / chunkSize)`, and consistent expected lengths for duplicate checksums
 - The requester strips responder-local paths and per-chunk possession state at the trust boundary. These fields are never authoritative on the wire
 
 ### getChunk — fetch chunk data
@@ -207,9 +207,9 @@ Requests the binary data of one chunk.
 - Chunks are identified by their **checksum**, not by a positional index. Chunks with identical content therefore share one identifier — a single received chunk can satisfy every position (in any file) that lists the same checksum
 - The requester MUST hash the received data with the manifest's `checksumAlgo` and compare the result to the requested `chunkID`; on mismatch it discards the data and re-queues the chunk (typically retried via another peer), banning peers that repeatedly deliver corrupt data (see Peer penalties)
 - A LISH that is not shared (or that the peer does not have at all) is answered with `PEER_LISH_NOT_SHARED` — same non-revealing semantics as `getLish`
-- A peer that has the LISH but not this chunk (partial seeder) answers `PEER_CHUNK_NOT_FOUND` — the requester goes elsewhere for that chunk
+- A peer that has the LISH but not this chunk answers `PEER_CHUNK_NOT_FOUND` — this includes partial seeders and a backing file that has just disappeared and had its possession state reset; the requester goes elsewhere for that chunk
 - A peer at its per-LISH upload capacity, or with the LISH temporarily busy (verification, data move, or deletion), answers `PEER_BUSY` — the requester retries later
-- A peer that fails to read the chunk from disk answers `PEER_IO_ERROR`
+- Other failures while reading a known chunk from disk answer `PEER_IO_ERROR`
 
 ### announceHave — availability announcement
 
@@ -270,9 +270,9 @@ Wire error codes returned in the `error` field:
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `PEER_INVALID_REQUEST` | Undecodable MessagePack, a non-object payload, or an unknown request type; known request types do not all enforce a uniform field schema |
 | `PEER_LISH_NOT_SHARED` | The LISH is not shared by this peer (also returned when the peer does not have it — deliberately indistinguishable)                      |
-| `PEER_CHUNK_NOT_FOUND` | The peer does not have the requested chunk (partial seeder)                                                                              |
+| `PEER_CHUNK_NOT_FOUND` | The peer does not have the requested chunk (partial seeder or missing backing file)                                                      |
 | `PEER_BUSY`            | Transient rejection, returned for chunk requests only — verification, data move, deletion, or upload peer capacity reached; retry later  |
-| `PEER_IO_ERROR`        | The peer failed to read the requested data from disk                                                                                     |
+| `PEER_IO_ERROR`        | The peer hit another I/O failure while reading a known chunk from disk                                                                   |
 
 ## Transfer flow
 
@@ -295,7 +295,7 @@ Wire error codes returned in the `error` field:
 ## Security properties and current limitations
 
 - Strictly signed gossipsub envelopes authenticate the sender of control messages. Noise authenticates the remote endpoint of a data-plane stream. Neither property signs the LISH manifest itself
-- A LISH ID is a random UUID, not a content hash. Matching the requested ID, validating manifest structure, and hashing chunks proves internal consistency with the received manifest; it does not prove publisher authenticity. Version 0.0.1 uses the first accepted manifest for that UUID as its trust root
+- A LISH ID is a random UUID, not a content hash. Matching the requested ID, validating manifest structure, and hashing chunks proves internal consistency with the received manifest; it does not prove publisher authenticity. For a network-only download, version 0.0.1 uses the first accepted manifest for that UUID as its trust root; an imported `.lish` structure serves that role when present
 - The reference implementation accepts inbound request frames up to the same 128 MiB limit required for large responses before applying the per-request serving gate. Requests are normally small, but the protocol does not yet define a separate small request-frame cap
 - Structural manifest validation does not cap total file count, checksum count, or declared logical size, and it is not a disk-quota preflight. A downloader must treat allocation size as untrusted and ensure adequate storage before materializing files
 - Upload enablement is global across joined lishnets, as described above. Network-specific publication and download authorization are not implemented in version 0.0.1
