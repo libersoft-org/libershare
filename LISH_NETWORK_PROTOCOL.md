@@ -122,7 +122,7 @@ Request / response messages over a libp2p stream. Every message is a MessagePack
 
 Message size is bounded by the receiving peer's configured maximum message size (reference implementation default: 128 MiB). It must cover the largest chunk plus encoding overhead, and manifests of many-file LISHs. The current implementation applies the same cap to small inbound requests and large responses; see Security properties and current limitations.
 
-Requests are discriminated by a `type` field. Undecodable MessagePack, a non-object payload, or an unknown request type is answered with `PEER_INVALID_REQUEST`, and the stream stays open for further messages. Version 0.0.1 does not apply one uniform runtime schema to the required fields of every known request type; operation-specific validation is described below.
+Requests are discriminated by a `type` field. Undecodable MessagePack, `null`, a primitive payload, or an unknown explicit request type is answered with `PEER_INVALID_REQUEST`, and the stream stays open for further messages. A decoded object-like payload without `type` is handled as the legacy `getChunk` request form. Version 0.0.1 does not apply one uniform runtime schema to the required fields of every known request type; operation-specific validation is described below.
 
 The stream's remote peer ID is authenticated by libp2p. The reference implementation serves manifests and chunks only while the remote peer shares at least one currently joined lishnet with this node; a denial is indistinguishable from an unshared LISH. The lower-sensitivity `getLishs` listing additionally allows a non-infrastructure peer during the first 30 seconds of a new connection while gossipsub subscription state propagates.
 
@@ -181,7 +181,7 @@ Requests the full manifest (LISH data format structure) of a single LISH.
 - A LISH that is not shared is answered with `PEER_LISH_NOT_SHARED`; a LISH the peer does not have at all is answered with the same code, so possession is not revealed
 - A temporarily busy LISH (verification, data move, or deletion in progress) is likewise answered with `PEER_LISH_NOT_SHARED` — `PEER_BUSY` is only used for chunk requests
 - The requester MUST check that the returned manifest's `id` equals the requested `lishID` — otherwise a peer could substitute an unrelated LISH for the one requested
-- Every received manifest MUST pass the request ID check and structural validation before it is persisted or allocated. The reference implementation validates the manifest object, the array shape of `files`, `directories`, and `links`, file path / size / checksum types, and the following invariants: supported checksum algorithms, non-negative integer file sizes, a positive integer `chunkSize` no larger than the configured limit (100 MiB by default), the exact checksum count `ceil(size / chunkSize)`, and consistent expected lengths for duplicate checksums
+- Every received manifest MUST have an `id` equal to the requested `lishID` and pass structural validation before it is persisted or allocated. The reference implementation validates the manifest object, the array shape of `files`, `directories`, and `links`, file path / size / checksum types, and the following invariants: supported checksum algorithms, non-negative integer file sizes, a positive integer `chunkSize` no larger than the configured limit (100 MiB by default), the exact checksum count `ceil(size / chunkSize)`, and consistent expected lengths for duplicate checksums
 - The requester strips responder-local paths and per-chunk possession state at the trust boundary. These fields are never authoritative on the wire
 
 ### getChunk — fetch chunk data
@@ -266,13 +266,13 @@ Sent by a peer in reply to a pubsub `searchLishs`, over a fresh stream to the se
 
 Wire error codes returned in the `error` field:
 
-| Code                   | Meaning                                                                                                                                  |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `PEER_INVALID_REQUEST` | Undecodable MessagePack, a non-object payload, or an unknown request type; known request types do not all enforce a uniform field schema |
-| `PEER_LISH_NOT_SHARED` | The LISH is not shared by this peer (also returned when the peer does not have it — deliberately indistinguishable)                      |
-| `PEER_CHUNK_NOT_FOUND` | The peer does not have the requested chunk (partial seeder or missing backing file)                                                      |
-| `PEER_BUSY`            | Transient rejection, returned for chunk requests only — verification, data move, deletion, or upload peer capacity reached; retry later  |
-| `PEER_IO_ERROR`        | The peer hit another I/O failure while reading a known chunk from disk                                                                   |
+| Code                   | Meaning                                                                                                                                                            |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PEER_INVALID_REQUEST` | Undecodable MessagePack, `null`, primitive payloads, or an unknown explicit request type; an object-like payload without `type` follows the legacy `getChunk` path |
+| `PEER_LISH_NOT_SHARED` | The LISH is not shared by this peer (also returned when the peer does not have it — deliberately indistinguishable)                                                |
+| `PEER_CHUNK_NOT_FOUND` | The peer does not have the requested chunk (partial seeder or missing backing file)                                                                                |
+| `PEER_BUSY`            | Transient rejection, returned for chunk requests only — verification, data move, deletion, or upload peer capacity reached; retry later                            |
+| `PEER_IO_ERROR`        | The peer hit another I/O failure while reading a known chunk from disk                                                                                             |
 
 ## Transfer flow
 
