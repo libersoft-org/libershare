@@ -3,7 +3,7 @@
 **Document version**: 1  
 **Protocol**: `/lish/0.0.1`  
 **Created**: 24 October 2025  
-**Last update**: 24 July 2026
+**Last update**: 26 August 2026
 
 ## Overview
 
@@ -20,14 +20,14 @@ The protocol has two planes:
 
 The protocol is built on [**libp2p**](https://libp2p.io/):
 
-| Layer               | Implementation                                                                                       |
-| ------------------- | ---------------------------------------------------------------------------------------------------- |
-| Transport           | TCP, Circuit Relay v2 (for peers behind NAT)                                                         |
-| Encryption          | Noise                                                                                                |
-| Stream multiplexing | Yamux                                                                                                |
-| Broadcast messaging | gossipsub (with Peer Exchange)                                                                       |
+| Layer               | Implementation                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------ |
+| Transport           | TCP, Circuit Relay v2 (for peers behind NAT)                                                           |
+| Encryption          | Noise                                                                                                  |
+| Stream multiplexing | Yamux                                                                                                  |
+| Broadcast messaging | gossipsub (with Peer Exchange)                                                                         |
 | NAT traversal       | AutoNAT v2 (reachability detection), DCUtR (hole punching), optional UPnP port mapping, relay fallback |
-| Peer metadata       | Identify / Identify Push, Ping                                                                       |
+| Peer metadata       | Identify / Identify Push, Ping                                                                         |
 
 Peers with a public address may additionally run a **circuit relay server** and forward traffic for NAT'd peers that cannot be reached directly.
 
@@ -39,7 +39,9 @@ A **network** (lishnet) is defined by the [**LISH network structure format**](./
 lish/<networkID>
 ```
 
-The subscribers of a network's topic are the network's participants. One node can join any number of networks. LISH data themselves do NOT contain a `networkID` — the same LISH can be shared on multiple networks.
+The subscribers of a network's topic are the network's participants. One node can join any number of networks. LISH data themselves do NOT contain a `networkID`.
+
+The reference implementation currently has no per-LISH network assignment. Upload enablement is global: a peer that shares any joined lishnet with this node can discover and request every upload-enabled LISH. A lishnet is therefore a peer-membership boundary, not an isolation boundary between individual shares. Per-LISH network scoping belongs to the planned access-control extension.
 
 ### Peer discovery
 
@@ -91,7 +93,7 @@ Broadcast by a peer searching the network for content. Peers whose shared LISHs 
 
 ### peer-announce
 
-Periodic peer-discovery broadcast. Contains the sender's own reachable multiaddrs plus, transitively, the multiaddrs of peers recently seen subscribed to the same topic. The transitive list is scoped to the topic's own subscribers, so peers of one network are never advertised into another.
+Periodic peer-discovery broadcast. Contains the sender's own directly dialable multiaddrs plus, transitively, the multiaddrs of peers recently seen subscribed to the same topic. Circuit-relay addresses are not propagated by this message. The transitive list is scoped to the topic's own subscribers, so peers of one network are never advertised into another.
 
 ```typescript
 {
@@ -102,23 +104,26 @@ Periodic peer-discovery broadcast. Contains the sender's own reachable multiaddr
 
 **Sender behavior**:
 
-- The announce interval adapts to how many peers the sender already knows (frequent when isolated, sparse when saturated), with random jitter
-- Address counts are capped (self addresses, per-peer transitive addresses, and total)
+- The announce interval adapts to how many peers the sender already knows (frequent when isolated, sparse when saturated), with random jitter; the reference implementation starts broadcasting once its peer store contains at least five peers
+- The reference implementation sends at most 32 self addresses, three addresses per transitive peer, and 128 addresses in total
 - Loopback and non-routable private addresses are filtered out before sending
 
 **Receiver behavior**:
 
-- Drop unparseable, loopback, and non-routable private addresses — every receiver must filter defensively regardless of sender-side filtering
-- Dial newly discovered peers and tag them for automatic re-dial, so briefly dropped peers reconnect without waiting for the next announce
+- Drop unparseable, loopback, non-local private, anonymous (no trailing `/p2p/<peerID>`), or overlong addresses — every receiver must filter defensively regardless of sender-side filtering
+- Bound intake before dialing. The reference implementation examines at most 1,024 raw entries, accepts at most 128 unique addresses per message, limits each address to 512 characters, and rate-limits admitted addresses per announcing peer
+- Treat every announced address as an unverified claim. The reference implementation dials it but does not persist or keep-alive-tag the peer until a successful Noise-authenticated connection proves the identity
 - A cryptographically proven identity mismatch (the Noise handshake reports a different peer ID than the address claims) is definitive — the receiver purges the announced entry so the dead identity is not re-dialed or re-gossiped
 
 ## Data plane (`/lish/0.0.1` stream protocol)
 
 Request / response messages over a libp2p stream. Every message is a MessagePack-encoded object framed with an unsigned-varint length prefix. A single stream can carry any number of requests; the responder answers each request with exactly one response, in order. Binary chunk data uses the MessagePack native binary type — no base64 overhead.
 
-Message size is bounded by the receiving peer's configured maximum message size (reference implementation default: 128 MiB). It must cover the largest chunk plus encoding overhead, and manifests of many-file LISHs.
+Message size is bounded by the receiving peer's configured maximum message size (reference implementation default: 128 MiB). It must cover the largest chunk plus encoding overhead, and manifests of many-file LISHs. The current implementation applies the same cap to small inbound requests and large responses; see Security properties and current limitations.
 
-Requests are discriminated by a `type` field. A request the responder cannot parse is answered with `PEER_INVALID_REQUEST` and the stream stays open for further messages.
+Requests are discriminated by a `type` field. Undecodable MessagePack, a non-object payload, or an unknown request type is answered with `PEER_INVALID_REQUEST`, and the stream stays open for further messages. Version 0.0.1 does not apply one uniform runtime schema to the required fields of every known request type; operation-specific validation is described below.
+
+The stream's remote peer ID is authenticated by libp2p. The reference implementation serves manifests and chunks only while the remote peer shares at least one currently joined lishnet with this node; a denial is indistinguishable from an unshared LISH. The lower-sensitivity `getLishs` listing additionally allows a non-infrastructure peer during the first 30 seconds of a new connection while gossipsub subscription state propagates.
 
 Responders SHOULD answer promptly: the reference implementation treats a peer that does not respond within 15 seconds (list requests, acknowledgements) or 30 seconds (manifest and chunk requests) as unreachable and moves on.
 
@@ -148,8 +153,9 @@ Requests the list of LISHs the peer currently shares.
 
 **Behavior**:
 
-- Only shared (upload-enabled) and currently available LISHs are listed, newest first
+- Upload-enabled LISHs that are not busy are listed, newest first. Listing does not prove that the data directory still exists or that the peer has a verified chunk; the subsequent `want`, manifest, and chunk paths apply their own checks
 - With `query`, the responder applies the same case-insensitive substring filter as `searchLishs` — this is the unicast fallback used to search freshly discovered peers that are not yet visible in the gossipsub subscriber set
+- A peer outside the shared-lishnet or 30-second propagation window receives an empty list
 
 ### getLish — fetch manifest
 
@@ -172,9 +178,10 @@ Requests the full manifest (LISH data format structure) of a single LISH.
 
 - The manifest contains the complete LISH data format structure — directory tree, file list, chunk checksums — and MUST NOT include responder-local state (local paths, per-chunk possession)
 - A LISH that is not shared is answered with `PEER_LISH_NOT_SHARED`; a LISH the peer does not have at all is answered with the same code, so possession is not revealed
-- A temporarily busy LISH (verification or data move in progress) is likewise answered with `PEER_LISH_NOT_SHARED` — `PEER_BUSY` is only used for chunk requests
+- A temporarily busy LISH (verification, data move, or deletion in progress) is likewise answered with `PEER_LISH_NOT_SHARED` — `PEER_BUSY` is only used for chunk requests
 - The requester MUST check that the returned manifest's `id` equals the requested `lishID` — otherwise a peer could answer with a different LISH and have it stored under the requested id
-- The requester SHOULD validate manifest consistency before allocating: per-file checksum count equals `ceil(size / chunkSize)`, and `chunkSize` is within the requester's configured limits
+- Every received manifest MUST pass structural validation before it is persisted or allocated. The reference implementation checks field types, supported checksum algorithms, non-negative integer file sizes, a positive integer `chunkSize` no larger than the configured limit (100 MiB by default), the exact checksum count `ceil(size / chunkSize)`, and consistent expected lengths for duplicate checksums
+- The requester strips responder-local paths and per-chunk possession state at the trust boundary. These fields are never authoritative on the wire
 
 ### getChunk — fetch chunk data
 
@@ -200,7 +207,7 @@ Requests the binary data of one chunk.
 - The requester MUST hash the received data with the manifest's `checksumAlgo` and compare the result to the requested `chunkID`; on mismatch it discards the data and re-queues the chunk (typically retried via another peer), banning peers that repeatedly deliver corrupt data (see Peer penalties)
 - A LISH that is not shared (or that the peer does not have at all) is answered with `PEER_LISH_NOT_SHARED` — same non-revealing semantics as `getLish`
 - A peer that has the LISH but not this chunk (partial seeder) answers `PEER_CHUNK_NOT_FOUND` — the requester goes elsewhere for that chunk
-- A peer at its per-LISH upload capacity, or with the LISH temporarily busy, answers `PEER_BUSY` — the requester retries later
+- A peer at its per-LISH upload capacity, or with the LISH temporarily busy (verification, data move, or deletion), answers `PEER_BUSY` — the requester retries later
 - A peer that fails to read the chunk from disk answers `PEER_IO_ERROR`
 
 ### announceHave — availability announcement
@@ -224,7 +231,8 @@ Sent by a seeder in reply to a pubsub `want`, over a fresh stream to the request
 
 **Behavior**:
 
-- The requester identifies the seeder by the verified stream remote peer ID, never by a payload field — the announcement cannot be spoofed on behalf of another peer
+- The announcement itself is attributed to the verified stream remote peer ID, never to a payload field
+- `multiaddrs` are untrusted dial hints. The current reference implementation does not yet bind the peer reached by the follow-up dial back to the announcer, so callers MUST NOT treat those addresses as authenticated by the announcement
 - Partial seeders announce only the chunks they can serve; a downloader can therefore pull different chunks from different incomplete peers in parallel
 
 ### searchResult — search response
@@ -257,13 +265,13 @@ Sent by a peer in reply to a pubsub `searchLishs`, over a fresh stream to the se
 
 Wire error codes returned in the `error` field:
 
-| Code                   | Meaning                                                                                                         |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `PEER_INVALID_REQUEST` | Malformed or unknown message                                                                                    |
-| `PEER_LISH_NOT_SHARED` | The LISH is not shared by this peer (also returned when the peer does not have it — deliberately indistinguishable) |
-| `PEER_CHUNK_NOT_FOUND` | The peer does not have the requested chunk (partial seeder)                                                     |
-| `PEER_BUSY`            | Transient rejection, returned for chunk requests only — verification / data move in progress, or upload peer capacity reached; retry later |
-| `PEER_IO_ERROR`        | The peer failed to read the requested data from disk                                                            |
+| Code                   | Meaning                                                                                                                                 |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `PEER_INVALID_REQUEST` | Malformed or unknown message                                                                                                            |
+| `PEER_LISH_NOT_SHARED` | The LISH is not shared by this peer (also returned when the peer does not have it — deliberately indistinguishable)                     |
+| `PEER_CHUNK_NOT_FOUND` | The peer does not have the requested chunk (partial seeder)                                                                             |
+| `PEER_BUSY`            | Transient rejection, returned for chunk requests only — verification, data move, deletion, or upload peer capacity reached; retry later |
+| `PEER_IO_ERROR`        | The peer failed to read the requested data from disk                                                                                    |
 
 ## Transfer flow
 
@@ -275,13 +283,21 @@ Wire error codes returned in the `error` field:
 6. **Resume** — verified chunks are persisted; a restarted download requests only the missing chunks
 7. **Seed** — a peer can serve every chunk it has verified, even before its own download completes (partial seeding)
 
-**Peer penalties** (downloader-side, reference implementation): a peer that repeatedly delivers corrupt chunks is banned for the rest of the application session; a peer that repeatedly fails transiently (busy, I/O errors) is dropped into a temporary quarantine and retried after a few minutes — or immediately after it sends a fresh `announceHave`. A `PEER_CHUNK_NOT_FOUND` answer is not a failure: it is remembered per chunk (the peer is never asked for that chunk again) and keeps the partial seeder in rotation for the chunks it does have.
+**Peer penalties** (downloader-side, reference implementation): a peer that repeatedly delivers corrupt chunks is banned for the lifetime of that downloader; recreating the transfer creates a fresh peer manager. A peer that repeatedly fails transiently (busy, I/O errors) is dropped into a temporary quarantine and retried after a few minutes — or immediately after it sends a fresh `announceHave`. A `PEER_CHUNK_NOT_FOUND` answer is not a failure: it is remembered per chunk (the peer is never asked for that chunk again) and keeps the partial seeder in rotation for the chunks it does have.
 
 ## Search flow
 
 1. The searcher broadcasts `searchLishs` with a unique `searchID`
 2. Matching peers reply with unicast `searchResult`
 3. As a fallback, the searcher may also issue `getLishs` with the same query directly to its currently connected peers (including peers that connect while the search is still running) — this covers peers not yet propagated through the gossipsub subscriber set
+
+## Security properties and current limitations
+
+- Strictly signed gossipsub envelopes authenticate the sender of control messages. Noise authenticates the remote endpoint of a data-plane stream. Neither property signs the LISH manifest itself
+- A LISH ID is a random UUID, not a content hash. Matching the requested ID, validating manifest structure, and hashing chunks proves internal consistency with the received manifest; it does not prove publisher authenticity. Version 0.0.1 uses the first accepted manifest for that UUID as its trust root
+- The reference implementation accepts inbound request frames up to the same 128 MiB limit required for large responses before applying the per-request serving gate. Requests are normally small, but the protocol does not yet define a separate small request-frame cap
+- Structural manifest validation does not cap total file count, checksum count, or declared logical size, and it is not a disk-quota preflight. A downloader must treat allocation size as untrusted and ensure adequate storage before materializing files
+- Upload enablement is global across joined lishnets, as described above. Network-specific publication and download authorization are not implemented in version 0.0.1
 
 ## Planned extensions
 
@@ -291,28 +307,7 @@ The following features are planned and are NOT part of `/lish/0.0.1`.
 
 A network-wide, decentralized database of published LISH entries (an online library), so the network's content can be browsed without every publisher being online.
 
-Planned synchronization messages:
-
-```typescript
-// Request — full or incremental database listing
-{
-	type: 'getLishDatabase',
-	requestID: string,  // Unique ID for tracking this request
-	lishIDFrom?: string // Last LISH UUID the requester already has
-}
-
-// Response
-{
-	requestID: string, // Matches the request
-	lishIDs: string[]  // LISH UUIDs in the database
-}
-```
-
-**Behavior**:
-
-- If `lishIDFrom` is provided, only entries added after that ID are returned (incremental synchronization)
-- If `lishIDFrom` is not provided, the whole database listing is returned
-- The requester then fetches unknown entries individually via `getLish`
+The wire messages, ordering, pagination, and incremental cursor model are not yet defined. A LISH UUID is random and cannot serve as an "entries after this ID" cursor. Any future incremental design must define a stable ordering and an opaque cursor or equivalent snapshot rule before implementations can interoperate.
 
 Each database entry carries the LISH structure plus optional publication metadata:
 
@@ -324,7 +319,7 @@ Each database entry carries the LISH structure plus optional publication metadat
 }
 ```
 
-Publishing adds an entry to the database; removing an entry is restricted to the network's owners and admins.
+Publishing adds an entry to the database; removing an entry is restricted to the network's owners and admins. The `publisher` field is metadata, not proof of authorship, until the extension defines signatures and key authorization.
 
 ### Network access control
 
