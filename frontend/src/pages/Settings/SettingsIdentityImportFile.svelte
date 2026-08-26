@@ -4,7 +4,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { storageBackupPath } from '../../scripts/settings.ts';
 	import { api } from '../../scripts/api.ts';
-	import { type IdentityBackup } from '@shared';
+	import { withCompressionExtensions, type IdentityBackup } from '@shared';
 	import ImportFileForm from '../../components/Import/ImportFileForm.svelte';
 	import SettingsIdentityImportConfirm from './SettingsIdentityImportConfirm.svelte';
 	interface Props {
@@ -35,7 +35,7 @@
 	}
 </script>
 
-<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageBackupPath} fileFilter={['*.lishid', '*.lishid.gz', '*.lishid.gzip', '*.json']} fileFilterName={'LISHID ' + $t('common.extensions')} {parseFile} {parseJSON} onConfirmDone={handleConfirmDone}>
+<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageBackupPath} fileFilter={withCompressionExtensions(['*.lishid', '*.json'])} fileFilterName={'LISHID ' + $t('common.extensions')} {parseFile} {parseJSON} onConfirmDone={handleConfirmDone}>
 	{#snippet confirm({ data, onDone })}
 		<SettingsIdentityImportConfirm data={data as IdentityBackup} {currentPeerID} {position} {onDone} />
 	{/snippet}

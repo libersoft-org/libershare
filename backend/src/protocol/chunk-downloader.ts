@@ -255,8 +255,10 @@ export class ChunkDownloader {
 				try {
 					// Throttle BEFORE downloading \u2014 ensures bandwidth is reserved before network transfer
 					touchPeer(lishID, peerID, 'download');
-					const limiterReservation = await downloadLimiter.throttle(lish.chunkSize);
+					const limiterReservation = await downloadLimiter.throttle(lish.chunkSize, this.deps.abortSignal);
+					if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
 					const result = await this.downloadChunk(client, chunk.chunkID, peerID);
+					if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
 					// Non-data results transferred no payload \u2014 return the reservation so failed
 					// probes (an unbounded number for a partial seeder) don't accumulate phantom
 					// debt on the shared limiter and starve real transfers.
@@ -331,7 +333,9 @@ export class ChunkDownloader {
 
 					try {
 						await writeChunkToAllSlots(chunk, data);
+						if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
 					} catch (err: any) {
+						if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
 						if (err.code === 'ENOENT') {
 							// File deleted \u2014 pause ALL peers, verify ALL files, re-allocate missing, reset chunks, resume
 							if (this.fileReallocInProgress.size > 0) {
@@ -391,7 +395,10 @@ export class ChunkDownloader {
 									console.log(`[DL] Verifying ALL file checksums...`);
 									progressReporter.emit({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
 									const { runVerification } = await import('../lish/lish.ts');
-									const ac = new AbortController();
+									if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) {
+										aborted = true;
+										break;
+									}
 									let lastVerified = 0;
 									let lastVerifyEmit = 0;
 									await runVerification(
@@ -405,8 +412,12 @@ export class ChunkDownloader {
 												progressReporter.emit({ downloadedChunks: lastVerified, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
 											}
 										},
-										ac.signal
+										this.deps.abortSignal
 									);
+									if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) {
+										aborted = true;
+										break;
+									}
 									progressReporter.emit({ downloadedChunks: lastVerified, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
 									console.log(`[DL] Verification done: ${lastVerified}/${totalChunks} chunks valid`);
 								}
@@ -477,6 +488,10 @@ export class ChunkDownloader {
 								}
 								try {
 									await writeChunkToAllSlots(chunk, data);
+									if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) {
+										writeAborted = true;
+										break;
+									}
 									console.log(`[DL] Write retry succeeded for ${lishID.slice(0, 8)}`);
 									this.writeRetryCount = 0;
 									this.deps.onRetry?.({ errorCode: code, errorDetail: downloadDir, retryCount: 0, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES, resolved: true });
@@ -497,6 +512,7 @@ export class ChunkDownloader {
 							break;
 						}
 					}
+					if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
 					dataServer.markChunkDownloaded(lishID, chunk.chunkID);
 					dataServer.incrementDownloadedBytes(lishID, data.length);
 					recordDownloadBytes(lishID, peerID, data.length, lish.files?.[chunk.fileIndex]?.path);

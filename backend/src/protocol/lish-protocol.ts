@@ -111,13 +111,18 @@ export interface HaveAnnouncement {
 type HaveAnnouncementHandler = (ann: HaveAnnouncement) => void;
 const haveAnnouncementHandlers = new Map<string, HaveAnnouncementHandler>();
 
-/** Register a handler for incoming unicast HAVE announcements for a given lishID. Only one handler per lishID. */
-export function registerHaveAnnouncementHandler(lishID: string, handler: HaveAnnouncementHandler): void {
+/**
+ * Register the single handler for a LISH and return an ownership-aware disposer.
+ * A stale downloader may only remove its own registration, never a newer owner's.
+ */
+export function registerHaveAnnouncementHandler(lishID: string, handler: HaveAnnouncementHandler): () => boolean {
 	haveAnnouncementHandlers.set(lishID, handler);
+	return () => unregisterHaveAnnouncementHandler(lishID, handler);
 }
 
-export function unregisterHaveAnnouncementHandler(lishID: string): void {
-	haveAnnouncementHandlers.delete(lishID);
+export function unregisterHaveAnnouncementHandler(lishID: string, owner?: HaveAnnouncementHandler): boolean {
+	if (owner && haveAnnouncementHandlers.get(lishID) !== owner) return false;
+	return haveAnnouncementHandlers.delete(lishID);
 }
 
 /**
@@ -249,7 +254,8 @@ export class LISHClient {
 		} finally {
 			this.lengthSink = null;
 			this.byteSink = null;
-		}	}
+		}
+	}
 
 	// Request list of shared LISHs from peer. `query` is an optional
 	// case-insensitive substring filter the peer applies server-side; omit it
@@ -269,6 +275,11 @@ export class LISHClient {
 	}
 
 	// Request a single chunk (can be called multiple times on same stream)
+	// TODO(out of scope): thread an AbortSignal through requestChunk so a
+	// download disabled mid-flight (e.g. by leaving its last lishnet) can cancel
+	// an in-progress chunk read immediately instead of waiting for the stream
+	// read to complete or time out. Requires plumbing the downloader's
+	// abortController.signal down through ChunkDownloader → LISHClient.
 	async requestChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array> {
 		// Bail early if stream is already closed/aborted — treat as transient (peer unreachable),
 		// not as a reason to permanently ban the peer.
@@ -297,6 +308,21 @@ export class LISHClient {
 			await this.stream.close();
 		} catch (error) {
 			// Ignore errors on close
+		}
+	}
+
+	/**
+	 * Tear the stream down immediately instead of half-closing it. `close()` ends
+	 * only our write side; the stream stays readable until the remote closes its
+	 * own, so a chunk already in flight keeps arriving. When the reason we are
+	 * closing is that the peer must stop serving us right now — leaving a lishnet,
+	 * disabling a download — waiting on the remote is exactly wrong.
+	 */
+	abort(reason?: Error): void {
+		try {
+			this.stream.abort(reason ?? new Error('client aborted'));
+		} catch {
+			// Stream may already be closed/reset — nothing left to tear down.
 		}
 	}
 
@@ -424,9 +450,24 @@ export function clearAllUploads(): void {
 	uploadEnabled.clear();
 	activeUploads.clear();
 	activeStreamCount.clear();
+	uploadLimiter.reset();
 }
 
 const IO_ERROR_THRESHOLD = 3; // consecutive I/O errors before auto-disabling upload
+
+/**
+ * Serve-gate predicate for the unicast LISH protocol. Returns true when a served
+ * response (LISH list / manifest / chunk) must be withheld because we do not share
+ * a joined lishnet with the remote peer. Fail CLOSED: when the gate is active
+ * (`sharesNetworkWith` provided) but the stream could not be mapped to a peer id
+ * (`remotePeerID` absent), block exactly like a not-shared peer — a bare or
+ * unauthenticated transport connection must never be served. Mirrors handleWant,
+ * which drops a WANT that has no verified sender peerID.
+ */
+export function serveGateBlocks(sharesNetworkWith: ((peerID: string) => boolean) | undefined, remotePeerID: string | undefined): boolean {
+	if (!sharesNetworkWith) return false;
+	return !remotePeerID || !sharesNetworkWith(remotePeerID);
+}
 
 /**
  * Strip node-local state from a LISH so only the LISH data format structure remains.
@@ -441,7 +482,7 @@ export function toManifest(lish: import('@shared').IStoredLISH): import('@shared
 	return exportData as import('@shared').IStoredLISH;
 }
 
-export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType): Promise<void> {
+export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType, sharesNetworkWith?: (peerID: string) => boolean, canListShares?: (peerID: string) => boolean, abortSignal?: AbortSignal): Promise<void> {
 	const servedLishIDs = new Set<string>();
 	const ioErrorCounts = new Map<string, number>(); // per-LISH consecutive I/O error counter
 	const remotePeer = remotePeerID?.slice(0, 12) ?? 'unknown';
@@ -450,11 +491,18 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 	trace(`[PROTO] stream open from ${remotePeer}, id=${stream.id}`);
 	let requestCount = 0;
 	try {
+		if (abortSignal?.aborted) return;
 		// Wrap the stream with length-prefixed decoder for multiple messages
 		// requests are small (<200 bytes); maxMessageSize covers chunks + large manifests
 		const decoder = lpDecode(stream, { maxDataLength: getMaxMessageSize() });
-		// Handle multiple requests on the same stream
-		for await (const msg of decoder) {
+		const iterator = decoder[Symbol.asyncIterator]();
+		// Handle multiple requests on the same stream. A stream abort does not guarantee that
+		// every source iterator wakes up, so the reset signal must also interrupt next().
+		while (!abortSignal?.aborted) {
+			const next = await nextProtocolMessage(iterator, abortSignal);
+			if (next.done) break;
+			const msg = next.value;
+			if (abortSignal?.aborted) break;
 			// Peer may disconnect between decoder.next() and our response send. Bail out if
 			// stream transitioned to closed/closing — any sendLengthPrefixed would throw sync
 			// StreamStateError → rejected Promise from this async handler → unhandledRejection.
@@ -480,6 +528,17 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			}
 
 			if (request.type === 'getLishs') {
+				// Serve the shared-LISH LISTING under the softer list-gate (canListShares):
+				// unlike the strict data gate it does not require a synced gossipsub
+				// SUBSCRIBE, so the unicast search fallback reaches freshly-connected peers.
+				// Still fail-closed on an unknown peer id and still refuses peers we left.
+				// Falls back to the strict gate when no list-gate was supplied.
+				if (serveGateBlocks(canListShares ?? sharesNetworkWith, remotePeerID)) {
+					trace(`[PROTO] getLishs from ${remotePeer} refused: no shared joined lishnet`);
+					const gated: LISHGetLishsResponse = { type: 'getLishs-result', lishs: [] };
+					sendLengthPrefixed(stream, codecEncode(gated));
+					continue;
+				}
 				// Return list of all shared (upload_enabled) LISHs — id and name only.
 				// Newest first — matches the order shown locally in "Download and Sharing".
 				const allLishs = dataServer.list();
@@ -502,8 +561,9 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				};
 				sendLengthPrefixed(stream, codecEncode(response));
 			} else if (request.type === 'getLish') {
-				// Only return manifest for LISHs with upload enabled
-				if (!isUploadAdvertisable(request.lishID)) {
+				// Only return manifest for LISHs with upload enabled — and only to
+				// peers we share a joined lishnet with (same gate as getLishs).
+				if (serveGateBlocks(sharesNetworkWith, remotePeerID) || !isUploadAdvertisable(request.lishID)) {
 					const response: LISHGetLishResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 					sendLengthPrefixed(stream, codecEncode(response));
 				} else {
@@ -521,6 +581,16 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			} else if (request.type === 'getChunk' || request.type === undefined) {
 				// Chunk request (type may be omitted for legacy compatibility)
 				const chunkReq = request as LISHGetChunkRequest;
+				// Stop serving chunks to peers we no longer share a joined
+				// lishnet with. Without this a downloader re-dials our stored
+				// address after we left its network and the transfer silently
+				// continues over the fresh transport connection.
+				if (serveGateBlocks(sharesNetworkWith, remotePeerID)) {
+					trace(`[PROTO] getChunk from ${remotePeer} refused: no shared joined lishnet`);
+					const gatedResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
+					sendLengthPrefixed(stream, codecEncode(gatedResponse));
+					continue;
+				}
 				if (!uploadEnabled.has(chunkReq.lishID)) {
 					const blockedResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 					sendLengthPrefixed(stream, codecEncode(blockedResponse));
@@ -541,6 +611,10 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					continue;
 				}
 				const chunkResult = await dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID);
+				// A factory-reset barrier may have closed and aborted this stream while
+				// the filesystem read was pending. Nothing from the old runtime may be
+				// sent or registered after that boundary.
+				if (abortSignal?.aborted) break;
 				if (chunkResult === 'lish_not_found') {
 					// Same privacy rationale as getLish: don't leak whether we have it.
 					const response: LISHGetChunkResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
@@ -599,7 +673,8 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				const chunkLoc = dataServer.findChunkFile(chunkReq.lishID as LISHid, chunkReq.chunkID as import('@shared').ChunkID);
 				if (remotePeerID) recordUploadBytes(chunkReq.lishID, fullRemotePeer, chunkData.length, chunkLoc);
 				dataServer.incrementUploadedBytes(chunkReq.lishID as import('@shared').LISHid, chunkData.length);
-				await uploadLimiter.throttle(chunkData.length);
+				await uploadLimiter.throttle(chunkData.length, abortSignal);
+				if (abortSignal?.aborted) break;
 				// Upload progress tracking (sliding window speed, 1s polling)
 				if (broadcastFn) {
 					let info = activeUploads.get(chunkReq.lishID);
@@ -666,7 +741,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			}
 		}
 		// Stream closed by remote, close our end
-		await stream.close();
+		if (!abortSignal?.aborted) await stream.close();
 	} catch (error: any) {
 		console.debug(`[PROTO] stream error from ${remotePeer} after ${requestCount} reqs: ${error.message?.slice(0, 120) ?? error}`);
 		stream.abort(error instanceof Error ? error : new Error(String(error)));
@@ -687,6 +762,29 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			}
 		}
 	}
+}
+
+const PROTOCOL_READ_ABORTED = Symbol('protocol-read-aborted');
+
+async function nextProtocolMessage<T>(iterator: AsyncIterator<T>, abortSignal?: AbortSignal): Promise<IteratorResult<T>> {
+	if (!abortSignal) return await iterator.next();
+	if (abortSignal.aborted) return { done: true, value: undefined as T };
+
+	const pending = Promise.resolve(iterator.next());
+	let onAbort: (() => void) | undefined;
+	const aborted = new Promise<typeof PROTOCOL_READ_ABORTED>(resolve => {
+		onAbort = () => resolve(PROTOCOL_READ_ABORTED);
+		abortSignal.addEventListener('abort', onAbort, { once: true });
+	});
+	const result = await Promise.race([pending, aborted]);
+	if (onAbort) abortSignal.removeEventListener('abort', onAbort);
+	if (result !== PROTOCOL_READ_ABORTED) return result;
+
+	void pending.catch(() => {});
+	try {
+		void Promise.resolve(iterator.return?.()).catch(() => {});
+	} catch {}
+	return { done: true, value: undefined as T };
 }
 
 // Helper: reject after timeout (prevents hanging on dead streams).

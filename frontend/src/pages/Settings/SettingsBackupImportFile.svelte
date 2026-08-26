@@ -4,6 +4,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { storageBackupPath } from '../../scripts/settings.ts';
 	import { api } from '../../scripts/api.ts';
+	import { withCompressionExtensions } from '@shared';
 	import ImportFileForm from '../../components/Import/ImportFileForm.svelte';
 	import SettingsBackupImportConfirm from './SettingsBackupImportConfirm.svelte';
 	interface Props {
@@ -31,7 +32,7 @@
 	}
 </script>
 
-<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageBackupPath} fileFilter={['*.lishset', '*.lishset.gz', '*.lishset.gzip', '*.json', '*.json.gz', '*.json.gzip']} fileFilterName={'LISHSET ' + $t('common.extensions')} {parseFile} {parseJSON} onConfirmDone={handleConfirmDone}>
+<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageBackupPath} fileFilter={withCompressionExtensions(['*.lishset', '*.json'])} fileFilterName={'LISHSET ' + $t('common.extensions')} {parseFile} {parseJSON} onConfirmDone={handleConfirmDone}>
 	{#snippet confirm({ data, onDone })}
 		<SettingsBackupImportConfirm data={data as BackupData} {position} {onDone} />
 	{/snippet}
