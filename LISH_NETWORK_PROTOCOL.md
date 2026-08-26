@@ -1,9 +1,9 @@
 # LISH Network protocol specification
 
-**Document version**: 1  
-**Protocol**: `/lish/0.0.1`  
-**Created**: 24 October 2025  
-**Last update**: 26 August 2026
+- **Document version**: 1
+- **Protocol**: `/lish/0.0.1`
+- **Created**: 24 October 2025
+- **Last update**: 26 August 2026
 
 ## Overview
 
@@ -71,7 +71,7 @@ Broadcast by a peer that wants to download a LISH. Every subscriber that shares 
 
 - Ignore when the LISH is not shared (upload disabled), temporarily busy (verification or data move in progress), or its data directory is missing on disk
 - Ignore when the responder has no verified chunks of the LISH yet (nothing to serve)
-- Rate-limit responses per (peer, lishID) pair — at most one `announceHave` per 60 seconds
+- After an `announceHave` is sent successfully, start a 60-second cooldown for that (peer, lishID) pair. Requests that arrive concurrently before the first send completes are not coalesced
 
 ### searchLishs
 
@@ -89,6 +89,7 @@ Broadcast by a peer searching the network for content. Peers whose shared LISHs 
 
 - Drop empty queries and queries longer than 256 characters
 - Deduplicate by `searchID` — the same query can arrive via several gossipsub mesh paths, answer at most once (the reference implementation remembers seen IDs for 5 minutes)
+- Match only upload-enabled LISHs that are not busy. As with `getLishs`, a search result does not prove that the data directory exists or that the peer still has a verified chunk
 - No matching LISH → no response (the searcher treats silence as "no result")
 
 ### peer-announce
@@ -104,14 +105,14 @@ Periodic peer-discovery broadcast. Contains the sender's own directly dialable m
 
 **Sender behavior**:
 
-- The announce interval adapts to how many peers the sender already knows (frequent when isolated, sparse when saturated), with random jitter; the reference implementation starts broadcasting once its peer store contains at least five peers
+- The announce interval adapts to peer-store size: 15 seconds below 20 peers, 30 seconds from 20 through 79 peers, and 180 seconds at 80 peers or more, each with ±25% random jitter. The reference implementation starts broadcasting once its peer store contains at least five peers
 - The reference implementation sends at most 32 self addresses, three addresses per transitive peer, and 128 addresses in total
 - Loopback and non-routable private addresses are filtered out before sending
 
 **Receiver behavior**:
 
 - Drop unparseable, loopback, non-local private, anonymous (no trailing `/p2p/<peerID>`), or overlong addresses — every receiver must filter defensively regardless of sender-side filtering
-- Bound intake before dialing. The reference implementation examines at most 1,024 raw entries, accepts at most 128 unique addresses per message, limits each address to 512 characters, and rate-limits admitted addresses per announcing peer
+- Bound intake before dialing. The reference implementation has a 1,024-entry hard walk cap, accepts at most 128 unique addresses per message, limits each address to 512 characters, and applies per-announcing-peer token buckets to both raw parsing work and admitted addresses (384-entry initial burst, refilling at 256 entries per minute). Both bucket maps use a 1,024-source LRU cap
 - Treat every announced address as an unverified claim. The reference implementation dials it but does not persist or keep-alive-tag the peer until a successful Noise-authenticated connection proves the identity
 - A cryptographically proven identity mismatch (the Noise handshake reports a different peer ID than the address claims) is definitive — the receiver purges the announced entry so the dead identity is not re-dialed or re-gossiped
 
@@ -267,7 +268,7 @@ Wire error codes returned in the `error` field:
 
 | Code                   | Meaning                                                                                                                                 |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `PEER_INVALID_REQUEST` | Malformed or unknown message                                                                                                            |
+| `PEER_INVALID_REQUEST` | Undecodable MessagePack, a non-object payload, or an unknown request type; known request types do not all enforce a uniform field schema |
 | `PEER_LISH_NOT_SHARED` | The LISH is not shared by this peer (also returned when the peer does not have it — deliberately indistinguishable)                     |
 | `PEER_CHUNK_NOT_FOUND` | The peer does not have the requested chunk (partial seeder)                                                                             |
 | `PEER_BUSY`            | Transient rejection, returned for chunk requests only — verification, data move, deletion, or upload peer capacity reached; retry later |
