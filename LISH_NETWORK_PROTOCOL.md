@@ -25,7 +25,7 @@ The protocol is built on [**libp2p**](https://libp2p.io/):
 | Transport           | TCP, Circuit Relay v2 (for peers behind NAT)                                                           |
 | Encryption          | Noise                                                                                                  |
 | Stream multiplexing | Yamux                                                                                                  |
-| Broadcast messaging | gossipsub (with Peer Exchange)                                                                         |
+| Broadcast messaging | gossipsub (Peer Exchange is configurable and enabled by default)                                       |
 | NAT traversal       | AutoNAT v2 (reachability detection), DCUtR (hole punching), optional UPnP port mapping, relay fallback |
 | Peer metadata       | Identify / Identify Push, Ping                                                                         |
 
@@ -33,7 +33,7 @@ Peers with a public address may additionally run a **circuit relay server** and 
 
 ### Networks and topics
 
-A **network** (lishnet) is defined by the [**LISH network structure format**](./LISH_NETWORK_FORMAT.md) — a network UUID, a name, and a list of bootstrap peer multiaddrs. Joining a network means subscribing to its gossipsub topic:
+A **network** (lishnet) is defined by the [**LISH network structure format**](./LISH_NETWORK_FORMAT.md) — a network identifier, a name, and a list of bootstrap peer multiaddrs. The reference tools normally generate the identifier as a UUID, but imported identifiers are not syntax-checked. Joining a network means subscribing to its gossipsub topic:
 
 ```
 lish/<networkID>
@@ -48,7 +48,7 @@ The reference implementation currently has no per-LISH network assignment. Uploa
 The protocol does not use a DHT. Peers are discovered through complementary mechanisms:
 
 1. **Bootstrap peers** — dialed from the network definition when joining
-2. **gossipsub Peer Exchange (PX)** — mesh maintenance propagates peer addresses on prune
+2. **gossipsub Peer Exchange (PX)** — configurable and enabled by default in the reference implementation; mesh maintenance propagates peer addresses on prune
 3. **`peer-announce` gossip** — periodic broadcast of own and known same-network peer multiaddrs (see below)
 4. **mDNS** — optional discovery of peers on the local network
 
@@ -63,7 +63,7 @@ Broadcast by a peer that wants to download a LISH. Every subscriber that shares 
 ```typescript
 {
 	type: 'want',
-	lishID: string // LISH UUID
+	lishID: string // LISH identifier
 }
 ```
 
@@ -143,7 +143,7 @@ Requests the list of LISHs the peer currently shares.
 {
 	type: 'getLishs-result',
 	lishs: Array<{
-		id: string,        // LISH UUID
+		id: string,        // LISH identifier
 		name?: string,     // LISH name, if set
 		totalSize?: number // Total size of all files in bytes
 	}>
@@ -154,7 +154,7 @@ Requests the list of LISHs the peer currently shares.
 
 **Behavior**:
 
-- Upload-enabled LISHs that are not busy are listed, newest first. Listing does not prove that the data directory still exists or that the peer has a verified chunk; the subsequent `want`, manifest, and chunk paths apply their own checks
+- Upload-enabled LISHs that are not busy are listed with those most recently added to the responder's local database first. This ordering does not use the manifest's `created` timestamp. Listing does not prove that the data directory still exists or that the peer has a verified chunk; the subsequent `want`, manifest, and chunk paths apply their own checks
 - With `query`, the responder applies the same case-insensitive substring filter as `searchLishs` — this is the unicast fallback used to search freshly discovered peers that are not yet visible in the gossipsub subscriber set
 - A peer outside the shared-lishnet or 30-second propagation window receives an empty list
 
@@ -284,7 +284,7 @@ Wire error codes returned in the `error` field:
 6. **Resume** — verified chunks are persisted; a restarted download requests only the missing chunks
 7. **Seed** — a peer can serve every chunk it has verified, even before its own download completes (partial seeding)
 
-**Peer penalties** (downloader-side, reference implementation): a peer that repeatedly delivers corrupt chunks is banned for the lifetime of that downloader; recreating the transfer creates a fresh peer manager. A peer that repeatedly fails transiently (busy, I/O errors) is dropped into a temporary quarantine and retried after a few minutes — or immediately after it sends a fresh `announceHave`. A `PEER_CHUNK_NOT_FOUND` answer is not a failure: it is remembered per chunk (the peer is never asked for that chunk again) and keeps the partial seeder in rotation for the chunks it does have.
+**Peer penalties** (downloader-side, reference implementation): a peer that repeatedly delivers corrupt chunks is banned for the lifetime of that downloader; recreating the transfer creates a fresh peer manager. A peer that repeatedly fails transiently (busy, I/O errors) is dropped into a temporary quarantine and retried after a few minutes — or immediately after it sends a fresh `announceHave`. A `PEER_CHUNK_NOT_FOUND` answer is not a failure: it is remembered for that chunk in the current peer download loop and keeps the partial seeder in rotation for the chunks it does have. The peer is not asked for that chunk again unless a newer `announceHave` reports that it now has it.
 
 ## Search flow
 
@@ -295,7 +295,7 @@ Wire error codes returned in the `error` field:
 ## Security properties and current limitations
 
 - Strictly signed gossipsub envelopes authenticate the sender of control messages. Noise authenticates the remote endpoint of a data-plane stream. Neither property signs the LISH manifest itself
-- A LISH ID is a random UUID, not a content hash. Matching the requested ID, validating manifest structure, and hashing chunks proves internal consistency with the received manifest; it does not prove publisher authenticity. For a network-only download, version 0.0.1 uses the first accepted manifest for that UUID as its trust root; an imported `.lish` structure serves that role when present
+- The reference implementation normally generates a LISH ID as a random UUID, but imported and received IDs are accepted as opaque non-empty strings; UUID syntax is not enforced. The ID is not a content hash. Matching the requested ID, validating manifest structure, and hashing chunks proves internal consistency with the received manifest; it does not prove publisher authenticity. For a network-only download, version 0.0.1 uses the first accepted manifest for that identifier as its trust root; an imported `.lish` structure serves that role when present
 - The reference implementation accepts inbound request frames up to the same 128 MiB limit required for large responses before applying the per-request serving gate. Requests are normally small, but the protocol does not yet define a separate small request-frame cap
 - Structural manifest validation does not cap total file count, checksum count, or declared logical size, and it is not a disk-quota preflight. A downloader must treat allocation size as untrusted and ensure adequate storage before materializing files
 - Upload enablement is global across joined lishnets, as described above. Network-specific publication and download authorization are not implemented in version 0.0.1
@@ -308,7 +308,7 @@ The following features are planned and are NOT part of `/lish/0.0.1`.
 
 A network-wide, decentralized database of published LISH entries (an online library), so the network's content can be browsed without every publisher being online.
 
-The wire messages, ordering, pagination, and incremental cursor model are not yet defined. A LISH UUID is random and cannot serve as an "entries after this ID" cursor. Any future incremental design must define a stable ordering and an opaque cursor or equivalent snapshot rule before implementations can interoperate.
+The wire messages, ordering, pagination, and incremental cursor model are not yet defined. LISH IDs have no defined chronological ordering and therefore cannot serve as an "entries after this ID" cursor. Any future incremental design must define a stable ordering and an opaque cursor or equivalent snapshot rule before implementations can interoperate.
 
 Each database entry carries the LISH structure plus optional publication metadata:
 
