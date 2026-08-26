@@ -19,7 +19,7 @@ useNetworkSettings(
 			maxChunkSize: chunkLimit,
 		}) as SettingsData['network']
 );
-import { ErrorCodes, type IStoredLISH } from '@shared';
+import { CodedError, ErrorCodes, type IStoredLISH } from '@shared';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -508,6 +508,17 @@ describe('LISHClient.requestManifest – manifest validation', () => {
 		};
 	}
 
+	async function getManifestError(manifest: unknown, requestedID = 'lish-manifest-test'): Promise<CodedError> {
+		const client = new LISHClient(fakeStream(manifest));
+		try {
+			await client.requestManifest(requestedID);
+		} catch (error) {
+			if (error instanceof CodedError) return error;
+			throw error;
+		}
+		throw new Error('Expected requestManifest to reject');
+	}
+
 	afterEach(() => {
 		chunkLimit = DEFAULT_MAX_CHUNK_SIZE;
 	});
@@ -535,5 +546,47 @@ describe('LISHClient.requestManifest – manifest validation', () => {
 		// A spoofing peer answering with a different LISH must not win the fallback.
 		const client = new LISHClient(fakeStream({ ...makeManifest(1024), id: 'some-other-lish' }));
 		await expect(client.requestManifest('lish-manifest-test')).rejects.toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+	});
+
+	it('rejects a manifest with no id', async () => {
+		const { id: _id, ...manifest } = makeManifest(1024);
+		const client = new LISHClient(fakeStream(manifest));
+		await expect(client.requestManifest('lish-manifest-test')).rejects.toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+	});
+
+	it('does not stringify a large non-string id', async () => {
+		const error = await getManifestError({ ...makeManifest(1024), id: new Uint8Array(100_000) });
+
+		expect(error).toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+		expect(error.message).toContain('manifest id mismatch (object)');
+		expect(error.message.length).toBeLessThan(200);
+	});
+
+	it('bounds and escapes a peer-supplied string id', async () => {
+		const hostileID = `forged\r\n\u0085\u2028\u2029log-line-${'A'.repeat(100_000)}`;
+		const error = await getManifestError({ ...makeManifest(1024), id: hostileID });
+
+		expect(error).toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+		expect(error.message.length).toBeLessThan(200);
+		expect(error.message).not.toContain('\r');
+		expect(error.message).not.toContain('\n');
+		expect(error.message).not.toContain('\u0085');
+		expect(error.message).not.toContain('\u2028');
+		expect(error.message).not.toContain('\u2029');
+		expect(error.message).toContain('forged\\r\\n\\u0085\\u2028\\u2029log-line-');
+	});
+
+	it('bounds and escapes the requested peer-advertised id in errors', async () => {
+		const hostileID = `requested\r\n\u0085\u2028\u2029fake-line-${'A'.repeat(100_000)}`;
+		const error = await getManifestError(makeManifest(1024), hostileID);
+
+		expect(error).toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+		expect(error.message.length).toBeLessThan(200);
+		expect(error.message).not.toContain('\r');
+		expect(error.message).not.toContain('\n');
+		expect(error.message).not.toContain('\u0085');
+		expect(error.message).not.toContain('\u2028');
+		expect(error.message).not.toContain('\u2029');
+		expect(error.message).toContain('requested\\r\\n\\u0085\\u2028\\u2029fake-line-');
 	});
 });

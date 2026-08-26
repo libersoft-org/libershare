@@ -146,6 +146,11 @@ export function unregisterSearchResultHandler(searchID: string): void {
 	searchResultHandlers.delete(searchID);
 }
 
+function summarizeManifestID(value: unknown): string {
+	if (typeof value !== 'string') return value === null ? 'null' : typeof value;
+	return JSON.stringify(value.slice(0, 64)).replace(/[\u007f-\u009f\u2028\u2029]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
 // Client-side stream wrapper that can send multiple requests
 export class LISHClient {
 	private stream: Stream;
@@ -193,8 +198,9 @@ export class LISHClient {
 	// callback never breaks the transfer or poisons the shared decoder.
 	async requestManifest(lishID: LISHid, onProgress?: (received: number, total: number) => void): Promise<import('@shared').IStoredLISH> {
 		const request: LISHGetLishRequest = { type: 'getLish', lishID };
+		const safeLishID = summarizeManifestID(lishID);
 		if (!sendLengthPrefixed(this.stream, codecEncode(request))) {
-			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `getLish ${lishID}: stream ${this.stream.status}`);
+			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `getLish ${safeLishID}: stream ${this.stream.status}`);
 		}
 		const safeEmit = (r: number, t: number): void => {
 			if (!onProgress) return;
@@ -223,15 +229,20 @@ export class LISHClient {
 		};
 		try {
 			const responseMsg = (await Promise.race([this.decoder.next(), rejectAfterTimeout(30000, 'manifest-receive')])) as IteratorResult<Uint8Array | Uint8ArrayList>;
-			if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, lishID);
+			if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, safeLishID);
 			const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
-			const response = this.parseResponse<LISHGetLishResponse>(responseData, `getLish ${lishID}`);
-			if ('error' in response) throw new CodedError(response.error, lishID);
-			if (!('manifest' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: missing manifest`);
-			// The manifest must be for the LISH we asked for — a peer returning a different id
-			// would let a spoofing peer win the fallback loop and could import the wrong LISH
-			// under the requested id. Treat a mismatch as this peer's fault so fallback tries the next.
-			if (response.manifest?.id !== lishID) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: manifest id mismatch (${String(response.manifest?.id)})`);
+			const response = this.parseResponse<LISHGetLishResponse>(responseData, `getLish ${safeLishID}`);
+			if ('error' in response) throw new CodedError(response.error, safeLishID);
+			if (!('manifest' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: missing manifest`);
+			// The manifest must be for the LISH we asked for. Callers key their local state on the
+			// requested id but persist the manifest under the id it carries, so a foreign id lands
+			// in another LISH's DB row — an upsert that repoints its directory, drops its move
+			// target and replaces its file/chunk state. Honest peers always answer with the
+			// requested LISH, so rejecting a mismatch costs nothing and this peer's answer is
+			// unusable either way: treat it as a peer fault so fallback moves to the next one.
+			// Summarize peer-controlled input without coercing a large binary value or
+			// allowing control characters to forge additional log lines.
+			if (response.manifest?.id !== lishID) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: manifest id mismatch (${summarizeManifestID(response.manifest?.id)})`);
 			// A manifest from the network is untrusted input — validate chunk-size bounds and
 			// manifest consistency before it can reach any caller (DB persist / import / probe).
 			try {
@@ -241,7 +252,7 @@ export class LISHClient {
 				// protocol error so fallback loops move on to the next peer. An over-limit
 				// chunkSize is a property of the LISH itself (every honest peer serves the same
 				// manifest), so it stays a terminal local error.
-				if (e instanceof CodedError && e.code !== ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: ${e.message}`);
+				if (e instanceof CodedError && e.code !== ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: ${e.message}`);
 				throw e;
 			}
 			// Emitted only after validation passes — a rejected manifest must not flash a full bar.
