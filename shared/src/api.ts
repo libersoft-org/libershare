@@ -7,7 +7,7 @@ type EventCallback = (data: any) => void;
  * Both browser and CLI clients must implement this interface.
  */
 export interface IWsClient {
-	call<T = any>(method: string, params?: Record<string, any>): Promise<T>;
+	call<T = any>(method: string, params?: Record<string, any>, timeoutMs?: number): Promise<T>;
 	on(event: string, callback: EventCallback): (() => void) | void;
 	off(event: string, callback: EventCallback): void;
 }
@@ -26,6 +26,7 @@ export class API {
 	readonly lishs: LISHsAPI;
 	readonly transfer: TransferAPI;
 	readonly search: SearchAPI;
+	readonly upload: UploadAPI;
 
 	constructor(client: IWsClient) {
 		this.client = client;
@@ -37,6 +38,7 @@ export class API {
 		this.lishs = new LISHsAPI(client);
 		this.transfer = new TransferAPI(client);
 		this.search = new SearchAPI(client);
+		this.upload = new UploadAPI(client);
 	}
 
 	// Raw call access
@@ -58,6 +60,41 @@ export class API {
 
 	unsubscribe(...events: string[]): Promise<boolean> {
 		return this.client.call<boolean>('events.unsubscribe', { events });
+	}
+}
+
+/**
+ * How long an abort may wait for the server to finish clearing the upload. Long
+ * enough to cover a chunk write and an unlink on a slow disk, short enough that
+ * a modal blocked on it does not become permanent.
+ */
+const UPLOAD_ABORT_TIMEOUT_MS = 60_000;
+
+/**
+ * Import file uploads. The transfer itself lives in the frontend's
+ * `uploadImportFile`, which drives `upload.begin` / `chunk` / `end` directly;
+ * what belongs here is the one call a caller makes on its own — discarding a
+ * finished upload it decided not to import after all.
+ */
+class UploadAPI {
+	private client: IWsClient;
+	constructor(client: IWsClient) {
+		this.client = client;
+	}
+
+	/**
+	 * Throw away an upload without importing it. Safe to call for an id the
+	 * server no longer knows: an upload already gone is the outcome asked for.
+	 *
+	 * The server waits for whatever operation the abort interrupted and then for
+	 * the file to actually leave the disk before it answers, so this call is a
+	 * barrier and not a request — a caller may start its next transfer the moment
+	 * it resolves. It can therefore take as long as that operation does, which is
+	 * exactly why it goes out with a timeout: without one a reply lost on a socket
+	 * that stays open leaves the caller waiting for good.
+	 */
+	abort(uploadID: string, timeoutMs: number = UPLOAD_ABORT_TIMEOUT_MS): Promise<void> {
+		return this.client.call<void>('upload.abort', { uploadID }, timeoutMs);
 	}
 }
 
@@ -102,15 +139,6 @@ class FsAPI {
 	 */
 	async readCompressed(path: string, algorithm?: CompressionAlgorithm, prettyJSON?: boolean): Promise<string> {
 		const result = await this.client.call<{ content: string }>('fs.readCompressed', { path, algorithm, prettyJSON });
-		return result.content;
-	}
-
-	/**
-	 * Hand a locally-picked file to the backend for decompression. `dataBase64`
-	 * is the raw file content; the algorithm is detected from `fileName`.
-	 */
-	async decompressText(dataBase64: string, fileName?: string, algorithm?: CompressionAlgorithm, prettyJSON?: boolean): Promise<string> {
-		const result = await this.client.call<{ content: string }>('fs.decompressText', { data: dataBase64, fileName, algorithm, prettyJSON });
 		return result.content;
 	}
 
@@ -188,6 +216,11 @@ class SettingsAPI {
 		return this.client.call<T>('settings.parseFromFile', { filePath });
 	}
 
+	/** Parse a finished upload. The server reads and deletes it; no path is ever exposed. */
+	parseFromUpload<T = Record<string, unknown>>(uploadID: string): Promise<T> {
+		return this.client.call<T>('settings.parseFromUpload', { uploadID });
+	}
+
 	parseFromJSON<T = Record<string, unknown>>(json: string): Promise<T> {
 		return this.client.call<T>('settings.parseFromJSON', { json });
 	}
@@ -222,6 +255,11 @@ class IdentityAPI {
 
 	parseFromFile(filePath: string): Promise<IdentityBackup> {
 		return this.client.call<IdentityBackup>('identity.parseFromFile', { filePath });
+	}
+
+	/** Parse a finished upload. The server reads and deletes it; no path is ever exposed. */
+	parseFromUpload(uploadID: string): Promise<IdentityBackup> {
+		return this.client.call<IdentityBackup>('identity.parseFromUpload', { uploadID });
 	}
 
 	parseFromJSON(json: string): Promise<IdentityBackup> {
@@ -299,6 +337,11 @@ class LISHnetsAPI {
 
 	parseFromFile(path: string): Promise<LISHNetworkDefinition[]> {
 		return this.client.call<LISHNetworkDefinition[]>('lishnets.parseFromFile', { path });
+	}
+
+	/** Parse a finished upload. The server reads and deletes it; no path is ever exposed. */
+	parseFromUpload(uploadID: string): Promise<LISHNetworkDefinition[]> {
+		return this.client.call<LISHNetworkDefinition[]>('lishnets.parseFromUpload', { uploadID });
 	}
 
 	parseFromJSON(json: string): Promise<LISHNetworkDefinition[]> {
@@ -427,6 +470,11 @@ class LISHsAPI {
 
 	parseFromFile(filePath: string): Promise<ILISH[]> {
 		return this.client.call<ILISH[]>('lishs.parseFromFile', { filePath });
+	}
+
+	/** Parse a finished upload. The server reads and deletes it; no path is ever exposed. */
+	parseFromUpload(uploadID: string): Promise<ILISH[]> {
+		return this.client.call<ILISH[]>('lishs.parseFromUpload', { uploadID });
 	}
 
 	parseFromJSON(json: string): Promise<ILISH[]> {
