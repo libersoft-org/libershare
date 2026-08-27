@@ -9,7 +9,7 @@
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { uploadImportFile } from '../../scripts/ws-client.ts';
-	import { createImportUploader, importCleanup, importOwnsForm } from '../../scripts/importUpload.ts';
+	import { createImportUploader, importOwnsForm } from '../../scripts/importUpload.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import ButtonBar from '../Buttons/ButtonBar.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -32,7 +32,10 @@
 		fileFilter: string[];
 		fileFilterName: string;
 		filePathLabel?: string | undefined;
+		/** Parse a file the user pointed at by path, on a machine with a local filesystem. */
 		parseFile: (path: string) => Promise<TData>;
+		/** Parse a file the user uploaded. The backend reads and deletes it by id. */
+		parseUpload: (uploadID: string) => Promise<TData>;
 		downloadPath?: string | undefined;
 		downloadPathLabel?: string | undefined;
 		validate?: (() => string | null) | undefined;
@@ -40,35 +43,30 @@
 		onConfirmDone: () => void;
 	}
 
-	let { areaID, position = LAYOUT.content, onBack, defaultDirectory, fileFilter, fileFilterName, filePathLabel, parseFile, downloadPath = $bindable(), downloadPathLabel, validate, confirm, onConfirmDone }: Props = $props();
+	let { areaID, position = LAYOUT.content, onBack, defaultDirectory, fileFilter, fileFilterName, filePathLabel, parseFile, parseUpload, downloadPath = $bindable(), downloadPathLabel, validate, confirm, onConfirmDone }: Props = $props();
 
 	let filePath = $state('');
 	let uploadMode = $state(false);
 	let uploadFileName = $state('');
-	/** Path of the uploaded file in the backend's temp directory, empty until one is picked. */
-	let uploadPath = $state('');
+	/** Id the backend holds the uploaded file under, empty until one is picked. */
+	let uploadID = $state('');
 	let fileInput = $state<HTMLInputElement>();
 	let errorMessage = $state('');
 	let parsedData = $state<TData | null>(null);
 	/** Label shown in the blocking dialog, empty while nothing is running. */
 	let busyLabel = $state('');
 
-	/** Drops a backend temp file we no longer own; a failed delete has nothing left to report. */
-	function discardUpload(path: string): void {
-		void api.fs.delete(path).catch(() => {});
-	}
-
 	const uploader = createImportUploader(
 		{
-			getPath: () => uploadPath,
-			setPath: path => (uploadPath = path),
+			getUploadID: () => uploadID,
+			setUploadID: id => (uploadID = id),
 			setFileName: name => (uploadFileName = name),
 			setError: message => (errorMessage = message),
 			setBusy: label => (busyLabel = label),
 		},
 		{
 			upload: uploadImportFile,
-			discard: discardUpload,
+			discard: id => api.upload.abort(id),
 			uploadingLabel: () => $t('import.uploading'),
 			formatError: translateError,
 		}
@@ -99,17 +97,15 @@
 
 	// Leaving the form after picking a file but before importing it — Back, a
 	// mode switch followed by a path import, any navigation away — would strand
-	// the uploaded copy on the backend's disk. The sweep only runs on the next
-	// upload, which on a node that imports twice a year is effectively never.
+	// the uploaded copy on the backend's disk until it ages out.
 	onDestroy(() => {
 		uploader.unmount();
-		if (uploadPath) discardUpload(uploadPath);
 	});
 
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
 		if (uploadMode) {
-			if (!uploadPath) {
+			if (!uploadID) {
 				errorMessage = $t('import.uploadRequired');
 				return;
 			}
@@ -133,31 +129,32 @@
 		// Capture what we are about to parse: the picker stays reachable during the
 		// await, so reading the state again afterwards would act on a file the user
 		// picked meanwhile instead of the one this import consumed.
-		const parsing = uploadMode ? uploadPath : filePath;
+		const parsingUpload = uploadMode;
+		const parsing = parsingUpload ? uploadID : filePath;
 		// Whether the form still shows the file this import is parsing. A pick made
 		// during the parse takes the form over, and this import must then keep its
 		// result to itself: opening a confirmation screen for the old file, clearing
 		// the new pick's spinner or reporting the old file's error would all overrule
 		// the choice the user just made.
-		const ownsForm = (): boolean => importOwnsForm(uploadMode, uploadPath, parsing);
+		const ownsForm = (): boolean => importOwnsForm(parsingUpload, uploadMode, uploadMode ? uploadID : filePath, parsing);
+		if (parsingUpload) uploader.consume(parsing);
 		try {
 			busyLabel = $t('import.importing');
-			const parsed = await parseFile(parsing);
+			const parsed = parsingUpload ? await parseUpload(parsing) : await parseFile(parsing);
 			if (ownsForm()) parsedData = parsed;
 		} catch (e) {
 			if (ownsForm()) errorMessage = translateError(e);
 		} finally {
-			if (ownsForm()) busyLabel = '';
-			// The parsed data lives in memory from here on, so the temp copy is done
-			// either way. Dropping it on failure too means a bad file cannot linger.
-			if (uploadMode && parsing) {
-				const cleanup = importCleanup(parsing, uploadPath);
-				if (cleanup.clearForm) {
-					uploadPath = '';
+			if (ownsForm()) {
+				busyLabel = '';
+				if (parsingUpload) {
+					uploadID = '';
 					uploadFileName = '';
 				}
-				discardUpload(cleanup.discard);
 			}
+			// A transport failure can happen before the backend consumes the upload.
+			// Abort is harmless when parsing already removed it.
+			if (parsingUpload) void api.upload.abort(parsing).catch(() => {});
 		}
 	}
 

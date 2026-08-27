@@ -1,8 +1,8 @@
 // Product info
-export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL, MAX_API_MESSAGE_SIZE } from './product.ts';
+export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE } from './product.ts';
 
 // Utils
-export { formatBytes, parseBytes, sanitizeFilename } from './utils.ts';
+export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End } from './utils.ts';
 
 // Compression
 
@@ -271,11 +271,29 @@ export interface FactoryResetResult {
 	detail?: string;
 }
 
+/** The infrastructure steps run around the wipes. `prepare` stops the transfers and the
+ * node, `restart` brings them back — neither is a wipe, but both can fail in ways the
+ * user has to know about: a failed `prepare` means the destructive categories were not
+ * safe to run, a failed `restart` means the node is still down. */
+export type FactoryResetPhase = 'prepare' | 'restart';
+
+/** Outcome of one factory-reset phase. */
+export interface FactoryResetPhaseResult {
+	phase: FactoryResetPhase;
+	ok: boolean;
+	/** Failure (or skip) reason when `ok` is false. */
+	detail?: string;
+}
+
 /** Aggregate factory-reset response: `success` is true only when every selected
- * category succeeded; `results` carries the per-category outcome. */
+ * category AND every phase succeeded; `results` carries the per-category outcome and
+ * `phases` the prepare/restart outcome. */
 export interface FactoryResetResponse {
 	success: boolean;
+	/** True when the request selected no categories and intentionally changed nothing. */
+	noop: boolean;
 	results: FactoryResetResult[];
+	phases: FactoryResetPhaseResult[];
 }
 
 // Dataset types (derived from ILISH entries that have a directory)
@@ -325,6 +343,13 @@ export interface IWriteResult {
 // API response wrappers
 export interface SuccessResponse {
 	success: boolean;
+}
+
+/** Outcome of changing one lishnet's enabled state in storage and at runtime. */
+export interface SetLISHNetworkEnabledResponse extends SuccessResponse {
+	applied: boolean;
+	transitioned: boolean;
+	joined: boolean;
 }
 
 // Result of `settings.applyImported`: how many keys were applied vs. skipped.

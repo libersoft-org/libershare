@@ -19,6 +19,10 @@
 		return api.lishnets.parseFromFile(path);
 	}
 
+	function parseUpload(uploadID: string): Promise<LISHNetworkDefinition[]> {
+		return api.lishnets.parseFromUpload(uploadID);
+	}
+
 	function handleConfirmDone(): void {
 		onImport?.();
 		onBack?.();
@@ -26,7 +30,7 @@
 	}
 </script>
 
-<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageLISHnetPath} fileFilter={withCompressionExtensions(['*.lishnet', '*.lishnets', '*.json'])} fileFilterName={'LISHNET ' + $t('common.extensions')} filePathLabel={$t('settings.lishNetworkImport.filePath')} {parseFile} onConfirmDone={handleConfirmDone}>
+<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageLISHnetPath} fileFilter={withCompressionExtensions(['*.lishnet', '*.lishnets', '*.json'])} fileFilterName={'LISHNET ' + $t('common.extensions')} filePathLabel={$t('settings.lishNetworkImport.filePath')} {parseFile} {parseUpload} onConfirmDone={handleConfirmDone}>
 	{#snippet confirm({ data, onDone })}
 		<ImportOverwrite networks={data as LISHNetworkDefinition[]} {position} {onDone} />
 	{/snippet}
