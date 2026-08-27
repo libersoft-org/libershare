@@ -171,6 +171,12 @@ describe('Utils.compress / Utils.decompress', () => {
 		});
 	}
 
+	it('deflate: treats an impossible zlib window size as raw DEFLATE', () => {
+		const body = Uint8Array.from([0xf8, 0x00, 0x00, 0xff, 0xff, 0x01, 0x00, 0x00, 0xff, 0xff]) as Uint8Array<ArrayBuffer>;
+		expect(Array.from(inflateRawSync(body))).toEqual([]);
+		expect(Array.from(Utils.decompress(body, 'deflate'))).toEqual([]);
+	});
+
 	it('deflate: throws on a corrupt stream instead of returning what it managed to read', () => {
 		const whole = deflateSync(samplePayload());
 		// Truncated mid-stream, and pure garbage: neither fits either wire variant, so the

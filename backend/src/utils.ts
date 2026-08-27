@@ -26,11 +26,14 @@ const CONTENT_ENCODING_ALGORITHMS: Record<string, DecompressAlgorithm> = { gzip:
 
 /**
  * Whether `data` opens with an RFC 1950 zlib header: the low nibble of the first byte is
- * the compression method, which must be 8 (deflate), and the two header bytes read as a
- * big-endian 16-bit value must be a multiple of 31.
+ * the compression method, which must be 8 (deflate), its high nibble must name a window
+ * no larger than 32 KiB, and the two header bytes read as a big-endian 16-bit value must
+ * be a multiple of 31.
  */
 function hasZlibHeader(data: Uint8Array<ArrayBuffer>): boolean {
-	return data.byteLength >= 2 && (data[0]! & 0x0f) === 8 && ((data[0]! << 8) | data[1]!) % 31 === 0;
+	if (data.byteLength < 2) return false;
+	const cmf = data[0]!;
+	return (cmf & 0x0f) === 8 && cmf >> 4 <= 7 && ((cmf << 8) | data[1]!) % 31 === 0;
 }
 
 /**
