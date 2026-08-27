@@ -39,6 +39,9 @@ function getDelay(errorCode: string, retryCount: number): number {
 export class ErrorRecovery {
 	private readonly entries = new Map<string, RecoveryState>();
 	private readonly cumulativeRetries = new Map<string, number>(); // persists across stop/restart cycles
+	private readonly lishGenerations = new Map<string, number>();
+	private generation = 0;
+	private readonly inFlightAttempts = new Set<Promise<void>>();
 	private readonly deps: RecoveryDeps;
 
 	constructor(deps: RecoveryDeps) {
@@ -78,6 +81,11 @@ export class ErrorRecovery {
 	}
 
 	stop(lishID: string): void {
+		this.lishGenerations.set(lishID, (this.lishGenerations.get(lishID) ?? 0) + 1);
+		this.removeEntry(lishID);
+	}
+
+	private removeEntry(lishID: string): void {
 		const entry = this.entries.get(lishID);
 		if (!entry) return;
 		if (entry.timer) clearTimeout(entry.timer);
@@ -86,7 +94,14 @@ export class ErrorRecovery {
 	}
 
 	stopAll(): void {
+		this.generation++;
 		for (const [lishID] of this.entries) this.stop(lishID);
+	}
+
+	/** Cancel scheduled work and wait for attempts already past their timer callback. */
+	async stopAllAndDrain(): Promise<void> {
+		this.stopAll();
+		while (this.inFlightAttempts.size > 0) await Promise.allSettled([...this.inFlightAttempts]);
 	}
 
 	getState(lishID: string): RecoveryState | undefined {
@@ -98,10 +113,27 @@ export class ErrorRecovery {
 		if (!entry) return;
 		entry.scheduledAt = Date.now();
 		entry.nextRetryDelay = delay;
-		entry.timer = setTimeout(() => this.attempt(lishID), delay);
+		const generation = this.generation;
+		const lishGeneration = this.lishGenerations.get(lishID) ?? 0;
+		entry.timer = setTimeout(() => this.launchAttempt(lishID, generation, lishGeneration), delay);
 	}
 
-	private async attempt(lishID: string): Promise<void> {
+	private launchAttempt(lishID: string, generation: number, lishGeneration: number): void {
+		const attempt = this.attempt(lishID, generation, lishGeneration);
+		this.inFlightAttempts.add(attempt);
+		attempt.then(
+			() => this.inFlightAttempts.delete(attempt),
+			() => this.inFlightAttempts.delete(attempt)
+		);
+		void attempt.catch(error => console.error(`[Recovery] ${lishID.slice(0, 8)}: attempt failed`, error));
+	}
+
+	private isCurrent(lishID: string, generation: number, lishGeneration: number): boolean {
+		return this.generation === generation && (this.lishGenerations.get(lishID) ?? 0) === lishGeneration;
+	}
+
+	private async attempt(lishID: string, generation: number, lishGeneration: number): Promise<void> {
+		if (!this.isCurrent(lishID, generation, lishGeneration)) return;
 		const entry = this.entries.get(lishID);
 		if (!entry) return;
 		entry.retryCount++;
@@ -130,18 +162,21 @@ export class ErrorRecovery {
 			} catch {
 				/* best effort */
 			}
+			if (!this.isCurrent(lishID, generation, lishGeneration)) return;
 		}
 
 		// Check if directory is accessible
 		try {
 			await this.deps.checkAccess(lish.directory);
 		} catch {
+			if (!this.isCurrent(lishID, generation, lishGeneration)) return;
 			const nextDelay = getDelay(entry.errorCode, entry.retryCount);
 			console.warn(`[Recovery] ${lishID.slice(0, 8)}: still inaccessible (attempt ${entry.retryCount}/${MAX_RECOVERY_ATTEMPTS}), retry in ${Math.round(nextDelay / 1000)}s`);
 			this.deps.broadcast('transfer.recovery:scheduled', { lishID, delayMs: nextDelay, retryCount: entry.retryCount });
 			this.schedule(lishID, nextDelay);
 			return;
 		}
+		if (!this.isCurrent(lishID, generation, lishGeneration)) return;
 
 		// Directory accessible — attempt re-enable
 		console.debug(`[Recovery] ${lishID.slice(0, 8)}: directory accessible, attempting recovery (attempt ${entry.retryCount}/${MAX_RECOVERY_ATTEMPTS})`);
@@ -150,9 +185,10 @@ export class ErrorRecovery {
 		// Save state before stopping (stop deletes the entry)
 		const { downloadWasEnabled, uploadWasEnabled } = entry;
 		// Stop recovery BEFORE calling enableDownload to prevent re-entrancy
-		this.stop(lishID);
+		this.removeEntry(lishID);
 
 		const success = await this.deps.attemptRecover(lishID, downloadWasEnabled, uploadWasEnabled);
+		if (!this.isCurrent(lishID, generation, lishGeneration)) return;
 		if (success) {
 			this.cumulativeRetries.delete(lishID);
 			console.log(`[Recovery] ${lishID.slice(0, 8)}: recovered successfully`);

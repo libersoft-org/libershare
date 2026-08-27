@@ -38,6 +38,7 @@ function makeChunks(count: number): { missing: MissingChunk[]; data: Map<ChunkID
 class FakeDataServer {
 	downloadedChunks = new Set<ChunkID>();
 	isChunkDownloadedCalls = 0;
+	writeChunkHook: (() => Promise<void>) | undefined;
 	private missing: MissingChunk[];
 	constructor(missing: MissingChunk[]) {
 		this.missing = missing;
@@ -58,7 +59,9 @@ class FakeDataServer {
 	markChunkDownloaded(_l: LISHid, c: ChunkID): void {
 		this.downloadedChunks.add(c);
 	}
-	async writeChunk(_dir: string, _lish: IStoredLISH, _fi: number, _ci: number, _data: Uint8Array): Promise<void> {}
+	async writeChunk(_dir: string, _lish: IStoredLISH, _fi: number, _ci: number, _data: Uint8Array): Promise<void> {
+		await this.writeChunkHook?.();
+	}
 	incrementDownloadedBytes(_l: LISHid, _n: number): void {}
 	getFileVerificationProgress(_l: LISHid): Array<{ filePath: string; verifiedChunks: number }> {
 		return [];
@@ -90,10 +93,12 @@ class ScriptedClient {
 		return reply;
 	}
 	async close(): Promise<void> {}
+	abort(): void {}
 }
 
-function makeDownloader(ds: FakeDataServer, pm: PeerManager, chunkCount: number): ChunkDownloader {
+function makeDownloader(ds: FakeDataServer, pm: PeerManager, chunkCount: number, lifecycle?: { controller: AbortController; isDestroyed: () => boolean }): ChunkDownloader {
 	const lish = { id: LISH_ID, name: 'test', chunkSize: CHUNK_SIZE, checksumAlgo: 'sha256', files: [{ path: 'f.bin', size: chunkCount * CHUNK_SIZE, checksums: [] }] } as unknown as IStoredLISH;
+	const controller = lifecycle?.controller ?? new AbortController();
 	const pc = new PauseController(
 		() => false,
 		() => false
@@ -101,14 +106,14 @@ function makeDownloader(ds: FakeDataServer, pm: PeerManager, chunkCount: number)
 	const deps = {
 		lishID: LISH_ID,
 		downloadDir: '/tmp/peerloop-test',
-		abortSignal: new AbortController().signal,
+		abortSignal: controller.signal,
 		dataServer: ds as never,
 		peerManager: pm,
 		pauseController: pc,
 		progressReporter: new ProgressReporter(),
 		fileAllocator: {} as never,
 		getLish: () => lish,
-		isDestroyed: () => false,
+		isDestroyed: lifecycle?.isDestroyed ?? (() => false),
 		isDisabled: () => false,
 		onSetError: () => {},
 		emitAllocProgress: () => {},
@@ -304,5 +309,44 @@ describe('ChunkDownloader peerLoop — partial seeder behavior', () => {
 		await runPromise;
 		expect(ds.downloadedChunks.has(newlyAvailableID)).toBe(true);
 		expect(dynamic.requests.filter(id => id === newlyAvailableID).length).toBe(2);
+	}, 15000);
+
+	it('does not commit a chunk after its downloader is destroyed during the file write', async () => {
+		const { missing, data } = makeChunks(1);
+		const chunkID = missing[0]!.chunkID;
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const controller = new AbortController();
+		let destroyed = false;
+		let writeStarted!: () => void;
+		let releaseWrite!: () => void;
+		const writeEntered = new Promise<void>(resolve => {
+			writeStarted = resolve;
+		});
+		const writeBlocked = new Promise<void>(resolve => {
+			releaseWrite = resolve;
+		});
+		ds.writeChunkHook = async () => {
+			writeStarted();
+			await writeBlocked;
+		};
+		const cd = makeDownloader(ds, pm, 1, { controller, isDestroyed: () => destroyed });
+		pm.tryAdd('peer-write-wait0', new ScriptedClient(new Map([[chunkID, data.get(chunkID)!]])) as never, 'DIRECT');
+
+		const running = cd.run();
+		await writeEntered;
+		destroyed = true;
+		controller.abort();
+		let settled = false;
+		void running.then(() => {
+			settled = true;
+		});
+		await Promise.resolve();
+		expect(settled).toBe(false);
+
+		releaseWrite();
+		await running;
+
+		expect(ds.downloadedChunks.has(chunkID)).toBe(false);
 	}, 15000);
 });
