@@ -138,7 +138,11 @@ export class ChunkDownloader {
 			}
 		};
 		const reserveRetainedWriteBytes = (bytes: number): (() => void) | null => {
-			if (bytes > ChunkDownloader.MAX_RETAINED_WRITE_BYTES || retainedWriteBytes > ChunkDownloader.MAX_RETAINED_WRITE_BYTES - bytes) return null;
+			// A configured chunk may legitimately exceed the base budget. It is already in memory
+			// when the write fails, so allow one such buffer when no other retained write exists.
+			// Once any buffer is retained, the normal aggregate cap applies; an oversized buffer
+			// therefore excludes every concurrent reservation until it is released.
+			if (retainedWriteBytes > 0 && bytes > ChunkDownloader.MAX_RETAINED_WRITE_BYTES - retainedWriteBytes) return null;
 			retainedWriteBytes += bytes;
 			let released = false;
 			return () => {
@@ -205,12 +209,9 @@ export class ChunkDownloader {
 		// Only the owner increments writeRetryCount, so concurrent peers can't burn the shared limit
 		// against each other. Returns 'written' (fall through to mark), 'requeue' (file vanished →
 		// hand back to the normal path / ENOENT recovery), or 'abort' (fatal: limit hit, unexpected
-		// error, or destroy/disable — onSetError already called where relevant).
+		// error or destroy/disable — onSetError already called where relevant). A memory-budget
+		// rejection returns 'requeue' so another peer can fetch the chunk after retained writes drain.
 		const retainedWrite = async (c: MissingChunk, payload: Uint8Array, firstCode: string): Promise<'written' | 'requeue' | 'abort'> => {
-			if (payload.byteLength > ChunkDownloader.MAX_RETAINED_WRITE_BYTES) {
-				this.deps.onSetError(firstCode, downloadDir);
-				return 'abort';
-			}
 			const releaseRetainedBytes = reserveRetainedWriteBytes(payload.byteLength);
 			if (!releaseRetainedBytes) {
 				console.warn(`[DL] ${lishID.slice(0, 8)}: retained-write memory limit reached; re-queuing ${payload.byteLength}B chunk`);

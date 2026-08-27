@@ -358,7 +358,7 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 			emitAllocProgress: () => {},
 		};
 
-		return { cd: new ChunkDownloader(deps), client, ds, retries, errors, chunkID, data, pauseController, deps };
+		return { cd: new ChunkDownloader(deps), client, ds, retries, errors, chunkID, data, pauseController, deps, state };
 	}
 
 	it('write fails once → retries from the SAME buffer, no second network request', async () => {
@@ -375,14 +375,44 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		expect(h.errors).toHaveLength(0);
 	});
 
-	it('a chunk larger than the retention cap fails without a re-download loop', async () => {
+	for (const code of ['EACCES', 'EPERM'] as const) {
+		it(`${code} retries the verified chunk from memory`, async () => {
+			const h = harness(0);
+			h.ds.writeChunkOutcomes = [Object.assign(new Error(code), { code }), null];
+			await h.cd.run();
+
+			expect(h.client.requestChunkCalls).toBe(1);
+			expect(h.ds.downloadedChunks.has(h.chunkID)).toBe(true);
+			expect(h.retries.some(r => !r.resolved && r.errorCode === ErrorCodes.DIRECTORY_ACCESS_DENIED)).toBe(true);
+			expect(h.errors).toHaveLength(0);
+		});
+	}
+
+	it('a chunk larger than the base retention cap still retries from memory', async () => {
 		(ChunkDownloader as unknown as { MAX_RETAINED_WRITE_BYTES: number }).MAX_RETAINED_WRITE_BYTES = 1024;
 		const h = harness(1);
 		await h.cd.run();
 
 		expect(h.client.requestChunkCalls).toBe(1);
+		expect(h.ds.writtenChunks).toHaveLength(1);
+		expect(h.ds.writtenChunks[0]!.data).toEqual(h.data);
+		expect(h.ds.downloadedChunks.has(h.chunkID)).toBe(true);
+		expect(h.errors).toHaveLength(0);
+	});
+
+	it('destroying during a retained retry releases the write pause', async () => {
+		const h = harness(1);
+		h.deps.onRetry = info => {
+			if (info.resolved) return;
+			h.state.destroyed = true;
+			h.pauseController.notifyStateChange();
+		};
+		await h.cd.run();
+
+		expect(h.client.requestChunkCalls).toBe(1);
 		expect(h.ds.downloadedChunks.has(h.chunkID)).toBe(false);
-		expect(h.errors).toEqual([{ code: ErrorCodes.DISK_FULL, detail: '/tmp/test-dl' }]);
+		expect(h.pauseController.writePaused).toBe(false);
+		expect(h.errors).toHaveLength(0);
 	});
 
 	it('throwing recovery notifications cannot abort ENOENT recovery', async () => {
@@ -631,90 +661,95 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		expect(errors).toHaveLength(0);
 	});
 
-	it('three concurrent failures retain only buffers within the byte limit', async () => {
-		(ChunkDownloader as unknown as { MAX_RETAINED_WRITE_BYTES: number }).MAX_RETAINED_WRITE_BYTES = 2048;
-		const mk = (seed: number) => {
-			const bytes = new Uint8Array(1024);
-			for (let i = 0; i < bytes.length; i++) bytes[i] = (i * seed + 17) & 0xff;
-			return bytes;
-		};
-		const payloads = [mk(3), mk(7), mk(11)];
-		const chunkIDs = payloads.map(data => sha256Hex(data) as ChunkID);
-		const ds = new MockDataServer();
-		const lish = makeLISH({
-			chunkSize: 1024,
-			files: [{ path: 'f.bin', size: 3072, checksums: chunkIDs }],
-		});
-		ds.add(lish);
-		ds.allChunkCount = 3;
-		ds.missingChunks = chunkIDs.map((chunkID, chunkIndex) => makeMissingChunk(chunkID, 0, chunkIndex));
-
-		let initialWrites = 0;
-		let releaseInitialWrites!: () => void;
-		let allInitialWritesEntered!: () => void;
-		const initialWritesBlocked = new Promise<void>(resolve => {
-			releaseInitialWrites = resolve;
-		});
-		const allInitialWritesStarted = new Promise<void>(resolve => {
-			allInitialWritesEntered = resolve;
-		});
-		ds.writeChunk = async (_dir, _lish, fileIndex, chunkIndex, data) => {
-			initialWrites++;
-			if (initialWrites <= 3) {
-				if (initialWrites === 3) allInitialWritesEntered();
-				await initialWritesBlocked;
-				throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
-			}
-			ds.writtenChunks.push({ fileIndex, chunkIndex, data });
-		};
-
-		const requestCounts = new Map<ChunkID, number>();
-		const chunkData = new Map(chunkIDs.map((chunkID, index) => [chunkID, payloads[index]!]));
-		const peerManager = new PeerManager();
-		peerManager.setLishID(lish.id);
-		for (let i = 0; i < 3; i++) {
-			const client = new MockLISHClient();
-			client.requestChunk = async (_lishID, chunkID) => {
-				client.requestChunkCalls++;
-				requestCounts.set(chunkID, (requestCounts.get(chunkID) ?? 0) + 1);
-				return chunkData.get(chunkID) ?? null;
+	for (const scenario of [
+		{ name: 'retains only buffers within the aggregate byte limit', payloadSize: 1024, expectedRequests: 4 },
+		{ name: 'retains one oversized buffer and requeues concurrent overflow', payloadSize: 3072, expectedRequests: 5 },
+	]) {
+		it(`three concurrent failures ${scenario.name}`, async () => {
+			(ChunkDownloader as unknown as { MAX_RETAINED_WRITE_BYTES: number }).MAX_RETAINED_WRITE_BYTES = 2048;
+			const mk = (seed: number) => {
+				const bytes = new Uint8Array(scenario.payloadSize);
+				for (let i = 0; i < bytes.length; i++) bytes[i] = (i * seed + 17) & 0xff;
+				return bytes;
 			};
-			peerManager.tryAdd(`peer-${i}`, client as never, 'DIRECT');
-		}
-		const state = { disabled: false, destroyed: false };
-		const errors: Array<{ code: string; detail: string | undefined }> = [];
-		const running = new ChunkDownloader({
-			lishID: lish.id,
-			downloadDir: '/tmp/test-dl',
-			abortSignal: new AbortController().signal,
-			dataServer: ds as never,
-			peerManager,
-			pauseController: new PauseController(
-				() => state.disabled,
-				() => state.destroyed
-			),
-			progressReporter: new ProgressReporter(),
-			fileAllocator: {} as never,
-			getLish: () => lish,
-			isDestroyed: () => state.destroyed,
-			isDisabled: () => state.disabled,
-			onSetError: (code, detail) => {
-				errors.push({ code, detail });
-				state.disabled = true;
-			},
-			onRetry: () => {},
-			emitAllocProgress: () => {},
-		}).run();
+			const payloads = [mk(3), mk(7), mk(11)];
+			const chunkIDs = payloads.map(data => sha256Hex(data) as ChunkID);
+			const ds = new MockDataServer();
+			const lish = makeLISH({
+				chunkSize: scenario.payloadSize,
+				files: [{ path: 'f.bin', size: scenario.payloadSize * 3, checksums: chunkIDs }],
+			});
+			ds.add(lish);
+			ds.allChunkCount = 3;
+			ds.missingChunks = chunkIDs.map((chunkID, chunkIndex) => makeMissingChunk(chunkID, 0, chunkIndex));
 
-		await allInitialWritesStarted;
-		releaseInitialWrites();
-		await running;
+			let initialWrites = 0;
+			let releaseInitialWrites!: () => void;
+			let allInitialWritesEntered!: () => void;
+			const initialWritesBlocked = new Promise<void>(resolve => {
+				releaseInitialWrites = resolve;
+			});
+			const allInitialWritesStarted = new Promise<void>(resolve => {
+				allInitialWritesEntered = resolve;
+			});
+			ds.writeChunk = async (_dir, _lish, fileIndex, chunkIndex, data) => {
+				initialWrites++;
+				if (initialWrites <= 3) {
+					if (initialWrites === 3) allInitialWritesEntered();
+					await initialWritesBlocked;
+					throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+				}
+				ds.writtenChunks.push({ fileIndex, chunkIndex, data });
+			};
 
-		expect([...requestCounts.values()].reduce((sum, count) => sum + count, 0)).toBe(4);
-		expect(ds.downloadedChunks.size).toBe(3);
-		expect(ds.writtenChunks).toHaveLength(3);
-		expect(errors).toHaveLength(0);
-	});
+			const requestCounts = new Map<ChunkID, number>();
+			const chunkData = new Map(chunkIDs.map((chunkID, index) => [chunkID, payloads[index]!]));
+			const peerManager = new PeerManager();
+			peerManager.setLishID(lish.id);
+			for (let i = 0; i < 3; i++) {
+				const client = new MockLISHClient();
+				client.requestChunk = async (_lishID, chunkID) => {
+					client.requestChunkCalls++;
+					requestCounts.set(chunkID, (requestCounts.get(chunkID) ?? 0) + 1);
+					return chunkData.get(chunkID) ?? null;
+				};
+				peerManager.tryAdd(`peer-${i}`, client as never, 'DIRECT');
+			}
+			const state = { disabled: false, destroyed: false };
+			const errors: Array<{ code: string; detail: string | undefined }> = [];
+			const running = new ChunkDownloader({
+				lishID: lish.id,
+				downloadDir: '/tmp/test-dl',
+				abortSignal: new AbortController().signal,
+				dataServer: ds as never,
+				peerManager,
+				pauseController: new PauseController(
+					() => state.disabled,
+					() => state.destroyed
+				),
+				progressReporter: new ProgressReporter(),
+				fileAllocator: {} as never,
+				getLish: () => lish,
+				isDestroyed: () => state.destroyed,
+				isDisabled: () => state.disabled,
+				onSetError: (code, detail) => {
+					errors.push({ code, detail });
+					state.disabled = true;
+				},
+				onRetry: () => {},
+				emitAllocProgress: () => {},
+			}).run();
+
+			await allInitialWritesStarted;
+			releaseInitialWrites();
+			await running;
+
+			expect([...requestCounts.values()].reduce((sum, count) => sum + count, 0)).toBe(scenario.expectedRequests);
+			expect(ds.downloadedChunks.size).toBe(3);
+			expect(ds.writtenChunks).toHaveLength(3);
+			expect(errors).toHaveLength(0);
+		});
+	}
 
 	it('an in-flight successful write cannot reset the active retry budget', async () => {
 		const mk = (seed: number) => {
