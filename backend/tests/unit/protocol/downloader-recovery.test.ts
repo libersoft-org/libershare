@@ -200,6 +200,10 @@ describe('Downloader — inline ENOSPC retry', () => {
 		expect((ChunkDownloader as any).WRITE_RETRY_DELAY).toBe(60000);
 	});
 
+	it('retained write memory is capped at 128 MiB per download', () => {
+		expect((ChunkDownloader as any).MAX_RETAINED_WRITE_BYTES).toBe(128 * 1024 * 1024);
+	});
+
 	it('writePaused starts as false', () => {
 		const pc = priv(downloader)['pauseController'] as { writePaused: boolean };
 		expect(pc.writePaused).toBe(false);
@@ -281,11 +285,13 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 
 	let origDelay: number;
 	let origFileReallocDelay: number;
+	let origRetainedWriteLimit: number;
 
 	beforeEach(() => {
 		// Shrink the 60s retry pause so the loop runs in milliseconds under test.
 		origDelay = (ChunkDownloader as unknown as { WRITE_RETRY_DELAY: number }).WRITE_RETRY_DELAY;
 		origFileReallocDelay = (ChunkDownloader as unknown as { FILE_REALLOC_DELAY: number }).FILE_REALLOC_DELAY;
+		origRetainedWriteLimit = (ChunkDownloader as unknown as { MAX_RETAINED_WRITE_BYTES: number }).MAX_RETAINED_WRITE_BYTES;
 		(ChunkDownloader as unknown as { WRITE_RETRY_DELAY: number }).WRITE_RETRY_DELAY = 15;
 		(ChunkDownloader as unknown as { FILE_REALLOC_DELAY: number }).FILE_REALLOC_DELAY = 15;
 		Downloader.setMaxDownloadSpeed(0); // guard against a leftover throttle from other suites
@@ -294,6 +300,7 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 	afterEach(() => {
 		(ChunkDownloader as unknown as { WRITE_RETRY_DELAY: number }).WRITE_RETRY_DELAY = origDelay;
 		(ChunkDownloader as unknown as { FILE_REALLOC_DELAY: number }).FILE_REALLOC_DELAY = origFileReallocDelay;
+		(ChunkDownloader as unknown as { MAX_RETAINED_WRITE_BYTES: number }).MAX_RETAINED_WRITE_BYTES = origRetainedWriteLimit;
 	});
 
 	/**
@@ -368,16 +375,35 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		expect(h.errors).toHaveLength(0);
 	});
 
-	it('onRetry throws while taking the recovery pause → hold is released, not leaked', async () => {
+	it('a chunk larger than the retention cap fails without a re-download loop', async () => {
+		(ChunkDownloader as unknown as { MAX_RETAINED_WRITE_BYTES: number }).MAX_RETAINED_WRITE_BYTES = 1024;
+		const h = harness(1);
+		await h.cd.run();
+
+		expect(h.client.requestChunkCalls).toBe(1);
+		expect(h.ds.downloadedChunks.has(h.chunkID)).toBe(false);
+		expect(h.errors).toEqual([{ code: ErrorCodes.DISK_FULL, detail: '/tmp/test-dl' }]);
+	});
+
+	it('throwing recovery notifications cannot abort ENOENT recovery', async () => {
 		const h = harness(0);
-		// The write pause is a holder count, so a hold leaked by a throwing callback would
-		// never self-heal — every later peer loop would block on it for this Downloader's life.
-		h.ds.writeChunkOutcomes = [Object.assign(new Error('ENOENT'), { code: 'ENOENT' })];
+		h.ds.writeChunkOutcomes = [Object.assign(new Error('ENOENT'), { code: 'ENOENT' }), null];
+		(h.ds as unknown as { getFilesForVerification: () => null }).getFilesForVerification = () => null;
+		(h.deps as unknown as { fileAllocator: unknown }).fileAllocator = {
+			findMissingFiles: async () => [],
+			allocateFiles: async () => {},
+		} as never;
+		let notificationCalls = 0;
 		h.deps.onRetry = () => {
+			notificationCalls++;
 			throw new Error('callback blew up');
 		};
 		await h.cd.run();
 
+		expect(notificationCalls).toBe(2);
+		expect(h.client.requestChunkCalls).toBe(2);
+		expect(h.ds.downloadedChunks.has(h.chunkID)).toBe(true);
+		expect(h.errors).toHaveLength(0);
 		expect((h.pauseController as unknown as { writePauseHolders: number })['writePauseHolders']).toBe(0);
 		expect(h.pauseController.writePaused).toBe(false);
 		expect(h.pauseController.progressPaused).toBe(false);
@@ -431,6 +457,18 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		expect(h.ds.downloadedChunks.has(h.chunkID)).toBe(true);
 		expect(h.errors).toHaveLength(0); // never burned through 5 retries reporting DISK_FULL
 		expect(h.retries.some(r => r.resolved)).toBe(true); // disk retry state must not stay stuck in the FE
+	});
+
+	it('ENOENT resolves the old retry budget before a later ENOSPC', async () => {
+		const h = harness(0);
+		h.ds.writeChunkOutcomes = [Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }), Object.assign(new Error('ENOENT'), { code: 'ENOENT' }), Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }), null];
+		await h.cd.run();
+
+		const startedRetries = h.retries.filter(r => !r.resolved).map(r => r.retryCount);
+		expect(startedRetries).toEqual([1, 1]);
+		expect(h.client.requestChunkCalls).toBe(2);
+		expect(h.ds.downloadedChunks.has(h.chunkID)).toBe(true);
+		expect(h.errors).toHaveLength(0);
 	});
 
 	it('error changes to an unknown code mid-retry → fails with real cause, not DISK_FULL', async () => {
@@ -516,6 +554,165 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		expect(ds.downloadedChunks.has(idA)).toBe(true);
 		expect(ds.downloadedChunks.has(idB)).toBe(true);
 		expect(ds.writtenChunks).toHaveLength(2);
+		expect(errors).toHaveLength(0);
+	});
+
+	it('disabling releases multiple retained buffers and every write pause', async () => {
+		const payloads = [new Uint8Array(1024).fill(3), new Uint8Array(1024).fill(7)];
+		const chunkIDs = payloads.map(data => sha256Hex(data) as ChunkID);
+		const ds = new MockDataServer();
+		const lish = makeLISH({ chunkSize: 1024, files: [{ path: 'f.bin', size: 2048, checksums: chunkIDs }] });
+		ds.add(lish);
+		ds.allChunkCount = 2;
+		ds.missingChunks = chunkIDs.map((chunkID, chunkIndex) => makeMissingChunk(chunkID, 0, chunkIndex));
+
+		let initialWrites = 0;
+		let releaseInitialWrites!: () => void;
+		let allInitialWritesEntered!: () => void;
+		const initialWritesBlocked = new Promise<void>(resolve => {
+			releaseInitialWrites = resolve;
+		});
+		const allInitialWritesStarted = new Promise<void>(resolve => {
+			allInitialWritesEntered = resolve;
+		});
+		ds.writeChunk = async () => {
+			initialWrites++;
+			if (initialWrites === 2) allInitialWritesEntered();
+			await initialWritesBlocked;
+			throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+		};
+
+		const chunkData = new Map(chunkIDs.map((chunkID, index) => [chunkID, payloads[index]!]));
+		const clients = [new MockLISHClient(), new MockLISHClient()];
+		const peerManager = new PeerManager();
+		peerManager.setLishID(lish.id);
+		clients.forEach((client, index) => {
+			client.chunkData = chunkData;
+			peerManager.tryAdd(`peer-${index}`, client as never, 'DIRECT');
+		});
+		const state = { disabled: false, destroyed: false };
+		const pauseController = new PauseController(
+			() => state.disabled,
+			() => state.destroyed
+		);
+		const errors: Array<{ code: string; detail: string | undefined }> = [];
+		let disableScheduled = false;
+		const running = new ChunkDownloader({
+			lishID: lish.id,
+			downloadDir: '/tmp/test-dl',
+			abortSignal: new AbortController().signal,
+			dataServer: ds as never,
+			peerManager,
+			pauseController,
+			progressReporter: new ProgressReporter(),
+			fileAllocator: {} as never,
+			getLish: () => lish,
+			isDestroyed: () => state.destroyed,
+			isDisabled: () => state.disabled,
+			onSetError: (code, detail) => errors.push({ code, detail }),
+			onRetry: info => {
+				if (info.resolved || disableScheduled) return;
+				disableScheduled = true;
+				setTimeout(() => {
+					state.disabled = true;
+					pauseController.notifyStateChange();
+				}, 0);
+			},
+			emitAllocProgress: () => {},
+		}).run();
+
+		await allInitialWritesStarted;
+		releaseInitialWrites();
+		await running;
+
+		expect(clients[0]!.requestChunkCalls + clients[1]!.requestChunkCalls).toBe(2);
+		expect(ds.downloadedChunks.size).toBe(0);
+		expect(pauseController.writePaused).toBe(false);
+		expect(errors).toHaveLength(0);
+	});
+
+	it('three concurrent failures retain only buffers within the byte limit', async () => {
+		(ChunkDownloader as unknown as { MAX_RETAINED_WRITE_BYTES: number }).MAX_RETAINED_WRITE_BYTES = 2048;
+		const mk = (seed: number) => {
+			const bytes = new Uint8Array(1024);
+			for (let i = 0; i < bytes.length; i++) bytes[i] = (i * seed + 17) & 0xff;
+			return bytes;
+		};
+		const payloads = [mk(3), mk(7), mk(11)];
+		const chunkIDs = payloads.map(data => sha256Hex(data) as ChunkID);
+		const ds = new MockDataServer();
+		const lish = makeLISH({
+			chunkSize: 1024,
+			files: [{ path: 'f.bin', size: 3072, checksums: chunkIDs }],
+		});
+		ds.add(lish);
+		ds.allChunkCount = 3;
+		ds.missingChunks = chunkIDs.map((chunkID, chunkIndex) => makeMissingChunk(chunkID, 0, chunkIndex));
+
+		let initialWrites = 0;
+		let releaseInitialWrites!: () => void;
+		let allInitialWritesEntered!: () => void;
+		const initialWritesBlocked = new Promise<void>(resolve => {
+			releaseInitialWrites = resolve;
+		});
+		const allInitialWritesStarted = new Promise<void>(resolve => {
+			allInitialWritesEntered = resolve;
+		});
+		ds.writeChunk = async (_dir, _lish, fileIndex, chunkIndex, data) => {
+			initialWrites++;
+			if (initialWrites <= 3) {
+				if (initialWrites === 3) allInitialWritesEntered();
+				await initialWritesBlocked;
+				throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+			}
+			ds.writtenChunks.push({ fileIndex, chunkIndex, data });
+		};
+
+		const requestCounts = new Map<ChunkID, number>();
+		const chunkData = new Map(chunkIDs.map((chunkID, index) => [chunkID, payloads[index]!]));
+		const peerManager = new PeerManager();
+		peerManager.setLishID(lish.id);
+		for (let i = 0; i < 3; i++) {
+			const client = new MockLISHClient();
+			client.requestChunk = async (_lishID, chunkID) => {
+				client.requestChunkCalls++;
+				requestCounts.set(chunkID, (requestCounts.get(chunkID) ?? 0) + 1);
+				return chunkData.get(chunkID) ?? null;
+			};
+			peerManager.tryAdd(`peer-${i}`, client as never, 'DIRECT');
+		}
+		const state = { disabled: false, destroyed: false };
+		const errors: Array<{ code: string; detail: string | undefined }> = [];
+		const running = new ChunkDownloader({
+			lishID: lish.id,
+			downloadDir: '/tmp/test-dl',
+			abortSignal: new AbortController().signal,
+			dataServer: ds as never,
+			peerManager,
+			pauseController: new PauseController(
+				() => state.disabled,
+				() => state.destroyed
+			),
+			progressReporter: new ProgressReporter(),
+			fileAllocator: {} as never,
+			getLish: () => lish,
+			isDestroyed: () => state.destroyed,
+			isDisabled: () => state.disabled,
+			onSetError: (code, detail) => {
+				errors.push({ code, detail });
+				state.disabled = true;
+			},
+			onRetry: () => {},
+			emitAllocProgress: () => {},
+		}).run();
+
+		await allInitialWritesStarted;
+		releaseInitialWrites();
+		await running;
+
+		expect([...requestCounts.values()].reduce((sum, count) => sum + count, 0)).toBe(4);
+		expect(ds.downloadedChunks.size).toBe(3);
+		expect(ds.writtenChunks).toHaveLength(3);
 		expect(errors).toHaveLength(0);
 	});
 
