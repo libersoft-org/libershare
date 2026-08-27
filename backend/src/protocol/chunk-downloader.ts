@@ -67,6 +67,7 @@ export class ChunkDownloader {
 	private static readonly MAX_FILE_REALLOC = 3;
 	private static readonly MAX_WRITE_RETRIES = 5;
 	private static readonly WRITE_RETRY_DELAY = 60_000;
+	private static readonly FILE_REALLOC_DELAY = 10_000;
 
 	constructor(deps: ChunkDownloaderDeps) {
 		this.deps = deps;
@@ -120,6 +121,7 @@ export class ChunkDownloader {
 		// same per-peer notFound entries while nothing has settled.
 		let requeueVersion = 0;
 		const lock = new Mutex();
+		const writeRecoveryMutex = new Mutex();
 		const requeueChunk = async (chunk: MissingChunk): Promise<void> => {
 			await lock.runExclusive(() => {
 				queue.push(chunk);
@@ -171,6 +173,17 @@ export class ChunkDownloader {
 			for (const t of targets) await dataServer.writeChunk(downloadDir, lish, t.fileIndex, t.chunkIndex, payload);
 		};
 
+		const writeRetainedChunkToAllSlots = async (c: MissingChunk, payload: Uint8Array): Promise<boolean> => {
+			const release = await writeRecoveryMutex.acquire();
+			try {
+				if (this.deps.isDestroyed() || this.deps.isDisabled()) return false;
+				await writeChunkToAllSlots(c, payload);
+				return true;
+			} finally {
+				release();
+			}
+		};
+
 		// Retry a verified chunk's write from the retained in-memory buffer without re-downloading.
 		// Any peer that hits a disk-full write error routes here regardless of who holds the pause:
 		//   - pause free  → we become the owner: hold all writers and re-attempt our buffer every
@@ -209,7 +222,7 @@ export class ChunkDownloader {
 					// that ENOENT recovery is re-allocating and verifying — go back to waiting.
 					if (pauseController.writePaused) continue;
 					try {
-						await writeChunkToAllSlots(c, payload);
+						if (!(await writeRetainedChunkToAllSlots(c, payload))) return 'abort';
 						return 'written';
 					} catch (retryErr: any) {
 						const action = classify(retryErr);
@@ -244,7 +257,7 @@ export class ChunkDownloader {
 						});
 						if (this.deps.isDestroyed() || this.deps.isDisabled()) return 'abort';
 						try {
-							await writeChunkToAllSlots(c, payload);
+							if (!(await writeRetainedChunkToAllSlots(c, payload))) return 'abort';
 							console.log(`[DL] Write retry succeeded for ${lishID.slice(0, 8)}`);
 							this.writeRetryCount = 0;
 							notifyWriteRetry({ errorCode: code, errorDetail: downloadDir, retryCount: 0, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES, resolved: true });
@@ -459,16 +472,22 @@ export class ChunkDownloader {
 							// onRetry callback: it is set by an outside caller and may throw.
 							this.fileReallocInProgress.add(-1);
 							let aborted = false;
+							let releaseWriteRecovery: (() => void) | undefined;
 							try {
 								pauseController.pauseWrites();
 								pauseController.pauseProgress();
 								progressReporter.resetLastFile();
+								releaseWriteRecovery = await writeRecoveryMutex.acquire();
+								if (this.deps.isDestroyed() || this.deps.isDisabled()) {
+									aborted = true;
+									break;
+								}
 								console.warn(`[DL] File deleted detected, pausing all transfers for 10s before recovery (attempt ${globalAttempts}/${ChunkDownloader.MAX_FILE_REALLOC})`);
 								this.deps.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: downloadDir, retryCount: globalAttempts, maxRetries: ChunkDownloader.MAX_FILE_REALLOC });
 								// FE shows retrying badge during the 10s pause — no progress override
 								// 10s delay — let the user finish deleting files before we scan
 								await new Promise<void>(resolve => {
-									const timer = setTimeout(resolve, 10_000);
+									const timer = setTimeout(resolve, ChunkDownloader.FILE_REALLOC_DELAY);
 									const check = setInterval(() => {
 										if (this.deps.isDestroyed() || this.deps.isDisabled()) {
 											clearTimeout(timer);
@@ -476,7 +495,7 @@ export class ChunkDownloader {
 											resolve();
 										}
 									}, 1000);
-									setTimeout(() => clearInterval(check), 10_100);
+									setTimeout(() => clearInterval(check), ChunkDownloader.FILE_REALLOC_DELAY + 100);
 								});
 								if (this.deps.isDestroyed() || this.deps.isDisabled()) {
 									aborted = true;
@@ -544,6 +563,7 @@ export class ChunkDownloader {
 								aborted = true;
 								break;
 							} finally {
+								releaseWriteRecovery?.();
 								this.fileReallocInProgress.delete(-1);
 								pauseController.resumeProgress();
 								pauseController.resumeWrites();

@@ -280,16 +280,20 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 	}
 
 	let origDelay: number;
+	let origFileReallocDelay: number;
 
 	beforeEach(() => {
 		// Shrink the 60s retry pause so the loop runs in milliseconds under test.
 		origDelay = (ChunkDownloader as unknown as { WRITE_RETRY_DELAY: number }).WRITE_RETRY_DELAY;
+		origFileReallocDelay = (ChunkDownloader as unknown as { FILE_REALLOC_DELAY: number }).FILE_REALLOC_DELAY;
 		(ChunkDownloader as unknown as { WRITE_RETRY_DELAY: number }).WRITE_RETRY_DELAY = 15;
+		(ChunkDownloader as unknown as { FILE_REALLOC_DELAY: number }).FILE_REALLOC_DELAY = 15;
 		Downloader.setMaxDownloadSpeed(0); // guard against a leftover throttle from other suites
 	});
 
 	afterEach(() => {
 		(ChunkDownloader as unknown as { WRITE_RETRY_DELAY: number }).WRITE_RETRY_DELAY = origDelay;
+		(ChunkDownloader as unknown as { FILE_REALLOC_DELAY: number }).FILE_REALLOC_DELAY = origFileReallocDelay;
 	});
 
 	/**
@@ -587,5 +591,145 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		expect(retryCounts.slice(0, 2)).toEqual([1, 2]);
 		expect(ds.downloadedChunks.has(idA)).toBe(true);
 		expect(ds.downloadedChunks.has(idB)).toBe(true);
+	});
+
+	it('retained write waits until concurrent ENOENT recovery finishes', async () => {
+		const mk = (seed: number) => {
+			const bytes = new Uint8Array(1024);
+			for (let i = 0; i < bytes.length; i++) bytes[i] = (i * seed + 13) & 0xff;
+			return bytes;
+		};
+		const dataA = mk(3);
+		const dataB = mk(7);
+		const idA = sha256Hex(dataA) as ChunkID;
+		const idB = sha256Hex(dataB) as ChunkID;
+		const ds = new MockDataServer();
+		const lish = makeLISH({ chunkSize: 1024, files: [{ path: 'f.bin', size: 2048, checksums: [idA, idB] }] });
+		ds.add(lish);
+		ds.allChunkCount = 2;
+		ds.missingChunks = [makeMissingChunk(idA, 0, 0), makeMissingChunk(idB, 0, 1)];
+		(ds as unknown as { getFilesForVerification: () => null }).getFilesForVerification = () => null;
+
+		let firstWriteEntered!: () => void;
+		let secondWriteEntered!: () => void;
+		let releaseFirstWrite!: () => void;
+		let releaseSecondWrite!: () => void;
+		const firstWriteStarted = new Promise<void>(resolve => {
+			firstWriteEntered = resolve;
+		});
+		const secondWriteStarted = new Promise<void>(resolve => {
+			secondWriteEntered = resolve;
+		});
+		const firstWriteBlocked = new Promise<void>(resolve => {
+			releaseFirstWrite = resolve;
+		});
+		const secondWriteBlocked = new Promise<void>(resolve => {
+			releaseSecondWrite = resolve;
+		});
+		let writeCalls = 0;
+		let retainedChunkIndex = -1;
+		let recoveryActive = false;
+		let writeDuringRecovery = false;
+		ds.writeChunk = async (_dir, _lish, fileIndex, chunkIndex, data) => {
+			writeCalls++;
+			if (writeCalls === 1) {
+				retainedChunkIndex = chunkIndex;
+				firstWriteEntered();
+				await firstWriteBlocked;
+				throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+			}
+			if (writeCalls === 2) {
+				secondWriteEntered();
+				await secondWriteBlocked;
+				throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			}
+			if (recoveryActive) writeDuringRecovery = true;
+			ds.writtenChunks.push({ fileIndex, chunkIndex, data });
+		};
+
+		const requestCounts = new Map<ChunkID, number>();
+		const client = () => {
+			const c = new MockLISHClient();
+			c.requestChunk = async (_lishID, chunkID) => {
+				c.requestChunkCalls++;
+				requestCounts.set(chunkID, (requestCounts.get(chunkID) ?? 0) + 1);
+				return chunkID === idA ? dataA : dataB;
+			};
+			return c;
+		};
+		const c1 = client();
+		const c2 = client();
+		const peerManager = new PeerManager();
+		peerManager.setLishID(lish.id);
+		peerManager.tryAdd('peer-1', c1 as never, 'DIRECT');
+		peerManager.tryAdd('peer-2', c2 as never, 'DIRECT');
+
+		let recoveryEntered!: () => void;
+		let releaseRecovery!: () => void;
+		const recoveryStarted = new Promise<void>(resolve => {
+			recoveryEntered = resolve;
+		});
+		const recoveryBlocked = new Promise<void>(resolve => {
+			releaseRecovery = resolve;
+		});
+		const fileAllocator = {
+			findMissingFiles: async () => {
+				recoveryActive = true;
+				recoveryEntered();
+				await recoveryBlocked;
+				recoveryActive = false;
+				return [];
+			},
+			allocateFiles: async () => {},
+		};
+		const state = { disabled: false, destroyed: false };
+		const errors: Array<{ code: string; detail: string | undefined }> = [];
+		let retryStarted!: () => void;
+		const retryCycleStarted = new Promise<void>(resolve => {
+			retryStarted = resolve;
+		});
+		const deps: ChunkDownloaderDeps = {
+			lishID: lish.id,
+			downloadDir: '/tmp/test-dl',
+			abortSignal: new AbortController().signal,
+			dataServer: ds as never,
+			peerManager,
+			pauseController: new PauseController(
+				() => state.disabled,
+				() => state.destroyed
+			),
+			progressReporter: new ProgressReporter(),
+			fileAllocator: fileAllocator as never,
+			getLish: () => lish,
+			isDestroyed: () => state.destroyed,
+			isDisabled: () => state.disabled,
+			onSetError: (code, detail) => {
+				errors.push({ code, detail });
+				state.disabled = true;
+			},
+			onRetry: info => {
+				if (info.errorCode === ErrorCodes.DISK_FULL && !info.resolved) retryStarted();
+			},
+			emitAllocProgress: () => {},
+		};
+
+		const running = new ChunkDownloader(deps).run();
+		await Promise.all([firstWriteStarted, secondWriteStarted]);
+		releaseFirstWrite();
+		await retryCycleStarted;
+		releaseSecondWrite();
+		await recoveryStarted;
+		await new Promise(resolve => setTimeout(resolve, 40));
+		const markedDuringRecovery = ds.downloadedChunks.size > 0;
+		releaseRecovery();
+		await running;
+
+		const retainedID = retainedChunkIndex === 0 ? idA : idB;
+		expect(writeDuringRecovery).toBe(false);
+		expect(markedDuringRecovery).toBe(false);
+		expect(requestCounts.get(retainedID)).toBe(1);
+		expect(ds.downloadedChunks.has(idA)).toBe(true);
+		expect(ds.downloadedChunks.has(idB)).toBe(true);
+		expect(errors).toHaveLength(0);
 	});
 });
