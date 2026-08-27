@@ -126,6 +126,13 @@ export class ChunkDownloader {
 				requeueVersion++;
 			});
 		};
+		const notifyWriteRetry = (info: RetryInfo): void => {
+			try {
+				this.deps.onRetry?.(info);
+			} catch (err) {
+				console.error('[DL] Write retry callback failed:', err);
+			}
+		};
 		// Track all peerLoop promises so we can await dynamically spawned ones
 		const peerLoopPromises = new Map<string, Promise<void>>();
 
@@ -223,7 +230,7 @@ export class ChunkDownloader {
 							return 'abort';
 						}
 						console.warn(`[DL] ${lishID.slice(0, 8)}: write failed (${code}), pausing ${ChunkDownloader.WRITE_RETRY_DELAY / 1000}s (attempt ${this.writeRetryCount}/${ChunkDownloader.MAX_WRITE_RETRIES})`);
-						this.deps.onRetry?.({ errorCode: code, errorDetail: downloadDir, retryCount: this.writeRetryCount, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES });
+						notifyWriteRetry({ errorCode: code, errorDetail: downloadDir, retryCount: this.writeRetryCount, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES });
 						await new Promise<void>(resolve => {
 							const timer = setTimeout(resolve, ChunkDownloader.WRITE_RETRY_DELAY);
 							const check = setInterval(() => {
@@ -240,7 +247,7 @@ export class ChunkDownloader {
 							await writeChunkToAllSlots(c, payload);
 							console.log(`[DL] Write retry succeeded for ${lishID.slice(0, 8)}`);
 							this.writeRetryCount = 0;
-							this.deps.onRetry?.({ errorCode: code, errorDetail: downloadDir, retryCount: 0, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES, resolved: true });
+							notifyWriteRetry({ errorCode: code, errorDetail: downloadDir, retryCount: 0, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES, resolved: true });
 							return 'written';
 						} catch (retryErr: any) {
 							const action = classify(retryErr);
@@ -248,6 +255,7 @@ export class ChunkDownloader {
 								console.warn(`[DL] ${lishID.slice(0, 8)}: write retry still failed (attempt ${this.writeRetryCount}/${ChunkDownloader.MAX_WRITE_RETRIES}): ${retryErr?.code}`);
 								continue;
 							}
+							if (action === 'requeue') notifyWriteRetry({ errorCode: code, errorDetail: downloadDir, retryCount: 0, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES, resolved: true });
 							return action;
 						}
 					}
@@ -566,7 +574,10 @@ export class ChunkDownloader {
 					dataServer.incrementDownloadedBytes(lishID, data.length);
 					recordDownloadBytes(lishID, peerID, data.length, lish.files?.[chunk.fileIndex]?.path);
 					downloadedCount++;
-					if (this.writeRetryCount > 0) this.writeRetryCount = 0;
+					// A write that started before another peer acquired the recovery pause may
+					// finish while that peer is still retrying. It does not prove the active
+					// retained write recovered and must not reset its shared retry budget.
+					if (!pauseController.writePaused && this.writeRetryCount > 0) this.writeRetryCount = 0;
 					const fIdx = chunk.fileIndex;
 					progressReporter.recordChunk(data.length, fIdx, lish.files?.[fIdx]?.path);
 					if (downloadedCount % 50 === 0 || downloadedCount === totalChunks) {
