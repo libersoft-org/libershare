@@ -472,7 +472,9 @@
 			"confirmMessage": "Wipe the selected categories? Files on disk are kept, but this action cannot be undone.",
 			"error": "Factory reset failed: {detail}",
 			"categoryDone": "{category} – reset",
-			"categoryFailed": "{category} – failed: {detail}"
+			"categoryFailed": "{category} – failed: {detail}",
+			"prepareFailed": "Transfers and the network node could not be stopped, so nothing that uses them was wiped: {detail}",
+			"restartFailed": "The network node was not started again: {detail}"
 		},
 		"identity": {
 			"title": "Identity",

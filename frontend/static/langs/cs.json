@@ -472,7 +472,9 @@
 			"confirmMessage": "Opravdu vymazat vybrané kategorie? Soubory na disku zůstanou, ale tuto akci nelze vrátit zpět.",
 			"error": "Obnova továrního nastavení selhala: {detail}",
 			"categoryDone": "{category} – vyresetováno",
-			"categoryFailed": "{category} – selhalo: {detail}"
+			"categoryFailed": "{category} – selhalo: {detail}",
+			"prepareFailed": "Přenosy a síťový uzel se nepodařilo zastavit, proto nebylo vymazáno nic, co je používá: {detail}",
+			"restartFailed": "Síťový uzel nebyl znovu spuštěn: {detail}"
 		},
 		"identity": {
 			"title": "Identita",

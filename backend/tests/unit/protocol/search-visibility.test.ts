@@ -47,7 +47,12 @@ describe('LISH search visibility', () => {
 		// exact substring that would break on every new predicate.
 		const getLishsBlock = LISH_PROTOCOL_TS.slice(LISH_PROTOCOL_TS.indexOf("request.type === 'getLishs'"), LISH_PROTOCOL_TS.indexOf("request.type === 'getLish'"));
 		expect(getLishsBlock).toContain('isUploadAdvertisable(l.id)');
-		expect(LISH_PROTOCOL_TS).toContain('if (!isUploadAdvertisable(request.lishID))');
+		// getLish guard: still rejects non-advertisable LISHs; the shared-lishnet
+		// gate sits in front of it within the same condition.
+		expect(LISH_PROTOCOL_TS).toContain('!isUploadAdvertisable(request.lishID)');
+		// The lishnet serve-gate must protect both unicast discovery request types.
+		expect(getLishsBlock).toContain('sharesNetworkWith');
+		expect(LISH_PROTOCOL_TS.slice(LISH_PROTOCOL_TS.indexOf("request.type === 'getLish'"))).toContain('sharesNetworkWith');
 	});
 
 	it('marks queued verification as busy before broadcasting pending-verification', () => {
