@@ -241,12 +241,12 @@ export class ChunkDownloader {
 				return 'requeue';
 			}
 			let code = firstCode;
-			// Classify a failed retry write. Disk-full class → 'retry' (track the current code so
+			// Classify a failed retry write. Recoverable storage errors → 'retry' (track the current code so
 			// notifications/onSetError report the live cause even if it switches, e.g. EACCES→ENOSPC).
 			// File vanished (ENOENT) → 'requeue' into the existing recovery. Anything else → fail real.
 			const classify = (retryErr: any): 'retry' | 'requeue' | 'abort' => {
 				const rc = retryErr?.code;
-				if (rc === 'ENOSPC' || rc === 'EACCES' || rc === 'EPERM') {
+				if (rc === 'ENOSPC' || rc === 'EACCES' || rc === 'EPERM' || rc === 'EROFS') {
 					code = rc === 'ENOSPC' ? ErrorCodes.DISK_FULL : ErrorCodes.DIRECTORY_ACCESS_DENIED;
 					return 'retry';
 				}
@@ -629,7 +629,7 @@ export class ChunkDownloader {
 							if (aborted) break;
 							notifyRetry({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: downloadDir, retryCount: globalAttempts, maxRetries: ChunkDownloader.MAX_FILE_REALLOC, resolved: true });
 							continue;
-						} else if (err.code === 'ENOSPC' || err.code === 'EACCES' || err.code === 'EPERM') {
+						} else if (err.code === 'ENOSPC' || err.code === 'EACCES' || err.code === 'EPERM' || err.code === 'EROFS') {
 							// Disk full or permission denied. `data` is already length+hash verified, so we
 							// hold it in memory (closure-scoped, no global cache) and retry the SAME bytes \u2014
 							// whether we own the write pause or are waiting on another peer's \u2014 instead of

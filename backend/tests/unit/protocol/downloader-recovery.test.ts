@@ -375,7 +375,7 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		expect(h.errors).toHaveLength(0);
 	});
 
-	for (const code of ['EACCES', 'EPERM'] as const) {
+	for (const code of ['EACCES', 'EPERM', 'EROFS'] as const) {
 		it(`${code} retries the verified chunk from memory`, async () => {
 			const h = harness(0);
 			h.ds.writeChunkOutcomes = [Object.assign(new Error(code), { code }), null];
@@ -387,6 +387,17 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 			expect(h.errors).toHaveLength(0);
 		});
 	}
+
+	it('keeps retrying when the write error changes to EROFS', async () => {
+		const h = harness(0);
+		h.ds.writeChunkOutcomes = [Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }), Object.assign(new Error('EROFS'), { code: 'EROFS' }), null];
+		await h.cd.run();
+
+		expect(h.client.requestChunkCalls).toBe(1);
+		expect(h.ds.downloadedChunks.has(h.chunkID)).toBe(true);
+		expect(h.retries.filter(r => !r.resolved).map(r => r.errorCode)).toEqual([ErrorCodes.DISK_FULL, ErrorCodes.DIRECTORY_ACCESS_DENIED]);
+		expect(h.errors).toHaveLength(0);
+	});
 
 	it('a chunk larger than the base retention cap still retries from memory', async () => {
 		(ChunkDownloader as unknown as { MAX_RETAINED_WRITE_BYTES: number }).MAX_RETAINED_WRITE_BYTES = 1024;
