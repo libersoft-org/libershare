@@ -122,6 +122,8 @@ export class ChunkDownloader {
 		// same per-peer notFound entries while nothing has settled.
 		let requeueVersion = 0;
 		let retainedWriteBytes = 0;
+		let retainedWriteDrainPending = false;
+		let retainedWriteDrainResolvers: Array<() => void> = [];
 		const lock = new Mutex();
 		const writeRecoveryMutex = new Mutex();
 		const requeueChunk = async (chunk: MissingChunk): Promise<void> => {
@@ -137,18 +139,39 @@ export class ChunkDownloader {
 				console.error('[DL] Retry callback failed:', err);
 			}
 		};
+		const waitForRetainedWritesToDrain = async (): Promise<void> => {
+			while (retainedWriteDrainPending && !this.deps.isDestroyed() && !this.deps.isDisabled()) {
+				if (retainedWriteBytes === 0 && inFlight === 0) {
+					retainedWriteDrainPending = false;
+					return;
+				}
+				await new Promise<void>(resolve => {
+					retainedWriteDrainResolvers.push(resolve);
+				});
+			}
+		};
+		const notifyRetainedWriteDrain = (): void => {
+			if (retainedWriteDrainResolvers.length === 0) return;
+			const pending = retainedWriteDrainResolvers;
+			retainedWriteDrainResolvers = [];
+			for (const resolve of pending) resolve();
+		};
 		const reserveRetainedWriteBytes = (bytes: number): (() => void) | null => {
 			// A configured chunk may legitimately exceed the base budget. It is already in memory
 			// when the write fails, so allow one such buffer when no other retained write exists.
 			// Once any buffer is retained, the normal aggregate cap applies; an oversized buffer
 			// therefore excludes every concurrent reservation until it is released.
-			if (retainedWriteBytes > 0 && bytes > ChunkDownloader.MAX_RETAINED_WRITE_BYTES - retainedWriteBytes) return null;
+			if (retainedWriteBytes > 0 && bytes > ChunkDownloader.MAX_RETAINED_WRITE_BYTES - retainedWriteBytes) {
+				retainedWriteDrainPending = true;
+				return null;
+			}
 			retainedWriteBytes += bytes;
 			let released = false;
 			return () => {
 				if (released) return;
 				released = true;
 				retainedWriteBytes -= bytes;
+				if (retainedWriteBytes === 0) notifyRetainedWriteDrain();
 			};
 		};
 		// Track all peerLoop promises so we can await dynamically spawned ones
@@ -343,6 +366,12 @@ export class ChunkDownloader {
 				if (this.deps.isDestroyed() || this.deps.isDisabled()) break;
 				await pauseController.waitIfDisabled();
 				await pauseController.waitIfWritePaused();
+				// A foreign recovery pause may end while verified chunks are still queued for
+				// retained writes. Drain those buffers before starting fresh network transfers;
+				// otherwise a memory-pressure requeue can be downloaded repeatedly while a
+				// slow retained write still occupies the budget.
+				await waitForRetainedWritesToDrain();
+				if (this.deps.isDestroyed() || this.deps.isDisabled()) break;
 				let chunk: MissingChunk | undefined;
 				let onlyNotFoundLeft = false;
 				let observedRequeueVersion = 0;
@@ -637,6 +666,7 @@ export class ChunkDownloader {
 					// The chunk's fate is settled (downloaded, requeued, or fatal) — release
 					// the in-flight claim so idle peers can make their exit/drop decision.
 					inFlight--;
+					if (retainedWriteDrainPending) notifyRetainedWriteDrain();
 				}
 			}
 			peerManager.markInactive(peerID);
