@@ -27,7 +27,15 @@ import { CodedError, ErrorCodes } from '@shared';
 export class PauseController {
 	private enableResolvers: (() => void)[] = [];
 	private writeResolvers: (() => void)[] = [];
-	private _writePaused = false;
+	/**
+	 * Number of holders of the write pause, not a flag. Two independent paths pause
+	 * writes — the retained-write retry cycle and missing-file recovery — and either
+	 * can start while the other is mid-cycle. With a boolean, whichever finished first
+	 * opened the gate for both, so a peer could see writes running, claim ownership of
+	 * a retry cycle someone else already owned, and share its retry budget.
+	 * Counting means the pause lifts only once the last holder has released.
+	 */
+	private writePauseHolders = 0;
 	private _progressPaused = false;
 	private readonly isDisabled: () => boolean;
 	private readonly isDestroyed: () => boolean;
@@ -38,7 +46,7 @@ export class PauseController {
 	}
 
 	get writePaused(): boolean {
-		return this._writePaused;
+		return this.writePauseHolders > 0;
 	}
 
 	get progressPaused(): boolean {
@@ -46,12 +54,13 @@ export class PauseController {
 	}
 
 	pauseWrites(): void {
-		this._writePaused = true;
+		this.writePauseHolders++;
 	}
 
+	/** Release one hold. Waiters wake only once every holder has released. */
 	resumeWrites(): void {
-		this._writePaused = false;
-		this.drainWriteResolvers();
+		this.writePauseHolders = Math.max(0, this.writePauseHolders - 1);
+		if (this.writePauseHolders === 0) this.drainWriteResolvers();
 	}
 
 	pauseProgress(): void {
@@ -91,7 +100,7 @@ export class PauseController {
 	 * via their own destroyed/disabled checks right after.
 	 */
 	async waitIfWritePaused(): Promise<void> {
-		if (!this._writePaused) return;
+		if (this.writePauseHolders === 0) return;
 		if (this.isDisabled() || this.isDestroyed()) return;
 		await new Promise<void>(resolve => {
 			this.writeResolvers.push(resolve);
