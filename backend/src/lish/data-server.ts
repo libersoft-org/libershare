@@ -10,9 +10,11 @@ export type { MissingChunk };
 
 export class DataServer {
 	private db: Database;
+	private openFile: typeof open;
 
-	constructor(db: Database) {
+	constructor(db: Database, openFile: typeof open = open) {
 		this.db = db;
+		this.openFile = openFile;
 	}
 
 	get(lishID: LISHid): IStoredLISH | null {
@@ -232,9 +234,14 @@ export class DataServer {
 		const filePath = resolve(downloadDir, file.path);
 		if (!filePath.startsWith(resolve(downloadDir) + sep)) throw new CodedError(ErrorCodes.INVALID_FILE_INDEX, `Path traversal: ${file.path}`);
 		const offset = chunkIndex * lish.chunkSize;
-		const fd = await open(filePath, 'r+');
+		const fd = await this.openFile(filePath, 'r+');
 		try {
-			await fd.write(data, 0, data.length, offset);
+			let bytesWritten = 0;
+			while (bytesWritten < data.length) {
+				const result = await fd.write(data, bytesWritten, data.length - bytesWritten, offset + bytesWritten);
+				if (result.bytesWritten <= 0) throw Object.assign(new Error('File write made no progress'), { code: 'EIO' });
+				bytesWritten += result.bytesWritten;
+			}
 		} finally {
 			await fd.close();
 		}
