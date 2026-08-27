@@ -192,6 +192,8 @@ export function decodeBinaryRequest(frame: Uint8Array): Request {
 	// The header is bounded and cheap, so it is parsed first — that way an
 	// oversized payload is still rejected with the id the caller is waiting on.
 	const req = JSON.parse(new TextDecoder().decode(frame.subarray(BINARY_HEADER_PREFIX, payloadStart))) as Request;
+	if (!req || typeof req !== 'object' || Array.isArray(req)) throw new CodedError(ErrorCodes.PARSE_ERROR);
+	if (req.params !== undefined && (!req.params || typeof req.params !== 'object' || Array.isArray(req.params))) throw new BinaryFrameError(ErrorCodes.PARSE_ERROR, 'params must be an object', typeof req.id === 'string' ? req.id : null);
 	// Checked before the copy below, which is the allocation worth avoiding.
 	if (frame.byteLength - payloadStart > MAX_UPLOAD_CHUNK_SIZE) throw new BinaryFrameError(ErrorCodes.UPLOAD_CHUNK_TOO_LARGE, formatBytes(MAX_UPLOAD_CHUNK_SIZE), req.id ?? null);
 	req.params = { ...req.params, data: new Uint8Array(frame.subarray(payloadStart)) };

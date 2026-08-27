@@ -38,6 +38,14 @@ const UPLOAD_IDLE_MS = 15 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
+ * Time a manual or timer-triggered sweep waits for the cleanups it started.
+ * Normal closes and unlinks finish inside this window, so `await sweep()` keeps
+ * its useful completion semantics. A wedged filesystem operation is detached
+ * after the grace period so it cannot wedge every later sweep as well.
+ */
+const SWEEP_CLEANUP_GRACE_MS = 250;
+
+/**
  * Transfers one client may have open at once. Each holds an open file handle and
  * may grow to the size ceiling, so an unbounded number of them is a way to fill
  * the disk from a single socket.
@@ -208,6 +216,7 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 
 	async function runSweep(): Promise<void> {
 		const now = Date.now();
+		const startedCleanups: Promise<void>[] = [];
 		// Cleanups whose unlink failed come first. Those bytes are still charged to
 		// the global budget — correctly, since the file is still there — so a stuck
 		// cleanup starves every other client until it is retried.
@@ -221,7 +230,12 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 			// above, mean no sweep ever runs again. A cleanup that failed leaves the
 			// record here with no promise on it, which is the case worth retrying.
 			if (upload.cleanup) continue;
-			await release(uploadID, upload);
+			// Start the retry, but never make the sweep itself depend on storage
+			// returning. A wedged unlink must hold this upload's quota, not the
+			// single-flight promise that allows every other stale upload and orphan to
+			// be discovered on later passes. `discard` publishes `upload.cleanup`
+			// synchronously, so another sweep cannot start a competing retry.
+			startedCleanups.push(discard(uploadID));
 		}
 		// Idle transfers next, so their files become unowned and the pass below
 		// can see them rather than skipping them as active.
@@ -239,7 +253,10 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 			if (!isIdleExpirable(upload.state)) continue;
 			if (now - upload.lastActivityAt < idleMs) continue;
 			console.warn(`[API] Upload expired after ${Math.round((now - upload.lastActivityAt) / 1000)}s idle: ${uploadID}`);
-			await discard(uploadID);
+			// Cleanup owns its own joinable promise. The sweep only starts it: awaiting
+			// a writer close or unlink here would let one wedged filesystem operation
+			// stop every future sweep.
+			startedCleanups.push(discard(uploadID));
 		}
 		let names: string[];
 		try {
@@ -247,7 +264,7 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 		} catch (err: any) {
 			// ENOENT before the first upload is the normal case, not a fault.
 			if (err?.code !== 'ENOENT') console.error(`[API] Upload sweep could not read ${uploadDir}: ${err.message}`);
-			return;
+			names = [];
 		}
 		const cutoff = now - maxAgeMs;
 		for (const name of names) {
@@ -266,6 +283,9 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 				// fills up with no indication of why.
 				if (err?.code !== 'ENOENT') console.error(`[API] Upload sweep failed to remove ${path}: ${err.message}`);
 			}
+		}
+		if (startedCleanups.length > 0) {
+			await Promise.race([Promise.allSettled(startedCleanups), Bun.sleep(SWEEP_CLEANUP_GRACE_MS)]);
 		}
 	}
 

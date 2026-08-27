@@ -44,7 +44,7 @@ function startUpstream(): { url: string; port: number; stop: () => void } {
 async function startProxy(backendUrl: string): Promise<{ url: string; stop: () => void }> {
 	const script = await stageProxy();
 	const port = 20000 + Math.floor(Math.random() * 20000);
-	const proc = Bun.spawn(['bun', script], {
+	const proc = Bun.spawn([process.execPath, script], {
 		env: { ...process.env, PORT: String(port), BACKEND_WS_URL: backendUrl },
 		stdout: 'pipe',
 		stderr: 'pipe',
