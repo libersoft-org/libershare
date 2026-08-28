@@ -54,6 +54,8 @@ export function handleHealthProbe(req: globalThis.Request): Response | null {
 
 /** Longest params blob written to the log; enough to identify a call, short of dumping a file upload. */
 const MAX_LOGGED_PARAMS = 1000;
+/** Request fields whose values must never reach logs, regardless of nesting. */
+const SENSITIVE_PARAM_NAME = /(?:password|passphrase|token|secret|authorization|api[-_]?key)/i;
 
 /**
  * Serialise request params for the log, truncated. Some methods carry a whole
@@ -64,8 +66,17 @@ const MAX_LOGGED_PARAMS = 1000;
  * `Buffer`, whose `toJSON` would run before this replacer ever sees it.
  */
 export function formatParamsForLog(params: unknown): string {
-	const json = JSON.stringify(params, (_key, value) => (value instanceof Uint8Array ? `<${value.byteLength} bytes>` : value)) ?? String(params);
+	const json =
+		JSON.stringify(params, (key, value) => {
+			if (key && SENSITIVE_PARAM_NAME.test(key)) return '[REDACTED]';
+			return value instanceof Uint8Array ? `<${value.byteLength} bytes>` : value;
+		}) ?? String(params);
 	return json.length <= MAX_LOGGED_PARAMS ? json : json.slice(0, MAX_LOGGED_PARAMS) + `…(${json.length} chars)`;
+}
+
+/** Host network administration is local-only unless the remote API is authenticated. */
+export function canAdministerHostNetwork(isLocalClient: boolean, apiTokenConfigured: boolean): boolean {
+	return isLocalClient || apiTokenConfigured;
 }
 
 /** Byte length of the header-length prefix on a binary request frame. */
@@ -269,6 +280,12 @@ export class APIServer {
 			return false;
 		};
 		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers);
+		const networkAdmin = <P, R>(handler: (params: P) => R): ((params: P, client: ClientSocket) => R) => {
+			return (params, client) => {
+				if (!canAdministerHostNetwork(client.data.isLocalClient, !!this.apiToken)) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'remote host network administration requires API authentication');
+				return handler(params);
+			};
+		};
 		this._system = _system;
 		_system.startPolling();
 		const _relay = initRelayHandlers(this.networks, broadcastFn, hasSubscribers);
@@ -415,9 +432,9 @@ export class APIServer {
 			'system.setVolume': _system.setVolume,
 			'system.getVolume': _system.getVolume,
 			'system.network': _system.network,
-			'system.networkApply': _system.networkApply,
-			'system.wifiScan': _system.wifiScan,
-			'system.wifiConnect': _system.wifiConnect,
+			'system.networkApply': networkAdmin(_system.networkApply),
+			'system.wifiScan': networkAdmin(_system.wifiScan),
+			'system.wifiConnect': networkAdmin(_system.wifiConnect),
 			// Relay
 			'relay.stats': _relay.stats,
 		};
