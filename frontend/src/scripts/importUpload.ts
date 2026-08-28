@@ -17,8 +17,10 @@ export interface ImportUploadDeps {
 
 export interface ImportUploader {
 	pick: (file: File) => Promise<void>;
-	/** Stop treating an upload as discardable because the parser now owns it. */
+	/** Move an upload from the picker to parser-owned cleanup. */
 	consume: (uploadID: string) => void;
+	/** Release a parser-owned upload after parsing settles. */
+	finishConsume: (uploadID: string) => void;
 	unmount: () => void;
 }
 
@@ -27,8 +29,8 @@ export interface ImportUploader {
  * A mode change or a newer selection means the old result must not overwrite the
  * state the user is now looking at.
  */
-export function importOwnsForm(parsingUpload: boolean, currentUploadMode: boolean, currentSelection: string, parsing: string): boolean {
-	return parsingUpload === currentUploadMode && currentSelection === parsing;
+export function importOwnsForm(parsingUpload: boolean, currentUploadMode: boolean, currentSelection: string, parsing: string, mounted = true): boolean {
+	return mounted && parsingUpload === currentUploadMode && currentSelection === parsing;
 }
 
 /**
@@ -40,10 +42,16 @@ export function createImportUploader(form: ImportUploadForm, deps: ImportUploadD
 	let newest = 0;
 	let mounted = true;
 	let activeUploadID = '';
+	const consumedUploadIDs = new Set<string>();
 	let cleanup: { uploadID: string; promise: Promise<void> } | null = null;
 
 	function discardQuietly(uploadID: string): void {
 		void deps.discard(uploadID).catch(() => {});
+	}
+
+	function discardConsumed(uploadID: string): void {
+		if (!consumedUploadIDs.delete(uploadID)) return;
+		discardQuietly(uploadID);
 	}
 
 	function discardActive(uploadID: string): Promise<void> {
@@ -97,12 +105,18 @@ export function createImportUploader(form: ImportUploadForm, deps: ImportUploadD
 		},
 		consume(uploadID: string): void {
 			if (activeUploadID === uploadID) activeUploadID = '';
+			if (mounted) consumedUploadIDs.add(uploadID);
+			else discardQuietly(uploadID);
+		},
+		finishConsume(uploadID: string): void {
+			discardConsumed(uploadID);
 		},
 		unmount(): void {
 			mounted = false;
 			newest++;
 			const uploadID = activeUploadID;
 			if (uploadID) void discardActive(uploadID).catch(() => {});
+			for (const consumedUploadID of consumedUploadIDs) discardConsumed(consumedUploadID);
 		},
 	};
 }

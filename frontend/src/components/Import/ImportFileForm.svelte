@@ -55,6 +55,7 @@
 	let parsedData = $state<TData | null>(null);
 	/** Label shown in the blocking dialog, empty while nothing is running. */
 	let busyLabel = $state('');
+	let destroyed = false;
 
 	const uploader = createImportUploader(
 		{
@@ -99,6 +100,7 @@
 	// mode switch followed by a path import, any navigation away — would strand
 	// the uploaded copy on the backend's disk until it ages out.
 	onDestroy(() => {
+		destroyed = true;
 		uploader.unmount();
 	});
 
@@ -136,7 +138,7 @@
 		// result to itself: opening a confirmation screen for the old file, clearing
 		// the new pick's spinner or reporting the old file's error would all overrule
 		// the choice the user just made.
-		const ownsForm = (): boolean => importOwnsForm(parsingUpload, uploadMode, uploadMode ? uploadID : filePath, parsing);
+		const ownsForm = (): boolean => importOwnsForm(parsingUpload, uploadMode, uploadMode ? uploadID : filePath, parsing, !destroyed);
 		if (parsingUpload) uploader.consume(parsing);
 		try {
 			busyLabel = $t('import.importing');
@@ -154,7 +156,7 @@
 			}
 			// A transport failure can happen before the backend consumes the upload.
 			// Abort is harmless when parsing already removed it.
-			if (parsingUpload) void api.upload.abort(parsing).catch(() => {});
+			if (parsingUpload) uploader.finishConsume(parsing);
 		}
 	}
 

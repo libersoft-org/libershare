@@ -226,6 +226,44 @@ test('consuming an upload prevents a newer pick from aborting the active parse',
 	await second;
 });
 
+test('unmount aborts an upload while its parse is still pending', async () => {
+	const h = harness();
+	const first = h.uploader.pick(pickedFile('first.lish'));
+	h.pending[0]!.resolve();
+	await first;
+	h.uploader.consume('upload-first.lish');
+	h.uploader.unmount();
+	await advance();
+	expect(h.discarded).toEqual(['upload-first.lish']);
+});
+
+test('unmount aborts every upload owned by concurrent parses', async () => {
+	const h = harness();
+	const first = h.uploader.pick(pickedFile('first.lish'));
+	h.pending[0]!.resolve();
+	await first;
+	h.uploader.consume('upload-first.lish');
+	const second = h.uploader.pick(pickedFile('second.lish'));
+	h.pending[1]!.resolve();
+	await second;
+	h.uploader.consume('upload-second.lish');
+	h.uploader.unmount();
+	await advance();
+	expect(h.discarded).toEqual(['upload-first.lish', 'upload-second.lish']);
+});
+
+test('finishing a parse aborts transport leftovers only once', async () => {
+	const h = harness();
+	const first = h.uploader.pick(pickedFile('first.lish'));
+	h.pending[0]!.resolve();
+	await first;
+	h.uploader.consume('upload-first.lish');
+	h.uploader.finishConsume('upload-first.lish');
+	h.uploader.unmount();
+	await advance();
+	expect(h.discarded).toEqual(['upload-first.lish']);
+});
+
 test('a parse loses the form after either a mode change or a newer selection', () => {
 	expect(importOwnsForm(true, true, 'newer', 'parsed')).toBe(false);
 	expect(importOwnsForm(true, false, '/data/file.lish', 'parsed')).toBe(false);
@@ -235,4 +273,8 @@ test('a parse loses the form after either a mode change or a newer selection', (
 test('a parse still owns the unchanged selection in the same mode', () => {
 	expect(importOwnsForm(true, true, 'upload-id', 'upload-id')).toBe(true);
 	expect(importOwnsForm(false, false, '/data/file.lish', '/data/file.lish')).toBe(true);
+});
+
+test('a completed parse cannot own a destroyed form', () => {
+	expect(importOwnsForm(true, true, 'upload-id', 'upload-id', false)).toBe(false);
 });
