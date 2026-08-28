@@ -9,6 +9,7 @@
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { uploadImportFile } from '../../scripts/ws-client.ts';
+	import { createImportOperationController, createImportUploader } from '../../scripts/importUpload.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import ButtonBar from '../Buttons/ButtonBar.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -49,20 +50,27 @@
 	let uploadFileName = $state('');
 	/** Id the backend holds the uploaded file under, empty until one is picked. */
 	let uploadID = $state('');
-	/**
-	 * Id of the last transfer this form started, whether it finished or not, and
-	 * only ever used to clean up. `uploadID` is the one that may be imported, so it
-	 * stays empty until the upload succeeded — which used to mean a transfer that
-	 * failed halfway left nothing here to discard.
-	 */
-	let startedUploadID = '';
 	let fileInput = $state<HTMLInputElement>();
 	let errorMessage = $state('');
 	let parsedData = $state<TData | null>(null);
 	/** Label shown in the blocking dialog, empty while nothing is running. */
 	let busyLabel = $state('');
-	/** Set once the form is gone, so an upload that finishes later cleans up after itself. */
-	let destroyed = false;
+	const operations = createImportOperationController(label => (busyLabel = label));
+
+	const uploader = createImportUploader(
+		{
+			setUploadID: id => (uploadID = id),
+			setFileName: name => (uploadFileName = name),
+			setError: message => (errorMessage = message),
+		},
+		{
+			upload: uploadImportFile,
+			discard: id => api.upload.abort(id),
+			uploadingLabel: () => $t('import.uploading'),
+			formatError: translateError,
+		},
+		operations
+	);
 
 	const showDownloadPath = $derived(downloadPath !== undefined);
 	const effectiveFilePathLabel = $derived(filePathLabel ?? $t('common.file'));
@@ -80,51 +88,25 @@
 		// user could not retry with that file at all.
 		input.value = '';
 		if (!file) return;
-		// Picking a second file abandons the first one on the backend's disk —
-		// whether that one finished or died in the middle.
-		const previous = startedUploadID;
-		uploadID = '';
-		uploadFileName = file.name;
-		errorMessage = '';
-		busyLabel = $t('import.uploading');
-		try {
-			// Awaited, and the error is not swallowed. The next transfer starts on this
-			// same socket immediately afterwards, and the old file has to be off the
-			// disk and out of the quota before the new one begins claiming both — so a
-			// cleanup that did not happen is this pick's problem, not a footnote.
-			if (previous) {
-				await api.upload.abort(previous);
-				startedUploadID = '';
-			}
-			// The file goes to the backend as-is and is parsed there. Reading it here
-			// would also mean decompressing it here, and the browser only knows gzip
-			// and deflate — a .br or .zst upload has no chance.
-			const id = await uploadImportFile(file, started => (startedUploadID = started));
-			// The form can be closed mid-upload; the file that lands afterwards has
-			// nobody left to import or discard it, so drop it here instead.
-			if (destroyed) void api.upload.abort(id).catch(() => {});
-			else uploadID = id;
-		} catch (err) {
-			errorMessage = translateError(err);
-			uploadFileName = '';
-		} finally {
-			busyLabel = '';
-		}
+		await uploader.pick(file);
 	}
 
 	function toggleUploadMode(): void {
 		uploadMode = !uploadMode;
+		operations.invalidate();
+		uploader.discardSelection();
+		errorMessage = '';
 	}
 
 	// Leaving the form after picking a file but before importing it — Back, a
 	// mode switch followed by a path import, any navigation away — would strand
 	// the uploaded copy on the backend's disk until it ages out.
 	onDestroy(() => {
-		destroyed = true;
-		if (startedUploadID) void api.upload.abort(startedUploadID).catch(() => {});
+		uploader.unmount();
 	});
 
 	async function handleImport(): Promise<void> {
+		if (operations.isActive()) return;
 		errorMessage = '';
 		if (uploadMode) {
 			if (!uploadID) {
@@ -148,28 +130,24 @@
 				return;
 			}
 		}
+		// Capture what we are about to parse: the picker stays reachable during the
+		// await, so reading the state again afterwards would act on a file the user
+		// picked meanwhile instead of the one this import consumed.
+		const parsingUpload = uploadMode;
+		const parsing = parsingUpload ? uploadID : filePath;
+		const operation = operations.start($t('import.importing'));
+		const ownsForm = (): boolean => operations.owns(operation);
+		if (parsingUpload) uploader.consume(parsing);
 		try {
-			busyLabel = $t('import.importing');
-			// The backend consumes the upload as part of parsing it — reading the
-			// file and deleting it under its own lock — so there is nothing left to
-			// clean up here on either outcome.
-			parsedData = uploadMode ? await parseUpload(uploadID) : await parseFile(filePath);
-			if (uploadMode) {
-				uploadID = '';
-				startedUploadID = '';
-				uploadFileName = '';
-			}
+			const parsed = parsingUpload ? await parseUpload(parsing) : await parseFile(parsing);
+			if (ownsForm()) parsedData = parsed;
 		} catch (e) {
-			errorMessage = translateError(e);
-			// A failed parse consumes the upload too, so the picked file has to be
-			// chosen again rather than silently retried against a file that is gone.
-			if (uploadMode) {
-				uploadID = '';
-				startedUploadID = '';
-				uploadFileName = '';
-			}
+			if (ownsForm()) errorMessage = translateError(e);
 		} finally {
-			busyLabel = '';
+			operations.finish(operation);
+			// A transport failure can happen before the backend consumes the upload.
+			// Abort is harmless when parsing already removed it.
+			if (parsingUpload) uploader.finishConsume(parsing);
 		}
 	}
 
@@ -192,6 +170,7 @@
 
 	function handleFilePathSelect(path: string): void {
 		filePath = path;
+		operations.invalidate();
 		void filePathSubPage.exit();
 	}
 
@@ -272,7 +251,7 @@
 				</div>
 			{:else}
 				<div class="row" role="group" data-mouse-activate-area={areaID}>
-					<Input bind:value={filePath} label={effectiveFilePathLabel} position={[0, 1]} flex />
+					<Input bind:value={filePath} label={effectiveFilePathLabel} position={[0, 1]} onchange={() => operations.invalidate()} flex />
 					<Button icon="/img/directory.svg" position={[1, 1]} onConfirm={openFilePathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				</div>
 			{/if}
