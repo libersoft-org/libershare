@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
-import type { NetAddress, NetInterfaceInfo, NetIPv4Config, NetLink, NetWifiInfo, NetWifiNetwork } from '@shared';
+import type { NetAddress, NetCapabilities, NetInterfaceInfo, NetIPv4Config, NetLink, NetWifiInfo, NetWifiNetwork } from '@shared';
 
 const execFileAsync = promisify(execFile);
+const C_LOCALE_ENV = { ...process.env, LC_ALL: 'C', LANG: 'C' };
 
 /**
  * Linux host network state, read entirely through `ip -j` (iproute2's JSON
@@ -15,7 +16,7 @@ const execFileAsync = promisify(execFile);
  *
  * WRITING is the opposite: it has to go through the stack that owns the device,
  * so the apply half of this module speaks nmcli and refuses to act on a host
- * NetworkManager does not run. See {@link isLinuxWritable}.
+ * NetworkManager does not run. See {@link readLinuxCapabilities}.
  */
 
 /** Hard cap on how long any `ip`/`iw` child process may run before we give up. */
@@ -227,13 +228,40 @@ async function runFirst(candidates: string[], args: string[], timeoutMs: number 
 	let lastError: unknown = new Error(`no candidate found for ${args.join(' ')}`);
 	for (const bin of candidates) {
 		try {
-			const { stdout } = await execFileAsync(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 });
+			const { stdout } = await execFileAsync(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: C_LOCALE_ENV });
 			return stdout;
 		} catch (err) {
 			lastError = err;
 			// ENOENT means this path does not exist — try the next candidate. Any
 			// other failure (non-zero exit, timeout) is the real answer: `ip` ran and
 			// said no, so a further candidate would only repeat it.
+			if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+		}
+	}
+	throw lastError;
+}
+
+/** Run the first available binary while providing one bounded stdin value. */
+async function runFirstWithInput(candidates: string[], args: string[], input: string, timeoutMs: number): Promise<string> {
+	let lastError: unknown = new Error(`no candidate found for ${args.join(' ')}`);
+	for (const bin of candidates) {
+		try {
+			return await new Promise<string>((resolve, reject) => {
+				const child = execFile(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: C_LOCALE_ENV }, (error, stdout, stderr) => {
+					if (!error) {
+						resolve(stdout);
+						return;
+					}
+					Object.assign(error, { stdout, stderr });
+					reject(error);
+				});
+				// A command that exits before reading can close the pipe first. Its exit
+				// callback above is the useful error; EPIPE on stdin is not a second one.
+				child.stdin?.on('error', () => {});
+				child.stdin?.end(input);
+			});
+		} catch (err) {
+			lastError = err;
 			if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
 		}
 	}
@@ -328,6 +356,8 @@ export function splitNmcliFields(line: string): string[] {
 
 /** The polkit action that persisting a connection change needs. */
 const NM_MODIFY_PERMISSION = 'org.freedesktop.NetworkManager.settings.modify.system';
+const NM_CONTROL_PERMISSION = 'org.freedesktop.NetworkManager.network-control';
+const NM_WIFI_SCAN_PERMISSION = 'org.freedesktop.NetworkManager.wifi.scan';
 
 /**
  * Read one permission verdict out of `nmcli -t -f PERMISSION,VALUE general permissions`.
@@ -354,12 +384,13 @@ export function parseNmcliPermission(text: string, permission: string): string |
  * fails. Reporting the capability from "nmcli exists" alone would put an edit
  * form in front of the user whose Save could never succeed.
  */
-export async function isLinuxWritable(): Promise<boolean> {
+/** Probe address and Wi-Fi rights separately; custom polkit policies may differ. */
+export async function readLinuxCapabilities(): Promise<NetCapabilities> {
 	try {
-		if (!(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'RUNNING', 'general'])).trim().startsWith('running')) return false;
-		return parseNmcliPermission(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'PERMISSION,VALUE', 'general', 'permissions']), NM_MODIFY_PERMISSION) === 'yes';
+		if (!(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'RUNNING', 'general'])).trim().startsWith('running')) return { ipv4: false, wifi: false };
+		return parseLinuxCapabilities(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'PERMISSION,VALUE', 'general', 'permissions']));
 	} catch {
-		return false;
+		return { ipv4: false, wifi: false };
 	}
 }
 
@@ -490,16 +521,35 @@ export async function scanLinuxWifi(device: string): Promise<NetWifiNetwork[]> {
 	return parseNmcliWifiList(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'SSID,SIGNAL,SECURITY,IN-USE', 'device', 'wifi', 'list', 'ifname', device, '--rescan', 'yes'], WIFI_SCAN_TIMEOUT_MS));
 }
 
+/** Map NetworkManager's three independent policy decisions to real capabilities. */
+export function parseLinuxCapabilities(text: string): NetCapabilities {
+	const canModify = parseNmcliPermission(text, NM_MODIFY_PERMISSION) === 'yes';
+	const canActivate = parseNmcliPermission(text, NM_CONTROL_PERMISSION) === 'yes';
+	return {
+		ipv4: canModify && canActivate,
+		wifi: canModify && canActivate && parseNmcliPermission(text, NM_WIFI_SCAN_PERMISSION) === 'yes',
+	};
+}
+
+/** Build the public part of a Wi-Fi connect command; the secret is never an argument. */
+export function nmcliWifiConnectArgs(device: string, ssid: string, askForPassword: boolean): string[] {
+	return [...(askForPassword ? ['--ask'] : []), 'device', 'wifi', 'connect', ssid, 'ifname', device];
+}
+
 /**
  * Join a Wi-Fi network.
  *
  * `device wifi connect` reuses a saved profile when one exists and creates one
  * otherwise, so the same call covers both "reconnect to a known network" and
- * "join a new one with a password". The password is passed as a separate argv
- * entry — never interpolated into a command line — so no quoting rule applies to it.
+ * "join a new one with a password". A password is supplied through stdin to
+ * `nmcli --ask`, never argv, so another local user cannot read it from
+ * `/proc/<pid>/cmdline` while the command is running.
  */
 export async function connectLinuxWifi(device: string, ssid: string, password: string): Promise<void> {
-	const args = ['device', 'wifi', 'connect', ssid, 'ifname', device];
-	if (password) args.push('password', password);
-	await runFirst(NMCLI_CANDIDATES, args, APPLY_TIMEOUT_MS);
+	const args = nmcliWifiConnectArgs(device, ssid, !!password);
+	if (!password) {
+		await runFirst(NMCLI_CANDIDATES, args, APPLY_TIMEOUT_MS);
+		return;
+	}
+	await runFirstWithInput(NMCLI_CANDIDATES, args, `${password}\n`, APPLY_TIMEOUT_MS);
 }

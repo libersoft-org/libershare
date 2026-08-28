@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import type { NetAddress, NetInterfaceInfo, NetIPv4Config, NetLink, NetMedium } from '@shared';
 
 const execFileAsync = promisify(execFile);
+const C_LOCALE_ENV = { ...process.env, LC_ALL: 'C', LANG: 'C' };
 
 /**
  * macOS host network state.
@@ -293,7 +294,7 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 
 /** Run a tool, returning stdout. Throws when it is missing or exits non-zero. */
 async function run(bin: string, args: string[], timeoutMs: number = EXEC_TIMEOUT_MS): Promise<string> {
-	const { stdout } = await execFileAsync(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 });
+	const { stdout } = await execFileAsync(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: C_LOCALE_ENV });
 	return stdout;
 }
 

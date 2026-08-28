@@ -259,8 +259,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	 */
 	async function applyNetworkConfig(p: { interfaceID: string; config: NetIPv4Config }): Promise<NetworkStateInfo> {
 		assert(p, ['interfaceID', 'config']);
-		await applyIPv4(p.interfaceID, p.config);
-		const state = await getNetworkState();
+		const state = await applyIPv4(p.interfaceID, p.config, settings.get('network.primaryInterface') ?? '');
 		broadcast('system:network', state);
 		return state;
 	}
@@ -272,8 +271,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 
 	async function joinWifiNetwork(p: { interfaceID: string; ssid: string; password?: string }): Promise<NetworkStateInfo> {
 		assert(p, ['interfaceID', 'ssid']);
-		await connectWifi(p.interfaceID, p.ssid, p.password ?? '');
-		const state = await getNetworkState();
+		const state = await connectWifi(p.interfaceID, p.ssid, p.password ?? '', settings.get('network.primaryInterface') ?? '');
 		broadcast('system:network', state);
 		return state;
 	}

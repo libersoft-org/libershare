@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { ptr, type Pointer } from 'bun:ffi';
 import { parseWindowsNetworkState, readConnectionAttributes, WINDOWS_STATE_COMMAND } from '../../src/system-network-windows.ts';
 import { dbmToQuality, parseIwLink, parseLinuxNetworkState } from '../../src/system-network-linux.ts';
-import { assertReadProducedSomething, prefixFromNetmask, readGenericInterfaces, readNetworkState, resolvePrimaryID, resetNetworkStateCache } from '../../src/system-network.ts';
+import { assertReadProducedSomething, NetworkStateCache, prefixFromNetmask, readGenericInterfaces, readNetworkState, resolvePrimaryID, resetNetworkStateCache, type NetworkSnapshot } from '../../src/system-network.ts';
 import type { NetInterfaceInfo } from '@shared';
 
 /**
@@ -337,6 +337,43 @@ describe('assertReadProducedSomething', () => {
 		// Get-Net* cmdlet fails non-terminatingly, which would otherwise be reported
 		// as full detail with no interfaces — and render as a confident Disconnected.
 		expect(() => assertReadProducedSomething([])).toThrow();
+	});
+});
+
+describe('NetworkStateCache invalidation', () => {
+	it('retries after a reader failure instead of caching the rejection', async () => {
+		const snapshot = { interfaces: [], detail: 'addressesOnly' } as NetworkSnapshot;
+		let reads = 0;
+		const cache = new NetworkStateCache(async () => {
+			if (++reads === 1) throw new Error('temporary read failure');
+			return snapshot;
+		}, 60_000);
+
+		await expect(cache.read()).rejects.toThrow('temporary read failure');
+		expect(await cache.read()).toBe(snapshot);
+		expect(reads).toBe(2);
+	});
+
+	it('does not return or cache an old in-flight read after a mutation', async () => {
+		let resolveOld!: (snapshot: NetworkSnapshot) => void;
+		let resolveFresh!: (snapshot: NetworkSnapshot) => void;
+		const oldRead = new Promise<NetworkSnapshot>(resolve => (resolveOld = resolve));
+		const freshRead = new Promise<NetworkSnapshot>(resolve => (resolveFresh = resolve));
+		let reads = 0;
+		const cache = new NetworkStateCache(() => (++reads === 1 ? oldRead : freshRead), 60_000);
+		const oldSnapshot = { interfaces: [{ id: 'old', name: 'old', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'dhcp', gateway: null, dns: [] }], detail: 'full' } as NetworkSnapshot;
+		const freshSnapshot = { interfaces: [{ id: 'fresh', name: 'fresh', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'static', gateway: null, dns: [] }], detail: 'full' } as NetworkSnapshot;
+
+		const staleCaller = cache.read();
+		cache.reset();
+		const postMutationCaller = cache.read();
+		resolveFresh(freshSnapshot);
+		expect(await postMutationCaller).toBe(freshSnapshot);
+		resolveOld(oldSnapshot);
+		expect(await staleCaller).toBe(freshSnapshot);
+
+		expect(await cache.read()).toEqual(freshSnapshot);
+		expect(reads).toBe(2);
 	});
 });
 

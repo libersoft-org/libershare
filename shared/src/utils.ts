@@ -1,5 +1,5 @@
 import { CodedError, ErrorCodes } from './errors.ts';
-import type { ConnectionStatus, NetInterfaceInfo, NetIPv4Config, NetworkStateInfo } from './index.ts';
+import type { ConnectionStatus, NetInterfaceInfo, NetworkStateInfo } from './index.ts';
 
 export function formatBytes(bytes: number, decimals: number = 2): string {
 	if (bytes === 0) return '0 Bytes';
@@ -85,15 +85,18 @@ export function isIPv4(value: string): boolean {
  * a plain IPv4 literal or a small integer must never get that far. Callers on
  * every platform validate before touching a child process.
  */
-export function validateIPv4Config(config: NetIPv4Config): string | null {
+export function validateIPv4Config(value: unknown): string | null {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return 'mode';
+	const config = value as { mode?: unknown; dns?: unknown; address?: unknown; prefixLength?: unknown; gateway?: unknown };
 	if (config.mode !== 'dhcp' && config.mode !== 'static') return 'mode';
-	for (const server of config.dns ?? []) if (!isIPv4(server)) return 'dns';
+	if (config.dns !== undefined && !Array.isArray(config.dns)) return 'dns';
+	for (const server of config.dns ?? []) if (typeof server !== 'string' || !isIPv4(server)) return 'dns';
 	if (config.mode === 'dhcp') return null;
-	if (!config.address || !isIPv4(config.address)) return 'address';
+	if (typeof config.address !== 'string' || !isIPv4(config.address)) return 'address';
 	if (!Number.isInteger(config.prefixLength) || (config.prefixLength as number) < 1 || (config.prefixLength as number) > 32) return 'prefixLength';
 	// An interface on an isolated segment legitimately has no gateway, so only a
 	// present-but-malformed value is an error.
-	if (config.gateway && !isIPv4(config.gateway)) return 'gateway';
+	if (config.gateway !== undefined && (typeof config.gateway !== 'string' || (config.gateway !== '' && !isIPv4(config.gateway)))) return 'gateway';
 	return null;
 }
 
@@ -102,7 +105,8 @@ export function validateIPv4Config(config: NetIPv4Config): string | null {
  * encoded as UTF-8. Length is counted in bytes, not characters, because a
  * 20-character name with accents already exceeds the field.
  */
-export function isValidSSID(ssid: string): boolean {
+export function isValidSSID(ssid: unknown): ssid is string {
+	if (typeof ssid !== 'string' || ssid.includes('\0')) return false;
 	const length = new TextEncoder().encode(ssid).length;
 	return length >= 1 && length <= 32;
 }

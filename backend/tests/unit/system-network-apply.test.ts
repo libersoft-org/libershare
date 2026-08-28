@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import { isIPv4, isValidSSID, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { nmcliModifyArgs, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
+import { nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
-import { firstLine } from '../../src/system-network.ts';
+import { assertDeviceName, firstLine, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, runNetworkMutation } from '../../src/system-network.ts';
 
 describe('isIPv4', () => {
 	it('accepts ordinary dotted quads', () => {
@@ -53,6 +53,14 @@ describe('validateIPv4Config', () => {
 			expect(validateIPv4Config({ mode: 'static', address: '192.0.2.1', prefixLength: 24, gateway: attack })).toBe('gateway');
 		}
 	});
+
+	it('rejects malformed API shapes without throwing a native TypeError', () => {
+		expect(validateIPv4Config(null)).toBe('mode');
+		expect(validateIPv4Config([])).toBe('mode');
+		expect(validateIPv4Config({ mode: 'static', address: 123, prefixLength: 24 })).toBe('address');
+		expect(validateIPv4Config({ mode: 'dhcp', dns: '192.0.2.1' })).toBe('dns');
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.2', prefixLength: 24, gateway: 123 })).toBe('gateway');
+	});
 });
 
 describe('isValidSSID', () => {
@@ -70,6 +78,65 @@ describe('isValidSSID', () => {
 
 	it('rejects an empty name', () => {
 		expect(isValidSSID('')).toBe(false);
+	});
+
+	it('rejects NUL because process arguments cannot carry it', () => {
+		expect(isValidSSID('home\0guest')).toBe(false);
+	});
+
+	it('rejects non-string API input', () => {
+		expect(isValidSSID(123)).toBe(false);
+	});
+});
+
+describe('Unix interface names', () => {
+	it('enforces the kernel limit in UTF-8 bytes', () => {
+		expect(assertDeviceName('enp6s18')).toBe('enp6s18');
+		expect(() => assertDeviceName('ž'.repeat(8))).toThrow();
+		expect(() => assertDeviceName('bad/name')).toThrow();
+	});
+});
+
+describe('Wi-Fi password handling', () => {
+	it('keeps the secret out of the nmcli argument vector', () => {
+		const secret = 'not-visible-in-proc';
+		const args = nmcliWifiConnectArgs('wlan0', 'Example network', true);
+		expect(args[0]).toBe('--ask');
+		expect(args).not.toContain(secret);
+		expect(args).not.toContain('password');
+	});
+
+	it('bounds and validates the value written to stdin', () => {
+		expect(isValidWifiPassword('')).toBe(true);
+		expect(isValidWifiPassword('a'.repeat(MAX_WIFI_PASSWORD_BYTES))).toBe(true);
+		expect(isValidWifiPassword('a'.repeat(MAX_WIFI_PASSWORD_BYTES + 1))).toBe(false);
+		expect(isValidWifiPassword('secret\0suffix')).toBe(false);
+		expect(isValidWifiPassword('secret\nsuffix')).toBe(false);
+		expect(isValidWifiPassword(123)).toBe(false);
+	});
+});
+
+describe('network mutation serialization', () => {
+	it('never overlaps two host network changes', async () => {
+		let releaseFirst!: () => void;
+		const firstGate = new Promise<void>(resolve => (releaseFirst = resolve));
+		const events: string[] = [];
+		const first = runNetworkMutation(async () => {
+			events.push('first:start');
+			await firstGate;
+			events.push('first:end');
+		});
+		await Promise.resolve();
+		const second = runNetworkMutation(async () => {
+			events.push('second:start');
+			events.push('second:end');
+		});
+		await Promise.resolve();
+		expect(events).toEqual(['first:start']);
+
+		releaseFirst();
+		await Promise.all([first, second]);
+		expect(events).toEqual(['first:start', 'first:end', 'second:start', 'second:end']);
 	});
 });
 
@@ -272,6 +339,20 @@ describe('parseNmcliPermission', () => {
 
 	it('returns null when the permission is absent', () => {
 		expect(parseNmcliPermission(AS_ROOT, 'org.freedesktop.NetworkManager.wifi.share.open')).toBeNull();
+	});
+});
+
+describe('parseLinuxCapabilities', () => {
+	const permissions = (modify: string, control: string, scan: string): string => [`org.freedesktop.NetworkManager.settings.modify.system:${modify}`, `org.freedesktop.NetworkManager.network-control:${control}`, `org.freedesktop.NetworkManager.wifi.scan:${scan}`].join('\n');
+
+	it('requires both profile modification and activation for IPv4 writes', () => {
+		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'yes'))).toEqual({ ipv4: true, wifi: true });
+		expect(parseLinuxCapabilities(permissions('yes', 'no', 'yes'))).toEqual({ ipv4: false, wifi: false });
+		expect(parseLinuxCapabilities(permissions('auth', 'yes', 'yes'))).toEqual({ ipv4: false, wifi: false });
+	});
+
+	it('requires the separate scan permission before offering Wi-Fi actions', () => {
+		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'no'))).toEqual({ ipv4: true, wifi: false });
 	});
 });
 

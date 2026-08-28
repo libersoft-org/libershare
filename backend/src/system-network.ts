@@ -1,9 +1,10 @@
 import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { Mutex } from 'async-mutex';
 import { CodedError, ErrorCodes, isValidSSID, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
 import { isWindowsInterfaceID, parseElevation, parseWindowsNetworkState, readWindowsWifi, windowsApplyIPv4Command, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
-import { applyLinuxIPv4, connectLinuxWifi, isLinuxWritable, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
+import { applyLinuxIPv4, connectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
 import { applyMacIPv4, isMacWifiConfigurable, isMacWritable, readMacNetworkState } from './system-network-macos.ts';
 
 const execFileAsync = promisify(execFile);
@@ -55,9 +56,82 @@ const CACHE_TTL_MS = 5000;
  * went on to make anyway.
  */
 const APPLY_TIMEOUT_MS = 45000;
+/** Transport ceiling for a secret sent to NetworkManager. */
+export const MAX_WIFI_PASSWORD_BYTES = 1024;
 
-let cached: { at: number; interfaces: NetInterfaceInfo[]; detail: NetworkStateInfo['detail'] } | null = null;
-let inFlight: Promise<NetInterfaceInfo[]> | null = null;
+export interface NetworkSnapshot {
+	interfaces: NetInterfaceInfo[];
+	detail: NetworkStateInfo['detail'];
+}
+
+/**
+ * TTL cache that shares concurrent reads without letting an invalidated read
+ * overwrite a newer snapshot when it eventually settles.
+ */
+export class NetworkStateCache {
+	private cached: { at: number; snapshot: NetworkSnapshot } | null = null;
+	private inFlight: { generation: number; promise: Promise<NetworkSnapshot> } | null = null;
+	private generation = 0;
+	private readonly reader: () => Promise<NetworkSnapshot>;
+	private readonly ttlMs: number;
+
+	constructor(reader: () => Promise<NetworkSnapshot>, ttlMs: number = CACHE_TTL_MS) {
+		this.reader = reader;
+		this.ttlMs = ttlMs;
+	}
+
+	async read(): Promise<NetworkSnapshot> {
+		const now = Date.now();
+		if (this.cached && now - this.cached.at < this.ttlMs) return this.cached.snapshot;
+
+		const generation = this.generation;
+		let pending = this.inFlight;
+		if (!pending || pending.generation !== generation) {
+			pending = { generation, promise: this.reader() };
+			this.inFlight = pending;
+		}
+
+		let snapshot: NetworkSnapshot;
+		try {
+			snapshot = await pending.promise;
+		} catch (err) {
+			if (this.inFlight === pending) this.inFlight = null;
+			throw err;
+		}
+		// Reset means a host mutation began after this read. Returning the old
+		// snapshot would still let its caller (notably the periodic broadcaster)
+		// publish pre-mutation state over the fresh result, even though it no longer
+		// enters the cache. Join the current generation instead; it either reuses the
+		// post-mutation read already in flight or serves its completed cache entry.
+		if (this.generation !== generation) return this.read();
+		this.cached = { snapshot, at: Date.now() };
+		if (this.inFlight === pending) this.inFlight = null;
+		return snapshot;
+	}
+
+	reset(): void {
+		this.generation++;
+		this.cached = null;
+		this.inFlight = null;
+	}
+}
+
+const stateCache = new NetworkStateCache(async () => {
+	const detail: NetworkStateInfo['detail'] = process.platform === 'win32' || process.platform === 'linux' || process.platform === 'darwin' ? 'full' : 'addressesOnly';
+	try {
+		return { interfaces: assertReadProducedSomething(await readPlatform()), detail };
+	} catch (err) {
+		console.warn('[system-network] Platform read failed, falling back to addresses only:', (err as Error).message);
+		return { interfaces: readGenericInterfaces(), detail: 'addressesOnly' };
+	}
+});
+
+const mutationMutex = new Mutex();
+
+/** Serialize changes to the one host network stack. */
+export function runNetworkMutation<T>(action: () => Promise<T>): Promise<T> {
+	return mutationMutex.runExclusive(action);
+}
 
 /**
  * Addresses and MACs from the Node/Bun runtime — everything every platform can
@@ -116,30 +190,8 @@ async function readWindows(): Promise<NetInterfaceInfo[]> {
  * rather than throwing — a settings screen showing addresses beats an error.
  */
 export async function readNetworkState(primaryInterface: string = ''): Promise<NetworkStateInfo> {
-	const now = Date.now();
-	if (!cached || now - cached.at >= CACHE_TTL_MS) {
-		if (!inFlight) {
-			const detail: NetworkStateInfo['detail'] = process.platform === 'win32' || process.platform === 'linux' || process.platform === 'darwin' ? 'full' : 'addressesOnly';
-			inFlight = readPlatform()
-				.then(assertReadProducedSomething)
-				.then(interfaces => {
-					cached = { at: Date.now(), interfaces, detail };
-					return interfaces;
-				})
-				.catch(err => {
-					console.warn('[system-network] Platform read failed, falling back to addresses only:', (err as Error).message);
-					const interfaces = readGenericInterfaces();
-					cached = { at: Date.now(), interfaces, detail: 'addressesOnly' };
-					return interfaces;
-				})
-				.finally(() => {
-					inFlight = null;
-				});
-		}
-		await inFlight;
-	}
-	const interfaces = cached?.interfaces ?? [];
-	return { interfaces, primaryID: resolvePrimaryID(interfaces, primaryInterface), detail: cached?.detail ?? 'addressesOnly', known: cached !== null, capabilities: await readCapabilities() };
+	const snapshot = await stateCache.read();
+	return { interfaces: snapshot.interfaces, primaryID: resolvePrimaryID(snapshot.interfaces, primaryInterface), detail: snapshot.detail, known: true, capabilities: await readCapabilities() };
 }
 
 function readPlatform(): Promise<NetInterfaceInfo[]> {
@@ -174,8 +226,7 @@ export function resolvePrimaryID(interfaces: NetInterfaceInfo[], primaryInterfac
 
 /** Drop the cached reading — used by tests so a stale entry cannot leak between cases. */
 export function resetNetworkStateCache(): void {
-	cached = null;
-	inFlight = null;
+	stateCache.reset();
 }
 
 /**
@@ -195,8 +246,7 @@ async function readCapabilities(): Promise<NetCapabilities> {
 		// user when Save fails. Wi-Fi is deliberately read-only.
 		capabilities = { ipv4: await isWindowsElevated(), wifi: false };
 	} else if (process.platform === 'linux') {
-		const managed = await isLinuxWritable();
-		capabilities = { ipv4: managed, wifi: managed };
+		capabilities = await readLinuxCapabilities();
 	} else if (process.platform === 'darwin') {
 		// networksetup persists a change and is present on every macOS install, so
 		// addressing is editable. Wi-Fi is not: see isMacWifiConfigurable.
@@ -220,37 +270,60 @@ async function isWindowsElevated(): Promise<boolean> {
 	}
 }
 
-/** Apply an IPv4 configuration to one interface, then drop the cache so the next read reflects it. */
-export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Promise<void> {
+/** Apply an IPv4 configuration and read its resulting state before another mutation may begin. */
+export async function applyIPv4(interfaceID: string, config: NetIPv4Config, primaryInterface: string = ''): Promise<NetworkStateInfo> {
+	if (typeof interfaceID !== 'string' || !config || typeof config !== 'object') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid request');
 	const invalid = validateIPv4Config(config);
 	if (invalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${invalid}`);
-	const supported = await readCapabilities();
-	if (!supported.ipv4) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host does not expose a writable network configuration');
-	await run(async () => {
-		if (process.platform === 'win32') {
-			if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
-			await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, config)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
-		} else if (process.platform === 'darwin') {
-			await applyMacIPv4(assertDeviceName(interfaceID), config);
-		} else {
-			await applyLinuxIPv4(assertDeviceName(interfaceID), config);
+	return runNetworkMutation(async () => {
+		const supported = await readCapabilities();
+		if (!supported.ipv4) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host does not expose a writable network configuration');
+		try {
+			await run(async () => {
+				if (process.platform === 'win32') {
+					if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+					await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, config)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
+				} else if (process.platform === 'darwin') {
+					await applyMacIPv4(assertDeviceName(interfaceID), config);
+				} else {
+					await applyLinuxIPv4(assertDeviceName(interfaceID), config);
+				}
+			});
+		} finally {
+			// A multi-step OS command may have changed part of the configuration
+			// before failing. Never keep the pre-command snapshot in that case.
+			resetNetworkStateCache();
 		}
+		return readNetworkState(primaryInterface);
 	});
-	resetNetworkStateCache();
 }
 
 /** Scan for joinable Wi-Fi networks on one interface. */
 export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
+	if (typeof interfaceID !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
 	await assertWirelessInterface(interfaceID);
 	return run(() => scanLinuxWifi(assertDeviceName(interfaceID)));
 }
 
 /** Join a Wi-Fi network on one interface. An empty password means an open network. */
-export async function connectWifi(interfaceID: string, ssid: string, password: string): Promise<void> {
-	await assertWirelessInterface(interfaceID);
+export async function connectWifi(interfaceID: string, ssid: string, password: string, primaryInterface: string = ''): Promise<NetworkStateInfo> {
+	if (typeof interfaceID !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
 	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
-	await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password));
-	resetNetworkStateCache();
+	if (!isValidWifiPassword(password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
+	return runNetworkMutation(async () => {
+		await assertWirelessInterface(interfaceID);
+		try {
+			await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password));
+		} finally {
+			resetNetworkStateCache();
+		}
+		return readNetworkState(primaryInterface);
+	});
+}
+
+/** A bounded string that can be written to a child process stdin. Empty = open network. */
+export function isValidWifiPassword(password: unknown): password is string {
+	return typeof password === 'string' && !/[\0\r\n]/.test(password) && new TextEncoder().encode(password).byteLength <= MAX_WIFI_PASSWORD_BYTES;
 }
 
 /**
@@ -279,8 +352,8 @@ async function assertWirelessInterface(interfaceID: string): Promise<void> {
  * client, not because the tools would misparse it: arguments are passed as argv,
  * never through a shell.
  */
-function assertDeviceName(interfaceID: string): string {
-	if (!interfaceID || interfaceID.length > 15 || /[/\0]/.test(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+export function assertDeviceName(interfaceID: string): string {
+	if (!interfaceID || new TextEncoder().encode(interfaceID).byteLength > 15 || /[/\0]/.test(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
 	return interfaceID;
 }
 
