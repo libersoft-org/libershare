@@ -70,6 +70,7 @@
 	}
 
 	async function save(): Promise<void> {
+		if (busy || scanning) return;
 		const config = buildConfig();
 		const invalid = validateIPv4Config(config);
 		if (invalid) {
@@ -92,6 +93,7 @@
 	}
 
 	async function scan(): Promise<void> {
+		if (scanning || busy) return;
 		scanning = true;
 		message = '';
 		try {
@@ -117,7 +119,7 @@
 	}
 
 	async function join(): Promise<void> {
-		if (!joinSSID) return;
+		if (!joinSSID || busy || scanning) return;
 		busy = true;
 		message = '';
 		try {
@@ -208,7 +210,7 @@
 		{/if}
 
 		<ButtonBar justify="center" basePosition={[0, 1 + staticRows]}>
-			<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy} onConfirm={save} />
+			<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy || scanning} onConfirm={save} />
 		</ButtonBar>
 
 		{#if canEditWifi}
@@ -218,7 +220,7 @@
 			</ButtonBar>
 			{#each networks as network, index (network.ssid)}
 				<div role="group" data-mouse-activate-area={areaID}>
-					<Button label="{network.ssid}{network.active ? ' ✓' : ''}" position={[0, wifiBaseY + 1 + index]} onConfirm={() => selectNetwork(network)} disabled={busy} />
+					<Button label="{network.ssid}{network.active ? ' ✓' : ''}" position={[0, wifiBaseY + 1 + index]} onConfirm={() => selectNetwork(network)} disabled={busy || scanning} />
 					<div class="network">
 						<span>{network.secured ? $t('settings.network.secured') : $t('settings.network.open')}</span>
 						<span>{network.signal !== null ? `${network.signal}%` : '—'}</span>
@@ -230,7 +232,7 @@
 					<Input bind:value={password} label={$t('settings.network.passwordFor', { ssid: joinSSID })} type="password" position={[0, wifiBaseY + 1 + networks.length]} flex />
 				</div>
 				<ButtonBar justify="center" basePosition={[0, wifiBaseY + 2 + networks.length]}>
-					<Button icon="/img/check.svg" label={$t('settings.network.join')} disabled={busy} onConfirm={join} />
+					<Button icon="/img/check.svg" label={$t('settings.network.join')} disabled={busy || scanning} onConfirm={join} />
 				</ButtonBar>
 			{/if}
 		{/if}
