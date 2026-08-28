@@ -107,10 +107,34 @@ export function isValidSSID(ssid: string): boolean {
 	return length >= 1 && length <= 32;
 }
 
-// Sanitize filename - remove invalid characters and normalize spaces
+/**
+ * Strip characters a file name may not contain and normalise whitespace.
+ *
+ * The control range goes too: a NUL truncates the path at the system-call
+ * boundary, so a name containing one can address a different file than the one
+ * it appears to name, and the rest of C0 makes for names that cannot be typed,
+ * listed or deleted through ordinary tools.
+ */
 export function sanitizeFilename(filename: string): string {
 	return filename
 		.replace(/[<>:"/\\|?*]/g, '')
+		.replace(/\p{Cc}/gu, '')
 		.replace(/\s+/g, ' ')
 		.trim();
+}
+
+/**
+ * Keep at most `maxBytes` UTF-8 bytes from the end of `value`, never splitting a
+ * character. Byte length is what a filesystem limits — the usual cap is 255
+ * bytes per path component — while `String.length` counts UTF-16 units, so a
+ * hundred emoji or CJK characters measure as well within a hundred-character
+ * budget and still overflow the real one several times over.
+ */
+export function truncateUTF8End(value: string, maxBytes: number): string {
+	const bytes = new TextEncoder().encode(value);
+	if (bytes.byteLength <= maxBytes) return value;
+	let start = bytes.byteLength - maxBytes;
+	// Walk forward off any continuation byte, so the slice begins on a character.
+	while (start < bytes.byteLength && (bytes[start]! & 0xc0) === 0x80) start++;
+	return new TextDecoder().decode(bytes.subarray(start));
 }

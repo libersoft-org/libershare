@@ -5,7 +5,8 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { joinPath } from '../../scripts/fileBrowser.ts';
 	import { api } from '../../scripts/api.ts';
-	import { storageBackupPath, defaultCompress } from '../../scripts/settings.ts';
+	import { storageBackupPath, defaultCompress, defaultCompressionAlgorithm } from '../../scripts/settings.ts';
+	import { compressionExtension } from '@shared';
 	import ExportFileForm, { type ExportOptions } from '../../components/Export/ExportFileForm.svelte';
 	interface Props {
 		areaID: string;
@@ -21,10 +22,10 @@
 	}
 
 	const initialFileName = generateFileName();
-	let filePath = $state(joinPath($storageBackupPath, $defaultCompress ? initialFileName + '.gz' : initialFileName));
+	let filePath = $state(joinPath($storageBackupPath, $defaultCompress ? initialFileName + compressionExtension($defaultCompressionAlgorithm) : initialFileName));
 
 	async function doExport(path: string, opts: ExportOptions): Promise<{ success: boolean }> {
-		return await api.settings.exportToFile(path, opts.minifyJSON, opts.compress);
+		return await api.settings.exportToFile(path, opts.minifyJSON, opts.compress, opts.compressionAlgorithm);
 	}
 
 	function onSuccess(): void {

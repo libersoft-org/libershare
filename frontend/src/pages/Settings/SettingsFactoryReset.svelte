@@ -19,9 +19,10 @@
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 
-	// Each category defaults to ON so a plain confirm wipes everything.
-	// "peers" defaults to OFF: it is an advanced-use option and does not
-	// require wiping the identity, so it is opt-in rather than opt-out.
+	// Every category starts ON, "peers" included, so a plain confirm wipes everything —
+	// which is what "factory reset" reads as, and how the backend defaults for a call that
+	// names no categories. Wiping the peerstore only discards peers this node discovered;
+	// they come back from gossip, so it costs the user nothing they typed in themselves.
 	let resetSettings = $state(true);
 	let resetIdentity = $state(true);
 	let resetDownloads = $state(true);
@@ -54,10 +55,14 @@
 			const res = await api.settings.factoryReset({ settings: resetSettings, identity: resetIdentity, downloads: resetDownloads, networks: resetNetworks, peers: resetPeers });
 			// Each category is wiped independently — one alert per category on the done page.
 			const labelKey: Record<string, string> = { settings: 'optionSettings', identity: 'optionIdentity', downloads: 'optionDownloads', networks: 'optionNetworks', peers: 'optionPeers' };
-			resultAlerts = res.results.map(r => {
+			const categoryAlerts = res.results.map(r => {
 				const category = tt('settings.factoryReset.' + labelKey[r.category]);
 				return r.ok ? { type: 'info' as const, message: tt('settings.factoryReset.categoryDone', { category }) } : { type: 'error' as const, message: tt('settings.factoryReset.categoryFailed', { category, detail: r.detail ?? '' }) };
 			});
+			// A failed prepare is why the wipes were skipped, a failed restart means the node
+			// is still down — both matter more than any single category outcome.
+			const failedPhase = (phase: 'prepare' | 'restart') => res.phases.filter(p => p.phase === phase && !p.ok).map(p => ({ type: 'error' as const, message: tt('settings.factoryReset.' + phase + 'Failed', { detail: p.detail ?? '' }) }));
+			resultAlerts = [...failedPhase('prepare'), ...categoryAlerts, ...failedPhase('restart')];
 			phase = 'done';
 		} catch (e) {
 			// Transport-level failure — the reset never ran. Back to the form with the error.

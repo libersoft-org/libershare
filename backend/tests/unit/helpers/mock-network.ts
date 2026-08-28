@@ -31,6 +31,20 @@ export class MockNetwork {
 		return [];
 	}
 
+	/** Registered peer-disconnect handlers — invoke {@link emitPeerDisconnect} to simulate a peer dropping. */
+	readonly peerDisconnectHandlers: Set<(peerID: string) => void> = new Set();
+
+	/** Mirrors Network.onPeerDisconnect: registers a handler and returns a disposer. */
+	onPeerDisconnect(handler: (peerID: string) => void): () => void {
+		this.peerDisconnectHandlers.add(handler);
+		return () => this.peerDisconnectHandlers.delete(handler);
+	}
+
+	/** Test helper: simulate a peer disconnect, invoking every registered handler. */
+	emitPeerDisconnect(peerID: string): void {
+		for (const handler of this.peerDisconnectHandlers) handler(peerID);
+	}
+
 	isRunning(): boolean {
 		return false;
 	}

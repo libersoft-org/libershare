@@ -1,19 +1,76 @@
 // Product info
-export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL } from './product.ts';
+export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE } from './product.ts';
 
 // Utils
-export { formatBytes, parseBytes, sanitizeFilename, deriveConnectionStatus, isSelectableInterface, isIPv4, isValidSSID, validateIPv4Config } from './utils.ts';
+export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End, deriveConnectionStatus, isSelectableInterface, isIPv4, isValidSSID, validateIPv4Config } from './utils.ts';
 
 // Compression
-export type CompressionAlgorithm = 'gzip';
+
+/**
+ * Compression algorithms the backend can really compress and decompress with.
+ * Order matters — the UI renders the selector in this order.
+ */
+export const COMPRESSION_ALGORITHMS = ['gzip', 'brotli', 'zstd'] as const;
+
+/** One of the algorithms listed in {@link COMPRESSION_ALGORITHMS}. */
+export type CompressionAlgorithm = (typeof COMPRESSION_ALGORITHMS)[number];
+
+/** Canonical file extension appended when exporting with a given algorithm. */
+export const COMPRESSION_EXTENSIONS: Record<CompressionAlgorithm, string> = {
+	gzip: '.gz',
+	brotli: '.br',
+	zstd: '.zst',
+};
+
+/**
+ * Every extension recognised on import, mapped to its algorithm. Includes the
+ * long aliases (.gzip, .zstd) so files produced elsewhere still open.
+ */
+const EXTENSION_ALGORITHMS: Record<string, CompressionAlgorithm> = {
+	'.gz': 'gzip',
+	'.gzip': 'gzip',
+	'.br': 'brotli',
+	'.zst': 'zstd',
+	'.zstd': 'zstd',
+};
+
+/** File extension (with leading dot) written for the given algorithm. */
+export function compressionExtension(algorithm: CompressionAlgorithm): string {
+	return COMPRESSION_EXTENSIONS[algorithm] ?? COMPRESSION_EXTENSIONS.gzip;
+}
+
+/**
+ * Detect the compression algorithm of a file path or URL from its extension.
+ * Returns null when the path carries no known compression extension.
+ */
+export function detectCompression(filePath: string): CompressionAlgorithm | null {
+	const lower = filePath.toLowerCase();
+	for (const [ext, algorithm] of Object.entries(EXTENSION_ALGORITHMS)) if (lower.endsWith(ext)) return algorithm;
+	return null;
+}
+
+/** Remove a trailing compression extension, if any. Leaves other paths untouched. */
+export function stripCompressionExtension(filePath: string): string {
+	const lower = filePath.toLowerCase();
+	for (const ext of Object.keys(EXTENSION_ALGORITHMS)) if (lower.endsWith(ext)) return filePath.slice(0, -ext.length);
+	return filePath;
+}
+
+/**
+ * Expand file patterns/suffixes with every recognised compression extension,
+ * so a picker offering `*.lish` also offers `*.lish.gz`, `*.lish.br`, …
+ */
+export function withCompressionExtensions(patterns: string[]): string[] {
+	const extensions = Object.keys(EXTENSION_ALGORITHMS);
+	return patterns.flatMap(pattern => [pattern, ...extensions.map(ext => pattern + ext)]);
+}
 
 /**
  * Check if a file path has a compressed file extension.
- * Returns true for known compression extensions (.gz, .gzip, etc.).
+ * Returns true for known compression extensions (.gz, .br, .zst, …).
  */
 export function isCompressed(filePath: string): boolean {
-	const lower = filePath.toLowerCase();
-	return lower.endsWith('.gz') || lower.endsWith('.gzip');
+	return detectCompression(filePath) !== null;
 }
 
 // LISH types
@@ -214,11 +271,29 @@ export interface FactoryResetResult {
 	detail?: string;
 }
 
+/** The infrastructure steps run around the wipes. `prepare` stops the transfers and the
+ * node, `restart` brings them back — neither is a wipe, but both can fail in ways the
+ * user has to know about: a failed `prepare` means the destructive categories were not
+ * safe to run, a failed `restart` means the node is still down. */
+export type FactoryResetPhase = 'prepare' | 'restart';
+
+/** Outcome of one factory-reset phase. */
+export interface FactoryResetPhaseResult {
+	phase: FactoryResetPhase;
+	ok: boolean;
+	/** Failure (or skip) reason when `ok` is false. */
+	detail?: string;
+}
+
 /** Aggregate factory-reset response: `success` is true only when every selected
- * category succeeded; `results` carries the per-category outcome. */
+ * category AND every phase succeeded; `results` carries the per-category outcome and
+ * `phases` the prepare/restart outcome. */
 export interface FactoryResetResponse {
 	success: boolean;
+	/** True when the request selected no categories and intentionally changed nothing. */
+	noop: boolean;
 	results: FactoryResetResult[];
+	phases: FactoryResetPhaseResult[];
 }
 
 // Dataset types (derived from ILISH entries that have a directory)
@@ -268,6 +343,13 @@ export interface IWriteResult {
 // API response wrappers
 export interface SuccessResponse {
 	success: boolean;
+}
+
+/** Outcome of changing one lishnet's enabled state in storage and at runtime. */
+export interface SetLISHNetworkEnabledResponse extends SuccessResponse {
+	applied: boolean;
+	transitioned: boolean;
+	joined: boolean;
 }
 
 // Result of `settings.applyImported`: how many keys were applied vs. skipped.

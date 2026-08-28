@@ -5,7 +5,8 @@
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { joinPath } from '../../scripts/fileBrowser.ts';
 	import { api } from '../../scripts/api.ts';
-	import { storageLISHPath, defaultCompress } from '../../scripts/settings.ts';
+	import { storageLISHPath, defaultCompress, defaultCompressionAlgorithm } from '../../scripts/settings.ts';
+	import { compressionExtension } from '@shared';
 	import ExportFileForm, { type ExportOptions } from '../../components/Export/ExportFileForm.svelte';
 	interface Props {
 		areaID: string;
@@ -18,13 +19,13 @@
 		const now = new Date();
 		const ts = now.getFullYear().toString() + '-' + (now.getMonth() + 1).toString().padStart(2, '0') + '-' + now.getDate().toString().padStart(2, '0') + '_' + now.getHours().toString().padStart(2, '0') + now.getMinutes().toString().padStart(2, '0') + now.getSeconds().toString().padStart(2, '0');
 		const base = `lishs_${ts}.lishs`;
-		return $defaultCompress ? base + '.gz' : base;
+		return $defaultCompress ? base + compressionExtension($defaultCompressionAlgorithm) : base;
 	}
 
 	let filePath = $state(joinPath($storageLISHPath, generateFileName()));
 
 	async function doExport(path: string, opts: ExportOptions): Promise<{ success: boolean }> {
-		return await api.lishs.exportAllToFile(path, opts.minifyJSON, opts.compress);
+		return await api.lishs.exportAllToFile(path, opts.minifyJSON, opts.compress, opts.compressionAlgorithm);
 	}
 
 	function onSuccess(): void {
