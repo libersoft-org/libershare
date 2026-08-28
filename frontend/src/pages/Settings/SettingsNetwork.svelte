@@ -142,7 +142,7 @@
 							<span>{$t('settings.network.signal')}: {iface.wifi.signal !== null ? `${iface.wifi.signal}%` : '—'}</span>
 						{/if}
 					</div>
-					{#if editable}
+					{#if editable && iface.ipv4Configurable}
 						<div role="group" data-mouse-activate-area={areaID} class="configure">
 							<Button icon="/img/edit.svg" label={$t('settings.network.configure')} position={[1, index + 1]} onConfirm={() => (editing = iface.id)} />
 						</div>

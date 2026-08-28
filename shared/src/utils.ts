@@ -1,5 +1,5 @@
 import { CodedError, ErrorCodes } from './errors.ts';
-import type { ConnectionStatus, NetInterfaceInfo, NetworkStateInfo } from './index.ts';
+import type { ConnectionStatus, NetCapabilities, NetInterfaceInfo, NetworkStateInfo } from './index.ts';
 
 export function formatBytes(bytes: number, decimals: number = 2): string {
 	if (bytes === 0) return '0 Bytes';
@@ -85,7 +85,7 @@ export function isIPv4(value: string): boolean {
  * a plain IPv4 literal or a small integer must never get that far. Callers on
  * every platform validate before touching a child process.
  */
-export function validateIPv4Config(value: unknown): string | null {
+export function validateIPv4Config(value: unknown, capabilities?: Pick<NetCapabilities, 'staticGatewayRequired'>): string | null {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) return 'mode';
 	const config = value as { mode?: unknown; dns?: unknown; address?: unknown; prefixLength?: unknown; gateway?: unknown };
 	if (config.mode !== 'dhcp' && config.mode !== 'static') return 'mode';
@@ -97,6 +97,7 @@ export function validateIPv4Config(value: unknown): string | null {
 	// An interface on an isolated segment legitimately has no gateway, so only a
 	// present-but-malformed value is an error.
 	if (config.gateway !== undefined && (typeof config.gateway !== 'string' || (config.gateway !== '' && !isIPv4(config.gateway)))) return 'gateway';
+	if (capabilities?.staticGatewayRequired && !config.gateway) return 'gateway';
 	return null;
 }
 

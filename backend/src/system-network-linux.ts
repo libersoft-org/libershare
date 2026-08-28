@@ -66,6 +66,8 @@ export interface LinuxNetworkSources {
 	resolvers?: string[];
 	/** Per-interface resolvers as NetworkManager sees them. Preferred over {@link resolvers} when present. */
 	nmDns?: Map<string, string[]> | undefined;
+	/** Active NetworkManager profile UUIDs by device. Only these devices can be edited. */
+	activeConnections?: Map<string, string> | undefined;
 }
 
 /**
@@ -200,6 +202,7 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 			mac: entry.address ?? link?.address ?? null,
 			addresses,
 			ipv4Mode,
+			ipv4Configurable: sources.activeConnections?.has(entry.ifname) ?? false,
 			gateway: entry.ifname === defaultDev ? (best?.gateway ?? null) : null,
 			// NetworkManager knows the resolvers PER LINK, which is the only correct
 			// answer on a systemd-resolved host: there /etc/resolv.conf holds the
@@ -308,7 +311,8 @@ export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
 			// rather than being guessed from anything else.
 		}
 	}
-	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: await readNetworkManagerDns() });
+	const [nmDns, activeConnections] = await Promise.all([readNetworkManagerDns(), readNetworkManagerActiveConnections()]);
+	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns, activeConnections });
 }
 
 /**
@@ -387,10 +391,10 @@ export function parseNmcliPermission(text: string, permission: string): string |
 /** Probe address and Wi-Fi rights separately; custom polkit policies may differ. */
 export async function readLinuxCapabilities(): Promise<NetCapabilities> {
 	try {
-		if (!(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'RUNNING', 'general'])).trim().startsWith('running')) return { ipv4: false, wifi: false };
+		if (!(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'RUNNING', 'general'])).trim().startsWith('running')) return { ipv4: false, wifi: false, staticGatewayRequired: false };
 		return parseLinuxCapabilities(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'PERMISSION,VALUE', 'general', 'permissions']));
 	} catch {
-		return { ipv4: false, wifi: false };
+		return { ipv4: false, wifi: false, staticGatewayRequired: false };
 	}
 }
 
@@ -434,20 +438,39 @@ export function parseNmcliDns(text: string): Map<string, string[]> {
 	return result;
 }
 
+/** Parse active NetworkManager profile UUIDs keyed by their device. */
+export function parseNmcliActiveConnections(text: string): Map<string, string> {
+	const result = new Map<string, string>();
+	for (const line of text.split('\n')) {
+		if (!line.trim()) continue;
+		const [uuid, device] = splitNmcliFields(line);
+		if (uuid && device) result.set(device, uuid);
+	}
+	return result;
+}
+
+/** Active profiles for the read path. Undefined means NetworkManager could not answer. */
+async function readNetworkManagerActiveConnections(): Promise<Map<string, string> | undefined> {
+	try {
+		return await activeConnections();
+	} catch {
+		return undefined;
+	}
+}
+
+/** Fresh active-profile lookup shared by the read and apply paths. */
+async function activeConnections(): Promise<Map<string, string>> {
+	return parseNmcliActiveConnections(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'UUID,DEVICE', 'connection', 'show', '--active']));
+}
+
 /**
- * Name of the NetworkManager profile currently active on a device.
+ * UUID of the NetworkManager profile currently active on a device.
  *
  * Modifying the active profile (rather than creating a new one) is what makes an
  * edit idempotent: applying twice leaves one profile, not two competing ones.
  */
 async function activeConnection(device: string): Promise<string | null> {
-	const out = await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'NAME,DEVICE', 'connection', 'show', '--active']);
-	for (const line of out.split('\n')) {
-		if (!line.trim()) continue;
-		const fields = splitNmcliFields(line);
-		if (fields[1] === device) return fields[0] ?? null;
-	}
-	return null;
+	return (await activeConnections()).get(device) ?? null;
 }
 
 /**
@@ -457,8 +480,8 @@ async function activeConnection(device: string): Promise<string | null> {
  * stale `ipv4.addresses` on a profile whose method changed, and that address
  * comes back the moment the user switches to static again.
  */
-export function nmcliModifyArgs(connection: string, config: NetIPv4Config): string[] {
-	const base = ['connection', 'modify', connection];
+export function nmcliModifyArgs(connectionUUID: string, config: NetIPv4Config): string[] {
+	const base = ['connection', 'modify', 'uuid', connectionUUID];
 	if (config.mode === 'dhcp') return [...base, 'ipv4.method', 'auto', 'ipv4.addresses', '', 'ipv4.gateway', '', 'ipv4.dns', '', 'ipv4.ignore-auto-dns', 'no'];
 	const dns = config.dns ?? [];
 	return [
@@ -478,14 +501,19 @@ export function nmcliModifyArgs(connection: string, config: NetIPv4Config): stri
 	];
 }
 
+/** Address one active profile unambiguously even when display names collide. */
+export function nmcliActivateArgs(connectionUUID: string): string[] {
+	return ['connection', 'up', 'uuid', connectionUUID];
+}
+
 /** Apply an IPv4 configuration to one device and bring the profile back up. Throws when NetworkManager does not own the device. */
 export async function applyLinuxIPv4(device: string, config: NetIPv4Config): Promise<void> {
-	const connection = await activeConnection(device);
-	if (!connection) throw new Error(`no NetworkManager profile is active on ${device}`);
-	await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connection, config), APPLY_TIMEOUT_MS);
+	const connectionUUID = await activeConnection(device);
+	if (!connectionUUID) throw new Error(`no NetworkManager profile is active on ${device}`);
+	await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connectionUUID, config), APPLY_TIMEOUT_MS);
 	// `connection up` re-applies the edited profile in place. The device drops for
 	// a moment either way — that is inherent to changing an address, not to this.
-	await runFirst(NMCLI_CANDIDATES, ['connection', 'up', connection], APPLY_TIMEOUT_MS);
+	await runFirst(NMCLI_CANDIDATES, nmcliActivateArgs(connectionUUID), APPLY_TIMEOUT_MS);
 }
 
 /**
@@ -511,7 +539,13 @@ export function parseNmcliWifiList(text: string): NetWifiNetwork[] {
 			active: inUse?.trim() === '*',
 		};
 		const previous = best.get(ssid);
-		if (!previous || (entry.signal ?? -1) > (previous.signal ?? -1)) best.set(ssid, previous ? { ...entry, active: previous.active || entry.active } : entry);
+		if (!previous) {
+			best.set(ssid, entry);
+		} else if ((entry.signal ?? -1) > (previous.signal ?? -1)) {
+			best.set(ssid, { ...entry, active: previous.active || entry.active });
+		} else if (entry.active && !previous.active) {
+			best.set(ssid, { ...previous, active: true });
+		}
 	}
 	return [...best.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
 }
@@ -528,6 +562,7 @@ export function parseLinuxCapabilities(text: string): NetCapabilities {
 	return {
 		ipv4: canModify && canActivate,
 		wifi: canModify && canActivate && parseNmcliPermission(text, NM_WIFI_SCAN_PERMISSION) === 'yes',
+		staticGatewayRequired: false,
 	};
 }
 

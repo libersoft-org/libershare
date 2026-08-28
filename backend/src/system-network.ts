@@ -149,7 +149,7 @@ export function readGenericInterfaces(): NetInterfaceInfo[] {
 			prefixLength: prefixFromNetmask(e.netmask, e.family === 'IPv4'),
 		}));
 		const mac = usable.find(e => e.mac && e.mac !== '00:00:00:00:00:00')?.mac ?? null;
-		result.push({ id: name, name, medium: 'other', link: 'unknown', defaultRoute: false, mac, addresses, ipv4Mode: 'unknown', gateway: null, dns: [] });
+		result.push({ id: name, name, medium: 'other', link: 'unknown', defaultRoute: false, mac, addresses, ipv4Mode: 'unknown', ipv4Configurable: false, gateway: null, dns: [] });
 	}
 	return result;
 }
@@ -244,18 +244,18 @@ async function readCapabilities(): Promise<NetCapabilities> {
 		// The Get/Set-Net* cmdlets refuse outright without an elevated token, so the
 		// capability is that token — probed once here rather than discovered by the
 		// user when Save fails. Wi-Fi is deliberately read-only.
-		capabilities = { ipv4: await isWindowsElevated(), wifi: false };
+		capabilities = { ipv4: await isWindowsElevated(), wifi: false, staticGatewayRequired: false };
 	} else if (process.platform === 'linux') {
 		capabilities = await readLinuxCapabilities();
 	} else if (process.platform === 'darwin') {
 		// networksetup persists a change and is present on every macOS install, so
 		// addressing is editable. Wi-Fi is not: see isMacWifiConfigurable.
-		capabilities = { ipv4: await isMacWritable(), wifi: isMacWifiConfigurable() };
+		capabilities = { ipv4: await isMacWritable(), wifi: isMacWifiConfigurable(), staticGatewayRequired: true };
 	} else {
 		// Everything else reads through os.networkInterfaces(), which cannot even
 		// report whether an address came from DHCP. Offering to edit a configuration
 		// we cannot describe would be worse than not offering it.
-		capabilities = { ipv4: false, wifi: false };
+		capabilities = { ipv4: false, wifi: false, staticGatewayRequired: false };
 	}
 	return capabilities;
 }
@@ -278,6 +278,8 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config, prim
 	return runNetworkMutation(async () => {
 		const supported = await readCapabilities();
 		if (!supported.ipv4) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host does not expose a writable network configuration');
+		const platformInvalid = validateIPv4Config(config, supported);
+		if (platformInvalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${platformInvalid}`);
 		try {
 			await run(async () => {
 				if (process.platform === 'win32') {

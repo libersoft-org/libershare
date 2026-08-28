@@ -72,7 +72,7 @@
 	async function save(): Promise<void> {
 		if (busy || scanning) return;
 		const config = buildConfig();
-		const invalid = validateIPv4Config(config);
+		const invalid = validateIPv4Config(config, $networkState.capabilities);
 		if (invalid) {
 			failed = true;
 			message = $t('settings.network.invalidField', { field: $t('settings.network.field.' + invalid) });

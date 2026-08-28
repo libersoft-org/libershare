@@ -273,6 +273,7 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 			mac: entry.mac,
 			addresses: entry.addresses,
 			ipv4Mode: sources.serviceInfo?.has(device) ? parseServiceInfo(sources.serviceInfo.get(device) as string) : 'unknown',
+			ipv4Configurable: services.has(device),
 			gateway: defaultRoute ? route.gateway : null,
 			// Manually set servers win; otherwise fall back to what the DHCP lease
 			// handed out, so a DHCP link reports the resolvers it actually uses.
@@ -389,10 +390,12 @@ export function macApplyArgs(service: string, config: NetIPv4Config): string[][]
 	const dns = config.dns ?? [];
 	const dnsArgs = ['-setdnsservers', service, ...(dns.length > 0 ? dns : ['Empty'])];
 	if (config.mode === 'dhcp') return [['-setdhcp', service], dnsArgs];
-	const address = ['-setmanual', service, config.address as string, netmaskFromPrefix(config.prefixLength as number)];
-	// An interface on an isolated segment has no gateway, and networksetup takes
-	// the router as an optional trailing argument rather than an empty string.
-	if (config.gateway) address.push(config.gateway);
+	// Unlike the Windows and NetworkManager paths, networksetup documents the
+	// router as a required positional argument and has no documented no-router
+	// sentinel. Reject only this platform-specific shape instead of emitting a
+	// command that networksetup cannot parse.
+	if (!config.gateway) throw new Error('macOS manual IPv4 configuration requires a router');
+	const address = ['-setmanual', service, config.address as string, netmaskFromPrefix(config.prefixLength as number), config.gateway];
 	return [address, dnsArgs];
 }
 

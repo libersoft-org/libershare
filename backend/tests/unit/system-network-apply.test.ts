@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { isIPv4, isValidSSID, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
+import { nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNmcliActiveConnections, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { assertDeviceName, firstLine, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, runNetworkMutation } from '../../src/system-network.ts';
 
@@ -30,6 +30,12 @@ describe('validateIPv4Config', () => {
 
 	it('accepts a static config with no gateway, as on an isolated segment', () => {
 		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24 })).toBeNull();
+	});
+
+	it('requires a static gateway when the platform tool does', () => {
+		const capabilities = { staticGatewayRequired: true };
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24 }, capabilities)).toBe('gateway');
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }, capabilities)).toBeNull();
 	});
 
 	it('names the field that is wrong', () => {
@@ -179,6 +185,11 @@ describe('parseNmcliWifiList', () => {
 		expect(result).toEqual([{ ssid: 'home', signal: 88, secured: true, active: true }]);
 	});
 
+	it('keeps the active flag when the weaker associated row arrives last', () => {
+		const result = parseNmcliWifiList('home:88:WPA2:\nhome:40:WPA2:*');
+		expect(result).toEqual([{ ssid: 'home', signal: 88, secured: true, active: true }]);
+	});
+
 	it('sorts strongest first', () => {
 		expect(parseNmcliWifiList('weak:10:WPA2:\nstrong:90:WPA2:\nmid:50:WPA2:').map(n => n.ssid)).toEqual(['strong', 'mid', 'weak']);
 	});
@@ -188,12 +199,21 @@ describe('parseNmcliWifiList', () => {
 	});
 });
 
+describe('parseNmcliActiveConnections', () => {
+	it('keys unambiguous active profile UUIDs by device', () => {
+		expect([...parseNmcliActiveConnections('11111111-1111-1111-1111-111111111111:eth0\n22222222-2222-2222-2222-222222222222:wlan0\n')]).toEqual([
+			['eth0', '11111111-1111-1111-1111-111111111111'],
+			['wlan0', '22222222-2222-2222-2222-222222222222'],
+		]);
+	});
+});
+
 describe('nmcliModifyArgs', () => {
 	it('clears the manual fields when switching to DHCP', () => {
 		// NetworkManager keeps a stale ipv4.addresses on a profile whose method
 		// changed, and it comes back the moment the user switches to static again.
-		const args = nmcliModifyArgs('Wired connection 1', { mode: 'dhcp' });
-		expect(args.slice(0, 3)).toEqual(['connection', 'modify', 'Wired connection 1']);
+		const args = nmcliModifyArgs('11111111-1111-1111-1111-111111111111', { mode: 'dhcp' });
+		expect(args.slice(0, 4)).toEqual(['connection', 'modify', 'uuid', '11111111-1111-1111-1111-111111111111']);
 		expect(args).toContain('auto');
 		expect(args[args.indexOf('ipv4.addresses') + 1]).toBe('');
 		expect(args[args.indexOf('ipv4.gateway') + 1]).toBe('');
@@ -215,11 +235,10 @@ describe('nmcliModifyArgs', () => {
 		expect(args[args.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('no');
 	});
 
-	it('passes an SSID-shaped connection name as a single argument', () => {
-		// Arguments reach nmcli as argv, so a name with spaces or quotes needs no
-		// escaping — this pins that it is never flattened into one string.
-		const args = nmcliModifyArgs('my "odd" name', { mode: 'dhcp' });
-		expect(args[2]).toBe('my "odd" name');
+	it('addresses both modify and activation by UUID rather than an ambiguous name', () => {
+		const uuid = '11111111-1111-1111-1111-111111111111';
+		expect(nmcliModifyArgs(uuid, { mode: 'dhcp' }).slice(0, 4)).toEqual(['connection', 'modify', 'uuid', uuid]);
+		expect(nmcliActivateArgs(uuid)).toEqual(['connection', 'up', 'uuid', uuid]);
 	});
 });
 
@@ -346,13 +365,13 @@ describe('parseLinuxCapabilities', () => {
 	const permissions = (modify: string, control: string, scan: string): string => [`org.freedesktop.NetworkManager.settings.modify.system:${modify}`, `org.freedesktop.NetworkManager.network-control:${control}`, `org.freedesktop.NetworkManager.wifi.scan:${scan}`].join('\n');
 
 	it('requires both profile modification and activation for IPv4 writes', () => {
-		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'yes'))).toEqual({ ipv4: true, wifi: true });
-		expect(parseLinuxCapabilities(permissions('yes', 'no', 'yes'))).toEqual({ ipv4: false, wifi: false });
-		expect(parseLinuxCapabilities(permissions('auth', 'yes', 'yes'))).toEqual({ ipv4: false, wifi: false });
+		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'yes'))).toEqual({ ipv4: true, wifi: true, staticGatewayRequired: false });
+		expect(parseLinuxCapabilities(permissions('yes', 'no', 'yes'))).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
+		expect(parseLinuxCapabilities(permissions('auth', 'yes', 'yes'))).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
 	});
 
 	it('requires the separate scan permission before offering Wi-Fi actions', () => {
-		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'no'))).toEqual({ ipv4: true, wifi: false });
+		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'no'))).toEqual({ ipv4: true, wifi: false, staticGatewayRequired: false });
 	});
 });
 

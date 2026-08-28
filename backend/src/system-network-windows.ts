@@ -231,6 +231,7 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 			mac: mac && mac.length > 0 ? mac : null,
 			addresses: addressesByIndex.get(ifIndex) ?? [],
 			ipv4Mode: dhcpByIndex.get(ifIndex) ?? 'unknown',
+			ipv4Configurable: guid !== null,
 			gateway: ifIndex === defaultIndex ? (best?.NextHop ?? null) : null,
 			dns: dnsByIndex.get(ifIndex) ?? [],
 		};

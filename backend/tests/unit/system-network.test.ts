@@ -64,6 +64,7 @@ describe('parseWindowsNetworkState', () => {
 		expect(eth.gateway).toBe('192.0.2.1');
 		expect(eth.dns).toEqual(['192.0.2.1', '192.0.2.2']);
 		expect(eth.addresses).toContainEqual({ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 });
+		expect(eth.ipv4Configurable).toBe(true);
 	});
 
 	it('reads the Wi-Fi adapter as wireless and disconnected', () => {
@@ -89,6 +90,7 @@ describe('parseWindowsNetworkState', () => {
 		expect(ras.medium).toBe('other');
 		expect(ras.link).toBe('unknown');
 		expect(ras.addresses).toContainEqual({ family: 'ipv4', address: '203.0.113.200', prefixLength: 32 });
+		expect(ras.ipv4Configurable).toBe(false);
 	});
 
 	it('drops tentative APIPA, deprecated link-local and loopback addresses', () => {
@@ -154,7 +156,7 @@ describe('parseWindowsNetworkState', () => {
 });
 
 describe('parseLinuxNetworkState', () => {
-	const sources = { addr: fixture('network-linux-addr.json'), link: fixture('network-linux-link.json'), route: '[{"dst":"default","gateway":"192.0.2.1","dev":"eth0","flags":[]}]', resolvers: ['192.0.2.1'] };
+	const sources = { addr: fixture('network-linux-addr.json'), link: fixture('network-linux-link.json'), route: '[{"dst":"default","gateway":"192.0.2.1","dev":"eth0","flags":[]}]', resolvers: ['192.0.2.1'], activeConnections: new Map([['eth0', 'Wired connection 1']]) };
 	const result = parseLinuxNetworkState(sources);
 
 	it('reads DHCP from the kernel dynamic flag and static from a permanent lifetime', () => {
@@ -196,6 +198,11 @@ describe('parseLinuxNetworkState', () => {
 
 	it('attributes resolvers to the default-route interface only', () => {
 		expect(byID(result, 'docker0').dns).toEqual([]);
+	});
+
+	it('marks only devices with an active NetworkManager profile configurable', () => {
+		expect(byID(result, 'eth0').ipv4Configurable).toBe(true);
+		expect(byID(result, 'docker0').ipv4Configurable).toBe(false);
 	});
 
 	it('marks wireless interfaces and carries their iw reading through', () => {
@@ -304,8 +311,8 @@ describe('prefixFromNetmask', () => {
 
 describe('resolvePrimaryID', () => {
 	const list: NetInterfaceInfo[] = [
-		{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [] },
-		{ id: 'b', name: 'b', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [] },
+		{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, gateway: null, dns: [] },
+		{ id: 'b', name: 'b', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, gateway: null, dns: [] },
 	];
 
 	it('honours a pick that still exists', () => {
@@ -326,7 +333,7 @@ describe('resolvePrimaryID', () => {
 });
 
 describe('assertReadProducedSomething', () => {
-	const list: NetInterfaceInfo[] = [{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [] }];
+	const list: NetInterfaceInfo[] = [{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, gateway: null, dns: [] }];
 
 	it('passes a non-empty read straight through', () => {
 		expect(assertReadProducedSomething(list)).toBe(list);
@@ -361,8 +368,8 @@ describe('NetworkStateCache invalidation', () => {
 		const freshRead = new Promise<NetworkSnapshot>(resolve => (resolveFresh = resolve));
 		let reads = 0;
 		const cache = new NetworkStateCache(() => (++reads === 1 ? oldRead : freshRead), 60_000);
-		const oldSnapshot = { interfaces: [{ id: 'old', name: 'old', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'dhcp', gateway: null, dns: [] }], detail: 'full' } as NetworkSnapshot;
-		const freshSnapshot = { interfaces: [{ id: 'fresh', name: 'fresh', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'static', gateway: null, dns: [] }], detail: 'full' } as NetworkSnapshot;
+		const oldSnapshot = { interfaces: [{ id: 'old', name: 'old', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'dhcp', ipv4Configurable: true, gateway: null, dns: [] }], detail: 'full' } as NetworkSnapshot;
+		const freshSnapshot = { interfaces: [{ id: 'fresh', name: 'fresh', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'static', ipv4Configurable: true, gateway: null, dns: [] }], detail: 'full' } as NetworkSnapshot;
 
 		const staleCaller = cache.read();
 		cache.reset();

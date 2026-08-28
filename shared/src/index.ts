@@ -449,6 +449,8 @@ export interface NetInterfaceInfo {
 	mac: string | null;
 	addresses: NetAddress[];
 	ipv4Mode: NetAddressMode;
+	/** True only when the platform apply path can resolve this exact interface. */
+	ipv4Configurable: boolean;
 	gateway: string | null;
 	dns: string[];
 	/** Present only when medium === 'wireless'. */
@@ -480,6 +482,8 @@ export interface NetCapabilities {
 	ipv4: boolean;
 	/** Wi-Fi networks can be scanned and joined. */
 	wifi: boolean;
+	/** Static IPv4 requires a gateway because the platform tool has no no-router form. */
+	staticGatewayRequired: boolean;
 }
 
 /**

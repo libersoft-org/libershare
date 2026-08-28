@@ -220,6 +220,7 @@ describe('parseMacNetworkState', () => {
 			link: 'up',
 			defaultRoute: true,
 			ipv4Mode: 'dhcp',
+			ipv4Configurable: true,
 			gateway: '192.0.2.1',
 			dns: ['192.0.2.1'],
 		});
@@ -237,6 +238,10 @@ describe('parseMacNetworkState', () => {
 	it('leaves wifi undefined on a wired interface', () => {
 		expect(parseMacNetworkState(sources).find(i => i.id === 'bridge0')?.wifi).toBeUndefined();
 	});
+
+	it('marks a device without an enabled network service read-only', () => {
+		expect(parseMacNetworkState({ ...sources, serviceOrder: '' }).find(i => i.id === 'en0')?.ipv4Configurable).toBe(false);
+	});
 });
 
 describe('macApplyArgs', () => {
@@ -247,10 +252,8 @@ describe('macApplyArgs', () => {
 		]);
 	});
 
-	it('omits the router argument when there is no gateway', () => {
-		// networksetup takes the router as an optional trailing argument; an empty
-		// string is a parameter error, not a no-op.
-		expect(macApplyArgs('Wi-Fi', { mode: 'static', address: '192.0.2.10', prefixLength: 24 })[0]).toEqual(['-setmanual', 'Wi-Fi', '192.0.2.10', '255.255.255.0']);
+	it("rejects a manual configuration without networksetup's required router", () => {
+		expect(() => macApplyArgs('Wi-Fi', { mode: 'static', address: '192.0.2.10', prefixLength: 24 })).toThrow('requires a router');
 	});
 
 	it('clears the resolvers with the Empty sentinel when switching to DHCP', () => {
