@@ -9,7 +9,7 @@
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { uploadImportFile } from '../../scripts/ws-client.ts';
-	import { createImportUploader, importOwnsForm } from '../../scripts/importUpload.ts';
+	import { createImportOperationController, createImportUploader } from '../../scripts/importUpload.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import ButtonBar from '../Buttons/ButtonBar.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -55,22 +55,21 @@
 	let parsedData = $state<TData | null>(null);
 	/** Label shown in the blocking dialog, empty while nothing is running. */
 	let busyLabel = $state('');
-	let destroyed = false;
+	const operations = createImportOperationController(label => (busyLabel = label));
 
 	const uploader = createImportUploader(
 		{
-			getUploadID: () => uploadID,
 			setUploadID: id => (uploadID = id),
 			setFileName: name => (uploadFileName = name),
 			setError: message => (errorMessage = message),
-			setBusy: label => (busyLabel = label),
 		},
 		{
 			upload: uploadImportFile,
 			discard: id => api.upload.abort(id),
 			uploadingLabel: () => $t('import.uploading'),
 			formatError: translateError,
-		}
+		},
+		operations
 	);
 
 	const showDownloadPath = $derived(downloadPath !== undefined);
@@ -94,13 +93,13 @@
 
 	function toggleUploadMode(): void {
 		uploadMode = !uploadMode;
+		operations.invalidate();
 	}
 
 	// Leaving the form after picking a file but before importing it — Back, a
 	// mode switch followed by a path import, any navigation away — would strand
 	// the uploaded copy on the backend's disk until it ages out.
 	onDestroy(() => {
-		destroyed = true;
 		uploader.unmount();
 	});
 
@@ -133,26 +132,20 @@
 		// picked meanwhile instead of the one this import consumed.
 		const parsingUpload = uploadMode;
 		const parsing = parsingUpload ? uploadID : filePath;
-		// Whether the form still shows the file this import is parsing. A pick made
-		// during the parse takes the form over, and this import must then keep its
-		// result to itself: opening a confirmation screen for the old file, clearing
-		// the new pick's spinner or reporting the old file's error would all overrule
-		// the choice the user just made.
-		const ownsForm = (): boolean => importOwnsForm(parsingUpload, uploadMode, uploadMode ? uploadID : filePath, parsing, !destroyed);
+		const operation = operations.start($t('import.importing'));
+		const ownsForm = (): boolean => operations.owns(operation);
 		if (parsingUpload) uploader.consume(parsing);
 		try {
-			busyLabel = $t('import.importing');
 			const parsed = parsingUpload ? await parseUpload(parsing) : await parseFile(parsing);
 			if (ownsForm()) parsedData = parsed;
 		} catch (e) {
 			if (ownsForm()) errorMessage = translateError(e);
 		} finally {
-			if (ownsForm()) {
-				busyLabel = '';
-				if (parsingUpload) {
-					uploadID = '';
-					uploadFileName = '';
-				}
+			const owned = ownsForm();
+			operations.finish(operation);
+			if (owned && parsingUpload) {
+				uploadID = '';
+				uploadFileName = '';
 			}
 			// A transport failure can happen before the backend consumes the upload.
 			// Abort is harmless when parsing already removed it.
@@ -179,6 +172,7 @@
 
 	function handleFilePathSelect(path: string): void {
 		filePath = path;
+		operations.invalidate();
 		void filePathSubPage.exit();
 	}
 
@@ -259,7 +253,7 @@
 				</div>
 			{:else}
 				<div class="row" role="group" data-mouse-activate-area={areaID}>
-					<Input bind:value={filePath} label={effectiveFilePathLabel} position={[0, 1]} flex />
+					<Input bind:value={filePath} label={effectiveFilePathLabel} position={[0, 1]} onchange={() => operations.invalidate()} flex />
 					<Button icon="/img/directory.svg" position={[1, 1]} onConfirm={openFilePathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				</div>
 			{/if}

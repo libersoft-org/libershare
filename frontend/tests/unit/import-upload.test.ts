@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { createImportUploader, importOwnsForm, type ImportUploadForm, type ImportUploadDeps } from '../../src/scripts/importUpload.ts';
+import { createImportOperationController, createImportUploader, type ImportUploadForm, type ImportUploadDeps } from '../../src/scripts/importUpload.ts';
 
 interface PendingUpload {
 	id: string;
@@ -13,11 +13,9 @@ function harness() {
 	const pending: PendingUpload[] = [];
 	let discardError: unknown;
 	const form: ImportUploadForm = {
-		getUploadID: () => state.uploadID,
 		setUploadID: uploadID => (state.uploadID = uploadID),
 		setFileName: name => (state.fileName = name),
 		setError: message => (state.error = message),
-		setBusy: label => (state.busy = label),
 	};
 	const deps: ImportUploadDeps = {
 		upload: (file, onStart) => {
@@ -32,12 +30,14 @@ function harness() {
 		uploadingLabel: () => 'uploading',
 		formatError: err => `error:${String(err)}`,
 	};
+	const operations = createImportOperationController(label => (state.busy = label));
 	return {
 		state,
 		discarded,
 		pending,
 		failDiscard: (err: unknown) => (discardError = err),
-		uploader: createImportUploader(form, deps),
+		operations,
+		uploader: createImportUploader(form, deps, operations),
 	};
 }
 
@@ -131,11 +131,9 @@ test('rapid replacement picks share one cleanup barrier before the newest upload
 	let discardCalls = 0;
 	const uploader = createImportUploader(
 		{
-			getUploadID: () => state.uploadID,
 			setUploadID: value => (state.uploadID = value),
 			setFileName: value => (state.fileName = value),
 			setError: value => (state.error = value),
-			setBusy: value => (state.busy = value),
 		},
 		{
 			upload: (file, onStart) => {
@@ -149,7 +147,8 @@ test('rapid replacement picks share one cleanup barrier before the newest upload
 			},
 			uploadingLabel: () => 'uploading',
 			formatError: String,
-		}
+		},
+		createImportOperationController(value => (state.busy = value))
 	);
 	const first = uploader.pick(pickedFile('first.lish'));
 	const second = uploader.pick(pickedFile('second.lish'));
@@ -186,11 +185,9 @@ test('an upload that starts after unmount is immediately discarded', async () =>
 	const state = { uploadID: '', fileName: '', error: '', busy: '' };
 	const uploader = createImportUploader(
 		{
-			getUploadID: () => state.uploadID,
 			setUploadID: value => (state.uploadID = value),
 			setFileName: value => (state.fileName = value),
 			setError: value => (state.error = value),
-			setBusy: value => (state.busy = value),
 		},
 		{
 			upload: (_file, onStart) =>
@@ -201,7 +198,8 @@ test('an upload that starts after unmount is immediately discarded', async () =>
 			discard: async id => void discarded.push(id),
 			uploadingLabel: () => 'uploading',
 			formatError: String,
-		}
+		},
+		createImportOperationController(value => (state.busy = value))
 	);
 	const pick = uploader.pick(pickedFile('late.lish'));
 	uploader.unmount();
@@ -264,17 +262,54 @@ test('finishing a parse aborts transport leftovers only once', async () => {
 	expect(h.discarded).toEqual(['upload-first.lish']);
 });
 
-test('a parse loses the form after either a mode change or a newer selection', () => {
-	expect(importOwnsForm(true, true, 'newer', 'parsed')).toBe(false);
-	expect(importOwnsForm(true, false, '/data/file.lish', 'parsed')).toBe(false);
-	expect(importOwnsForm(false, true, 'upload-id', '/data/file.lish')).toBe(false);
+test('invalidating an import operation clears only its busy state and supersedes it permanently', () => {
+	const busy: string[] = [];
+	const operations = createImportOperationController(label => busy.push(label));
+	const first = operations.start('importing first');
+	expect(operations.owns(first)).toBe(true);
+	operations.invalidate();
+	expect(busy.at(-1)).toBe('');
+	const second = operations.start('importing second');
+	expect(operations.owns(first)).toBe(false);
+	operations.finish(first);
+	expect(busy.at(-1)).toBe('importing second');
+	operations.finish(second);
+	expect(busy.at(-1)).toBe('');
 });
 
-test('a parse still owns the unchanged selection in the same mode', () => {
-	expect(importOwnsForm(true, true, 'upload-id', 'upload-id')).toBe(true);
-	expect(importOwnsForm(false, false, '/data/file.lish', '/data/file.lish')).toBe(true);
+test('starting the same import twice gives ownership only to the newer parse', () => {
+	const operations = createImportOperationController(() => {});
+	const first = operations.start('importing');
+	const second = operations.start('importing');
+	expect(operations.owns(first)).toBe(false);
+	expect(operations.owns(second)).toBe(true);
+	operations.destroy();
+	expect(operations.owns(second)).toBe(false);
 });
 
-test('a completed parse cannot own a destroyed form', () => {
-	expect(importOwnsForm(true, true, 'upload-id', 'upload-id', false)).toBe(false);
+test('an older upload cannot clear the busy state or error of a newer parse', async () => {
+	const h = harness();
+	const upload = h.uploader.pick(pickedFile('first.lish'));
+	const parse = h.operations.start('importing');
+	h.pending[0]!.reject(new Error('old upload failed'));
+	await upload;
+	expect(h.state.busy).toBe('importing');
+	expect(h.state.error).toBe('');
+	h.operations.finish(parse);
+	expect(h.state.busy).toBe('');
+});
+
+test('a failed parser-owned cleanup is retried when the form unmounts', async () => {
+	const h = harness();
+	const first = h.uploader.pick(pickedFile('first.lish'));
+	h.pending[0]!.resolve();
+	await first;
+	h.uploader.consume('upload-first.lish');
+	h.failDiscard(new Error('connection lost'));
+	h.uploader.finishConsume('upload-first.lish');
+	await advance();
+	h.failDiscard(undefined);
+	h.uploader.unmount();
+	await advance();
+	expect(h.discarded).toEqual(['upload-first.lish', 'upload-first.lish']);
 });

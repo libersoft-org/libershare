@@ -1,10 +1,8 @@
 /** State one file pick drives in the import form. */
 export interface ImportUploadForm {
-	getUploadID: () => string;
 	setUploadID: (uploadID: string) => void;
 	setFileName: (name: string) => void;
 	setError: (message: string) => void;
-	setBusy: (label: string) => void;
 }
 
 /** External operations used by the upload sequencer. */
@@ -24,34 +22,78 @@ export interface ImportUploader {
 	unmount: () => void;
 }
 
-/**
- * Whether an import still owns the form after its asynchronous parse finishes.
- * A mode change or a newer selection means the old result must not overwrite the
- * state the user is now looking at.
- */
-export function importOwnsForm(parsingUpload: boolean, currentUploadMode: boolean, currentSelection: string, parsing: string, mounted = true): boolean {
-	return mounted && parsingUpload === currentUploadMode && currentSelection === parsing;
+export interface ImportOperationController {
+	start: (busyLabel: string) => number;
+	invalidate: () => void;
+	owns: (operation: number) => boolean;
+	finish: (operation: number) => void;
+	destroy: () => void;
+}
+
+/** Keep every asynchronous form operation under one monotonic owner token. */
+export function createImportOperationController(setBusy: (label: string) => void): ImportOperationController {
+	let current = 0;
+	let mounted = true;
+	return {
+		start(busyLabel: string): number {
+			const operation = ++current;
+			if (mounted) setBusy(busyLabel);
+			return operation;
+		},
+		invalidate(): void {
+			current++;
+			if (mounted) setBusy('');
+		},
+		owns(operation: number): boolean {
+			return mounted && operation === current;
+		},
+		finish(operation: number): void {
+			if (mounted && operation === current) setBusy('');
+		},
+		destroy(): void {
+			mounted = false;
+			current++;
+		},
+	};
 }
 
 /**
  * Sequence file picks so only the newest one can update the form. Upload ids are
- * recorded as soon as `upload.begin` succeeds, allowing a later pick or unmount
- * to abort a transfer that has not reached `upload.end` yet.
+ * recorded before `upload.begin` is sent, allowing a later pick or unmount to
+ * abort a transfer that has not reached `upload.end` yet.
  */
-export function createImportUploader(form: ImportUploadForm, deps: ImportUploadDeps): ImportUploader {
-	let newest = 0;
+export function createImportUploader(form: ImportUploadForm, deps: ImportUploadDeps, operations: ImportOperationController): ImportUploader {
 	let mounted = true;
 	let activeUploadID = '';
 	const consumedUploadIDs = new Set<string>();
+	const consumedCleanups = new Map<string, Promise<void>>();
+	const retryConsumedAfterFailure = new Set<string>();
 	let cleanup: { uploadID: string; promise: Promise<void> } | null = null;
 
 	function discardQuietly(uploadID: string): void {
 		void deps.discard(uploadID).catch(() => {});
 	}
 
-	function discardConsumed(uploadID: string): void {
-		if (!consumedUploadIDs.delete(uploadID)) return;
-		discardQuietly(uploadID);
+	function discardConsumed(uploadID: string, retryOnFailure = false): void {
+		if (!consumedUploadIDs.has(uploadID)) return;
+		if (retryOnFailure) retryConsumedAfterFailure.add(uploadID);
+		if (consumedCleanups.has(uploadID)) return;
+		const promise = Promise.resolve().then(() => deps.discard(uploadID));
+		consumedCleanups.set(uploadID, promise);
+		void promise.then(
+			() => {
+				if (consumedCleanups.get(uploadID) !== promise) return;
+				consumedCleanups.delete(uploadID);
+				consumedUploadIDs.delete(uploadID);
+				retryConsumedAfterFailure.delete(uploadID);
+			},
+			() => {
+				if (consumedCleanups.get(uploadID) !== promise) return;
+				consumedCleanups.delete(uploadID);
+				if (!retryConsumedAfterFailure.delete(uploadID)) return;
+				discardConsumed(uploadID);
+			}
+		);
 	}
 
 	function discardActive(uploadID: string): Promise<void> {
@@ -73,13 +115,12 @@ export function createImportUploader(form: ImportUploadForm, deps: ImportUploadD
 
 	return {
 		async pick(file: File): Promise<void> {
-			const token = ++newest;
-			const owns = (): boolean => mounted && token === newest;
+			const operation = operations.start(deps.uploadingLabel());
+			const owns = (): boolean => mounted && operations.owns(operation);
 			const previous = activeUploadID;
 			form.setUploadID('');
 			form.setFileName(file.name);
 			form.setError('');
-			form.setBusy(deps.uploadingLabel());
 			try {
 				// Cleanup is a barrier: the new transfer must not claim quota beside a
 				// file the same form has already abandoned.
@@ -100,7 +141,7 @@ export function createImportUploader(form: ImportUploadForm, deps: ImportUploadD
 				form.setError(deps.formatError(err));
 				form.setFileName('');
 			} finally {
-				if (owns()) form.setBusy('');
+				operations.finish(operation);
 			}
 		},
 		consume(uploadID: string): void {
@@ -113,10 +154,10 @@ export function createImportUploader(form: ImportUploadForm, deps: ImportUploadD
 		},
 		unmount(): void {
 			mounted = false;
-			newest++;
+			operations.destroy();
 			const uploadID = activeUploadID;
 			if (uploadID) void discardActive(uploadID).catch(() => {});
-			for (const consumedUploadID of consumedUploadIDs) discardConsumed(consumedUploadID);
+			for (const consumedUploadID of consumedUploadIDs) discardConsumed(consumedUploadID, true);
 		},
 	};
 }
