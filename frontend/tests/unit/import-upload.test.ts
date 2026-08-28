@@ -217,9 +217,29 @@ test('consuming an upload prevents a newer pick from aborting the active parse',
 	h.pending[0]!.resolve();
 	await first;
 	h.uploader.consume('upload-first.lish');
+	expect(h.state.uploadID).toBe('');
+	expect(h.state.fileName).toBe('');
 	const second = h.uploader.pick(pickedFile('second.lish'));
 	await advance();
 	expect(h.discarded).toEqual([]);
+	h.pending[1]!.resolve();
+	await second;
+});
+
+test('discarding an invalidated selection removes its visible and server state', async () => {
+	const h = harness();
+	const first = h.uploader.pick(pickedFile('first.lish'));
+	h.operations.invalidate();
+	h.uploader.discardSelection();
+	await advance();
+	expect(h.state.uploadID).toBe('');
+	expect(h.state.fileName).toBe('');
+	expect(h.discarded).toEqual(['upload-first.lish']);
+	h.pending[0]!.reject(new Error('aborted'));
+	await first;
+	const second = h.uploader.pick(pickedFile('second.lish'));
+	await waitUntil(() => h.pending.length === 2);
+	expect(h.discarded).toEqual(['upload-first.lish']);
 	h.pending[1]!.resolve();
 	await second;
 });
@@ -265,15 +285,21 @@ test('finishing a parse aborts transport leftovers only once', async () => {
 test('invalidating an import operation clears only its busy state and supersedes it permanently', () => {
 	const busy: string[] = [];
 	const operations = createImportOperationController(label => busy.push(label));
+	expect(operations.isActive()).toBe(false);
 	const first = operations.start('importing first');
 	expect(operations.owns(first)).toBe(true);
+	expect(operations.isActive()).toBe(true);
 	operations.invalidate();
+	expect(operations.isActive()).toBe(false);
 	expect(busy.at(-1)).toBe('');
 	const second = operations.start('importing second');
+	expect(operations.isActive()).toBe(true);
 	expect(operations.owns(first)).toBe(false);
 	operations.finish(first);
+	expect(operations.isActive()).toBe(true);
 	expect(busy.at(-1)).toBe('importing second');
 	operations.finish(second);
+	expect(operations.isActive()).toBe(false);
 	expect(busy.at(-1)).toBe('');
 });
 
@@ -312,4 +338,43 @@ test('a failed parser-owned cleanup is retried when the form unmounts', async ()
 	h.uploader.unmount();
 	await advance();
 	expect(h.discarded).toEqual(['upload-first.lish', 'upload-first.lish']);
+});
+
+test('unmount retries an active cleanup that was already in flight', async () => {
+	const state = { uploadID: '', fileName: '', error: '', busy: '' };
+	const pendingUploads: PendingUpload[] = [];
+	const cleanupAttempts: Array<{ uploadID: string; resolve: () => void; reject: (err: unknown) => void }> = [];
+	const operations = createImportOperationController(value => (state.busy = value));
+	const uploader = createImportUploader(
+		{
+			setUploadID: value => (state.uploadID = value),
+			setFileName: value => (state.fileName = value),
+			setError: value => (state.error = value),
+		},
+		{
+			upload: (file, onStart) => {
+				const id = `upload-${file.name}`;
+				onStart(id);
+				return new Promise<string>((resolve, reject) => pendingUploads.push({ id, resolve: () => resolve(id), reject }));
+			},
+			discard: uploadID =>
+				new Promise<void>((resolve, reject) => {
+					cleanupAttempts.push({ uploadID, resolve, reject });
+				}),
+			uploadingLabel: () => 'uploading',
+			formatError: String,
+		},
+		operations
+	);
+	const pick = uploader.pick(pickedFile('first.lish'));
+	operations.invalidate();
+	uploader.discardSelection();
+	await waitUntil(() => cleanupAttempts.length === 1);
+	uploader.unmount();
+	cleanupAttempts[0]!.reject(new Error('connection lost'));
+	await waitUntil(() => cleanupAttempts.length === 2);
+	expect(cleanupAttempts.map(attempt => attempt.uploadID)).toEqual(['upload-first.lish', 'upload-first.lish']);
+	cleanupAttempts[1]!.resolve();
+	pendingUploads[0]!.reject(new Error('aborted'));
+	await pick;
 });

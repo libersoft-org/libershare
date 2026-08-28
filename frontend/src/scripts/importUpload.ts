@@ -15,6 +15,8 @@ export interface ImportUploadDeps {
 
 export interface ImportUploader {
 	pick: (file: File) => Promise<void>;
+	/** Remove the current picker selection and discard its backend upload. */
+	discardSelection: () => void;
 	/** Move an upload from the picker to parser-owned cleanup. */
 	consume: (uploadID: string) => void;
 	/** Release a parser-owned upload after parsing settles. */
@@ -25,6 +27,7 @@ export interface ImportUploader {
 export interface ImportOperationController {
 	start: (busyLabel: string) => number;
 	invalidate: () => void;
+	isActive: () => boolean;
 	owns: (operation: number) => boolean;
 	finish: (operation: number) => void;
 	destroy: () => void;
@@ -33,26 +36,36 @@ export interface ImportOperationController {
 /** Keep every asynchronous form operation under one monotonic owner token. */
 export function createImportOperationController(setBusy: (label: string) => void): ImportOperationController {
 	let current = 0;
+	let active = 0;
 	let mounted = true;
 	return {
 		start(busyLabel: string): number {
 			const operation = ++current;
+			active = operation;
 			if (mounted) setBusy(busyLabel);
 			return operation;
 		},
 		invalidate(): void {
 			current++;
+			active = 0;
 			if (mounted) setBusy('');
+		},
+		isActive(): boolean {
+			return mounted && active !== 0 && active === current;
 		},
 		owns(operation: number): boolean {
 			return mounted && operation === current;
 		},
 		finish(operation: number): void {
-			if (mounted && operation === current) setBusy('');
+			if (mounted && operation === current) {
+				active = 0;
+				setBusy('');
+			}
 		},
 		destroy(): void {
 			mounted = false;
 			current++;
+			active = 0;
 		},
 	};
 }
@@ -66,48 +79,29 @@ export function createImportUploader(form: ImportUploadForm, deps: ImportUploadD
 	let mounted = true;
 	let activeUploadID = '';
 	const consumedUploadIDs = new Set<string>();
-	const consumedCleanups = new Map<string, Promise<void>>();
-	const retryConsumedAfterFailure = new Set<string>();
-	let cleanup: { uploadID: string; promise: Promise<void> } | null = null;
+	const cleanups = new Map<string, { promise: Promise<void>; retryOnFailure: boolean }>();
 
-	function discardQuietly(uploadID: string): void {
-		void deps.discard(uploadID).catch(() => {});
-	}
-
-	function discardConsumed(uploadID: string, retryOnFailure = false): void {
-		if (!consumedUploadIDs.has(uploadID)) return;
-		if (retryOnFailure) retryConsumedAfterFailure.add(uploadID);
-		if (consumedCleanups.has(uploadID)) return;
+	function discard(uploadID: string, retryOnFailure = false): Promise<void> {
+		const existing = cleanups.get(uploadID);
+		if (existing) {
+			if (retryOnFailure) existing.retryOnFailure = true;
+			return existing.promise;
+		}
+		const cleanup = { promise: Promise.resolve(), retryOnFailure };
 		const promise = Promise.resolve().then(() => deps.discard(uploadID));
-		consumedCleanups.set(uploadID, promise);
+		cleanup.promise = promise;
+		cleanups.set(uploadID, cleanup);
 		void promise.then(
 			() => {
-				if (consumedCleanups.get(uploadID) !== promise) return;
-				consumedCleanups.delete(uploadID);
-				consumedUploadIDs.delete(uploadID);
-				retryConsumedAfterFailure.delete(uploadID);
-			},
-			() => {
-				if (consumedCleanups.get(uploadID) !== promise) return;
-				consumedCleanups.delete(uploadID);
-				if (!retryConsumedAfterFailure.delete(uploadID)) return;
-				discardConsumed(uploadID);
-			}
-		);
-	}
-
-	function discardActive(uploadID: string): Promise<void> {
-		if (cleanup?.uploadID === uploadID) return cleanup.promise;
-		const promise = Promise.resolve().then(() => deps.discard(uploadID));
-		cleanup = { uploadID, promise };
-		void promise.then(
-			() => {
+				if (cleanups.get(uploadID) !== cleanup) return;
+				cleanups.delete(uploadID);
 				if (activeUploadID === uploadID) activeUploadID = '';
-				if (cleanup?.promise === promise) cleanup = null;
+				consumedUploadIDs.delete(uploadID);
 			},
 			() => {
-				// Keep the id active so a later pick can retry cleanup.
-				if (cleanup?.promise === promise) cleanup = null;
+				if (cleanups.get(uploadID) !== cleanup) return;
+				cleanups.delete(uploadID);
+				if (cleanup.retryOnFailure) void discard(uploadID).catch(() => {});
 			}
 		);
 		return promise;
@@ -124,17 +118,17 @@ export function createImportUploader(form: ImportUploadForm, deps: ImportUploadD
 			try {
 				// Cleanup is a barrier: the new transfer must not claim quota beside a
 				// file the same form has already abandoned.
-				if (previous) await discardActive(previous);
+				if (previous) await discard(previous);
 				if (!owns()) return;
 				const uploadID = await deps.upload(file, started => {
 					if (owns()) activeUploadID = started;
-					else discardQuietly(started);
+					else void discard(started).catch(() => {});
 				});
 				if (owns()) {
 					activeUploadID = uploadID;
 					form.setUploadID(uploadID);
 				} else {
-					discardQuietly(uploadID);
+					void discard(uploadID).catch(() => {});
 				}
 			} catch (err) {
 				if (!owns()) return;
@@ -144,20 +138,27 @@ export function createImportUploader(form: ImportUploadForm, deps: ImportUploadD
 				operations.finish(operation);
 			}
 		},
+		discardSelection(): void {
+			form.setUploadID('');
+			form.setFileName('');
+			if (activeUploadID) void discard(activeUploadID).catch(() => {});
+		},
 		consume(uploadID: string): void {
 			if (activeUploadID === uploadID) activeUploadID = '';
+			form.setUploadID('');
+			form.setFileName('');
 			if (mounted) consumedUploadIDs.add(uploadID);
-			else discardQuietly(uploadID);
+			else void discard(uploadID).catch(() => {});
 		},
 		finishConsume(uploadID: string): void {
-			discardConsumed(uploadID);
+			if (consumedUploadIDs.has(uploadID)) void discard(uploadID).catch(() => {});
 		},
 		unmount(): void {
 			mounted = false;
 			operations.destroy();
 			const uploadID = activeUploadID;
-			if (uploadID) void discardActive(uploadID).catch(() => {});
-			for (const consumedUploadID of consumedUploadIDs) discardConsumed(consumedUploadID, true);
+			if (uploadID) void discard(uploadID, true).catch(() => {});
+			for (const consumedUploadID of consumedUploadIDs) void discard(consumedUploadID, true).catch(() => {});
 		},
 	};
 }

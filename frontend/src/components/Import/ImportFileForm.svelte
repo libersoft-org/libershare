@@ -94,6 +94,8 @@
 	function toggleUploadMode(): void {
 		uploadMode = !uploadMode;
 		operations.invalidate();
+		uploader.discardSelection();
+		errorMessage = '';
 	}
 
 	// Leaving the form after picking a file but before importing it — Back, a
@@ -104,6 +106,7 @@
 	});
 
 	async function handleImport(): Promise<void> {
+		if (operations.isActive()) return;
 		errorMessage = '';
 		if (uploadMode) {
 			if (!uploadID) {
@@ -141,12 +144,7 @@
 		} catch (e) {
 			if (ownsForm()) errorMessage = translateError(e);
 		} finally {
-			const owned = ownsForm();
 			operations.finish(operation);
-			if (owned && parsingUpload) {
-				uploadID = '';
-				uploadFileName = '';
-			}
 			// A transport failure can happen before the backend consumes the upload.
 			// Abort is harmless when parsing already removed it.
 			if (parsingUpload) uploader.finishConsume(parsing);
