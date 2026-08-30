@@ -17,6 +17,11 @@ export function canOpenNetworkConfig(source: NetInterfaceInfo, capabilities: Net
 	return (capabilities.ipv4 && source.ipv4Configurable) || (capabilities.wifi && source.medium === 'wireless');
 }
 
+/** A missing saved adapter is rendered as Automatic, matching backend fallback. */
+export function visiblePrimaryInterface(preferredID: string, interfaces: NetInterfaceInfo[]): string {
+	return preferredID && interfaces.some(iface => iface.id === preferredID) ? preferredID : '';
+}
+
 /** Seed the editable fields without discarding any resolver family. */
 export function networkConfigFormFrom(source: NetInterfaceInfo): NetworkConfigForm {
 	const ipv4 = source.addresses.find(address => address.family === 'ipv4');

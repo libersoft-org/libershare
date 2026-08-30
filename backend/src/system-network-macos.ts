@@ -190,7 +190,7 @@ export function parseDefaultRoutes(text: string): Array<{ device: string; gatewa
  */
 export function parseServiceInfo(text: string): NetInterfaceInfo['ipv4Mode'] {
 	if (/^\s*Manual Configuration/m.test(text)) return 'static';
-	if (/^\s*(DHCP|BOOTP) Configuration/m.test(text)) return 'dhcp';
+	if (/^\s*DHCP Configuration/m.test(text)) return 'dhcp';
 	return 'unknown';
 }
 
@@ -372,13 +372,7 @@ const NETWORKSETUP = '/usr/sbin/networksetup';
 
 /** Read the live macOS network state. Throws when the core tools are unavailable, so the caller degrades to addresses only. */
 export async function readMacNetworkState(): Promise<NetInterfaceInfo[]> {
-	const [hardwarePorts, serviceOrder, ifconfig, route, routes] = await Promise.all([
-		run(NETWORKSETUP, ['-listallhardwareports']),
-		run(NETWORKSETUP, ['-listnetworkserviceorder']),
-		run('/sbin/ifconfig', ['-a']),
-		runOptional('/sbin/route', ['-n', 'get', 'default']),
-		runOptional('/usr/sbin/netstat', ['-rn', '-f', 'inet']),
-	]);
+	const [hardwarePorts, serviceOrder, ifconfig, route, routes] = await Promise.all([run(NETWORKSETUP, ['-listallhardwareports']), run(NETWORKSETUP, ['-listnetworkserviceorder']), run('/sbin/ifconfig', ['-a']), runOptional('/sbin/route', ['-n', 'get', 'default']), runOptional('/usr/sbin/netstat', ['-rn', '-f', 'inet'])]);
 
 	const services = parseServiceOrder(serviceOrder);
 	const present = parseIfconfig(ifconfig);
@@ -452,8 +446,9 @@ export function netmaskFromPrefix(prefixLength: number): string {
  * `-setdhcp` deliberately does NOT reset the resolvers — a manual DNS entry
  * survives a switch back to DHCP unless it is cleared with the `Empty` sentinel.
  */
-export function macApplyArgs(service: string, config: NetIPv4Config): string[][] {
+export function macApplyArgs(service: string, config: NetIPv4Config, addressingChanged: boolean = true): string[][] {
 	const dnsArgs = config.dns === undefined ? [] : [['-setdnsservers', service, ...(config.dns.length > 0 ? config.dns : ['Empty'])]];
+	if (!addressingChanged) return dnsArgs;
 	if (config.mode === 'dhcp') return [['-setdhcp', service], ...dnsArgs];
 	// Unlike the Windows and NetworkManager paths, networksetup documents the
 	// router as a required positional argument and has no documented no-router
@@ -474,7 +469,26 @@ async function serviceForDevice(device: string): Promise<string> {
 }
 
 /** Apply an IPv4 configuration to one device. Requires root, which is how networksetup guards every write. */
-export async function applyMacIPv4(device: string, config: NetIPv4Config): Promise<void> {
+export async function applyMacIPv4(device: string, config: NetIPv4Config, addressingChanged: boolean = true): Promise<void> {
 	const service = await serviceForDevice(device);
-	for (const args of macApplyArgs(service, config)) await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);
+	if (!addressingChanged) {
+		for (const args of macApplyArgs(service, config, false)) await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);
+		return;
+	}
+	const [oldInfo, oldDns] = await Promise.all([run(NETWORKSETUP, ['-getinfo', service]), run(NETWORKSETUP, ['-getdnsservers', service])]);
+	const oldMode = parseServiceInfo(oldInfo);
+	const oldAddress = parseServiceIPv4(oldInfo);
+	const oldGateway = parseServiceGateway(oldInfo);
+	if (oldMode === 'unknown' || (oldMode === 'static' && (!oldAddress || !oldGateway))) throw new Error('macOS network service configuration cannot be preserved safely');
+	const previous: NetIPv4Config = oldMode === 'dhcp' ? { mode: 'dhcp', dns: parseServiceDns(oldDns) } : { mode: 'static', address: oldAddress!.address, prefixLength: oldAddress!.prefixLength, gateway: oldGateway!, dns: parseServiceDns(oldDns) };
+	try {
+		for (const args of macApplyArgs(service, config, true)) await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);
+	} catch (applyError) {
+		try {
+			for (const args of macApplyArgs(service, previous, true)) await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);
+		} catch (rollbackError) {
+			throw new Error(`network apply failed: ${String(applyError)}; rollback failed: ${String(rollbackError)}`);
+		}
+		throw applyError;
+	}
 }

@@ -30,7 +30,7 @@ interface SystemHandlers {
 	network: () => Promise<NetworkStateInfo>;
 	networkApply: (p: { interfaceID: string; config: NetIPv4Config }) => Promise<NetworkStateInfo>;
 	wifiScan: (p: { interfaceID: string }) => Promise<NetWifiNetwork[]>;
-	wifiConnect: (p: { interfaceID: string; ssid: string; password?: string }) => Promise<NetworkStateInfo>;
+	wifiConnect: (p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string }) => Promise<NetworkStateInfo>;
 	startPolling: () => void;
 	stopPolling: () => void;
 }
@@ -279,7 +279,11 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	async function applyNetworkConfig(p: { interfaceID: string; config: NetIPv4Config }): Promise<NetworkStateInfo> {
 		assert(p, ['interfaceID', 'config']);
 		const primary = settings.get('network.primaryInterface') ?? '';
-		return runAndPublishNetworkMutation(() => applyIPv4(p.interfaceID, p.config, primary), () => readNetworkState(primary), state => broadcast('system:network', state));
+		return runAndPublishNetworkMutation(
+			() => applyIPv4(p.interfaceID, p.config, primary),
+			() => readNetworkState(primary),
+			state => broadcast('system:network', state)
+		);
 	}
 
 	async function scanWifiNetworks(p: { interfaceID: string }): Promise<NetWifiNetwork[]> {
@@ -287,10 +291,14 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		return await scanWifi(p.interfaceID);
 	}
 
-	async function joinWifiNetwork(p: { interfaceID: string; ssid: string; password?: string }): Promise<NetworkStateInfo> {
+	async function joinWifiNetwork(p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string }): Promise<NetworkStateInfo> {
 		assert(p, ['interfaceID', 'ssid']);
 		const primary = settings.get('network.primaryInterface') ?? '';
-		return runAndPublishNetworkMutation(() => connectWifi(p.interfaceID, p.ssid, p.password ?? '', primary), () => readNetworkState(primary), state => broadcast('system:network', state));
+		return runAndPublishNetworkMutation(
+			() => connectWifi(p.interfaceID, p.ssid, p.password ?? '', primary, p.bssid ?? null),
+			() => readNetworkState(primary),
+			state => broadcast('system:network', state)
+		);
 	}
 
 	let networkTick = 0;

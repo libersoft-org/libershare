@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { t, translateError } from '../../scripts/language.ts';
+	import { get } from 'svelte/store';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { applyInterfaceConfig, joinWifiNetwork, networkState, scanWifiNetworks } from '../../scripts/networkState.ts';
+	import { applyInterfaceConfig, joinWifiNetwork, networkState, refreshNetworkState, scanWifiNetworks } from '../../scripts/networkState.ts';
 	import { networkConfigFormFrom, networkConfigFromForm, type DnsUpdateMode } from '../../scripts/networkConfig.ts';
 	import { validateIPv4Config, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -35,6 +36,7 @@
 	let networks = $state<NetWifiNetwork[]>([]);
 	let scanning = $state(false);
 	let joinSSID = $state('');
+	let joinBSSID = $state<string | null>(null);
 	let password = $state('');
 
 	// Seed the form from the live state once, when the screen opens. Re-seeding on
@@ -60,6 +62,11 @@
 		return networkConfigFromForm({ mode, address, prefix, gateway, dnsMode, dns });
 	}
 
+	function seedCurrentInterface(): void {
+		const current = get(networkState).interfaces.find(item => item.id === interfaceID);
+		if (current) seedFrom(current);
+	}
+
 	async function save(): Promise<void> {
 		if (busy || scanning) return;
 		const config = buildConfig();
@@ -78,11 +85,16 @@
 		message = '';
 		try {
 			await applyInterfaceConfig(interfaceID, config);
+			seedCurrentInterface();
 			failed = false;
 			message = $t('settings.network.applied');
 		} catch (error) {
 			failed = true;
 			message = translateError(error);
+			try {
+				await refreshNetworkState();
+				seedCurrentInterface();
+			} catch {}
 		} finally {
 			busy = false;
 		}
@@ -108,21 +120,31 @@
 
 	function selectNetwork(network: NetWifiNetwork): void {
 		if (!network.supported) return;
-		joinSSID = network.ssid;
 		// An open network takes no key, and asking for one would invite the user to
 		// type a password that cannot be used.
 		password = '';
-		if (!network.secured) void join();
+		if (!network.secured) {
+			joinSSID = '';
+			joinBSSID = null;
+			void join(network);
+			return;
+		}
+		joinSSID = network.ssid;
+		joinBSSID = network.bssid;
 	}
 
-	async function join(): Promise<void> {
-		if (!joinSSID || busy || scanning) return;
+	async function join(network?: NetWifiNetwork): Promise<void> {
+		const ssid = network?.ssid ?? joinSSID;
+		const bssid = network?.bssid ?? joinBSSID;
+		if (!ssid || busy || scanning) return;
 		busy = true;
 		message = '';
 		try {
-			await joinWifiNetwork(interfaceID, joinSSID, password);
+			await joinWifiNetwork(interfaceID, ssid, bssid, password);
 			failed = false;
-			message = $t('settings.network.joined', { ssid: joinSSID });
+			message = $t('settings.network.joined', { ssid });
+			joinSSID = '';
+			joinBSSID = null;
 			password = '';
 		} catch (error) {
 			failed = true;
@@ -130,6 +152,11 @@
 		} finally {
 			busy = false;
 		}
+	}
+
+	function networkLabel(network: NetWifiNetwork): string {
+		const duplicate = networks.some(item => item !== network && item.ssid === network.ssid);
+		return duplicate && network.bssid ? `${network.ssid} — ${network.bssid}` : network.ssid;
 	}
 
 	// Row positions shift with the mode: the static fields exist only in 'static'.
@@ -229,9 +256,9 @@
 			<ButtonBar justify="center" basePosition={[0, wifiBaseY]}>
 				<Button icon="/img/search.svg" label={scanning ? $t('settings.network.scanning') : $t('settings.network.scan')} disabled={scanning || busy} onConfirm={scan} />
 			</ButtonBar>
-			{#each networks as network, index (network.ssid)}
+			{#each networks as network, index (`${network.ssid}:${network.bssid ?? ''}:${network.security}`)}
 				<div role="group" data-mouse-activate-area={areaID}>
-					<Button label="{network.ssid}{network.active ? ' ✓' : ''}" position={[0, wifiBaseY + 1 + index]} onConfirm={() => selectNetwork(network)} disabled={busy || scanning || !network.supported} />
+					<Button label="{networkLabel(network)}{network.active ? ' ✓' : ''}" position={[0, wifiBaseY + 1 + index]} onConfirm={() => selectNetwork(network)} disabled={busy || scanning || !network.supported} />
 					<div class="network">
 						<span>{network.supported ? (network.secured ? $t('settings.network.secured') : $t('settings.network.open')) : $t('settings.network.unsupportedSecurity')}</span>
 						<span>{network.signal !== null ? `${network.signal}%` : '—'}</span>

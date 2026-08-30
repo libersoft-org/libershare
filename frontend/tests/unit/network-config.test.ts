@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { canOpenNetworkConfig, networkConfigFormFrom, networkConfigFromForm, type NetworkConfigForm } from '../../src/scripts/networkConfig.ts';
+import { canOpenNetworkConfig, networkConfigFormFrom, networkConfigFromForm, visiblePrimaryInterface, type NetworkConfigForm } from '../../src/scripts/networkConfig.ts';
 import type { NetInterfaceInfo } from '@shared';
 
 const iface: NetInterfaceInfo = {
@@ -45,5 +45,10 @@ describe('network configuration form', () => {
 		expect(canOpenNetworkConfig(disconnectedWifi, { ipv4: true, wifi: true, staticGatewayRequired: false }, 'full')).toBe(true);
 		expect(canOpenNetworkConfig(disconnectedWifi, { ipv4: true, wifi: false, staticGatewayRequired: false }, 'full')).toBe(false);
 		expect(canOpenNetworkConfig(disconnectedWifi, { ipv4: true, wifi: true, staticGatewayRequired: false }, 'addressesOnly')).toBe(false);
+	});
+
+	it('shows Automatic when the saved primary interface no longer exists', () => {
+		expect(visiblePrimaryInterface('missing', [iface])).toBe('');
+		expect(visiblePrimaryInterface('lan0', [iface])).toBe('lan0');
 	});
 });

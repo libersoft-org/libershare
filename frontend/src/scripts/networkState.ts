@@ -59,6 +59,6 @@ export function scanWifiNetworks(interfaceID: string): Promise<NetWifiNetwork[]>
 }
 
 /** Join a Wi-Fi network. An empty password means an open network. */
-export async function joinWifiNetwork(interfaceID: string, ssid: string, password: string): Promise<void> {
-	networkState.set(await api.call<NetworkStateInfo>('system.wifiConnect', { interfaceID, ssid, password }));
+export async function joinWifiNetwork(interfaceID: string, ssid: string, bssid: string | null, password: string): Promise<void> {
+	networkState.set(await api.call<NetworkStateInfo>('system.wifiConnect', { interfaceID, ssid, bssid, password }));
 }

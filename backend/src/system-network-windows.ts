@@ -245,13 +245,7 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 			mac: mac && mac.length > 0 ? mac : null,
 			addresses: interfaceAddresses,
 			ipv4Mode,
-			ipv4Configurable:
-				guid !== null &&
-				ipv4Mode !== 'unknown' &&
-				(ipv4RowsByIndex.get(ifIndex) ?? 0) === interfaceAddresses.filter(address => address.family === 'ipv4').length &&
-				(ipv4RowsByIndex.get(ifIndex) ?? 0) <= 1 &&
-				interfaceRoutes.length <= 1 &&
-				(medium !== 'wireless' || radio !== undefined),
+			ipv4Configurable: guid !== null && ipv4Mode !== 'unknown' && (ipv4RowsByIndex.get(ifIndex) ?? 0) === interfaceAddresses.filter(address => address.family === 'ipv4').length && (ipv4RowsByIndex.get(ifIndex) ?? 0) <= 1 && interfaceRoutes.length <= 1 && (medium !== 'wireless' || radio !== undefined),
 			gateway: interfaceRoutes[0]?.NextHop ?? null,
 			dns: dnsByIndex.get(ifIndex) ?? [],
 		};
@@ -460,33 +454,22 @@ export function isWindowsInterfaceID(id: string): boolean {
  * a dotted-quad literal, a small integer, or a GUID. No quoting rule protects
  * this string — the validation does.
  */
-export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): string {
-	const steps = [
-		'[Console]::OutputEncoding=[System.Text.Encoding]::UTF8',
-		'$ErrorActionPreference = "Stop"',
-		`$adapter = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq '${guid}' }`,
-		'if (-not $adapter) { throw "interface not found" }',
-		'$i = $adapter.ifIndex',
-		'$oldAddresses = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $i })',
-		"$oldRoutes = @(Get-NetRoute -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $i -and $_.DestinationPrefix -eq '0.0.0.0/0' })",
-		'$oldRouteMetric = ($oldRoutes | Select-Object -First 1).RouteMetric',
-		'if ($oldAddresses.Count -gt 0) { $oldAddresses | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop }',
-		'if ($oldRoutes.Count -gt 0) { $oldRoutes | Remove-NetRoute -Confirm:$false -ErrorAction Stop }',
-	];
+export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config, addressingChanged: boolean = true): string {
+	const prefix = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', `$adapter = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq '${guid}' }`, 'if (-not $adapter) { throw "interface not found" }', '$i = $adapter.ifIndex'];
 	const dnsStep = config.dns === undefined ? null : config.dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${config.dns.map(server => `'${server}'`).join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses';
+	if (!addressingChanged) return [...prefix, ...(dnsStep ? [dnsStep] : [])].join('; ');
+
+	const snapshot = ['$oldAddresses = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $i })', "$oldRoutes = @(Get-NetRoute -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $i -and $_.DestinationPrefix -eq '0.0.0.0/0' })", '$oldDhcp = (Get-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop).Dhcp', '$oldDns = @((Get-DnsClientServerAddress -InterfaceIndex $i -ErrorAction Stop).ServerAddresses | Where-Object { $_ })'];
+	const apply = ['if ($oldAddresses.Count -gt 0) { $oldAddresses | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop }', 'if ($oldRoutes.Count -gt 0) { $oldRoutes | Remove-NetRoute -Confirm:$false -ErrorAction Stop }'];
 	if (config.mode === 'dhcp') {
-		steps.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled');
+		apply.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled');
 	} else {
-		const gateway = config.gateway ? ` -DefaultGateway ${config.gateway}` : '';
-		steps.push(
-			'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled',
-			`New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`,
-			`$deadline = [DateTime]::UtcNow.AddSeconds(10); do { $addressState = (Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -ErrorAction SilentlyContinue).AddressState; if ($addressState -eq 'Preferred') { break }; Start-Sleep -Milliseconds 100 } while ([DateTime]::UtcNow -lt $deadline); if ($addressState -ne 'Preferred') { throw 'IPv4 address did not become usable' }`
-		);
-		if (config.gateway) steps.push(`if ($null -ne $oldRouteMetric) { Set-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop ${config.gateway} -RouteMetric $oldRouteMetric }`);
+		apply.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength} | Out-Null`, `$deadline = [DateTime]::UtcNow.AddSeconds(10); do { $addressState = (Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -ErrorAction SilentlyContinue).AddressState; if ($addressState -eq 'Preferred') { break }; Start-Sleep -Milliseconds 100 } while ([DateTime]::UtcNow -lt $deadline); if ($addressState -ne 'Preferred') { throw 'IPv4 address did not become usable' }`);
+		if (config.gateway) apply.push(`$routeMetric = ($oldRoutes | Select-Object -First 1).RouteMetric; if ($null -eq $routeMetric) { New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop ${config.gateway} | Out-Null } else { New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop ${config.gateway} -RouteMetric $routeMetric | Out-Null }`);
 	}
-	if (dnsStep) steps.push(dnsStep);
-	return steps.join('; ');
+	if (dnsStep) apply.push(dnsStep);
+	const rollback = ['$applyError = $_', 'try {', '$currentAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue); if ($currentAddresses.Count -gt 0) { $currentAddresses | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop }', "$currentRoutes = @(Get-NetRoute -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.DestinationPrefix -eq '0.0.0.0/0' }); if ($currentRoutes.Count -gt 0) { $currentRoutes | Remove-NetRoute -Confirm:$false -ErrorAction Stop }", 'if ($oldDhcp -eq "Enabled") { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled } else { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled; foreach ($address in $oldAddresses) { New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $address.IPAddress -PrefixLength $address.PrefixLength | Out-Null }; foreach ($route in $oldRoutes) { New-NetRoute -InterfaceIndex $i -DestinationPrefix $route.DestinationPrefix -NextHop $route.NextHop -RouteMetric $route.RouteMetric | Out-Null } }', 'if ($oldDns.Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $oldDns } else { Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses }', '} catch { throw "network apply failed: $($applyError.Exception.Message); rollback failed: $($_.Exception.Message)" }', 'throw $applyError'];
+	return [...prefix, ...snapshot, `try { ${apply.join('; ')} } catch { ${rollback.join('; ')} }`].join('; ');
 }
 
 /**

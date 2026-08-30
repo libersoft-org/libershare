@@ -512,6 +512,8 @@ export interface NetIPv4Config {
 /** One network seen by a Wi-Fi scan. */
 export interface NetWifiNetwork {
 	ssid: string;
+	/** Access-point identity used to disambiguate equal SSIDs. */
+	bssid: string | null;
 	/** 0-100 signal quality, never dBm. Null = the scanner did not report one. */
 	signal: number | null;
 	/** False for a genuinely open network — the UI must not ask for a password. */

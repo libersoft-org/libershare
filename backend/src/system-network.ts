@@ -234,13 +234,18 @@ export function resetNetworkStateCache(): void {
  * interface snapshot. Undefined DNS is intentionally ignored: it means preserve
  * the resolver policy, whereas either form of explicit DNS is a real user action.
  */
-export function isIPv4ConfigUnchanged(target: NetInterfaceInfo, config: NetIPv4Config): boolean {
-	if (!target.ipv4Configurable || target.ipv4Mode !== config.mode || config.dns !== undefined) return false;
+export function isIPv4AddressingUnchanged(target: NetInterfaceInfo, config: NetIPv4Config): boolean {
+	if (!target.ipv4Configurable || target.ipv4Mode !== config.mode) return false;
 	if (config.mode === 'dhcp') return true;
 	const addresses = target.addresses.filter(address => address.family === 'ipv4');
 	if (addresses.length !== 1) return false;
 	const current = addresses[0]!;
 	return current.address === config.address && current.prefixLength === config.prefixLength && (target.gateway ?? '') === (config.gateway ?? '');
+}
+
+/** True when neither addressing nor resolver policy would change. */
+export function isIPv4ConfigUnchanged(target: NetInterfaceInfo, config: NetIPv4Config): boolean {
+	return config.dns === undefined && isIPv4AddressingUnchanged(target, config);
 }
 
 /**
@@ -303,15 +308,16 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config, prim
 		if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
 		if (!target.ipv4Configurable || target.ipv4Mode === 'unknown') throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'interface configuration cannot be preserved safely');
 		if (isIPv4ConfigUnchanged(target, config)) return before;
+		const addressingChanged = !isIPv4AddressingUnchanged(target, config);
 		try {
 			await run(async () => {
 				if (process.platform === 'win32') {
 					if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
-					await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, config)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
+					await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, config, addressingChanged)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
 				} else if (process.platform === 'darwin') {
-					await applyMacIPv4(assertDeviceName(interfaceID), config);
+					await applyMacIPv4(assertDeviceName(interfaceID), config, addressingChanged);
 				} else {
-					await applyLinuxIPv4(assertDeviceName(interfaceID), config);
+					await applyLinuxIPv4(assertDeviceName(interfaceID), config, addressingChanged);
 				}
 			});
 		} finally {
@@ -331,18 +337,20 @@ export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 }
 
 /** Join a Wi-Fi network on one interface. An empty password means an open network. */
-export async function connectWifi(interfaceID: string, ssid: string, password: string, primaryInterface: string = ''): Promise<NetworkStateInfo> {
+export async function connectWifi(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null): Promise<NetworkStateInfo> {
 	if (typeof interfaceID !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
 	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
 	if (!isValidWifiPassword(password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
+	if (bssid !== null && typeof bssid !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid bssid');
 	return runNetworkMutation(async () => {
 		await assertWirelessInterface(interfaceID);
 		const available = await scanLinuxWifi(assertDeviceName(interfaceID));
-		const network = available.find(item => item.ssid === ssid);
+		const matches = available.filter(item => item.ssid === ssid);
+		const network = bssid === null ? (matches.length === 1 ? matches[0] : undefined) : matches.find(item => item.bssid?.toLowerCase() === bssid.toLowerCase());
 		if (!network) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'network is no longer available');
 		if (!network.supported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi authentication method is not supported');
 		try {
-			await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password));
+			await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password, network.bssid));
 		} finally {
 			resetNetworkStateCache();
 		}

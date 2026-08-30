@@ -70,6 +70,8 @@ export interface LinuxNetworkSources {
 	nmDns?: Map<string, string[]> | undefined;
 	/** Active NetworkManager profile UUIDs by device. Only these devices can be edited. */
 	activeConnections?: Map<string, string> | undefined;
+	/** Exact `ipv4.method` of each active NetworkManager profile, keyed by device. */
+	ipv4Methods?: Map<string, string> | undefined;
 }
 
 /**
@@ -191,18 +193,23 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 		// Loopback is never a choice a user makes and never a connection to report.
 		if (entry.ifname === 'lo') continue;
 		const addresses: NetAddress[] = [];
-		let ipv4Mode: NetInterfaceInfo['ipv4Mode'] = 'unknown';
+		let kernelIPv4Mode: NetInterfaceInfo['ipv4Mode'] = 'unknown';
 		for (const info of entry.addr_info ?? []) {
 			const family = info.family === 'inet' ? 'ipv4' : info.family === 'inet6' ? 'ipv6' : null;
 			if (!family) continue;
 			addresses.push({ family, address: info.local, prefixLength: info.prefixlen });
 			if (family !== 'ipv4') continue;
-			if (info.dynamic === true) ipv4Mode = 'dhcp';
-			else if (ipv4Mode === 'unknown' && info.valid_life_time === LIFETIME_PERMANENT) ipv4Mode = 'static';
+			if (info.dynamic === true) kernelIPv4Mode = 'dhcp';
+			else if (kernelIPv4Mode === 'unknown' && info.valid_life_time === LIFETIME_PERMANENT) kernelIPv4Mode = 'static';
 		}
 		const link = linkByName.get(entry.ifname);
 		const wireless = sources.wireless?.has(entry.ifname) ?? false;
 		const interfaceRoutes = routesByDevice.get(entry.ifname) ?? [];
+		const managed = sources.activeConnections?.has(entry.ifname) ?? false;
+		// Kernel address flags cannot distinguish manual addressing from shared,
+		// link-local or disabled NetworkManager profiles. Only auto/manual are safe
+		// for this editor to round-trip; every other managed method stays read-only.
+		const ipv4Mode = managed ? parseNmcliIPv4Method(sources.ipv4Methods?.get(entry.ifname) ?? '') : kernelIPv4Mode;
 		const info: NetInterfaceInfo = {
 			id: entry.ifname,
 			name: entry.ifname,
@@ -212,7 +219,7 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 			mac: entry.address ?? link?.address ?? null,
 			addresses,
 			ipv4Mode,
-			ipv4Configurable: (sources.activeConnections?.has(entry.ifname) ?? false) && ipv4Mode !== 'unknown' && addresses.filter(address => address.family === 'ipv4').length <= 1 && interfaceRoutes.length <= 1,
+			ipv4Configurable: managed && ipv4Mode !== 'unknown' && addresses.filter(address => address.family === 'ipv4').length <= 1 && interfaceRoutes.length <= 1,
 			gateway: interfaceRoutes[0]?.gateway ?? null,
 			// NetworkManager knows the resolvers PER LINK, which is the only correct
 			// answer on a systemd-resolved host: there /etc/resolv.conf holds the
@@ -248,33 +255,6 @@ async function runFirst(candidates: string[], args: string[], timeoutMs: number 
 			// ENOENT means this path does not exist — try the next candidate. Any
 			// other failure (non-zero exit, timeout) is the real answer: `ip` ran and
 			// said no, so a further candidate would only repeat it.
-			if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-		}
-	}
-	throw lastError;
-}
-
-/** Run the first available binary while providing one bounded stdin value. */
-async function runFirstWithInput(candidates: string[], args: string[], input: string, timeoutMs: number): Promise<string> {
-	let lastError: unknown = new Error(`no candidate found for ${args.join(' ')}`);
-	for (const bin of candidates) {
-		try {
-			return await new Promise<string>((resolve, reject) => {
-				const child = execFile(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: C_LOCALE_ENV }, (error, stdout, stderr) => {
-					if (!error) {
-						resolve(stdout);
-						return;
-					}
-					Object.assign(error, { stdout, stderr });
-					reject(error);
-				});
-				// A command that exits before reading can close the pipe first. Its exit
-				// callback above is the useful error; EPIPE on stdin is not a second one.
-				child.stdin?.on('error', () => {});
-				child.stdin?.end(input);
-			});
-		} catch (err) {
-			lastError = err;
 			if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
 		}
 	}
@@ -321,8 +301,8 @@ export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
 			// rather than being guessed from anything else.
 		}
 	}
-	const [nmDns, activeConnections] = await Promise.all([readNetworkManagerDns(), readNetworkManagerActiveConnections()]);
-	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns, activeConnections });
+	const [nmDns, profiles] = await Promise.all([readNetworkManagerDns(), readNetworkManagerProfiles()]);
+	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns, activeConnections: profiles?.connections, ipv4Methods: profiles?.ipv4Methods });
 }
 
 /**
@@ -466,10 +446,26 @@ export function parseNmcliActiveConnections(text: string): Map<string, string> {
 	return result;
 }
 
-/** Active profiles for the read path. Undefined means NetworkManager could not answer. */
-async function readNetworkManagerActiveConnections(): Promise<Map<string, string> | undefined> {
+/** Map only the two NetworkManager methods this editor can preserve exactly. */
+export function parseNmcliIPv4Method(text: string): NetInterfaceInfo['ipv4Mode'] {
+	const method = text.trim().toLowerCase();
+	if (method === 'auto') return 'dhcp';
+	if (method === 'manual') return 'static';
+	return 'unknown';
+}
+
+/** Active profiles and their exact IPv4 method. Any incomplete read stays read-only. */
+async function readNetworkManagerProfiles(): Promise<{ connections: Map<string, string>; ipv4Methods: Map<string, string> } | undefined> {
 	try {
-		return await activeConnections();
+		const connections = await activeConnections();
+		const ipv4Methods = new Map<string, string>();
+		await Promise.all(
+			[...connections].map(async ([device, uuid]) => {
+				const method = await runFirst(NMCLI_CANDIDATES, ['-g', 'ipv4.method', 'connection', 'show', 'uuid', uuid]);
+				ipv4Methods.set(device, method.trim());
+			})
+		);
+		return { connections, ipv4Methods };
 	} catch {
 		return undefined;
 	}
@@ -500,32 +496,15 @@ async function activeConnection(device: string): Promise<string | null> {
 function nmcliDnsArgs(config: NetIPv4Config): string[] {
 	if (config.dns === undefined) return [];
 	const ignoreAutomatic = config.dns.length > 0 ? 'yes' : 'no';
-	return [
-		'ipv4.dns',
-		config.dns.filter(isIPv4).join(','),
-		'ipv4.ignore-auto-dns',
-		ignoreAutomatic,
-		'ipv6.dns',
-		config.dns.filter(isIPv6).join(','),
-		'ipv6.ignore-auto-dns',
-		ignoreAutomatic,
-	];
+	return ['ipv4.dns', config.dns.filter(isIPv4).join(','), 'ipv4.ignore-auto-dns', ignoreAutomatic, 'ipv6.dns', config.dns.filter(isIPv6).join(','), 'ipv6.ignore-auto-dns', ignoreAutomatic];
 }
 
-export function nmcliModifyArgs(connectionUUID: string, config: NetIPv4Config): string[] {
+export function nmcliModifyArgs(connectionUUID: string, config: NetIPv4Config, addressingChanged: boolean = true): string[] {
 	const base = ['connection', 'modify', 'uuid', connectionUUID];
 	const dns = nmcliDnsArgs(config);
+	if (!addressingChanged) return [...base, ...dns];
 	if (config.mode === 'dhcp') return [...base, 'ipv4.method', 'auto', 'ipv4.addresses', '', 'ipv4.gateway', '', ...dns];
-	return [
-		...base,
-		'ipv4.method',
-		'manual',
-		'ipv4.addresses',
-		`${config.address}/${config.prefixLength}`,
-		'ipv4.gateway',
-		config.gateway ?? '',
-		...dns,
-	];
+	return [...base, 'ipv4.method', 'manual', 'ipv4.addresses', `${config.address}/${config.prefixLength}`, 'ipv4.gateway', config.gateway ?? '', ...dns];
 }
 
 /** Address one active profile unambiguously even when display names collide. */
@@ -538,27 +517,13 @@ export function nmcliActivateArgs(connectionUUID: string): string[] {
  * The shell receives every variable value as a positional argument; none is
  * interpolated into executable text.
  */
-export function nmcliCheckpointArgs(device: string, connectionUUID: string, config: NetIPv4Config, successMarker: string): string[] {
-	return [
-		'device',
-		'checkpoint',
-		'--timeout',
-		String(CHECKPOINT_ROLLBACK_SECONDS),
-		device,
-		'--',
-		'/bin/sh',
-		'-c',
-		'set -eu; marker=$1; uuid=$2; wait_seconds=$3; shift 3; nmcli "$@"; nmcli --wait "$wait_seconds" connection up uuid "$uuid"; printf "%s\\n" "$marker"',
-		'nmcli-checkpoint',
-		successMarker,
-		connectionUUID,
-		String(NMCLI_ACTIVATION_WAIT_SECONDS),
-		...nmcliModifyArgs(connectionUUID, config),
-	];
+export function nmcliCheckpointArgs(device: string, connectionUUID: string, config: NetIPv4Config, successMarker: string, addressingChanged: boolean = true): string[] {
+	const applyCommand = addressingChanged ? 'nmcli --wait "$wait_seconds" connection up uuid "$uuid"' : 'nmcli --wait "$wait_seconds" device reapply "$device"';
+	return ['device', 'checkpoint', '--timeout', String(CHECKPOINT_ROLLBACK_SECONDS), device, '--', '/bin/sh', '-c', `set -eu; marker=$1; uuid=$2; device=$3; wait_seconds=$4; shift 4; nmcli "$@"; ${applyCommand}; printf "%s\\n" "$marker"`, 'nmcli-checkpoint', successMarker, connectionUUID, device, String(NMCLI_ACTIVATION_WAIT_SECONDS), ...nmcliModifyArgs(connectionUUID, config, addressingChanged)];
 }
 
 /** Commit a checkpoint only after both child commands emitted their private success marker. */
-async function runNmcliCheckpoint(args: string[], successMarker: string): Promise<void> {
+async function runNmcliCheckpoint(args: string[], successMarker: string, initialInput: string = ''): Promise<void> {
 	let lastError: unknown = new Error('nmcli is unavailable');
 	for (const bin of NMCLI_CANDIDATES) {
 		try {
@@ -572,6 +537,8 @@ async function runNmcliCheckpoint(args: string[], successMarker: string): Promis
 					timedOut = true;
 					child.kill('SIGKILL');
 				}, APPLY_TIMEOUT_MS);
+				child.stdin.on('error', () => {});
+				if (initialInput) child.stdin.write(initialInput);
 				const inspect = (): void => {
 					if (confirmed || (!stdout.includes(successMarker) && !stderr.includes(successMarker))) return;
 					confirmed = true;
@@ -611,32 +578,35 @@ async function runNmcliCheckpoint(args: string[], successMarker: string): Promis
 }
 
 /** Apply an IPv4 configuration to one device and bring the profile back up. Throws when NetworkManager does not own the device. */
-export async function applyLinuxIPv4(device: string, config: NetIPv4Config): Promise<void> {
+export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addressingChanged: boolean = true): Promise<void> {
 	const connectionUUID = await activeConnection(device);
 	if (!connectionUUID) throw new Error(`no NetworkManager profile is active on ${device}`);
 	const successMarker = `lish-nm-${randomUUID()}`;
-	await runNmcliCheckpoint(nmcliCheckpointArgs(device, connectionUUID, config, successMarker), successMarker);
+	await runNmcliCheckpoint(nmcliCheckpointArgs(device, connectionUUID, config, successMarker, addressingChanged), successMarker);
 }
 
 /**
- * Parse `nmcli -t -f SSID,SIGNAL,SECURITY,IN-USE device wifi list`.
+ * Parse `nmcli -t -f SSID,BSSID,SIGNAL,SECURITY,IN-USE device wifi list`.
  *
  * Hidden networks report an empty SSID and are dropped: they cannot be joined by
  * name, so offering an unnamed row would be offering something that fails.
- * Duplicates (one row per access point for a roaming network) collapse to the strongest.
+ * Every BSSID stays distinct so equal SSIDs with different security cannot be
+ * mistaken for the same network.
  */
 export function parseNmcliWifiList(text: string): NetWifiNetwork[] {
-	const best = new Map<string, NetWifiNetwork>();
+	const networks = new Map<string, NetWifiNetwork>();
 	for (const line of text.split('\n')) {
 		if (!line.trim()) continue;
-		const [ssid, signal, security, inUse] = splitNmcliFields(line);
+		const [ssid, rawBssid, signal, security, inUse] = splitNmcliFields(line);
 		if (!ssid) continue;
+		const bssid = rawBssid && /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(rawBssid) ? rawBssid.toUpperCase() : null;
 		const parsed = signal ? parseInt(signal, 10) : NaN;
 		const securityName = security?.trim() ?? '';
 		const enterprise = /(?:802\.1X|ENTERPRISE|EAP)/i.test(securityName);
 		const obsolete = /\bWEP\b/i.test(securityName);
 		const entry: NetWifiNetwork = {
 			ssid,
+			bssid,
 			signal: Number.isFinite(parsed) ? Math.min(100, Math.max(0, parsed)) : null,
 			// nmcli leaves SECURITY empty for an open network and prints the key
 			// management (WPA2, WPA3, WEP, 802.1X) otherwise.
@@ -645,21 +615,18 @@ export function parseNmcliWifiList(text: string): NetWifiNetwork[] {
 			supported: securityName.length === 0 || (/\bWPA\d*\b/i.test(securityName) && !enterprise && !obsolete),
 			active: inUse?.trim() === '*',
 		};
-		const previous = best.get(ssid);
-		if (!previous) {
-			best.set(ssid, entry);
-		} else if ((entry.signal ?? -1) > (previous.signal ?? -1)) {
-			best.set(ssid, { ...entry, active: previous.active || entry.active });
-		} else if (entry.active && !previous.active) {
-			best.set(ssid, { ...previous, active: true });
-		}
+		const key = `${ssid}\0${bssid ?? ''}\0${securityName}`;
+		const previous = networks.get(key);
+		if (!previous) networks.set(key, entry);
+		else if ((entry.signal ?? -1) > (previous.signal ?? -1)) networks.set(key, { ...entry, active: previous.active || entry.active });
+		else if (entry.active && !previous.active) networks.set(key, { ...previous, active: true });
 	}
-	return [...best.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
+	return [...networks.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
 }
 
 /** Scan for Wi-Fi networks reachable from one device. */
 export async function scanLinuxWifi(device: string): Promise<NetWifiNetwork[]> {
-	return parseNmcliWifiList(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'SSID,SIGNAL,SECURITY,IN-USE', 'device', 'wifi', 'list', 'ifname', device, '--rescan', 'yes'], WIFI_SCAN_TIMEOUT_MS));
+	return parseNmcliWifiList(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'SSID,BSSID,SIGNAL,SECURITY,IN-USE', 'device', 'wifi', 'list', 'ifname', device, '--rescan', 'yes'], WIFI_SCAN_TIMEOUT_MS));
 }
 
 /** Map NetworkManager's three independent policy decisions to real capabilities. */
@@ -674,8 +641,8 @@ export function parseLinuxCapabilities(text: string): NetCapabilities {
 }
 
 /** Build the public part of a Wi-Fi connect command; the secret is never an argument. */
-export function nmcliWifiConnectArgs(device: string, ssid: string, askForPassword: boolean): string[] {
-	return [...(askForPassword ? ['--ask'] : []), 'device', 'wifi', 'connect', ssid, 'ifname', device];
+export function nmcliWifiConnectArgs(device: string, ssid: string, askForPassword: boolean, bssid: string | null = null): string[] {
+	return [...(askForPassword ? ['--ask'] : []), 'device', 'wifi', 'connect', ssid, ...(bssid ? ['bssid', bssid] : []), 'ifname', device];
 }
 
 /**
@@ -687,11 +654,8 @@ export function nmcliWifiConnectArgs(device: string, ssid: string, askForPasswor
  * `nmcli --ask`, never argv, so another local user cannot read it from
  * `/proc/<pid>/cmdline` while the command is running.
  */
-export async function connectLinuxWifi(device: string, ssid: string, password: string): Promise<void> {
-	const args = nmcliWifiConnectArgs(device, ssid, !!password);
-	if (!password) {
-		await runFirst(NMCLI_CANDIDATES, args, APPLY_TIMEOUT_MS);
-		return;
-	}
-	await runFirstWithInput(NMCLI_CANDIDATES, args, `${password}\n`, APPLY_TIMEOUT_MS);
+export async function connectLinuxWifi(device: string, ssid: string, password: string, bssid: string | null = null): Promise<void> {
+	const successMarker = `lish-wifi-${randomUUID()}`;
+	const args = ['device', 'checkpoint', '--timeout', String(CHECKPOINT_ROLLBACK_SECONDS), device, '--', '/bin/sh', '-c', 'set -eu; marker=$1; shift; nmcli "$@"; printf "%s\\n" "$marker"', 'nmcli-wifi-checkpoint', successMarker, ...nmcliWifiConnectArgs(device, ssid, !!password, bssid)];
+	await runNmcliCheckpoint(args, successMarker, password ? `${password}\n` : '');
 }

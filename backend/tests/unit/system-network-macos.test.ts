@@ -171,7 +171,7 @@ describe('parseServiceInfo', () => {
 	it('distinguishes the addressing modes', () => {
 		expect(parseServiceInfo('DHCP Configuration\nIP address: 192.0.2.2\n')).toBe('dhcp');
 		expect(parseServiceInfo('Manual Configuration\nIP address: 192.0.2.2\n')).toBe('static');
-		expect(parseServiceInfo('BOOTP Configuration\n')).toBe('dhcp');
+		expect(parseServiceInfo('BOOTP Configuration\n')).toBe('unknown');
 	});
 
 	it('does not guess when networksetup does not recognise the service', () => {
@@ -338,6 +338,11 @@ describe('macApplyArgs', () => {
 			['-setdhcp', 'Wi-Fi'],
 			['-setdnsservers', 'Wi-Fi', '2001:db8::53', '127.0.0.1'],
 		]);
+	});
+
+	it('changes only DNS when addressing is unchanged', () => {
+		expect(macApplyArgs('Wi-Fi', { mode: 'dhcp', dns: ['192.0.2.53'] }, false)).toEqual([['-setdnsservers', 'Wi-Fi', '192.0.2.53']]);
+		expect(macApplyArgs('Wi-Fi', { mode: 'dhcp' }, false)).toEqual([]);
 	});
 
 	it('passes a service name with spaces as one argument', () => {

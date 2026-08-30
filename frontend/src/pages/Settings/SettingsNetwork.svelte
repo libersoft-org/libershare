@@ -5,7 +5,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { networkState, refreshNetworkState } from '../../scripts/networkState.ts';
 	import { primaryInterface, setPrimaryInterface } from '../../scripts/settings.ts';
-	import { canOpenNetworkConfig } from '../../scripts/networkConfig.ts';
+	import { canOpenNetworkConfig, visiblePrimaryInterface } from '../../scripts/networkConfig.ts';
 	import { isSelectableInterface, type NetInterfaceInfo } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -22,6 +22,7 @@
 	// Tunnels, bridges and container veth pairs would flood the picker, so an
 	// 'other' interface is only listed when it actually carries traffic.
 	let interfaces = $derived($networkState.interfaces.filter(isSelectableInterface));
+	let selectedPrimary = $derived(visiblePrimaryInterface($primaryInterface, interfaces));
 	// Editing is offered only where the host can actually carry it out, so the app
 	// never presents a form whose Save would always fail. `detail` matters as much
 	// as the capability: when a platform read fails we fall back to the generic
@@ -57,7 +58,7 @@
 		primaryBusy = true;
 		primaryFailed = false;
 		try {
-			if (!(await setPrimaryInterface($primaryInterface === id ? '' : id))) {
+			if (!(await setPrimaryInterface(selectedPrimary === id ? '' : id))) {
 				primaryFailed = true;
 				return;
 			}
@@ -139,14 +140,14 @@
 				<div class="note">{$t('settings.network.detailLimited')}</div>
 			{/if}
 			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.network.automatic')} checked={$primaryInterface === ''} position={[0, 0]} disabled={primaryBusy} onToggle={() => void pick('')} />
+				<SwitchRow label={$t('settings.network.automatic')} checked={selectedPrimary === ''} position={[0, 0]} disabled={primaryBusy} onToggle={() => void pick('')} />
 			</div>
 			{#each interfaces as iface, index (iface.id)}
 				<div class="iface">
 					<div class="head">
 						<Icon img={iconFor(iface)} alt="" size="3vh" padding="0" colorVariable="--primary-foreground" />
 						<div role="group" data-mouse-activate-area={areaID} style="flex: 1 1 auto;">
-							<SwitchRow label="{iface.name} — {linkLabel(iface)}" checked={$primaryInterface === iface.id} position={[0, index + 1]} disabled={primaryBusy} onToggle={() => void pick(iface.id)} />
+							<SwitchRow label="{iface.name} — {linkLabel(iface)}" checked={selectedPrimary === iface.id} position={[0, index + 1]} disabled={primaryBusy} onToggle={() => void pick(iface.id)} />
 						</div>
 					</div>
 					<div class="detail">

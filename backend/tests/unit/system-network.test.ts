@@ -202,7 +202,7 @@ describe('parseWindowsNetworkState', () => {
 });
 
 describe('parseLinuxNetworkState', () => {
-	const sources = { addr: fixture('network-linux-addr.json'), link: fixture('network-linux-link.json'), route: '[{"dst":"default","gateway":"192.0.2.1","dev":"eth0","flags":[]}]', resolvers: ['192.0.2.1'], activeConnections: new Map([['eth0', 'Wired connection 1']]) };
+	const sources = { addr: fixture('network-linux-addr.json'), link: fixture('network-linux-link.json'), route: '[{"dst":"default","gateway":"192.0.2.1","dev":"eth0","flags":[]}]', resolvers: ['192.0.2.1'], activeConnections: new Map([['eth0', 'Wired connection 1']]), ipv4Methods: new Map([['eth0', 'auto']]) };
 	const result = parseLinuxNetworkState(sources);
 
 	it('reads DHCP from the kernel dynamic flag and static from a permanent lifetime', () => {
@@ -210,13 +210,11 @@ describe('parseLinuxNetworkState', () => {
 		expect(byID(result, 'docker0').ipv4Mode).toBe('static');
 	});
 
-	it('ignores IPv6 dynamic — SLAAC is not DHCP', () => {
-		// docker0 has no IPv4 dynamic flag; its only dynamic-looking addresses on
-		// eth0 are IPv6, so a v6-only document must not be reported as DHCP.
+	it('keeps an active DHCP profile editable before it receives a lease', () => {
 		const v6Only = JSON.parse(sources.addr) as Array<{ ifname: string; addr_info?: Array<{ family: string }> }>;
 		for (const entry of v6Only) entry.addr_info = (entry.addr_info ?? []).filter(a => a.family === 'inet6');
 		const parsed = parseLinuxNetworkState({ ...sources, addr: JSON.stringify(v6Only) });
-		expect(byID(parsed, 'eth0').ipv4Mode).toBe('unknown');
+		expect(byID(parsed, 'eth0')).toMatchObject({ ipv4Mode: 'dhcp', ipv4Configurable: true });
 	});
 
 	it('reports a NO-CARRIER bridge as down even though it is administratively UP', () => {
@@ -235,7 +233,18 @@ describe('parseLinuxNetworkState', () => {
 			{ dst: 'default', gateway: '192.0.2.1', dev: 'eth0', metric: 10 },
 			{ dst: 'default', gateway: '198.51.100.1', dev: 'docker0', metric: 200 },
 		]);
-		const parsed = parseLinuxNetworkState({ ...sources, route: routes, activeConnections: new Map([['eth0', 'a'], ['docker0', 'b']]) });
+		const parsed = parseLinuxNetworkState({
+			...sources,
+			route: routes,
+			activeConnections: new Map([
+				['eth0', 'a'],
+				['docker0', 'b'],
+			]),
+			ipv4Methods: new Map([
+				['eth0', 'auto'],
+				['docker0', 'manual'],
+			]),
+		});
 		expect(byID(parsed, 'eth0')).toMatchObject({ defaultRoute: true, gateway: '192.0.2.1' });
 		expect(byID(parsed, 'docker0')).toMatchObject({ defaultRoute: false, gateway: '198.51.100.1' });
 	});
@@ -246,12 +255,18 @@ describe('parseLinuxNetworkState', () => {
 		const multiAddress = parseLinuxNetworkState({ ...sources, addr: JSON.stringify(addresses) });
 		expect(byID(multiAddress, 'eth0').ipv4Configurable).toBe(false);
 
-		const multiRoute = parseLinuxNetworkState({ ...sources, route: JSON.stringify([{ dev: 'eth0', gateway: '192.0.2.1' }, { dev: 'eth0', gateway: '192.0.2.254', metric: 50 }]) });
+		const multiRoute = parseLinuxNetworkState({
+			...sources,
+			route: JSON.stringify([
+				{ dev: 'eth0', gateway: '192.0.2.1' },
+				{ dev: 'eth0', gateway: '192.0.2.254', metric: 50 },
+			]),
+		});
 		expect(byID(multiRoute, 'eth0').ipv4Configurable).toBe(false);
 
 		const v6Only = JSON.parse(sources.addr) as Array<{ ifname: string; addr_info?: Array<{ family: string }> }>;
 		for (const entry of v6Only) entry.addr_info = (entry.addr_info ?? []).filter(address => address.family !== 'inet');
-		const unknown = parseLinuxNetworkState({ ...sources, addr: JSON.stringify(v6Only) });
+		const unknown = parseLinuxNetworkState({ ...sources, addr: JSON.stringify(v6Only), ipv4Methods: new Map([['eth0', 'shared']]) });
 		expect(byID(unknown, 'eth0').ipv4Configurable).toBe(false);
 	});
 
