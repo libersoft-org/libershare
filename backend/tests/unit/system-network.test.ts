@@ -161,6 +161,14 @@ describe('parseWindowsNetworkState', () => {
 		expect(byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet).ipv4Configurable).toBe(false);
 	});
 
+	it('makes an adapter with a hidden non-preferred IPv4 address read-only', () => {
+		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, any[]>;
+		doc['addresses']!.push({ ifIndex: 20, Family: 2, IPAddress: '192.0.2.11', PrefixLength: 24, State: 3 });
+		const ethernet = byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet);
+		expect(ethernet.addresses).not.toContainEqual({ family: 'ipv4', address: '192.0.2.11', prefixLength: 24 });
+		expect(ethernet.ipv4Configurable).toBe(false);
+	});
+
 	it('makes an adapter with unknown addressing mode and Wi-Fi Direct read-only', () => {
 		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, any[]>;
 		doc['interfaces'] = doc['interfaces']!.filter(row => row.ifIndex !== 20);

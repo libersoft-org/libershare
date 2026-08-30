@@ -27,6 +27,11 @@ describe('isIPv6', () => {
 	it('rejects malformed values and scope suffixes', () => {
 		for (const value of ['', ':', '2001:::1', '2001:db8::1::2', 'gggg::1', 'fe80::1%12']) expect(isIPv6(value)).toBe(false);
 	});
+
+	it('rejects trailing URL syntax and PowerShell metacharacters', () => {
+		for (const value of ["::1]/';Stop-Computer;#", '::1]/path', '::1]?query', '::1]@host']) expect(isIPv6(value)).toBe(false);
+		expect(validateIPv4Config({ mode: 'dhcp', dns: ["::1]/';Stop-Computer;#"] })).toBe('dns');
+	});
 });
 
 describe('validateIPv4Config', () => {

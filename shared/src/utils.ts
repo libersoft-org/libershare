@@ -86,10 +86,14 @@ export function isIPv4(value: string): boolean {
 
 /** True for an IPv6 literal without a zone/scope suffix. */
 export function isIPv6(value: string): boolean {
-	if (!value.includes(':') || value.includes('%')) return false;
+	// URL is a convenient standards-compliant IPv6 parser, but it must never be
+	// allowed to reinterpret trailing input as a path, query, or credentials.
+	// DNS values reach an elevated PowerShell writer on Windows, so accept only
+	// characters that can occur in an IPv6 literal before asking URL to parse it.
+	if (!value.includes(':') || !/^[0-9a-f:.]+$/i.test(value)) return false;
 	try {
 		const parsed = new URL(`http://[${value}]/`);
-		return parsed.hostname.startsWith('[') && parsed.hostname.endsWith(']');
+		return parsed.hostname.startsWith('[') && parsed.hostname.endsWith(']') && parsed.host === parsed.hostname && parsed.pathname === '/' && parsed.search === '' && parsed.hash === '';
 	} catch {
 		return false;
 	}

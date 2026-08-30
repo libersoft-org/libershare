@@ -168,7 +168,9 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 	const dnsRows = asArray<WindowsDnsRow>(doc['dns']);
 
 	const addressesByIndex = new Map<number, NetAddress[]>();
+	const ipv4RowsByIndex = new Map<number, number>();
 	for (const row of addresses) {
+		if (row.Family === AF_INET) ipv4RowsByIndex.set(row.ifIndex, (ipv4RowsByIndex.get(row.ifIndex) ?? 0) + 1);
 		if (row.State !== ADDRESS_STATE_PREFERRED) continue;
 		const family = row.Family === AF_INET ? 'ipv4' : row.Family === AF_INET6 ? 'ipv6' : null;
 		if (!family) continue;
@@ -241,7 +243,13 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 			mac: mac && mac.length > 0 ? mac : null,
 			addresses: interfaceAddresses,
 			ipv4Mode,
-			ipv4Configurable: guid !== null && ipv4Mode !== 'unknown' && interfaceAddresses.filter(address => address.family === 'ipv4').length <= 1 && interfaceRoutes.length <= 1 && (medium !== 'wireless' || radio !== undefined),
+			ipv4Configurable:
+				guid !== null &&
+				ipv4Mode !== 'unknown' &&
+				(ipv4RowsByIndex.get(ifIndex) ?? 0) === interfaceAddresses.filter(address => address.family === 'ipv4').length &&
+				(ipv4RowsByIndex.get(ifIndex) ?? 0) <= 1 &&
+				interfaceRoutes.length <= 1 &&
+				(medium !== 'wireless' || radio !== undefined),
 			gateway: interfaceRoutes[0]?.NextHop ?? null,
 			dns: dnsByIndex.get(ifIndex) ?? [],
 		};
