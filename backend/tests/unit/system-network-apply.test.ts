@@ -351,8 +351,12 @@ describe('windowsApplyIPv4Command', () => {
 	it('clears the old address and route before applying either mode', () => {
 		for (const config of [{ mode: 'dhcp' } as NetIPv4Config, { mode: 'static', address: '192.0.2.10', prefixLength: 24 } as NetIPv4Config]) {
 			const command = windowsApplyIPv4Command(guid, config);
-			expect(command).toContain('Remove-NetIPAddress');
-			expect(command).toContain('Remove-NetRoute');
+			expect(command).toContain('$oldAddresses = @(Get-NetIPAddress');
+			expect(command).toContain('$oldAddresses | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop');
+			expect(command).toContain('$oldRoutes = @(Get-NetRoute');
+			expect(command).toContain('$oldRoutes | Remove-NetRoute -Confirm:$false -ErrorAction Stop');
+			expect(command).not.toContain('Remove-NetIPAddress -InterfaceIndex');
+			expect(command).not.toContain('Remove-NetRoute -InterfaceIndex');
 		}
 	});
 

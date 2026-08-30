@@ -461,7 +461,18 @@ export function isWindowsInterfaceID(id: string): boolean {
  * this string — the validation does.
  */
 export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): string {
-	const steps = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', `$adapter = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq '${guid}' }`, 'if (-not $adapter) { throw "interface not found" }', '$i = $adapter.ifIndex', "$oldRoute = @(Get-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object -First 1)", '$oldRouteMetric = $oldRoute.RouteMetric', 'Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue', "Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false -ErrorAction SilentlyContinue"];
+	const steps = [
+		'[Console]::OutputEncoding=[System.Text.Encoding]::UTF8',
+		'$ErrorActionPreference = "Stop"',
+		`$adapter = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq '${guid}' }`,
+		'if (-not $adapter) { throw "interface not found" }',
+		'$i = $adapter.ifIndex',
+		'$oldAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop)',
+		"$oldRoutes = @(Get-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop)",
+		'$oldRouteMetric = ($oldRoutes | Select-Object -First 1).RouteMetric',
+		'if ($oldAddresses.Count -gt 0) { $oldAddresses | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop }',
+		'if ($oldRoutes.Count -gt 0) { $oldRoutes | Remove-NetRoute -Confirm:$false -ErrorAction Stop }',
+	];
 	const dnsStep = config.dns === undefined ? null : config.dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${config.dns.map(server => `'${server}'`).join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses';
 	if (config.mode === 'dhcp') {
 		steps.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled');
