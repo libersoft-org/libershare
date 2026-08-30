@@ -176,6 +176,25 @@ export function parseServiceGateway(text: string): string | null {
 	return value && value.toLowerCase() !== 'none' ? value : null;
 }
 
+/** Static IPv4 stored in a service even while its device has no carrier. */
+export function parseServiceIPv4(text: string): NetAddress | null {
+	if (parseServiceInfo(text) !== 'static') return null;
+	const address = text.match(/^\s*IP address:\s*(\S+)/im)?.[1];
+	const mask = text.match(/^\s*Subnet mask:\s*(\S+)/im)?.[1];
+	if (!address || !mask || !isIPv4(address) || !isIPv4(mask)) return null;
+	let prefixLength = 0;
+	let zeroSeen = false;
+	for (const octet of mask.split('.').map(Number)) {
+		for (let bit = 7; bit >= 0; bit--) {
+			const set = (octet & (1 << bit)) !== 0;
+			if (set && zeroSeen) return null;
+			if (set) prefixLength++;
+			else zeroSeen = true;
+		}
+	}
+	return { family: 'ipv4', address, prefixLength };
+}
+
 /**
  * Resolvers from `networksetup -getdnsservers <service>`.
  *
@@ -270,7 +289,10 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 		const defaultRoute = device === route.device;
 		const serviceInfo = sources.serviceInfo?.get(device) ?? '';
 		const ipv4Mode = serviceInfo ? parseServiceInfo(serviceInfo) : 'unknown';
-		const ipv4Addresses = entry.addresses.filter(address => address.family === 'ipv4');
+		const liveIPv4Addresses = entry.addresses.filter(address => address.family === 'ipv4');
+		const storedIPv4 = liveIPv4Addresses.length === 0 ? parseServiceIPv4(serviceInfo) : null;
+		const addresses = storedIPv4 ? [...entry.addresses, storedIPv4] : entry.addresses;
+		const ipv4Addresses = addresses.filter(address => address.family === 'ipv4');
 		const info: NetInterfaceInfo = {
 			id: device,
 			// The service name is what the user sees in System Settings, so it is the
@@ -280,7 +302,7 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 			link: mapLink(entry.status),
 			defaultRoute,
 			mac: entry.mac,
-			addresses: entry.addresses,
+			addresses,
 			ipv4Mode,
 			ipv4Configurable: services.has(device) && ipv4Mode !== 'unknown' && ipv4Addresses.length <= 1,
 			gateway: parseServiceGateway(serviceInfo) ?? (defaultRoute ? route.gateway : null),

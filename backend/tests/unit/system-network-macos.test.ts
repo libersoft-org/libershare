@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { macApplyArgs, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceDns, parseServiceGateway, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { macApplyArgs, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -165,6 +165,17 @@ describe('parseServiceGateway', () => {
 	});
 });
 
+describe('parseServiceIPv4', () => {
+	it('reads a manual address stored for an inactive service', () => {
+		expect(parseServiceIPv4('Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\n')).toEqual({ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 });
+	});
+
+	it('does not invent an address from DHCP or a malformed mask', () => {
+		expect(parseServiceIPv4('DHCP Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\n')).toBeNull();
+		expect(parseServiceIPv4('Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.0.255.0\n')).toBeNull();
+	});
+});
+
 describe('DNS', () => {
 	it('reads servers the user set', () => {
 		expect(parseServiceDns('192.0.2.1\n198.51.100.1\n')).toEqual(['192.0.2.1', '198.51.100.1']);
@@ -243,6 +254,13 @@ describe('parseMacNetworkState', () => {
 		const serviceInfo = new Map(sources.serviceInfo).set('bridge0', 'Manual Configuration\nRouter: 198.51.100.1\n');
 		const bridge = parseMacNetworkState({ ...sources, ifconfig: withBridgeAddress, serviceInfo }).find(i => i.id === 'bridge0');
 		expect(bridge).toMatchObject({ defaultRoute: false, gateway: '198.51.100.1', ipv4Configurable: true });
+	});
+
+	it('keeps a configured manual address visible while the link is inactive', () => {
+		const serviceInfo = new Map(sources.serviceInfo).set('bridge0', 'Manual Configuration\nIP address: 198.51.100.10\nSubnet mask: 255.255.255.0\nRouter: 198.51.100.1\n');
+		const bridge = parseMacNetworkState({ ...sources, serviceInfo }).find(i => i.id === 'bridge0');
+		expect(bridge?.addresses).toContainEqual({ family: 'ipv4', address: '198.51.100.10', prefixLength: 24 });
+		expect(bridge?.ipv4Configurable).toBe(true);
 	});
 
 	it('leaves wifi undefined on a wired interface', () => {
