@@ -3,7 +3,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { networkState } from '../../scripts/networkState.ts';
+	import { networkState, refreshNetworkState } from '../../scripts/networkState.ts';
 	import { primaryInterface, setPrimaryInterface } from '../../scripts/settings.ts';
 	import { isSelectableInterface, type NetInterfaceInfo } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -28,6 +28,8 @@
 	// resolves, so every save from that state would be rejected.
 	let editable = $derived($networkState.capabilities.ipv4 && $networkState.detail === 'full');
 	let editing = $state<string | null>(null);
+	let primaryFailed = $state(false);
+	let primaryBusy = $state(false);
 
 	function iconFor(iface: NetInterfaceInfo): string {
 		if (iface.medium === 'wired') return '/img/ethernet.svg';
@@ -49,8 +51,23 @@
 
 	// Picking the already-primary interface returns to automatic, so the row works
 	// as a toggle and the user is never stuck on a stale manual pick.
-	function pick(id: string): void {
-		setPrimaryInterface($primaryInterface === id ? '' : id);
+	async function pick(id: string): Promise<void> {
+		if (primaryBusy) return;
+		primaryBusy = true;
+		primaryFailed = false;
+		try {
+			if (!(await setPrimaryInterface($primaryInterface === id ? '' : id))) {
+				primaryFailed = true;
+				return;
+			}
+			try {
+				await refreshNetworkState();
+			} catch (error) {
+				console.error('[NetworkState] Error refreshing primary interface:', error);
+			}
+		} finally {
+			primaryBusy = false;
+		}
 	}
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));
@@ -116,18 +133,19 @@
 	<div class="settings">
 		<div class="container">
 			<div class="note">{editable ? $t('settings.network.editableNote') : $t('settings.network.readOnlyNote')}</div>
+			{#if primaryFailed}<div class="note">{$t('settings.network.primarySaveFailed')}</div>{/if}
 			{#if $networkState.detail === 'addressesOnly'}
 				<div class="note">{$t('settings.network.detailLimited')}</div>
 			{/if}
 			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.network.automatic')} checked={$primaryInterface === ''} position={[0, 0]} onToggle={() => setPrimaryInterface('')} />
+				<SwitchRow label={$t('settings.network.automatic')} checked={$primaryInterface === ''} position={[0, 0]} disabled={primaryBusy} onToggle={() => void pick('')} />
 			</div>
 			{#each interfaces as iface, index (iface.id)}
 				<div class="iface">
 					<div class="head">
 						<Icon img={iconFor(iface)} alt="" size="3vh" padding="0" colorVariable="--primary-foreground" />
 						<div role="group" data-mouse-activate-area={areaID} style="flex: 1 1 auto;">
-							<SwitchRow label="{iface.name} — {linkLabel(iface)}" checked={$primaryInterface === iface.id} position={[0, index + 1]} onToggle={() => pick(iface.id)} />
+							<SwitchRow label="{iface.name} — {linkLabel(iface)}" checked={$primaryInterface === iface.id} position={[0, index + 1]} disabled={primaryBusy} onToggle={() => void pick(iface.id)} />
 						</div>
 					</div>
 					<div class="detail">

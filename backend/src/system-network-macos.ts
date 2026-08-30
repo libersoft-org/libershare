@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { NetAddress, NetInterfaceInfo, NetIPv4Config, NetLink, NetMedium } from '@shared';
+import { isIPv4, isIPv6, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetLink, type NetMedium } from '@shared';
 
 const execFileAsync = promisify(execFile);
 const C_LOCALE_ENV = { ...process.env, LC_ALL: 'C', LANG: 'C' };
@@ -170,6 +170,12 @@ export function parseServiceInfo(text: string): NetInterfaceInfo['ipv4Mode'] {
 	return 'unknown';
 }
 
+/** IPv4 router reported for one network service. */
+export function parseServiceGateway(text: string): string | null {
+	const value = text.match(/^\s*Router:\s*(\S+)/im)?.[1];
+	return value && value.toLowerCase() !== 'none' ? value : null;
+}
+
 /**
  * Resolvers from `networksetup -getdnsservers <service>`.
  *
@@ -184,7 +190,7 @@ export function parseServiceDns(text: string): string[] {
 	return text
 		.split('\n')
 		.map(line => line.trim())
-		.filter(line => /^\d+\.\d+\.\d+\.\d+$/.test(line) || /^[0-9a-f:]+$/i.test(line));
+		.filter(line => isIPv4(line) || isIPv6(line));
 }
 
 /**
@@ -199,7 +205,7 @@ export function parseDhcpDns(text: string): string[] {
 	return line[1]
 		.split(',')
 		.map(server => server.trim())
-		.filter(server => /^\d+\.\d+\.\d+\.\d+$/.test(server) || /^[0-9a-f:]+$/i.test(server));
+		.filter(server => isIPv4(server) || isIPv6(server));
 }
 
 /**
@@ -262,6 +268,9 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 		const port = ports.get(device);
 		const medium = mapMedium(port);
 		const defaultRoute = device === route.device;
+		const serviceInfo = sources.serviceInfo?.get(device) ?? '';
+		const ipv4Mode = serviceInfo ? parseServiceInfo(serviceInfo) : 'unknown';
+		const ipv4Addresses = entry.addresses.filter(address => address.family === 'ipv4');
 		const info: NetInterfaceInfo = {
 			id: device,
 			// The service name is what the user sees in System Settings, so it is the
@@ -272,9 +281,9 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 			defaultRoute,
 			mac: entry.mac,
 			addresses: entry.addresses,
-			ipv4Mode: sources.serviceInfo?.has(device) ? parseServiceInfo(sources.serviceInfo.get(device) as string) : 'unknown',
-			ipv4Configurable: services.has(device),
-			gateway: defaultRoute ? route.gateway : null,
+			ipv4Mode,
+			ipv4Configurable: services.has(device) && ipv4Mode !== 'unknown' && ipv4Addresses.length <= 1,
+			gateway: parseServiceGateway(serviceInfo) ?? (defaultRoute ? route.gateway : null),
 			// Manually set servers win; otherwise fall back to what the DHCP lease
 			// handed out, so a DHCP link reports the resolvers it actually uses.
 			dns: pickDns(sources, device),
@@ -387,16 +396,15 @@ export function netmaskFromPrefix(prefixLength: number): string {
  * survives a switch back to DHCP unless it is cleared with the `Empty` sentinel.
  */
 export function macApplyArgs(service: string, config: NetIPv4Config): string[][] {
-	const dns = config.dns ?? [];
-	const dnsArgs = ['-setdnsservers', service, ...(dns.length > 0 ? dns : ['Empty'])];
-	if (config.mode === 'dhcp') return [['-setdhcp', service], dnsArgs];
+	const dnsArgs = config.dns === undefined ? [] : [['-setdnsservers', service, ...(config.dns.length > 0 ? config.dns : ['Empty'])]];
+	if (config.mode === 'dhcp') return [['-setdhcp', service], ...dnsArgs];
 	// Unlike the Windows and NetworkManager paths, networksetup documents the
 	// router as a required positional argument and has no documented no-router
 	// sentinel. Reject only this platform-specific shape instead of emitting a
 	// command that networksetup cannot parse.
 	if (!config.gateway) throw new Error('macOS manual IPv4 configuration requires a router');
 	const address = ['-setmanual', service, config.address as string, netmaskFromPrefix(config.prefixLength as number), config.gateway];
-	return [address, dnsArgs];
+	return [address, ...dnsArgs];
 }
 
 /** Resolve the service name a device belongs to. Throws when the device is not part of an enabled service. */

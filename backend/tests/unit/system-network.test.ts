@@ -143,6 +143,38 @@ describe('parseWindowsNetworkState', () => {
 		expect(byID(parsed, ID.tunnel).gateway).toBe('198.51.100.1');
 	});
 
+	it('keeps each interface own gateway while only the best route is primary', () => {
+		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
+		doc['routes'] = [
+			{ ifIndex: 20, NextHop: '192.0.2.1', RouteMetric: 10, InterfaceMetric: 20 },
+			{ ifIndex: 63, NextHop: '198.51.100.1', RouteMetric: 100, InterfaceMetric: 20 },
+		];
+		const parsed = parseWindowsNetworkState(JSON.stringify(doc));
+		expect(byID(parsed, ID.ethernet)).toMatchObject({ defaultRoute: true, gateway: '192.0.2.1' });
+		expect(byID(parsed, ID.tunnel)).toMatchObject({ defaultRoute: false, gateway: '198.51.100.1' });
+	});
+
+	it('makes a multi-address or multi-route adapter read-only', () => {
+		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, any[]>;
+		doc['addresses']!.push({ ifIndex: 20, Family: 2, IPAddress: '192.0.2.11', PrefixLength: 24, State: 4 });
+		doc['routes']!.push({ ifIndex: 20, NextHop: '192.0.2.254', RouteMetric: 200, InterfaceMetric: 20 });
+		expect(byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet).ipv4Configurable).toBe(false);
+	});
+
+	it('makes an adapter with unknown addressing mode and Wi-Fi Direct read-only', () => {
+		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, any[]>;
+		doc['interfaces'] = doc['interfaces']!.filter(row => row.ifIndex !== 20);
+		const parsed = parseWindowsNetworkState(JSON.stringify(doc));
+		expect(byID(parsed, ID.ethernet).ipv4Configurable).toBe(false);
+		expect(byID(parsed, ID.wifiDirect).ipv4Configurable).toBe(false);
+	});
+
+	it('merges IPv4 and IPv6 DNS rows for one interface', () => {
+		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, any[]>;
+		doc['dns']!.push({ InterfaceIndex: 20, Servers: '2001:db8::53,127.0.0.1' });
+		expect(byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet).dns).toEqual(['192.0.2.1', '192.0.2.2', '2001:db8::53', '127.0.0.1']);
+	});
+
 	it('still ranks by route metric when the interface metric is absent', () => {
 		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
 		doc['routes'] = [
@@ -182,6 +214,31 @@ describe('parseLinuxNetworkState', () => {
 		expect(eth0.defaultRoute).toBe(true);
 		expect(eth0.gateway).toBe('192.0.2.1');
 		expect(eth0.dns).toEqual(['192.0.2.1']);
+	});
+
+	it('keeps a secondary interface own default gateway without calling it primary', () => {
+		const routes = JSON.stringify([
+			{ dst: 'default', gateway: '192.0.2.1', dev: 'eth0', metric: 10 },
+			{ dst: 'default', gateway: '198.51.100.1', dev: 'docker0', metric: 200 },
+		]);
+		const parsed = parseLinuxNetworkState({ ...sources, route: routes, activeConnections: new Map([['eth0', 'a'], ['docker0', 'b']]) });
+		expect(byID(parsed, 'eth0')).toMatchObject({ defaultRoute: true, gateway: '192.0.2.1' });
+		expect(byID(parsed, 'docker0')).toMatchObject({ defaultRoute: false, gateway: '198.51.100.1' });
+	});
+
+	it('makes multi-address, multi-route and unknown-mode interfaces read-only', () => {
+		const addresses = JSON.parse(sources.addr) as Array<{ ifname: string; addr_info?: any[] }>;
+		addresses.find(entry => entry.ifname === 'eth0')!.addr_info!.push({ family: 'inet', local: '192.0.2.10', prefixlen: 23, valid_life_time: 4294967295 });
+		const multiAddress = parseLinuxNetworkState({ ...sources, addr: JSON.stringify(addresses) });
+		expect(byID(multiAddress, 'eth0').ipv4Configurable).toBe(false);
+
+		const multiRoute = parseLinuxNetworkState({ ...sources, route: JSON.stringify([{ dev: 'eth0', gateway: '192.0.2.1' }, { dev: 'eth0', gateway: '192.0.2.254', metric: 50 }]) });
+		expect(byID(multiRoute, 'eth0').ipv4Configurable).toBe(false);
+
+		const v6Only = JSON.parse(sources.addr) as Array<{ ifname: string; addr_info?: Array<{ family: string }> }>;
+		for (const entry of v6Only) entry.addr_info = (entry.addr_info ?? []).filter(address => address.family !== 'inet');
+		const unknown = parseLinuxNetworkState({ ...sources, addr: JSON.stringify(v6Only) });
+		expect(byID(unknown, 'eth0').ipv4Configurable).toBe(false);
 	});
 
 	it('calls software devices other and only a bare ethernet link wired', () => {

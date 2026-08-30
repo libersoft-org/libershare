@@ -1,0 +1,42 @@
+import { describe, expect, it } from 'bun:test';
+import { networkConfigFormFrom, networkConfigFromForm, type NetworkConfigForm } from '../../src/scripts/networkConfig.ts';
+import type { NetInterfaceInfo } from '@shared';
+
+const iface: NetInterfaceInfo = {
+	id: 'lan0',
+	name: 'LAN',
+	medium: 'wired',
+	link: 'up',
+	defaultRoute: true,
+	mac: null,
+	addresses: [{ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 }],
+	ipv4Mode: 'dhcp',
+	ipv4Configurable: true,
+	gateway: '192.0.2.1',
+	dns: ['192.0.2.53', '2001:db8::53', '127.0.0.1'],
+};
+
+describe('network configuration form', () => {
+	it('preserves DNS by default, including IPv6 and loopback resolvers', () => {
+		const form = networkConfigFormFrom(iface);
+		expect(form.dns).toBe('192.0.2.53, 2001:db8::53, 127.0.0.1');
+		expect(networkConfigFromForm(form)).toEqual({ mode: 'dhcp' });
+	});
+
+	it('distinguishes automatic DNS from a custom list', () => {
+		const base = networkConfigFormFrom(iface);
+		expect(networkConfigFromForm({ ...base, dnsMode: 'automatic' })).toEqual({ mode: 'dhcp', dns: [] });
+		expect(networkConfigFromForm({ ...base, dnsMode: 'custom' })).toEqual({ mode: 'dhcp', dns: ['192.0.2.53', '2001:db8::53', '127.0.0.1'] });
+	});
+
+	it('builds a static address without forcing a DNS change', () => {
+		const form: NetworkConfigForm = { mode: 'static', address: ' 198.51.100.10 ', prefix: '24', gateway: ' 198.51.100.1 ', dnsMode: 'unchanged', dns: '' };
+		expect(networkConfigFromForm(form)).toEqual({ mode: 'static', address: '198.51.100.10', prefixLength: 24, gateway: '198.51.100.1' });
+	});
+
+	it('never turns an unknown addressing mode into DHCP', () => {
+		const form = networkConfigFormFrom({ ...iface, ipv4Mode: 'unknown' });
+		expect(form.mode).toBe('unknown');
+		expect(networkConfigFromForm(form)).toBeNull();
+	});
+});

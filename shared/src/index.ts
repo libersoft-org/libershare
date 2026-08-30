@@ -2,7 +2,7 @@
 export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE } from './product.ts';
 
 // Utils
-export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End, deriveConnectionStatus, isSelectableInterface, isIPv4, isValidSSID, validateIPv4Config } from './utils.ts';
+export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End, deriveConnectionStatus, isSelectableInterface, isIPv4, isIPv6, isValidSSID, validateIPv4Config } from './utils.ts';
 
 // Compression
 
@@ -501,7 +501,11 @@ export interface NetIPv4Config {
 	prefixLength?: number;
 	/** Optional even for 'static' — an interface on an isolated segment has no gateway. */
 	gateway?: string;
-	/** Empty means "let the OS decide" (DHCP-supplied, or none for a static address). */
+	/**
+	 * Resolver update requested by the user. Undefined preserves the current
+	 * resolver policy, an empty array selects automatic DNS, and a non-empty
+	 * array replaces it with the listed IPv4/IPv6 resolvers.
+	 */
 	dns?: string[];
 }
 
@@ -512,6 +516,10 @@ export interface NetWifiNetwork {
 	signal: number | null;
 	/** False for a genuinely open network — the UI must not ask for a password. */
 	secured: boolean;
+	/** Scanner security label, for display and capability decisions. */
+	security: string;
+	/** True only for open and personal WPA networks the one-password form supports. */
+	supported: boolean;
 	/** True when the interface is currently associated with this network. */
 	active: boolean;
 }

@@ -4,7 +4,8 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { applyInterfaceConfig, joinWifiNetwork, networkState, scanWifiNetworks } from '../../scripts/networkState.ts';
-	import { isIPv4, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork } from '@shared';
+	import { networkConfigFormFrom, networkConfigFromForm, type DnsUpdateMode } from '../../scripts/networkConfig.ts';
+	import { validateIPv4Config, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -21,10 +22,11 @@
 	let iface = $derived($networkState.interfaces.find(i => i.id === interfaceID));
 	let canEditWifi = $derived(!!iface && iface.medium === 'wireless' && $networkState.capabilities.wifi);
 
-	let mode = $state<'dhcp' | 'static'>('dhcp');
+	let mode = $state<NetAddressMode>('unknown');
 	let address = $state('');
 	let prefix = $state('24');
 	let gateway = $state('');
+	let dnsMode = $state<DnsUpdateMode>('unchanged');
 	let dns = $state('');
 	let busy = $state(false);
 	let message = $state('');
@@ -44,34 +46,27 @@
 	});
 
 	function seedFrom(source: NetInterfaceInfo): void {
-		mode = source.ipv4Mode === 'static' ? 'static' : 'dhcp';
-		const ipv4 = source.addresses.find(a => a.family === 'ipv4');
-		address = ipv4?.address ?? '';
-		prefix = String(ipv4?.prefixLength ?? 24);
-		gateway = source.gateway ?? '';
-		// Only real resolvers are offered back for editing: a loopback stub is what
-		// the host runs, not something the user typed, and re-submitting it would
-		// pin the machine to its own resolver.
-		dns = source.dns.filter(server => isIPv4(server) && !server.startsWith('127.')).join(', ');
+		const form = networkConfigFormFrom(source);
+		mode = form.mode;
+		address = form.address;
+		prefix = form.prefix;
+		gateway = form.gateway;
+		dnsMode = form.dnsMode;
+		dns = form.dns;
 	}
 
-	function buildConfig(): NetIPv4Config {
-		if (mode === 'dhcp') return { mode: 'dhcp' };
-		return {
-			mode: 'static',
-			address: address.trim(),
-			prefixLength: Number(prefix.trim()),
-			gateway: gateway.trim(),
-			dns: dns
-				.split(',')
-				.map(server => server.trim())
-				.filter(Boolean),
-		};
+	function buildConfig(): NetIPv4Config | null {
+		return networkConfigFromForm({ mode, address, prefix, gateway, dnsMode, dns });
 	}
 
 	async function save(): Promise<void> {
 		if (busy || scanning) return;
 		const config = buildConfig();
+		if (!config) {
+			failed = true;
+			message = $t('settings.network.modeUnknown');
+			return;
+		}
 		const invalid = validateIPv4Config(config, $networkState.capabilities);
 		if (invalid) {
 			failed = true;
@@ -111,6 +106,7 @@
 	}
 
 	function selectNetwork(network: NetWifiNetwork): void {
+		if (!network.supported) return;
 		joinSSID = network.ssid;
 		// An open network takes no key, and asking for one would invite the user to
 		// type a password that cannot be used.
@@ -136,8 +132,10 @@
 	}
 
 	// Row positions shift with the mode: the static fields exist only in 'static'.
-	let staticRows = $derived(mode === 'static' ? 4 : 0);
-	let wifiBaseY = $derived(1 + staticRows + 1);
+	let staticRows = $derived(mode === 'static' ? 3 : 0);
+	let dnsRows = $derived(dnsMode === 'custom' ? 2 : 1);
+	let saveY = $derived(1 + staticRows + dnsRows);
+	let wifiBaseY = $derived(saveY + 1);
 	let buttonsY = $derived(canEditWifi ? wifiBaseY + 2 + networks.length + (joinSSID ? 1 : 0) : wifiBaseY);
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));
@@ -205,11 +203,21 @@
 				<Input bind:value={address} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, 1]} flex />
 				<Input bind:value={prefix} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, 2]} flex />
 				<Input bind:value={gateway} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, 3]} flex />
-				<Input bind:value={dns} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 1.1.1.1" position={[0, 4]} flex />
 			</div>
 		{/if}
 
-		<ButtonBar justify="center" basePosition={[0, 1 + staticRows]}>
+		<div role="group" data-mouse-activate-area={areaID}>
+			<Select bind:value={dnsMode} label={$t('settings.network.dnsPolicy')} position={[0, 1 + staticRows]} flex>
+				<SelectOption value="unchanged" label={$t('settings.network.dnsUnchanged')} />
+				<SelectOption value="automatic" label={$t('settings.network.dnsAutomatic')} />
+				<SelectOption value="custom" label={$t('settings.network.dnsCustom')} />
+			</Select>
+			{#if dnsMode === 'custom'}
+				<Input bind:value={dns} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 2001:db8::53" position={[0, 2 + staticRows]} flex />
+			{/if}
+		</div>
+
+		<ButtonBar justify="center" basePosition={[0, saveY]}>
 			<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy || scanning} onConfirm={save} />
 		</ButtonBar>
 
@@ -220,9 +228,9 @@
 			</ButtonBar>
 			{#each networks as network, index (network.ssid)}
 				<div role="group" data-mouse-activate-area={areaID}>
-					<Button label="{network.ssid}{network.active ? ' ✓' : ''}" position={[0, wifiBaseY + 1 + index]} onConfirm={() => selectNetwork(network)} disabled={busy || scanning} />
+					<Button label="{network.ssid}{network.active ? ' ✓' : ''}" position={[0, wifiBaseY + 1 + index]} onConfirm={() => selectNetwork(network)} disabled={busy || scanning || !network.supported} />
 					<div class="network">
-						<span>{network.secured ? $t('settings.network.secured') : $t('settings.network.open')}</span>
+						<span>{network.supported ? (network.secured ? $t('settings.network.secured') : $t('settings.network.open')) : $t('settings.network.unsupportedSecurity')}</span>
 						<span>{network.signal !== null ? `${network.signal}%` : '—'}</span>
 					</div>
 				</div>

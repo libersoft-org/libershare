@@ -176,6 +176,13 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 		if (!best || (route.metric ?? 0) < (best.metric ?? 0)) best = route;
 	}
 	const defaultDev = best?.dev ?? null;
+	const routesByDevice = new Map<string, IpRouteEntry[]>();
+	for (const route of routeEntries) {
+		if (!route.dev) continue;
+		const list = routesByDevice.get(route.dev) ?? [];
+		list.push(route);
+		routesByDevice.set(route.dev, list);
+	}
 
 	const result: NetInterfaceInfo[] = [];
 	for (const entry of addrEntries) {
@@ -193,6 +200,7 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 		}
 		const link = linkByName.get(entry.ifname);
 		const wireless = sources.wireless?.has(entry.ifname) ?? false;
+		const interfaceRoutes = routesByDevice.get(entry.ifname) ?? [];
 		const info: NetInterfaceInfo = {
 			id: entry.ifname,
 			name: entry.ifname,
@@ -202,8 +210,8 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 			mac: entry.address ?? link?.address ?? null,
 			addresses,
 			ipv4Mode,
-			ipv4Configurable: sources.activeConnections?.has(entry.ifname) ?? false,
-			gateway: entry.ifname === defaultDev ? (best?.gateway ?? null) : null,
+			ipv4Configurable: (sources.activeConnections?.has(entry.ifname) ?? false) && ipv4Mode !== 'unknown' && addresses.filter(address => address.family === 'ipv4').length <= 1 && interfaceRoutes.length <= 1,
+			gateway: interfaceRoutes[0]?.gateway ?? null,
 			// NetworkManager knows the resolvers PER LINK, which is the only correct
 			// answer on a systemd-resolved host: there /etc/resolv.conf holds the
 			// 127.0.0.53 stub, so reporting it would show every machine the same
@@ -399,7 +407,7 @@ export async function readLinuxCapabilities(): Promise<NetCapabilities> {
 }
 
 /**
- * Per-interface resolvers from `nmcli -t -f GENERAL.DEVICE,IP4.DNS device show`.
+ * Per-interface resolvers from NetworkManager, including IPv4 and IPv6.
  *
  * Returns undefined — not an empty map — when NetworkManager is absent or fails,
  * so the caller can tell "NM says this link has no resolvers" apart from "there
@@ -407,14 +415,14 @@ export async function readLinuxCapabilities(): Promise<NetCapabilities> {
  */
 async function readNetworkManagerDns(): Promise<Map<string, string[]> | undefined> {
 	try {
-		return parseNmcliDns(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'GENERAL.DEVICE,IP4.DNS', 'device', 'show']));
+		return parseNmcliDns(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'GENERAL.DEVICE,IP4.DNS,IP6.DNS', 'device', 'show']));
 	} catch {
 		return undefined;
 	}
 }
 
 /**
- * Parse the per-device blocks of `nmcli -t -f GENERAL.DEVICE,IP4.DNS device show`.
+ * Parse the per-device blocks of NetworkManager DNS output.
  *
  * Output is one blank-line-separated block per device: a `GENERAL.DEVICE` line
  * followed by zero or more `IP4.DNS[n]` lines. A device with no resolvers still
@@ -431,7 +439,7 @@ export function parseNmcliDns(text: string): Map<string, string[]> {
 		if (key === 'GENERAL.DEVICE') {
 			device = fields[1] ?? null;
 			if (device) result.set(device, []);
-		} else if (device && key.startsWith('IP4.DNS')) {
+		} else if (device && (key.startsWith('IP4.DNS') || key.startsWith('IP6.DNS'))) {
 			if (fields[1]) result.get(device)?.push(fields[1]);
 		}
 	}
@@ -482,8 +490,8 @@ async function activeConnection(device: string): Promise<string | null> {
  */
 export function nmcliModifyArgs(connectionUUID: string, config: NetIPv4Config): string[] {
 	const base = ['connection', 'modify', 'uuid', connectionUUID];
-	if (config.mode === 'dhcp') return [...base, 'ipv4.method', 'auto', 'ipv4.addresses', '', 'ipv4.gateway', '', 'ipv4.dns', '', 'ipv4.ignore-auto-dns', 'no'];
-	const dns = config.dns ?? [];
+	const dns = config.dns === undefined ? [] : ['ipv4.dns', config.dns.join(','), 'ipv4.ignore-auto-dns', config.dns.length > 0 ? 'yes' : 'no'];
+	if (config.mode === 'dhcp') return [...base, 'ipv4.method', 'auto', 'ipv4.addresses', '', 'ipv4.gateway', '', ...dns];
 	return [
 		...base,
 		'ipv4.method',
@@ -492,12 +500,7 @@ export function nmcliModifyArgs(connectionUUID: string, config: NetIPv4Config): 
 		`${config.address}/${config.prefixLength}`,
 		'ipv4.gateway',
 		config.gateway ?? '',
-		'ipv4.dns',
-		dns.join(','),
-		// Without this a static profile still merges resolvers handed out by any
-		// other active connection, so the user's DNS choice silently does nothing.
-		'ipv4.ignore-auto-dns',
-		dns.length > 0 ? 'yes' : 'no',
+		...dns,
 	];
 }
 
@@ -530,12 +533,17 @@ export function parseNmcliWifiList(text: string): NetWifiNetwork[] {
 		const [ssid, signal, security, inUse] = splitNmcliFields(line);
 		if (!ssid) continue;
 		const parsed = signal ? parseInt(signal, 10) : NaN;
+		const securityName = security?.trim() ?? '';
+		const enterprise = /(?:802\.1X|ENTERPRISE|EAP)/i.test(securityName);
+		const obsolete = /\bWEP\b/i.test(securityName);
 		const entry: NetWifiNetwork = {
 			ssid,
 			signal: Number.isFinite(parsed) ? Math.min(100, Math.max(0, parsed)) : null,
 			// nmcli leaves SECURITY empty for an open network and prints the key
 			// management (WPA2, WPA3, WEP, 802.1X) otherwise.
-			secured: !!security?.trim(),
+			secured: securityName.length > 0,
+			security: securityName,
+			supported: securityName.length === 0 || (/\bWPA\d*\b/i.test(securityName) && !enterprise && !obsolete),
 			active: inUse?.trim() === '*',
 		};
 		const previous = best.get(ssid);

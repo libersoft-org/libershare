@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { macApplyArgs, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceDns, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { macApplyArgs, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceDns, parseServiceGateway, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -158,6 +158,13 @@ describe('parseServiceInfo', () => {
 	});
 });
 
+describe('parseServiceGateway', () => {
+	it('reads a router from each service own configuration', () => {
+		expect(parseServiceGateway('Manual Configuration\nRouter: 198.51.100.1\n')).toBe('198.51.100.1');
+		expect(parseServiceGateway('DHCP Configuration\nRouter: none\n')).toBeNull();
+	});
+});
+
 describe('DNS', () => {
 	it('reads servers the user set', () => {
 		expect(parseServiceDns('192.0.2.1\n198.51.100.1\n')).toEqual(['192.0.2.1', '198.51.100.1']);
@@ -231,8 +238,11 @@ describe('parseMacNetworkState', () => {
 		expect(parseMacNetworkState(sources).some(i => i.id === 'lo0')).toBe(false);
 	});
 
-	it('attributes the gateway only to the default-route interface', () => {
-		expect(parseMacNetworkState(sources).find(i => i.id === 'bridge0')?.gateway).toBeNull();
+	it('reads a gateway for a secondary service without calling it the default route', () => {
+		const withBridgeAddress = IFCONFIG.replace('\tstatus: inactive\n', '\tinet 198.51.100.10 netmask 0xffffff00 broadcast 198.51.100.255\n\tstatus: inactive\n');
+		const serviceInfo = new Map(sources.serviceInfo).set('bridge0', 'Manual Configuration\nRouter: 198.51.100.1\n');
+		const bridge = parseMacNetworkState({ ...sources, ifconfig: withBridgeAddress, serviceInfo }).find(i => i.id === 'bridge0');
+		expect(bridge).toMatchObject({ defaultRoute: false, gateway: '198.51.100.1', ipv4Configurable: true });
 	});
 
 	it('leaves wifi undefined on a wired interface', () => {
@@ -241,6 +251,13 @@ describe('parseMacNetworkState', () => {
 
 	it('marks a device without an enabled network service read-only', () => {
 		expect(parseMacNetworkState({ ...sources, serviceOrder: '' }).find(i => i.id === 'en0')?.ipv4Configurable).toBe(false);
+	});
+
+	it('marks unknown-mode and multi-address services read-only', () => {
+		const unknown = parseMacNetworkState({ ...sources, serviceInfo: new Map([['en0', 'unrecognised']]) }).find(i => i.id === 'en0');
+		expect(unknown?.ipv4Configurable).toBe(false);
+		const multi = parseMacNetworkState({ ...sources, ifconfig: IFCONFIG.replace('\tinet 192.0.2.232 netmask 0xffffff00', '\tinet 192.0.2.231 netmask 0xffffff00\n\tinet 192.0.2.232 netmask 0xffffff00') }).find(i => i.id === 'en0');
+		expect(multi?.ipv4Configurable).toBe(false);
 	});
 });
 
@@ -256,12 +273,15 @@ describe('macApplyArgs', () => {
 		expect(() => macApplyArgs('Wi-Fi', { mode: 'static', address: '192.0.2.10', prefixLength: 24 })).toThrow('requires a router');
 	});
 
-	it('clears the resolvers with the Empty sentinel when switching to DHCP', () => {
-		// -setdhcp on its own leaves a manual DNS entry in place, so a user who set
-		// one would keep it after asking for full automatic configuration.
-		expect(macApplyArgs('Wi-Fi', { mode: 'dhcp' })).toEqual([
+	it('leaves DNS untouched unless the user explicitly changes it', () => {
+		expect(macApplyArgs('Wi-Fi', { mode: 'dhcp' })).toEqual([['-setdhcp', 'Wi-Fi']]);
+		expect(macApplyArgs('Wi-Fi', { mode: 'dhcp', dns: [] })).toEqual([
 			['-setdhcp', 'Wi-Fi'],
 			['-setdnsservers', 'Wi-Fi', 'Empty'],
+		]);
+		expect(macApplyArgs('Wi-Fi', { mode: 'dhcp', dns: ['2001:db8::53', '127.0.0.1'] })).toEqual([
+			['-setdhcp', 'Wi-Fi'],
+			['-setdnsservers', 'Wi-Fi', '2001:db8::53', '127.0.0.1'],
 		]);
 	});
 

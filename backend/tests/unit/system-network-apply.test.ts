@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'bun:test';
-import { isIPv4, isValidSSID, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNmcliActiveConnections, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
+import { isIPv4, isIPv6, isValidSSID, validateIPv4Config, type NetIPv4Config } from '@shared';
+import { nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNmcliActiveConnections, parseNmcliDns, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
-import { assertDeviceName, firstLine, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, runNetworkMutation } from '../../src/system-network.ts';
+import { assertDeviceName, firstLine, isIPv4ConfigUnchanged, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, runNetworkMutation } from '../../src/system-network.ts';
 
 describe('isIPv4', () => {
 	it('accepts ordinary dotted quads', () => {
@@ -19,13 +19,23 @@ describe('isIPv4', () => {
 	});
 });
 
+describe('isIPv6', () => {
+	it('accepts compressed, expanded and IPv4-mapped literals', () => {
+		for (const value of ['::1', '2001:db8::53', 'fe90::1', '2001:0db8:0000:0000:0000:0000:0000:0053', '::ffff:192.0.2.1']) expect(isIPv6(value)).toBe(true);
+	});
+
+	it('rejects malformed values and scope suffixes', () => {
+		for (const value of ['', ':', '2001:::1', '2001:db8::1::2', 'gggg::1', 'fe80::1%12']) expect(isIPv6(value)).toBe(false);
+	});
+});
+
 describe('validateIPv4Config', () => {
 	it('accepts a DHCP config with nothing else set', () => {
 		expect(validateIPv4Config({ mode: 'dhcp' })).toBeNull();
 	});
 
 	it('accepts a complete static config', () => {
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.1', '198.51.100.1'] })).toBeNull();
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.1', '2001:db8::53', '127.0.0.1'] })).toBeNull();
 	});
 
 	it('accepts a static config with no gateway, as on an isolated segment', () => {
@@ -66,6 +76,33 @@ describe('validateIPv4Config', () => {
 		expect(validateIPv4Config({ mode: 'static', address: 123, prefixLength: 24 })).toBe('address');
 		expect(validateIPv4Config({ mode: 'dhcp', dns: '192.0.2.1' })).toBe('dns');
 		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.2', prefixLength: 24, gateway: 123 })).toBe('gateway');
+	});
+});
+
+describe('isIPv4ConfigUnchanged', () => {
+	const target = {
+		id: 'lan0',
+		name: 'LAN',
+		medium: 'wired' as const,
+		link: 'up' as const,
+		defaultRoute: true,
+		mac: null,
+		addresses: [{ family: 'ipv4' as const, address: '192.0.2.10', prefixLength: 24 }],
+		ipv4Mode: 'static' as const,
+		ipv4Configurable: true,
+		gateway: '192.0.2.1',
+		dns: ['2001:db8::53'],
+	};
+
+	it('skips an unchanged address while preserving DNS', () => {
+		expect(isIPv4ConfigUnchanged(target, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' })).toBe(true);
+		expect(isIPv4ConfigUnchanged({ ...target, ipv4Mode: 'dhcp' }, { mode: 'dhcp' })).toBe(true);
+	});
+
+	it('treats any explicit DNS choice or address change as a mutation', () => {
+		expect(isIPv4ConfigUnchanged(target, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: [] })).toBe(false);
+		expect(isIPv4ConfigUnchanged(target, { mode: 'static', address: '192.0.2.11', prefixLength: 24, gateway: '192.0.2.1' })).toBe(false);
+		expect(isIPv4ConfigUnchanged({ ...target, ipv4Configurable: false }, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' })).toBe(false);
 	});
 });
 
@@ -166,28 +203,28 @@ describe('parseNmcliWifiList', () => {
 	it('parses signal, security and the active marker', () => {
 		const result = parseNmcliWifiList('home:82:WPA2:*\nguest:47::\n');
 		expect(result).toEqual([
-			{ ssid: 'home', signal: 82, secured: true, active: true },
-			{ ssid: 'guest', signal: 47, secured: false, active: false },
+			{ ssid: 'home', signal: 82, secured: true, security: 'WPA2', supported: true, active: true },
+			{ ssid: 'guest', signal: 47, secured: false, security: '', supported: true, active: false },
 		]);
 	});
 
 	it('drops hidden networks, which cannot be joined by name', () => {
-		expect(parseNmcliWifiList(':60:WPA2:\nhome:40:WPA2:')).toEqual([{ ssid: 'home', signal: 40, secured: true, active: false }]);
+		expect(parseNmcliWifiList(':60:WPA2:\nhome:40:WPA2:')).toEqual([{ ssid: 'home', signal: 40, secured: true, security: 'WPA2', supported: true, active: false }]);
 	});
 
 	it('collapses one row per access point into the strongest', () => {
 		const result = parseNmcliWifiList('home:40:WPA2:\nhome:88:WPA2:\nhome:12:WPA2:');
-		expect(result).toEqual([{ ssid: 'home', signal: 88, secured: true, active: false }]);
+		expect(result).toEqual([{ ssid: 'home', signal: 88, secured: true, security: 'WPA2', supported: true, active: false }]);
 	});
 
 	it('keeps the active flag when the strongest row is not the associated one', () => {
 		const result = parseNmcliWifiList('home:40:WPA2:*\nhome:88:WPA2:');
-		expect(result).toEqual([{ ssid: 'home', signal: 88, secured: true, active: true }]);
+		expect(result).toEqual([{ ssid: 'home', signal: 88, secured: true, security: 'WPA2', supported: true, active: true }]);
 	});
 
 	it('keeps the active flag when the weaker associated row arrives last', () => {
 		const result = parseNmcliWifiList('home:88:WPA2:\nhome:40:WPA2:*');
-		expect(result).toEqual([{ ssid: 'home', signal: 88, secured: true, active: true }]);
+		expect(result).toEqual([{ ssid: 'home', signal: 88, secured: true, security: 'WPA2', supported: true, active: true }]);
 	});
 
 	it('sorts strongest first', () => {
@@ -196,6 +233,14 @@ describe('parseNmcliWifiList', () => {
 
 	it('reports an unparseable signal as unknown rather than zero', () => {
 		expect(parseNmcliWifiList('home:--:WPA2:')[0]?.signal).toBeNull();
+	});
+
+	it('only supports open and personal WPA networks', () => {
+		const parsed = parseNmcliWifiList('Open:80::\nPersonal:70:WPA2\nEnterprise:60:WPA2 802.1X\nLegacy:50:WEP\n');
+		expect(parsed.find(item => item.ssid === 'Open')).toMatchObject({ supported: true, secured: false });
+		expect(parsed.find(item => item.ssid === 'Personal')).toMatchObject({ supported: true, secured: true });
+		expect(parsed.find(item => item.ssid === 'Enterprise')).toMatchObject({ supported: false });
+		expect(parsed.find(item => item.ssid === 'Legacy')).toMatchObject({ supported: false });
 	});
 });
 
@@ -208,6 +253,13 @@ describe('parseNmcliActiveConnections', () => {
 	});
 });
 
+describe('parseNmcliDns', () => {
+	it('combines IPv4 and IPv6 resolvers for each device', () => {
+		const parsed = parseNmcliDns('GENERAL.DEVICE:eth0\nIP4.DNS[1]:192.0.2.53\nIP6.DNS[1]:2001\\:db8\\:\\:53\n');
+		expect(parsed.get('eth0')).toEqual(['192.0.2.53', '2001:db8::53']);
+	});
+});
+
 describe('nmcliModifyArgs', () => {
 	it('clears the manual fields when switching to DHCP', () => {
 		// NetworkManager keeps a stale ipv4.addresses on a profile whose method
@@ -217,7 +269,21 @@ describe('nmcliModifyArgs', () => {
 		expect(args).toContain('auto');
 		expect(args[args.indexOf('ipv4.addresses') + 1]).toBe('');
 		expect(args[args.indexOf('ipv4.gateway') + 1]).toBe('');
-		expect(args[args.indexOf('ipv4.dns') + 1]).toBe('');
+		expect(args).not.toContain('ipv4.dns');
+	});
+
+	it('changes DNS only when explicitly requested in either address mode', () => {
+		const unchanged = nmcliModifyArgs('lan', { mode: 'dhcp' });
+		expect(unchanged).not.toContain('ipv4.dns');
+		expect(unchanged).not.toContain('ipv4.ignore-auto-dns');
+
+		const automatic = nmcliModifyArgs('lan', { mode: 'dhcp', dns: [] });
+		expect(automatic[automatic.indexOf('ipv4.dns') + 1]).toBe('');
+		expect(automatic[automatic.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('no');
+
+		const custom = nmcliModifyArgs('lan', { mode: 'dhcp', dns: ['2001:db8::53', '127.0.0.1'] });
+		expect(custom[custom.indexOf('ipv4.dns') + 1]).toBe('2001:db8::53,127.0.0.1');
+		expect(custom[custom.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('yes');
 	});
 
 	it('sets address, gateway and DNS for a static config', () => {
@@ -229,8 +295,8 @@ describe('nmcliModifyArgs', () => {
 		expect(args[args.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('yes');
 	});
 
-	it('does not ignore automatic DNS when the user supplied none', () => {
-		const args = nmcliModifyArgs('lan', { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
+	it('does not ignore automatic DNS when the user explicitly requested it', () => {
+		const args = nmcliModifyArgs('lan', { mode: 'static', address: '192.0.2.10', prefixLength: 24, dns: [] });
 		expect(args[args.indexOf('ipv4.dns') + 1]).toBe('');
 		expect(args[args.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('no');
 	});
@@ -267,25 +333,33 @@ describe('windowsApplyIPv4Command', () => {
 		}
 	});
 
-	it('enables DHCP and resets the resolvers for a DHCP config', () => {
+	it('enables DHCP without touching resolvers by default', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
 		expect(command).toContain('-Dhcp Enabled');
-		expect(command).toContain('-ResetServerAddresses');
+		expect(command).not.toContain('Set-DnsClientServerAddress');
 		expect(command).not.toContain('New-NetIPAddress');
+	});
+
+	it('supports explicit automatic or custom DNS in DHCP mode', () => {
+		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp', dns: [] })).toContain('-ResetServerAddresses');
+		const custom = windowsApplyIPv4Command(guid, { mode: 'dhcp', dns: ['2001:db8::53', '127.0.0.1'] });
+		expect(custom).toContain("-ServerAddresses '2001:db8::53','127.0.0.1'");
 	});
 
 	it('sets the address, prefix and gateway for a static config', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.1'] });
 		expect(command).toContain('-Dhcp Disabled');
 		expect(command).toContain('-IPAddress 192.0.2.10 -PrefixLength 24 -DefaultGateway 192.0.2.1');
-		expect(command).toContain('-ServerAddresses 192.0.2.1');
+		expect(command).toContain("-ServerAddresses '192.0.2.1'");
+		expect(command).toContain('$oldRouteMetric');
+		expect(command).toContain('-RouteMetric $oldRouteMetric');
 	});
 
 	it('omits the gateway parameter entirely when there is none', () => {
 		// Passing an empty -DefaultGateway is a parameter binding error, not a no-op.
 		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
 		expect(command).not.toContain('-DefaultGateway');
-		expect(command).toContain('-ResetServerAddresses');
+		expect(command).not.toContain('Set-DnsClientServerAddress');
 	});
 
 	it('stops on the first failing step', () => {

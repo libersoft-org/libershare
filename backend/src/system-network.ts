@@ -230,6 +230,20 @@ export function resetNetworkStateCache(): void {
 }
 
 /**
+ * True when the requested address change is already represented by a complete
+ * interface snapshot. Undefined DNS is intentionally ignored: it means preserve
+ * the resolver policy, whereas either form of explicit DNS is a real user action.
+ */
+export function isIPv4ConfigUnchanged(target: NetInterfaceInfo, config: NetIPv4Config): boolean {
+	if (!target.ipv4Configurable || target.ipv4Mode !== config.mode || config.dns !== undefined) return false;
+	if (config.mode === 'dhcp') return true;
+	const addresses = target.addresses.filter(address => address.family === 'ipv4');
+	if (addresses.length !== 1) return false;
+	const current = addresses[0]!;
+	return current.address === config.address && current.prefixLength === config.prefixLength && (target.gateway ?? '') === (config.gateway ?? '');
+}
+
+/**
  * What this host lets the app change.
  *
  * Probed once and remembered: on Linux the answer is an `nmcli` spawn, and it
@@ -280,6 +294,15 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config, prim
 		if (!supported.ipv4) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host does not expose a writable network configuration');
 		const platformInvalid = validateIPv4Config(config, supported);
 		if (platformInvalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${platformInvalid}`);
+		// Never trust the UI snapshot at this boundary. A platform reader marks an
+		// adapter read-only when its complete address/route state cannot be preserved,
+		// and a fresh read closes the gap between opening the form and pressing Save.
+		resetNetworkStateCache();
+		const before = await readNetworkState(primaryInterface);
+		const target = before.interfaces.find(item => item.id === interfaceID);
+		if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
+		if (!target.ipv4Configurable || target.ipv4Mode === 'unknown') throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'interface configuration cannot be preserved safely');
+		if (isIPv4ConfigUnchanged(target, config)) return before;
 		try {
 			await run(async () => {
 				if (process.platform === 'win32') {
@@ -314,6 +337,10 @@ export async function connectWifi(interfaceID: string, ssid: string, password: s
 	if (!isValidWifiPassword(password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
 	return runNetworkMutation(async () => {
 		await assertWirelessInterface(interfaceID);
+		const available = await scanLinuxWifi(assertDeviceName(interfaceID));
+		const network = available.find(item => item.ssid === ssid);
+		if (!network) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'network is no longer available');
+		if (!network.supported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi authentication method is not supported');
 		try {
 			await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password));
 		} finally {

@@ -27,7 +27,7 @@ export async function initNetworkState(): Promise<void> {
 	// The backend only broadcasts every 10 s, so without this the widget would sit
 	// on "unknown" for up to that long after every (re)connect.
 	try {
-		networkState.set(await api.call<NetworkStateInfo>('system.network'));
+		await refreshNetworkState();
 	} catch (error) {
 		console.error('[NetworkState] Error loading network state:', error);
 		// The snapshot we still hold predates a backend restart or a failed read, so
@@ -35,6 +35,11 @@ export async function initNetworkState(): Promise<void> {
 		// "unknown" rather than keep presenting it as current.
 		networkState.update(state => ({ ...state, known: false }));
 	}
+}
+
+/** Fetch and publish the current host state immediately. */
+export async function refreshNetworkState(): Promise<void> {
+	networkState.set(await api.call<NetworkStateInfo>('system.network'));
 }
 
 /**

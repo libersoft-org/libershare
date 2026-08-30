@@ -299,9 +299,18 @@ export function setAutoErrorRecovery(enabled: boolean): void {
 	updateSetting(autoErrorRecovery, 'network.autoErrorRecovery', enabled);
 }
 
-/** Pick the interface the UI treats as primary. Empty string = follow the default route. */
-export function setPrimaryInterface(id: string): void {
-	updateSetting(primaryInterface, 'network.primaryInterface', id);
+/** Pick the displayed primary interface, rolling the optimistic store back on failure. */
+export async function setPrimaryInterface(id: string): Promise<boolean> {
+	const previous = get(primaryInterface);
+	primaryInterface.set(id);
+	try {
+		await api.settings.set('network.primaryInterface', id);
+		return true;
+	} catch (error) {
+		primaryInterface.set(previous);
+		console.error('[Settings] Error saving network.primaryInterface:', error);
+		return false;
+	}
 }
 
 export function setMdnsEnabled(enabled: boolean): void {

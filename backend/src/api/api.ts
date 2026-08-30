@@ -217,7 +217,6 @@ export class APIServer {
 	private readonly settings: Settings;
 	private readonly host: string;
 	private readonly port: number;
-	private readonly localAddresses: Set<string>;
 	private readonly secure: boolean;
 	private readonly keyFile?: string | undefined;
 	private readonly certFile?: string | undefined;
@@ -260,7 +259,6 @@ export class APIServer {
 		this.keyFile = options.keyFile;
 		this.certFile = options.certFile;
 		this.apiToken = options.apiToken || undefined;
-		this.localAddresses = getLocalAddresses();
 		const emitTo = (client: ClientSocket, event: string, data: any): void => this.emit(client, event, data);
 		const broadcastFn = (event: string, data: any): void => this.broadcast(event, data);
 		const broadcastExceptFn = (event: string, data: any, except?: unknown): void => this.broadcast(event, data, except as ClientSocket | undefined);
@@ -462,7 +460,7 @@ export class APIServer {
 				if (!self.isAuthorized(url)) return self.unauthorizedResponse();
 				const clientIP = server.requestIP(req)?.address ?? '';
 				const upgraded = server.upgrade(req, {
-					data: { subscribedEvents: new Set<string>(), isLocalClient: self.localAddresses.has(clientIP) },
+					data: { subscribedEvents: new Set<string>(), isLocalClient: getLocalAddresses().has(clientIP) },
 				});
 				if (upgraded) return undefined;
 				return new Response('Expected WebSocket', { status: 400 });

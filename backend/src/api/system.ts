@@ -259,9 +259,19 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	 */
 	async function applyNetworkConfig(p: { interfaceID: string; config: NetIPv4Config }): Promise<NetworkStateInfo> {
 		assert(p, ['interfaceID', 'config']);
-		const state = await applyIPv4(p.interfaceID, p.config, settings.get('network.primaryInterface') ?? '');
-		broadcast('system:network', state);
-		return state;
+		const primary = settings.get('network.primaryInterface') ?? '';
+		try {
+			const state = await applyIPv4(p.interfaceID, p.config, primary);
+			broadcast('system:network', state);
+			return state;
+		} catch (error) {
+			// A platform writer consists of several commands. If a later one fails,
+			// publish the actual partial result before returning the original error.
+			try {
+				broadcast('system:network', await readNetworkState(primary));
+			} catch {}
+			throw error;
+		}
 	}
 
 	async function scanWifiNetworks(p: { interfaceID: string }): Promise<NetWifiNetwork[]> {

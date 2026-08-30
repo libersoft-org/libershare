@@ -66,7 +66,15 @@ export function deriveConnectionStatus(state: NetworkStateInfo): ConnectionStatu
  */
 export function isSelectableInterface(iface: NetInterfaceInfo): boolean {
 	if (iface.medium !== 'other' || iface.defaultRoute) return true;
-	return iface.addresses.some(a => !a.address.toLowerCase().startsWith('fe80') && !a.address.startsWith('169.254.'));
+	return iface.addresses.some(a => !isIPv6LinkLocal(a.address) && !a.address.startsWith('169.254.'));
+}
+
+/** True for the IPv6 link-local block fe80::/10. */
+function isIPv6LinkLocal(value: string): boolean {
+	const first = value.split(':', 1)[0];
+	if (!first || !/^[0-9a-f]{1,4}$/i.test(first)) return false;
+	const group = parseInt(first, 16);
+	return group >= 0xfe80 && group <= 0xfebf;
 }
 
 /** True for a dotted-quad IPv4 literal: four octets, 0-255, no leading zeros. */
@@ -74,6 +82,17 @@ export function isIPv4(value: string): boolean {
 	const parts = value.split('.');
 	if (parts.length !== 4) return false;
 	return parts.every(part => /^(0|[1-9]\d{0,2})$/.test(part) && Number(part) <= 255);
+}
+
+/** True for an IPv6 literal without a zone/scope suffix. */
+export function isIPv6(value: string): boolean {
+	if (!value.includes(':') || value.includes('%')) return false;
+	try {
+		const parsed = new URL(`http://[${value}]/`);
+		return parsed.hostname.startsWith('[') && parsed.hostname.endsWith(']');
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -90,7 +109,7 @@ export function validateIPv4Config(value: unknown, capabilities?: Pick<NetCapabi
 	const config = value as { mode?: unknown; dns?: unknown; address?: unknown; prefixLength?: unknown; gateway?: unknown };
 	if (config.mode !== 'dhcp' && config.mode !== 'static') return 'mode';
 	if (config.dns !== undefined && !Array.isArray(config.dns)) return 'dns';
-	for (const server of config.dns ?? []) if (typeof server !== 'string' || !isIPv4(server)) return 'dns';
+	for (const server of config.dns ?? []) if (typeof server !== 'string' || (!isIPv4(server) && !isIPv6(server))) return 'dns';
 	if (config.mode === 'dhcp') return null;
 	if (typeof config.address !== 'string' || !isIPv4(config.address)) return 'address';
 	if (!Number.isInteger(config.prefixLength) || (config.prefixLength as number) < 1 || (config.prefixLength as number) > 32) return 'prefixLength';

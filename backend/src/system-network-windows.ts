@@ -58,7 +58,7 @@ const DHCP_ENABLED = 1;
  * because Windows PowerShell serializes an empty array inside a calculated
  * property as `{}` and a one-element array as a bare string.
  */
-export const WINDOWS_STATE_COMMAND: string = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', "$adapters = @(Get-NetAdapter -IncludeHidden | Select-Object ifIndex, Name, InterfaceGuid, MacAddress, @{n='Media';e={[int]$_.NdisPhysicalMedium}}, @{n='IfType';e={[int]$_.InterfaceType}}, @{n='Hidden';e={[int]$_.Hidden}}, @{n='State';e={[int]$_.MediaConnectionState}})", "$addresses = @(Get-NetIPAddress | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}})", "$interfaces = @(Get-NetIPInterface | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, @{n='Dhcp';e={[int]$_.Dhcp}})", "$routes = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric)", "$dns = @(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object InterfaceIndex, @{n='Servers';e={($_.ServerAddresses -join ',')}})", '[pscustomobject]@{adapters=$adapters; addresses=$addresses; interfaces=$interfaces; routes=$routes; dns=$dns} | ConvertTo-Json -Depth 6 -Compress'].join('; ');
+export const WINDOWS_STATE_COMMAND: string = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', "$adapters = @(Get-NetAdapter -IncludeHidden | Select-Object ifIndex, Name, InterfaceGuid, MacAddress, @{n='Media';e={[int]$_.NdisPhysicalMedium}}, @{n='IfType';e={[int]$_.InterfaceType}}, @{n='Hidden';e={[int]$_.Hidden}}, @{n='State';e={[int]$_.MediaConnectionState}})", "$addresses = @(Get-NetIPAddress | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}})", "$interfaces = @(Get-NetIPInterface | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, @{n='Dhcp';e={[int]$_.Dhcp}})", "$routes = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric)", "$dns = @(Get-DnsClientServerAddress -ErrorAction SilentlyContinue | Select-Object InterfaceIndex, @{n='Servers';e={($_.ServerAddresses -join ',')}})", '[pscustomobject]@{adapters=$adapters; addresses=$addresses; interfaces=$interfaces; routes=$routes; dns=$dns} | ConvertTo-Json -Depth 6 -Compress'].join('; ');
 
 interface WindowsAdapterRow {
 	ifIndex: number;
@@ -194,6 +194,12 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 	let best: WindowsRouteRow | null = null;
 	for (const row of routes) if (!best || effectiveMetric(row) < effectiveMetric(best)) best = row;
 	const defaultIndex = best?.ifIndex ?? null;
+	const routesByIndex = new Map<number, WindowsRouteRow[]>();
+	for (const row of routes) {
+		const list = routesByIndex.get(row.ifIndex) ?? [];
+		list.push(row);
+		routesByIndex.set(row.ifIndex, list);
+	}
 
 	const dnsByIndex = new Map<number, string[]>();
 	for (const row of dnsRows) {
@@ -201,7 +207,7 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 			.split(',')
 			.map(s => s.trim())
 			.filter(s => s.length > 0);
-		if (servers.length > 0) dnsByIndex.set(row.InterfaceIndex, servers);
+		if (servers.length > 0) dnsByIndex.set(row.InterfaceIndex, [...(dnsByIndex.get(row.InterfaceIndex) ?? []), ...servers]);
 	}
 
 	const result: NetInterfaceInfo[] = [];
@@ -218,6 +224,10 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 	return result;
 
 	function buildInterface(ifIndex: number, name: string, medium: NetMedium, link: NetLink, mac: string, guid: string | null): NetInterfaceInfo {
+		const interfaceAddresses = addressesByIndex.get(ifIndex) ?? [];
+		const interfaceRoutes = routesByIndex.get(ifIndex) ?? [];
+		const ipv4Mode = dhcpByIndex.get(ifIndex) ?? 'unknown';
+		const radio = medium === 'wireless' && guid ? wifi.get(guid) : undefined;
 		const info: NetInterfaceInfo = {
 			// The GUID (registry NetCfgInstanceId) survives reboots and adapter
 			// disable/enable; ifIndex explicitly does not, and the id is persisted as
@@ -229,15 +239,14 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 			link,
 			defaultRoute: ifIndex === defaultIndex,
 			mac: mac && mac.length > 0 ? mac : null,
-			addresses: addressesByIndex.get(ifIndex) ?? [],
-			ipv4Mode: dhcpByIndex.get(ifIndex) ?? 'unknown',
-			ipv4Configurable: guid !== null,
-			gateway: ifIndex === defaultIndex ? (best?.NextHop ?? null) : null,
+			addresses: interfaceAddresses,
+			ipv4Mode,
+			ipv4Configurable: guid !== null && ipv4Mode !== 'unknown' && interfaceAddresses.filter(address => address.family === 'ipv4').length <= 1 && interfaceRoutes.length <= 1 && (medium !== 'wireless' || radio !== undefined),
+			gateway: interfaceRoutes[0]?.NextHop ?? null,
 			dns: dnsByIndex.get(ifIndex) ?? [],
 		};
 		// Wi-Fi Direct virtual adapters also report medium 9 but have no WLAN
 		// interface of their own, so an absent entry leaves `wifi` undefined.
-		const radio = medium === 'wireless' && guid ? wifi.get(guid) : undefined;
 		if (radio) info.wifi = radio;
 		return info;
 	}
@@ -442,14 +451,16 @@ export function isWindowsInterfaceID(id: string): boolean {
  * this string — the validation does.
  */
 export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): string {
-	const steps = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', `$adapter = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq '${guid}' }`, 'if (-not $adapter) { throw "interface not found" }', '$i = $adapter.ifIndex', 'Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue', "Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false -ErrorAction SilentlyContinue"];
+	const steps = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', `$adapter = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq '${guid}' }`, 'if (-not $adapter) { throw "interface not found" }', '$i = $adapter.ifIndex', "$oldRoute = @(Get-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object -First 1)", '$oldRouteMetric = $oldRoute.RouteMetric', 'Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue', "Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false -ErrorAction SilentlyContinue"];
+	const dnsStep = config.dns === undefined ? null : config.dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${config.dns.map(server => `'${server}'`).join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses';
 	if (config.mode === 'dhcp') {
-		steps.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses');
+		steps.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled');
 	} else {
 		const gateway = config.gateway ? ` -DefaultGateway ${config.gateway}` : '';
-		const dns = config.dns ?? [];
-		steps.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`, dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses');
+		steps.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`);
+		if (config.gateway) steps.push(`if ($null -ne $oldRouteMetric) { Set-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop ${config.gateway} -RouteMetric $oldRouteMetric }`);
 	}
+	if (dnsStep) steps.push(dnsStep);
 	return steps.join('; ');
 }
 
