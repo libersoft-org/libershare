@@ -51,4 +51,11 @@ describe('network configuration form', () => {
 		expect(visiblePrimaryInterface('missing', [iface])).toBe('');
 		expect(visiblePrimaryInterface('lan0', [iface])).toBe('lan0');
 	});
+
+	it('re-seeds a static Wi-Fi form with the DHCP state of the newly joined network', () => {
+		const oldForm = networkConfigFormFrom({ ...iface, medium: 'wireless', ipv4Mode: 'static', addresses: [{ family: 'ipv4', address: '192.0.2.50', prefixLength: 24 }] });
+		const newForm = networkConfigFormFrom({ ...iface, medium: 'wireless', ipv4Mode: 'dhcp', addresses: [{ family: 'ipv4', address: '198.51.100.20', prefixLength: 24 }], gateway: '198.51.100.1', dns: ['198.51.100.53'] });
+		expect(oldForm).toMatchObject({ mode: 'static', address: '192.0.2.50' });
+		expect(newForm).toMatchObject({ mode: 'dhcp', address: '198.51.100.20', gateway: '198.51.100.1', dns: '198.51.100.53' });
+	});
 });

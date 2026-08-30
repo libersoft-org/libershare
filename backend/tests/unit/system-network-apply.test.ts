@@ -353,18 +353,21 @@ describe('nmcliModifyArgs', () => {
 
 	it('wraps modification and activation in one device checkpoint', () => {
 		const uuid = '11111111-1111-1111-1111-111111111111';
-		const args = nmcliCheckpointArgs('wlan0', uuid, { mode: 'dhcp' }, 'success-marker');
+		const args = nmcliCheckpointArgs('wlan0', uuid, { mode: 'dhcp' }, 'success-marker', true, '/usr/bin/nmcli');
 		expect(args.slice(0, 6)).toEqual(['device', 'checkpoint', '--timeout', '100', 'wlan0', '--']);
 		expect(args.join(' ')).toContain('connection up uuid');
+		expect(args).toContain('/usr/bin/nmcli');
+		expect(args.join(' ')).toContain('"$nmcli_bin" "$@"');
 		expect(args).toContain('90');
 		const modify = args.indexOf('connection');
 		expect(args.slice(modify, modify + 4)).toEqual(['connection', 'modify', 'uuid', uuid]);
 	});
 
 	it('reapplies a DNS-only profile without cycling the connection', () => {
-		const args = nmcliCheckpointArgs('wlan0', 'uuid', { mode: 'dhcp', dns: ['192.0.2.53'] }, 'marker', false);
+		const args = nmcliCheckpointArgs('wlan0', 'uuid', { mode: 'dhcp', dns: ['192.0.2.53'] }, 'marker', false, '/bin/nmcli');
 		expect(args.join(' ')).toContain('device reapply');
 		expect(args.join(' ')).not.toContain('connection up uuid');
+		expect(args).toContain('/bin/nmcli');
 	});
 });
 

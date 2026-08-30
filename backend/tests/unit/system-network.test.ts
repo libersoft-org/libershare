@@ -25,6 +25,19 @@ describe('WINDOWS_STATE_COMMAND', () => {
 		}
 	});
 
+	it('fails the whole read when any required Windows query fails', () => {
+		expect(WINDOWS_STATE_COMMAND).toContain('$ErrorActionPreference = "Stop"');
+		for (const cmdlet of ['Get-NetAdapter', 'Get-NetIPAddress', 'Get-NetIPInterface', 'Get-NetRoute', 'Get-DnsClientServerAddress']) {
+			expect(WINDOWS_STATE_COMMAND).toMatch(new RegExp(`${cmdlet}[^;]+-ErrorAction Stop`));
+		}
+		expect(WINDOWS_STATE_COMMAND).not.toContain('SilentlyContinue');
+	});
+
+	it('allows a successful route query to return no default route', () => {
+		expect(WINDOWS_STATE_COMMAND).toContain("Get-NetRoute -ErrorAction Stop | Where-Object DestinationPrefix -eq '0.0.0.0/0'");
+		expect(WINDOWS_STATE_COMMAND).not.toContain("Get-NetRoute -DestinationPrefix '0.0.0.0/0'");
+	});
+
 	it('projects the enums it parses to integers so the OS display language cannot matter', () => {
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.NdisPhysicalMedium');
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.MediaConnectionState');
@@ -49,6 +62,15 @@ describe('parseWindowsNetworkState', () => {
 		ethernet4: '{3E0713DD-C5DB-4F8C-B105-6A804AD4AA33}',
 		wifi: '{1227A929-7D30-456E-B9C1-DBD0899A8950}',
 	};
+
+	it('rejects a document missing any required query result', () => {
+		const complete = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
+		for (const key of ['adapters', 'addresses', 'interfaces', 'routes', 'dns']) {
+			const partial = { ...complete };
+			delete partial[key];
+			expect(() => parseWindowsNetworkState(JSON.stringify(partial))).toThrow(`missing ${key}`);
+		}
+	});
 
 	it('keys interfaces by their persistent GUID, not by the volatile ifIndex', () => {
 		expect(result.map(i => i.id)).toContain(ID.ethernet);
@@ -413,6 +435,11 @@ describe('resolvePrimaryID', () => {
 
 	it('falls back to the default route when the pick is gone', () => {
 		expect(resolvePrimaryID(list, 'removed')).toBe('b');
+	});
+
+	it('falls back when the saved virtual interface is no longer selectable', () => {
+		const hidden: NetInterfaceInfo = { id: 'hidden', name: 'hidden', medium: 'other', link: 'unknown', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, gateway: null, dns: [] };
+		expect(resolvePrimaryID([...list, hidden], hidden.id)).toBe('b');
 	});
 
 	it('falls back to the default route when nothing is picked', () => {

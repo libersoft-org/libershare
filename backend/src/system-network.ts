@@ -2,7 +2,7 @@ import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
-import { CodedError, ErrorCodes, isValidSSID, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
+import { CodedError, ErrorCodes, isSelectableInterface, isValidSSID, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
 import { isWindowsInterfaceID, parseElevation, parseWindowsNetworkState, readWindowsWifi, windowsApplyIPv4Command, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
 import { applyLinuxIPv4, connectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
 import { applyMacIPv4, isMacWifiConfigurable, isMacWritable, readMacNetworkState } from './system-network-macos.ts';
@@ -220,7 +220,7 @@ export function assertReadProducedSomething(interfaces: NetInterfaceInfo[]): Net
 
 /** The user's pick when it still exists, else the default-route interface, else nothing. */
 export function resolvePrimaryID(interfaces: NetInterfaceInfo[], primaryInterface: string): string | null {
-	if (primaryInterface && interfaces.some(i => i.id === primaryInterface)) return primaryInterface;
+	if (primaryInterface && interfaces.some(i => i.id === primaryInterface && isSelectableInterface(i))) return primaryInterface;
 	return interfaces.find(i => i.defaultRoute)?.id ?? null;
 }
 

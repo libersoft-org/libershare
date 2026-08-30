@@ -60,7 +60,7 @@ const DHCP_ENABLED = 1;
  * because Windows PowerShell serializes an empty array inside a calculated
  * property as `{}` and a one-element array as a bare string.
  */
-export const WINDOWS_STATE_COMMAND: string = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', "$adapters = @(Get-NetAdapter -IncludeHidden | Select-Object ifIndex, Name, InterfaceGuid, MacAddress, @{n='Media';e={[int]$_.NdisPhysicalMedium}}, @{n='IfType';e={[int]$_.InterfaceType}}, @{n='Hidden';e={[int]$_.Hidden}}, @{n='State';e={[int]$_.MediaConnectionState}})", "$addresses = @(Get-NetIPAddress | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}})", "$interfaces = @(Get-NetIPInterface | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, @{n='Dhcp';e={[int]$_.Dhcp}})", "$routes = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric)", "$dns = @(Get-DnsClientServerAddress -ErrorAction SilentlyContinue | Select-Object InterfaceIndex, @{n='Servers';e={($_.ServerAddresses -join ',')}})", '[pscustomobject]@{adapters=$adapters; addresses=$addresses; interfaces=$interfaces; routes=$routes; dns=$dns} | ConvertTo-Json -Depth 6 -Compress'].join('; ');
+export const WINDOWS_STATE_COMMAND: string = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', "$adapters = @(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Select-Object ifIndex, Name, InterfaceGuid, MacAddress, @{n='Media';e={[int]$_.NdisPhysicalMedium}}, @{n='IfType';e={[int]$_.InterfaceType}}, @{n='Hidden';e={[int]$_.Hidden}}, @{n='State';e={[int]$_.MediaConnectionState}})", "$addresses = @(Get-NetIPAddress -ErrorAction Stop | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}})", "$interfaces = @(Get-NetIPInterface -ErrorAction Stop | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, @{n='Dhcp';e={[int]$_.Dhcp}})", "$routes = @(Get-NetRoute -ErrorAction Stop | Where-Object DestinationPrefix -eq '0.0.0.0/0' | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric)", "$dns = @(Get-DnsClientServerAddress -ErrorAction Stop | Select-Object InterfaceIndex, @{n='Servers';e={($_.ServerAddresses -join ',')}})", '[pscustomobject]@{adapters=$adapters; addresses=$addresses; interfaces=$interfaces; routes=$routes; dns=$dns} | ConvertTo-Json -Depth 6 -Compress'].join('; ');
 
 interface WindowsAdapterRow {
 	ifIndex: number;
@@ -163,6 +163,9 @@ function normalizeGuid(guid: string): string {
  */
 export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifiInfo> = new Map()): NetInterfaceInfo[] {
 	const doc = JSON.parse(json) as Record<string, unknown>;
+	for (const key of ['adapters', 'addresses', 'interfaces', 'routes', 'dns']) {
+		if (!Object.prototype.hasOwnProperty.call(doc, key) || doc[key] === null) throw new Error(`incomplete Windows network state: missing ${key}`);
+	}
 	const adapters = asArray<WindowsAdapterRow>(doc['adapters']);
 	const addresses = asArray<WindowsAddressRow>(doc['addresses']);
 	const ipInterfaces = asArray<WindowsInterfaceRow>(doc['interfaces']);

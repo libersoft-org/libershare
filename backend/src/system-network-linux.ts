@@ -517,18 +517,18 @@ export function nmcliActivateArgs(connectionUUID: string): string[] {
  * The shell receives every variable value as a positional argument; none is
  * interpolated into executable text.
  */
-export function nmcliCheckpointArgs(device: string, connectionUUID: string, config: NetIPv4Config, successMarker: string, addressingChanged: boolean = true): string[] {
-	const applyCommand = addressingChanged ? 'nmcli --wait "$wait_seconds" connection up uuid "$uuid"' : 'nmcli --wait "$wait_seconds" device reapply "$device"';
-	return ['device', 'checkpoint', '--timeout', String(CHECKPOINT_ROLLBACK_SECONDS), device, '--', '/bin/sh', '-c', `set -eu; marker=$1; uuid=$2; device=$3; wait_seconds=$4; shift 4; nmcli "$@"; ${applyCommand}; printf "%s\\n" "$marker"`, 'nmcli-checkpoint', successMarker, connectionUUID, device, String(NMCLI_ACTIVATION_WAIT_SECONDS), ...nmcliModifyArgs(connectionUUID, config, addressingChanged)];
+export function nmcliCheckpointArgs(device: string, connectionUUID: string, config: NetIPv4Config, successMarker: string, addressingChanged: boolean, nmcliBin: string): string[] {
+	const applyCommand = addressingChanged ? '"$nmcli_bin" --wait "$wait_seconds" connection up uuid "$uuid"' : '"$nmcli_bin" --wait "$wait_seconds" device reapply "$device"';
+	return ['device', 'checkpoint', '--timeout', String(CHECKPOINT_ROLLBACK_SECONDS), device, '--', '/bin/sh', '-c', `set -eu; marker=$1; uuid=$2; device=$3; wait_seconds=$4; nmcli_bin=$5; shift 5; "$nmcli_bin" "$@"; ${applyCommand}; printf "%s\\n" "$marker"`, 'nmcli-checkpoint', successMarker, connectionUUID, device, String(NMCLI_ACTIVATION_WAIT_SECONDS), nmcliBin, ...nmcliModifyArgs(connectionUUID, config, addressingChanged)];
 }
 
 /** Commit a checkpoint only after both child commands emitted their private success marker. */
-async function runNmcliCheckpoint(args: string[], successMarker: string, initialInput: string = ''): Promise<void> {
+async function runNmcliCheckpoint(argsForBinary: (bin: string) => string[], successMarker: string, initialInput: string = ''): Promise<void> {
 	let lastError: unknown = new Error('nmcli is unavailable');
 	for (const bin of NMCLI_CANDIDATES) {
 		try {
 			await new Promise<void>((resolve, reject) => {
-				const child = spawn(bin, args, { env: C_LOCALE_ENV, stdio: ['pipe', 'pipe', 'pipe'] });
+				const child = spawn(bin, argsForBinary(bin), { env: C_LOCALE_ENV, stdio: ['pipe', 'pipe', 'pipe'] });
 				let stdout = '';
 				let stderr = '';
 				let confirmed = false;
@@ -582,7 +582,7 @@ export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addr
 	const connectionUUID = await activeConnection(device);
 	if (!connectionUUID) throw new Error(`no NetworkManager profile is active on ${device}`);
 	const successMarker = `lish-nm-${randomUUID()}`;
-	await runNmcliCheckpoint(nmcliCheckpointArgs(device, connectionUUID, config, successMarker, addressingChanged), successMarker);
+	await runNmcliCheckpoint(bin => nmcliCheckpointArgs(device, connectionUUID, config, successMarker, addressingChanged, bin), successMarker);
 }
 
 /**
@@ -656,6 +656,6 @@ export function nmcliWifiConnectArgs(device: string, ssid: string, askForPasswor
  */
 export async function connectLinuxWifi(device: string, ssid: string, password: string, bssid: string | null = null): Promise<void> {
 	const successMarker = `lish-wifi-${randomUUID()}`;
-	const args = ['device', 'checkpoint', '--timeout', String(CHECKPOINT_ROLLBACK_SECONDS), device, '--', '/bin/sh', '-c', 'set -eu; marker=$1; shift; nmcli "$@"; printf "%s\\n" "$marker"', 'nmcli-wifi-checkpoint', successMarker, ...nmcliWifiConnectArgs(device, ssid, !!password, bssid)];
-	await runNmcliCheckpoint(args, successMarker, password ? `${password}\n` : '');
+	const argsForBinary = (bin: string): string[] => ['device', 'checkpoint', '--timeout', String(CHECKPOINT_ROLLBACK_SECONDS), device, '--', '/bin/sh', '-c', 'set -eu; marker=$1; nmcli_bin=$2; shift 2; "$nmcli_bin" "$@"; printf "%s\\n" "$marker"', 'nmcli-wifi-checkpoint', successMarker, bin, ...nmcliWifiConnectArgs(device, ssid, !!password, bssid)];
+	await runNmcliCheckpoint(argsForBinary, successMarker, password ? `${password}\n` : '');
 }

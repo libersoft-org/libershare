@@ -6,7 +6,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { applyInterfaceConfig, joinWifiNetwork, networkState, refreshNetworkState, scanWifiNetworks } from '../../scripts/networkState.ts';
 	import { networkConfigFormFrom, networkConfigFromForm, type DnsUpdateMode } from '../../scripts/networkConfig.ts';
-	import { validateIPv4Config, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork } from '@shared';
+	import { validateIPv4Config, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -65,6 +65,22 @@
 	function seedCurrentInterface(): void {
 		const current = get(networkState).interfaces.find(item => item.id === interfaceID);
 		if (current) seedFrom(current);
+	}
+
+	async function syncAfterWifiMutation(state?: NetworkStateInfo): Promise<void> {
+		let current = state;
+		if (!current) {
+			try {
+				current = await refreshNetworkState();
+			} catch {}
+		}
+		const currentInterface = current?.interfaces.find(item => item.id === interfaceID);
+		if (currentInterface) seedFrom(currentInterface);
+		try {
+			networks = await scanWifiNetworks(interfaceID);
+		} catch {
+			networks = [];
+		}
 	}
 
 	async function save(): Promise<void> {
@@ -140,13 +156,15 @@
 		busy = true;
 		message = '';
 		try {
-			await joinWifiNetwork(interfaceID, ssid, bssid, password);
+			const state = await joinWifiNetwork(interfaceID, ssid, bssid, password);
+			await syncAfterWifiMutation(state);
 			failed = false;
 			message = $t('settings.network.joined', { ssid });
 			joinSSID = '';
 			joinBSSID = null;
 			password = '';
 		} catch (error) {
+			await syncAfterWifiMutation();
 			failed = true;
 			message = translateError(error);
 		} finally {
