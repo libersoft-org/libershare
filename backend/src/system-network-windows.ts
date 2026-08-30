@@ -46,6 +46,8 @@ const AF_INET = 2;
 const AF_INET6 = 23;
 // AddressState (Get-NetIPAddress): 0 Invalid, 1 Tentative, 2 Duplicate, 3 Deprecated, 4 Preferred.
 const ADDRESS_STATE_PREFERRED = 4;
+/** Windows' empty automatic-DNS sentinel addresses, not usable resolvers. */
+const AUTOMATIC_DNS_PLACEHOLDERS = new Set(['fec0:0:0:ffff::1', 'fec0:0:0:ffff::2', 'fec0:0:0:ffff::3']);
 // NetIPInterface.Dhcp: 0 Disabled, 1 Enabled. NOTE the opposite convention to
 // MediaConnectionState, where 1 means Connected — they must never be swapped.
 const DHCP_ENABLED = 1;
@@ -208,7 +210,7 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 		const servers = (row.Servers ?? '')
 			.split(',')
 			.map(s => s.trim())
-			.filter(s => s.length > 0);
+			.filter(s => s.length > 0 && !AUTOMATIC_DNS_PLACEHOLDERS.has(s.toLowerCase()));
 		if (servers.length > 0) dnsByIndex.set(row.InterfaceIndex, [...(dnsByIndex.get(row.InterfaceIndex) ?? []), ...servers]);
 	}
 
@@ -465,7 +467,11 @@ export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): st
 		steps.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled');
 	} else {
 		const gateway = config.gateway ? ` -DefaultGateway ${config.gateway}` : '';
-		steps.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`);
+		steps.push(
+			'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled',
+			`New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`,
+			`$deadline = [DateTime]::UtcNow.AddSeconds(10); do { $addressState = (Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -ErrorAction SilentlyContinue).AddressState; if ($addressState -eq 'Preferred') { break }; Start-Sleep -Milliseconds 100 } while ([DateTime]::UtcNow -lt $deadline); if ($addressState -ne 'Preferred') { throw 'IPv4 address did not become usable' }`
+		);
 		if (config.gateway) steps.push(`if ($null -ne $oldRouteMetric) { Set-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop ${config.gateway} -RouteMetric $oldRouteMetric }`);
 	}
 	if (dnsStep) steps.push(dnsStep);

@@ -183,6 +183,12 @@ describe('parseWindowsNetworkState', () => {
 		expect(byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet).dns).toEqual(['192.0.2.1', '192.0.2.2', '2001:db8::53', '127.0.0.1']);
 	});
 
+	it('drops Windows automatic-DNS placeholders', () => {
+		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, any[]>;
+		doc['dns'] = [{ InterfaceIndex: 20, Servers: 'fec0:0:0:ffff::1,fec0:0:0:ffff::2,fec0:0:0:ffff::3' }];
+		expect(byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet).dns).toEqual([]);
+	});
+
 	it('still ranks by route metric when the interface metric is absent', () => {
 		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
 		doc['routes'] = [

@@ -373,6 +373,8 @@ describe('windowsApplyIPv4Command', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.1'] });
 		expect(command).toContain('-Dhcp Disabled');
 		expect(command).toContain('-IPAddress 192.0.2.10 -PrefixLength 24 -DefaultGateway 192.0.2.1');
+		expect(command).toContain("$addressState -eq 'Preferred'");
+		expect(command).toContain("throw 'IPv4 address did not become usable'");
 		expect(command).toContain("-ServerAddresses '192.0.2.1'");
 		expect(command).toContain('$oldRouteMetric');
 		expect(command).toContain('-RouteMetric $oldRouteMetric');
