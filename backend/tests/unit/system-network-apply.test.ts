@@ -260,8 +260,8 @@ describe('parseNmcliActiveConnections', () => {
 
 describe('parseNmcliDns', () => {
 	it('combines IPv4 and IPv6 resolvers for each device', () => {
-		const parsed = parseNmcliDns('GENERAL.DEVICE:eth0\nIP4.DNS[1]:192.0.2.53\nIP6.DNS[1]:2001\\:db8\\:\\:53\n');
-		expect(parsed.get('eth0')).toEqual(['192.0.2.53', '2001:db8::53']);
+		const parsed = parseNmcliDns('GENERAL.DEVICE:eth0\nIP4.DNS[1]:192.0.2.53\nIP6.DNS[1]:2001:db8::53\nIP6.DNS[2]:2001\\:db8\\:\\:54\n');
+		expect(parsed.get('eth0')).toEqual(['192.0.2.53', '2001:db8::53', '2001:db8::54']);
 	});
 });
 

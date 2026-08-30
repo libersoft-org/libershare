@@ -437,11 +437,14 @@ export function parseNmcliDns(text: string): Map<string, string[]> {
 		const fields = splitNmcliFields(line.trim());
 		const key = fields[0];
 		if (!key) continue;
+		// NetworkManager versions disagree on whether ':' inside an IPv6 value is
+		// escaped in terse mode. Rejoining the value fields accepts both forms.
+		const value = fields.slice(1).join(':');
 		if (key === 'GENERAL.DEVICE') {
-			device = fields[1] ?? null;
+			device = value || null;
 			if (device) result.set(device, []);
 		} else if (device && (key.startsWith('IP4.DNS') || key.startsWith('IP6.DNS'))) {
-			if (fields[1]) result.get(device)?.push(fields[1]);
+			if (value) result.get(device)?.push(value);
 		}
 	}
 	return result;
