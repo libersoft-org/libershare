@@ -284,7 +284,7 @@
 		},
 		"errorNotFound": "LISH not found: {detail}",
 		"errorNoLISHs": "No LISHs to export",
-		"errorDirectoryEmpty": "Directory is empty — nothing to create LISH from",
+		"errorDirectoryEmpty": "Directory is empty \u2014 nothing to create LISH from",
 		"errorAlreadyExists": "LISH already exists: {detail}",
 		"errorInvalidInputType": "Input must be a file or directory",
 		"errorInvalidFormat": "Invalid LISH: not an object",

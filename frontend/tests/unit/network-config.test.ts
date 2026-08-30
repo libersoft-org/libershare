@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { networkConfigFormFrom, networkConfigFromForm, type NetworkConfigForm } from '../../src/scripts/networkConfig.ts';
+import { canOpenNetworkConfig, networkConfigFormFrom, networkConfigFromForm, type NetworkConfigForm } from '../../src/scripts/networkConfig.ts';
 import type { NetInterfaceInfo } from '@shared';
 
 const iface: NetInterfaceInfo = {
@@ -38,5 +38,12 @@ describe('network configuration form', () => {
 		const form = networkConfigFormFrom({ ...iface, ipv4Mode: 'unknown' });
 		expect(form.mode).toBe('unknown');
 		expect(networkConfigFromForm(form)).toBeNull();
+	});
+
+	it('opens disconnected Wi-Fi controls independently of IPv4 editing', () => {
+		const disconnectedWifi = { ...iface, medium: 'wireless' as const, link: 'down' as const, ipv4Mode: 'unknown' as const, ipv4Configurable: false };
+		expect(canOpenNetworkConfig(disconnectedWifi, { ipv4: true, wifi: true, staticGatewayRequired: false }, 'full')).toBe(true);
+		expect(canOpenNetworkConfig(disconnectedWifi, { ipv4: true, wifi: false, staticGatewayRequired: false }, 'full')).toBe(false);
+		expect(canOpenNetworkConfig(disconnectedWifi, { ipv4: true, wifi: true, staticGatewayRequired: false }, 'addressesOnly')).toBe(false);
 	});
 });

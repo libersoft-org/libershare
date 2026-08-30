@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { macApplyArgs, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { macApplyArgs, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -64,6 +64,12 @@ destination: default
       flags: <UP,GATEWAY,DONE,STATIC,PRCLONING,GLOBAL>
 `;
 
+const ROUTES = `Routing tables
+Internet:
+Destination        Gateway            Flags               Netif Expire
+default            192.0.2.1          UGScg                 en0
+`;
+
 const AIRPORT = `Wi-Fi:
 
       Interfaces:
@@ -106,6 +112,12 @@ describe('parseServiceOrder', () => {
 	it('skips a disabled service, because writing to it silently does nothing', () => {
 		expect(parseServiceOrder(SERVICE_ORDER).has('en4')).toBe(false);
 	});
+
+	it('keeps a device with multiple enabled services read-only', () => {
+		const duplicate = `${SERVICE_ORDER}\n(5) Backup Wi-Fi\n(Hardware Port: Wi-Fi, Device: en0)\n`;
+		expect(parseServiceBindings(duplicate).get('en0')).toEqual(['Wi-Fi', 'Backup Wi-Fi']);
+		expect(parseServiceOrder(duplicate).has('en0')).toBe(false);
+	});
 });
 
 describe('parseIfconfig', () => {
@@ -143,6 +155,15 @@ describe('parseDefaultRoute', () => {
 
 	it('yields nulls when there is no default route', () => {
 		expect(parseDefaultRoute('route: writing to routing socket: not in table')).toEqual({ device: null, gateway: null });
+	});
+
+	it('reads every default route from the routing table', () => {
+		const routes = `${ROUTES}default            198.51.100.1       UGScIg                en0\ndefault            203.0.113.1        UGScIg                en4\n`;
+		expect(parseDefaultRoutes(routes)).toEqual([
+			{ device: 'en0', gateway: '192.0.2.1' },
+			{ device: 'en0', gateway: '198.51.100.1' },
+			{ device: 'en4', gateway: '203.0.113.1' },
+		]);
 	});
 });
 
@@ -224,6 +245,7 @@ describe('parseMacNetworkState', () => {
 		serviceOrder: SERVICE_ORDER,
 		ifconfig: IFCONFIG,
 		route: ROUTE,
+		routes: ROUTES,
 		serviceInfo: new Map([['en0', 'DHCP Configuration\n']]),
 		serviceDns: new Map([['en0', "There aren't any DNS Servers set on Wi-Fi."]]),
 		dhcpPacket: new Map([['en0', 'domain_name_server (ip_mult): {192.0.2.1}']]),
@@ -276,6 +298,21 @@ describe('parseMacNetworkState', () => {
 		expect(unknown?.ipv4Configurable).toBe(false);
 		const multi = parseMacNetworkState({ ...sources, ifconfig: IFCONFIG.replace('\tinet 192.0.2.232 netmask 0xffffff00', '\tinet 192.0.2.231 netmask 0xffffff00\n\tinet 192.0.2.232 netmask 0xffffff00') }).find(i => i.id === 'en0');
 		expect(multi?.ipv4Configurable).toBe(false);
+	});
+
+	it('marks duplicate services and multiple default routes read-only', () => {
+		const duplicateService = `${SERVICE_ORDER}\n(5) Backup Wi-Fi\n(Hardware Port: Wi-Fi, Device: en0)\n`;
+		expect(parseMacNetworkState({ ...sources, serviceOrder: duplicateService }).find(i => i.id === 'en0')?.ipv4Configurable).toBe(false);
+		const duplicateRoute = `${ROUTES}default            198.51.100.1       UGScIg                en0\n`;
+		expect(parseMacNetworkState({ ...sources, routes: duplicateRoute }).find(i => i.id === 'en0')?.ipv4Configurable).toBe(false);
+	});
+
+	it('does not copy one Wi-Fi reading to multiple wireless devices', () => {
+		const extraPort = HARDWARE_PORTS.replace('VLAN Configurations', 'Hardware Port: Wi-Fi\nDevice: en1\nEthernet Address: f6:c9:50:19:52:16\n\nVLAN Configurations');
+		const extraIfconfig = `${IFCONFIG}\nen1: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500\n\tether f6:c9:50:19:52:16\n\tstatus: active\n`;
+		const parsed = parseMacNetworkState({ ...sources, hardwarePorts: extraPort, ifconfig: extraIfconfig });
+		expect(parsed.find(i => i.id === 'en0')?.wifi).toBeUndefined();
+		expect(parsed.find(i => i.id === 'en1')?.wifi).toBeUndefined();
 	});
 });
 

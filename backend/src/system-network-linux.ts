@@ -1,4 +1,5 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { isIPv4, isIPv6 } from '@shared';
@@ -219,7 +220,7 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 			// fictional nameserver — and would contradict the servers the user had
 			// just set. Only when NM is absent do we fall back to resolv.conf, which
 			// is system-wide and so is attributed to the default-route interface.
-			dns: sources.nmDns?.get(entry.ifname) ?? (entry.ifname === defaultDev ? (sources.resolvers ?? []) : []),
+			dns: sources.nmDns !== undefined ? (sources.nmDns.get(entry.ifname) ?? []) : entry.ifname === defaultDev ? (sources.resolvers ?? []) : [],
 		};
 		if (wireless) {
 			const iw = sources.iwLinks?.get(entry.ifname);
@@ -335,8 +336,12 @@ export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
  * the UI keeps the read-only view rather than offering an edit that would not stick.
  */
 const NMCLI_CANDIDATES = ['/usr/bin/nmcli', '/bin/nmcli', 'nmcli'];
-/** Reconfiguring an interface renegotiates DHCP and can rebuild routes, which is far slower than a read. */
-const APPLY_TIMEOUT_MS = 45000;
+/** Match NetworkManager's documented default activation wait explicitly. */
+const NMCLI_ACTIVATION_WAIT_SECONDS = 90;
+/** Keep the checkpoint alive throughout activation and leave time for confirmation. */
+const CHECKPOINT_ROLLBACK_SECONDS = NMCLI_ACTIVATION_WAIT_SECONDS + 10;
+/** The parent must outlive the checkpoint so a failed mutation is rolled back before returning. */
+const APPLY_TIMEOUT_MS = (CHECKPOINT_ROLLBACK_SECONDS + 5) * 1000;
 /** A rescan has to wait for the radio to sweep every channel. */
 const WIFI_SCAN_TIMEOUT_MS = 30000;
 
@@ -528,14 +533,89 @@ export function nmcliActivateArgs(connectionUUID: string): string[] {
 	return ['connection', 'up', 'uuid', connectionUUID];
 }
 
+/**
+ * Run modify + activation inside NetworkManager's native checkpoint transaction.
+ * The shell receives every variable value as a positional argument; none is
+ * interpolated into executable text.
+ */
+export function nmcliCheckpointArgs(device: string, connectionUUID: string, config: NetIPv4Config, successMarker: string): string[] {
+	return [
+		'device',
+		'checkpoint',
+		'--timeout',
+		String(CHECKPOINT_ROLLBACK_SECONDS),
+		device,
+		'--',
+		'/bin/sh',
+		'-c',
+		'set -eu; marker=$1; uuid=$2; wait_seconds=$3; shift 3; nmcli "$@"; nmcli --wait "$wait_seconds" connection up uuid "$uuid"; printf "%s\\n" "$marker"',
+		'nmcli-checkpoint',
+		successMarker,
+		connectionUUID,
+		String(NMCLI_ACTIVATION_WAIT_SECONDS),
+		...nmcliModifyArgs(connectionUUID, config),
+	];
+}
+
+/** Commit a checkpoint only after both child commands emitted their private success marker. */
+async function runNmcliCheckpoint(args: string[], successMarker: string): Promise<void> {
+	let lastError: unknown = new Error('nmcli is unavailable');
+	for (const bin of NMCLI_CANDIDATES) {
+		try {
+			await new Promise<void>((resolve, reject) => {
+				const child = spawn(bin, args, { env: C_LOCALE_ENV, stdio: ['pipe', 'pipe', 'pipe'] });
+				let stdout = '';
+				let stderr = '';
+				let confirmed = false;
+				let timedOut = false;
+				const timer = setTimeout(() => {
+					timedOut = true;
+					child.kill('SIGKILL');
+				}, APPLY_TIMEOUT_MS);
+				const inspect = (): void => {
+					if (confirmed || (!stdout.includes(successMarker) && !stderr.includes(successMarker))) return;
+					confirmed = true;
+					child.stdin.write('Yes\n');
+					child.stdin.end();
+				};
+				child.stdout.on('data', chunk => {
+					stdout += String(chunk);
+					inspect();
+				});
+				child.stderr.on('data', chunk => {
+					stderr += String(chunk);
+					inspect();
+				});
+				child.on('error', error => {
+					clearTimeout(timer);
+					reject(error);
+				});
+				child.on('close', code => {
+					clearTimeout(timer);
+					if (!timedOut && code === 0 && confirmed) {
+						resolve();
+						return;
+					}
+					const error = new Error(timedOut ? 'nmcli checkpoint timed out' : `nmcli checkpoint failed with exit code ${code ?? 'unknown'}`);
+					Object.assign(error, { stdout, stderr, code });
+					reject(error);
+				});
+			});
+			return;
+		} catch (error) {
+			lastError = error;
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+		}
+	}
+	throw lastError;
+}
+
 /** Apply an IPv4 configuration to one device and bring the profile back up. Throws when NetworkManager does not own the device. */
 export async function applyLinuxIPv4(device: string, config: NetIPv4Config): Promise<void> {
 	const connectionUUID = await activeConnection(device);
 	if (!connectionUUID) throw new Error(`no NetworkManager profile is active on ${device}`);
-	await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connectionUUID, config), APPLY_TIMEOUT_MS);
-	// `connection up` re-applies the edited profile in place. The device drops for
-	// a moment either way — that is inherent to changing an address, not to this.
-	await runFirst(NMCLI_CANDIDATES, nmcliActivateArgs(connectionUUID), APPLY_TIMEOUT_MS);
+	const successMarker = `lish-nm-${randomUUID()}`;
+	await runNmcliCheckpoint(nmcliCheckpointArgs(device, connectionUUID, config, successMarker), successMarker);
 }
 
 /**

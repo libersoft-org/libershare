@@ -41,6 +41,11 @@ describe('deriveConnectionStatus', () => {
 		expect(result).toMatchObject({ kind: 'wifi', connected: false, signal: null, ssid: null });
 	});
 
+	it('does not turn an unknown Wi-Fi link state into disconnected', () => {
+		const result = deriveConnectionStatus(state([iface({ id: '1', medium: 'wireless', link: 'unknown', defaultRoute: true, wifi: { ssid: null, signal: null, radio: 'unknown' } })]));
+		expect(result).toEqual({ kind: 'unknown', connected: false, signal: null, ssid: null, interfaceName: '1' });
+	});
+
 	it('falls back to the default route when the user pick no longer exists', () => {
 		const interfaces = [iface({ id: 'wan', name: 'Ethernet', defaultRoute: true })];
 		const result = deriveConnectionStatus(state(interfaces, { primaryID: 'wan' }));

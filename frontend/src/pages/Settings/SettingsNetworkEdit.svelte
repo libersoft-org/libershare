@@ -20,6 +20,7 @@
 	let { areaID, interfaceID, position = LAYOUT.content, onBack }: Props = $props();
 
 	let iface = $derived($networkState.interfaces.find(i => i.id === interfaceID));
+	let canEditIPv4 = $derived(!!iface && iface.ipv4Configurable && $networkState.capabilities.ipv4);
 	let canEditWifi = $derived(!!iface && iface.medium === 'wireless' && $networkState.capabilities.wifi);
 
 	let mode = $state<NetAddressMode>('unknown');
@@ -134,8 +135,8 @@
 	// Row positions shift with the mode: the static fields exist only in 'static'.
 	let staticRows = $derived(mode === 'static' ? 3 : 0);
 	let dnsRows = $derived(dnsMode === 'custom' ? 2 : 1);
-	let saveY = $derived(1 + staticRows + dnsRows);
-	let wifiBaseY = $derived(saveY + 1);
+	let saveY = $derived(canEditIPv4 ? 1 + staticRows + dnsRows : 0);
+	let wifiBaseY = $derived(canEditIPv4 ? saveY + 1 : 0);
 	let buttonsY = $derived(canEditWifi ? wifiBaseY + 2 + networks.length + (joinSSID ? 1 : 0) : wifiBaseY);
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));
@@ -189,37 +190,39 @@
 <div class="settings">
 	<div class="container">
 		<div class="title">{iface?.name ?? interfaceID}</div>
-		<div class="note">{$t('settings.network.applyWarning')}</div>
+		{#if canEditIPv4}
+			<div class="note">{$t('settings.network.applyWarning')}</div>
 
-		<div role="group" data-mouse-activate-area={areaID}>
-			<Select bind:value={mode} label={$t('settings.network.addressing')} position={[0, 0]} flex>
-				<SelectOption value="dhcp" label={$t('settings.network.dhcp')} />
-				<SelectOption value="static" label={$t('settings.network.static')} />
-			</Select>
-		</div>
-
-		{#if mode === 'static'}
 			<div role="group" data-mouse-activate-area={areaID}>
-				<Input bind:value={address} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, 1]} flex />
-				<Input bind:value={prefix} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, 2]} flex />
-				<Input bind:value={gateway} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, 3]} flex />
+				<Select bind:value={mode} label={$t('settings.network.addressing')} position={[0, 0]} flex>
+					<SelectOption value="dhcp" label={$t('settings.network.dhcp')} />
+					<SelectOption value="static" label={$t('settings.network.static')} />
+				</Select>
 			</div>
-		{/if}
 
-		<div role="group" data-mouse-activate-area={areaID}>
-			<Select bind:value={dnsMode} label={$t('settings.network.dnsPolicy')} position={[0, 1 + staticRows]} flex>
-				<SelectOption value="unchanged" label={$t('settings.network.dnsUnchanged')} />
-				<SelectOption value="automatic" label={$t('settings.network.dnsAutomatic')} />
-				<SelectOption value="custom" label={$t('settings.network.dnsCustom')} />
-			</Select>
-			{#if dnsMode === 'custom'}
-				<Input bind:value={dns} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 2001:db8::53" position={[0, 2 + staticRows]} flex />
+			{#if mode === 'static'}
+				<div role="group" data-mouse-activate-area={areaID}>
+					<Input bind:value={address} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, 1]} flex />
+					<Input bind:value={prefix} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, 2]} flex />
+					<Input bind:value={gateway} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, 3]} flex />
+				</div>
 			{/if}
-		</div>
 
-		<ButtonBar justify="center" basePosition={[0, saveY]}>
-			<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy || scanning} onConfirm={save} />
-		</ButtonBar>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<Select bind:value={dnsMode} label={$t('settings.network.dnsPolicy')} position={[0, 1 + staticRows]} flex>
+					<SelectOption value="unchanged" label={$t('settings.network.dnsUnchanged')} />
+					<SelectOption value="automatic" label={$t('settings.network.dnsAutomatic')} />
+					<SelectOption value="custom" label={$t('settings.network.dnsCustom')} />
+				</Select>
+				{#if dnsMode === 'custom'}
+					<Input bind:value={dns} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 2001:db8::53" position={[0, 2 + staticRows]} flex />
+				{/if}
+			</div>
+
+			<ButtonBar justify="center" basePosition={[0, saveY]}>
+				<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy || scanning} onConfirm={save} />
+			</ButtonBar>
+		{/if}
 
 		{#if canEditWifi}
 			<div class="title">{$t('settings.network.wifi')}</div>

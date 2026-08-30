@@ -42,6 +42,8 @@ export interface MacNetworkSources {
 	ifconfig: string;
 	/** `route -n get default` */
 	route: string;
+	/** `netstat -rn -f inet`, used to detect every IPv4 default route. */
+	routes?: string;
 	/** Per-service `networksetup -getinfo <service>`, keyed by DEVICE. */
 	serviceInfo?: Map<string, string>;
 	/** Per-service `networksetup -getdnsservers <service>`, keyed by DEVICE. */
@@ -87,16 +89,27 @@ export function parseHardwarePorts(text: string): Map<string, string> {
  * device. A service prefixed with `*` is disabled and is skipped, because writing
  * to it silently does nothing.
  */
-export function parseServiceOrder(text: string): Map<string, string> {
-	const result = new Map<string, string>();
+export function parseServiceBindings(text: string): Map<string, string[]> {
+	const result = new Map<string, string[]>();
 	const lines = text.split('\n');
 	for (let i = 0; i < lines.length; i++) {
 		const header = lines[i]?.match(/^\(\s*(\*?)\d+\)\s*(.+?)\s*$/);
 		if (!header) continue;
 		if (header[1] === '*') continue;
 		const device = lines[i + 1]?.match(/Device:\s*(\S+?)\s*\)/);
-		if (device && device[1] && header[2] && !result.has(device[1])) result.set(device[1], header[2]);
+		if (device && device[1] && header[2]) {
+			const services = result.get(device[1]) ?? [];
+			services.push(header[2]);
+			result.set(device[1], services);
+		}
 	}
+	return result;
+}
+
+/** Devices with exactly one enabled service are safe to address by device id. */
+export function parseServiceOrder(text: string): Map<string, string> {
+	const result = new Map<string, string>();
+	for (const [device, services] of parseServiceBindings(text)) if (services.length === 1 && services[0]) result.set(device, services[0]);
 	return result;
 }
 
@@ -154,6 +167,17 @@ export function parseDefaultRoute(text: string): { device: string | null; gatewa
 		device: text.match(/^\s*interface:\s*(\S+)/m)?.[1] ?? null,
 		gateway: text.match(/^\s*gateway:\s*(\S+)/m)?.[1] ?? null,
 	};
+}
+
+/** Every IPv4 default route from macOS' routing table. */
+export function parseDefaultRoutes(text: string): Array<{ device: string; gateway: string }> {
+	const result: Array<{ device: string; gateway: string }> = [];
+	for (const line of text.split('\n')) {
+		const fields = line.trim().split(/\s+/);
+		if (fields[0] !== 'default' || !fields[1] || !fields[3]) continue;
+		result.push({ gateway: fields[1], device: fields[3] });
+	}
+	return result;
 }
 
 /**
@@ -276,10 +300,14 @@ function mapLink(status: string | null): NetLink {
  */
 export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceInfo[] {
 	const ports = parseHardwarePorts(sources.hardwarePorts);
+	const serviceBindings = parseServiceBindings(sources.serviceOrder);
 	const services = parseServiceOrder(sources.serviceOrder);
 	const interfaces = parseIfconfig(sources.ifconfig);
 	const route = parseDefaultRoute(sources.route);
+	const routeDetailKnown = sources.routes === undefined || sources.routes.trim() !== '';
+	const routes = sources.routes === undefined ? (route.device && route.gateway ? [{ device: route.device, gateway: route.gateway }] : []) : parseDefaultRoutes(sources.routes);
 	const airport = sources.airport ? parseAirport(sources.airport) : null;
+	const wirelessDevices = [...ports].filter(([, port]) => mapMedium(port) === 'wireless').map(([device]) => device);
 
 	const result: NetInterfaceInfo[] = [];
 	for (const [device, entry] of interfaces) {
@@ -287,6 +315,7 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 		const port = ports.get(device);
 		const medium = mapMedium(port);
 		const defaultRoute = device === route.device;
+		const deviceRoutes = routes.filter(entry => entry.device === device);
 		const serviceInfo = sources.serviceInfo?.get(device) ?? '';
 		const ipv4Mode = serviceInfo ? parseServiceInfo(serviceInfo) : 'unknown';
 		const liveIPv4Addresses = entry.addresses.filter(address => address.family === 'ipv4');
@@ -297,20 +326,20 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 			id: device,
 			// The service name is what the user sees in System Settings, so it is the
 			// better label; the device name is the fallback for anything unmanaged.
-			name: services.get(device) ?? port ?? device,
+			name: serviceBindings.get(device)?.[0] ?? port ?? device,
 			medium,
 			link: mapLink(entry.status),
 			defaultRoute,
 			mac: entry.mac,
 			addresses,
 			ipv4Mode,
-			ipv4Configurable: services.has(device) && ipv4Mode !== 'unknown' && ipv4Addresses.length <= 1,
+			ipv4Configurable: routeDetailKnown && services.has(device) && ipv4Mode !== 'unknown' && ipv4Addresses.length <= 1 && deviceRoutes.length <= 1,
 			gateway: parseServiceGateway(serviceInfo) ?? (defaultRoute ? route.gateway : null),
 			// Manually set servers win; otherwise fall back to what the DHCP lease
 			// handed out, so a DHCP link reports the resolvers it actually uses.
 			dns: pickDns(sources, device),
 		};
-		if (medium === 'wireless' && airport) {
+		if (medium === 'wireless' && airport && wirelessDevices.length === 1 && wirelessDevices[0] === device) {
 			info.wifi = {
 				ssid: airport.connected ? airport.ssid : null,
 				signal: airport.connected ? airport.signal : null,
@@ -343,7 +372,13 @@ const NETWORKSETUP = '/usr/sbin/networksetup';
 
 /** Read the live macOS network state. Throws when the core tools are unavailable, so the caller degrades to addresses only. */
 export async function readMacNetworkState(): Promise<NetInterfaceInfo[]> {
-	const [hardwarePorts, serviceOrder, ifconfig, route] = await Promise.all([run(NETWORKSETUP, ['-listallhardwareports']), run(NETWORKSETUP, ['-listnetworkserviceorder']), run('/sbin/ifconfig', ['-a']), runOptional('/sbin/route', ['-n', 'get', 'default'])]);
+	const [hardwarePorts, serviceOrder, ifconfig, route, routes] = await Promise.all([
+		run(NETWORKSETUP, ['-listallhardwareports']),
+		run(NETWORKSETUP, ['-listnetworkserviceorder']),
+		run('/sbin/ifconfig', ['-a']),
+		runOptional('/sbin/route', ['-n', 'get', 'default']),
+		runOptional('/usr/sbin/netstat', ['-rn', '-f', 'inet']),
+	]);
 
 	const services = parseServiceOrder(serviceOrder);
 	const present = parseIfconfig(ifconfig);
@@ -363,7 +398,7 @@ export async function readMacNetworkState(): Promise<NetInterfaceInfo[]> {
 
 	const hasWifi = [...parseHardwarePorts(hardwarePorts).values()].some(port => /^Wi-Fi$/i.test(port));
 	const airport = hasWifi ? await runOptional('/usr/sbin/system_profiler', ['SPAirPortDataType']) : '';
-	return parseMacNetworkState({ hardwarePorts, serviceOrder, ifconfig, route, serviceInfo, serviceDns, dhcpPacket, airport });
+	return parseMacNetworkState({ hardwarePorts, serviceOrder, ifconfig, route, routes, serviceInfo, serviceDns, dhcpPacket, airport });
 }
 
 /**
@@ -431,8 +466,10 @@ export function macApplyArgs(service: string, config: NetIPv4Config): string[][]
 
 /** Resolve the service name a device belongs to. Throws when the device is not part of an enabled service. */
 async function serviceForDevice(device: string): Promise<string> {
-	const service = parseServiceOrder(await run(NETWORKSETUP, ['-listnetworkserviceorder'])).get(device);
+	const [serviceOrder, routeTable] = await Promise.all([run(NETWORKSETUP, ['-listnetworkserviceorder']), run('/usr/sbin/netstat', ['-rn', '-f', 'inet'])]);
+	const service = parseServiceOrder(serviceOrder).get(device);
 	if (!service) throw new Error(`no enabled network service uses ${device}`);
+	if (parseDefaultRoutes(routeTable).filter(route => route.device === device).length > 1) throw new Error(`multiple default routes use ${device}`);
 	return service;
 }
 

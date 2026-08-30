@@ -35,7 +35,26 @@ interface SystemHandlers {
 	stopPolling: () => void;
 }
 
-export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, hasSubscribers: HasSubscribersFn): SystemHandlers {
+export async function runAndPublishNetworkMutation(action: () => Promise<NetworkStateInfo>, readCurrent: () => Promise<NetworkStateInfo>, publish: (state: NetworkStateInfo) => void): Promise<NetworkStateInfo> {
+	try {
+		const state = await action();
+		publish(state);
+		return state;
+	} catch (error) {
+		try {
+			publish(await readCurrent());
+		} catch {}
+		throw error;
+	}
+}
+
+/** Remove mutation capabilities when this API instance has no authentication token. */
+export function restrictNetworkCapabilities(state: NetworkStateInfo, networkAdminEnabled: boolean): NetworkStateInfo {
+	if (networkAdminEnabled) return state;
+	return { ...state, capabilities: { ...state.capabilities, ipv4: false, wifi: false } };
+}
+
+export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, hasSubscribers: HasSubscribersFn, networkAdminEnabled: boolean): SystemHandlers {
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	let volumeMonitor: VolumeMonitor | null = null;
 
@@ -246,8 +265,8 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	}
 
 	/** Live host network state, with the user's primary-interface preference applied. */
-	function getNetworkState(): Promise<NetworkStateInfo> {
-		return readNetworkState(settings.get('network.primaryInterface') ?? '');
+	async function getNetworkState(): Promise<NetworkStateInfo> {
+		return restrictNetworkCapabilities(await readNetworkState(settings.get('network.primaryInterface') ?? ''), networkAdminEnabled);
 	}
 
 	/**
@@ -260,18 +279,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	async function applyNetworkConfig(p: { interfaceID: string; config: NetIPv4Config }): Promise<NetworkStateInfo> {
 		assert(p, ['interfaceID', 'config']);
 		const primary = settings.get('network.primaryInterface') ?? '';
-		try {
-			const state = await applyIPv4(p.interfaceID, p.config, primary);
-			broadcast('system:network', state);
-			return state;
-		} catch (error) {
-			// A platform writer consists of several commands. If a later one fails,
-			// publish the actual partial result before returning the original error.
-			try {
-				broadcast('system:network', await readNetworkState(primary));
-			} catch {}
-			throw error;
-		}
+		return runAndPublishNetworkMutation(() => applyIPv4(p.interfaceID, p.config, primary), () => readNetworkState(primary), state => broadcast('system:network', state));
 	}
 
 	async function scanWifiNetworks(p: { interfaceID: string }): Promise<NetWifiNetwork[]> {
@@ -281,9 +289,8 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 
 	async function joinWifiNetwork(p: { interfaceID: string; ssid: string; password?: string }): Promise<NetworkStateInfo> {
 		assert(p, ['interfaceID', 'ssid']);
-		const state = await connectWifi(p.interfaceID, p.ssid, p.password ?? '', settings.get('network.primaryInterface') ?? '');
-		broadcast('system:network', state);
-		return state;
+		const primary = settings.get('network.primaryInterface') ?? '';
+		return runAndPublishNetworkMutation(() => connectWifi(p.interfaceID, p.ssid, p.password ?? '', primary), () => readNetworkState(primary), state => broadcast('system:network', state));
 	}
 
 	let networkTick = 0;

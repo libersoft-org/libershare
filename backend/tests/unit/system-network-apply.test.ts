@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { isIPv4, isIPv6, isValidSSID, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNmcliActiveConnections, parseNmcliDns, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
+import { nmcliActivateArgs, nmcliCheckpointArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNmcliActiveConnections, parseNmcliDns, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { assertDeviceName, firstLine, isIPv4ConfigUnchanged, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, runNetworkMutation } from '../../src/system-network.ts';
 
@@ -328,6 +328,16 @@ describe('nmcliModifyArgs', () => {
 		const uuid = '11111111-1111-1111-1111-111111111111';
 		expect(nmcliModifyArgs(uuid, { mode: 'dhcp' }).slice(0, 4)).toEqual(['connection', 'modify', 'uuid', uuid]);
 		expect(nmcliActivateArgs(uuid)).toEqual(['connection', 'up', 'uuid', uuid]);
+	});
+
+	it('wraps modification and activation in one device checkpoint', () => {
+		const uuid = '11111111-1111-1111-1111-111111111111';
+		const args = nmcliCheckpointArgs('wlan0', uuid, { mode: 'dhcp' }, 'success-marker');
+		expect(args.slice(0, 6)).toEqual(['device', 'checkpoint', '--timeout', '100', 'wlan0', '--']);
+		expect(args).toContain('set -eu; marker=$1; uuid=$2; wait_seconds=$3; shift 3; nmcli "$@"; nmcli --wait "$wait_seconds" connection up uuid "$uuid"; printf "%s\\n" "$marker"');
+		expect(args).toContain('90');
+		const modify = args.indexOf('connection');
+		expect(args.slice(modify, modify + 4)).toEqual(['connection', 'modify', 'uuid', uuid]);
 	});
 });
 

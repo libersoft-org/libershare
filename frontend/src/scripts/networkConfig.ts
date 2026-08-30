@@ -1,4 +1,4 @@
-import type { NetAddressMode, NetInterfaceInfo, NetIPv4Config } from '@shared';
+import type { NetAddressMode, NetCapabilities, NetInterfaceInfo, NetIPv4Config, NetworkStateInfo } from '@shared';
 
 export type DnsUpdateMode = 'unchanged' | 'automatic' | 'custom';
 
@@ -9,6 +9,12 @@ export interface NetworkConfigForm {
 	gateway: string;
 	dnsMode: DnsUpdateMode;
 	dns: string;
+}
+
+/** The detail screen may offer IPv4, Wi-Fi, or both independently. */
+export function canOpenNetworkConfig(source: NetInterfaceInfo, capabilities: NetCapabilities, detail: NetworkStateInfo['detail']): boolean {
+	if (detail !== 'full') return false;
+	return (capabilities.ipv4 && source.ipv4Configurable) || (capabilities.wifi && source.medium === 'wireless');
 }
 
 /** Seed the editable fields without discarding any resolver family. */

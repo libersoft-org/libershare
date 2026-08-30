@@ -271,6 +271,12 @@ describe('parseLinuxNetworkState', () => {
 		expect(byID(result, 'docker0').dns).toEqual([]);
 	});
 
+	it('does not assign system-wide resolvers to a device missing from NetworkManager DNS', () => {
+		const parsed = parseLinuxNetworkState({ ...sources, nmDns: new Map([['docker0', ['198.51.100.53']]]) });
+		expect(byID(parsed, 'eth0').dns).toEqual([]);
+		expect(byID(parsed, 'docker0').dns).toEqual(['198.51.100.53']);
+	});
+
 	it('marks only devices with an active NetworkManager profile configurable', () => {
 		expect(byID(result, 'eth0').ipv4Configurable).toBe(true);
 		expect(byID(result, 'docker0').ipv4Configurable).toBe(false);

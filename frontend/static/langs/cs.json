@@ -284,7 +284,7 @@
 		},
 		"errorNotFound": "LISH nebyl nalezen: {detail}",
 		"errorNoLISHs": "Žádné LISHy k exportu",
-		"errorDirectoryEmpty": "Adresář je prázdný — není co vytvářet",
+		"errorDirectoryEmpty": "Adresář je prázdný \u2014 není co vytvářet",
 		"errorAlreadyExists": "LISH již existuje: {detail}",
 		"errorInvalidInputType": "Vstup musí být soubor nebo adresář",
 		"errorInvalidFormat": "Neplatný LISH: není objekt",

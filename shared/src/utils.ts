@@ -47,6 +47,7 @@ export function deriveConnectionStatus(state: NetworkStateInfo): ConnectionStatu
 		// A soft/hard-killed radio is a state the OS genuinely reports and is not
 		// the same as "associated with nothing" — the widget labels it separately.
 		if (wifi?.radio === 'off') return { kind: 'wifiOff', ...blank, interfaceName };
+		if (primary.link === 'unknown') return { kind: 'unknown', ...blank, interfaceName };
 		const connected = primary.link === 'up';
 		return { kind: 'wifi', connected, signal: connected ? (wifi?.signal ?? null) : null, ssid: connected ? (wifi?.ssid ?? null) : null, interfaceName };
 	}

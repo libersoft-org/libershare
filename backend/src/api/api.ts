@@ -19,10 +19,8 @@ import { initSystemHandlers } from './system.ts';
 import { initRelayHandlers } from './relay.ts';
 import { initSearchManager } from './search.ts';
 import { buildFactoryResetHandler } from './factory-reset-orchestrator.ts';
-import { getLocalAddresses } from '../container.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
-	clientIP: string;
 }
 type ClientSocket = ServerWebSocket<ClientData>;
 interface Request {
@@ -74,9 +72,9 @@ export function formatParamsForLog(params: unknown): string {
 	return json.length <= MAX_LOGGED_PARAMS ? json : json.slice(0, MAX_LOGGED_PARAMS) + `…(${json.length} chars)`;
 }
 
-/** Host network administration is local-only unless the remote API is authenticated. */
-export function canAdministerHostNetwork(clientIP: string, apiTokenConfigured: boolean, localAddresses: ReadonlySet<string> = getLocalAddresses()): boolean {
-	return apiTokenConfigured || localAddresses.has(clientIP);
+/** Host network administration always requires the authenticated API mode. */
+export function canAdministerHostNetwork(apiTokenConfigured: boolean): boolean {
+	return apiTokenConfigured;
 }
 
 /** Byte length of the header-length prefix on a binary request frame. */
@@ -277,10 +275,10 @@ export class APIServer {
 			}
 			return false;
 		};
-		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers);
+		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers, !!this.apiToken);
 		const networkAdmin = <P, R>(handler: (params: P) => R): ((params: P, client: ClientSocket) => R) => {
-			return (params, client) => {
-				if (!canAdministerHostNetwork(client.data.clientIP, !!this.apiToken)) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'remote host network administration requires API authentication');
+			return params => {
+				if (!canAdministerHostNetwork(!!this.apiToken)) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'host network administration requires API authentication');
 				return handler(params);
 			};
 		};
@@ -458,9 +456,8 @@ export class APIServer {
 				if (req.method === 'OPTIONS' && url.pathname === '/status') return self.statusOptionsResponse();
 				if (url.pathname === '/status') return self.statusResponse(url);
 				if (!self.isAuthorized(url)) return self.unauthorizedResponse();
-				const clientIP = server.requestIP(req)?.address ?? '';
 				const upgraded = server.upgrade(req, {
-					data: { subscribedEvents: new Set<string>(), clientIP },
+					data: { subscribedEvents: new Set<string>() },
 				});
 				if (upgraded) return undefined;
 				return new Response('Expected WebSocket', { status: 400 });
