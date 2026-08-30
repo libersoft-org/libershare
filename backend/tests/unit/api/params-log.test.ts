@@ -35,8 +35,15 @@ describe('formatParamsForLog', () => {
 
 describe('host network administration trust boundary', () => {
 	it('allows local clients and authenticated remote API deployments only', () => {
-		expect(canAdministerHostNetwork(true, false)).toBe(true);
-		expect(canAdministerHostNetwork(false, true)).toBe(true);
-		expect(canAdministerHostNetwork(false, false)).toBe(false);
+		const local = new Set(['192.0.2.10']);
+		expect(canAdministerHostNetwork('192.0.2.10', false, local)).toBe(true);
+		expect(canAdministerHostNetwork('198.51.100.20', true, local)).toBe(true);
+		expect(canAdministerHostNetwork('198.51.100.20', false, local)).toBe(false);
+	});
+
+	it('re-evaluates local administration against the current host addresses', () => {
+		const clientIP = '192.0.2.10';
+		expect(canAdministerHostNetwork(clientIP, false, new Set([clientIP]))).toBe(true);
+		expect(canAdministerHostNetwork(clientIP, false, new Set(['192.0.2.11']))).toBe(false);
 	});
 });

@@ -22,7 +22,7 @@ import { buildFactoryResetHandler } from './factory-reset-orchestrator.ts';
 import { getLocalAddresses } from '../container.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
-	isLocalClient: boolean;
+	clientIP: string;
 }
 type ClientSocket = ServerWebSocket<ClientData>;
 interface Request {
@@ -75,8 +75,8 @@ export function formatParamsForLog(params: unknown): string {
 }
 
 /** Host network administration is local-only unless the remote API is authenticated. */
-export function canAdministerHostNetwork(isLocalClient: boolean, apiTokenConfigured: boolean): boolean {
-	return isLocalClient || apiTokenConfigured;
+export function canAdministerHostNetwork(clientIP: string, apiTokenConfigured: boolean, localAddresses: ReadonlySet<string> = getLocalAddresses()): boolean {
+	return apiTokenConfigured || localAddresses.has(clientIP);
 }
 
 /** Byte length of the header-length prefix on a binary request frame. */
@@ -280,7 +280,7 @@ export class APIServer {
 		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers);
 		const networkAdmin = <P, R>(handler: (params: P) => R): ((params: P, client: ClientSocket) => R) => {
 			return (params, client) => {
-				if (!canAdministerHostNetwork(client.data.isLocalClient, !!this.apiToken)) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'remote host network administration requires API authentication');
+				if (!canAdministerHostNetwork(client.data.clientIP, !!this.apiToken)) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'remote host network administration requires API authentication');
 				return handler(params);
 			};
 		};
@@ -460,7 +460,7 @@ export class APIServer {
 				if (!self.isAuthorized(url)) return self.unauthorizedResponse();
 				const clientIP = server.requestIP(req)?.address ?? '';
 				const upgraded = server.upgrade(req, {
-					data: { subscribedEvents: new Set<string>(), isLocalClient: getLocalAddresses().has(clientIP) },
+					data: { subscribedEvents: new Set<string>(), clientIP },
 				});
 				if (upgraded) return undefined;
 				return new Response('Expected WebSocket', { status: 400 });
