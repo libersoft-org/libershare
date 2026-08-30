@@ -281,14 +281,32 @@ describe('nmcliModifyArgs', () => {
 		const unchanged = nmcliModifyArgs('lan', { mode: 'dhcp' });
 		expect(unchanged).not.toContain('ipv4.dns');
 		expect(unchanged).not.toContain('ipv4.ignore-auto-dns');
+		expect(unchanged).not.toContain('ipv6.dns');
+		expect(unchanged).not.toContain('ipv6.ignore-auto-dns');
 
 		const automatic = nmcliModifyArgs('lan', { mode: 'dhcp', dns: [] });
 		expect(automatic[automatic.indexOf('ipv4.dns') + 1]).toBe('');
 		expect(automatic[automatic.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('no');
+		expect(automatic[automatic.indexOf('ipv6.dns') + 1]).toBe('');
+		expect(automatic[automatic.indexOf('ipv6.ignore-auto-dns') + 1]).toBe('no');
 
 		const custom = nmcliModifyArgs('lan', { mode: 'dhcp', dns: ['2001:db8::53', '127.0.0.1'] });
-		expect(custom[custom.indexOf('ipv4.dns') + 1]).toBe('2001:db8::53,127.0.0.1');
+		expect(custom[custom.indexOf('ipv4.dns') + 1]).toBe('127.0.0.1');
 		expect(custom[custom.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('yes');
+		expect(custom[custom.indexOf('ipv6.dns') + 1]).toBe('2001:db8::53');
+		expect(custom[custom.indexOf('ipv6.ignore-auto-dns') + 1]).toBe('yes');
+	});
+
+	it('disables automatic DNS for both families when only one family is custom', () => {
+		const ipv4Only = nmcliModifyArgs('lan', { mode: 'dhcp', dns: ['192.0.2.53'] });
+		expect(ipv4Only[ipv4Only.indexOf('ipv4.dns') + 1]).toBe('192.0.2.53');
+		expect(ipv4Only[ipv4Only.indexOf('ipv6.dns') + 1]).toBe('');
+		expect(ipv4Only[ipv4Only.indexOf('ipv6.ignore-auto-dns') + 1]).toBe('yes');
+
+		const ipv6Only = nmcliModifyArgs('lan', { mode: 'dhcp', dns: ['2001:db8::53'] });
+		expect(ipv6Only[ipv6Only.indexOf('ipv4.dns') + 1]).toBe('');
+		expect(ipv6Only[ipv6Only.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('yes');
+		expect(ipv6Only[ipv6Only.indexOf('ipv6.dns') + 1]).toBe('2001:db8::53');
 	});
 
 	it('sets address, gateway and DNS for a static config', () => {

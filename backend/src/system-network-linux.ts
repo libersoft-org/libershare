@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
+import { isIPv4, isIPv6 } from '@shared';
 import type { NetAddress, NetCapabilities, NetInterfaceInfo, NetIPv4Config, NetLink, NetWifiInfo, NetWifiNetwork } from '@shared';
 
 const execFileAsync = promisify(execFile);
@@ -488,9 +489,24 @@ async function activeConnection(device: string): Promise<string | null> {
  * stale `ipv4.addresses` on a profile whose method changed, and that address
  * comes back the moment the user switches to static again.
  */
+function nmcliDnsArgs(config: NetIPv4Config): string[] {
+	if (config.dns === undefined) return [];
+	const ignoreAutomatic = config.dns.length > 0 ? 'yes' : 'no';
+	return [
+		'ipv4.dns',
+		config.dns.filter(isIPv4).join(','),
+		'ipv4.ignore-auto-dns',
+		ignoreAutomatic,
+		'ipv6.dns',
+		config.dns.filter(isIPv6).join(','),
+		'ipv6.ignore-auto-dns',
+		ignoreAutomatic,
+	];
+}
+
 export function nmcliModifyArgs(connectionUUID: string, config: NetIPv4Config): string[] {
 	const base = ['connection', 'modify', 'uuid', connectionUUID];
-	const dns = config.dns === undefined ? [] : ['ipv4.dns', config.dns.join(','), 'ipv4.ignore-auto-dns', config.dns.length > 0 ? 'yes' : 'no'];
+	const dns = nmcliDnsArgs(config);
 	if (config.mode === 'dhcp') return [...base, 'ipv4.method', 'auto', 'ipv4.addresses', '', 'ipv4.gateway', '', ...dns];
 	return [
 		...base,
