@@ -5,8 +5,8 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { applyInterfaceConfig, joinWifiNetwork, networkState, refreshNetworkState, scanWifiNetworks } from '../../scripts/networkState.ts';
-	import { networkConfigFormFrom, networkConfigFromForm, type DnsUpdateMode } from '../../scripts/networkConfig.ts';
-	import { validateIPv4Config, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
+	import { networkConfigFormFrom, networkConfigFromForm, validateNetworkConfigForm, type DnsUpdateMode, type NetworkConfigForm } from '../../scripts/networkConfig.ts';
+	import { type NetAddressMode, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -58,8 +58,8 @@
 		dns = form.dns;
 	}
 
-	function buildConfig(): NetIPv4Config | null {
-		return networkConfigFromForm({ mode, address, prefix, gateway, dnsMode, dns });
+	function currentForm(): NetworkConfigForm {
+		return { mode, address, prefix, gateway, dnsMode, dns };
 	}
 
 	function seedCurrentInterface(): void {
@@ -76,27 +76,29 @@
 		}
 		const currentInterface = current?.interfaces.find(item => item.id === interfaceID);
 		if (currentInterface) seedFrom(currentInterface);
+	}
+
+	async function refreshWifiNetworks(): Promise<void> {
+		scanning = true;
 		try {
 			networks = await scanWifiNetworks(interfaceID);
 		} catch {
 			networks = [];
+		} finally {
+			scanning = false;
 		}
 	}
 
 	async function save(): Promise<void> {
 		if (busy || scanning) return;
-		const config = buildConfig();
-		if (!config) {
-			failed = true;
-			message = $t('settings.network.modeUnknown');
-			return;
-		}
-		const invalid = validateIPv4Config(config, $networkState.capabilities);
+		const form = currentForm();
+		const invalid = validateNetworkConfigForm(form, $networkState.capabilities);
 		if (invalid) {
 			failed = true;
-			message = $t('settings.network.invalidField', { field: $t('settings.network.field.' + invalid) });
+			message = invalid === 'mode' ? $t('settings.network.modeUnknown') : $t('settings.network.invalidField', { field: $t('settings.network.field.' + invalid) });
 			return;
 		}
+		const config = networkConfigFromForm(form) as NetIPv4Config;
 		busy = true;
 		message = '';
 		try {
@@ -169,6 +171,7 @@
 			message = translateError(error);
 		} finally {
 			busy = false;
+			void refreshWifiNetworks();
 		}
 	}
 

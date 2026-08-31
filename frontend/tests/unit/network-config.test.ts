@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { canOpenNetworkConfig, networkConfigFormFrom, networkConfigFromForm, visiblePrimaryInterface, type NetworkConfigForm } from '../../src/scripts/networkConfig.ts';
+import { canOpenNetworkConfig, networkConfigFormFrom, networkConfigFromForm, validateNetworkConfigForm, visiblePrimaryInterface, type NetworkConfigForm } from '../../src/scripts/networkConfig.ts';
 import type { NetInterfaceInfo } from '@shared';
 
 const iface: NetInterfaceInfo = {
@@ -27,6 +27,15 @@ describe('network configuration form', () => {
 		const base = networkConfigFormFrom(iface);
 		expect(networkConfigFromForm({ ...base, dnsMode: 'automatic' })).toEqual({ mode: 'dhcp', dns: [] });
 		expect(networkConfigFromForm({ ...base, dnsMode: 'custom' })).toEqual({ mode: 'dhcp', dns: ['192.0.2.53', '2001:db8::53', '127.0.0.1'] });
+	});
+
+	it('rejects custom DNS without at least one server', () => {
+		const base = networkConfigFormFrom(iface);
+		for (const dns of ['', '   ', ' ,  , ']) {
+			const form = { ...base, dnsMode: 'custom' as const, dns };
+			expect(validateNetworkConfigForm(form)).toBe('dns');
+			expect(networkConfigFromForm(form)).toBeNull();
+		}
 	});
 
 	it('builds a static address without forcing a DNS change', () => {

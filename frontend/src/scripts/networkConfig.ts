@@ -1,4 +1,4 @@
-import type { NetAddressMode, NetCapabilities, NetInterfaceInfo, NetIPv4Config, NetworkStateInfo } from '@shared';
+import { validateIPv4Config, type NetAddressMode, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
 
 export type DnsUpdateMode = 'unchanged' | 'automatic' | 'custom';
 
@@ -49,10 +49,20 @@ export function networkConfigFromForm(form: NetworkConfigForm): NetIPv4Config | 
 				};
 	if (form.dnsMode === 'automatic') config.dns = [];
 	if (form.dnsMode === 'custom') {
-		config.dns = form.dns
+		const servers = form.dns
 			.split(',')
 			.map(server => server.trim())
 			.filter(Boolean);
+		if (servers.length === 0) return null;
+		config.dns = servers;
 	}
 	return config;
+}
+
+/** Name the field that prevents this UI form from producing a valid RPC value. */
+export function validateNetworkConfigForm(form: NetworkConfigForm, capabilities?: Pick<NetCapabilities, 'staticGatewayRequired'>): string | null {
+	if (form.mode === 'unknown') return 'mode';
+	if (form.dnsMode === 'custom' && !form.dns.split(',').some(server => server.trim().length > 0)) return 'dns';
+	const config = networkConfigFromForm(form);
+	return config ? validateIPv4Config(config, capabilities) : 'mode';
 }

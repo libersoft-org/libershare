@@ -435,6 +435,15 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('$applyError');
 	});
 
+	it('restores automatic DNS policy instead of pinning its current DHCP servers', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, dns: ['192.0.2.53'] });
+		expect(command).toContain('Tcpip\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)');
+		expect(command).toContain('Tcpip6\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)');
+		expect(command).toContain('$oldDnsAutomatic = [string]::IsNullOrWhiteSpace($oldDnsNameServer4) -and [string]::IsNullOrWhiteSpace($oldDnsNameServer6)');
+		expect(command).toContain('if ($oldDnsAutomatic) { Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses } else { Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $oldDns }');
+		expect(command).not.toContain('if ($oldDns.Count -gt 0)');
+	});
+
 	it('omits the gateway parameter entirely when there is none', () => {
 		// Passing an empty -DefaultGateway is a parameter binding error, not a no-op.
 		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
