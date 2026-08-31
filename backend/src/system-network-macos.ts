@@ -322,6 +322,8 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 		const storedIPv4 = liveIPv4Addresses.length === 0 ? parseServiceIPv4(serviceInfo) : null;
 		const addresses = storedIPv4 ? [...entry.addresses, storedIPv4] : entry.addresses;
 		const ipv4Addresses = addresses.filter(address => address.family === 'ipv4');
+		const serviceGateway = parseServiceGateway(serviceInfo);
+		const gateway = serviceGateway ?? (defaultRoute ? route.gateway : null);
 		const info: NetInterfaceInfo = {
 			id: device,
 			// The service name is what the user sees in System Settings, so it is the
@@ -333,8 +335,8 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 			mac: entry.mac,
 			addresses,
 			ipv4Mode,
-			ipv4Configurable: routeDetailKnown && services.has(device) && ipv4Mode !== 'unknown' && ipv4Addresses.length <= 1 && deviceRoutes.length <= 1,
-			gateway: parseServiceGateway(serviceInfo) ?? (defaultRoute ? route.gateway : null),
+			ipv4Configurable: routeDetailKnown && services.has(device) && ipv4Mode !== 'unknown' && (ipv4Mode !== 'static' || serviceGateway !== null) && ipv4Addresses.length <= 1 && deviceRoutes.length <= 1,
+			gateway,
 			// Manually set servers win; otherwise fall back to what the DHCP lease
 			// handed out, so a DHCP link reports the resolvers it actually uses.
 			dns: pickDns(sources, device),
@@ -399,25 +401,23 @@ export async function readMacNetworkState(): Promise<NetInterfaceInfo[]> {
  * True when `networksetup` is present AND this process may actually use it to
  * write.
  *
- * macOS gates the write on membership of the `admin` group rather than on root:
- * measured on 15.7.4, an ordinary admin user applies a configuration with no
- * prompt at all, while a non-admin gets "** Error: Command requires admin
- * privileges." and exit status 14. Probing the group is what keeps the edit form
- * away from a standard user, for whom every Save would fail.
+ * macOS may require root when system-wide preferences are password-protected.
+ * Group membership cannot prove that the current non-interactive process may
+ * write, so only an effective root process advertises this capability.
  */
 export async function isMacWritable(): Promise<boolean> {
+	if (!hasMacWritePrivilege(typeof process.getuid === 'function' ? process.getuid() : undefined)) return false;
 	try {
 		await run(NETWORKSETUP, ['-getcomputername']);
+		return true;
 	} catch {
 		return false;
 	}
-	// root is allowed regardless of which groups it happens to carry.
-	if (typeof process.getuid === 'function' && process.getuid() === 0) return true;
-	try {
-		return (await run('/usr/bin/id', ['-Gn'])).split(/\s+/).includes('admin');
-	} catch {
-		return false;
-	}
+}
+
+/** Root is the only privilege level that is safe under every macOS policy. */
+export function hasMacWritePrivilege(effectiveUID: number | undefined): boolean {
+	return effectiveUID === 0;
 }
 
 /**

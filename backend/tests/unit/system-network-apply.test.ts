@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { isIPv4, isIPv6, isValidSSID, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { assertNetworkManagerRollback, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
+import { assertNetworkManagerRollback, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { assertDeviceName, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, runNetworkMutation } from '../../src/system-network.ts';
 
@@ -358,9 +358,13 @@ describe('NetworkManager checkpoint transaction', () => {
 
 	it('requests deletion of connections created after the checkpoint', () => {
 		const args = networkManagerCheckpointCreateArgs(devicePath);
-		expect(args.slice(-3)).toEqual([devicePath, '100', '2']);
+		expect(args.slice(-3)).toEqual([devicePath, String(NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS), '2']);
 		expect(args).toContain('CheckpointCreate');
 		expect(parseNetworkManagerCheckpointPath(`o "${checkpointPath}"\n`)).toBe(checkpointPath);
+	});
+
+	it('keeps a real safety reserve beyond update, activation and rollback limits', () => {
+		expect(NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS * 1000).toBeGreaterThan(NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS + NETWORK_MANAGER_MUTATION_TIMEOUT_MS + NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS + NETWORK_MANAGER_CHECKPOINT_SAFETY_MS);
 	});
 
 	it('destroys a successful checkpoint and keeps the mutation', async () => {
@@ -502,6 +506,20 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('if ($oldDnsAutomatic4) { Set-DnsClientServerAddress -InputObject $oldDns4 -ResetServerAddresses } else { Set-DnsClientServerAddress -InputObject $oldDns4 -ServerAddresses $oldDnsServers4 }');
 		expect(command).toContain('if ($oldDnsAutomatic6) { Set-DnsClientServerAddress -InputObject $oldDns6 -ResetServerAddresses } else { Set-DnsClientServerAddress -InputObject $oldDns6 -ServerAddresses $oldDnsServers6 }');
 		expect(command).not.toContain('$oldDnsAutomatic =');
+	});
+
+	it('waits for restored static addresses before recreating routes', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
+		expect(command).toContain('$restoredState -eq "Duplicate"');
+		expect(command).toContain('$restoredState -ne "Preferred"');
+		expect(command.indexOf('$restoredState -ne "Preferred"')).toBeLessThan(command.indexOf('foreach ($route in $oldRoutes)'));
+	});
+
+	it('confirms a previously usable DHCP lease and route during rollback', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
+		expect(command).toContain('$oldDhcpNeedsAddress');
+		expect(command).toContain('$oldDhcpNeedsRoute');
+		expect(command).toContain('DHCP rollback did not restore a usable lease');
 	});
 
 	it('omits the gateway parameter entirely when there is none', () => {

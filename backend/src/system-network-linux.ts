@@ -359,9 +359,11 @@ const NMCLI_CANDIDATES = ['/usr/bin/nmcli', '/bin/nmcli', 'nmcli'];
 const BUSCTL_CANDIDATES = ['/usr/bin/busctl', '/bin/busctl', 'busctl'];
 /** Match NetworkManager's documented default activation wait explicitly. */
 const NMCLI_ACTIVATION_WAIT_SECONDS = 90;
-/** Keep the checkpoint alive throughout activation and leave time to commit it. */
-const CHECKPOINT_ROLLBACK_SECONDS = NMCLI_ACTIVATION_WAIT_SECONDS + 10;
-const NMCLI_MUTATION_TIMEOUT_MS = (NMCLI_ACTIVATION_WAIT_SECONDS + 5) * 1000;
+export const NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS: number = EXEC_TIMEOUT_MS;
+export const NETWORK_MANAGER_MUTATION_TIMEOUT_MS: number = (NMCLI_ACTIVATION_WAIT_SECONDS + 5) * 1000;
+export const NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS: number = NETWORK_MANAGER_MUTATION_TIMEOUT_MS;
+export const NETWORK_MANAGER_CHECKPOINT_SAFETY_MS: number = 30000;
+export const NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS: number = Math.ceil((NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS + NETWORK_MANAGER_MUTATION_TIMEOUT_MS + NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS + NETWORK_MANAGER_CHECKPOINT_SAFETY_MS) / 1000) + 1;
 /** A rescan has to wait for the radio to sweep every channel. */
 const WIFI_SCAN_TIMEOUT_MS = 30000;
 
@@ -561,7 +563,7 @@ const NM_CHECKPOINT_DELETE_NEW_CONNECTIONS = 2;
 
 /** Create a device checkpoint that also removes profiles created by a failed mutation. */
 export function networkManagerCheckpointCreateArgs(devicePath: string): string[] {
-	return ['--system', 'call', NM_SERVICE, NM_PATH, NM_INTERFACE, 'CheckpointCreate', 'aouu', '1', devicePath, String(CHECKPOINT_ROLLBACK_SECONDS), String(NM_CHECKPOINT_DELETE_NEW_CONNECTIONS)];
+	return ['--system', 'call', NM_SERVICE, NM_PATH, NM_INTERFACE, 'CheckpointCreate', 'aouu', '1', devicePath, String(NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS), String(NM_CHECKPOINT_DELETE_NEW_CONNECTIONS)];
 }
 
 /** Finish a checkpoint explicitly; rollback is never left waiting for an interactive timeout. */
@@ -617,7 +619,7 @@ async function destroyNetworkManagerCheckpoint(checkpointPath: string): Promise<
 }
 
 async function rollbackNetworkManagerCheckpoint(checkpointPath: string): Promise<void> {
-	assertNetworkManagerRollback(await runFirst(BUSCTL_CANDIDATES, networkManagerCheckpointFinishArgs('CheckpointRollback', checkpointPath), NMCLI_MUTATION_TIMEOUT_MS));
+	assertNetworkManagerRollback(await runFirst(BUSCTL_CANDIDATES, networkManagerCheckpointFinishArgs('CheckpointRollback', checkpointPath), NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS));
 }
 
 async function withDeviceCheckpoint<T>(device: string, mutate: () => Promise<T>): Promise<T> {
@@ -635,9 +637,9 @@ export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addr
 	const connectionUUID = await activeConnection(device);
 	if (!connectionUUID) throw new Error(`no NetworkManager profile is active on ${device}`);
 	await withDeviceCheckpoint(device, async () => {
-		await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connectionUUID, config, addressingChanged));
+		await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connectionUUID, config, addressingChanged), NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS);
 		const activate = addressingChanged ? nmcliActivateArgs(connectionUUID) : ['device', 'reapply', device];
-		await runFirst(NMCLI_CANDIDATES, ['--wait', String(NMCLI_ACTIVATION_WAIT_SECONDS), ...activate], NMCLI_MUTATION_TIMEOUT_MS);
+		await runFirst(NMCLI_CANDIDATES, ['--wait', String(NMCLI_ACTIVATION_WAIT_SECONDS), ...activate], NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
 	});
 }
 
@@ -713,5 +715,5 @@ export function nmcliWifiConnectArgs(device: string, ssid: string, askForPasswor
  */
 export async function connectLinuxWifi(device: string, ssid: string, password: string, bssid: string | null = null): Promise<void> {
 	const args = ['--wait', String(NMCLI_ACTIVATION_WAIT_SECONDS), ...nmcliWifiConnectArgs(device, ssid, !!password, bssid)];
-	await withDeviceCheckpoint(device, () => (password ? runFirstWithInput(NMCLI_CANDIDATES, args, `${password}\n`, NMCLI_MUTATION_TIMEOUT_MS) : runFirst(NMCLI_CANDIDATES, args, NMCLI_MUTATION_TIMEOUT_MS)));
+	await withDeviceCheckpoint(device, () => (password ? runFirstWithInput(NMCLI_CANDIDATES, args, `${password}\n`, NETWORK_MANAGER_MUTATION_TIMEOUT_MS) : runFirst(NMCLI_CANDIDATES, args, NETWORK_MANAGER_MUTATION_TIMEOUT_MS)));
 }

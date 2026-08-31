@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { macApplyArgs, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { hasMacWritePrivilege, macApplyArgs, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -285,6 +285,14 @@ describe('parseMacNetworkState', () => {
 		expect(bridge?.ipv4Configurable).toBe(true);
 	});
 
+	it('keeps a manual service without a router read-only', () => {
+		const serviceInfo = new Map(sources.serviceInfo).set('bridge0', 'Manual Configuration\nIP address: 198.51.100.10\nSubnet mask: 255.255.255.0\nRouter: none\n');
+		const bridge = parseMacNetworkState({ ...sources, serviceInfo }).find(i => i.id === 'bridge0');
+		expect(bridge).toMatchObject({ ipv4Mode: 'static', gateway: null, ipv4Configurable: false });
+		const defaultService = parseMacNetworkState({ ...sources, serviceInfo: new Map([['en0', 'Manual Configuration\nIP address: 192.0.2.232\nSubnet mask: 255.255.255.0\nRouter: none\n']]) }).find(i => i.id === 'en0');
+		expect(defaultService).toMatchObject({ ipv4Mode: 'static', gateway: '192.0.2.1', ipv4Configurable: false });
+	});
+
 	it('leaves wifi undefined on a wired interface', () => {
 		expect(parseMacNetworkState(sources).find(i => i.id === 'bridge0')?.wifi).toBeUndefined();
 	});
@@ -313,6 +321,14 @@ describe('parseMacNetworkState', () => {
 		const parsed = parseMacNetworkState({ ...sources, hardwarePorts: extraPort, ifconfig: extraIfconfig });
 		expect(parsed.find(i => i.id === 'en0')?.wifi).toBeUndefined();
 		expect(parsed.find(i => i.id === 'en1')?.wifi).toBeUndefined();
+	});
+});
+
+describe('macOS write privilege', () => {
+	it('offers network changes only to an effective root process', () => {
+		expect(hasMacWritePrivilege(0)).toBe(true);
+		expect(hasMacWritePrivilege(501)).toBe(false);
+		expect(hasMacWritePrivilege(undefined)).toBe(false);
 	});
 });
 
