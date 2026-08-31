@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 import { ptr, type Pointer } from 'bun:ffi';
 import { parseWindowsNetworkState, readConnectionAttributes, WINDOWS_STATE_COMMAND } from '../../src/system-network-windows.ts';
 import { dbmToQuality, parseIwLink, parseLinuxNetworkState } from '../../src/system-network-linux.ts';
-import { assertReadProducedSomething, NetworkStateCache, prefixFromNetmask, readGenericInterfaces, readNetworkState, resolvePrimaryID, resetNetworkStateCache, type NetworkSnapshot } from '../../src/system-network.ts';
-import type { NetInterfaceInfo } from '@shared';
+import { assertReadProducedSomething, assertWifiConfigurableInterface, NetworkStateCache, prefixFromNetmask, readGenericInterfaces, readNetworkState, resolvePrimaryID, resetNetworkStateCache, type NetworkSnapshot } from '../../src/system-network.ts';
+import { ErrorCodes, type NetInterfaceInfo } from '@shared';
 
 /**
  * Fixtures are the verbatim shape of real command output captured on a Windows
@@ -12,6 +12,24 @@ import type { NetInterfaceInfo } from '@shared';
  * rewritten to documentation ranges before entering the repository.
  */
 const fixture = (name: string): string => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
+const windowsFixture = (): string => {
+	const doc = JSON.parse(fixture('network-windows.json')) as Record<string, any[]>;
+	const dhcpIndexes = new Set(doc['interfaces']!.filter(row => row.Family === 2 && row.Dhcp === 1).map(row => row.ifIndex));
+	doc['addresses'] = doc['addresses']!.map(row => ({ Type: 1, SkipAsSource: false, Infinite: true, ...row }));
+	doc['persistentAddresses'] = doc['addresses']!.filter(row => row.Family === 2 && !dhcpIndexes.has(row.ifIndex)).map(row => ({ ...row, State: 0 }));
+	doc['routes'] = doc['routes']!.map(row => ({ Protocol: 3, Publish: 0, Infinite: true, ...row }));
+	doc['persistentRoutes'] = doc['routes']!.filter(row => !dhcpIndexes.has(row.ifIndex)).map(row => ({ ...row }));
+	return JSON.stringify(doc);
+};
+const simpleWindowsStaticDoc = (): Record<string, unknown> => ({
+	adapters: { ifIndex: 5, Name: 'Ethernet', InterfaceGuid: '{11111111-2222-3333-4444-555555555555}', MacAddress: '02-00-5E-30-00-01', Media: 14, State: 1 },
+	addresses: { ifIndex: 5, Family: 2, IPAddress: '198.51.100.5', PrefixLength: 24, State: 4, PrefixOrigin: 1, SuffixOrigin: 1, Type: 1, SkipAsSource: false, Infinite: true },
+	persistentAddresses: { ifIndex: 5, Family: 2, IPAddress: '198.51.100.5', PrefixLength: 24, State: 0, PrefixOrigin: 1, SuffixOrigin: 1, Type: 1, SkipAsSource: false, Infinite: true },
+	interfaces: { ifIndex: 5, Family: 2, Dhcp: 0 },
+	routes: { ifIndex: 5, NextHop: '198.51.100.1', RouteMetric: 25, Protocol: 3, Publish: 0, Infinite: true },
+	persistentRoutes: { ifIndex: 5, NextHop: '198.51.100.1', RouteMetric: 25, Protocol: 3, Publish: 0, Infinite: true },
+	dns: { InterfaceIndex: 5, Servers: '198.51.100.1' },
+});
 const byID = (list: NetInterfaceInfo[], id: string): NetInterfaceInfo => {
 	const found = list.find(i => i.id === id);
 	if (!found) throw new Error(`interface ${id} missing from parse result`);
@@ -20,7 +38,7 @@ const byID = (list: NetInterfaceInfo[], id: string): NetInterfaceInfo => {
 
 describe('WINDOWS_STATE_COMMAND', () => {
 	it('wraps every collection so a single-row result stays an array', () => {
-		for (const name of ['adapters', 'addresses', 'interfaces', 'routes', 'dns']) {
+		for (const name of ['adapters', 'addresses', 'persistentAddresses', 'interfaces', 'routes', 'persistentRoutes', 'dns']) {
 			expect(WINDOWS_STATE_COMMAND).toContain(`$${name} = @(`);
 		}
 	});
@@ -34,7 +52,7 @@ describe('WINDOWS_STATE_COMMAND', () => {
 	});
 
 	it('allows a successful route query to return no default route', () => {
-		expect(WINDOWS_STATE_COMMAND).toContain("Get-NetRoute -ErrorAction Stop | Where-Object DestinationPrefix -eq '0.0.0.0/0'");
+		expect(WINDOWS_STATE_COMMAND).toContain("Get-NetRoute -PolicyStore ActiveStore -ErrorAction Stop | Where-Object DestinationPrefix -eq '0.0.0.0/0'");
 		expect(WINDOWS_STATE_COMMAND).not.toContain("Get-NetRoute -DestinationPrefix '0.0.0.0/0'");
 	});
 
@@ -53,7 +71,7 @@ describe('WINDOWS_STATE_COMMAND', () => {
 });
 
 describe('parseWindowsNetworkState', () => {
-	const result = parseWindowsNetworkState(fixture('network-windows.json'));
+	const result = parseWindowsNetworkState(windowsFixture());
 	// Public ids are the adapters' persistent GUIDs (ifIndex is not stable across
 	// reboots and the id is persisted as the user's primary-interface preference).
 	const ID = {
@@ -66,8 +84,8 @@ describe('parseWindowsNetworkState', () => {
 	};
 
 	it('rejects a document missing any required query result', () => {
-		const complete = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
-		for (const key of ['adapters', 'addresses', 'interfaces', 'routes', 'dns']) {
+		const complete = JSON.parse(windowsFixture()) as Record<string, unknown>;
+		for (const key of ['adapters', 'addresses', 'persistentAddresses', 'interfaces', 'routes', 'persistentRoutes', 'dns']) {
 			const partial = { ...complete };
 			delete partial[key];
 			expect(() => parseWindowsNetworkState(JSON.stringify(partial))).toThrow(`missing ${key}`);
@@ -132,21 +150,24 @@ describe('parseWindowsNetworkState', () => {
 	});
 
 	it('parses a one-NIC document where ConvertTo-Json emitted bare objects', () => {
-		const single = JSON.stringify({
-			adapters: { ifIndex: 5, Name: 'Ethernet', InterfaceGuid: '{11111111-2222-3333-4444-555555555555}', MacAddress: '02-00-5E-30-00-01', Media: 14, State: 1 },
-			addresses: { ifIndex: 5, Family: 2, IPAddress: '198.51.100.5', PrefixLength: 24, State: 4 },
-			interfaces: { ifIndex: 5, Family: 2, Dhcp: 0 },
-			routes: { ifIndex: 5, NextHop: '198.51.100.1', RouteMetric: 25 },
-			dns: { InterfaceIndex: 5, Servers: '198.51.100.1' },
-		});
+		const single = JSON.stringify(simpleWindowsStaticDoc());
 		const parsed = parseWindowsNetworkState(single);
 		expect(parsed).toHaveLength(1);
-		expect(parsed[0]).toMatchObject({ id: '{11111111-2222-3333-4444-555555555555}', medium: 'wired', link: 'up', ipv4Mode: 'static', defaultRoute: true, gateway: '198.51.100.1', dns: ['198.51.100.1'] });
+		expect(parsed[0]).toMatchObject({ id: '{11111111-2222-3333-4444-555555555555}', medium: 'wired', link: 'up', ipv4Mode: 'static', ipv4Configurable: true, defaultRoute: true, gateway: '198.51.100.1', dns: ['198.51.100.1'] });
+	});
+
+	it('keeps active-only or advanced static policy read-only', () => {
+		const cases = [(doc: Record<string, any>) => (doc['persistentAddresses'] = []), (doc: Record<string, any>) => (doc['persistentRoutes'] = []), (doc: Record<string, any>) => (doc['addresses'].SkipAsSource = true), (doc: Record<string, any>) => (doc['addresses'].Infinite = false), (doc: Record<string, any>) => (doc['addresses'].Type = 2), (doc: Record<string, any>) => (doc['routes'].Infinite = false), (doc: Record<string, any>) => (doc['routes'].Protocol = 2)];
+		for (const mutate of cases) {
+			const doc = simpleWindowsStaticDoc();
+			mutate(doc);
+			expect(parseWindowsNetworkState(JSON.stringify(doc))[0]?.ipv4Configurable).toBe(false);
+		}
 	});
 
 	it('attaches Wi-Fi data only to the wireless adapter whose GUID matches', () => {
 		const wifi = new Map([[ID.wifi, { ssid: null, signal: null, radio: 'off' as const }]]);
-		const withWifi = parseWindowsNetworkState(fixture('network-windows.json'), wifi);
+		const withWifi = parseWindowsNetworkState(windowsFixture(), wifi);
 		expect(byID(withWifi, ID.wifi).wifi).toEqual({ ssid: null, signal: null, radio: 'off' });
 		// A Wi-Fi Direct virtual adapter also reports medium 9 but has no WLAN interface.
 		expect(byID(withWifi, ID.wifiDirect).wifi).toBeUndefined();
@@ -154,7 +175,7 @@ describe('parseWindowsNetworkState', () => {
 	});
 
 	it('ranks default routes by route metric PLUS interface metric, as Windows does', () => {
-		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
+		const doc = JSON.parse(windowsFixture()) as Record<string, unknown>;
 		// A VPN tunnel with RouteMetric 0 / InterfaceMetric 5 beats a NIC on 0 / 25,
 		// which comparing RouteMetric alone would have got backwards.
 		doc['routes'] = [
@@ -168,7 +189,7 @@ describe('parseWindowsNetworkState', () => {
 	});
 
 	it('keeps each interface own gateway while only the best route is primary', () => {
-		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
+		const doc = JSON.parse(windowsFixture()) as Record<string, unknown>;
 		doc['routes'] = [
 			{ ifIndex: 20, NextHop: '192.0.2.1', RouteMetric: 10, InterfaceMetric: 20 },
 			{ ifIndex: 63, NextHop: '198.51.100.1', RouteMetric: 100, InterfaceMetric: 20 },
@@ -179,14 +200,14 @@ describe('parseWindowsNetworkState', () => {
 	});
 
 	it('makes a multi-address or multi-route adapter read-only', () => {
-		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, any[]>;
+		const doc = JSON.parse(windowsFixture()) as Record<string, any[]>;
 		doc['addresses']!.push({ ifIndex: 20, Family: 2, IPAddress: '192.0.2.11', PrefixLength: 24, State: 4 });
 		doc['routes']!.push({ ifIndex: 20, NextHop: '192.0.2.254', RouteMetric: 200, InterfaceMetric: 20 });
 		expect(byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet).ipv4Configurable).toBe(false);
 	});
 
 	it('makes an adapter with a hidden non-preferred IPv4 address read-only', () => {
-		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, any[]>;
+		const doc = JSON.parse(windowsFixture()) as Record<string, any[]>;
 		doc['addresses']!.push({ ifIndex: 20, Family: 2, IPAddress: '192.0.2.11', PrefixLength: 24, State: 3 });
 		const ethernet = byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet);
 		expect(ethernet.addresses).not.toContainEqual({ family: 'ipv4', address: '192.0.2.11', prefixLength: 24 });
@@ -194,7 +215,7 @@ describe('parseWindowsNetworkState', () => {
 	});
 
 	it('allows DHCP recovery from a proven automatic APIPA address', () => {
-		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, any[]>;
+		const doc = JSON.parse(windowsFixture()) as Record<string, any[]>;
 		const apipa = doc['addresses']!.find(row => row.ifIndex === 12 && row.IPAddress === '169.254.86.18');
 		apipa.PrefixOrigin = 2;
 		apipa.SuffixOrigin = 4;
@@ -206,7 +227,7 @@ describe('parseWindowsNetworkState', () => {
 	});
 
 	it('makes an adapter with unknown addressing mode and Wi-Fi Direct read-only', () => {
-		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, any[]>;
+		const doc = JSON.parse(windowsFixture()) as Record<string, any[]>;
 		doc['interfaces'] = doc['interfaces']!.filter(row => row.ifIndex !== 20);
 		const parsed = parseWindowsNetworkState(JSON.stringify(doc));
 		expect(byID(parsed, ID.ethernet).ipv4Configurable).toBe(false);
@@ -214,19 +235,19 @@ describe('parseWindowsNetworkState', () => {
 	});
 
 	it('merges IPv4 and IPv6 DNS rows for one interface', () => {
-		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, any[]>;
+		const doc = JSON.parse(windowsFixture()) as Record<string, any[]>;
 		doc['dns']!.push({ InterfaceIndex: 20, Servers: '2001:db8::53,127.0.0.1' });
 		expect(byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet).dns).toEqual(['192.0.2.1', '192.0.2.2', '2001:db8::53', '127.0.0.1']);
 	});
 
 	it('drops Windows automatic-DNS placeholders', () => {
-		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, any[]>;
+		const doc = JSON.parse(windowsFixture()) as Record<string, any[]>;
 		doc['dns'] = [{ InterfaceIndex: 20, Servers: 'fec0:0:0:ffff::1,fec0:0:0:ffff::2,fec0:0:0:ffff::3' }];
 		expect(byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet).dns).toEqual([]);
 	});
 
 	it('still ranks by route metric when the interface metric is absent', () => {
-		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
+		const doc = JSON.parse(windowsFixture()) as Record<string, unknown>;
 		doc['routes'] = [
 			{ ifIndex: 63, NextHop: '198.51.100.1', RouteMetric: 5 },
 			{ ifIndex: 20, NextHop: '192.0.2.1', RouteMetric: 0 },
@@ -238,7 +259,7 @@ describe('parseWindowsNetworkState', () => {
 });
 
 describe('parseLinuxNetworkState', () => {
-	const sources = { addr: fixture('network-linux-addr.json'), link: fixture('network-linux-link.json'), route: '[{"dst":"default","gateway":"192.0.2.1","dev":"eth0","flags":[]}]', resolvers: ['192.0.2.1'], activeConnections: new Map([['eth0', 'Wired connection 1']]), ipv4Methods: new Map([['eth0', 'auto']]) };
+	const sources = { addr: fixture('network-linux-addr.json'), link: fixture('network-linux-link.json'), route: '[{"dst":"default","gateway":"192.0.2.1","dev":"eth0","flags":[]}]', resolvers: ['192.0.2.1'], activeConnections: new Map([['eth0', 'Wired connection 1']]), ipv4Profiles: new Map([['eth0', { method: 'auto', gateway: null, safe: true }]]) };
 	const result = parseLinuxNetworkState(sources);
 
 	it('reads DHCP from the kernel dynamic flag and static from a permanent lifetime', () => {
@@ -276,9 +297,9 @@ describe('parseLinuxNetworkState', () => {
 				['eth0', 'a'],
 				['docker0', 'b'],
 			]),
-			ipv4Methods: new Map([
-				['eth0', 'auto'],
-				['docker0', 'manual'],
+			ipv4Profiles: new Map([
+				['eth0', { method: 'auto', gateway: null, safe: true }],
+				['docker0', { method: 'manual', gateway: '198.51.100.1', safe: true }],
 			]),
 		});
 		expect(byID(parsed, 'eth0')).toMatchObject({ defaultRoute: true, gateway: '192.0.2.1' });
@@ -302,7 +323,7 @@ describe('parseLinuxNetworkState', () => {
 
 		const v6Only = JSON.parse(sources.addr) as Array<{ ifname: string; addr_info?: Array<{ family: string }> }>;
 		for (const entry of v6Only) entry.addr_info = (entry.addr_info ?? []).filter(address => address.family !== 'inet');
-		const unknown = parseLinuxNetworkState({ ...sources, addr: JSON.stringify(v6Only), ipv4Methods: new Map([['eth0', 'shared']]) });
+		const unknown = parseLinuxNetworkState({ ...sources, addr: JSON.stringify(v6Only), ipv4Profiles: new Map([['eth0', { method: 'shared', gateway: null, safe: false }]]) });
 		expect(byID(unknown, 'eth0').ipv4Configurable).toBe(false);
 	});
 
@@ -336,9 +357,15 @@ describe('parseLinuxNetworkState', () => {
 	it('marks wireless interfaces and carries their iw reading through', () => {
 		const wireless = new Set(['eth0']);
 		const iwLinks = new Map([['eth0', 'Connected to 02:00:5e:40:00:01 (on eth0)\n\tSSID: Example Net\n\tfreq: 5180\n\tsignal: -55 dBm\n\ttx bitrate: 780.0 MBit/s\n']]);
-		const parsed = parseLinuxNetworkState({ ...sources, wireless, iwLinks });
+		const parsed = parseLinuxNetworkState({ ...sources, wireless, iwLinks, managedDevices: new Set(['eth0']) });
 		expect(byID(parsed, 'eth0').medium).toBe('wireless');
+		expect(byID(parsed, 'eth0').wifiConfigurable).toBe(true);
 		expect(byID(parsed, 'eth0').wifi).toEqual({ ssid: 'Example Net', signal: 90, radio: 'unknown' });
+	});
+
+	it('keeps a wireless device read-only when NetworkManager reports it unmanaged', () => {
+		const parsed = parseLinuxNetworkState({ ...sources, wireless: new Set(['eth0']), managedDevices: new Set() });
+		expect(byID(parsed, 'eth0')).toMatchObject({ medium: 'wireless', wifiConfigurable: false });
 	});
 
 	it('leaves a wireless interface with no iw output at unknown rather than guessing', () => {
@@ -439,8 +466,8 @@ describe('prefixFromNetmask', () => {
 
 describe('resolvePrimaryID', () => {
 	const list: NetInterfaceInfo[] = [
-		{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, gateway: null, dns: [] },
-		{ id: 'b', name: 'b', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, gateway: null, dns: [] },
+		{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, wifiConfigurable: false, gateway: null, dns: [] },
+		{ id: 'b', name: 'b', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, wifiConfigurable: false, gateway: null, dns: [] },
 	];
 
 	it('honours a pick that still exists', () => {
@@ -452,7 +479,7 @@ describe('resolvePrimaryID', () => {
 	});
 
 	it('falls back when the saved virtual interface is no longer selectable', () => {
-		const hidden: NetInterfaceInfo = { id: 'hidden', name: 'hidden', medium: 'other', link: 'unknown', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, gateway: null, dns: [] };
+		const hidden: NetInterfaceInfo = { id: 'hidden', name: 'hidden', medium: 'other', link: 'unknown', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, wifiConfigurable: false, gateway: null, dns: [] };
 		expect(resolvePrimaryID([...list, hidden], hidden.id)).toBe('b');
 	});
 
@@ -465,8 +492,25 @@ describe('resolvePrimaryID', () => {
 	});
 });
 
+describe('assertWifiConfigurableInterface', () => {
+	const unmanaged: NetInterfaceInfo = { id: 'wlan0', name: 'wlan0', medium: 'wireless', link: 'down', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, wifiConfigurable: false, gateway: null, dns: [] };
+
+	it('rejects an unmanaged wireless device with the API unsupported code', () => {
+		try {
+			assertWifiConfigurableInterface([unmanaged], unmanaged.id);
+			expect.unreachable();
+		} catch (error) {
+			expect((error as { code?: string }).code).toBe(ErrorCodes.NETCONFIG_UNSUPPORTED);
+		}
+	});
+
+	it('accepts a managed device even while it is disconnected', () => {
+		expect(() => assertWifiConfigurableInterface([{ ...unmanaged, wifiConfigurable: true }], unmanaged.id)).not.toThrow();
+	});
+});
+
 describe('assertReadProducedSomething', () => {
-	const list: NetInterfaceInfo[] = [{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, gateway: null, dns: [] }];
+	const list: NetInterfaceInfo[] = [{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, wifiConfigurable: false, gateway: null, dns: [] }];
 
 	it('passes a non-empty read straight through', () => {
 		expect(assertReadProducedSomething(list)).toBe(list);
@@ -501,8 +545,8 @@ describe('NetworkStateCache invalidation', () => {
 		const freshRead = new Promise<NetworkSnapshot>(resolve => (resolveFresh = resolve));
 		let reads = 0;
 		const cache = new NetworkStateCache(() => (++reads === 1 ? oldRead : freshRead), 60_000);
-		const oldSnapshot = { interfaces: [{ id: 'old', name: 'old', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'dhcp', ipv4Configurable: true, gateway: null, dns: [] }], detail: 'full' } as NetworkSnapshot;
-		const freshSnapshot = { interfaces: [{ id: 'fresh', name: 'fresh', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'static', ipv4Configurable: true, gateway: null, dns: [] }], detail: 'full' } as NetworkSnapshot;
+		const oldSnapshot = { interfaces: [{ id: 'old', name: 'old', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'dhcp', ipv4Configurable: true, wifiConfigurable: false, gateway: null, dns: [] }], detail: 'full' } as NetworkSnapshot;
+		const freshSnapshot = { interfaces: [{ id: 'fresh', name: 'fresh', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'static', ipv4Configurable: true, wifiConfigurable: false, gateway: null, dns: [] }], detail: 'full' } as NetworkSnapshot;
 
 		const staleCaller = cache.read();
 		cache.reset();

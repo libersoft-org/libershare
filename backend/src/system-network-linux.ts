@@ -70,8 +70,17 @@ export interface LinuxNetworkSources {
 	nmDns?: Map<string, string[]> | undefined;
 	/** Active NetworkManager profile UUIDs by device. Only these devices can be edited. */
 	activeConnections?: Map<string, string> | undefined;
-	/** Exact `ipv4.method` of each active NetworkManager profile, keyed by device. */
-	ipv4Methods?: Map<string, string> | undefined;
+	/** IPv4 settings of each active NetworkManager profile, keyed by device. */
+	ipv4Profiles?: Map<string, NmcliIPv4Profile> | undefined;
+	/** Devices NetworkManager explicitly reports as managed, active or disconnected. */
+	managedDevices?: Set<string> | undefined;
+}
+
+/** The profile fields required to decide whether the simple editor can preserve it. */
+export interface NmcliIPv4Profile {
+	method: string;
+	gateway: string | null;
+	safe: boolean;
 }
 
 /**
@@ -205,11 +214,12 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 		const link = linkByName.get(entry.ifname);
 		const wireless = sources.wireless?.has(entry.ifname) ?? false;
 		const interfaceRoutes = routesByDevice.get(entry.ifname) ?? [];
-		const managed = sources.activeConnections?.has(entry.ifname) ?? false;
+		const activeProfile = sources.ipv4Profiles?.get(entry.ifname);
+		const managed = sources.activeConnections?.has(entry.ifname) === true && activeProfile !== undefined;
 		// Kernel address flags cannot distinguish manual addressing from shared,
 		// link-local or disabled NetworkManager profiles. Only auto/manual are safe
 		// for this editor to round-trip; every other managed method stays read-only.
-		const ipv4Mode = managed ? parseNmcliIPv4Method(sources.ipv4Methods?.get(entry.ifname) ?? '') : kernelIPv4Mode;
+		const ipv4Mode = managed ? parseNmcliIPv4Method(activeProfile.method) : kernelIPv4Mode;
 		const info: NetInterfaceInfo = {
 			id: entry.ifname,
 			name: entry.ifname,
@@ -219,8 +229,9 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 			mac: entry.address ?? link?.address ?? null,
 			addresses,
 			ipv4Mode,
-			ipv4Configurable: managed && ipv4Mode !== 'unknown' && addresses.filter(address => address.family === 'ipv4').length <= 1 && interfaceRoutes.length <= 1,
-			gateway: interfaceRoutes[0]?.gateway ?? null,
+			ipv4Configurable: managed && activeProfile.safe && ipv4Mode !== 'unknown' && addresses.filter(address => address.family === 'ipv4').length <= 1 && interfaceRoutes.length <= 1,
+			wifiConfigurable: wireless && sources.managedDevices?.has(entry.ifname) === true,
+			gateway: interfaceRoutes[0]?.gateway ?? activeProfile?.gateway ?? null,
 			// NetworkManager knows the resolvers PER LINK, which is the only correct
 			// answer on a systemd-resolved host: there /etc/resolv.conf holds the
 			// 127.0.0.53 stub, so reporting it would show every machine the same
@@ -341,8 +352,8 @@ export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
 			// rather than being guessed from anything else.
 		}
 	}
-	const [nmDns, profiles] = await Promise.all([readNetworkManagerDns(), readNetworkManagerProfiles()]);
-	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns, activeConnections: profiles?.connections, ipv4Methods: profiles?.ipv4Methods });
+	const [nmDevices, profiles] = await Promise.all([readNetworkManagerDevices(), readNetworkManagerProfiles()]);
+	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: nmDevices?.dns, activeConnections: profiles?.connections, ipv4Profiles: profiles?.ipv4Profiles, managedDevices: nmDevices?.managedDevices });
 }
 
 /**
@@ -443,9 +454,10 @@ export async function readLinuxCapabilities(): Promise<NetCapabilities> {
  * so the caller can tell "NM says this link has no resolvers" apart from "there
  * is no NM to ask" and fall back to /etc/resolv.conf only in the latter case.
  */
-async function readNetworkManagerDns(): Promise<Map<string, string[]> | undefined> {
+async function readNetworkManagerDevices(): Promise<{ dns: Map<string, string[]>; managedDevices: Set<string> } | undefined> {
 	try {
-		return parseNmcliDns(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'GENERAL.DEVICE,IP4.DNS,IP6.DNS', 'device', 'show']));
+		const text = await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'GENERAL.DEVICE,GENERAL.NM-MANAGED,IP4.DNS,IP6.DNS', 'device', 'show']);
+		return { dns: parseNmcliDns(text), managedDevices: parseNmcliManagedDevices(text) };
 	} catch {
 		return undefined;
 	}
@@ -456,8 +468,8 @@ async function readNetworkManagerDns(): Promise<Map<string, string[]> | undefine
  *
  * Output is one blank-line-separated block per device: a `GENERAL.DEVICE` line
  * followed by zero or more `IP4.DNS[n]` lines. A device with no resolvers still
- * gets an entry (an empty array), which is what lets the caller distinguish it
- * from a device NetworkManager does not manage at all.
+ * gets an entry with an empty array so callers can distinguish it from a missing
+ * read. Whether NetworkManager manages the device is parsed separately.
  */
 export function parseNmcliDns(text: string): Map<string, string[]> {
 	const result = new Map<string, string[]>();
@@ -475,6 +487,20 @@ export function parseNmcliDns(text: string): Map<string, string[]> {
 		} else if (device && (key.startsWith('IP4.DNS') || key.startsWith('IP6.DNS'))) {
 			if (value) result.get(device)?.push(value);
 		}
+	}
+	return result;
+}
+
+/** Parse the devices NetworkManager owns independently of connection state. */
+export function parseNmcliManagedDevices(text: string): Set<string> {
+	const result = new Set<string>();
+	let device: string | null = null;
+	for (const line of text.split('\n')) {
+		const fields = splitNmcliFields(line.trim());
+		const key = fields[0];
+		const value = fields.slice(1).join(':');
+		if (key === 'GENERAL.DEVICE') device = value || null;
+		else if (key === 'GENERAL.NM-MANAGED' && device && value.trim().toLowerCase() === 'yes') result.add(device);
 	}
 	return result;
 }
@@ -498,18 +524,36 @@ export function parseNmcliIPv4Method(text: string): NetInterfaceInfo['ipv4Mode']
 	return 'unknown';
 }
 
+/** Accept only a plain profile the editor can replace without preserving hidden routing policy. */
+export function parseNmcliIPv4Profile(text: string): NmcliIPv4Profile {
+	const values = new Map<string, string>();
+	for (const line of text.split('\n')) {
+		const fields = splitNmcliFields(line.trim());
+		const key = fields[0]?.toLowerCase();
+		if (key) values.set(key, fields.slice(1).join(':').trim());
+	}
+	const method = values.get('ipv4.method') ?? '';
+	const gatewayText = values.get('ipv4.gateway') ?? '';
+	const addresses = values.get('ipv4.addresses') ?? '';
+	const addressMatch = addresses.match(/^([^/]+)\/(\d{1,2})$/);
+	const simpleManualAddress = !!addressMatch && isIPv4(addressMatch[1] ?? '') && Number(addressMatch[2]) >= 0 && Number(addressMatch[2]) <= 32;
+	const knownMethod = method === 'auto' || method === 'manual';
+	const safe = knownMethod && values.get('ipv4.never-default') === 'no' && (values.get('ipv4.routes') ?? '') === '' && ['', '0'].includes(values.get('ipv4.route-table') ?? '') && (values.get('ipv4.routing-rules') ?? '') === '' && (gatewayText === '' || isIPv4(gatewayText)) && (method === 'auto' ? addresses === '' && gatewayText === '' : simpleManualAddress);
+	return { method, gateway: gatewayText || null, safe };
+}
+
 /** Active profiles and their exact IPv4 method. Any incomplete read stays read-only. */
-async function readNetworkManagerProfiles(): Promise<{ connections: Map<string, string>; ipv4Methods: Map<string, string> } | undefined> {
+async function readNetworkManagerProfiles(): Promise<{ connections: Map<string, string>; ipv4Profiles: Map<string, NmcliIPv4Profile> } | undefined> {
 	try {
 		const connections = await activeConnections();
-		const ipv4Methods = new Map<string, string>();
+		const ipv4Profiles = new Map<string, NmcliIPv4Profile>();
 		await Promise.all(
 			[...connections].map(async ([device, uuid]) => {
-				const method = await runFirst(NMCLI_CANDIDATES, ['-g', 'ipv4.method', 'connection', 'show', 'uuid', uuid]);
-				ipv4Methods.set(device, method.trim());
+				const profile = await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'ipv4.method,ipv4.never-default,ipv4.gateway,ipv4.addresses,ipv4.routes,ipv4.route-table,ipv4.routing-rules', 'connection', 'show', 'uuid', uuid]);
+				ipv4Profiles.set(device, parseNmcliIPv4Profile(profile));
 			})
 		);
-		return { connections, ipv4Methods };
+		return { connections, ipv4Profiles };
 	} catch {
 		return undefined;
 	}
@@ -640,7 +684,24 @@ export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addr
 		await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connectionUUID, config, addressingChanged), NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS);
 		const activate = addressingChanged ? nmcliActivateArgs(connectionUUID) : ['device', 'reapply', device];
 		await runFirst(NMCLI_CANDIDATES, ['--wait', String(NMCLI_ACTIVATION_WAIT_SECONDS), ...activate], NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
+		if (addressingChanged) {
+			const [method, addr, route] = await Promise.all([runFirst(NMCLI_CANDIDATES, ['-g', 'ipv4.method', 'connection', 'show', 'uuid', connectionUUID]), runFirst(IP_CANDIDATES, ['-j', 'addr', 'show', 'dev', device]), runFirst(IP_CANDIDATES, ['-j', 'route', 'show', 'default', 'dev', device])]);
+			assertLinuxIPv4Applied(config, method, addr, route);
+		}
 	});
+}
+
+/** Verify the live address and route before committing the NetworkManager checkpoint. */
+export function assertLinuxIPv4Applied(config: NetIPv4Config, methodText: string, addrJson: string, routeJson: string): void {
+	const expectedMethod = config.mode === 'dhcp' ? 'auto' : 'manual';
+	if (methodText.trim() !== expectedMethod) throw new Error('NetworkManager did not preserve the requested IPv4 method');
+	if (config.mode === 'dhcp') return;
+	const addresses = (JSON.parse(addrJson) as IpAddrEntry[]).flatMap(entry => entry.addr_info ?? []).filter(address => address.family === 'inet');
+	if (addresses.length !== 1 || addresses[0]?.local !== config.address || addresses[0]?.prefixlen !== config.prefixLength) throw new Error('NetworkManager did not apply the requested IPv4 address');
+	const routes = JSON.parse(routeJson) as IpRouteEntry[];
+	if (config.gateway) {
+		if (routes.length !== 1 || routes[0]?.gateway !== config.gateway) throw new Error('NetworkManager did not apply the requested IPv4 gateway');
+	} else if (routes.length !== 0) throw new Error('NetworkManager kept an unexpected default route');
 }
 
 /**

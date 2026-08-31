@@ -12,6 +12,7 @@ const iface: NetInterfaceInfo = {
 	addresses: [{ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 }],
 	ipv4Mode: 'dhcp',
 	ipv4Configurable: true,
+	wifiConfigurable: false,
 	gateway: '192.0.2.1',
 	dns: ['192.0.2.53', '2001:db8::53', '127.0.0.1'],
 };
@@ -50,10 +51,11 @@ describe('network configuration form', () => {
 	});
 
 	it('opens disconnected Wi-Fi controls independently of IPv4 editing', () => {
-		const disconnectedWifi = { ...iface, medium: 'wireless' as const, link: 'down' as const, ipv4Mode: 'unknown' as const, ipv4Configurable: false };
+		const disconnectedWifi = { ...iface, medium: 'wireless' as const, link: 'down' as const, ipv4Mode: 'unknown' as const, ipv4Configurable: false, wifiConfigurable: true };
 		expect(canOpenNetworkConfig(disconnectedWifi, { ipv4: true, wifi: true, staticGatewayRequired: false }, 'full')).toBe(true);
 		expect(canOpenNetworkConfig(disconnectedWifi, { ipv4: true, wifi: false, staticGatewayRequired: false }, 'full')).toBe(false);
 		expect(canOpenNetworkConfig(disconnectedWifi, { ipv4: true, wifi: true, staticGatewayRequired: false }, 'addressesOnly')).toBe(false);
+		expect(canOpenNetworkConfig({ ...disconnectedWifi, wifiConfigurable: false }, { ipv4: true, wifi: true, staticGatewayRequired: false }, 'full')).toBe(false);
 	});
 
 	it('shows Automatic when the saved primary interface no longer exists', () => {

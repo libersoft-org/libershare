@@ -336,6 +336,7 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 			addresses,
 			ipv4Mode,
 			ipv4Configurable: routeDetailKnown && services.has(device) && ipv4Mode !== 'unknown' && (ipv4Mode !== 'static' || serviceGateway !== null) && ipv4Addresses.length <= 1 && deviceRoutes.length <= 1,
+			wifiConfigurable: false,
 			gateway,
 			// Manually set servers win; otherwise fall back to what the DHCP lease
 			// handed out, so a DHCP link reports the resolvers it actually uses.

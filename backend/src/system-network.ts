@@ -18,7 +18,7 @@ const execFileAsync = promisify(execFile);
  *  - IPv4 (address, gateway, DNS) applies on Windows, on a Linux host running
  *    NetworkManager, and on macOS. All three need privileges, and each answers
  *    that question differently — an elevated token on Windows, a polkit verdict
- *    of `yes` on Linux, membership of the `admin` group on macOS. The answer is
+ *    of `yes` on Linux, and an effective root process on macOS. The answer is
  *    probed once and cached, so the UI can hide an edit the process could never
  *    complete instead of letting the user discover it when Save fails.
  *  - Wi-Fi scan/join applies on Linux only. See system-network-windows.ts and
@@ -149,7 +149,7 @@ export function readGenericInterfaces(): NetInterfaceInfo[] {
 			prefixLength: prefixFromNetmask(e.netmask, e.family === 'IPv4'),
 		}));
 		const mac = usable.find(e => e.mac && e.mac !== '00:00:00:00:00:00')?.mac ?? null;
-		result.push({ id: name, name, medium: 'other', link: 'unknown', defaultRoute: false, mac, addresses, ipv4Mode: 'unknown', ipv4Configurable: false, gateway: null, dns: [] });
+		result.push({ id: name, name, medium: 'other', link: 'unknown', defaultRoute: false, mac, addresses, ipv4Mode: 'unknown', ipv4Configurable: false, wifiConfigurable: false, gateway: null, dns: [] });
 	}
 	return result;
 }
@@ -374,10 +374,17 @@ export function isValidWifiPassword(password: unknown): password is string {
 async function assertWirelessInterface(interfaceID: string): Promise<void> {
 	const supported = await readCapabilities();
 	if (!supported.wifi) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host cannot configure Wi-Fi');
+	resetNetworkStateCache();
 	const state = await readNetworkState();
-	const target = state.interfaces.find(i => i.id === interfaceID);
+	assertWifiConfigurableInterface(state.interfaces, interfaceID);
+}
+
+/** Recheck the exact device at the API boundary; global host capability is not enough. */
+export function assertWifiConfigurableInterface(interfaces: NetInterfaceInfo[], interfaceID: string): void {
+	const target = interfaces.find(i => i.id === interfaceID);
 	if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
 	if (target.medium !== 'wireless') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'not a wireless interface');
+	if (!target.wifiConfigurable) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi interface is not managed by NetworkManager');
 }
 
 /**

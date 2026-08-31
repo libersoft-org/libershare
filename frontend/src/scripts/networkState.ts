@@ -15,6 +15,17 @@ export const connectionStatus: Readable<ConnectionStatus> = derived(networkState
 
 let handlersRegistered = false;
 
+/** A rejected subscribe must never become an unhandled promise on startup. */
+export async function subscribeNetworkState(subscribe: () => Promise<unknown> = () => api.subscribe('system:network')): Promise<boolean> {
+	try {
+		await subscribe();
+		return true;
+	} catch (error) {
+		console.error('[NetworkState] Error subscribing to network state:', error);
+		return false;
+	}
+}
+
 /** Subscribe to network-state broadcasts and take one immediate snapshot. */
 export async function initNetworkState(): Promise<void> {
 	if (!handlersRegistered) {
@@ -23,11 +34,12 @@ export async function initNetworkState(): Promise<void> {
 			networkState.set(data);
 		});
 	}
-	api.subscribe('system:network');
+	const subscribed = await subscribeNetworkState();
 	// The backend only broadcasts every 10 s, so without this the widget would sit
 	// on "unknown" for up to that long after every (re)connect.
 	try {
 		await refreshNetworkState();
+		if (!subscribed) networkState.update(state => ({ ...state, known: false }));
 	} catch (error) {
 		console.error('[NetworkState] Error loading network state:', error);
 		// The snapshot we still hold predates a backend restart or a failed read, so

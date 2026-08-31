@@ -3,7 +3,7 @@ import { isSelectableInterface, type NetInterfaceInfo } from '@shared';
 
 /** An interface with only the fields a case cares about spelled out. */
 function iface(overrides: Partial<NetInterfaceInfo> & { id: string }): NetInterfaceInfo {
-	return { name: overrides.id, medium: 'other', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, gateway: null, dns: [], ...overrides };
+	return { name: overrides.id, medium: 'other', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, wifiConfigurable: false, gateway: null, dns: [], ...overrides };
 }
 
 const address = (a: string, family: 'ipv4' | 'ipv6' = 'ipv4'): NetInterfaceInfo['addresses'][number] => ({ family, address: a, prefixLength: 24 });

@@ -451,6 +451,8 @@ export interface NetInterfaceInfo {
 	ipv4Mode: NetAddressMode;
 	/** True only when the platform apply path can resolve this exact interface. */
 	ipv4Configurable: boolean;
+	/** True only when the platform Wi-Fi path manages this exact wireless device. */
+	wifiConfigurable: boolean;
 	gateway: string | null;
 	dns: string[];
 	/** Present only when medium === 'wireless'. */

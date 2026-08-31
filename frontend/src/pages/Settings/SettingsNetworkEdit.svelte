@@ -22,7 +22,7 @@
 
 	let iface = $derived($networkState.interfaces.find(i => i.id === interfaceID));
 	let canEditIPv4 = $derived(!!iface && iface.ipv4Configurable && $networkState.capabilities.ipv4);
-	let canEditWifi = $derived(!!iface && iface.medium === 'wireless' && $networkState.capabilities.wifi);
+	let canEditWifi = $derived(!!iface && iface.wifiConfigurable && $networkState.capabilities.wifi);
 
 	let mode = $state<NetAddressMode>('unknown');
 	let address = $state('');

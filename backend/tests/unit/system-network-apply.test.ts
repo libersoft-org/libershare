@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { isIPv4, isIPv6, isValidSSID, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { assertNetworkManagerRollback, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
+import { assertLinuxIPv4Applied, assertNetworkManagerRollback, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { assertDeviceName, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, runNetworkMutation } from '../../src/system-network.ts';
 
@@ -95,6 +95,7 @@ describe('isIPv4ConfigUnchanged', () => {
 		addresses: [{ family: 'ipv4' as const, address: '192.0.2.10', prefixLength: 24 }],
 		ipv4Mode: 'static' as const,
 		ipv4Configurable: true,
+		wifiConfigurable: false,
 		gateway: '192.0.2.1',
 		dns: ['2001:db8::53'],
 	};
@@ -271,6 +272,28 @@ describe('parseNmcliIPv4Method', () => {
 	});
 });
 
+describe('parseNmcliIPv4Profile', () => {
+	const plain = ['ipv4.method:auto', 'ipv4.never-default:no', 'ipv4.gateway:', 'ipv4.addresses:', 'ipv4.routes:', 'ipv4.route-table:0', 'ipv4.routing-rules:'].join('\n');
+
+	it('accepts only plain automatic or single-address manual profiles', () => {
+		expect(parseNmcliIPv4Profile(plain)).toEqual({ method: 'auto', gateway: null, safe: true });
+		expect(parseNmcliIPv4Profile(plain.replace('ipv4.method:auto', 'ipv4.method:manual').replace('ipv4.gateway:', 'ipv4.gateway:192.0.2.1').replace('ipv4.addresses:', 'ipv4.addresses:192.0.2.10/24'))).toEqual({ method: 'manual', gateway: '192.0.2.1', safe: true });
+	});
+
+	it('rejects routing policy and address shapes the editor cannot preserve', () => {
+		for (const unsafe of [plain.replace('ipv4.never-default:no', 'ipv4.never-default:yes'), plain.replace('ipv4.routes:', 'ipv4.routes:0.0.0.0/0 192.0.2.254'), plain.replace('ipv4.route-table:0', 'ipv4.route-table:100'), plain.replace('ipv4.routing-rules:', 'ipv4.routing-rules:priority 100 from 192.0.2.0/24'), plain.replace('ipv4.addresses:', 'ipv4.addresses:192.0.2.10/24')]) {
+			expect(parseNmcliIPv4Profile(unsafe).safe).toBe(false);
+		}
+	});
+});
+
+describe('parseNmcliManagedDevices', () => {
+	it('keeps managed and disconnected Wi-Fi devices distinct from unmanaged ones', () => {
+		const text = ['GENERAL.DEVICE:wlan0', 'GENERAL.NM-MANAGED:yes', '', 'GENERAL.DEVICE:wlan1', 'GENERAL.NM-MANAGED:no'].join('\n');
+		expect([...parseNmcliManagedDevices(text)]).toEqual(['wlan0']);
+	});
+});
+
 describe('parseNmcliDns', () => {
 	it('combines IPv4 and IPv6 resolvers for each device', () => {
 		const parsed = parseNmcliDns('GENERAL.DEVICE:eth0\nIP4.DNS[1]:192.0.2.53\nIP6.DNS[1]:2001:db8::53\nIP6.DNS[2]:2001\\:db8\\:\\:54\n');
@@ -349,6 +372,25 @@ describe('nmcliModifyArgs', () => {
 		const uuid = '11111111-1111-1111-1111-111111111111';
 		expect(nmcliModifyArgs(uuid, { mode: 'dhcp' }).slice(0, 4)).toEqual(['connection', 'modify', 'uuid', uuid]);
 		expect(nmcliActivateArgs(uuid)).toEqual(['connection', 'up', 'uuid', uuid]);
+	});
+});
+
+describe('assertLinuxIPv4Applied', () => {
+	const addr = JSON.stringify([{ ifname: 'eth0', addr_info: [{ family: 'inet', local: '192.0.2.10', prefixlen: 24 }] }]);
+	const route = JSON.stringify([{ dev: 'eth0', gateway: '192.0.2.1' }]);
+
+	it('confirms the requested live static address and gateway', () => {
+		expect(() => assertLinuxIPv4Applied({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }, 'manual\n', addr, route)).not.toThrow();
+	});
+
+	it('rejects a successful command whose live route does not match', () => {
+		expect(() => assertLinuxIPv4Applied({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }, 'manual', addr, JSON.stringify([{ dev: 'eth0', gateway: '192.0.2.254' }]))).toThrow('gateway');
+		expect(() => assertLinuxIPv4Applied({ mode: 'static', address: '192.0.2.10', prefixLength: 24 }, 'manual', addr, route)).toThrow('unexpected default route');
+	});
+
+	it('confirms DHCP from the persisted profile without inventing a lease', () => {
+		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', '[]', '[]')).not.toThrow();
+		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'manual\n', '[]', '[]')).toThrow('method');
 	});
 });
 
