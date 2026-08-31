@@ -43,6 +43,8 @@ describe('WINDOWS_STATE_COMMAND', () => {
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.MediaConnectionState');
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.Dhcp');
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.AddressState');
+		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.PrefixOrigin');
+		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.SuffixOrigin');
 	});
 
 	it('only queries — it contains no cmdlet that could change configuration', () => {
@@ -189,6 +191,18 @@ describe('parseWindowsNetworkState', () => {
 		const ethernet = byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet);
 		expect(ethernet.addresses).not.toContainEqual({ family: 'ipv4', address: '192.0.2.11', prefixLength: 24 });
 		expect(ethernet.ipv4Configurable).toBe(false);
+	});
+
+	it('allows DHCP recovery from a proven automatic APIPA address', () => {
+		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, any[]>;
+		const apipa = doc['addresses']!.find(row => row.ifIndex === 12 && row.IPAddress === '169.254.86.18');
+		apipa.PrefixOrigin = 2;
+		apipa.SuffixOrigin = 4;
+		expect(byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet4).ipv4Configurable).toBe(true);
+	});
+
+	it('keeps an APIPA address read-only when Windows does not prove automatic origin', () => {
+		expect(byID(result, ID.ethernet4).ipv4Configurable).toBe(false);
 	});
 
 	it('makes an adapter with unknown addressing mode and Wi-Fi Direct read-only', () => {

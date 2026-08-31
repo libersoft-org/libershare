@@ -46,6 +46,10 @@ const AF_INET = 2;
 const AF_INET6 = 23;
 // AddressState (Get-NetIPAddress): 0 Invalid, 1 Tentative, 2 Duplicate, 3 Deprecated, 4 Preferred.
 const ADDRESS_STATE_PREFERRED = 4;
+// PrefixOrigin: 2 = WellKnown. SuffixOrigin: 4 = LinkLayerAddress.
+// This exact pair identifies Windows' automatic IPv4 link-local fallback.
+const PREFIX_ORIGIN_WELL_KNOWN = 2;
+const SUFFIX_ORIGIN_LINK_LAYER = 4;
 /** Windows' empty automatic-DNS sentinel addresses, not usable resolvers. */
 const AUTOMATIC_DNS_PLACEHOLDERS = new Set(['fec0:0:0:ffff::1', 'fec0:0:0:ffff::2', 'fec0:0:0:ffff::3']);
 // NetIPInterface.Dhcp: 0 Disabled, 1 Enabled. NOTE the opposite convention to
@@ -60,7 +64,7 @@ const DHCP_ENABLED = 1;
  * because Windows PowerShell serializes an empty array inside a calculated
  * property as `{}` and a one-element array as a bare string.
  */
-export const WINDOWS_STATE_COMMAND: string = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', "$adapters = @(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Select-Object ifIndex, Name, InterfaceGuid, MacAddress, @{n='Media';e={[int]$_.NdisPhysicalMedium}}, @{n='IfType';e={[int]$_.InterfaceType}}, @{n='Hidden';e={[int]$_.Hidden}}, @{n='State';e={[int]$_.MediaConnectionState}})", "$addresses = @(Get-NetIPAddress -ErrorAction Stop | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}})", "$interfaces = @(Get-NetIPInterface -ErrorAction Stop | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, @{n='Dhcp';e={[int]$_.Dhcp}})", "$routes = @(Get-NetRoute -ErrorAction Stop | Where-Object DestinationPrefix -eq '0.0.0.0/0' | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric)", "$dns = @(Get-DnsClientServerAddress -ErrorAction Stop | Select-Object InterfaceIndex, @{n='Servers';e={($_.ServerAddresses -join ',')}})", '[pscustomobject]@{adapters=$adapters; addresses=$addresses; interfaces=$interfaces; routes=$routes; dns=$dns} | ConvertTo-Json -Depth 6 -Compress'].join('; ');
+export const WINDOWS_STATE_COMMAND: string = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', "$adapters = @(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Select-Object ifIndex, Name, InterfaceGuid, MacAddress, @{n='Media';e={[int]$_.NdisPhysicalMedium}}, @{n='IfType';e={[int]$_.InterfaceType}}, @{n='Hidden';e={[int]$_.Hidden}}, @{n='State';e={[int]$_.MediaConnectionState}})", "$addresses = @(Get-NetIPAddress -ErrorAction Stop | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}}, @{n='PrefixOrigin';e={[int]$_.PrefixOrigin}}, @{n='SuffixOrigin';e={[int]$_.SuffixOrigin}})", "$interfaces = @(Get-NetIPInterface -ErrorAction Stop | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, @{n='Dhcp';e={[int]$_.Dhcp}})", "$routes = @(Get-NetRoute -ErrorAction Stop | Where-Object DestinationPrefix -eq '0.0.0.0/0' | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric)", "$dns = @(Get-DnsClientServerAddress -ErrorAction Stop | Select-Object InterfaceIndex, @{n='Servers';e={($_.ServerAddresses -join ',')}})", '[pscustomobject]@{adapters=$adapters; addresses=$addresses; interfaces=$interfaces; routes=$routes; dns=$dns} | ConvertTo-Json -Depth 6 -Compress'].join('; ');
 
 interface WindowsAdapterRow {
 	ifIndex: number;
@@ -80,6 +84,9 @@ interface WindowsAddressRow {
 	IPAddress: string;
 	PrefixLength: number;
 	State: number;
+	/** Optional so state documents captured before origin projection still parse. */
+	PrefixOrigin?: number;
+	SuffixOrigin?: number;
 }
 interface WindowsInterfaceRow {
 	ifIndex: number;
@@ -111,6 +118,11 @@ function asArray<T>(value: unknown): T[] {
  */
 function isUnusableAddress(address: string): boolean {
 	return address.startsWith('169.254.') || address.startsWith('127.') || address === '::1';
+}
+
+/** Automatic APIPA may be ignored for edit-safety only when Windows proves its origin. */
+function isAutomaticApipa(row: WindowsAddressRow): boolean {
+	return row.IPAddress.startsWith('169.254.') && row.PrefixOrigin === PREFIX_ORIGIN_WELL_KNOWN && row.SuffixOrigin === SUFFIX_ORIGIN_LINK_LAYER;
 }
 
 /**
@@ -174,8 +186,12 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 
 	const addressesByIndex = new Map<number, NetAddress[]>();
 	const ipv4RowsByIndex = new Map<number, number>();
+	const automaticApipaByIndex = new Map<number, number>();
 	for (const row of addresses) {
-		if (row.Family === AF_INET) ipv4RowsByIndex.set(row.ifIndex, (ipv4RowsByIndex.get(row.ifIndex) ?? 0) + 1);
+		if (row.Family === AF_INET) {
+			ipv4RowsByIndex.set(row.ifIndex, (ipv4RowsByIndex.get(row.ifIndex) ?? 0) + 1);
+			if (isAutomaticApipa(row)) automaticApipaByIndex.set(row.ifIndex, (automaticApipaByIndex.get(row.ifIndex) ?? 0) + 1);
+		}
 		if (row.State !== ADDRESS_STATE_PREFERRED) continue;
 		const family = row.Family === AF_INET ? 'ipv4' : row.Family === AF_INET6 ? 'ipv6' : null;
 		if (!family) continue;
@@ -234,6 +250,7 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 		const interfaceAddresses = addressesByIndex.get(ifIndex) ?? [];
 		const interfaceRoutes = routesByIndex.get(ifIndex) ?? [];
 		const ipv4Mode = dhcpByIndex.get(ifIndex) ?? 'unknown';
+		const ipv4RowCount = (ipv4RowsByIndex.get(ifIndex) ?? 0) - (ipv4Mode === 'dhcp' ? (automaticApipaByIndex.get(ifIndex) ?? 0) : 0);
 		const radio = medium === 'wireless' && guid ? wifi.get(guid) : undefined;
 		const info: NetInterfaceInfo = {
 			// The GUID (registry NetCfgInstanceId) survives reboots and adapter
@@ -248,7 +265,7 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 			mac: mac && mac.length > 0 ? mac : null,
 			addresses: interfaceAddresses,
 			ipv4Mode,
-			ipv4Configurable: guid !== null && ipv4Mode !== 'unknown' && (ipv4RowsByIndex.get(ifIndex) ?? 0) === interfaceAddresses.filter(address => address.family === 'ipv4').length && (ipv4RowsByIndex.get(ifIndex) ?? 0) <= 1 && interfaceRoutes.length <= 1 && (medium !== 'wireless' || radio !== undefined),
+			ipv4Configurable: guid !== null && ipv4Mode !== 'unknown' && ipv4RowCount === interfaceAddresses.filter(address => address.family === 'ipv4').length && ipv4RowCount <= 1 && interfaceRoutes.length <= 1 && (medium !== 'wireless' || radio !== undefined),
 			gateway: interfaceRoutes[0]?.NextHop ?? null,
 			dns: dnsByIndex.get(ifIndex) ?? [],
 		};
@@ -462,7 +479,7 @@ export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config, add
 	const dnsStep = config.dns === undefined ? null : config.dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${config.dns.map(server => `'${server}'`).join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses';
 	if (!addressingChanged) return [...prefix, ...(dnsStep ? [dnsStep] : [])].join('; ');
 
-	const snapshot = ['$oldAddresses = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $i })', "$oldRoutes = @(Get-NetRoute -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $i -and $_.DestinationPrefix -eq '0.0.0.0/0' })", '$oldDhcp = (Get-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop).Dhcp', '$oldDns = @((Get-DnsClientServerAddress -InterfaceIndex $i -ErrorAction Stop).ServerAddresses | Where-Object { $_ })', '$dnsKey4 = "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)"', '$dnsKey6 = "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)"', '$oldDnsNameServer4 = [string](Get-ItemProperty -LiteralPath $dnsKey4 -ErrorAction SilentlyContinue).NameServer', '$oldDnsNameServer6 = [string](Get-ItemProperty -LiteralPath $dnsKey6 -ErrorAction SilentlyContinue).NameServer', '$oldDnsAutomatic = [string]::IsNullOrWhiteSpace($oldDnsNameServer4) -and [string]::IsNullOrWhiteSpace($oldDnsNameServer6)'];
+	const snapshot = ['$oldAddresses = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $i })', "$oldRoutes = @(Get-NetRoute -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $i -and $_.DestinationPrefix -eq '0.0.0.0/0' })", '$oldDhcp = (Get-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop).Dhcp', '$oldDns4 = @(Get-DnsClientServerAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop)', '$oldDns6 = @(Get-DnsClientServerAddress -InterfaceIndex $i -AddressFamily IPv6 -ErrorAction Stop)', 'if ($oldDns4.Count -eq 0 -or $oldDns6.Count -eq 0) { throw "DNS state is incomplete" }', '$oldDnsServers4 = @($oldDns4.ServerAddresses | Where-Object { $_ })', '$oldDnsServers6 = @($oldDns6.ServerAddresses | Where-Object { $_ })', '$dnsKey4 = "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)"', '$dnsKey6 = "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)"', '$oldDnsNameServer4 = [string](Get-ItemProperty -LiteralPath $dnsKey4 -ErrorAction SilentlyContinue).NameServer', '$oldDnsNameServer6 = [string](Get-ItemProperty -LiteralPath $dnsKey6 -ErrorAction SilentlyContinue).NameServer', '$oldDnsAutomatic4 = [string]::IsNullOrWhiteSpace($oldDnsNameServer4)', '$oldDnsAutomatic6 = [string]::IsNullOrWhiteSpace($oldDnsNameServer6)'];
 	const apply = ['if ($oldAddresses.Count -gt 0) { $oldAddresses | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop }', 'if ($oldRoutes.Count -gt 0) { $oldRoutes | Remove-NetRoute -Confirm:$false -ErrorAction Stop }'];
 	if (config.mode === 'dhcp') {
 		apply.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled');
@@ -471,7 +488,7 @@ export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config, add
 		if (config.gateway) apply.push(`$routeMetric = ($oldRoutes | Select-Object -First 1).RouteMetric; if ($null -eq $routeMetric) { New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop ${config.gateway} | Out-Null } else { New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop ${config.gateway} -RouteMetric $routeMetric | Out-Null }`);
 	}
 	if (dnsStep) apply.push(dnsStep);
-	const rollback = ['$applyError = $_', 'try {', '$currentAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue); if ($currentAddresses.Count -gt 0) { $currentAddresses | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop }', "$currentRoutes = @(Get-NetRoute -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.DestinationPrefix -eq '0.0.0.0/0' }); if ($currentRoutes.Count -gt 0) { $currentRoutes | Remove-NetRoute -Confirm:$false -ErrorAction Stop }", 'if ($oldDhcp -eq "Enabled") { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled } else { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled; foreach ($address in $oldAddresses) { New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $address.IPAddress -PrefixLength $address.PrefixLength | Out-Null }; foreach ($route in $oldRoutes) { New-NetRoute -InterfaceIndex $i -DestinationPrefix $route.DestinationPrefix -NextHop $route.NextHop -RouteMetric $route.RouteMetric | Out-Null } }', 'if ($oldDnsAutomatic) { Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses } else { Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $oldDns }', '} catch { throw "network apply failed: $($applyError.Exception.Message); rollback failed: $($_.Exception.Message)" }', 'throw $applyError'];
+	const rollback = ['$applyError = $_', 'try {', '$currentAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue); if ($currentAddresses.Count -gt 0) { $currentAddresses | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop }', "$currentRoutes = @(Get-NetRoute -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.DestinationPrefix -eq '0.0.0.0/0' }); if ($currentRoutes.Count -gt 0) { $currentRoutes | Remove-NetRoute -Confirm:$false -ErrorAction Stop }", 'if ($oldDhcp -eq "Enabled") { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled } else { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled; foreach ($address in $oldAddresses) { New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $address.IPAddress -PrefixLength $address.PrefixLength | Out-Null }; foreach ($route in $oldRoutes) { New-NetRoute -InterfaceIndex $i -DestinationPrefix $route.DestinationPrefix -NextHop $route.NextHop -RouteMetric $route.RouteMetric | Out-Null } }', 'if ($oldDnsAutomatic4) { Set-DnsClientServerAddress -InputObject $oldDns4 -ResetServerAddresses } else { Set-DnsClientServerAddress -InputObject $oldDns4 -ServerAddresses $oldDnsServers4 }', 'if ($oldDnsAutomatic6) { Set-DnsClientServerAddress -InputObject $oldDns6 -ResetServerAddresses } else { Set-DnsClientServerAddress -InputObject $oldDns6 -ServerAddresses $oldDnsServers6 }', '} catch { throw "network apply failed: $($applyError.Exception.Message); rollback failed: $($_.Exception.Message)" }', 'throw $applyError'];
 	return [...prefix, ...snapshot, `try { ${apply.join('; ')} } catch { ${rollback.join('; ')} }`].join('; ');
 }
 

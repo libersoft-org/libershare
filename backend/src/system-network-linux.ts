@@ -1,5 +1,4 @@
 import { execFile, spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { isIPv4, isIPv6 } from '@shared';
@@ -17,8 +16,9 @@ const C_LOCALE_ENV = { ...process.env, LC_ALL: 'C', LANG: 'C' };
  * ifupdown, systemd-networkd, NetworkManager or netplan.
  *
  * WRITING is the opposite: it has to go through the stack that owns the device,
- * so the apply half of this module speaks nmcli and refuses to act on a host
- * NetworkManager does not run. See {@link readLinuxCapabilities}.
+ * so the apply half of this module speaks to NetworkManager through nmcli and
+ * D-Bus, and refuses to act on a host it does not own. See
+ * {@link readLinuxCapabilities}.
  */
 
 /** Hard cap on how long any `ip`/`iw` child process may run before we give up. */
@@ -261,6 +261,46 @@ async function runFirst(candidates: string[], args: string[], timeoutMs: number 
 	throw lastError;
 }
 
+/** `execFile` cannot feed stdin; use this only for nmcli's password prompt. */
+async function runFirstWithInput(candidates: string[], args: string[], input: string, timeoutMs: number): Promise<string> {
+	let lastError: unknown = new Error(`no candidate found for ${args.join(' ')}`);
+	for (const bin of candidates) {
+		try {
+			return await new Promise<string>((resolve, reject) => {
+				const child = spawn(bin, args, { env: C_LOCALE_ENV, stdio: ['pipe', 'pipe', 'pipe'] });
+				let stdout = '';
+				let stderr = '';
+				let timedOut = false;
+				const timer = setTimeout(() => {
+					timedOut = true;
+					child.kill('SIGKILL');
+				}, timeoutMs);
+				child.stdout.on('data', chunk => (stdout += String(chunk)));
+				child.stderr.on('data', chunk => (stderr += String(chunk)));
+				child.stdin.on('error', () => {});
+				child.on('error', error => {
+					clearTimeout(timer);
+					reject(error);
+				});
+				child.on('close', code => {
+					clearTimeout(timer);
+					if (!timedOut && code === 0) resolve(stdout);
+					else {
+						const error = new Error(timedOut ? `${bin} timed out` : `${bin} failed with exit code ${code ?? 'unknown'}`);
+						Object.assign(error, { stdout, stderr, code });
+						reject(error);
+					}
+				});
+				child.stdin.end(input);
+			});
+		} catch (error) {
+			lastError = error;
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+		}
+	}
+	throw lastError;
+}
+
 /** True when the kernel exposes an 802.11 phy for this interface — no userspace tool required. */
 function isWireless(ifname: string): boolean {
 	return existsSync(`/sys/class/net/${ifname}/phy80211`);
@@ -316,12 +356,12 @@ export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
  * the UI keeps the read-only view rather than offering an edit that would not stick.
  */
 const NMCLI_CANDIDATES = ['/usr/bin/nmcli', '/bin/nmcli', 'nmcli'];
+const BUSCTL_CANDIDATES = ['/usr/bin/busctl', '/bin/busctl', 'busctl'];
 /** Match NetworkManager's documented default activation wait explicitly. */
 const NMCLI_ACTIVATION_WAIT_SECONDS = 90;
-/** Keep the checkpoint alive throughout activation and leave time for confirmation. */
+/** Keep the checkpoint alive throughout activation and leave time to commit it. */
 const CHECKPOINT_ROLLBACK_SECONDS = NMCLI_ACTIVATION_WAIT_SECONDS + 10;
-/** The parent must outlive the checkpoint so a failed mutation is rolled back before returning. */
-const APPLY_TIMEOUT_MS = (CHECKPOINT_ROLLBACK_SECONDS + 5) * 1000;
+const NMCLI_MUTATION_TIMEOUT_MS = (NMCLI_ACTIVATION_WAIT_SECONDS + 5) * 1000;
 /** A rescan has to wait for the radio to sweep every channel. */
 const WIFI_SCAN_TIMEOUT_MS = 30000;
 
@@ -356,6 +396,7 @@ export function splitNmcliFields(line: string): string[] {
 const NM_MODIFY_PERMISSION = 'org.freedesktop.NetworkManager.settings.modify.system';
 const NM_CONTROL_PERMISSION = 'org.freedesktop.NetworkManager.network-control';
 const NM_WIFI_SCAN_PERMISSION = 'org.freedesktop.NetworkManager.wifi.scan';
+const NM_CHECKPOINT_PERMISSION = 'org.freedesktop.NetworkManager.checkpoint-rollback';
 
 /**
  * Read one permission verdict out of `nmcli -t -f PERMISSION,VALUE general permissions`.
@@ -386,6 +427,7 @@ export function parseNmcliPermission(text: string, permission: string): string |
 export async function readLinuxCapabilities(): Promise<NetCapabilities> {
 	try {
 		if (!(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'RUNNING', 'general'])).trim().startsWith('running')) return { ipv4: false, wifi: false, staticGatewayRequired: false };
+		await runFirst(BUSCTL_CANDIDATES, ['--version']);
 		return parseLinuxCapabilities(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'PERMISSION,VALUE', 'general', 'permissions']));
 	} catch {
 		return { ipv4: false, wifi: false, staticGatewayRequired: false };
@@ -512,77 +554,91 @@ export function nmcliActivateArgs(connectionUUID: string): string[] {
 	return ['connection', 'up', 'uuid', connectionUUID];
 }
 
-/**
- * Run modify + activation inside NetworkManager's native checkpoint transaction.
- * The shell receives every variable value as a positional argument; none is
- * interpolated into executable text.
- */
-export function nmcliCheckpointArgs(device: string, connectionUUID: string, config: NetIPv4Config, successMarker: string, addressingChanged: boolean, nmcliBin: string): string[] {
-	const applyCommand = addressingChanged ? '"$nmcli_bin" --wait "$wait_seconds" connection up uuid "$uuid"' : '"$nmcli_bin" --wait "$wait_seconds" device reapply "$device"';
-	return ['device', 'checkpoint', '--timeout', String(CHECKPOINT_ROLLBACK_SECONDS), device, '--', '/bin/sh', '-c', `set -eu; marker=$1; uuid=$2; device=$3; wait_seconds=$4; nmcli_bin=$5; shift 5; "$nmcli_bin" "$@"; ${applyCommand}; printf "%s\\n" "$marker"`, 'nmcli-checkpoint', successMarker, connectionUUID, device, String(NMCLI_ACTIVATION_WAIT_SECONDS), nmcliBin, ...nmcliModifyArgs(connectionUUID, config, addressingChanged)];
+const NM_SERVICE = 'org.freedesktop.NetworkManager';
+const NM_PATH = '/org/freedesktop/NetworkManager';
+const NM_INTERFACE = 'org.freedesktop.NetworkManager';
+const NM_CHECKPOINT_DELETE_NEW_CONNECTIONS = 2;
+
+/** Create a device checkpoint that also removes profiles created by a failed mutation. */
+export function networkManagerCheckpointCreateArgs(devicePath: string): string[] {
+	return ['--system', 'call', NM_SERVICE, NM_PATH, NM_INTERFACE, 'CheckpointCreate', 'aouu', '1', devicePath, String(CHECKPOINT_ROLLBACK_SECONDS), String(NM_CHECKPOINT_DELETE_NEW_CONNECTIONS)];
 }
 
-/** Commit a checkpoint only after both child commands emitted their private success marker. */
-async function runNmcliCheckpoint(argsForBinary: (bin: string) => string[], successMarker: string, initialInput: string = ''): Promise<void> {
-	let lastError: unknown = new Error('nmcli is unavailable');
-	for (const bin of NMCLI_CANDIDATES) {
+/** Finish a checkpoint explicitly; rollback is never left waiting for an interactive timeout. */
+export function networkManagerCheckpointFinishArgs(method: 'CheckpointDestroy' | 'CheckpointRollback', checkpointPath: string): string[] {
+	return ['--system', 'call', NM_SERVICE, NM_PATH, NM_INTERFACE, method, 'o', checkpointPath];
+}
+
+/** Parse the stable object-path output of `busctl call ... CheckpointCreate`. */
+export function parseNetworkManagerCheckpointPath(output: string): string {
+	const match = output.trim().match(/^o\s+"?(\/org\/freedesktop\/NetworkManager\/Checkpoint\/\d+)"?$/);
+	if (!match?.[1]) throw new Error('NetworkManager returned an invalid checkpoint path');
+	return match[1];
+}
+
+/** Reject a D-Bus rollback that completed but failed for any checkpointed device. */
+export function assertNetworkManagerRollback(output: string): void {
+	const header = output.trim().match(/^a\{su\}\s+(\d+)\s*(.*)$/s);
+	if (!header) throw new Error('NetworkManager returned an invalid rollback result');
+	const expected = Number(header[1]);
+	const entries = [...(header[2] ?? '').matchAll(/"([^"]+)"\s+(\d+)/g)];
+	if (expected === 0 || entries.length !== expected || entries.some(entry => Number(entry[2]) !== 0)) throw new Error('NetworkManager failed to roll back a checkpointed device');
+}
+
+/** Transaction invariant shared by IPv4 and Wi-Fi mutations. */
+export async function withNetworkManagerCheckpoint<T>(operations: { create: () => Promise<string>; mutate: () => Promise<T>; commit: (checkpointPath: string) => Promise<void>; rollback: (checkpointPath: string) => Promise<void> }): Promise<T> {
+	const checkpointPath = await operations.create();
+	try {
+		const result = await operations.mutate();
+		await operations.commit(checkpointPath);
+		return result;
+	} catch (error) {
 		try {
-			await new Promise<void>((resolve, reject) => {
-				const child = spawn(bin, argsForBinary(bin), { env: C_LOCALE_ENV, stdio: ['pipe', 'pipe', 'pipe'] });
-				let stdout = '';
-				let stderr = '';
-				let confirmed = false;
-				let timedOut = false;
-				const timer = setTimeout(() => {
-					timedOut = true;
-					child.kill('SIGKILL');
-				}, APPLY_TIMEOUT_MS);
-				child.stdin.on('error', () => {});
-				if (initialInput) child.stdin.write(initialInput);
-				const inspect = (): void => {
-					if (confirmed || (!stdout.includes(successMarker) && !stderr.includes(successMarker))) return;
-					confirmed = true;
-					child.stdin.write('Yes\n');
-					child.stdin.end();
-				};
-				child.stdout.on('data', chunk => {
-					stdout += String(chunk);
-					inspect();
-				});
-				child.stderr.on('data', chunk => {
-					stderr += String(chunk);
-					inspect();
-				});
-				child.on('error', error => {
-					clearTimeout(timer);
-					reject(error);
-				});
-				child.on('close', code => {
-					clearTimeout(timer);
-					if (!timedOut && code === 0 && confirmed) {
-						resolve();
-						return;
-					}
-					const error = new Error(timedOut ? 'nmcli checkpoint timed out' : `nmcli checkpoint failed with exit code ${code ?? 'unknown'}`);
-					Object.assign(error, { stdout, stderr, code });
-					reject(error);
-				});
-			});
-			return;
-		} catch (error) {
-			lastError = error;
-			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+			await operations.rollback(checkpointPath);
+		} catch (rollbackError) {
+			throw new AggregateError([error, rollbackError], 'network mutation failed and rollback also failed');
 		}
+		throw error;
 	}
-	throw lastError;
+}
+
+async function networkManagerDevicePath(device: string): Promise<string> {
+	const path = (await runFirst(NMCLI_CANDIDATES, ['-g', 'GENERAL.DBUS-PATH', 'device', 'show', device])).trim();
+	if (!/^\/org\/freedesktop\/NetworkManager\/Devices\/\d+$/.test(path)) throw new Error(`NetworkManager returned an invalid D-Bus path for ${device}`);
+	return path;
+}
+
+async function createNetworkManagerCheckpoint(devicePath: string): Promise<string> {
+	return parseNetworkManagerCheckpointPath(await runFirst(BUSCTL_CANDIDATES, networkManagerCheckpointCreateArgs(devicePath)));
+}
+
+async function destroyNetworkManagerCheckpoint(checkpointPath: string): Promise<void> {
+	await runFirst(BUSCTL_CANDIDATES, networkManagerCheckpointFinishArgs('CheckpointDestroy', checkpointPath));
+}
+
+async function rollbackNetworkManagerCheckpoint(checkpointPath: string): Promise<void> {
+	assertNetworkManagerRollback(await runFirst(BUSCTL_CANDIDATES, networkManagerCheckpointFinishArgs('CheckpointRollback', checkpointPath), NMCLI_MUTATION_TIMEOUT_MS));
+}
+
+async function withDeviceCheckpoint<T>(device: string, mutate: () => Promise<T>): Promise<T> {
+	const devicePath = await networkManagerDevicePath(device);
+	return withNetworkManagerCheckpoint({
+		create: () => createNetworkManagerCheckpoint(devicePath),
+		mutate,
+		commit: destroyNetworkManagerCheckpoint,
+		rollback: rollbackNetworkManagerCheckpoint,
+	});
 }
 
 /** Apply an IPv4 configuration to one device and bring the profile back up. Throws when NetworkManager does not own the device. */
 export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addressingChanged: boolean = true): Promise<void> {
 	const connectionUUID = await activeConnection(device);
 	if (!connectionUUID) throw new Error(`no NetworkManager profile is active on ${device}`);
-	const successMarker = `lish-nm-${randomUUID()}`;
-	await runNmcliCheckpoint(bin => nmcliCheckpointArgs(device, connectionUUID, config, successMarker, addressingChanged, bin), successMarker);
+	await withDeviceCheckpoint(device, async () => {
+		await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connectionUUID, config, addressingChanged));
+		const activate = addressingChanged ? nmcliActivateArgs(connectionUUID) : ['device', 'reapply', device];
+		await runFirst(NMCLI_CANDIDATES, ['--wait', String(NMCLI_ACTIVATION_WAIT_SECONDS), ...activate], NMCLI_MUTATION_TIMEOUT_MS);
+	});
 }
 
 /**
@@ -633,9 +689,10 @@ export async function scanLinuxWifi(device: string): Promise<NetWifiNetwork[]> {
 export function parseLinuxCapabilities(text: string): NetCapabilities {
 	const canModify = parseNmcliPermission(text, NM_MODIFY_PERMISSION) === 'yes';
 	const canActivate = parseNmcliPermission(text, NM_CONTROL_PERMISSION) === 'yes';
+	const canCheckpoint = parseNmcliPermission(text, NM_CHECKPOINT_PERMISSION) === 'yes';
 	return {
-		ipv4: canModify && canActivate,
-		wifi: canModify && canActivate && parseNmcliPermission(text, NM_WIFI_SCAN_PERMISSION) === 'yes',
+		ipv4: canModify && canActivate && canCheckpoint,
+		wifi: canModify && canActivate && canCheckpoint && parseNmcliPermission(text, NM_WIFI_SCAN_PERMISSION) === 'yes',
 		staticGatewayRequired: false,
 	};
 }
@@ -655,7 +712,6 @@ export function nmcliWifiConnectArgs(device: string, ssid: string, askForPasswor
  * `/proc/<pid>/cmdline` while the command is running.
  */
 export async function connectLinuxWifi(device: string, ssid: string, password: string, bssid: string | null = null): Promise<void> {
-	const successMarker = `lish-wifi-${randomUUID()}`;
-	const argsForBinary = (bin: string): string[] => ['device', 'checkpoint', '--timeout', String(CHECKPOINT_ROLLBACK_SECONDS), device, '--', '/bin/sh', '-c', 'set -eu; marker=$1; nmcli_bin=$2; shift 2; "$nmcli_bin" "$@"; printf "%s\\n" "$marker"', 'nmcli-wifi-checkpoint', successMarker, bin, ...nmcliWifiConnectArgs(device, ssid, !!password, bssid)];
-	await runNmcliCheckpoint(argsForBinary, successMarker, password ? `${password}\n` : '');
+	const args = ['--wait', String(NMCLI_ACTIVATION_WAIT_SECONDS), ...nmcliWifiConnectArgs(device, ssid, !!password, bssid)];
+	await withDeviceCheckpoint(device, () => (password ? runFirstWithInput(NMCLI_CANDIDATES, args, `${password}\n`, NMCLI_MUTATION_TIMEOUT_MS) : runFirst(NMCLI_CANDIDATES, args, NMCLI_MUTATION_TIMEOUT_MS)));
 }

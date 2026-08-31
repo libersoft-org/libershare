@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { isIPv4, isIPv6, isValidSSID, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { nmcliActivateArgs, nmcliCheckpointArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
+import { assertNetworkManagerRollback, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { assertDeviceName, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, runNetworkMutation } from '../../src/system-network.ts';
 
@@ -350,24 +350,80 @@ describe('nmcliModifyArgs', () => {
 		expect(nmcliModifyArgs(uuid, { mode: 'dhcp' }).slice(0, 4)).toEqual(['connection', 'modify', 'uuid', uuid]);
 		expect(nmcliActivateArgs(uuid)).toEqual(['connection', 'up', 'uuid', uuid]);
 	});
+});
 
-	it('wraps modification and activation in one device checkpoint', () => {
-		const uuid = '11111111-1111-1111-1111-111111111111';
-		const args = nmcliCheckpointArgs('wlan0', uuid, { mode: 'dhcp' }, 'success-marker', true, '/usr/bin/nmcli');
-		expect(args.slice(0, 6)).toEqual(['device', 'checkpoint', '--timeout', '100', 'wlan0', '--']);
-		expect(args.join(' ')).toContain('connection up uuid');
-		expect(args).toContain('/usr/bin/nmcli');
-		expect(args.join(' ')).toContain('"$nmcli_bin" "$@"');
-		expect(args).toContain('90');
-		const modify = args.indexOf('connection');
-		expect(args.slice(modify, modify + 4)).toEqual(['connection', 'modify', 'uuid', uuid]);
+describe('NetworkManager checkpoint transaction', () => {
+	const devicePath = '/org/freedesktop/NetworkManager/Devices/7';
+	const checkpointPath = '/org/freedesktop/NetworkManager/Checkpoint/12';
+
+	it('requests deletion of connections created after the checkpoint', () => {
+		const args = networkManagerCheckpointCreateArgs(devicePath);
+		expect(args.slice(-3)).toEqual([devicePath, '100', '2']);
+		expect(args).toContain('CheckpointCreate');
+		expect(parseNetworkManagerCheckpointPath(`o "${checkpointPath}"\n`)).toBe(checkpointPath);
 	});
 
-	it('reapplies a DNS-only profile without cycling the connection', () => {
-		const args = nmcliCheckpointArgs('wlan0', 'uuid', { mode: 'dhcp', dns: ['192.0.2.53'] }, 'marker', false, '/bin/nmcli');
-		expect(args.join(' ')).toContain('device reapply');
-		expect(args.join(' ')).not.toContain('connection up uuid');
-		expect(args).toContain('/bin/nmcli');
+	it('destroys a successful checkpoint and keeps the mutation', async () => {
+		const events: string[] = [];
+		const result = await withNetworkManagerCheckpoint({
+			create: async () => {
+				events.push('create');
+				return checkpointPath;
+			},
+			mutate: async () => {
+				events.push('mutate');
+				return 42;
+			},
+			commit: async path => {
+				events.push(`commit:${path}`);
+			},
+			rollback: async path => {
+				events.push(`rollback:${path}`);
+			},
+		});
+		expect(result).toBe(42);
+		expect(events).toEqual(['create', 'mutate', `commit:${checkpointPath}`]);
+		expect(networkManagerCheckpointFinishArgs('CheckpointDestroy', checkpointPath)).toContain('CheckpointDestroy');
+	});
+
+	it('rolls back immediately when the mutation fails', async () => {
+		const events: string[] = [];
+		const failure = new Error('mutation failed');
+		const operation = withNetworkManagerCheckpoint({
+			create: async () => checkpointPath,
+			mutate: async () => {
+				events.push('mutate');
+				throw failure;
+			},
+			commit: async () => {
+				events.push('commit');
+			},
+			rollback: async path => {
+				events.push(`rollback:${path}`);
+			},
+		});
+		await expect(operation).rejects.toBe(failure);
+		expect(events).toEqual(['mutate', `rollback:${checkpointPath}`]);
+		expect(networkManagerCheckpointFinishArgs('CheckpointRollback', checkpointPath)).toContain('CheckpointRollback');
+	});
+
+	it('reports a rollback failure instead of hiding it', async () => {
+		const operation = withNetworkManagerCheckpoint({
+			create: async () => checkpointPath,
+			mutate: async () => {
+				throw new Error('mutation failed');
+			},
+			commit: async () => {},
+			rollback: async () => {
+				throw new Error('rollback failed');
+			},
+		});
+		await expect(operation).rejects.toBeInstanceOf(AggregateError);
+	});
+
+	it('accepts only successful per-device rollback results', () => {
+		expect(() => assertNetworkManagerRollback(`a{su} 1 "${devicePath}" 0\n`)).not.toThrow();
+		expect(() => assertNetworkManagerRollback(`a{su} 1 "${devicePath}" 1\n`)).toThrow();
 	});
 });
 
@@ -435,13 +491,17 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('$applyError');
 	});
 
-	it('restores automatic DNS policy instead of pinning its current DHCP servers', () => {
+	it('restores automatic and manual DNS independently for IPv4 and IPv6', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, dns: ['192.0.2.53'] });
 		expect(command).toContain('Tcpip\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)');
 		expect(command).toContain('Tcpip6\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)');
-		expect(command).toContain('$oldDnsAutomatic = [string]::IsNullOrWhiteSpace($oldDnsNameServer4) -and [string]::IsNullOrWhiteSpace($oldDnsNameServer6)');
-		expect(command).toContain('if ($oldDnsAutomatic) { Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses } else { Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $oldDns }');
-		expect(command).not.toContain('if ($oldDns.Count -gt 0)');
+		expect(command).toContain('$oldDns4 = @(Get-DnsClientServerAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop)');
+		expect(command).toContain('$oldDns6 = @(Get-DnsClientServerAddress -InterfaceIndex $i -AddressFamily IPv6 -ErrorAction Stop)');
+		expect(command).toContain('$oldDnsAutomatic4 = [string]::IsNullOrWhiteSpace($oldDnsNameServer4)');
+		expect(command).toContain('$oldDnsAutomatic6 = [string]::IsNullOrWhiteSpace($oldDnsNameServer6)');
+		expect(command).toContain('if ($oldDnsAutomatic4) { Set-DnsClientServerAddress -InputObject $oldDns4 -ResetServerAddresses } else { Set-DnsClientServerAddress -InputObject $oldDns4 -ServerAddresses $oldDnsServers4 }');
+		expect(command).toContain('if ($oldDnsAutomatic6) { Set-DnsClientServerAddress -InputObject $oldDns6 -ResetServerAddresses } else { Set-DnsClientServerAddress -InputObject $oldDns6 -ServerAddresses $oldDnsServers6 }');
+		expect(command).not.toContain('$oldDnsAutomatic =');
 	});
 
 	it('omits the gateway parameter entirely when there is none', () => {
@@ -525,7 +585,7 @@ describe('parseNmcliPermission', () => {
 });
 
 describe('parseLinuxCapabilities', () => {
-	const permissions = (modify: string, control: string, scan: string): string => [`org.freedesktop.NetworkManager.settings.modify.system:${modify}`, `org.freedesktop.NetworkManager.network-control:${control}`, `org.freedesktop.NetworkManager.wifi.scan:${scan}`].join('\n');
+	const permissions = (modify: string, control: string, scan: string, checkpoint: string = 'yes'): string => [`org.freedesktop.NetworkManager.settings.modify.system:${modify}`, `org.freedesktop.NetworkManager.network-control:${control}`, `org.freedesktop.NetworkManager.wifi.scan:${scan}`, `org.freedesktop.NetworkManager.checkpoint-rollback:${checkpoint}`].join('\n');
 
 	it('requires both profile modification and activation for IPv4 writes', () => {
 		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'yes'))).toEqual({ ipv4: true, wifi: true, staticGatewayRequired: false });
@@ -535,6 +595,10 @@ describe('parseLinuxCapabilities', () => {
 
 	it('requires the separate scan permission before offering Wi-Fi actions', () => {
 		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'no'))).toEqual({ ipv4: true, wifi: false, staticGatewayRequired: false });
+	});
+
+	it('requires checkpoint permission before offering any mutation', () => {
+		for (const verdict of ['auth', 'no']) expect(parseLinuxCapabilities(permissions('yes', 'yes', 'yes', verdict))).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
 	});
 });
 
