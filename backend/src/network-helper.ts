@@ -1,5 +1,5 @@
 import { applyIPv4 } from './system-network.ts';
-import { decodeNetworkHelperRequest, executeNetworkHelperRequest, networkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
+import { decodeNetworkHelperRequest, executeNetworkHelperRequest, NETWORK_HELPER_EXIT, networkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
 
 const MAX_REQUEST_BYTES = 12 * 1024;
 
@@ -22,7 +22,7 @@ async function readBoundedStdin(): Promise<string> {
  * malformed request still reports through the channel the caller is listening
  * on. The Windows launcher never sees the elevated helper's stdout.
  */
-export function reportsWithExitCode(args: string[]): boolean {
+function reportsWithExitCode(args: string[]): boolean {
 	return args.length === 3 && args[0] === '--request' && args[2] === '--exit-code';
 }
 
@@ -40,5 +40,5 @@ try {
 } catch (error) {
 	response = networkHelperFailure(error);
 }
-if (reportWithExitCode) process.exitCode = response.ok ? 0 : 10;
+if (reportWithExitCode) process.exitCode = response.ok ? NETWORK_HELPER_EXIT.applied : NETWORK_HELPER_EXIT.rejected;
 else process.stdout.write(JSON.stringify(response));

@@ -7,6 +7,9 @@ export interface NetworkHelperRequest {
 	config: NetIPv4Config;
 }
 
+/** Exit codes of the helper when it reports through the process status instead of stdout. */
+export const NETWORK_HELPER_EXIT = { applied: 0, rejected: 10 } as const;
+
 export type NetworkHelperFailure = { ok: false; error: string };
 export type NetworkHelperResponse = { ok: true } | NetworkHelperFailure;
 type ApplyIPv4 = (interfaceID: string, config: NetIPv4Config) => Promise<unknown>;

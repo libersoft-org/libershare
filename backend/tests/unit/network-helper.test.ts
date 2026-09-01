@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, networkHelperFailure, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
+import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, NETWORK_HELPER_EXIT, networkHelperFailure, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
 import { linuxNetworkHelperArgs, MAC_HELPER_SHELL, macAppBundleRoot, macNetworkHelperScript, networkHelperPath, trustedLinuxHelperMetadata, windowsLauncherFailure, windowsNetworkLauncherPath } from '../../src/network-helper-client.ts';
 import { windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProgramFilesPath, windowsSystemEnvironment } from '../../src/network-helper-windows.ts';
 
@@ -71,7 +71,7 @@ describe('windows launcher outcomes', () => {
 		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.cancelled).error).toContain('cancelled');
 		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.timeout).error).toContain('timed out');
 		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.untrusted).error).toContain('not trusted');
-		expect(windowsLauncherFailure(10).error).toContain('could not apply');
+		expect(windowsLauncherFailure(NETWORK_HELPER_EXIT.rejected).error).toContain('could not apply');
 	});
 
 	it('falls back to one generic reason for an unmapped or absent exit code', () => {
@@ -81,8 +81,7 @@ describe('windows launcher outcomes', () => {
 	it('reserves launcher codes that cannot collide with the helper', () => {
 		// 0 = applied and 10 = helper rejected the change both come from the helper
 		// itself, so the launcher's own reasons must live outside that set.
-		expect(Object.values(WINDOWS_LAUNCHER_EXIT)).not.toContain(0);
-		expect(Object.values(WINDOWS_LAUNCHER_EXIT)).not.toContain(10);
+		for (const helperCode of Object.values(NETWORK_HELPER_EXIT)) expect(Object.values(WINDOWS_LAUNCHER_EXIT)).not.toContain(helperCode);
 		expect(new Set(Object.values(WINDOWS_LAUNCHER_EXIT)).size).toBe(3);
 	});
 });
