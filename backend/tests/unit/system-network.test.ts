@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { ptr, type Pointer } from 'bun:ffi';
 import { parseWindowsNetworkState, readConnectionAttributes, WINDOWS_STATE_COMMAND } from '../../src/system-network-windows.ts';
 import { dbmToQuality, parseIwLink, parseLinuxNetworkState } from '../../src/system-network-linux.ts';
-import { assertReadProducedSomething, assertWifiConfigurableInterface, NetworkStateCache, prefixFromNetmask, readGenericInterfaces, readNetworkState, resolvePrimaryID, resetNetworkStateCache, type NetworkSnapshot } from '../../src/system-network.ts';
+import { assertReadProducedSomething, assertWifiConfigurableInterface, NetworkStateCache, prefixFromNetmask, readGenericInterfaces, readNetworkState, resolvePrimaryID, resetNetworkStateCache, runNetworkMutation, type NetworkSnapshot } from '../../src/system-network.ts';
 import { ErrorCodes, type NetInterfaceInfo } from '@shared';
 
 /**
@@ -626,5 +626,22 @@ describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('r
 		const started = Date.now();
 		await readNetworkState('');
 		expect(Date.now() - started).toBeLessThan(100);
+	});
+
+	it('waits for a change in progress instead of reading through it', async () => {
+		// A read that overlapped a multi-step apply could capture the gap between
+		// the old address being removed and the new one being created.
+		let release: () => void = () => {};
+		const held = new Promise<void>(resolve => (release = resolve));
+		let mutationDone = false;
+		const mutation = runNetworkMutation(async () => {
+			await held;
+			mutationDone = true;
+		});
+		const read = readNetworkState('').then(() => mutationDone);
+		await new Promise(resolve => setTimeout(resolve, 50));
+		release();
+		expect(await read).toBe(true);
+		await mutation;
 	});
 });

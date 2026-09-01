@@ -192,8 +192,18 @@ async function readWindows(): Promise<NetInterfaceInfo[]> {
  * one in-flight read, so a poll tick and an RPC call arriving together cost a
  * single spawn. A failed platform read degrades to the address-only reader
  * rather than throwing — a settings screen showing addresses beats an error.
+ *
+ * Waits for any host change in progress. A read that started in the middle of
+ * a multi-step apply would capture the gap between "old address removed" and
+ * "new address created", and the periodic broadcaster would publish that gap as
+ * the current state of the host.
  */
-export async function readNetworkState(primaryInterface: string = ''): Promise<NetworkStateInfo> {
+export function readNetworkState(primaryInterface: string = ''): Promise<NetworkStateInfo> {
+	return runNetworkMutation(() => readNetworkStateUnlocked(primaryInterface));
+}
+
+/** {@link readNetworkState} for a caller that already holds the network mutation lock. */
+export async function readNetworkStateUnlocked(primaryInterface: string = ''): Promise<NetworkStateInfo> {
 	const snapshot = await stateCache.read();
 	return { interfaces: snapshot.interfaces, primaryID: resolvePrimaryID(snapshot.interfaces, primaryInterface), detail: snapshot.detail, known: true, capabilities: await readCapabilities() };
 }
@@ -351,94 +361,104 @@ async function isWindowsElevated(): Promise<boolean> {
 }
 
 /** Apply an IPv4 configuration and read its resulting state before another mutation may begin. */
-export async function applyIPv4(interfaceID: string, config: NetIPv4Config, primaryInterface: string = '', allowPrivilegeEscalation: boolean = true): Promise<NetworkStateInfo> {
+export function applyIPv4(interfaceID: string, config: NetIPv4Config, primaryInterface: string = '', allowPrivilegeEscalation: boolean = true): Promise<NetworkStateInfo> {
+	return runNetworkMutation(() => applyIPv4Unlocked(interfaceID, config, primaryInterface, allowPrivilegeEscalation));
+}
+
+/** {@link applyIPv4} for a caller that already holds the network mutation lock. */
+export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Config, primaryInterface: string = '', allowPrivilegeEscalation: boolean = true): Promise<NetworkStateInfo> {
 	if (typeof interfaceID !== 'string' || !config || typeof config !== 'object') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid request');
 	const invalid = validateIPv4Config(config);
 	if (invalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${invalid}`);
 	const desired = config.dns === undefined ? config : { ...config, dns: normalizeDnsServers(config.dns) };
-	return runNetworkMutation(async () => {
-		const supported = await readCapabilities();
-		if (!supported.ipv4) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host does not expose a writable network configuration');
-		const platformInvalid = validateIPv4Config(desired, supported);
-		if (platformInvalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${platformInvalid}`);
-		// Never trust the UI snapshot at this boundary. A platform reader marks an
-		// adapter read-only when its complete address/route state cannot be preserved,
-		// and a fresh read closes the gap between opening the form and pressing Save.
+	const supported = await readCapabilities();
+	if (!supported.ipv4) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host does not expose a writable network configuration');
+	const platformInvalid = validateIPv4Config(desired, supported);
+	if (platformInvalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${platformInvalid}`);
+	// Never trust the UI snapshot at this boundary. A platform reader marks an
+	// adapter read-only when its complete address/route state cannot be preserved,
+	// and a fresh read closes the gap between opening the form and pressing Save.
+	resetNetworkStateCache();
+	const before = await readNetworkStateUnlocked(primaryInterface);
+	const target = before.interfaces.find(item => item.id === interfaceID);
+	if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
+	if (!target.ipv4Configurable || target.ipv4Mode === 'unknown') throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'interface configuration cannot be preserved safely');
+	if (isIPv4ConfigUnchanged(target, desired)) return before;
+	const addressingChanged = !isIPv4AddressingUnchanged(target, desired);
+	let usedHelper = false;
+	try {
+		await run(async () => {
+			if (supported.ipv4Elevation) {
+				if (!allowPrivilegeEscalation) throw new Error('network helper cannot recursively request privileges');
+				const response = await runElevatedNetworkHelper({ version: 1, operation: 'applyIPv4', interfaceID, config: desired });
+				if (!response.ok) throw new Error(response.error);
+				usedHelper = true;
+				return;
+			}
+			if (process.platform === 'win32') {
+				if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+				await execFileAsync(WINDOWS_POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, desired, addressingChanged)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true, env: WINDOWS_SYSTEM_ENV });
+			} else if (process.platform === 'darwin') {
+				await applyMacIPv4(assertDeviceName(interfaceID), desired, addressingChanged);
+			} else {
+				await applyLinuxIPv4(assertDeviceName(interfaceID), desired, addressingChanged);
+			}
+		});
+	} catch (error) {
+		resetNetworkCapabilitiesCache();
+		throw error;
+	} finally {
+		// A multi-step OS command may have changed part of the configuration
+		// before failing. Never keep the pre-command snapshot in that case.
 		resetNetworkStateCache();
-		const before = await readNetworkState(primaryInterface);
-		const target = before.interfaces.find(item => item.id === interfaceID);
-		if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
-		if (!target.ipv4Configurable || target.ipv4Mode === 'unknown') throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'interface configuration cannot be preserved safely');
-		if (isIPv4ConfigUnchanged(target, desired)) return before;
-		const addressingChanged = !isIPv4AddressingUnchanged(target, desired);
-		let usedHelper = false;
-		try {
-			await run(async () => {
-				if (supported.ipv4Elevation) {
-					if (!allowPrivilegeEscalation) throw new Error('network helper cannot recursively request privileges');
-					const response = await runElevatedNetworkHelper({ version: 1, operation: 'applyIPv4', interfaceID, config: desired });
-					if (!response.ok) throw new Error(response.error);
-					usedHelper = true;
-					return;
-				}
-				if (process.platform === 'win32') {
-					if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
-					await execFileAsync(WINDOWS_POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, desired, addressingChanged)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true, env: WINDOWS_SYSTEM_ENV });
-				} else if (process.platform === 'darwin') {
-					await applyMacIPv4(assertDeviceName(interfaceID), desired, addressingChanged);
-				} else {
-					await applyLinuxIPv4(assertDeviceName(interfaceID), desired, addressingChanged);
-				}
-			});
-		} catch (error) {
-			resetNetworkCapabilitiesCache();
-			throw error;
-		} finally {
-			// A multi-step OS command may have changed part of the configuration
-			// before failing. Never keep the pre-command snapshot in that case.
-			resetNetworkStateCache();
-		}
-		const after = await readNetworkState(primaryInterface);
-		if (usedHelper) assertAppliedIPv4State(after, interfaceID, desired);
-		return after;
-	});
+	}
+	const after = await readNetworkStateUnlocked(primaryInterface);
+	if (usedHelper) assertAppliedIPv4State(after, interfaceID, desired);
+	return after;
 }
 
 /** Scan for joinable Wi-Fi networks on one interface. */
 export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 	if (typeof interfaceID !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
-	await assertWirelessInterface(interfaceID);
-	try {
-		return await run(() => scanLinuxWifi(assertDeviceName(interfaceID)));
-	} catch (error) {
-		resetNetworkCapabilitiesCache();
-		throw error;
-	}
+	// A scan is a device operation; letting it overlap an apply on the same host
+	// would race NetworkManager and let the scan read a half-applied state.
+	return runNetworkMutation(async () => {
+		await assertWirelessInterface(interfaceID);
+		try {
+			return await run(() => scanLinuxWifi(assertDeviceName(interfaceID)));
+		} catch (error) {
+			resetNetworkCapabilitiesCache();
+			throw error;
+		}
+	});
 }
 
 /** Join a Wi-Fi network on one interface. An empty password means an open network. */
-export async function connectWifi(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null): Promise<NetworkStateInfo> {
+export function connectWifi(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null): Promise<NetworkStateInfo> {
+	return runNetworkMutation(() => connectWifiUnlocked(interfaceID, ssid, password, primaryInterface, bssid));
+}
+
+/** {@link connectWifi} for a caller that already holds the network mutation lock. */
+export async function connectWifiUnlocked(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null): Promise<NetworkStateInfo> {
 	if (typeof interfaceID !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
 	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
 	if (!isValidWifiPassword(password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
 	if (bssid !== null && typeof bssid !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid bssid');
-	return runNetworkMutation(async () => {
-		await assertWirelessInterface(interfaceID);
-		const available = await scanLinuxWifi(assertDeviceName(interfaceID));
-		const matches = available.filter(item => item.ssid === ssid);
-		const network = bssid === null ? (matches.length === 1 ? matches[0] : undefined) : matches.find(item => item.bssid?.toLowerCase() === bssid.toLowerCase());
-		if (!network) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'network is no longer available');
-		if (!network.supported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi authentication method is not supported');
-		try {
-			await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password, network.bssid));
-		} catch (error) {
-			resetNetworkCapabilitiesCache();
-			throw error;
-		} finally {
-			resetNetworkStateCache();
-		}
-		return readNetworkState(primaryInterface);
-	});
+	await assertWirelessInterface(interfaceID);
+	const available = await scanLinuxWifi(assertDeviceName(interfaceID));
+	const matches = available.filter(item => item.ssid === ssid);
+	const network = bssid === null ? (matches.length === 1 ? matches[0] : undefined) : matches.find(item => item.bssid?.toLowerCase() === bssid.toLowerCase());
+	if (!network) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'network is no longer available');
+	if (!network.supported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi authentication method is not supported');
+	try {
+		await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password, network.bssid));
+	} catch (error) {
+		resetNetworkCapabilitiesCache();
+		throw error;
+	} finally {
+		resetNetworkStateCache();
+	}
+	return readNetworkStateUnlocked(primaryInterface);
 }
 
 /** A bounded string that can be written to a child process stdin. Empty = open network. */
@@ -458,7 +478,7 @@ async function assertWirelessInterface(interfaceID: string): Promise<void> {
 	const supported = await readCapabilities();
 	if (!supported.wifi) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host cannot configure Wi-Fi');
 	resetNetworkStateCache();
-	const state = await readNetworkState();
+	const state = await readNetworkStateUnlocked();
 	assertWifiConfigurableInterface(state.interfaces, interfaceID);
 }
 

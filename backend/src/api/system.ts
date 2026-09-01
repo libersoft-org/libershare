@@ -5,7 +5,7 @@ import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type Ne
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
-import { applyIPv4, connectWifi, readNetworkState, scanWifi } from '../system-network.ts';
+import { applyIPv4Unlocked, connectWifiUnlocked, readNetworkState, readNetworkStateUnlocked, runNetworkMutation, scanWifi } from '../system-network.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -35,17 +35,27 @@ interface SystemHandlers {
 	stopPolling: () => void;
 }
 
-export async function runAndPublishNetworkMutation(action: () => Promise<NetworkStateInfo>, readCurrent: () => Promise<NetworkStateInfo>, publish: (state: NetworkStateInfo) => void): Promise<NetworkStateInfo> {
-	try {
-		const state = await action();
-		publish(state);
-		return state;
-	} catch (error) {
+/**
+ * Run one host change and publish the state it left behind.
+ *
+ * The network lock is held through the read-back. Released any earlier, a
+ * change queued behind this one could start before the read, and what got
+ * published as this change's result would be a mix of the two. Both callbacks
+ * therefore have to be the lock-free variants.
+ */
+export function runAndPublishNetworkMutation(action: () => Promise<NetworkStateInfo>, readCurrent: () => Promise<NetworkStateInfo>, publish: (state: NetworkStateInfo) => void): Promise<NetworkStateInfo> {
+	return runNetworkMutation(async () => {
 		try {
-			publish(await readCurrent());
-		} catch {}
-		throw error;
-	}
+			const state = await action();
+			publish(state);
+			return state;
+		} catch (error) {
+			try {
+				publish(await readCurrent());
+			} catch {}
+			throw error;
+		}
+	});
 }
 
 /** Remove mutation capabilities when this API instance has no authentication token. */
@@ -280,8 +290,8 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		assert(p, ['interfaceID', 'config']);
 		const primary = settings.get('network.primaryInterface') ?? '';
 		return runAndPublishNetworkMutation(
-			() => applyIPv4(p.interfaceID, p.config, primary),
-			() => readNetworkState(primary),
+			() => applyIPv4Unlocked(p.interfaceID, p.config, primary),
+			() => readNetworkStateUnlocked(primary),
 			state => broadcast('system:network', state)
 		);
 	}
@@ -295,8 +305,8 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		assert(p, ['interfaceID', 'ssid']);
 		const primary = settings.get('network.primaryInterface') ?? '';
 		return runAndPublishNetworkMutation(
-			() => connectWifi(p.interfaceID, p.ssid, p.password ?? '', primary, p.bssid ?? null),
-			() => readNetworkState(primary),
+			() => connectWifiUnlocked(p.interfaceID, p.ssid, p.password ?? '', primary, p.bssid ?? null),
+			() => readNetworkStateUnlocked(primary),
 			state => broadcast('system:network', state)
 		);
 	}
