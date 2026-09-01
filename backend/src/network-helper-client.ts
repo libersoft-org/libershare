@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { productIdentifier } from '@shared';
 import { encodeNetworkHelperRequest, parseNetworkHelperResponse, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
+import { runElevatedWindowsProcess, windowsHelperParameters, windowsProgramFilesPath } from './network-helper-windows.ts';
 
 const execFileAsync = promisify(execFile);
 const HELPER_TIMEOUT_MS = 180_000;
@@ -27,14 +28,6 @@ async function sha256File(path: string): Promise<string> {
 		stream.on('data', chunk => hash.update(chunk));
 		stream.on('end', () => resolve(hash.digest('hex')));
 	});
-}
-
-function powershellQuote(value: string): string {
-	return `'${value.replaceAll("'", "''")}'`;
-}
-
-export function windowsNetworkHelperCommand(helperPath: string, request: string, responsePipe: string): string {
-	return `$ErrorActionPreference='Stop'; $p=Start-Process -FilePath ${powershellQuote(helperPath)} -Verb RunAs -UseNewEnvironment -ArgumentList @('--request',${powershellQuote(request)},'--response-pipe',${powershellQuote(responsePipe)}) -Wait -PassThru; exit $p.ExitCode`;
 }
 
 export function macNetworkHelperScript(): string {
@@ -77,11 +70,12 @@ async function verifyLinuxHelper(helper: string): Promise<boolean> {
 async function verifyWindowsHelper(helper: string): Promise<boolean> {
 	const expectedHash = expectedHelperHash();
 	if (!expectedHash) return false;
-	const script = `$ErrorActionPreference='Stop'; $helper=(Resolve-Path -LiteralPath ${powershellQuote(helper)}).Path; $backend=(Resolve-Path -LiteralPath ${powershellQuote(process.execPath)}).Path; $programFiles=[Environment]::GetFolderPath('ProgramFiles').TrimEnd('\\')+'\\'; if (-not $helper.StartsWith($programFiles,[StringComparison]::OrdinalIgnoreCase)) { exit 2 }; $h=Get-AuthenticodeSignature -LiteralPath $helper; $b=Get-AuthenticodeSignature -LiteralPath $backend; if ($h.Status -eq 'Valid' -and $b.Status -eq 'Valid' -and $h.SignerCertificate -and $b.SignerCertificate -and $h.SignerCertificate.Thumbprint -eq $b.SignerCertificate.Thumbprint) { exit 0 }; if ($h.Status -eq 'NotSigned' -and $b.Status -eq 'NotSigned' -and (Get-FileHash -Algorithm SHA256 -LiteralPath $helper).Hash.ToLowerInvariant() -eq '${expectedHash}') { exit 0 }; exit 3`;
-	const encoded = Buffer.from(script, 'utf16le').toString('base64');
 	try {
-		await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { timeout: 10_000, windowsHide: true });
-		return true;
+		const [resolvedHelper, resolvedBackend] = await Promise.all([realpath(helper), realpath(process.execPath)]);
+		if (dirname(resolvedHelper).toLowerCase() !== dirname(resolvedBackend).toLowerCase()) return false;
+		const prefix = `${windowsProgramFilesPath().replace(/[\\/]+$/, '')}\\`.toLowerCase();
+		if (!resolvedBackend.toLowerCase().startsWith(prefix)) return false;
+		return (await sha256File(resolvedHelper)) === expectedHash;
 	} catch {
 		return false;
 	}
@@ -160,10 +154,9 @@ async function runWindowsHelper(helper: string, encoded: string): Promise<string
 			responseTimer = setTimeout(() => reject(new Error('network helper response timed out')), HELPER_TIMEOUT_MS);
 		}),
 	]);
-	const command = windowsNetworkHelperCommand(helper, encoded, pipe);
-	const powershell = Buffer.from(command, 'utf16le').toString('base64');
 	try {
-		const [, output] = await Promise.all([execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', powershell], { timeout: HELPER_TIMEOUT_MS, windowsHide: true }), boundedResponse]);
+		const [exitCode, output] = await Promise.all([runElevatedWindowsProcess(helper, windowsHelperParameters(encoded, pipe), HELPER_TIMEOUT_MS), boundedResponse]);
+		if (exitCode !== 0) throw new Error(`network helper exited with ${exitCode}`);
 		return output;
 	} catch (error) {
 		throw new Error(error instanceof Error ? error.message.slice(0, 500) : 'network helper failed');
