@@ -7,8 +7,11 @@ import { isWindowsInterfaceID, parseElevation, parseWindowsNetworkState, readWin
 import { applyLinuxIPv4, connectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
 import { applyMacIPv4, isMacWifiConfigurable, isMacWritable, readMacNetworkState } from './system-network-macos.ts';
 import { networkHelperAvailable, runElevatedNetworkHelper } from './network-helper-client.ts';
+import { windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
 
 const execFileAsync = promisify(execFile);
+const WINDOWS_POWERSHELL = process.platform === 'win32' ? windowsPowerShellPath() : 'powershell.exe';
+const WINDOWS_SYSTEM_ENV = process.platform === 'win32' ? windowsSystemEnvironment() : undefined;
 
 /**
  * Host network state and configuration, dispatched per platform.
@@ -176,7 +179,7 @@ export function prefixFromNetmask(netmask: string, ipv4: boolean): number {
 }
 
 async function readWindows(): Promise<NetInterfaceInfo[]> {
-	const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_STATE_COMMAND], { timeout: WINDOWS_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024, windowsHide: true });
+	const { stdout } = await execFileAsync(WINDOWS_POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_STATE_COMMAND], { timeout: WINDOWS_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024, windowsHide: true, env: WINDOWS_SYSTEM_ENV });
 	// The Wi-Fi read is in-process FFI and never throws — a missing WLAN service
 	// simply yields an empty map, leaving `wifi` undefined on the adapters.
 	return parseWindowsNetworkState(stdout, readWindowsWifi());
@@ -340,7 +343,7 @@ async function readCapabilities(): Promise<NetCapabilities> {
 /** True when this process can actually run the privileged cmdlets. One spawn, cached with the capabilities. */
 async function isWindowsElevated(): Promise<boolean> {
 	try {
-		const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_ELEVATION_COMMAND], { timeout: WINDOWS_TIMEOUT_MS, maxBuffer: 1024, windowsHide: true });
+		const { stdout } = await execFileAsync(WINDOWS_POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_ELEVATION_COMMAND], { timeout: WINDOWS_TIMEOUT_MS, maxBuffer: 1024, windowsHide: true, env: WINDOWS_SYSTEM_ENV });
 		return parseElevation(stdout);
 	} catch {
 		return false;
@@ -380,7 +383,7 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config, prim
 				}
 				if (process.platform === 'win32') {
 					if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
-					await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, desired, addressingChanged)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
+					await execFileAsync(WINDOWS_POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, desired, addressingChanged)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true, env: WINDOWS_SYSTEM_ENV });
 				} else if (process.platform === 'darwin') {
 					await applyMacIPv4(assertDeviceName(interfaceID), desired, addressingChanged);
 				} else {

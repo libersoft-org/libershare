@@ -41,6 +41,8 @@ if [ -n "$BUN_TARGET" ]; then
 		bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target "$BUN_TARGET" src/network-helper.ts --outfile build/lish-network-helper.exe
 		bun scripts/set-windows-gui-subsystem.ts build/lish-network-helper.exe
 		HELPER_HASH=$(hash_file build/lish-network-helper.exe)
+		bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target "$BUN_TARGET" src/network-helper-windows-launcher.ts --outfile build/lish-network-launcher.exe --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
+		bun scripts/set-windows-gui-subsystem.ts build/lish-network-launcher.exe
 		bun build --compile --target "$BUN_TARGET" src/app.ts --outfile build/lish-backend.exe --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
 		bun scripts/set-windows-gui-subsystem.ts build/lish-backend.exe
 		;;

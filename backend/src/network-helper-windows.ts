@@ -1,4 +1,7 @@
 import { dlopen, FFIType, ptr, read, type Pointer } from 'bun:ffi';
+import { realpath } from 'node:fs/promises';
+import { dirname, win32 } from 'node:path';
+import { sha256File } from './network-helper-integrity.ts';
 
 const SHELLEXECUTEINFO_SIZE = 112;
 const PROCESS_HANDLE_OFFSET = 104;
@@ -19,9 +22,9 @@ function pointerValue(value: Uint8Array): bigint {
 	return BigInt(ptr(value) as unknown as number | bigint);
 }
 
-export function windowsHelperParameters(request: string, responsePipe: string): string {
-	if (!/^[A-Za-z0-9_-]{1,8192}$/.test(request) || !/^\\\\\.\\pipe\\lish-network-helper-[0-9a-f]{48}$/.test(responsePipe)) throw new Error('invalid Windows helper launch arguments');
-	return `--request ${request} --response-pipe ${responsePipe}`;
+export function windowsHelperParameters(request: string): string {
+	if (!/^[A-Za-z0-9_-]{1,8192}$/.test(request)) throw new Error('invalid Windows helper launch arguments');
+	return `--request ${request} --exit-code`;
 }
 
 export function windowsProgramFilesPath(): string {
@@ -54,6 +57,62 @@ export function windowsProgramFilesPath(): string {
 	}
 }
 
+function windowsSystemDirectory(): string {
+	if (process.platform !== 'win32') throw new Error('Windows system directory is unavailable');
+	const kernel = dlopen('kernel32.dll', {
+		GetSystemDirectoryW: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.u32 },
+	});
+	const buffer = new Uint16Array(32 * 1024);
+	try {
+		const length = kernel.symbols.GetSystemDirectoryW(ptr(buffer), buffer.length);
+		if (length === 0 || length >= buffer.length) throw new Error('GetSystemDirectoryW failed');
+		return Buffer.from(buffer.buffer, buffer.byteOffset, length * 2).toString('utf16le');
+	} finally {
+		kernel.close();
+	}
+}
+
+export function windowsPowerShellPath(): string {
+	return win32.join(windowsSystemDirectory(), 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+}
+
+export function windowsSystemEnvironment(): NodeJS.ProcessEnv {
+	const systemDirectory = windowsSystemDirectory();
+	const windowsDirectory = win32.dirname(systemDirectory);
+	return {
+		SystemRoot: windowsDirectory,
+		WINDIR: windowsDirectory,
+		ComSpec: win32.join(systemDirectory, 'cmd.exe'),
+		PATH: [systemDirectory, win32.join(systemDirectory, 'Wbem'), win32.dirname(windowsPowerShellPath())].join(';'),
+		PATHEXT: '.COM;.EXE;.BAT;.CMD',
+	};
+}
+
+async function windowsInstalledSibling(path: string, executable: string): Promise<{ path: string; executable: string } | null> {
+	const [resolvedPath, resolvedExecutable] = await Promise.all([realpath(path), realpath(executable)]);
+	if (dirname(resolvedPath).toLowerCase() !== dirname(resolvedExecutable).toLowerCase()) return null;
+	const prefix = `${windowsProgramFilesPath().replace(/[\\/]+$/, '')}\\`.toLowerCase();
+	if (!resolvedExecutable.toLowerCase().startsWith(prefix)) return null;
+	return { path: resolvedPath, executable: resolvedExecutable };
+}
+
+export async function verifyWindowsInstalledSibling(path: string, executable: string): Promise<boolean> {
+	try {
+		return (await windowsInstalledSibling(path, executable)) !== null;
+	} catch {
+		return false;
+	}
+}
+
+export async function verifyWindowsInstalledHelper(path: string, executable: string, expectedHash: string): Promise<boolean> {
+	try {
+		const sibling = await windowsInstalledSibling(path, executable);
+		return sibling !== null && (await sha256File(sibling.path)) === expectedHash;
+	} catch {
+		return false;
+	}
+}
+
 export async function runElevatedWindowsProcess(file: string, parameters: string, timeoutMs: number): Promise<number> {
 	if (process.platform !== 'win32') throw new Error('Windows elevation is unavailable');
 	const shell = dlopen('shell32.dll', {
@@ -69,6 +128,7 @@ export async function runElevatedWindowsProcess(file: string, parameters: string
 	const verb = wide('runas');
 	const executable = wide(file);
 	const args = wide(parameters);
+	const workingDirectory = wide(dirname(file));
 	const info = new Uint8Array(SHELLEXECUTEINFO_SIZE);
 	const view = new DataView(info.buffer);
 	view.setUint32(0, SHELLEXECUTEINFO_SIZE, true);
@@ -76,6 +136,7 @@ export async function runElevatedWindowsProcess(file: string, parameters: string
 	view.setBigUint64(16, pointerValue(verb), true);
 	view.setBigUint64(24, pointerValue(executable), true);
 	view.setBigUint64(32, pointerValue(args), true);
+	view.setBigUint64(40, pointerValue(workingDirectory), true);
 	view.setInt32(48, 0, true);
 	let processHandle: Pointer | null = null;
 	try {

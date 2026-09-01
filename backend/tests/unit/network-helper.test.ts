@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
-import { linuxNetworkHelperArgs, MAC_HELPER_SHELL, macAppBundleRoot, macNetworkHelperScript, networkHelperPath, trustedLinuxHelperMetadata } from '../../src/network-helper-client.ts';
-import { windowsHelperParameters, windowsProgramFilesPath } from '../../src/network-helper-windows.ts';
+import { linuxNetworkHelperArgs, MAC_HELPER_SHELL, macAppBundleRoot, macNetworkHelperScript, networkHelperPath, trustedLinuxHelperMetadata, windowsNetworkLauncherPath } from '../../src/network-helper-client.ts';
+import { windowsHelperParameters, windowsPowerShellPath, windowsProgramFilesPath, windowsSystemEnvironment } from '../../src/network-helper-windows.ts';
 
 describe('network helper protocol', () => {
 	it('round-trips one validated IPv4 operation', () => {
@@ -54,15 +54,20 @@ describe('network helper launch commands', () => {
 	const request = 'eyJ2ZXJzaW9uIjoxfQ';
 
 	it('passes only a bounded base64url request to the Windows helper', () => {
-		const parameters = windowsHelperParameters(request, '\\\\.\\pipe\\lish-network-helper-0123456789abcdef0123456789abcdef0123456789abcdef');
-		expect(parameters).toBe(`--request ${request} --response-pipe \\\\.\\pipe\\lish-network-helper-0123456789abcdef0123456789abcdef0123456789abcdef`);
+		const parameters = windowsHelperParameters(request);
+		expect(parameters).toBe(`--request ${request} --exit-code`);
 		expect(parameters).not.toContain('powershell');
-		expect(() => windowsHelperParameters(`${request};whoami`, '\\\\.\\pipe\\lish-network-helper-0123456789abcdef0123456789abcdef0123456789abcdef')).toThrow();
+		expect(() => windowsHelperParameters(`${request};whoami`)).toThrow();
 	});
 
 	it('reads Program Files through the Windows known-folder API', () => {
-		if (process.platform === 'win32') expect(windowsProgramFilesPath()).toMatch(/^[A-Z]:\\/i);
-		else expect(() => windowsProgramFilesPath()).toThrow('unavailable');
+		if (process.platform === 'win32') {
+			expect(windowsProgramFilesPath()).toMatch(/^[A-Z]:\\/i);
+			expect(windowsPowerShellPath()).toMatch(/\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/i);
+			const env = windowsSystemEnvironment();
+			expect(env['PATH']).not.toContain(process.cwd());
+			expect(env['PSModulePath']).toBeUndefined();
+		} else expect(() => windowsProgramFilesPath()).toThrow('unavailable');
 	});
 
 	it('uses the system authorization dialog on macOS', () => {
@@ -85,6 +90,7 @@ describe('network helper launch commands', () => {
 	it('never resolves a Linux helper from the application directory', () => {
 		expect(networkHelperPath('linux', '/tmp/.mount_LiberShare/lish-backend')).toBe('/usr/libexec/libershare/lish-network-helper');
 		expect(networkHelperPath('win32', 'C:\\Program Files\\LiberShare\\lish-backend.exe')).toBe('C:\\Program Files\\LiberShare\\lish-network-helper.exe');
+		expect(windowsNetworkLauncherPath('C:\\Program Files\\LiberShare\\lish-backend.exe')).toBe('C:\\Program Files\\LiberShare\\lish-network-launcher.exe');
 	});
 
 	it('accepts only a root-owned regular Linux helper without group or other writes', () => {
