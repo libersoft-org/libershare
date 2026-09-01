@@ -7,6 +7,7 @@
 		},
 		"linux": {
 			"deb": {
+				"depends": ["pkexec"],
 				"desktopTemplate": "desktop-entry.desktop",
 				"files": {
 					"/usr/share/applications/{{PRODUCT_NAME_LOWER}}-debug.desktop": "desktop-entry-debug.desktop",
@@ -15,6 +16,7 @@
 				}
 			},
 			"rpm": {
+				"depends": ["polkit"],
 				"desktopTemplate": "desktop-entry.desktop",
 				"files": {
 					"/usr/share/applications/{{PRODUCT_NAME_LOWER}}-debug.desktop": "desktop-entry-debug.desktop",

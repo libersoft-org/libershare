@@ -6,7 +6,7 @@ Version: ${PRODUCT_VERSION}
 Architecture: ${PKG_DEB_ARCH}
 Maintainer: LiberSoft <info@libersoft.org>
 Installed-Size: ${PKG_INSTALLED_SIZE}
-Depends: libwebkit2gtk-4.1-0, libgtk-3-0
+Depends: libwebkit2gtk-4.1-0, libgtk-3-0, pkexec
 Section: net
 Priority: optional
 Homepage: ${PRODUCT_WEBSITE}
@@ -32,7 +32,7 @@ Summary: ${PRODUCT_NAME} - peer-to-peer file sharing
 License: MIT
 URL: ${PRODUCT_WEBSITE}
 AutoReqProv: no
-Requires: webkit2gtk4.1, gtk3
+Requires: webkit2gtk4.1, gtk3, polkit
 
 %description
 ${PRODUCT_NAME} - peer-to-peer file sharing application
@@ -72,6 +72,7 @@ arch = ${PKG_PACMAN_ARCH}
 license = MIT
 depend = webkit2gtk-4.1
 depend = gtk3
+depend = polkit
 PKGINFO_EOF
 	cd "$PKG_STAGING"
 	bsdtar -czf "$WORK/.MTREE" \
