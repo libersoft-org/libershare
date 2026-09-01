@@ -4,7 +4,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import type { PeerCountEntry } from '../protocol/network.ts';
 import { type Settings } from '../settings.ts';
-import { CodedError, type ErrorCode, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, formatBytes } from '@shared';
+import { CodedError, type ErrorCode, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, formatBytes, type NetworkStateInfo } from '@shared';
 import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
@@ -15,7 +15,7 @@ import { initUploadHandlers } from './upload.ts';
 import { initLISHsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
 import { initEventsHandlers } from './events.ts';
-import { initSystemHandlers } from './system.ts';
+import { initSystemHandlers, restrictNetworkCapabilities } from './system.ts';
 import { initRelayHandlers } from './relay.ts';
 import { initSearchManager } from './search.ts';
 import { buildFactoryResetHandler } from './factory-reset-orchestrator.ts';
@@ -74,9 +74,13 @@ export function formatParamsForLog(params: unknown): string {
 	return json.length <= MAX_LOGGED_PARAMS ? json : json.slice(0, MAX_LOGGED_PARAMS) + `…(${json.length} chars)`;
 }
 
-/** Host network administration always requires the authenticated API mode. */
-export function canAdministerHostNetwork(apiTokenConfigured: boolean): boolean {
-	return apiTokenConfigured;
+/** Host network administration requires authenticated API mode on the same machine. */
+export function canAdministerHostNetwork(apiTokenConfigured: boolean, isLocalClient: boolean): boolean {
+	return apiTokenConfigured && isLocalClient;
+}
+
+export function networkStateForClient(state: NetworkStateInfo, apiTokenConfigured: boolean, isLocalClient: boolean): NetworkStateInfo {
+	return restrictNetworkCapabilities(state, canAdministerHostNetwork(apiTokenConfigured, isLocalClient));
 }
 
 /** Match Bun's peer address against loopback and every address owned by this host. */
@@ -284,8 +288,8 @@ export class APIServer {
 		};
 		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers, !!this.apiToken);
 		const networkAdmin = <P, R>(handler: (params: P) => R): ((params: P, client: ClientSocket) => R) => {
-			return params => {
-				if (!canAdministerHostNetwork(!!this.apiToken)) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'host network administration requires API authentication');
+			return (params, client) => {
+				if (!canAdministerHostNetwork(!!this.apiToken, client.data.isLocalClient)) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'host network administration requires an authenticated client on this machine');
 				return handler(params);
 			};
 		};
@@ -434,7 +438,7 @@ export class APIServer {
 			'system.cpu': _system.cpu,
 			'system.setVolume': _system.setVolume,
 			'system.getVolume': _system.getVolume,
-			'system.network': _system.network,
+			'system.network': async (_params, client) => networkStateForClient(await _system.network(), !!this.apiToken, client.data.isLocalClient),
 			'system.networkApply': networkAdmin(_system.networkApply),
 			'system.wifiScan': networkAdmin(_system.wifiScan),
 			'system.wifiConnect': networkAdmin(_system.wifiConnect),
@@ -653,12 +657,12 @@ export class APIServer {
 	 * broadcast — a factory reset reloading the very tab that is about to show its result.
 	 */
 	private broadcast(event: string, data: any, except?: ClientSocket): void {
-		const msg = JSON.stringify({ event, data });
 		let sent = 0;
 		for (const client of this.clients) {
 			if (client === except) continue;
 			if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) {
-				client.send(msg);
+				const clientData = event === 'system:network' ? networkStateForClient(data as NetworkStateInfo, !!this.apiToken, client.data.isLocalClient) : data;
+				client.send(JSON.stringify({ event, data: clientData }));
 				sent++;
 			}
 		}

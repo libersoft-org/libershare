@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { canAdministerHostNetwork, formatParamsForLog } from '../../../src/api/api.ts';
+import { canAdministerHostNetwork, formatParamsForLog, networkStateForClient } from '../../../src/api/api.ts';
 
 describe('formatParamsForLog', () => {
 	it('leaves a small params object intact', () => {
@@ -34,8 +34,21 @@ describe('formatParamsForLog', () => {
 });
 
 describe('host network administration trust boundary', () => {
-	it('requires API authentication even for a browser on the same host', () => {
-		expect(canAdministerHostNetwork(true)).toBe(true);
-		expect(canAdministerHostNetwork(false)).toBe(false);
+	it('requires both API authentication and a browser on the same host', () => {
+		expect(canAdministerHostNetwork(true, true)).toBe(true);
+		expect(canAdministerHostNetwork(true, false)).toBe(false);
+		expect(canAdministerHostNetwork(false, true)).toBe(false);
+	});
+
+	it('removes write capabilities from network state sent to a remote client', () => {
+		const state = {
+			interfaces: [],
+			primaryID: null,
+			detail: 'full' as const,
+			known: true,
+			capabilities: { ipv4: true, wifi: true, staticGatewayRequired: false },
+		};
+		expect(networkStateForClient(state, true, true).capabilities).toEqual(state.capabilities);
+		expect(networkStateForClient(state, true, false).capabilities).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
 	});
 });
