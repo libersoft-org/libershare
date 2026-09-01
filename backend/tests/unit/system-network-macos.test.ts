@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { hasMacWritePrivilege, macApplyArgs, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { assertMacIPv4Applied, hasMacWritePrivilege, macApplyArgs, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -363,6 +363,20 @@ describe('macApplyArgs', () => {
 
 	it('passes a service name with spaces as one argument', () => {
 		expect(macApplyArgs('Thunderbolt Bridge', { mode: 'dhcp' })[0]).toEqual(['-setdhcp', 'Thunderbolt Bridge']);
+	});
+});
+
+describe('macOS apply verification', () => {
+	it('requires a live DHCP lease before reporting success', () => {
+		expect(() => assertMacIPv4Applied({ mode: 'dhcp' }, 'DHCP Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\n', "There aren't any DNS Servers set on Wi-Fi.\n", true)).not.toThrow();
+		expect(() => assertMacIPv4Applied({ mode: 'dhcp' }, 'DHCP Configuration\nIP address: none\n', "There aren't any DNS Servers set on Wi-Fi.\n", true)).toThrow('lease');
+	});
+
+	it('checks static addressing and explicit DNS exactly', () => {
+		const info = 'Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\n';
+		expect(() => assertMacIPv4Applied({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53', '2001:db8::53'] }, info, '192.0.2.53\n2001:db8::53\n', true)).not.toThrow();
+		expect(() => assertMacIPv4Applied({ mode: 'static', address: '192.0.2.11', prefixLength: 24, gateway: '192.0.2.1' }, info, '', true)).toThrow('IPv4');
+		expect(() => assertMacIPv4Applied({ mode: 'dhcp', dns: [] }, info, '192.0.2.53\n', false)).toThrow('DNS');
 	});
 });
 

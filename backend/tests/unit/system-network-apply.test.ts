@@ -639,6 +639,20 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).not.toContain('Remove-NetIPAddress');
 		expect(command).not.toContain('Remove-NetRoute');
 		expect(command).not.toContain('Set-NetIPInterface');
+		expect(command).toContain('$oldDns4');
+		expect(command).toContain('Compare-Object');
+		expect(command).toContain('Set-DnsClientServerAddress -InputObject $oldDns4');
+	});
+
+	it('verifies the applied lease, route and DNS inside the rollback boundary', () => {
+		const dhcp = windowsApplyIPv4Command(guid, { mode: 'dhcp', dns: [] });
+		expect(dhcp).toContain('DHCP apply did not obtain a usable lease');
+		expect(dhcp).toContain('DNS apply did not restore automatic policy');
+		const fixed = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53'] });
+		expect(fixed).toContain('$appliedAddresses.Count -ne 1');
+		expect(fixed).toContain('$appliedRoutes.Count -ne 1');
+		expect(fixed).toContain('Compare-Object');
+		expect(fixed.indexOf('$appliedRoutes.Count -ne 1')).toBeLessThan(fixed.indexOf('} catch {'));
 	});
 
 	it('sets the address, prefix and gateway for a static config', () => {
