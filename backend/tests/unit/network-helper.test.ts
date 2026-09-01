@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
+import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, networkHelperFailure, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
 import { linuxNetworkHelperArgs, MAC_HELPER_SHELL, macAppBundleRoot, macNetworkHelperScript, networkHelperPath, trustedLinuxHelperMetadata, windowsNetworkLauncherPath } from '../../src/network-helper-client.ts';
 import { windowsHelperParameters, windowsPowerShellPath, windowsProgramFilesPath, windowsSystemEnvironment } from '../../src/network-helper-windows.ts';
 
@@ -47,6 +47,22 @@ describe('network helper protocol', () => {
 		if (result.ok) throw new Error('expected failure');
 		expect(result.error.length).toBeLessThanOrEqual(500);
 		expect(result.error).not.toContain('network-helper.test.ts');
+	});
+
+	it('shapes a decode failure into the same bounded response as an apply failure', () => {
+		// A request that never decodes must not escape as a runtime stack trace:
+		// on Linux the helper's stderr is what the UI shows as the reason.
+		let thrown: unknown;
+		try {
+			decodeNetworkHelperRequest(Buffer.from(JSON.stringify({ version: 1, operation: 'shell', interfaceID: 'eth0', config: { mode: 'dhcp' } })).toString('base64url'));
+		} catch (error) {
+			thrown = error;
+		}
+		const response = networkHelperFailure(thrown);
+		expect(response).toEqual({ ok: false, error: 'unsupported network helper operation' });
+		expect(parseNetworkHelperResponse(JSON.stringify(response))).toEqual(response);
+		expect(networkHelperFailure(new Error(`bad\nline${'x'.repeat(900)}`)).ok).toBe(false);
+		expect(networkHelperFailure(new Error('')).error).toBe('network change failed');
 	});
 });
 

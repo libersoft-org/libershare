@@ -7,7 +7,8 @@ export interface NetworkHelperRequest {
 	config: NetIPv4Config;
 }
 
-export type NetworkHelperResponse = { ok: true } | { ok: false; error: string };
+export type NetworkHelperFailure = { ok: false; error: string };
+export type NetworkHelperResponse = { ok: true } | NetworkHelperFailure;
 type ApplyIPv4 = (interfaceID: string, config: NetIPv4Config) => Promise<unknown>;
 
 const REQUEST_KEYS = ['config', 'interfaceID', 'operation', 'version'];
@@ -40,13 +41,26 @@ export function decodeNetworkHelperRequest(encoded: string): NetworkHelperReques
 	return request as NetworkHelperRequest;
 }
 
+/**
+ * Shape any thrown value into the bounded, control-character-free failure the
+ * client can parse.
+ *
+ * Every path out of the helper goes through here, including the request decode
+ * that runs before an operation is even known. An escaping exception would
+ * otherwise reach the caller as a runtime stack trace on stderr, and on Linux
+ * that text is what the UI shows as the reason the change failed.
+ */
+export function networkHelperFailure(error: unknown): NetworkHelperFailure {
+	const message = (error instanceof Error ? error.message : String(error)).replace(/\p{Cc}/gu, ' ').trim();
+	return { ok: false, error: (message || 'network change failed').slice(0, 500) };
+}
+
 export async function executeNetworkHelperRequest(request: NetworkHelperRequest, applyIPv4: ApplyIPv4): Promise<NetworkHelperResponse> {
 	try {
 		await applyIPv4(request.interfaceID, request.config);
 		return { ok: true };
 	} catch (error) {
-		const message = (error instanceof Error ? error.message : String(error)).replace(/\p{Cc}/gu, ' ').trim();
-		return { ok: false, error: (message || 'network change failed').slice(0, 500) };
+		return networkHelperFailure(error);
 	}
 }
 
