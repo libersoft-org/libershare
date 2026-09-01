@@ -5,8 +5,8 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { joinPath } from '../../scripts/fileBrowser.ts';
 	import { api } from '../../scripts/api.ts';
-	import { storageLISHnetPath, defaultCompress } from '../../scripts/settings.ts';
-	import { sanitizeFilename } from '@shared';
+	import { storageLISHnetPath, defaultCompress, defaultCompressionAlgorithm } from '../../scripts/settings.ts';
+	import { compressionExtension, sanitizeFilename } from '@shared';
 	import ExportFileForm, { type ExportOptions } from '../../components/Export/ExportFileForm.svelte';
 	interface Props {
 		areaID: string;
@@ -19,7 +19,7 @@
 	function getInitialFileName(): string {
 		const baseName = network ? sanitizeFilename(network.name || network.id) : 'network';
 		const base = `${baseName}.lishnet`;
-		return $defaultCompress ? base + '.gz' : base;
+		return $defaultCompress ? base + compressionExtension($defaultCompressionAlgorithm) : base;
 	}
 
 	let filePath = $state(joinPath($storageLISHnetPath, getInitialFileName()));
@@ -31,7 +31,7 @@
 
 	async function doExport(path: string, opts: ExportOptions): Promise<{ success: boolean }> {
 		if (!network) return { success: false };
-		return await api.lishnets.exportToFile(network.id, path, opts.minifyJSON, opts.compress);
+		return await api.lishnets.exportToFile(network.id, path, opts.minifyJSON, opts.compress, opts.compressionAlgorithm);
 	}
 
 	function onSuccess(): void {
