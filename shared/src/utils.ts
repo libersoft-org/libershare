@@ -100,6 +100,40 @@ export function isIPv6(value: string): boolean {
 	}
 }
 
+export const MAX_DNS_SERVERS = 16;
+export const MAX_DNS_LIST_BYTES = 1024;
+
+export function normalizeDnsServers(servers: readonly string[]): string[] {
+	const seen = new Set<string>();
+	const result: string[] = [];
+	for (const server of servers) {
+		const key = server.toLowerCase();
+		if (seen.has(key)) continue;
+		seen.add(key);
+		result.push(server);
+	}
+	return result;
+}
+
+function ipv4Number(value: string): number {
+	return value.split('.').reduce((result, part) => ((result << 8) | Number(part)) >>> 0, 0);
+}
+
+function isUsableInterfaceAddress(value: string, prefixLength: number): boolean {
+	if (!isIPv4(value)) return false;
+	const first = Number(value.split('.')[0]);
+	if (first === 0 || first === 127 || first >= 224) return false;
+	if (prefixLength >= 31) return true;
+	const hostMask = 0xffffffff >>> prefixLength;
+	const host = ipv4Number(value) & hostMask;
+	return host !== 0 && host !== hostMask;
+}
+
+function sameIPv4Subnet(left: string, right: string, prefixLength: number): boolean {
+	const mask = prefixLength === 32 ? 0xffffffff : (0xffffffff << (32 - prefixLength)) >>> 0;
+	return (ipv4Number(left) & mask) === (ipv4Number(right) & mask);
+}
+
 /**
  * Validate a desired IPv4 configuration. Returns the name of the offending field,
  * or null when the whole config is usable.
@@ -115,12 +149,16 @@ export function validateIPv4Config(value: unknown, capabilities?: Pick<NetCapabi
 	if (config.mode !== 'dhcp' && config.mode !== 'static') return 'mode';
 	if (config.dns !== undefined && !Array.isArray(config.dns)) return 'dns';
 	for (const server of config.dns ?? []) if (typeof server !== 'string' || (!isIPv4(server) && !isIPv6(server))) return 'dns';
+	const dns = normalizeDnsServers((config.dns ?? []) as string[]);
+	if (dns.length > MAX_DNS_SERVERS || new TextEncoder().encode(dns.join(',')).byteLength > MAX_DNS_LIST_BYTES) return 'dns';
 	if (config.mode === 'dhcp') return null;
 	if (typeof config.address !== 'string' || !isIPv4(config.address)) return 'address';
 	if (!Number.isInteger(config.prefixLength) || (config.prefixLength as number) < 1 || (config.prefixLength as number) > 32) return 'prefixLength';
+	if (!isUsableInterfaceAddress(config.address, config.prefixLength as number)) return 'address';
 	// An interface on an isolated segment legitimately has no gateway, so only a
 	// present-but-malformed value is an error.
 	if (config.gateway !== undefined && (typeof config.gateway !== 'string' || (config.gateway !== '' && !isIPv4(config.gateway)))) return 'gateway';
+	if (config.gateway && (!isUsableInterfaceAddress(config.gateway, config.prefixLength as number) || config.gateway === config.address || !sameIPv4Subnet(config.address, config.gateway, config.prefixLength as number))) return 'gateway';
 	if (capabilities?.staticGatewayRequired && !config.gateway) return 'gateway';
 	return null;
 }

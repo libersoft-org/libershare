@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { isIPv4, isIPv6, isValidSSID, validateIPv4Config, type NetIPv4Config } from '@shared';
+import { isIPv4, isIPv6, isValidSSID, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetIPv4Config } from '@shared';
 import { assertLinuxDnsApplied, assertLinuxIPv4Applied, assertLinuxWifiConnected, assertNetworkManagerRollback, assertNmcliActiveConnection, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { assertDeviceName, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, runNetworkMutation } from '../../src/system-network.ts';
@@ -73,6 +73,30 @@ describe('validateIPv4Config', () => {
 			expect(validateIPv4Config({ mode: 'static', address: attack, prefixLength: 24 })).toBe('address');
 			expect(validateIPv4Config({ mode: 'static', address: '192.0.2.1', prefixLength: 24, gateway: attack })).toBe('gateway');
 		}
+	});
+
+	it('rejects addresses that cannot identify a normal interface host', () => {
+		for (const address of ['0.0.0.0', '127.0.0.1', '224.0.0.1', '240.0.0.1', '255.255.255.255', '192.0.2.0', '192.0.2.255']) {
+			expect(validateIPv4Config({ mode: 'static', address, prefixLength: 24, gateway: '192.0.2.1' })).toBe('address');
+		}
+	});
+
+	it('requires a distinct on-link unicast gateway', () => {
+		for (const gateway of ['0.0.0.0', '127.0.0.1', '224.0.0.1', '192.0.2.0', '192.0.2.255', '192.0.2.10', '198.51.100.1']) {
+			expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway })).toBe('gateway');
+		}
+	});
+
+	it('handles point-to-point and host prefixes explicitly', () => {
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 31, gateway: '192.0.2.11' })).toBeNull();
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 32 })).toBeNull();
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 32, gateway: '192.0.2.11' })).toBe('gateway');
+	});
+
+	it('bounds and deduplicates resolver lists without rejecting loopback DNS', () => {
+		expect(normalizeDnsServers(['127.0.0.1', '2001:DB8::53', '127.0.0.1', '2001:db8::53'])).toEqual(['127.0.0.1', '2001:DB8::53']);
+		expect(validateIPv4Config({ mode: 'dhcp', dns: Array.from({ length: MAX_DNS_SERVERS }, (_, index) => `192.0.2.${index + 1}`) })).toBeNull();
+		expect(validateIPv4Config({ mode: 'dhcp', dns: Array.from({ length: MAX_DNS_SERVERS + 1 }, (_, index) => `192.0.2.${index + 1}`) })).toBe('dns');
 	});
 
 	it('rejects malformed API shapes without throwing a native TypeError', () => {

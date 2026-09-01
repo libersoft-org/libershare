@@ -1,4 +1,4 @@
-import { validateIPv4Config, type NetAddressMode, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
+import { normalizeDnsServers, validateIPv4Config, type NetAddressMode, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
 
 export type DnsUpdateMode = 'unchanged' | 'automatic' | 'custom';
 
@@ -54,7 +54,7 @@ export function networkConfigFromForm(form: NetworkConfigForm): NetIPv4Config | 
 			.map(server => server.trim())
 			.filter(Boolean);
 		if (servers.length === 0) return null;
-		config.dns = servers;
+		config.dns = normalizeDnsServers(servers);
 	}
 	return config;
 }

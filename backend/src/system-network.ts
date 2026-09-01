@@ -2,7 +2,7 @@ import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
-import { CodedError, ErrorCodes, isSelectableInterface, isValidSSID, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
+import { CodedError, ErrorCodes, isSelectableInterface, isValidSSID, normalizeDnsServers, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
 import { isWindowsInterfaceID, parseElevation, parseWindowsNetworkState, readWindowsWifi, windowsApplyIPv4Command, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
 import { applyLinuxIPv4, connectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
 import { applyMacIPv4, isMacWifiConfigurable, isMacWritable, readMacNetworkState } from './system-network-macos.ts';
@@ -294,10 +294,11 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config, prim
 	if (typeof interfaceID !== 'string' || !config || typeof config !== 'object') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid request');
 	const invalid = validateIPv4Config(config);
 	if (invalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${invalid}`);
+	const desired = config.dns === undefined ? config : { ...config, dns: normalizeDnsServers(config.dns) };
 	return runNetworkMutation(async () => {
 		const supported = await readCapabilities();
 		if (!supported.ipv4) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host does not expose a writable network configuration');
-		const platformInvalid = validateIPv4Config(config, supported);
+		const platformInvalid = validateIPv4Config(desired, supported);
 		if (platformInvalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${platformInvalid}`);
 		// Never trust the UI snapshot at this boundary. A platform reader marks an
 		// adapter read-only when its complete address/route state cannot be preserved,
@@ -307,17 +308,17 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config, prim
 		const target = before.interfaces.find(item => item.id === interfaceID);
 		if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
 		if (!target.ipv4Configurable || target.ipv4Mode === 'unknown') throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'interface configuration cannot be preserved safely');
-		if (isIPv4ConfigUnchanged(target, config)) return before;
-		const addressingChanged = !isIPv4AddressingUnchanged(target, config);
+		if (isIPv4ConfigUnchanged(target, desired)) return before;
+		const addressingChanged = !isIPv4AddressingUnchanged(target, desired);
 		try {
 			await run(async () => {
 				if (process.platform === 'win32') {
 					if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
-					await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, config, addressingChanged)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
+					await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, desired, addressingChanged)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
 				} else if (process.platform === 'darwin') {
-					await applyMacIPv4(assertDeviceName(interfaceID), config, addressingChanged);
+					await applyMacIPv4(assertDeviceName(interfaceID), desired, addressingChanged);
 				} else {
-					await applyLinuxIPv4(assertDeviceName(interfaceID), config, addressingChanged);
+					await applyLinuxIPv4(assertDeviceName(interfaceID), desired, addressingChanged);
 				}
 			});
 		} finally {
