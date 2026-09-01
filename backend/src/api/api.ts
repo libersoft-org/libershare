@@ -657,12 +657,13 @@ export class APIServer {
 	 * broadcast — a factory reset reloading the very tab that is about to show its result.
 	 */
 	private broadcast(event: string, data: any, except?: ClientSocket): void {
+		const sharedMessage = event === 'system:network' ? null : JSON.stringify({ event, data });
 		let sent = 0;
 		for (const client of this.clients) {
 			if (client === except) continue;
 			if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) {
-				const clientData = event === 'system:network' ? networkStateForClient(data as NetworkStateInfo, !!this.apiToken, client.data.isLocalClient) : data;
-				client.send(JSON.stringify({ event, data: clientData }));
+				const message = sharedMessage ?? JSON.stringify({ event, data: networkStateForClient(data as NetworkStateInfo, !!this.apiToken, client.data.isLocalClient) });
+				client.send(message);
 				sent++;
 			}
 		}

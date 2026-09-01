@@ -1,5 +1,5 @@
 import { dlopen, FFIType, ptr, read, toArrayBuffer, type Pointer } from 'bun:ffi';
-import type { NetAddress, NetInterfaceInfo, NetIPv4Config, NetMedium, NetLink, NetAddressMode, NetWifiInfo } from '@shared';
+import { validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetMedium, type NetLink, type NetAddressMode, type NetWifiInfo } from '@shared';
 
 /**
  * Windows host network state.
@@ -278,6 +278,8 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 		const interfaceRoutes = routesByIndex.get(ifIndex) ?? [];
 		const ipv4Mode = dhcpByIndex.get(ifIndex) ?? 'unknown';
 		const ipv4RowCount = (ipv4RowsByIndex.get(ifIndex) ?? 0) - (ipv4Mode === 'dhcp' ? (automaticApipaByIndex.get(ifIndex) ?? 0) : 0);
+		const visibleIPv4 = interfaceAddresses.filter(address => address.family === 'ipv4');
+		const staticShapeSafe = ipv4Mode !== 'static' || (visibleIPv4.length === 1 && validateIPv4Config({ mode: 'static', address: visibleIPv4[0]!.address, prefixLength: visibleIPv4[0]!.prefixLength, gateway: interfaceRoutes[0]?.NextHop ?? '' }) === null);
 		const radio = medium === 'wireless' && guid ? wifi.get(guid) : undefined;
 		const info: NetInterfaceInfo = {
 			// The GUID (registry NetCfgInstanceId) survives reboots and adapter
@@ -292,7 +294,7 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 			mac: mac && mac.length > 0 ? mac : null,
 			addresses: interfaceAddresses,
 			ipv4Mode,
-			ipv4Configurable: guid !== null && ipv4Mode !== 'unknown' && ipv4RowCount === interfaceAddresses.filter(address => address.family === 'ipv4').length && ipv4RowCount <= 1 && interfaceRoutes.length <= 1 && (ipv4Mode !== 'static' || isSimplePersistentStaticState(ifIndex, addresses, persistentAddresses, routes, persistentRoutes)) && (medium !== 'wireless' || radio !== undefined),
+			ipv4Configurable: guid !== null && ipv4Mode !== 'unknown' && staticShapeSafe && ipv4RowCount === visibleIPv4.length && ipv4RowCount <= 1 && interfaceRoutes.length <= 1 && (ipv4Mode !== 'static' || isSimplePersistentStaticState(ifIndex, addresses, persistentAddresses, routes, persistentRoutes)) && (medium !== 'wireless' || radio !== undefined),
 			wifiConfigurable: false,
 			gateway: interfaceRoutes[0]?.NextHop ?? null,
 			dns: dnsByIndex.get(ifIndex) ?? [],

@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
-import { isIPv4, isIPv6, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetLink, type NetMedium } from '@shared';
+import { isIPv4, isIPv6, validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetLink, type NetMedium } from '@shared';
 
 const execFileAsync = promisify(execFile);
 const C_LOCALE_ENV = { ...process.env, LC_ALL: 'C', LANG: 'C' };
@@ -330,6 +330,7 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 		const ipv4Addresses = addresses.filter(address => address.family === 'ipv4');
 		const serviceGateway = parseServiceGateway(serviceInfo);
 		const gateway = serviceGateway ?? (defaultRoute ? route.gateway : null);
+		const staticShapeSafe = ipv4Mode !== 'static' || (ipv4Addresses.length === 1 && validateIPv4Config({ mode: 'static', address: ipv4Addresses[0]!.address, prefixLength: ipv4Addresses[0]!.prefixLength, gateway: serviceGateway ?? '' }, { staticGatewayRequired: true }) === null);
 		const info: NetInterfaceInfo = {
 			id: device,
 			// The service name is what the user sees in System Settings, so it is the
@@ -341,7 +342,7 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 			mac: entry.mac,
 			addresses,
 			ipv4Mode,
-			ipv4Configurable: routeDetailKnown && services.has(device) && ipv4Mode !== 'unknown' && (ipv4Mode !== 'static' || serviceGateway !== null) && ipv4Addresses.length <= 1 && deviceRoutes.length <= 1,
+			ipv4Configurable: routeDetailKnown && services.has(device) && ipv4Mode !== 'unknown' && staticShapeSafe && ipv4Addresses.length <= 1 && deviceRoutes.length <= 1,
 			wifiConfigurable: false,
 			gateway,
 			// Manually set servers win; otherwise fall back to what the DHCP lease

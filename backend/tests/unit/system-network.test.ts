@@ -165,6 +165,13 @@ describe('parseWindowsNetworkState', () => {
 		}
 	});
 
+	it('keeps a static /32 address with an off-link gateway read-only', () => {
+		const doc = simpleWindowsStaticDoc() as Record<string, any>;
+		doc['addresses'].PrefixLength = 32;
+		doc['persistentAddresses'].PrefixLength = 32;
+		expect(parseWindowsNetworkState(JSON.stringify(doc))[0]?.ipv4Configurable).toBe(false);
+	});
+
 	it('attaches Wi-Fi data only to the wireless adapter whose GUID matches', () => {
 		const wifi = new Map([[ID.wifi, { ssid: null, signal: null, radio: 'off' as const }]]);
 		const withWifi = parseWindowsNetworkState(windowsFixture(), wifi);

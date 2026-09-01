@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
-import { isIPv4, isIPv6 } from '@shared';
+import { isIPv4, isIPv6, validateIPv4Config } from '@shared';
 import type { NetAddress, NetCapabilities, NetInterfaceInfo, NetIPv4Config, NetLink, NetWifiInfo, NetWifiNetwork } from '@shared';
 
 const execFileAsync = promisify(execFile);
@@ -539,7 +539,7 @@ export function parseNmcliIPv4Profile(text: string, expectedDevice: string, acti
 	const multiConnectMatch = (values.get('connection.multi-connect') ?? '').match(/^-?\d+/);
 	const multiConnect = multiConnectMatch ? Number(multiConnectMatch[0]) : null;
 	const addressMatch = addresses.match(/^([^/]+)\/(\d{1,2})$/);
-	const simpleManualAddress = !!addressMatch && isIPv4(addressMatch[1] ?? '') && Number(addressMatch[2]) >= 1 && Number(addressMatch[2]) <= 32;
+	const simpleManualAddress = !!addressMatch && validateIPv4Config({ mode: 'static', address: addressMatch[1] ?? '', prefixLength: Number(addressMatch[2]), gateway: gatewayText }) === null;
 	const knownMethod = method === 'auto' || method === 'manual';
 	const boundOnce = interfaceName === expectedDevice && (multiConnect === 0 || multiConnect === 1) && activeInstances === 1;
 	const safe = boundOnce && knownMethod && values.get('ipv4.never-default') === 'no' && (values.get('ipv4.routes') ?? '') === '' && ['', '0'].includes(values.get('ipv4.route-table') ?? '') && (values.get('ipv4.routing-rules') ?? '') === '' && (gatewayText === '' || isIPv4(gatewayText)) && (method === 'auto' ? addresses === '' && gatewayText === '' : simpleManualAddress);

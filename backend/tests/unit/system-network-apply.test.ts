@@ -357,6 +357,11 @@ describe('parseNmcliIPv4Profile', () => {
 		const zero = plain.replace('ipv4.method:auto', 'ipv4.method:manual').replace('ipv4.gateway:', 'ipv4.gateway:192.0.2.1').replace('ipv4.addresses:', 'ipv4.addresses:192.0.2.10/0');
 		expect(parseNmcliIPv4Profile(zero, 'eth0', 1).safe).toBe(false);
 	});
+
+	it('keeps a /32 profile with an off-link gateway read-only', () => {
+		const hostRoute = plain.replace('ipv4.method:auto', 'ipv4.method:manual').replace('ipv4.gateway:', 'ipv4.gateway:192.0.2.1').replace('ipv4.addresses:', 'ipv4.addresses:192.0.2.10/32');
+		expect(parseNmcliIPv4Profile(hostRoute, 'eth0', 1).safe).toBe(false);
+	});
 });
 
 describe('parseNmcliManagedDevices', () => {

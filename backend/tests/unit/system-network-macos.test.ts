@@ -293,6 +293,11 @@ describe('parseMacNetworkState', () => {
 		expect(defaultService).toMatchObject({ ipv4Mode: 'static', gateway: '192.0.2.1', ipv4Configurable: false });
 	});
 
+	it('keeps a manual /32 service with an off-link router read-only', () => {
+		const serviceInfo = new Map(sources.serviceInfo).set('bridge0', 'Manual Configuration\nIP address: 198.51.100.10\nSubnet mask: 255.255.255.255\nRouter: 198.51.100.1\n');
+		expect(parseMacNetworkState({ ...sources, serviceInfo }).find(i => i.id === 'bridge0')?.ipv4Configurable).toBe(false);
+	});
+
 	it('leaves wifi undefined on a wired interface', () => {
 		expect(parseMacNetworkState(sources).find(i => i.id === 'bridge0')?.wifi).toBeUndefined();
 	});
