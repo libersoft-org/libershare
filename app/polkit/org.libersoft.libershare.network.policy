@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN" "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+	<vendor>LiberSoft</vendor>
+	<vendor_url>https://libershare.com</vendor_url>
+	<action id="org.libersoft.libershare.network.configure">
+		<description>Change host network settings</description>
+		<message>Authentication is required to change host network settings</message>
+		<defaults>
+			<allow_any>no</allow_any>
+			<allow_inactive>no</allow_inactive>
+			<allow_active>auth_admin</allow_active>
+		</defaults>
+		<annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/libershare/lish-network-helper</annotate>
+	</action>
+</policyconfig>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
-import { linuxNetworkHelperArgs, macAppBundleRoot, macNetworkHelperScript, networkHelperPath, trustedLinuxHelperMetadata, windowsNetworkHelperCommand } from '../../src/network-helper-client.ts';
+import { linuxNetworkHelperArgs, MAC_HELPER_SHELL, macAppBundleRoot, macNetworkHelperScript, networkHelperPath, trustedLinuxHelperMetadata, windowsNetworkHelperCommand } from '../../src/network-helper-client.ts';
 
 describe('network helper protocol', () => {
 	it('round-trips one validated IPv4 operation', () => {
@@ -55,6 +55,7 @@ describe('network helper launch commands', () => {
 	it('passes only a fixed helper path and encoded request on Windows', () => {
 		const command = windowsNetworkHelperCommand('C:\\Program Files\\LiberShare\\lish-network-helper.exe', request, '\\\\.\\pipe\\lish-network-helper-0123456789abcdef0123456789abcdef0123456789abcdef');
 		expect(command).toContain('-Verb RunAs');
+		expect(command).toContain('-UseNewEnvironment');
 		expect(command).toContain('lish-network-helper.exe');
 		expect(command).toContain(request);
 		expect(command).toContain('--response-pipe');
@@ -68,6 +69,10 @@ describe('network helper launch commands', () => {
 		expect(script).toContain('quoted form of helperPath');
 		expect(script).toContain('quoted form of shellProgram');
 		expect(script).not.toContain(request);
+		expect(MAC_HELPER_SHELL).toContain('/usr/bin/codesign --verify --strict');
+		expect(MAC_HELPER_SHELL).toContain('TeamIdentifier=');
+		expect(MAC_HELPER_SHELL).toContain('/usr/bin/shasum -a 256');
+		expect(MAC_HELPER_SHELL).toContain('/usr/bin/mktemp -d /private/var/tmp/');
 	});
 
 	it('uses pkexec with a fixed executable and stdin on Linux', () => {

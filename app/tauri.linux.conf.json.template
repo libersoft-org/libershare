@@ -9,13 +9,17 @@
 			"deb": {
 				"desktopTemplate": "desktop-entry.desktop",
 				"files": {
-					"/usr/share/applications/{{PRODUCT_NAME_LOWER}}-debug.desktop": "desktop-entry-debug.desktop"
+					"/usr/share/applications/{{PRODUCT_NAME_LOWER}}-debug.desktop": "desktop-entry-debug.desktop",
+					"/usr/libexec/libershare/lish-network-helper": "../backend/build/lish-network-helper",
+					"/usr/share/polkit-1/actions/org.libersoft.libershare.network.policy": "polkit/org.libersoft.libershare.network.policy"
 				}
 			},
 			"rpm": {
 				"desktopTemplate": "desktop-entry.desktop",
 				"files": {
-					"/usr/share/applications/{{PRODUCT_NAME_LOWER}}-debug.desktop": "desktop-entry-debug.desktop"
+					"/usr/share/applications/{{PRODUCT_NAME_LOWER}}-debug.desktop": "desktop-entry-debug.desktop",
+					"/usr/libexec/libershare/lish-network-helper": "../backend/build/lish-network-helper",
+					"/usr/share/polkit-1/actions/org.libersoft.libershare.network.policy": "polkit/org.libersoft.libershare.network.policy"
 				}
 			},
 			"appimage": {

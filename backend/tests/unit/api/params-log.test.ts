@@ -49,6 +49,6 @@ describe('host network administration trust boundary', () => {
 			capabilities: { ipv4: true, wifi: true, staticGatewayRequired: false },
 		};
 		expect(networkStateForClient(state, true, true).capabilities).toEqual(state.capabilities);
-		expect(networkStateForClient(state, true, false).capabilities).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
+		expect(networkStateForClient(state, true, false).capabilities).toEqual({ ipv4: false, ipv4Elevation: false, wifi: false, staticGatewayRequired: false });
 	});
 });
