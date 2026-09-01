@@ -525,7 +525,7 @@ export function parseNmcliIPv4Method(text: string): NetInterfaceInfo['ipv4Mode']
 }
 
 /** Accept only a plain profile the editor can replace without preserving hidden routing policy. */
-export function parseNmcliIPv4Profile(text: string): NmcliIPv4Profile {
+export function parseNmcliIPv4Profile(text: string, expectedDevice: string, activeInstances: number): NmcliIPv4Profile {
 	const values = new Map<string, string>();
 	for (const line of text.split('\n')) {
 		const fields = splitNmcliFields(line.trim());
@@ -535,11 +535,22 @@ export function parseNmcliIPv4Profile(text: string): NmcliIPv4Profile {
 	const method = values.get('ipv4.method') ?? '';
 	const gatewayText = values.get('ipv4.gateway') ?? '';
 	const addresses = values.get('ipv4.addresses') ?? '';
+	const interfaceName = values.get('connection.interface-name') || null;
+	const multiConnectMatch = (values.get('connection.multi-connect') ?? '').match(/^-?\d+/);
+	const multiConnect = multiConnectMatch ? Number(multiConnectMatch[0]) : null;
 	const addressMatch = addresses.match(/^([^/]+)\/(\d{1,2})$/);
-	const simpleManualAddress = !!addressMatch && isIPv4(addressMatch[1] ?? '') && Number(addressMatch[2]) >= 0 && Number(addressMatch[2]) <= 32;
+	const simpleManualAddress = !!addressMatch && isIPv4(addressMatch[1] ?? '') && Number(addressMatch[2]) >= 1 && Number(addressMatch[2]) <= 32;
 	const knownMethod = method === 'auto' || method === 'manual';
-	const safe = knownMethod && values.get('ipv4.never-default') === 'no' && (values.get('ipv4.routes') ?? '') === '' && ['', '0'].includes(values.get('ipv4.route-table') ?? '') && (values.get('ipv4.routing-rules') ?? '') === '' && (gatewayText === '' || isIPv4(gatewayText)) && (method === 'auto' ? addresses === '' && gatewayText === '' : simpleManualAddress);
+	const boundOnce = interfaceName === expectedDevice && (multiConnect === 0 || multiConnect === 1) && activeInstances === 1;
+	const safe = boundOnce && knownMethod && values.get('ipv4.never-default') === 'no' && (values.get('ipv4.routes') ?? '') === '' && ['', '0'].includes(values.get('ipv4.route-table') ?? '') && (values.get('ipv4.routing-rules') ?? '') === '' && (gatewayText === '' || isIPv4(gatewayText)) && (method === 'auto' ? addresses === '' && gatewayText === '' : simpleManualAddress);
 	return { method, gateway: gatewayText || null, safe };
+}
+
+const NMCLI_IPV4_PROFILE_FIELDS = 'connection.interface-name,connection.multi-connect,ipv4.method,ipv4.never-default,ipv4.gateway,ipv4.addresses,ipv4.routes,ipv4.route-table,ipv4.routing-rules';
+
+async function readNmcliIPv4Profile(uuid: string, device: string, activeInstances: number): Promise<NmcliIPv4Profile> {
+	const profile = await runFirst(NMCLI_CANDIDATES, ['-t', '-f', NMCLI_IPV4_PROFILE_FIELDS, 'connection', 'show', 'uuid', uuid]);
+	return parseNmcliIPv4Profile(profile, device, activeInstances);
 }
 
 /** Active profiles and their exact IPv4 method. Any incomplete read stays read-only. */
@@ -547,10 +558,11 @@ async function readNetworkManagerProfiles(): Promise<{ connections: Map<string, 
 	try {
 		const connections = await activeConnections();
 		const ipv4Profiles = new Map<string, NmcliIPv4Profile>();
+		const activeCounts = new Map<string, number>();
+		for (const uuid of connections.values()) activeCounts.set(uuid, (activeCounts.get(uuid) ?? 0) + 1);
 		await Promise.all(
 			[...connections].map(async ([device, uuid]) => {
-				const profile = await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'ipv4.method,ipv4.never-default,ipv4.gateway,ipv4.addresses,ipv4.routes,ipv4.route-table,ipv4.routing-rules', 'connection', 'show', 'uuid', uuid]);
-				ipv4Profiles.set(device, parseNmcliIPv4Profile(profile));
+				ipv4Profiles.set(device, await readNmcliIPv4Profile(uuid, device, activeCounts.get(uuid) ?? 0));
 			})
 		);
 		return { connections, ipv4Profiles };
@@ -570,8 +582,13 @@ async function activeConnections(): Promise<Map<string, string>> {
  * Modifying the active profile (rather than creating a new one) is what makes an
  * edit idempotent: applying twice leaves one profile, not two competing ones.
  */
-async function activeConnection(device: string): Promise<string | null> {
-	return (await activeConnections()).get(device) ?? null;
+async function editableActiveConnection(device: string): Promise<string> {
+	const connections = await activeConnections();
+	const uuid = connections.get(device);
+	if (!uuid) throw new Error(`no NetworkManager profile is active on ${device}`);
+	const instances = [...connections.values()].filter(activeUUID => activeUUID === uuid).length;
+	if (!(await readNmcliIPv4Profile(uuid, device, instances)).safe) throw new Error(`NetworkManager profile on ${device} is not bound exclusively to that device`);
+	return uuid;
 }
 
 /**
@@ -596,8 +613,12 @@ export function nmcliModifyArgs(connectionUUID: string, config: NetIPv4Config, a
 }
 
 /** Address one active profile unambiguously even when display names collide. */
-export function nmcliActivateArgs(connectionUUID: string): string[] {
-	return ['connection', 'up', 'uuid', connectionUUID];
+export function nmcliActivateArgs(connectionUUID: string, device: string): string[] {
+	return ['connection', 'up', 'uuid', connectionUUID, 'ifname', device];
+}
+
+export function assertNmcliActiveConnection(connections: Map<string, string>, device: string, expectedUUID: string): void {
+	if (connections.get(device) !== expectedUUID || [...connections.values()].filter(uuid => uuid === expectedUUID).length !== 1) throw new Error(`NetworkManager activated the profile on an unexpected device`);
 }
 
 const NM_SERVICE = 'org.freedesktop.NetworkManager';
@@ -678,15 +699,19 @@ async function withDeviceCheckpoint<T>(device: string, mutate: () => Promise<T>)
 
 /** Apply an IPv4 configuration to one device and bring the profile back up. Throws when NetworkManager does not own the device. */
 export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addressingChanged: boolean = true): Promise<void> {
-	const connectionUUID = await activeConnection(device);
-	if (!connectionUUID) throw new Error(`no NetworkManager profile is active on ${device}`);
 	await withDeviceCheckpoint(device, async () => {
+		const connectionUUID = await editableActiveConnection(device);
 		await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connectionUUID, config, addressingChanged), NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS);
-		const activate = addressingChanged ? nmcliActivateArgs(connectionUUID) : ['device', 'reapply', device];
+		const activate = addressingChanged ? nmcliActivateArgs(connectionUUID, device) : ['device', 'reapply', device];
 		await runFirst(NMCLI_CANDIDATES, ['--wait', String(NMCLI_ACTIVATION_WAIT_SECONDS), ...activate], NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
+		assertNmcliActiveConnection(await activeConnections(), device, connectionUUID);
 		if (addressingChanged) {
 			const [method, addr, route] = await Promise.all([runFirst(NMCLI_CANDIDATES, ['-g', 'ipv4.method', 'connection', 'show', 'uuid', connectionUUID]), runFirst(IP_CANDIDATES, ['-j', 'addr', 'show', 'dev', device]), runFirst(IP_CANDIDATES, ['-j', 'route', 'show', 'default', 'dev', device])]);
 			assertLinuxIPv4Applied(config, method, addr, route);
+		}
+		if (config.dns !== undefined) {
+			const [profileDns, liveDns] = await Promise.all([runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'ipv4.dns,ipv4.ignore-auto-dns,ipv6.dns,ipv6.ignore-auto-dns', 'connection', 'show', 'uuid', connectionUUID]), runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'GENERAL.DEVICE,IP4.DNS,IP6.DNS', 'device', 'show', device])]);
+			assertLinuxDnsApplied(config, profileDns, liveDns, device);
 		}
 	});
 }
@@ -695,13 +720,54 @@ export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addr
 export function assertLinuxIPv4Applied(config: NetIPv4Config, methodText: string, addrJson: string, routeJson: string): void {
 	const expectedMethod = config.mode === 'dhcp' ? 'auto' : 'manual';
 	if (methodText.trim() !== expectedMethod) throw new Error('NetworkManager did not preserve the requested IPv4 method');
-	if (config.mode === 'dhcp') return;
 	const addresses = (JSON.parse(addrJson) as IpAddrEntry[]).flatMap(entry => entry.addr_info ?? []).filter(address => address.family === 'inet');
+	if (config.mode === 'dhcp') {
+		if (!addresses.some(address => address.local !== '0.0.0.0' && !address.local.startsWith('169.254.') && address.scope !== 'host')) throw new Error('NetworkManager did not obtain a usable IPv4 lease');
+		return;
+	}
 	if (addresses.length !== 1 || addresses[0]?.local !== config.address || addresses[0]?.prefixlen !== config.prefixLength) throw new Error('NetworkManager did not apply the requested IPv4 address');
 	const routes = JSON.parse(routeJson) as IpRouteEntry[];
 	if (config.gateway) {
 		if (routes.length !== 1 || routes[0]?.gateway !== config.gateway) throw new Error('NetworkManager did not apply the requested IPv4 gateway');
 	} else if (routes.length !== 0) throw new Error('NetworkManager kept an unexpected default route');
+}
+
+function parseNmcliProfileValues(text: string): Map<string, string> {
+	const values = new Map<string, string>();
+	for (const line of text.split('\n')) {
+		const fields = splitNmcliFields(line.trim());
+		const key = fields[0]?.toLowerCase();
+		if (key) values.set(key, fields.slice(1).join(':').trim());
+	}
+	return values;
+}
+
+function dnsList(value: string | undefined): string[] {
+	return (value ?? '')
+		.split(',')
+		.map(server => server.trim())
+		.filter(Boolean);
+}
+
+function sameAddresses(actual: string[], expected: string[]): boolean {
+	const left = [...new Set(actual)].sort();
+	const right = [...new Set(expected)].sort();
+	return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+export function assertLinuxDnsApplied(config: NetIPv4Config, profileText: string, liveText: string, device: string): void {
+	if (config.dns === undefined) return;
+	const values = parseNmcliProfileValues(profileText);
+	const custom = config.dns.length > 0;
+	const expected4 = config.dns.filter(isIPv4);
+	const expected6 = config.dns.filter(isIPv6);
+	if (values.get('ipv4.ignore-auto-dns') !== (custom ? 'yes' : 'no') || values.get('ipv6.ignore-auto-dns') !== (custom ? 'yes' : 'no') || !sameAddresses(dnsList(values.get('ipv4.dns')), expected4) || !sameAddresses(dnsList(values.get('ipv6.dns')), expected6)) throw new Error('NetworkManager did not preserve the requested DNS policy');
+	if (custom && !sameAddresses(parseNmcliDns(liveText).get(device) ?? [], config.dns)) throw new Error('NetworkManager did not apply the requested DNS servers');
+}
+
+export function assertLinuxWifiConnected(networks: NetWifiNetwork[], ssid: string, bssid: string | null): void {
+	const active = networks.find(network => network.active && network.ssid === ssid && (bssid === null || network.bssid?.toLowerCase() === bssid.toLowerCase()));
+	if (!active) throw new Error('NetworkManager did not connect to the requested Wi-Fi access point');
 }
 
 /**
@@ -776,5 +842,10 @@ export function nmcliWifiConnectArgs(device: string, ssid: string, askForPasswor
  */
 export async function connectLinuxWifi(device: string, ssid: string, password: string, bssid: string | null = null): Promise<void> {
 	const args = ['--wait', String(NMCLI_ACTIVATION_WAIT_SECONDS), ...nmcliWifiConnectArgs(device, ssid, !!password, bssid)];
-	await withDeviceCheckpoint(device, () => (password ? runFirstWithInput(NMCLI_CANDIDATES, args, `${password}\n`, NETWORK_MANAGER_MUTATION_TIMEOUT_MS) : runFirst(NMCLI_CANDIDATES, args, NETWORK_MANAGER_MUTATION_TIMEOUT_MS)));
+	await withDeviceCheckpoint(device, async () => {
+		if (password) await runFirstWithInput(NMCLI_CANDIDATES, args, `${password}\n`, NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
+		else await runFirst(NMCLI_CANDIDATES, args, NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
+		const networks = parseNmcliWifiList(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'SSID,BSSID,SIGNAL,SECURITY,IN-USE', 'device', 'wifi', 'list', 'ifname', device, '--rescan', 'no'], WIFI_SCAN_TIMEOUT_MS));
+		assertLinuxWifiConnected(networks, ssid, bssid);
+	});
 }
