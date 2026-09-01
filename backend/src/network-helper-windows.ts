@@ -113,7 +113,20 @@ export async function verifyWindowsInstalledHelper(path: string, executable: str
 	}
 }
 
-export async function runElevatedWindowsProcess(file: string, parameters: string, timeoutMs: number): Promise<number> {
+/**
+ * Why an elevated apply did not happen, as an exit code from the launcher.
+ *
+ * The launcher cannot pass the helper's own text back: the elevated process
+ * owns a separate console the unelevated caller never reads. A small fixed set
+ * of codes is what survives that boundary, and it is enough to tell "you
+ * cancelled the prompt" apart from "the change itself failed".
+ */
+export const WINDOWS_LAUNCHER_EXIT = { untrusted: 11, cancelled: 12, timeout: 13 } as const;
+
+/** Outcome of one elevation attempt. Only genuine Win32 faults throw. */
+export type WindowsElevationOutcome = { kind: 'exited'; code: number } | { kind: 'cancelled' } | { kind: 'timeout' };
+
+export async function runElevatedWindowsProcess(file: string, parameters: string, timeoutMs: number): Promise<WindowsElevationOutcome> {
 	if (process.platform !== 'win32') throw new Error('Windows elevation is unavailable');
 	const shell = dlopen('shell32.dll', {
 		ShellExecuteExW: { args: [FFIType.ptr], returns: FFIType.i32 },
@@ -142,7 +155,9 @@ export async function runElevatedWindowsProcess(file: string, parameters: string
 	try {
 		if (!shell.symbols.ShellExecuteExW(ptr(info))) {
 			const error = kernel.symbols.GetLastError();
-			if (error === 1223) throw new Error('network helper elevation was cancelled');
+			// ERROR_CANCELLED is what UAC reports for both "No" and a prompt that
+			// timed out, and it is an ordinary answer rather than a fault.
+			if (error === 1223) return { kind: 'cancelled' };
 			throw new Error(`ShellExecuteExW failed with ${error}`);
 		}
 		processHandle = Number(view.getBigUint64(PROCESS_HANDLE_OFFSET, true)) as Pointer;
@@ -154,13 +169,13 @@ export async function runElevatedWindowsProcess(file: string, parameters: string
 			if (wait !== WAIT_TIMEOUT) throw new Error(`WaitForSingleObject failed with ${wait}`);
 			if (Date.now() - started >= timeoutMs) {
 				kernel.symbols.TerminateProcess(processHandle, 1);
-				throw new Error('network helper process timed out');
+				return { kind: 'timeout' };
 			}
 			await new Promise(resolve => setTimeout(resolve, 50));
 		}
 		const exitCode = new Uint32Array(1);
 		if (!kernel.symbols.GetExitCodeProcess(processHandle, ptr(exitCode))) throw new Error(`GetExitCodeProcess failed with ${kernel.symbols.GetLastError()}`);
-		return exitCode[0]!;
+		return { kind: 'exited', code: exitCode[0]! };
 	} finally {
 		if (processHandle) kernel.symbols.CloseHandle(processHandle);
 		shell.close();

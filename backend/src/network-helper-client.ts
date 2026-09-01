@@ -5,8 +5,8 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { productIdentifier } from '@shared';
 import { expectedNetworkHelperHash, sha256File } from './network-helper-integrity.ts';
-import { encodeNetworkHelperRequest, parseNetworkHelperResponse, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
-import { verifyWindowsInstalledHelper, verifyWindowsInstalledSibling, windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
+import { encodeNetworkHelperRequest, parseNetworkHelperResponse, type NetworkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
+import { verifyWindowsInstalledHelper, verifyWindowsInstalledSibling, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
 
 const execFileAsync = promisify(execFile);
 const HELPER_TIMEOUT_MS = 180_000;
@@ -107,12 +107,25 @@ export async function networkHelperAvailable(platform: NodeJS.Platform = process
 	return platform === 'win32' && verifyWindowsHelper(helper);
 }
 
+/** What each launcher exit code means to the person who pressed Save. */
+export const WINDOWS_LAUNCHER_MESSAGES: Readonly<Record<number, string>> = {
+	10: 'the privileged network helper could not apply the change',
+	[WINDOWS_LAUNCHER_EXIT.untrusted]: 'the privileged network helper is missing or not trusted',
+	[WINDOWS_LAUNCHER_EXIT.cancelled]: 'the administrator prompt was cancelled',
+	[WINDOWS_LAUNCHER_EXIT.timeout]: 'the privileged network helper timed out',
+};
+
+export function windowsLauncherFailure(exitCode: unknown): NetworkHelperFailure {
+	const message = typeof exitCode === 'number' ? WINDOWS_LAUNCHER_MESSAGES[exitCode] : undefined;
+	return { ok: false, error: message ?? 'the privileged network helper failed' };
+}
+
 async function runWindowsHelper(encoded: string): Promise<NetworkHelperResponse> {
 	try {
 		await execFileAsync(windowsNetworkLauncherPath(), ['--request', encoded], { timeout: HELPER_TIMEOUT_MS + 5000, maxBuffer: MAX_HELPER_OUTPUT_BYTES, windowsHide: true, cwd: dirname(windowsNetworkLauncherPath()) });
 		return { ok: true };
-	} catch {
-		throw new Error('privileged network helper failed, timed out, or was cancelled');
+	} catch (error) {
+		return windowsLauncherFailure((error as { code?: unknown } | null)?.code);
 	}
 }
 

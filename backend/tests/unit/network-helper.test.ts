@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, networkHelperFailure, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
-import { linuxNetworkHelperArgs, MAC_HELPER_SHELL, macAppBundleRoot, macNetworkHelperScript, networkHelperPath, trustedLinuxHelperMetadata, windowsNetworkLauncherPath } from '../../src/network-helper-client.ts';
-import { windowsHelperParameters, windowsPowerShellPath, windowsProgramFilesPath, windowsSystemEnvironment } from '../../src/network-helper-windows.ts';
+import { linuxNetworkHelperArgs, MAC_HELPER_SHELL, macAppBundleRoot, macNetworkHelperScript, networkHelperPath, trustedLinuxHelperMetadata, windowsLauncherFailure, windowsNetworkLauncherPath } from '../../src/network-helper-client.ts';
+import { windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProgramFilesPath, windowsSystemEnvironment } from '../../src/network-helper-windows.ts';
 
 describe('network helper protocol', () => {
 	it('round-trips one validated IPv4 operation', () => {
@@ -63,6 +63,27 @@ describe('network helper protocol', () => {
 		expect(parseNetworkHelperResponse(JSON.stringify(response))).toEqual(response);
 		expect(networkHelperFailure(new Error(`bad\nline${'x'.repeat(900)}`)).ok).toBe(false);
 		expect(networkHelperFailure(new Error('')).error).toBe('network change failed');
+	});
+});
+
+describe('windows launcher outcomes', () => {
+	it('tells a cancelled prompt apart from a failed change', () => {
+		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.cancelled).error).toContain('cancelled');
+		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.timeout).error).toContain('timed out');
+		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.untrusted).error).toContain('not trusted');
+		expect(windowsLauncherFailure(10).error).toContain('could not apply');
+	});
+
+	it('falls back to one generic reason for an unmapped or absent exit code', () => {
+		for (const code of [null, undefined, 1, 255, 'boom']) expect(windowsLauncherFailure(code)).toEqual({ ok: false, error: 'the privileged network helper failed' });
+	});
+
+	it('reserves launcher codes that cannot collide with the helper', () => {
+		// 0 = applied and 10 = helper rejected the change both come from the helper
+		// itself, so the launcher's own reasons must live outside that set.
+		expect(Object.values(WINDOWS_LAUNCHER_EXIT)).not.toContain(0);
+		expect(Object.values(WINDOWS_LAUNCHER_EXIT)).not.toContain(10);
+		expect(new Set(Object.values(WINDOWS_LAUNCHER_EXIT)).size).toBe(3);
 	});
 });
 
