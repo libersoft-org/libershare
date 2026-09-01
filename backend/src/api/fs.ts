@@ -80,10 +80,15 @@ interface FsHandlers {
 	writeCompressed: (p: { path: string; content: string; algorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 }
 
-export function initFsHandlers(containerCheck: () => Promise<boolean> = isContainer): FsHandlers {
+/** Every path a browse can start from. On Windows that means probing drive letters, which touches the disk. */
+async function listRootPaths(): Promise<string[]> {
+	return isWindows ? (await getWindowsDrives()).map(d => d.path) : ['/'];
+}
+
+export function initFsHandlers(containerCheck: () => Promise<boolean> = isContainer, listRoots: () => Promise<string[]> = listRootPaths): FsHandlers {
 	async function info(_p: any, client?: any): Promise<FsInfo> {
 		const plat = platform();
-		const roots = isWindows ? (await getWindowsDrives()).map(d => d.path) : ['/'];
+		const roots = await listRoots();
 		const isLocal = client?.data?.isLocalClient ?? false;
 		const inContainer = await containerCheck();
 		return {
