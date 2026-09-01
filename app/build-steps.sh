@@ -69,12 +69,10 @@ build_backend() {
 
 sync_product_info() {
 	PRODUCT_JSON="$ROOT_DIR/shared/src/product.json"
-	_PRODUCT_DATA=$(jq -r '[.name, .version, .identifier, (.website // "https://github.com/libersoft-org/libershare")] | join("\n")' "$PRODUCT_JSON")
-	PRODUCT_NAME=$(echo "$_PRODUCT_DATA" | sed -n '1p')
-	PRODUCT_VERSION=$(echo "$_PRODUCT_DATA" | sed -n '2p')
-	PRODUCT_IDENTIFIER=$(echo "$_PRODUCT_DATA" | sed -n '3p')
-	PRODUCT_WEBSITE=$(echo "$_PRODUCT_DATA" | sed -n '4p')
-	unset _PRODUCT_DATA
+	PRODUCT_NAME=$(jq -r '.name' "$PRODUCT_JSON")
+	PRODUCT_VERSION=$(jq -r '.version' "$PRODUCT_JSON")
+	PRODUCT_IDENTIFIER=$(jq -r '.identifier' "$PRODUCT_JSON")
+	PRODUCT_WEBSITE=$(jq -r '(.website // "https://github.com/libersoft-org/libershare")' "$PRODUCT_JSON")
 	PRODUCT_NAME_LOWER=$(echo "$PRODUCT_NAME" | tr '[:upper:]' '[:lower:]')
 	echo "Product: $PRODUCT_NAME v$PRODUCT_VERSION ($PRODUCT_IDENTIFIER)"
 
@@ -83,7 +81,7 @@ sync_product_info() {
 		if [ "$DOCKER_INNER" != "1" ]; then
 			cp "$SCRIPT_DIR/Cargo.toml" "$SCRIPT_DIR/Cargo.toml.orig" 2>/dev/null || true
 		fi
-		sed "s/^version = \"[^\"]*\"/version = \"$PRODUCT_VERSION\"/" "$SCRIPT_DIR/Cargo.toml" >"$SCRIPT_DIR/Cargo.toml.tmp" && mv "$SCRIPT_DIR/Cargo.toml.tmp" "$SCRIPT_DIR/Cargo.toml"
+		PRODUCT_VERSION="$PRODUCT_VERSION" perl -pi -e 's/^version = "[^"]*"/version = "$ENV{PRODUCT_VERSION}"/' "$SCRIPT_DIR/Cargo.toml"
 		_PRODUCT_INFO_SYNCED=1
 	fi
 
@@ -92,8 +90,8 @@ sync_product_info() {
 			cp "$SCRIPT_DIR/desktop-entry-debug.desktop" "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" 2>/dev/null || true
 			cp "$SCRIPT_DIR/desktop-entry.desktop" "$SCRIPT_DIR/desktop-entry.desktop.orig" 2>/dev/null || true
 		fi
-		sed -i "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" "$SCRIPT_DIR/desktop-entry-debug.desktop"
-		sed -i "s/%%product_name%%/$PRODUCT_NAME/g" "$SCRIPT_DIR/desktop-entry.desktop"
+		PRODUCT_NAME="$PRODUCT_NAME" PRODUCT_NAME_LOWER="$PRODUCT_NAME_LOWER" perl -pi -e 's/\{\{product_name\}\}/$ENV{PRODUCT_NAME}/g; s/\{\{exec_name\}\}/$ENV{PRODUCT_NAME_LOWER}/g' "$SCRIPT_DIR/desktop-entry-debug.desktop"
+		PRODUCT_NAME="$PRODUCT_NAME" perl -pi -e 's/%%product_name%%/$ENV{PRODUCT_NAME}/g' "$SCRIPT_DIR/desktop-entry.desktop"
 		_SYNCED_LINUX=1
 	fi
 
@@ -101,7 +99,7 @@ sync_product_info() {
 		if [ "$DOCKER_INNER" != "1" ]; then
 			cp "$SCRIPT_DIR/wix-fragment-debug.wxs" "$SCRIPT_DIR/wix-fragment-debug.wxs.orig" 2>/dev/null || true
 		fi
-		sed -i "s/{{product_name}}/$PRODUCT_NAME/g" "$SCRIPT_DIR/wix-fragment-debug.wxs"
+		PRODUCT_NAME="$PRODUCT_NAME" perl -pi -e 's/\{\{product_name\}\}/$ENV{PRODUCT_NAME}/g' "$SCRIPT_DIR/wix-fragment-debug.wxs"
 		_SYNCED_WINDOWS=1
 	fi
 }

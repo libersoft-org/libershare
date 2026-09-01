@@ -133,7 +133,7 @@ _stage_zip_linux() {
 _stage_zip_windows() {
 	cp "$BUILD_RELEASE_DIR/${PRODUCT_NAME}.exe" "$ZIP_STAGING/"
 	cp "$ROOT_DIR/backend/build/lish-backend.exe" "$ZIP_STAGING/lish-backend.exe"
-	sed "s/{{product_name}}/$PRODUCT_NAME/g" \
+	PRODUCT_NAME="$PRODUCT_NAME" perl -pe 's/\{\{product_name\}\}/$ENV{PRODUCT_NAME}/g' \
 		"$SCRIPT_DIR/bundle-scripts/Debug.bat" >"$ZIP_STAGING/Debug.bat"
 }
 

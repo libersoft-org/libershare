@@ -390,7 +390,7 @@ stage_zip() {
 
 # ── Utility: copy debug launch script into $ZIP_STAGING ──
 _copy_debug_script() {
-	sed "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" \
+	PRODUCT_NAME="$PRODUCT_NAME" PRODUCT_NAME_LOWER="$PRODUCT_NAME_LOWER" perl -pe 's/\{\{product_name\}\}/$ENV{PRODUCT_NAME}/g; s/\{\{exec_name\}\}/$ENV{PRODUCT_NAME_LOWER}/g' \
 		"$SCRIPT_DIR/bundle-scripts/debug.sh" >"$ZIP_STAGING/debug.sh"
 	chmod +x "$ZIP_STAGING/debug.sh"
 }
@@ -559,7 +559,11 @@ docker_inner_build() {
 	# Convert bundle targets to --config JSON (bypasses host-OS filtering of --bundles)
 	BUNDLE_ARGS=""
 	if [ -n "$TAURI_BUNDLE_TARGETS" ]; then
-		_targets_json=$(echo $TAURI_BUNDLE_TARGETS | tr ' ' '\n' | sed 's/.*/"&"/' | tr '\n' ',' | sed 's/,$//')
+		_targets_json=""
+		for _target in $TAURI_BUNDLE_TARGETS; do
+			[ -n "$_targets_json" ] && _targets_json="$_targets_json,"
+			_targets_json="${_targets_json}\"${_target}\""
+		done
 		BUNDLE_ARGS="--config {\"bundle\":{\"targets\":[$_targets_json]}}"
 	fi
 	# If no Tauri-native bundles requested, build only the binary
