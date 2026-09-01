@@ -103,3 +103,13 @@ sync_product_info() {
 		_SYNCED_WINDOWS=1
 	fi
 }
+
+sign_macos_network_binaries() {
+	[ "$BUILD_OS" = "macos" ] || return 0
+	if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+		echo "=== Network helper remains disabled in this unsigned macOS build ==="
+		return 0
+	fi
+	codesign --force --options runtime --timestamp --identifier "${PRODUCT_IDENTIFIER}.backend" --sign "$APPLE_SIGNING_IDENTITY" "$ROOT_DIR/backend/build/lish-backend"
+	codesign --force --options runtime --timestamp --identifier "${PRODUCT_IDENTIFIER}.network-helper" --sign "$APPLE_SIGNING_IDENTITY" "$ROOT_DIR/backend/build/lish-network-helper"
+}

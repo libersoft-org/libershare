@@ -71,6 +71,7 @@ describe('network helper launch commands', () => {
 		expect(script).not.toContain(request);
 		expect(MAC_HELPER_SHELL).toContain('/usr/bin/codesign --verify --strict');
 		expect(MAC_HELPER_SHELL).toContain('TeamIdentifier=');
+		expect(MAC_HELPER_SHELL).toContain('Identifier=');
 		expect(MAC_HELPER_SHELL).toContain('/usr/bin/shasum -a 256');
 		expect(MAC_HELPER_SHELL).toContain('/usr/bin/mktemp -d /private/var/tmp/');
 	});

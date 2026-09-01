@@ -5,12 +5,13 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { productIdentifier } from '@shared';
 import { encodeNetworkHelperRequest, parseNetworkHelperResponse, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
 
 const execFileAsync = promisify(execFile);
 const HELPER_TIMEOUT_MS = 180_000;
 const MAX_HELPER_OUTPUT_BYTES = 4096;
-export const MAC_HELPER_SHELL = 'set -eu; d=$(/usr/bin/mktemp -d /private/var/tmp/lish-network-helper.XXXXXX); trap \'/bin/rm -f "$d/helper"; /bin/rmdir "$d"\' EXIT HUP INT TERM; /bin/cp "$1" "$d/helper"; /usr/bin/codesign --verify --strict "$d/helper"; t=$(/usr/bin/codesign -dv --verbose=4 "$d/helper" 2>&1 | /usr/bin/awk -F= \'/^TeamIdentifier=/{print $2}\'); h=$(/usr/bin/shasum -a 256 "$d/helper" | /usr/bin/awk \'{print $1}\'); [ -n "$t" ] && [ "$t" = "$3" ] && [ "$h" = "$4" ]; "$d/helper" --request "$2"';
+export const MAC_HELPER_SHELL = 'set -eu; d=$(/usr/bin/mktemp -d /private/var/tmp/lish-network-helper.XXXXXX); trap \'/bin/rm -f "$d/helper"; /bin/rmdir "$d"\' EXIT HUP INT TERM; /bin/cp "$1" "$d/helper"; /usr/bin/codesign --verify --strict "$d/helper"; t=$(/usr/bin/codesign -dv --verbose=4 "$d/helper" 2>&1 | /usr/bin/awk -F= \'/^TeamIdentifier=/{print $2}\'); i=$(/usr/bin/codesign -dv --verbose=4 "$d/helper" 2>&1 | /usr/bin/awk -F= \'/^Identifier=/{print $2}\'); h=$(/usr/bin/shasum -a 256 "$d/helper" | /usr/bin/awk \'{print $1}\'); [ -n "$t" ] && [ "$t" = "$3" ] && [ "$h" = "$4" ] && [ "$i" = "$5" ]; "$d/helper" --request "$2"';
 declare const LISH_NETWORK_HELPER_SHA256: string | undefined;
 
 function expectedHelperHash(): string | null {
@@ -37,7 +38,7 @@ export function windowsNetworkHelperCommand(helperPath: string, request: string,
 }
 
 export function macNetworkHelperScript(): string {
-	return 'on run argv\nset helperPath to item 1 of argv\nset requestValue to item 2 of argv\nset expectedTeam to item 3 of argv\nset expectedHash to item 4 of argv\nset shellProgram to item 5 of argv\ndo shell script "/bin/sh -c " & quoted form of shellProgram & " sh " & quoted form of helperPath & " " & quoted form of requestValue & " " & quoted form of expectedTeam & " " & quoted form of expectedHash with administrator privileges\nend run';
+	return 'on run argv\nset helperPath to item 1 of argv\nset requestValue to item 2 of argv\nset expectedTeam to item 3 of argv\nset expectedHash to item 4 of argv\nset expectedIdentifier to item 5 of argv\nset shellProgram to item 6 of argv\ndo shell script "/bin/sh -c " & quoted form of shellProgram & " sh " & quoted form of helperPath & " " & quoted form of requestValue & " " & quoted form of expectedTeam & " " & quoted form of expectedHash & " " & quoted form of expectedIdentifier with administrator privileges\nend run';
 }
 
 export function linuxNetworkHelperArgs(helperPath: string): string[] {
@@ -86,11 +87,18 @@ async function verifyWindowsHelper(helper: string): Promise<boolean> {
 	}
 }
 
-async function macTeamID(path: string, deep: boolean = false): Promise<string | null> {
+interface MacCodeIdentity {
+	team: string;
+	identifier: string;
+}
+
+async function macCodeIdentity(path: string, deep: boolean = false): Promise<MacCodeIdentity | null> {
 	try {
 		await execFileAsync('/usr/bin/codesign', ['--verify', ...(deep ? ['--deep'] : []), '--strict', path], { timeout: 10_000 });
 		const { stderr } = await execFileAsync('/usr/bin/codesign', ['-dv', '--verbose=4', path], { timeout: 10_000 });
-		return stderr.match(/^TeamIdentifier=(.+)$/m)?.[1]?.trim() || null;
+		const team = stderr.match(/^TeamIdentifier=(.+)$/m)?.[1]?.trim();
+		const identifier = stderr.match(/^Identifier=(.+)$/m)?.[1]?.trim();
+		return team && identifier ? { team, identifier } : null;
 	} catch {
 		return null;
 	}
@@ -103,8 +111,8 @@ async function verifyMacHelper(helper: string): Promise<boolean> {
 		const helperRoot = macAppBundleRoot(resolvedHelper);
 		const backendRoot = macAppBundleRoot(resolvedBackend);
 		if (!helperRoot || helperRoot !== backendRoot) return false;
-		const [helperTeam, backendTeam, bundleTeam] = await Promise.all([macTeamID(resolvedHelper), macTeamID(resolvedBackend), macTeamID(helperRoot, true)]);
-		return helperTeam !== null && backendTeam !== null && bundleTeam !== null && helperTeam === backendTeam && helperTeam === bundleTeam;
+		const [helperIdentity, backendIdentity, bundleIdentity] = await Promise.all([macCodeIdentity(resolvedHelper), macCodeIdentity(resolvedBackend), macCodeIdentity(helperRoot, true)]);
+		return helperIdentity !== null && backendIdentity !== null && bundleIdentity !== null && helperIdentity.team === backendIdentity.team && helperIdentity.team === bundleIdentity.team && helperIdentity.identifier === `${productIdentifier}.network-helper` && backendIdentity.identifier === `${productIdentifier}.backend` && bundleIdentity.identifier === productIdentifier;
 	} catch {
 		return false;
 	}
@@ -166,9 +174,9 @@ async function runWindowsHelper(helper: string, encoded: string): Promise<string
 }
 
 async function runMacHelper(helper: string, encoded: string): Promise<string> {
-	const [expectedTeam, expectedHash] = await Promise.all([macTeamID(process.execPath), sha256File(helper)]);
-	if (!expectedTeam) throw new Error('privileged network helper signature is unavailable');
-	const { stdout } = await execFileAsync('/usr/bin/osascript', ['-e', macNetworkHelperScript(), '--', helper, encoded, expectedTeam, expectedHash, MAC_HELPER_SHELL], { timeout: HELPER_TIMEOUT_MS, maxBuffer: MAX_HELPER_OUTPUT_BYTES });
+	const [backend, expectedHash] = await Promise.all([macCodeIdentity(process.execPath), sha256File(helper)]);
+	if (!backend) throw new Error('privileged network helper signature is unavailable');
+	const { stdout } = await execFileAsync('/usr/bin/osascript', ['-e', macNetworkHelperScript(), '--', helper, encoded, backend.team, expectedHash, `${productIdentifier}.network-helper`, MAC_HELPER_SHELL], { timeout: HELPER_TIMEOUT_MS, maxBuffer: MAX_HELPER_OUTPUT_BYTES });
 	return stdout;
 }
 
