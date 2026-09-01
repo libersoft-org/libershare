@@ -9,6 +9,7 @@ import { deriveConnectionStatus, type ConnectionStatus, type NetIPv4Config, type
  * honest "unknown" instead of a placeholder that looks like real data.
  */
 export const networkState = writable<NetworkStateInfo>({ interfaces: [], primaryID: null, detail: 'full', known: false, capabilities: { ipv4: false, wifi: false, staticGatewayRequired: false } });
+export const networkSubscriptionActive = writable(false);
 
 /** The footer connection widget's input, projected from {@link networkState}. */
 export const connectionStatus: Readable<ConnectionStatus> = derived(networkState, deriveConnectionStatus);
@@ -31,21 +32,22 @@ export async function initNetworkState(): Promise<void> {
 	if (!handlersRegistered) {
 		handlersRegistered = true;
 		api.on('system:network', (data: NetworkStateInfo) => {
+			networkSubscriptionActive.set(true);
 			networkState.set(data);
 		});
 	}
-	const subscribed = await subscribeNetworkState();
-	// The backend only broadcasts every 10 s, so without this the widget would sit
-	// on "unknown" for up to that long after every (re)connect.
+	await syncNetworkState();
+}
+
+export async function syncNetworkState(subscribe: () => Promise<unknown> = () => api.subscribe('system:network'), load: () => Promise<NetworkStateInfo> = () => api.call<NetworkStateInfo>('system.network')): Promise<void> {
+	networkSubscriptionActive.set(false);
+	const subscribed = await subscribeNetworkState(subscribe);
+	networkSubscriptionActive.set(subscribed);
 	try {
-		await refreshNetworkState();
-		if (!subscribed) networkState.update(state => ({ ...state, known: false }));
+		networkState.set(await load());
 	} catch (error) {
 		console.error('[NetworkState] Error loading network state:', error);
-		// The snapshot we still hold predates a backend restart or a failed read, so
-		// it may describe a machine state that no longer exists. Fall back to
-		// "unknown" rather than keep presenting it as current.
-		networkState.update(state => ({ ...state, known: false }));
+		networkState.update(state => ({ ...state, known: false, capabilities: { ...state.capabilities, ipv4: false, wifi: false } }));
 	}
 }
 

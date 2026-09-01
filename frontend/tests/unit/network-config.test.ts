@@ -57,10 +57,11 @@ describe('network configuration form', () => {
 
 	it('opens disconnected Wi-Fi controls independently of IPv4 editing', () => {
 		const disconnectedWifi = { ...iface, medium: 'wireless' as const, link: 'down' as const, ipv4Mode: 'unknown' as const, ipv4Configurable: false, wifiConfigurable: true };
-		expect(canOpenNetworkConfig(disconnectedWifi, { ipv4: true, wifi: true, staticGatewayRequired: false }, 'full')).toBe(true);
-		expect(canOpenNetworkConfig(disconnectedWifi, { ipv4: true, wifi: false, staticGatewayRequired: false }, 'full')).toBe(false);
-		expect(canOpenNetworkConfig(disconnectedWifi, { ipv4: true, wifi: true, staticGatewayRequired: false }, 'addressesOnly')).toBe(false);
-		expect(canOpenNetworkConfig({ ...disconnectedWifi, wifiConfigurable: false }, { ipv4: true, wifi: true, staticGatewayRequired: false }, 'full')).toBe(false);
+		expect(canOpenNetworkConfig(disconnectedWifi, { ipv4: true, wifi: true, staticGatewayRequired: false }, 'full', true)).toBe(true);
+		expect(canOpenNetworkConfig(disconnectedWifi, { ipv4: true, wifi: false, staticGatewayRequired: false }, 'full', true)).toBe(false);
+		expect(canOpenNetworkConfig(disconnectedWifi, { ipv4: true, wifi: true, staticGatewayRequired: false }, 'addressesOnly', true)).toBe(false);
+		expect(canOpenNetworkConfig(disconnectedWifi, { ipv4: true, wifi: true, staticGatewayRequired: false }, 'full', false)).toBe(false);
+		expect(canOpenNetworkConfig({ ...disconnectedWifi, wifiConfigurable: false }, { ipv4: true, wifi: true, staticGatewayRequired: false }, 'full', true)).toBe(false);
 	});
 
 	it('shows Automatic when the saved primary interface no longer exists', () => {

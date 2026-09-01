@@ -12,8 +12,8 @@ export interface NetworkConfigForm {
 }
 
 /** The detail screen may offer IPv4, Wi-Fi, or both independently. */
-export function canOpenNetworkConfig(source: NetInterfaceInfo, capabilities: NetCapabilities, detail: NetworkStateInfo['detail']): boolean {
-	if (detail !== 'full') return false;
+export function canOpenNetworkConfig(source: NetInterfaceInfo, capabilities: NetCapabilities, detail: NetworkStateInfo['detail'], known: boolean): boolean {
+	if (!known || detail !== 'full') return false;
 	return (capabilities.ipv4 && source.ipv4Configurable) || (capabilities.wifi && source.wifiConfigurable);
 }
 

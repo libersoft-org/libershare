@@ -3,7 +3,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { networkState, refreshNetworkState } from '../../scripts/networkState.ts';
+	import { networkState, networkSubscriptionActive, refreshNetworkState } from '../../scripts/networkState.ts';
 	import { primaryInterface, setPrimaryInterface } from '../../scripts/settings.ts';
 	import { canOpenNetworkConfig, visiblePrimaryInterface } from '../../scripts/networkConfig.ts';
 	import { isSelectableInterface, type NetInterfaceInfo } from '@shared';
@@ -28,7 +28,7 @@
 	// as the capability: when a platform read fails we fall back to the generic
 	// reader, whose ids are device names rather than the identifiers the apply path
 	// resolves, so every save from that state would be rejected.
-	let editable = $derived(($networkState.capabilities.ipv4 || $networkState.capabilities.wifi) && $networkState.detail === 'full');
+	let editable = $derived($networkState.known && interfaces.some(iface => canOpenNetworkConfig(iface, $networkState.capabilities, $networkState.detail, $networkState.known)));
 	let editing = $state<string | null>(null);
 	let primaryFailed = $state(false);
 	let primaryBusy = $state(false);
@@ -135,6 +135,9 @@
 	<div class="settings">
 		<div class="container">
 			<div class="note">{editable ? $t('settings.network.editableNote') : $t('settings.network.readOnlyNote')}</div>
+			<div class="note">{$t('settings.network.primaryHint')}</div>
+			{#if !$networkState.known && interfaces.length > 0}<div class="note">{$t('settings.network.staleState')}</div>{/if}
+			{#if $networkState.known && !$networkSubscriptionActive}<div class="note">{$t('settings.network.liveUpdatesUnavailable')}</div>{/if}
 			{#if primaryFailed}<div class="note">{$t('settings.network.primarySaveFailed')}</div>{/if}
 			{#if $networkState.detail === 'addressesOnly'}
 				<div class="note">{$t('settings.network.detailLimited')}</div>
@@ -162,7 +165,7 @@
 							<span>{$t('settings.network.signal')}: {iface.wifi.signal !== null ? `${iface.wifi.signal}%` : '—'}</span>
 						{/if}
 					</div>
-					{#if canOpenNetworkConfig(iface, $networkState.capabilities, $networkState.detail)}
+					{#if canOpenNetworkConfig(iface, $networkState.capabilities, $networkState.detail, $networkState.known)}
 						<div role="group" data-mouse-activate-area={areaID} class="configure">
 							<Button icon="/img/edit.svg" label={$t('settings.network.configure')} position={[1, index + 1]} onConfirm={() => (editing = iface.id)} />
 						</div>

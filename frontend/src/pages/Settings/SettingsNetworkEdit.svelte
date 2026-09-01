@@ -21,8 +21,8 @@
 	let { areaID, interfaceID, position = LAYOUT.content, onBack }: Props = $props();
 
 	let iface = $derived($networkState.interfaces.find(i => i.id === interfaceID));
-	let canEditIPv4 = $derived(!!iface && iface.ipv4Configurable && $networkState.capabilities.ipv4);
-	let canEditWifi = $derived(!!iface && iface.wifiConfigurable && $networkState.capabilities.wifi);
+	let canEditIPv4 = $derived($networkState.known && $networkState.detail === 'full' && !!iface && iface.ipv4Configurable && $networkState.capabilities.ipv4);
+	let canEditWifi = $derived($networkState.known && $networkState.detail === 'full' && !!iface && iface.wifiConfigurable && $networkState.capabilities.wifi);
 
 	let mode = $state<NetAddressMode>('unknown');
 	let address = $state('');
