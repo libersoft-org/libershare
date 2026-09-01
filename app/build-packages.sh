@@ -140,10 +140,8 @@ _stage_zip_windows() {
 
 _stage_zip_macos() {
 	APP_BUNDLE="$BUILD_RELEASE_DIR/bundle/macos/${PRODUCT_NAME}.app"
-	if [ ! -d "$APP_BUNDLE" ]; then
-		echo "Building .app bundle for macOS ZIP..."
-		cargo tauri build --target "$RUST_TARGET" $PLATFORM_CONFIG --config '{"bundle":{"targets":["app"]}}'
-	fi
+	echo "Building .app bundle for macOS ZIP..."
+	cargo tauri build --target "$RUST_TARGET" $PLATFORM_CONFIG --config '{"bundle":{"targets":["app"]}}'
 	cp -r "$APP_BUNDLE" "$ZIP_STAGING/"
 	_copy_debug_script
 }
