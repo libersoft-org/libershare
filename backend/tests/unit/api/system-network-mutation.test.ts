@@ -18,13 +18,19 @@ describe('network mutation publishing', () => {
 		const published: NetworkStateInfo[] = [];
 		const fresh = state();
 
-		await expect(runAndPublishNetworkMutation(async () => Promise.reject(original), async () => fresh, value => published.push(value))).rejects.toBe(original);
+		await expect(
+			runAndPublishNetworkMutation(
+				async () => Promise.reject(original),
+				async () => fresh,
+				value => published.push(value)
+			)
+		).rejects.toBe(original);
 		expect(published).toEqual([fresh]);
 	});
 
 	it('hides write capabilities when the API has no authentication token', () => {
 		const current = state();
-		expect(restrictNetworkCapabilities(current, false).capabilities).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
+		expect(restrictNetworkCapabilities(current, false).capabilities).toEqual({ ipv4: false, ipv4Elevation: false, wifi: false, staticGatewayRequired: false });
 		expect(restrictNetworkCapabilities(current, true)).toBe(current);
 	});
 });

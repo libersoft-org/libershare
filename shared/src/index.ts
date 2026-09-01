@@ -482,6 +482,8 @@ export interface NetworkStateInfo {
 export interface NetCapabilities {
 	/** Address, gateway and DNS of an interface can be changed. */
 	ipv4: boolean;
+	/** The next IPv4 mutation must run through the trusted privileged helper. */
+	ipv4Elevation?: boolean;
 	/** Wi-Fi networks can be scanned and joined. */
 	wifi: boolean;
 	/** Static IPv4 requires a gateway because the platform tool has no no-router form. */

@@ -816,12 +816,15 @@ export async function scanLinuxWifi(device: string): Promise<NetWifiNetwork[]> {
 
 /** Map NetworkManager's three independent policy decisions to real capabilities. */
 export function parseLinuxCapabilities(text: string): NetCapabilities {
-	const canModify = parseNmcliPermission(text, NM_MODIFY_PERMISSION) === 'yes';
-	const canActivate = parseNmcliPermission(text, NM_CONTROL_PERMISSION) === 'yes';
-	const canCheckpoint = parseNmcliPermission(text, NM_CHECKPOINT_PERMISSION) === 'yes';
+	const modify = parseNmcliPermission(text, NM_MODIFY_PERMISSION);
+	const activate = parseNmcliPermission(text, NM_CONTROL_PERMISSION);
+	const checkpoint = parseNmcliPermission(text, NM_CHECKPOINT_PERMISSION);
+	const nativeIPv4 = modify === 'yes' && activate === 'yes' && checkpoint === 'yes';
+	const helperIPv4 = !nativeIPv4 && [modify, activate, checkpoint].every(verdict => verdict === 'yes' || verdict === 'auth');
 	return {
-		ipv4: canModify && canActivate && canCheckpoint,
-		wifi: canModify && canActivate && canCheckpoint && parseNmcliPermission(text, NM_WIFI_SCAN_PERMISSION) === 'yes',
+		ipv4: nativeIPv4 || helperIPv4,
+		...(helperIPv4 && { ipv4Elevation: true }),
+		wifi: nativeIPv4 && parseNmcliPermission(text, NM_WIFI_SCAN_PERMISSION) === 'yes',
 		staticGatewayRequired: false,
 	};
 }

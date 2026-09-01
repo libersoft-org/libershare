@@ -49,7 +49,7 @@ describe('network state subscription', () => {
 			const state = get(networkState);
 			expect(state.known).toBe(false);
 			expect(state.interfaces).toHaveLength(1);
-			expect(state.capabilities).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
+			expect(state.capabilities).toEqual({ ipv4: false, ipv4Elevation: false, wifi: false, staticGatewayRequired: false });
 			expect(get(networkSubscriptionActive)).toBe(true);
 		} finally {
 			console.error = originalError;

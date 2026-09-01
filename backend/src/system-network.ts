@@ -6,6 +6,7 @@ import { CodedError, ErrorCodes, isSelectableInterface, isValidSSID, normalizeDn
 import { isWindowsInterfaceID, parseElevation, parseWindowsNetworkState, readWindowsWifi, windowsApplyIPv4Command, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
 import { applyLinuxIPv4, connectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
 import { applyMacIPv4, isMacWifiConfigurable, isMacWritable, readMacNetworkState } from './system-network-macos.ts';
+import { networkHelperAvailable, runElevatedNetworkHelper } from './network-helper-client.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -248,6 +249,32 @@ export function isIPv4ConfigUnchanged(target: NetInterfaceInfo, config: NetIPv4C
 	return config.dns === undefined && isIPv4AddressingUnchanged(target, config);
 }
 
+export function assertAppliedIPv4State(state: NetworkStateInfo, interfaceID: string, config: NetIPv4Config): void {
+	if (!state.known || state.detail !== 'full') throw new Error('network state could not be verified after the privileged change');
+	const target = state.interfaces.find(item => item.id === interfaceID);
+	if (!target || target.ipv4Mode !== config.mode) throw new Error('network helper did not preserve the requested IPv4 method');
+	if (config.mode === 'static') {
+		const ipv4 = target.addresses.filter(item => item.family === 'ipv4');
+		if (ipv4.length !== 1 || ipv4[0]?.address !== config.address || ipv4[0]?.prefixLength !== config.prefixLength) throw new Error('network helper did not apply the requested IPv4 address');
+		if ((target.gateway ?? '') !== (config.gateway ?? '')) throw new Error('network helper did not apply the requested IPv4 gateway');
+	} else if (!target.addresses.some(item => item.family === 'ipv4')) {
+		throw new Error('network helper enabled DHCP but no IPv4 lease was obtained');
+	}
+	// An empty list means "restore automatic DNS". The public snapshot contains
+	// the resulting resolver addresses, not the policy that produced them, so only
+	// a non-empty custom list can be compared here. The privileged platform apply
+	// path verifies the automatic policy before it returns.
+	if (config.dns?.length) {
+		const actualDns = normalizeDnsServers(target.dns)
+			.map(value => value.toLowerCase())
+			.sort();
+		const expectedDns = normalizeDnsServers(config.dns)
+			.map(value => value.toLowerCase())
+			.sort();
+		if (actualDns.length !== expectedDns.length || actualDns.some((value, index) => value !== expectedDns[index])) throw new Error('network helper did not apply the requested DNS servers');
+	}
+}
+
 /** What this host lets the app change, with short-lived negative results. */
 export const CAPABILITY_NEGATIVE_TTL_MS: number = 15_000;
 export const CAPABILITY_POSITIVE_TTL_MS: number = 5 * 60_000;
@@ -285,13 +312,19 @@ async function probeCapabilities(): Promise<NetCapabilities> {
 		// The Get/Set-Net* cmdlets refuse outright without an elevated token, so the
 		// capability is that token — probed before the user reaches Save rather than
 		// user when Save fails. Wi-Fi is deliberately read-only.
-		return { ipv4: await isWindowsElevated(), wifi: false, staticGatewayRequired: false };
+		const native = await isWindowsElevated();
+		const elevated = !native && (await networkHelperAvailable('win32'));
+		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi: false, staticGatewayRequired: false };
 	} else if (process.platform === 'linux') {
-		return readLinuxCapabilities();
+		const capability = await readLinuxCapabilities();
+		if (capability.ipv4Elevation && !(await networkHelperAvailable('linux'))) return { ...capability, ipv4: false, ipv4Elevation: false };
+		return capability;
 	} else if (process.platform === 'darwin') {
 		// networksetup persists a change and is present on every macOS install, so
 		// addressing is editable. Wi-Fi is not: see isMacWifiConfigurable.
-		return { ipv4: await isMacWritable(), wifi: isMacWifiConfigurable(), staticGatewayRequired: true };
+		const native = await isMacWritable();
+		const elevated = !native && (await networkHelperAvailable('darwin'));
+		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi: isMacWifiConfigurable(), staticGatewayRequired: true };
 	} else {
 		// Everything else reads through os.networkInterfaces(), which cannot even
 		// report whether an address came from DHCP. Offering to edit a configuration
@@ -315,7 +348,7 @@ async function isWindowsElevated(): Promise<boolean> {
 }
 
 /** Apply an IPv4 configuration and read its resulting state before another mutation may begin. */
-export async function applyIPv4(interfaceID: string, config: NetIPv4Config, primaryInterface: string = ''): Promise<NetworkStateInfo> {
+export async function applyIPv4(interfaceID: string, config: NetIPv4Config, primaryInterface: string = '', allowPrivilegeEscalation: boolean = true): Promise<NetworkStateInfo> {
 	if (typeof interfaceID !== 'string' || !config || typeof config !== 'object') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid request');
 	const invalid = validateIPv4Config(config);
 	if (invalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${invalid}`);
@@ -335,8 +368,16 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config, prim
 		if (!target.ipv4Configurable || target.ipv4Mode === 'unknown') throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'interface configuration cannot be preserved safely');
 		if (isIPv4ConfigUnchanged(target, desired)) return before;
 		const addressingChanged = !isIPv4AddressingUnchanged(target, desired);
+		let usedHelper = false;
 		try {
 			await run(async () => {
+				if (supported.ipv4Elevation) {
+					if (!allowPrivilegeEscalation) throw new Error('network helper cannot recursively request privileges');
+					const response = await runElevatedNetworkHelper({ version: 1, operation: 'applyIPv4', interfaceID, config: desired });
+					if (!response.ok) throw new Error(response.error);
+					usedHelper = true;
+					return;
+				}
 				if (process.platform === 'win32') {
 					if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
 					await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, desired, addressingChanged)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
@@ -354,7 +395,9 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config, prim
 			// before failing. Never keep the pre-command snapshot in that case.
 			resetNetworkStateCache();
 		}
-		return readNetworkState(primaryInterface);
+		const after = await readNetworkState(primaryInterface);
+		if (usedHelper) assertAppliedIPv4State(after, interfaceID, desired);
+		return after;
 	});
 }
 

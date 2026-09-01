@@ -47,7 +47,7 @@ export async function syncNetworkState(subscribe: () => Promise<unknown> = () =>
 		networkState.set(await load());
 	} catch (error) {
 		console.error('[NetworkState] Error loading network state:', error);
-		networkState.update(state => ({ ...state, known: false, capabilities: { ...state.capabilities, ipv4: false, wifi: false } }));
+		networkState.update(state => ({ ...state, known: false, capabilities: { ...state.capabilities, ipv4: false, ipv4Elevation: false, wifi: false } }));
 	}
 }
 

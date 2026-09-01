@@ -51,7 +51,7 @@ export async function runAndPublishNetworkMutation(action: () => Promise<Network
 /** Remove mutation capabilities when this API instance has no authentication token. */
 export function restrictNetworkCapabilities(state: NetworkStateInfo, networkAdminEnabled: boolean): NetworkStateInfo {
 	if (networkAdminEnabled) return state;
-	return { ...state, capabilities: { ...state.capabilities, ipv4: false, wifi: false } };
+	return { ...state, capabilities: { ...state.capabilities, ipv4: false, ipv4Elevation: false, wifi: false } };
 }
 
 export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, hasSubscribers: HasSubscribersFn, networkAdminEnabled: boolean): SystemHandlers {

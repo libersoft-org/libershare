@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { isIPv4, isIPv6, isValidSSID, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetIPv4Config } from '@shared';
+import { isIPv4, isIPv6, isValidSSID, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetIPv4Config, type NetworkStateInfo } from '@shared';
 import { assertLinuxDnsApplied, assertLinuxIPv4Applied, assertLinuxWifiConnected, assertNetworkManagerRollback, assertNmcliActiveConnection, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
-import { assertDeviceName, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, readCachedCapabilities, resetNetworkCapabilitiesCache, runNetworkMutation } from '../../src/system-network.ts';
+import { assertAppliedIPv4State, assertDeviceName, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, readCachedCapabilities, resetNetworkCapabilitiesCache, runNetworkMutation } from '../../src/system-network.ts';
 
 describe('isIPv4', () => {
 	it('accepts ordinary dotted quads', () => {
@@ -134,6 +134,33 @@ describe('isIPv4ConfigUnchanged', () => {
 		expect(isIPv4AddressingUnchanged(target, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: [] })).toBe(true);
 		expect(isIPv4ConfigUnchanged(target, { mode: 'static', address: '192.0.2.11', prefixLength: 24, gateway: '192.0.2.1' })).toBe(false);
 		expect(isIPv4ConfigUnchanged({ ...target, ipv4Configurable: false }, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' })).toBe(false);
+	});
+});
+
+describe('assertAppliedIPv4State', () => {
+	const iface = {
+		id: 'lan0',
+		name: 'LAN',
+		medium: 'wired' as const,
+		link: 'up' as const,
+		defaultRoute: true,
+		mac: null,
+		addresses: [{ family: 'ipv4' as const, address: '192.0.2.10', prefixLength: 24 }],
+		ipv4Mode: 'static' as const,
+		ipv4Configurable: true,
+		wifiConfigurable: false,
+		gateway: '192.0.2.1',
+		dns: ['2001:db8::53', '192.0.2.53'],
+	};
+	const state: NetworkStateInfo = { interfaces: [iface], primaryID: 'lan0', detail: 'full', known: true, capabilities: { ipv4: true, wifi: false, staticGatewayRequired: false } };
+
+	it('accepts the exact address, route and normalized DNS result', () => {
+		expect(() => assertAppliedIPv4State(state, 'lan0', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53', '2001:DB8::53'] })).not.toThrow();
+	});
+
+	it('rejects a spoofed success whose fresh state does not match', () => {
+		expect(() => assertAppliedIPv4State(state, 'lan0', { mode: 'static', address: '192.0.2.11', prefixLength: 24, gateway: '192.0.2.1' })).toThrow('address');
+		expect(() => assertAppliedIPv4State({ ...state, known: false }, 'lan0', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' })).toThrow('verified');
 	});
 });
 
@@ -787,7 +814,7 @@ describe('parseLinuxCapabilities', () => {
 	it('requires both profile modification and activation for IPv4 writes', () => {
 		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'yes'))).toEqual({ ipv4: true, wifi: true, staticGatewayRequired: false });
 		expect(parseLinuxCapabilities(permissions('yes', 'no', 'yes'))).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
-		expect(parseLinuxCapabilities(permissions('auth', 'yes', 'yes'))).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
+		expect(parseLinuxCapabilities(permissions('auth', 'yes', 'yes'))).toEqual({ ipv4: true, ipv4Elevation: true, wifi: false, staticGatewayRequired: false });
 	});
 
 	it('requires the separate scan permission before offering Wi-Fi actions', () => {
@@ -795,7 +822,8 @@ describe('parseLinuxCapabilities', () => {
 	});
 
 	it('requires checkpoint permission before offering any mutation', () => {
-		for (const verdict of ['auth', 'no']) expect(parseLinuxCapabilities(permissions('yes', 'yes', 'yes', verdict))).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
+		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'yes', 'auth'))).toEqual({ ipv4: true, ipv4Elevation: true, wifi: false, staticGatewayRequired: false });
+		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'yes', 'no'))).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
 	});
 });
 
