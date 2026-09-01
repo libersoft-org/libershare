@@ -134,6 +134,10 @@ _stage_zip_linux() {
 _stage_zip_windows() {
 	cp "$BUILD_RELEASE_DIR/${PRODUCT_NAME}.exe" "$ZIP_STAGING/"
 	cp "$ROOT_DIR/backend/build/lish-backend.exe" "$ZIP_STAGING/lish-backend.exe"
+	# The backend only trusts the network helper as a signed sibling of itself, so
+	# the portable ZIP has to carry both helper binaries next to it as well.
+	cp "$ROOT_DIR/backend/build/lish-network-helper.exe" "$ZIP_STAGING/lish-network-helper.exe"
+	cp "$ROOT_DIR/backend/build/lish-network-launcher.exe" "$ZIP_STAGING/lish-network-launcher.exe"
 	PRODUCT_NAME="$PRODUCT_NAME" perl -pe 's/\{\{product_name\}\}/$ENV{PRODUCT_NAME}/g' \
 		"$SCRIPT_DIR/bundle-scripts/Debug.bat" >"$ZIP_STAGING/Debug.bat"
 }

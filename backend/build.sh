@@ -42,13 +42,33 @@ if [ -n "$BUN_TARGET" ]; then
 		# binary a user may be asked to approve carries a readable one instead of its file name.
 		PRODUCT_NAME=$(node -p "require('../shared/src/product.json').name")
 		PRODUCT_VERSION=$(node -p "require('../shared/src/product.json').version")
+		# The backend trusts the helper only when helper, launcher and backend carry a
+		# valid Authenticode signature from one certificate, and it pins the hash of the
+		# helper as shipped. So the helper is signed before its hash is taken, and the
+		# other two are signed after they were built with that hash. Without a
+		# certificate the build is explicitly read-only rather than silently so.
+		if [ -z "${WINDOWS_CERTIFICATE_PFX:-}" ]; then
+			echo "WARNING: WINDOWS_CERTIFICATE_PFX is not set; the network helper is unsigned and host network settings will remain read-only"
+		elif ! command -v osslsigncode >/dev/null 2>&1; then
+			echo "ERROR: WINDOWS_CERTIFICATE_PFX is set but osslsigncode is not installed" >&2
+			exit 1
+		fi
+		sign_windows_binary() {
+			[ -n "${WINDOWS_CERTIFICATE_PFX:-}" ] || return 0
+			osslsigncode sign -pkcs12 "$WINDOWS_CERTIFICATE_PFX" -pass "${WINDOWS_CERTIFICATE_PASSWORD:-}" -h sha256 -t http://timestamp.digicert.com -in "$1" -out "$1.signed"
+			mv "$1.signed" "$1"
+			osslsigncode verify -in "$1" >/dev/null
+		}
 		bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target "$BUN_TARGET" --windows-title "$PRODUCT_NAME" --windows-publisher "LiberSoft" --windows-version "$PRODUCT_VERSION.0" --windows-description "$PRODUCT_NAME network settings helper" src/network-helper.ts --outfile build/lish-network-helper.exe
 		bun scripts/set-windows-gui-subsystem.ts build/lish-network-helper.exe
+		sign_windows_binary build/lish-network-helper.exe
 		HELPER_HASH=$(hash_file build/lish-network-helper.exe)
 		bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target "$BUN_TARGET" --windows-title "$PRODUCT_NAME" --windows-publisher "LiberSoft" --windows-version "$PRODUCT_VERSION.0" --windows-description "$PRODUCT_NAME network settings launcher" src/network-helper-windows-launcher.ts --outfile build/lish-network-launcher.exe --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
 		bun scripts/set-windows-gui-subsystem.ts build/lish-network-launcher.exe
+		sign_windows_binary build/lish-network-launcher.exe
 		bun build --compile --target "$BUN_TARGET" --windows-title "$PRODUCT_NAME" --windows-publisher "LiberSoft" --windows-version "$PRODUCT_VERSION.0" --windows-description "$PRODUCT_NAME backend" src/app.ts --outfile build/lish-backend.exe --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
 		bun scripts/set-windows-gui-subsystem.ts build/lish-backend.exe
+		sign_windows_binary build/lish-backend.exe
 		;;
 	*)
 		bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target "$BUN_TARGET" src/network-helper.ts --outfile build/lish-network-helper

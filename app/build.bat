@@ -805,6 +805,10 @@ if exist "!ZIP_STAGING!" rmdir /s /q "!ZIP_STAGING!"
 mkdir "!ZIP_STAGING!"
 copy /y "!BUILD_RELEASE_DIR!\!PRODUCT_NAME!.exe" "!ZIP_STAGING!\!PRODUCT_NAME!.exe" >nul
 copy /y "!ROOT_DIR!\backend\build\lish-backend.exe" "!ZIP_STAGING!\lish-backend.exe" >nul
+rem The backend only trusts the network helper as a signed sibling of itself, so
+rem the portable ZIP has to carry both helper binaries next to it as well.
+copy /y "!ROOT_DIR!\backend\build\lish-network-helper.exe" "!ZIP_STAGING!\lish-network-helper.exe" >nul
+copy /y "!ROOT_DIR!\backend\build\lish-network-launcher.exe" "!ZIP_STAGING!\lish-network-launcher.exe" >nul
 rem Create Debug.bat from template
 powershell -Command "(Get-Content '!SCRIPT_DIR!bundle-scripts\Debug.bat' -Raw) -replace '\{\{product_name\}\}','!PRODUCT_NAME!' | Set-Content '!ZIP_STAGING!\Debug.bat' -NoNewline"
 powershell -Command "Compress-Archive -Path '!ZIP_STAGING!\*' -DestinationPath '!FINAL_DIR!\!PRODUCT_NAME!_!PRODUCT_VERSION!_windows_!_arch!.zip' -CompressionLevel !ZIP_PS_LEVEL! -Force"
