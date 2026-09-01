@@ -22,19 +22,34 @@ describe('network state subscription', () => {
 		}
 	});
 
-	it('keeps a successful immediate snapshot known when live subscription fails', async () => {
+	it('leaves a snapshot unknown and read-only when live subscription fails', async () => {
+		// The snapshot is true only at the moment it was taken. Without live
+		// updates, a form opened on it could write stale configuration back over a
+		// change made outside the app.
 		const originalError = console.error;
 		console.error = () => {};
 		try {
 			await syncNetworkState(
 				() => Promise.reject(new Error('temporary failure')),
-				() => Promise.resolve(freshState)
+				() => Promise.resolve({ ...freshState, interfaces: [{ id: 'lan0', name: 'LAN', medium: 'wired' as const, link: 'up' as const, defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'dhcp' as const, ipv4Configurable: true, wifiConfigurable: false, gateway: null, dns: [] }] })
 			);
-			expect(get(networkState)).toEqual(freshState);
+			const state = get(networkState);
+			expect(state.known).toBe(false);
+			expect(state.interfaces).toHaveLength(1);
+			expect(state.capabilities).toEqual({ ipv4: false, ipv4Elevation: false, wifi: false, staticGatewayRequired: false });
 			expect(get(networkSubscriptionActive)).toBe(false);
 		} finally {
 			console.error = originalError;
 		}
+	});
+
+	it('keeps a snapshot known and writable once live updates are flowing', async () => {
+		await syncNetworkState(
+			() => Promise.resolve(true),
+			() => Promise.resolve(freshState)
+		);
+		expect(get(networkState)).toEqual(freshState);
+		expect(get(networkSubscriptionActive)).toBe(true);
 	});
 
 	it('keeps stale rows visible but removes write capabilities after a failed refresh', async () => {

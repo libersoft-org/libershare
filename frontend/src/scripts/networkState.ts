@@ -1,4 +1,4 @@
-import { derived, writable, type Readable } from 'svelte/store';
+import { derived, get, writable, type Readable } from 'svelte/store';
 import { api } from './api.ts';
 import { deriveConnectionStatus, type ConnectionStatus, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
 
@@ -39,23 +39,39 @@ export async function initNetworkState(): Promise<void> {
 	await syncNetworkState();
 }
 
+/**
+ * A snapshot that is true only at the moment it was taken.
+ *
+ * Without live updates a change made outside the app — DHCP switched to static
+ * by a system tool, a different Wi-Fi joined — never reaches the store, and a
+ * form opened on the stale snapshot would write that stale configuration back.
+ * The rows stay visible as last known data; the state is not known and cannot
+ * be edited.
+ */
+export function withoutLiveUpdates(state: NetworkStateInfo): NetworkStateInfo {
+	return { ...state, known: false, capabilities: { ...state.capabilities, ipv4: false, ipv4Elevation: false, wifi: false } };
+}
+
+function storeSnapshot(state: NetworkStateInfo): void {
+	networkState.set(get(networkSubscriptionActive) ? state : withoutLiveUpdates(state));
+}
+
 export async function syncNetworkState(subscribe: () => Promise<unknown> = () => api.subscribe('system:network'), load: () => Promise<NetworkStateInfo> = () => api.call<NetworkStateInfo>('system.network')): Promise<void> {
 	networkSubscriptionActive.set(false);
-	const subscribed = await subscribeNetworkState(subscribe);
-	networkSubscriptionActive.set(subscribed);
+	networkSubscriptionActive.set(await subscribeNetworkState(subscribe));
 	try {
-		networkState.set(await load());
+		storeSnapshot(await load());
 	} catch (error) {
 		console.error('[NetworkState] Error loading network state:', error);
-		networkState.update(state => ({ ...state, known: false, capabilities: { ...state.capabilities, ipv4: false, ipv4Elevation: false, wifi: false } }));
+		networkState.update(withoutLiveUpdates);
 	}
 }
 
 /** Fetch and publish the current host state immediately. */
 export async function refreshNetworkState(): Promise<NetworkStateInfo> {
 	const state = await api.call<NetworkStateInfo>('system.network');
-	networkState.set(state);
-	return state;
+	storeSnapshot(state);
+	return get(networkState);
 }
 
 /**

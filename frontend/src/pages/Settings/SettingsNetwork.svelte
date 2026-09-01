@@ -137,7 +137,7 @@
 			<div class="note">{editable ? $t('settings.network.editableNote') : $t('settings.network.readOnlyNote')}</div>
 			<div class="note">{$t('settings.network.primaryHint')}</div>
 			{#if !$networkState.known && interfaces.length > 0}<div class="note">{$t('settings.network.staleState')}</div>{/if}
-			{#if $networkState.known && !$networkSubscriptionActive}<div class="note">{$t('settings.network.liveUpdatesUnavailable')}</div>{/if}
+			{#if !$networkSubscriptionActive}<div class="note">{$t('settings.network.liveUpdatesUnavailable')}</div>{/if}
 			{#if primaryFailed}<div class="note">{$t('settings.network.primarySaveFailed')}</div>{/if}
 			{#if $networkState.detail === 'addressesOnly'}
 				<div class="note">{$t('settings.network.detailLimited')}</div>
