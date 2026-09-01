@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, NETWORK_HELPER_EXIT, networkHelperFailure, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
 import { linuxNetworkHelperArgs, MAC_HELPER_SHELL, macAppBundleRoot, macNetworkHelperScript, networkHelperPath, trustedLinuxHelperMetadata, windowsLauncherFailure, windowsNetworkLauncherPath } from '../../src/network-helper-client.ts';
-import { windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProgramFilesPath, windowsSystemEnvironment } from '../../src/network-helper-windows.ts';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProgramFilesPath, windowsSystemEnvironment, writeWindowsRequestFile } from '../../src/network-helper-windows.ts';
 
 describe('network helper protocol', () => {
 	it('round-trips one validated IPv4 operation', () => {
@@ -89,11 +92,28 @@ describe('windows launcher outcomes', () => {
 describe('network helper launch commands', () => {
 	const request = 'eyJ2ZXJzaW9uIjoxfQ';
 
-	it('passes only a bounded base64url request to the Windows helper', () => {
-		const parameters = windowsHelperParameters(request);
-		expect(parameters).toBe(`--request ${request} --exit-code`);
-		expect(parameters).not.toContain('powershell');
-		expect(() => windowsHelperParameters(`${request};whoami`)).toThrow();
+	it('hands the Windows helper one readable file path instead of an encoded request', () => {
+		// UAC shows this command line to the user under "Program location".
+		const file = 'C:\\Users\\alice\\AppData\\Local\\LiberShare\\network-request.json';
+		expect(windowsHelperParameters(file)).toBe(`--request-file "${file}"`);
+		expect(windowsHelperParameters(file)).not.toContain(request);
+		expect(() => windowsHelperParameters(`${file}" --request ${request}`)).toThrow();
+		expect(() => windowsHelperParameters('network-request.json')).toThrow();
+		expect(() => windowsHelperParameters(`C:\\x\n.json`)).toThrow();
+	});
+
+	it('freezes the request file until the launcher releases it', () => {
+		if (process.platform !== 'win32') return;
+		const path = join(tmpdir(), `lish-request-${process.pid}.json`);
+		const guard = writeWindowsRequestFile(path, '{"version":1}');
+		try {
+			expect(() => writeFileSync(path, 'tampered')).toThrow();
+			expect(() => unlinkSync(path)).toThrow();
+			expect(readFileSync(path, 'utf8')).toBe('{"version":1}');
+		} finally {
+			guard.release();
+		}
+		expect(existsSync(path)).toBe(false);
 	});
 
 	it('reads Program Files through the Windows known-folder API', () => {
