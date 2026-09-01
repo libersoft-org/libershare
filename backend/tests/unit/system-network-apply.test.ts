@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { isIPv4, isIPv6, isValidSSID, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetIPv4Config } from '@shared';
 import { assertLinuxDnsApplied, assertLinuxIPv4Applied, assertLinuxWifiConnected, assertNetworkManagerRollback, assertNmcliActiveConnection, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
-import { assertDeviceName, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, runNetworkMutation } from '../../src/system-network.ts';
+import { assertDeviceName, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, readCachedCapabilities, resetNetworkCapabilitiesCache, runNetworkMutation } from '../../src/system-network.ts';
 
 describe('isIPv4', () => {
 	it('accepts ordinary dotted quads', () => {
@@ -212,6 +212,41 @@ describe('network mutation serialization', () => {
 		releaseFirst();
 		await Promise.all([first, second]);
 		expect(events).toEqual(['first:start', 'first:end', 'second:start', 'second:end']);
+	});
+});
+
+describe('network capability cache', () => {
+	const denied = { ipv4: false, wifi: false, staticGatewayRequired: false };
+	const allowed = { ipv4: true, wifi: false, staticGatewayRequired: false };
+
+	it('retries a negative result quickly and retains a positive result longer', async () => {
+		resetNetworkCapabilitiesCache();
+		let probes = 0;
+		const probe = async () => (++probes === 1 ? denied : allowed);
+		expect(await readCachedCapabilities(probe, 0)).toEqual(denied);
+		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS - 1)).toEqual(denied);
+		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS)).toEqual(allowed);
+		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS + CAPABILITY_POSITIVE_TTL_MS - 1)).toEqual(allowed);
+		expect(probes).toBe(2);
+	});
+
+	it('shares one in-flight probe and does not let it overwrite an invalidation', async () => {
+		resetNetworkCapabilitiesCache();
+		let resolveProbe: ((value: typeof allowed) => void) | undefined;
+		let probes = 0;
+		const probe = () => {
+			probes++;
+			return new Promise<typeof allowed>(resolve => (resolveProbe = resolve));
+		};
+		const first = readCachedCapabilities(probe, 0);
+		const second = readCachedCapabilities(probe, 1);
+		expect(probes).toBe(1);
+		resetNetworkCapabilitiesCache();
+		const afterReset = readCachedCapabilities(async () => denied, 2);
+		resolveProbe?.(allowed);
+		expect(await Promise.all([first, second])).toEqual([allowed, allowed]);
+		expect(await afterReset).toEqual(denied);
+		expect(await readCachedCapabilities(async () => allowed, 3)).toEqual(denied);
 	});
 });
 

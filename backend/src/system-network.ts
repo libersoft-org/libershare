@@ -248,35 +248,60 @@ export function isIPv4ConfigUnchanged(target: NetInterfaceInfo, config: NetIPv4C
 	return config.dns === undefined && isIPv4AddressingUnchanged(target, config);
 }
 
-/**
- * What this host lets the app change.
- *
- * Probed once and remembered: on Linux the answer is an `nmcli` spawn, and it
- * cannot change without the daemon being installed or stopped, which does not
- * happen inside one run of the app.
- */
-let capabilities: NetCapabilities | null = null;
+/** What this host lets the app change, with short-lived negative results. */
+export const CAPABILITY_NEGATIVE_TTL_MS: number = 15_000;
+export const CAPABILITY_POSITIVE_TTL_MS: number = 5 * 60_000;
+let capabilityCache: { value: NetCapabilities; expiresAt: number } | null = null;
+let capabilityProbeInFlight: Promise<NetCapabilities> | null = null;
+let capabilityGeneration = 0;
 
-async function readCapabilities(): Promise<NetCapabilities> {
-	if (capabilities) return capabilities;
+export function resetNetworkCapabilitiesCache(): void {
+	capabilityCache = null;
+	capabilityProbeInFlight = null;
+	capabilityGeneration++;
+}
+
+export async function readCachedCapabilities(probe: () => Promise<NetCapabilities>, now: number = Date.now()): Promise<NetCapabilities> {
+	if (capabilityCache && now < capabilityCache.expiresAt) return capabilityCache.value;
+	if (capabilityProbeInFlight) return capabilityProbeInFlight;
+	const generation = capabilityGeneration;
+	const pending = probe().then(value => {
+		if (generation === capabilityGeneration) {
+			const writable = value.ipv4 || value.wifi;
+			capabilityCache = { value, expiresAt: now + (writable ? CAPABILITY_POSITIVE_TTL_MS : CAPABILITY_NEGATIVE_TTL_MS) };
+		}
+		return value;
+	});
+	capabilityProbeInFlight = pending;
+	try {
+		return await pending;
+	} finally {
+		if (capabilityProbeInFlight === pending) capabilityProbeInFlight = null;
+	}
+}
+
+async function probeCapabilities(): Promise<NetCapabilities> {
 	if (process.platform === 'win32') {
 		// The Get/Set-Net* cmdlets refuse outright without an elevated token, so the
-		// capability is that token — probed once here rather than discovered by the
+		// capability is that token — probed before the user reaches Save rather than
 		// user when Save fails. Wi-Fi is deliberately read-only.
-		capabilities = { ipv4: await isWindowsElevated(), wifi: false, staticGatewayRequired: false };
+		return { ipv4: await isWindowsElevated(), wifi: false, staticGatewayRequired: false };
 	} else if (process.platform === 'linux') {
-		capabilities = await readLinuxCapabilities();
+		return readLinuxCapabilities();
 	} else if (process.platform === 'darwin') {
 		// networksetup persists a change and is present on every macOS install, so
 		// addressing is editable. Wi-Fi is not: see isMacWifiConfigurable.
-		capabilities = { ipv4: await isMacWritable(), wifi: isMacWifiConfigurable(), staticGatewayRequired: true };
+		return { ipv4: await isMacWritable(), wifi: isMacWifiConfigurable(), staticGatewayRequired: true };
 	} else {
 		// Everything else reads through os.networkInterfaces(), which cannot even
 		// report whether an address came from DHCP. Offering to edit a configuration
 		// we cannot describe would be worse than not offering it.
-		capabilities = { ipv4: false, wifi: false, staticGatewayRequired: false };
+		return { ipv4: false, wifi: false, staticGatewayRequired: false };
 	}
-	return capabilities;
+}
+
+async function readCapabilities(): Promise<NetCapabilities> {
+	return readCachedCapabilities(probeCapabilities);
 }
 
 /** True when this process can actually run the privileged cmdlets. One spawn, cached with the capabilities. */
@@ -321,6 +346,9 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config, prim
 					await applyLinuxIPv4(assertDeviceName(interfaceID), desired, addressingChanged);
 				}
 			});
+		} catch (error) {
+			resetNetworkCapabilitiesCache();
+			throw error;
 		} finally {
 			// A multi-step OS command may have changed part of the configuration
 			// before failing. Never keep the pre-command snapshot in that case.
@@ -334,7 +362,12 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config, prim
 export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 	if (typeof interfaceID !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
 	await assertWirelessInterface(interfaceID);
-	return run(() => scanLinuxWifi(assertDeviceName(interfaceID)));
+	try {
+		return await run(() => scanLinuxWifi(assertDeviceName(interfaceID)));
+	} catch (error) {
+		resetNetworkCapabilitiesCache();
+		throw error;
+	}
 }
 
 /** Join a Wi-Fi network on one interface. An empty password means an open network. */
@@ -352,6 +385,9 @@ export async function connectWifi(interfaceID: string, ssid: string, password: s
 		if (!network.supported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi authentication method is not supported');
 		try {
 			await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password, network.bssid));
+		} catch (error) {
+			resetNetworkCapabilitiesCache();
+			throw error;
 		} finally {
 			resetNetworkStateCache();
 		}
