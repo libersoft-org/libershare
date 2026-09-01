@@ -333,11 +333,18 @@ const ASSOC_SIGNAL_QUALITY_OFFSET = CONN_ASSOCIATION_OFFSET + 56;
 /** DOT11_SSID caps the SSID at 32 octets — a longer value means we read the wrong offset. */
 const MAX_SSID_LENGTH = 32;
 
+/**
+ * A Windows HANDLE is an opaque 64-bit value, not a virtual address, so it is
+ * declared to the FFI as `u64` and carried as a bigint. Declaring it as `ptr`
+ * happens to work while handle values stay small, but nothing guarantees that.
+ */
+type WlanHandle = bigint;
+
 interface WlanApi {
 	WlanOpenHandle: (version: number, reserved: null, negotiated: Pointer, handle: Pointer) => number;
-	WlanCloseHandle: (handle: Pointer, reserved: null) => number;
-	WlanEnumInterfaces: (handle: Pointer, reserved: null, list: Pointer) => number;
-	WlanQueryInterface: (handle: Pointer, guid: Pointer, opcode: number, reserved: null, size: Pointer, data: Pointer, valueType: Pointer) => number;
+	WlanCloseHandle: (handle: WlanHandle, reserved: null) => number;
+	WlanEnumInterfaces: (handle: WlanHandle, reserved: null, list: Pointer) => number;
+	WlanQueryInterface: (handle: WlanHandle, guid: Pointer, opcode: number, reserved: null, size: Pointer, data: Pointer, valueType: Pointer) => number;
 	WlanFreeMemory: (memory: Pointer) => void;
 }
 
@@ -351,9 +358,9 @@ function getWlanApi(): WlanApi | null {
 		try {
 			const lib = dlopen('wlanapi.dll', {
 				WlanOpenHandle: { args: [FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanCloseHandle: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanEnumInterfaces: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanQueryInterface: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+				WlanCloseHandle: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.u32 },
+				WlanEnumInterfaces: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+				WlanQueryInterface: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 				WlanFreeMemory: { args: [FFIType.ptr], returns: FFIType.void },
 			});
 			wlanApi = lib.symbols as unknown as WlanApi;
@@ -432,7 +439,7 @@ export function readWindowsWifi(): Map<string, NetWifiInfo> {
 	const handleOut = new BigUint64Array(1);
 	// Client version 2 = Vista and later; every supported Windows negotiates it.
 	if (api.WlanOpenHandle(2, null, ptr(negotiated), ptr(handleOut)) !== 0) return result;
-	const handle = Number(handleOut[0]) as Pointer;
+	const handle: WlanHandle = handleOut[0]!;
 	try {
 		const listOut = new BigUint64Array(1);
 		if (api.WlanEnumInterfaces(handle, null, ptr(listOut)) !== 0) return result;
