@@ -154,6 +154,17 @@ export function windowsSystemEnvironment(): NodeJS.ProcessEnv {
 	};
 }
 
+/**
+ * A helper binary the backend may hand to UAC: a sibling of the running
+ * executable, installed under Program Files.
+ *
+ * The location is part of the trust, not a convenience. An elevated process
+ * loads DLLs from its own directory before the system ones, so a helper in a
+ * user-writable place (a portable ZIP, a per-user install under LOCALAPPDATA)
+ * could be made to run planted code as administrator the next time the user
+ * approves a genuine prompt. Program Files is writable only by administrators,
+ * which closes that. Bundles that cannot land there stay read-only on purpose.
+ */
 async function windowsInstalledSibling(path: string, executable: string): Promise<{ path: string; executable: string } | null> {
 	const [resolvedPath, resolvedExecutable] = await Promise.all([realpath(path), realpath(executable)]);
 	if (dirname(resolvedPath).toLowerCase() !== dirname(resolvedExecutable).toLowerCase()) return null;
