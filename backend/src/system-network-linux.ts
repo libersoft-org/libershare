@@ -715,6 +715,14 @@ export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addr
 		const connectionUUID = await editableActiveConnection(device);
 		if (config.dns?.some(isIPv6)) assertIPv6DnsAllowed(await runFirst(NMCLI_CANDIDATES, ['-g', 'ipv6.method', 'connection', 'show', 'uuid', connectionUUID]), config.dns);
 		await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connectionUUID, config, addressingChanged), NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS);
+		// Switching to DHCP with the carrier down is a change to the saved profile,
+		// not something that can be activated: NetworkManager cannot complete IP
+		// configuration without a link and fails the activation. The profile is the
+		// whole change; NetworkManager acts on it when the carrier returns.
+		if (!requireLease && config.mode === 'dhcp') {
+			assertLinuxIPv4Method(config, await runFirst(NMCLI_CANDIDATES, ['-g', 'ipv4.method', 'connection', 'show', 'uuid', connectionUUID]));
+			return;
+		}
 		const activate = addressingChanged ? nmcliActivateArgs(connectionUUID, device) : ['device', 'reapply', device];
 		await runFirst(NMCLI_CANDIDATES, ['--wait', String(NMCLI_ACTIVATION_WAIT_SECONDS), ...activate], NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
 		assertNmcliActiveConnection(await activeConnections(), device, connectionUUID);
@@ -730,9 +738,13 @@ export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addr
 }
 
 /** Verify the live address and route before committing the NetworkManager checkpoint. */
+/** The saved profile carries the requested addressing method. */
+export function assertLinuxIPv4Method(config: NetIPv4Config, methodText: string): void {
+	if (methodText.trim() !== (config.mode === 'dhcp' ? 'auto' : 'manual')) throw new Error('NetworkManager did not preserve the requested IPv4 method');
+}
+
 export function assertLinuxIPv4Applied(config: NetIPv4Config, methodText: string, addrJson: string, routeJson: string, requireLease: boolean = true): void {
-	const expectedMethod = config.mode === 'dhcp' ? 'auto' : 'manual';
-	if (methodText.trim() !== expectedMethod) throw new Error('NetworkManager did not preserve the requested IPv4 method');
+	assertLinuxIPv4Method(config, methodText);
 	const addresses = (JSON.parse(addrJson) as IpAddrEntry[]).flatMap(entry => entry.addr_info ?? []).filter(address => address.family === 'inet');
 	if (config.mode === 'dhcp') {
 		// With the link down the method is what gets saved; the lease follows the cable.
