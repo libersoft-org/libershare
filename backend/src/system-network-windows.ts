@@ -523,6 +523,13 @@ export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config, add
 		return [...prefix, ...dnsSnapshot, `try { ${[dnsStep, ...dnsVerify].join('; ')} } catch { ${rollback.join('; ')} }`].join('; ');
 	}
 
+	// The snapshot objects come from the active store, and piping them into the
+	// Remove-* cmdlets removes them from the persistent store as well — verified
+	// on Windows 11: after a static A→B apply the persistent store held only B,
+	// and after a forced failure the rollback restored A in both stores. The
+	// persistent-store checks after the apply are what would catch a Windows
+	// build that behaves differently.
+
 	const snapshot = ['$oldAddresses = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $i })', "$oldRoutes = @(Get-NetRoute -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $i -and $_.DestinationPrefix -eq '0.0.0.0/0' })", '$oldDhcp = (Get-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop).Dhcp', '$oldDhcpNeedsAddress = $oldDhcp -eq "Enabled" -and @($oldAddresses | Where-Object { $_.AddressState -eq "Preferred" -and $_.IPAddress -notlike "169.254.*" }).Count -gt 0', '$oldDhcpNeedsRoute = $oldDhcp -eq "Enabled" -and $oldRoutes.Count -gt 0', ...dnsSnapshot];
 	const apply = ['if ($oldAddresses.Count -gt 0) { $oldAddresses | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop }', 'if ($oldRoutes.Count -gt 0) { $oldRoutes | Remove-NetRoute -Confirm:$false -ErrorAction Stop }'];
 	if (config.mode === 'dhcp') {
