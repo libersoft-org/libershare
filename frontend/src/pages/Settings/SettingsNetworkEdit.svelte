@@ -6,7 +6,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { applyInterfaceConfig, joinWifiNetwork, networkState, refreshNetworkState, scanWifiNetworks } from '../../scripts/networkState.ts';
 	import { networkConfigFormFrom, networkConfigFromForm, validateNetworkConfigForm, type DnsUpdateMode, type NetworkConfigForm } from '../../scripts/networkConfig.ts';
-	import { type NetAddressMode, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
+	import { ipv4BaselineOf, sameIPv4Baseline, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Baseline, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -39,13 +39,27 @@
 	let joinBSSID = $state<string | null>(null);
 	let password = $state('');
 
-	// Seed the form from the live state once, when the screen opens. Re-seeding on
-	// every broadcast would overwrite what the user is in the middle of typing.
-	let seeded = false;
+	// Seed the form from the live state when the screen opens, then keep it in
+	// step with the host only while the user has not started editing. Re-seeding
+	// over typed input would throw the user's work away; saving typed input over a
+	// configuration that changed underneath would throw the host's change away,
+	// so that case blocks Save until the user reloads the form.
+	let baseline = $state<NetIPv4Baseline | null>(null);
+	let seededForm: NetworkConfigForm | null = null;
+	let stale = $state(false);
 	$effect(() => {
-		if (seeded || !iface) return;
-		seeded = true;
+		if (!iface) return;
+		if (!baseline) return seedFrom(iface);
+		if (sameIPv4Baseline(ipv4BaselineOf(iface), baseline)) return;
+		if (formDirty()) {
+			stale = true;
+			failed = true;
+			message = $t('settings.network.changedOutside');
+			return;
+		}
 		seedFrom(iface);
+		failed = false;
+		message = $t('settings.network.reloadedFromHost');
 	});
 
 	function seedFrom(source: NetInterfaceInfo): void {
@@ -56,10 +70,23 @@
 		gateway = form.gateway;
 		dnsMode = form.dnsMode;
 		dns = form.dns;
+		seededForm = form;
+		baseline = ipv4BaselineOf(source);
+		stale = false;
 	}
 
 	function currentForm(): NetworkConfigForm {
 		return { mode, address, prefix, gateway, dnsMode, dns };
+	}
+
+	function formDirty(): boolean {
+		return JSON.stringify(currentForm()) !== JSON.stringify(seededForm);
+	}
+
+	function reloadForm(): void {
+		if (iface) seedFrom(iface);
+		failed = false;
+		message = '';
 	}
 
 	function seedCurrentInterface(): void {
@@ -90,7 +117,8 @@
 	}
 
 	async function save(): Promise<void> {
-		if (busy || scanning) return;
+		if (busy || scanning || stale || !baseline) return;
+		const expected = baseline;
 		const form = currentForm();
 		const invalid = validateNetworkConfigForm(form, $networkState.capabilities);
 		if (invalid) {
@@ -102,7 +130,7 @@
 		busy = true;
 		message = '';
 		try {
-			await applyInterfaceConfig(interfaceID, config);
+			await applyInterfaceConfig(interfaceID, config, expected);
 			seedCurrentInterface();
 			failed = false;
 			message = $t('settings.network.applied');
@@ -268,7 +296,10 @@
 			</div>
 
 			<ButtonBar justify="center" basePosition={[0, saveY]}>
-				<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy || scanning} onConfirm={save} />
+				<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy || scanning || stale} onConfirm={save} />
+				{#if stale}
+					<Button icon="/img/back.svg" label={$t('settings.network.reloadForm')} disabled={busy || scanning} onConfirm={reloadForm} />
+				{/if}
 			</ButtonBar>
 		{/if}
 

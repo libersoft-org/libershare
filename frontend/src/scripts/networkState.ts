@@ -1,6 +1,6 @@
 import { derived, get, writable, type Readable } from 'svelte/store';
 import { api } from './api.ts';
-import { deriveConnectionStatus, type ConnectionStatus, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
+import { deriveConnectionStatus, type ConnectionStatus, type NetIPv4Baseline, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
 
 /**
  * Host network state as reported by the backend.
@@ -81,8 +81,8 @@ export async function refreshNetworkState(): Promise<NetworkStateInfo> {
  * the user just changed the interface they are looking at and must see what
  * actually happened rather than wait up to 10 s for the next broadcast.
  */
-export async function applyInterfaceConfig(interfaceID: string, config: NetIPv4Config): Promise<void> {
-	networkState.set(await api.call<NetworkStateInfo>('system.networkApply', { interfaceID, config }));
+export async function applyInterfaceConfig(interfaceID: string, config: NetIPv4Config, expected: NetIPv4Baseline): Promise<void> {
+	networkState.set(await api.call<NetworkStateInfo>('system.networkApply', { interfaceID, config, expected }));
 }
 
 /** Scan for Wi-Fi networks reachable from one interface. */

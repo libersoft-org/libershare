@@ -372,7 +372,11 @@
 			"joined": "Připojeno k síti {ssid}.",
 			"errorInvalid": "Nastavení sítě není platné: {detail}",
 			"errorUnsupported": "Tento systém neumožňuje aplikaci měnit nastavení sítě.",
-			"errorFailed": "Nastavení sítě se nepodařilo použít: {detail}"
+			"errorFailed": "Nastavení sítě se nepodařilo použít: {detail}",
+			"errorStale": "Nastavení rozhraní se během úprav změnilo. Formulář byl znovu načten; zkontrolujte ho a uložte znovu.",
+			"changedOutside": "Nastavení rozhraní se změnilo mimo tento formulář. Načtěte formulář znovu, aby ukazoval aktuální hodnoty; vaše úpravy budou zahozeny.",
+			"reloadedFromHost": "Nastavení rozhraní se změnilo mimo tento formulář a formulář byl znovu načten.",
+			"reloadForm": "Načíst znovu"
 		},
 		"download": {
 			"directoryDownload": "Adresář pro dokončená stahování",

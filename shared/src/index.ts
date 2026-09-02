@@ -2,7 +2,7 @@
 export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE } from './product.ts';
 
 // Utils
-export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End, deriveConnectionStatus, isSelectableInterface, isIPv4, isIPv6, isValidSSID, MAX_DNS_LIST_BYTES, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config } from './utils.ts';
+export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End, deriveConnectionStatus, isSelectableInterface, ipv4BaselineOf, sameIPv4Baseline, isIPv4, isIPv6, isValidSSID, MAX_DNS_LIST_BYTES, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config } from './utils.ts';
 
 // Compression
 
@@ -511,6 +511,22 @@ export interface NetIPv4Config {
 	 * array replaces it with the listed IPv4/IPv6 resolvers.
 	 */
 	dns?: string[];
+}
+
+/**
+ * The IPv4 facts an edit form was seeded from.
+ *
+ * Sent back with the change so that a form opened on one configuration cannot
+ * quietly overwrite a different one that arrived in the meantime — DHCP switched
+ * on by a system tool, another client's edit. The backend compares it with a
+ * fresh read and refuses a stale form instead of applying it.
+ */
+export interface NetIPv4Baseline {
+	mode: NetAddressMode;
+	address: string | null;
+	prefixLength: number | null;
+	gateway: string | null;
+	dns: string[];
 }
 
 /** One network seen by a Wi-Fi scan. */

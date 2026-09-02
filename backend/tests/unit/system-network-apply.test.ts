@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { isIPv4, isIPv6, isValidSSID, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetIPv4Config, type NetworkStateInfo } from '@shared';
+import { ErrorCodes, ipv4BaselineOf, isIPv4, isIPv6, isValidSSID, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
 import { assertLinuxDnsApplied, assertLinuxIPv4Applied, assertLinuxWifiConnected, assertNetworkManagerRollback, assertNmcliActiveConnection, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
-import { assertAppliedIPv4State, assertDeviceName, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, readCachedCapabilities, resetNetworkCapabilitiesCache, runNetworkMutation } from '../../src/system-network.ts';
+import { assertAppliedIPv4State, assertDeviceName, assertIPv4Baseline, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, readCachedCapabilities, resetNetworkCapabilitiesCache, runNetworkMutation } from '../../src/system-network.ts';
 
 describe('isIPv4', () => {
 	it('accepts ordinary dotted quads', () => {
@@ -105,6 +105,42 @@ describe('validateIPv4Config', () => {
 		expect(validateIPv4Config({ mode: 'static', address: 123, prefixLength: 24 })).toBe('address');
 		expect(validateIPv4Config({ mode: 'dhcp', dns: '192.0.2.1' })).toBe('dns');
 		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.2', prefixLength: 24, gateway: 123 })).toBe('gateway');
+	});
+});
+
+describe('assertIPv4Baseline', () => {
+	const target: NetInterfaceInfo = {
+		id: 'lan0',
+		name: 'LAN',
+		medium: 'wired',
+		link: 'up',
+		defaultRoute: true,
+		mac: null,
+		addresses: [{ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 }],
+		ipv4Mode: 'static',
+		ipv4Configurable: true,
+		wifiConfigurable: false,
+		gateway: '192.0.2.1',
+		dns: ['192.0.2.53', '2001:db8::53'],
+	};
+
+	it('accepts a form seeded from the configuration the interface still has', () => {
+		expect(() => assertIPv4Baseline(target, ipv4BaselineOf(target))).not.toThrow();
+		expect(() => assertIPv4Baseline(target, undefined)).not.toThrow();
+	});
+
+	it('refuses a form whose interface was meanwhile switched to DHCP or re-addressed', () => {
+		// A system tool or another client changed the interface after the form
+		// opened; applying the old form would silently undo that change.
+		const seededFrom = ipv4BaselineOf(target);
+		const dhcpNow: NetInterfaceInfo = { ...target, ipv4Mode: 'dhcp', gateway: '192.0.2.254' };
+		expect(() => assertIPv4Baseline(dhcpNow, seededFrom)).toThrow(expect.objectContaining({ code: ErrorCodes.NETCONFIG_STALE }));
+		expect(() => assertIPv4Baseline({ ...target, addresses: [{ family: 'ipv4', address: '192.0.2.20', prefixLength: 24 }] }, seededFrom)).toThrow();
+		expect(() => assertIPv4Baseline({ ...target, dns: ['192.0.2.53'] }, seededFrom)).toThrow();
+	});
+
+	it('treats a malformed baseline from the wire as stale rather than crashing', () => {
+		for (const value of [null, [], 'x', { mode: 'static' }, { ...ipv4BaselineOf(target), dns: 'nope' }]) expect(() => assertIPv4Baseline(target, value)).toThrow(expect.objectContaining({ code: ErrorCodes.NETCONFIG_STALE }));
 	});
 });
 

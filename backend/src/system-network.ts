@@ -2,7 +2,7 @@ import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
-import { CodedError, ErrorCodes, isSelectableInterface, isValidSSID, normalizeDnsServers, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
+import { CodedError, ErrorCodes, ipv4BaselineOf, isSelectableInterface, isValidSSID, normalizeDnsServers, sameIPv4Baseline, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
 import { isWindowsInterfaceID, parseElevation, parseWindowsNetworkState, readWindowsWifi, windowsApplyIPv4Command, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
 import { applyLinuxIPv4, connectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
 import { applyMacIPv4, isMacWifiConfigurable, isMacWritable, readMacNetworkState } from './system-network-macos.ts';
@@ -360,13 +360,25 @@ async function isWindowsElevated(): Promise<boolean> {
 	}
 }
 
+/**
+ * Refuse a change built on a configuration the interface no longer has.
+ *
+ * The form was seeded from one snapshot; by the time Save is pressed the
+ * interface may have been switched to DHCP by a system tool or edited by
+ * another client. Applying the form then would silently undo that change.
+ */
+export function assertIPv4Baseline(target: NetInterfaceInfo, expected: unknown): void {
+	if (expected === undefined) return;
+	if (!sameIPv4Baseline(ipv4BaselineOf(target), expected)) throw new CodedError(ErrorCodes.NETCONFIG_STALE, 'interface configuration changed since the form was opened');
+}
+
 /** Apply an IPv4 configuration and read its resulting state before another mutation may begin. */
-export function applyIPv4(interfaceID: string, config: NetIPv4Config, primaryInterface: string = '', allowPrivilegeEscalation: boolean = true): Promise<NetworkStateInfo> {
-	return runNetworkMutation(() => applyIPv4Unlocked(interfaceID, config, primaryInterface, allowPrivilegeEscalation));
+export function applyIPv4(interfaceID: string, config: NetIPv4Config, primaryInterface: string = '', allowPrivilegeEscalation: boolean = true, expected?: unknown): Promise<NetworkStateInfo> {
+	return runNetworkMutation(() => applyIPv4Unlocked(interfaceID, config, primaryInterface, allowPrivilegeEscalation, expected));
 }
 
 /** {@link applyIPv4} for a caller that already holds the network mutation lock. */
-export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Config, primaryInterface: string = '', allowPrivilegeEscalation: boolean = true): Promise<NetworkStateInfo> {
+export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Config, primaryInterface: string = '', allowPrivilegeEscalation: boolean = true, expected?: unknown): Promise<NetworkStateInfo> {
 	if (typeof interfaceID !== 'string' || !config || typeof config !== 'object') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid request');
 	const invalid = validateIPv4Config(config);
 	if (invalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${invalid}`);
@@ -383,6 +395,7 @@ export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Conf
 	const target = before.interfaces.find(item => item.id === interfaceID);
 	if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
 	if (!target.ipv4Configurable || target.ipv4Mode === 'unknown') throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'interface configuration cannot be preserved safely');
+	assertIPv4Baseline(target, expected);
 	if (isIPv4ConfigUnchanged(target, desired)) return before;
 	const addressingChanged = !isIPv4AddressingUnchanged(target, desired);
 	let usedHelper = false;

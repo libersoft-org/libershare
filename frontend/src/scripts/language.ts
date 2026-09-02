@@ -142,6 +142,7 @@ const errorCodeKeys: Record<string, string> = {
 	NETCONFIG_INVALID: 'settings.network.errorInvalid',
 	NETCONFIG_UNSUPPORTED: 'settings.network.errorUnsupported',
 	NETCONFIG_FAILED: 'settings.network.errorFailed',
+	NETCONFIG_STALE: 'settings.network.errorStale',
 	PEER_UNREACHABLE: 'network.errorUnreachable',
 	PEER_LISH_NOT_SHARED: 'network.errorLishNotShared',
 	PEER_CHUNK_NOT_FOUND: 'network.errorChunkNotFound',

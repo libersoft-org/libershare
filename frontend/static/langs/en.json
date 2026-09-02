@@ -372,7 +372,11 @@
 			"joined": "Connected to {ssid}.",
 			"errorInvalid": "The network configuration is not valid: {detail}",
 			"errorUnsupported": "This system does not allow the application to change the network configuration.",
-			"errorFailed": "The network configuration could not be applied: {detail}"
+			"errorFailed": "The network configuration could not be applied: {detail}",
+			"errorStale": "The interface configuration changed while this form was open. The form has been reloaded; review it and save again.",
+			"changedOutside": "The interface configuration changed outside this form. Reload the form to see the current values; your edits will be discarded.",
+			"reloadedFromHost": "The interface configuration changed outside this form and the form was reloaded.",
+			"reloadForm": "Reload"
 		},
 		"download": {
 			"directoryDownload": "Finished download directory",

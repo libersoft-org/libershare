@@ -1,5 +1,5 @@
 import { CodedError, ErrorCodes } from './errors.ts';
-import type { ConnectionStatus, NetCapabilities, NetInterfaceInfo, NetworkStateInfo } from './index.ts';
+import type { ConnectionStatus, NetCapabilities, NetInterfaceInfo, NetIPv4Baseline, NetworkStateInfo } from './index.ts';
 
 export function formatBytes(bytes: number, decimals: number = 2): string {
 	if (bytes === 0) return '0 Bytes';
@@ -102,6 +102,20 @@ export function isIPv6(value: string): boolean {
 
 export const MAX_DNS_SERVERS = 16;
 export const MAX_DNS_LIST_BYTES = 1024;
+
+/** The IPv4 facts of one interface, in the shape the edit form is seeded from. */
+export function ipv4BaselineOf(iface: NetInterfaceInfo): NetIPv4Baseline {
+	const ipv4 = iface.addresses.find(address => address.family === 'ipv4');
+	return { mode: iface.ipv4Mode, address: ipv4?.address ?? null, prefixLength: ipv4?.prefixLength ?? null, gateway: iface.gateway ?? null, dns: [...iface.dns] };
+}
+
+/** True when two baselines describe the same IPv4 configuration. Tolerates a malformed value from the wire. */
+export function sameIPv4Baseline(left: NetIPv4Baseline, right: unknown): boolean {
+	if (!right || typeof right !== 'object' || Array.isArray(right)) return false;
+	const other = right as Partial<NetIPv4Baseline>;
+	if (!Array.isArray(other.dns) || other.dns.length !== left.dns.length) return false;
+	return other.mode === left.mode && other.address === left.address && other.prefixLength === left.prefixLength && other.gateway === left.gateway && other.dns.every((server, index) => server === left.dns[index]);
+}
 
 export function normalizeDnsServers(servers: readonly string[]): string[] {
 	const seen = new Set<string>();

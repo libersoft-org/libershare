@@ -1,7 +1,7 @@
 import os from 'os';
 import { statfs } from 'fs/promises';
 import { readFileSync } from 'fs';
-import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork, CodedError, ErrorCodes } from '@shared';
+import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type NetIPv4Baseline, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork, CodedError, ErrorCodes } from '@shared';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
@@ -28,7 +28,7 @@ interface SystemHandlers {
 	setVolume: (p: { volume: number }) => Promise<{ success: boolean; available: boolean }>;
 	getVolume: () => Promise<{ volume: number | null; available: boolean }>;
 	network: () => Promise<NetworkStateInfo>;
-	networkApply: (p: { interfaceID: string; config: NetIPv4Config }) => Promise<NetworkStateInfo>;
+	networkApply: (p: { interfaceID: string; config: NetIPv4Config; expected?: NetIPv4Baseline }) => Promise<NetworkStateInfo>;
 	wifiScan: (p: { interfaceID: string }) => Promise<NetWifiNetwork[]>;
 	wifiConnect: (p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string }) => Promise<NetworkStateInfo>;
 	startPolling: () => void;
@@ -286,11 +286,11 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	 * the caller has just changed the very interface it is watching and needs to
 	 * see the outcome — including the case where the address did not take.
 	 */
-	async function applyNetworkConfig(p: { interfaceID: string; config: NetIPv4Config }): Promise<NetworkStateInfo> {
+	async function applyNetworkConfig(p: { interfaceID: string; config: NetIPv4Config; expected?: NetIPv4Baseline }): Promise<NetworkStateInfo> {
 		assert(p, ['interfaceID', 'config']);
 		const primary = settings.get('network.primaryInterface') ?? '';
 		return runAndPublishNetworkMutation(
-			() => applyIPv4Unlocked(p.interfaceID, p.config, primary),
+			() => applyIPv4Unlocked(p.interfaceID, p.config, primary, true, p.expected),
 			() => readNetworkStateUnlocked(primary),
 			state => broadcast('system:network', state)
 		);
