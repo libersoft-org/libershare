@@ -274,14 +274,30 @@ export function isIPv4ConfigUnchanged(target: NetInterfaceInfo, config: NetIPv4C
  * IPv4 at all) is the user asking for the lease to be obtained, so it runs the
  * addressing path instead of being a no-op reported as applied. When the same
  * request also changes DNS, only DNS is changed: resolvers can be set without a
- * lease, and the lease will arrive when the network does.
+ * lease, and the lease will arrive when the network does. With the link down
+ * there is nothing to obtain, so DHCP on DHCP is simply unchanged.
  */
 export function planIPv4Change(target: NetInterfaceInfo, config: NetIPv4Config): { unchanged: boolean; addressingChanged: boolean } {
-	const renewLease = config.dns === undefined && config.mode === 'dhcp' && !hasUsableIPv4(target);
+	const renewLease = config.dns === undefined && config.mode === 'dhcp' && !hasUsableIPv4(target) && leaseRequired(target);
 	return { unchanged: isIPv4ConfigUnchanged(target, config) && !renewLease, addressingChanged: !isIPv4AddressingUnchanged(target, config) || renewLease };
 }
 
-export function assertAppliedIPv4State(state: NetworkStateInfo, interfaceID: string, config: NetIPv4Config, addressingChanged: boolean = true): void {
+/**
+ * Whether switching this interface to DHCP has to produce a lease before the
+ * change counts as applied.
+ *
+ * With the link up, a missing lease means the network has no DHCP server for
+ * this host, and leaving the change in place would strand a remotely managed
+ * machine — so the change is rolled back. With the link down (cable out, the
+ * machine about to move) there is nothing to obtain yet; the DHCP mode is
+ * saved and verified as a mode, and the lease arrives when the link does.
+ * An unknown link state is treated as up, the stricter of the two.
+ */
+export function leaseRequired(target: Pick<NetInterfaceInfo, 'link'>): boolean {
+	return target.link !== 'down';
+}
+
+export function assertAppliedIPv4State(state: NetworkStateInfo, interfaceID: string, config: NetIPv4Config, leaseOwed: boolean = true): void {
 	if (!state.known || state.detail !== 'full') throw new Error('network state could not be verified after the privileged change');
 	const target = state.interfaces.find(item => item.id === interfaceID);
 	if (!target || target.ipv4Mode !== config.mode) throw new Error('network helper did not preserve the requested IPv4 method');
@@ -289,10 +305,10 @@ export function assertAppliedIPv4State(state: NetworkStateInfo, interfaceID: str
 		const ipv4 = target.addresses.filter(item => item.family === 'ipv4');
 		if (ipv4.length !== 1 || ipv4[0]?.address !== config.address || ipv4[0]?.prefixLength !== config.prefixLength) throw new Error('network helper did not apply the requested IPv4 address');
 		if ((target.gateway ?? '') !== (config.gateway ?? '')) throw new Error('network helper did not apply the requested IPv4 gateway');
-	} else if (addressingChanged && !target.addresses.some(item => item.family === 'ipv4')) {
-		// A lease is only owed when DHCP was just switched on. A DNS-only change on
-		// an interface that is already on DHCP but has no lease right now (cable out,
-		// no server answering) succeeded exactly as requested.
+	} else if (leaseOwed && !target.addresses.some(item => item.family === 'ipv4')) {
+		// A lease is only owed when DHCP was just switched on with the link up. A
+		// DNS-only change, or a switch made with the cable out, succeeded exactly as
+		// requested even though no address is there yet.
 		throw new Error('network helper enabled DHCP but no IPv4 lease was obtained');
 	}
 	// An empty list means "restore automatic DNS". The public snapshot contains
@@ -420,6 +436,7 @@ export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Conf
 	assertIPv4Baseline(target, expected);
 	const { unchanged, addressingChanged } = planIPv4Change(target, desired);
 	if (unchanged) return before;
+	const requireLease = leaseRequired(target);
 	let usedHelper = false;
 	try {
 		await run(async () => {
@@ -435,11 +452,11 @@ export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Conf
 			}
 			if (process.platform === 'win32') {
 				if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
-				await execFileAsync(WINDOWS_POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, desired, addressingChanged)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true, env: WINDOWS_SYSTEM_ENV });
+				await execFileAsync(WINDOWS_POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, desired, addressingChanged, requireLease)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true, env: WINDOWS_SYSTEM_ENV });
 			} else if (process.platform === 'darwin') {
-				await applyMacIPv4(assertDeviceName(interfaceID), desired, addressingChanged);
+				await applyMacIPv4(assertDeviceName(interfaceID), desired, addressingChanged, requireLease);
 			} else {
-				await applyLinuxIPv4(assertDeviceName(interfaceID), desired, addressingChanged);
+				await applyLinuxIPv4(assertDeviceName(interfaceID), desired, addressingChanged, requireLease);
 			}
 		});
 	} catch (error) {
@@ -451,7 +468,7 @@ export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Conf
 		resetNetworkStateCache();
 	}
 	const after = await readNetworkStateUnlocked(primaryInterface);
-	if (usedHelper) assertAppliedIPv4State(after, interfaceID, desired, addressingChanged);
+	if (usedHelper) assertAppliedIPv4State(after, interfaceID, desired, addressingChanged && requireLease);
 	return after;
 }
 

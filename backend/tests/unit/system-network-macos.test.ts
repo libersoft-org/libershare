@@ -375,6 +375,9 @@ describe('macOS apply verification', () => {
 	it('requires a live DHCP lease before reporting success', () => {
 		expect(() => assertMacIPv4Applied({ mode: 'dhcp' }, 'DHCP Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\n', "There aren't any DNS Servers set on Wi-Fi.\n", true)).not.toThrow();
 		expect(() => assertMacIPv4Applied({ mode: 'dhcp' }, 'DHCP Configuration\nIP address: none\n', "There aren't any DNS Servers set on Wi-Fi.\n", true)).toThrow('lease');
+		// With the link down only the saved mode can be verified; the lease follows the cable.
+		expect(() => assertMacIPv4Applied({ mode: 'dhcp' }, 'DHCP Configuration\nIP address: none\n', "There aren't any DNS Servers set on Wi-Fi.\n", true, false)).not.toThrow();
+		expect(() => assertMacIPv4Applied({ mode: 'dhcp' }, 'Manually using DHCP Router\nIP address: none\n', "There aren't any DNS Servers set on Wi-Fi.\n", true, false)).toThrow();
 	});
 
 	it('checks static addressing and explicit DNS exactly', () => {

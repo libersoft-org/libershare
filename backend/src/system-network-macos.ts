@@ -473,29 +473,30 @@ function sameAddressSet(left: string[], right: string[]): boolean {
 	return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
 }
 
-function macAddressingApplied(config: NetIPv4Config, info: string): boolean {
+function macAddressingApplied(config: NetIPv4Config, info: string, requireLease: boolean = true): boolean {
 	if (parseServiceInfo(info) !== config.mode) return false;
 	const current = parseServiceCurrentIPv4(info);
-	if (config.mode === 'dhcp') return !!current && current.address !== '0.0.0.0' && !current.address.startsWith('169.254.');
+	// With the link down the mode is what gets saved; the lease follows the cable.
+	if (config.mode === 'dhcp') return !requireLease || (!!current && current.address !== '0.0.0.0' && !current.address.startsWith('169.254.'));
 	return !!current && current.address === config.address && current.prefixLength === config.prefixLength && parseServiceGateway(info) === (config.gateway || null);
 }
 
-export function assertMacIPv4Applied(config: NetIPv4Config, info: string, dnsText: string, addressingChanged: boolean): void {
-	if (addressingChanged && !macAddressingApplied(config, info)) throw new Error(config.mode === 'dhcp' ? 'macOS did not obtain a usable DHCP lease' : 'macOS did not apply the requested IPv4 configuration');
+export function assertMacIPv4Applied(config: NetIPv4Config, info: string, dnsText: string, addressingChanged: boolean, requireLease: boolean = true): void {
+	if (addressingChanged && !macAddressingApplied(config, info, requireLease)) throw new Error(config.mode === 'dhcp' ? 'macOS did not obtain a usable DHCP lease' : 'macOS did not apply the requested IPv4 configuration');
 	if (config.dns !== undefined && !sameAddressSet(parseServiceDns(dnsText), config.dns)) throw new Error('macOS did not apply the requested DNS policy');
 }
 
-async function verifyMacIPv4(service: string, config: NetIPv4Config, addressingChanged: boolean): Promise<void> {
+async function verifyMacIPv4(service: string, config: NetIPv4Config, addressingChanged: boolean, requireLease: boolean): Promise<void> {
 	let info = await run(NETWORKSETUP, ['-getinfo', service]);
 	if (addressingChanged) {
 		const deadline = Date.now() + 20_000;
-		while (!macAddressingApplied(config, info) && Date.now() < deadline) {
+		while (!macAddressingApplied(config, info, requireLease) && Date.now() < deadline) {
 			await delay(200);
 			info = await run(NETWORKSETUP, ['-getinfo', service]);
 		}
 	}
 	const dns = config.dns === undefined ? '' : await run(NETWORKSETUP, ['-getdnsservers', service]);
-	assertMacIPv4Applied(config, info, dns, addressingChanged);
+	assertMacIPv4Applied(config, info, dns, addressingChanged, requireLease);
 }
 
 /** Resolve the service name a device belongs to. Throws when the device is not part of an enabled service. */
@@ -508,7 +509,7 @@ async function serviceForDevice(device: string): Promise<string> {
 }
 
 /** Apply an IPv4 configuration to one device. Requires root, which is how networksetup guards every write. */
-export async function applyMacIPv4(device: string, config: NetIPv4Config, addressingChanged: boolean = true): Promise<void> {
+export async function applyMacIPv4(device: string, config: NetIPv4Config, addressingChanged: boolean = true, requireLease: boolean = true): Promise<void> {
 	const service = await serviceForDevice(device);
 	const [oldInfo, oldDns] = await Promise.all([run(NETWORKSETUP, ['-getinfo', service]), run(NETWORKSETUP, ['-getdnsservers', service])]);
 	const oldMode = parseServiceInfo(oldInfo);
@@ -518,7 +519,7 @@ export async function applyMacIPv4(device: string, config: NetIPv4Config, addres
 	const previous: NetIPv4Config = oldMode === 'dhcp' ? { mode: 'dhcp', dns: parseServiceDns(oldDns) } : { mode: 'static', address: oldAddress!.address, prefixLength: oldAddress!.prefixLength, gateway: oldGateway!, dns: parseServiceDns(oldDns) };
 	try {
 		for (const args of macApplyArgs(service, config, addressingChanged)) await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);
-		await verifyMacIPv4(service, config, addressingChanged);
+		await verifyMacIPv4(service, config, addressingChanged, requireLease);
 	} catch (applyError) {
 		try {
 			for (const args of macApplyArgs(service, previous, addressingChanged)) await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);

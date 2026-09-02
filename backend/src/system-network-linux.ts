@@ -698,7 +698,7 @@ async function withDeviceCheckpoint<T>(device: string, mutate: () => Promise<T>)
 }
 
 /** Apply an IPv4 configuration to one device and bring the profile back up. Throws when NetworkManager does not own the device. */
-export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addressingChanged: boolean = true): Promise<void> {
+export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addressingChanged: boolean = true, requireLease: boolean = true): Promise<void> {
 	await withDeviceCheckpoint(device, async () => {
 		const connectionUUID = await editableActiveConnection(device);
 		await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connectionUUID, config, addressingChanged), NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS);
@@ -707,7 +707,7 @@ export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addr
 		assertNmcliActiveConnection(await activeConnections(), device, connectionUUID);
 		if (addressingChanged) {
 			const [method, addr, route] = await Promise.all([runFirst(NMCLI_CANDIDATES, ['-g', 'ipv4.method', 'connection', 'show', 'uuid', connectionUUID]), runFirst(IP_CANDIDATES, ['-j', 'addr', 'show', 'dev', device]), runFirst(IP_CANDIDATES, ['-j', 'route', 'show', 'default', 'dev', device])]);
-			assertLinuxIPv4Applied(config, method, addr, route);
+			assertLinuxIPv4Applied(config, method, addr, route, requireLease);
 		}
 		if (config.dns !== undefined) {
 			const [profileDns, liveDns] = await Promise.all([runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'ipv4.dns,ipv4.ignore-auto-dns,ipv6.dns,ipv6.ignore-auto-dns', 'connection', 'show', 'uuid', connectionUUID]), runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'GENERAL.DEVICE,IP4.DNS,IP6.DNS', 'device', 'show', device])]);
@@ -717,12 +717,13 @@ export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addr
 }
 
 /** Verify the live address and route before committing the NetworkManager checkpoint. */
-export function assertLinuxIPv4Applied(config: NetIPv4Config, methodText: string, addrJson: string, routeJson: string): void {
+export function assertLinuxIPv4Applied(config: NetIPv4Config, methodText: string, addrJson: string, routeJson: string, requireLease: boolean = true): void {
 	const expectedMethod = config.mode === 'dhcp' ? 'auto' : 'manual';
 	if (methodText.trim() !== expectedMethod) throw new Error('NetworkManager did not preserve the requested IPv4 method');
 	const addresses = (JSON.parse(addrJson) as IpAddrEntry[]).flatMap(entry => entry.addr_info ?? []).filter(address => address.family === 'inet');
 	if (config.mode === 'dhcp') {
-		if (!addresses.some(address => address.local !== '0.0.0.0' && !address.local.startsWith('169.254.') && address.scope !== 'host')) throw new Error('NetworkManager did not obtain a usable IPv4 lease');
+		// With the link down the method is what gets saved; the lease follows the cable.
+		if (requireLease && !addresses.some(address => address.local !== '0.0.0.0' && !address.local.startsWith('169.254.') && address.scope !== 'host')) throw new Error('NetworkManager did not obtain a usable IPv4 lease');
 		return;
 	}
 	if (addresses.length !== 1 || addresses[0]?.local !== config.address || addresses[0]?.prefixlen !== config.prefixLength) throw new Error('NetworkManager did not apply the requested IPv4 address');

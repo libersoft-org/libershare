@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { canonicalDnsServer, ErrorCodes, ipv4BaselineOf, isIPv4, isIPv6, isValidSSID, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
 import { assertLinuxDnsApplied, assertLinuxIPv4Applied, assertLinuxWifiConnected, assertNetworkManagerRollback, assertNmcliActiveConnection, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
-import { assertAppliedIPv4State, assertDeviceName, assertIPv4Baseline, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, planIPv4Change, readCachedCapabilities, resetNetworkCapabilitiesCache, runNetworkMutation } from '../../src/system-network.ts';
+import { assertAppliedIPv4State, assertDeviceName, assertIPv4Baseline, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, leaseRequired, MAX_WIFI_PASSWORD_BYTES, planIPv4Change, readCachedCapabilities, resetNetworkCapabilitiesCache, runNetworkMutation } from '../../src/system-network.ts';
 
 describe('isIPv4', () => {
 	it('accepts ordinary dotted quads', () => {
@@ -188,6 +188,12 @@ describe('isIPv4ConfigUnchanged', () => {
 		expect(planIPv4Change(noIPv4, { mode: 'dhcp' })).toEqual({ unchanged: false, addressingChanged: true });
 		expect(planIPv4Change(apipa, { mode: 'dhcp', dns: ['192.0.2.53'] })).toEqual({ unchanged: false, addressingChanged: false });
 		expect(planIPv4Change(dhcp, { mode: 'dhcp', dns: [] })).toEqual({ unchanged: false, addressingChanged: false });
+		// With the link down there is no lease to obtain: DHCP on DHCP is unchanged,
+		// and a switch to DHCP owes no lease until the cable is back.
+		expect(planIPv4Change({ ...apipa, link: 'down' as const }, { mode: 'dhcp' })).toEqual({ unchanged: true, addressingChanged: false });
+		expect(leaseRequired({ link: 'up' })).toBe(true);
+		expect(leaseRequired({ link: 'unknown' })).toBe(true);
+		expect(leaseRequired({ link: 'down' })).toBe(false);
 		expect(planIPv4Change(target, { mode: 'static', address: '192.0.2.11', prefixLength: 24, gateway: '192.0.2.1' })).toEqual({ unchanged: false, addressingChanged: true });
 	});
 
@@ -588,6 +594,9 @@ describe('assertLinuxIPv4Applied', () => {
 		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', JSON.stringify([{ ifname: 'eth0', addr_info: [{ family: 'inet', local: '169.254.10.2', prefixlen: 16 }] }]), '[]')).toThrow('lease');
 		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', addr, '[]')).not.toThrow();
 		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'manual\n', '[]', '[]')).toThrow('method');
+		// With the link down only the saved method can be verified; the lease follows the cable.
+		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', '[]', '[]', false)).not.toThrow();
+		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'manual\n', '[]', '[]', false)).toThrow('method');
 	});
 });
 
@@ -771,6 +780,16 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('$routeMetric');
 		expect(command).toContain('-RouteMetric $routeMetric');
 		expect(command).toContain('$applyError');
+	});
+
+	it('waits for a DHCP lease only while the link is up', () => {
+		const withLink = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
+		expect(withLink).toContain('-Dhcp Enabled');
+		expect(withLink).toContain('DHCP apply did not obtain a usable lease');
+		const linkDown = windowsApplyIPv4Command(guid, { mode: 'dhcp' }, true, false);
+		expect(linkDown).toContain('-Dhcp Enabled');
+		expect(linkDown).not.toContain('usable lease');
+		expect(linkDown).toContain('throw "DHCP apply did not enable DHCP"');
 	});
 
 	it('verifies the persistent store as well as the active one after a static apply', () => {
