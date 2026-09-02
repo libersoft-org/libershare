@@ -469,7 +469,13 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 	if (!isValidWifiPassword(password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
 	if (bssid !== null && typeof bssid !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid bssid');
 	await assertWirelessInterface(interfaceID);
-	const available = await scanLinuxWifi(assertDeviceName(interfaceID));
+	let available: NetWifiNetwork[];
+	try {
+		available = await run(() => scanLinuxWifi(assertDeviceName(interfaceID)));
+	} catch (error) {
+		resetNetworkCapabilitiesCache();
+		throw error;
+	}
 	const matches = available.filter(item => item.ssid === ssid);
 	const network = bssid === null ? (matches.length === 1 ? matches[0] : undefined) : matches.find(item => item.bssid?.toLowerCase() === bssid.toLowerCase());
 	if (!network) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'network is no longer available');
