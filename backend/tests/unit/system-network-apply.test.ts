@@ -165,6 +165,16 @@ describe('isIPv4ConfigUnchanged', () => {
 		expect(isIPv4ConfigUnchanged({ ...target, ipv4Mode: 'dhcp' }, { mode: 'dhcp' })).toBe(true);
 	});
 
+	it('treats DHCP as unchanged only while the interface actually holds a lease', () => {
+		// Saving DHCP on an interface stuck on APIPA or without any IPv4 address is
+		// a request to obtain the lease, not a no-op to report as applied.
+		const dhcp = { ...target, ipv4Mode: 'dhcp' as const, gateway: null };
+		expect(isIPv4ConfigUnchanged(dhcp, { mode: 'dhcp' })).toBe(true);
+		expect(isIPv4ConfigUnchanged({ ...dhcp, addresses: [{ family: 'ipv4' as const, address: '169.254.10.20', prefixLength: 16 }] }, { mode: 'dhcp' })).toBe(false);
+		expect(isIPv4ConfigUnchanged({ ...dhcp, addresses: [] }, { mode: 'dhcp' })).toBe(false);
+		expect(isIPv4ConfigUnchanged({ ...dhcp, addresses: [{ family: 'ipv6' as const, address: '2001:db8::10', prefixLength: 64 }] }, { mode: 'dhcp' })).toBe(false);
+	});
+
 	it('treats any explicit DNS choice or address change as a mutation', () => {
 		expect(isIPv4ConfigUnchanged(target, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: [] })).toBe(false);
 		expect(isIPv4AddressingUnchanged(target, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: [] })).toBe(true);

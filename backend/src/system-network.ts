@@ -248,9 +248,17 @@ export function resetNetworkStateCache(): void {
  * interface snapshot. Undefined DNS is intentionally ignored: it means preserve
  * the resolver policy, whereas either form of explicit DNS is a real user action.
  */
+/** True when the interface holds an IPv4 address that identifies it on a network, not an APIPA fallback. */
+function hasUsableIPv4(target: NetInterfaceInfo): boolean {
+	return target.addresses.some(address => address.family === 'ipv4' && !address.address.startsWith('169.254.'));
+}
+
 export function isIPv4AddressingUnchanged(target: NetInterfaceInfo, config: NetIPv4Config): boolean {
 	if (!target.ipv4Configurable || target.ipv4Mode !== config.mode) return false;
-	if (config.mode === 'dhcp') return true;
+	// DHCP without a lease is not "already what was asked for": saving DHCP on
+	// such an interface is the user asking for the lease to be obtained, and a
+	// silent no-op would report success while nothing happened.
+	if (config.mode === 'dhcp') return hasUsableIPv4(target);
 	const addresses = target.addresses.filter(address => address.family === 'ipv4');
 	if (addresses.length !== 1) return false;
 	const current = addresses[0]!;
