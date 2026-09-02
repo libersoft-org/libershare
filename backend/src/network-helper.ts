@@ -1,4 +1,5 @@
 import { open } from 'node:fs/promises';
+import { windowsRequestFileHeld } from './network-helper-windows.ts';
 import { applyIPv4 } from './system-network.ts';
 import { decodeNetworkHelperRequest, executeNetworkHelperRequest, networkHelperExitCode, networkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
 
@@ -44,7 +45,11 @@ function reportsWithExitCode(args: string[]): boolean {
 async function readRequest(args: string[]): Promise<NetworkHelperRequest> {
 	if (args.length === 1 && args[0] === '--stdin') return decodeNetworkHelperRequest(Buffer.from(await readBoundedStdin()).toString('base64url'));
 	if (args.length === 2 && args[0] === '--request') return decodeNetworkHelperRequest(args[1]!);
-	if (reportsWithExitCode(args)) return decodeNetworkHelperRequest(Buffer.from(await readBoundedFile(args[1]!)).toString('base64url'));
+	if (reportsWithExitCode(args)) {
+		// Only act on a request whose launcher is still waiting for the answer.
+		if (process.platform === 'win32' && !windowsRequestFileHeld(args[1]!)) throw new Error('network helper request is no longer held by the launcher that asked for it');
+		return decodeNetworkHelperRequest(Buffer.from(await readBoundedFile(args[1]!)).toString('base64url'));
+	}
 	throw new Error('network helper request is missing');
 }
 

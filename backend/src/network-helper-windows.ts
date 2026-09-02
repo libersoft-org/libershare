@@ -15,10 +15,12 @@ const WAIT_TIMEOUT = 258;
 const FOLDERID_PROGRAM_FILES = Buffer.from([0xb6, 0x63, 0x5e, 0x90, 0xbf, 0xc1, 0x4e, 0x49, 0xb2, 0x9c, 0x65, 0xb7, 0x32, 0xd3, 0xd2, 0x1a]);
 const FOLDERID_LOCAL_APP_DATA = Buffer.from([0x85, 0x27, 0xb3, 0xf1, 0xba, 0x6f, 0xcf, 0x4f, 0x9d, 0x55, 0x7b, 0x8e, 0x7f, 0x15, 0x70, 0x91]);
 const GENERIC_READ = 0x80000000;
+const GENERIC_WRITE = 0x40000000;
 const FILE_SHARE_READ = 0x1;
 const OPEN_EXISTING = 3;
 const FILE_ATTRIBUTE_NORMAL = 0x80;
 const INVALID_HANDLE_VALUE = 0xffffffffffffffffn;
+const ERROR_SHARING_VIOLATION = 32;
 
 function wide(value: string): Buffer {
 	if (value.includes('\0')) throw new Error('invalid Windows helper argument');
@@ -82,6 +84,34 @@ export function writeWindowsRequestFile(path: string, content: string): WindowsR
 		throw new Error('network request file was modified');
 	}
 	return { path, release };
+}
+
+/**
+ * True while the launcher that asked for this change still holds its request file.
+ *
+ * The launcher keeps the file open with read-only sharing, so a write-open fails
+ * with a sharing violation exactly as long as it lives. That makes the guard a
+ * liveness signal, which the elevated helper needs: UAC keeps its prompt on
+ * screen even after the launcher is gone (killed on the backend's timeout, or
+ * with the whole app closed), and the file it left behind is then unprotected.
+ * Approving such a prompt minutes later would apply a change the backend already
+ * reported as failed, out of a file anyone in the session could have rewritten.
+ */
+export function windowsRequestFileHeld(path: string): boolean {
+	if (process.platform !== 'win32') throw new Error('Windows request files are unavailable');
+	const kernel = dlopen('kernel32.dll', {
+		CreateFileW: { args: [FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr], returns: FFIType.u64 },
+		CloseHandle: { args: [FFIType.u64], returns: FFIType.i32 },
+		GetLastError: { args: [], returns: FFIType.u32 },
+	});
+	try {
+		const handle = BigInt(kernel.symbols.CreateFileW(ptr(wide(path)), GENERIC_WRITE, 0, null, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, null));
+		if (handle === INVALID_HANDLE_VALUE) return kernel.symbols.GetLastError() === ERROR_SHARING_VIOLATION;
+		kernel.symbols.CloseHandle(handle);
+		return false;
+	} finally {
+		kernel.close();
+	}
 }
 
 function windowsKnownFolderPath(folder: Buffer): string {

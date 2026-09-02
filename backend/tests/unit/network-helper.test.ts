@@ -6,7 +6,7 @@ import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from '../../src/system-net
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProgramFilesPath, windowsSystemEnvironment, writeWindowsRequestFile } from '../../src/network-helper-windows.ts';
+import { windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProgramFilesPath, windowsRequestFileHeld, windowsSystemEnvironment, writeWindowsRequestFile } from '../../src/network-helper-windows.ts';
 
 describe('network helper protocol', () => {
 	it('round-trips one validated IPv4 operation', () => {
@@ -162,10 +162,28 @@ describe('network helper launch commands', () => {
 			expect(() => writeFileSync(path, 'tampered')).toThrow();
 			expect(() => unlinkSync(path)).toThrow();
 			expect(readFileSync(path, 'utf8')).toBe('{"version":1}');
+			// The same lock is what tells the elevated helper its launcher is still
+			// waiting for the answer.
+			expect(windowsRequestFileHeld(path)).toBe(true);
 		} finally {
 			guard.release();
 		}
 		expect(existsSync(path)).toBe(false);
+	});
+
+	it('reports a request file nobody holds any more', () => {
+		if (process.platform !== 'win32') return;
+		// UAC leaves its prompt on screen after the launcher is killed, and the file
+		// it left behind is unprotected. Approving that prompt must not apply a
+		// change the backend already gave up on.
+		const path = join(tmpdir(), `lish-orphan-${process.pid}.json`);
+		writeFileSync(path, '{"version":1}');
+		try {
+			expect(windowsRequestFileHeld(path)).toBe(false);
+		} finally {
+			unlinkSync(path);
+		}
+		expect(windowsRequestFileHeld(path)).toBe(false);
 	});
 
 	it('reads Program Files through the Windows known-folder API', () => {
