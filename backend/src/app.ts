@@ -227,6 +227,12 @@ function isTransientError(err: any): boolean {
 	// Cause-chain check (Node may set .cause on wrapped errors).
 	const causeName = err?.cause?.constructor?.name || err?.cause?.name || '';
 	if (causeName === 'TimeoutError' || causeName === 'AbortError') return true;
+	// A UDP discovery socket (SSDP behind UPnP NAT, mDNS) binding to an interface
+	// address that is being reconfigured — just added and still tentative, or just
+	// removed — fails with EADDRNOTAVAIL, and the library surfaces that as an
+	// unhandled 'error' event. Seen live right after the app's own IPv4 change;
+	// the host must survive its own network change.
+	if (err?.code === 'EADDRNOTAVAIL' && /^bind /.test(msg)) return true;
 	return false;
 }
 
