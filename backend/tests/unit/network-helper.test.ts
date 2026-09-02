@@ -26,13 +26,34 @@ describe('network helper protocol', () => {
 	it('dispatches only the typed apply operation', async () => {
 		const calls: unknown[] = [];
 		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' } }));
-		const result = await executeNetworkHelperRequest(request, async (interfaceID, config) => {
-			calls.push({ interfaceID, config });
+		const result = await executeNetworkHelperRequest(request, async (interfaceID, config, expected) => {
+			calls.push({ interfaceID, config, expected });
 			return { interfaces: [], primaryID: null, detail: 'full', known: true, capabilities: { ipv4: true, wifi: false, staticGatewayRequired: false } };
 		});
-		expect(calls).toEqual([{ interfaceID: 'eth0', config: { mode: 'dhcp' } }]);
+		expect(calls).toEqual([{ interfaceID: 'eth0', config: { mode: 'dhcp' }, expected: undefined }]);
 		expect(result).toEqual({ ok: true });
 		expect(parseNetworkHelperResponse(JSON.stringify(result))).toEqual(result);
+	});
+
+	it('carries the baseline the change was built on into the privileged apply', async () => {
+		// The authorization prompt can stay open for a long time; the helper must
+		// re-check the baseline against its own fresh read, so it has to receive it.
+		const expected = { mode: 'static' as const, address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53'] };
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected }));
+		expect(request.expected).toEqual(expected);
+		const seen: unknown[] = [];
+		await executeNetworkHelperRequest(request, async (_interfaceID, _config, baseline) => {
+			seen.push(baseline);
+			return null;
+		});
+		expect(seen).toEqual([expected]);
+	});
+
+	it('rejects a baseline that is not exactly the shape the backend builds', () => {
+		const base = { version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' } };
+		for (const expected of [null, [], 'x', { mode: 'static' }, { mode: 'bogus', address: null, prefixLength: null, gateway: null, dns: [] }, { mode: 'dhcp', address: null, prefixLength: null, gateway: null, dns: [], extra: 1 }, { mode: 'dhcp', address: 'x'.repeat(65), prefixLength: null, gateway: null, dns: [] }, { mode: 'dhcp', address: null, prefixLength: 33, gateway: null, dns: [] }, { mode: 'dhcp', address: null, prefixLength: null, gateway: null, dns: 'nope' }, { mode: 'dhcp', address: null, prefixLength: null, gateway: null, dns: [1] }]) {
+			expect(() => decodeNetworkHelperRequest(Buffer.from(JSON.stringify({ ...base, expected })).toString('base64url'))).toThrow('baseline');
+		}
 	});
 
 	it('rejects extra request fields and malformed helper responses', () => {

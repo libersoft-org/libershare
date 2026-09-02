@@ -52,7 +52,7 @@ const args = process.argv.slice(2);
 const reportWithExitCode = reportsWithExitCode(args);
 let response: NetworkHelperResponse;
 try {
-	response = await executeNetworkHelperRequest(await readRequest(args), (interfaceID, config) => applyIPv4(interfaceID, config, '', false));
+	response = await executeNetworkHelperRequest(await readRequest(args), (interfaceID, config, expected) => applyIPv4(interfaceID, config, '', false, expected));
 } catch (error) {
 	response = networkHelperFailure(error);
 }

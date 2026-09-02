@@ -1,10 +1,12 @@
-import { validateIPv4Config, type NetIPv4Config } from '@shared';
+import { MAX_DNS_SERVERS, validateIPv4Config, type NetIPv4Baseline, type NetIPv4Config } from '@shared';
 
 export interface NetworkHelperRequest {
 	version: 1;
 	operation: 'applyIPv4';
 	interfaceID: string;
 	config: NetIPv4Config;
+	/** The configuration the change was built on; the helper refuses to apply over anything else. */
+	expected?: NetIPv4Baseline;
 }
 
 /** Exit codes of the helper when it reports through the process status instead of stdout. */
@@ -12,13 +14,26 @@ export const NETWORK_HELPER_EXIT = { applied: 0, rejected: 10 } as const;
 
 export type NetworkHelperFailure = { ok: false; error: string };
 export type NetworkHelperResponse = { ok: true } | NetworkHelperFailure;
-type ApplyIPv4 = (interfaceID: string, config: NetIPv4Config) => Promise<unknown>;
+type ApplyIPv4 = (interfaceID: string, config: NetIPv4Config, expected?: NetIPv4Baseline) => Promise<unknown>;
 
-const REQUEST_KEYS = ['config', 'interfaceID', 'operation', 'version'];
+const REQUEST_KEYS = ['config', 'expected', 'interfaceID', 'operation', 'version'];
 const CONFIG_KEYS = ['address', 'dns', 'gateway', 'mode', 'prefixLength'];
+const BASELINE_KEYS = ['address', 'dns', 'gateway', 'mode', 'prefixLength'];
+const MAX_BASELINE_VALUE_LENGTH = 64;
 
 function hasOnlyKeys(value: Record<string, unknown>, allowed: string[]): boolean {
 	return Object.keys(value).every(key => allowed.includes(key));
+}
+
+function isBoundedStringOrNull(value: unknown): boolean {
+	return value === null || (typeof value === 'string' && value.length <= MAX_BASELINE_VALUE_LENGTH && !/\p{Cc}/u.test(value));
+}
+
+/** Accept only a baseline of the exact shape the backend builds; it is compared, never executed, but it still crosses a privilege boundary. */
+function isNetworkHelperBaseline(value: unknown): value is NetIPv4Baseline {
+	if (!value || typeof value !== 'object' || Array.isArray(value) || !hasOnlyKeys(value as Record<string, unknown>, BASELINE_KEYS)) return false;
+	const baseline = value as Partial<Record<keyof NetIPv4Baseline, unknown>>;
+	return (baseline.mode === 'dhcp' || baseline.mode === 'static' || baseline.mode === 'unknown') && isBoundedStringOrNull(baseline.address) && (baseline.prefixLength === null || (Number.isInteger(baseline.prefixLength) && (baseline.prefixLength as number) >= 0 && (baseline.prefixLength as number) <= 32)) && isBoundedStringOrNull(baseline.gateway) && Array.isArray(baseline.dns) && baseline.dns.length <= MAX_DNS_SERVERS && baseline.dns.every(server => typeof server === 'string' && isBoundedStringOrNull(server));
 }
 
 export function encodeNetworkHelperRequest(request: NetworkHelperRequest): string {
@@ -41,6 +56,7 @@ export function decodeNetworkHelperRequest(encoded: string): NetworkHelperReques
 	if (!request.config || typeof request.config !== 'object' || Array.isArray(request.config) || !hasOnlyKeys(request.config as unknown as Record<string, unknown>, CONFIG_KEYS)) throw new Error('invalid network helper config');
 	const invalid = validateIPv4Config(request.config);
 	if (invalid) throw new Error(`invalid network helper ${invalid}`);
+	if (request.expected !== undefined && !isNetworkHelperBaseline(request.expected)) throw new Error('invalid network helper baseline');
 	return request as NetworkHelperRequest;
 }
 
@@ -60,7 +76,7 @@ export function networkHelperFailure(error: unknown): NetworkHelperFailure {
 
 export async function executeNetworkHelperRequest(request: NetworkHelperRequest, applyIPv4: ApplyIPv4): Promise<NetworkHelperResponse> {
 	try {
-		await applyIPv4(request.interfaceID, request.config);
+		await applyIPv4(request.interfaceID, request.config, request.expected);
 		return { ok: true };
 	} catch (error) {
 		return networkHelperFailure(error);
