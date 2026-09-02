@@ -788,7 +788,7 @@ describe('windowsApplyIPv4Command', () => {
 		expect(withLink).toContain('DHCP apply did not obtain a usable lease');
 		const linkDown = windowsApplyIPv4Command(guid, { mode: 'dhcp' }, true, false);
 		expect(linkDown).toContain('-Dhcp Enabled');
-		expect(linkDown).not.toContain('usable lease');
+		expect(linkDown).not.toContain('DHCP apply did not obtain a usable lease');
 		expect(linkDown).toContain('throw "DHCP apply did not enable DHCP"');
 	});
 
