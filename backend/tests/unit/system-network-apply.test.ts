@@ -701,6 +701,20 @@ describe('windowsApplyIPv4Command', () => {
 		expect(command).toContain('$applyError');
 	});
 
+	it('verifies the persistent store as well as the active one after a static apply', () => {
+		// The reader offers an adapter for editing only while both stores agree, so
+		// an apply that left them apart would make the adapter read-only and bring
+		// the old address back after a reboot. That has to fail and roll back.
+		const withGateway = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
+		expect(withGateway).toContain('$persistedAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction SilentlyContinue)');
+		expect(withGateway).toContain('$persistedAddresses[0].IPAddress -ne \'192.0.2.10\' -or $persistedAddresses[0].PrefixLength -ne 24) { throw "IPv4 apply did not persist the requested address" }');
+		expect(withGateway).toContain('$persistedRoutes.Count -ne 1 -or $persistedRoutes[0].NextHop -ne \'192.0.2.1\') { throw "IPv4 apply did not persist the requested gateway" }');
+		expect(withGateway.indexOf('$persistedRoutes.Count -ne 1')).toBeLessThan(withGateway.indexOf('} catch {'));
+		const withoutGateway = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
+		expect(withoutGateway).toContain('if ($persistedRoutes.Count -ne 0) { throw "IPv4 apply left a persistent default route" }');
+		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).not.toContain('$persistedAddresses');
+	});
+
 	it('restores automatic and manual DNS independently for IPv4 and IPv6', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, dns: ['192.0.2.53'] });
 		expect(command).toContain('Tcpip\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)');
