@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { ErrorCodes, ipv4BaselineOf, isIPv4, isIPv6, isValidSSID, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
 import { assertLinuxDnsApplied, assertLinuxIPv4Applied, assertLinuxWifiConnected, assertNetworkManagerRollback, assertNmcliActiveConnection, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
-import { assertAppliedIPv4State, assertDeviceName, assertIPv4Baseline, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, readCachedCapabilities, resetNetworkCapabilitiesCache, runNetworkMutation } from '../../src/system-network.ts';
+import { assertAppliedIPv4State, assertDeviceName, assertIPv4Baseline, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, MAX_WIFI_PASSWORD_BYTES, planIPv4Change, readCachedCapabilities, resetNetworkCapabilitiesCache, runNetworkMutation } from '../../src/system-network.ts';
 
 describe('isIPv4', () => {
 	it('accepts ordinary dotted quads', () => {
@@ -165,14 +165,19 @@ describe('isIPv4ConfigUnchanged', () => {
 		expect(isIPv4ConfigUnchanged({ ...target, ipv4Mode: 'dhcp' }, { mode: 'dhcp' })).toBe(true);
 	});
 
-	it('treats DHCP as unchanged only while the interface actually holds a lease', () => {
+	it('obtains a lease when DHCP is saved on a leaseless interface, but leaves a DNS-only change to the DNS path', () => {
 		// Saving DHCP on an interface stuck on APIPA or without any IPv4 address is
-		// a request to obtain the lease, not a no-op to report as applied.
+		// a request to obtain the lease, not a no-op to report as applied. A DNS
+		// change on such an interface must still be possible without a lease.
 		const dhcp = { ...target, ipv4Mode: 'dhcp' as const, gateway: null };
-		expect(isIPv4ConfigUnchanged(dhcp, { mode: 'dhcp' })).toBe(true);
-		expect(isIPv4ConfigUnchanged({ ...dhcp, addresses: [{ family: 'ipv4' as const, address: '169.254.10.20', prefixLength: 16 }] }, { mode: 'dhcp' })).toBe(false);
-		expect(isIPv4ConfigUnchanged({ ...dhcp, addresses: [] }, { mode: 'dhcp' })).toBe(false);
-		expect(isIPv4ConfigUnchanged({ ...dhcp, addresses: [{ family: 'ipv6' as const, address: '2001:db8::10', prefixLength: 64 }] }, { mode: 'dhcp' })).toBe(false);
+		const apipa = { ...dhcp, addresses: [{ family: 'ipv4' as const, address: '169.254.10.20', prefixLength: 16 }] };
+		const noIPv4 = { ...dhcp, addresses: [{ family: 'ipv6' as const, address: '2001:db8::10', prefixLength: 64 }] };
+		expect(planIPv4Change(dhcp, { mode: 'dhcp' })).toEqual({ unchanged: true, addressingChanged: false });
+		expect(planIPv4Change(apipa, { mode: 'dhcp' })).toEqual({ unchanged: false, addressingChanged: true });
+		expect(planIPv4Change(noIPv4, { mode: 'dhcp' })).toEqual({ unchanged: false, addressingChanged: true });
+		expect(planIPv4Change(apipa, { mode: 'dhcp', dns: ['192.0.2.53'] })).toEqual({ unchanged: false, addressingChanged: false });
+		expect(planIPv4Change(dhcp, { mode: 'dhcp', dns: [] })).toEqual({ unchanged: false, addressingChanged: false });
+		expect(planIPv4Change(target, { mode: 'static', address: '192.0.2.11', prefixLength: 24, gateway: '192.0.2.1' })).toEqual({ unchanged: false, addressingChanged: true });
 	});
 
 	it('treats any explicit DNS choice or address change as a mutation', () => {

@@ -255,10 +255,7 @@ function hasUsableIPv4(target: NetInterfaceInfo): boolean {
 
 export function isIPv4AddressingUnchanged(target: NetInterfaceInfo, config: NetIPv4Config): boolean {
 	if (!target.ipv4Configurable || target.ipv4Mode !== config.mode) return false;
-	// DHCP without a lease is not "already what was asked for": saving DHCP on
-	// such an interface is the user asking for the lease to be obtained, and a
-	// silent no-op would report success while nothing happened.
-	if (config.mode === 'dhcp') return hasUsableIPv4(target);
+	if (config.mode === 'dhcp') return true;
 	const addresses = target.addresses.filter(address => address.family === 'ipv4');
 	if (addresses.length !== 1) return false;
 	const current = addresses[0]!;
@@ -268,6 +265,20 @@ export function isIPv4AddressingUnchanged(target: NetInterfaceInfo, config: NetI
 /** True when neither addressing nor resolver policy would change. */
 export function isIPv4ConfigUnchanged(target: NetInterfaceInfo, config: NetIPv4Config): boolean {
 	return config.dns === undefined && isIPv4AddressingUnchanged(target, config);
+}
+
+/**
+ * What applying `config` to `target` has to do.
+ *
+ * Saving DHCP on an interface that is on DHCP but holds no lease (APIPA, or no
+ * IPv4 at all) is the user asking for the lease to be obtained, so it runs the
+ * addressing path instead of being a no-op reported as applied. When the same
+ * request also changes DNS, only DNS is changed: resolvers can be set without a
+ * lease, and the lease will arrive when the network does.
+ */
+export function planIPv4Change(target: NetInterfaceInfo, config: NetIPv4Config): { unchanged: boolean; addressingChanged: boolean } {
+	const renewLease = config.dns === undefined && config.mode === 'dhcp' && !hasUsableIPv4(target);
+	return { unchanged: isIPv4ConfigUnchanged(target, config) && !renewLease, addressingChanged: !isIPv4AddressingUnchanged(target, config) || renewLease };
 }
 
 export function assertAppliedIPv4State(state: NetworkStateInfo, interfaceID: string, config: NetIPv4Config, addressingChanged: boolean = true): void {
@@ -407,8 +418,8 @@ export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Conf
 	if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
 	if (!target.ipv4Configurable || target.ipv4Mode === 'unknown') throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'interface configuration cannot be preserved safely');
 	assertIPv4Baseline(target, expected);
-	if (isIPv4ConfigUnchanged(target, desired)) return before;
-	const addressingChanged = !isIPv4AddressingUnchanged(target, desired);
+	const { unchanged, addressingChanged } = planIPv4Change(target, desired);
+	if (unchanged) return before;
 	let usedHelper = false;
 	try {
 		await run(async () => {
