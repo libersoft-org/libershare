@@ -5,11 +5,19 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { productIdentifier } from '@shared';
 import { expectedNetworkHelperHash, sha256File } from './network-helper-integrity.ts';
+import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from './system-network-linux.ts';
 import { encodeNetworkHelperRequest, NETWORK_HELPER_EXIT, parseNetworkHelperResponse, type NetworkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
 import { verifyWindowsInstalledHelper, verifyWindowsInstalledSibling, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
 
 const execFileAsync = promisify(execFile);
-const HELPER_TIMEOUT_MS = 180_000;
+/**
+ * Longer than the longest transaction a helper may run: the NetworkManager
+ * checkpoint window (profile change, activation, explicit rollback and its
+ * safety margin), plus room for the outcome to be reported. Killing the helper
+ * earlier would abandon a rollback in progress, release the host lock, and let
+ * the backend publish a state that is still changing.
+ */
+export const HELPER_TIMEOUT_MS: number = NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS * 1000 + 15_000;
 const MAX_HELPER_OUTPUT_BYTES = 4096;
 export const MAC_HELPER_SHELL = 'set -eu; d=$(/usr/bin/mktemp -d /private/var/tmp/lish-network-helper.XXXXXX); trap \'/bin/rm -f "$d/helper"; /bin/rmdir "$d"\' EXIT HUP INT TERM; /bin/cp "$1" "$d/helper"; /usr/bin/codesign --verify --strict "$d/helper"; t=$(/usr/bin/codesign -dv --verbose=4 "$d/helper" 2>&1 | /usr/bin/awk -F= \'/^TeamIdentifier=/{print $2}\'); i=$(/usr/bin/codesign -dv --verbose=4 "$d/helper" 2>&1 | /usr/bin/awk -F= \'/^Identifier=/{print $2}\'); h=$(/usr/bin/shasum -a 256 "$d/helper" | /usr/bin/awk \'{print $1}\'); [ -n "$t" ] && [ "$t" = "$3" ] && [ "$h" = "$4" ] && [ "$i" = "$5" ]; "$d/helper" --request "$2"';
 

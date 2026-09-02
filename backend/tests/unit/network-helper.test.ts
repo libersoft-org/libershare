@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, NETWORK_HELPER_EXIT, networkHelperFailure, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
-import { linuxNetworkHelperArgs, MAC_HELPER_SHELL, macAppBundleRoot, macNetworkHelperScript, networkHelperPath, trustedLinuxHelperMetadata, windowsLauncherFailure, windowsNetworkLauncherPath } from '../../src/network-helper-client.ts';
+import { HELPER_TIMEOUT_MS, linuxNetworkHelperArgs, MAC_HELPER_SHELL, macAppBundleRoot, macNetworkHelperScript, networkHelperPath, trustedLinuxHelperMetadata, windowsLauncherFailure, windowsNetworkLauncherPath } from '../../src/network-helper-client.ts';
+import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from '../../src/system-network-linux.ts';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -47,6 +48,12 @@ describe('network helper protocol', () => {
 			return null;
 		});
 		expect(seen).toEqual([expected]);
+	});
+
+	it('outlives the longest NetworkManager transaction it may have to wait for', () => {
+		// Killing the helper before the checkpoint window closes would abandon a
+		// rollback in progress and publish a state that is still changing.
+		expect(HELPER_TIMEOUT_MS).toBeGreaterThan(NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS * 1000);
 	});
 
 	it('rejects a baseline that is not exactly the shape the backend builds', () => {
