@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { canonicalDnsServer, ErrorCodes, ipv4BaselineOf, isIPv4, isIPv6, isValidSSID, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
-import { assertLinuxDnsApplied, assertLinuxIPv4Applied, assertLinuxWifiConnected, assertNetworkManagerRollback, assertNmcliActiveConnection, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
+import { assertIPv6DnsAllowed, assertLinuxDnsApplied, assertLinuxIPv4Applied, assertLinuxWifiConnected, assertNetworkManagerRollback, assertNmcliActiveConnection, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { assertAppliedIPv4State, assertDeviceName, assertIPv4Baseline, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, leaseRequired, MAX_WIFI_PASSWORD_BYTES, planIPv4Change, readCachedCapabilities, resetNetworkCapabilitiesCache, runNetworkMutation } from '../../src/system-network.ts';
 
@@ -116,6 +116,17 @@ describe('validateIPv4Config', () => {
 		expect(validateIPv4Config({ mode: 'static', address: 123, prefixLength: 24 })).toBe('address');
 		expect(validateIPv4Config({ mode: 'dhcp', dns: '192.0.2.1' })).toBe('dns');
 		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.2', prefixLength: 24, gateway: 123 })).toBe('gateway');
+	});
+});
+
+describe('assertIPv6DnsAllowed', () => {
+	it('refuses IPv6 resolvers on a profile with IPv6 disabled, before the profile is touched', () => {
+		// Seen live: NetworkManager rejects ipv6.dns with "not allowed for method=disabled".
+		expect(() => assertIPv6DnsAllowed('disabled\n', ['2001:db8::53'])).toThrow(expect.objectContaining({ code: ErrorCodes.NETCONFIG_UNSUPPORTED }));
+		expect(() => assertIPv6DnsAllowed('ignore', ['192.0.2.53', '2001:db8::53'])).toThrow();
+		expect(() => assertIPv6DnsAllowed('disabled', ['192.0.2.53'])).not.toThrow();
+		expect(() => assertIPv6DnsAllowed('disabled', undefined)).not.toThrow();
+		expect(() => assertIPv6DnsAllowed('auto', ['2001:db8::53'])).not.toThrow();
 	});
 });
 

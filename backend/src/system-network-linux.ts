@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
-import { isIPv4, isIPv6, validateIPv4Config } from '@shared';
+import { CodedError, ErrorCodes, isIPv4, isIPv6, validateIPv4Config } from '@shared';
 import type { NetAddress, NetCapabilities, NetInterfaceInfo, NetIPv4Config, NetLink, NetWifiInfo, NetWifiNetwork } from '@shared';
 
 const execFileAsync = promisify(execFile);
@@ -604,6 +604,18 @@ function nmcliDnsArgs(config: NetIPv4Config): string[] {
 	return ['ipv4.dns', config.dns.filter(isIPv4).join(','), 'ipv4.ignore-auto-dns', ignoreAutomatic, 'ipv6.dns', config.dns.filter(isIPv6).join(','), 'ipv6.ignore-auto-dns', ignoreAutomatic];
 }
 
+/**
+ * NetworkManager refuses `ipv6.dns` on a profile whose IPv6 method is
+ * `disabled` or `ignore`, and would only say so after the profile update has
+ * started. Say it first, as a request the host cannot honour rather than a
+ * failed change.
+ */
+export function assertIPv6DnsAllowed(ipv6Method: string, dns: readonly string[] | undefined): void {
+	if (!dns?.some(isIPv6)) return;
+	const method = ipv6Method.trim();
+	if (method === 'disabled' || method === 'ignore') throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'IPv6 resolvers need IPv6 enabled on this profile');
+}
+
 export function nmcliModifyArgs(connectionUUID: string, config: NetIPv4Config, addressingChanged: boolean = true): string[] {
 	const base = ['connection', 'modify', 'uuid', connectionUUID];
 	const dns = nmcliDnsArgs(config);
@@ -701,6 +713,7 @@ async function withDeviceCheckpoint<T>(device: string, mutate: () => Promise<T>)
 export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addressingChanged: boolean = true, requireLease: boolean = true): Promise<void> {
 	await withDeviceCheckpoint(device, async () => {
 		const connectionUUID = await editableActiveConnection(device);
+		if (config.dns?.some(isIPv6)) assertIPv6DnsAllowed(await runFirst(NMCLI_CANDIDATES, ['-g', 'ipv6.method', 'connection', 'show', 'uuid', connectionUUID]), config.dns);
 		await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connectionUUID, config, addressingChanged), NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS);
 		const activate = addressingChanged ? nmcliActivateArgs(connectionUUID, device) : ['device', 'reapply', device];
 		await runFirst(NMCLI_CANDIDATES, ['--wait', String(NMCLI_ACTIVATION_WAIT_SECONDS), ...activate], NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
