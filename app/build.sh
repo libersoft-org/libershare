@@ -894,6 +894,9 @@ for os in $OS_LIST; do
 				-v "${HOME}/.cache/cargo-xwin:/root/.cache/cargo-xwin" \
 				-v "${HOME}/.bun/install/cache:/root/.bun/install/cache" \
 				-e APPIMAGE_EXTRACT_AND_RUN=1 \
+				${WINDOWS_CERTIFICATE_PFX:+-v "$WINDOWS_CERTIFICATE_PFX:/run/secrets/windows-signing.pfx:ro"} \
+				${WINDOWS_CERTIFICATE_PFX:+-e WINDOWS_CERTIFICATE_PFX=/run/secrets/windows-signing.pfx} \
+				${WINDOWS_CERTIFICATE_PASSWORD:+-e WINDOWS_CERTIFICATE_PASSWORD} \
 				"$DOCKER_IMAGE" \
 				sh -c "cd /workspace/app && exec ./build.sh --docker-inner --inner-os $os --inner-arch $target --compress $COMPRESS_LEVEL $INNER_FORMAT_ARGS"
 			_rc=$?
