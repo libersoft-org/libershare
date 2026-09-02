@@ -117,14 +117,30 @@ export function sameIPv4Baseline(left: NetIPv4Baseline, right: unknown): boolean
 	return other.mode === left.mode && other.address === left.address && other.prefixLength === left.prefixLength && other.gateway === left.gateway && other.dns.every((server, index) => server === left.dns[index]);
 }
 
+/**
+ * One spelling for one resolver address.
+ *
+ * An IPv6 literal can be written many ways; the operating system reports it
+ * back in one (compressed, lowercase). Comparing what was requested with what
+ * was applied only works when both sides use that same spelling, so every list
+ * is canonicalised before it is deduplicated, stored, written or verified.
+ */
+export function canonicalDnsServer(server: string): string {
+	if (!isIPv6(server)) return server;
+	const canonical = new URL(`http://[${server}]/`).hostname.slice(1, -1);
+	// URL turns an IPv4-mapped tail into hex; operating systems print it dotted.
+	const mapped = server.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
+	return mapped && canonical.startsWith('::ffff:') ? `::ffff:${mapped[1]}` : canonical;
+}
+
 export function normalizeDnsServers(servers: readonly string[]): string[] {
 	const seen = new Set<string>();
 	const result: string[] = [];
 	for (const server of servers) {
-		const key = server.toLowerCase();
-		if (seen.has(key)) continue;
-		seen.add(key);
-		result.push(server);
+		const canonical = canonicalDnsServer(server);
+		if (seen.has(canonical)) continue;
+		seen.add(canonical);
+		result.push(canonical);
 	}
 	return result;
 }

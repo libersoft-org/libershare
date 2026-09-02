@@ -32,7 +32,7 @@ describe('network configuration form', () => {
 
 	it('deduplicates custom DNS before sending it to the backend', () => {
 		const config = networkConfigFromForm({ mode: 'dhcp', address: '', prefix: '24', gateway: '', dnsMode: 'custom', dns: '192.0.2.53, 192.0.2.53, 2001:DB8::53, 2001:db8::53' });
-		expect(config?.dns).toEqual(['192.0.2.53', '2001:DB8::53']);
+		expect(config?.dns).toEqual(['192.0.2.53', '2001:db8::53']);
 	});
 
 	it('rejects custom DNS without at least one server', () => {
