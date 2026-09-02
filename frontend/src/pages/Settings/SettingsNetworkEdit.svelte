@@ -48,7 +48,7 @@
 	let seededForm: NetworkConfigForm | null = null;
 	let stale = $state(false);
 	$effect(() => {
-		if (!iface) return;
+		if (!iface || busy) return;
 		if (!baseline) return seedFrom(iface);
 		if (sameIPv4Baseline(ipv4BaselineOf(iface), baseline)) return;
 		if (formDirty()) {
@@ -138,8 +138,12 @@
 			failed = true;
 			message = translateError(error);
 			try {
-				await refreshNetworkState();
-				seedCurrentInterface();
+				const current = (await refreshNetworkState()).interfaces.find(item => item.id === interfaceID);
+				// A stale form is reloaded so the user sees what they would now be
+				// editing over. Any other failure keeps the typed values for a retry and
+				// only moves the baseline to what the host actually has after it.
+				if (current && (error as { code?: string }).code === 'NETCONFIG_STALE') seedFrom(current);
+				else if (current) baseline = ipv4BaselineOf(current);
 			} catch {}
 		} finally {
 			busy = false;
