@@ -1,4 +1,4 @@
-import { MAX_DNS_SERVERS, validateIPv4Config, type NetIPv4Baseline, type NetIPv4Config } from '@shared';
+import { CodedError, MAX_DNS_SERVERS, validateIPv4Config, type NetIPv4Baseline, type NetIPv4Config } from '@shared';
 
 export interface NetworkHelperRequest {
 	version: 1;
@@ -10,9 +10,18 @@ export interface NetworkHelperRequest {
 }
 
 /** Exit codes of the helper when it reports through the process status instead of stdout. */
-export const NETWORK_HELPER_EXIT = { applied: 0, rejected: 10 } as const;
+export const NETWORK_HELPER_EXIT = { applied: 0, rejected: 10, stale: 14 } as const;
 
-export type NetworkHelperFailure = { ok: false; error: string };
+/**
+ * Error codes the helper hands back unchanged. The stale-form refusal has to
+ * survive the privilege boundary: the screen reloads the form only on that
+ * exact code, and a generic failure would let the same stale values be saved
+ * on the next attempt.
+ */
+export const NETWORK_HELPER_ERROR_CODES = ['NETCONFIG_INVALID', 'NETCONFIG_UNSUPPORTED', 'NETCONFIG_FAILED', 'NETCONFIG_STALE'] as const;
+export type NetworkHelperErrorCode = (typeof NETWORK_HELPER_ERROR_CODES)[number];
+
+export type NetworkHelperFailure = { ok: false; error: string; code?: NetworkHelperErrorCode };
 export type NetworkHelperResponse = { ok: true } | NetworkHelperFailure;
 type ApplyIPv4 = (interfaceID: string, config: NetIPv4Config, expected?: NetIPv4Baseline) => Promise<unknown>;
 
@@ -71,7 +80,14 @@ export function decodeNetworkHelperRequest(encoded: string): NetworkHelperReques
  */
 export function networkHelperFailure(error: unknown): NetworkHelperFailure {
 	const message = (error instanceof Error ? error.message : String(error)).replace(/\p{Cc}/gu, ' ').trim();
-	return { ok: false, error: (message || 'network change failed').slice(0, 500) };
+	const code = error instanceof CodedError && (NETWORK_HELPER_ERROR_CODES as readonly string[]).includes(error.code) ? (error.code as NetworkHelperErrorCode) : undefined;
+	return { ok: false, error: (message || 'network change failed').slice(0, 500), ...(code && { code }) };
+}
+
+/** The process status a helper reports the failure with when it has no stdout to answer on. */
+export function networkHelperExitCode(response: NetworkHelperResponse): number {
+	if (response.ok) return NETWORK_HELPER_EXIT.applied;
+	return response.code === 'NETCONFIG_STALE' ? NETWORK_HELPER_EXIT.stale : NETWORK_HELPER_EXIT.rejected;
 }
 
 export async function executeNetworkHelperRequest(request: NetworkHelperRequest, applyIPv4: ApplyIPv4): Promise<NetworkHelperResponse> {
@@ -92,9 +108,11 @@ export function parseNetworkHelperResponse(text: string): NetworkHelperResponse 
 		throw new Error('network helper returned an invalid response');
 	}
 	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('network helper returned an invalid response');
-	const response = value as Partial<NetworkHelperResponse>;
-	const keys = Object.keys(response);
-	if (response.ok === false && keys.length === 2 && keys.includes('error') && typeof response.error === 'string' && response.error.length > 0 && response.error.length <= 500 && !/\p{Cc}/u.test(response.error)) return response as NetworkHelperResponse;
-	if (response.ok === true && keys.length === 1) return { ok: true };
+	const response = value as { ok?: unknown; error?: unknown; code?: unknown };
+	const keys = Object.keys(response).sort().join();
+	const error = typeof response.error === 'string' && response.error.length > 0 && response.error.length <= 500 && !/\p{Cc}/u.test(response.error) ? response.error : null;
+	if (response.ok === false && error !== null && keys === 'error,ok') return { ok: false, error };
+	if (response.ok === false && error !== null && keys === 'code,error,ok' && typeof response.code === 'string' && (NETWORK_HELPER_ERROR_CODES as readonly string[]).includes(response.code)) return { ok: false, error, code: response.code as NetworkHelperErrorCode };
+	if (response.ok === true && keys === 'ok') return { ok: true };
 	throw new Error('network helper returned an invalid response');
 }

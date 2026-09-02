@@ -1,6 +1,6 @@
 import { open } from 'node:fs/promises';
 import { applyIPv4 } from './system-network.ts';
-import { decodeNetworkHelperRequest, executeNetworkHelperRequest, NETWORK_HELPER_EXIT, networkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
+import { decodeNetworkHelperRequest, executeNetworkHelperRequest, networkHelperExitCode, networkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
 
 const MAX_REQUEST_BYTES = 12 * 1024;
 
@@ -56,5 +56,5 @@ try {
 } catch (error) {
 	response = networkHelperFailure(error);
 }
-if (reportWithExitCode) process.exitCode = response.ok ? NETWORK_HELPER_EXIT.applied : NETWORK_HELPER_EXIT.rejected;
+if (reportWithExitCode) process.exitCode = networkHelperExitCode(response);
 else process.stdout.write(JSON.stringify(response));

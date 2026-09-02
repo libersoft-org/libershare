@@ -124,6 +124,7 @@ export const WINDOWS_LAUNCHER_MESSAGES: Readonly<Record<number, string>> = {
 };
 
 export function windowsLauncherFailure(exitCode: unknown): NetworkHelperFailure {
+	if (exitCode === NETWORK_HELPER_EXIT.stale) return { ok: false, error: 'the interface configuration changed while the administrator prompt was open', code: 'NETCONFIG_STALE' };
 	const message = typeof exitCode === 'number' ? WINDOWS_LAUNCHER_MESSAGES[exitCode] : undefined;
 	return { ok: false, error: message ?? 'the privileged network helper failed' };
 }

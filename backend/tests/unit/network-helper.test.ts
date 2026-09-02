@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, NETWORK_HELPER_EXIT, networkHelperFailure, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
+import { CodedError, ErrorCodes } from '@shared';
+import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, NETWORK_HELPER_EXIT, networkHelperExitCode, networkHelperFailure, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
 import { HELPER_TIMEOUT_MS, linuxNetworkHelperArgs, MAC_HELPER_SHELL, macAppBundleRoot, macNetworkHelperScript, networkHelperPath, trustedLinuxHelperMetadata, windowsLauncherFailure, windowsNetworkLauncherPath } from '../../src/network-helper-client.ts';
 import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from '../../src/system-network-linux.ts';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -78,6 +79,29 @@ describe('network helper protocol', () => {
 		if (result.ok) throw new Error('expected failure');
 		expect(result.error.length).toBeLessThanOrEqual(500);
 		expect(result.error).not.toContain('network-helper.test.ts');
+	});
+
+	it('carries the stale-form refusal back across the privilege boundary', async () => {
+		// The screen reloads the form only on this exact code; a generic failure
+		// would let the same stale values be saved on the next attempt.
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' } }));
+		const stale = await executeNetworkHelperRequest(request, async () => {
+			throw new CodedError(ErrorCodes.NETCONFIG_STALE, 'interface configuration changed since the form was opened');
+		});
+		expect(stale).toMatchObject({ ok: false, code: 'NETCONFIG_STALE' });
+		if (stale.ok) throw new Error('expected failure');
+		expect(stale.error).toContain('changed since the form was opened');
+		expect(parseNetworkHelperResponse(JSON.stringify(stale))).toEqual(stale);
+		expect(networkHelperExitCode(stale)).toBe(NETWORK_HELPER_EXIT.stale);
+		expect(networkHelperExitCode({ ok: false, error: 'x' })).toBe(NETWORK_HELPER_EXIT.rejected);
+		expect(networkHelperExitCode({ ok: true })).toBe(NETWORK_HELPER_EXIT.applied);
+		const failure = windowsLauncherFailure(NETWORK_HELPER_EXIT.stale);
+		expect(failure.code).toBe('NETCONFIG_STALE');
+		const foreign = await executeNetworkHelperRequest(request, async () => {
+			throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'not a network code');
+		});
+		expect(foreign).toEqual({ ok: false, error: 'INTERNAL_ERROR: not a network code' });
+		for (const text of ['{"ok":false,"error":"x","code":"INTERNAL_ERROR"}', '{"ok":false,"error":"x","code":1}', '{"ok":true,"code":"NETCONFIG_STALE"}']) expect(() => parseNetworkHelperResponse(text)).toThrow();
 	});
 
 	it('shapes a decode failure into the same bounded response as an apply failure', () => {

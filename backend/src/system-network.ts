@@ -429,7 +429,7 @@ export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Conf
 				// process just verified so a change made while the authorization prompt
 				// was open is refused there too, not applied over.
 				const response = await runElevatedNetworkHelper({ version: 1, operation: 'applyIPv4', interfaceID, config: desired, expected: ipv4BaselineOf(target) });
-				if (!response.ok) throw new Error(response.error);
+				if (!response.ok) throw response.code ? new CodedError(ErrorCodes[response.code], response.error) : new Error(response.error);
 				usedHelper = true;
 				return;
 			}
