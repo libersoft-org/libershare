@@ -134,7 +134,11 @@ async function runWindowsHelper(encoded: string): Promise<NetworkHelperResponse>
 		await execFileAsync(windowsNetworkLauncherPath(), ['--request', encoded], { timeout: HELPER_TIMEOUT_MS + 5000, maxBuffer: MAX_HELPER_OUTPUT_BYTES, windowsHide: true, cwd: dirname(windowsNetworkLauncherPath()) });
 		return { ok: true };
 	} catch (error) {
-		return windowsLauncherFailure((error as { code?: unknown } | null)?.code);
+		// A killed launcher is this timeout firing: the wait for the administrator
+		// prompt happens inside ShellExecuteExW, which the launcher cannot bound
+		// itself, so the caller's timeout is the one that ends it.
+		const failure = error as { code?: unknown; killed?: boolean } | null;
+		return windowsLauncherFailure(failure?.killed ? WINDOWS_LAUNCHER_EXIT.timeout : failure?.code);
 	}
 }
 
