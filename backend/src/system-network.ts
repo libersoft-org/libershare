@@ -262,7 +262,7 @@ export function isIPv4ConfigUnchanged(target: NetInterfaceInfo, config: NetIPv4C
 	return config.dns === undefined && isIPv4AddressingUnchanged(target, config);
 }
 
-export function assertAppliedIPv4State(state: NetworkStateInfo, interfaceID: string, config: NetIPv4Config): void {
+export function assertAppliedIPv4State(state: NetworkStateInfo, interfaceID: string, config: NetIPv4Config, addressingChanged: boolean = true): void {
 	if (!state.known || state.detail !== 'full') throw new Error('network state could not be verified after the privileged change');
 	const target = state.interfaces.find(item => item.id === interfaceID);
 	if (!target || target.ipv4Mode !== config.mode) throw new Error('network helper did not preserve the requested IPv4 method');
@@ -270,7 +270,10 @@ export function assertAppliedIPv4State(state: NetworkStateInfo, interfaceID: str
 		const ipv4 = target.addresses.filter(item => item.family === 'ipv4');
 		if (ipv4.length !== 1 || ipv4[0]?.address !== config.address || ipv4[0]?.prefixLength !== config.prefixLength) throw new Error('network helper did not apply the requested IPv4 address');
 		if ((target.gateway ?? '') !== (config.gateway ?? '')) throw new Error('network helper did not apply the requested IPv4 gateway');
-	} else if (!target.addresses.some(item => item.family === 'ipv4')) {
+	} else if (addressingChanged && !target.addresses.some(item => item.family === 'ipv4')) {
+		// A lease is only owed when DHCP was just switched on. A DNS-only change on
+		// an interface that is already on DHCP but has no lease right now (cable out,
+		// no server answering) succeeded exactly as requested.
 		throw new Error('network helper enabled DHCP but no IPv4 lease was obtained');
 	}
 	// An empty list means "restore automatic DNS". The public snapshot contains
@@ -426,7 +429,7 @@ export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Conf
 		resetNetworkStateCache();
 	}
 	const after = await readNetworkStateUnlocked(primaryInterface);
-	if (usedHelper) assertAppliedIPv4State(after, interfaceID, desired);
+	if (usedHelper) assertAppliedIPv4State(after, interfaceID, desired, addressingChanged);
 	return after;
 }
 

@@ -198,6 +198,16 @@ describe('assertAppliedIPv4State', () => {
 		expect(() => assertAppliedIPv4State(state, 'lan0', { mode: 'static', address: '192.0.2.11', prefixLength: 24, gateway: '192.0.2.1' })).toThrow('address');
 		expect(() => assertAppliedIPv4State({ ...state, known: false }, 'lan0', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' })).toThrow('verified');
 	});
+
+	it('demands a DHCP lease only when DHCP was just switched on', () => {
+		// A DNS-only change on an interface already on DHCP without a lease (cable
+		// out, no server answering) succeeded exactly as requested; the reader drops
+		// APIPA, so such an interface legitimately reports no IPv4 address.
+		const leaseless: NetworkStateInfo = { ...state, interfaces: [{ ...iface, ipv4Mode: 'dhcp', addresses: [], gateway: null, dns: ['192.0.2.53'] }] };
+		expect(() => assertAppliedIPv4State(leaseless, 'lan0', { mode: 'dhcp', dns: ['192.0.2.53'] }, false)).not.toThrow();
+		expect(() => assertAppliedIPv4State(leaseless, 'lan0', { mode: 'dhcp', dns: ['192.0.2.53'] }, true)).toThrow('lease');
+		expect(() => assertAppliedIPv4State(leaseless, 'lan0', { mode: 'dhcp' })).toThrow('lease');
+	});
 });
 
 describe('isValidSSID', () => {
