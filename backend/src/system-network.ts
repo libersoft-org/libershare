@@ -514,6 +514,7 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 	const network = bssid === null ? (matches.length === 1 ? matches[0] : undefined) : matches.find(item => item.bssid?.toLowerCase() === bssid.toLowerCase());
 	if (!network) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'network is no longer available');
 	if (!network.supported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi authentication method is not supported');
+	if (network.secured && !isValidWpaPassphrase(password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
 	try {
 		await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password, network.bssid));
 	} catch (error) {
@@ -523,6 +524,20 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 		resetNetworkStateCache();
 	}
 	return readNetworkStateUnlocked(primaryInterface);
+}
+
+/**
+ * A key WPA can actually carry: an 8-63 character passphrase, or the 64 hex
+ * digits of the pre-shared key itself.
+ *
+ * Only the networks this app offers to join are checked against it — open ones
+ * take no key, and anything but WPA personal is refused before this. Without the
+ * check an empty or too-short key reaches NetworkManager, which answers with a
+ * generic activation failure that says nothing about what to type instead.
+ */
+export function isValidWpaPassphrase(password: string): boolean {
+	const bytes = new TextEncoder().encode(password).byteLength;
+	return /^[0-9a-f]{64}$/i.test(password) || (bytes >= 8 && bytes <= 63);
 }
 
 /** A bounded string that can be written to a child process stdin. Empty = open network. */
