@@ -5,8 +5,8 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { applyInterfaceConfig, joinWifiNetwork, networkState, refreshNetworkState, scanWifiNetworks } from '../../scripts/networkState.ts';
-	import { networkConfigFormFrom, networkConfigFromForm, validateNetworkConfigForm, type DnsUpdateMode, type NetworkConfigForm } from '../../scripts/networkConfig.ts';
-	import { ipv4BaselineOf, sameIPv4Baseline, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Baseline, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
+	import { networkConfigFormFrom, networkConfigFromForm, networkFormUpdate, validateNetworkConfigForm, type DnsUpdateMode, type NetworkConfigForm } from '../../scripts/networkConfig.ts';
+	import { ipv4BaselineOf, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Baseline, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -49,17 +49,19 @@
 	let stale = $state(false);
 	$effect(() => {
 		if (!iface || busy) return;
-		if (!baseline) return seedFrom(iface);
-		if (sameIPv4Baseline(ipv4BaselineOf(iface), baseline)) return;
-		if (formDirty()) {
+		const update = networkFormUpdate(ipv4BaselineOf(iface), baseline, formDirty());
+		if (update === 'keep') return;
+		if (update === 'stale') {
 			stale = true;
 			failed = true;
 			message = $t('settings.network.changedOutside');
 			return;
 		}
 		seedFrom(iface);
-		failed = false;
-		message = $t('settings.network.reloadedFromHost');
+		if (update === 'reseed') {
+			failed = false;
+			message = $t('settings.network.reloadedFromHost');
+		}
 	});
 
 	function seedFrom(source: NetInterfaceInfo): void {

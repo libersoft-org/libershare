@@ -1,4 +1,4 @@
-import { normalizeDnsServers, validateIPv4Config, type NetAddressMode, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
+import { normalizeDnsServers, sameIPv4Baseline, validateIPv4Config, type NetAddressMode, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Baseline, type NetIPv4Config, type NetworkStateInfo } from '@shared';
 
 export type DnsUpdateMode = 'unchanged' | 'automatic' | 'custom';
 
@@ -15,6 +15,26 @@ export interface NetworkConfigForm {
 export function canOpenNetworkConfig(source: NetInterfaceInfo, capabilities: NetCapabilities, detail: NetworkStateInfo['detail'], known: boolean): boolean {
 	if (!known || detail !== 'full') return false;
 	return (capabilities.ipv4 && source.ipv4Configurable) || (capabilities.wifi && source.wifiConfigurable);
+}
+
+/** What a fresh reading of the interface means for a form that is already open. */
+export type NetworkFormUpdate = 'seed' | 'reseed' | 'stale' | 'keep';
+
+/**
+ * What an open form has to do when the host reports the interface again.
+ *
+ * The form is seeded from one snapshot and saves against that baseline. While
+ * the two still agree there is nothing to do. Once they diverge — the host was
+ * changed by a system tool, by another client, or by a save of this form that
+ * failed part-way — an untouched form is simply re-seeded, but one the user has
+ * typed into cannot be: re-seeding would throw their work away, and saving would
+ * throw the host's change away. That form is stale, and Save stays blocked until
+ * the user reloads it.
+ */
+export function networkFormUpdate(current: NetIPv4Baseline, baseline: NetIPv4Baseline | null, dirty: boolean): NetworkFormUpdate {
+	if (!baseline) return 'seed';
+	if (sameIPv4Baseline(current, baseline)) return 'keep';
+	return dirty ? 'stale' : 'reseed';
 }
 
 /** A missing saved adapter is rendered as Automatic, matching backend fallback. */

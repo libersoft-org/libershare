@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-import { canOpenNetworkConfig, networkConfigFormFrom, networkConfigFromForm, validateNetworkConfigForm, visiblePrimaryInterface, type NetworkConfigForm } from '../../src/scripts/networkConfig.ts';
-import type { NetInterfaceInfo } from '@shared';
+import { canOpenNetworkConfig, networkConfigFormFrom, networkConfigFromForm, networkFormUpdate, validateNetworkConfigForm, visiblePrimaryInterface, type NetworkConfigForm } from '../../src/scripts/networkConfig.ts';
+import type { NetInterfaceInfo, NetIPv4Baseline } from '@shared';
 
 const iface: NetInterfaceInfo = {
 	id: 'lan0',
@@ -74,5 +74,30 @@ describe('network configuration form', () => {
 		const newForm = networkConfigFormFrom({ ...iface, medium: 'wireless', ipv4Mode: 'dhcp', addresses: [{ family: 'ipv4', address: '198.51.100.20', prefixLength: 24 }], gateway: '198.51.100.1', dns: ['198.51.100.53'] });
 		expect(oldForm).toMatchObject({ mode: 'static', address: '192.0.2.50' });
 		expect(newForm).toMatchObject({ mode: 'dhcp', address: '198.51.100.20', gateway: '198.51.100.1', dns: '198.51.100.53' });
+	});
+});
+
+describe('open form against a moving host', () => {
+	const opened: NetIPv4Baseline = { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53'] };
+	const moved: NetIPv4Baseline = { ...opened, address: '192.0.2.11' };
+
+	it('leaves a form alone while the host still matches what it was seeded from', () => {
+		expect(networkFormUpdate(opened, opened, true)).toBe('keep');
+		expect(networkFormUpdate(opened, opened, false)).toBe('keep');
+	});
+
+	it('blocks a typed-in form once the host moved under it', () => {
+		// The sequence that must not end in a silent overwrite: a save fails, the
+		// interface is changed from somewhere else, and Save is pressed again.
+		expect(networkFormUpdate(moved, opened, true)).toBe('stale');
+	});
+
+	it('re-seeds an untouched form from the host instead of blocking it', () => {
+		expect(networkFormUpdate(moved, opened, false)).toBe('reseed');
+	});
+
+	it('seeds the first reading, which has no baseline to compare against', () => {
+		expect(networkFormUpdate(opened, null, false)).toBe('seed');
+		expect(networkFormUpdate(opened, null, true)).toBe('seed');
 	});
 });
