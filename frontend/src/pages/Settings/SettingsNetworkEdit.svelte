@@ -96,15 +96,23 @@
 		if (current) seedFrom(current);
 	}
 
+	/**
+	 * Publish what the host looks like after a Wi-Fi join, and leave the addressing
+	 * form to the rule every other update goes through.
+	 *
+	 * A successful join already stored the state it returned. A failed one has to
+	 * be read back, because the attempt may still have moved the interface. Neither
+	 * re-seeds the form here: the join changes the interface the form is open on,
+	 * which is exactly the case the effect above decides — keep what the user typed,
+	 * mark it stale when the host moved under it, re-seed only a clean form.
+	 * Re-seeding unconditionally threw away a half-typed address, gateway or DNS
+	 * and cleared the stale flag with it.
+	 */
 	async function syncAfterWifiMutation(state?: NetworkStateInfo): Promise<void> {
-		let current = state;
-		if (!current) {
-			try {
-				current = await refreshNetworkState();
-			} catch {}
-		}
-		const currentInterface = current?.interfaces.find(item => item.id === interfaceID);
-		if (currentInterface) seedFrom(currentInterface);
+		if (state) return;
+		try {
+			await refreshNetworkState();
+		} catch {}
 	}
 
 	async function refreshWifiNetworks(): Promise<void> {
