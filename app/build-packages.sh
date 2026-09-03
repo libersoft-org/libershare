@@ -34,6 +34,11 @@ URL: ${PRODUCT_WEBSITE}
 AutoReqProv: no
 Requires: webkit2gtk4.1, gtk3, polkit
 
+# Nothing may rewrite a binary on its way into the package. The helper's SHA-256
+# is pinned inside the backend, so a stripped or compressed copy would fail its
+# own trust check and leave network settings read-only on an RPM install.
+%define __os_install_post %{nil}
+
 %description
 ${PRODUCT_NAME} - peer-to-peer file sharing application
 
@@ -54,6 +59,15 @@ SPEC_EOF
 		--target "$PKG_RPM_ARCH" \
 		"$WORK/SPECS/${PRODUCT_NAME_LOWER}.spec"
 	RPM_BUILT=$(find "$WORK/RPMS" -name "*.rpm" | head -1)
+	# Proof rather than trust: compare what the package carries with what was built.
+	for _rpm_file in /usr/bin/lish-backend /usr/libexec/libershare/lish-network-helper; do
+		_rpm_packed=$(rpm -qp --dump "$RPM_BUILT" | awk -v p="$_rpm_file" '$1 == p { print $4 }')
+		_rpm_staged=$(sha256sum "$PKG_STAGING$_rpm_file" | cut -d' ' -f1)
+		if [ "$_rpm_packed" != "$_rpm_staged" ]; then
+			echo "RPM changed $_rpm_file ($_rpm_staged -> $_rpm_packed)" >&2
+			exit 1
+		fi
+	done
 	mv "$RPM_BUILT" "$FINAL_DIR/${PRODUCT_NAME_LOWER}-${PRODUCT_VERSION}-1.${PKG_RPM_ARCH}.rpm"
 }
 
