@@ -1,7 +1,7 @@
-import { type Networks } from '../lishnet/lishnets.ts';
+import { type Networks, type SetEnabledResult } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ManifestProgressEvent, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, type BootstrapStatus, CodedError, ErrorCodes, productName } from '@shared';
+import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type SetLISHNetworkEnabledResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ManifestProgressEvent, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, type BootstrapStatus, CodedError, ErrorCodes, productName } from '@shared';
 import { LISHClient, LISH_PROTOCOL } from '../protocol/lish-protocol.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
@@ -10,18 +10,18 @@ interface LISHnetsHandlers {
 	get: (p: { networkID: string }) => LISHNetworkConfig | undefined;
 	exists: (p: { networkID: string }) => boolean;
 	add: (p: { network: LISHNetworkConfig }) => Promise<boolean>;
-	update: (p: { network: LISHNetworkConfig }) => boolean;
+	update: (p: { network: LISHNetworkConfig }) => Promise<boolean>;
 	delete: (p: { networkID: string }) => Promise<boolean>;
 	addIfNotExists: (p: { network: LISHNetworkDefinition }) => Promise<boolean>;
-	import: (p: { networks: LISHNetworkDefinition[] }) => number;
-	replace: (p: { networks: LISHNetworkConfig[] }) => boolean;
+	import: (p: { networks: LISHNetworkDefinition[] }) => Promise<number>;
+	replace: (p: { networks: LISHNetworkConfig[] }) => Promise<boolean>;
 	exportToFile: (p: { networkID: string; filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 	exportAllToFile: (p: { filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 	importFromFile: (p: { path: string; enabled?: boolean }) => Promise<LISHNetworkConfig[]>;
 	parseFromFile: (p: { path: string }) => Promise<LISHNetworkDefinition[]>;
 	parseFromJSON: (p: { json: string }) => LISHNetworkDefinition[];
 	parseFromURL: (p: { url: string }) => Promise<LISHNetworkDefinition[]>;
-	setEnabled: (p: { networkID: string; enabled: boolean }) => Promise<SuccessResponse>;
+	setEnabled: (p: { networkID: string; enabled: boolean }) => Promise<SetLISHNetworkEnabledResponse>;
 	connect: (p: { multiaddr: string }) => Promise<SuccessResponse>;
 	findPeer: (p: { peerID: string }) => Promise<void>;
 	getAddresses: () => string[];
@@ -37,8 +37,13 @@ interface LISHnetsHandlers {
 	updateBootstrapPeers: (p: { networkID: string; bootstrapPeers: string[] }) => Promise<LISHNetworkConfig>;
 }
 type ImportManifestFn = (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
+type RunLISHMutationFn = <T>(operation: () => Promise<T>) => Promise<T>;
 
-export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void, settings: Settings, importManifest: ImportManifestFn): LISHnetsHandlers {
+export function toSetEnabledResponse(result: SetEnabledResult): SetLISHNetworkEnabledResponse {
+	return { success: result.found && result.applied, applied: result.applied, transitioned: result.transitioned, joined: result.joined };
+}
+
+export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void, settings: Settings, importManifest: ImportManifestFn, runLISHMutation: RunLISHMutationFn): LISHnetsHandlers {
 	function list(): LISHNetworkConfig[] {
 		return networks.list();
 	}
@@ -54,7 +59,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['network']);
 		return networks.add(p.network);
 	}
-	function update(p: { network: LISHNetworkConfig }): boolean {
+	async function update(p: { network: LISHNetworkConfig }): Promise<boolean> {
 		assert(p, ['network']);
 		return networks.update(p.network);
 	}
@@ -66,13 +71,13 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['network']);
 		return networks.addIfNotExists(p.network);
 	}
-	function importNetworks(p: { networks: LISHNetworkDefinition[] }): number {
+	async function importNetworks(p: { networks: LISHNetworkDefinition[] }): Promise<number> {
 		assert(p, ['networks']);
 		return networks.importNetworks(p.networks);
 	}
-	function replace(p: { networks: LISHNetworkConfig[] }): boolean {
+	async function replace(p: { networks: LISHNetworkConfig[] }): Promise<boolean> {
 		assert(p, ['networks']);
-		networks.replace(p.networks);
+		await networks.replace(p.networks);
 		return true;
 	}
 	async function exportToFile(p: { networkID: string; filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }): Promise<SuccessResponse> {
@@ -97,10 +102,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 
 	async function importFromFile(p: { path: string; enabled?: boolean }): Promise<LISHNetworkConfig[]> {
 		assert(p, ['path']);
-		const definitions = await networks.parseFromFile(p.path);
-		const results: LISHNetworkConfig[] = [];
-		for (const def of definitions) results.push(await networks.importFromLISHnet(def as any, p.enabled ?? false));
-		return results;
+		return networks.importFromFile(p.path, p.enabled ?? false);
 	}
 	async function parseFromFile(p: { path: string }): Promise<LISHNetworkDefinition[]> {
 		assert(p, ['path']);
@@ -114,15 +116,21 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['url']);
 		return networks.parseFromURL(p.url);
 	}
-	async function setEnabled(p: { networkID: string; enabled: boolean }): Promise<SuccessResponse> {
+	async function setEnabled(p: { networkID: string; enabled: boolean }): Promise<SetLISHNetworkEnabledResponse> {
 		assert(p, ['networkID', 'enabled']);
-		const net = networks.get(p.networkID);
-		const success = await networks.setEnabled(p.networkID, p.enabled);
-		if (success && net) {
-			const event = p.enabled ? 'lishnets:joined' : 'lishnets:left';
-			broadcast(event, { networkID: p.networkID, name: net.name });
-		}
-		return { success };
+		const result = await networks.setEnabled(p.networkID, p.enabled);
+		// Only a settled transition is broadcast, and the event names the state the network
+		// actually ended in. Broadcasting on "the network exists" plus the REQUESTED flag
+		// announced a join for a request a newer one had already overruled, and repeated the
+		// event for an enable of an already-enabled network.
+		//
+		// The name comes from the operation, not from a get() of our own. Reading the row
+		// before the await missed a network that was still being added — undefined, so the
+		// join it really did perform was never broadcast — and carried the pre-rename name
+		// when an edit was queued ahead of the enable. Reading it after the await races the
+		// next write instead.
+		if (result.transitioned && result.network) broadcast(result.joined ? 'lishnets:joined' : 'lishnets:left', result.network);
+		return toSetEnabledResponse(result);
 	}
 	async function connect(p: { multiaddr: string }): Promise<SuccessResponse> {
 		assert(p, ['multiaddr']);
@@ -241,6 +249,10 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		}
 	}
 	async function addPeerLish(p: { lishID: string; peerID: string; networkID: string }): Promise<{ lishID: string }> {
+		return runLISHMutation(() => addPeerLishAdmitted(p));
+	}
+
+	async function addPeerLishAdmitted(p: { lishID: string; peerID: string; networkID: string }): Promise<{ lishID: string }> {
 		assert(p, ['lishID', 'peerID', 'networkID']);
 		const network = networks.getRunningNetwork();
 		let manifest;

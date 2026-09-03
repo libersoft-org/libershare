@@ -167,8 +167,6 @@ export const transferStats = derived(downloads, $dl => {
 const activeDownloads = new Map<string, number>();
 // Track explicitly disabled downloads (prevents progress events from overriding disabled state)
 const disabledDownloads = new Set<string>();
-// Last known chunk counts for session delta calculation
-const lastDownloadedChunks = new Map<string, number>();
 const lastUploadedChunks = new Map<string, number>();
 
 export function setCurrentDetailLISHID(lishID: string | null): void {
@@ -297,7 +295,6 @@ export async function initDownloads(): Promise<void> {
 				m.delete(data.lishID);
 				return m;
 			});
-			lastDownloadedChunks.delete(data.lishID);
 			lastUploadedChunks.delete(data.lishID);
 		});
 
@@ -418,7 +415,7 @@ export async function initDownloads(): Promise<void> {
 
 		// transfer.download:progress — with stale timeout to reset peers/speed
 		const downloadStaleTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
-		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond?: number; filePath?: string; fileDownloadedChunks?: number; allocatingFile?: string; allocatingFileProgress?: number; resetFiles?: boolean }) => {
+		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; totalDownloadedBytes: number; bytesPerSecond?: number; filePath?: string; fileDownloadedChunks?: number; allocatingFile?: string; allocatingFileProgress?: number; resetFiles?: boolean }) => {
 			// Allocating signal — always process (even if disabled — clears stale disabled state)
 			if (data.filePath === '__allocating__') {
 				disabledDownloads.delete(data.lishID);
@@ -474,10 +471,6 @@ export async function initDownloads(): Promise<void> {
 			if (data.peers > 0) activeDownloads.set(data.lishID, Date.now());
 			else activeDownloads.delete(data.lishID);
 			const hasPeers = data.peers > 0;
-			// Calculate delta chunks since last event for cumulative byte tracking
-			const prevChunks = lastDownloadedChunks.get(data.lishID) ?? data.downloadedChunks;
-			const deltaChunks = Math.max(0, data.downloadedChunks - prevChunks);
-			lastDownloadedChunks.set(data.lishID, data.downloadedChunks);
 			downloads.update(list =>
 				list.map(d => {
 					if (d.id !== data.lishID) return d;
@@ -488,7 +481,6 @@ export async function initDownloads(): Promise<void> {
 					const downloadedSize = d.rawTotalSize > 0 && data.totalChunks > 0 ? formatSize(Math.round((d.rawTotalSize * data.downloadedChunks) / data.totalChunks)) : '?';
 					const downloadSpeed = data.bytesPerSecond ? formatSize(data.bytesPerSecond) + '/s' : data.peers === 0 ? '0 B/s' : d.downloadSpeed;
 					const status = computeStatus(hasPeers, activeUploadLishs.has(data.lishID));
-					const totalDownloadedBytes = d.totalDownloadedBytes + (deltaChunks > 0 && d.chunkSize > 0 ? deltaChunks * d.chunkSize : 0);
 					let files = d.files;
 					// Leaving allocation — drop the per-file allocation overlay so rows show real progress again.
 					if (d.status === 'allocating')
@@ -507,7 +499,7 @@ export async function initDownloads(): Promise<void> {
 						});
 					}
 					const rawDownloadSpeed = data.bytesPerSecond ?? 0;
-					return { ...d, status, progress, downloadedSize, downloadPeers: data.peers, downloadSpeed, rawDownloadSpeed, totalChunks: data.totalChunks, verifiedChunks: data.downloadedChunks, totalDownloadedBytes, files };
+					return { ...d, status, progress, downloadedSize, downloadPeers: data.peers, downloadSpeed, rawDownloadSpeed, totalChunks: data.totalChunks, verifiedChunks: data.downloadedChunks, totalDownloadedBytes: data.totalDownloadedBytes, files };
 				})
 			);
 			// Session boundary (peers gone — final emit of a download session): per-file events
@@ -573,7 +565,7 @@ export async function initDownloads(): Promise<void> {
 		});
 
 		// transfer.download:complete
-		api.on('transfer.download:complete', (data: { downloadDir: string; lishID: string; name?: string }) => {
+		api.on('transfer.download:complete', (data: { downloadDir: string; lishID: string; totalDownloadedBytes: number; name?: string }) => {
 			disabledDownloads.delete(data.lishID);
 			activeDownloads.delete(data.lishID);
 			const lish = get(downloads).find(d => d.id === data.lishID);
@@ -583,7 +575,7 @@ export async function initDownloads(): Promise<void> {
 					if (d.id !== data.lishID) return d;
 					const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
 					const files = d.files.map(f => (f.type !== 'file' ? f : { ...f, verifiedChunks: f.totalChunks, progress: 100, downloadedSize: formatSize(f.rawSize) }));
-					return { ...d, status, progress: 100, downloadedSize: d.size, directory: data.downloadDir, files };
+					return { ...d, status, progress: 100, downloadedSize: d.size, directory: data.downloadDir, totalDownloadedBytes: data.totalDownloadedBytes, files };
 				})
 			);
 			peerDetails.update(map => {

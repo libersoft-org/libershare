@@ -1,15 +1,17 @@
 import { type ServerWebSocket } from 'bun';
+import { Mutex } from 'async-mutex';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import type { PeerCountEntry } from '../protocol/network.ts';
 import { type Settings } from '../settings.ts';
-import { CodedError, ErrorCodes } from '@shared';
+import { CodedError, type ErrorCode, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, formatBytes } from '@shared';
 import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
 import { initIdentityHandlers } from './identity.ts';
 import { initDatasetsHandlers } from './datasets.ts';
 import { initFsHandlers } from './fs.ts';
+import { initUploadHandlers } from './upload.ts';
 import { initLISHsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
 import { initEventsHandlers } from './events.ts';
@@ -50,6 +52,154 @@ export function handleHealthProbe(req: globalThis.Request): Response | null {
 	return null;
 }
 
+/** Longest params blob written to the log; enough to identify a call, short of dumping a file upload. */
+const MAX_LOGGED_PARAMS = 1000;
+
+/**
+ * Serialise request params for the log, truncated. Some methods carry a whole
+ * file chunk, and a multi-megabyte log line per call is both unreadable and a
+ * measurable write cost — the truncation alone would not help, because the
+ * megabytes are spent building the string before it is cut. A binary payload is
+ * always a plain `Uint8Array` (see {@link decodeBinaryRequest}), never a
+ * `Buffer`, whose `toJSON` would run before this replacer ever sees it.
+ */
+export function formatParamsForLog(params: unknown): string {
+	const json = JSON.stringify(params, (_key, value) => (value instanceof Uint8Array ? `<${value.byteLength} bytes>` : value)) ?? String(params);
+	return json.length <= MAX_LOGGED_PARAMS ? json : json.slice(0, MAX_LOGGED_PARAMS) + `…(${json.length} chars)`;
+}
+
+/** Byte length of the header-length prefix on a binary request frame. */
+const BINARY_HEADER_PREFIX = 4;
+
+/**
+ * Direct imports — those that did not arrive as an upload — that may be waiting
+ * for the parser at once. An upload import is deliberately not counted here: its
+ * file is already on our disk and already charged against the upload ceilings,
+ * so refusing it at this queue would be a second and harsher limit on work that
+ * has been admitted.
+ *
+ * This bounds the queue, not peak memory. A request's payload is parsed out of
+ * the frame before any handler runs, so it exists before this check can refuse
+ * it — what the bound stops is that cost being multiplied by an unlimited number
+ * of waiters.
+ */
+const MAX_QUEUED_IMPORTS = 8;
+
+/**
+ * True for a dispatch table entry that parses an import and therefore has to
+ * queue behind every other one.
+ *
+ * Decided from the method name rather than by wrapping entries one at a time as
+ * the table is written. That list was opt-in and four handlers were left off
+ * it — the legacy `importFrom*` set, which parses exactly like its `parseFrom*`
+ * neighbours — so they ran beside a serialised parse and undid the point of the
+ * lock. A name cannot be forgotten in the same way.
+ *
+ * `parseFromUpload` is the one exclusion: it reaches the same lock further down,
+ * inside `withFile`, where it also keeps the upload's disk accounting open while
+ * it waits. Taking a non-reentrant mutex twice would deadlock the first upload
+ * import.
+ */
+export function isSerialisedImport(method: string): boolean {
+	return /\.(parseFrom|importFrom)/.test(method) && !method.endsWith('.parseFromUpload');
+}
+
+/**
+ * Put every import entry in a dispatch table behind the shared parser lock, in
+ * place. Applied to the whole table once it is built rather than written around
+ * individual entries as they are added, which is what makes it impossible to
+ * add an import RPC and forget the lock.
+ *
+ * Exported so the wiring can be exercised on its own: the real table is built in
+ * the {@link APIServer} constructor, which wants a database, a network stack and
+ * a data server before it will hand one over.
+ */
+export function serialiseImportHandlers(handlers: Record<string, (p: any, client: ClientSocket) => any>, lock: Mutex, isConnected: (client: ClientSocket) => boolean = () => true, maxQueued: number = MAX_QUEUED_IMPORTS): void {
+	let queued = 0;
+	for (const method of Object.keys(handlers)) {
+		if (!isSerialisedImport(method)) continue;
+		const handler = handlers[method]!;
+		handlers[method] = async (p: any, client: ClientSocket): Promise<any> => {
+			// Refused rather than queued once the queue is full. `runExclusive` waits
+			// without limit, and each waiter holds its whole request alive for as long
+			// as it waits — so an unbounded queue is an unbounded number of import
+			// payloads in memory, which is the thing the lock exists to keep down.
+			if (queued >= maxQueued) throw new CodedError(ErrorCodes.IMPORT_BUSY, String(maxQueued));
+			queued++;
+			try {
+				// The handler goes straight to its domain implementation, never back
+				// through this table, so nothing re-enters the lock it is holding.
+				return await lock.runExclusive(async () => {
+					// The wait has no time bound, so the caller may well be gone by the
+					// time the lock comes free — and parsing an import nobody is left to
+					// answer is the expensive half of the operation spent on nothing.
+					if (!isConnected(client)) throw new CodedError(ErrorCodes.CLIENT_DISCONNECTED, method);
+					return await handler(p, client);
+				});
+			} finally {
+				queued--;
+			}
+		};
+	}
+}
+
+/**
+ * Largest JSON header accepted on a binary frame. The header is a short
+ * `{ id, method, params }` envelope — 64 KiB is orders of magnitude more than
+ * one needs, and the cap stops a frame from forcing a huge `TextDecoder` pass
+ * and `JSON.parse` before anything about it has been validated.
+ */
+export const MAX_BINARY_HEADER_SIZE: number = 64 * 1024;
+
+/**
+ * A binary frame rejected after its header was understood, so the reply can
+ * still carry the request id. Without the id the caller's promise is never
+ * settled by anything but a socket close, since responses are correlated by id
+ * alone.
+ */
+export class BinaryFrameError extends CodedError {
+	readonly requestID: string | null;
+
+	constructor(code: ErrorCode, detail: string, requestID: string | null) {
+		super(code, detail);
+		this.requestID = requestID;
+	}
+}
+
+/**
+ * Decode a binary request frame, laid out as
+ * `[uint32 BE header length][header JSON][payload]`. The header is the same
+ * `{ id, method, params }` object a text request carries, so the frame is
+ * dispatched and answered by exactly the same code path; the trailing bytes
+ * arrive at the handler as `params.data`. Sending a payload this way costs its
+ * own size, where base64 in JSON would cost a third more plus an encode and a
+ * decode pass over the whole file.
+ *
+ * The payload is copied out of the frame rather than referenced into it: the
+ * message handler is async, so the socket callback returns to Bun before a
+ * handler has finished with the bytes, and nothing promises the received buffer
+ * stays untouched that long.
+ */
+export function decodeBinaryRequest(frame: Uint8Array): Request {
+	if (frame.byteLength < BINARY_HEADER_PREFIX) throw new CodedError(ErrorCodes.PARSE_ERROR);
+	const headerLength = new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getUint32(0);
+	// Both bounds are checked before any decoding or copying: the transport
+	// allows a frame far bigger than any legitimate chunk, and an oversized one
+	// must cost a length comparison rather than a full second copy of itself.
+	if (headerLength > MAX_BINARY_HEADER_SIZE) throw new CodedError(ErrorCodes.PARSE_ERROR);
+	const payloadStart = BINARY_HEADER_PREFIX + headerLength;
+	if (payloadStart > frame.byteLength) throw new CodedError(ErrorCodes.PARSE_ERROR);
+	// The header is bounded and cheap, so it is parsed first — that way an
+	// oversized payload is still rejected with the id the caller is waiting on.
+	const req = JSON.parse(new TextDecoder().decode(frame.subarray(BINARY_HEADER_PREFIX, payloadStart))) as Request;
+	if (!req || typeof req !== 'object' || Array.isArray(req)) throw new CodedError(ErrorCodes.PARSE_ERROR);
+	if (req.params !== undefined && (!req.params || typeof req.params !== 'object' || Array.isArray(req.params))) throw new BinaryFrameError(ErrorCodes.PARSE_ERROR, 'params must be an object', typeof req.id === 'string' ? req.id : null);
+	// Checked before the copy below, which is the allocation worth avoiding.
+	if (frame.byteLength - payloadStart > MAX_UPLOAD_CHUNK_SIZE) throw new BinaryFrameError(ErrorCodes.UPLOAD_CHUNK_TOO_LARGE, formatBytes(MAX_UPLOAD_CHUNK_SIZE), req.id ?? null);
+	req.params = { ...req.params, data: new Uint8Array(frame.subarray(payloadStart)) };
+	return req;
+}
+
 export class APIServer {
 	private clients: Set<ClientSocket> = new Set();
 	private server: ReturnType<typeof Bun.serve<ClientData>> | null = null;
@@ -64,6 +214,27 @@ export class APIServer {
 	private readonly dataDir: string;
 	private readonly dataServer: DataServer;
 	private readonly networks: Networks;
+	private readonly _upload: ReturnType<typeof initUploadHandlers>;
+	/**
+	 * Serialises parsing an import, however the file arrived. Parsing is where the
+	 * memory actually goes: the file is held as a buffer, decompressed into a
+	 * second buffer, decoded into a string and then parsed into an object graph,
+	 * and the last two are usually several times the file. Chunking bounds what
+	 * arrives on the wire, not that.
+	 *
+	 * Taken by every import entry point, uploaded or not — the uploaded ones reach
+	 * it inside `withFile`, the rest through {@link serialiseImportHandlers}.
+	 *
+	 * What it guarantees is one parse body at a time. That is not a ceiling on
+	 * peak memory, and nothing here should be read as claiming one: this server
+	 * runs `JSON.parse` over the whole request frame before any handler is
+	 * reached, so a large `parseFromJSON` argument already exists in memory before
+	 * the lock can delay anything, and the previous import's object graph is still
+	 * being serialised into its reply when the next parse starts. A real ceiling
+	 * would mean streaming the request body and holding the permit across the
+	 * response write.
+	 */
+	private readonly importLock = new Mutex();
 	private _search: ReturnType<typeof import('./search.ts').initSearchManager> | null = null;
 	private _system: ReturnType<typeof import('./system.ts').initSystemHandlers> | null = null;
 
@@ -81,14 +252,16 @@ export class APIServer {
 		this.localAddresses = getLocalAddresses();
 		const emitTo = (client: ClientSocket, event: string, data: any): void => this.emit(client, event, data);
 		const broadcastFn = (event: string, data: any): void => this.broadcast(event, data);
+		const broadcastExceptFn = (event: string, data: any, except?: unknown): void => this.broadcast(event, data, except as ClientSocket | undefined);
 		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
 		const _settings = initSettingsHandlers(this.settings);
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
+		this._upload = initUploadHandlers(dataDir, {}, this.importLock);
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn, this.settings);
-		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifest);
+		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifest, _lishs.runMutation);
 		const _identity = initIdentityHandlers(this.networks);
-		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification, _lishs.finalizeDownload);
+		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification, _lishs.finalizeDownloadAdmitted);
 		const hasSubscribers = (event: string): boolean => {
 			for (const client of this.clients) {
 				if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) return true;
@@ -113,8 +286,14 @@ export class APIServer {
 			networks: this.networks,
 			settings: this.settings,
 			stopVerifyAll: _lishs.stopVerifyAll,
+			pauseAllLISHMutations: _lishs.pauseMutations,
+			resumeAllLISHMutations: _lishs.resumeMutations,
+			pauseAllTransfers: _transfer.pauseAll,
 			clearAllTransfers: _transfer.clearAll,
-			broadcastFn,
+			clearUploadRuntime: _transfer.clearUploads,
+			restoreAllTransfers: _transfer.restoreAll,
+			resumeAllTransfers: _transfer.resumeAll,
+			broadcastFn: broadcastExceptFn,
 		});
 
 		this.handlers = {
@@ -130,6 +309,7 @@ export class APIServer {
 			'settings.factoryReset': factoryReset,
 			'settings.exportToFile': _settings.exportToFile,
 			'settings.parseFromFile': _settings.parseFromFile,
+			'settings.parseFromUpload': (p, client) => this._upload.withFile(p, client, filePath => _settings.parseFromFile({ filePath })),
 			'settings.parseFromJSON': _settings.parseFromJSON,
 			'settings.parseFromURL': _settings.parseFromURL,
 			'settings.applyImported': _settings.applyImported,
@@ -137,6 +317,7 @@ export class APIServer {
 			'identity.get': _identity.get,
 			'identity.exportToFile': _identity.exportToFile,
 			'identity.parseFromFile': _identity.parseFromFile,
+			'identity.parseFromUpload': (p, client) => this._upload.withFile(p, client, filePath => _identity.parseFromFile({ filePath })),
 			'identity.parseFromJSON': _identity.parseFromJSON,
 			'identity.parseFromURL': _identity.parseFromURL,
 			'identity.applyImported': _identity.applyImported,
@@ -155,6 +336,7 @@ export class APIServer {
 			'lishnets.exportAllToFile': _lishnets.exportAllToFile,
 			'lishnets.importFromFile': _lishnets.importFromFile,
 			'lishnets.parseFromFile': _lishnets.parseFromFile,
+			'lishnets.parseFromUpload': (p, client) => this._upload.withFile(p, client, path => _lishnets.parseFromFile({ path })),
 			'lishnets.parseFromJSON': _lishnets.parseFromJSON,
 			'lishnets.parseFromURL': _lishnets.parseFromURL,
 			'lishnets.setEnabled': _lishnets.setEnabled,
@@ -186,6 +368,7 @@ export class APIServer {
 			'lishs.importFromJSON': _lishs.importFromJSON,
 			'lishs.importFromURL': _lishs.importFromURL,
 			'lishs.parseFromFile': _lishs.parseFromFile,
+			'lishs.parseFromUpload': (p, client) => this._upload.withFile(p, client, filePath => _lishs.parseFromFile({ filePath })),
 			'lishs.parseFromJSON': _lishs.parseFromJSON,
 			'lishs.parseFromURL': _lishs.parseFromURL,
 			'lishs.verify': _lishs.verify,
@@ -220,6 +403,11 @@ export class APIServer {
 			'fs.exists': _fs.exists,
 			'fs.writeText': _fs.writeText,
 			'fs.writeCompressed': _fs.writeCompressed,
+			// Import file upload
+			'upload.begin': this._upload.begin,
+			'upload.chunk': this._upload.chunk,
+			'upload.end': this._upload.end,
+			'upload.abort': this._upload.abort,
 			// System
 			'system.ram': _system.ram,
 			'system.storage': _system.storage,
@@ -229,10 +417,14 @@ export class APIServer {
 			// Relay
 			'relay.stats': _relay.stats,
 		};
+		serialiseImportHandlers(this.handlers, this.importLock, client => this.clients.has(client));
 	}
 
 	start(): void {
 		const self = this;
+		// Uploads are client-supplied bytes on our disk, and a transfer interrupted
+		// by a kill leaves one behind with nobody left to abort it.
+		this._upload.wipe();
 		const serverConfig: Parameters<typeof Bun.serve<ClientData>>[0] = {
 			port: this.port,
 			hostname: this.host,
@@ -255,6 +447,11 @@ export class APIServer {
 				return new Response('Expected WebSocket', { status: 400 });
 			},
 			websocket: {
+				// Bun's default is 16 MiB, and an oversized frame closes the socket
+				// with nothing the caller can read as an error. Must live inside the
+				// `websocket` object — at the top level of the config it type-checks
+				// and is then ignored at runtime.
+				maxPayloadLength: MAX_API_MESSAGE_SIZE,
 				open(ws): void {
 					self.clients.add(ws);
 					console.log(`[API] Client connected (${self.clients.size} total)`);
@@ -262,10 +459,16 @@ export class APIServer {
 				close(ws): void {
 					self.clients.delete(ws);
 					unsubscribeAllPeers(ws);
+					// A socket that drops mid-transfer leaves a half-written temp
+					// file with nobody able to finish or delete it.
+					self._upload.closeClient(ws);
 					console.log(`[API] Client disconnected (${self.clients.size} total)`);
 				},
 				async message(ws, message): Promise<void> {
-					await self.handleMessage(ws, message.toString());
+					// A binary frame must not be run through toString(): it is a
+					// request envelope around raw bytes, and decoding it as UTF-8
+					// would replace every invalid sequence before it is ever read.
+					await self.handleMessage(ws, message);
 				},
 			},
 		};
@@ -301,6 +504,8 @@ export class APIServer {
 
 	stop(): void {
 		this._search?.stopAll();
+		// The upload sweep is a long-lived interval and must not outlive the server.
+		this._upload.stop();
 		// Stop the volume poll interval and the push monitor (a long-lived pactl
 		// subscribe child on Linux) — they must not outlive the API server.
 		this._system?.stopPolling();
@@ -354,12 +559,18 @@ export class APIServer {
 		);
 	}
 
-	private async handleMessage(client: ClientSocket, message: string): Promise<void> {
+	private async handleMessage(client: ClientSocket, message: string | Buffer): Promise<void> {
 		let req: Request;
 		try {
-			req = JSON.parse(message);
-		} catch {
-			client.send(JSON.stringify({ id: null, error: ErrorCodes.PARSE_ERROR }));
+			req = typeof message === 'string' ? JSON.parse(message) : decodeBinaryRequest(message);
+		} catch (err) {
+			// A frame rejected on a real limit reports that limit rather than a
+			// blanket parse failure, and carries the request id when the decoder got
+			// far enough to read one — otherwise the caller waits for a reply that
+			// can never be matched to it.
+			const coded = err instanceof CodedError ? err : null;
+			const id = err instanceof BinaryFrameError ? err.requestID : null;
+			client.send(JSON.stringify({ id, error: coded?.code ?? ErrorCodes.PARSE_ERROR, ...(coded?.detail !== undefined && { errorDetail: coded.detail }) }));
 			return;
 		}
 
@@ -372,7 +583,7 @@ export class APIServer {
 			const result = await this.execute(client, req.method, req.params || {});
 			client.send(JSON.stringify({ id: req.id, result }));
 		} catch (err: any) {
-			console.error(`[API] Error executing ${req.method}, params=${JSON.stringify(req.params)}: ${err.message}`);
+			console.error(`[API] Error executing ${req.method}, params=${formatParamsForLog(req.params)}: ${err.message}`);
 			if (err instanceof CodedError) client.send(JSON.stringify({ id: req.id, error: err.code, ...(err.detail !== undefined && { errorDetail: err.detail }) }));
 			else client.send(JSON.stringify({ id: req.id, error: ErrorCodes.INTERNAL_ERROR, errorDetail: err.message }));
 		}
@@ -382,7 +593,7 @@ export class APIServer {
 	private handlers!: Record<string, (params: any, client: ClientSocket) => any>;
 
 	private async execute(client: ClientSocket, method: string, params: Record<string, any>): Promise<any> {
-		console.log(`[API] Executing method: ${method}, params: ${JSON.stringify(params)}`);
+		console.log(`[API] Executing method: ${method}, params: ${formatParamsForLog(params)}`);
 		const handler = this.handlers[method];
 		if (!handler) throw new CodedError(ErrorCodes.UNKNOWN_METHOD, method);
 		return handler.call(this, params, client);
@@ -410,10 +621,18 @@ export class APIServer {
 		this.broadcast(event, data);
 	}
 
-	private broadcast(event: string, data: any): void {
+	/**
+	 * Send `event` to every subscribed client, optionally skipping one.
+	 *
+	 * `except` exists for events whose whole point is "somebody else did this": the client
+	 * that asked gets the RPC answer and acts on that, and would only be talked over by the
+	 * broadcast — a factory reset reloading the very tab that is about to show its result.
+	 */
+	private broadcast(event: string, data: any, except?: ClientSocket): void {
 		const msg = JSON.stringify({ event, data });
 		let sent = 0;
 		for (const client of this.clients) {
+			if (client === except) continue;
 			if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) {
 				client.send(msg);
 				sent++;

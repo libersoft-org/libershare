@@ -121,6 +121,48 @@ describe('ErrorRecovery', () => {
 		expect(attemptCalls.length).toBe(0);
 	});
 
+	it('stopAllAndDrain waits for an in-flight attempt and prevents stale recovery', async () => {
+		let releaseAccess!: () => void;
+		let accessStarted!: () => void;
+		const accessEntered = new Promise<void>(resolve => {
+			accessStarted = resolve;
+		});
+		const accessBlocked = new Promise<void>(resolve => {
+			releaseAccess = resolve;
+		});
+		const recovered: string[] = [];
+		const events: string[] = [];
+		const rec = new ErrorRecovery({
+			attemptRecover: async lishID => {
+				recovered.push(lishID);
+				return true;
+			},
+			broadcast: event => events.push(event),
+			getLISH: lishID => ({ directory: '/tmp/test', id: lishID }) as any,
+			checkAccess: async () => {
+				accessStarted();
+				await accessBlocked;
+			},
+		});
+		rec.start('stale-recovery', ErrorCodes.IO_NOT_FOUND, { downloadEnabled: false, uploadEnabled: true });
+		(rec as any).launchAttempt('stale-recovery', 0, 0);
+		await accessEntered;
+
+		let drained = false;
+		const stopping = rec.stopAllAndDrain().then(() => {
+			drained = true;
+		});
+		await Promise.resolve();
+		expect(drained).toBe(false);
+
+		releaseAccess();
+		await stopping;
+
+		expect(recovered).toEqual([]);
+		expect(events).not.toContain('transfer.recovery:recovered');
+		expect(rec.getState('stale-recovery')).toBeUndefined();
+	});
+
 	it('stops recovery when LISH has no directory', async () => {
 		const noDir = new ErrorRecovery({
 			attemptRecover: async (_id, _dl, _ul): Promise<boolean> => true,

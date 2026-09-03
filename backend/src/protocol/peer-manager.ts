@@ -225,22 +225,35 @@ export class PeerManager {
 
 	/**
 	 * Close all peer clients and clear the peers map (preserves banned/dropped state).
-	 * Fire-and-forget close. For hot paths (disable, setError, finally blocks).
+	 * For hot paths (disable, setError, doWork retry) — every one of them discards
+	 * these clients, so the streams are aborted rather than half-closed: `close()`
+	 * ends our write side only and a chunk already in flight would keep arriving
+	 * from the remote. Leaving a lishnet must stop the transfer now, not eventually.
 	 */
 	closeAll(reason: string): void {
 		const clients = [...this.peers.values()];
 		this.peers.clear();
 		this.activeLoops.clear();
 		if (this.lishID) unregisterAllPeersForLISH(this.lishID);
-		for (const client of clients) client.close().catch((err: any) => trace(`[PM] closeAll(${reason}) close: ${err?.message ?? err}`));
+		for (const client of clients) client.abort(new Error(`closeAll(${reason})`));
 	}
 
-	/** Close-all with awaited closes — for destroy() / downloadChunks finally. */
-	async closeAllAwait(reason: string): Promise<void> {
+	/**
+	 * Close-all with awaited closes — for destroy() / downloadChunks finally.
+	 * `immediate` aborts instead of half-closing, for teardown paths where no
+	 * in-flight read may outlive the call.
+	 */
+	async closeAllAwait(reason: string, immediate = false): Promise<void> {
 		const clients = [...this.peers.values()];
 		this.peers.clear();
 		this.activeLoops.clear();
 		if (this.lishID) unregisterAllPeersForLISH(this.lishID);
-		for (const client of clients) await client.close().catch((err: any) => trace(`[PM] closeAllAwait(${reason}) close: ${err?.message ?? err}`));
+		for (const client of clients) {
+			if (immediate) {
+				client.abort(new Error(`closeAllAwait(${reason})`));
+				continue;
+			}
+			await client.close().catch((err: any) => trace(`[PM] closeAllAwait(${reason}) close: ${err?.message ?? err}`));
+		}
 	}
 }

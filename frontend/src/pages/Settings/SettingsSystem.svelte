@@ -3,11 +3,13 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea, type NavPos } from '../../scripts/navArea.svelte.ts';
-	import { autoStartOnBoot, showInTray, minimizeToTray, defaultMinifyJSON, defaultCompress, notificationTimeout, setAutoStartOnBoot, setShowInTray, setMinimizeToTray, setDefaultMinifyJSON, setDefaultCompress, setNotificationTimeout } from '../../scripts/settings.ts';
+	import { autoStartOnBoot, showInTray, minimizeToTray, defaultMinifyJSON, defaultCompress, defaultCompressionAlgorithm, notificationTimeout, setAutoStartOnBoot, setShowInTray, setMinimizeToTray, setDefaultMinifyJSON, setDefaultCompress, setDefaultCompressionAlgorithm, setNotificationTimeout } from '../../scripts/settings.ts';
+	import { type CompressionAlgorithm } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
+	import CompressionAlgorithmRow from '../../components/Export/CompressionAlgorithmRow.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -20,6 +22,7 @@
 	let trayMinimize = $state($minimizeToTray);
 	let minifyJSON = $state($defaultMinifyJSON);
 	let compress = $state($defaultCompress);
+	let compressionAlgorithm = $state<CompressionAlgorithm>($defaultCompressionAlgorithm);
 	let timeout = $state($notificationTimeout.toString());
 
 	function toggleAutoStart(): void {
@@ -49,16 +52,18 @@
 		setMinimizeToTray(trayMinimize);
 		setDefaultMinifyJSON(minifyJSON);
 		setDefaultCompress(compress);
+		setDefaultCompressionAlgorithm(compressionAlgorithm);
 		setNotificationTimeout(parseInt(timeout) || 0);
 		timeout = $notificationTimeout.toString();
 		onBack?.();
 	}
 
-	// Reactive positions accounting for hidden minimizeToTray row
+	// Reactive positions accounting for the hidden minimizeToTray row
 	let minifyPos = $derived<NavPos>([0, trayVisible ? 3 : 2]);
 	let compressPos = $derived<NavPos>([0, trayVisible ? 4 : 3]);
-	let timeoutPos = $derived<NavPos>([0, trayVisible ? 5 : 4]);
-	let buttonsY = $derived(trayVisible ? 6 : 5);
+	let algorithmRow = $derived(trayVisible ? 5 : 4);
+	let timeoutPos = $derived<NavPos>([0, algorithmRow + 1]);
+	let buttonsY = $derived(algorithmRow + 2);
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));
 </script>
@@ -101,6 +106,9 @@
 		</div>
 		<div role="group" data-mouse-activate-area={areaID}>
 			<SwitchRow label={$t('settings.system.defaultCompress') + ':'} checked={compress} position={compressPos} onToggle={toggleCompress} />
+		</div>
+		<div role="group" data-mouse-activate-area={areaID}>
+			<CompressionAlgorithmRow label={$t('settings.system.defaultCompressionAlgorithm')} value={compressionAlgorithm} row={algorithmRow} onSelect={algorithm => (compressionAlgorithm = algorithm)} />
 		</div>
 		<div role="group" data-mouse-activate-area={areaID}>
 			<Input bind:value={timeout} label={$t('settings.system.notificationTimeout')} type="number" position={timeoutPos} flex />

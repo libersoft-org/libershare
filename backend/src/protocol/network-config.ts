@@ -25,7 +25,11 @@ import { trace } from '../logger.ts';
 import { normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial, extractFirstIPv4 } from './address-filter.ts';
 import { peerIdFromString } from '@libp2p/peer-id';
+import { extractDestinationPeerID, destinationPeerIDOf } from './multiaddr-utils.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
+
+/** Keep recovery metadata only as long as libp2p can keep the peer itself. */
+export const PEERSTORE_MAX_PEER_AGE_MS = 7_200_000;
 
 /** A gossipsub direct-peer entry: a peer id and its multiaddrs. */
 export interface DirectPeer {
@@ -45,7 +49,7 @@ function buildDirectPeersFromBootstrap(uniquePeers: string[]): DirectPeer[] {
 	for (const ma of uniquePeers) {
 		try {
 			const parsed = Multiaddr(ma);
-			const pid = parsed.getComponents().find((c: any) => c.code === 421)?.value;
+			const pid = extractDestinationPeerID(parsed);
 			if (!pid) continue;
 			direct.push({ id: peerIdFromString(pid), addrs: [parsed] });
 		} catch {
@@ -74,7 +78,10 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	const bootstrapMultiaddrs: any[] = [];
 	// Unique bootstrap peers computed up-front so gossipsub config below can
 	// pre-populate directPeers from them.
-	const uniqueBootstrapPeers = [...new Set(bootstrapPeers)].filter(p => !p.includes(myPeerID));
+	// Self is decided by the DESTINATION identity, not by "the string mentions us". A
+	// relayed entry `/…/p2p/<us>/p2p-circuit/p2p/<remote>` names us as the RELAY hop while
+	// targeting somebody else, and the substring test threw it away as our own address.
+	const uniqueBootstrapPeers = [...new Set(bootstrapPeers)].filter(p => destinationPeerIDOf(p) !== myPeerID);
 	const peerExchange = allSettings.network?.peerExchange;
 	const pxEnabled = peerExchange?.enabled === true;
 	const parsedThreshold = parseAcceptPXThreshold(peerExchange?.acceptPXThreshold);
@@ -210,8 +217,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				// trusted peers blocked when their advertised addr lives on a LAN segment
 				// different from our own. Trusted peers are by policy known-good
 				// destinations, so dial them regardless of CIDR match.
-				const pidComponent = ma?.getComponents?.()?.find?.((c: any) => c.code === 421);
-				const pid = pidComponent?.value ?? null;
+				const pid = extractDestinationPeerID(ma);
 				if (pid && (bootstrapPeerIDs.has(pid) || trustedPXPeerIDs.has(pid))) return false;
 				const deny = shouldDenyDial(ma, getLocalCidrs());
 				if (deny) {
@@ -239,7 +245,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			// writing to closed streams (100+/h), which in turn prevented
 			// SUBSCRIBE RPC propagation → fragmented pubsub mesh.
 			maxAddressAge: 1_800_000, // 30 min (default 3_600_000 = 1h)
-			maxPeerAge: 7_200_000, // 2h (default 21_600_000 = 6h)
+			maxPeerAge: PEERSTORE_MAX_PEER_AGE_MS, // 2h (default 21_600_000 = 6h)
 		},
 		services: {
 			identify: identify(),
@@ -410,7 +416,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			console.log('  -', peer);
 			try {
 				const ma = Multiaddr(peer);
-				const peerID = ma.getComponents().find(c => c.code === 421)?.value ?? null;
+				const peerID = extractDestinationPeerID(ma);
 				if (peerID) {
 					bootstrapPeerIDs.add(peerID);
 					bootstrapMultiaddrs.push(ma);
