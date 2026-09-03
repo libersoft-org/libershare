@@ -112,13 +112,18 @@ export interface HaveAnnouncement {
 type HaveAnnouncementHandler = (ann: HaveAnnouncement) => void;
 const haveAnnouncementHandlers = new Map<string, HaveAnnouncementHandler>();
 
-/** Register a handler for incoming unicast HAVE announcements for a given lishID. Only one handler per lishID. */
-export function registerHaveAnnouncementHandler(lishID: string, handler: HaveAnnouncementHandler): void {
+/**
+ * Register the single handler for a LISH and return an ownership-aware disposer.
+ * A stale downloader may only remove its own registration, never a newer owner's.
+ */
+export function registerHaveAnnouncementHandler(lishID: string, handler: HaveAnnouncementHandler): () => boolean {
 	haveAnnouncementHandlers.set(lishID, handler);
+	return () => unregisterHaveAnnouncementHandler(lishID, handler);
 }
 
-export function unregisterHaveAnnouncementHandler(lishID: string): void {
-	haveAnnouncementHandlers.delete(lishID);
+export function unregisterHaveAnnouncementHandler(lishID: string, owner?: HaveAnnouncementHandler): boolean {
+	if (owner && haveAnnouncementHandlers.get(lishID) !== owner) return false;
+	return haveAnnouncementHandlers.delete(lishID);
 }
 
 /**
@@ -140,6 +145,11 @@ export function registerSearchResultHandler(searchID: string, handler: SearchRes
 
 export function unregisterSearchResultHandler(searchID: string): void {
 	searchResultHandlers.delete(searchID);
+}
+
+function summarizeManifestID(value: unknown): string {
+	if (typeof value !== 'string') return value === null ? 'null' : typeof value;
+	return JSON.stringify(value.slice(0, 64)).replace(/[\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
 // Client-side stream wrapper that can send multiple requests
@@ -189,8 +199,9 @@ export class LISHClient {
 	// callback never breaks the transfer or poisons the shared decoder.
 	async requestManifest(lishID: LISHid, onProgress?: (received: number, total: number) => void): Promise<import('@shared').IStoredLISH> {
 		const request: LISHGetLishRequest = { type: 'getLish', lishID };
+		const safeLishID = summarizeManifestID(lishID);
 		if (!sendLengthPrefixed(this.stream, codecEncode(request))) {
-			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `getLish ${lishID}: stream ${this.stream.status}`);
+			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `getLish ${safeLishID}: stream ${this.stream.status}`);
 		}
 		const safeEmit = (r: number, t: number): void => {
 			if (!onProgress) return;
@@ -219,15 +230,20 @@ export class LISHClient {
 		};
 		try {
 			const responseMsg = (await Promise.race([this.decoder.next(), rejectAfterTimeout(30000, 'manifest-receive')])) as IteratorResult<Uint8Array | Uint8ArrayList>;
-			if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, lishID);
+			if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, safeLishID);
 			const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
-			const response = this.parseResponse<LISHGetLishResponse>(responseData, `getLish ${lishID}`);
-			if ('error' in response) throw new CodedError(response.error, lishID);
-			if (!('manifest' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: missing manifest`);
-			// The manifest must be for the LISH we asked for — a peer returning a different id
-			// would let a spoofing peer win the fallback loop and could import the wrong LISH
-			// under the requested id. Treat a mismatch as this peer's fault so fallback tries the next.
-			if (response.manifest?.id !== lishID) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: manifest id mismatch (${String(response.manifest?.id)})`);
+			const response = this.parseResponse<LISHGetLishResponse>(responseData, `getLish ${safeLishID}`);
+			if ('error' in response) throw new CodedError(response.error, safeLishID);
+			if (!('manifest' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: missing manifest`);
+			// The manifest must be for the LISH we asked for. Callers key their local state on the
+			// requested id but persist the manifest under the id it carries, so a foreign id lands
+			// in another LISH's DB row — an upsert that repoints its directory, drops its move
+			// target and replaces its file/chunk state. Honest peers always answer with the
+			// requested LISH, so rejecting a mismatch costs nothing and this peer's answer is
+			// unusable either way: treat it as a peer fault so fallback moves to the next one.
+			// Summarize peer-controlled input without coercing a large binary value or
+			// allowing control characters to forge additional log lines.
+			if (response.manifest?.id !== lishID) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: manifest id mismatch (${summarizeManifestID(response.manifest?.id)})`);
 			// A manifest from the network is untrusted input — validate chunk-size bounds and
 			// manifest consistency before it can reach any caller (DB persist / import / probe).
 			try {
@@ -237,7 +253,7 @@ export class LISHClient {
 				// protocol error so fallback loops move on to the next peer. An over-limit
 				// chunkSize is a property of the LISH itself (every honest peer serves the same
 				// manifest), so it stays a terminal local error.
-				if (e instanceof CodedError && e.code !== ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: ${e.message}`);
+				if (e instanceof CodedError && e.code !== ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: ${e.message}`);
 				throw e;
 			}
 			// Emitted only after validation passes — a rejected manifest must not flash a full bar.
@@ -446,6 +462,7 @@ export function clearAllUploads(): void {
 	uploadEnabled.clear();
 	activeUploads.clear();
 	activeStreamCount.clear();
+	uploadLimiter.reset();
 }
 
 const IO_ERROR_THRESHOLD = 3; // consecutive I/O errors before auto-disabling upload
@@ -477,7 +494,7 @@ export function toManifest(lish: import('@shared').IStoredLISH): import('@shared
 	return exportData as import('@shared').IStoredLISH;
 }
 
-export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType, sharesNetworkWith?: (peerID: string) => boolean, canListShares?: (peerID: string) => boolean): Promise<void> {
+export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType, sharesNetworkWith?: (peerID: string) => boolean, canListShares?: (peerID: string) => boolean, abortSignal?: AbortSignal): Promise<void> {
 	const servedLishIDs = new Set<string>();
 	const ioErrorCounts = new Map<string, number>(); // per-LISH consecutive I/O error counter
 	const remotePeer = remotePeerID?.slice(0, 12) ?? 'unknown';
@@ -486,11 +503,18 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 	trace(`[PROTO] stream open from ${remotePeer}, id=${stream.id}`);
 	let requestCount = 0;
 	try {
+		if (abortSignal?.aborted) return;
 		// Wrap the stream with length-prefixed decoder for multiple messages
 		// requests are small (<200 bytes); maxMessageSize covers chunks + large manifests
 		const decoder = lpDecode(stream, { maxDataLength: getMaxMessageSize() });
-		// Handle multiple requests on the same stream
-		for await (const msg of decoder) {
+		const iterator = decoder[Symbol.asyncIterator]();
+		// Handle multiple requests on the same stream. A stream abort does not guarantee that
+		// every source iterator wakes up, so the reset signal must also interrupt next().
+		while (!abortSignal?.aborted) {
+			const next = await nextProtocolMessage(iterator, abortSignal);
+			if (next.done) break;
+			const msg = next.value;
+			if (abortSignal?.aborted) break;
 			// Peer may disconnect between decoder.next() and our response send. Bail out if
 			// stream transitioned to closed/closing — any sendLengthPrefixed would throw sync
 			// StreamStateError → rejected Promise from this async handler → unhandledRejection.
@@ -610,6 +634,10 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					continue;
 				}
 				const chunkResult = await dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID);
+				// A factory-reset barrier may have closed and aborted this stream while
+				// the filesystem read was pending. Nothing from the old runtime may be
+				// sent or registered after that boundary.
+				if (abortSignal?.aborted) break;
 				if (chunkResult === 'lish_not_found') {
 					// Same privacy rationale as getLish: don't leak whether we have it.
 					const response: LISHGetChunkResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
@@ -668,7 +696,8 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				const chunkLoc = dataServer.findChunkFile(chunkReq.lishID as LISHid, chunkReq.chunkID as import('@shared').ChunkID);
 				if (remotePeerID) recordUploadBytes(chunkReq.lishID, fullRemotePeer, chunkData.length, chunkLoc);
 				dataServer.incrementUploadedBytes(chunkReq.lishID as import('@shared').LISHid, chunkData.length);
-				await uploadLimiter.throttle(chunkData.length);
+				await uploadLimiter.throttle(chunkData.length, abortSignal);
+				if (abortSignal?.aborted) break;
 				// Upload progress tracking (sliding window speed, 1s polling)
 				if (broadcastFn) {
 					let info = activeUploads.get(chunkReq.lishID);
@@ -735,7 +764,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			}
 		}
 		// Stream closed by remote, close our end
-		await stream.close();
+		if (!abortSignal?.aborted) await stream.close();
 	} catch (error: any) {
 		console.debug(`[PROTO] stream error from ${remotePeer} after ${requestCount} reqs: ${error.message?.slice(0, 120) ?? error}`);
 		stream.abort(error instanceof Error ? error : new Error(String(error)));
@@ -756,6 +785,29 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			}
 		}
 	}
+}
+
+const PROTOCOL_READ_ABORTED = Symbol('protocol-read-aborted');
+
+async function nextProtocolMessage<T>(iterator: AsyncIterator<T>, abortSignal?: AbortSignal): Promise<IteratorResult<T>> {
+	if (!abortSignal) return await iterator.next();
+	if (abortSignal.aborted) return { done: true, value: undefined as T };
+
+	const pending = Promise.resolve(iterator.next());
+	let onAbort: (() => void) | undefined;
+	const aborted = new Promise<typeof PROTOCOL_READ_ABORTED>(resolve => {
+		onAbort = () => resolve(PROTOCOL_READ_ABORTED);
+		abortSignal.addEventListener('abort', onAbort, { once: true });
+	});
+	const result = await Promise.race([pending, aborted]);
+	if (onAbort) abortSignal.removeEventListener('abort', onAbort);
+	if (result !== PROTOCOL_READ_ABORTED) return result;
+
+	void pending.catch(() => {});
+	try {
+		void Promise.resolve(iterator.return?.()).catch(() => {});
+	} catch {}
+	return { done: true, value: undefined as T };
 }
 
 // Helper: reject after timeout (prevents hanging on dead streams).
