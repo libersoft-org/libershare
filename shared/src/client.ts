@@ -1,8 +1,13 @@
+import { CodedError, ErrorCodes } from './errors.ts';
+import { MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE } from './product.ts';
+import { formatBytes } from './utils.ts';
+
 type EventCallback = (data: any) => void;
 
 interface PendingRequest {
 	resolve: (result: any) => void;
 	reject: (error: Error) => void;
+	timer?: ReturnType<typeof setTimeout> | undefined;
 }
 
 interface State {
@@ -43,7 +48,10 @@ export class WsClient {
 				this.onStateChange({ connected: false });
 				this.connectPromise = null;
 				this.ws = null;
-				for (const [, pending] of this.pendingRequests) pending.reject(new Error('WebSocket disconnected'));
+				for (const [, pending] of this.pendingRequests) {
+					if (pending.timer) clearTimeout(pending.timer);
+					pending.reject(new Error('WebSocket disconnected'));
+				}
 				this.pendingRequests.clear();
 				this.scheduleReconnect();
 			};
@@ -121,6 +129,7 @@ export class WsClient {
 			const pending = this.pendingRequests.get(msg.id);
 			if (pending) {
 				this.pendingRequests.delete(msg.id);
+				if (pending.timer) clearTimeout(pending.timer);
 				if (msg.error) {
 					const err = new Error(msg.error);
 					(err as any).code = msg.error;
@@ -136,13 +145,65 @@ export class WsClient {
 		await this.connect();
 	}
 
-	async call<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
+	/**
+	 * Call a method with a raw binary payload attached, framed as
+	 * `[uint32 BE header length][header JSON][payload]`. The header is the same
+	 * `{ id, method, params }` a text request carries, so the reply comes back as
+	 * an ordinary JSON response and every existing mechanism — id correlation,
+	 * error codes, rejection on disconnect — applies unchanged. The payload
+	 * reaches the handler as `params.data` without being base64'd, which would
+	 * otherwise cost a third more bytes and two full passes over the file.
+	 */
+	async callBinary<T = any>(method: string, params: Record<string, any>, payload: Uint8Array, timeoutMs?: number): Promise<T> {
 		await this.ensureConnected();
 		const id = crypto.randomUUID();
-		const request = { id, method, params };
+		const header = new TextEncoder().encode(JSON.stringify({ id, method, params }));
+		// Both limits are checked before the frame is allocated: building a copy of
+		// an oversized payload only to reject it doubles the peak memory of the very
+		// case the limit exists to prevent.
+		if (payload.byteLength > MAX_UPLOAD_CHUNK_SIZE) throw new CodedError(ErrorCodes.UPLOAD_CHUNK_TOO_LARGE, formatBytes(MAX_UPLOAD_CHUNK_SIZE));
+		if (4 + header.byteLength + payload.byteLength > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.MESSAGE_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
+		const frame = new Uint8Array(4 + header.byteLength + payload.byteLength);
+		new DataView(frame.buffer).setUint32(0, header.byteLength);
+		frame.set(header, 4);
+		frame.set(payload, 4 + header.byteLength);
+		return this.send<T>(id, frame, timeoutMs);
+	}
+
+	async call<T = any>(method: string, params: Record<string, any> = {}, timeoutMs?: number): Promise<T> {
+		await this.ensureConnected();
+		const id = crypto.randomUUID();
+		const request = JSON.stringify({ id, method, params });
+		// The server closes the socket outright on an oversized frame, and the
+		// caller only ever sees "disconnected" — so refuse here and hand back a
+		// real error code. The server counts UTF-8 bytes, so the string length is
+		// only a cheap pre-filter: one UTF-16 unit is at most three UTF-8 bytes,
+		// so anything under a third of the limit provably fits and skips the copy
+		// that measuring the real byte length costs.
+		if (request.length * 3 > MAX_API_MESSAGE_SIZE && new Blob([request]).size > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.MESSAGE_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
+		return this.send<T>(id, request, timeoutMs);
+	}
+
+	/**
+	 * Register a pending request and put it on the wire.
+	 *
+	 * A response is only ever matched back by id, so a reply that never arrives —
+	 * a frame the server rejected before it could read the id, or a session torn
+	 * down somewhere in the middle without this socket noticing — leaves the
+	 * caller waiting forever. `timeoutMs` bounds that; without it the only thing
+	 * that ever settles a pending request is a reply or this socket closing.
+	 */
+	private send<T>(id: string, payload: string | Uint8Array, timeoutMs?: number): Promise<T> {
 		return new Promise<T>((resolve, reject) => {
-			this.pendingRequests.set(id, { resolve, reject });
-			this.ws!.send(JSON.stringify(request));
+			const timer =
+				timeoutMs && timeoutMs > 0
+					? setTimeout(() => {
+							this.pendingRequests.delete(id);
+							reject(new CodedError(ErrorCodes.REQUEST_TIMEOUT, String(timeoutMs)));
+						}, timeoutMs)
+					: undefined;
+			this.pendingRequests.set(id, { resolve, reject, timer });
+			this.ws!.send(payload as any);
 		});
 	}
 

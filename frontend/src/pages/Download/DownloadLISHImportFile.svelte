@@ -5,7 +5,7 @@
 	import { navigateBack } from '../../scripts/navigation.ts';
 	import { storagePath, storageLISHPath, autoStartSharing, autoStartDownloading } from '../../scripts/settings.ts';
 	import { api } from '../../scripts/api.ts';
-	import { type ILISH } from '@shared';
+	import { withCompressionExtensions, type ILISH } from '@shared';
 	import ImportFileForm from '../../components/Import/ImportFileForm.svelte';
 	import ImportOverwrite from './DownloadLISHImportOverwrite.svelte';
 	interface Props {
@@ -21,8 +21,8 @@
 		return api.lishs.parseFromFile(path);
 	}
 
-	function parseJSON(content: string): Promise<ILISH[]> {
-		return api.lishs.parseFromJSON(content);
+	function parseUpload(uploadID: string): Promise<ILISH[]> {
+		return api.lishs.parseFromUpload(uploadID);
 	}
 
 	function handleConfirmDone(): void {
@@ -34,7 +34,7 @@
 	}
 </script>
 
-<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageLISHPath} fileFilter={['*.lish', '*.lishs', '*.json', '*.lish.gz', '*.lishs.gz', '*.json.gz', '*.lish.gzip', '*.lishs.gzip', '*.json.gzip']} fileFilterName={'LISH ' + $t('common.extensions')} filePathLabel={$t('lish.import.filePath')} {parseFile} {parseJSON} bind:downloadPath downloadPathLabel={$t('lish.import.downloadPath')} onConfirmDone={handleConfirmDone}>
+<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageLISHPath} fileFilter={withCompressionExtensions(['*.lish', '*.lishs', '*.json'])} fileFilterName={'LISH ' + $t('common.extensions')} filePathLabel={$t('lish.import.filePath')} {parseFile} {parseUpload} bind:downloadPath downloadPathLabel={$t('lish.import.downloadPath')} onConfirmDone={handleConfirmDone}>
 	{#snippet confirm({ data, onDone })}
 		<ImportOverwrite lishs={data as ILISH[]} {downloadPath} {position} enableSharing={$autoStartSharing} enableDownloading={$autoStartDownloading} {onDone} />
 	{/snippet}
