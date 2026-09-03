@@ -351,8 +351,29 @@ describe('parseLinuxNetworkState', () => {
 		const movedGateway = parseLinuxNetworkState({ ...sources, ipv4Profiles: new Map([['eth0', { ...live, gateway: '192.0.2.254' }]]) });
 		expect(byID(movedGateway, 'eth0').ipv4Configurable).toBe(false);
 
-		// A DHCP profile stores no address of its own, so there is nothing to diverge.
+		// A DHCP profile is just as able to diverge, in the other direction: the switch
+		// to DHCP is saved but not activated, so the kernel still holds the static
+		// address. Editing then would let a DNS-only save reapply the profile and move
+		// the address the user never touched.
 		expect(byID(parseLinuxNetworkState(sources), 'eth0').ipv4Configurable).toBe(true);
+		const permanent = JSON.parse(sources.addr) as Array<{ ifname: string; addr_info?: Array<{ family: string; dynamic?: boolean; valid_life_time?: number }> }>;
+		for (const address of permanent.find(entry => entry.ifname === 'eth0')!.addr_info!.filter(address => address.family === 'inet')) {
+			delete address.dynamic;
+			address.valid_life_time = 4294967295;
+		}
+		expect(byID(parseLinuxNetworkState({ ...sources, addr: JSON.stringify(permanent) }), 'eth0').ipv4Configurable).toBe(false);
+
+		// Nothing to disagree with yet: the cable is out, or no server answered.
+		const noAddress = JSON.parse(sources.addr) as Array<{ ifname: string; addr_info?: Array<{ family: string }> }>;
+		const eth0 = noAddress.find(entry => entry.ifname === 'eth0')!;
+		eth0.addr_info = (eth0.addr_info ?? []).filter(address => address.family !== 'inet');
+		expect(byID(parseLinuxNetworkState({ ...sources, addr: JSON.stringify(noAddress) }), 'eth0').ipv4Configurable).toBe(true);
+
+		// The link-local fallback is the kernel saying it has nothing, not a static address.
+		const linkLocal = JSON.parse(sources.addr) as Array<{ ifname: string; addr_info?: Array<{ family: string; local?: string; prefixlen?: number; dynamic?: boolean; valid_life_time?: number }> }>;
+		const withFallback = linkLocal.find(entry => entry.ifname === 'eth0')!;
+		withFallback.addr_info = [{ family: 'inet', local: '169.254.10.2', prefixlen: 16, valid_life_time: 4294967295 }, ...(withFallback.addr_info ?? []).filter(address => address.family !== 'inet')];
+		expect(byID(parseLinuxNetworkState({ ...sources, addr: JSON.stringify(linkLocal) }), 'eth0').ipv4Configurable).toBe(true);
 	});
 
 	it('calls software devices other and only a bare ethernet link wired', () => {

@@ -607,6 +607,10 @@ describe('assertLinuxIPv4Applied', () => {
 		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', JSON.stringify([{ ifname: 'eth0', addr_info: [{ family: 'inet', local: '169.254.10.2', prefixlen: 16 }] }]), '[]')).toThrow('lease');
 		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', addr, '[]')).not.toThrow();
 		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'manual\n', '[]', '[]')).toThrow('method');
+		// A permanent address is the static one the switch was supposed to replace, so
+		// it is not evidence that a lease arrived.
+		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', JSON.stringify([{ ifname: 'eth0', addr_info: [{ family: 'inet', local: '192.0.2.10', prefixlen: 24, valid_life_time: 4294967295 }] }]), '[]')).toThrow('lease');
+		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', JSON.stringify([{ ifname: 'eth0', addr_info: [{ family: 'inet', local: '192.0.2.10', prefixlen: 24, dynamic: true, valid_life_time: 3600 }] }]), '[]')).not.toThrow();
 		// With the link down only the saved method can be verified; the lease follows the cable.
 		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', '[]', '[]', false)).not.toThrow();
 		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'manual\n', '[]', '[]', false)).toThrow('method');

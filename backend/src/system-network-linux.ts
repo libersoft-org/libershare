@@ -29,6 +29,17 @@ const IW_CANDIDATES = ['/usr/sbin/iw', '/sbin/iw', 'iw'];
 /** IFA_F_PERMANENT lifetime sentinel — a manually configured address never expires. */
 const LIFETIME_PERMANENT = 4294967295;
 
+/**
+ * True when an address came from a lease rather than from a saved static entry.
+ *
+ * `dynamic` is what iproute2 sets for a DHCP address; the finite lifetime is the
+ * same fact seen from the other side, and is there on builds that omit the flag.
+ * Only an explicitly permanent address is taken as evidence of static addressing.
+ */
+function isLeasedAddress(info: { dynamic?: boolean; valid_life_time?: number }): boolean {
+	return info.dynamic === true || info.valid_life_time !== LIFETIME_PERMANENT;
+}
+
 /** One `ip -j addr` entry (only the fields this module reads). */
 interface IpAddrEntry {
 	ifname: string;
@@ -206,11 +217,13 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 		if (entry.ifname === 'lo') continue;
 		const addresses: NetAddress[] = [];
 		let kernelIPv4Mode: NetInterfaceInfo['ipv4Mode'] = 'unknown';
+		let liveIPv4: LiveIPv4Address | null = null;
 		for (const info of entry.addr_info ?? []) {
 			const family = info.family === 'inet' ? 'ipv4' : info.family === 'inet6' ? 'ipv6' : null;
 			if (!family) continue;
 			addresses.push({ family, address: info.local, prefixLength: info.prefixlen });
 			if (family !== 'ipv4') continue;
+			liveIPv4 ??= { address: info.local, prefixLength: info.prefixlen, leased: isLeasedAddress(info) };
 			if (info.dynamic === true) kernelIPv4Mode = 'dhcp';
 			else if (kernelIPv4Mode === 'unknown' && info.valid_life_time === LIFETIME_PERMANENT) kernelIPv4Mode = 'static';
 		}
@@ -233,7 +246,7 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 			mac: entry.address ?? link?.address ?? null,
 			addresses,
 			ipv4Mode,
-			ipv4Configurable: managed && activeProfile.safe && ipv4Mode !== 'unknown' && ipv4Addresses.length <= 1 && interfaceRoutes.length <= 1 && nmcliProfileMatchesLive(activeProfile, ipv4Addresses[0] ?? null, interfaceRoutes[0]?.gateway ?? null),
+			ipv4Configurable: managed && activeProfile.safe && ipv4Mode !== 'unknown' && ipv4Addresses.length <= 1 && interfaceRoutes.length <= 1 && nmcliProfileMatchesLive(activeProfile, liveIPv4, interfaceRoutes[0]?.gateway ?? null),
 			wifiConfigurable: wireless && sources.managedDevices?.has(entry.ifname) === true,
 			gateway: interfaceRoutes[0]?.gateway ?? activeProfile?.gateway ?? null,
 			// NetworkManager knows the resolvers PER LINK, which is the only correct
@@ -574,20 +587,32 @@ export function parseNmcliIPv4Profile(text: string, expectedDevice: string, acti
 	return { method, gateway: gatewayText || null, address: simpleManualAddress ? (addressMatch?.[1] ?? null) : null, prefixLength: simpleManualAddress && addressMatch ? Number(addressMatch[2]) : null, safe };
 }
 
+/** The one IPv4 address the kernel holds on a device, and whether it came from a lease. */
+export interface LiveIPv4Address {
+	address: string;
+	prefixLength: number;
+	leased: boolean;
+}
+
 /**
  * True when the saved profile still describes what the kernel is actually using.
  *
- * The screen shows the kernel's address and the form saves back into the profile,
+ * The screen shows the kernel's state and the form saves back into the profile,
  * so the two have to agree before an edit can round-trip. `nmcli connection
- * modify` without a reapply leaves them apart — the profile already holds the
- * next address while the kernel still holds the previous one — and saving the
- * form would then quietly undo that pending change, which is the very thing the
- * baseline check exists to prevent one layer up. A profile on DHCP stores no
- * address or gateway to disagree about.
+ * modify` without a reapply leaves them apart, and either direction is dangerous:
+ * a profile that already holds the next static address would have it overwritten
+ * by the one on screen, and a profile switched to DHCP would have that switch
+ * activated by the `device reapply` a DNS-only save runs — changing the address
+ * the user never touched. Both are the thing the baseline check exists to prevent
+ * one layer up, so a divergent interface is not offered for editing at all.
+ *
+ * A DHCP profile agrees with a leased address, and with having none yet: the link
+ * may be down, no server may have answered, or the kernel may hold only the
+ * link-local fallback.
  */
-export function nmcliProfileMatchesLive(profile: NmcliIPv4Profile, liveAddress: NetAddress | null, liveGateway: string | null): boolean {
-	if (parseNmcliIPv4Method(profile.method) !== 'static') return true;
-	return liveAddress !== null && profile.address === liveAddress.address && profile.prefixLength === liveAddress.prefixLength && profile.gateway === liveGateway;
+export function nmcliProfileMatchesLive(profile: NmcliIPv4Profile, live: LiveIPv4Address | null, liveGateway: string | null): boolean {
+	if (parseNmcliIPv4Method(profile.method) === 'static') return live !== null && profile.address === live.address && profile.prefixLength === live.prefixLength && profile.gateway === liveGateway;
+	return live === null || live.leased || live.address.startsWith('169.254.');
 }
 
 const NMCLI_IPV4_PROFILE_FIELDS = 'connection.interface-name,connection.multi-connect,ipv4.method,ipv4.never-default,ipv4.gateway,ipv4.addresses,ipv4.routes,ipv4.route-table,ipv4.routing-rules';
@@ -792,7 +817,10 @@ export function assertLinuxIPv4Applied(config: NetIPv4Config, methodText: string
 	const addresses = (JSON.parse(addrJson) as IpAddrEntry[]).flatMap(entry => entry.addr_info ?? []).filter(address => address.family === 'inet');
 	if (config.mode === 'dhcp') {
 		// With the link down the method is what gets saved; the lease follows the cable.
-		if (requireLease && !addresses.some(address => address.local !== '0.0.0.0' && !address.local.startsWith('169.254.') && address.scope !== 'host')) throw new Error('NetworkManager did not obtain a usable IPv4 lease');
+		// A leftover static address is not a lease. Without the origin check, a DHCP
+		// switch that never got an answer would pass on the address it was supposed
+		// to replace.
+		if (requireLease && !addresses.some(address => isLeasedAddress(address) && address.local !== '0.0.0.0' && !address.local.startsWith('169.254.') && address.scope !== 'host')) throw new Error('NetworkManager did not obtain a usable IPv4 lease');
 		return;
 	}
 	if (addresses.length !== 1 || addresses[0]?.local !== config.address || addresses[0]?.prefixlen !== config.prefixLength) throw new Error('NetworkManager did not apply the requested IPv4 address');
