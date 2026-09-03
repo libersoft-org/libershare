@@ -514,7 +514,7 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 	const network = bssid === null ? (matches.length === 1 ? matches[0] : undefined) : matches.find(item => item.bssid?.toLowerCase() === bssid.toLowerCase());
 	if (!network) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'network is no longer available');
 	if (!network.supported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi authentication method is not supported');
-	if (network.secured && !isValidWpaPassphrase(password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
+	if (network.secured && !isValidWifiKey(network.security, password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
 	try {
 		await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password, network.bssid));
 	} catch (error) {
@@ -527,15 +527,23 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 }
 
 /**
- * A key WPA can actually carry: an 8-63 character passphrase, or the 64 hex
- * digits of the pre-shared key itself.
+ * A key the network's own security can carry.
  *
- * Only the networks this app offers to join are checked against it — open ones
- * take no key, and anything but WPA personal is refused before this. Without the
- * check an empty or too-short key reaches NetworkManager, which answers with a
- * generic activation failure that says nothing about what to type instead.
+ * The rule is not the same for both WPA generations, and measured against
+ * NetworkManager 1.52: a WPA-PSK key is 8 to 63 bytes, or exactly 64 hexadecimal
+ * digits of the pre-shared key itself — it counts bytes, so a four-character
+ * accented passphrase passes as eight. WPA3 replaces that with SAE, which
+ * derives from the password rather than hashing it to a fixed-length key and so
+ * accepts any length; holding a WPA3 network to the PSK rule would refuse a
+ * short password that works.
+ *
+ * Only networks this app offers to join reach here — open ones take no key, and
+ * anything but WPA personal is refused earlier. The check exists so a key that
+ * cannot work is named as such, instead of arriving as a generic activation
+ * failure that says nothing about what to type instead.
  */
-export function isValidWpaPassphrase(password: string): boolean {
+export function isValidWifiKey(security: string, password: string): boolean {
+	if (/WPA3|SAE/i.test(security)) return password.length > 0;
 	const bytes = new TextEncoder().encode(password).byteLength;
 	return /^[0-9a-f]{64}$/i.test(password) || (bytes >= 8 && bytes <= 63);
 }
