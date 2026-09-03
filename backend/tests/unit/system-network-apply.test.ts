@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { canonicalDnsServer, ErrorCodes, ipv4BaselineOf, isIPv4, isIPv6, isValidSSID, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
-import { assertIPv6DnsAllowed, assertLinuxDnsApplied, assertLinuxIPv4Applied, assertLinuxIPv4Method, assertLinuxWifiConnected, assertNetworkManagerRollback, assertNmcliActiveConnection, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
+import { assertIPv6DnsAllowed, assertLinuxDnsApplied, assertLinuxIPv4Applied, assertLinuxIPv4Method, assertLinuxWifiConnected, assertNetworkManagerRollback, assertNmcliActiveConnection, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { assertAppliedIPv4State, assertDeviceName, assertIPv4Baseline, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, leaseRequired, MAX_WIFI_PASSWORD_BYTES, planIPv4Change, readCachedCapabilities, resetNetworkCapabilitiesCache, runNetworkMutation } from '../../src/system-network.ts';
 
@@ -652,8 +652,16 @@ describe('NetworkManager checkpoint transaction', () => {
 		expect(parseNetworkManagerCheckpointPath(`o "${checkpointPath}"\n`)).toBe(checkpointPath);
 	});
 
-	it('keeps a real safety reserve beyond update, activation and rollback limits', () => {
-		expect(NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS * 1000).toBeGreaterThan(NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS + NETWORK_MANAGER_MUTATION_TIMEOUT_MS + NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS + NETWORK_MANAGER_CHECKPOINT_SAFETY_MS);
+	it('keeps a real safety reserve beyond the whole transaction and its rollback', () => {
+		// The activation is the longest step but never the only one: the pre-checks
+		// and the two read-backs run inside the checkpoint as well. Measuring the
+		// reserve against the activation alone would report thirty seconds of margin
+		// where there is one.
+		const longest = Math.max(NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS, NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS);
+		expect(NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS * 1000 - longest - NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS).toBeGreaterThanOrEqual(NETWORK_MANAGER_CHECKPOINT_SAFETY_MS);
+		// Each budget has to cover the steps it is named after.
+		expect(NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS).toBeGreaterThan(NETWORK_MANAGER_MUTATION_TIMEOUT_MS + NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS);
+		expect(NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS).toBeGreaterThan(NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
 	});
 
 	it('destroys a successful checkpoint and keeps the mutation', async () => {

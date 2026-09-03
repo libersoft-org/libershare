@@ -378,9 +378,33 @@ export const NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS: number = EXEC_TIMEOUT_MS
 export const NETWORK_MANAGER_MUTATION_TIMEOUT_MS: number = (NMCLI_ACTIVATION_WAIT_SECONDS + 5) * 1000;
 export const NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS: number = NETWORK_MANAGER_MUTATION_TIMEOUT_MS;
 export const NETWORK_MANAGER_CHECKPOINT_SAFETY_MS: number = 30000;
-export const NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS: number = Math.ceil((NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS + NETWORK_MANAGER_MUTATION_TIMEOUT_MS + NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS + NETWORK_MANAGER_CHECKPOINT_SAFETY_MS) / 1000) + 1;
 /** A rescan has to wait for the radio to sweep every channel. */
 const WIFI_SCAN_TIMEOUT_MS = 30000;
+/**
+ * Every child process {@link applyLinuxIPv4} may run inside the checkpoint, in
+ * the order it runs them, each at its own timeout. The pre-checks and the two
+ * read-backs are as much a part of the transaction as the activation is: the
+ * checkpoint has to outlive all of them, or NetworkManager starts its automatic
+ * rollback while the explicit one is still to come.
+ */
+export const NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS: number =
+	2 * EXEC_TIMEOUT_MS + // resolve the active profile and read it back to judge it
+	EXEC_TIMEOUT_MS + // ipv6.method, before an IPv6 resolver is offered to it
+	NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS +
+	NETWORK_MANAGER_MUTATION_TIMEOUT_MS +
+	EXEC_TIMEOUT_MS + // the profile is still the one active on the device
+	EXEC_TIMEOUT_MS + // method, address and route, read together
+	EXEC_TIMEOUT_MS; // profile and live resolvers, read together
+/** The same for {@link connectLinuxWifi}: the join, then the scan that confirms it. */
+export const NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS: number = NETWORK_MANAGER_MUTATION_TIMEOUT_MS + WIFI_SCAN_TIMEOUT_MS;
+/**
+ * How long NetworkManager holds the checkpoint before rolling back on its own.
+ *
+ * Long enough for the slowest transaction, the explicit rollback that may follow
+ * it, and a margin on top — so the automatic rollback is a backstop for a
+ * process that died, never a second rollback racing our own.
+ */
+export const NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS: number = Math.ceil((Math.max(NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS, NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS) + NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS + NETWORK_MANAGER_CHECKPOINT_SAFETY_MS) / 1000) + 1;
 
 /**
  * Split one `nmcli -t` output line into fields.
