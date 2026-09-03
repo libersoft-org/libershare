@@ -24,6 +24,7 @@ function tinyPeerStore(n: number) {
 function makeManager(subscribers: string[], peerStoreSize: number, topics: string[] = [TOPIC]) {
 	const broadcasts: string[] = [];
 	const node: any = {
+		// Mutable so a test can make the peerStore start failing mid-life.
 		peerStore: tinyPeerStore(peerStoreSize),
 		peerId: { toString: () => 'self' },
 		// A routable self address, or the announce would carry nothing and be skipped
@@ -42,7 +43,7 @@ function makeManager(subscribers: string[], peerStoreSize: number, topics: strin
 		},
 		async addBootstrapPeers(): Promise<void> {},
 	});
-	return { mgr, broadcasts, pubsub };
+	return { mgr, broadcasts, pubsub, node, topics };
 }
 
 /** emit() is private; the tick is what a running node would perform. */
@@ -66,36 +67,54 @@ describe('PeerAnnounceManager topic membership', () => {
 		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-b']);
 	});
 
-	it('records a GRAFT member without any announce tick at all', async () => {
-		// GRAFT fires before the peer's SUBSCRIBE is visible in getSubscribers, so this
-		// is the only source that covers the propagation window.
+	it('records a subscriber without any announce tick at all', async () => {
+		// subscription-change lands the moment the RPC is processed, well before the
+		// next announce cadence would refresh the map from getSubscribers.
 		const { mgr } = makeManager([], 2);
 		expect(mgr.getRecentMembers(TOPIC)).toEqual([]);
-		mgr.noteMember(TOPIC, 'peer-grafted');
-		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-grafted']);
+		mgr.noteMember(TOPIC, 'peer-sub');
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-sub']);
 	});
 
-	it('keeps a GRAFT member that the live subscriber snapshot does not list', async () => {
+	it('keeps a noted subscriber that the live snapshot does not list', async () => {
 		const { mgr } = makeManager([], 2);
-		mgr.noteMember(TOPIC, 'peer-grafted');
+		mgr.noteMember(TOPIC, 'peer-sub');
 		await tick(mgr);
-		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-grafted']);
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-sub']);
 	});
 
 	/**
-	 * The gossipsub GRAFT payload is `{ peerId, topic, direction }`. Reading it as
-	 * `peerID` type-checks against an `any` event and silently records nothing, so the
-	 * membership fast-path has to be driven with the real payload to be worth anything.
+	 * The gossipsub payload is `{ peerId, subscriptions: [{ topic, subscribe }] }`, with
+	 * `peerId` a PeerId object rather than a string. Reading either field under the wrong
+	 * name type-checks against an `any` event and silently records nothing, so the
+	 * membership feed has to be driven with the real shape to be worth anything.
 	 */
-	it('records a member from a real gossipsub GRAFT payload', () => {
+	it('records a member from a real gossipsub subscription-change payload', () => {
 		const { mgr } = makeManager([], 2);
 		const net = Object.create(Network.prototype) as Network;
 		(net as any).peerAnnounce = mgr;
+		(net as any).peerSubscribeHandlers = new Set();
 		(net as any).bootstrapTracker = new BootstrapStatusTracker();
 
-		(net as any).noteMeshGraft({ peerId: 'peer-grafted', topic: TOPIC, direction: 'inbound' });
+		(net as any).noteSubscriptionChange({ peerId: { toString: () => 'peer-sub' }, subscriptions: [{ topic: TOPIC, subscribe: true }] });
 
-		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-grafted']);
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-sub']);
+	});
+
+	it('revokes membership as soon as the peer unsubscribes', () => {
+		// gossipsub removes the peer from its subscriber map on subscribe:false. A recent
+		// union that outlived that would keep authorizing a withdrawn claim for a minute.
+		const { mgr } = makeManager([], 2);
+		const net = Object.create(Network.prototype) as Network;
+		(net as any).peerAnnounce = mgr;
+		(net as any).peerSubscribeHandlers = new Set();
+		const peerId = { toString: () => 'peer-sub' };
+
+		(net as any).noteSubscriptionChange({ peerId, subscriptions: [{ topic: TOPIC, subscribe: true }] });
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-sub']);
+
+		(net as any).noteSubscriptionChange({ peerId, subscriptions: [{ topic: TOPIC, subscribe: false }] });
+		expect(mgr.getRecentMembers(TOPIC)).toEqual([]);
 	});
 
 	it('restarts the quiet window immediately when a verified peer GRAFTs', () => {
@@ -127,13 +146,139 @@ describe('PeerAnnounceManager topic membership', () => {
 		expect(mgr.getRecentMembers('other/topic')).toEqual([]);
 	});
 
+	it('records nothing from a mesh GRAFT', () => {
+		// The pinned gossipsub emits gossipsub:graft for REJECTED grafts too (backoff,
+		// negative score, full mesh) and never requires a prior SUBSCRIBE, so a GRAFT is
+		// not a claim of membership at all — let alone an accepted one.
+		const { mgr } = makeManager([], 2);
+		const net = Object.create(Network.prototype) as Network;
+		(net as any).peerAnnounce = mgr;
+		(net as any).peerSubscribeHandlers = new Set();
+		(net as any).bootstrapTracker = new BootstrapStatusTracker();
+
+		// A GRAFT still feeds the bootstrap status tracker, which is not authorization.
+		(net as any).noteMeshGraft({ peerId: 'peer-graft', topic: TOPIC, direction: 'inbound' });
+		(net as any).noteSubscriptionChange({ peerId: { toString: () => 'peer-graft' }, subscriptions: [] });
+
+		expect(mgr.getRecentMembers(TOPIC)).toEqual([]);
+	});
+
+	it('ignores a subscription to a topic that is not a lishnet', () => {
+		const { mgr } = makeManager([], 2);
+		const net = Object.create(Network.prototype) as Network;
+		(net as any).peerAnnounce = mgr;
+		(net as any).peerSubscribeHandlers = new Set();
+
+		(net as any).noteSubscriptionChange({ peerId: { toString: () => 'peer-x' }, subscriptions: [{ topic: 'other/topic', subscribe: true }] });
+
+		expect(mgr.getRecentMembers('other/topic')).toEqual([]);
+	});
+
 	it('drops membership for a topic we are no longer subscribed to', async () => {
+		// Must be the SAME manager that recorded the members — a fresh one starts empty
+		// and would pass no matter whether the eviction runs at all.
+		const { mgr, topics } = makeManager(['peer-b'], 2);
+		await tick(mgr);
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-b']);
+
+		topics.length = 0; // left the lishnet — and it was our only one
+		await tick(mgr);
+
+		expect(mgr.getRecentMembers(TOPIC)).toEqual([]);
+	});
+
+	it('still evicts a left topic when it was the last one', async () => {
+		// The eviction lives inside the membership refresh, so bailing out of the tick on
+		// an empty topic list before running it strands the members of the lishnet we
+		// just left — and a quick rejoin would find them still inside the auth window.
+		const { mgr, topics } = makeManager(['peer-b'], 2, [TOPIC]);
+		await tick(mgr);
+		topics.length = 0;
+
+		await tick(mgr);
+
+		expect(mgr.getRecentMembers(TOPIC)).toEqual([]);
+	});
+
+	it('refreshes membership even when the peerStore read fails', async () => {
+		// The peerStore is only needed to decide whether to ADVERTISE. Reading it first
+		// let a failing or stalled store take the membership tracker down with it.
+		const { mgr, node } = makeManager(['peer-b'], 2);
+		node.peerStore = {
+			all: async () => {
+				throw new Error('peerStore unavailable');
+			},
+		};
+
+		await tick(mgr).catch(() => {});
+
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-b']);
+	});
+
+	it('does not let the wall clock stretch the authorization window', () => {
+		// The listing gate reads these ages as an authorization TTL. On Date.now() an NTP
+		// step or a user moving the system clock backwards makes every recorded member
+		// look freshly seen again — the one direction a security window must not move.
+		const realDateNow = Date.now;
+		const realPerfNow = performance.now.bind(performance);
+		try {
+			let wall = 1_000_000;
+			let mono = 5_000;
+			Date.now = () => wall;
+			performance.now = () => mono;
+			const { mgr } = makeManager([], 2);
+			mgr.noteMember(TOPIC, 'peer-b');
+
+			wall -= 600_000; // clock stepped back 10 minutes
+			mono += 120_000; // 2 minutes of actual elapsed time
+
+			expect(mgr.getRecentMembers(TOPIC, 60_000)).toEqual([]);
+		} finally {
+			Date.now = realDateNow;
+			performance.now = realPerfNow;
+		}
+	});
+
+	it('restarts the grace window at disconnect for a known member', async () => {
+		// The announce tick is what otherwise advances these stamps, and at saturation it
+		// runs 135-225s apart — longer than the 60s window the listing gate reads, so a
+		// continuously-subscribed peer could drop with a stamp already too old to help.
+		const realPerfNow = performance.now.bind(performance);
+		try {
+			let mono = 5_000;
+			performance.now = () => mono;
+			const { mgr } = makeManager(['peer-b'], 2);
+			await tick(mgr);
+			mono += 300_000; // one saturated announce gap and then some
+			expect(mgr.getRecentMembers(TOPIC, 60_000)).toEqual([]);
+
+			mgr.touchKnownMember('peer-b');
+
+			expect(mgr.getRecentMembers(TOPIC, 60_000)).toEqual(['peer-b']);
+		} finally {
+			performance.now = realPerfNow;
+		}
+	});
+
+	it('does not make a stranger a member on disconnect', async () => {
+		const { mgr } = makeManager(['peer-b'], 2);
+		await tick(mgr);
+
+		mgr.touchKnownMember('peer-stranger');
+
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-b']);
+	});
+
+	it('forgets every membership on stop', async () => {
+		// Network reuses the same manager across stop/start, so a membership carried over
+		// would authorize a peer on a node that has not even reconnected to it yet.
 		const { mgr } = makeManager(['peer-b'], 2);
 		await tick(mgr);
 		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-b']);
-		const gone = makeManager(['peer-b'], 2, []);
-		await tick(gone.mgr);
-		expect(gone.mgr.getRecentMembers(TOPIC)).toEqual([]);
+
+		mgr.stop();
+
+		expect(mgr.getRecentMembers(TOPIC)).toEqual([]);
 	});
 
 	it('reports nothing for an unknown topic', () => {
