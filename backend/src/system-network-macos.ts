@@ -517,12 +517,36 @@ export async function applyMacIPv4(device: string, config: NetIPv4Config, addres
 	const oldGateway = parseServiceGateway(oldInfo);
 	if (oldMode === 'unknown' || (oldMode === 'static' && (!oldAddress || !oldGateway))) throw new Error('macOS network service configuration cannot be preserved safely');
 	const previous: NetIPv4Config = oldMode === 'dhcp' ? { mode: 'dhcp', dns: parseServiceDns(oldDns) } : { mode: 'static', address: oldAddress!.address, prefixLength: oldAddress!.prefixLength, gateway: oldGateway!, dns: parseServiceDns(oldDns) };
+	return withMacRollback(
+		async () => {
+			for (const args of macApplyArgs(service, config, addressingChanged)) await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);
+			await verifyMacIPv4(service, config, addressingChanged, requireLease);
+		},
+		async () => {
+			for (const args of macApplyArgs(service, previous, addressingChanged)) await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);
+			// `networksetup` exiting zero is not the service being back: a restored
+			// DHCP service still has to get its lease, and a restored static one still
+			// has to hold the address it was handed. An unverified restore is exactly
+			// the case that leaves the machine unreachable while the app reports only
+			// the original failure.
+			await verifyMacIPv4(service, previous, addressingChanged, requireLease);
+		}
+	);
+}
+
+/**
+ * Run a change that must leave the service either changed or as it was.
+ *
+ * The restore is verified like the change is, and a restore that cannot be
+ * verified is reported alongside the failure that triggered it — those are two
+ * different situations for whoever has to get the machine back on the network.
+ */
+export async function withMacRollback<T>(mutate: () => Promise<T>, rollback: () => Promise<void>): Promise<T> {
 	try {
-		for (const args of macApplyArgs(service, config, addressingChanged)) await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);
-		await verifyMacIPv4(service, config, addressingChanged, requireLease);
+		return await mutate();
 	} catch (applyError) {
 		try {
-			for (const args of macApplyArgs(service, previous, addressingChanged)) await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);
+			await rollback();
 		} catch (rollbackError) {
 			throw new Error(`network apply failed: ${String(applyError)}; rollback failed: ${String(rollbackError)}`);
 		}

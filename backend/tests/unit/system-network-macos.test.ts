@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { assertMacIPv4Applied, hasMacWritePrivilege, macApplyArgs, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { assertMacIPv4Applied, hasMacWritePrivilege, macApplyArgs, withMacRollback, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -395,5 +395,54 @@ describe('netmaskFromPrefix', () => {
 		expect(netmaskFromPrefix(8)).toBe('255.0.0.0');
 		expect(netmaskFromPrefix(23)).toBe('255.255.254.0');
 		expect(netmaskFromPrefix(32)).toBe('255.255.255.255');
+	});
+});
+
+describe('withMacRollback', () => {
+	it('keeps the change when it verifies', async () => {
+		let rolledBack = false;
+		expect(
+			await withMacRollback(
+				async () => 'applied',
+				async () => {
+					rolledBack = true;
+				}
+			)
+		).toBe('applied');
+		expect(rolledBack).toBe(false);
+	});
+
+	it('reports the original failure when the restore verifies', async () => {
+		// The user needs to know why the change did not take; the machine is back the
+		// way it was, so that failure is the whole story.
+		const applyFailed = new Error('address did not become usable');
+		let rolledBack = false;
+		await expect(
+			withMacRollback(
+				async () => {
+					throw applyFailed;
+				},
+				async () => {
+					rolledBack = true;
+				}
+			)
+		).rejects.toBe(applyFailed);
+		expect(rolledBack).toBe(true);
+	});
+
+	it('reports both failures when the restore cannot be verified', async () => {
+		// `networksetup` exiting zero is not the service being back. A restore whose
+		// read-back disagrees leaves the machine somewhere neither the user nor the
+		// app asked for, and saying only "apply failed" would hide that.
+		const failure = await withMacRollback(
+			async () => {
+				throw new Error('address did not become usable');
+			},
+			async () => {
+				throw new Error('DHCP restore obtained no address');
+			}
+		).catch((error: Error) => error);
+		expect(failure.message).toContain('address did not become usable');
+		expect(failure.message).toContain('DHCP restore obtained no address');
 	});
 });
