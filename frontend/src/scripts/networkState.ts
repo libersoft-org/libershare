@@ -52,6 +52,14 @@ export function withoutLiveUpdates(state: NetworkStateInfo): NetworkStateInfo {
 	return { ...state, known: false, capabilities: { ...state.capabilities, ipv4: false, ipv4Elevation: false, wifi: false } };
 }
 
+/**
+ * The one way a fresh state enters the store.
+ *
+ * Every read and every mutation answers with the state that resulted, and all of
+ * them land here: without live updates that answer is already only a snapshot,
+ * so publishing one as live would hand the form back its write capabilities and
+ * let the next Save go out over whatever changed since.
+ */
 function storeSnapshot(state: NetworkStateInfo): void {
 	networkState.set(get(networkSubscriptionActive) ? state : withoutLiveUpdates(state));
 }
@@ -82,7 +90,7 @@ export async function refreshNetworkState(): Promise<NetworkStateInfo> {
  * actually happened rather than wait up to 10 s for the next broadcast.
  */
 export async function applyInterfaceConfig(interfaceID: string, config: NetIPv4Config, expected: NetIPv4Baseline): Promise<void> {
-	networkState.set(await api.call<NetworkStateInfo>('system.networkApply', { interfaceID, config, expected }));
+	storeSnapshot(await api.call<NetworkStateInfo>('system.networkApply', { interfaceID, config, expected }));
 }
 
 /** Scan for Wi-Fi networks reachable from one interface. */
@@ -92,7 +100,6 @@ export function scanWifiNetworks(interfaceID: string): Promise<NetWifiNetwork[]>
 
 /** Join a Wi-Fi network. An empty password means an open network. */
 export async function joinWifiNetwork(interfaceID: string, ssid: string, bssid: string | null, password: string): Promise<NetworkStateInfo> {
-	const state = await api.call<NetworkStateInfo>('system.wifiConnect', { interfaceID, ssid, bssid, password });
-	networkState.set(state);
-	return state;
+	storeSnapshot(await api.call<NetworkStateInfo>('system.wifiConnect', { interfaceID, ssid, bssid, password }));
+	return get(networkState);
 }
