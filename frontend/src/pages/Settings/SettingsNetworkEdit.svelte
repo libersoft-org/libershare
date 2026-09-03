@@ -141,9 +141,12 @@
 				const current = (await refreshNetworkState()).interfaces.find(item => item.id === interfaceID);
 				// A stale form is reloaded so the user sees what they would now be
 				// editing over. Any other failure keeps the typed values for a retry and
-				// only moves the baseline to what the host actually has after it.
+				// leaves the baseline where it was: if the host moved anyway, whether
+				// the failed attempt moved it or somebody else did, the form goes stale
+				// and Save stays blocked until the user reloads it. Adopting the new
+				// state here instead would let the retry overwrite that change without
+				// ever saying so.
 				if (current && (error as { code?: string }).code === 'NETCONFIG_STALE') seedFrom(current);
-				else if (current) baseline = ipv4BaselineOf(current);
 			} catch {}
 		} finally {
 			busy = false;
