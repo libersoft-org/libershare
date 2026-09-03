@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path';
 import { productName } from '@shared';
 import { expectedNetworkHelperHash } from './network-helper-integrity.ts';
-import { runElevatedWindowsProcess, verifyWindowsInstalledHelper, WINDOWS_LAUNCHER_EXIT, windowsHelperParameters, windowsLocalAppDataPath, writeWindowsRequestFile } from './network-helper-windows.ts';
+import { runElevatedWindowsProcess, verifyWindowsInstalledHelper, WINDOWS_LAUNCHER_EXIT, windowsCurrentProcessIdentity, windowsHelperParameters, windowsLocalAppDataPath, windowsRequestFileName, writeWindowsRequestFile } from './network-helper-windows.ts';
 
 /**
  * Resolve the outcome of one elevation request as an exit code.
@@ -15,7 +15,7 @@ async function elevate(args: string[]): Promise<number> {
 	const helper = join(dirname(process.execPath), 'lish-network-helper.exe');
 	const expectedHash = expectedNetworkHelperHash();
 	if (!expectedHash || !(await verifyWindowsInstalledHelper(helper, process.execPath, expectedHash))) return WINDOWS_LAUNCHER_EXIT.untrusted;
-	const request = writeWindowsRequestFile(join(windowsLocalAppDataPath(), productName, 'network-request.json'), Buffer.from(args[1]!, 'base64url').toString('utf8'));
+	const request = writeWindowsRequestFile(join(windowsLocalAppDataPath(), productName, windowsRequestFileName(windowsCurrentProcessIdentity())), Buffer.from(args[1]!, 'base64url').toString('utf8'));
 	try {
 		const outcome = await runElevatedWindowsProcess(helper, windowsHelperParameters(request.path), 180_000);
 		if (outcome.kind === 'cancelled') return WINDOWS_LAUNCHER_EXIT.cancelled;

@@ -5,8 +5,8 @@ import { HELPER_TIMEOUT_MS, linuxNetworkHelperArgs, MAC_HELPER_SHELL, macAppBund
 import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from '../../src/system-network-linux.ts';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProgramFilesPath, windowsRequestFileHeld, windowsSystemEnvironment, writeWindowsRequestFile } from '../../src/network-helper-windows.ts';
+import { join, win32 } from 'node:path';
+import { assertWindowsRequestOwner, parseWindowsRequestFileName, windowsCurrentProcessIdentity, windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProcessImagePath, windowsProgramFilesPath, windowsRequestFileHeld, windowsRequestFileName, windowsSystemEnvironment, writeWindowsRequestFile } from '../../src/network-helper-windows.ts';
 
 describe('network helper protocol', () => {
 	it('round-trips one validated IPv4 operation', () => {
@@ -184,6 +184,65 @@ describe('network helper launch commands', () => {
 			unlinkSync(path);
 		}
 		expect(windowsRequestFileHeld(path)).toBe(false);
+	});
+
+	it('names a request file after the launcher that wrote it', () => {
+		const identity = { pid: 4321, created: 0x1dc9a3b4c5d6e7fn };
+		const name = windowsRequestFileName(identity);
+		expect(parseWindowsRequestFileName(name)).toEqual(identity);
+		expect(parseWindowsRequestFileName(['C:', 'Users', 'alice', 'AppData', 'Local', 'LiberShare', name].join(win32.sep))).toEqual(identity);
+		// Two launchers, and a launcher and a file an earlier one left behind, never
+		// share a name.
+		expect(windowsRequestFileName(identity)).not.toBe(name);
+		// A name nothing wrote carries no owner, so nothing can be verified about it.
+		for (const foreign of ['network-request.json', 'network-request-4321-1dc-.json', 'network-request-4321-nothex-00112233445566778899aabbccddeeff.json', `network-request-99999999999-1dc-${'0'.repeat(32)}.json`]) expect(parseWindowsRequestFileName(foreign)).toBeNull();
+	});
+
+	it('resolves a live process and refuses a stale identity', () => {
+		if (process.platform !== 'win32') return;
+		const identity = windowsCurrentProcessIdentity();
+		expect(identity.pid).toBe(process.pid);
+		expect(windowsProcessImagePath(identity)?.toLowerCase()).toBe(process.execPath.toLowerCase());
+		// A process id says nothing on its own: Windows hands it out again once the
+		// process is gone, so the creation time is what makes it an identity.
+		expect(windowsProcessImagePath({ pid: identity.pid, created: identity.created + 1n })).toBeNull();
+		expect(windowsProcessImagePath({ pid: 0xffffffe, created: identity.created })).toBeNull();
+	});
+
+	it('refuses a request whose launcher cannot be verified', async () => {
+		if (process.platform !== 'win32') return;
+		const unnamed = join(tmpdir(), `lish-unnamed-${process.pid}.json`);
+		writeFileSync(unnamed, '{"version":1}');
+		try {
+			expect(assertWindowsRequestOwner(unnamed)).rejects.toThrow('not named by a launcher');
+			// A well-formed name is only a claim. This test process is not the
+			// installed launcher, so the claim fails on the running process too.
+			expect(assertWindowsRequestOwner(join(tmpdir(), windowsRequestFileName({ pid: 0xffffffe, created: 1n })))).rejects.toThrow();
+		} finally {
+			unlinkSync(unnamed);
+		}
+	});
+
+	it('sweeps request files an earlier launcher left behind', () => {
+		if (process.platform !== 'win32') return;
+		const directory = join(tmpdir(), `lish-sweep-${process.pid}`);
+		const leftover = join(directory, windowsRequestFileName({ pid: 4321, created: 1n }));
+		const held = join(directory, windowsRequestFileName({ pid: 4322, created: 2n }));
+		const guard = writeWindowsRequestFile(held, '{"version":1}');
+		try {
+			writeFileSync(leftover, '{"version":1}');
+			const next = writeWindowsRequestFile(join(directory, windowsRequestFileName(windowsCurrentProcessIdentity())), '{"version":1}');
+			try {
+				// A launcher killed while its prompt was up never deletes its own file.
+				expect(existsSync(leftover)).toBe(false);
+				// One a live launcher still holds is not swept out from under it.
+				expect(existsSync(held)).toBe(true);
+			} finally {
+				next.release();
+			}
+		} finally {
+			guard.release();
+		}
 	});
 
 	it('reads Program Files through the Windows known-folder API', () => {

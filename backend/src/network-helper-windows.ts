@@ -1,7 +1,8 @@
 import { dlopen, FFIType, ptr, read, type Pointer } from 'bun:ffi';
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
-import { dirname, win32 } from 'node:path';
+import { dirname, join, win32 } from 'node:path';
 import { sha256File } from './network-helper-integrity.ts';
 
 const SHELLEXECUTEINFO_SIZE = 112;
@@ -21,6 +22,12 @@ const OPEN_EXISTING = 3;
 const FILE_ATTRIBUTE_NORMAL = 0x80;
 const INVALID_HANDLE_VALUE = 0xffffffffffffffffn;
 const ERROR_SHARING_VIOLATION = 32;
+const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+/** The installed launcher, the only process the elevated helper takes a request from. */
+export const WINDOWS_LAUNCHER_FILE = 'lish-network-launcher.exe';
+
+const REQUEST_FILE_NAME = /^network-request-(\d{1,10})-([0-9a-f]{1,16})-[0-9a-f]{32}\.json$/;
 
 function wide(value: string): Buffer {
 	if (value.includes('\0')) throw new Error('invalid Windows helper argument');
@@ -40,6 +47,110 @@ function pointerValue(value: Uint8Array): bigint {
 export function windowsHelperParameters(requestFile: string): string {
 	if (!/^[A-Za-z]:\\[^"\p{Cc}]{1,1024}$/u.test(requestFile)) throw new Error('invalid Windows helper launch arguments');
 	return `--request-file "${requestFile}"`;
+}
+
+/**
+ * A running process, named so that a recycled process id cannot pass for it.
+ *
+ * Windows hands process ids out again once the process is gone, so the id alone
+ * says nothing about who holds it now. Its creation time does.
+ */
+export interface WindowsProcessIdentity {
+	readonly pid: number;
+	readonly created: bigint;
+}
+
+function processCreationTime(kernel: { symbols: { GetProcessTimes: (handle: bigint, creation: Pointer, exit: Pointer, kernelTime: Pointer, userTime: Pointer) => number } }, handle: bigint): bigint | null {
+	const times = new Uint8Array(32);
+	const at = (offset: number): Pointer => ptr(times, offset);
+	if (!kernel.symbols.GetProcessTimes(handle, at(0), at(8), at(16), at(24))) return null;
+	return new DataView(times.buffer).getBigUint64(0, true);
+}
+
+/** This process, as the launcher names itself in the request file it writes. */
+export function windowsCurrentProcessIdentity(): WindowsProcessIdentity {
+	if (process.platform !== 'win32') throw new Error('Windows process identities are unavailable');
+	const kernel = dlopen('kernel32.dll', {
+		GetCurrentProcess: { args: [], returns: FFIType.u64 },
+		GetProcessTimes: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+	});
+	try {
+		const created = processCreationTime(kernel, BigInt(kernel.symbols.GetCurrentProcess()));
+		if (created === null) throw new Error('GetProcessTimes failed');
+		return { pid: process.pid, created };
+	} finally {
+		kernel.close();
+	}
+}
+
+/**
+ * Where a process's image lives, or null when it is gone or the id now belongs
+ * to something else.
+ */
+export function windowsProcessImagePath(identity: WindowsProcessIdentity): string | null {
+	if (process.platform !== 'win32') throw new Error('Windows process identities are unavailable');
+	const kernel = dlopen('kernel32.dll', {
+		OpenProcess: { args: [FFIType.u32, FFIType.i32, FFIType.u32], returns: FFIType.u64 },
+		GetProcessTimes: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+		QueryFullProcessImageNameW: { args: [FFIType.u64, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+		CloseHandle: { args: [FFIType.u64], returns: FFIType.i32 },
+	});
+	try {
+		const handle = BigInt(kernel.symbols.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, identity.pid));
+		if (handle === 0n) return null;
+		try {
+			if (processCreationTime(kernel, handle) !== identity.created) return null;
+			const image = new Uint16Array(32 * 1024);
+			const size = new Uint32Array([image.length]);
+			if (!kernel.symbols.QueryFullProcessImageNameW(handle, 0, ptr(image), ptr(size))) return null;
+			return Buffer.from(image.buffer, 0, size[0]! * 2).toString('utf16le');
+		} finally {
+			kernel.symbols.CloseHandle(handle);
+		}
+	} finally {
+		kernel.close();
+	}
+}
+
+/**
+ * The name of the file one request lives in, which carries its launcher's identity.
+ *
+ * The name is fixed when the launcher hands it to UAC, so from that moment it is
+ * out of reach of everything else in the session, and the elevated helper can
+ * read out of it whose request this is. A random tail keeps two launchers, or a
+ * launcher and a file left behind by an earlier one, from ever sharing a name.
+ */
+export function windowsRequestFileName(identity: WindowsProcessIdentity): string {
+	return `network-request-${identity.pid}-${identity.created.toString(16)}-${randomBytes(16).toString('hex')}.json`;
+}
+
+/** The launcher a request file names, or null when the name is not one a launcher wrote. */
+export function parseWindowsRequestFileName(path: string): WindowsProcessIdentity | null {
+	const match = REQUEST_FILE_NAME.exec(win32.basename(path));
+	return match ? { pid: Number(match[1]), created: BigInt(`0x${match[2]}`) } : null;
+}
+
+/**
+ * Fail unless the launcher that asked for this change is still there waiting for
+ * the answer, running out of the installed launcher next to this helper.
+ *
+ * Holding the file open is a liveness signal and nothing more: anyone in the
+ * session can hold a file. UAC keeps its prompt on screen after the launcher is
+ * gone (killed on the backend's timeout, or with the whole app closed), and the
+ * file it left behind is then free for anything in the session to rewrite and
+ * hold open in its place. So the owner is checked, not just the lock: a live
+ * process, the same one the file is named after, out of a binary only an
+ * administrator can replace.
+ */
+export async function assertWindowsRequestOwner(path: string): Promise<void> {
+	const identity = parseWindowsRequestFileName(path);
+	if (!identity) throw new Error('network helper request file was not named by a launcher');
+	const launcher = join(dirname(process.execPath), WINDOWS_LAUNCHER_FILE);
+	if (!(await verifyWindowsInstalledSibling(launcher, process.execPath))) throw new Error('privileged network helper is not installed next to its launcher');
+	const image = windowsProcessImagePath(identity);
+	if (image === null) throw new Error('the launcher that asked for this change is no longer running');
+	if (image.toLowerCase() !== (await realpath(launcher)).toLowerCase()) throw new Error('the process that asked for this change is not the installed launcher');
+	if (!windowsRequestFileHeld(path)) throw new Error('the launcher no longer holds the request it asked for');
 }
 
 /** The request file the launcher hands to the elevated helper, held until {@link WindowsRequestFile.release}. */
@@ -62,6 +173,16 @@ export interface WindowsRequestFile {
 export function writeWindowsRequestFile(path: string, content: string): WindowsRequestFile {
 	if (process.platform !== 'win32') throw new Error('Windows request files are unavailable');
 	mkdirSync(dirname(path), { recursive: true });
+	// A launcher killed while its prompt was up never reaches its own cleanup, so
+	// leftovers are swept on the way in. One still held by a live launcher stays:
+	// Windows refuses to delete a file opened without delete sharing.
+	for (const entry of readdirSync(dirname(path))) {
+		if (entry !== win32.basename(path) && REQUEST_FILE_NAME.test(entry)) {
+			try {
+				unlinkSync(join(dirname(path), entry));
+			} catch {}
+		}
+	}
 	writeFileSync(path, content, 'utf8');
 	const kernel = dlopen('kernel32.dll', {
 		CreateFileW: { args: [FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr], returns: FFIType.u64 },
@@ -87,15 +208,12 @@ export function writeWindowsRequestFile(path: string, content: string): WindowsR
 }
 
 /**
- * True while the launcher that asked for this change still holds its request file.
+ * True while something still holds the request file open for writing.
  *
  * The launcher keeps the file open with read-only sharing, so a write-open fails
- * with a sharing violation exactly as long as it lives. That makes the guard a
- * liveness signal, which the elevated helper needs: UAC keeps its prompt on
- * screen even after the launcher is gone (killed on the backend's timeout, or
- * with the whole app closed), and the file it left behind is then unprotected.
- * Approving such a prompt minutes later would apply a change the backend already
- * reported as failed, out of a file anyone in the session could have rewritten.
+ * with a sharing violation exactly as long as it lives. That is only a lock,
+ * never proof of who took it, so {@link assertWindowsRequestOwner} is what the
+ * elevated helper asks; this is one of its checks.
  */
 export function windowsRequestFileHeld(path: string): boolean {
 	if (process.platform !== 'win32') throw new Error('Windows request files are unavailable');

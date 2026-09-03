@@ -7,7 +7,7 @@ import { productIdentifier } from '@shared';
 import { expectedNetworkHelperHash, sha256File } from './network-helper-integrity.ts';
 import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from './system-network-linux.ts';
 import { encodeNetworkHelperRequest, NETWORK_HELPER_EXIT, parseNetworkHelperResponse, type NetworkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
-import { verifyWindowsInstalledHelper, verifyWindowsInstalledSibling, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
+import { verifyWindowsInstalledHelper, verifyWindowsInstalledSibling, WINDOWS_LAUNCHER_EXIT, WINDOWS_LAUNCHER_FILE, windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
 
 const execFileAsync = promisify(execFile);
 /**
@@ -35,7 +35,7 @@ export function networkHelperPath(platform: NodeJS.Platform = process.platform, 
 }
 
 export function windowsNetworkLauncherPath(executablePath: string = process.execPath): string {
-	return join(dirname(executablePath), 'lish-network-launcher.exe');
+	return join(dirname(executablePath), WINDOWS_LAUNCHER_FILE);
 }
 
 export function trustedLinuxHelperMetadata(uid: number, mode: number, regularFile: boolean): boolean {
