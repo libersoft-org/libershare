@@ -454,8 +454,8 @@ describe('parseNmcliIPv4Profile', () => {
 	const plain = ['connection.interface-name:eth0', 'connection.multi-connect:0', 'ipv4.method:auto', 'ipv4.never-default:no', 'ipv4.gateway:', 'ipv4.addresses:', 'ipv4.routes:', 'ipv4.route-table:0', 'ipv4.routing-rules:'].join('\n');
 
 	it('accepts only plain automatic or single-address manual profiles', () => {
-		expect(parseNmcliIPv4Profile(plain, 'eth0', 1)).toEqual({ method: 'auto', gateway: null, safe: true });
-		expect(parseNmcliIPv4Profile(plain.replace('ipv4.method:auto', 'ipv4.method:manual').replace('ipv4.gateway:', 'ipv4.gateway:192.0.2.1').replace('ipv4.addresses:', 'ipv4.addresses:192.0.2.10/24'), 'eth0', 1)).toEqual({ method: 'manual', gateway: '192.0.2.1', safe: true });
+		expect(parseNmcliIPv4Profile(plain, 'eth0', 1)).toEqual({ method: 'auto', gateway: null, address: null, prefixLength: null, safe: true });
+		expect(parseNmcliIPv4Profile(plain.replace('ipv4.method:auto', 'ipv4.method:manual').replace('ipv4.gateway:', 'ipv4.gateway:192.0.2.1').replace('ipv4.addresses:', 'ipv4.addresses:192.0.2.10/24'), 'eth0', 1)).toEqual({ method: 'manual', gateway: '192.0.2.1', address: '192.0.2.10', prefixLength: 24, safe: true });
 	});
 
 	it('rejects routing policy and address shapes the editor cannot preserve', () => {

@@ -80,6 +80,9 @@ export interface LinuxNetworkSources {
 export interface NmcliIPv4Profile {
 	method: string;
 	gateway: string | null;
+	/** What the profile stores, which is not necessarily what the kernel is using. */
+	address: string | null;
+	prefixLength: number | null;
 	safe: boolean;
 }
 
@@ -220,6 +223,7 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 		// link-local or disabled NetworkManager profiles. Only auto/manual are safe
 		// for this editor to round-trip; every other managed method stays read-only.
 		const ipv4Mode = managed ? parseNmcliIPv4Method(activeProfile.method) : kernelIPv4Mode;
+		const ipv4Addresses = addresses.filter(address => address.family === 'ipv4');
 		const info: NetInterfaceInfo = {
 			id: entry.ifname,
 			name: entry.ifname,
@@ -229,7 +233,7 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 			mac: entry.address ?? link?.address ?? null,
 			addresses,
 			ipv4Mode,
-			ipv4Configurable: managed && activeProfile.safe && ipv4Mode !== 'unknown' && addresses.filter(address => address.family === 'ipv4').length <= 1 && interfaceRoutes.length <= 1,
+			ipv4Configurable: managed && activeProfile.safe && ipv4Mode !== 'unknown' && ipv4Addresses.length <= 1 && interfaceRoutes.length <= 1 && nmcliProfileMatchesLive(activeProfile, ipv4Addresses[0] ?? null, interfaceRoutes[0]?.gateway ?? null),
 			wifiConfigurable: wireless && sources.managedDevices?.has(entry.ifname) === true,
 			gateway: interfaceRoutes[0]?.gateway ?? activeProfile?.gateway ?? null,
 			// NetworkManager knows the resolvers PER LINK, which is the only correct
@@ -543,7 +547,23 @@ export function parseNmcliIPv4Profile(text: string, expectedDevice: string, acti
 	const knownMethod = method === 'auto' || method === 'manual';
 	const boundOnce = interfaceName === expectedDevice && (multiConnect === 0 || multiConnect === 1) && activeInstances === 1;
 	const safe = boundOnce && knownMethod && values.get('ipv4.never-default') === 'no' && (values.get('ipv4.routes') ?? '') === '' && ['', '0'].includes(values.get('ipv4.route-table') ?? '') && (values.get('ipv4.routing-rules') ?? '') === '' && (gatewayText === '' || isIPv4(gatewayText)) && (method === 'auto' ? addresses === '' && gatewayText === '' : simpleManualAddress);
-	return { method, gateway: gatewayText || null, safe };
+	return { method, gateway: gatewayText || null, address: simpleManualAddress ? (addressMatch?.[1] ?? null) : null, prefixLength: simpleManualAddress && addressMatch ? Number(addressMatch[2]) : null, safe };
+}
+
+/**
+ * True when the saved profile still describes what the kernel is actually using.
+ *
+ * The screen shows the kernel's address and the form saves back into the profile,
+ * so the two have to agree before an edit can round-trip. `nmcli connection
+ * modify` without a reapply leaves them apart — the profile already holds the
+ * next address while the kernel still holds the previous one — and saving the
+ * form would then quietly undo that pending change, which is the very thing the
+ * baseline check exists to prevent one layer up. A profile on DHCP stores no
+ * address or gateway to disagree about.
+ */
+export function nmcliProfileMatchesLive(profile: NmcliIPv4Profile, liveAddress: NetAddress | null, liveGateway: string | null): boolean {
+	if (parseNmcliIPv4Method(profile.method) !== 'static') return true;
+	return liveAddress !== null && profile.address === liveAddress.address && profile.prefixLength === liveAddress.prefixLength && profile.gateway === liveGateway;
 }
 
 const NMCLI_IPV4_PROFILE_FIELDS = 'connection.interface-name,connection.multi-connect,ipv4.method,ipv4.never-default,ipv4.gateway,ipv4.addresses,ipv4.routes,ipv4.route-table,ipv4.routing-rules';

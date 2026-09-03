@@ -266,7 +266,7 @@ describe('parseWindowsNetworkState', () => {
 });
 
 describe('parseLinuxNetworkState', () => {
-	const sources = { addr: fixture('network-linux-addr.json'), link: fixture('network-linux-link.json'), route: '[{"dst":"default","gateway":"192.0.2.1","dev":"eth0","flags":[]}]', resolvers: ['192.0.2.1'], activeConnections: new Map([['eth0', 'Wired connection 1']]), ipv4Profiles: new Map([['eth0', { method: 'auto', gateway: null, safe: true }]]) };
+	const sources = { addr: fixture('network-linux-addr.json'), link: fixture('network-linux-link.json'), route: '[{"dst":"default","gateway":"192.0.2.1","dev":"eth0","flags":[]}]', resolvers: ['192.0.2.1'], activeConnections: new Map([['eth0', 'Wired connection 1']]), ipv4Profiles: new Map([['eth0', { method: 'auto', gateway: null, address: null, prefixLength: null, safe: true }]]) };
 	const result = parseLinuxNetworkState(sources);
 
 	it('reads DHCP from the kernel dynamic flag and static from a permanent lifetime', () => {
@@ -305,8 +305,8 @@ describe('parseLinuxNetworkState', () => {
 				['docker0', 'b'],
 			]),
 			ipv4Profiles: new Map([
-				['eth0', { method: 'auto', gateway: null, safe: true }],
-				['docker0', { method: 'manual', gateway: '198.51.100.1', safe: true }],
+				['eth0', { method: 'auto', gateway: null, address: null, prefixLength: null, safe: true }],
+				['docker0', { method: 'manual', gateway: '198.51.100.1', address: '172.17.0.1', prefixLength: 16, safe: true }],
 			]),
 		});
 		expect(byID(parsed, 'eth0')).toMatchObject({ defaultRoute: true, gateway: '192.0.2.1' });
@@ -330,8 +330,29 @@ describe('parseLinuxNetworkState', () => {
 
 		const v6Only = JSON.parse(sources.addr) as Array<{ ifname: string; addr_info?: Array<{ family: string }> }>;
 		for (const entry of v6Only) entry.addr_info = (entry.addr_info ?? []).filter(address => address.family !== 'inet');
-		const unknown = parseLinuxNetworkState({ ...sources, addr: JSON.stringify(v6Only), ipv4Profiles: new Map([['eth0', { method: 'shared', gateway: null, safe: false }]]) });
+		const unknown = parseLinuxNetworkState({ ...sources, addr: JSON.stringify(v6Only), ipv4Profiles: new Map([['eth0', { method: 'shared', gateway: null, address: null, prefixLength: null, safe: false }]]) });
 		expect(byID(unknown, 'eth0').ipv4Configurable).toBe(false);
+	});
+
+	it('keeps an interface read-only while its saved profile and the kernel disagree', () => {
+		// `nmcli connection modify` without a reapply leaves the profile holding the
+		// next address and the kernel the previous one. The screen shows the kernel's,
+		// so saving the form would write it back and undo the pending change.
+		const live = { method: 'manual', gateway: '192.0.2.1', address: '192.0.2.9', prefixLength: 23, safe: true } as const;
+		const matching = parseLinuxNetworkState({ ...sources, ipv4Profiles: new Map([['eth0', live]]) });
+		expect(byID(matching, 'eth0').ipv4Configurable).toBe(true);
+
+		const movedAddress = parseLinuxNetworkState({ ...sources, ipv4Profiles: new Map([['eth0', { ...live, address: '192.0.2.20' }]]) });
+		expect(byID(movedAddress, 'eth0').ipv4Configurable).toBe(false);
+
+		const movedPrefix = parseLinuxNetworkState({ ...sources, ipv4Profiles: new Map([['eth0', { ...live, prefixLength: 24 }]]) });
+		expect(byID(movedPrefix, 'eth0').ipv4Configurable).toBe(false);
+
+		const movedGateway = parseLinuxNetworkState({ ...sources, ipv4Profiles: new Map([['eth0', { ...live, gateway: '192.0.2.254' }]]) });
+		expect(byID(movedGateway, 'eth0').ipv4Configurable).toBe(false);
+
+		// A DHCP profile stores no address of its own, so there is nothing to diverge.
+		expect(byID(parseLinuxNetworkState(sources), 'eth0').ipv4Configurable).toBe(true);
 	});
 
 	it('calls software devices other and only a bare ethernet link wired', () => {
