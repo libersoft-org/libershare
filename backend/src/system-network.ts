@@ -404,19 +404,22 @@ async function isWindowsElevated(): Promise<boolean> {
  * The form was seeded from one snapshot; by the time Save is pressed the
  * interface may have been switched to DHCP by a system tool or edited by
  * another client. Applying the form then would silently undo that change.
+ *
+ * Anything that is not the interface's current configuration is refused,
+ * a missing or malformed baseline included: there is no value a caller can pass
+ * to mean "apply this over whatever is there".
  */
 export function assertIPv4Baseline(target: NetInterfaceInfo, expected: unknown): void {
-	if (expected === undefined) return;
 	if (!sameIPv4Baseline(ipv4BaselineOf(target), expected)) throw new CodedError(ErrorCodes.NETCONFIG_STALE, 'interface configuration changed since the form was opened');
 }
 
 /** Apply an IPv4 configuration and read its resulting state before another mutation may begin. */
-export function applyIPv4(interfaceID: string, config: NetIPv4Config, primaryInterface: string = '', allowPrivilegeEscalation: boolean = true, expected?: unknown): Promise<NetworkStateInfo> {
+export function applyIPv4(interfaceID: string, config: NetIPv4Config, primaryInterface: string = '', allowPrivilegeEscalation: boolean = true, expected: unknown): Promise<NetworkStateInfo> {
 	return runNetworkMutation(() => applyIPv4Unlocked(interfaceID, config, primaryInterface, allowPrivilegeEscalation, expected));
 }
 
 /** {@link applyIPv4} for a caller that already holds the network mutation lock. */
-export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Config, primaryInterface: string = '', allowPrivilegeEscalation: boolean = true, expected?: unknown): Promise<NetworkStateInfo> {
+export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Config, primaryInterface: string = '', allowPrivilegeEscalation: boolean = true, expected: unknown): Promise<NetworkStateInfo> {
 	if (typeof interfaceID !== 'string' || !config || typeof config !== 'object') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid request');
 	const invalid = validateIPv4Config(config);
 	if (invalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${invalid}`);

@@ -8,9 +8,12 @@ import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
 import { assertWindowsRequestOwner, parseWindowsRequestFileName, windowsCurrentProcessIdentity, windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProcessImagePath, windowsProgramFilesPath, windowsRequestFileHeld, windowsRequestFileName, windowsSystemEnvironment, writeWindowsRequestFile } from '../../src/network-helper-windows.ts';
 
+/** A baseline of the exact shape the backend builds, which every request has to carry. */
+const baseline = { mode: 'dhcp' as const, address: null, prefixLength: null, gateway: null, dns: [] };
+
 describe('network helper protocol', () => {
 	it('round-trips one validated IPv4 operation', () => {
-		const request = { version: 1 as const, operation: 'applyIPv4' as const, interfaceID: 'eth0', config: { mode: 'static' as const, address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53'] } };
+		const request = { version: 1 as const, operation: 'applyIPv4' as const, interfaceID: 'eth0', config: { mode: 'static' as const, address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53'] }, expected: baseline };
 		expect(decodeNetworkHelperRequest(encodeNetworkHelperRequest(request))).toEqual(request);
 	});
 
@@ -27,12 +30,12 @@ describe('network helper protocol', () => {
 
 	it('dispatches only the typed apply operation', async () => {
 		const calls: unknown[] = [];
-		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' } }));
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected: baseline }));
 		const result = await executeNetworkHelperRequest(request, async (interfaceID, config, expected) => {
 			calls.push({ interfaceID, config, expected });
 			return { interfaces: [], primaryID: null, detail: 'full', known: true, capabilities: { ipv4: true, wifi: false, staticGatewayRequired: false } };
 		});
-		expect(calls).toEqual([{ interfaceID: 'eth0', config: { mode: 'dhcp' }, expected: undefined }]);
+		expect(calls).toEqual([{ interfaceID: 'eth0', config: { mode: 'dhcp' }, expected: baseline }]);
 		expect(result).toEqual({ ok: true });
 		expect(parseNetworkHelperResponse(JSON.stringify(result))).toEqual(result);
 	});
@@ -59,19 +62,19 @@ describe('network helper protocol', () => {
 
 	it('rejects a baseline that is not exactly the shape the backend builds', () => {
 		const base = { version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' } };
-		for (const expected of [null, [], 'x', { mode: 'static' }, { mode: 'bogus', address: null, prefixLength: null, gateway: null, dns: [] }, { mode: 'dhcp', address: null, prefixLength: null, gateway: null, dns: [], extra: 1 }, { mode: 'dhcp', address: 'x'.repeat(65), prefixLength: null, gateway: null, dns: [] }, { mode: 'dhcp', address: null, prefixLength: 33, gateway: null, dns: [] }, { mode: 'dhcp', address: null, prefixLength: null, gateway: null, dns: 'nope' }, { mode: 'dhcp', address: null, prefixLength: null, gateway: null, dns: [1] }]) {
+		for (const expected of [undefined, null, [], 'x', { mode: 'static' }, { mode: 'bogus', address: null, prefixLength: null, gateway: null, dns: [] }, { mode: 'dhcp', address: null, prefixLength: null, gateway: null, dns: [], extra: 1 }, { mode: 'dhcp', address: 'x'.repeat(65), prefixLength: null, gateway: null, dns: [] }, { mode: 'dhcp', address: null, prefixLength: 33, gateway: null, dns: [] }, { mode: 'dhcp', address: null, prefixLength: null, gateway: null, dns: 'nope' }, { mode: 'dhcp', address: null, prefixLength: null, gateway: null, dns: [1] }]) {
 			expect(() => decodeNetworkHelperRequest(Buffer.from(JSON.stringify({ ...base, expected })).toString('base64url'))).toThrow('baseline');
 		}
 	});
 
 	it('rejects extra request fields and malformed helper responses', () => {
-		const extra = Buffer.from(JSON.stringify({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, command: 'whoami' })).toString('base64url');
+		const extra = Buffer.from(JSON.stringify({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected: baseline, command: 'whoami' })).toString('base64url');
 		expect(() => decodeNetworkHelperRequest(extra)).toThrow();
 		for (const response of ['{"ok":true,"state":{}}', '{"ok":false,"error":"bad\\nline"}', '{"ok":true,"extra":1}', 'x'.repeat(4097)]) expect(() => parseNetworkHelperResponse(response)).toThrow();
 	});
 
 	it('returns a bounded error instead of leaking a stack trace', async () => {
-		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' } }));
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected: baseline }));
 		const result = await executeNetworkHelperRequest(request, async () => {
 			throw new Error('x'.repeat(2000));
 		});
@@ -84,7 +87,7 @@ describe('network helper protocol', () => {
 	it('carries the stale-form refusal back across the privilege boundary', async () => {
 		// The screen reloads the form only on this exact code; a generic failure
 		// would let the same stale values be saved on the next attempt.
-		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' } }));
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected: baseline }));
 		const stale = await executeNetworkHelperRequest(request, async () => {
 			throw new CodedError(ErrorCodes.NETCONFIG_STALE, 'interface configuration changed since the form was opened');
 		});

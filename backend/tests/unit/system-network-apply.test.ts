@@ -148,7 +148,9 @@ describe('assertIPv4Baseline', () => {
 
 	it('accepts a form seeded from the configuration the interface still has', () => {
 		expect(() => assertIPv4Baseline(target, ipv4BaselineOf(target))).not.toThrow();
-		expect(() => assertIPv4Baseline(target, undefined)).not.toThrow();
+		// There is no value that means "apply over whatever is there": a caller that
+		// brings no baseline, or a malformed one, is refused like a stale one.
+		for (const missing of [undefined, null, {}, 'x']) expect(() => assertIPv4Baseline(target, missing)).toThrow(expect.objectContaining({ code: ErrorCodes.NETCONFIG_STALE }));
 	});
 
 	it('refuses a form whose interface was meanwhile switched to DHCP or re-addressed', () => {

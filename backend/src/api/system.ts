@@ -28,7 +28,7 @@ interface SystemHandlers {
 	setVolume: (p: { volume: number }) => Promise<{ success: boolean; available: boolean }>;
 	getVolume: () => Promise<{ volume: number | null; available: boolean }>;
 	network: () => Promise<NetworkStateInfo>;
-	networkApply: (p: { interfaceID: string; config: NetIPv4Config; expected?: NetIPv4Baseline }) => Promise<NetworkStateInfo>;
+	networkApply: (p: { interfaceID: string; config: NetIPv4Config; expected: NetIPv4Baseline }) => Promise<NetworkStateInfo>;
 	wifiScan: (p: { interfaceID: string }) => Promise<NetWifiNetwork[]>;
 	wifiConnect: (p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string }) => Promise<NetworkStateInfo>;
 	startPolling: () => void;
@@ -286,8 +286,8 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	 * the caller has just changed the very interface it is watching and needs to
 	 * see the outcome — including the case where the address did not take.
 	 */
-	async function applyNetworkConfig(p: { interfaceID: string; config: NetIPv4Config; expected?: NetIPv4Baseline }): Promise<NetworkStateInfo> {
-		assert(p, ['interfaceID', 'config']);
+	async function applyNetworkConfig(p: { interfaceID: string; config: NetIPv4Config; expected: NetIPv4Baseline }): Promise<NetworkStateInfo> {
+		assert(p, ['interfaceID', 'config', 'expected']);
 		const primary = settings.get('network.primaryInterface') ?? '';
 		return runAndPublishNetworkMutation(
 			() => applyIPv4Unlocked(p.interfaceID, p.config, primary, true, p.expected),

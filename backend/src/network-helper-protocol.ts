@@ -5,8 +5,15 @@ export interface NetworkHelperRequest {
 	operation: 'applyIPv4';
 	interfaceID: string;
 	config: NetIPv4Config;
-	/** The configuration the change was built on; the helper refuses to apply over anything else. */
-	expected?: NetIPv4Baseline;
+	/**
+	 * The configuration the change was built on; the helper refuses to apply over
+	 * anything else.
+	 *
+	 * Required, so that a caller cannot opt out of the check by leaving it out. An
+	 * apply is always "make this interface look like X, given that it looks like
+	 * Y" — a caller with no Y has not read the interface it is about to change.
+	 */
+	expected: NetIPv4Baseline;
 }
 
 /** Exit codes of the helper when it reports through the process status instead of stdout. */
@@ -23,7 +30,7 @@ export type NetworkHelperErrorCode = (typeof NETWORK_HELPER_ERROR_CODES)[number]
 
 export type NetworkHelperFailure = { ok: false; error: string; code?: NetworkHelperErrorCode };
 export type NetworkHelperResponse = { ok: true } | NetworkHelperFailure;
-type ApplyIPv4 = (interfaceID: string, config: NetIPv4Config, expected?: NetIPv4Baseline) => Promise<unknown>;
+type ApplyIPv4 = (interfaceID: string, config: NetIPv4Config, expected: NetIPv4Baseline) => Promise<unknown>;
 
 const REQUEST_KEYS = ['config', 'expected', 'interfaceID', 'operation', 'version'];
 const CONFIG_KEYS = ['address', 'dns', 'gateway', 'mode', 'prefixLength'];
@@ -65,7 +72,7 @@ export function decodeNetworkHelperRequest(encoded: string): NetworkHelperReques
 	if (!request.config || typeof request.config !== 'object' || Array.isArray(request.config) || !hasOnlyKeys(request.config as unknown as Record<string, unknown>, CONFIG_KEYS)) throw new Error('invalid network helper config');
 	const invalid = validateIPv4Config(request.config);
 	if (invalid) throw new Error(`invalid network helper ${invalid}`);
-	if (request.expected !== undefined && !isNetworkHelperBaseline(request.expected)) throw new Error('invalid network helper baseline');
+	if (!isNetworkHelperBaseline(request.expected)) throw new Error('invalid network helper baseline');
 	return request as NetworkHelperRequest;
 }
 
