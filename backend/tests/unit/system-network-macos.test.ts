@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { assertMacIPv4Applied, hasMacWritePrivilege, macApplyArgs, withMacRollback, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { assertMacIPv4Applied, hasMacWritePrivilege, macApplyArgs, macRestoreRequiresLease, withMacRollback, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -444,5 +444,27 @@ describe('withMacRollback', () => {
 		).catch((error: Error) => error);
 		expect(failure.message).toContain('address did not become usable');
 		expect(failure.message).toContain('DHCP restore obtained no address');
+	});
+});
+
+describe('macRestoreRequiresLease', () => {
+	const leased = 'DHCP Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\n';
+	const noLease = 'DHCP Configuration\n';
+	const linkLocal = 'DHCP Configuration\nIP address: 169.254.10.2\nSubnet mask: 255.255.0.0\n';
+	const manual = 'Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\n';
+
+	it('asks the restore for a lease only when the service had one before', () => {
+		expect(macRestoreRequiresLease({ mode: 'dhcp' }, leased, true)).toBe(true);
+		// The link was up and nothing answered, so the restore will not get an
+		// address either. Demanding one would report a failed restore for a service
+		// that is exactly back where it started.
+		expect(macRestoreRequiresLease({ mode: 'dhcp' }, noLease, true)).toBe(false);
+		expect(macRestoreRequiresLease({ mode: 'dhcp' }, linkLocal, true)).toBe(false);
+	});
+
+	it('leaves every other case as the change itself was judged', () => {
+		expect(macRestoreRequiresLease({ mode: 'dhcp' }, leased, false)).toBe(false);
+		expect(macRestoreRequiresLease({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }, manual, true)).toBe(true);
+		expect(macRestoreRequiresLease({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }, manual, false)).toBe(false);
 	});
 });

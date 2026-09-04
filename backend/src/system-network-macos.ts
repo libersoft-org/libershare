@@ -481,6 +481,20 @@ function macAddressingApplied(config: NetIPv4Config, info: string, requireLease:
 	return !!current && current.address === config.address && current.prefixLength === config.prefixLength && parseServiceGateway(info) === (config.gateway || null);
 }
 
+/**
+ * Whether restoring a configuration may be held to producing a DHCP lease.
+ *
+ * A restore cannot be asked for a better state than the one it restores. A
+ * service that was on DHCP without an address before the change — the link is up
+ * but nothing answered — will not have one after it either, and demanding one
+ * would report a failed restore for a service that is exactly back where it
+ * started. What it does have to prove either way is that it is on DHCP again.
+ */
+export function macRestoreRequiresLease(previous: NetIPv4Config, previousInfo: string, requireLease: boolean): boolean {
+	if (!requireLease || previous.mode !== 'dhcp') return requireLease;
+	return macAddressingApplied(previous, previousInfo, true);
+}
+
 export function assertMacIPv4Applied(config: NetIPv4Config, info: string, dnsText: string, addressingChanged: boolean, requireLease: boolean = true): void {
 	if (addressingChanged && !macAddressingApplied(config, info, requireLease)) throw new Error(config.mode === 'dhcp' ? 'macOS did not obtain a usable DHCP lease' : 'macOS did not apply the requested IPv4 configuration');
 	if (config.dns !== undefined && !sameAddressSet(parseServiceDns(dnsText), config.dns)) throw new Error('macOS did not apply the requested DNS policy');
@@ -529,7 +543,7 @@ export async function applyMacIPv4(device: string, config: NetIPv4Config, addres
 			// has to hold the address it was handed. An unverified restore is exactly
 			// the case that leaves the machine unreachable while the app reports only
 			// the original failure.
-			await verifyMacIPv4(service, previous, addressingChanged, requireLease);
+			await verifyMacIPv4(service, previous, addressingChanged, macRestoreRequiresLease(previous, oldInfo, requireLease));
 		}
 	);
 }
