@@ -43,6 +43,8 @@ export interface MacNetworkSources {
 	ifconfig: string;
 	/** `route -n get default` */
 	route: string;
+	/** `route -n get -inet6 default`. Names the interface the host reaches the internet through when there is no IPv4 default route. */
+	route6?: string;
 	/** `netstat -rn -f inet`, used to detect every IPv4 default route. */
 	routes?: string;
 	/** Per-service `networksetup -getinfo <service>`, keyed by DEVICE. */
@@ -310,6 +312,11 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 	const services = parseServiceOrder(sources.serviceOrder);
 	const interfaces = parseIfconfig(sources.ifconfig);
 	const route = parseDefaultRoute(sources.route);
+	// Only the interface name is taken from the IPv6 side: a host reachable solely
+	// over IPv6 still has a default route, and without it the footer would call a
+	// working connection "disconnected". The IPv4 route stays first, and the
+	// gateway shown on the screen is still the IPv4 one.
+	const route6Device = sources.route6 ? parseDefaultRoute(sources.route6).device : null;
 	const routeDetailKnown = sources.routes === undefined || sources.routes.trim() !== '';
 	const routes = sources.routes === undefined ? (route.device && route.gateway ? [{ device: route.device, gateway: route.gateway }] : []) : parseDefaultRoutes(sources.routes);
 	const airport = sources.airport ? parseAirport(sources.airport) : null;
@@ -320,7 +327,7 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 		if (entry.loopback) continue;
 		const port = ports.get(device);
 		const medium = mapMedium(port);
-		const defaultRoute = device === route.device;
+		const defaultRoute = device === (route.device ?? route6Device);
 		const deviceRoutes = routes.filter(entry => entry.device === device);
 		const serviceInfo = sources.serviceInfo?.get(device) ?? '';
 		const ipv4Mode = serviceInfo ? parseServiceInfo(serviceInfo) : 'unknown';
@@ -382,7 +389,7 @@ const NETWORKSETUP = '/usr/sbin/networksetup';
 
 /** Read the live macOS network state. Throws when the core tools are unavailable, so the caller degrades to addresses only. */
 export async function readMacNetworkState(): Promise<NetInterfaceInfo[]> {
-	const [hardwarePorts, serviceOrder, ifconfig, route, routes] = await Promise.all([run(NETWORKSETUP, ['-listallhardwareports']), run(NETWORKSETUP, ['-listnetworkserviceorder']), run('/sbin/ifconfig', ['-a']), runOptional('/sbin/route', ['-n', 'get', 'default']), runOptional('/usr/sbin/netstat', ['-rn', '-f', 'inet'])]);
+	const [hardwarePorts, serviceOrder, ifconfig, route, route6, routes] = await Promise.all([run(NETWORKSETUP, ['-listallhardwareports']), run(NETWORKSETUP, ['-listnetworkserviceorder']), run('/sbin/ifconfig', ['-a']), runOptional('/sbin/route', ['-n', 'get', 'default']), runOptional('/sbin/route', ['-n', 'get', '-inet6', 'default']), runOptional('/usr/sbin/netstat', ['-rn', '-f', 'inet'])]);
 
 	const services = parseServiceOrder(serviceOrder);
 	const present = parseIfconfig(ifconfig);
@@ -402,7 +409,7 @@ export async function readMacNetworkState(): Promise<NetInterfaceInfo[]> {
 
 	const hasWifi = [...parseHardwarePorts(hardwarePorts).values()].some(port => /^Wi-Fi$/i.test(port));
 	const airport = hasWifi ? await runOptional('/usr/sbin/system_profiler', ['SPAirPortDataType']) : '';
-	return parseMacNetworkState({ hardwarePorts, serviceOrder, ifconfig, route, routes, serviceInfo, serviceDns, dhcpPacket, airport });
+	return parseMacNetworkState({ hardwarePorts, serviceOrder, ifconfig, route, route6, routes, serviceInfo, serviceDns, dhcpPacket, airport });
 }
 
 /**

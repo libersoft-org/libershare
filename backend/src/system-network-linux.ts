@@ -69,6 +69,8 @@ export interface LinuxNetworkSources {
 	addr: string;
 	link: string;
 	route: string;
+	/** `ip -j -6 route show default`. Names the interface the host reaches the internet through when there is no IPv4 default route. */
+	route6?: string;
 	/** Interface names the kernel reports as wireless (a `phy80211` symlink in sysfs). */
 	wireless?: Set<string>;
 	/** Per-interface `iw dev <if> link` output, when `iw` is installed. */
@@ -192,17 +194,25 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 	const addrEntries = JSON.parse(sources.addr) as IpAddrEntry[];
 	const linkEntries = JSON.parse(sources.link) as IpLinkEntry[];
 	const routeEntries = JSON.parse(sources.route) as IpRouteEntry[];
+	const route6Entries = sources.route6 ? (JSON.parse(sources.route6) as IpRouteEntry[]) : [];
 
 	const linkByName = new Map<string, IpLinkEntry>();
 	for (const entry of linkEntries) linkByName.set(entry.ifname, entry);
 
 	// Lowest-metric default route wins; an absent metric means 0 (kernel default).
-	let best: IpRouteEntry | null = null;
-	for (const route of routeEntries) {
-		if (!route.dev) continue;
-		if (!best || (route.metric ?? 0) < (best.metric ?? 0)) best = route;
-	}
-	const defaultDev = best?.dev ?? null;
+	const lowestMetric = (entries: IpRouteEntry[]): IpRouteEntry | null => {
+		let best: IpRouteEntry | null = null;
+		for (const route of entries) {
+			if (!route.dev) continue;
+			if (!best || (route.metric ?? 0) < (best.metric ?? 0)) best = route;
+		}
+		return best;
+	};
+	// A host reachable only over IPv6 still has a default route, just not an IPv4
+	// one. Without this the footer would call a working connection "disconnected"
+	// purely because the automatic pick had nothing to point at. The IPv4 route
+	// stays first: everything this screen edits is IPv4.
+	const defaultDev = lowestMetric(routeEntries)?.dev ?? lowestMetric(route6Entries)?.dev ?? null;
 	const routesByDevice = new Map<string, IpRouteEntry[]>();
 	for (const route of routeEntries) {
 		if (!route.dev) continue;
@@ -357,7 +367,7 @@ function readResolvers(): string[] {
 
 /** Read the live Linux network state. Throws when `ip` is absent or fails — the caller degrades to the address-only reader. */
 export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
-	const [addr, link, route] = await Promise.all([runFirst(IP_CANDIDATES, ['-j', 'addr']), runFirst(IP_CANDIDATES, ['-j', '-d', 'link']), runFirst(IP_CANDIDATES, ['-j', 'route', 'show', 'default'])]);
+	const [addr, link, route, route6] = await Promise.all([runFirst(IP_CANDIDATES, ['-j', 'addr']), runFirst(IP_CANDIDATES, ['-j', '-d', 'link']), runFirst(IP_CANDIDATES, ['-j', 'route', 'show', 'default']), runFirst(IP_CANDIDATES, ['-j', '-6', 'route', 'show', 'default']).catch(() => '[]')]);
 	const names = (JSON.parse(addr) as IpAddrEntry[]).map(e => e.ifname);
 	const wireless = new Set(names.filter(isWireless));
 	const iwLinks = new Map<string, string>();
@@ -370,7 +380,7 @@ export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
 		}
 	}
 	const [nmDevices, profiles] = await Promise.all([readNetworkManagerDevices(), readNetworkManagerProfiles()]);
-	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: nmDevices?.dns, activeConnections: profiles?.connections, ipv4Profiles: profiles?.ipv4Profiles, managedDevices: nmDevices?.managedDevices });
+	return parseLinuxNetworkState({ addr, link, route, route6, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: nmDevices?.dns, activeConnections: profiles?.connections, ipv4Profiles: profiles?.ipv4Profiles, managedDevices: nmDevices?.managedDevices });
 }
 
 /**

@@ -252,6 +252,21 @@ describe('parseMacNetworkState', () => {
 		airport: AIRPORT,
 	};
 
+	it('follows the IPv6 default route when the host has no IPv4 one', () => {
+		// `route -n get -inet6 default` prints the same key-value block as the IPv4
+		// call, so the existing parser reads it unchanged.
+		const route6 = '   route to: default\ndestination: default\n  interface: en0\n      flags: <UP,GATEWAY,DONE>\n';
+		const noIPv4 = parseMacNetworkState({ ...sources, route: '', routes: '' });
+		expect(noIPv4.some(item => item.defaultRoute)).toBe(false);
+		const viaIPv6 = parseMacNetworkState({ ...sources, route: '', routes: '', route6 });
+		expect(viaIPv6.find(item => item.defaultRoute)?.id).toBe('en0');
+		// The gateway shown stays the IPv4 one, which an IPv6-only host does not have.
+		expect(viaIPv6.find(item => item.defaultRoute)?.gateway).toBeNull();
+		// A host with no IPv6 default route prints an error instead of a block, and
+		// the parser finds no interface in it.
+		expect(parseMacNetworkState({ ...sources, route: '', routes: '', route6: 'route: writing to routing socket: not in table' }).some(item => item.defaultRoute)).toBe(false);
+	});
+
 	it('builds the Wi-Fi interface from every source at once', () => {
 		const en0 = parseMacNetworkState(sources).find(i => i.id === 'en0');
 		expect(en0).toMatchObject({

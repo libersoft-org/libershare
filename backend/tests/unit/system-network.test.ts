@@ -72,6 +72,20 @@ describe('WINDOWS_STATE_COMMAND', () => {
 
 describe('parseWindowsNetworkState', () => {
 	const result = parseWindowsNetworkState(windowsFixture());
+
+	it('follows the IPv6 default route when the host has no IPv4 one', () => {
+		const doc = JSON.parse(windowsFixture()) as Record<string, unknown>;
+		const ethernetIndex = (doc['routes'] as Array<{ ifIndex: number }>)[0]!.ifIndex;
+		const noIPv4 = parseWindowsNetworkState(JSON.stringify({ ...doc, routes: [] }));
+		expect(noIPv4.some(item => item.defaultRoute)).toBe(false);
+		const viaIPv6 = parseWindowsNetworkState(JSON.stringify({ ...doc, routes: [], routes6: [{ ifIndex: ethernetIndex, RouteMetric: 256, InterfaceMetric: 25 }] }));
+		expect(viaIPv6.find(item => item.defaultRoute)?.id).toBe(ID.ethernet);
+		// The gateway on screen stays the IPv4 one, so an IPv6-only host shows none.
+		expect(viaIPv6.find(item => item.defaultRoute)?.gateway).toBeNull();
+		// Where both exist the IPv4 route decides.
+		const both = parseWindowsNetworkState(JSON.stringify({ ...doc, routes6: [{ ifIndex: 999, RouteMetric: 0, InterfaceMetric: 0 }] }));
+		expect(both.find(item => item.defaultRoute)?.id).toBe(ID.ethernet);
+	});
 	// Public ids are the adapters' persistent GUIDs (ifIndex is not stable across
 	// reboots and the id is persisted as the user's primary-interface preference).
 	const ID = {
@@ -385,6 +399,25 @@ describe('parseLinuxNetworkState', () => {
 		const withFallback = linkLocal.find(entry => entry.ifname === 'eth0')!;
 		withFallback.addr_info = [{ family: 'inet', local: '169.254.10.2', prefixlen: 16, valid_life_time: 4294967295 }, ...(withFallback.addr_info ?? []).filter(address => address.family !== 'inet')];
 		expect(byID(parseLinuxNetworkState({ ...sources, addr: JSON.stringify(linkLocal) }), 'eth0').ipv4Configurable).toBe(true);
+	});
+
+	it('follows the IPv6 default route when the host has no IPv4 one', () => {
+		// Captured from `ip -j -6 route show default` on a dual-stacked host: the shape
+		// is the IPv4 one, so the same lowest-metric rule applies.
+		const route6 = '[{"dst":"default","gateway":"fe80::d2ea:11ff:fe29:ecfd","dev":"eth0","protocol":"ra","metric":1024,"flags":[],"pref":"medium"}]';
+		// Without an IPv4 default route nothing was primary, so the footer said
+		// "disconnected" for a host that is plainly connected.
+		expect(byID(parseLinuxNetworkState({ ...sources, route: '[]' }), 'eth0').defaultRoute).toBe(false);
+		expect(byID(parseLinuxNetworkState({ ...sources, route: '[]', route6 }), 'eth0').defaultRoute).toBe(true);
+		// The IPv4 route still wins where both exist.
+		const both = parseLinuxNetworkState({ ...sources, route6: '[{"dst":"default","gateway":"fe80::1","dev":"docker0","metric":1024}]' });
+		expect(byID(both, 'eth0').defaultRoute).toBe(true);
+		expect(byID(both, 'docker0').defaultRoute).toBe(false);
+		// An IPv6 default route must not be mistaken for an IPv4 one anywhere else:
+		// the interface keeps its IPv4 gateway and stays editable on its own terms.
+		const v6Only = parseLinuxNetworkState({ ...sources, route: '[]', route6 });
+		expect(byID(v6Only, 'eth0').gateway).toBeNull();
+		expect(byID(v6Only, 'eth0').ipv4Configurable).toBe(true);
 	});
 
 	it('calls software devices other and only a bare ethernet link wired', () => {
