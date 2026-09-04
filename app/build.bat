@@ -750,7 +750,7 @@ if defined WINDOWS_CERTIFICATE_THUMBPRINT (
     "!SIGN_POWERSHELL!" -NoProfile -NonInteractive -File scripts\sign-windows-binary.ps1 -Path build\lish-network-helper.exe -Thumbprint "!WINDOWS_CERTIFICATE_THUMBPRINT!"
     if errorlevel 1 ( endlocal & exit /b 1 )
 ) else echo WARNING: network helper is unsigned and will remain read-only
-for /f "tokens=*" %%h in ('node -e "const fs=require('fs'),c=require('crypto');process.stdout.write(c.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'))" "!ROOT_DIR!\backend\build\lish-network-helper.exe"') do set "HELPER_HASH=%%h"
+for /f "tokens=*" %%h in ('bun -e "const fs=require('fs'),c=require('crypto');process.stdout.write(c.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'))" "!ROOT_DIR!\backend\build\lish-network-helper.exe"') do set "HELPER_HASH=%%h"
 if not defined HELPER_HASH ( endlocal & exit /b 1 )
 call bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target !BUN_TGT! src/network-helper-windows-launcher.ts --outfile build\lish-network-launcher.exe --define LISH_NETWORK_HELPER_SHA256=\"!HELPER_HASH!\"
 if errorlevel 1 ( endlocal & exit /b 1 )

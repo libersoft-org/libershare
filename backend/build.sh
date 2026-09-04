@@ -40,8 +40,8 @@ if [ -n "$BUN_TARGET" ]; then
 	*windows*)
 		# The version resource is what the UAC prompt shows as the program name, so every
 		# binary a user may be asked to approve carries a readable one instead of its file name.
-		PRODUCT_NAME=$(node -p "require('../shared/src/product.json').name")
-		PRODUCT_VERSION=$(node -p "require('../shared/src/product.json').version")
+		PRODUCT_NAME=$(bun -p "require('../shared/src/product.json').name")
+		PRODUCT_VERSION=$(bun -p "require('../shared/src/product.json').version")
 		# The backend trusts the helper only when helper, launcher and backend carry a
 		# valid Authenticode signature from one certificate, and it pins the hash of the
 		# helper as shipped. So the helper is signed before its hash is taken, and the
