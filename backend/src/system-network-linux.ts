@@ -606,12 +606,15 @@ export interface LiveIPv4Address {
  * the user never touched. Both are the thing the baseline check exists to prevent
  * one layer up, so a divergent interface is not offered for editing at all.
  *
- * A DHCP profile agrees with a leased address, and with having none yet: the link
- * may be down, no server may have answered, or the kernel may hold only the
- * link-local fallback.
+ * The origin of the live address decides it in both directions, which is why a
+ * numeric match is not enough on its own: a profile switched to manual over an
+ * address the kernel is still leasing looks identical to one that owns it, and
+ * saving the form would activate that pending switch. A DHCP profile agrees with
+ * a leased address, and with having none yet: the link may be down, no server may
+ * have answered, or the kernel may hold only the link-local fallback.
  */
 export function nmcliProfileMatchesLive(profile: NmcliIPv4Profile, live: LiveIPv4Address | null, liveGateway: string | null): boolean {
-	if (parseNmcliIPv4Method(profile.method) === 'static') return live !== null && profile.address === live.address && profile.prefixLength === live.prefixLength && profile.gateway === liveGateway;
+	if (parseNmcliIPv4Method(profile.method) === 'static') return live !== null && !live.leased && profile.address === live.address && profile.prefixLength === live.prefixLength && profile.gateway === liveGateway;
 	return live === null || live.leased || live.address.startsWith('169.254.');
 }
 

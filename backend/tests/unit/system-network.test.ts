@@ -265,6 +265,16 @@ describe('parseWindowsNetworkState', () => {
 	});
 });
 
+/** The fixture's eth0 address, rewritten as a permanent one the kernel did not lease. */
+function withPermanentIPv4(addr: string): string {
+	const entries = JSON.parse(addr) as Array<{ ifname: string; addr_info?: Array<{ family: string; dynamic?: boolean; valid_life_time?: number }> }>;
+	for (const address of entries.find(entry => entry.ifname === 'eth0')?.addr_info?.filter(address => address.family === 'inet') ?? []) {
+		delete address.dynamic;
+		address.valid_life_time = 4294967295;
+	}
+	return JSON.stringify(entries);
+}
+
 describe('parseLinuxNetworkState', () => {
 	const sources = { addr: fixture('network-linux-addr.json'), link: fixture('network-linux-link.json'), route: '[{"dst":"default","gateway":"192.0.2.1","dev":"eth0","flags":[]}]', resolvers: ['192.0.2.1'], activeConnections: new Map([['eth0', 'Wired connection 1']]), ipv4Profiles: new Map([['eth0', { method: 'auto', gateway: null, address: null, prefixLength: null, safe: true }]]) };
 	const result = parseLinuxNetworkState(sources);
@@ -339,16 +349,22 @@ describe('parseLinuxNetworkState', () => {
 		// next address and the kernel the previous one. The screen shows the kernel's,
 		// so saving the form would write it back and undo the pending change.
 		const live = { method: 'manual', gateway: '192.0.2.1', address: '192.0.2.9', prefixLength: 23, safe: true } as const;
-		const matching = parseLinuxNetworkState({ ...sources, ipv4Profiles: new Map([['eth0', live]]) });
+		// The fixture's address is a DHCP lease, so a manual profile over it is the
+		// same divergence read the other way round: the switch to static is saved but
+		// not activated, and the numbers matching proves nothing. Only a permanent
+		// address is one the profile actually owns.
+		const staticSources = { ...sources, addr: withPermanentIPv4(sources.addr) };
+		expect(byID(parseLinuxNetworkState({ ...sources, ipv4Profiles: new Map([['eth0', live]]) }), 'eth0').ipv4Configurable).toBe(false);
+		const matching = parseLinuxNetworkState({ ...staticSources, ipv4Profiles: new Map([['eth0', live]]) });
 		expect(byID(matching, 'eth0').ipv4Configurable).toBe(true);
 
-		const movedAddress = parseLinuxNetworkState({ ...sources, ipv4Profiles: new Map([['eth0', { ...live, address: '192.0.2.20' }]]) });
+		const movedAddress = parseLinuxNetworkState({ ...staticSources, ipv4Profiles: new Map([['eth0', { ...live, address: '192.0.2.20' }]]) });
 		expect(byID(movedAddress, 'eth0').ipv4Configurable).toBe(false);
 
-		const movedPrefix = parseLinuxNetworkState({ ...sources, ipv4Profiles: new Map([['eth0', { ...live, prefixLength: 24 }]]) });
+		const movedPrefix = parseLinuxNetworkState({ ...staticSources, ipv4Profiles: new Map([['eth0', { ...live, prefixLength: 24 }]]) });
 		expect(byID(movedPrefix, 'eth0').ipv4Configurable).toBe(false);
 
-		const movedGateway = parseLinuxNetworkState({ ...sources, ipv4Profiles: new Map([['eth0', { ...live, gateway: '192.0.2.254' }]]) });
+		const movedGateway = parseLinuxNetworkState({ ...staticSources, ipv4Profiles: new Map([['eth0', { ...live, gateway: '192.0.2.254' }]]) });
 		expect(byID(movedGateway, 'eth0').ipv4Configurable).toBe(false);
 
 		// A DHCP profile is just as able to diverge, in the other direction: the switch
@@ -356,12 +372,7 @@ describe('parseLinuxNetworkState', () => {
 		// address. Editing then would let a DNS-only save reapply the profile and move
 		// the address the user never touched.
 		expect(byID(parseLinuxNetworkState(sources), 'eth0').ipv4Configurable).toBe(true);
-		const permanent = JSON.parse(sources.addr) as Array<{ ifname: string; addr_info?: Array<{ family: string; dynamic?: boolean; valid_life_time?: number }> }>;
-		for (const address of permanent.find(entry => entry.ifname === 'eth0')!.addr_info!.filter(address => address.family === 'inet')) {
-			delete address.dynamic;
-			address.valid_life_time = 4294967295;
-		}
-		expect(byID(parseLinuxNetworkState({ ...sources, addr: JSON.stringify(permanent) }), 'eth0').ipv4Configurable).toBe(false);
+		expect(byID(parseLinuxNetworkState(staticSources), 'eth0').ipv4Configurable).toBe(false);
 
 		// Nothing to disagree with yet: the cable is out, or no server answered.
 		const noAddress = JSON.parse(sources.addr) as Array<{ ifname: string; addr_info?: Array<{ family: string }> }>;
