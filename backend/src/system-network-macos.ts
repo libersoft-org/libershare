@@ -53,6 +53,8 @@ export interface MacNetworkSources {
 	serviceDns?: Map<string, string>;
 	/** Per-device `ipconfig getpacket <device>`, keyed by DEVICE. Supplies the DHCP-handed resolvers. */
 	dhcpPacket?: Map<string, string>;
+	/** `scutil --dns`. The resolvers macOS actually uses per interface, whatever family delivered them. */
+	resolvers?: string;
 	/** `system_profiler SPAirPortDataType`, when a Wi-Fi port exists. */
 	airport?: string;
 }
@@ -278,10 +280,42 @@ export function parseAirport(text: string): { connected: boolean; ssid: string |
 	};
 }
 
-/** Resolvers for one device: the user's own choice first, the DHCP lease second. */
+/**
+ * Effective resolvers for one device from `scutil --dns`.
+ *
+ * The "for scoped queries" section lists one resolver per interface, so this
+ * answers for interfaces that are not the primary one too. Unlike
+ * {@link parseDhcpDns} it does not care which family carried the servers: a host
+ * that learns its resolvers from IPv6 router advertisements or DHCPv6 is
+ * described here and by no other command macOS ships.
+ *
+ * macOS lists only the resolvers it considers usable on that link, which is the
+ * honest answer for a status screen - a configured but unreachable server is not
+ * the one answering queries.
+ */
+export function parseScopedDns(text: string, device: string): string[] {
+	const scoped = text.split(/^DNS configuration \(for scoped queries\)$/m)[1];
+	if (!scoped) return [];
+	for (const block of scoped.split(/^resolver #\d+$/m)) {
+		const owner = block.match(/^\s*if_index\s*:\s*\d+\s*\((.+?)\)\s*$/m);
+		if (owner?.[1] !== device) continue;
+		const servers = [...block.matchAll(/^\s*nameserver\[\d+\]\s*:\s*(\S+)\s*$/gm)].map(match => match[1] as string).filter(server => isIPv4(server) || isIPv6(server));
+		if (servers.length > 0) return servers;
+	}
+	return [];
+}
+
+/**
+ * Resolvers for one device: the user's own choice first, then the ones the
+ * network handed out. The DHCP packet stays as the last resort because macOS
+ * drops a resolver from `scutil` once it judges the link unusable, and the
+ * lease still describes what the interface was given.
+ */
 function pickDns(sources: MacNetworkSources, device: string): string[] {
 	const manual = sources.serviceDns?.has(device) ? parseServiceDns(sources.serviceDns.get(device) as string) : [];
 	if (manual.length > 0) return manual;
+	const scoped = sources.resolvers ? parseScopedDns(sources.resolvers, device) : [];
+	if (scoped.length > 0) return scoped;
 	return sources.dhcpPacket?.has(device) ? parseDhcpDns(sources.dhcpPacket.get(device) as string) : [];
 }
 
@@ -389,7 +423,7 @@ const NETWORKSETUP = '/usr/sbin/networksetup';
 
 /** Read the live macOS network state. Throws when the core tools are unavailable, so the caller degrades to addresses only. */
 export async function readMacNetworkState(): Promise<NetInterfaceInfo[]> {
-	const [hardwarePorts, serviceOrder, ifconfig, route, route6, routes] = await Promise.all([run(NETWORKSETUP, ['-listallhardwareports']), run(NETWORKSETUP, ['-listnetworkserviceorder']), run('/sbin/ifconfig', ['-a']), runOptional('/sbin/route', ['-n', 'get', 'default']), runOptional('/sbin/route', ['-n', 'get', '-inet6', 'default']), runOptional('/usr/sbin/netstat', ['-rn', '-f', 'inet'])]);
+	const [hardwarePorts, serviceOrder, ifconfig, route, route6, routes, resolvers] = await Promise.all([run(NETWORKSETUP, ['-listallhardwareports']), run(NETWORKSETUP, ['-listnetworkserviceorder']), run('/sbin/ifconfig', ['-a']), runOptional('/sbin/route', ['-n', 'get', 'default']), runOptional('/sbin/route', ['-n', 'get', '-inet6', 'default']), runOptional('/usr/sbin/netstat', ['-rn', '-f', 'inet']), runOptional('/usr/sbin/scutil', ['--dns'])]);
 
 	const services = parseServiceOrder(serviceOrder);
 	const present = parseIfconfig(ifconfig);
@@ -409,7 +443,7 @@ export async function readMacNetworkState(): Promise<NetInterfaceInfo[]> {
 
 	const hasWifi = [...parseHardwarePorts(hardwarePorts).values()].some(port => /^Wi-Fi$/i.test(port));
 	const airport = hasWifi ? await runOptional('/usr/sbin/system_profiler', ['SPAirPortDataType']) : '';
-	return parseMacNetworkState({ hardwarePorts, serviceOrder, ifconfig, route, route6, routes, serviceInfo, serviceDns, dhcpPacket, airport });
+	return parseMacNetworkState({ hardwarePorts, serviceOrder, ifconfig, route, route6, routes, serviceInfo, serviceDns, dhcpPacket, resolvers, airport });
 }
 
 /**

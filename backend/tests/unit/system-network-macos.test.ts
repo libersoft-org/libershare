@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { assertMacIPv4Applied, hasMacWritePrivilege, macApplyArgs, macRestoreRequiresLease, withMacRollback, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { assertMacIPv4Applied, hasMacWritePrivilege, macApplyArgs, macRestoreRequiresLease, withMacRollback, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseScopedDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -197,6 +197,8 @@ describe('parseServiceIPv4', () => {
 	});
 });
 
+const SCUTIL = 'DNS configuration\n\nresolver #1\n  nameserver[0] : 2001:db8::53\n  if_index : 17 (en0)\n  flags    : Request AAAA records\n  reach    : 0x00000002 (Reachable)\n\nresolver #2\n  domain   : local\n  options  : mdns\n  timeout  : 5\n\nDNS configuration (for scoped queries)\n\nresolver #1\n  nameserver[0] : 2001:db8::53\n  nameserver[1] : 2001:db8::54\n  if_index : 17 (en0)\n  flags    : Scoped, Request AAAA records\n  reach    : 0x00000002 (Reachable)\n\nresolver #2\n  nameserver[0] : 192.0.2.1\n  if_index : 21 (en4)\n  flags    : Scoped, Request A records\n';
+
 describe('DNS', () => {
 	it('reads servers the user set', () => {
 		expect(parseServiceDns('192.0.2.1\n198.51.100.1\n')).toEqual(['192.0.2.1', '198.51.100.1']);
@@ -211,6 +213,19 @@ describe('DNS', () => {
 		// reporting an empty list there would tell the user they have no resolvers.
 		expect(parseDhcpDns('domain_name_server (ip_mult): {192.0.2.1, 198.51.100.1}')).toEqual(['192.0.2.1', '198.51.100.1']);
 		expect(parseDhcpDns('subnet_mask (ip): 255.255.255.0')).toEqual([]);
+	});
+
+	it('reads the resolvers scoped to one device, whichever family delivered them', () => {
+		// `ipconfig getpacket` only ever describes an IPv4 lease, so a host whose
+		// resolvers arrive over IPv6 is invisible to it. The scoped section of
+		// `scutil --dns` names one resolver per interface and carries both families.
+		const scutil = SCUTIL;
+		expect(parseScopedDns(scutil, 'en0')).toEqual(['2001:db8::53', '2001:db8::54']);
+		expect(parseScopedDns(scutil, 'en4')).toEqual(['192.0.2.1']);
+		expect(parseScopedDns(scutil, 'en5')).toEqual([]);
+		// The unscoped section above it describes the host, not an interface, and
+		// must not answer for a device that has no scoped resolver of its own.
+		expect(parseScopedDns(scutil.split('DNS configuration (for scoped queries)')[0] as string, 'en0')).toEqual([]);
 	});
 });
 
@@ -280,6 +295,16 @@ describe('parseMacNetworkState', () => {
 			dns: ['192.0.2.1'],
 		});
 		expect(en0?.wifi).toEqual({ ssid: null, signal: 60, radio: 'unknown' });
+	});
+
+	it('shows the resolvers an IPv6-only host was handed', () => {
+		// No manual servers and no IPv4 lease to read them from: without the scoped
+		// source the screen would claim the machine has no resolvers at all.
+		const noLease = { ...sources, dhcpPacket: new Map<string, string>(), resolvers: SCUTIL };
+		expect(parseMacNetworkState(noLease).find(i => i.id === 'en0')?.dns).toEqual(['2001:db8::53', '2001:db8::54']);
+		// The servers the user set stay ahead of what the network offered.
+		const manual = new Map(sources.serviceDns).set('en0', '198.51.100.1\n');
+		expect(parseMacNetworkState({ ...noLease, serviceDns: manual }).find(i => i.id === 'en0')?.dns).toEqual(['198.51.100.1']);
 	});
 
 	it('drops loopback', () => {
