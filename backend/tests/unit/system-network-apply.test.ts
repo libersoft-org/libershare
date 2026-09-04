@@ -633,6 +633,17 @@ describe('Linux DNS verification', () => {
 		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: [] }, custom, 'GENERAL.DEVICE:eth0\n', 'eth0')).toThrow('DNS');
 		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: ['192.0.2.53'] }, custom, 'GENERAL.DEVICE:eth0\nIP4.DNS[1]:192.0.2.54\n', 'eth0')).toThrow('DNS');
 	});
+
+	it('still verifies the saved policy when there is no live side to read', () => {
+		// Saving DHCP with the carrier down writes the resolvers to the profile but
+		// activates nothing, so the device reports none. The saved policy is the whole
+		// change there and is checked; only the live comparison is skipped.
+		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: ['192.0.2.53', '2001:db8::53'] }, custom, null, 'eth0')).not.toThrow();
+		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: [] }, automatic, null, 'eth0')).not.toThrow();
+		// A profile that did not take the requested policy still fails.
+		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: ['192.0.2.53'] }, automatic, null, 'eth0')).toThrow('DNS');
+		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: [] }, custom, null, 'eth0')).toThrow('DNS');
+	});
 });
 
 describe('Linux Wi-Fi verification', () => {

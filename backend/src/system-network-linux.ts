@@ -792,7 +792,13 @@ export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addr
 		// configuration without a link and fails the activation. The profile is the
 		// whole change; NetworkManager acts on it when the carrier returns.
 		if (!requireLease && config.mode === 'dhcp') {
-			assertLinuxIPv4Method(config, await runFirst(NMCLI_CANDIDATES, ['-g', 'ipv4.method', 'connection', 'show', 'uuid', connectionUUID]));
+			// Everything this branch wrote still gets read back, resolvers included —
+			// they are saved to the profile whether or not the link is up, and a
+			// change that is never verified is a change nobody knows happened. Only
+			// the live side is skipped: with no carrier the device reports none.
+			const [method, profileDns] = await Promise.all([runFirst(NMCLI_CANDIDATES, ['-g', 'ipv4.method', 'connection', 'show', 'uuid', connectionUUID]), config.dns === undefined ? Promise.resolve('') : runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'ipv4.dns,ipv4.ignore-auto-dns,ipv6.dns,ipv6.ignore-auto-dns', 'connection', 'show', 'uuid', connectionUUID])]);
+			assertLinuxIPv4Method(config, method);
+			assertLinuxDnsApplied(config, profileDns, null, device);
 			return;
 		}
 		const activate = addressingChanged ? nmcliActivateArgs(connectionUUID, device) : ['device', 'reapply', device];
@@ -856,14 +862,22 @@ function sameAddresses(actual: string[], expected: string[]): boolean {
 	return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-export function assertLinuxDnsApplied(config: NetIPv4Config, profileText: string, liveText: string, device: string): void {
+/**
+ * Verify the resolvers a change asked for.
+ *
+ * `liveText` is what the device reports now, and is only meaningful once the
+ * profile has been activated. With the carrier down there is nothing to activate
+ * and no resolvers to read back, so pass `null`: the saved policy is the whole
+ * change there, and it is still verified.
+ */
+export function assertLinuxDnsApplied(config: NetIPv4Config, profileText: string, liveText: string | null, device: string): void {
 	if (config.dns === undefined) return;
 	const values = parseNmcliProfileValues(profileText);
 	const custom = config.dns.length > 0;
 	const expected4 = config.dns.filter(isIPv4);
 	const expected6 = config.dns.filter(isIPv6);
 	if (values.get('ipv4.ignore-auto-dns') !== (custom ? 'yes' : 'no') || values.get('ipv6.ignore-auto-dns') !== (custom ? 'yes' : 'no') || !sameAddresses(dnsList(values.get('ipv4.dns')), expected4) || !sameAddresses(dnsList(values.get('ipv6.dns')), expected6)) throw new Error('NetworkManager did not preserve the requested DNS policy');
-	if (custom && !sameAddresses(parseNmcliDns(liveText).get(device) ?? [], config.dns)) throw new Error('NetworkManager did not apply the requested DNS servers');
+	if (custom && liveText !== null && !sameAddresses(parseNmcliDns(liveText).get(device) ?? [], config.dns)) throw new Error('NetworkManager did not apply the requested DNS servers');
 }
 
 export function assertLinuxWifiConnected(networks: NetWifiNetwork[], ssid: string, bssid: string | null): void {
