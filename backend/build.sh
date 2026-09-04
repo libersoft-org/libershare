@@ -38,10 +38,12 @@ if [ -n "$BUN_TARGET" ]; then
 	echo "Building backend for target: $BUN_TARGET"
 	case "$BUN_TARGET" in
 	*windows*)
-		# The version resource is what the UAC prompt shows as the program name, so every
-		# binary a user may be asked to approve carries a readable one instead of its file name.
-		PRODUCT_NAME=$(bun -p "require('../shared/src/product.json').name")
-		PRODUCT_VERSION=$(bun -p "require('../shared/src/product.json').version")
+		# No --windows-* resource flags here: bun refuses them unless it is compiling
+		# ON Windows ("Using --windows-title is only available when compiling on
+		# Windows"), and this branch cross-compiles from the Linux build image. The
+		# readable program name in the UAC prompt therefore comes from build.bat, the
+		# Windows-native path; a binary cross-built here is identified to the user by
+		# its Authenticode publisher instead.
 		# The backend trusts the helper only when helper, launcher and backend carry a
 		# valid Authenticode signature from one certificate, and it pins the hash of the
 		# helper as shipped. So the helper is signed before its hash is taken, and the
@@ -59,14 +61,14 @@ if [ -n "$BUN_TARGET" ]; then
 			mv "$1.signed" "$1"
 			osslsigncode verify -in "$1" >/dev/null
 		}
-		bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target "$BUN_TARGET" --windows-title "$PRODUCT_NAME" --windows-publisher "LiberSoft" --windows-version "$PRODUCT_VERSION.0" --windows-description "$PRODUCT_NAME network settings helper" src/network-helper.ts --outfile build/lish-network-helper.exe
+		bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target "$BUN_TARGET" src/network-helper.ts --outfile build/lish-network-helper.exe
 		bun scripts/set-windows-gui-subsystem.ts build/lish-network-helper.exe
 		sign_windows_binary build/lish-network-helper.exe
 		HELPER_HASH=$(hash_file build/lish-network-helper.exe)
-		bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target "$BUN_TARGET" --windows-title "$PRODUCT_NAME" --windows-publisher "LiberSoft" --windows-version "$PRODUCT_VERSION.0" --windows-description "$PRODUCT_NAME network settings launcher" src/network-helper-windows-launcher.ts --outfile build/lish-network-launcher.exe --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
+		bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target "$BUN_TARGET" src/network-helper-windows-launcher.ts --outfile build/lish-network-launcher.exe --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
 		bun scripts/set-windows-gui-subsystem.ts build/lish-network-launcher.exe
 		sign_windows_binary build/lish-network-launcher.exe
-		bun build --compile --target "$BUN_TARGET" --windows-title "$PRODUCT_NAME" --windows-publisher "LiberSoft" --windows-version "$PRODUCT_VERSION.0" --windows-description "$PRODUCT_NAME backend" src/app.ts --outfile build/lish-backend.exe --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
+		bun build --compile --target "$BUN_TARGET" src/app.ts --outfile build/lish-backend.exe --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
 		bun scripts/set-windows-gui-subsystem.ts build/lish-backend.exe
 		sign_windows_binary build/lish-backend.exe
 		;;
