@@ -297,7 +297,7 @@ export function leaseRequired(target: Pick<NetInterfaceInfo, 'link'>): boolean {
 	return target.link !== 'down';
 }
 
-export function assertAppliedIPv4State(state: NetworkStateInfo, interfaceID: string, config: NetIPv4Config, leaseOwed: boolean = true): void {
+export function assertAppliedIPv4State(state: NetworkStateInfo, interfaceID: string, config: NetIPv4Config, addressingChanged: boolean = true, requireLease: boolean = true): void {
 	if (!state.known || state.detail !== 'full') throw new Error('network state could not be verified after the privileged change');
 	const target = state.interfaces.find(item => item.id === interfaceID);
 	if (!target || target.ipv4Mode !== config.mode) throw new Error('network helper did not preserve the requested IPv4 method');
@@ -305,7 +305,7 @@ export function assertAppliedIPv4State(state: NetworkStateInfo, interfaceID: str
 		const ipv4 = target.addresses.filter(item => item.family === 'ipv4');
 		if (ipv4.length !== 1 || ipv4[0]?.address !== config.address || ipv4[0]?.prefixLength !== config.prefixLength) throw new Error('network helper did not apply the requested IPv4 address');
 		if ((target.gateway ?? '') !== (config.gateway ?? '')) throw new Error('network helper did not apply the requested IPv4 gateway');
-	} else if (leaseOwed && !target.addresses.some(item => item.family === 'ipv4')) {
+	} else if (addressingChanged && requireLease && !target.addresses.some(item => item.family === 'ipv4')) {
 		// A lease is only owed when DHCP was just switched on with the link up. A
 		// DNS-only change, or a switch made with the cable out, succeeded exactly as
 		// requested even though no address is there yet.
@@ -315,7 +315,13 @@ export function assertAppliedIPv4State(state: NetworkStateInfo, interfaceID: str
 	// the resulting resolver addresses, not the policy that produced them, so only
 	// a non-empty custom list can be compared here. The privileged platform apply
 	// path verifies the automatic policy before it returns.
-	if (config.dns?.length) {
+	// A link that is down has no live resolvers at all: the platform layer
+	// verified the saved profile instead, and NetworkManager reports no servers
+	// for a device it could not activate. Comparing against them here would fail
+	// a change that was written exactly as asked, and fail it after the helper
+	// returned - nothing rolls it back, so the user would be told the opposite of
+	// what happened to their machine.
+	if (config.dns?.length && requireLease) {
 		const actualDns = normalizeDnsServers(target.dns)
 			.map(value => value.toLowerCase())
 			.sort();
@@ -471,7 +477,7 @@ export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Conf
 		resetNetworkStateCache();
 	}
 	const after = await readNetworkStateUnlocked(primaryInterface);
-	if (usedHelper) assertAppliedIPv4State(after, interfaceID, desired, addressingChanged && requireLease);
+	if (usedHelper) assertAppliedIPv4State(after, interfaceID, desired, addressingChanged, requireLease);
 	return after;
 }
 

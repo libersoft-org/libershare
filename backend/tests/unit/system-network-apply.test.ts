@@ -244,6 +244,24 @@ describe('assertAppliedIPv4State', () => {
 		expect(() => assertAppliedIPv4State({ ...state, known: false }, 'lan0', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' })).toThrow('verified');
 	});
 
+	it('does not demand live resolvers from a link that is down', () => {
+		// Saving DHCP with custom DNS on an unplugged card: the platform layer writes
+		// and verifies the saved profile, because NetworkManager reports no servers at
+		// all for a device it could not activate (measured: `nmcli device show` prints
+		// no IP4.DNS line while the profile holds them). Demanding them here failed a
+		// change that had already been made, after the helper returned - so nothing
+		// rolled it back and the user was told the opposite of what happened.
+		const unplugged: NetworkStateInfo = { ...state, interfaces: [{ ...iface, link: 'down', ipv4Mode: 'dhcp', addresses: [], gateway: null, dns: [] }] };
+		expect(() => assertAppliedIPv4State(unplugged, 'lan0', { mode: 'dhcp', dns: ['192.0.2.53'] }, true, false)).not.toThrow();
+		// With the link up the same empty result is a real failure.
+		const live: NetworkStateInfo = { ...state, interfaces: [{ ...iface, ipv4Mode: 'dhcp', addresses: [{ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 }], dns: [] }] };
+		expect(() => assertAppliedIPv4State(live, 'lan0', { mode: 'dhcp', dns: ['192.0.2.53'] }, true, true)).toThrow('DNS');
+		// And a DNS-only change on a connected card is still verified against the
+		// live servers - that case reaches here with no addressing change, not with a
+		// link that is down.
+		expect(() => assertAppliedIPv4State(live, 'lan0', { mode: 'dhcp', dns: ['192.0.2.53'] }, false, true)).toThrow('DNS');
+	});
+
 	it('demands a DHCP lease only when DHCP was just switched on', () => {
 		// A DNS-only change on an interface already on DHCP without a lease (cable
 		// out, no server answering) succeeded exactly as requested; the reader drops
