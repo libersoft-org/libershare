@@ -1,5 +1,5 @@
 import { CodedError, ErrorCodes } from './errors.ts';
-import type { ConnectionStatus, NetInterfaceInfo, NetIPv4Config, NetworkStateInfo } from './index.ts';
+import type { ConnectionStatus, NetCapabilities, NetInterfaceInfo, NetIPv4Baseline, NetworkStateInfo } from './index.ts';
 
 export function formatBytes(bytes: number, decimals: number = 2): string {
 	if (bytes === 0) return '0 Bytes';
@@ -47,6 +47,7 @@ export function deriveConnectionStatus(state: NetworkStateInfo): ConnectionStatu
 		// A soft/hard-killed radio is a state the OS genuinely reports and is not
 		// the same as "associated with nothing" — the widget labels it separately.
 		if (wifi?.radio === 'off') return { kind: 'wifiOff', ...blank, interfaceName };
+		if (primary.link === 'unknown') return { kind: 'unknown', ...blank, interfaceName };
 		const connected = primary.link === 'up';
 		return { kind: 'wifi', connected, signal: connected ? (wifi?.signal ?? null) : null, ssid: connected ? (wifi?.ssid ?? null) : null, interfaceName };
 	}
@@ -66,21 +67,101 @@ export function deriveConnectionStatus(state: NetworkStateInfo): ConnectionStatu
  */
 export function isSelectableInterface(iface: NetInterfaceInfo): boolean {
 	if (iface.medium !== 'other' || iface.defaultRoute) return true;
-	return iface.addresses.some(a => !a.address.toLowerCase().startsWith('fe80') && !a.address.startsWith('169.254.'));
+	return iface.addresses.some(a => !isIPv6LinkLocal(a.address) && !a.address.startsWith('169.254.'));
 }
 
-/**
- * True for a dotted-quad IPv4 literal: four octets, 0-255, no leading zeros.
- *
- * The type says `string`, but the values reaching this come from an RPC client,
- * so a non-string is answered with `false` rather than a `TypeError` thrown from
- * `.split` — the caller's job is to reject a bad address, not to crash on one.
- */
+/** True for the IPv6 link-local block fe80::/10. */
+function isIPv6LinkLocal(value: string): boolean {
+	const first = value.split(':', 1)[0];
+	if (!first || !/^[0-9a-f]{1,4}$/i.test(first)) return false;
+	const group = parseInt(first, 16);
+	return group >= 0xfe80 && group <= 0xfebf;
+}
+
+/** True for a dotted-quad IPv4 literal: four octets, 0-255, no leading zeros. */
 export function isIPv4(value: string): boolean {
-	if (typeof value !== 'string') return false;
 	const parts = value.split('.');
 	if (parts.length !== 4) return false;
 	return parts.every(part => /^(0|[1-9]\d{0,2})$/.test(part) && Number(part) <= 255);
+}
+
+/** True for an IPv6 literal without a zone/scope suffix. */
+export function isIPv6(value: string): boolean {
+	// URL is a convenient standards-compliant IPv6 parser, but it must never be
+	// allowed to reinterpret trailing input as a path, query, or credentials.
+	// DNS values reach an elevated PowerShell writer on Windows, so accept only
+	// characters that can occur in an IPv6 literal before asking URL to parse it.
+	if (!value.includes(':') || !/^[0-9a-f:.]+$/i.test(value)) return false;
+	try {
+		const parsed = new URL(`http://[${value}]/`);
+		return parsed.hostname.startsWith('[') && parsed.hostname.endsWith(']') && parsed.host === parsed.hostname && parsed.pathname === '/' && parsed.search === '' && parsed.hash === '';
+	} catch {
+		return false;
+	}
+}
+
+export const MAX_DNS_SERVERS = 16;
+export const MAX_DNS_LIST_BYTES = 1024;
+
+/** The IPv4 facts of one interface, in the shape the edit form is seeded from. */
+export function ipv4BaselineOf(iface: NetInterfaceInfo): NetIPv4Baseline {
+	const ipv4 = iface.addresses.find(address => address.family === 'ipv4');
+	return { mode: iface.ipv4Mode, address: ipv4?.address ?? null, prefixLength: ipv4?.prefixLength ?? null, gateway: iface.gateway ?? null, dns: [...iface.dns] };
+}
+
+/** True when two baselines describe the same IPv4 configuration. Tolerates a malformed value from the wire. */
+export function sameIPv4Baseline(left: NetIPv4Baseline, right: unknown): boolean {
+	if (!right || typeof right !== 'object' || Array.isArray(right)) return false;
+	const other = right as Partial<NetIPv4Baseline>;
+	if (!Array.isArray(other.dns) || other.dns.length !== left.dns.length) return false;
+	return other.mode === left.mode && other.address === left.address && other.prefixLength === left.prefixLength && other.gateway === left.gateway && other.dns.every((server, index) => server === left.dns[index]);
+}
+
+/**
+ * One spelling for one resolver address.
+ *
+ * An IPv6 literal can be written many ways; the operating system reports it
+ * back in one (compressed, lowercase). Comparing what was requested with what
+ * was applied only works when both sides use that same spelling, so every list
+ * is canonicalised before it is deduplicated, stored, written or verified.
+ */
+export function canonicalDnsServer(server: string): string {
+	if (!isIPv6(server)) return server;
+	const canonical = new URL(`http://[${server}]/`).hostname.slice(1, -1);
+	// URL turns an IPv4-mapped tail into hex; operating systems print it dotted.
+	const mapped = server.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
+	return mapped && canonical.startsWith('::ffff:') ? `::ffff:${mapped[1]}` : canonical;
+}
+
+export function normalizeDnsServers(servers: readonly string[]): string[] {
+	const seen = new Set<string>();
+	const result: string[] = [];
+	for (const server of servers) {
+		const canonical = canonicalDnsServer(server);
+		if (seen.has(canonical)) continue;
+		seen.add(canonical);
+		result.push(canonical);
+	}
+	return result;
+}
+
+function ipv4Number(value: string): number {
+	return value.split('.').reduce((result, part) => ((result << 8) | Number(part)) >>> 0, 0);
+}
+
+function isUsableInterfaceAddress(value: string, prefixLength: number): boolean {
+	if (!isIPv4(value)) return false;
+	const first = Number(value.split('.')[0]);
+	if (first === 0 || first === 127 || first >= 224) return false;
+	if (prefixLength >= 31) return true;
+	const hostMask = 0xffffffff >>> prefixLength;
+	const host = ipv4Number(value) & hostMask;
+	return host !== 0 && host !== hostMask;
+}
+
+function sameIPv4Subnet(left: string, right: string, prefixLength: number): boolean {
+	const mask = prefixLength === 32 ? 0xffffffff : (0xffffffff << (32 - prefixLength)) >>> 0;
+	return (ipv4Number(left) & mask) === (ipv4Number(right) & mask);
 }
 
 /**
@@ -92,149 +173,84 @@ export function isIPv4(value: string): boolean {
  * a plain IPv4 literal or a small integer must never get that far. Callers on
  * every platform validate before touching a child process.
  */
-export function validateIPv4Config(config: NetIPv4Config, staticGatewayRequired: boolean = false): string | null {
-	// The parameter is typed, but it arrives from an RPC client, so nothing about
-	// its runtime SHAPE is guaranteed either. `null` used to reach the field reads
-	// below and throw a TypeError out of the API dispatcher instead of being
-	// answered as the bad request it is; an array has no usable mode, which is the
-	// first thing missing from it and so what the user is pointed at.
-	if (typeof config !== 'object' || config === null || Array.isArray(config)) return 'mode';
+export function validateIPv4Config(value: unknown, capabilities?: Pick<NetCapabilities, 'staticGatewayRequired'>): string | null {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return 'mode';
+	const config = value as { mode?: unknown; dns?: unknown; address?: unknown; prefixLength?: unknown; gateway?: unknown };
 	if (config.mode !== 'dhcp' && config.mode !== 'static') return 'mode';
-	const dns = config.dns ?? [];
-	// A `dns` that is not a list would otherwise be iterated character by character
-	// when it is a string, and throw when it is an object.
-	if (!Array.isArray(dns)) return 'dns';
-	for (const server of dns) if (!isIPv4(server)) return 'dns';
+	if (config.dns !== undefined && !Array.isArray(config.dns)) return 'dns';
+	for (const server of config.dns ?? []) if (typeof server !== 'string' || (!isIPv4(server) && !isIPv6(server))) return 'dns';
+	const dns = normalizeDnsServers((config.dns ?? []) as string[]);
+	if (dns.length > MAX_DNS_SERVERS || new TextEncoder().encode(dns.join(',')).byteLength > MAX_DNS_LIST_BYTES) return 'dns';
 	if (config.mode === 'dhcp') return null;
-	if (!config.address || !isIPv4(config.address)) return 'address';
+	if (typeof config.address !== 'string' || !isIPv4(config.address)) return 'address';
 	if (!Number.isInteger(config.prefixLength) || (config.prefixLength as number) < 1 || (config.prefixLength as number) > 32) return 'prefixLength';
-	// Everything above is LEXICAL — the value is shaped like an address. What
-	// follows is SEMANTIC: whether it can be a host's address at all. The two are
-	// separate because a configurator that deletes the previous address before
-	// setting the new one must not discover the answer from the OS afterwards.
-	const prefix = config.prefixLength as number;
-	const mask = maskFor(prefix);
-	const host = ipv4ToInt(config.address);
-	// The unspecified address and the limited broadcast are never a host.
-	if (host === 0 || host === 0xffffffff) return 'address';
-	// The all-zero and all-ones host parts belong to the subnet itself. A /31 is a
-	// point-to-point link where RFC 3021 makes both usable, and a /32 has no host
-	// part at all, so neither has a network or broadcast address to collide with —
-	// which is what `subnetReserved` is false for at those two lengths.
-	const network = (host & mask) >>> 0;
-	const broadcast = (network | (~mask >>> 0)) >>> 0;
-	const subnetReserved = (value: number): boolean => prefix <= 30 && (value === network || value === broadcast);
-	if (subnetReserved(host)) return 'address';
-	// An interface on an isolated segment legitimately has no gateway, so an absent
-	// one is only an error where the platform has no way to express it —
-	// `networksetup -setmanual` takes the router as a mandatory value, which the
-	// caller states through `NetCapabilities.staticGatewayRequired`. Asking here
-	// rather than at apply time is the difference between the form marking the
-	// field and the user being told the configuration was valid and then failing.
-	if (!config.gateway) return staticGatewayRequired ? 'gateway' : null;
-	if (!isIPv4(config.gateway)) return 'gateway';
-	const gateway = ipv4ToInt(config.gateway);
-	// A gateway of 0.0.0.0, or one that is the interface's own address, is a
-	// routing loop rather than a route.
-	if (gateway === 0 || gateway === host) return 'gateway';
-	// A router cannot live at the subnet's own network or broadcast address, and
-	// the on-link test below happily accepts both — they are in the prefix. The
-	// result is a default route to an address that can never answer ARP, so the
-	// interface configures cleanly and then reaches nothing off-link.
-	if (subnetReserved(gateway)) return 'gateway';
-	// A gateway has to be reachable without already having a route to it. The
-	// exception is a /32, where nothing at all is on-link and an off-link
-	// gateway is the normal arrangement.
-	if (prefix <= 31 && (gateway & mask) >>> 0 !== (host & mask) >>> 0) return 'gateway';
+	if (!isUsableInterfaceAddress(config.address, config.prefixLength as number)) return 'address';
+	// An interface on an isolated segment legitimately has no gateway, so only a
+	// present-but-malformed value is an error.
+	if (config.gateway !== undefined && (typeof config.gateway !== 'string' || (config.gateway !== '' && !isIPv4(config.gateway)))) return 'gateway';
+	if (config.gateway && (!isUsableInterfaceAddress(config.gateway, config.prefixLength as number) || config.gateway === config.address || !sameIPv4Subnet(config.address, config.gateway, config.prefixLength as number))) return 'gateway';
+	if (capabilities?.staticGatewayRequired && !config.gateway) return 'gateway';
 	return null;
 }
 
-/** The 32-bit value of a dotted quad {@link isIPv4} has already accepted. */
-function ipv4ToInt(address: string): number {
-	return address.split('.').reduce((acc, part) => acc * 256 + Number(part), 0) >>> 0;
-}
-
-/** The netmask of a prefix length, as a 32-bit value. */
-function maskFor(prefixLength: number): number {
-	return prefixLength === 0 ? 0 : (0xffffffff << (32 - prefixLength)) >>> 0;
-}
+/**
+ * Control characters an SSID a USER typed must not contain.
+ *
+ * A scanned name is whatever the radio reported and is not filtered here; this
+ * is the gate for a name the user supplied. Windows builds its WLAN profile as
+ * XML and falls back to the typed SSID for the profile name, and XML 1.0 cannot
+ * carry these code points even escaped - the profile would be rejected as
+ * malformed rather than as a wrong name. Tab, LF and CR are legal there and stay
+ * out of the set.
+ */
+const SSID_FORBIDDEN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/;
 
 /**
- * Characters no join path can carry: NUL and the C0 controls XML 1.0 forbids.
+ * A key the network's own security can carry.
  *
- * Tab, LF and CR are legal in XML and so are left alone; everything else below
- * U+0020 is not, and NUL is worse than merely invalid on every platform:
+ * The rule is not the same for both WPA generations, and measured against
+ * NetworkManager 1.52: a WPA-PSK key is 8 to 63 bytes, or exactly 64 hexadecimal
+ * digits of the pre-shared key itself — it counts bytes, so a four-character
+ * accented passphrase passes as eight. WPA3 replaces that with SAE, which
+ * derives from the password rather than hashing it to a fixed-length key and so
+ * accepts any length; holding a WPA3 network to the PSK rule would refuse a
+ * short password that works.
  *
- *  - Windows: `utf16z()` writes it verbatim, and a Win32 `LPCWSTR` stops there,
- *    so a profile asked for as "Home\0Evil" is created for "Home" instead.
- *  - Windows: the profile document is XML, and a raw NUL in it is not
- *    well-formed, so `WlanSetProfile` refuses it with an opaque reason code.
- *  - Linux: the runtime throws a bare `TypeError` out of `execFile` before
- *    nmcli ever starts, which surfaces as an internal error, not a bad request.
- *
- * This gate is for an SSID a USER supplied. Names coming back from a native scan
- * are not passed through it — they are what the radio actually saw.
+ * Only networks this app offers to join reach here — open ones take no key, and
+ * anything but WPA personal is refused earlier. The check exists so a key that
+ * cannot work is named as such, instead of arriving as a generic activation
+ * failure that says nothing about what to type instead.
  */
-const SSID_FORBIDDEN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/;
-
-/**
- * True for an SSID the 802.11 standard can actually carry AND every join path
- * can express: 1-32 octets once encoded as UTF-8, and no forbidden control
- * character. Length is counted in bytes, not characters, because a
- * 20-character name with accents already exceeds the field.
- */
-export function isValidSSID(ssid: string): boolean {
-	if (typeof ssid !== 'string' || SSID_FORBIDDEN.test(ssid)) return false;
-	const length = new TextEncoder().encode(ssid).length;
-	return length >= 1 && length <= 32;
+export function isValidWifiKey(security: string, password: string): boolean {
+	if (/WPA3|SAE/i.test(security)) return password.length > 0;
+	const bytes = new TextEncoder().encode(password).byteLength;
+	return /^[0-9a-f]{64}$/i.test(password) || (bytes >= 8 && bytes <= 63);
 }
 
 /**
  * True when a Wi-Fi credential is a raw 256-bit pre-shared key rather than a
  * passphrase: exactly 64 hexadecimal digits.
  *
- * The distinction is not cosmetic. A WLAN profile has to declare which of the
- * two it carries — `<keyType>networkKey</keyType>` for this form and
- * `passPhrase` for the other — and a raw key announced as a passphrase is
- * hashed a second time, so it silently fails to authenticate.
+ * The distinction is not cosmetic. A Windows WLAN profile has to declare which
+ * of the two it carries - `<keyType>networkKey</keyType>` for this form and
+ * `passPhrase` for the other - and a raw key announced as a passphrase is hashed
+ * a second time, so the profile is written, accepted, and then never
+ * authenticates.
  */
-export function isWifiHexKey(key: string): boolean {
-	return typeof key === 'string' && /^[0-9a-fA-F]{64}$/.test(key);
+export function isWifiHexKey(key: unknown): key is string {
+	return typeof key === 'string' && /^[0-9a-f]{64}$/i.test(key);
 }
 
 /**
- * True for a credential a WPA2/WPA3 personal network can actually accept.
- *
- * Three separate constraints, and the previous `key.length >= 8 && <= 63` met
- * none of them exactly:
- *
- *  - IEEE 802.11i measures a passphrase in OCTETS, not in JavaScript characters.
- *    A 40-character passphrase of accented letters is 60-80 bytes, so counting
- *    `.length` accepted credentials that overflow the field and are then
- *    truncated or rejected by the supplicant.
- *  - A control character is never part of an intended passphrase and is actively
- *    harmful on the way to one: a NUL ends a Win32 `LPCWSTR` mid-key, and the
- *    Windows profile is XML, which cannot carry most of the C0 range at all.
- *  - The 64-hex form is a raw 256-bit PSK, which is a WPA/WPA2 construct. WPA3
- *    SAE derives its key from a passphrase instead, so a profile announcing 64
- *    hex digits as SAE key material is written, accepted, and then simply never
- *    authenticates. `sae` is passed by the caller that knows which mechanism the
- *    access point actually advertises.
- *
- * Checked before anything is written, because on Windows the profile lands on
- * disk BEFORE the association is attempted — a credential that could never work
- * would replace a saved network's real one purely on its way to failing.
+ * True for an SSID the 802.11 standard can actually carry: 1-32 octets once
+ * encoded as UTF-8. Length is counted in bytes, not characters, because a
+ * 20-character name with accents already exceeds the field.
  */
-export function isValidWifiKey(key: string, sae: boolean = false): boolean {
-	if (typeof key !== 'string') return false;
-	if (isWifiHexKey(key)) return !sae;
-	if (WIFI_KEY_FORBIDDEN.test(key)) return false;
-	const octets = new TextEncoder().encode(key).length;
-	return octets >= 8 && octets <= 63;
+export function isValidSSID(ssid: unknown): ssid is string {
+	if (typeof ssid !== 'string' || SSID_FORBIDDEN.test(ssid)) return false;
+	const length = new TextEncoder().encode(ssid).length;
+	return length >= 1 && length <= 32;
 }
-
-/** Every C0 and C1 control character, plus DEL. None of them belongs in a passphrase. */
-const WIFI_KEY_FORBIDDEN = /[\u0000-\u001f\u007f-\u009f]/;
 
 /**
  * Strip characters a file name may not contain and normalise whitespace.

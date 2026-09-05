@@ -1,8 +1,10 @@
 import { execFile } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
-import { CodedError, ErrorCodes, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetLink, type NetMedium } from '@shared';
+import { isIPv4, isIPv6, validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetLink, type NetMedium } from '@shared';
 
 const execFileAsync = promisify(execFile);
+const C_LOCALE_ENV = { ...process.env, LC_ALL: 'C', LANG: 'C' };
 
 /**
  * macOS host network state.
@@ -15,10 +17,13 @@ const execFileAsync = promisify(execFile);
  * while everything else speaks DEVICE names (en0, bridge0).
  *
  * Wi-Fi is READ-ONLY and partially blind, by the operating system's design:
- * since macOS 14 the name of a network on the air is withheld from any process
- * that has not been granted Location Services access. The signal strength,
- * security and connection state are NOT withheld and are reported.
- * {@link isMacWifiConfigurable} explains why that makes joining unofferable.
+ * since macOS 14 the SSID is withheld from any process that has not been granted
+ * Location Services access, and both `ipconfig getsummary` and `system_profiler`
+ * return the literal string `<redacted>` instead. Measured on macOS 15.7.4 even
+ * when running as root. A scan is therefore a list of unnamed networks, which
+ * cannot be offered as something to join — so {@link isMacWifiConfigurable} is
+ * false and the UI does not show Wi-Fi actions on this platform. The signal
+ * strength, security and connection state are NOT redacted and are reported.
  */
 
 /** Hard cap on any single tool invocation. These are local BSD utilities; a slow one is a hung one. */
@@ -38,12 +43,18 @@ export interface MacNetworkSources {
 	ifconfig: string;
 	/** `route -n get default` */
 	route: string;
+	/** `route -n get -inet6 default`. Names the interface the host reaches the internet through when there is no IPv4 default route. */
+	route6?: string;
+	/** `netstat -rn -f inet`, used to detect every IPv4 default route. */
+	routes?: string;
 	/** Per-service `networksetup -getinfo <service>`, keyed by DEVICE. */
 	serviceInfo?: Map<string, string>;
 	/** Per-service `networksetup -getdnsservers <service>`, keyed by DEVICE. */
 	serviceDns?: Map<string, string>;
 	/** Per-device `ipconfig getpacket <device>`, keyed by DEVICE. Supplies the DHCP-handed resolvers. */
 	dhcpPacket?: Map<string, string>;
+	/** `scutil --dns`. The resolvers macOS actually uses per interface, whatever family delivered them. */
+	resolvers?: string;
 	/** `system_profiler SPAirPortDataType`, when a Wi-Fi port exists. */
 	airport?: string;
 }
@@ -83,16 +94,27 @@ export function parseHardwarePorts(text: string): Map<string, string> {
  * device. A service prefixed with `*` is disabled and is skipped, because writing
  * to it silently does nothing.
  */
-export function parseServiceOrder(text: string): Map<string, string> {
-	const result = new Map<string, string>();
+export function parseServiceBindings(text: string): Map<string, string[]> {
+	const result = new Map<string, string[]>();
 	const lines = text.split('\n');
 	for (let i = 0; i < lines.length; i++) {
 		const header = lines[i]?.match(/^\(\s*(\*?)\d+\)\s*(.+?)\s*$/);
 		if (!header) continue;
 		if (header[1] === '*') continue;
 		const device = lines[i + 1]?.match(/Device:\s*(\S+?)\s*\)/);
-		if (device && device[1] && header[2] && !result.has(device[1])) result.set(device[1], header[2]);
+		if (device && device[1] && header[2]) {
+			const services = result.get(device[1]) ?? [];
+			services.push(header[2]);
+			result.set(device[1], services);
+		}
 	}
+	return result;
+}
+
+/** Devices with exactly one enabled service are safe to address by device id. */
+export function parseServiceOrder(text: string): Map<string, string> {
+	const result = new Map<string, string>();
+	for (const [device, services] of parseServiceBindings(text)) if (services.length === 1 && services[0]) result.set(device, services[0]);
 	return result;
 }
 
@@ -152,6 +174,17 @@ export function parseDefaultRoute(text: string): { device: string | null; gatewa
 	};
 }
 
+/** Every IPv4 default route from macOS' routing table. */
+export function parseDefaultRoutes(text: string): Array<{ device: string; gateway: string }> {
+	const result: Array<{ device: string; gateway: string }> = [];
+	for (const line of text.split('\n')) {
+		const fields = line.trim().split(/\s+/);
+		if (fields[0] !== 'default' || !fields[1] || !fields[3]) continue;
+		result.push({ gateway: fields[1], device: fields[3] });
+	}
+	return result;
+}
+
 /**
  * Addressing mode from `networksetup -getinfo <service>`.
  *
@@ -159,13 +192,6 @@ export function parseDefaultRoute(text: string): { device: string | null; gatewa
  * "BOOTP Configuration" or "Automatic Configuration". Anything else — including
  * the "not a recognized network service" error — is honestly unknown rather than
  * guessed.
- *
- * BOOTP is deliberately NOT reported as DHCP. They are different protocols with
- * different `networksetup` verbs, and the model has no word for BOOTP — so
- * calling it DHCP meant merely opening the editor and pressing Save ran
- * `-setdhcp` and converted the service to a protocol the user never chose.
- * Reported as `unknown` the editor shows the mode as itself and waits for the
- * user to pick one, which is the same treatment every other unnameable mode gets.
  */
 export function parseServiceInfo(text: string): NetInterfaceInfo['ipv4Mode'] {
 	if (/^\s*Manual Configuration/m.test(text)) return 'static';
@@ -173,18 +199,50 @@ export function parseServiceInfo(text: string): NetInterfaceInfo['ipv4Mode'] {
 	return 'unknown';
 }
 
+/** IPv4 router reported for one network service. */
+export function parseServiceGateway(text: string): string | null {
+	const value = text.match(/^\s*Router:\s*(\S+)/im)?.[1];
+	return value && value.toLowerCase() !== 'none' ? value : null;
+}
+
+/** Static IPv4 stored in a service even while its device has no carrier. */
+export function parseServiceIPv4(text: string): NetAddress | null {
+	if (parseServiceInfo(text) !== 'static') return null;
+	return parseServiceCurrentIPv4(text);
+}
+
+/** Current IPv4 reported for either a manual service or an acquired DHCP lease. */
+export function parseServiceCurrentIPv4(text: string): NetAddress | null {
+	const address = text.match(/^\s*IP address:\s*(\S+)/im)?.[1];
+	const mask = text.match(/^\s*Subnet mask:\s*(\S+)/im)?.[1];
+	if (!address || !mask || !isIPv4(address) || !isIPv4(mask)) return null;
+	let prefixLength = 0;
+	let zeroSeen = false;
+	for (const octet of mask.split('.').map(Number)) {
+		for (let bit = 7; bit >= 0; bit--) {
+			const set = (octet & (1 << bit)) !== 0;
+			if (set && zeroSeen) return null;
+			if (set) prefixLength++;
+			else zeroSeen = true;
+		}
+	}
+	return { family: 'ipv4', address, prefixLength };
+}
+
 /**
- * Router of one service, from the same `networksetup -getinfo <service>` output.
+ * Accept a resolver spelled the way macOS prints it.
  *
- * `route -n get default` answers only for the interface that won the default
- * route, but a multi-homed Mac gives several services a router of their own.
- * Reporting those as null would seed the edit form with an empty gateway field,
- * and saving any other change on that service would then clear its real router.
- * macOS prints the literal "none" when a service has no router configured.
+ * `scutil` appends the zone to a link-local server (`fe80::1%en0`), which is the
+ * usual shape of a resolver learned from a router advertisement - exactly the
+ * case the scoped source exists for. The shared validators reject `%` on purpose,
+ * because the values they guard reach an elevated writer, so the zone is
+ * accounted for here instead of widening them.
  */
-export function parseServiceRouter(text: string): string | null {
-	const router = text.match(/^\s*Router:\s*(\S+)/m)?.[1] ?? null;
-	return router && router !== 'none' ? router : null;
+function isMacResolver(value: string): boolean {
+	const zone = value.indexOf('%');
+	if (zone < 0) return isIPv4(value) || isIPv6(value);
+	// Only IPv6 carries a zone, and only one, and an interface name is alphanumeric.
+	return zone === value.lastIndexOf('%') && /^[0-9a-z]{1,15}$/i.test(value.slice(zone + 1)) && isIPv6(value.slice(0, zone));
 }
 
 /**
@@ -201,7 +259,7 @@ export function parseServiceDns(text: string): string[] {
 	return text
 		.split('\n')
 		.map(line => line.trim())
-		.filter(line => /^\d+\.\d+\.\d+\.\d+$/.test(line) || /^[0-9a-f:]+$/i.test(line));
+		.filter(line => isMacResolver(line));
 }
 
 /**
@@ -216,7 +274,7 @@ export function parseDhcpDns(text: string): string[] {
 	return line[1]
 		.split(',')
 		.map(server => server.trim())
-		.filter(server => /^\d+\.\d+\.\d+\.\d+$/.test(server) || /^[0-9a-f:]+$/i.test(server));
+		.filter(server => isMacResolver(server));
 }
 
 /**
@@ -238,10 +296,42 @@ export function parseAirport(text: string): { connected: boolean; ssid: string |
 	};
 }
 
-/** Resolvers for one device: the user's own choice first, the DHCP lease second. */
+/**
+ * Effective resolvers for one device from `scutil --dns`.
+ *
+ * The "for scoped queries" section lists one resolver per interface, so this
+ * answers for interfaces that are not the primary one too. Unlike
+ * {@link parseDhcpDns} it does not care which family carried the servers: a host
+ * that learns its resolvers from IPv6 router advertisements or DHCPv6 is
+ * described here and by no other command macOS ships.
+ *
+ * macOS lists only the resolvers it considers usable on that link, which is the
+ * honest answer for a status screen - a configured but unreachable server is not
+ * the one answering queries.
+ */
+export function parseScopedDns(text: string, device: string): string[] {
+	const scoped = text.split(/^DNS configuration \(for scoped queries\)$/m)[1];
+	if (!scoped) return [];
+	for (const block of scoped.split(/^resolver #\d+$/m)) {
+		const owner = block.match(/^\s*if_index\s*:\s*\d+\s*\((.+?)\)\s*$/m);
+		if (owner?.[1] !== device) continue;
+		const servers = [...block.matchAll(/^\s*nameserver\[\d+\]\s*:\s*(\S+)\s*$/gm)].map(match => match[1] as string).filter(server => isMacResolver(server));
+		if (servers.length > 0) return servers;
+	}
+	return [];
+}
+
+/**
+ * Resolvers for one device: the user's own choice first, then the ones the
+ * network handed out. The DHCP packet stays as the last resort because macOS
+ * drops a resolver from `scutil` once it judges the link unusable, and the
+ * lease still describes what the interface was given.
+ */
 function pickDns(sources: MacNetworkSources, device: string): string[] {
 	const manual = sources.serviceDns?.has(device) ? parseServiceDns(sources.serviceDns.get(device) as string) : [];
 	if (manual.length > 0) return manual;
+	const scoped = sources.resolvers ? parseScopedDns(sources.resolvers, device) : [];
+	if (scoped.length > 0) return scoped;
 	return sources.dhcpPacket?.has(device) ? parseDhcpDns(sources.dhcpPacket.get(device) as string) : [];
 }
 
@@ -268,47 +358,55 @@ function mapLink(status: string | null): NetLink {
  */
 export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceInfo[] {
 	const ports = parseHardwarePorts(sources.hardwarePorts);
+	const serviceBindings = parseServiceBindings(sources.serviceOrder);
 	const services = parseServiceOrder(sources.serviceOrder);
 	const interfaces = parseIfconfig(sources.ifconfig);
 	const route = parseDefaultRoute(sources.route);
+	// Only the interface name is taken from the IPv6 side: a host reachable solely
+	// over IPv6 still has a default route, and without it the footer would call a
+	// working connection "disconnected". The IPv4 route stays first, and the
+	// gateway shown on the screen is still the IPv4 one.
+	const route6Device = sources.route6 ? parseDefaultRoute(sources.route6).device : null;
+	const routeDetailKnown = sources.routes === undefined || sources.routes.trim() !== '';
+	const routes = sources.routes === undefined ? (route.device && route.gateway ? [{ device: route.device, gateway: route.gateway }] : []) : parseDefaultRoutes(sources.routes);
 	const airport = sources.airport ? parseAirport(sources.airport) : null;
+	const wirelessDevices = [...ports].filter(([, port]) => mapMedium(port) === 'wireless').map(([device]) => device);
 
 	const result: NetInterfaceInfo[] = [];
 	for (const [device, entry] of interfaces) {
 		if (entry.loopback) continue;
 		const port = ports.get(device);
 		const medium = mapMedium(port);
-		const defaultRoute = device === route.device;
+		const defaultRoute = device === (route.device ?? route6Device);
+		const deviceRoutes = routes.filter(entry => entry.device === device);
+		const serviceInfo = sources.serviceInfo?.get(device) ?? '';
+		const ipv4Mode = serviceInfo ? parseServiceInfo(serviceInfo) : 'unknown';
+		const liveIPv4Addresses = entry.addresses.filter(address => address.family === 'ipv4');
+		const storedIPv4 = liveIPv4Addresses.length === 0 ? parseServiceIPv4(serviceInfo) : null;
+		const addresses = storedIPv4 ? [...entry.addresses, storedIPv4] : entry.addresses;
+		const ipv4Addresses = addresses.filter(address => address.family === 'ipv4');
+		const serviceGateway = parseServiceGateway(serviceInfo);
+		const gateway = serviceGateway ?? (defaultRoute ? route.gateway : null);
+		const staticShapeSafe = ipv4Mode !== 'static' || (ipv4Addresses.length === 1 && validateIPv4Config({ mode: 'static', address: ipv4Addresses[0]!.address, prefixLength: ipv4Addresses[0]!.prefixLength, gateway: serviceGateway ?? '' }, { staticGatewayRequired: true }) === null);
 		const info: NetInterfaceInfo = {
 			id: device,
 			// The service name is what the user sees in System Settings, so it is the
 			// better label; the device name is the fallback for anything unmanaged.
-			name: services.get(device) ?? port ?? device,
+			name: serviceBindings.get(device)?.[0] ?? port ?? device,
 			medium,
 			link: mapLink(entry.status),
 			defaultRoute,
 			mac: entry.mac,
-			addresses: entry.addresses,
-			ipv4Mode: sources.serviceInfo?.has(device) ? parseServiceInfo(sources.serviceInfo.get(device) as string) : 'unknown',
-			// The service's own router, falling back to the default route for a device
-			// networksetup does not manage (and so reports nothing about).
-			gateway: (sources.serviceInfo?.has(device) ? parseServiceRouter(sources.serviceInfo.get(device) as string) : null) ?? (defaultRoute ? route.gateway : null),
+			addresses,
+			ipv4Mode,
+			ipv4Configurable: routeDetailKnown && services.has(device) && ipv4Mode !== 'unknown' && staticShapeSafe && ipv4Addresses.length <= 1 && deviceRoutes.length <= 1,
+			wifiConfigurable: false,
+			gateway,
 			// Manually set servers win; otherwise fall back to what the DHCP lease
 			// handed out, so a DHCP link reports the resolvers it actually uses.
 			dns: pickDns(sources, device),
-			// Every `networksetup` write is addressed by SERVICE name, and
-			// `serviceForDevice` throws for a device no ENABLED service covers. A
-			// record is created here for every non-loopback device the kernel reports,
-			// including plenty with no service at all, so without this the UI offers
-			// an edit that fails only once the user presses Save.
-			ipv4Configurable: services.has(device),
-			// Never, on any device: macOS withholds every network name from a process
-			// without CoreLocation authorization, so a scan cannot name what it found
-			// and a join's outcome cannot be checked. See isMacWifiConfigurable.
-			wifiScannable: false,
-			wifiConnectable: false,
 		};
-		if (medium === 'wireless' && airport) {
+		if (medium === 'wireless' && airport && wirelessDevices.length === 1 && wirelessDevices[0] === device) {
 			info.wifi = {
 				ssid: airport.connected ? airport.ssid : null,
 				signal: airport.connected ? airport.signal : null,
@@ -324,7 +422,7 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 
 /** Run a tool, returning stdout. Throws when it is missing or exits non-zero. */
 async function run(bin: string, args: string[], timeoutMs: number = EXEC_TIMEOUT_MS): Promise<string> {
-	const { stdout } = await execFileAsync(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 });
+	const { stdout } = await execFileAsync(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: C_LOCALE_ENV });
 	return stdout;
 }
 
@@ -341,7 +439,7 @@ const NETWORKSETUP = '/usr/sbin/networksetup';
 
 /** Read the live macOS network state. Throws when the core tools are unavailable, so the caller degrades to addresses only. */
 export async function readMacNetworkState(): Promise<NetInterfaceInfo[]> {
-	const [hardwarePorts, serviceOrder, ifconfig, route] = await Promise.all([run(NETWORKSETUP, ['-listallhardwareports']), run(NETWORKSETUP, ['-listnetworkserviceorder']), run('/sbin/ifconfig', ['-a']), runOptional('/sbin/route', ['-n', 'get', 'default'])]);
+	const [hardwarePorts, serviceOrder, ifconfig, route, route6, routes, resolvers] = await Promise.all([run(NETWORKSETUP, ['-listallhardwareports']), run(NETWORKSETUP, ['-listnetworkserviceorder']), run('/sbin/ifconfig', ['-a']), runOptional('/sbin/route', ['-n', 'get', 'default']), runOptional('/sbin/route', ['-n', 'get', '-inet6', 'default']), runOptional('/usr/sbin/netstat', ['-rn', '-f', 'inet']), runOptional('/usr/sbin/scutil', ['--dns'])]);
 
 	const services = parseServiceOrder(serviceOrder);
 	const present = parseIfconfig(ifconfig);
@@ -361,78 +459,40 @@ export async function readMacNetworkState(): Promise<NetInterfaceInfo[]> {
 
 	const hasWifi = [...parseHardwarePorts(hardwarePorts).values()].some(port => /^Wi-Fi$/i.test(port));
 	const airport = hasWifi ? await runOptional('/usr/sbin/system_profiler', ['SPAirPortDataType']) : '';
-	return parseMacNetworkState({ hardwarePorts, serviceOrder, ifconfig, route, serviceInfo, serviceDns, dhcpPacket, airport });
+	return parseMacNetworkState({ hardwarePorts, serviceOrder, ifconfig, route, route6, routes, serviceInfo, serviceDns, dhcpPacket, resolvers, airport });
 }
 
 /**
  * True when `networksetup` is present AND this process may actually use it to
  * write.
  *
- * macOS gates the write on membership of the `admin` group rather than on root:
- * measured on 15.7.4, an ordinary admin user applies a configuration with no
- * prompt at all, while a non-admin gets "** Error: Command requires admin
- * privileges." and exit status 14. Probing the group is what keeps the edit form
- * away from a standard user, for whom every Save would fail.
+ * macOS may require root when system-wide preferences are password-protected.
+ * Group membership cannot prove that the current non-interactive process may
+ * write, so only an effective root process advertises this capability.
  */
 export async function isMacWritable(): Promise<boolean> {
+	if (!hasMacWritePrivilege(typeof process.getuid === 'function' ? process.getuid() : undefined)) return false;
 	try {
 		await run(NETWORKSETUP, ['-getcomputername']);
-	} catch {
-		return false;
-	}
-	// root is allowed regardless of which groups it happens to carry.
-	if (typeof process.getuid === 'function' && process.getuid() === 0) return true;
-	try {
-		return (await run('/usr/bin/id', ['-Gn'])).split(/\s+/).includes('admin');
+		return true;
 	} catch {
 		return false;
 	}
 }
 
+/** Root is the only privilege level that is safe under every macOS policy. */
+export function hasMacWritePrivilege(effectiveUID: number | undefined): boolean {
+	return effectiveUID === 0;
+}
+
 /**
  * Wi-Fi configuration is not offered on macOS.
  *
- * WHAT IS BLOCKED: the name of any network on the air. Not the signal, not the
- * security, not whether the radio is associated — just the name, which is the one
- * thing a join needs.
- *
- * WHAT WAS MEASURED, on macOS 15.7.4 (arm64), as ROOT, on a machine whose Wi-Fi
- * was associated and carrying the default route:
- *
- *  - `ipconfig getsummary <device>` prints `SSID : <redacted>`, and the same for
- *    BSSID and NetworkID.
- *  - `system_profiler SPAirPortDataType` prints `<redacted>` where the current
- *    network's name belongs.
- *  - `wdutil info` prints `SSID : <redacted>` and `BSSID : <redacted>` while
- *    giving the RSSI in dBm and the security mode in full.
- *  - `networksetup -getairportnetwork <device>` does not redact but DENIES:
- *    it answers "You are not associated with an AirPort network" on an interface
- *    that `ifconfig` reports as `status: active` and that owns the default route.
- *  - The private `airport` tool still exists under Apple80211.framework but has
- *    been emptied out: both `-I` and `-s` print only their deprecation notice and
- *    no data at all.
- *  - Location Services is ENABLED system-wide on that machine
- *    (`LocationServicesEnabled = 1`) and the names are withheld anyway, which
- *    places the gate on per-application authorization rather than on the system
- *    switch.
- *  - `networksetup -listpreferredwirelessnetworks <device>` DOES return real
- *    names. The withholding covers what is on the air, not what is on disk.
- *
- * WHAT WOULD HAVE TO CHANGE: the process asking would need CoreLocation
- * authorization attributed to it — a signed application bundle that declares
- * NSLocationWhenInUseUsageDescription, asks CLLocationManager at runtime, and is
- * granted it by the user. Only then does CoreWLAN's scan return named networks.
- * This backend is a helper process spawned by such a bundle and cannot request
- * that for itself.
- *
- * A join could in principle be offered without any scan, since
- * `networksetup -setairportnetwork` takes a name typed by hand or taken from the
- * preferred list above. It is not offered because its outcome cannot be checked:
- * after joining, the reader still cannot name the network it is on, and
- * `-getairportnetwork` denies the association outright — so the app could not
- * tell the user whether it had worked. Shipping that is worse than not offering
- * it, so the capability stays false. A constant, not a probe: nothing this
- * process can do at runtime changes the answer.
+ * Joining needs a network name, and macOS withholds every name from a process
+ * without Location Services access — a scan comes back as a list of `<redacted>`
+ * entries. Rather than ship a picker that cannot name anything, the capability is
+ * reported as false. This is a constant, not a probe: the answer cannot change
+ * without the user granting the permission to this binary in System Settings.
  */
 export function isMacWifiConfigurable(): boolean {
 	return false;
@@ -444,193 +504,123 @@ export function netmaskFromPrefix(prefixLength: number): string {
 	return [(mask >>> 24) & 0xff, (mask >>> 16) & 0xff, (mask >>> 8) & 0xff, mask & 0xff].join('.');
 }
 
-/** True for a resolver the IPv4 editor cannot express, and so must not silently drop. */
-function isIPv6Server(server: string): boolean {
-	return server.includes(':');
-}
-
-/**
- * The IPv4 configuration and resolvers of one service, taken before an apply.
- *
- * `networksetup` changes the address and the resolvers through two separate
- * commands, and nothing ties them together — so if the second fails the first has
- * already happened. This is what makes it undoable.
- */
-export interface MacServiceSnapshot {
-	readonly mode: NetInterfaceInfo['ipv4Mode'];
-	readonly address: string | null;
-	readonly mask: string | null;
-	readonly router: string | null;
-	/** Every resolver the service holds, BOTH families, in the order macOS listed them. */
-	readonly dns: readonly string[];
-}
-
-/** `networksetup` prints the literal "none" for a value a service does not have. */
-function presentValue(value: string | undefined): string | null {
-	return value && value !== 'none' ? value : null;
-}
-
-/**
- * What a `networksetup -getdnsservers` reading actually established.
- *
- * Three outcomes, because two of them used to be one. `runOptional` turns every
- * failure into an empty string, so "this service genuinely has no manual
- * resolvers" was indistinguishable from "the command could not run", "the call
- * was refused" and "the service has disappeared" — and an apply built on the
- * second kind DELETES the manual DNS the read failed to see.
- *
- * The outcome is decided from the OUTPUT rather than from the exit code alone:
- * macOS answers the "aren't any" sentence for a service with no manual
- * resolvers, and `networksetup` is documented as printing its errors to stdout
- * and signalling failure only through the exit status — so the text is the more
- * reliable of the two signals, and it is the one available here.
- */
-export type MacDnsReading = { readonly kind: 'none' } | { readonly kind: 'values'; readonly servers: readonly string[] } | { readonly kind: 'readError' };
-
-/** Classify `networksetup -getdnsservers` output into {@link MacDnsReading}. */
-export function readMacDnsServers(text: string): MacDnsReading {
-	if (/There aren't any DNS Servers set/i.test(text)) return { kind: 'none' };
-	const servers = parseServiceDns(text);
-	// Neither the sentence nor a single parseable address: an empty string from a
-	// failed command, or an error message. Nothing was established either way.
-	return servers.length > 0 ? { kind: 'values', servers } : { kind: 'readError' };
-}
-
-/**
- * Read a snapshot out of `networksetup -getinfo` and `-getdnsservers` output, or
- * null when either reading established nothing.
- *
- * Null is what makes the apply refusable. A snapshot missing its resolvers is
- * worse than no snapshot at all: it is written back as "this service had no DNS",
- * which is a change of its own.
- */
-export function parseMacServiceSnapshot(info: string, dns: string): MacServiceSnapshot | null {
-	const resolvers = readMacDnsServers(dns);
-	if (resolvers.kind === 'readError') return null;
-	// The same failure by the other command — `-getinfo` answers nothing at all.
-	if (!info.trim()) return null;
-	return {
-		mode: parseServiceInfo(info),
-		address: presentValue(info.match(/^\s*IP address:\s*(\S+)/m)?.[1]),
-		mask: presentValue(info.match(/^\s*Subnet mask:\s*(\S+)/m)?.[1]),
-		router: parseServiceRouter(info),
-		dns: resolvers.kind === 'values' ? resolvers.servers : [],
-	};
-}
-
-/**
- * The two commands that put a snapshot back, or null when it cannot be expressed.
- *
- * Null is a real answer rather than a failure to try: a service that was static
- * with no router has no `networksetup -setmanual` spelling (the parameter is
- * mandatory), and a mode macOS did not name cannot be restored to something
- * specific. Saying so lets the caller report an un-undone change honestly instead
- * of guessing at one.
- */
-export function macRestoreArgs(service: string, snapshot: MacServiceSnapshot): [string[], string[]] | null {
-	const dnsArgs = ['-setdnsservers', service, ...(snapshot.dns.length > 0 ? [...snapshot.dns] : ['Empty'])];
-	if (snapshot.mode === 'dhcp') return [['-setdhcp', service], dnsArgs];
-	if (snapshot.mode === 'static' && snapshot.address && snapshot.mask && snapshot.router) return [['-setmanual', service, snapshot.address, snapshot.mask, snapshot.router], dnsArgs];
-	return null;
-}
-
 /**
  * Build the `networksetup` argument lists that apply one IPv4 configuration.
  *
  * Two calls, not one: the address and the resolvers are separate settings, and
  * `-setdhcp` deliberately does NOT reset the resolvers — a manual DNS entry
  * survives a switch back to DHCP unless it is cleared with the `Empty` sentinel.
- *
- * `existingDns` is the service's CURRENT resolver list, both families. It has to
- * be passed in because `-setdnsservers` replaces the whole list at once while the
- * editor only ever holds IPv4 servers: writing the form's list verbatim deleted
- * every manually configured IPv6 resolver, even when the user had changed nothing
- * but an address. The servers the form cannot express are carried through
- * unchanged, after the ones it can.
  */
-export function macApplyArgs(service: string, config: NetIPv4Config, existingDns: readonly string[] = []): [string[], string[]] {
-	const dns = [...(config.dns ?? []), ...existingDns.filter(isIPv6Server)];
-	const dnsArgs = ['-setdnsservers', service, ...(dns.length > 0 ? dns : ['Empty'])];
-	if (config.mode === 'dhcp') return [['-setdhcp', service], dnsArgs];
-	// `networksetup -setmanual` is documented as taking FOUR mandatory values —
-	// service, address, subnet mask and router — not three with an optional
-	// trailing one. Building the short form produces a command networksetup
-	// rejects as invalid parameters, and it would be rejected AFTER the caller had
-	// been told the configuration was acceptable. A gateway-less static address is
-	// legitimate on an isolated segment and the shared validator rightly allows it
-	// for the other platforms, so the refusal belongs here, where the limitation
-	// actually is: macOS has no `networksetup` spelling for it.
-	if (!config.gateway) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'macOS requires a gateway for a static address');
-	return [['-setmanual', service, config.address as string, netmaskFromPrefix(config.prefixLength as number), config.gateway], dnsArgs];
+export function macApplyArgs(service: string, config: NetIPv4Config, addressingChanged: boolean = true): string[][] {
+	const dnsArgs = config.dns === undefined ? [] : [['-setdnsservers', service, ...(config.dns.length > 0 ? config.dns : ['Empty'])]];
+	if (!addressingChanged) return dnsArgs;
+	if (config.mode === 'dhcp') return [['-setdhcp', service], ...dnsArgs];
+	// Unlike the Windows and NetworkManager paths, networksetup documents the
+	// router as a required positional argument and has no documented no-router
+	// sentinel. Reject only this platform-specific shape instead of emitting a
+	// command that networksetup cannot parse.
+	if (!config.gateway) throw new Error('macOS manual IPv4 configuration requires a router');
+	const address = ['-setmanual', service, config.address as string, netmaskFromPrefix(config.prefixLength as number), config.gateway];
+	return [address, ...dnsArgs];
+}
+
+function sameAddressSet(left: string[], right: string[]): boolean {
+	const actual = [...new Set(left.map(value => value.toLowerCase()))].sort();
+	const expected = [...new Set(right.map(value => value.toLowerCase()))].sort();
+	return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
+}
+
+function macAddressingApplied(config: NetIPv4Config, info: string, requireLease: boolean = true): boolean {
+	if (parseServiceInfo(info) !== config.mode) return false;
+	const current = parseServiceCurrentIPv4(info);
+	// With the link down the mode is what gets saved; the lease follows the cable.
+	if (config.mode === 'dhcp') return !requireLease || (!!current && current.address !== '0.0.0.0' && !current.address.startsWith('169.254.'));
+	return !!current && current.address === config.address && current.prefixLength === config.prefixLength && parseServiceGateway(info) === (config.gateway || null);
+}
+
+/**
+ * Whether restoring a configuration may be held to producing a DHCP lease.
+ *
+ * A restore cannot be asked for a better state than the one it restores. A
+ * service that was on DHCP without an address before the change — the link is up
+ * but nothing answered — will not have one after it either, and demanding one
+ * would report a failed restore for a service that is exactly back where it
+ * started. What it does have to prove either way is that it is on DHCP again.
+ */
+export function macRestoreRequiresLease(previous: NetIPv4Config, previousInfo: string, requireLease: boolean): boolean {
+	if (!requireLease || previous.mode !== 'dhcp') return requireLease;
+	return macAddressingApplied(previous, previousInfo, true);
+}
+
+export function assertMacIPv4Applied(config: NetIPv4Config, info: string, dnsText: string, addressingChanged: boolean, requireLease: boolean = true): void {
+	if (addressingChanged && !macAddressingApplied(config, info, requireLease)) throw new Error(config.mode === 'dhcp' ? 'macOS did not obtain a usable DHCP lease' : 'macOS did not apply the requested IPv4 configuration');
+	if (config.dns !== undefined && !sameAddressSet(parseServiceDns(dnsText), config.dns)) throw new Error('macOS did not apply the requested DNS policy');
+}
+
+async function verifyMacIPv4(service: string, config: NetIPv4Config, addressingChanged: boolean, requireLease: boolean): Promise<void> {
+	let info = await run(NETWORKSETUP, ['-getinfo', service]);
+	if (addressingChanged) {
+		const deadline = Date.now() + 20_000;
+		while (!macAddressingApplied(config, info, requireLease) && Date.now() < deadline) {
+			await delay(200);
+			info = await run(NETWORKSETUP, ['-getinfo', service]);
+		}
+	}
+	const dns = config.dns === undefined ? '' : await run(NETWORKSETUP, ['-getdnsservers', service]);
+	assertMacIPv4Applied(config, info, dns, addressingChanged, requireLease);
 }
 
 /** Resolve the service name a device belongs to. Throws when the device is not part of an enabled service. */
 async function serviceForDevice(device: string): Promise<string> {
-	const service = parseServiceOrder(await run(NETWORKSETUP, ['-listnetworkserviceorder'])).get(device);
+	const [serviceOrder, routeTable] = await Promise.all([run(NETWORKSETUP, ['-listnetworkserviceorder']), run('/usr/sbin/netstat', ['-rn', '-f', 'inet'])]);
+	const service = parseServiceOrder(serviceOrder).get(device);
 	if (!service) throw new Error(`no enabled network service uses ${device}`);
+	if (parseDefaultRoutes(routeTable).filter(route => route.device === device).length > 1) throw new Error(`multiple default routes use ${device}`);
 	return service;
 }
 
-/**
- * Apply an IPv4 configuration to one device. Requires membership of `admin`,
- * which is how networksetup guards every write.
- *
- * The address and the resolvers are two commands and nothing joins them, so the
- * second failing used to leave the machine on the new address with the old
- * resolvers and no way back. The snapshot taken first serves twice: it supplies
- * the IPv6 resolvers the editor cannot express, and it is what the address is
- * put back to when the second command fails.
- *
- * Nothing is changed without a complete snapshot, and BOTH writes are inside the
- * guard. Neither used to be true: a snapshot that failed to read yielded an empty
- * resolver list, which the apply then wrote to the service as fact, and the
- * address command sat outside the try, so its own failure rolled nothing back.
- */
-export async function applyMacIPv4(device: string, config: NetIPv4Config): Promise<void> {
+/** Apply an IPv4 configuration to one device. Requires root, which is how networksetup guards every write. */
+export async function applyMacIPv4(device: string, config: NetIPv4Config, addressingChanged: boolean = true, requireLease: boolean = true): Promise<void> {
 	const service = await serviceForDevice(device);
-	const snapshot = await readMacServiceSnapshot(service);
-	if (!snapshot) throw new CodedError(ErrorCodes.NETCONFIG_FAILED, `the current configuration of ${service} could not be read, so it will not be changed`);
-	// Read fine, and still un-writable: a static service with no router, or a mode
-	// networksetup did not name (BOOTP, "Automatic"), has no `-setmanual` or
-	// `-setdhcp` spelling to go back to. Discovering that in the rollback is
-	// discovering it too late — the address has already changed by then and the
-	// user is told only that undoing failed. The apply is refusable up to this
-	// point and nothing has been written, so this is where it is refused.
-	if (!macRestoreArgs(service, snapshot)) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, `the current configuration of ${service} cannot be written back if the change fails, so it will not be changed`);
-	const [addressArgs, dnsArgs] = macApplyArgs(service, config, snapshot.dns);
-	try {
-		await run(NETWORKSETUP, addressArgs, APPLY_TIMEOUT_MS);
-		await run(NETWORKSETUP, dnsArgs, APPLY_TIMEOUT_MS);
-	} catch (err) {
-		const rollback = await restoreMacService(service, snapshot);
-		// Both, not just the first: the address has already changed, and reporting
-		// only the resolver failure would suggest it had not.
-		if (rollback) throw new Error(`${(err as Error).message} — and undoing the change failed: ${rollback}`);
-		throw err;
-	}
-}
-
-/** The service's IPv4 configuration and resolvers, or null when either could not be read. */
-async function readMacServiceSnapshot(service: string): Promise<MacServiceSnapshot | null> {
-	const [info, dns] = await Promise.all([runOptional(NETWORKSETUP, ['-getinfo', service]), runOptional(NETWORKSETUP, ['-getdnsservers', service])]);
-	return parseMacServiceSnapshot(info, dns);
+	const [oldInfo, oldDns] = await Promise.all([run(NETWORKSETUP, ['-getinfo', service]), run(NETWORKSETUP, ['-getdnsservers', service])]);
+	const oldMode = parseServiceInfo(oldInfo);
+	const oldAddress = parseServiceIPv4(oldInfo);
+	const oldGateway = parseServiceGateway(oldInfo);
+	if (oldMode === 'unknown' || (oldMode === 'static' && (!oldAddress || !oldGateway))) throw new Error('macOS network service configuration cannot be preserved safely');
+	const previous: NetIPv4Config = oldMode === 'dhcp' ? { mode: 'dhcp', dns: parseServiceDns(oldDns) } : { mode: 'static', address: oldAddress!.address, prefixLength: oldAddress!.prefixLength, gateway: oldGateway!, dns: parseServiceDns(oldDns) };
+	return withMacRollback(
+		async () => {
+			for (const args of macApplyArgs(service, config, addressingChanged)) await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);
+			await verifyMacIPv4(service, config, addressingChanged, requireLease);
+		},
+		async () => {
+			for (const args of macApplyArgs(service, previous, addressingChanged)) await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);
+			// `networksetup` exiting zero is not the service being back: a restored
+			// DHCP service still has to get its lease, and a restored static one still
+			// has to hold the address it was handed. An unverified restore is exactly
+			// the case that leaves the machine unreachable while the app reports only
+			// the original failure.
+			await verifyMacIPv4(service, previous, addressingChanged, macRestoreRequiresLease(previous, oldInfo, requireLease));
+		}
+	);
 }
 
 /**
- * Put the service's addressing and resolvers back. Returns what went wrong, or null.
+ * Run a change that must leave the service either changed or as it was.
  *
- * The snapshot is not nullable: {@link applyMacIPv4} refuses to change anything
- * without one, so there is no longer a path here with nothing to restore from.
+ * The restore is verified like the change is, and a restore that cannot be
+ * verified is reported alongside the failure that triggered it — those are two
+ * different situations for whoever has to get the machine back on the network.
  */
-async function restoreMacService(service: string, snapshot: MacServiceSnapshot): Promise<string | null> {
-	const restore = macRestoreArgs(service, snapshot);
-	if (!restore) return 'the previous configuration has no networksetup form and cannot be written back';
-	for (const args of restore) {
+export async function withMacRollback<T>(mutate: () => Promise<T>, rollback: () => Promise<void>): Promise<T> {
+	try {
+		return await mutate();
+	} catch (applyError) {
 		try {
-			await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);
-		} catch (err) {
-			return (err as Error).message;
+			await rollback();
+		} catch (rollbackError) {
+			throw new Error(`network apply failed: ${String(applyError)}; rollback failed: ${String(rollbackError)}`);
 		}
+		throw applyError;
 	}
-	return null;
 }

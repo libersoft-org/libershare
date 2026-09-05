@@ -2,7 +2,7 @@
 export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE } from './product.ts';
 
 // Utils
-export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End, deriveConnectionStatus, isSelectableInterface, isIPv4, isValidSSID, isValidWifiKey, isWifiHexKey, validateIPv4Config } from './utils.ts';
+export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End, deriveConnectionStatus, isSelectableInterface, ipv4BaselineOf, sameIPv4Baseline, isIPv4, isIPv6, isValidSSID, isValidWifiKey, isWifiHexKey, MAX_DNS_LIST_BYTES, MAX_DNS_SERVERS, canonicalDnsServer, normalizeDnsServers, validateIPv4Config } from './utils.ts';
 
 // Compression
 
@@ -449,47 +449,12 @@ export interface NetInterfaceInfo {
 	mac: string | null;
 	addresses: NetAddress[];
 	ipv4Mode: NetAddressMode;
+	/** True only when the platform apply path can resolve this exact interface. */
+	ipv4Configurable: boolean;
+	/** True only when the platform Wi-Fi path manages this exact wireless device. */
+	wifiConfigurable: boolean;
 	gateway: string | null;
 	dns: string[];
-	/**
-	 * Whether this interface's IPv4 addressing can be reconfigured, given that the
-	 * host can be.
-	 *
-	 * The host-wide {@link NetCapabilities} answer only says the tooling is present
-	 * and we may use it. Each interface still has to be reachable BY that tooling:
-	 * on Linux the apply edits the profile ACTIVE on the device, so a device with
-	 * none has nothing to edit; on Windows an addressed stack may have no adapter
-	 * GUID for the apply to resolve; on macOS a device may belong to no enabled
-	 * network service.
-	 *
-	 * REQUIRED, and deliberately so. While it was optional, an absent value meant
-	 * "no per-interface objection" and the frontend read that as permission — a
-	 * fail-open default in front of an operation that can take the host off the
-	 * network. Every reader now states it outright, so only `true` is permission
-	 * and a reader that forgets is a compile error rather than an open door.
-	 */
-	ipv4Configurable: boolean;
-	/**
-	 * Whether this interface's radio can be asked what networks it can see.
-	 *
-	 * Separate from {@link ipv4Configurable} because the two answer to different
-	 * tooling and were briefly conflated, with a plain regression: requiring an
-	 * ACTIVE NetworkManager profile is right for editing an address and wrong for
-	 * Wi-Fi, since a DISCONNECTED adapter has no active profile and is exactly the
-	 * adapter a user needs to scan with. `nmcli device wifi list` asks the radio,
-	 * not the profile, and needs only a managed device.
-	 */
-	wifiScannable: boolean;
-	/**
-	 * Whether this interface can be told to join a network.
-	 *
-	 * Distinct from {@link wifiScannable} because seeing a network and being
-	 * allowed to associate with it are not the same permission on every platform —
-	 * a radio can be scannable while joining is refused by policy. No current
-	 * platform separates them, so today every reader answers both alike; the field
-	 * exists so the join path asks the question it actually means.
-	 */
-	wifiConnectable: boolean;
 	/** Present only when medium === 'wireless'. */
 	wifi?: NetWifiInfo;
 }
@@ -517,18 +482,11 @@ export interface NetworkStateInfo {
 export interface NetCapabilities {
 	/** Address, gateway and DNS of an interface can be changed. */
 	ipv4: boolean;
+	/** The next IPv4 mutation must run through the trusted privileged helper. */
+	ipv4Elevation?: boolean;
 	/** Wi-Fi networks can be scanned and joined. */
 	wifi: boolean;
-	/**
-	 * A static address on this host cannot be applied without a gateway.
-	 *
-	 * True on macOS and nowhere else: `networksetup -setmanual` takes the router as
-	 * a MANDATORY fourth value, so a gateway-less static address — perfectly
-	 * legitimate on an isolated segment, and accepted by the shared validator for
-	 * that reason — has no spelling there. Reported as a capability so the form can
-	 * require the field before Save, rather than letting the user find out from a
-	 * platform error after the change had already been called valid.
-	 */
+	/** Static IPv4 requires a gateway because the platform tool has no no-router form. */
 	staticGatewayRequired: boolean;
 }
 
@@ -547,17 +505,43 @@ export interface NetIPv4Config {
 	prefixLength?: number;
 	/** Optional even for 'static' — an interface on an isolated segment has no gateway. */
 	gateway?: string;
-	/** Empty means "let the OS decide" (DHCP-supplied, or none for a static address). */
+	/**
+	 * Resolver update requested by the user. Undefined preserves the current
+	 * resolver policy, an empty array selects automatic DNS, and a non-empty
+	 * array replaces it with the listed IPv4/IPv6 resolvers.
+	 */
 	dns?: string[];
+}
+
+/**
+ * The IPv4 facts an edit form was seeded from.
+ *
+ * Sent back with the change so that a form opened on one configuration cannot
+ * quietly overwrite a different one that arrived in the meantime — DHCP switched
+ * on by a system tool, another client's edit. The backend compares it with a
+ * fresh read and refuses a stale form instead of applying it.
+ */
+export interface NetIPv4Baseline {
+	mode: NetAddressMode;
+	address: string | null;
+	prefixLength: number | null;
+	gateway: string | null;
+	dns: string[];
 }
 
 /** One network seen by a Wi-Fi scan. */
 export interface NetWifiNetwork {
 	ssid: string;
+	/** Access-point identity used to disambiguate equal SSIDs. */
+	bssid: string | null;
 	/** 0-100 signal quality, never dBm. Null = the scanner did not report one. */
 	signal: number | null;
 	/** False for a genuinely open network — the UI must not ask for a password. */
 	secured: boolean;
+	/** Scanner security label, for display and capability decisions. */
+	security: string;
+	/** True only for open and personal WPA networks the one-password form supports. */
+	supported: boolean;
 	/** True when the interface is currently associated with this network. */
 	active: boolean;
 }

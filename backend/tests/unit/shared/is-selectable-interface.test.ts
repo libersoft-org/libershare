@@ -3,7 +3,7 @@ import { isSelectableInterface, type NetInterfaceInfo } from '@shared';
 
 /** An interface with only the fields a case cares about spelled out. */
 function iface(overrides: Partial<NetInterfaceInfo> & { id: string }): NetInterfaceInfo {
-	return { name: overrides.id, medium: 'other', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [], ipv4Configurable: false, wifiScannable: false, wifiConnectable: false, ...overrides };
+	return { name: overrides.id, medium: 'other', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, wifiConfigurable: false, gateway: null, dns: [], ...overrides };
 }
 
 const address = (a: string, family: 'ipv4' | 'ipv6' = 'ipv4'): NetInterfaceInfo['addresses'][number] => ({ family, address: a, prefixLength: 24 });
@@ -26,6 +26,7 @@ describe('isSelectableInterface', () => {
 		// The reason this predicate exists: 111 of 137 interfaces on a container
 		// host look exactly like this, and listing them buries the real ones.
 		expect(isSelectableInterface(iface({ id: 'veth42085d7', addresses: [address('fe80::c0d5:4bff:fe21:5c66', 'ipv6')] }))).toBe(false);
+		for (const value of ['fe90::1', 'fea0::1', 'febf::1']) expect(isSelectableInterface(iface({ id: value, addresses: [address(value, 'ipv6')] }))).toBe(false);
 	});
 
 	it('hides an adapter that only ever got an APIPA address', () => {

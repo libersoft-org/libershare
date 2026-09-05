@@ -3,7 +3,7 @@ import { deriveConnectionStatus, type NetInterfaceInfo, type NetworkStateInfo } 
 
 /** An interface with only the fields a case cares about spelled out. */
 function iface(overrides: Partial<NetInterfaceInfo> & { id: string }): NetInterfaceInfo {
-	return { name: overrides.id, medium: 'wired', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [], ipv4Configurable: false, wifiScannable: false, wifiConnectable: false, ...overrides };
+	return { name: overrides.id, medium: 'wired', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, wifiConfigurable: false, gateway: null, dns: [], ...overrides };
 }
 
 function state(interfaces: NetInterfaceInfo[], overrides: Partial<NetworkStateInfo> = {}): NetworkStateInfo {
@@ -39,6 +39,11 @@ describe('deriveConnectionStatus', () => {
 	it('never carries a stale signal into a disconnected adapter', () => {
 		const result = deriveConnectionStatus(state([iface({ id: '1', medium: 'wireless', link: 'down', defaultRoute: true, wifi: { ssid: 'Example Net', signal: 88, radio: 'on' } })]));
 		expect(result).toMatchObject({ kind: 'wifi', connected: false, signal: null, ssid: null });
+	});
+
+	it('does not turn an unknown Wi-Fi link state into disconnected', () => {
+		const result = deriveConnectionStatus(state([iface({ id: '1', medium: 'wireless', link: 'unknown', defaultRoute: true, wifi: { ssid: null, signal: null, radio: 'unknown' } })]));
+		expect(result).toEqual({ kind: 'unknown', connected: false, signal: null, ssid: null, interfaceName: '1' });
 	});
 
 	it('falls back to the default route when the user pick no longer exists', () => {

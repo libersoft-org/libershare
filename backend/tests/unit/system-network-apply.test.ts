@@ -1,16 +1,9 @@
-import { describe, expect, it } from 'bun:test';
-import { isIPv4, isValidSSID, isValidWifiKey, isWifiHexKey, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { connectLinuxWifi, nmcliActivateArgs, nmcliMethodToMode, parseLinuxIPv4Snapshot, parseLinuxWifiSecrets, nmcliModifyArgs, parseNmcliActiveUUIDs, nmcliRestoreArgs, nmcliWifiRestoreArgs, parseNmcliProperties, parseNmcliActiveUUID, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseNmcliWifiProfileUUIDs, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
+import { afterEach, describe, expect, it } from 'bun:test';
+import { canonicalDnsServer, ErrorCodes, ipv4BaselineOf, isIPv4, isIPv6, isValidSSID, isValidWifiKey, isWifiHexKey, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
+import { assertIPv6DnsAllowed, assertLinuxDnsApplied, assertLinuxIPv4Applied, assertLinuxIPv4Method, assertLinuxWifiConnected, assertNetworkManagerRollback, assertNmcliActiveConnection, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
-import { assertDeviceName, firstLine } from '../../src/system-network.ts';
+import { assertAppliedIPv4State, assertDeviceName, assertIPv4Baseline, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, leaseRequired, MAX_WIFI_PASSWORD_BYTES, planIPv4Change, readCachedCapabilities, resetNetworkCapabilitiesCache, runNetworkMutation } from '../../src/system-network.ts';
 
-/**
- * `isIPv4` is deliberately LEXICAL: it answers whether a string is shaped like a
- * dotted quad, nothing more. Whether such a literal can be a host's address is a
- * separate, semantic question, answered by `validateIPv4Config` below — so
- * `0.0.0.0` being accepted here and rejected there is the intended split, not a
- * contradiction.
- */
 describe('isIPv4', () => {
 	it('accepts ordinary dotted quads', () => {
 		for (const value of ['192.0.2.1', '0.0.0.0', '255.255.255.255', '198.51.100.42']) expect(isIPv4(value)).toBe(true);
@@ -24,9 +17,20 @@ describe('isIPv4', () => {
 		expect(isIPv4('192.0.2.01')).toBe(false);
 		expect(isIPv4('010.0.0.1')).toBe(false);
 	});
+});
 
-	it('answers false for a non-string rather than throwing', () => {
-		for (const bogus of [null, undefined, 42, {}, ['192.0.2.1']]) expect(isIPv4(bogus as unknown as string)).toBe(false);
+describe('isIPv6', () => {
+	it('accepts compressed, expanded and IPv4-mapped literals', () => {
+		for (const value of ['::1', '2001:db8::53', 'fe90::1', '2001:0db8:0000:0000:0000:0000:0000:0053', '::ffff:192.0.2.1']) expect(isIPv6(value)).toBe(true);
+	});
+
+	it('rejects malformed values and scope suffixes', () => {
+		for (const value of ['', ':', '2001:::1', '2001:db8::1::2', 'gggg::1', 'fe80::1%12']) expect(isIPv6(value)).toBe(false);
+	});
+
+	it('rejects trailing URL syntax and PowerShell metacharacters', () => {
+		for (const value of ["::1]/';Stop-Computer;#", '::1]/path', '::1]?query', '::1]@host']) expect(isIPv6(value)).toBe(false);
+		expect(validateIPv4Config({ mode: 'dhcp', dns: ["::1]/';Stop-Computer;#"] })).toBe('dns');
 	});
 });
 
@@ -36,11 +40,17 @@ describe('validateIPv4Config', () => {
 	});
 
 	it('accepts a complete static config', () => {
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.1', '198.51.100.1'] })).toBeNull();
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.1', '2001:db8::53', '127.0.0.1'] })).toBeNull();
 	});
 
 	it('accepts a static config with no gateway, as on an isolated segment', () => {
 		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24 })).toBeNull();
+	});
+
+	it('requires a static gateway when the platform tool does', () => {
+		const capabilities = { staticGatewayRequired: true };
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24 }, capabilities)).toBe('gateway');
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }, capabilities)).toBeNull();
 	});
 
 	it('names the field that is wrong', () => {
@@ -58,111 +68,208 @@ describe('validateIPv4Config', () => {
 		expect(validateIPv4Config({ mode: 'dhcp', dns: ['not an address'] })).toBe('dns');
 	});
 
-	// The config arrives from an RPC client, so its runtime shape is whatever was
-	// sent. Every one of these used to throw a TypeError out of the dispatcher
-	// instead of naming the offending field.
-	it('names a field rather than throwing on a config that is not an object', () => {
-		for (const bogus of [null, undefined, [], 'static', 42]) expect(validateIPv4Config(bogus as unknown as NetIPv4Config)).toBe('mode');
-	});
-
-	it('names a field rather than throwing on a non-string address', () => {
-		for (const bogus of [{}, [], 42, null]) expect(validateIPv4Config({ mode: 'static', address: bogus, prefixLength: 24 } as unknown as NetIPv4Config)).toBe('address');
-	});
-
-	it('names a field rather than throwing on a dns list that is not a list', () => {
-		expect(validateIPv4Config({ mode: 'dhcp', dns: '192.0.2.1' } as unknown as NetIPv4Config)).toBe('dns');
-		expect(validateIPv4Config({ mode: 'dhcp', dns: { 0: '192.0.2.1' } } as unknown as NetIPv4Config)).toBe('dns');
-	});
-
-	it('names a field rather than throwing on a dns entry that is not a string', () => {
-		expect(validateIPv4Config({ mode: 'dhcp', dns: [{}] } as unknown as NetIPv4Config)).toBe('dns');
-		expect(validateIPv4Config({ mode: 'dhcp', dns: [null] } as unknown as NetIPv4Config)).toBe('dns');
-	});
-
-	// Semantic layer: a literal that is shaped like an address but cannot be a
-	// host's. Windows deletes the previous address BEFORE setting the new one, so
-	// letting the OS be the one to notice leaves the interface with neither.
-	it('rejects the unspecified and limited-broadcast addresses', () => {
-		expect(validateIPv4Config({ mode: 'static', address: '0.0.0.0', prefixLength: 24 })).toBe('address');
-		expect(validateIPv4Config({ mode: 'static', address: '255.255.255.255', prefixLength: 24 })).toBe('address');
-		// At /31 and /32 the network/broadcast rule below does not apply, so these
-		// two are the only thing standing between the user and an interface
-		// configured with no address at all.
-		expect(validateIPv4Config({ mode: 'static', address: '0.0.0.0', prefixLength: 32 })).toBe('address');
-		expect(validateIPv4Config({ mode: 'static', address: '255.255.255.255', prefixLength: 32 })).toBe('address');
-		expect(validateIPv4Config({ mode: 'static', address: '0.0.0.0', prefixLength: 31 })).toBe('address');
-	});
-
-	it('rejects the network and broadcast addresses of the prefix', () => {
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.0', prefixLength: 24 })).toBe('address');
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.255', prefixLength: 24 })).toBe('address');
-		// The same host in a wider prefix is a perfectly ordinary address.
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.255', prefixLength: 23 })).toBeNull();
-	});
-
-	it('allows both addresses of a point-to-point /31 and a lone /32', () => {
-		// RFC 3021: a /31 has no network or broadcast address, both are usable.
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.0', prefixLength: 31 })).toBeNull();
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.1', prefixLength: 31 })).toBeNull();
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.0', prefixLength: 32 })).toBeNull();
-	});
-
-	it('rejects a gateway that is the interface itself, or unspecified', () => {
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.10' })).toBe('gateway');
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '0.0.0.0' })).toBe('gateway');
-	});
-
-	// Both are inside the prefix, so the on-link test accepts them — and a router
-	// cannot live at either. The interface then configures cleanly with a default
-	// route to an address that can never answer ARP.
-	it('rejects a gateway that is the network or broadcast address of the prefix', () => {
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.0' })).toBe('gateway');
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.255' })).toBe('gateway');
-		// A /25 has its own boundaries, which are ordinary addresses in a /24.
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 25, gateway: '192.0.2.127' })).toBe('gateway');
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.127' })).toBeNull();
-	});
-
-	it('still allows both addresses of a point-to-point /31 as a gateway', () => {
-		// RFC 3021 again: no network or broadcast address exists to collide with, and
-		// the peer is normally the other of the two.
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.0', prefixLength: 31, gateway: '192.0.2.1' })).toBeNull();
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.1', prefixLength: 31, gateway: '192.0.2.0' })).toBeNull();
-	});
-
-	it('rejects a gateway the interface has no route to', () => {
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '198.51.100.1' })).toBe('gateway');
-		// ...and accepts one inside the prefix.
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' })).toBeNull();
-	});
-
-	it('allows an off-link gateway on a /32, where nothing is on-link', () => {
-		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 32, gateway: '198.51.100.1' })).toBeNull();
-	});
-
-	// The gateway rule is the host's, not the protocol's: `networksetup -setmanual`
-	// takes the router as a mandatory value, so macOS cannot express the
-	// gateway-less form other platforms accept on an isolated segment. Asked here,
-	// the form can mark the field; asked at apply time it was a platform error
-	// arriving after the configuration had been called valid.
-	it('requires a gateway only where the host says it cannot do without one', () => {
-		const noGateway: NetIPv4Config = { mode: 'static', address: '192.0.2.10', prefixLength: 24 };
-		expect(validateIPv4Config(noGateway, false)).toBeNull();
-		expect(validateIPv4Config(noGateway, true)).toBe('gateway');
-		// A gateway that IS supplied is judged the same way on every host.
-		expect(validateIPv4Config({ ...noGateway, gateway: '192.0.2.1' }, true)).toBeNull();
-		expect(validateIPv4Config({ ...noGateway, gateway: '198.51.100.1' }, true)).toBe('gateway');
-	});
-
-	it('does not demand a gateway from a DHCP configuration even then', () => {
-		expect(validateIPv4Config({ mode: 'dhcp' }, true)).toBeNull();
-	});
-
 	it('refuses anything carrying shell or PowerShell syntax', () => {
 		for (const attack of ["192.0.2.1'; Stop-Computer; '", '192.0.2.1 -and $(calc)', '$(whoami)', '192.0.2.1;reboot']) {
 			expect(validateIPv4Config({ mode: 'static', address: attack, prefixLength: 24 })).toBe('address');
 			expect(validateIPv4Config({ mode: 'static', address: '192.0.2.1', prefixLength: 24, gateway: attack })).toBe('gateway');
 		}
+	});
+
+	it('rejects addresses that cannot identify a normal interface host', () => {
+		for (const address of ['0.0.0.0', '127.0.0.1', '224.0.0.1', '240.0.0.1', '255.255.255.255', '192.0.2.0', '192.0.2.255']) {
+			expect(validateIPv4Config({ mode: 'static', address, prefixLength: 24, gateway: '192.0.2.1' })).toBe('address');
+		}
+	});
+
+	it('requires a distinct on-link unicast gateway', () => {
+		for (const gateway of ['0.0.0.0', '127.0.0.1', '224.0.0.1', '192.0.2.0', '192.0.2.255', '192.0.2.10', '198.51.100.1']) {
+			expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway })).toBe('gateway');
+		}
+	});
+
+	it('handles point-to-point and host prefixes explicitly', () => {
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 31, gateway: '192.0.2.11' })).toBeNull();
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 32 })).toBeNull();
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.10', prefixLength: 32, gateway: '192.0.2.11' })).toBe('gateway');
+	});
+
+	it('bounds and deduplicates resolver lists without rejecting loopback DNS', () => {
+		expect(normalizeDnsServers(['127.0.0.1', '2001:DB8::53', '127.0.0.1', '2001:db8::53'])).toEqual(['127.0.0.1', '2001:db8::53']);
+		expect(validateIPv4Config({ mode: 'dhcp', dns: Array.from({ length: MAX_DNS_SERVERS }, (_, index) => `192.0.2.${index + 1}`) })).toBeNull();
+		expect(validateIPv4Config({ mode: 'dhcp', dns: Array.from({ length: MAX_DNS_SERVERS + 1 }, (_, index) => `192.0.2.${index + 1}`) })).toBe('dns');
+	});
+
+	it('spells every IPv6 resolver the way the operating system reports it back', () => {
+		// The apply is verified by comparing the requested list with what the host
+		// reports; a different spelling of the same address would look like a
+		// failed apply and trigger a rollback of a change that actually succeeded.
+		expect(canonicalDnsServer('2001:0DB8:0000:0000:0000:0000:0000:0053')).toBe('2001:db8::53');
+		expect(canonicalDnsServer('2001:DB8::53')).toBe('2001:db8::53');
+		expect(canonicalDnsServer('::FFFF:192.0.2.1')).toBe('::ffff:192.0.2.1');
+		expect(canonicalDnsServer('192.0.2.53')).toBe('192.0.2.53');
+		expect(normalizeDnsServers(['2001:0DB8:0000:0000:0000:0000:0000:0053', '2001:db8::53', '2001:DB8:0:0:0:0:0:53'])).toEqual(['2001:db8::53']);
+	});
+
+	it('rejects malformed API shapes without throwing a native TypeError', () => {
+		expect(validateIPv4Config(null)).toBe('mode');
+		expect(validateIPv4Config([])).toBe('mode');
+		expect(validateIPv4Config({ mode: 'static', address: 123, prefixLength: 24 })).toBe('address');
+		expect(validateIPv4Config({ mode: 'dhcp', dns: '192.0.2.1' })).toBe('dns');
+		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.2', prefixLength: 24, gateway: 123 })).toBe('gateway');
+	});
+});
+
+describe('assertIPv6DnsAllowed', () => {
+	it('refuses IPv6 resolvers on a profile with IPv6 disabled, before the profile is touched', () => {
+		// Seen live: NetworkManager rejects ipv6.dns with "not allowed for method=disabled".
+		expect(() => assertIPv6DnsAllowed('disabled\n', ['2001:db8::53'])).toThrow(expect.objectContaining({ code: ErrorCodes.NETCONFIG_UNSUPPORTED }));
+		expect(() => assertIPv6DnsAllowed('ignore', ['192.0.2.53', '2001:db8::53'])).toThrow();
+		expect(() => assertIPv6DnsAllowed('disabled', ['192.0.2.53'])).not.toThrow();
+		expect(() => assertIPv6DnsAllowed('disabled', undefined)).not.toThrow();
+		expect(() => assertIPv6DnsAllowed('auto', ['2001:db8::53'])).not.toThrow();
+	});
+});
+
+describe('assertIPv4Baseline', () => {
+	const target: NetInterfaceInfo = {
+		id: 'lan0',
+		name: 'LAN',
+		medium: 'wired',
+		link: 'up',
+		defaultRoute: true,
+		mac: null,
+		addresses: [{ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 }],
+		ipv4Mode: 'static',
+		ipv4Configurable: true,
+		wifiConfigurable: false,
+		gateway: '192.0.2.1',
+		dns: ['192.0.2.53', '2001:db8::53'],
+	};
+
+	it('accepts a form seeded from the configuration the interface still has', () => {
+		expect(() => assertIPv4Baseline(target, ipv4BaselineOf(target))).not.toThrow();
+		// There is no value that means "apply over whatever is there": a caller that
+		// brings no baseline, or a malformed one, is refused like a stale one.
+		for (const missing of [undefined, null, {}, 'x']) expect(() => assertIPv4Baseline(target, missing)).toThrow(expect.objectContaining({ code: ErrorCodes.NETCONFIG_STALE }));
+	});
+
+	it('refuses a form whose interface was meanwhile switched to DHCP or re-addressed', () => {
+		// A system tool or another client changed the interface after the form
+		// opened; applying the old form would silently undo that change.
+		const seededFrom = ipv4BaselineOf(target);
+		const dhcpNow: NetInterfaceInfo = { ...target, ipv4Mode: 'dhcp', gateway: '192.0.2.254' };
+		expect(() => assertIPv4Baseline(dhcpNow, seededFrom)).toThrow(expect.objectContaining({ code: ErrorCodes.NETCONFIG_STALE }));
+		expect(() => assertIPv4Baseline({ ...target, addresses: [{ family: 'ipv4', address: '192.0.2.20', prefixLength: 24 }] }, seededFrom)).toThrow();
+		expect(() => assertIPv4Baseline({ ...target, dns: ['192.0.2.53'] }, seededFrom)).toThrow();
+	});
+
+	it('treats a malformed baseline from the wire as stale rather than crashing', () => {
+		for (const value of [null, [], 'x', { mode: 'static' }, { ...ipv4BaselineOf(target), dns: 'nope' }]) expect(() => assertIPv4Baseline(target, value)).toThrow(expect.objectContaining({ code: ErrorCodes.NETCONFIG_STALE }));
+	});
+});
+
+describe('isIPv4ConfigUnchanged', () => {
+	const target = {
+		id: 'lan0',
+		name: 'LAN',
+		medium: 'wired' as const,
+		link: 'up' as const,
+		defaultRoute: true,
+		mac: null,
+		addresses: [{ family: 'ipv4' as const, address: '192.0.2.10', prefixLength: 24 }],
+		ipv4Mode: 'static' as const,
+		ipv4Configurable: true,
+		wifiConfigurable: false,
+		gateway: '192.0.2.1',
+		dns: ['2001:db8::53'],
+	};
+
+	it('skips an unchanged address while preserving DNS', () => {
+		expect(isIPv4ConfigUnchanged(target, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' })).toBe(true);
+		expect(isIPv4ConfigUnchanged({ ...target, ipv4Mode: 'dhcp' }, { mode: 'dhcp' })).toBe(true);
+	});
+
+	it('obtains a lease when DHCP is saved on a leaseless interface, but leaves a DNS-only change to the DNS path', () => {
+		// Saving DHCP on an interface stuck on APIPA or without any IPv4 address is
+		// a request to obtain the lease, not a no-op to report as applied. A DNS
+		// change on such an interface must still be possible without a lease.
+		const dhcp = { ...target, ipv4Mode: 'dhcp' as const, gateway: null };
+		const apipa = { ...dhcp, addresses: [{ family: 'ipv4' as const, address: '169.254.10.20', prefixLength: 16 }] };
+		const noIPv4 = { ...dhcp, addresses: [{ family: 'ipv6' as const, address: '2001:db8::10', prefixLength: 64 }] };
+		expect(planIPv4Change(dhcp, { mode: 'dhcp' })).toEqual({ unchanged: true, addressingChanged: false });
+		expect(planIPv4Change(apipa, { mode: 'dhcp' })).toEqual({ unchanged: false, addressingChanged: true });
+		expect(planIPv4Change(noIPv4, { mode: 'dhcp' })).toEqual({ unchanged: false, addressingChanged: true });
+		expect(planIPv4Change(apipa, { mode: 'dhcp', dns: ['192.0.2.53'] })).toEqual({ unchanged: false, addressingChanged: false });
+		expect(planIPv4Change(dhcp, { mode: 'dhcp', dns: [] })).toEqual({ unchanged: false, addressingChanged: false });
+		// With the link down there is no lease to obtain: DHCP on DHCP is unchanged,
+		// and a switch to DHCP owes no lease until the cable is back.
+		expect(planIPv4Change({ ...apipa, link: 'down' as const }, { mode: 'dhcp' })).toEqual({ unchanged: true, addressingChanged: false });
+		expect(leaseRequired({ link: 'up' })).toBe(true);
+		expect(leaseRequired({ link: 'unknown' })).toBe(true);
+		expect(leaseRequired({ link: 'down' })).toBe(false);
+		expect(planIPv4Change(target, { mode: 'static', address: '192.0.2.11', prefixLength: 24, gateway: '192.0.2.1' })).toEqual({ unchanged: false, addressingChanged: true });
+	});
+
+	it('treats any explicit DNS choice or address change as a mutation', () => {
+		expect(isIPv4ConfigUnchanged(target, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: [] })).toBe(false);
+		expect(isIPv4AddressingUnchanged(target, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: [] })).toBe(true);
+		expect(isIPv4ConfigUnchanged(target, { mode: 'static', address: '192.0.2.11', prefixLength: 24, gateway: '192.0.2.1' })).toBe(false);
+		expect(isIPv4ConfigUnchanged({ ...target, ipv4Configurable: false }, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' })).toBe(false);
+	});
+});
+
+describe('assertAppliedIPv4State', () => {
+	const iface = {
+		id: 'lan0',
+		name: 'LAN',
+		medium: 'wired' as const,
+		link: 'up' as const,
+		defaultRoute: true,
+		mac: null,
+		addresses: [{ family: 'ipv4' as const, address: '192.0.2.10', prefixLength: 24 }],
+		ipv4Mode: 'static' as const,
+		ipv4Configurable: true,
+		wifiConfigurable: false,
+		gateway: '192.0.2.1',
+		dns: ['2001:db8::53', '192.0.2.53'],
+	};
+	const state: NetworkStateInfo = { interfaces: [iface], primaryID: 'lan0', detail: 'full', known: true, capabilities: { ipv4: true, wifi: false, staticGatewayRequired: false } };
+
+	it('accepts the exact address, route and normalized DNS result', () => {
+		expect(() => assertAppliedIPv4State(state, 'lan0', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53', '2001:DB8::53'] })).not.toThrow();
+	});
+
+	it('rejects a spoofed success whose fresh state does not match', () => {
+		expect(() => assertAppliedIPv4State(state, 'lan0', { mode: 'static', address: '192.0.2.11', prefixLength: 24, gateway: '192.0.2.1' })).toThrow('address');
+		expect(() => assertAppliedIPv4State({ ...state, known: false }, 'lan0', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' })).toThrow('verified');
+	});
+
+	it('does not demand live resolvers from a link that is down', () => {
+		// Saving DHCP with custom DNS on an unplugged card: the platform layer writes
+		// and verifies the saved profile, because NetworkManager reports no servers at
+		// all for a device it could not activate (measured: `nmcli device show` prints
+		// no IP4.DNS line while the profile holds them). Demanding them here failed a
+		// change that had already been made, after the helper returned - so nothing
+		// rolled it back and the user was told the opposite of what happened.
+		const unplugged: NetworkStateInfo = { ...state, interfaces: [{ ...iface, link: 'down', ipv4Mode: 'dhcp', addresses: [], gateway: null, dns: [] }] };
+		expect(() => assertAppliedIPv4State(unplugged, 'lan0', { mode: 'dhcp', dns: ['192.0.2.53'] }, true, false)).not.toThrow();
+		// With the link up the same empty result is a real failure.
+		const live: NetworkStateInfo = { ...state, interfaces: [{ ...iface, ipv4Mode: 'dhcp', addresses: [{ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 }], dns: [] }] };
+		expect(() => assertAppliedIPv4State(live, 'lan0', { mode: 'dhcp', dns: ['192.0.2.53'] }, true, true)).toThrow('DNS');
+		// And a DNS-only change on a connected card is still verified against the
+		// live servers - that case reaches here with no addressing change, not with a
+		// link that is down.
+		expect(() => assertAppliedIPv4State(live, 'lan0', { mode: 'dhcp', dns: ['192.0.2.53'] }, false, true)).toThrow('DNS');
+	});
+
+	it('demands a DHCP lease only when DHCP was just switched on', () => {
+		// A DNS-only change on an interface already on DHCP without a lease (cable
+		// out, no server answering) succeeded exactly as requested; the reader drops
+		// APIPA, so such an interface legitimately reports no IPv4 address.
+		const leaseless: NetworkStateInfo = { ...state, interfaces: [{ ...iface, ipv4Mode: 'dhcp', addresses: [], gateway: null, dns: ['192.0.2.53'] }] };
+		expect(() => assertAppliedIPv4State(leaseless, 'lan0', { mode: 'dhcp', dns: ['192.0.2.53'] }, false)).not.toThrow();
+		expect(() => assertAppliedIPv4State(leaseless, 'lan0', { mode: 'dhcp', dns: ['192.0.2.53'] }, true)).toThrow('lease');
+		expect(() => assertAppliedIPv4State(leaseless, 'lan0', { mode: 'dhcp' })).toThrow('lease');
 	});
 });
 
@@ -183,92 +290,100 @@ describe('isValidSSID', () => {
 		expect(isValidSSID('')).toBe(false);
 	});
 
-	// A NUL is not merely unusual, it silently changes which network is joined:
-	// utf16z writes it through and a Win32 LPCWSTR ends there, so "Home\0Evil"
-	// becomes a profile for "Home". It also makes the profile XML malformed, and
-	// on Linux the runtime throws a bare TypeError out of execFile before nmcli
-	// even starts. Measured: all three.
-	it('rejects a name carrying a NUL', () => {
-		expect(isValidSSID(`Home${String.fromCharCode(0)}Evil`)).toBe(false);
+	it('rejects NUL because process arguments cannot carry it', () => {
+		expect(isValidSSID('home\0guest')).toBe(false);
 	});
 
-	it('rejects the control characters XML 1.0 cannot carry', () => {
-		for (const code of [0x01, 0x07, 0x08, 0x0b, 0x0c, 0x0e, 0x1f]) expect(isValidSSID(`Home${String.fromCharCode(code)}Net`)).toBe(false);
-	});
-
-	it('still accepts the whitespace XML does allow', () => {
-		for (const code of [0x09, 0x0a, 0x0d]) expect(isValidSSID(`Home${String.fromCharCode(code)}Net`)).toBe(true);
-	});
-
-	it('rejects a non-string rather than throwing', () => {
-		for (const bogus of [null, undefined, 42, {}]) expect(isValidSSID(bogus as unknown as string)).toBe(false);
+	it('rejects non-string API input', () => {
+		expect(isValidSSID(123)).toBe(false);
 	});
 });
 
-describe('isValidWifiKey', () => {
-	// IEEE 802.11i allows a passphrase of 8-63 characters or a 64-hex raw key.
-	// On Windows the profile is written to disk BEFORE the association is tried,
-	// so a credential that could never work would replace a saved network's real
-	// one purely on its way to failing.
-	it('accepts a passphrase at both ends of the allowed range', () => {
-		expect(isValidWifiKey('8charsxx')).toBe(true);
-		expect(isValidWifiKey('x'.repeat(63))).toBe(true);
-	});
-
-	it('rejects a passphrase too short for WPA2', () => {
-		for (const key of ['', 'a', '7chars!']) expect(isValidWifiKey(key)).toBe(false);
-	});
-
-	it('rejects a passphrase past 63 characters that is not a hex key', () => {
-		expect(isValidWifiKey(`${'x'.repeat(63)}y`)).toBe(false);
-		expect(isValidWifiKey('x'.repeat(200))).toBe(false);
-	});
-
-	it('accepts exactly 64 hex digits as a raw pre-shared key', () => {
-		expect(isValidWifiKey('0123456789abcdef'.repeat(4))).toBe(true);
-		expect(isValidWifiKey('0123456789ABCDEF'.repeat(4))).toBe(true);
-	});
-
-	it('rejects a non-string rather than throwing', () => {
-		for (const bogus of [null, undefined, 42, ['secret']]) expect(isValidWifiKey(bogus as unknown as string)).toBe(false);
-	});
-
-	it('counts octets rather than UTF-16 code units', () => {
-		// 802.11i measures the passphrase in octets. 32 two-byte characters are 64
-		// of them and overflow the field, even though `.length` says 32.
-		expect(isValidWifiKey('ě'.repeat(32))).toBe(false);
-		expect(isValidWifiKey('ě'.repeat(31))).toBe(true);
-		// ...and four of them are still only 8 octets, so the lower bound holds too.
-		expect(isValidWifiKey('ě'.repeat(4))).toBe(true);
-		expect(isValidWifiKey('ě'.repeat(3))).toBe(false);
-	});
-
-	it('rejects control characters, which no join path can carry', () => {
-		// A NUL ends a Win32 LPCWSTR mid-key and the Windows profile is XML, which
-		// cannot carry most of the C0 range at all.
-		for (const code of [0x00, 0x09, 0x0a, 0x0d, 0x1b, 0x7f, 0x85]) expect(isValidWifiKey(`passw${String.fromCharCode(code)}ord`)).toBe(false);
-	});
-
-	it('refuses a raw 64-hex pre-shared key under WPA3 SAE', () => {
-		// SAE derives its key from a passphrase. A profile announcing 64 hex digits
-		// as SAE key material is written, accepted, and then never authenticates.
-		const psk = '0123456789abcdef'.repeat(4);
-		expect(isValidWifiKey(psk, false)).toBe(true);
-		expect(isValidWifiKey(psk, true)).toBe(false);
-		// A genuine passphrase is acceptable under either mechanism.
-		expect(isValidWifiKey('correct horse', true)).toBe(true);
+describe('Unix interface names', () => {
+	it('enforces the kernel limit in UTF-8 bytes', () => {
+		expect(assertDeviceName('enp6s18')).toBe('enp6s18');
+		expect(() => assertDeviceName('ž'.repeat(8))).toThrow();
+		expect(() => assertDeviceName('bad/name')).toThrow();
 	});
 });
 
-describe('isWifiHexKey', () => {
-	it('is true only for exactly 64 hex digits', () => {
-		expect(isWifiHexKey('0123456789abcdef'.repeat(4))).toBe(true);
-		expect(isWifiHexKey('0123456789abcdef'.repeat(3))).toBe(false);
-		expect(isWifiHexKey(`${'0123456789abcdef'.repeat(4)}0`)).toBe(false);
+describe('Wi-Fi password handling', () => {
+	it('keeps the secret out of the nmcli argument vector', () => {
+		const secret = 'not-visible-in-proc';
+		const args = nmcliWifiConnectArgs('wlan0', 'Example network', true, '02:00:5E:40:00:01');
+		expect(args[0]).toBe('--ask');
+		expect(args).toContain('02:00:5E:40:00:01');
+		expect(args).not.toContain(secret);
+		expect(args).not.toContain('password');
 	});
 
-	it('is false for 64 characters that are not all hex', () => {
-		expect(isWifiHexKey(`${'a'.repeat(63)}z`)).toBe(false);
+	it('bounds and validates the value written to stdin', () => {
+		expect(isValidWifiPassword('')).toBe(true);
+		expect(isValidWifiPassword('a'.repeat(MAX_WIFI_PASSWORD_BYTES))).toBe(true);
+		expect(isValidWifiPassword('a'.repeat(MAX_WIFI_PASSWORD_BYTES + 1))).toBe(false);
+		expect(isValidWifiPassword('secret\0suffix')).toBe(false);
+		expect(isValidWifiPassword('secret\nsuffix')).toBe(false);
+		expect(isValidWifiPassword(123)).toBe(false);
+	});
+});
+
+describe('network mutation serialization', () => {
+	it('never overlaps two host network changes', async () => {
+		let releaseFirst!: () => void;
+		const firstGate = new Promise<void>(resolve => (releaseFirst = resolve));
+		const events: string[] = [];
+		const first = runNetworkMutation(async () => {
+			events.push('first:start');
+			await firstGate;
+			events.push('first:end');
+		});
+		await Promise.resolve();
+		const second = runNetworkMutation(async () => {
+			events.push('second:start');
+			events.push('second:end');
+		});
+		await Promise.resolve();
+		expect(events).toEqual(['first:start']);
+
+		releaseFirst();
+		await Promise.all([first, second]);
+		expect(events).toEqual(['first:start', 'first:end', 'second:start', 'second:end']);
+	});
+});
+
+describe('network capability cache', () => {
+	const denied = { ipv4: false, wifi: false, staticGatewayRequired: false };
+	const allowed = { ipv4: true, wifi: false, staticGatewayRequired: false };
+	afterEach(resetNetworkCapabilitiesCache);
+
+	it('retries a negative result quickly and retains a positive result longer', async () => {
+		resetNetworkCapabilitiesCache();
+		let probes = 0;
+		const probe = async () => (++probes === 1 ? denied : allowed);
+		expect(await readCachedCapabilities(probe, 0)).toEqual(denied);
+		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS - 1)).toEqual(denied);
+		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS)).toEqual(allowed);
+		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS + CAPABILITY_POSITIVE_TTL_MS - 1)).toEqual(allowed);
+		expect(probes).toBe(2);
+	});
+
+	it('shares one in-flight probe and does not let it overwrite an invalidation', async () => {
+		resetNetworkCapabilitiesCache();
+		let resolveProbe: ((value: typeof allowed) => void) | undefined;
+		let probes = 0;
+		const probe = () => {
+			probes++;
+			return new Promise<typeof allowed>(resolve => (resolveProbe = resolve));
+		};
+		const first = readCachedCapabilities(probe, 0);
+		const second = readCachedCapabilities(probe, 1);
+		expect(probes).toBe(1);
+		resetNetworkCapabilitiesCache();
+		const afterReset = readCachedCapabilities(async () => denied, 2);
+		resolveProbe?.(allowed);
+		expect(await Promise.all([first, second])).toEqual([allowed, allowed]);
+		expect(await afterReset).toEqual(denied);
+		expect(await readCachedCapabilities(async () => allowed, 3)).toEqual(denied);
 	});
 });
 
@@ -290,41 +405,112 @@ describe('splitNmcliFields', () => {
 
 describe('parseNmcliWifiList', () => {
 	it('parses signal, security and the active marker', () => {
-		const result = parseNmcliWifiList('home:82:WPA2:*\nguest:47::\n');
+		const result = parseNmcliWifiList('home:02\\:00\\:5E\\:40\\:00\\:01:82:WPA2:*\nguest:02\\:00\\:5E\\:40\\:00\\:02:47::\n');
 		expect(result).toEqual([
-			{ ssid: 'home', signal: 82, secured: true, active: true },
-			{ ssid: 'guest', signal: 47, secured: false, active: false },
+			{ ssid: 'home', bssid: '02:00:5E:40:00:01', signal: 82, secured: true, security: 'WPA2', supported: true, active: true },
+			{ ssid: 'guest', bssid: '02:00:5E:40:00:02', signal: 47, secured: false, security: '', supported: true, active: false },
 		]);
 	});
 
 	it('drops hidden networks, which cannot be joined by name', () => {
-		expect(parseNmcliWifiList(':60:WPA2:\nhome:40:WPA2:')).toEqual([{ ssid: 'home', signal: 40, secured: true, active: false }]);
+		expect(parseNmcliWifiList(':02\\:00\\:5E\\:40\\:00\\:01:60:WPA2:\nhome:02\\:00\\:5E\\:40\\:00\\:02:40:WPA2:')).toEqual([{ ssid: 'home', bssid: '02:00:5E:40:00:02', signal: 40, secured: true, security: 'WPA2', supported: true, active: false }]);
 	});
 
-	it('collapses one row per access point into the strongest', () => {
-		const result = parseNmcliWifiList('home:40:WPA2:\nhome:88:WPA2:\nhome:12:WPA2:');
-		expect(result).toEqual([{ ssid: 'home', signal: 88, secured: true, active: false }]);
+	it('keeps equal SSIDs with different BSSIDs and security separate', () => {
+		const result = parseNmcliWifiList('home:02\\:00\\:5E\\:40\\:00\\:01:88::\nhome:02\\:00\\:5E\\:40\\:00\\:02:40:WPA2:');
+		expect(result.map(item => ({ bssid: item.bssid, secured: item.secured }))).toEqual([
+			{ bssid: '02:00:5E:40:00:01', secured: false },
+			{ bssid: '02:00:5E:40:00:02', secured: true },
+		]);
 	});
 
 	it('keeps the active flag when the strongest row is not the associated one', () => {
-		const result = parseNmcliWifiList('home:40:WPA2:*\nhome:88:WPA2:');
-		expect(result).toEqual([{ ssid: 'home', signal: 88, secured: true, active: true }]);
+		const result = parseNmcliWifiList('home:02\\:00\\:5E\\:40\\:00\\:01:40:WPA2:*\nhome:02\\:00\\:5E\\:40\\:00\\:01:88:WPA2:');
+		expect(result[0]).toMatchObject({ signal: 88, active: true });
 	});
 
-	it('keeps the active flag when the associated row is listed after the strongest', () => {
-		// Same roaming network, rows the other way round. nmcli does not order
-		// access points, so the marker has to survive whichever row wins the signal
-		// — otherwise a host on the weaker access point shows no active network.
-		const result = parseNmcliWifiList('home:88:WPA2:\nhome:40:WPA2:*');
-		expect(result).toEqual([{ ssid: 'home', signal: 88, secured: true, active: true }]);
+	it('keeps the active flag when the weaker associated row arrives last', () => {
+		const result = parseNmcliWifiList('home:02\\:00\\:5E\\:40\\:00\\:01:88:WPA2:\nhome:02\\:00\\:5E\\:40\\:00\\:01:40:WPA2:*');
+		expect(result[0]).toMatchObject({ signal: 88, active: true });
 	});
 
 	it('sorts strongest first', () => {
-		expect(parseNmcliWifiList('weak:10:WPA2:\nstrong:90:WPA2:\nmid:50:WPA2:').map(n => n.ssid)).toEqual(['strong', 'mid', 'weak']);
+		expect(parseNmcliWifiList('weak::10:WPA2:\nstrong::90:WPA2:\nmid::50:WPA2:').map(n => n.ssid)).toEqual(['strong', 'mid', 'weak']);
 	});
 
 	it('reports an unparseable signal as unknown rather than zero', () => {
-		expect(parseNmcliWifiList('home:--:WPA2:')[0]?.signal).toBeNull();
+		expect(parseNmcliWifiList('home::--:WPA2:')[0]?.signal).toBeNull();
+	});
+
+	it('only supports open and personal WPA networks', () => {
+		const parsed = parseNmcliWifiList('Open::80::\nPersonal::70:WPA2:\nEnterprise::60:WPA2 802.1X:\nLegacy::50:WEP:\n');
+		expect(parsed.find(item => item.ssid === 'Open')).toMatchObject({ supported: true, secured: false });
+		expect(parsed.find(item => item.ssid === 'Personal')).toMatchObject({ supported: true, secured: true });
+		expect(parsed.find(item => item.ssid === 'Enterprise')).toMatchObject({ supported: false });
+		expect(parsed.find(item => item.ssid === 'Legacy')).toMatchObject({ supported: false });
+	});
+});
+
+describe('parseNmcliActiveConnections', () => {
+	it('keys unambiguous active profile UUIDs by device', () => {
+		expect([...parseNmcliActiveConnections('11111111-1111-1111-1111-111111111111:eth0\n22222222-2222-2222-2222-222222222222:wlan0\n')]).toEqual([
+			['eth0', '11111111-1111-1111-1111-111111111111'],
+			['wlan0', '22222222-2222-2222-2222-222222222222'],
+		]);
+	});
+});
+
+describe('parseNmcliIPv4Method', () => {
+	it('accepts only methods the editor can preserve', () => {
+		expect(parseNmcliIPv4Method('auto\n')).toBe('dhcp');
+		expect(parseNmcliIPv4Method('manual')).toBe('static');
+		for (const method of ['shared', 'link-local', 'disabled', '', 'future-mode']) expect(parseNmcliIPv4Method(method)).toBe('unknown');
+	});
+});
+
+describe('parseNmcliIPv4Profile', () => {
+	const plain = ['connection.interface-name:eth0', 'connection.multi-connect:0', 'ipv4.method:auto', 'ipv4.never-default:no', 'ipv4.gateway:', 'ipv4.addresses:', 'ipv4.routes:', 'ipv4.route-table:0', 'ipv4.routing-rules:'].join('\n');
+
+	it('accepts only plain automatic or single-address manual profiles', () => {
+		expect(parseNmcliIPv4Profile(plain, 'eth0', 1)).toEqual({ method: 'auto', gateway: null, address: null, prefixLength: null, safe: true });
+		expect(parseNmcliIPv4Profile(plain.replace('ipv4.method:auto', 'ipv4.method:manual').replace('ipv4.gateway:', 'ipv4.gateway:192.0.2.1').replace('ipv4.addresses:', 'ipv4.addresses:192.0.2.10/24'), 'eth0', 1)).toEqual({ method: 'manual', gateway: '192.0.2.1', address: '192.0.2.10', prefixLength: 24, safe: true });
+	});
+
+	it('rejects routing policy and address shapes the editor cannot preserve', () => {
+		for (const unsafe of [plain.replace('ipv4.never-default:no', 'ipv4.never-default:yes'), plain.replace('ipv4.routes:', 'ipv4.routes:0.0.0.0/0 192.0.2.254'), plain.replace('ipv4.route-table:0', 'ipv4.route-table:100'), plain.replace('ipv4.routing-rules:', 'ipv4.routing-rules:priority 100 from 192.0.2.0/24'), plain.replace('ipv4.addresses:', 'ipv4.addresses:192.0.2.10/24')]) {
+			expect(parseNmcliIPv4Profile(unsafe, 'eth0', 1).safe).toBe(false);
+		}
+	});
+
+	it('rejects a profile that is generic, multi-connect, duplicated, or bound elsewhere', () => {
+		expect(parseNmcliIPv4Profile(plain.replace('connection.interface-name:eth0', 'connection.interface-name:'), 'eth0', 1).safe).toBe(false);
+		expect(parseNmcliIPv4Profile(plain.replace('connection.interface-name:eth0', 'connection.interface-name:eth1'), 'eth0', 1).safe).toBe(false);
+		expect(parseNmcliIPv4Profile(plain.replace('connection.multi-connect:0', 'connection.multi-connect:2'), 'eth0', 1).safe).toBe(false);
+		expect(parseNmcliIPv4Profile(plain, 'eth0', 2).safe).toBe(false);
+	});
+
+	it('keeps a /0 manual profile read-only', () => {
+		const zero = plain.replace('ipv4.method:auto', 'ipv4.method:manual').replace('ipv4.gateway:', 'ipv4.gateway:192.0.2.1').replace('ipv4.addresses:', 'ipv4.addresses:192.0.2.10/0');
+		expect(parseNmcliIPv4Profile(zero, 'eth0', 1).safe).toBe(false);
+	});
+
+	it('keeps a /32 profile with an off-link gateway read-only', () => {
+		const hostRoute = plain.replace('ipv4.method:auto', 'ipv4.method:manual').replace('ipv4.gateway:', 'ipv4.gateway:192.0.2.1').replace('ipv4.addresses:', 'ipv4.addresses:192.0.2.10/32');
+		expect(parseNmcliIPv4Profile(hostRoute, 'eth0', 1).safe).toBe(false);
+	});
+});
+
+describe('parseNmcliManagedDevices', () => {
+	it('keeps managed and disconnected Wi-Fi devices distinct from unmanaged ones', () => {
+		const text = ['GENERAL.DEVICE:wlan0', 'GENERAL.NM-MANAGED:yes', '', 'GENERAL.DEVICE:wlan1', 'GENERAL.NM-MANAGED:no'].join('\n');
+		expect([...parseNmcliManagedDevices(text)]).toEqual(['wlan0']);
+	});
+});
+
+describe('parseNmcliDns', () => {
+	it('combines IPv4 and IPv6 resolvers for each device', () => {
+		const parsed = parseNmcliDns('GENERAL.DEVICE:eth0\nIP4.DNS[1]:192.0.2.53\nIP6.DNS[1]:2001:db8::53\nIP6.DNS[2]:2001\\:db8\\:\\:54\n');
+		expect(parsed.get('eth0')).toEqual(['192.0.2.53', '2001:db8::53', '2001:db8::54']);
 	});
 });
 
@@ -332,12 +518,52 @@ describe('nmcliModifyArgs', () => {
 	it('clears the manual fields when switching to DHCP', () => {
 		// NetworkManager keeps a stale ipv4.addresses on a profile whose method
 		// changed, and it comes back the moment the user switches to static again.
-		const args = nmcliModifyArgs('4b8a1f2c-0000-4000-8000-000000000001', { mode: 'dhcp' });
-		expect(args.slice(0, 4)).toEqual(['connection', 'modify', 'uuid', '4b8a1f2c-0000-4000-8000-000000000001']);
+		const args = nmcliModifyArgs('11111111-1111-1111-1111-111111111111', { mode: 'dhcp' });
+		expect(args.slice(0, 4)).toEqual(['connection', 'modify', 'uuid', '11111111-1111-1111-1111-111111111111']);
 		expect(args).toContain('auto');
 		expect(args[args.indexOf('ipv4.addresses') + 1]).toBe('');
 		expect(args[args.indexOf('ipv4.gateway') + 1]).toBe('');
-		expect(args[args.indexOf('ipv4.dns') + 1]).toBe('');
+		expect(args).not.toContain('ipv4.dns');
+	});
+
+	it('changes DNS only when explicitly requested in either address mode', () => {
+		const unchanged = nmcliModifyArgs('lan', { mode: 'dhcp' });
+		expect(unchanged).not.toContain('ipv4.dns');
+		expect(unchanged).not.toContain('ipv4.ignore-auto-dns');
+		expect(unchanged).not.toContain('ipv6.dns');
+		expect(unchanged).not.toContain('ipv6.ignore-auto-dns');
+
+		const automatic = nmcliModifyArgs('lan', { mode: 'dhcp', dns: [] });
+		expect(automatic[automatic.indexOf('ipv4.dns') + 1]).toBe('');
+		expect(automatic[automatic.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('no');
+		expect(automatic[automatic.indexOf('ipv6.dns') + 1]).toBe('');
+		expect(automatic[automatic.indexOf('ipv6.ignore-auto-dns') + 1]).toBe('no');
+
+		const custom = nmcliModifyArgs('lan', { mode: 'dhcp', dns: ['2001:db8::53', '127.0.0.1'] });
+		expect(custom[custom.indexOf('ipv4.dns') + 1]).toBe('127.0.0.1');
+		expect(custom[custom.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('yes');
+		expect(custom[custom.indexOf('ipv6.dns') + 1]).toBe('2001:db8::53');
+		expect(custom[custom.indexOf('ipv6.ignore-auto-dns') + 1]).toBe('yes');
+	});
+
+	it('does not rewrite addressing for a DNS-only update', () => {
+		const args = nmcliModifyArgs('lan', { mode: 'dhcp', dns: ['192.0.2.53'] }, false);
+		expect(args).not.toContain('ipv4.method');
+		expect(args).not.toContain('ipv4.addresses');
+		expect(args).not.toContain('ipv4.gateway');
+		expect(args).toContain('ipv4.dns');
+	});
+
+	it('disables automatic DNS for both families when only one family is custom', () => {
+		const ipv4Only = nmcliModifyArgs('lan', { mode: 'dhcp', dns: ['192.0.2.53'] });
+		expect(ipv4Only[ipv4Only.indexOf('ipv4.dns') + 1]).toBe('192.0.2.53');
+		expect(ipv4Only[ipv4Only.indexOf('ipv6.dns') + 1]).toBe('');
+		expect(ipv4Only[ipv4Only.indexOf('ipv6.ignore-auto-dns') + 1]).toBe('yes');
+
+		const ipv6Only = nmcliModifyArgs('lan', { mode: 'dhcp', dns: ['2001:db8::53'] });
+		expect(ipv6Only[ipv6Only.indexOf('ipv4.dns') + 1]).toBe('');
+		expect(ipv6Only[ipv6Only.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('yes');
+		expect(ipv6Only[ipv6Only.indexOf('ipv6.dns') + 1]).toBe('2001:db8::53');
 	});
 
 	it('sets address, gateway and DNS for a static config', () => {
@@ -349,143 +575,189 @@ describe('nmcliModifyArgs', () => {
 		expect(args[args.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('yes');
 	});
 
-	it('does not ignore automatic DNS when the user supplied none', () => {
-		const args = nmcliModifyArgs('lan', { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
+	it('does not ignore automatic DNS when the user explicitly requested it', () => {
+		const args = nmcliModifyArgs('lan', { mode: 'static', address: '192.0.2.10', prefixLength: 24, dns: [] });
 		expect(args[args.indexOf('ipv4.dns') + 1]).toBe('');
 		expect(args[args.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('no');
 	});
 
-	it('names the profile by uuid so a duplicate name cannot be picked instead', () => {
-		// Profile names are not unique. Addressed as `uuid <UUID>`, nmcli cannot fall
-		// back to matching the value against names.
-		const args = nmcliModifyArgs('4b8a1f2c-0000-4000-8000-000000000001', { mode: 'dhcp' });
-		expect(args[2]).toBe('uuid');
-		expect(args[3]).toBe('4b8a1f2c-0000-4000-8000-000000000001');
-	});
-});
-
-describe('nmcliActivateArgs', () => {
-	const uuid = '4b8a1f2c-0000-4000-8000-000000000001';
-
-	it('binds the activation to the device that was edited', () => {
-		// Without `ifname`, NetworkManager may bring a generic profile up on any
-		// compatible adapter — reconfiguring one interface while leaving the one the
-		// user actually edited down.
+	it('addresses both modify and activation by UUID rather than an ambiguous name', () => {
+		const uuid = '11111111-1111-1111-1111-111111111111';
+		expect(nmcliModifyArgs(uuid, { mode: 'dhcp' }).slice(0, 4)).toEqual(['connection', 'modify', 'uuid', uuid]);
 		expect(nmcliActivateArgs(uuid, 'eth0')).toEqual(['connection', 'up', 'uuid', uuid, 'ifname', 'eth0']);
 	});
+});
 
-	it('still addresses the profile by uuid rather than by name', () => {
-		const args = nmcliActivateArgs(uuid, 'wlan0');
-		expect(args[2]).toBe('uuid');
-		expect(args[3]).toBe(uuid);
+describe('active NetworkManager profile binding', () => {
+	const uuid = '11111111-1111-1111-1111-111111111111';
+
+	it('accepts only one activation on the requested device', () => {
+		expect(() => assertNmcliActiveConnection(new Map([['eth0', uuid]]), 'eth0', uuid)).not.toThrow();
+		expect(() => assertNmcliActiveConnection(new Map([['eth1', uuid]]), 'eth0', uuid)).toThrow('unexpected device');
+		expect(() =>
+			assertNmcliActiveConnection(
+				new Map([
+					['eth0', uuid],
+					['eth1', uuid],
+				]),
+				'eth0',
+				uuid
+			)
+		).toThrow('unexpected device');
 	});
 });
 
-/**
- * `nmcli connection modify` rewrites the stored profile permanently, before
- * `connection up` has proved the new configuration works. A failed activation
- * used to leave that rewrite standing — and since the connection already running
- * often keeps working, the damage surfaced only at the next reboot.
- */
-describe('assertDeviceName', () => {
-	it('accepts the device names a kernel actually hands out', () => {
-		for (const name of ['eth0', 'wlan0', 'enp6s18', 'br-1a2b3c4d5e6f']) expect(assertDeviceName(name)).toBe(name);
+describe('assertLinuxIPv4Applied', () => {
+	const addr = JSON.stringify([{ ifname: 'eth0', addr_info: [{ family: 'inet', local: '192.0.2.10', prefixlen: 24 }] }]);
+	const route = JSON.stringify([{ dev: 'eth0', gateway: '192.0.2.1' }]);
+
+	it('confirms the requested live static address and gateway', () => {
+		expect(() => assertLinuxIPv4Applied({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }, 'manual\n', addr, route)).not.toThrow();
 	});
 
-	it('refuses an empty name, a path separator or a NUL', () => {
-		for (const bad of ['', '../etc', 'eth0/x', `eth0${String.fromCharCode(0)}`]) expect(() => assertDeviceName(bad)).toThrow();
+	it('rejects a successful command whose live route does not match', () => {
+		expect(() => assertLinuxIPv4Applied({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }, 'manual', addr, JSON.stringify([{ dev: 'eth0', gateway: '192.0.2.254' }]))).toThrow('gateway');
+		expect(() => assertLinuxIPv4Applied({ mode: 'static', address: '192.0.2.10', prefixLength: 24 }, 'manual', addr, route)).toThrow('unexpected default route');
 	});
 
-	// IFNAMSIZ is a byte count. `.length` counts UTF-16 code units, so a name of
-	// accented characters passed a 15-character check while being well over 15
-	// octets — and the kernel then truncates or refuses what we had accepted.
-	it('counts the kernel limit in bytes rather than in code units', () => {
-		expect(assertDeviceName('e'.repeat(15))).toBe('e'.repeat(15));
-		expect(() => assertDeviceName('e'.repeat(16))).toThrow();
-		// Eight two-byte characters are 16 octets, one past IFNAMSIZ-1.
-		expect(() => assertDeviceName('ě'.repeat(8))).toThrow();
-		expect(assertDeviceName('ě'.repeat(7))).toBe('ě'.repeat(7));
-	});
-});
-
-describe('parseNmcliProperties', () => {
-	const SHOW = 'ipv4.method:manual\nipv4.addresses:192.0.2.10/24\nipv4.gateway:192.0.2.1\nipv4.dns:192.0.2.1,198.51.100.1\nipv4.ignore-auto-dns:yes\n';
-
-	it('reads every field of the profile as it stands', () => {
-		const props = parseNmcliProperties(SHOW);
-		expect(props.get('ipv4.method')).toBe('manual');
-		expect(props.get('ipv4.addresses')).toBe('192.0.2.10/24');
-		expect(props.get('ipv4.dns')).toBe('192.0.2.1,198.51.100.1');
-		expect(props.get('ipv4.ignore-auto-dns')).toBe('yes');
-	});
-
-	it('reads an unset property as empty, which is also how it is written back', () => {
-		// nmcli prints `--` for a property that has no value; handing that back
-		// verbatim would set the literal two dashes as the address.
-		const props = parseNmcliProperties('ipv4.method:auto\nipv4.addresses:--\nipv4.gateway:\n');
-		expect(props.get('ipv4.addresses')).toBe('');
-		expect(props.get('ipv4.gateway')).toBe('');
-	});
-
-	it('keeps a value that contains a colon in one piece', () => {
-		// Terse mode escapes a colon inside a value; splitting naively would cut an
-		// IPv6 resolver into fields and shift every column after it.
-		expect(parseNmcliProperties('ipv4.dns:2001\\:db8\\:\\:1\n').get('ipv4.dns')).toBe('2001:db8::1');
+	it('requires a usable IPv4 lease before confirming DHCP', () => {
+		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', '[]', '[]')).toThrow('lease');
+		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', JSON.stringify([{ ifname: 'eth0', addr_info: [{ family: 'inet', local: '169.254.10.2', prefixlen: 16 }] }]), '[]')).toThrow('lease');
+		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', addr, '[]')).not.toThrow();
+		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'manual\n', '[]', '[]')).toThrow('method');
+		// A permanent address is the static one the switch was supposed to replace, so
+		// it is not evidence that a lease arrived.
+		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', JSON.stringify([{ ifname: 'eth0', addr_info: [{ family: 'inet', local: '192.0.2.10', prefixlen: 24, valid_life_time: 4294967295 }] }]), '[]')).toThrow('lease');
+		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', JSON.stringify([{ ifname: 'eth0', addr_info: [{ family: 'inet', local: '192.0.2.10', prefixlen: 24, dynamic: true, valid_life_time: 3600 }] }]), '[]')).not.toThrow();
+		// With the link down only the saved method can be verified; the lease follows the cable.
+		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', '[]', '[]', false)).not.toThrow();
+		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'manual\n', '[]', '[]', false)).toThrow('method');
+		expect(() => assertLinuxIPv4Method({ mode: 'dhcp' }, 'auto\n')).not.toThrow();
+		expect(() => assertLinuxIPv4Method({ mode: 'dhcp' }, 'manual')).toThrow('method');
+		expect(() => assertLinuxIPv4Method({ mode: 'static', address: '192.0.2.10', prefixLength: 24 }, 'manual')).not.toThrow();
 	});
 });
 
-describe('nmcliRestoreArgs', () => {
-	const uuid = '4b8a1f2c-0000-4000-8000-000000000001';
+describe('Linux DNS verification', () => {
+	const automatic = ['ipv4.dns:', 'ipv4.ignore-auto-dns:no', 'ipv6.dns:', 'ipv6.ignore-auto-dns:no'].join('\n');
+	const custom = ['ipv4.dns:192.0.2.53', 'ipv4.ignore-auto-dns:yes', 'ipv6.dns:2001\\:db8\\:\\:53', 'ipv6.ignore-auto-dns:yes'].join('\n');
 
-	it('writes back every field the apply rewrites, and no fewer', () => {
-		// Restoring a subset would leave the profile a mixture of the old
-		// configuration and the rejected new one — a third state never true of the host.
-		const args = nmcliRestoreArgs(uuid, parseNmcliProperties('ipv4.method:manual\nipv4.addresses:192.0.2.10/24\nipv4.gateway:192.0.2.1\nipv4.dns:192.0.2.1\nipv4.ignore-auto-dns:yes\n'));
-		expect(args.slice(0, 4)).toEqual(['connection', 'modify', 'uuid', uuid]);
-		for (const field of ['ipv4.method', 'ipv4.addresses', 'ipv4.gateway', 'ipv4.dns', 'ipv4.ignore-auto-dns']) expect(args).toContain(field);
-		expect(args[args.indexOf('ipv4.addresses') + 1]).toBe('192.0.2.10/24');
-		expect(args[args.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('yes');
+	it('accepts the requested resolver policy and live custom servers', () => {
+		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: [] }, automatic, 'GENERAL.DEVICE:eth0\n', 'eth0')).not.toThrow();
+		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: ['192.0.2.53', '2001:db8::53'] }, custom, 'GENERAL.DEVICE:eth0\nIP4.DNS[1]:192.0.2.53\nIP6.DNS[1]:2001\\:db8\\:\\:53\n', 'eth0')).not.toThrow();
 	});
 
-	it('clears a field the snapshot did not hold rather than leaving it behind', () => {
-		const args = nmcliRestoreArgs(uuid, parseNmcliProperties('ipv4.method:auto\n'));
-		expect(args[args.indexOf('ipv4.addresses') + 1]).toBe('');
-		expect(args[args.indexOf('ipv4.gateway') + 1]).toBe('');
-		expect(args[args.indexOf('ipv4.dns') + 1]).toBe('');
+	it('rejects a command that left the wrong policy or live servers', () => {
+		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: [] }, custom, 'GENERAL.DEVICE:eth0\n', 'eth0')).toThrow('DNS');
+		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: ['192.0.2.53'] }, custom, 'GENERAL.DEVICE:eth0\nIP4.DNS[1]:192.0.2.54\n', 'eth0')).toThrow('DNS');
 	});
 
-	it('still addresses the profile by uuid rather than by name', () => {
-		expect(nmcliRestoreArgs(uuid, new Map()).slice(2, 4)).toEqual(['uuid', uuid]);
+	it('still verifies the saved policy when there is no live side to read', () => {
+		// Saving DHCP with the carrier down writes the resolvers to the profile but
+		// activates nothing, so the device reports none. The saved policy is the whole
+		// change there and is checked; only the live comparison is skipped.
+		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: ['192.0.2.53', '2001:db8::53'] }, custom, null, 'eth0')).not.toThrow();
+		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: [] }, automatic, null, 'eth0')).not.toThrow();
+		// A profile that did not take the requested policy still fails.
+		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: ['192.0.2.53'] }, automatic, null, 'eth0')).toThrow('DNS');
+		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: [] }, custom, null, 'eth0')).toThrow('DNS');
 	});
 });
 
-// The clearing behaviour two cases up is exactly why a partial reading must never
-// become a snapshot: restoring from one does not put the profile back, it wipes
-// the fields that failed to read. The apply refuses to start without a complete
-// set, so a partial reading has to be rejected here rather than half-used.
-describe('parseLinuxIPv4Snapshot', () => {
-	const COMPLETE = 'ipv4.method:manual\nipv4.addresses:192.0.2.10/24\nipv4.gateway:192.0.2.1\nipv4.dns:192.0.2.1\nipv4.ignore-auto-dns:yes\n';
+describe('Linux Wi-Fi verification', () => {
+	const networks = parseNmcliWifiList('Cafe:00\\:11\\:22\\:33\\:44\\:55:80:WPA2:*\nCafe:66\\:77\\:88\\:99\\:AA\\:BB:70:WPA2:\n');
 
-	it('accepts a reading that holds every field the apply rewrites', () => {
-		expect(parseLinuxIPv4Snapshot(COMPLETE)?.get('ipv4.addresses')).toBe('192.0.2.10/24');
+	it('requires the selected access point to be active', () => {
+		expect(() => assertLinuxWifiConnected(networks, 'Cafe', '00:11:22:33:44:55')).not.toThrow();
+		expect(() => assertLinuxWifiConnected(networks, 'Cafe', '66:77:88:99:AA:BB')).toThrow('Wi-Fi');
+		expect(() => assertLinuxWifiConnected(networks, 'Other', null)).toThrow('Wi-Fi');
+	});
+});
+
+describe('NetworkManager checkpoint transaction', () => {
+	const devicePath = '/org/freedesktop/NetworkManager/Devices/7';
+	const checkpointPath = '/org/freedesktop/NetworkManager/Checkpoint/12';
+
+	it('requests deletion of connections created after the checkpoint', () => {
+		const args = networkManagerCheckpointCreateArgs(devicePath);
+		expect(args.slice(-3)).toEqual([devicePath, String(NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS), '2']);
+		expect(args).toContain('CheckpointCreate');
+		expect(parseNetworkManagerCheckpointPath(`o "${checkpointPath}"\n`)).toBe(checkpointPath);
 	});
 
-	// An empty VALUE is a real answer — the property is unset — and must not be
-	// confused with a missing LINE, which is an answer nmcli never gave.
-	it('accepts fields that are present but empty', () => {
-		const empty = 'ipv4.method:auto\nipv4.addresses:\nipv4.gateway:--\nipv4.dns:\nipv4.ignore-auto-dns:no\n';
-		expect(parseLinuxIPv4Snapshot(empty)?.get('ipv4.gateway')).toBe('');
+	it('keeps a real safety reserve beyond the whole transaction and its rollback', () => {
+		// The activation is the longest step but never the only one: the pre-checks
+		// and the two read-backs run inside the checkpoint as well. Measuring the
+		// reserve against the activation alone would report thirty seconds of margin
+		// where there is one.
+		const longest = Math.max(NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS, NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS);
+		expect(NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS * 1000 - longest - NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS).toBeGreaterThanOrEqual(NETWORK_MANAGER_CHECKPOINT_SAFETY_MS);
+		// Each budget has to cover the steps it is named after.
+		expect(NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS).toBeGreaterThan(NETWORK_MANAGER_MUTATION_TIMEOUT_MS + NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS);
+		expect(NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS).toBeGreaterThan(NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
 	});
 
-	it.each(['ipv4.method', 'ipv4.addresses', 'ipv4.gateway', 'ipv4.dns', 'ipv4.ignore-auto-dns'])('rejects a reading missing %s', field => {
-		const partial = COMPLETE.split('\n')
-			.filter(line => !line.startsWith(`${field}:`))
-			.join('\n');
-		expect(parseLinuxIPv4Snapshot(partial)).toBeNull();
+	it('destroys a successful checkpoint and keeps the mutation', async () => {
+		const events: string[] = [];
+		const result = await withNetworkManagerCheckpoint({
+			create: async () => {
+				events.push('create');
+				return checkpointPath;
+			},
+			mutate: async () => {
+				events.push('mutate');
+				return 42;
+			},
+			commit: async path => {
+				events.push(`commit:${path}`);
+			},
+			rollback: async path => {
+				events.push(`rollback:${path}`);
+			},
+		});
+		expect(result).toBe(42);
+		expect(events).toEqual(['create', 'mutate', `commit:${checkpointPath}`]);
+		expect(networkManagerCheckpointFinishArgs('CheckpointDestroy', checkpointPath)).toContain('CheckpointDestroy');
 	});
 
-	it('rejects output that holds nothing at all', () => {
-		expect(parseLinuxIPv4Snapshot('')).toBeNull();
+	it('rolls back immediately when the mutation fails', async () => {
+		const events: string[] = [];
+		const failure = new Error('mutation failed');
+		const operation = withNetworkManagerCheckpoint({
+			create: async () => checkpointPath,
+			mutate: async () => {
+				events.push('mutate');
+				throw failure;
+			},
+			commit: async () => {
+				events.push('commit');
+			},
+			rollback: async path => {
+				events.push(`rollback:${path}`);
+			},
+		});
+		await expect(operation).rejects.toBe(failure);
+		expect(events).toEqual(['mutate', `rollback:${checkpointPath}`]);
+		expect(networkManagerCheckpointFinishArgs('CheckpointRollback', checkpointPath)).toContain('CheckpointRollback');
+	});
+
+	it('reports a rollback failure instead of hiding it', async () => {
+		const operation = withNetworkManagerCheckpoint({
+			create: async () => checkpointPath,
+			mutate: async () => {
+				throw new Error('mutation failed');
+			},
+			commit: async () => {},
+			rollback: async () => {
+				throw new Error('rollback failed');
+			},
+		});
+		await expect(operation).rejects.toBeInstanceOf(AggregateError);
+	});
+
+	it('accepts only successful per-device rollback results', () => {
+		expect(() => assertNetworkManagerRollback(`a{su} 1 "${devicePath}" 0\n`)).not.toThrow();
+		expect(() => assertNetworkManagerRollback(`a{su} 1 "${devicePath}" 1\n`)).toThrow();
 	});
 });
 
@@ -509,400 +781,120 @@ describe('windowsApplyIPv4Command', () => {
 	it('clears the old address and route before applying either mode', () => {
 		for (const config of [{ mode: 'dhcp' } as NetIPv4Config, { mode: 'static', address: '192.0.2.10', prefixLength: 24 } as NetIPv4Config]) {
 			const command = windowsApplyIPv4Command(guid, config);
-			expect(command).toContain('Remove-NetIPAddress');
-			expect(command).toContain('Remove-NetRoute');
+			expect(command).toContain('$oldAddresses = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $i })');
+			expect(command).toContain('$oldAddresses | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop');
+			expect(command).toContain("$oldRoutes = @(Get-NetRoute -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $i -and $_.DestinationPrefix -eq '0.0.0.0/0' })");
+			expect(command).toContain('$oldRoutes | Remove-NetRoute -Confirm:$false -ErrorAction Stop');
+			expect(command).not.toContain('Remove-NetIPAddress -InterfaceIndex');
+			expect(command).not.toContain('Remove-NetRoute -InterfaceIndex');
 		}
 	});
 
-	// The removal exists because New-NetIPAddress adds rather than replaces. When
-	// the address, prefix and gateway are already the requested ones there is
-	// nothing to replace — and the settings form posts the whole configuration
-	// whichever field was edited, so a changed DNS server used to destroy and
-	// re-make the default route, which then came back with a different metric.
-	it('does not rewrite the addressing a static config leaves unchanged', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['198.51.100.1'] });
-		// Each store asked separately and both required to agree. The skipped write
-		// would have reached both, so "already applied" is "in force now AND at the next
-		// boot"; the active store alone cannot answer the second half and the union
-		// cannot answer the first.
-		expect(command).toContain("$addressingUnchanged = ($oldDhcp -ne 'Enabled') -and ((@($oldActiveAddresses).Count -eq 1) -and ($oldActiveAddresses[0].IPAddress -eq '192.0.2.10') -and ($oldActiveAddresses[0].PrefixLength -eq 24) -and (@($oldActiveRoutes).Count -eq 1) -and ($oldActiveRoutes[0].NextHop -eq '192.0.2.1')) -and ((@($oldPersistentAddresses).Count -eq 1) -and ($oldPersistentAddresses[0].IPAddress -eq '192.0.2.10') -and ($oldPersistentAddresses[0].PrefixLength -eq 24) -and (@($oldPersistentRoutes).Count -eq 1) -and ($oldPersistentRoutes[0].NextHop -eq '192.0.2.1'))");
-		expect(command).toContain('if (-not $addressingUnchanged) { $addressingChanged = $true; $keptAddress =');
-		// The resolvers and the state check are outside that branch: they are the
-		// part a DNS-only change is actually asking for.
-		expect(command).toContain('-Confirm:$false } }; $dnsWriteStarted = $true; Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses 198.51.100.1');
-		expect(command.indexOf('AddressState')).toBeGreaterThan(command.indexOf('-ServerAddresses 198.51.100.1'));
-	});
-
-	// Skipping the rewrite was only half the fix: every later step stayed inside one
-	// blanket catch, so a transient DNS failure still ran a rollback that cleared
-	// every address and default route on an interface the apply had not touched.
-	it('scopes the rollback to the half of the apply that actually ran', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['198.51.100.1'] });
-		expect(command).toContain('$addressingChanged = $false; $dnsWriteStarted = $false; try {');
-		// Raised at the first destructive step, not after the last write — a rewrite
-		// that failed halfway still has to be undone.
-		expect(command).toContain('if (-not $addressingUnchanged) { $addressingChanged = $true; $keptAddress =');
-		// The resolvers are rewritten by every apply, so they always go back; the
-		// addressing goes back only when it was disturbed.
-		expect(command).toContain('catch { $applyError = $_; try { if ($addressingChanged) { try { Remove-NetIPAddress');
-		// ...and the resolvers go back only if this apply had started writing them. A
-		// failure at the first address removal never reached the DNS setter, so putting
-		// the snapshot back there would revert somebody else's change instead.
-		expect(command).toContain('}; if ($dnsWriteStarted) { if ($oldDnsManual.Count -gt 0) { Set-DnsClientServerAddress');
-		// Nothing to wait for when no address was created.
-		expect(command).toContain('if ($addressingChanged) { $deadline =');
-	});
-
-	it('always rewrites, and so always guards, a DHCP config', () => {
-		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).toContain('$addressingChanged = $false; $dnsWriteStarted = $false; try { $addressingChanged = $true; try { Remove-NetIPAddress');
-	});
-
-	it('compares against no default route when the config has no gateway', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
-		expect(command).toContain('-and (@($oldActiveRoutes).Count -eq 0)');
-		expect(command).toContain('-and (@($oldPersistentRoutes).Count -eq 0)');
-	});
-
-	it('still rewrites unconditionally for a DHCP config', () => {
-		// There is no addressing to compare: the point of the change is to hand the
-		// interface back to the lease, which starts by clearing what is there.
+	it('enables DHCP without touching resolvers by default', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
-		expect(command).not.toContain('$addressingUnchanged');
-		expect(command).toContain('try { $addressingChanged = $true; try { Remove-NetIPAddress');
-	});
-
-	// The removals above are destructive and irreversible on their own: between
-	// them and the last step the interface holds no usable configuration, so a
-	// failure in between used to leave the machine with no address, no gateway and
-	// no resolvers. Everything the apply overwrites has to be recorded BEFORE the
-	// first removal, because afterwards the machine no longer knows what it was.
-	it('snapshots the whole IPv4 configuration before the first destructive step', () => {
-		for (const config of [{ mode: 'dhcp' } as NetIPv4Config, { mode: 'static', address: '192.0.2.10', prefixLength: 24 } as NetIPv4Config]) {
-			const command = windowsApplyIPv4Command(guid, config);
-			for (const captured of ['$oldDhcp = ', '$oldAddresses = ', '$oldRoutes = ', '$oldDnsManual = ']) {
-				expect(command).toContain(captured);
-				expect(command.indexOf(captured)).toBeLessThan(command.indexOf('Remove-NetIPAddress'));
-			}
-		}
-	});
-
-	// The snapshot is the only copy of what the apply is about to delete, so a
-	// reading of it that fails open is a rollback that deletes for good: an
-	// unreachable address provider produced an empty `$oldAddresses`, and the
-	// restore then wrote that emptiness back as the interface's former state.
-	it('aborts the apply when a snapshot reading fails, rather than recording nothing', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
-		const snapshot = command.slice(0, command.indexOf('Remove-NetIPAddress'));
-		// Nothing captured before the first removal may swallow a failure silently.
-		expect(snapshot).not.toContain('SilentlyContinue');
-		// Only "this adapter simply has none" is tolerated, and it aborts otherwise —
-		// the same one category the removals treat as an absence.
-		for (const variable of ['$oldActiveAddresses', '$oldPersistentAddresses', '$oldActiveRoutes', '$oldPersistentRoutes']) {
-			expect(snapshot).toContain(`try { ${variable} = @(`);
-			expect(snapshot).toContain(`${variable} = @();`);
-		}
-		// A DHCP interface has no manual override to find, and asking for the value by
-		// name reports that as InvalidArgument — a category a genuine failure also
-		// uses. Reading the key leaves the absence as $null and keeps the failure a failure.
-		expect(snapshot).toContain('NameServer -split');
-		expect(snapshot).not.toContain('-Name NameServer');
-	});
-
-	// The reader shows only addresses Windows calls Preferred, and the alias refusal
-	// in front of the apply counts what the reader shows — while the removal below
-	// takes every IPv4 address the interface has, Preferred or not. An interface
-	// with a deprecated address beside its real one therefore looked ordinary and
-	// lost the address nobody was shown.
-	it('refuses an interface holding several IPv4 addresses, counted on the machine', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
-		expect(command).toContain('this interface carries several IPv4 addresses');
-		// Out of the snapshot, which queries without an AddressState filter — so the
-		// count includes exactly the addresses the reader dropped.
-		expect(command).toContain('@($oldAddresses).Count -gt 1');
-		expect(command.slice(0, command.indexOf('several IPv4 addresses'))).not.toContain('AddressState');
-		// Before anything is removed, so the refusal costs nothing and undoes nothing.
-		expect(command.indexOf('several IPv4 addresses')).toBeLessThan(command.indexOf('Remove-NetIPAddress'));
-	});
-
-	// A `169.254.*` address is not necessarily APIPA. Windows lets one be configured
-	// by hand, tells the two apart by PrefixOrigin rather than by the text of the
-	// address, and the removal takes both alike — so exempting the prefix from the
-	// count deleted a manual link-local alias that the reader does not even show.
-	it('exempts no address from the alias count, the link-local prefix included', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
-		expect(command).not.toContain('169.254.');
-		expect(command).toContain('if (@($oldAddresses).Count -gt 1) { throw');
-	});
-
-	// The reader keeps only the best of several default routes, so the configuration
-	// the user edits can name one gateway — while the apply removes every default
-	// route on the interface and creates at most one. A backup route, or one a VPN
-	// client installed, was therefore destroyed by a change to the DNS servers.
-	it('refuses an interface carrying several IPv4 default routes', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
-		expect(command).toContain('if (@($oldRoutes).Count -gt 1) { throw');
-		expect(command).toContain('several IPv4 default routes');
-		expect(command.indexOf('several IPv4 default routes')).toBeLessThan(command.indexOf('Remove-NetIPAddress'));
-	});
-
-	// `Get-NetIPAddress` and `Get-NetRoute` answer for the ACTIVE store, while
-	// `New-NetIPAddress` and `New-NetRoute` write to the active AND the persistent
-	// one. Reading a single store and writing two is how a rejected configuration
-	// survived its own rollback: the new address went into both stores, the restore
-	// deleted only the active copy, and the next boot loaded the rejected address
-	// back out of the persistent one.
-	it('snapshots, clears and restores both policy stores rather than only the active one', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
-		for (const store of ['ActiveStore', 'PersistentStore']) {
-			expect(command).toContain(`Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -PolicyStore ${store} -ErrorAction Stop`);
-			expect(command).toContain(`Get-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -PolicyStore ${store} -ErrorAction Stop`);
-		}
-		// Both stores are cleared before anything is written, so the new object cannot
-		// land beside a persistent copy of the one it replaces.
-		for (const store of ['ActiveStore', 'PersistentStore']) {
-			expect(command).toContain(`Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -PolicyStore ${store} -Confirm:$false`);
-			expect(command).toContain(`Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -PolicyStore ${store} -Confirm:$false`);
-		}
-		// The guards and the comparison read the UNION of the two stores, deduplicated
-		// on the identity they compare — an interface holding one address in both
-		// stores is not two addresses.
-		expect(command).toContain('$oldAddresses = @($oldActiveAddresses + @($oldPersistentAddresses | Where-Object { $oldActiveAddresses.IPAddress -notcontains $_.IPAddress }))');
-		expect(command).toContain('$oldRoutes = @($oldActiveRoutes + @($oldPersistentRoutes | Where-Object { $oldActiveRoutes.NextHop -notcontains $_.NextHop }))');
-	});
-
-	// An object held in both stores with the same properties is re-created with no
-	// -PolicyStore, which is how it came to be in both. One held in only one store
-	// names that store, so an active-only address is not promoted to a persistent one
-	// that outlives the next boot — the very asymmetry that made the rollback
-	// dishonest.
-	it('puts every restored object back into the store it was found in', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
-		expect(command).toContain('foreach ($aActive in $oldActiveAddresses) { $aTwin = @($oldPersistentAddresses | Where-Object { $_.IPAddress -eq $aActive.IPAddress })[0];');
-		expect(command).toContain('foreach ($a in $oldPersistentAddresses) { if ($oldActiveAddresses.IPAddress -notcontains $a.IPAddress) {');
-		expect(command).toContain('foreach ($rActive in $oldActiveRoutes) { $rTwin = @($oldPersistentRoutes | Where-Object { $_.NextHop -eq $rActive.NextHop })[0];');
-		expect(command).toContain('foreach ($r in $oldPersistentRoutes) { if ($oldActiveRoutes.NextHop -notcontains $r.NextHop) {');
-		// The shortcut is taken only when every restored property matches, because the
-		// two stores are free to hold the same identity with different properties.
-		expect(command).toContain('elseif ($aActive.PrefixLength -eq $aTwin.PrefixLength -and $aActive.Type -eq $aTwin.Type -and $aActive.SkipAsSource -eq $aTwin.SkipAsSource -and $aActive.ValidLifetime -eq $aTwin.ValidLifetime -and $aActive.PreferredLifetime -eq $aTwin.PreferredLifetime)');
-		expect(command).toContain('elseif ($rActive.RouteMetric -eq $rTwin.RouteMetric -and $rActive.Protocol -eq $rTwin.Protocol -and $rActive.Publish -eq $rTwin.Publish -and $rActive.ValidLifetime -eq $rTwin.ValidLifetime -and $rActive.PreferredLifetime -eq $rTwin.PreferredLifetime)');
-		// And when they do not, the persistent variant goes in first (reaching both
-		// stores), its active copy is taken away, and the active variant replaces it.
-		expect(command).toContain('else { $a = $aTwin; New-NetIPAddress');
-		expect(command).toContain('else { $r = $rTwin; New-NetRoute');
-		// The active-only branches say so; the both-stores branches say nothing, which
-		// is what writes both.
-		expect(command).toContain('-PreferredLifetime $a.PreferredLifetime -PolicyStore ActiveStore -ErrorAction Stop');
-		expect(command).toContain('-Confirm:$false -PolicyStore ActiveStore -ErrorAction Stop');
-		// A persistent-only object is created into both and its active copy taken away,
-		// because neither creating cmdlet can be pointed at the persistent store —
-		// New-NetIPAddress is documented "Specify ActiveStore only" and New-NetRoute says
-		// of PersistentStore "Cannot be used".
-		expect(command).toContain('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $a.IPAddress -PolicyStore ActiveStore -Confirm:$false -ErrorAction Stop');
-		expect(command).toContain("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop $r.NextHop -PolicyStore ActiveStore -Confirm:$false -ErrorAction Stop");
-		expect(command).not.toContain('New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $a.IPAddress -PrefixLength $a.PrefixLength -Type $a.Type -SkipAsSource $a.SkipAsSource -ValidLifetime $a.ValidLifetime -PreferredLifetime $a.PreferredLifetime -PolicyStore PersistentStore');
-		expect(command).not.toContain('-Confirm:$false -PolicyStore PersistentStore -ErrorAction Stop | Out-Null');
-	});
-
-	it('keeps the route metrics in the snapshot, not just the next hops', () => {
-		// A hand-set metric is what ranks competing default routes; restoring the
-		// route without it silently re-ranks every route on a multi-homed host.
-		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).toContain('Select-Object NextHop, RouteMetric');
-	});
-
-	// A rollback that reports "the change was undone" has to leave the object it
-	// puts back equal to the one it removed. Re-creating an address from its value
-	// and prefix alone returns it with SkipAsSource false and an infinite lifetime
-	// whatever it had, and a route from its next hop and metric alone loses the
-	// protocol that created it and whether it was published.
-	it('snapshots and restores the properties a re-created object would otherwise lose', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
-		expect(command).toContain('Select-Object IPAddress, PrefixLength, PrefixOrigin, SuffixOrigin, SkipAsSource, ValidLifetime, PreferredLifetime, Type');
-		expect(command).toContain('Select-Object NextHop, RouteMetric, Protocol, Publish, ValidLifetime, PreferredLifetime');
-		expect(command).toContain('-SkipAsSource $a.SkipAsSource -ValidLifetime $a.ValidLifetime -PreferredLifetime $a.PreferredLifetime');
-		expect(command).toContain('-RouteMetric $r.RouteMetric -Protocol $r.Protocol -Publish $r.Publish');
-	});
-
-	// Two more properties with no parameter of their own until now. An Anycast
-	// address is configured by hand, so it passes the Manual/Manual origin guard and
-	// used to come back Unicast; a route with a countdown on it came back permanent,
-	// because New-NetRoute's default lifetime is infinite.
-	it('restores an address type and a route lifetime rather than defaulting them', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
-		expect(command).toContain('-PrefixLength $a.PrefixLength -Type $a.Type -SkipAsSource');
-		expect(command).toContain('-Publish $r.Publish -ValidLifetime $r.ValidLifetime -PreferredLifetime $r.PreferredLifetime -Confirm:$false');
-	});
-
-	// PrefixOrigin and SuffixOrigin have no parameter on New-NetIPAddress at all —
-	// Windows derives them from how the address came to exist — so an address that
-	// is not Manual/Manual cannot be handed back as the object it was. The DHCP
-	// branch is exempt because it re-creates nothing: it re-enables the lease.
-	it('refuses a static interface whose address provenance cannot be replayed', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
-		expect(command).toContain("if ($oldDhcp -ne 'Enabled') { foreach ($a in $oldAddresses)");
-		expect(command).toContain("$a.PrefixOrigin -ne 'Manual' -or $a.SuffixOrigin -ne 'Manual'");
-		expect(command).toContain('could not put back if the change failed');
-		expect(command.indexOf('could not put back')).toBeLessThan(command.indexOf('Remove-NetIPAddress'));
-	});
-
-	it('rolls the snapshot back when any step of the change fails', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
-		// The mutation runs inside a guard, and the guard restores before rethrowing.
-		expect(command).toContain('catch { $applyError = $_;');
-		expect(command).toContain('throw $applyError');
-		expect(command).toContain('foreach ($aActive in $oldActiveAddresses)');
-		expect(command).toContain('foreach ($rActive in $oldActiveRoutes)');
-		expect(command).toContain('$oldDnsManual.Count -gt 0');
-		// The mutation must be inside the guard, not before it.
-		expect(command).toContain('try { $addressingUnchanged =');
-	});
-
-	// A rollback that writes the EFFECTIVE resolver list back turns DHCP-supplied
-	// DNS into a manual static override: the network keeps working, and then
-	// silently stops honouring every future DHCP DNS change. Only the interface's
-	// static `NameServer` registry value answers "was this a manual override?" —
-	// verified on Windows 11, where a DHCP interface reports an effective server
-	// while `NameServer` is empty and the lease value sits under `DhcpNameServer`.
-	it('snapshots whether DNS was a manual override, not the effective list', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
-		expect(command).toContain('NameServer');
-		expect(command).not.toContain('$oldDns = @((Get-DnsClientServerAddress');
-		// The two branches: addresses back only for a proven manual override, and
-		// automatic mode restored with -ResetServerAddresses for everything else.
-		expect(command).toContain('if ($oldDnsManual.Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $oldDnsManual } else { Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses }');
-	});
-
-	it('restores a DHCP interface by re-enabling DHCP rather than by re-adding its lease', () => {
-		// The snapshot addresses of a DHCP interface came from a lease. Writing them
-		// back by hand installs a static copy that the next lease then duplicates.
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
-		expect(command).toContain("if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled; foreach ($rActive in $oldActiveRoutes)");
-		// The addresses are the lease's to hand back; nothing re-adds them.
-		expect(command.slice(command.indexOf("if ($oldDhcp -eq 'Enabled') { Set-NetIPInterface"), command.indexOf('} else { Set-NetIPInterface'))).not.toContain('New-NetIPAddress');
-	});
-
-	// Windows lets an interface take its address from DHCP and still carry a default
-	// route somebody added. That route exists nowhere but on this machine, so a
-	// rollback that re-enables DHCP and stops there deletes it for good — and if it
-	// was the only path into the management network, the host goes with it.
-	it('puts a DHCP interface default route back unless a lease handed it out', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
-		// Told apart by lifetime, not by Protocol: measured on Windows 11 a lease's
-		// default route and a hand-added one both report Protocol NetMgmt, and only the
-		// lease's counts down.
-		// Asked of the ACTIVE copy first, ahead of every question about the twin: a
-		// persistent route on the same next hop says nothing about where the active one
-		// came from, and evaluating the filter only in the twin-less branch had the
-		// lease's own route re-created by hand whenever a twin happened to exist.
-		expect(command).toContain('$r = $rActive; if (-not ($r.ValidLifetime -eq [TimeSpan]::MaxValue)) { if ($null -ne $rTwin) { $r = $rTwin; New-NetRoute');
-		expect(command).toContain('} } elseif ($null -eq $rTwin) { New-NetRoute');
-		expect(command).toContain('foreach ($r in $oldPersistentRoutes) { if ($oldActiveRoutes.NextHop -notcontains $r.NextHop) { New-NetRoute');
-		// The static branch restores every route it snapshotted — there is no lease on
-		// a static interface for a countdown to have come from.
-		expect(command.slice(command.indexOf('} else { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled'))).not.toContain('[TimeSpan]::MaxValue');
-	});
-
-	it('reports both failures when the rollback itself fails', () => {
-		// Neither error alone describes the machine at that point, and answering with
-		// only the original one would claim the host was left as it was found.
-		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).toContain('and rolling it back also failed');
-	});
-
-	it('verifies a static address actually landed before reporting success', () => {
-		// PowerShell reports a clean run for a New-NetIPAddress the stack did not
-		// honour; without this the apply answers "done" on an interface with no address.
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
-		expect(command).toContain("$_.IPAddress -eq '192.0.2.10'");
-		expect(command).toContain('the address was accepted but is not on the interface');
-	});
-
-	// Windows creates the object first and only then runs duplicate address
-	// detection, so an existence check passes for an address that ends up
-	// Duplicate — and the reader, which shows only Preferred addresses, then
-	// reports the interface as having no IPv4 address at all right after the apply
-	// claimed to have set one.
-	it('waits for duplicate address detection instead of only looking the address up', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
-		expect(command).toContain('$state = [int]$found[0].AddressState');
-		expect(command).toContain('if ($state -eq 4) { break }');
-		expect(command).toContain('if ($state -eq 2) { throw "another device on this network is already using that address" }');
-		expect(command).toContain('if ($state -ne 1) { throw "Windows accepted the address but will not use it" }');
-		expect(command).toContain('Windows is still checking the new address for duplicates');
-		// Inside the guarded mutation, so a duplicate rolls the change back rather
-		// than leaving the interface on an address it cannot use.
-		expect(command.indexOf('AddressState')).toBeGreaterThan(command.indexOf('Remove-NetIPAddress'));
-		expect(command.indexOf('AddressState')).toBeLessThan(command.indexOf('catch { $applyError = $_;'));
-	});
-
-	it('does not wait for an address a DHCP config never sets', () => {
-		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).not.toContain('AddressState');
-	});
-
-	it('enables DHCP and resets the resolvers for a DHCP config', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
+		const apply = command.split('} catch {')[0]!;
 		expect(command).toContain('-Dhcp Enabled');
-		expect(command).toContain('-ResetServerAddresses');
-		// No address is SET. The rollback still carries New-NetIPAddress — once per
-		// combination of stores an address could have come from — but each re-adds
-		// `$a.IPAddress` out of the snapshot rather than a literal.
-		expect(command).not.toContain('New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress 1');
-		expect(command.match(/New-NetIPAddress -InterfaceIndex \$i -AddressFamily IPv4 -IPAddress \$a\.IPAddress/g)).toHaveLength(5);
+		expect(apply).not.toContain('Set-DnsClientServerAddress');
+		expect(apply).not.toContain('New-NetIPAddress');
+	});
+
+	it('supports explicit automatic or custom DNS in DHCP mode', () => {
+		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp', dns: [] })).toContain('-ResetServerAddresses');
+		const custom = windowsApplyIPv4Command(guid, { mode: 'dhcp', dns: ['2001:db8::53', '127.0.0.1'] });
+		expect(custom).toContain("-ServerAddresses '2001:db8::53','127.0.0.1'");
+	});
+
+	it('changes only DNS when addressing is unchanged', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp', dns: ['192.0.2.53'] }, false);
+		expect(command).toContain('Set-DnsClientServerAddress');
+		expect(command).not.toContain('Remove-NetIPAddress');
+		expect(command).not.toContain('Remove-NetRoute');
+		expect(command).not.toContain('Set-NetIPInterface');
+		expect(command).toContain('$oldDns4');
+		expect(command).toContain('Compare-Object');
+		expect(command).toContain('Set-DnsClientServerAddress -InputObject $oldDns4');
+	});
+
+	it('verifies the applied lease, route and DNS inside the rollback boundary', () => {
+		const dhcp = windowsApplyIPv4Command(guid, { mode: 'dhcp', dns: [] });
+		expect(dhcp).toContain('DHCP apply did not obtain a usable lease');
+		expect(dhcp).toContain('DNS apply did not restore automatic policy');
+		const fixed = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53'] });
+		expect(fixed).toContain('$appliedAddresses.Count -ne 1');
+		expect(fixed).toContain('$appliedRoutes.Count -ne 1');
+		expect(fixed).toContain('Compare-Object');
+		expect(fixed.indexOf('$appliedRoutes.Count -ne 1')).toBeLessThan(fixed.indexOf('} catch {'));
 	});
 
 	it('sets the address, prefix and gateway for a static config', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.1'] });
 		expect(command).toContain('-Dhcp Disabled');
-		expect(command).toContain('-IPAddress 192.0.2.10 -PrefixLength 24 -DefaultGateway 192.0.2.1');
-		expect(command).toContain('-ServerAddresses 192.0.2.1');
+		expect(command).toContain('-IPAddress 192.0.2.10 -PrefixLength 24');
+		expect(command).toContain("New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop 192.0.2.1");
+		expect(command).toContain("$addressState -eq 'Preferred'");
+		expect(command).toContain("throw 'IPv4 address did not become usable'");
+		expect(command).toContain("-ServerAddresses '192.0.2.1'");
+		expect(command).toContain('$routeMetric');
+		expect(command).toContain('-RouteMetric $routeMetric');
+		expect(command).toContain('$applyError');
 	});
 
-	// `New-NetIPAddress -DefaultGateway` has a parameter for none of these and takes
-	// Windows' own defaults, so a change of address alone re-ranked the route, made a
-	// temporary one permanent and stopped a published one being advertised. Corrected
-	// afterwards rather than by creating the route by hand, which would give up
-	// -DefaultGateway's own reachability check.
-	it('keeps the existing route properties when the gateway does not move', () => {
+	it('waits for a DHCP lease only while the link is up', () => {
+		const withLink = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
+		expect(withLink).toContain('-Dhcp Enabled');
+		expect(withLink).toContain('DHCP apply did not obtain a usable lease');
+		const linkDown = windowsApplyIPv4Command(guid, { mode: 'dhcp' }, true, false);
+		expect(linkDown).toContain('-Dhcp Enabled');
+		expect(linkDown).not.toContain('DHCP apply did not obtain a usable lease');
+		expect(linkDown).toContain('throw "DHCP apply did not enable DHCP"');
+	});
+
+	it('verifies the persistent store as well as the active one after a static apply', () => {
+		// The reader offers an adapter for editing only while both stores agree, so
+		// an apply that left them apart would make the adapter read-only and bring
+		// the old address back after a reboot. That has to fail and roll back.
+		const withGateway = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
+		expect(withGateway).toContain('$persistedAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction SilentlyContinue)');
+		expect(withGateway).toContain('$persistedAddresses[0].IPAddress -ne \'192.0.2.10\' -or $persistedAddresses[0].PrefixLength -ne 24) { throw "IPv4 apply did not persist the requested address" }');
+		expect(withGateway).toContain('$persistedRoutes.Count -ne 1 -or $persistedRoutes[0].NextHop -ne \'192.0.2.1\') { throw "IPv4 apply did not persist the requested gateway" }');
+		expect(withGateway.indexOf('$persistedRoutes.Count -ne 1')).toBeLessThan(withGateway.indexOf('} catch {'));
+		const withoutGateway = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
+		expect(withoutGateway).toContain('if ($persistedRoutes.Count -ne 0) { throw "IPv4 apply left a persistent default route" }');
+		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).not.toContain('$persistedAddresses');
+	});
+
+	it('restores automatic and manual DNS independently for IPv4 and IPv6', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, dns: ['192.0.2.53'] });
+		expect(command).toContain('Tcpip\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)');
+		expect(command).toContain('Tcpip6\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)');
+		expect(command).toContain('$oldDns4 = @(Get-DnsClientServerAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop)');
+		expect(command).toContain('$oldDns6 = @(Get-DnsClientServerAddress -InterfaceIndex $i -AddressFamily IPv6 -ErrorAction Stop)');
+		expect(command).toContain('$oldDnsAutomatic4 = [string]::IsNullOrWhiteSpace($oldDnsNameServer4)');
+		expect(command).toContain('$oldDnsAutomatic6 = [string]::IsNullOrWhiteSpace($oldDnsNameServer6)');
+		expect(command).toContain('if ($oldDnsAutomatic4) { Set-DnsClientServerAddress -InputObject $oldDns4 -ResetServerAddresses } else { Set-DnsClientServerAddress -InputObject $oldDns4 -ServerAddresses $oldDnsServers4 }');
+		expect(command).toContain('if ($oldDnsAutomatic6) { Set-DnsClientServerAddress -InputObject $oldDns6 -ResetServerAddresses } else { Set-DnsClientServerAddress -InputObject $oldDns6 -ServerAddresses $oldDnsServers6 }');
+		expect(command).not.toContain('$oldDnsAutomatic =');
+	});
+
+	it('waits for restored static addresses before recreating routes', () => {
 		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
-		expect(command).toContain("$keptRoute = @($oldRoutes | Where-Object { $_.NextHop -eq '192.0.2.1' })[0]");
-		expect(command).toContain("if ($keptRoute) { Set-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop 192.0.2.1 -RouteMetric $keptRoute.RouteMetric -Publish $keptRoute.Publish -ValidLifetime $keptRoute.ValidLifetime -PreferredLifetime $keptRoute.PreferredLifetime -Confirm:$false }");
-		// Inside the rewrite, so a configuration that changed nothing does not run it.
-		expect(command.indexOf('Set-NetRoute')).toBeLessThan(command.indexOf('Set-DnsClientServerAddress'));
+		expect(command).toContain('$restoredState -eq "Duplicate"');
+		expect(command).toContain('$restoredState -ne "Preferred"');
+		expect(command.indexOf('$restoredState -ne "Preferred"')).toBeLessThan(command.indexOf('foreach ($route in $oldRoutes)'));
 	});
 
-	// The same for the address itself. The rewrite re-creates rather than edits, so an
-	// interface whose address is not changing — the user moved the gateway, or only
-	// the resolvers — got New-NetIPAddress's defaults on everything the form does not
-	// carry: an Anycast address came back Unicast, a SkipAsSource one started
-	// answering for outgoing traffic, and a lifetime became infinite.
-	it('keeps the existing address properties when the address does not move', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
-		expect(command).toContain("$keptAddress = @($oldAddresses | Where-Object { $_.IPAddress -eq '192.0.2.10' })[0]");
-		expect(command).toContain('if ($keptAddress) { $keptAddressProperties = @{ Type = $keptAddress.Type; SkipAsSource = $keptAddress.SkipAsSource; ValidLifetime = $keptAddress.ValidLifetime; PreferredLifetime = $keptAddress.PreferredLifetime } }');
-		expect(command).toContain('-IPAddress 192.0.2.10 -PrefixLength 24 -DefaultGateway 192.0.2.1 @keptAddressProperties | Out-Null');
-	});
-
-	it('has no metric to keep when the config has no gateway', () => {
-		expect(windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 })).not.toContain('Set-NetRoute');
+	it('confirms a previously usable DHCP lease and route during rollback', () => {
+		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
+		expect(command).toContain('$oldDhcpNeedsAddress');
+		expect(command).toContain('$oldDhcpNeedsRoute');
+		expect(command).toContain('DHCP rollback did not restore a usable lease');
 	});
 
 	it('omits the gateway parameter entirely when there is none', () => {
 		// Passing an empty -DefaultGateway is a parameter binding error, not a no-op.
 		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
 		expect(command).not.toContain('-DefaultGateway');
-		expect(command).toContain('-ResetServerAddresses');
-	});
-
-	it('ignores only a not-found removal, never a real failure', () => {
-		// `-ErrorAction SilentlyContinue` treated "already on DHCP, nothing to
-		// delete" and "access denied" as the same thing, and the steps after it then
-		// ran on an unknown partial state. Verified on Windows 11: a removal that
-		// matches nothing reports CategoryInfo.Category of ObjectNotFound, and a
-		// genuine failure reports anything but.
-		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
-		// Only the read-only snapshot queries may be silent — a removal never is.
-		expect(command).not.toContain('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue');
-		expect(command).not.toContain("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false -ErrorAction SilentlyContinue");
-		expect(command).toContain("catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw } }");
-		for (const step of ['Remove-NetIPAddress', 'Remove-NetRoute']) expect(command).toContain(`try { ${step}`);
+		expect(command.split('} catch {')[0]).not.toContain('Set-DnsClientServerAddress');
 	});
 
 	it('stops on the first failing step', () => {
@@ -978,6 +970,25 @@ describe('parseNmcliPermission', () => {
 	});
 });
 
+describe('parseLinuxCapabilities', () => {
+	const permissions = (modify: string, control: string, scan: string, checkpoint: string = 'yes'): string => [`org.freedesktop.NetworkManager.settings.modify.system:${modify}`, `org.freedesktop.NetworkManager.network-control:${control}`, `org.freedesktop.NetworkManager.wifi.scan:${scan}`, `org.freedesktop.NetworkManager.checkpoint-rollback:${checkpoint}`].join('\n');
+
+	it('requires both profile modification and activation for IPv4 writes', () => {
+		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'yes'))).toEqual({ ipv4: true, wifi: true, staticGatewayRequired: false });
+		expect(parseLinuxCapabilities(permissions('yes', 'no', 'yes'))).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
+		expect(parseLinuxCapabilities(permissions('auth', 'yes', 'yes'))).toEqual({ ipv4: true, ipv4Elevation: true, wifi: false, staticGatewayRequired: false });
+	});
+
+	it('requires the separate scan permission before offering Wi-Fi actions', () => {
+		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'no'))).toEqual({ ipv4: true, wifi: false, staticGatewayRequired: false });
+	});
+
+	it('requires checkpoint permission before offering any mutation', () => {
+		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'yes', 'auth'))).toEqual({ ipv4: true, ipv4Elevation: true, wifi: false, staticGatewayRequired: false });
+		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'yes', 'no'))).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
+	});
+});
+
 describe('firstLine', () => {
 	it('keeps only the reason out of a PowerShell error block', () => {
 		// Captured shape: the message, then the offending command, then a caret
@@ -1012,441 +1023,40 @@ describe('parseElevation', () => {
 	});
 });
 
-describe('parseNmcliActiveUUID', () => {
-	// `nmcli -t -f UUID,DEVICE connection show --active`, colon-separated.
-	const ACTIVE = '4b8a1f2c-0000-4000-8000-000000000001:eth0\n7c2d9e40-0000-4000-8000-000000000002:wlan0\n';
-
-	it('picks the profile active on the device asked for', () => {
-		expect(parseNmcliActiveUUID(ACTIVE, 'wlan0')).toBe('7c2d9e40-0000-4000-8000-000000000002');
+describe('isWifiHexKey', () => {
+	it('recognises exactly 64 hexadecimal digits, in either case', () => {
+		expect(isWifiHexKey('0123456789abcdef'.repeat(4))).toBe(true);
+		expect(isWifiHexKey('0123456789ABCDEF'.repeat(4))).toBe(true);
 	});
 
-	it('reports nothing for a device NetworkManager does not own', () => {
-		// A networkd-managed NIC or a Docker bridge has no active profile, and an
-		// apply must fail loudly rather than edit some other device's profile.
-		expect(parseNmcliActiveUUID(ACTIVE, 'docker0')).toBeNull();
-	});
-});
-
-describe('parseNmcliActiveUUIDs', () => {
-	const ACTIVE = '4b8a1f2c-0000-4000-8000-000000000001:eth0\n7c2d9e40-0000-4000-8000-000000000002:wlan0\n';
-
-	it('maps every device that has an active profile', () => {
-		expect([...parseNmcliActiveUUIDs(ACTIVE)]).toEqual([
-			['eth0', '4b8a1f2c-0000-4000-8000-000000000001'],
-			['wlan0', '7c2d9e40-0000-4000-8000-000000000002'],
-		]);
-	});
-
-	it('ignores a profile that is active but not on any device', () => {
-		// A VPN waiting for its base connection is active with an empty DEVICE.
-		expect(parseNmcliActiveUUIDs(`${ACTIVE}9a1b2c3d-0000-4000-8000-000000000003:\n`).size).toBe(2);
+	it('refuses anything that is not one', () => {
+		// Off by one in either direction, a non-hex digit in the last place, and the
+		// wrong type. A false positive here writes a Windows profile that declares a
+		// passphrase as a raw key, which is accepted and then never authenticates.
+		expect(isWifiHexKey('0123456789abcdef'.repeat(3))).toBe(false);
+		expect(isWifiHexKey(`${'0123456789abcdef'.repeat(4)}0`)).toBe(false);
+		expect(isWifiHexKey(`${'a'.repeat(63)}z`)).toBe(false);
+		expect(isWifiHexKey(undefined)).toBe(false);
 	});
 });
 
-describe('nmcliMethodToMode', () => {
-	it('translates the two methods the model has a word for', () => {
-		expect(nmcliMethodToMode('auto')).toBe('dhcp');
-		expect(nmcliMethodToMode('manual')).toBe('static');
+describe('isValidWifiKey', () => {
+	// Measured against NetworkManager 1.52: it counts bytes for a WPA-PSK key, so
+	// four accented characters pass as eight, and 64 characters are a key only when
+	// every one of them is a hex digit.
+	it('holds a WPA2 key to the pre-shared key rule', () => {
+		for (const password of ['12345678', 'a'.repeat(63), '0'.repeat(64), 'A'.repeat(64), 'heslo123', 'ěěěě']) expect(isValidWifiKey('WPA2', password)).toBe(true);
+		for (const password of ['', '1234567', 'ěěě', 'z'.repeat(64), 'z'.repeat(65), '0'.repeat(63) + 'z']) expect(isValidWifiKey('WPA2', password)).toBe(false);
 	});
 
-	// `link-local`, `shared` and `disabled` are real methods with no counterpart.
-	// Calling any of them DHCP or static would put a mode in the editor that
-	// pressing Save would then impose on the profile.
-	it('refuses to name a method the model cannot express', () => {
-		for (const method of ['link-local', 'shared', 'disabled', '']) expect(nmcliMethodToMode(method)).toBe('unknown');
-	});
-});
-
-describe('parseNmcliManagedDevices', () => {
-	// `nmcli -t -f DEVICE,STATE device status`, colon-separated.
-	const STATUS = 'eth0:connected\nwlan0:disconnected\ndocker0:unmanaged\nlo:unmanaged\n';
-
-	it('keeps every device NetworkManager owns, whatever its state', () => {
-		const managed = parseNmcliManagedDevices(STATUS);
-		expect(managed.has('eth0')).toBe(true);
-		expect(managed.has('wlan0')).toBe(true);
-	});
-
-	it('drops a device another stack owns, so no edit is offered for it', () => {
-		const managed = parseNmcliManagedDevices(STATUS);
-		expect(managed.has('docker0')).toBe(false);
-	});
-});
-
-/**
- * A join that reuses a saved profile writes the supplied key into that profile and
- * persists it BEFORE the association is attempted, so a wrong password used to
- * replace a correct saved one for good. Every case below is about the direction a
- * failure has to leave the host in: holding the configuration it already had.
- *
- * The runner stands in for nmcli. Every passphrase here is invented.
- */
-describe('connectLinuxWifi', () => {
-	const DEVICE = 'wlan0';
-	const SSID = 'demo-network';
-	const SAVED = 'a2df06d1-0000-4000-8000-000000000001';
-	const OTHER = 'a2df06d1-0000-4000-8000-000000000002';
-	const OLD_KEY = 'old-passphrase-that-works';
-	const SECOND_KEY = 'other-passphrase-that-works';
-	const NEW_KEY = 'wrong-passphrase-typed';
-	/** A network no saved profile carries, so a join to it creates one. */
-	const NEW_SSID = 'unsaved-network';
-
-	const SECOND = 'a2df06d1-0000-4000-8000-000000000003';
-	const CREATED = 'a2df06d1-0000-4000-8000-000000000004';
-
-	interface HostState {
-		/** What each profile currently holds under `802-11-wireless-security.psk`. */
-		keys: Map<string, string>;
-		/** The SSID each saved Wi-Fi profile carries — and so which of them exist. */
-		ssids: Map<string, string>;
-		/** Commands nmcli was asked to run, in order. */
-		calls: string[][];
-		/** Argument shapes that make this nmcli fail. */
-		fail?: (args: string[]) => boolean;
-		/** Report the key as one nmcli holds but will not print. */
-		hidden?: boolean;
-		/** The profile carries no `802-11-wireless-security` setting, so nmcli reports none of its properties. */
-		noSecurity?: boolean;
-		/** What `device wifi connect` writes to disk before the association fails. */
-		onConnect?: (state: HostState) => void;
-	}
-
-	function nmcli(state: HostState): (args: string[]) => Promise<string> {
-		return async args => {
-			state.calls.push(args);
-			if (state.fail?.(args)) throw new Error('nmcli said no');
-			// One wired profile alongside them, so the type filter stays exercised.
-			if (args[2] === 'UUID,TYPE') return [...[...state.ssids.keys()].map(uuid => `${uuid}:802-11-wireless`), `${OTHER}:802-3-ethernet`, ''].join('\n');
-			const uuid = args[args.indexOf('uuid') + 1] ?? '';
-			if (args.includes('802-11-wireless.ssid')) return `802-11-wireless.ssid:${state.ssids.get(uuid) ?? ''}\n`;
-			if (args[0] === '--show-secrets') return state.noSecurity ? '' : `802-11-wireless-security.psk:${state.hidden ? '<hidden>' : (state.keys.get(uuid) ?? '')}\n802-11-wireless-security.wep-key0:\n802-11-wireless-security.wep-key-type:\n`;
-			if (args[1] === 'modify') {
-				state.keys.set(uuid, args[args.indexOf('802-11-wireless-security.psk') + 1] ?? '');
-				return '';
-			}
-			if (args[1] === 'delete') {
-				state.ssids.delete(uuid);
-				state.keys.delete(uuid);
-				return '';
-			}
-			// `device wifi connect`: nmcli persists the key into the profile it found,
-			// and only then tries to associate.
-			(state.onConnect ?? ((s: HostState) => s.keys.set(SAVED, NEW_KEY)))(state);
-			throw new Error('Secrets were required, but not provided');
-		};
-	}
-
-	function hostWithSavedKey(over: Partial<HostState> = {}): HostState {
-		return { keys: new Map([[SAVED, OLD_KEY]]), ssids: new Map([[SAVED, SSID]]), calls: [], ...over };
-	}
-
-	/** Two saved profiles for the same network, of which nmcli picks the first. */
-	function twoSavedProfiles(over: Partial<HostState> = {}): HostState {
-		return hostWithSavedKey({
-			keys: new Map([
-				[SAVED, OLD_KEY],
-				[SECOND, SECOND_KEY],
-			]),
-			ssids: new Map([
-				[SAVED, SSID],
-				[SECOND, SSID],
-			]),
-			...over,
-		});
-	}
-
-	it('puts the working password back when the attempt fails with a wrong one', async () => {
-		const state = hostWithSavedKey();
-		await expect(connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state))).rejects.toThrow('Secrets were required');
-		expect(state.keys.get(SAVED)).toBe(OLD_KEY);
-	});
-
-	it('leaves the profile alone when the attempt never reached it', async () => {
-		// A network out of range fails without nmcli writing anything, and rewriting
-		// every matching keyfile with its own values would be a change for nothing.
-		const state = hostWithSavedKey({ fail: args => args[0] === 'device' });
-		await expect(connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state))).rejects.toThrow();
-		expect(state.keys.get(SAVED)).toBe(OLD_KEY);
-		expect(state.calls.some(args => args[1] === 'modify')).toBe(false);
-	});
-
-	it('keeps a change another tool made during the attempt', async () => {
-		const state = hostWithSavedKey();
-		const run = nmcli(state);
-		await expect(
-			connectLinuxWifi(DEVICE, SSID, NEW_KEY, async args => {
-				const out = await run(args).catch((err: Error) => {
-					// Someone edits the same network while the association is still being tried.
-					state.keys.set(SAVED, 'set-by-another-tool');
-					throw err;
-				});
-				return out;
-			})
-		).rejects.toThrow();
-		expect(state.keys.get(SAVED)).toBe('set-by-another-tool');
-	});
-
-	it('loses a change another tool makes between the re-read and the restore', async () => {
-		// The window the check cannot cover, and the reason it is documented rather
-		// than closed: the restore re-reads, sees the failed attempt's password, and
-		// by the time `connection modify` runs the profile holds someone else's new
-		// one. There is no conditional modify to reject the write on, so it lands and
-		// the other change is gone. Asserting the loss pins the known cost — close the
-		// window and this test is what says so.
-		const state = hostWithSavedKey();
-		const run = nmcli(state);
-		await expect(
-			connectLinuxWifi(DEVICE, SSID, NEW_KEY, async args => {
-				if (args[1] === 'modify') state.keys.set(SAVED, 'set-by-another-tool');
-				return run(args);
-			})
-		).rejects.toThrow('Secrets were required');
-		expect(state.keys.get(SAVED)).toBe(OLD_KEY);
-	});
-
-	it('refuses the join when the saved networks cannot be listed', async () => {
-		// Not "there is no saved profile" — an unknown state, and joining on the
-		// assumption that it is empty is what destroys the profile that was there.
-		const state = hostWithSavedKey({ fail: args => args[2] === 'UUID,TYPE' });
-		await expect(connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state))).rejects.toThrow('could not be listed');
-		expect(state.calls.some(args => args[0] === 'device')).toBe(false);
-	});
-
-	it('refuses the join when a saved key exists but is not readable', async () => {
-		const state = hostWithSavedKey({ hidden: true });
-		await expect(connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state))).rejects.toThrow('could not be read');
-		expect(state.calls.some(args => args[0] === 'device')).toBe(false);
-		expect(state.keys.get(SAVED)).toBe(OLD_KEY);
-	});
-
-	it('reports the failed restore alongside the join, without the passphrase in it', async () => {
-		const state = hostWithSavedKey({ fail: args => args[1] === 'modify' });
-		const err = await connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state)).then(
-			() => new Error('the join should not have succeeded'),
-			(e: Error) => e
-		);
-		expect(err.message).toContain('Secrets were required');
-		expect(err.message).toContain('could not be put back');
-		expect(err.message).not.toContain(OLD_KEY);
-		expect(err.message).not.toContain(NEW_KEY);
-	});
-
-	it('joins a network no profile carries without writing to any of them', async () => {
-		const state = hostWithSavedKey();
-		await expect(connectLinuxWifi(DEVICE, 'somewhere-else', NEW_KEY, nmcli(state))).rejects.toThrow();
-		expect(state.calls.some(args => args[1] === 'modify')).toBe(false);
-		expect(state.calls.some(args => args[0] === '--show-secrets')).toBe(false);
-	});
-
-	it('does not try to restore a profile that carries no security setting', async () => {
-		// There is nothing on it to lose, and `connection modify` with no properties
-		// is not a command — keeping it would report a failed rollback for a profile
-		// that was never at risk.
-		const state = hostWithSavedKey({ keys: new Map(), noSecurity: true });
-		const err = await connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state)).then(
-			() => new Error('the join should not have succeeded'),
-			(e: Error) => e
-		);
-		expect(err.message).toBe('Secrets were required, but not provided');
-		expect(state.calls.some(args => args[1] === 'modify')).toBe(false);
-	});
-
-	it('takes back a key the attempt added to a profile that had none', async () => {
-		// Undoing is not only putting an old key back. A profile left holding a key it
-		// never had is just as much a configuration the host did not have before.
-		const state = hostWithSavedKey({ keys: new Map() });
-		await expect(connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state))).rejects.toThrow();
-		expect(state.keys.get(SAVED)).toBe('');
-	});
-
-	it('names the profile a failed first join left behind, without deleting it', async () => {
-		// Nothing was overwritten, so there is nothing to put back — but nmcli adds the
-		// profile to disk before it tries to associate, and a failed attempt that leaves
-		// one behind has saved a password nothing ever verified. The user is told which
-		// profile that is; taking it away is not this code's call to make.
-		const state = hostWithSavedKey({
-			onConnect: s => {
-				s.ssids.set(CREATED, NEW_SSID);
-				s.keys.set(CREATED, NEW_KEY);
-			},
-		});
-		const err = await connectLinuxWifi(DEVICE, NEW_SSID, NEW_KEY, nmcli(state)).then(
-			() => new Error('the join should not have succeeded'),
-			(e: Error) => e
-		);
-		expect(err.message).toContain('Secrets were required');
-		expect(err.message).toContain('left in place');
-		expect(err.message).toContain(CREATED);
-		expect(err.message).not.toContain(NEW_KEY);
-		expect(state.ssids.has(CREATED)).toBe(true);
-		expect(state.keys.get(SAVED)).toBe(OLD_KEY);
-	});
-
-	it('keeps a profile another program saved for this network just before the join', async () => {
-		// The sequence a delete cannot survive. Another program saves this network,
-		// with the password the user happens to have typed here, after the snapshot and
-		// before nmcli runs — so nmcli reuses THAT profile and fails on it. It was
-		// absent from the snapshot, it carries the SSID, it holds the attempt's
-		// password, and it is the only one: every test a delete could apply says it is
-		// this attempt's own work, and every one of them is wrong.
-		const state = hostWithSavedKey({ onConnect: () => {} });
-		const run = nmcli(state);
-		const err = await connectLinuxWifi(DEVICE, NEW_SSID, NEW_KEY, async args => {
-			if (args[0] === 'device') {
-				state.ssids.set(CREATED, NEW_SSID);
-				state.keys.set(CREATED, NEW_KEY);
-			}
-			return run(args);
-		}).then(
-			() => new Error('the join should not have succeeded'),
-			(e: Error) => e
-		);
-		expect(state.ssids.has(CREATED)).toBe(true);
-		expect(state.keys.get(CREATED)).toBe(NEW_KEY);
-		expect(err.message).toContain(CREATED);
-		expect(err.message).not.toContain(NEW_KEY);
-	});
-
-	it('keeps a profile whose SSID could not be read, having tied it to nothing', async () => {
-		// The harsher half of the same problem: nmcli refuses the SSID read, so the
-		// profile is not even known to belong to the network being joined. A profile
-		// that could not be identified has been attributed to nothing and must survive.
-		const state = hostWithSavedKey({
-			onConnect: s => {
-				s.ssids.set(CREATED, NEW_SSID);
-				s.keys.set(CREATED, NEW_KEY);
-			},
-		});
-		const run = nmcli(state);
-		const err = await connectLinuxWifi(DEVICE, NEW_SSID, NEW_KEY, async args => {
-			if (args.includes('802-11-wireless.ssid') && args.includes(CREATED)) throw new Error('nmcli said no');
-			return run(args);
-		}).then(
-			() => new Error('the join should not have succeeded'),
-			(e: Error) => e
-		);
-		expect(state.ssids.has(CREATED)).toBe(true);
-		expect(err.message).toContain(CREATED);
-	});
-
-	it("keeps a profile that appeared during the attempt carrying someone else's password", async () => {
-		// Someone adding the same network in another program while this one runs. It
-		// appeared inside the window and it carries the SSID, so it is reported — the
-		// password it holds is not consulted, because holding one never proved anything.
-		const state = hostWithSavedKey({
-			onConnect: s => {
-				s.ssids.set(CREATED, NEW_SSID);
-				s.keys.set(CREATED, 'typed-into-another-program');
-			},
-		});
-		const err = await connectLinuxWifi(DEVICE, NEW_SSID, NEW_KEY, nmcli(state)).then(
-			() => new Error('the join should not have succeeded'),
-			(e: Error) => e
-		);
-		expect(err.message).toContain('left in place');
-		expect(err.message).not.toContain(NEW_KEY);
-		expect(state.ssids.has(CREATED)).toBe(true);
-	});
-
-	it('names both profiles when two appeared while the attempt ran', async () => {
-		const state = hostWithSavedKey({
-			onConnect: s => {
-				for (const uuid of [CREATED, SECOND]) {
-					s.ssids.set(uuid, NEW_SSID);
-					s.keys.set(uuid, NEW_KEY);
-				}
-			},
-		});
-		await expect(connectLinuxWifi(DEVICE, NEW_SSID, NEW_KEY, nmcli(state))).rejects.toThrow('left in place');
-		expect(state.ssids.has(CREATED)).toBe(true);
-		expect(state.ssids.has(SECOND)).toBe(true);
-	});
-
-	it('puts back the one clobbered profile and leaves the other saved one alone', async () => {
-		const state = twoSavedProfiles();
-		await expect(connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state))).rejects.toThrow('Secrets were required');
-		expect(state.keys.get(SAVED)).toBe(OLD_KEY);
-		expect(state.keys.get(SECOND)).toBe(SECOND_KEY);
-	});
-
-	it('reverts nothing when another tool set a second profile to the same password', async () => {
-		// The collision the value check cannot see through: both profiles now hold the
-		// password this attempt supplied, one because nmcli wrote it and one because
-		// another program did, and nmcli exposes nothing that says which is which.
-		// Writing both back would silently discard that program's change, so neither is
-		// touched — including the one that really was clobbered, which the message says.
-		const state = twoSavedProfiles({
-			onConnect: s => {
-				s.keys.set(SAVED, NEW_KEY);
-				s.keys.set(SECOND, NEW_KEY);
-			},
-		});
-		const err = await connectLinuxWifi(DEVICE, SSID, NEW_KEY, nmcli(state)).then(
-			() => new Error('the join should not have succeeded'),
-			(e: Error) => e
-		);
-		expect(state.keys.get(SECOND)).toBe(NEW_KEY);
-		expect(state.keys.get(SAVED)).toBe(NEW_KEY);
-		expect(err.message).toContain('more than one saved profile');
-		expect(err.message).not.toContain(NEW_KEY);
-		expect(err.message).not.toContain(SECOND_KEY);
-	});
-
-	it('skips the snapshot entirely for an open network', async () => {
-		const state: HostState = { keys: new Map(), ssids: new Map(), calls: [] };
-		await connectLinuxWifi(DEVICE, SSID, '', async args => {
-			state.calls.push(args);
-			return '';
-		});
-		expect(state.calls).toEqual([['device', 'wifi', 'connect', SSID, 'ifname', DEVICE]]);
-	});
-});
-
-describe('parseNmcliWifiProfileUUIDs', () => {
-	it('keeps the Wi-Fi profiles and drops every other kind', () => {
-		expect(parseNmcliWifiProfileUUIDs('11111111-0000-4000-8000-000000000001:802-11-wireless\n22222222-0000-4000-8000-000000000002:802-3-ethernet\n33333333-0000-4000-8000-000000000003:vpn\n')).toEqual(['11111111-0000-4000-8000-000000000001']);
-	});
-
-	it('ignores blank lines rather than reading an empty uuid out of them', () => {
-		expect(parseNmcliWifiProfileUUIDs('\n\n')).toEqual([]);
-	});
-});
-
-describe('parseLinuxWifiSecrets', () => {
-	it('captures only the fields nmcli reported', () => {
-		// An absent field is one the profile does not have. Writing an empty value
-		// back for it would clear a property rather than restore one.
-		const snapshot = parseLinuxWifiSecrets('802-11-wireless-security.psk:some-passphrase\n');
-		expect(snapshot?.get('802-11-wireless-security.psk')).toBe('some-passphrase');
-		expect(snapshot?.has('802-11-wireless-security.wep-key0')).toBe(false);
-	});
-
-	it('reads a profile with no security setting as nothing to lose', () => {
-		expect(parseLinuxWifiSecrets('')?.size).toBe(0);
-	});
-
-	it('refuses a secret nmcli holds but will not print', () => {
-		// The opposite of an empty reading: there IS a key, a failed join can destroy
-		// it, and nothing could put it back.
-		expect(parseLinuxWifiSecrets('802-11-wireless-security.psk:<hidden>\n')).toBeNull();
-	});
-
-	it('keeps a passphrase containing a colon in one piece', () => {
-		expect(parseLinuxWifiSecrets('802-11-wireless-security.psk:one\\:two\n')?.get('802-11-wireless-security.psk')).toBe('one:two');
-	});
-});
-
-describe('nmcliWifiRestoreArgs', () => {
-	const uuid = 'a2df06d1-0000-4000-8000-000000000001';
-
-	it('writes back every captured field and addresses the profile by uuid', () => {
-		const args = nmcliWifiRestoreArgs(uuid, new Map([['802-11-wireless-security.psk', 'restored-passphrase']]));
-		expect(args.slice(0, 4)).toEqual(['connection', 'modify', 'uuid', uuid]);
-		expect(args[args.indexOf('802-11-wireless-security.psk') + 1]).toBe('restored-passphrase');
-	});
-
-	it('writes nothing for a field the snapshot never held', () => {
-		expect(nmcliWifiRestoreArgs(uuid, new Map())).toEqual(['connection', 'modify', 'uuid', uuid]);
+	it('puts no length rule on a network that offers WPA3', () => {
+		// SAE derives from the password instead of hashing it to a fixed-length key,
+		// and NetworkManager accepts any length for it. Refusing a short one would
+		// refuse a password that works.
+		for (const security of ['WPA3', 'WPA2 WPA3', 'wpa3', 'SAE']) {
+			expect(isValidWifiKey(security, 'abc')).toBe(true);
+			expect(isValidWifiKey(security, 'z'.repeat(64))).toBe(true);
+			expect(isValidWifiKey(security, '')).toBe(false);
+		}
 	});
 });

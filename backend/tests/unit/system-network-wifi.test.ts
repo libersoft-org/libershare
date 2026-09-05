@@ -68,8 +68,8 @@ describe('parseAvailableNetworks', () => {
 			{ ssid: 'Open Guest Net', signal: 40, secured: false },
 		]);
 		expect(parseAvailableNetworks(list)).toEqual([
-			{ ssid: 'Coffee Bar', signal: 71, secured: true, active: true },
-			{ ssid: 'Open Guest Net', signal: 40, secured: false, active: false },
+			{ ssid: 'Coffee Bar', bssid: null, signal: 71, secured: true, security: 'WPA2', supported: true, active: true },
+			{ ssid: 'Open Guest Net', bssid: null, signal: 40, secured: false, security: '', supported: false, active: false },
 		]);
 	});
 
@@ -88,7 +88,7 @@ describe('parseAvailableNetworks', () => {
 			{ ssid: 'Roaming Net', signal: 88 },
 			{ ssid: 'Roaming Net', signal: 61 },
 		]);
-		expect(parseAvailableNetworks(list)).toEqual([{ ssid: 'Roaming Net', signal: 88, secured: true, active: false }]);
+		expect(parseAvailableNetworks(list)).toEqual([{ ssid: 'Roaming Net', bssid: null, signal: 88, secured: true, security: 'WPA2', supported: true, active: false }]);
 	});
 
 	it('keeps the connected flag when the associated entry is not the strongest one', () => {
@@ -96,12 +96,12 @@ describe('parseAvailableNetworks', () => {
 			{ ssid: 'Roaming Net', signal: 30, active: true },
 			{ ssid: 'Roaming Net', signal: 88 },
 		]);
-		expect(parseAvailableNetworks(list)[0]).toEqual({ ssid: 'Roaming Net', signal: 88, secured: true, active: true });
+		expect(parseAvailableNetworks(list)[0]).toEqual({ ssid: 'Roaming Net', bssid: null, signal: 88, secured: true, security: 'WPA2', supported: true, active: true });
 		const reversed = buildList([
 			{ ssid: 'Roaming Net', signal: 88 },
 			{ ssid: 'Roaming Net', signal: 30, active: true },
 		]);
-		expect(parseAvailableNetworks(reversed)[0]).toEqual({ ssid: 'Roaming Net', signal: 88, secured: true, active: true });
+		expect(parseAvailableNetworks(reversed)[0]).toEqual({ ssid: 'Roaming Net', bssid: null, signal: 88, secured: true, security: 'WPA2', supported: true, active: true });
 	});
 
 	it('drops a hidden network, which has no name to join by', () => {

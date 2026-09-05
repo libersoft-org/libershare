@@ -1,11 +1,11 @@
 import os from 'os';
 import { statfs } from 'fs/promises';
 import { readFileSync } from 'fs';
-import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork, CodedError, ErrorCodes } from '@shared';
+import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type NetIPv4Baseline, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork, CodedError, ErrorCodes } from '@shared';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
-import { applyIPv4, connectWifi, hostMutationInProgress, readSettledNetworkState, scanWifi, type MutationOutcome } from '../system-network.ts';
+import { applyIPv4Unlocked, connectWifiUnlocked, readNetworkState, readNetworkStateUnlocked, runNetworkMutation, scanWifi } from '../system-network.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -26,8 +26,6 @@ const NETWORK_POLL_EVERY_N_TICKS = 2;
  * is 32 octets, and a WPA passphrase is 63 characters or a 64-character hex key.
  */
 const MAX_INTERFACE_ID = 64;
-const MAX_SSID_PARAM = 64;
-const MAX_WIFI_PASSWORD = 128;
 
 /** Require a bounded string, naming the offending parameter when it is not one. */
 export function assertString(value: unknown, name: string, maxLength: number, minLength: number = 1): string {
@@ -36,52 +34,7 @@ export function assertString(value: unknown, name: string, maxLength: number, mi
 	return value;
 }
 
-/**
- * Run a host reconfiguration and publish the state it actually left behind,
- * whether it succeeded or not.
- *
- * A platform apply is several commands and is not atomic: it can change the
- * address and then fail on the route, or change it and roll back. An error tells
- * the caller the request did not complete, but says nothing about what the
- * machine now looks like — so on the failure path the client used to keep
- * rendering the configuration from before the attempt, and every other connected
- * client heard nothing at all. Reading and broadcasting on both paths is what
- * makes the published state the real one.
- *
- * The reading itself is taken by `mutateAndReadBack`, inside the lock the
- * reconfiguration holds. Reading here instead looked equivalent and was not: the
- * mutex hands over to the longest-waiting owner the moment it is released, so a
- * second apply already queued behind this one ran first and this request answered
- * with ITS state. What is left here is only what has to happen after the lock —
- * broadcasting, and choosing which of two failures to report. A read that failed
- * as well is swallowed when there is already a mutation error, because replacing
- * it would hide the reason the user actually needs.
- */
-export async function applyAndPublish(mutate: () => Promise<MutationOutcome>, broadcast: BroadcastFn): Promise<NetworkStateInfo> {
-	const { state, failure, readError } = await mutate();
-	if (state) broadcast('system:network', state);
-	if (failure) throw failure;
-	if (readError) throw readError;
-	return state as NetworkStateInfo;
-}
 
-/**
- * Broadcast the host's network state on the poll tick — unless a reconfiguration
- * is running.
- *
- * Checked twice, because the two failures are different: a mutation already
- * running when the tick fires means the read would be taken mid-apply, and a
- * mutation that starts while the read is in flight (a Windows read takes 1.4-1.8 s)
- * means the answer became a mid-apply reading between the request and the reply.
- * Either way the tick is dropped rather than corrected — see
- * {@link hostMutationInProgress}.
- */
-export async function publishNetworkState(readState: () => Promise<NetworkStateInfo>, broadcast: BroadcastFn, mutating: () => boolean = hostMutationInProgress): Promise<void> {
-	if (mutating()) return;
-	const state = await readState();
-	if (mutating()) return;
-	broadcast('system:network', state);
-}
 
 /** A single CPU-times sample: accumulated idle ticks and total ticks across all cores. */
 interface ICpuSample {
@@ -95,14 +48,43 @@ interface SystemHandlers {
 	setVolume: (p: { volume: number }) => Promise<{ success: boolean; available: boolean }>;
 	getVolume: () => Promise<{ volume: number | null; available: boolean }>;
 	network: () => Promise<NetworkStateInfo>;
-	networkApply: (p: { interfaceID: string; config: NetIPv4Config }) => Promise<NetworkStateInfo>;
+	networkApply: (p: { interfaceID: string; config: NetIPv4Config; expected: NetIPv4Baseline }) => Promise<NetworkStateInfo>;
 	wifiScan: (p: { interfaceID: string }) => Promise<NetWifiNetwork[]>;
-	wifiConnect: (p: { interfaceID: string; ssid: string; password?: string }) => Promise<NetworkStateInfo>;
+	wifiConnect: (p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string }) => Promise<NetworkStateInfo>;
 	startPolling: () => void;
 	stopPolling: () => void;
 }
 
-export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, hasSubscribers: HasSubscribersFn): SystemHandlers {
+/**
+ * Run one host change and publish the state it left behind.
+ *
+ * The network lock is held through the read-back. Released any earlier, a
+ * change queued behind this one could start before the read, and what got
+ * published as this change's result would be a mix of the two. Both callbacks
+ * therefore have to be the lock-free variants.
+ */
+export function runAndPublishNetworkMutation(action: () => Promise<NetworkStateInfo>, readCurrent: () => Promise<NetworkStateInfo>, publish: (state: NetworkStateInfo) => void): Promise<NetworkStateInfo> {
+	return runNetworkMutation(async () => {
+		try {
+			const state = await action();
+			publish(state);
+			return state;
+		} catch (error) {
+			try {
+				publish(await readCurrent());
+			} catch {}
+			throw error;
+		}
+	});
+}
+
+/** Remove mutation capabilities when this API instance has no authentication token. */
+export function restrictNetworkCapabilities(state: NetworkStateInfo, networkAdminEnabled: boolean): NetworkStateInfo {
+	if (networkAdminEnabled) return state;
+	return { ...state, capabilities: { ...state.capabilities, ipv4: false, ipv4Elevation: false, wifi: false } };
+}
+
+export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, hasSubscribers: HasSubscribersFn, networkAdminEnabled: boolean): SystemHandlers {
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	let volumeMonitor: VolumeMonitor | null = null;
 
@@ -313,13 +295,8 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	}
 
 	/** Live host network state, with the user's primary-interface preference applied. */
-	function getNetworkState(): Promise<NetworkStateInfo> {
-		return readSettledNetworkState(primaryInterface());
-	}
-
-	/** The interface the user pinned as primary, if any — the reconfigurations read back through it too. */
-	function primaryInterface(): string {
-		return settings.get('network.primaryInterface') ?? '';
+	async function getNetworkState(): Promise<NetworkStateInfo> {
+		return restrictNetworkCapabilities(await readNetworkState(settings.get('network.primaryInterface') ?? ''), networkAdminEnabled);
 	}
 
 	/**
@@ -329,9 +306,14 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	 * the caller has just changed the very interface it is watching and needs to
 	 * see the outcome — including the case where the address did not take.
 	 */
-	function applyNetworkConfig(p: { interfaceID: string; config: NetIPv4Config }): Promise<NetworkStateInfo> {
-		assert(p, ['interfaceID', 'config']);
-		return applyAndPublish(() => applyIPv4(assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID), p.config, primaryInterface()), broadcast);
+	async function applyNetworkConfig(p: { interfaceID: string; config: NetIPv4Config; expected: NetIPv4Baseline }): Promise<NetworkStateInfo> {
+		assert(p, ['interfaceID', 'config', 'expected']);
+		const primary = settings.get('network.primaryInterface') ?? '';
+		return runAndPublishNetworkMutation(
+			() => applyIPv4Unlocked(p.interfaceID, p.config, primary, true, p.expected),
+			() => readNetworkStateUnlocked(primary),
+			state => broadcast('system:network', state)
+		);
 	}
 
 	async function scanWifiNetworks(p: { interfaceID: string }): Promise<NetWifiNetwork[]> {
@@ -339,14 +321,14 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		return await scanWifi(assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID));
 	}
 
-	async function joinWifiNetwork(p: { interfaceID: string; ssid: string; password?: string }): Promise<NetworkStateInfo> {
+	async function joinWifiNetwork(p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string }): Promise<NetworkStateInfo> {
 		assert(p, ['interfaceID', 'ssid']);
-		// The passphrase is optional and legitimately empty for an open network, but
-		// when it is present it has to be a string: `password: ['secret']` would
-		// otherwise travel all the way into nmcli's argv, or into a WLAN profile
-		// document as "[object Object]".
-		const password = p.password === undefined ? '' : assertString(p.password, 'password', MAX_WIFI_PASSWORD, 0);
-		return applyAndPublish(() => connectWifi(assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID), assertString(p.ssid, 'ssid', MAX_SSID_PARAM), password, primaryInterface()), broadcast);
+		const primary = settings.get('network.primaryInterface') ?? '';
+		return runAndPublishNetworkMutation(
+			() => connectWifiUnlocked(p.interfaceID, p.ssid, p.password ?? '', primary, p.bssid ?? null),
+			() => readNetworkStateUnlocked(primary),
+			state => broadcast('system:network', state)
+		);
 	}
 
 	let networkTick = 0;
@@ -366,7 +348,8 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 			}
 			if (++networkTick % NETWORK_POLL_EVERY_N_TICKS === 0 && hasSubscribers('system:network') && !networkReadInFlight) {
 				networkReadInFlight = true;
-				void publishNetworkState(getNetworkState, broadcast)
+				void getNetworkState()
+					.then(state => broadcast('system:network', state))
 					.catch(() => {})
 					.finally(() => {
 						networkReadInFlight = false;

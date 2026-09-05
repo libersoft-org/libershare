@@ -13,12 +13,12 @@
 	// associated network whose quality the OS withholds would otherwise render as
 	// four empty bars, which reads as "no signal" — a measurement nobody took.
 	let signalUnknown = $derived(kind === 'wifi' && connected && signal === null);
-	let showBars = $derived((kind === 'wifi' || kind === 'wifiOff') && !signalUnknown);
+	let showBars = $derived(kind === 'wifi' && !signalUnknown);
 	let activeBars = $derived(kind === 'wifi' && signal !== null ? getActiveBars(signal, connected) : 0);
 	// A cable icon is itself a claim about the medium, so an unknown one gets the
 	// generic network glyph — the same icon the settings screen uses for a medium
 	// it could not classify.
-	let icon = $derived(kind === 'unknown' ? '/img/network.svg' : signalUnknown ? '/img/wifi.svg' : '/img/ethernet.svg');
+	let icon = $derived(kind === 'wired' ? '/img/ethernet.svg' : kind === 'wifi' || kind === 'wifiOff' ? '/img/wifi.svg' : '/img/network.svg');
 	// Neutral only while the carrier state is genuinely unknown. A tunnel or bridge
 	// as primary still reports its link, and greying out a live VPN would understate
 	// a connection the OS confirmed.

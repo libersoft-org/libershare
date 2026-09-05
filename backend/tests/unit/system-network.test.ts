@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 import { ptr, type Pointer } from 'bun:ffi';
 import { parseWindowsNetworkState, readConnectionAttributes, WINDOWS_STATE_COMMAND } from '../../src/system-network-windows.ts';
 import { dbmToQuality, parseIwLink, parseLinuxNetworkState } from '../../src/system-network-linux.ts';
-import { assertReadProducedSomething, isAlreadyJoined, prefixFromNetmask, readGenericInterfaces, readNetworkStateUnlocked, resolvePrimaryID, resetNetworkStateCache } from '../../src/system-network.ts';
-import type { NetInterfaceInfo } from '@shared';
+import { assertReadProducedSomething, assertWifiConfigurableInterface, NetworkStateCache, prefixFromNetmask, readGenericInterfaces, readNetworkState, resolvePrimaryID, resetNetworkStateCache, runNetworkMutation, type NetworkSnapshot } from '../../src/system-network.ts';
+import { ErrorCodes, type NetInterfaceInfo } from '@shared';
 
 /**
  * Fixtures are the verbatim shape of real command output captured on a Windows
@@ -12,6 +12,24 @@ import type { NetInterfaceInfo } from '@shared';
  * rewritten to documentation ranges before entering the repository.
  */
 const fixture = (name: string): string => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
+const windowsFixture = (): string => {
+	const doc = JSON.parse(fixture('network-windows.json')) as Record<string, any[]>;
+	const dhcpIndexes = new Set(doc['interfaces']!.filter(row => row.Family === 2 && row.Dhcp === 1).map(row => row.ifIndex));
+	doc['addresses'] = doc['addresses']!.map(row => ({ Type: 1, SkipAsSource: false, Infinite: true, ...row }));
+	doc['persistentAddresses'] = doc['addresses']!.filter(row => row.Family === 2 && !dhcpIndexes.has(row.ifIndex)).map(row => ({ ...row, State: 0 }));
+	doc['routes'] = doc['routes']!.map(row => ({ Protocol: 3, Publish: 0, Infinite: true, ...row }));
+	doc['persistentRoutes'] = doc['routes']!.filter(row => !dhcpIndexes.has(row.ifIndex)).map(row => ({ ...row }));
+	return JSON.stringify(doc);
+};
+const simpleWindowsStaticDoc = (): Record<string, unknown> => ({
+	adapters: { ifIndex: 5, Name: 'Ethernet', InterfaceGuid: '{11111111-2222-3333-4444-555555555555}', MacAddress: '02-00-5E-30-00-01', Media: 14, State: 1 },
+	addresses: { ifIndex: 5, Family: 2, IPAddress: '198.51.100.5', PrefixLength: 24, State: 4, PrefixOrigin: 1, SuffixOrigin: 1, Type: 1, SkipAsSource: false, Infinite: true },
+	persistentAddresses: { ifIndex: 5, Family: 2, IPAddress: '198.51.100.5', PrefixLength: 24, State: 0, PrefixOrigin: 1, SuffixOrigin: 1, Type: 1, SkipAsSource: false, Infinite: true },
+	interfaces: { ifIndex: 5, Family: 2, Dhcp: 0 },
+	routes: { ifIndex: 5, NextHop: '198.51.100.1', RouteMetric: 25, Protocol: 3, Publish: 0, Infinite: true },
+	persistentRoutes: { ifIndex: 5, NextHop: '198.51.100.1', RouteMetric: 25, Protocol: 3, Publish: 0, Infinite: true },
+	dns: { InterfaceIndex: 5, Servers: '198.51.100.1' },
+});
 const byID = (list: NetInterfaceInfo[], id: string): NetInterfaceInfo => {
 	const found = list.find(i => i.id === id);
 	if (!found) throw new Error(`interface ${id} missing from parse result`);
@@ -20,9 +38,22 @@ const byID = (list: NetInterfaceInfo[], id: string): NetInterfaceInfo => {
 
 describe('WINDOWS_STATE_COMMAND', () => {
 	it('wraps every collection so a single-row result stays an array', () => {
-		for (const name of ['adapters', 'addresses', 'interfaces', 'routes', 'dns']) {
+		for (const name of ['adapters', 'addresses', 'persistentAddresses', 'interfaces', 'routes', 'persistentRoutes', 'dns']) {
 			expect(WINDOWS_STATE_COMMAND).toContain(`$${name} = @(`);
 		}
+	});
+
+	it('fails the whole read when any required Windows query fails', () => {
+		expect(WINDOWS_STATE_COMMAND).toContain('$ErrorActionPreference = "Stop"');
+		for (const cmdlet of ['Get-NetAdapter', 'Get-NetIPAddress', 'Get-NetIPInterface', 'Get-NetRoute', 'Get-DnsClientServerAddress']) {
+			expect(WINDOWS_STATE_COMMAND).toMatch(new RegExp(`${cmdlet}[^;]+-ErrorAction Stop`));
+		}
+		expect(WINDOWS_STATE_COMMAND).not.toContain('SilentlyContinue');
+	});
+
+	it('allows a successful route query to return no default route', () => {
+		expect(WINDOWS_STATE_COMMAND).toContain("Get-NetRoute -PolicyStore ActiveStore -ErrorAction Stop | Where-Object DestinationPrefix -eq '0.0.0.0/0'");
+		expect(WINDOWS_STATE_COMMAND).not.toContain("Get-NetRoute -DestinationPrefix '0.0.0.0/0'");
 	});
 
 	it('projects the enums it parses to integers so the OS display language cannot matter', () => {
@@ -30,50 +61,31 @@ describe('WINDOWS_STATE_COMMAND', () => {
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.MediaConnectionState');
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.Dhcp');
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.AddressState');
+		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.PrefixOrigin');
+		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.SuffixOrigin');
 	});
 
 	it('only queries — it contains no cmdlet that could change configuration', () => {
 		expect(WINDOWS_STATE_COMMAND).not.toMatch(/\b(Set|New|Remove|Disable|Enable|Restart)-Net/);
 	});
-
-	// `-ErrorAction SilentlyContinue` made "this host has no default route" and "the
-	// route provider failed" the same empty array. The sections that feed the edit
-	// form's gateway and DNS fields now report whether they SUCCEEDED, so an empty
-	// one can be told from an unknown one.
-	it('reports whether the optional sections could be read at all', () => {
-		for (const section of ['addresses', 'routes', 'dns']) {
-			expect(WINDOWS_STATE_COMMAND).toContain(`$${section}Ok = $true`);
-			expect(WINDOWS_STATE_COMMAND).toContain(`${section}Ok=$${section}Ok`);
-		}
-		// Verified on Windows 11: a query matching nothing raises ObjectNotFound while
-		// a genuine failure raises anything else, so that one category is what a
-		// host with no default route is allowed to be.
-		expect(WINDOWS_STATE_COMMAND).toContain("if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { $routesOk = $false }");
-		expect(WINDOWS_STATE_COMMAND).not.toContain('-ErrorAction SilentlyContinue');
-	});
 });
 
 describe('parseWindowsNetworkState', () => {
-	const result = parseWindowsNetworkState(fixture('network-windows.json'));
+	const result = parseWindowsNetworkState(windowsFixture());
 
-	it('keeps a secondary interface own gateway, not just the default route one', () => {
-		// Two default routes: Ethernet wins on effective metric, the VPN tunnel keeps a
-		// gateway of its own. Reporting the loser's as null would seed the edit form
-		// empty and clear its real gateway on the next save.
-		const doc = JSON.parse(fixture('network-windows.json'));
-		doc.routes = [
-			{ ifIndex: 20, NextHop: '192.0.2.1', RouteMetric: 0, InterfaceMetric: 25 },
-			{ ifIndex: 63, NextHop: '198.51.100.1', RouteMetric: 0, InterfaceMetric: 5 },
-		];
-		const parsed = parseWindowsNetworkState(JSON.stringify(doc));
-		const tunnel = byID(parsed, '{FC01FCD5-2B9D-2FD8-78D8-CB78B313E2B2}');
-		const ethernet = byID(parsed, '{901F20ED-4B31-4803-B655-ED47D47AD070}');
-		expect(tunnel.defaultRoute).toBe(true);
-		expect(tunnel.gateway).toBe('198.51.100.1');
-		expect(ethernet.defaultRoute).toBe(false);
-		expect(ethernet.gateway).toBe('192.0.2.1');
+	it('follows the IPv6 default route when the host has no IPv4 one', () => {
+		const doc = JSON.parse(windowsFixture()) as Record<string, unknown>;
+		const ethernetIndex = (doc['routes'] as Array<{ ifIndex: number }>)[0]!.ifIndex;
+		const noIPv4 = parseWindowsNetworkState(JSON.stringify({ ...doc, routes: [] }));
+		expect(noIPv4.some(item => item.defaultRoute)).toBe(false);
+		const viaIPv6 = parseWindowsNetworkState(JSON.stringify({ ...doc, routes: [], routes6: [{ ifIndex: ethernetIndex, RouteMetric: 256, InterfaceMetric: 25 }] }));
+		expect(viaIPv6.find(item => item.defaultRoute)?.id).toBe(ID.ethernet);
+		// The gateway on screen stays the IPv4 one, so an IPv6-only host shows none.
+		expect(viaIPv6.find(item => item.defaultRoute)?.gateway).toBeNull();
+		// Where both exist the IPv4 route decides.
+		const both = parseWindowsNetworkState(JSON.stringify({ ...doc, routes6: [{ ifIndex: 999, RouteMetric: 0, InterfaceMetric: 0 }] }));
+		expect(both.find(item => item.defaultRoute)?.id).toBe(ID.ethernet);
 	});
-
 	// Public ids are the adapters' persistent GUIDs (ifIndex is not stable across
 	// reboots and the id is persisted as the user's primary-interface preference).
 	const ID = {
@@ -84,6 +96,15 @@ describe('parseWindowsNetworkState', () => {
 		ethernet4: '{3E0713DD-C5DB-4F8C-B105-6A804AD4AA33}',
 		wifi: '{1227A929-7D30-456E-B9C1-DBD0899A8950}',
 	};
+
+	it('rejects a document missing any required query result', () => {
+		const complete = JSON.parse(windowsFixture()) as Record<string, unknown>;
+		for (const key of ['adapters', 'addresses', 'persistentAddresses', 'interfaces', 'routes', 'persistentRoutes', 'dns']) {
+			const partial = { ...complete };
+			delete partial[key];
+			expect(() => parseWindowsNetworkState(JSON.stringify(partial))).toThrow(`missing ${key}`);
+		}
+	});
 
 	it('keys interfaces by their persistent GUID, not by the volatile ifIndex', () => {
 		expect(result.map(i => i.id)).toContain(ID.ethernet);
@@ -99,6 +120,7 @@ describe('parseWindowsNetworkState', () => {
 		expect(eth.gateway).toBe('192.0.2.1');
 		expect(eth.dns).toEqual(['192.0.2.1', '192.0.2.2']);
 		expect(eth.addresses).toContainEqual({ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 });
+		expect(eth.ipv4Configurable).toBe(true);
 	});
 
 	it('reads the Wi-Fi adapter as wireless and disconnected', () => {
@@ -124,53 +146,7 @@ describe('parseWindowsNetworkState', () => {
 		expect(ras.medium).toBe('other');
 		expect(ras.link).toBe('unknown');
 		expect(ras.addresses).toContainEqual({ family: 'ipv4', address: '203.0.113.200', prefixLength: 32 });
-	});
-
-	it('marks an adapterless stack unconfigurable, since the apply resolves by GUID', () => {
-		// `ifIndex:69` is not a GUID, so assertWindowsGuid rejects it on every save.
-		// Offering Configure for it puts a button in front of the user that cannot
-		// do anything but fail.
-		expect(byID(result, 'ifIndex:69').ipv4Configurable).toBe(false);
-		expect(byID(result, ID.ethernet).ipv4Configurable).toBe(true);
-	});
-
-	// A section that failed leaves the gateway or the resolvers UNKNOWN, not absent
-	// — and an apply replaces both. Reporting such a reading as configurable let the
-	// form show empty fields and a save write that emptiness back as fact.
-	it.each(['addressesOk', 'routesOk', 'dnsOk'])('refuses to call an interface configurable when %s is false', flag => {
-		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
-		doc[flag] = false;
-		const parsed = parseWindowsNetworkState(JSON.stringify(doc));
-		expect(parsed.length).toBeGreaterThan(0);
-		expect(parsed.some(i => i.ipv4Configurable)).toBe(false);
-	});
-
-	// The address section is the one with something irreversible behind it. An
-	// interface carrying aliases is refused by counting the addresses in this
-	// reading — so a section that failed counts zero, satisfies that count, and the
-	// apply then removes every address the reading never saw.
-	it('does not present an unread address section as an interface with no addresses', () => {
-		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
-		doc['addresses'] = [];
-		doc['addressesOk'] = false;
-		const parsed = parseWindowsNetworkState(JSON.stringify(doc));
-		const ethernet = byID(parsed, ID.ethernet);
-		expect(ethernet.addresses).toEqual([]);
-		expect(ethernet.ipv4Configurable).toBe(false);
-	});
-
-	it('still treats a document captured before those flags existed as complete', () => {
-		// Absent is not false: the fixture predates the flags and describes a read
-		// that really did succeed.
-		expect(byID(parseWindowsNetworkState(fixture('network-windows.json')), ID.ethernet).ipv4Configurable).toBe(true);
-	});
-
-	// Wi-Fi asks nothing of the route or resolver sections, so their failure must
-	// not take the radio down with them.
-	it('leaves the Wi-Fi capabilities alone when a section could not be read', () => {
-		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
-		doc['dnsOk'] = false;
-		expect(byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.wifi).wifiScannable).toBe(true);
+		expect(ras.ipv4Configurable).toBe(false);
 	});
 
 	it('drops tentative APIPA, deprecated link-local and loopback addresses', () => {
@@ -188,21 +164,31 @@ describe('parseWindowsNetworkState', () => {
 	});
 
 	it('parses a one-NIC document where ConvertTo-Json emitted bare objects', () => {
-		const single = JSON.stringify({
-			adapters: { ifIndex: 5, Name: 'Ethernet', InterfaceGuid: '{11111111-2222-3333-4444-555555555555}', MacAddress: '02-00-5E-30-00-01', Media: 14, State: 1 },
-			addresses: { ifIndex: 5, Family: 2, IPAddress: '198.51.100.5', PrefixLength: 24, State: 4 },
-			interfaces: { ifIndex: 5, Family: 2, Dhcp: 0 },
-			routes: { ifIndex: 5, NextHop: '198.51.100.1', RouteMetric: 25 },
-			dns: { InterfaceIndex: 5, Servers: '198.51.100.1' },
-		});
+		const single = JSON.stringify(simpleWindowsStaticDoc());
 		const parsed = parseWindowsNetworkState(single);
 		expect(parsed).toHaveLength(1);
-		expect(parsed[0]).toMatchObject({ id: '{11111111-2222-3333-4444-555555555555}', medium: 'wired', link: 'up', ipv4Mode: 'static', defaultRoute: true, gateway: '198.51.100.1', dns: ['198.51.100.1'] });
+		expect(parsed[0]).toMatchObject({ id: '{11111111-2222-3333-4444-555555555555}', medium: 'wired', link: 'up', ipv4Mode: 'static', ipv4Configurable: true, defaultRoute: true, gateway: '198.51.100.1', dns: ['198.51.100.1'] });
+	});
+
+	it('keeps active-only or advanced static policy read-only', () => {
+		const cases = [(doc: Record<string, any>) => (doc['persistentAddresses'] = []), (doc: Record<string, any>) => (doc['persistentRoutes'] = []), (doc: Record<string, any>) => (doc['addresses'].SkipAsSource = true), (doc: Record<string, any>) => (doc['addresses'].Infinite = false), (doc: Record<string, any>) => (doc['addresses'].Type = 2), (doc: Record<string, any>) => (doc['routes'].Infinite = false), (doc: Record<string, any>) => (doc['routes'].Protocol = 2)];
+		for (const mutate of cases) {
+			const doc = simpleWindowsStaticDoc();
+			mutate(doc);
+			expect(parseWindowsNetworkState(JSON.stringify(doc))[0]?.ipv4Configurable).toBe(false);
+		}
+	});
+
+	it('keeps a static /32 address with an off-link gateway read-only', () => {
+		const doc = simpleWindowsStaticDoc() as Record<string, any>;
+		doc['addresses'].PrefixLength = 32;
+		doc['persistentAddresses'].PrefixLength = 32;
+		expect(parseWindowsNetworkState(JSON.stringify(doc))[0]?.ipv4Configurable).toBe(false);
 	});
 
 	it('attaches Wi-Fi data only to the wireless adapter whose GUID matches', () => {
 		const wifi = new Map([[ID.wifi, { ssid: null, signal: null, radio: 'off' as const }]]);
-		const withWifi = parseWindowsNetworkState(fixture('network-windows.json'), wifi);
+		const withWifi = parseWindowsNetworkState(windowsFixture(), wifi);
 		expect(byID(withWifi, ID.wifi).wifi).toEqual({ ssid: null, signal: null, radio: 'off' });
 		// A Wi-Fi Direct virtual adapter also reports medium 9 but has no WLAN interface.
 		expect(byID(withWifi, ID.wifiDirect).wifi).toBeUndefined();
@@ -210,7 +196,7 @@ describe('parseWindowsNetworkState', () => {
 	});
 
 	it('ranks default routes by route metric PLUS interface metric, as Windows does', () => {
-		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
+		const doc = JSON.parse(windowsFixture()) as Record<string, unknown>;
 		// A VPN tunnel with RouteMetric 0 / InterfaceMetric 5 beats a NIC on 0 / 25,
 		// which comparing RouteMetric alone would have got backwards.
 		doc['routes'] = [
@@ -223,8 +209,66 @@ describe('parseWindowsNetworkState', () => {
 		expect(byID(parsed, ID.tunnel).gateway).toBe('198.51.100.1');
 	});
 
+	it('keeps each interface own gateway while only the best route is primary', () => {
+		const doc = JSON.parse(windowsFixture()) as Record<string, unknown>;
+		doc['routes'] = [
+			{ ifIndex: 20, NextHop: '192.0.2.1', RouteMetric: 10, InterfaceMetric: 20 },
+			{ ifIndex: 63, NextHop: '198.51.100.1', RouteMetric: 100, InterfaceMetric: 20 },
+		];
+		const parsed = parseWindowsNetworkState(JSON.stringify(doc));
+		expect(byID(parsed, ID.ethernet)).toMatchObject({ defaultRoute: true, gateway: '192.0.2.1' });
+		expect(byID(parsed, ID.tunnel)).toMatchObject({ defaultRoute: false, gateway: '198.51.100.1' });
+	});
+
+	it('makes a multi-address or multi-route adapter read-only', () => {
+		const doc = JSON.parse(windowsFixture()) as Record<string, any[]>;
+		doc['addresses']!.push({ ifIndex: 20, Family: 2, IPAddress: '192.0.2.11', PrefixLength: 24, State: 4 });
+		doc['routes']!.push({ ifIndex: 20, NextHop: '192.0.2.254', RouteMetric: 200, InterfaceMetric: 20 });
+		expect(byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet).ipv4Configurable).toBe(false);
+	});
+
+	it('makes an adapter with a hidden non-preferred IPv4 address read-only', () => {
+		const doc = JSON.parse(windowsFixture()) as Record<string, any[]>;
+		doc['addresses']!.push({ ifIndex: 20, Family: 2, IPAddress: '192.0.2.11', PrefixLength: 24, State: 3 });
+		const ethernet = byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet);
+		expect(ethernet.addresses).not.toContainEqual({ family: 'ipv4', address: '192.0.2.11', prefixLength: 24 });
+		expect(ethernet.ipv4Configurable).toBe(false);
+	});
+
+	it('allows DHCP recovery from a proven automatic APIPA address', () => {
+		const doc = JSON.parse(windowsFixture()) as Record<string, any[]>;
+		const apipa = doc['addresses']!.find(row => row.ifIndex === 12 && row.IPAddress === '169.254.86.18');
+		apipa.PrefixOrigin = 2;
+		apipa.SuffixOrigin = 4;
+		expect(byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet4).ipv4Configurable).toBe(true);
+	});
+
+	it('keeps an APIPA address read-only when Windows does not prove automatic origin', () => {
+		expect(byID(result, ID.ethernet4).ipv4Configurable).toBe(false);
+	});
+
+	it('makes an adapter with unknown addressing mode and Wi-Fi Direct read-only', () => {
+		const doc = JSON.parse(windowsFixture()) as Record<string, any[]>;
+		doc['interfaces'] = doc['interfaces']!.filter(row => row.ifIndex !== 20);
+		const parsed = parseWindowsNetworkState(JSON.stringify(doc));
+		expect(byID(parsed, ID.ethernet).ipv4Configurable).toBe(false);
+		expect(byID(parsed, ID.wifiDirect).ipv4Configurable).toBe(false);
+	});
+
+	it('merges IPv4 and IPv6 DNS rows for one interface', () => {
+		const doc = JSON.parse(windowsFixture()) as Record<string, any[]>;
+		doc['dns']!.push({ InterfaceIndex: 20, Servers: '2001:db8::53,127.0.0.1' });
+		expect(byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet).dns).toEqual(['192.0.2.1', '192.0.2.2', '2001:db8::53', '127.0.0.1']);
+	});
+
+	it('drops Windows automatic-DNS placeholders', () => {
+		const doc = JSON.parse(windowsFixture()) as Record<string, any[]>;
+		doc['dns'] = [{ InterfaceIndex: 20, Servers: 'fec0:0:0:ffff::1,fec0:0:0:ffff::2,fec0:0:0:ffff::3' }];
+		expect(byID(parseWindowsNetworkState(JSON.stringify(doc)), ID.ethernet).dns).toEqual([]);
+	});
+
 	it('still ranks by route metric when the interface metric is absent', () => {
-		const doc = JSON.parse(fixture('network-windows.json')) as Record<string, unknown>;
+		const doc = JSON.parse(windowsFixture()) as Record<string, unknown>;
 		doc['routes'] = [
 			{ ifIndex: 63, NextHop: '198.51.100.1', RouteMetric: 5 },
 			{ ifIndex: 20, NextHop: '192.0.2.1', RouteMetric: 0 },
@@ -235,116 +279,30 @@ describe('parseWindowsNetworkState', () => {
 	});
 });
 
+/** The fixture's eth0 address, rewritten as a permanent one the kernel did not lease. */
+function withPermanentIPv4(addr: string): string {
+	const entries = JSON.parse(addr) as Array<{ ifname: string; addr_info?: Array<{ family: string; dynamic?: boolean; valid_life_time?: number }> }>;
+	for (const address of entries.find(entry => entry.ifname === 'eth0')?.addr_info?.filter(address => address.family === 'inet') ?? []) {
+		delete address.dynamic;
+		address.valid_life_time = 4294967295;
+	}
+	return JSON.stringify(entries);
+}
+
 describe('parseLinuxNetworkState', () => {
-	it('marks a device NetworkManager does not own as not configurable', () => {
-		// The interface list comes from the kernel, so it holds devices another stack
-		// manages. Offering Configure for those shows an action that can only fail.
-		const parsed = parseLinuxNetworkState({ ...sources, managed: new Set(['eth0', 'docker0']), activeProfiles: new Set(['eth0']) });
-		expect(byID(parsed, 'eth0').ipv4Configurable).toBe(true);
-	});
-
-	it('withholds configurability when NetworkManager could not be asked', () => {
-		// An unavailable answer is not a permission. Leaving the flag absent made the
-		// frontend fall back to "probably allow" for a destructive operation; the
-		// apply needs an active NetworkManager profile, and a host that cannot even
-		// be asked has already reported itself read-only through isLinuxWritable.
-		const parsed = parseLinuxNetworkState(sources);
-		expect(byID(parsed, 'eth0').ipv4Configurable).toBe(false);
-	});
-
-	// Being managed is not enough. `applyLinuxIPv4` edits the profile ACTIVE on the
-	// device, and "managed" happily includes disconnected and unavailable devices —
-	// which showed a working Save that failed every time with "no NetworkManager
-	// profile is active".
-	it('refuses to offer an edit on a managed device with no active profile', () => {
-		const managed = new Set(['eth0', 'docker0']);
-		const parsed = parseLinuxNetworkState({ ...sources, managed, activeProfiles: new Set(['eth0']) });
-		expect(byID(parsed, 'eth0').ipv4Configurable).toBe(true);
-		expect(byID(parsed, 'docker0').ipv4Configurable).toBe(false);
-		// ...and an active profile on a device NetworkManager does not own is not
-		// permission either. Both conditions, or neither.
-		expect(byID(parseLinuxNetworkState({ ...sources, managed: new Set(['eth0']), activeProfiles: managed }), 'docker0').ipv4Configurable).toBe(false);
-	});
-
-	// The active-profile rule above is right for ADDRESSING and was briefly applied
-	// to Wi-Fi as well, through a single shared flag. A disconnected adapter has no
-	// active profile by definition — and is exactly the adapter a user opens the
-	// screen to scan with — so the user could no longer scan or join at all.
-	// `nmcli device wifi list` drives the radio, and `connect` finds or creates a
-	// profile; neither needs one to be active already.
-	it('lets a managed wireless device scan and join with no active profile', () => {
-		// The fixture has no radio of its own; the flag is driven by the `wireless`
-		// set the reader passes in, not by the device's name.
-		const parsed = parseLinuxNetworkState({ ...sources, wireless: new Set(['eth0']), managed: new Set(['eth0']), activeProfiles: new Set() });
-		const radio = byID(parsed, 'eth0');
-		expect(radio.ipv4Configurable).toBe(false);
-		expect(radio.wifiScannable).toBe(true);
-		expect(radio.wifiConnectable).toBe(true);
-	});
-
-	it('still refuses Wi-Fi on a device NetworkManager does not own', () => {
-		const parsed = parseLinuxNetworkState({ ...sources, wireless: new Set(['eth0']), managed: new Set(), activeProfiles: new Set() });
-		expect(byID(parsed, 'eth0').wifiScannable).toBe(false);
-	});
-
-	it('never offers Wi-Fi on a device that is not a radio', () => {
-		const parsed = parseLinuxNetworkState({ ...sources, managed: new Set(['eth0']), activeProfiles: new Set(['eth0']) });
-		expect(byID(parsed, 'eth0').wifiScannable).toBe(false);
-		expect(byID(parsed, 'eth0').wifiConnectable).toBe(false);
-	});
-
-	it('keeps a secondary interface own gateway, not just the default route one', () => {
-		// A multi-homed host: eth0 wins the default route, docker0 has a router of its
-		// own. Reporting docker0 gateway as null would seed the edit form empty, and
-		// saving any change there would clear the gateway the interface really has.
-		const twoRoutes = '[{"dst":"default","gateway":"192.0.2.1","dev":"eth0","metric":100,"flags":[]},{"dst":"default","gateway":"198.51.100.1","dev":"docker0","metric":200,"flags":[]}]';
-		const parsed = parseLinuxNetworkState({ ...sources, route: twoRoutes });
-		expect(byID(parsed, 'eth0').gateway).toBe('192.0.2.1');
-		expect(byID(parsed, 'eth0').defaultRoute).toBe(true);
-		expect(byID(parsed, 'docker0').gateway).toBe('198.51.100.1');
-		expect(byID(parsed, 'docker0').defaultRoute).toBe(false);
-	});
-
-	const sources = { addr: fixture('network-linux-addr.json'), link: fixture('network-linux-link.json'), route: '[{"dst":"default","gateway":"192.0.2.1","dev":"eth0","flags":[]}]', resolvers: ['192.0.2.1'] };
+	const sources = { addr: fixture('network-linux-addr.json'), link: fixture('network-linux-link.json'), route: '[{"dst":"default","gateway":"192.0.2.1","dev":"eth0","flags":[]}]', resolvers: ['192.0.2.1'], activeConnections: new Map([['eth0', 'Wired connection 1']]), ipv4Profiles: new Map([['eth0', { method: 'auto', gateway: null, address: null, prefixLength: null, safe: true }]]) };
 	const result = parseLinuxNetworkState(sources);
 
 	it('reads DHCP from the kernel dynamic flag and static from a permanent lifetime', () => {
-		// Only where there is no active profile to ask — see the two cases below.
 		expect(byID(result, 'eth0').ipv4Mode).toBe('dhcp');
 		expect(byID(result, 'docker0').ipv4Mode).toBe('static');
 	});
 
-	// The kernel describes the address currently ON the interface; the profile
-	// describes what the editor changes and what survives a reboot. A DHCP profile
-	// with a manual secondary address, or one whose lease has momentarily lapsed,
-	// reads as static from the kernel — and saving then switched the profile to a
-	// mode the user had not chosen.
-	it('prefers the active profile method over what the kernel addresses suggest', () => {
-		const parsed = parseLinuxNetworkState({ ...sources, ipv4Methods: new Map([['docker0', 'dhcp' as const]]) });
-		expect(byID(parsed, 'docker0').ipv4Mode).toBe('dhcp');
-		// eth0 has no profile in this map, so the kernel reading stands for it.
-		expect(byID(parsed, 'eth0').ipv4Mode).toBe('dhcp');
-	});
-
-	it('reports a profile method the model cannot name as unknown, not as the kernel guess', () => {
-		// `link-local`, `shared` and `disabled` have no counterpart. Letting the
-		// kernel answer instead would offer an editable mode for a profile that is
-		// not in one.
-		//
-		// A profile whose method could not be READ takes the same path: the reader
-		// records `unknown` for it rather than omitting it, because an omission falls
-		// through to the kernel — which answers a different question entirely.
-		const parsed = parseLinuxNetworkState({ ...sources, ipv4Methods: new Map([['eth0', 'unknown' as const]]) });
-		expect(byID(parsed, 'eth0').ipv4Mode).toBe('unknown');
-	});
-
-	it('ignores IPv6 dynamic — SLAAC is not DHCP', () => {
-		// docker0 has no IPv4 dynamic flag; its only dynamic-looking addresses on
-		// eth0 are IPv6, so a v6-only document must not be reported as DHCP.
+	it('keeps an active DHCP profile editable before it receives a lease', () => {
 		const v6Only = JSON.parse(sources.addr) as Array<{ ifname: string; addr_info?: Array<{ family: string }> }>;
 		for (const entry of v6Only) entry.addr_info = (entry.addr_info ?? []).filter(a => a.family === 'inet6');
 		const parsed = parseLinuxNetworkState({ ...sources, addr: JSON.stringify(v6Only) });
-		expect(byID(parsed, 'eth0').ipv4Mode).toBe('unknown');
+		expect(byID(parsed, 'eth0')).toMatchObject({ ipv4Mode: 'dhcp', ipv4Configurable: true });
 	});
 
 	it('reports a NO-CARRIER bridge as down even though it is administratively UP', () => {
@@ -356,6 +314,110 @@ describe('parseLinuxNetworkState', () => {
 		expect(eth0.defaultRoute).toBe(true);
 		expect(eth0.gateway).toBe('192.0.2.1');
 		expect(eth0.dns).toEqual(['192.0.2.1']);
+	});
+
+	it('keeps a secondary interface own default gateway without calling it primary', () => {
+		const routes = JSON.stringify([
+			{ dst: 'default', gateway: '192.0.2.1', dev: 'eth0', metric: 10 },
+			{ dst: 'default', gateway: '198.51.100.1', dev: 'docker0', metric: 200 },
+		]);
+		const parsed = parseLinuxNetworkState({
+			...sources,
+			route: routes,
+			activeConnections: new Map([
+				['eth0', 'a'],
+				['docker0', 'b'],
+			]),
+			ipv4Profiles: new Map([
+				['eth0', { method: 'auto', gateway: null, address: null, prefixLength: null, safe: true }],
+				['docker0', { method: 'manual', gateway: '198.51.100.1', address: '172.17.0.1', prefixLength: 16, safe: true }],
+			]),
+		});
+		expect(byID(parsed, 'eth0')).toMatchObject({ defaultRoute: true, gateway: '192.0.2.1' });
+		expect(byID(parsed, 'docker0')).toMatchObject({ defaultRoute: false, gateway: '198.51.100.1' });
+	});
+
+	it('makes multi-address, multi-route and unknown-mode interfaces read-only', () => {
+		const addresses = JSON.parse(sources.addr) as Array<{ ifname: string; addr_info?: any[] }>;
+		addresses.find(entry => entry.ifname === 'eth0')!.addr_info!.push({ family: 'inet', local: '192.0.2.10', prefixlen: 23, valid_life_time: 4294967295 });
+		const multiAddress = parseLinuxNetworkState({ ...sources, addr: JSON.stringify(addresses) });
+		expect(byID(multiAddress, 'eth0').ipv4Configurable).toBe(false);
+
+		const multiRoute = parseLinuxNetworkState({
+			...sources,
+			route: JSON.stringify([
+				{ dev: 'eth0', gateway: '192.0.2.1' },
+				{ dev: 'eth0', gateway: '192.0.2.254', metric: 50 },
+			]),
+		});
+		expect(byID(multiRoute, 'eth0').ipv4Configurable).toBe(false);
+
+		const v6Only = JSON.parse(sources.addr) as Array<{ ifname: string; addr_info?: Array<{ family: string }> }>;
+		for (const entry of v6Only) entry.addr_info = (entry.addr_info ?? []).filter(address => address.family !== 'inet');
+		const unknown = parseLinuxNetworkState({ ...sources, addr: JSON.stringify(v6Only), ipv4Profiles: new Map([['eth0', { method: 'shared', gateway: null, address: null, prefixLength: null, safe: false }]]) });
+		expect(byID(unknown, 'eth0').ipv4Configurable).toBe(false);
+	});
+
+	it('keeps an interface read-only while its saved profile and the kernel disagree', () => {
+		// `nmcli connection modify` without a reapply leaves the profile holding the
+		// next address and the kernel the previous one. The screen shows the kernel's,
+		// so saving the form would write it back and undo the pending change.
+		const live = { method: 'manual', gateway: '192.0.2.1', address: '192.0.2.9', prefixLength: 23, safe: true } as const;
+		// The fixture's address is a DHCP lease, so a manual profile over it is the
+		// same divergence read the other way round: the switch to static is saved but
+		// not activated, and the numbers matching proves nothing. Only a permanent
+		// address is one the profile actually owns.
+		const staticSources = { ...sources, addr: withPermanentIPv4(sources.addr) };
+		expect(byID(parseLinuxNetworkState({ ...sources, ipv4Profiles: new Map([['eth0', live]]) }), 'eth0').ipv4Configurable).toBe(false);
+		const matching = parseLinuxNetworkState({ ...staticSources, ipv4Profiles: new Map([['eth0', live]]) });
+		expect(byID(matching, 'eth0').ipv4Configurable).toBe(true);
+
+		const movedAddress = parseLinuxNetworkState({ ...staticSources, ipv4Profiles: new Map([['eth0', { ...live, address: '192.0.2.20' }]]) });
+		expect(byID(movedAddress, 'eth0').ipv4Configurable).toBe(false);
+
+		const movedPrefix = parseLinuxNetworkState({ ...staticSources, ipv4Profiles: new Map([['eth0', { ...live, prefixLength: 24 }]]) });
+		expect(byID(movedPrefix, 'eth0').ipv4Configurable).toBe(false);
+
+		const movedGateway = parseLinuxNetworkState({ ...staticSources, ipv4Profiles: new Map([['eth0', { ...live, gateway: '192.0.2.254' }]]) });
+		expect(byID(movedGateway, 'eth0').ipv4Configurable).toBe(false);
+
+		// A DHCP profile is just as able to diverge, in the other direction: the switch
+		// to DHCP is saved but not activated, so the kernel still holds the static
+		// address. Editing then would let a DNS-only save reapply the profile and move
+		// the address the user never touched.
+		expect(byID(parseLinuxNetworkState(sources), 'eth0').ipv4Configurable).toBe(true);
+		expect(byID(parseLinuxNetworkState(staticSources), 'eth0').ipv4Configurable).toBe(false);
+
+		// Nothing to disagree with yet: the cable is out, or no server answered.
+		const noAddress = JSON.parse(sources.addr) as Array<{ ifname: string; addr_info?: Array<{ family: string }> }>;
+		const eth0 = noAddress.find(entry => entry.ifname === 'eth0')!;
+		eth0.addr_info = (eth0.addr_info ?? []).filter(address => address.family !== 'inet');
+		expect(byID(parseLinuxNetworkState({ ...sources, addr: JSON.stringify(noAddress) }), 'eth0').ipv4Configurable).toBe(true);
+
+		// The link-local fallback is the kernel saying it has nothing, not a static address.
+		const linkLocal = JSON.parse(sources.addr) as Array<{ ifname: string; addr_info?: Array<{ family: string; local?: string; prefixlen?: number; dynamic?: boolean; valid_life_time?: number }> }>;
+		const withFallback = linkLocal.find(entry => entry.ifname === 'eth0')!;
+		withFallback.addr_info = [{ family: 'inet', local: '169.254.10.2', prefixlen: 16, valid_life_time: 4294967295 }, ...(withFallback.addr_info ?? []).filter(address => address.family !== 'inet')];
+		expect(byID(parseLinuxNetworkState({ ...sources, addr: JSON.stringify(linkLocal) }), 'eth0').ipv4Configurable).toBe(true);
+	});
+
+	it('follows the IPv6 default route when the host has no IPv4 one', () => {
+		// Captured from `ip -j -6 route show default` on a dual-stacked host: the shape
+		// is the IPv4 one, so the same lowest-metric rule applies.
+		const route6 = '[{"dst":"default","gateway":"fe80::d2ea:11ff:fe29:ecfd","dev":"eth0","protocol":"ra","metric":1024,"flags":[],"pref":"medium"}]';
+		// Without an IPv4 default route nothing was primary, so the footer said
+		// "disconnected" for a host that is plainly connected.
+		expect(byID(parseLinuxNetworkState({ ...sources, route: '[]' }), 'eth0').defaultRoute).toBe(false);
+		expect(byID(parseLinuxNetworkState({ ...sources, route: '[]', route6 }), 'eth0').defaultRoute).toBe(true);
+		// The IPv4 route still wins where both exist.
+		const both = parseLinuxNetworkState({ ...sources, route6: '[{"dst":"default","gateway":"fe80::1","dev":"docker0","metric":1024}]' });
+		expect(byID(both, 'eth0').defaultRoute).toBe(true);
+		expect(byID(both, 'docker0').defaultRoute).toBe(false);
+		// An IPv6 default route must not be mistaken for an IPv4 one anywhere else:
+		// the interface keeps its IPv4 gateway and stays editable on its own terms.
+		const v6Only = parseLinuxNetworkState({ ...sources, route: '[]', route6 });
+		expect(byID(v6Only, 'eth0').gateway).toBeNull();
+		expect(byID(v6Only, 'eth0').ipv4Configurable).toBe(true);
 	});
 
 	it('calls software devices other and only a bare ethernet link wired', () => {
@@ -374,12 +436,29 @@ describe('parseLinuxNetworkState', () => {
 		expect(byID(result, 'docker0').dns).toEqual([]);
 	});
 
+	it('does not assign system-wide resolvers to a device missing from NetworkManager DNS', () => {
+		const parsed = parseLinuxNetworkState({ ...sources, nmDns: new Map([['docker0', ['198.51.100.53']]]) });
+		expect(byID(parsed, 'eth0').dns).toEqual([]);
+		expect(byID(parsed, 'docker0').dns).toEqual(['198.51.100.53']);
+	});
+
+	it('marks only devices with an active NetworkManager profile configurable', () => {
+		expect(byID(result, 'eth0').ipv4Configurable).toBe(true);
+		expect(byID(result, 'docker0').ipv4Configurable).toBe(false);
+	});
+
 	it('marks wireless interfaces and carries their iw reading through', () => {
 		const wireless = new Set(['eth0']);
 		const iwLinks = new Map([['eth0', 'Connected to 02:00:5e:40:00:01 (on eth0)\n\tSSID: Example Net\n\tfreq: 5180\n\tsignal: -55 dBm\n\ttx bitrate: 780.0 MBit/s\n']]);
-		const parsed = parseLinuxNetworkState({ ...sources, wireless, iwLinks });
+		const parsed = parseLinuxNetworkState({ ...sources, wireless, iwLinks, managedDevices: new Set(['eth0']) });
 		expect(byID(parsed, 'eth0').medium).toBe('wireless');
+		expect(byID(parsed, 'eth0').wifiConfigurable).toBe(true);
 		expect(byID(parsed, 'eth0').wifi).toEqual({ ssid: 'Example Net', signal: 90, radio: 'unknown' });
+	});
+
+	it('keeps a wireless device read-only when NetworkManager reports it unmanaged', () => {
+		const parsed = parseLinuxNetworkState({ ...sources, wireless: new Set(['eth0']), managedDevices: new Set() });
+		expect(byID(parsed, 'eth0')).toMatchObject({ medium: 'wireless', wifiConfigurable: false });
 	});
 
 	it('leaves a wireless interface with no iw output at unknown rather than guessing', () => {
@@ -424,10 +503,11 @@ describe('readConnectionAttributes sanity gate', () => {
 	const buffers: Uint8Array[] = [];
 
 	/** Build a WLAN_CONNECTION_ATTRIBUTES-shaped buffer with the given SSID length and signal. */
-	function buffer(ssidLength: number, signal: number, ssid = 'Example Net', state = 0): { pointer: Pointer; size: number } {
+	function buffer(ssidLength: number, signal: number, ssid = 'Example Net', state = 1): { pointer: Pointer; size: number } {
 		const bytes = new Uint8Array(640);
 		const view = new DataView(bytes.buffer);
-		view.setUint32(0, state, true); // WLAN_CONNECTION_ATTRIBUTES.isState
+		// isState is the first member: 1 = wlan_interface_state_connected.
+		view.setUint32(0, state, true);
 		view.setUint32(520, ssidLength, true);
 		new Uint8Array(bytes.buffer, 524, 32).set(new TextEncoder().encode(ssid).subarray(0, 32));
 		view.setUint32(576, signal, true);
@@ -436,37 +516,32 @@ describe('readConnectionAttributes sanity gate', () => {
 		return { pointer: ptr(bytes), size: bytes.length };
 	}
 
-	it('reports an adapter still associating as not connected, SSID and all', () => {
-		// Windows fills the SSID in while the adapter is only ATTEMPTING the network,
-		// so a join confirmed on the name alone would report a connection that never
-		// happened. State 5 is wlan_interface_state_associating.
-		const b = buffer(11, 73, 'Example Net', 5);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: 'Example Net', signal: 73, connected: false });
-	});
-
-	it('reports an adapter that really is on the network as connected', () => {
-		const b = buffer(11, 73, 'Example Net', 1);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: 'Example Net', signal: 73, connected: true });
-	});
-
 	it('accepts a plausible reading', () => {
 		const b = buffer(11, 73);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: 'Example Net', signal: 73, connected: false });
+		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: 'Example Net', signal: 73, connected: true });
 	});
 
 	it('reports an associated adapter with a hidden SSID as signal-only', () => {
 		const b = buffer(0, 42);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: 42, connected: false });
+		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: 42, connected: true });
 	});
 
 	it('rejects an out-of-range signal rather than reporting a wrong percentage', () => {
 		const b = buffer(11, 4294967295);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: null, connected: false });
+		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: null, connected: true });
+	});
+
+	it('does not call an adapter that is still associating connected', () => {
+		// The SSID is filled in while the association is still being negotiated, so a
+		// join that watches the name alone reports success before there is one. Every
+		// state but wlan_interface_state_connected is on the way to or from it.
+		const b = buffer(11, 73, 'Example Net', 6);
+		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: 'Example Net', signal: 73, connected: false });
 	});
 
 	it('rejects an impossible SSID length', () => {
 		const b = buffer(99, 50);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: null, connected: false });
+		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: null, connected: true });
 	});
 
 	it('rejects a buffer too small to hold the fields it would read', () => {
@@ -494,8 +569,8 @@ describe('prefixFromNetmask', () => {
 
 describe('resolvePrimaryID', () => {
 	const list: NetInterfaceInfo[] = [
-		{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [], ipv4Configurable: false, wifiScannable: false, wifiConnectable: false },
-		{ id: 'b', name: 'b', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [], ipv4Configurable: false, wifiScannable: false, wifiConnectable: false },
+		{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, wifiConfigurable: false, gateway: null, dns: [] },
+		{ id: 'b', name: 'b', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, wifiConfigurable: false, gateway: null, dns: [] },
 	];
 
 	it('honours a pick that still exists', () => {
@@ -504,6 +579,11 @@ describe('resolvePrimaryID', () => {
 
 	it('falls back to the default route when the pick is gone', () => {
 		expect(resolvePrimaryID(list, 'removed')).toBe('b');
+	});
+
+	it('falls back when the saved virtual interface is no longer selectable', () => {
+		const hidden: NetInterfaceInfo = { id: 'hidden', name: 'hidden', medium: 'other', link: 'unknown', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, wifiConfigurable: false, gateway: null, dns: [] };
+		expect(resolvePrimaryID([...list, hidden], hidden.id)).toBe('b');
 	});
 
 	it('falls back to the default route when nothing is picked', () => {
@@ -515,8 +595,25 @@ describe('resolvePrimaryID', () => {
 	});
 });
 
+describe('assertWifiConfigurableInterface', () => {
+	const unmanaged: NetInterfaceInfo = { id: 'wlan0', name: 'wlan0', medium: 'wireless', link: 'down', defaultRoute: false, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, wifiConfigurable: false, gateway: null, dns: [] };
+
+	it('rejects an unmanaged wireless device with the API unsupported code', () => {
+		try {
+			assertWifiConfigurableInterface([unmanaged], unmanaged.id);
+			expect.unreachable();
+		} catch (error) {
+			expect((error as { code?: string }).code).toBe(ErrorCodes.NETCONFIG_UNSUPPORTED);
+		}
+	});
+
+	it('accepts a managed device even while it is disconnected', () => {
+		expect(() => assertWifiConfigurableInterface([{ ...unmanaged, wifiConfigurable: true }], unmanaged.id)).not.toThrow();
+	});
+});
+
 describe('assertReadProducedSomething', () => {
-	const list: NetInterfaceInfo[] = [{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [], ipv4Configurable: false, wifiScannable: false, wifiConnectable: false }];
+	const list: NetInterfaceInfo[] = [{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', ipv4Configurable: false, wifiConfigurable: false, gateway: null, dns: [] }];
 
 	it('passes a non-empty read straight through', () => {
 		expect(assertReadProducedSomething(list)).toBe(list);
@@ -527,6 +624,43 @@ describe('assertReadProducedSomething', () => {
 		// Get-Net* cmdlet fails non-terminatingly, which would otherwise be reported
 		// as full detail with no interfaces — and render as a confident Disconnected.
 		expect(() => assertReadProducedSomething([])).toThrow();
+	});
+});
+
+describe('NetworkStateCache invalidation', () => {
+	it('retries after a reader failure instead of caching the rejection', async () => {
+		const snapshot = { interfaces: [], detail: 'addressesOnly' } as NetworkSnapshot;
+		let reads = 0;
+		const cache = new NetworkStateCache(async () => {
+			if (++reads === 1) throw new Error('temporary read failure');
+			return snapshot;
+		}, 60_000);
+
+		await expect(cache.read()).rejects.toThrow('temporary read failure');
+		expect(await cache.read()).toBe(snapshot);
+		expect(reads).toBe(2);
+	});
+
+	it('does not return or cache an old in-flight read after a mutation', async () => {
+		let resolveOld!: (snapshot: NetworkSnapshot) => void;
+		let resolveFresh!: (snapshot: NetworkSnapshot) => void;
+		const oldRead = new Promise<NetworkSnapshot>(resolve => (resolveOld = resolve));
+		const freshRead = new Promise<NetworkSnapshot>(resolve => (resolveFresh = resolve));
+		let reads = 0;
+		const cache = new NetworkStateCache(() => (++reads === 1 ? oldRead : freshRead), 60_000);
+		const oldSnapshot = { interfaces: [{ id: 'old', name: 'old', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'dhcp', ipv4Configurable: true, wifiConfigurable: false, gateway: null, dns: [] }], detail: 'full' } as NetworkSnapshot;
+		const freshSnapshot = { interfaces: [{ id: 'fresh', name: 'fresh', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'static', ipv4Configurable: true, wifiConfigurable: false, gateway: null, dns: [] }], detail: 'full' } as NetworkSnapshot;
+
+		const staleCaller = cache.read();
+		cache.reset();
+		const postMutationCaller = cache.read();
+		resolveFresh(freshSnapshot);
+		expect(await postMutationCaller).toBe(freshSnapshot);
+		resolveOld(oldSnapshot);
+		expect(await staleCaller).toBe(freshSnapshot);
+
+		expect(await cache.read()).toEqual(freshSnapshot);
+		expect(reads).toBe(2);
 	});
 });
 
@@ -555,113 +689,55 @@ describe('readGenericInterfaces (every platform, including macOS)', () => {
 
 // Live shape-only smoke test. It asserts the document is well formed, never a
 // specific address, so it is stable on any machine and leaks nothing. Read-only:
-// readNetworkStateUnlocked has no code path that changes configuration.
-//
-// A cold read on Windows spawns PowerShell twice — the state document and the
-// elevation probe — and the code allows each of them 15 s. The default per-test
-// budget of 5 s would fail the test for a spawn the code is still legitimately
-// waiting on, so these two cases carry their own, wider than what they wait for.
-const LIVE_READ_TIMEOUT_MS = 40_000;
-
-describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('readNetworkStateUnlocked (live)', () => {
-	it(
-		'returns a valid, internally consistent document',
-		async () => {
-			resetNetworkStateCache();
-			const state = await readNetworkStateUnlocked('');
-			expect(state.known).toBe(true);
-			expect(['full', 'addressesOnly']).toContain(state.detail);
-			const ids = state.interfaces.map(i => i.id);
-			expect(new Set(ids).size).toBe(ids.length);
-			for (const iface of state.interfaces) {
-				expect(iface.id.length).toBeGreaterThan(0);
-				expect(['wired', 'wireless', 'other']).toContain(iface.medium);
-				expect(['up', 'down', 'unknown']).toContain(iface.link);
-				expect(['dhcp', 'static', 'unknown']).toContain(iface.ipv4Mode);
-				for (const address of iface.addresses) {
-					expect(address.address.length).toBeGreaterThan(0);
-					expect(address.prefixLength).toBeGreaterThanOrEqual(0);
-				}
-				if (iface.wifi?.signal !== null && iface.wifi?.signal !== undefined) {
-					expect(iface.wifi.signal).toBeGreaterThanOrEqual(0);
-					expect(iface.wifi.signal).toBeLessThanOrEqual(100);
-				}
-				if (iface.wifi) expect(['on', 'off', 'unknown']).toContain(iface.wifi.radio);
+// readNetworkState has no code path that changes configuration.
+describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('readNetworkState (live)', () => {
+	it('returns a valid, internally consistent document', async () => {
+		resetNetworkStateCache();
+		const state = await readNetworkState('');
+		expect(state.known).toBe(true);
+		expect(['full', 'addressesOnly']).toContain(state.detail);
+		const ids = state.interfaces.map(i => i.id);
+		expect(new Set(ids).size).toBe(ids.length);
+		for (const iface of state.interfaces) {
+			expect(iface.id.length).toBeGreaterThan(0);
+			expect(['wired', 'wireless', 'other']).toContain(iface.medium);
+			expect(['up', 'down', 'unknown']).toContain(iface.link);
+			expect(['dhcp', 'static', 'unknown']).toContain(iface.ipv4Mode);
+			for (const address of iface.addresses) {
+				expect(address.address.length).toBeGreaterThan(0);
+				expect(address.prefixLength).toBeGreaterThanOrEqual(0);
 			}
-			expect(state.primaryID === null || ids.includes(state.primaryID)).toBe(true);
-		},
-		LIVE_READ_TIMEOUT_MS
-	);
-
-	it(
-		'serves a second read from cache instead of spawning again',
-		async () => {
-			resetNetworkStateCache();
-			await readNetworkStateUnlocked('');
-			const started = Date.now();
-			await readNetworkStateUnlocked('');
-			expect(Date.now() - started).toBeLessThan(100);
-		},
-		LIVE_READ_TIMEOUT_MS
-	);
-});
-
-/**
- * The backend's own refusal to "join" the network an interface is already on.
- *
- * The frontend hides that row, but the frontend is not the security boundary: a
- * snapshot a few seconds old, a state change mid-operation or a direct RPC call
- * all reach the join path anyway. And the join cannot be verified in that state —
- * the Windows confirmation polls whether the adapter is connected to that SSID,
- * which the still-live OLD connection satisfies on the first poll, reporting a
- * success that never happened and skipping the rollback for a wrong password.
- */
-describe('isAlreadyJoined', () => {
-	const radio = (overrides: Partial<NetInterfaceInfo> = {}): NetInterfaceInfo => ({
-		id: 'wlan0',
-		name: 'wlan0',
-		medium: 'wireless',
-		link: 'up',
-		defaultRoute: true,
-		mac: null,
-		addresses: [],
-		ipv4Mode: 'dhcp',
-		gateway: null,
-		dns: [],
-		ipv4Configurable: true,
-		wifiScannable: true,
-		wifiConnectable: true,
-		wifi: { ssid: 'Example Net', signal: 70, radio: 'on' },
-		...overrides,
+			if (iface.wifi?.signal !== null && iface.wifi?.signal !== undefined) {
+				expect(iface.wifi.signal).toBeGreaterThanOrEqual(0);
+				expect(iface.wifi.signal).toBeLessThanOrEqual(100);
+			}
+			if (iface.wifi) expect(['on', 'off', 'unknown']).toContain(iface.wifi.radio);
+		}
+		expect(state.primaryID === null || ids.includes(state.primaryID)).toBe(true);
 	});
 
-	it('recognises the network the adapter is on', () => {
-		expect(isAlreadyJoined(radio(), 'Example Net')).toBe(true);
+	it('serves a second read from cache instead of spawning again', async () => {
+		resetNetworkStateCache();
+		await readNetworkState('');
+		const started = Date.now();
+		await readNetworkState('');
+		expect(Date.now() - started).toBeLessThan(100);
 	});
 
-	it('lets a different network through', () => {
-		expect(isAlreadyJoined(radio(), 'Other Net')).toBe(false);
-	});
-
-	// An SSID is case-sensitive and byte-exact; two names that merely look alike
-	// are two networks, and joining the second must not be refused.
-	it('does not treat a similar name as the same network', () => {
-		expect(isAlreadyJoined(radio(), 'example net')).toBe(false);
-		expect(isAlreadyJoined(radio(), 'Example Net ')).toBe(false);
-	});
-
-	// An adapter that is merely ASSOCIATING carries the SSID already, so the name
-	// alone is not the answer — the carrier has to be up too.
-	it('does not count an adapter that is not actually on the network', () => {
-		expect(isAlreadyJoined(radio({ link: 'down' }), 'Example Net')).toBe(false);
-		expect(isAlreadyJoined(radio({ link: 'unknown' }), 'Example Net')).toBe(false);
-	});
-
-	it('lets a join through when the adapter reports no network at all', () => {
-		expect(isAlreadyJoined(radio({ wifi: { ssid: null, signal: null, radio: 'on' } }), 'Example Net')).toBe(false);
-		// A wireless row with no `wifi` block at all — a Wi-Fi Direct virtual adapter,
-		// or a host whose WLAN service could not be reached.
-		const { wifi: _wifi, ...noRadio } = radio();
-		expect(isAlreadyJoined(noRadio, 'Example Net')).toBe(false);
+	it('waits for a change in progress instead of reading through it', async () => {
+		// A read that overlapped a multi-step apply could capture the gap between
+		// the old address being removed and the new one being created.
+		let release: () => void = () => {};
+		const held = new Promise<void>(resolve => (release = resolve));
+		let mutationDone = false;
+		const mutation = runNetworkMutation(async () => {
+			await held;
+			mutationDone = true;
+		});
+		const read = readNetworkState('').then(() => mutationDone);
+		await new Promise(resolve => setTimeout(resolve, 50));
+		release();
+		expect(await read).toBe(true);
+		await mutation;
 	});
 });

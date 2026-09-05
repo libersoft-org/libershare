@@ -1,5 +1,5 @@
 import { dlopen, FFIType, ptr, read, toArrayBuffer, type Pointer } from 'bun:ffi';
-import { isValidWifiKey, isWifiHexKey, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetMedium, type NetLink, type NetAddressMode, type NetWifiInfo, type NetWifiNetwork } from '@shared';
+import { isValidWifiKey, isWifiHexKey, validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetMedium, type NetLink, type NetAddressMode, type NetWifiInfo, type NetWifiNetwork } from '@shared';
 
 /**
  * Windows host network state.
@@ -46,6 +46,16 @@ const AF_INET6 = 23;
 const ADDRESS_STATE_TENTATIVE = 1;
 const ADDRESS_STATE_DUPLICATE = 2;
 const ADDRESS_STATE_PREFERRED = 4;
+// PrefixOrigin: 2 = WellKnown. SuffixOrigin: 4 = LinkLayerAddress.
+// This exact pair identifies Windows' automatic IPv4 link-local fallback.
+const PREFIX_ORIGIN_WELL_KNOWN = 2;
+const SUFFIX_ORIGIN_LINK_LAYER = 4;
+const ORIGIN_MANUAL = 1;
+const ADDRESS_TYPE_UNICAST = 1;
+const ROUTE_PUBLISH_NO = 0;
+const ROUTE_PROTOCOL_NET_MGMT = 3;
+/** Windows' empty automatic-DNS sentinel addresses, not usable resolvers. */
+const AUTOMATIC_DNS_PLACEHOLDERS = new Set(['fec0:0:0:ffff::1', 'fec0:0:0:ffff::2', 'fec0:0:0:ffff::3']);
 // NetIPInterface.Dhcp: 0 Disabled, 1 Enabled. NOTE the opposite convention to
 // MediaConnectionState, where 1 means Connected — they must never be swapped.
 const DHCP_ENABLED = 1;
@@ -58,33 +68,7 @@ const DHCP_ENABLED = 1;
  * because Windows PowerShell serializes an empty array inside a calculated
  * property as `{}` and a one-element array as a bare string.
  */
-export const WINDOWS_STATE_COMMAND: string = [
-	'[Console]::OutputEncoding=[System.Text.Encoding]::UTF8',
-	"$adapters = @(Get-NetAdapter -IncludeHidden | Select-Object ifIndex, Name, InterfaceGuid, MacAddress, @{n='Media';e={[int]$_.NdisPhysicalMedium}}, @{n='IfType';e={[int]$_.InterfaceType}}, @{n='Hidden';e={[int]$_.Hidden}}, @{n='State';e={[int]$_.MediaConnectionState}})",
-	// The address section reports success for the same reason the two below do, and
-	// with more at stake: an apply REMOVES every IPv4 address before writing the new
-	// one, and {@link ipv4EditObjection} refuses an interface carrying more than one
-	// by counting the addresses in this very reading. A failed section counts zero,
-	// which passes that check and then destroys the aliases it exists to protect.
-	...sectionStep('addresses', "Get-NetIPAddress -ErrorAction Stop | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}}"),
-	"$interfaces = @(Get-NetIPInterface | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, @{n='Dhcp';e={[int]$_.Dhcp}})",
-	// The two sections below report whether they SUCCEEDED, not merely what they
-	// found. `-ErrorAction SilentlyContinue` made "this host has no default route"
-	// and "the route provider failed" the same empty array, and the parser then
-	// reported a confident state with no gateway and no resolvers — which the edit
-	// form shows as empty fields and a save writes back as fact.
-	//
-	// ObjectNotFound is the one category that is genuinely an absence: a host with
-	// no default route really has none. Everything else leaves the section unknown.
-	...sectionStep('routes', "Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric"),
-	...sectionStep('dns', "Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction Stop | Select-Object InterfaceIndex, @{n='Servers';e={($_.ServerAddresses -join ',')}}"),
-	'[pscustomobject]@{adapters=$adapters; addresses=$addresses; addressesOk=$addressesOk; interfaces=$interfaces; routes=$routes; routesOk=$routesOk; dns=$dns; dnsOk=$dnsOk} | ConvertTo-Json -Depth 6 -Compress',
-].join('; ');
-
-/** One optional section of the state document, plus the `<name>Ok` flag saying whether it could be read. */
-function sectionStep(name: string, query: string): string[] {
-	return [`$${name}Ok = $true`, `$${name} = @()`, `try { $${name} = @(${query}) } catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { $${name}Ok = $false } }`];
-}
+export const WINDOWS_STATE_COMMAND: string = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', "function Read-OptionalNetRows([scriptblock]$Query) { try { @(& $Query) } catch { if ($_.FullyQualifiedErrorId -like 'CmdletizationQuery_NotFound*') { @() } else { throw } } }", "$adapters = @(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Select-Object ifIndex, Name, InterfaceGuid, MacAddress, @{n='Media';e={[int]$_.NdisPhysicalMedium}}, @{n='IfType';e={[int]$_.InterfaceType}}, @{n='Hidden';e={[int]$_.Hidden}}, @{n='State';e={[int]$_.MediaConnectionState}})", "$addresses = @(Get-NetIPAddress -PolicyStore ActiveStore -ErrorAction Stop | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}}, @{n='PrefixOrigin';e={[int]$_.PrefixOrigin}}, @{n='SuffixOrigin';e={[int]$_.SuffixOrigin}}, @{n='Type';e={[int]$_.Type}}, @{n='SkipAsSource';e={[bool]$_.SkipAsSource}}, @{n='Infinite';e={$_.ValidLifetime -eq [TimeSpan]::MaxValue -and $_.PreferredLifetime -eq [TimeSpan]::MaxValue}})", "$persistentAddresses = @(Read-OptionalNetRows { Get-NetIPAddress -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction Stop } | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}}, @{n='PrefixOrigin';e={[int]$_.PrefixOrigin}}, @{n='SuffixOrigin';e={[int]$_.SuffixOrigin}}, @{n='Type';e={[int]$_.Type}}, @{n='SkipAsSource';e={[bool]$_.SkipAsSource}}, @{n='Infinite';e={$_.ValidLifetime -eq [TimeSpan]::MaxValue -and $_.PreferredLifetime -eq [TimeSpan]::MaxValue}})", "$interfaces = @(Get-NetIPInterface -ErrorAction Stop | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, @{n='Dhcp';e={[int]$_.Dhcp}})", "$routes = @(Get-NetRoute -PolicyStore ActiveStore -ErrorAction Stop | Where-Object DestinationPrefix -eq '0.0.0.0/0' | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric, @{n='Protocol';e={[int]$_.Protocol}}, @{n='Publish';e={[int]$_.Publish}}, @{n='Infinite';e={$_.ValidLifetime -eq [TimeSpan]::MaxValue}})", "$persistentRoutes = @(Read-OptionalNetRows { Get-NetRoute -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction Stop } | Where-Object DestinationPrefix -eq '0.0.0.0/0' | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric, @{n='Protocol';e={[int]$_.Protocol}}, @{n='Publish';e={[int]$_.Publish}}, @{n='Infinite';e={$_.ValidLifetime -eq [TimeSpan]::MaxValue}})", "$routes6 = @(Read-OptionalNetRows { Get-NetRoute -AddressFamily IPv6 -PolicyStore ActiveStore -ErrorAction Stop } | Where-Object DestinationPrefix -eq '::/0' | Select-Object ifIndex, RouteMetric, InterfaceMetric)", "$dns = @(Get-DnsClientServerAddress -ErrorAction Stop | Select-Object InterfaceIndex, @{n='Servers';e={($_.ServerAddresses -join ',')}})", '[pscustomobject]@{adapters=$adapters; addresses=$addresses; persistentAddresses=$persistentAddresses; interfaces=$interfaces; routes=$routes; routes6=$routes6; persistentRoutes=$persistentRoutes; dns=$dns} | ConvertTo-Json -Depth 6 -Compress'].join('; ');
 
 interface WindowsAdapterRow {
 	ifIndex: number;
@@ -104,6 +88,12 @@ interface WindowsAddressRow {
 	IPAddress: string;
 	PrefixLength: number;
 	State: number;
+	/** Optional so state documents captured before origin projection still parse. */
+	PrefixOrigin?: number;
+	SuffixOrigin?: number;
+	Type?: number;
+	SkipAsSource?: boolean;
+	Infinite?: boolean;
 }
 interface WindowsInterfaceRow {
 	ifIndex: number;
@@ -115,6 +105,9 @@ interface WindowsRouteRow {
 	NextHop: string;
 	RouteMetric: number;
 	InterfaceMetric?: number;
+	Protocol?: number;
+	Publish?: number;
+	Infinite?: boolean;
 }
 interface WindowsDnsRow {
 	InterfaceIndex: number;
@@ -135,6 +128,26 @@ function asArray<T>(value: unknown): T[] {
  */
 function isUnusableAddress(address: string): boolean {
 	return address.startsWith('169.254.') || address.startsWith('127.') || address === '::1';
+}
+
+/** Automatic APIPA may be ignored for edit-safety only when Windows proves its origin. */
+function isAutomaticApipa(row: WindowsAddressRow): boolean {
+	return row.IPAddress.startsWith('169.254.') && row.PrefixOrigin === PREFIX_ORIGIN_WELL_KNOWN && row.SuffixOrigin === SUFFIX_ORIGIN_LINK_LAYER;
+}
+
+/** True only when rollback can recreate the original static policy exactly. */
+function isSimplePersistentStaticState(ifIndex: number, activeAddresses: WindowsAddressRow[], persistentAddresses: WindowsAddressRow[], activeRoutes: WindowsRouteRow[], persistentRoutes: WindowsRouteRow[]): boolean {
+	const addresses = activeAddresses.filter(row => row.ifIndex === ifIndex && row.Family === AF_INET);
+	const storedAddresses = persistentAddresses.filter(row => row.ifIndex === ifIndex && row.Family === AF_INET);
+	const simpleAddress = (row: WindowsAddressRow): boolean => row.PrefixOrigin === ORIGIN_MANUAL && row.SuffixOrigin === ORIGIN_MANUAL && row.Type === ADDRESS_TYPE_UNICAST && row.SkipAsSource === false && row.Infinite === true;
+	const sameAddress = (left: WindowsAddressRow, right: WindowsAddressRow): boolean => left.IPAddress === right.IPAddress && left.PrefixLength === right.PrefixLength;
+	if (addresses.length !== storedAddresses.length || !addresses.every(simpleAddress) || !storedAddresses.every(simpleAddress) || !addresses.every(row => storedAddresses.some(stored => sameAddress(row, stored)))) return false;
+
+	const routes = activeRoutes.filter(row => row.ifIndex === ifIndex);
+	const storedRoutes = persistentRoutes.filter(row => row.ifIndex === ifIndex);
+	const simpleRoute = (row: WindowsRouteRow): boolean => row.Protocol === ROUTE_PROTOCOL_NET_MGMT && row.Publish === ROUTE_PUBLISH_NO && row.Infinite === true;
+	const sameRoute = (left: WindowsRouteRow, right: WindowsRouteRow): boolean => left.NextHop === right.NextHop && left.RouteMetric === right.RouteMetric;
+	return routes.length === storedRoutes.length && routes.every(simpleRoute) && storedRoutes.every(simpleRoute) && routes.every(row => storedRoutes.some(stored => sameRoute(row, stored)));
 }
 
 /**
@@ -187,25 +200,26 @@ function normalizeGuid(guid: string): string {
  */
 export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifiInfo> = new Map()): NetInterfaceInfo[] {
 	const doc = JSON.parse(json) as Record<string, unknown>;
+	for (const key of ['adapters', 'addresses', 'persistentAddresses', 'interfaces', 'routes', 'persistentRoutes', 'dns']) {
+		if (!Object.prototype.hasOwnProperty.call(doc, key) || doc[key] === null) throw new Error(`incomplete Windows network state: missing ${key}`);
+	}
 	const adapters = asArray<WindowsAdapterRow>(doc['adapters']);
 	const addresses = asArray<WindowsAddressRow>(doc['addresses']);
+	const persistentAddresses = asArray<WindowsAddressRow>(doc['persistentAddresses']);
 	const ipInterfaces = asArray<WindowsInterfaceRow>(doc['interfaces']);
 	const routes = asArray<WindowsRouteRow>(doc['routes']);
+	const routes6 = asArray<WindowsRouteRow>(doc['routes6']);
+	const persistentRoutes = asArray<WindowsRouteRow>(doc['persistentRoutes']);
 	const dnsRows = asArray<WindowsDnsRow>(doc['dns']);
-	// A section that could not be read leaves this interface's addresses, gateway or
-	// resolvers unknown rather than absent — and an apply REPLACES all three, so
-	// acting on the empty reading would delete values nobody ever saw. `!== false`
-	// so a document captured before these flags existed still parses as the complete
-	// read it was.
-	//
-	// `interfaces` is deliberately not in the list: all it carries is the DHCP flag,
-	// which an unread section reports as `ipv4Mode: 'unknown'` — the same honest
-	// answer every platform gives for a mode it cannot name, and one the editor
-	// already handles by making the user pick. Nothing is deleted by not knowing it.
-	const complete = doc['addressesOk'] !== false && doc['routesOk'] !== false && doc['dnsOk'] !== false;
 
 	const addressesByIndex = new Map<number, NetAddress[]>();
+	const ipv4RowsByIndex = new Map<number, number>();
+	const automaticApipaByIndex = new Map<number, number>();
 	for (const row of addresses) {
+		if (row.Family === AF_INET) {
+			ipv4RowsByIndex.set(row.ifIndex, (ipv4RowsByIndex.get(row.ifIndex) ?? 0) + 1);
+			if (isAutomaticApipa(row)) automaticApipaByIndex.set(row.ifIndex, (automaticApipaByIndex.get(row.ifIndex) ?? 0) + 1);
+		}
 		if (row.State !== ADDRESS_STATE_PREFERRED) continue;
 		const family = row.Family === AF_INET ? 'ipv4' : row.Family === AF_INET6 ? 'ipv6' : null;
 		if (!family) continue;
@@ -228,26 +242,31 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 	// RouteMetric 0 and InterfaceMetric 5 against a NIC's 25, and comparing route
 	// metrics alone would pick the wrong adapter on any multi-homed host.
 	const effectiveMetric = (row: WindowsRouteRow): number => row.RouteMetric + (row.InterfaceMetric ?? 0);
-	// Kept per interface as well: only one of them carries the host's default route,
-	// but on a multi-homed machine several have a gateway of their own. Reporting
-	// those as null would seed the edit form with an empty gateway field, and saving
-	// any other change on that interface would then clear the gateway it really has.
-	let best: WindowsRouteRow | null = null;
-	const bestByIndex = new Map<number, WindowsRouteRow>();
+	const lowestMetric = (rows: WindowsRouteRow[]): WindowsRouteRow | null => {
+		let best: WindowsRouteRow | null = null;
+		for (const row of rows) if (!best || effectiveMetric(row) < effectiveMetric(best)) best = row;
+		return best;
+	};
+	// A host reachable only over IPv6 still has a default route, just not an IPv4
+	// one, and the footer would otherwise call a working connection "disconnected"
+	// because the automatic pick had nothing to point at. The IPv4 route stays
+	// first: everything this screen edits is IPv4. Only this flag looks at IPv6 —
+	// the gateway and the editability rules keep reading the IPv4 rows alone.
+	const defaultIndex = (lowestMetric(routes) ?? lowestMetric(routes6))?.ifIndex ?? null;
+	const routesByIndex = new Map<number, WindowsRouteRow[]>();
 	for (const row of routes) {
-		if (!best || effectiveMetric(row) < effectiveMetric(best)) best = row;
-		const previous = bestByIndex.get(row.ifIndex);
-		if (!previous || effectiveMetric(row) < effectiveMetric(previous)) bestByIndex.set(row.ifIndex, row);
+		const list = routesByIndex.get(row.ifIndex) ?? [];
+		list.push(row);
+		routesByIndex.set(row.ifIndex, list);
 	}
-	const defaultIndex = best?.ifIndex ?? null;
 
 	const dnsByIndex = new Map<number, string[]>();
 	for (const row of dnsRows) {
 		const servers = (row.Servers ?? '')
 			.split(',')
 			.map(s => s.trim())
-			.filter(s => s.length > 0);
-		if (servers.length > 0) dnsByIndex.set(row.InterfaceIndex, servers);
+			.filter(s => s.length > 0 && !AUTOMATIC_DNS_PLACEHOLDERS.has(s.toLowerCase()));
+		if (servers.length > 0) dnsByIndex.set(row.InterfaceIndex, [...(dnsByIndex.get(row.InterfaceIndex) ?? []), ...servers]);
 	}
 
 	const result: NetInterfaceInfo[] = [];
@@ -264,6 +283,13 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 	return result;
 
 	function buildInterface(ifIndex: number, name: string, medium: NetMedium, link: NetLink, mac: string, guid: string | null): NetInterfaceInfo {
+		const interfaceAddresses = addressesByIndex.get(ifIndex) ?? [];
+		const interfaceRoutes = routesByIndex.get(ifIndex) ?? [];
+		const ipv4Mode = dhcpByIndex.get(ifIndex) ?? 'unknown';
+		const ipv4RowCount = (ipv4RowsByIndex.get(ifIndex) ?? 0) - (ipv4Mode === 'dhcp' ? (automaticApipaByIndex.get(ifIndex) ?? 0) : 0);
+		const visibleIPv4 = interfaceAddresses.filter(address => address.family === 'ipv4');
+		const staticShapeSafe = ipv4Mode !== 'static' || (visibleIPv4.length === 1 && validateIPv4Config({ mode: 'static', address: visibleIPv4[0]!.address, prefixLength: visibleIPv4[0]!.prefixLength, gateway: interfaceRoutes[0]?.NextHop ?? '' }) === null);
+		const radio = medium === 'wireless' && guid ? wifi.get(guid) : undefined;
 		const info: NetInterfaceInfo = {
 			// The GUID (registry NetCfgInstanceId) survives reboots and adapter
 			// disable/enable; ifIndex explicitly does not, and the id is persisted as
@@ -275,24 +301,19 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 			link,
 			defaultRoute: ifIndex === defaultIndex,
 			mac: mac && mac.length > 0 ? mac : null,
-			addresses: addressesByIndex.get(ifIndex) ?? [],
-			ipv4Mode: dhcpByIndex.get(ifIndex) ?? 'unknown',
-			gateway: bestByIndex.get(ifIndex)?.NextHop ?? null,
+			addresses: interfaceAddresses,
+			ipv4Mode,
+			ipv4Configurable: guid !== null && ipv4Mode !== 'unknown' && staticShapeSafe && ipv4RowCount === visibleIPv4.length && ipv4RowCount <= 1 && interfaceRoutes.length <= 1 && (ipv4Mode !== 'static' || isSimplePersistentStaticState(ifIndex, addresses, persistentAddresses, routes, persistentRoutes)) && (medium !== 'wireless' || radio !== undefined),
+			// Scanning and joining go through the WLAN service, which needs no elevated
+			// token - an adapter the service lists is one it can drive. The IPv4 rules
+			// above are unrelated: an adapter whose addressing this app will not touch
+			// can still be asked to join a network.
+			wifiConfigurable: medium === 'wireless' && guid !== null && radio !== undefined,
+			gateway: interfaceRoutes[0]?.NextHop ?? null,
 			dns: dnsByIndex.get(ifIndex) ?? [],
-			// An addressed stack with no adapter row (RAS, VPN, Teredo) gets an
-			// `ifIndex:N` id, and the apply path resolves an adapter by GUID — so
-			// `assertWindowsGuid` rejects that id every time. Saying so here keeps the
-			// UI from offering a Configure button whose Save could only ever fail.
-			ipv4Configurable: guid !== null && complete,
-			// Every wlanapi call is addressed by the same GUID, and none of them needs
-			// the elevation the address apply does — so on Windows the three answers
-			// differ only in what they are asked about, not in what they require.
-			wifiScannable: guid !== null,
-			wifiConnectable: guid !== null,
 		};
 		// Wi-Fi Direct virtual adapters also report medium 9 but have no WLAN
 		// interface of their own, so an absent entry leaves `wifi` undefined.
-		const radio = medium === 'wireless' && guid ? wifi.get(guid) : undefined;
 		if (radio) info.wifi = radio;
 		return info;
 	}
@@ -330,14 +351,9 @@ const ASSOC_SIGNAL_QUALITY_OFFSET = CONN_ASSOCIATION_OFFSET + 56;
 const MAX_SSID_LENGTH = 32;
 
 /**
- * A WLAN client handle.
- *
- * Kept as a `bigint` rather than a {@link Pointer} for the whole of its life.
- * Bun represents a pointer as a JavaScript number because a virtual address
- * fits in 53 bits, but its FFI documentation states outright that the Windows
- * `HANDLE` type is NOT a virtual address and must be declared `u64` instead of
- * `ptr`. Rounding one through `Number()` is therefore a conversion the ABI does
- * not sanction, whatever the values a given WLAN service happens to hand out.
+ * A Windows HANDLE is an opaque 64-bit value, not a virtual address, so it is
+ * declared to the FFI as `u64` and carried as a bigint. Declaring it as `ptr`
+ * happens to work while handle values stay small, but nothing guarantees that.
  */
 type WlanHandle = bigint;
 
@@ -401,7 +417,14 @@ function getWlanApi(): WlanApi | null {
 	if (wlanUnavailable) return null;
 	if (!wlanApi) {
 		try {
-			wlanApi = dlopen('wlanapi.dll', WLAN_SYMBOLS).symbols as unknown as WlanApi;
+			const lib = dlopen('wlanapi.dll', {
+				WlanOpenHandle: { args: [FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+				WlanCloseHandle: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.u32 },
+				WlanEnumInterfaces: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+				WlanQueryInterface: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+				WlanFreeMemory: { args: [FFIType.ptr], returns: FFIType.void },
+			});
+			wlanApi = lib.symbols as unknown as WlanApi;
 		} catch {
 			wlanUnavailable = true;
 			return null;
@@ -474,7 +497,27 @@ export function readConnectionAttributes(data: Pointer, size: number): { ssid: s
  * because it answers a question only the join path asks, and `link` already tells
  * the UI the same thing.
  */
-const connectedGuids = new Set<string>();
+
+/**
+ * Run one WlanQueryInterface and map the returned buffer, freeing it afterwards.
+ *
+ * A non-zero result yields null; the common one is ERROR_INVALID_STATE
+ * ({@link ERROR_INVALID_STATE}), which just means the adapter is not associated
+ * and is not worth logging.
+ */
+function queryInterface<T>(api: WlanApi, handle: WlanHandle, guidPtr: Pointer, opcode: number, map: (data: Pointer, size: number) => T): T | null {
+	const size = new Uint32Array(1);
+	const dataOut = new BigUint64Array(1);
+	const valueType = new Uint32Array(1);
+	const rc = api.WlanQueryInterface(handle, guidPtr, opcode, null, ptr(size), ptr(dataOut), ptr(valueType));
+	if (rc !== 0) return null;
+	const data = Number(dataOut[0]) as Pointer;
+	try {
+		return map(data, size[0]!);
+	} finally {
+		api.WlanFreeMemory(data);
+	}
+}
 
 /**
  * Read the Wi-Fi state of every WLAN adapter, keyed by canonical interface GUID.
@@ -485,7 +528,6 @@ export function readWindowsWifi(): Map<string, NetWifiInfo> {
 	try {
 		return withWlanHandle((api, handle) => {
 			const result = new Map<string, NetWifiInfo>();
-			connectedGuids.clear();
 			const listOut = new BigUint64Array(1);
 			if (api.WlanEnumInterfaces(handle, null, ptr(listOut)) !== 0) return result;
 			const list = Number(listOut[0]) as Pointer;
@@ -495,35 +537,14 @@ export function readWindowsWifi(): Map<string, NetWifiInfo> {
 					const base = WLAN_INTERFACE_LIST_HEADER + i * WLAN_INTERFACE_INFO_SIZE;
 					const guid = guidToString(list, base);
 					const guidPtr = ((list as unknown as number) + base) as unknown as Pointer;
-					const radio = query(guidPtr, OPCODE_RADIO_STATE, readRadioState) ?? 'unknown';
-					const connection = query(guidPtr, OPCODE_CURRENT_CONNECTION, readConnectionAttributes);
+					const radio = queryInterface(api, handle, guidPtr, OPCODE_RADIO_STATE, readRadioState) ?? 'unknown';
+					const connection = queryInterface(api, handle, guidPtr, OPCODE_CURRENT_CONNECTION, readConnectionAttributes);
 					result.set(guid, { ssid: connection?.ssid ?? null, signal: connection?.signal ?? null, radio });
-					if (connection?.connected) connectedGuids.add(guid);
 				}
 			} finally {
 				api.WlanFreeMemory(list);
 			}
 			return result;
-
-			/**
-			 * Run one WlanQueryInterface and map the returned buffer, freeing it afterwards.
-			 * A non-zero result yields null; the common one is ERROR_INVALID_STATE
-			 * ({@link ERROR_INVALID_STATE}), which just means the adapter is not associated
-			 * and is not worth logging.
-			 */
-			function query<T>(guidPtr: Pointer, opcode: number, map: (data: Pointer, size: number) => T): T | null {
-				const size = new Uint32Array(1);
-				const dataOut = new BigUint64Array(1);
-				const valueType = new Uint32Array(1);
-				const rc = api.WlanQueryInterface(handle, guidPtr, opcode, null, ptr(size), ptr(dataOut), ptr(valueType));
-				if (rc !== 0) return null;
-				const data = Number(dataOut[0]) as Pointer;
-				try {
-					return map(data, size[0]!);
-				} finally {
-					api.WlanFreeMemory(data);
-				}
-			}
 		});
 	} catch {
 		// Reading Wi-Fi is best-effort: a host with no WLAN service simply has no
@@ -544,11 +565,10 @@ function withWlanHandle<T>(fn: (api: WlanApi, handle: WlanHandle) => T): T {
 	if (!api) throw new Error('the Windows WLAN service is not available on this host');
 	const negotiated = new Uint32Array(1);
 	const handleOut = new BigUint64Array(1);
+	// Client version 2 = Vista and later; every supported Windows negotiates it.
 	const rc = api.WlanOpenHandle(2, null, ptr(negotiated), ptr(handleOut));
 	if (rc !== 0) throw new Error(wlanErrorMessage(rc));
-	// Straight out of the output buffer as a bigint. Never through `Number()`: a
-	// HANDLE is an opaque 64-bit value, not an address that is guaranteed to fit.
-	const handle = handleOut[0] as WlanHandle;
+	const handle: WlanHandle = handleOut[0]!;
 	try {
 		return fn(api, handle);
 	} finally {
@@ -693,40 +713,6 @@ function windowsSnapshotSteps(): string[] {
 	];
 }
 
-/**
- * Put the snapshot back after a failed apply.
- *
- * The two branches are not symmetrical, and deliberately so. An interface that was
- * static has every address and every default route written back individually,
- * metric included, because that configuration exists nowhere else. An interface
- * that was on DHCP has its addresses put back by the lease instead — re-adding
- * them by hand would install a static copy the lease then duplicates — but its
- * default routes are NOT all the lease's, and the ones that are not have to be
- * written back like any other. See {@link NOT_FROM_A_LEASE}.
- *
- * Resolvers are restored the same way round: the addresses go back only when the
- * snapshot proved they were a MANUAL override, and automatic DNS is put back with
- * `-ResetServerAddresses`. Writing an effective list back unconditionally would
- * convert a DHCP interface's resolvers into a static override it never had — see
- * {@link windowsSnapshotSteps}.
- *
- * Every object goes back into the store it was found in. An object held in BOTH
- * stores is re-created with no `-PolicyStore` at all, which is how it came to be
- * in both; one held in only one store names that store, so an active-only object
- * is not silently promoted to a persistent one that outlives the next boot.
- *
- * The addressing half is separate from {@link WINDOWS_RESTORE_DNS} because the two
- * are not undone together. The resolvers are rewritten by every apply, so they are
- * always put back; the addressing is rewritten only when it actually changed, and
- * clearing an interface that was never touched in order to rebuild it is a
- * destructive answer to a failure that did not involve it — see
- * `$addressingChanged` in {@link windowsApplyIPv4Command}.
- */
-function windowsRestoreAddressingSteps(): string[] {
-	const restoreStatic = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', ...restorePerStore(RESTORABLE_ADDRESS, '$oldActiveAddresses', '$oldPersistentAddresses'), ...restorePerStore(RESTORABLE_ROUTE, '$oldActiveRoutes', '$oldPersistentRoutes')].join('; ');
-	const restoreDhcp = ['Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', ...restorePerStore(RESTORABLE_ROUTE, '$oldActiveRoutes', '$oldPersistentRoutes', NOT_FROM_A_LEASE)].join('; ');
-	return [...windowsRemovalSteps(), `if ($oldDhcp -eq 'Enabled') { ${restoreDhcp} } else { ${restoreStatic} }`];
-}
 
 /**
  * True for an active-only object a lease did NOT hand out.
@@ -751,41 +737,8 @@ function windowsRestoreAddressingSteps(): string[] {
  */
 const NOT_FROM_A_LEASE = '$r.ValidLifetime -eq [TimeSpan]::MaxValue';
 
-/**
- * Re-create an address out of the snapshot, minus the store it belongs in.
- *
- * `-Type` is there because Windows supports Anycast as well as Unicast and
- * defaults to Unicast: an Anycast address passes the Manual/Manual origin guard —
- * it is configured by hand like any other — and would come back as a Unicast one,
- * which is a different object on an interface the rollback claimed to have left
- * alone. Verified on Windows 11 that `Get-NetIPAddress` hands its `Type` straight
- * back to `New-NetIPAddress -Type`.
- */
-const NEW_ADDRESS = 'New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $a.IPAddress -PrefixLength $a.PrefixLength -Type $a.Type -SkipAsSource $a.SkipAsSource -ValidLifetime $a.ValidLifetime -PreferredLifetime $a.PreferredLifetime';
-/**
- * The same for a default route, lifetimes included.
- *
- * A route left to `New-NetRoute`'s defaults comes back with an infinite lifetime
- * whatever it had, so a temporary route — one a VPN client or a lease installed
- * with a countdown on it — was made permanent by the very rollback that reported
- * having changed nothing.
- */
-const NEW_ROUTE = "New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop $r.NextHop -RouteMetric $r.RouteMetric -Protocol $r.Protocol -Publish $r.Publish -ValidLifetime $r.ValidLifetime -PreferredLifetime $r.PreferredLifetime -Confirm:$false";
 
-/**
- * Take away one object's ActiveStore copy, leaving its persistent one — the second
- * half of restoring something that was persistent-only. See {@link restorePerStore}.
- *
- * Addressed by identity rather than by interface, because this runs while the
- * restore has already put other objects back and must take only the one it just
- * created. Unlike the creating cmdlets, both removals genuinely accept either store.
- */
-const REMOVE_ACTIVE_ADDRESS = 'Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $a.IPAddress -PolicyStore ActiveStore -Confirm:$false';
-/** The same for a default route. */
-const REMOVE_ACTIVE_ROUTE = "Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop $r.NextHop -PolicyStore ActiveStore -Confirm:$false";
 
-/** Put the resolvers back — a manual override as itself, anything else as automatic. */
-const WINDOWS_RESTORE_DNS = 'if ($oldDnsManual.Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $oldDnsManual } else { Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses }';
 
 /** Everything restoring one kind of snapshotted object needs — see {@link restorePerStore}. */
 interface RestorableKind {
@@ -810,10 +763,6 @@ interface RestorableKind {
 	readonly noun: string;
 }
 
-/** An IPv4 address, as the restore has to reproduce it. */
-const RESTORABLE_ADDRESS: RestorableKind = { item: '$a', identity: 'IPAddress', properties: ['PrefixLength', 'Type', 'SkipAsSource', 'ValidLifetime', 'PreferredLifetime'], create: NEW_ADDRESS, removeActive: REMOVE_ACTIVE_ADDRESS, query: ADDRESS_QUERY, noun: 'address' };
-/** An IPv4 default route, likewise. */
-const RESTORABLE_ROUTE: RestorableKind = { item: '$r', identity: 'NextHop', properties: ['RouteMetric', 'Protocol', 'Publish', 'ValidLifetime', 'PreferredLifetime'], create: NEW_ROUTE, removeActive: REMOVE_ACTIVE_ROUTE, query: ROUTE_QUERY, noun: 'default route' };
 
 /**
  * Check that the ActiveStore half of a create-both really went away, and say so if
@@ -904,19 +853,6 @@ function restorePerStore(kind: RestorableKind, active: string, persistent: strin
 	return [`foreach (${activeCopy} in ${active}) { ${twin} = @(${persistent} | Where-Object { $_.${identity} -eq ${activeCopy}.${identity} })[0]; ${item} = ${activeCopy}; if ${branches.join(' elseif ')} else { ${diverged} } }`, `foreach (${item} in ${persistent}) { if (${active}.${identity} -notcontains ${item}.${identity}) { ${persistentOnly} } }`];
 }
 
-/**
- * Clear the interface's IPv4 addresses and default routes, from BOTH stores.
- *
- * Removing from the active store alone left the persistent copy behind, so an
- * apply that looked correct the moment it ran came back at the next boot as two
- * addresses on one interface — which {@link WINDOWS_ALIAS_GUARD} then refuses to
- * edit at all. The removals are shared by the apply and by its rollback, because
- * the rollback has to clear whatever the failed attempt managed to write before it
- * can put the snapshot back.
- */
-function windowsRemovalSteps(): string[] {
-	return [tolerateMissing('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -PolicyStore ActiveStore -Confirm:$false'), tolerateMissing('Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -PolicyStore PersistentStore -Confirm:$false'), tolerateMissing("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -PolicyStore ActiveStore -Confirm:$false"), tolerateMissing("Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -PolicyStore PersistentStore -Confirm:$false")];
-}
 
 /**
  * Refuse an interface carrying more than one IPv4 address, counted on the machine
@@ -1060,83 +996,7 @@ export function windowsAddressingUnchanged(config: NetIPv4Config): string {
 	return `$addressingUnchanged = ($oldDhcp -ne 'Enabled') -and (${inStore('$oldActiveAddresses', '$oldActiveRoutes')}) -and (${inStore('$oldPersistentAddresses', '$oldPersistentRoutes')})`;
 }
 
-/**
- * Give the new default route the properties the old one had, when it is the same
- * gateway.
- *
- * The route is created as a side effect of `New-NetIPAddress -DefaultGateway`,
- * which has no parameter for any of them — it takes the metric Windows derives from
- * the link speed, an infinite lifetime and `Publish` No. So changing an address on
- * an interface whose gateway did not move silently re-ranked that route against
- * every other default route on the host (on a multihomed machine, a change of which
- * interface traffic leaves by), made a route with a countdown on it permanent, and
- * stopped a published route being advertised. The same reasoning is why
- * {@link windowsAddressingUnchanged} exists: this is exactly what a rewrite loses.
- *
- * Correcting it afterwards rather than creating the route by hand keeps
- * `-DefaultGateway`'s own check that the gateway is reachable from the new address.
- * `Protocol` is the one property that cannot be carried across: on `Set-NetRoute` it
- * selects routes rather than changing them, and Windows will not let a route's next
- * hop or protocol be modified after creation.
- *
- * Empty when there is no gateway. A route to a DIFFERENT next hop contributes
- * nothing — its properties belong to a path this interface no longer takes.
- *
- * Read from the snapshot's union, active copy first, and written with no
- * `-PolicyStore`, so where the two stores held divergent copies of one next hop
- * BOTH come back carrying the active one's metric, `Publish` and lifetimes. That is
- * deliberate — see {@link keepAddressProperties} for the whole of the reasoning,
- * which is the same on this half.
- */
-function keepRouteProperties(config: NetIPv4Config): string[] {
-	if (!config.gateway) return [];
-	return [`$keptRoute = @($oldRoutes | Where-Object { $_.NextHop -eq '${config.gateway}' })[0]`, `if ($keptRoute) { Set-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop ${config.gateway} -RouteMetric $keptRoute.RouteMetric -Publish $keptRoute.Publish -ValidLifetime $keptRoute.ValidLifetime -PreferredLifetime $keptRoute.PreferredLifetime -Confirm:$false }`];
-}
 
-/**
- * Carry a re-created address's own properties across, when it keeps its address.
- *
- * The rewrite removes and re-creates rather than edits, so an address that is not
- * changing — the user moved the gateway, or only the resolvers, and the form posted
- * the whole configuration — came back with `New-NetIPAddress`'s defaults on every
- * property the form does not carry. An Anycast address became Unicast, a
- * `SkipAsSource` address started answering for outgoing traffic and appearing in
- * DNS, and an address with a lifetime on it became permanent. The rollback already
- * hands all four back; the SUCCESS path was throwing them away and reporting that
- * only the gateway had changed.
- *
- * Splatted rather than interpolated, because "the same address, so keep them" and
- * "a different address, so let Windows choose" are two different parameter lists
- * for one call. Read from the snapshot's union, active copy first, so an address
- * held only in the persistent store still contributes what it knows.
- *
- * A SUCCESSFUL apply deliberately normalises the two stores to one object, and the
- * active copy is the one that wins. Where an address is held in both stores with
- * different properties — an active Anycast copy against a persistent Unicast one —
- * the rewrite creates one object into both stores and both come back carrying the
- * active copy's. This is a decision, not the union leaking:
- *
- *  - The rollback and the apply answer different questions. The rollback's whole
- *    contract is "leave this machine as it was found", so it hands each store back
- *    its own copy. The apply's is "make this the configuration in force AND the one
- *    the next boot comes up on" — the same rule the no-op check applies in
- *    {@link windowsAddressingUnchanged}. Rewriting the address in both stores and
- *    then preserving a startup-only variation of it is half of each answer.
- *  - Reproducing the divergence cannot be done without destroying the address
- *    again. `Type` on `Set-NetIPAddress` and `Protocol` on `Set-NetRoute` are
- *    array-typed QUERY parameters — they select objects rather than change them,
- *    which is already why `Protocol` cannot be carried across — so a divergent
- *    `Type` needs create-both, remove-active, create-active. That is the sequence
- *    the rollback runs, and it is acceptable there because the alternative is a
- *    machine left unconfigured. Putting it on the success path adds a window in
- *    which the interface has no address to the one path that currently has none.
- *  - The active copy is what the user is looking at and what the screen reports
- *    back. Having asked for a rewrite, the next boot behaving like the machine does
- *    now is the outcome that matches what they were shown.
- */
-function keepAddressProperties(config: NetIPv4Config): string[] {
-	return [`$keptAddress = @($oldAddresses | Where-Object { $_.IPAddress -eq '${config.address}' })[0]`, '$keptAddressProperties = @{}', 'if ($keptAddress) { $keptAddressProperties = @{ Type = $keptAddress.Type; SkipAsSource = $keptAddress.SkipAsSource; ValidLifetime = $keptAddress.ValidLifetime; PreferredLifetime = $keptAddress.PreferredLifetime } }'];
-}
 
 /** How long duplicate address detection may run before the apply gives up on it. */
 const DAD_TIMEOUT_MS = 15000;
@@ -1218,30 +1078,47 @@ export function windowsAddressStateWait(address: string): string {
  * a dotted-quad literal, a small integer, or a GUID. No quoting rule protects
  * this string — the validation does.
  */
-export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): string {
-	const preamble = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', `$adapter = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq '${guid}' }`, 'if (-not $adapter) { throw "interface not found" }', '$i = $adapter.ifIndex'];
-	const removals = windowsRemovalSteps();
-	const mutation: string[] = [];
-	// Raised immediately before the resolvers are written, and read by the rollback
-	// for the same reason `$addressingChanged` is: an apply that failed at, say, the
-	// first address removal never reached the DNS setter, so writing the snapshot
-	// back would undo somebody ELSE's resolver change made since the snapshot was
-	// taken — a change this apply had not touched and has no business reverting.
-	const writeDns = (setter: string): string => `$dnsWriteStarted = $true; ${setter}`;
-	if (config.mode === 'dhcp') {
-		mutation.push('$addressingChanged = $true', ...removals, 'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', writeDns('Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses'));
-	} else {
-		const gateway = config.gateway ? ` -DefaultGateway ${config.gateway}` : '';
-		const dns = config.dns ?? [];
-		// The flag is set BEFORE the first removal, not after the last write: from that
-		// point on the interface is mid-change and the rollback has work to do however
-		// far the rewrite got.
-		const rewrite = ['$addressingChanged = $true', ...keepAddressProperties(config), ...removals, 'Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} @keptAddressProperties | Out-Null`, ...keepRouteProperties(config)].join('; ');
-		mutation.push(windowsAddressingUnchanged(config), `if (-not $addressingUnchanged) { ${rewrite} }`, writeDns(dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses'), `if ($addressingChanged) { ${windowsAddressStateWait(config.address as string)} }`);
+export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config, addressingChanged: boolean = true, requireLease: boolean = true): string {
+	const prefix = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', `$adapter = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq '${guid}' }`, 'if (-not $adapter) { throw "interface not found" }', '$i = $adapter.ifIndex'];
+	const dnsStep = config.dns === undefined ? null : config.dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${config.dns.map(server => `'${server}'`).join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses';
+	const dnsSnapshot = ['$oldDns4 = @(Get-DnsClientServerAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop)', '$oldDns6 = @(Get-DnsClientServerAddress -InterfaceIndex $i -AddressFamily IPv6 -ErrorAction Stop)', 'if ($oldDns4.Count -eq 0 -or $oldDns6.Count -eq 0) { throw "DNS state is incomplete" }', '$oldDnsServers4 = @($oldDns4.ServerAddresses | Where-Object { $_ })', '$oldDnsServers6 = @($oldDns6.ServerAddresses | Where-Object { $_ })', '$dnsKey4 = "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)"', '$dnsKey6 = "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)"', '$oldDnsNameServer4 = [string](Get-ItemProperty -LiteralPath $dnsKey4 -ErrorAction SilentlyContinue).NameServer', '$oldDnsNameServer6 = [string](Get-ItemProperty -LiteralPath $dnsKey6 -ErrorAction SilentlyContinue).NameServer', '$oldDnsAutomatic4 = [string]::IsNullOrWhiteSpace($oldDnsNameServer4)', '$oldDnsAutomatic6 = [string]::IsNullOrWhiteSpace($oldDnsNameServer6)'];
+	const dnsRollback = ['if ($oldDnsAutomatic4) { Set-DnsClientServerAddress -InputObject $oldDns4 -ResetServerAddresses } else { Set-DnsClientServerAddress -InputObject $oldDns4 -ServerAddresses $oldDnsServers4 }', 'if ($oldDnsAutomatic6) { Set-DnsClientServerAddress -InputObject $oldDns6 -ResetServerAddresses } else { Set-DnsClientServerAddress -InputObject $oldDns6 -ServerAddresses $oldDnsServers6 }'];
+	const dnsVerify = config.dns === undefined ? [] : config.dns.length === 0 ? ['$appliedDnsNameServer4 = [string](Get-ItemProperty -LiteralPath $dnsKey4 -ErrorAction SilentlyContinue).NameServer', '$appliedDnsNameServer6 = [string](Get-ItemProperty -LiteralPath $dnsKey6 -ErrorAction SilentlyContinue).NameServer', 'if (-not [string]::IsNullOrWhiteSpace($appliedDnsNameServer4) -or -not [string]::IsNullOrWhiteSpace($appliedDnsNameServer6)) { throw "DNS apply did not restore automatic policy" }'] : [`$expectedDns = @(${config.dns.map(server => `'${server}'`).join(',')}) | Sort-Object -Unique`, '$appliedDns = @(Get-DnsClientServerAddress -InterfaceIndex $i -ErrorAction Stop | ForEach-Object { $_.ServerAddresses } | Where-Object { $_ } | Sort-Object -Unique)', 'if (@(Compare-Object -ReferenceObject $expectedDns -DifferenceObject $appliedDns).Count -ne 0) { throw "DNS apply did not set the requested servers" }', '$appliedDnsNameServer4 = [string](Get-ItemProperty -LiteralPath $dnsKey4 -ErrorAction SilentlyContinue).NameServer', '$appliedDnsNameServer6 = [string](Get-ItemProperty -LiteralPath $dnsKey6 -ErrorAction SilentlyContinue).NameServer', 'if ([string]::IsNullOrWhiteSpace($appliedDnsNameServer4) -and [string]::IsNullOrWhiteSpace($appliedDnsNameServer6)) { throw "DNS apply did not set manual policy" }'];
+	if (!addressingChanged) {
+		if (!dnsStep) return prefix.join('; ');
+		const rollback = ['$applyError = $_', 'try {', ...dnsRollback, '} catch { throw "network apply failed: $($applyError.Exception.Message); rollback failed: $($_.Exception.Message)" }', 'throw $applyError'];
+		return [...prefix, ...dnsSnapshot, `try { ${[dnsStep, ...dnsVerify].join('; ')} } catch { ${rollback.join('; ')} }`].join('; ');
 	}
-	const rollback = [`if ($addressingChanged) { ${windowsRestoreAddressingSteps().join('; ')} }`, `if ($dnsWriteStarted) { ${WINDOWS_RESTORE_DNS} }`].join('; ');
-	const guarded = `try { ${mutation.join('; ')} } catch { $applyError = $_; try { ${rollback} } catch { throw "the change failed ($($applyError.Exception.Message)) and rolling it back also failed ($($_.Exception.Message))" }; throw $applyError }`;
-	return [...preamble, ...windowsSnapshotSteps(), WINDOWS_ALIAS_GUARD, WINDOWS_ROUTE_GUARD, WINDOWS_ORIGIN_GUARD, '$addressingChanged = $false', '$dnsWriteStarted = $false', guarded].join('; ');
+
+	// The snapshot objects come from the active store, and piping them into the
+	// Remove-* cmdlets removes them from the persistent store as well — verified
+	// on Windows 11: after a static A→B apply the persistent store held only B,
+	// and after a forced failure the rollback restored A in both stores. The
+	// persistent-store checks after the apply are what would catch a Windows
+	// build that behaves differently.
+
+	const snapshot = ['$oldAddresses = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $i })', "$oldRoutes = @(Get-NetRoute -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $i -and $_.DestinationPrefix -eq '0.0.0.0/0' })", '$oldDhcp = (Get-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop).Dhcp', '$oldDhcpNeedsAddress = $oldDhcp -eq "Enabled" -and @($oldAddresses | Where-Object { $_.AddressState -eq "Preferred" -and $_.IPAddress -notlike "169.254.*" }).Count -gt 0', '$oldDhcpNeedsRoute = $oldDhcp -eq "Enabled" -and $oldRoutes.Count -gt 0', ...dnsSnapshot];
+	const apply = ['if ($oldAddresses.Count -gt 0) { $oldAddresses | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop }', 'if ($oldRoutes.Count -gt 0) { $oldRoutes | Remove-NetRoute -Confirm:$false -ErrorAction Stop }'];
+	if (config.mode === 'dhcp') {
+		apply.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled');
+		// With the link down there is no lease to wait for: the mode is what gets
+		// saved, and the lease arrives when the cable does.
+		if (requireLease) apply.push('$deadline = [DateTime]::UtcNow.AddSeconds(20); do { $appliedAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.AddressState -eq "Preferred" -and $_.IPAddress -notlike "169.254.*" }); if ($appliedAddresses.Count -gt 0) { break }; Start-Sleep -Milliseconds 200 } while ([DateTime]::UtcNow -lt $deadline); if ($appliedAddresses.Count -eq 0) { throw "DHCP apply did not obtain a usable lease" }');
+		else apply.push('if ((Get-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop).Dhcp -ne "Enabled") { throw "DHCP apply did not enable DHCP" }');
+	} else {
+		apply.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength} | Out-Null`, `$deadline = [DateTime]::UtcNow.AddSeconds(10); do { $addressState = (Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -ErrorAction SilentlyContinue).AddressState; if ($addressState -eq 'Preferred') { break }; Start-Sleep -Milliseconds 100 } while ([DateTime]::UtcNow -lt $deadline); if ($addressState -ne 'Preferred') { throw 'IPv4 address did not become usable' }`);
+		if (config.gateway) apply.push(`$routeMetric = ($oldRoutes | Select-Object -First 1).RouteMetric; if ($null -eq $routeMetric) { New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop ${config.gateway} | Out-Null } else { New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop ${config.gateway} -RouteMetric $routeMetric | Out-Null }`);
+		apply.push(`$appliedAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop); if ($appliedAddresses.Count -ne 1 -or $appliedAddresses[0].IPAddress -ne '${config.address}' -or $appliedAddresses[0].PrefixLength -ne ${config.prefixLength}) { throw "IPv4 apply did not preserve the requested address" }`, "$appliedRoutes = @(Get-NetRoute -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.DestinationPrefix -eq '0.0.0.0/0' })", config.gateway ? `if ($appliedRoutes.Count -ne 1 -or $appliedRoutes[0].NextHop -ne '${config.gateway}') { throw "IPv4 apply did not preserve the requested gateway" }` : 'if ($appliedRoutes.Count -ne 0) { throw "IPv4 apply kept an unexpected default route" }');
+		// The reader only offers an adapter for editing while ActiveStore and
+		// PersistentStore agree, so a change that leaves them apart would make the
+		// adapter read-only and resurface the old address after a reboot. Checking
+		// the persistent side here turns that into a failure with a rollback.
+		apply.push(`$persistedAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction SilentlyContinue); if ($persistedAddresses.Count -ne 1 -or $persistedAddresses[0].IPAddress -ne '${config.address}' -or $persistedAddresses[0].PrefixLength -ne ${config.prefixLength}) { throw "IPv4 apply did not persist the requested address" }`, "$persistedRoutes = @(Get-NetRoute -InterfaceIndex $i -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction SilentlyContinue | Where-Object { $_.DestinationPrefix -eq '0.0.0.0/0' })", config.gateway ? `if ($persistedRoutes.Count -ne 1 -or $persistedRoutes[0].NextHop -ne '${config.gateway}') { throw "IPv4 apply did not persist the requested gateway" }` : 'if ($persistedRoutes.Count -ne 0) { throw "IPv4 apply left a persistent default route" }');
+	}
+	if (dnsStep) apply.push(dnsStep);
+	apply.push(...dnsVerify);
+	const rollback = ['$applyError = $_', 'try {', '$currentAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue); if ($currentAddresses.Count -gt 0) { $currentAddresses | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop }', "$currentRoutes = @(Get-NetRoute -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.DestinationPrefix -eq '0.0.0.0/0' }); if ($currentRoutes.Count -gt 0) { $currentRoutes | Remove-NetRoute -Confirm:$false -ErrorAction Stop }", 'if ($oldDhcp -eq "Enabled") { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled; if ($oldDhcpNeedsAddress -or $oldDhcpNeedsRoute) { $deadline = [DateTime]::UtcNow.AddSeconds(20); do { $restoredAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.AddressState -eq "Preferred" -and $_.IPAddress -notlike "169.254.*" }); $restoredRoutes = @(Get-NetRoute -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.DestinationPrefix -eq "0.0.0.0/0" }); $addressReady = -not $oldDhcpNeedsAddress -or $restoredAddresses.Count -gt 0; $routeReady = -not $oldDhcpNeedsRoute -or $restoredRoutes.Count -gt 0; if ($addressReady -and $routeReady) { break }; Start-Sleep -Milliseconds 200 } while ([DateTime]::UtcNow -lt $deadline); if (-not ($addressReady -and $routeReady)) { throw "DHCP rollback did not restore a usable lease" } } } else { Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled; foreach ($address in $oldAddresses) { New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $address.IPAddress -PrefixLength $address.PrefixLength | Out-Null; $deadline = [DateTime]::UtcNow.AddSeconds(10); do { $restoredState = (Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress $address.IPAddress -ErrorAction SilentlyContinue).AddressState; if ($restoredState -eq "Duplicate") { throw "restored IPv4 address is duplicate" }; if ($restoredState -eq "Preferred") { break }; Start-Sleep -Milliseconds 100 } while ([DateTime]::UtcNow -lt $deadline); if ($restoredState -ne "Preferred") { throw "restored IPv4 address did not become usable" } }; foreach ($route in $oldRoutes) { New-NetRoute -InterfaceIndex $i -DestinationPrefix $route.DestinationPrefix -NextHop $route.NextHop -RouteMetric $route.RouteMetric | Out-Null } }', ...dnsRollback, '} catch { throw "network apply failed: $($applyError.Exception.Message); rollback failed: $($_.Exception.Message)" }', 'throw $applyError'];
+	return [...prefix, ...snapshot, `try { ${apply.join('; ')} } catch { ${rollback.join('; ')} }`].join('; ');
 }
 
 /**
@@ -1552,7 +1429,7 @@ export function parseAvailableNetworks(list: Pointer): NetWifiNetwork[] {
 		// Projected explicitly rather than by rest-spread: the decoded entry carries
 		// the raw SSID bytes and the stored profile name, which the join path needs
 		// and the wire contract does not have a field for.
-		const entry: NetWifiNetwork = { ssid: found.ssid, signal: found.signal, secured: found.secured, active: found.active };
+		const entry: NetWifiNetwork = { ssid: found.ssid, bssid: found.bssid, signal: found.signal, secured: found.secured, security: found.security, supported: found.supported, active: found.active };
 		const previous = best.get(entry.ssid);
 		if (!previous) best.set(entry.ssid, entry);
 		else if ((entry.signal ?? -1) > (previous.signal ?? -1)) best.set(entry.ssid, { ...entry, active: previous.active || entry.active, secured: previous.secured || entry.secured });
@@ -1582,6 +1459,27 @@ export function findScannedNetwork(list: Pointer, ssid: string): AvailableNetwor
 	let best: AvailableNetwork | null = null;
 	for (const entry of availableNetworks(list)) if (entry.ssid === ssid && (!best || (entry.signal ?? -1) > (best.signal ?? -1))) best = entry;
 	return best;
+}
+
+/** DOT11_AUTH_ALGO_80211_OPEN — no authentication at all. */
+const AUTH_ALGO_OPEN = 1;
+/** DOT11_AUTH_ALGO_RSNA_PSK — WPA2-Personal. Note 6 is RSNA, which is 802.1X enterprise and NOT this. */
+const AUTH_ALGO_RSNA_PSK = 7;
+
+/**
+ * The security label and joinability of one scanned network.
+ *
+ * The wire contract carries a scanner label because the Linux reader has one
+ * from nmcli; Windows reports a DOT11_AUTH_ALGORITHM instead, so the label is
+ * built from it. Only open, WPA2-PSK and WPA3-SAE are offered - everything else
+ * (802.1X enterprise, the legacy WPA-None modes) needs a profile shape this app
+ * does not write, and offering it would hand the user a button that fails.
+ */
+function windowsWifiSecurity(auth: number, secured: boolean): { security: string; supported: boolean } {
+	if (!secured) return { security: '', supported: auth === AUTH_ALGO_OPEN };
+	if (auth === AUTH_ALGO_WPA3_SAE) return { security: 'WPA3', supported: true };
+	if (auth === AUTH_ALGO_RSNA_PSK) return { security: 'WPA2', supported: true };
+	return { security: 'WPA-ENTERPRISE', supported: false };
 }
 
 /** One decoded WLAN_AVAILABLE_NETWORK, plus the fields the public list has no room for. */
@@ -1617,6 +1515,8 @@ function* availableNetworks(list: Pointer): Generator<AvailableNetwork> {
 		// `slice`, not `subarray`: the caller frees the list as soon as this
 		// generator is drained, and the bytes have to outlive it.
 		const ssidBytes = new Uint8Array(toArrayBuffer(list, base + AVAILABLE_SSID_OFFSET, MAX_SSID_LENGTH)).slice(0, ssidLength);
+		const secured = read.u32(list, base + AVAILABLE_SECURITY_OFFSET) !== 0;
+		const auth = read.u32(list, base + AVAILABLE_AUTH_OFFSET);
 		yield {
 			// Lossy by nature — an SSID is not guaranteed to be UTF-8 — so this form
 			// is for display and for matching what the user picked, never for
@@ -1625,9 +1525,15 @@ function* availableNetworks(list: Pointer): Generator<AvailableNetwork> {
 			ssidBytes,
 			profileName: readFixedUtf16(list, base + AVAILABLE_PROFILE_NAME_OFFSET, AVAILABLE_PROFILE_NAME_CHARS),
 			signal,
-			secured: read.u32(list, base + AVAILABLE_SECURITY_OFFSET) !== 0,
+			secured,
 			active: (read.u32(list, base + AVAILABLE_FLAGS_OFFSET) & AVAILABLE_NETWORK_CONNECTED) !== 0,
-			auth: read.u32(list, base + AVAILABLE_AUTH_OFFSET),
+			auth,
+			...windowsWifiSecurity(auth, secured),
+			// WLAN_AVAILABLE_NETWORK describes a NETWORK, not one access point, and
+			// carries no BSSID. The Linux reader has one and uses it to tell equal
+			// names apart; here the profile names the SSID and the WLAN service picks
+			// the access point itself, so there is nothing honest to put here.
+			bssid: null,
 			connectable: read.u32(list, base + AVAILABLE_CONNECTABLE_OFFSET) !== 0,
 			notConnectableReason: read.u32(list, base + AVAILABLE_NOT_CONNECTABLE_REASON_OFFSET),
 		};
@@ -1786,7 +1692,7 @@ export function assertWindowsWifiKey(password: string, sae: boolean): void {
 		if (sae) throw new Error('this network uses WPA3, which takes a passphrase rather than a raw 64-digit key');
 		return;
 	}
-	if (!isValidWifiKey(password, sae)) throw new Error('the password is not one a WPA2 or WPA3 personal network could accept');
+	if (!isValidWifiKey(sae ? 'WPA3' : 'WPA2', password)) throw new Error('the password is not one a WPA2 or WPA3 personal network could accept');
 	if (!/^[\x20-\x7e]+$/.test(password)) throw new Error('Windows accepts only printable ASCII characters in a Wi-Fi passphrase');
 }
 
@@ -2206,6 +2112,28 @@ function readScannedNetwork(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Ar
 	}
 }
 
+/**
+ * The association of ONE adapter, read straight from the WLAN service.
+ *
+ * Asked for by GUID rather than taken from {@link readWindowsWifi}, which
+ * describes every adapter and answers on the wire contract - it has no field for
+ * whether the radio is actually on the network, only for the name it is
+ * associating with. Null when the adapter has no current connection, which is
+ * what an unassociated one reports.
+ */
+function readAssociation(guid: string): { ssid: string | null; connected: boolean } | null {
+	try {
+		return withWlanHandle((api, handle) => {
+			const guidBytes = guidToBytes(guid);
+			return queryInterface(api, handle, ptr(guidBytes), OPCODE_CURRENT_CONNECTION, readConnectionAttributes);
+		});
+	} catch {
+		// A service that cannot be asked right now is not an adapter that has
+		// joined; the caller polls again until its own deadline.
+		return null;
+	}
+}
+
 /** Poll the adapter's association until it reports the requested network, or give up. */
 async function waitForAssociation(guid: string, ssid: string): Promise<void> {
 	const deadline = Date.now() + JOIN_TIMEOUT_MS;
@@ -2214,7 +2142,8 @@ async function waitForAssociation(guid: string, ssid: string): Promise<void> {
 		// THIS one. WlanConnect only queues the attempt, and the SSID shows up in the
 		// connection attributes while the adapter is still associating — so a check on
 		// the name alone reports a join that never happened.
-		if (readWindowsWifi().get(guid)?.ssid === ssid && connectedGuids.has(guid)) return;
+		const association = readAssociation(guid);
+		if (association?.connected && association.ssid === ssid) return;
 		if (Date.now() >= deadline) throw new Error('the adapter did not join the network — check the password');
 		await delay(JOIN_POLL_MS);
 	}

@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { t, translateError } from '../../scripts/language.ts';
+	import { get } from 'svelte/store';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { InterfaceFormState } from '../../scripts/networkForm.svelte.ts';
-	import { canApplyMode, canEditInterfaceIPv4, canEditInterfaceWifi, isJoinable, networkState, scanWifiNetworks } from '../../scripts/networkState.ts';
-	import { validateIPv4Config, type NetIPv4Config, type NetWifiNetwork } from '@shared';
+	import { applyInterfaceConfig, joinWifiNetwork, networkState, refreshNetworkState, scanWifiNetworks } from '../../scripts/networkState.ts';
+	import { networkConfigFormFrom, networkConfigFromForm, networkFormUpdate, validateNetworkConfigForm, type DnsUpdateMode, type NetworkConfigForm } from '../../scripts/networkConfig.ts';
+	import { ipv4BaselineOf, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Baseline, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -20,118 +21,152 @@
 	let { areaID, interfaceID, position = LAYOUT.content, onBack }: Props = $props();
 
 	let iface = $derived($networkState.interfaces.find(i => i.id === interfaceID));
-	// The SAME rules the list applied before it offered Configure, re-evaluated
-	// here against the live snapshot rather than trusted from the moment the screen
-	// opened. State keeps arriving while the editor is up: a read can degrade to
-	// the address-only fallback, an interface can gain a second IPv4 address, be
-	// taken over by another stack, or disappear altogether. Checking only the
-	// host-wide capability meant Save stayed available through all of those.
-	//
-	// Independent of each other: Windows lets any user join a Wi-Fi network but
-	// only an elevated one change an address, so this screen can legitimately offer
-	// the Wi-Fi half and not the addressing half.
-	let canEditIPv4 = $derived(canEditInterfaceIPv4(iface, $networkState));
-	let canEditWifi = $derived(canEditInterfaceWifi(iface, $networkState));
+	let canEditIPv4 = $derived($networkState.known && $networkState.detail === 'full' && !!iface && iface.ipv4Configurable && $networkState.capabilities.ipv4);
+	let canEditWifi = $derived($networkState.known && $networkState.detail === 'full' && !!iface && iface.wifiConfigurable && $networkState.capabilities.wifi);
 
-	// Seeded from what the host actually reports, `unknown` included. Collapsing an
-	// unknown reading to DHCP made the form claim the interface was on DHCP and let
-	// Save convert it to exactly that. The fields and the basis they were seeded from
-	// live together in one rune module, because following the host is a question of
-	// ORDERING between a store update, the effect it schedules and the continuation of
-	// an await — which is testable there and is not testable field by field here.
-	const form = new InterfaceFormState();
-	form.watch(() => interfaceID);
+	let mode = $state<NetAddressMode>('unknown');
+	let address = $state('');
+	let prefix = $state('24');
+	let gateway = $state('');
+	let dnsMode = $state<DnsUpdateMode>('unchanged');
+	let dns = $state('');
 	let busy = $state(false);
 	let message = $state('');
 	let failed = $state(false);
 	let networks = $state<NetWifiNetwork[]>([]);
 	let scanning = $state(false);
 	let joinSSID = $state('');
-	// Whether the armed network needs a key. Decides between the password field and
-	// the open-network warning; both end at the same explicit Connect button.
-	let joinSecured = $state(true);
+	let joinBSSID = $state<string | null>(null);
 	let password = $state('');
 
-	function buildConfig(): NetIPv4Config {
-		if (form.mode === 'dhcp') return { mode: 'dhcp' };
-		return {
-			mode: 'static',
-			address: form.address.trim(),
-			prefixLength: Number(form.prefix.trim()),
-			gateway: form.gateway.trim(),
-			dns: form.dns
-				.split(',')
-				.map(server => server.trim())
-				.filter(Boolean),
-		};
+	// Seed the form from the live state when the screen opens, then keep it in
+	// step with the host only while the user has not started editing. Re-seeding
+	// over typed input would throw the user's work away; saving typed input over a
+	// configuration that changed underneath would throw the host's change away,
+	// so that case blocks Save until the user reloads the form.
+	let baseline = $state<NetIPv4Baseline | null>(null);
+	let seededForm: NetworkConfigForm | null = null;
+	let stale = $state(false);
+	$effect(() => {
+		if (!iface || busy) return;
+		const update = networkFormUpdate(ipv4BaselineOf(iface), baseline, formDirty());
+		if (update === 'keep') return;
+		if (update === 'stale') {
+			stale = true;
+			failed = true;
+			message = $t('settings.network.changedOutside');
+			return;
+		}
+		seedFrom(iface);
+		if (update === 'reseed') {
+			failed = false;
+			message = $t('settings.network.reloadedFromHost');
+		}
+	});
+
+	function seedFrom(source: NetInterfaceInfo): void {
+		const form = networkConfigFormFrom(source);
+		mode = form.mode;
+		address = form.address;
+		prefix = form.prefix;
+		gateway = form.gateway;
+		dnsMode = form.dnsMode;
+		dns = form.dns;
+		seededForm = form;
+		baseline = ipv4BaselineOf(source);
+		stale = false;
+	}
+
+	function currentForm(): NetworkConfigForm {
+		return { mode, address, prefix, gateway, dnsMode, dns };
+	}
+
+	function formDirty(): boolean {
+		return JSON.stringify(currentForm()) !== JSON.stringify(seededForm);
+	}
+
+	function reloadForm(): void {
+		if (iface) seedFrom(iface);
+		failed = false;
+		message = '';
+	}
+
+	function seedCurrentInterface(): void {
+		const current = get(networkState).interfaces.find(item => item.id === interfaceID);
+		if (current) seedFrom(current);
+	}
+
+	/**
+	 * Publish what the host looks like after a Wi-Fi join, and leave the addressing
+	 * form to the rule every other update goes through.
+	 *
+	 * A successful join already stored the state it returned. A failed one has to
+	 * be read back, because the attempt may still have moved the interface. Neither
+	 * re-seeds the form here: the join changes the interface the form is open on,
+	 * which is exactly the case the effect above decides — keep what the user typed,
+	 * mark it stale when the host moved under it, re-seed only a clean form.
+	 * Re-seeding unconditionally threw away a half-typed address, gateway or DNS
+	 * and cleared the stale flag with it.
+	 */
+	async function syncAfterWifiMutation(state?: NetworkStateInfo): Promise<void> {
+		if (state) return;
+		try {
+			await refreshNetworkState();
+		} catch {}
+	}
+
+	async function refreshWifiNetworks(): Promise<void> {
+		scanning = true;
+		try {
+			networks = await scanWifiNetworks(interfaceID);
+		} catch {
+			networks = [];
+		} finally {
+			scanning = false;
+		}
 	}
 
 	async function save(): Promise<void> {
-		// Re-checked at the instant of the click, not only when the button rendered:
-		// a broadcast can land between the two and take the interface away.
-		if (!canEditIPv4) {
-			failed = true;
-			message = $t('settings.network.readOnlyNote');
-			return;
-		}
-		// The host's configuration moved while this form was being edited, so what is
-		// on screen was derived from a state that no longer exists. Writing it would
-		// silently undo whatever changed it — a Wi-Fi join, the system's own network
-		// UI, or another client.
-		if (form.stale) {
-			failed = true;
-			message = $t('settings.network.staleNote');
-			return;
-		}
-		// Guarded in the markup as well; repeated here because Save is the step that
-		// rewrites the host's addressing and must never act on a mode nobody chose.
-		if (!canApplyMode(form.mode)) {
-			failed = true;
-			message = $t('settings.network.invalidField', { field: $t('settings.network.field.mode') });
-			return;
-		}
-		const config = buildConfig();
-		// The gateway rule is the host's, not the protocol's: macOS has no
-		// `networksetup` spelling for a static address without a router, while every
-		// other platform accepts one on an isolated segment. Applying the host's own
-		// answer here is what turns that into a named field the user can fix, instead
-		// of a platform error arriving after the configuration was called valid.
-		const invalid = validateIPv4Config(config, $networkState.capabilities.staticGatewayRequired);
+		if (busy || scanning || stale || !baseline) return;
+		const expected = baseline;
+		const form = currentForm();
+		const invalid = validateNetworkConfigForm(form, $networkState.capabilities);
 		if (invalid) {
 			failed = true;
-			message = $t('settings.network.invalidField', { field: $t('settings.network.field.' + invalid) });
+			message = invalid === 'mode' ? $t('settings.network.modeUnknown') : $t('settings.network.invalidField', { field: $t('settings.network.field.' + invalid) });
 			return;
 		}
+		const config = networkConfigFromForm(form) as NetIPv4Config;
 		busy = true;
 		message = '';
 		try {
-			// Seeded from the ANSWER, not by clearing the basis and waiting for the next
-			// broadcast: that left `seeded` null while the screen still showed the form,
-			// so the following broadcast overwrote whatever the user had begun typing
-			// after the "saved" message. This also shows the values the host normalized
-			// or refused to take, straight away. The RPC and the seeding are one call so
-			// that their order is the tested one rather than a copy of it.
-			await form.apply(interfaceID, config);
+			await applyInterfaceConfig(interfaceID, config, expected);
+			seedCurrentInterface();
 			failed = false;
 			message = $t('settings.network.applied');
 		} catch (error) {
 			failed = true;
 			message = translateError(error);
+			try {
+				const current = (await refreshNetworkState()).interfaces.find(item => item.id === interfaceID);
+				// A stale form is reloaded so the user sees what they would now be
+				// editing over. Any other failure keeps the typed values for a retry and
+				// leaves the baseline where it was: if the host moved anyway, whether
+				// the failed attempt moved it or somebody else did, the form goes stale
+				// and Save stays blocked until the user reloads it. Adopting the new
+				// state here instead would let the retry overwrite that change without
+				// ever saying so.
+				if (current && (error as { code?: string }).code === 'NETCONFIG_STALE') seedFrom(current);
+			} catch {}
 		} finally {
 			busy = false;
 		}
 	}
 
 	async function scan(): Promise<void> {
+		if (scanning || busy) return;
 		scanning = true;
 		message = '';
-		// The moment a new scan starts, what is on screen is the PREVIOUS sweep. If
-		// this one fails the user is shown an error, and leaving the old rows there
-		// left them able to click a network the radio can no longer see — joining
-		// something the error had just told them nothing was known about.
-		networks = [];
-		joinSSID = '';
-		password = '';
 		try {
 			networks = await scanWifiNetworks(interfaceID);
 			if (networks.length === 0) {
@@ -147,48 +182,55 @@
 	}
 
 	function selectNetwork(network: NetWifiNetwork): void {
-		joinSSID = network.ssid;
-		joinSecured = network.secured;
+		if (!network.supported) return;
 		// An open network takes no key, and asking for one would invite the user to
-		// type a password that cannot be used. It still gets a confirmation step
-		// rather than joining on the single click that selected it: a join drops the
-		// current connection — possibly the very one this screen is being driven
-		// over — and attaches the machine to an unencrypted network it may only have
-		// been looking at.
+		// type a password that cannot be used.
 		password = '';
+		if (!network.secured) {
+			joinSSID = '';
+			joinBSSID = null;
+			void join(network);
+			return;
+		}
+		joinSSID = network.ssid;
+		joinBSSID = network.bssid;
 	}
 
-	async function join(): Promise<void> {
-		if (!joinSSID || !canEditWifi) return;
-		// Read once, before the await, and used for both the request and the report.
-		// `joinSSID` is a live binding the user can move while the join is in flight, so
-		// reading it again afterwards let the success message name a network the backend
-		// was never asked about.
-		const submitted = joinSSID;
+	async function join(network?: NetWifiNetwork): Promise<void> {
+		const ssid = network?.ssid ?? joinSSID;
+		const bssid = network?.bssid ?? joinBSSID;
+		if (!ssid || busy || scanning) return;
 		busy = true;
 		message = '';
 		try {
-			await form.join(interfaceID, submitted, password);
+			const state = await joinWifiNetwork(interfaceID, ssid, bssid, password);
+			await syncAfterWifiMutation(state);
 			failed = false;
-			message = $t('settings.network.joined', { ssid: submitted });
+			message = $t('settings.network.joined', { ssid });
+			joinSSID = '';
+			joinBSSID = null;
 			password = '';
 		} catch (error) {
+			await syncAfterWifiMutation();
 			failed = true;
 			message = translateError(error);
 		} finally {
 			busy = false;
+			void refreshWifiNetworks();
 		}
 	}
 
+	function networkLabel(network: NetWifiNetwork): string {
+		const duplicate = networks.some(item => item !== network && item.ssid === network.ssid);
+		return duplicate && network.bssid ? `${network.ssid} — ${network.bssid}` : network.ssid;
+	}
+
 	// Row positions shift with the mode: the static fields exist only in 'static'.
-	let staticRows = $derived(form.mode === 'static' ? 4 : 0);
-	// ...and with the addressing half being absent altogether on a host that cannot
-	// change an address, in which case the Wi-Fi section starts at the top.
-	let wifiBaseY = $derived(canEditIPv4 ? 1 + staticRows + 1 : 0);
-	// The armed network contributes a focusable row only when it needs a key — the
-	// open-network warning is text, so it takes no navigation position.
-	let joinRows = $derived(joinSSID && joinSecured ? 1 : 0);
-	let buttonsY = $derived(canEditWifi ? wifiBaseY + 1 + networks.length + joinRows + (joinSSID ? 1 : 0) : wifiBaseY);
+	let staticRows = $derived(mode === 'static' ? 3 : 0);
+	let dnsRows = $derived(dnsMode === 'custom' ? 2 : 1);
+	let saveY = $derived(canEditIPv4 ? 1 + staticRows + dnsRows : 0);
+	let wifiBaseY = $derived(canEditIPv4 ? saveY + 1 : 0);
+	let buttonsY = $derived(canEditWifi ? wifiBaseY + 2 + networks.length + (joinSSID ? 1 : 0) : wifiBaseY);
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));
 </script>
@@ -241,41 +283,40 @@
 <div class="settings">
 	<div class="container">
 		<div class="title">{iface?.name ?? interfaceID}</div>
-		<div class="note">{$t('settings.network.applyWarning')}</div>
-
 		{#if canEditIPv4}
+			<div class="note">{$t('settings.network.applyWarning')}</div>
+
 			<div role="group" data-mouse-activate-area={areaID}>
-				<!-- Held shut for the whole operation, not just the button. An edit made
-				     while the RPC was in flight was thrown away the moment it answered:
-				     the handler seeds the form from the state the host returned, which is
-				     the older operation's result overwriting the newer typing. -->
-				<Select bind:value={form.mode} label={$t('settings.network.addressing')} position={[0, 0]} disabled={busy} flex>
-					<!-- Offered only while it is what the host reported, so the form can
-					     show the truth without inviting the user to select it back. -->
-					{#if form.mode === 'unknown'}<SelectOption value="unknown" label={$t('settings.network.modeUnknown')} />{/if}
+				<Select bind:value={mode} label={$t('settings.network.addressing')} position={[0, 0]} disabled={busy} flex>
 					<SelectOption value="dhcp" label={$t('settings.network.dhcp')} />
 					<SelectOption value="static" label={$t('settings.network.static')} />
 				</Select>
 			</div>
-			{#if form.mode === 'unknown'}
-				<div class="note">{$t('settings.network.invalidField', { field: $t('settings.network.field.mode') })}</div>
-			{/if}
 
-			{#if form.mode === 'static'}
+			{#if mode === 'static'}
 				<div role="group" data-mouse-activate-area={areaID}>
-					<Input bind:value={form.address} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, 1]} disabled={busy} flex />
-					<Input bind:value={form.prefix} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, 2]} disabled={busy} flex />
-					<Input bind:value={form.gateway} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, 3]} disabled={busy} flex />
-					<Input bind:value={form.dns} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 1.1.1.1" position={[0, 4]} disabled={busy} flex />
+					<Input bind:value={address} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, 1]} disabled={busy} flex />
+					<Input bind:value={prefix} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, 2]} disabled={busy} flex />
+					<Input bind:value={gateway} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, 3]} disabled={busy} flex />
 				</div>
 			{/if}
 
-			{#if form.stale}
-				<div class="note failed">{$t('settings.network.staleNote')}</div>
-			{/if}
+			<div role="group" data-mouse-activate-area={areaID}>
+				<Select bind:value={dnsMode} label={$t('settings.network.dnsPolicy')} position={[0, 1 + staticRows]} disabled={busy} flex>
+					<SelectOption value="unchanged" label={$t('settings.network.dnsUnchanged')} />
+					<SelectOption value="automatic" label={$t('settings.network.dnsAutomatic')} />
+					<SelectOption value="custom" label={$t('settings.network.dnsCustom')} />
+				</Select>
+				{#if dnsMode === 'custom'}
+					<Input bind:value={dns} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 2001:db8::53" position={[0, 2 + staticRows]} disabled={busy} flex />
+				{/if}
+			</div>
 
-			<ButtonBar justify="center" basePosition={[0, 1 + staticRows]}>
-				<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy || form.stale || !canApplyMode(form.mode)} onConfirm={save} />
+			<ButtonBar justify="center" basePosition={[0, saveY]}>
+				<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy || scanning || stale} onConfirm={save} />
+				{#if stale}
+					<Button icon="/img/back.svg" label={$t('settings.network.reloadForm')} disabled={busy || scanning} onConfirm={reloadForm} />
+				{/if}
 			</ButtonBar>
 		{/if}
 
@@ -284,28 +325,21 @@
 			<ButtonBar justify="center" basePosition={[0, wifiBaseY]}>
 				<Button icon="/img/search.svg" label={scanning ? $t('settings.network.scanning') : $t('settings.network.scan')} disabled={scanning || busy} onConfirm={scan} />
 			</ButtonBar>
-			{#each networks as network, index (network.ssid)}
+			{#each networks as network, index (`${network.ssid}:${network.bssid ?? ''}:${network.security}`)}
 				<div role="group" data-mouse-activate-area={areaID}>
-					<Button label={network.ssid} icon={network.active ? '/img/check.svg' : undefined} alt={network.active ? $t('settings.network.connected') : ''} position={[0, wifiBaseY + 1 + index]} onConfirm={() => selectNetwork(network)} disabled={!isJoinable(network, { busy, scanning })} />
+					<Button label="{networkLabel(network)}{network.active ? ' ✓' : ''}" position={[0, wifiBaseY + 1 + index]} onConfirm={() => selectNetwork(network)} disabled={busy || scanning || !network.supported} />
 					<div class="network">
-						<span>{network.secured ? $t('settings.network.secured') : $t('settings.network.open')}</span>
+						<span>{network.supported ? (network.secured ? $t('settings.network.secured') : $t('settings.network.open')) : $t('settings.network.unsupportedSecurity')}</span>
 						<span>{network.signal !== null ? `${network.signal}%` : '—'}</span>
 					</div>
 				</div>
 			{/each}
 			{#if joinSSID}
-				{#if joinSecured}
-					<div role="group" data-mouse-activate-area={areaID}>
-						<Input bind:value={password} label={$t('settings.network.passwordFor', { ssid: joinSSID })} type="password" position={[0, wifiBaseY + 1 + networks.length]} disabled={busy} flex />
-					</div>
-				{:else}
-					<!-- An open network has no key to type, so this is the whole of the
-					     confirmation: what is being joined, that it is unencrypted, and
-					     that the current connection may go down with it. -->
-					<div class="note">{$t('settings.network.confirmOpenJoin', { ssid: joinSSID })}</div>
-				{/if}
-				<ButtonBar justify="center" basePosition={[0, wifiBaseY + 1 + networks.length + joinRows]}>
-					<Button icon="/img/check.svg" label={$t('settings.network.join')} disabled={busy} onConfirm={join} />
+				<div role="group" data-mouse-activate-area={areaID}>
+					<Input bind:value={password} label={$t('settings.network.passwordFor', { ssid: joinSSID })} type="password" position={[0, wifiBaseY + 1 + networks.length]} disabled={busy} flex />
+				</div>
+				<ButtonBar justify="center" basePosition={[0, wifiBaseY + 2 + networks.length]}>
+					<Button icon="/img/check.svg" label={$t('settings.network.join')} disabled={busy || scanning} onConfirm={join} />
 				</ButtonBar>
 			{/if}
 		{/if}
@@ -314,11 +348,7 @@
 			<div class="message" class:failed>{message}</div>
 		{/if}
 	</div>
-	<!-- Back is held shut while an apply or a join is in flight. Leaving mid-operation
-	     did not cancel anything — the host kept reconfiguring — but it did take away
-	     the only screen that would report the outcome, so the user was left with a
-	     changed machine and no result. -->
 	<ButtonBar justify="center" basePosition={[0, buttonsY + 1]}>
-		<Button icon="/img/back.svg" label={$t('common.back')} disabled={busy || scanning} onConfirm={onBack} />
+		<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 	</ButtonBar>
 </div>

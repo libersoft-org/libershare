@@ -2,12 +2,16 @@ import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
-import { CodedError, ErrorCodes, isValidSSID, isValidWifiKey, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
-import { connectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, windowsApplyIPv4Command, windowsIPv4Objection, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
-import { applyLinuxIPv4, connectLinuxWifi, isLinuxWritable, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
+import { CodedError, ErrorCodes, ipv4BaselineOf, isSelectableInterface, isValidSSID, isValidWifiKey, normalizeDnsServers, sameIPv4Baseline, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
+import { connectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND, windowsApplyIPv4Command } from './system-network-windows.ts';
+import { applyLinuxIPv4, connectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
 import { applyMacIPv4, isMacWifiConfigurable, isMacWritable, readMacNetworkState } from './system-network-macos.ts';
+import { networkHelperAvailable, runElevatedNetworkHelper } from './network-helper-client.ts';
+import { windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
 
 const execFileAsync = promisify(execFile);
+const WINDOWS_POWERSHELL = process.platform === 'win32' ? windowsPowerShellPath() : 'powershell.exe';
+const WINDOWS_SYSTEM_ENV = process.platform === 'win32' ? windowsSystemEnvironment() : undefined;
 
 /**
  * Host network state and configuration, dispatched per platform.
@@ -18,7 +22,7 @@ const execFileAsync = promisify(execFile);
  *  - IPv4 (address, gateway, DNS) applies on Windows, on a Linux host running
  *    NetworkManager, and on macOS. All three need privileges, and each answers
  *    that question differently — an elevated token on Windows, a polkit verdict
- *    of `yes` on Linux, membership of the `admin` group on macOS. The answer is
+ *    of `yes` on Linux, and an effective root process on macOS. The answer is
  *    probed once and cached, so the UI can hide an edit the process could never
  *    complete instead of letting the user discover it when Save fails.
  *  - Wi-Fi scan/join applies on Windows (wlanapi, no elevation needed) and on a
@@ -56,27 +60,82 @@ const CACHE_TTL_MS = 5000;
  * went on to make anyway.
  */
 const APPLY_TIMEOUT_MS = 45000;
+/** Transport ceiling for a secret sent to NetworkManager. */
+export const MAX_WIFI_PASSWORD_BYTES = 1024;
 
-let cached: { at: number; interfaces: NetInterfaceInfo[]; detail: NetworkStateInfo['detail'] } | null = null;
-let inFlight: Promise<NetInterfaceInfo[]> | null = null;
-/**
- * Bumped by {@link resetNetworkStateCache}. A read carries the generation it
- * started under, so a read still in flight when a configuration change lands
- * publishes nothing — its answer describes the host as it was before the change.
- */
-let cacheGeneration = 0;
+export interface NetworkSnapshot {
+	interfaces: NetInterfaceInfo[];
+	detail: NetworkStateInfo['detail'];
+}
 
 /**
- * Serializes every host reconfiguration.
- *
- * An apply is several destructive steps — flush the address, set the new one,
- * rewrite the route, bring the profile back up — and two clients running them at
- * once interleave those steps and leave the interface with both configurations
- * stacked. One lock for the whole host rather than one per interface: a Wi-Fi
- * join and an IPv4 apply on different interfaces still contend over the default
- * route and the resolver list.
+ * TTL cache that shares concurrent reads without letting an invalidated read
+ * overwrite a newer snapshot when it eventually settles.
  */
-const applyLock = new Mutex();
+export class NetworkStateCache {
+	private cached: { at: number; snapshot: NetworkSnapshot } | null = null;
+	private inFlight: { generation: number; promise: Promise<NetworkSnapshot> } | null = null;
+	private generation = 0;
+	private readonly reader: () => Promise<NetworkSnapshot>;
+	private readonly ttlMs: number;
+
+	constructor(reader: () => Promise<NetworkSnapshot>, ttlMs: number = CACHE_TTL_MS) {
+		this.reader = reader;
+		this.ttlMs = ttlMs;
+	}
+
+	async read(): Promise<NetworkSnapshot> {
+		const now = Date.now();
+		if (this.cached && now - this.cached.at < this.ttlMs) return this.cached.snapshot;
+
+		const generation = this.generation;
+		let pending = this.inFlight;
+		if (!pending || pending.generation !== generation) {
+			pending = { generation, promise: this.reader() };
+			this.inFlight = pending;
+		}
+
+		let snapshot: NetworkSnapshot;
+		try {
+			snapshot = await pending.promise;
+		} catch (err) {
+			if (this.inFlight === pending) this.inFlight = null;
+			throw err;
+		}
+		// Reset means a host mutation began after this read. Returning the old
+		// snapshot would still let its caller (notably the periodic broadcaster)
+		// publish pre-mutation state over the fresh result, even though it no longer
+		// enters the cache. Join the current generation instead; it either reuses the
+		// post-mutation read already in flight or serves its completed cache entry.
+		if (this.generation !== generation) return this.read();
+		this.cached = { snapshot, at: Date.now() };
+		if (this.inFlight === pending) this.inFlight = null;
+		return snapshot;
+	}
+
+	reset(): void {
+		this.generation++;
+		this.cached = null;
+		this.inFlight = null;
+	}
+}
+
+const stateCache = new NetworkStateCache(async () => {
+	const detail: NetworkStateInfo['detail'] = process.platform === 'win32' || process.platform === 'linux' || process.platform === 'darwin' ? 'full' : 'addressesOnly';
+	try {
+		return { interfaces: assertReadProducedSomething(await readPlatform()), detail };
+	} catch (err) {
+		console.warn('[system-network] Platform read failed, falling back to addresses only:', (err as Error).message);
+		return { interfaces: readGenericInterfaces(), detail: 'addressesOnly' };
+	}
+});
+
+const mutationMutex = new Mutex();
+
+/** Serialize changes to the one host network stack. */
+export function runNetworkMutation<T>(action: () => Promise<T>): Promise<T> {
+	return mutationMutex.runExclusive(action);
+}
 
 /**
  * Addresses and MACs from the Node/Bun runtime — everything every platform can
@@ -94,10 +153,7 @@ export function readGenericInterfaces(): NetInterfaceInfo[] {
 			prefixLength: prefixFromNetmask(e.netmask, e.family === 'IPv4'),
 		}));
 		const mac = usable.find(e => e.mac && e.mac !== '00:00:00:00:00:00')?.mac ?? null;
-		// This reader is the fallback for a platform with no configuration backend at
-		// all, and its ids are runtime device names rather than the identifiers an
-		// apply resolves. Nothing it reports can be edited.
-		result.push({ id: name, name, medium: 'other', link: 'unknown', defaultRoute: false, mac, addresses, ipv4Mode: 'unknown', gateway: null, dns: [], ipv4Configurable: false, wifiScannable: false, wifiConnectable: false });
+		result.push({ id: name, name, medium: 'other', link: 'unknown', defaultRoute: false, mac, addresses, ipv4Mode: 'unknown', ipv4Configurable: false, wifiConfigurable: false, gateway: null, dns: [] });
 	}
 	return result;
 }
@@ -123,7 +179,7 @@ export function prefixFromNetmask(netmask: string, ipv4: boolean): number {
 }
 
 async function readWindows(): Promise<NetInterfaceInfo[]> {
-	const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_STATE_COMMAND], { timeout: WINDOWS_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024, windowsHide: true });
+	const { stdout } = await execFileAsync(WINDOWS_POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_STATE_COMMAND], { timeout: WINDOWS_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024, windowsHide: true, env: WINDOWS_SYSTEM_ENV });
 	// The Wi-Fi read is in-process FFI and never throws — a missing WLAN service
 	// simply yields an empty map, leaving `wifi` undefined on the adapters.
 	return parseWindowsNetworkState(stdout, readWindowsWifi());
@@ -138,81 +194,19 @@ async function readWindows(): Promise<NetInterfaceInfo[]> {
  * single spawn. A failed platform read degrades to the address-only reader
  * rather than throwing — a settings screen showing addresses beats an error.
  *
- * The name is a warning. This is the read a mutation performs on ITSELF, to
- * establish its own premise from inside {@link runHostMutation} — it cannot wait
- * for a lock its own caller is holding. Every other caller wants
- * {@link readSettledNetworkState}: called during a mutation this one reaches the
- * platform between two destructive steps and answers with an interface that has
- * no address yet, or an address with no route.
+ * Waits for any host change in progress. A read that started in the middle of
+ * a multi-step apply would capture the gap between "old address removed" and
+ * "new address created", and the periodic broadcaster would publish that gap as
+ * the current state of the host.
  */
+export function readNetworkState(primaryInterface: string = ''): Promise<NetworkStateInfo> {
+	return runNetworkMutation(() => readNetworkStateUnlocked(primaryInterface));
+}
+
+/** {@link readNetworkState} for a caller that already holds the network mutation lock. */
 export async function readNetworkStateUnlocked(primaryInterface: string = ''): Promise<NetworkStateInfo> {
-	// Two attempts at most. An apply landing mid-read invalidates that read — its
-	// answer describes the host before the change — which leaves the cache empty,
-	// and the caller deserves the state after the change rather than "unknown".
-	for (let attempt = 0; attempt < 2 && isCacheStale(); attempt++) await startOrJoinRead();
-	const interfaces = cached?.interfaces ?? [];
-	return { interfaces, primaryID: resolvePrimaryID(interfaces, primaryInterface), detail: cached?.detail ?? 'addressesOnly', known: cached !== null, capabilities: await readCapabilities() };
-}
-
-/**
- * Read the network state a reconfiguration has SETTLED on — the read every
- * caller outside a mutation wants.
- *
- * Taking the same lock the mutations take is the whole of it: a read that
- * arrives while one is running waits for it instead of describing the host
- * halfway through, and a mutation that would start while this read is in flight
- * waits for the read. Skipping the poll tick was only ever half the answer,
- * because a direct `system.network` request never consulted the lock at all —
- * and a Windows Wi-Fi join holds it for far longer than {@link CACHE_TTL_MS}, so
- * the cache expires mid-join and the next request reads the machine between the
- * old profile going and the new association arriving.
- *
- * Waiting is bounded by the mutation itself ({@link APPLY_TIMEOUT_MS}, or the
- * association timeout for a join), and the answer is worth the wait: the reading
- * it replaces was not slower, it was wrong.
- *
- * NEVER call this from inside {@link runHostMutation} — the lock is not
- * reentrant and the mutation would wait on itself. That path has
- * {@link readNetworkStateUnlocked}.
- */
-export function readSettledNetworkState(primaryInterface: string = ''): Promise<NetworkStateInfo> {
-	return applyLock.runExclusive(() => readNetworkStateUnlocked(primaryInterface));
-}
-
-function isCacheStale(): boolean {
-	return !cached || Date.now() - cached.at >= CACHE_TTL_MS;
-}
-
-/** Start a platform read, or join the one already running. Never rejects. */
-function startOrJoinRead(): Promise<NetInterfaceInfo[]> {
-	if (!inFlight) {
-		const generation = cacheGeneration;
-		const detail: NetworkStateInfo['detail'] = process.platform === 'win32' || process.platform === 'linux' || process.platform === 'darwin' ? 'full' : 'addressesOnly';
-		inFlight = readPlatform()
-			.then(assertReadProducedSomething)
-			.then(interfaces => {
-				publish(generation, interfaces, detail);
-				return interfaces;
-			})
-			.catch(err => {
-				console.warn('[system-network] Platform read failed, falling back to addresses only:', (err as Error).message);
-				const interfaces = readGenericInterfaces();
-				publish(generation, interfaces, 'addressesOnly');
-				return interfaces;
-			})
-			.finally(() => {
-				// Only clear the slot we own: after an invalidation it has already been
-				// cleared, and a newer read may be sitting in it.
-				if (cacheGeneration === generation) inFlight = null;
-			});
-	}
-	return inFlight;
-}
-
-/** Store a completed read, unless a configuration change has since invalidated it. */
-function publish(generation: number, interfaces: NetInterfaceInfo[], detail: NetworkStateInfo['detail']): void {
-	if (generation !== cacheGeneration) return;
-	cached = { at: Date.now(), interfaces, detail };
+	const snapshot = await stateCache.read();
+	return { interfaces: snapshot.interfaces, primaryID: resolvePrimaryID(snapshot.interfaces, primaryInterface), detail: snapshot.detail, known: true, capabilities: await readCapabilities() };
 }
 
 function readPlatform(): Promise<NetInterfaceInfo[]> {
@@ -241,7 +235,7 @@ export function assertReadProducedSomething(interfaces: NetInterfaceInfo[]): Net
 
 /** The user's pick when it still exists, else the default-route interface, else nothing. */
 export function resolvePrimaryID(interfaces: NetInterfaceInfo[], primaryInterface: string): string | null {
-	if (primaryInterface && interfaces.some(i => i.id === primaryInterface)) return primaryInterface;
+	if (primaryInterface && interfaces.some(i => i.id === primaryInterface && isSelectableInterface(i))) return primaryInterface;
 	return interfaces.find(i => i.defaultRoute)?.id ?? null;
 }
 
@@ -251,257 +245,168 @@ export function resolvePrimaryID(interfaces: NetInterfaceInfo[], primaryInterfac
  * generation is bumped and that read is left to finish and publish nothing.
  */
 export function resetNetworkStateCache(): void {
-	cached = null;
-	inFlight = null;
-	cacheGeneration++;
+	stateCache.reset();
 }
 
 /**
- * True while a host reconfiguration holds the lock.
- *
- * The generation counter discards a read that STARTED before a mutation, but not
- * one that starts during it: such a read carries the current generation, is
- * accepted when it finishes, and describes an interface halfway through the
- * change — no address yet, or an address with no route. The 10 s poll hits that
- * window on any apply that outlasts one tick, and the two-attempt retry in
- * {@link readNetworkStateUnlocked} walks straight into it, because the attempt that gets
- * discarded is followed by one taken mid-apply.
- *
- * There is no reading of a half-applied interface worth broadcasting, so the
- * publisher skips the tick instead. Nothing is lost: `applyAndPublish` reads and
- * broadcasts the settled state the moment the mutation is done.
- *
- * Counted rather than read off the lock. {@link readSettledNetworkState} takes the
- * same lock — that is how it waits for a reconfiguration — so `applyLock.isLocked()`
- * was also true throughout every ordinary read, and the publisher then dropped its
- * tick because another read was in progress. Nothing was damaged by that, but the
- * footer sat up to a poll interval behind for no reason.
+ * True when the requested address change is already represented by a complete
+ * interface snapshot. Undefined DNS is intentionally ignored: it means preserve
+ * the resolver policy, whereas either form of explicit DNS is a real user action.
  */
-export function hostMutationInProgress(): boolean {
-	return mutationDepth > 0;
+/** True when the interface holds an IPv4 address that identifies it on a network, not an APIPA fallback. */
+function hasUsableIPv4(target: NetInterfaceInfo): boolean {
+	return target.addresses.some(address => address.family === 'ipv4' && !address.address.startsWith('169.254.'));
 }
 
-/** How many host reconfigurations are running. Only {@link runHostMutation} moves it. */
-let mutationDepth = 0;
+export function isIPv4AddressingUnchanged(target: NetInterfaceInfo, config: NetIPv4Config): boolean {
+	if (!target.ipv4Configurable || target.ipv4Mode !== config.mode) return false;
+	if (config.mode === 'dhcp') return true;
+	const addresses = target.addresses.filter(address => address.family === 'ipv4');
+	if (addresses.length !== 1) return false;
+	const current = addresses[0]!;
+	return current.address === config.address && current.prefixLength === config.prefixLength && (target.gateway ?? '') === (config.gateway ?? '');
+}
 
-/**
- * The current cache generation. Exported so a test can observe that a mutation
- * invalidated the cache on both sides of the platform action, which is otherwise
- * only visible as the absence of a stale reading several seconds later.
- */
-export function networkStateGeneration(): number {
-	return cacheGeneration;
+/** True when neither addressing nor resolver policy would change. */
+export function isIPv4ConfigUnchanged(target: NetInterfaceInfo, config: NetIPv4Config): boolean {
+	return config.dns === undefined && isIPv4AddressingUnchanged(target, config);
 }
 
 /**
- * Run one host reconfiguration, with the cached reading invalidated on both
- * sides of it.
+ * What applying `config` to `target` has to do.
  *
- * The leading invalidation is the half that used to be missing. A platform apply
- * is several commands and is not atomic — it can change the address and then fail
- * rewriting the route — while the 10 s poll reads the host on its own schedule. A
- * read that starts mid-apply used to carry the pre-apply generation, so when it
- * finished it was accepted as valid and an intermediate state was published as
- * the truth. Bumping first means any read overlapping the mutation is discarded.
- *
- * The trailing invalidation is in a `finally` for the same reason: a failed apply
- * is precisely the case where the cached reading is fiction, because the failure
- * says the request did not complete but says nothing about how much of it did.
+ * Saving DHCP on an interface that is on DHCP but holds no lease (APIPA, or no
+ * IPv4 at all) is the user asking for the lease to be obtained, so it runs the
+ * addressing path instead of being a no-op reported as applied. When the same
+ * request also changes DNS, only DNS is changed: resolvers can be set without a
+ * lease, and the lease will arrive when the network does. With the link down
+ * there is nothing to obtain, so DHCP on DHCP is simply unchanged.
  */
-export async function runHostMutation<T>(action: () => Promise<T>): Promise<T> {
-	return applyLock.runExclusive(() => trackedMutation(action));
+export function planIPv4Change(target: NetInterfaceInfo, config: NetIPv4Config): { unchanged: boolean; addressingChanged: boolean } {
+	const renewLease = config.dns === undefined && config.mode === 'dhcp' && !hasUsableIPv4(target) && leaseRequired(target);
+	return { unchanged: isIPv4ConfigUnchanged(target, config) && !renewLease, addressingChanged: !isIPv4AddressingUnchanged(target, config) || renewLease };
 }
 
-/** The body of {@link runHostMutation}, minus taking the lock — see {@link mutateAndReadBack}. */
-async function trackedMutation<T>(action: () => Promise<T>): Promise<T> {
-	mutationDepth++;
-	resetNetworkStateCache();
-	try {
-		return await action();
-	} finally {
-		resetNetworkStateCache();
-		mutationDepth--;
+/**
+ * Whether switching this interface to DHCP has to produce a lease before the
+ * change counts as applied.
+ *
+ * With the link up, a missing lease means the network has no DHCP server for
+ * this host, and leaving the change in place would strand a remotely managed
+ * machine — so the change is rolled back. With the link down (cable out, the
+ * machine about to move) there is nothing to obtain yet; the DHCP mode is
+ * saved and verified as a mode, and the lease arrives when the link does.
+ * An unknown link state is treated as up, the stricter of the two.
+ */
+export function leaseRequired(target: Pick<NetInterfaceInfo, 'link'>): boolean {
+	return target.link !== 'down';
+}
+
+export function assertAppliedIPv4State(state: NetworkStateInfo, interfaceID: string, config: NetIPv4Config, addressingChanged: boolean = true, requireLease: boolean = true): void {
+	if (!state.known || state.detail !== 'full') throw new Error('network state could not be verified after the privileged change');
+	const target = state.interfaces.find(item => item.id === interfaceID);
+	if (!target || target.ipv4Mode !== config.mode) throw new Error('network helper did not preserve the requested IPv4 method');
+	if (config.mode === 'static') {
+		const ipv4 = target.addresses.filter(item => item.family === 'ipv4');
+		if (ipv4.length !== 1 || ipv4[0]?.address !== config.address || ipv4[0]?.prefixLength !== config.prefixLength) throw new Error('network helper did not apply the requested IPv4 address');
+		if ((target.gateway ?? '') !== (config.gateway ?? '')) throw new Error('network helper did not apply the requested IPv4 gateway');
+	} else if (addressingChanged && requireLease && !target.addresses.some(item => item.family === 'ipv4')) {
+		// A lease is only owed when DHCP was just switched on with the link up. A
+		// DNS-only change, or a switch made with the cable out, succeeded exactly as
+		// requested even though no address is there yet.
+		throw new Error('network helper enabled DHCP but no IPv4 lease was obtained');
+	}
+	// An empty list means "restore automatic DNS". The public snapshot contains
+	// the resulting resolver addresses, not the policy that produced them, so only
+	// a non-empty custom list can be compared here. The privileged platform apply
+	// path verifies the automatic policy before it returns.
+	// A link that is down has no live resolvers at all: the platform layer
+	// verified the saved profile instead, and NetworkManager reports no servers
+	// for a device it could not activate. Comparing against them here would fail
+	// a change that was written exactly as asked, and fail it after the helper
+	// returned - nothing rolls it back, so the user would be told the opposite of
+	// what happened to their machine.
+	if (config.dns?.length && requireLease) {
+		const actualDns = normalizeDnsServers(target.dns)
+			.map(value => value.toLowerCase())
+			.sort();
+		const expectedDns = normalizeDnsServers(config.dns)
+			.map(value => value.toLowerCase())
+			.sort();
+		if (actualDns.length !== expectedDns.length || actualDns.some((value, index) => value !== expectedDns[index])) throw new Error('network helper did not apply the requested DNS servers');
 	}
 }
 
-/** A reconfiguration and the state the host settled on afterwards, whether it worked or not. */
-export interface MutationOutcome {
-	/** The state read once the change was done, or null when that read failed too. */
-	readonly state: NetworkStateInfo | null;
-	/** Why the reconfiguration failed, or null when it did not. */
-	readonly failure: unknown;
-	/** Why the follow-up read failed, or null when it did not. */
-	readonly readError: unknown;
+/** What this host lets the app change, with short-lived negative results. */
+export const CAPABILITY_NEGATIVE_TTL_MS: number = 15_000;
+export const CAPABILITY_POSITIVE_TTL_MS: number = 5 * 60_000;
+let capabilityCache: { value: NetCapabilities; expiresAt: number } | null = null;
+let capabilityProbeInFlight: Promise<NetCapabilities> | null = null;
+let capabilityGeneration = 0;
+
+export function resetNetworkCapabilitiesCache(): void {
+	capabilityCache = null;
+	capabilityProbeInFlight = null;
+	capabilityGeneration++;
 }
 
-/**
- * Reconfigure the host and read the result WITHOUT letting go of the lock in
- * between.
- *
- * Doing the two separately looked equivalent and was not. `runExclusive` hands the
- * mutex to the longest-waiting owner the instant it is released, so a second apply
- * already queued behind this one started before the first had read anything — and
- * the first request then waited for the second to finish and answered with ITS
- * state. Two clients saving at once each got the other's configuration back, and a
- * fast apply could be held up behind a twenty-second Wi-Fi join for a reading it
- * was not going to use.
- *
- * The read is `readNetworkStateUnlocked` deliberately: the settled read takes this
- * very lock, and the mutex is not reentrant. It runs after {@link trackedMutation}
- * has invalidated the cache on its way out, so it reaches the platform rather than
- * returning the reading the mutation displaced.
- *
- * Both failures are carried out rather than thrown, because the caller has to
- * broadcast the state before deciding which error to report — a half-applied
- * change leaves the machine in a state the error does not describe.
- *
- * `read` is a parameter so a test can make the reading depend on what the action
- * did, which is the only way the swapped answer above is visible at all.
- * Production passes nothing.
- */
-export function mutateAndReadBack(action: () => Promise<void>, primaryInterface: string, read: (primary: string) => Promise<NetworkStateInfo> = readNetworkStateUnlocked): Promise<MutationOutcome> {
-	return applyLock.runExclusive(async () => {
-		let failure: unknown = null;
-		try {
-			await trackedMutation(action);
-		} catch (err) {
-			failure = err;
+export async function readCachedCapabilities(probe: () => Promise<NetCapabilities>, now: number = Date.now()): Promise<NetCapabilities> {
+	if (capabilityCache && now < capabilityCache.expiresAt) return capabilityCache.value;
+	if (capabilityProbeInFlight) return capabilityProbeInFlight;
+	const generation = capabilityGeneration;
+	const pending = probe().then(value => {
+		if (generation === capabilityGeneration) {
+			const writable = value.ipv4 || value.wifi;
+			capabilityCache = { value, expiresAt: now + (writable ? CAPABILITY_POSITIVE_TTL_MS : CAPABILITY_NEGATIVE_TTL_MS) };
 		}
-		try {
-			return { state: await read(primaryInterface), failure, readError: null };
-		} catch (readError) {
-			return { state: null, failure, readError };
-		}
+		return value;
 	});
-}
-
-/**
- * What this host lets the app change.
- *
- * Remembered rather than asked on every read, because two of the three probes
- * cost a child process. What "remembered" means differs by platform, and each
- * difference is a property of the answer rather than a policy:
- *
- *  - Windows Wi-Fi is re-asked every time. It is an in-process wlanapi
- *    enumeration, and it genuinely changes under a running app — a USB adapter
- *    plugged in, or WLAN AutoConfig restarted, used to leave the whole Wi-Fi
- *    section hidden until a restart. See {@link withVolatileCapabilities}.
- *  - Windows IPv4 and macOS are remembered for good. An elevated token is fixed
- *    for the life of a process and `admin` group membership for the life of a
- *    login; neither can be re-answered differently without a new process.
- *  - Linux expires after {@link CAPABILITIES_TTL_MS}. That answer is a polkit
- *    verdict about a daemon, and all of "NetworkManager was not running yet",
- *    "the first `nmcli` call failed" and "a polkit rule changed" are ordinary
- *    events inside one run — remembering the first answer for the life of the
- *    process meant a restart was the only way to pick any of them up.
- */
-let capabilities: { at: number; value: NetCapabilities } | null = null;
-
-/**
- * How long a probe that can go stale is remembered.
- *
- * Long enough that the 5 s read cadence does not pay for an `nmcli` spawn again
- * and again — the reason the answer was remembered for ever in the first place —
- * and short enough that starting NetworkManager, or being granted the polkit
- * rule, shows up without restarting the app.
- */
-const CAPABILITIES_TTL_MS = 60000;
-
-/**
- * Re-answer the parts of a remembered probe that can change while the app runs.
- *
- * Only the Windows Wi-Fi answer can be re-asked for free: it is an in-process
- * wlanapi enumeration. An elevated token is fixed for the life of a process and
- * `admin` group membership for the life of a login, so neither is worth asking
- * twice, and the Linux answer costs an `nmcli` spawn that a 5 s read cadence must
- * not pay for on every tick — that one expires on a timer instead, see
- * {@link isCapabilityProbeStale}.
- */
-export function withVolatileCapabilities(remembered: NetCapabilities, platform: string, probeWifi: () => boolean): NetCapabilities {
-	return platform === 'win32' ? { ...remembered, wifi: probeWifi() } : remembered;
-}
-
-/**
- * True when a remembered probe is old enough to be worth asking again.
- *
- * Only the Linux one is: see the platform notes on {@link capabilities}. Ageing
- * the Windows set would buy nothing and cost a PowerShell spawn a minute, since
- * the only Windows answer that can change is already re-asked on every read.
- */
-export function isCapabilityProbeStale(at: number, platform: string): boolean {
-	return platform === 'linux' && Date.now() - at >= CAPABILITIES_TTL_MS;
-}
-
-/**
- * The probe currently running, shared by every caller that found the answer stale.
- *
- * Without it, each of the concurrent callers that arrive once the Linux TTL has
- * expired ran its own `nmcli` probe, and the last one to FINISH stored its answer
- * whichever had started first. A transient failure racing a success could
- * therefore land last and pin `ipv4: false, wifi: false` — the whole settings
- * screen greyed out — for the next minute. One probe, one answer, everybody gets
- * it.
- *
- * No generation token goes with it, because nothing invalidates a probe
- * explicitly: it expires on age alone, so the single probe in flight is always the
- * newest one there is.
- */
-let capabilitiesInFlight: Promise<NetCapabilities> | null = null;
-
-/**
- * What this host lets the app change, remembered per {@link capabilities}.
- *
- * `platform` and `probe` are parameters so a test can drive the staleness and
- * single-flight behaviour of a platform it is not running on; production passes
- * neither.
- */
-export function readCapabilities(platform: string = process.platform, probe: (target: string) => Promise<NetCapabilities> = probeCapabilities): Promise<NetCapabilities> {
-	if (capabilities && !isCapabilityProbeStale(capabilities.at, platform)) return Promise.resolve(withVolatileCapabilities(capabilities.value, platform, isWindowsWifiConfigurable));
-	if (!capabilitiesInFlight) {
-		capabilitiesInFlight = probe(platform)
-			.then(value => {
-				capabilities = { at: Date.now(), value };
-				return value;
-			})
-			.finally(() => {
-				capabilitiesInFlight = null;
-			});
+	capabilityProbeInFlight = pending;
+	try {
+		return await pending;
+	} finally {
+		if (capabilityProbeInFlight === pending) capabilityProbeInFlight = null;
 	}
-	return capabilitiesInFlight;
 }
 
-/** Drop the remembered probe, so a test cannot inherit one another case installed. */
-export function resetCapabilityProbe(): void {
-	capabilities = null;
-	capabilitiesInFlight = null;
-}
-
-/** Ask the host itself, once. */
-async function probeCapabilities(platform: string): Promise<NetCapabilities> {
-	// The Get/Set-Net* cmdlets refuse outright without an elevated token, so the
-	// capability is that token — probed here rather than discovered by the user when
-	// Save fails. Wi-Fi goes through wlanapi instead, which asks for no elevation at
-	// all, so the two are probed separately.
-	if (platform === 'win32') return { ipv4: await isWindowsElevated(), wifi: isWindowsWifiConfigurable(), staticGatewayRequired: false };
-	if (platform === 'linux') {
-		const managed = await isLinuxWritable();
-		return { ipv4: managed, wifi: managed, staticGatewayRequired: false };
+async function probeCapabilities(): Promise<NetCapabilities> {
+	if (process.platform === 'win32') {
+		// The Get/Set-Net* cmdlets refuse outright without an elevated token, so the
+		// capability is that token — probed before the user reaches Save rather than
+		// user when Save fails.
+		const native = await isWindowsElevated();
+		const elevated = !native && (await networkHelperAvailable('win32'));
+		// Wi-Fi is the exception to that token: the WLAN service takes scan and join
+		// from an ordinary user, so the capability is whether the service lists an
+		// adapter at all. A host with no radio, or a stripped image with no WLAN
+		// stack, lists none and the screen offers nothing.
+		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi: isWindowsWifiConfigurable(), staticGatewayRequired: false };
+	} else if (process.platform === 'linux') {
+		const capability = await readLinuxCapabilities();
+		if (capability.ipv4Elevation && !(await networkHelperAvailable('linux'))) return { ...capability, ipv4: false, ipv4Elevation: false };
+		return capability;
+	} else if (process.platform === 'darwin') {
+		// networksetup persists a change and is present on every macOS install, so
+		// addressing is editable. Wi-Fi is not: see isMacWifiConfigurable.
+		const native = await isMacWritable();
+		const elevated = !native && (await networkHelperAvailable('darwin'));
+		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi: isMacWifiConfigurable(), staticGatewayRequired: true };
+	} else {
+		// Everything else reads through os.networkInterfaces(), which cannot even
+		// report whether an address came from DHCP. Offering to edit a configuration
+		// we cannot describe would be worse than not offering it.
+		return { ipv4: false, wifi: false, staticGatewayRequired: false };
 	}
-	// networksetup persists a change and is present on every macOS install, so
-	// addressing is editable. Wi-Fi is not: see isMacWifiConfigurable. The gateway
-	// requirement is macOS's alone — `-setmanual` takes the router as a mandatory
-	// value, and the form has to know that before the user presses Save.
-	if (platform === 'darwin') return { ipv4: await isMacWritable(), wifi: isMacWifiConfigurable(), staticGatewayRequired: true };
-	// Everything else reads through os.networkInterfaces(), which cannot even report
-	// whether an address came from DHCP. Offering to edit a configuration we cannot
-	// describe would be worse than not offering it.
-	return { ipv4: false, wifi: false, staticGatewayRequired: false };
+}
+
+async function readCapabilities(): Promise<NetCapabilities> {
+	return readCachedCapabilities(probeCapabilities);
 }
 
 /** True when this process can actually run the privileged cmdlets. One spawn, cached with the capabilities. */
 async function isWindowsElevated(): Promise<boolean> {
 	try {
-		const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_ELEVATION_COMMAND], { timeout: WINDOWS_TIMEOUT_MS, maxBuffer: 1024, windowsHide: true });
+		const { stdout } = await execFileAsync(WINDOWS_POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_ELEVATION_COMMAND], { timeout: WINDOWS_TIMEOUT_MS, maxBuffer: 1024, windowsHide: true, env: WINDOWS_SYSTEM_ENV });
 		return parseElevation(stdout);
 	} catch {
 		return false;
@@ -509,112 +414,165 @@ async function isWindowsElevated(): Promise<boolean> {
 }
 
 /**
- * Why one interface may not have its IPv4 configuration replaced right now, or
- * null when it may.
+ * Refuse a change built on a configuration the interface no longer has.
  *
- * These are the same three conditions the settings screen checks before it
- * offers the edit — and the frontend must not be the boundary that enforces
- * them. A direct RPC client sends none of them, and a frontend acting on a
- * snapshot a few seconds old sends them as they WERE. The apply is destructive
- * in a way that cannot be walked back from a wrong premise: on Windows it
- * removes every IPv4 address and every default route before creating the single
- * new one, which is exactly the aliases this last condition exists to protect.
+ * The form was seeded from one snapshot; by the time Save is pressed the
+ * interface may have been switched to DHCP by a system tool or edited by
+ * another client. Applying the form then would silently undo that change.
+ *
+ * Anything that is not the interface's current configuration is refused,
+ * a missing or malformed baseline included: there is no value a caller can pass
+ * to mean "apply this over whatever is there".
  */
-export function ipv4EditObjection(state: NetworkStateInfo, interfaceID: string): CodedError | null {
-	// An address-only reading reports runtime device names where the apply
-	// resolves adapter GUIDs or NetworkManager profiles, and cannot say whether
-	// an address came from DHCP. Nothing in it is a safe premise for a write.
-	if (state.detail !== 'full') return new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'the host network state could not be read in full');
-	const target = state.interfaces.find(i => i.id === interfaceID);
-	if (!target) return new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
-	if (target.ipv4Configurable !== true) return new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this interface cannot be reconfigured');
-	// The configuration holds ONE address and applying it replaces every address
-	// the interface had. Until the API can express and preserve aliases, an
-	// interface carrying several is one this app must decline rather than thin out.
-	if (target.addresses.filter(a => a.family === 'ipv4').length > 1) return new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this interface carries several IPv4 addresses, which this app cannot preserve');
-	return null;
+export function assertIPv4Baseline(target: NetInterfaceInfo, expected: unknown): void {
+	if (!sameIPv4Baseline(ipv4BaselineOf(target), expected)) throw new CodedError(ErrorCodes.NETCONFIG_STALE, 'interface configuration changed since the form was opened');
 }
 
-/**
- * Apply an IPv4 configuration to one interface and answer with the state the host
- * settled on.
- *
- * The state is read inside the same critical section as the change — see
- * {@link mutateAndReadBack} — so it is this request's own outcome rather than
- * whatever a second apply queued behind it went on to do.
- *
- * Everything checkable without touching the host is checked BEFORE the lock, so a
- * malformed configuration is refused immediately instead of waiting out a
- * twenty-second Wi-Fi join queued ahead of it. Such a refusal happens before
- * anything changed, so it carries no state to publish and simply throws.
- */
-export async function applyIPv4(interfaceID: string, config: NetIPv4Config, primaryInterface: string = ''): Promise<MutationOutcome> {
+/** Apply an IPv4 configuration and read its resulting state before another mutation may begin. */
+export function applyIPv4(interfaceID: string, config: NetIPv4Config, primaryInterface: string = '', allowPrivilegeEscalation: boolean = true, expected: unknown): Promise<NetworkStateInfo> {
+	return runNetworkMutation(() => applyIPv4Unlocked(interfaceID, config, primaryInterface, allowPrivilegeEscalation, expected));
+}
+
+/** {@link applyIPv4} for a caller that already holds the network mutation lock. */
+export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Config, primaryInterface: string = '', allowPrivilegeEscalation: boolean = true, expected: unknown): Promise<NetworkStateInfo> {
+	if (typeof interfaceID !== 'string' || !config || typeof config !== 'object') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid request');
 	const invalid = validateIPv4Config(config);
 	if (invalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${invalid}`);
-	// Coherent is not the same as expressible. The shared validator answers the
-	// first for every platform; the second is the platform's own answer, and asking
-	// it here rather than mid-apply is the difference between a refused request and
-	// an interface whose addresses have already been removed. See
-	// {@link windowsIPv4Objection}.
-	const unsupported = process.platform === 'win32' ? windowsIPv4Objection(config) : null;
-	if (unsupported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, unsupported);
+	const desired = config.dns === undefined ? config : { ...config, dns: normalizeDnsServers(config.dns) };
 	const supported = await readCapabilities();
 	if (!supported.ipv4) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host does not expose a writable network configuration');
-	return mutateAndReadBack(async () => {
-		// Inside the lock and after the cache has been invalidated, so this reaches the
-		// platform: the premise is the host as it is now, not as some earlier reading
-		// described it.
-		const objection = ipv4EditObjection(await readNetworkStateUnlocked(), interfaceID);
-		if (objection) throw objection;
+	const platformInvalid = validateIPv4Config(desired, supported);
+	if (platformInvalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${platformInvalid}`);
+	// Never trust the UI snapshot at this boundary. A platform reader marks an
+	// adapter read-only when its complete address/route state cannot be preserved,
+	// and a fresh read closes the gap between opening the form and pressing Save.
+	resetNetworkStateCache();
+	const before = await readNetworkStateUnlocked(primaryInterface);
+	const target = before.interfaces.find(item => item.id === interfaceID);
+	if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
+	if (!target.ipv4Configurable || target.ipv4Mode === 'unknown') throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'interface configuration cannot be preserved safely');
+	assertIPv4Baseline(target, expected);
+	const { unchanged, addressingChanged } = planIPv4Change(target, desired);
+	if (unchanged) return before;
+	const requireLease = leaseRequired(target);
+	let usedHelper = false;
+	try {
 		await run(async () => {
+			if (supported.ipv4Elevation) {
+				if (!allowPrivilegeEscalation) throw new Error('network helper cannot recursively request privileges');
+				// The helper reads the host again on its own; it gets the baseline this
+				// process just verified so a change made while the authorization prompt
+				// was open is refused there too, not applied over.
+				const response = await runElevatedNetworkHelper({ version: 1, operation: 'applyIPv4', interfaceID, config: desired, expected: ipv4BaselineOf(target) });
+				if (!response.ok) throw response.code ? new CodedError(ErrorCodes[response.code], response.error) : new Error(response.error);
+				usedHelper = true;
+				return;
+			}
 			if (process.platform === 'win32') {
-				await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(assertWindowsGuid(interfaceID), config)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
+				if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+				await execFileAsync(WINDOWS_POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, desired, addressingChanged, requireLease)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true, env: WINDOWS_SYSTEM_ENV });
 			} else if (process.platform === 'darwin') {
-				await applyMacIPv4(assertDeviceName(interfaceID), config);
+				await applyMacIPv4(assertDeviceName(interfaceID), desired, addressingChanged, requireLease);
 			} else {
-				await applyLinuxIPv4(assertDeviceName(interfaceID), config);
+				await applyLinuxIPv4(assertDeviceName(interfaceID), desired, addressingChanged, requireLease);
 			}
 		});
-	}, primaryInterface);
+	} catch (error) {
+		resetNetworkCapabilitiesCache();
+		throw error;
+	} finally {
+		// A multi-step OS command may have changed part of the configuration
+		// before failing. Never keep the pre-command snapshot in that case.
+		resetNetworkStateCache();
+	}
+	const after = await readNetworkStateUnlocked(primaryInterface);
+	if (usedHelper) assertAppliedIPv4State(after, interfaceID, desired, addressingChanged, requireLease);
+	return after;
 }
 
 /** Scan for joinable Wi-Fi networks on one interface. */
 export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
-	await assertWirelessInterface(interfaceID, 'wifiScannable');
-	if (process.platform === 'win32') return run(() => scanWindowsWifi(assertWindowsGuid(interfaceID)));
-	return run(() => scanLinuxWifi(assertDeviceName(interfaceID)));
+	if (typeof interfaceID !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+	// A scan is a device operation; letting it overlap an apply on the same host
+	// would race NetworkManager and let the scan read a half-applied state.
+	return runNetworkMutation(async () => {
+		await assertWirelessInterface(interfaceID);
+		try {
+			return await run(() => scanPlatformWifi(interfaceID));
+		} catch (error) {
+			resetNetworkCapabilitiesCache();
+			throw error;
+		}
+	});
+}
+
+/** Join a Wi-Fi network on one interface. An empty password means an open network. */
+export function connectWifi(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null): Promise<NetworkStateInfo> {
+	return runNetworkMutation(() => connectWifiUnlocked(interfaceID, ssid, password, primaryInterface, bssid));
+}
+
+/** {@link connectWifi} for a caller that already holds the network mutation lock. */
+export async function connectWifiUnlocked(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null): Promise<NetworkStateInfo> {
+	if (typeof interfaceID !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
+	if (!isValidWifiPassword(password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
+	if (bssid !== null && typeof bssid !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid bssid');
+	await assertWirelessInterface(interfaceID);
+	let available: NetWifiNetwork[];
+	try {
+		available = await run(() => scanPlatformWifi(interfaceID));
+	} catch (error) {
+		resetNetworkCapabilitiesCache();
+		throw error;
+	}
+	const matches = available.filter(item => item.ssid === ssid);
+	const network = bssid === null ? (matches.length === 1 ? matches[0] : undefined) : matches.find(item => item.bssid?.toLowerCase() === bssid.toLowerCase());
+	if (!network) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'network is no longer available');
+	if (!network.supported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi authentication method is not supported');
+	if (network.secured && !isValidWifiKey(network.security, password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
+	try {
+		await run(() => joinPlatformWifi(interfaceID, ssid, password, network.bssid), [password]);
+	} catch (error) {
+		resetNetworkCapabilitiesCache();
+		throw error;
+	} finally {
+		resetNetworkStateCache();
+	}
+	return readNetworkStateUnlocked(primaryInterface);
+}
+
+
+/** A bounded string that can be written to a child process stdin. Empty = open network. */
+export function isValidWifiPassword(password: unknown): password is string {
+	return typeof password === 'string' && !/[\0\r\n]/.test(password) && new TextEncoder().encode(password).byteLength <= MAX_WIFI_PASSWORD_BYTES;
 }
 
 /**
- * Join a Wi-Fi network on one interface, and answer with the state that resulted.
- * An empty password means an open network. See {@link applyIPv4} on why the read
- * shares the mutation's critical section.
+ * Scan on whichever platform this host runs.
+ *
+ * Both readers answer in the same shape, and the id each one needs is checked
+ * by its own boundary guard - a Windows adapter GUID is not a device name and
+ * neither is accepted where the other belongs.
  */
-export async function connectWifi(interfaceID: string, ssid: string, password: string, primaryInterface: string = ''): Promise<MutationOutcome> {
-	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
-	// Checked before anything is written. On Windows the profile lands on disk
-	// ahead of the association attempt, so a credential no WPA2/WPA3 network could
-	// ever accept would overwrite a working saved one purely in order to fail.
-	if (password && !isValidWifiKey(password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
-	// The passphrase reaches nmcli as an argv entry, so every text derived from a
-	// failure of that child process has to be scrubbed of it before it is logged
-	// or sent back — including the timeout case, where the only text available is
-	// the message execFile assembled out of the whole command line.
-	return mutateAndReadBack(async () => {
-		// Both premises are established INSIDE the lock, after the cache has been
-		// invalidated — exactly as applyIPv4 does. Read outside it, they come from a
-		// reading up to CACHE_TTL_MS old and from before any mutation queued ahead of
-		// this one ran, so "not currently on that network" could already be false by
-		// the time the join starts. The interface the guard approved is then the one
-		// the join runs against.
-		const target = await assertWirelessInterface(interfaceID, 'wifiConnectable');
-		if (isAlreadyJoined(target, ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'this interface is already connected to that network');
-		if (process.platform === 'win32') await run(() => connectWindowsWifi(assertWindowsGuid(interfaceID), ssid, password), [password]);
-		else await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password), [password]);
-	}, primaryInterface);
+function scanPlatformWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
+	if (process.platform === 'win32') return scanWindowsWifi(assertWindowsGuid(interfaceID));
+	return scanLinuxWifi(assertDeviceName(interfaceID));
 }
 
-/** Validate a Windows interface id before it addresses an adapter. Same boundary check as {@link assertDeviceName}. */
+/**
+ * Join on whichever platform this host runs.
+ *
+ * The BSSID only reaches NetworkManager. Windows addresses the network through
+ * a WLAN profile, which names the SSID and lets the service pick the access
+ * point - there is no per-BSSID form of that call, and pinning one would defeat
+ * the roaming the service does on its own.
+ */
+function joinPlatformWifi(interfaceID: string, ssid: string, password: string, bssid: string | null): Promise<void> {
+	if (process.platform === 'win32') return connectWindowsWifi(assertWindowsGuid(interfaceID), ssid, password);
+	return connectLinuxWifi(assertDeviceName(interfaceID), ssid, password, bssid);
+}
+
+/** Validate a Windows adapter id before it addresses the WLAN service. Same boundary check as {@link assertDeviceName}. */
 function assertWindowsGuid(interfaceID: string): string {
 	if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
 	return interfaceID;
@@ -623,50 +581,26 @@ function assertWindowsGuid(interfaceID: string): string {
 /**
  * Refuse a Wi-Fi operation the interface cannot perform.
  *
- * Without this the request reaches nmcli, which answers "Device 'enp6s18' is not
- * a Wi-Fi device" — a true statement, but one that surfaces as a command failure
- * for what is really a bad request. The medium comes from the same read the UI
- * displays, so the two can never disagree about which interfaces are wireless.
- *
- * `capability` is the per-interface flag the operation actually needs, checked
- * here rather than trusted from the frontend: scanning and joining are separate
- * answers, and a direct RPC client sends neither.
+ * Without this the request reaches the platform tool, which answers "Device
+ * 'enp6s18' is not a Wi-Fi device" — a true statement, but one that surfaces as
+ * a command failure for what is really a bad request. The medium comes from the
+ * same read the UI displays, so the two can never disagree about which
+ * interfaces are wireless.
  */
-async function assertWirelessInterface(interfaceID: string, capability: 'wifiScannable' | 'wifiConnectable'): Promise<NetInterfaceInfo> {
+async function assertWirelessInterface(interfaceID: string): Promise<void> {
 	const supported = await readCapabilities();
 	if (!supported.wifi) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host cannot configure Wi-Fi');
+	resetNetworkStateCache();
 	const state = await readNetworkStateUnlocked();
-	const target = state.interfaces.find(i => i.id === interfaceID);
-	if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
-	if (target.medium !== 'wireless') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'not a wireless interface');
-	if (target[capability] !== true) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this interface cannot be driven over Wi-Fi');
-	return target;
+	assertWifiConfigurableInterface(state.interfaces, interfaceID);
 }
 
-/**
- * True when this interface is ALREADY associated with the named network.
- *
- * Such a join cannot be verified and must not be attempted. Windows confirms an
- * association by polling whether the adapter is connected and to which SSID —
- * and if it was already connected to that SSID, the very first poll sees the
- * still-live old connection and reports success before Windows has finished the
- * new attempt. A wrong password is then never noticed, because success has been
- * reported and no rollback runs. It is also destructive for nothing: on Windows
- * a join rewrites the stored profile before associating, so re-joining the
- * current network replaces a working saved configuration to arrive back where it
- * started.
- *
- * The frontend already hides the row, which is not the same as the backend
- * refusing it — a snapshot a few seconds old, a state change mid-operation, or a
- * direct RPC call all reach here regardless.
- *
- * ponytail: this closes the false-success path for the case that produces it.
- * Proving an association in general needs `WlanRegisterNotification` and a
- * notification-driven state machine correlated by interface, profile and
- * attempt — a redesign, not a guard.
- */
-export function isAlreadyJoined(iface: NetInterfaceInfo, ssid: string): boolean {
-	return iface.link === 'up' && iface.wifi?.ssid === ssid;
+/** Recheck the exact device at the API boundary; global host capability is not enough. */
+export function assertWifiConfigurableInterface(interfaces: NetInterfaceInfo[], interfaceID: string): void {
+	const target = interfaces.find(i => i.id === interfaceID);
+	if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
+	if (target.medium !== 'wireless') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'not a wireless interface');
+	if (!target.wifiConfigurable) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi interface is not managed by NetworkManager');
 }
 
 /**
@@ -684,7 +618,7 @@ export function isAlreadyJoined(iface: NetInterfaceInfo, ssid: string): boolean 
  * truncates or refuses a name the boundary had already accepted.
  */
 export function assertDeviceName(interfaceID: string): string {
-	if (!interfaceID || Buffer.byteLength(interfaceID, 'utf8') > 15 || /[/\0]/.test(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+	if (!interfaceID || new TextEncoder().encode(interfaceID).byteLength > 15 || /[/\0]/.test(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
 	return interfaceID;
 }
 

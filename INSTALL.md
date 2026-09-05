@@ -114,6 +114,8 @@ build.bat [--os OS...] [--target ARCH...] [--format FMT...] [--compress LEVEL]
 
 The NSIS installer (.exe) includes a language selector dialog, license agreement, and installation directory selection. The MSI installer provides standard Windows Installer experience. The .zip contains portable binaries (no installation needed).
 
+Changing the host's network settings from the app needs the signed network helper, which only elevates from an administrator-owned directory. The installers therefore install for all users under Program Files, and the portable .zip keeps network settings read-only. Signed installers are produced by `build.bat` with `WINDOWS_CERTIFICATE_THUMBPRINT` set, or by `build.sh` with `WINDOWS_CERTIFICATE_PFX` and `WINDOWS_CERTIFICATE_PASSWORD` set (the file is mounted into the build container).
+
 #### Build compatibility matrix
 
 | Target                  | Host: Linux | Host: Windows | Host: macOS |

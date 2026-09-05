@@ -1,7 +1,9 @@
 {
 	"bundle": {
 		"resources": {
-			"../backend/build/lish-backend.exe": "./lish-backend.exe"
+			"../backend/build/lish-backend.exe": "./lish-backend.exe",
+			"../backend/build/lish-network-helper.exe": "./lish-network-helper.exe",
+			"../backend/build/lish-network-launcher.exe": "./lish-network-launcher.exe"
 		},
 		"windows": {
 			"wix": {

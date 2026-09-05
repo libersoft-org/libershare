@@ -1,9 +1,23 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
-import type { NetAddress, NetAddressMode, NetInterfaceInfo, NetIPv4Config, NetLink, NetWifiInfo, NetWifiNetwork } from '@shared';
+import { CodedError, ErrorCodes, isIPv4, isIPv6, validateIPv4Config } from '@shared';
+import type { NetAddress, NetCapabilities, NetInterfaceInfo, NetIPv4Config, NetLink, NetWifiInfo, NetWifiNetwork } from '@shared';
 
 const execFileAsync = promisify(execFile);
+/**
+ * The environment every child process in this module runs under.
+ *
+ * The C locale is not a preference, it is what makes the parsing correct. This
+ * module matches literal English tokens - `running` from `nmcli general`,
+ * `unmanaged` from `nmcli device status`, `Not connected.` from `iw` - and nmcli's
+ * own documentation recommends the C locale for machine parsing precisely
+ * because those strings are translated otherwise. On a localised host the effect
+ * is not a parse error but a wrong answer: a writable machine reports itself
+ * read-only, and a device NetworkManager refuses to touch is offered as
+ * configurable.
+ */
+export const C_LOCALE_ENV: NodeJS.ProcessEnv = { ...process.env, LC_ALL: 'C', LANG: 'C' };
 
 /**
  * Linux host network state, read entirely through `ip -j` (iproute2's JSON
@@ -14,8 +28,9 @@ const execFileAsync = promisify(execFile);
  * ifupdown, systemd-networkd, NetworkManager or netplan.
  *
  * WRITING is the opposite: it has to go through the stack that owns the device,
- * so the apply half of this module speaks nmcli and refuses to act on a host
- * NetworkManager does not run. See {@link isLinuxWritable}.
+ * so the apply half of this module speaks to NetworkManager through nmcli and
+ * D-Bus, and refuses to act on a host it does not own. See
+ * {@link readLinuxCapabilities}.
  */
 
 /** Hard cap on how long any `ip`/`iw` child process may run before we give up. */
@@ -25,6 +40,17 @@ const IP_CANDIDATES = ['/usr/sbin/ip', '/sbin/ip', 'ip'];
 const IW_CANDIDATES = ['/usr/sbin/iw', '/sbin/iw', 'iw'];
 /** IFA_F_PERMANENT lifetime sentinel — a manually configured address never expires. */
 const LIFETIME_PERMANENT = 4294967295;
+
+/**
+ * True when an address came from a lease rather than from a saved static entry.
+ *
+ * `dynamic` is what iproute2 sets for a DHCP address; the finite lifetime is the
+ * same fact seen from the other side, and is there on builds that omit the flag.
+ * Only an explicitly permanent address is taken as evidence of static addressing.
+ */
+function isLeasedAddress(info: { dynamic?: boolean; valid_life_time?: number }): boolean {
+	return info.dynamic === true || info.valid_life_time !== LIFETIME_PERMANENT;
+}
 
 /** One `ip -j addr` entry (only the fields this module reads). */
 interface IpAddrEntry {
@@ -55,6 +81,8 @@ export interface LinuxNetworkSources {
 	addr: string;
 	link: string;
 	route: string;
+	/** `ip -j -6 route show default`. Names the interface the host reaches the internet through when there is no IPv4 default route. */
+	route6?: string;
 	/** Interface names the kernel reports as wireless (a `phy80211` symlink in sysfs). */
 	wireless?: Set<string>;
 	/** Per-interface `iw dev <if> link` output, when `iw` is installed. */
@@ -65,24 +93,22 @@ export interface LinuxNetworkSources {
 	resolvers?: string[];
 	/** Per-interface resolvers as NetworkManager sees them. Preferred over {@link resolvers} when present. */
 	nmDns?: Map<string, string[]> | undefined;
-	/**
-	 * Devices NetworkManager owns. Undefined when it could not be asked, in which
-	 * case no interface is marked unconfigurable — an unavailable answer is not
-	 * evidence that a device is unmanaged.
-	 */
-	managed?: Set<string> | undefined;
-	/**
-	 * `ipv4.method` of the profile active on each device, as NetworkManager stores
-	 * it. Authoritative over anything inferred from the kernel's addresses; absent
-	 * for a device with no active profile, where the kernel is all there is.
-	 */
-	ipv4Methods?: Map<string, NetAddressMode> | undefined;
-	/**
-	 * Devices that currently have an active NetworkManager profile. The apply path
-	 * edits that profile, so a device without one cannot be configured however
-	 * thoroughly NetworkManager manages it.
-	 */
-	activeProfiles?: Set<string> | undefined;
+	/** Active NetworkManager profile UUIDs by device. Only these devices can be edited. */
+	activeConnections?: Map<string, string> | undefined;
+	/** IPv4 settings of each active NetworkManager profile, keyed by device. */
+	ipv4Profiles?: Map<string, NmcliIPv4Profile> | undefined;
+	/** Devices NetworkManager explicitly reports as managed, active or disconnected. */
+	managedDevices?: Set<string> | undefined;
+}
+
+/** The profile fields required to decide whether the simple editor can preserve it. */
+export interface NmcliIPv4Profile {
+	method: string;
+	gateway: string | null;
+	/** What the profile stores, which is not necessarily what the kernel is using. */
+	address: string | null;
+	prefixLength: number | null;
+	safe: boolean;
 }
 
 /**
@@ -168,17 +194,10 @@ function mapMedium(wireless: boolean, link: IpLinkEntry | undefined): NetInterfa
 /**
  * Build the interface list from the three `ip` documents.
  *
- * IPv4 addressing mode comes from the active NetworkManager profile's
- * `ipv4.method`, because that is the setting the editor changes and the one that
- * survives a reboot. The kernel's own `dynamic` flag is only the fallback for a
- * device with no active profile: it describes the address currently ON the
- * interface, which is not the same question. A DHCP profile with a manual
- * secondary address, a lease that has momentarily lapsed, or an address another
- * process added all read as static from the kernel — and saving then switched the
- * profile to a mode the user had not chosen. Where the kernel is all there is, a
- * DHCP lease carries `dynamic: true` and a manual address has no `dynamic` key
- * and the permanent lifetime sentinel; IPv6 `dynamic` is deliberately ignored,
- * because SLAAC also sets it and SLAAC is not DHCP.
+ * IPv4 addressing mode comes from the kernel's own `dynamic` flag: a DHCP lease
+ * carries `dynamic: true`, a manually configured address has no `dynamic` key
+ * and the permanent lifetime sentinel. IPv6 `dynamic` is deliberately ignored —
+ * SLAAC also sets it and SLAAC is not DHCP.
  *
  * Nothing is filtered out here: a container's `eth0` has `info_kind: veth` yet
  * carries the default route, so link kind is not a safe exclusion criterion.
@@ -187,42 +206,59 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 	const addrEntries = JSON.parse(sources.addr) as IpAddrEntry[];
 	const linkEntries = JSON.parse(sources.link) as IpLinkEntry[];
 	const routeEntries = JSON.parse(sources.route) as IpRouteEntry[];
+	const route6Entries = sources.route6 ? (JSON.parse(sources.route6) as IpRouteEntry[]) : [];
 
 	const linkByName = new Map<string, IpLinkEntry>();
 	for (const entry of linkEntries) linkByName.set(entry.ifname, entry);
 
 	// Lowest-metric default route wins; an absent metric means 0 (kernel default).
-	// Kept per device as well: only one interface carries the host's default route,
-	// but a multi-homed host gives several of them a gateway of their own. Reporting
-	// those as null would seed the edit form with an empty gateway field, and saving
-	// any other change on that interface would then clear the gateway it really has.
-	let best: IpRouteEntry | null = null;
-	const bestByDev = new Map<string, IpRouteEntry>();
+	const lowestMetric = (entries: IpRouteEntry[]): IpRouteEntry | null => {
+		let best: IpRouteEntry | null = null;
+		for (const route of entries) {
+			if (!route.dev) continue;
+			if (!best || (route.metric ?? 0) < (best.metric ?? 0)) best = route;
+		}
+		return best;
+	};
+	// A host reachable only over IPv6 still has a default route, just not an IPv4
+	// one. Without this the footer would call a working connection "disconnected"
+	// purely because the automatic pick had nothing to point at. The IPv4 route
+	// stays first: everything this screen edits is IPv4.
+	const defaultDev = lowestMetric(routeEntries)?.dev ?? lowestMetric(route6Entries)?.dev ?? null;
+	const routesByDevice = new Map<string, IpRouteEntry[]>();
 	for (const route of routeEntries) {
 		if (!route.dev) continue;
-		if (!best || (route.metric ?? 0) < (best.metric ?? 0)) best = route;
-		const previous = bestByDev.get(route.dev);
-		if (!previous || (route.metric ?? 0) < (previous.metric ?? 0)) bestByDev.set(route.dev, route);
+		const list = routesByDevice.get(route.dev) ?? [];
+		list.push(route);
+		routesByDevice.set(route.dev, list);
 	}
-	const defaultDev = best?.dev ?? null;
 
 	const result: NetInterfaceInfo[] = [];
 	for (const entry of addrEntries) {
 		// Loopback is never a choice a user makes and never a connection to report.
 		if (entry.ifname === 'lo') continue;
 		const addresses: NetAddress[] = [];
-		let ipv4Mode: NetInterfaceInfo['ipv4Mode'] = 'unknown';
+		let kernelIPv4Mode: NetInterfaceInfo['ipv4Mode'] = 'unknown';
+		let liveIPv4: LiveIPv4Address | null = null;
 		for (const info of entry.addr_info ?? []) {
 			const family = info.family === 'inet' ? 'ipv4' : info.family === 'inet6' ? 'ipv6' : null;
 			if (!family) continue;
 			addresses.push({ family, address: info.local, prefixLength: info.prefixlen });
 			if (family !== 'ipv4') continue;
-			if (info.dynamic === true) ipv4Mode = 'dhcp';
-			else if (ipv4Mode === 'unknown' && info.valid_life_time === LIFETIME_PERMANENT) ipv4Mode = 'static';
+			liveIPv4 ??= { address: info.local, prefixLength: info.prefixlen, leased: isLeasedAddress(info) };
+			if (info.dynamic === true) kernelIPv4Mode = 'dhcp';
+			else if (kernelIPv4Mode === 'unknown' && info.valid_life_time === LIFETIME_PERMANENT) kernelIPv4Mode = 'static';
 		}
 		const link = linkByName.get(entry.ifname);
 		const wireless = sources.wireless?.has(entry.ifname) ?? false;
-		const managed = sources.managed?.has(entry.ifname) ?? false;
+		const interfaceRoutes = routesByDevice.get(entry.ifname) ?? [];
+		const activeProfile = sources.ipv4Profiles?.get(entry.ifname);
+		const managed = sources.activeConnections?.has(entry.ifname) === true && activeProfile !== undefined;
+		// Kernel address flags cannot distinguish manual addressing from shared,
+		// link-local or disabled NetworkManager profiles. Only auto/manual are safe
+		// for this editor to round-trip; every other managed method stays read-only.
+		const ipv4Mode = managed ? parseNmcliIPv4Method(activeProfile.method) : kernelIPv4Mode;
+		const ipv4Addresses = addresses.filter(address => address.family === 'ipv4');
 		const info: NetInterfaceInfo = {
 			id: entry.ifname,
 			name: entry.ifname,
@@ -231,35 +267,17 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 			defaultRoute: entry.ifname === defaultDev,
 			mac: entry.address ?? link?.address ?? null,
 			addresses,
-			ipv4Mode: sources.ipv4Methods?.get(entry.ifname) ?? ipv4Mode,
-			gateway: bestByDev.get(entry.ifname)?.gateway ?? null,
-			// Always stated, never left absent. NetworkManager is the only stack the
-			// apply path can drive, so a device it does not own cannot be edited — and
-			// when it could not be asked at all, the honest answer is still "no": an
-			// unknown permission is not a permission, and `isLinuxWritable()` has
-			// already reported the host read-only in that case anyway.
-			//
-			// Being managed is necessary but not sufficient FOR ADDRESSING.
-			// `applyLinuxIPv4` edits the profile ACTIVE on the device, so a managed
-			// device that is disconnected or unavailable — which "managed" happily
-			// includes — has nothing to edit, and offering Configure there showed a
-			// working Save that failed every time with "no NetworkManager profile is
-			// active". Both conditions, or neither.
-			ipv4Configurable: managed && (sources.activeProfiles?.has(entry.ifname) ?? false),
-			// Wi-Fi asks nothing of the active profile, and requiring one was a
-			// regression: a disconnected adapter has no active profile and is precisely
-			// the one a user needs to scan and join with. `nmcli device wifi list`
-			// drives the radio, and `nmcli device wifi connect` finds or CREATES a
-			// profile for a managed device — so managed is the whole condition.
-			wifiScannable: managed && wireless,
-			wifiConnectable: managed && wireless,
+			ipv4Mode,
+			ipv4Configurable: managed && activeProfile.safe && ipv4Mode !== 'unknown' && ipv4Addresses.length <= 1 && interfaceRoutes.length <= 1 && nmcliProfileMatchesLive(activeProfile, liveIPv4, interfaceRoutes[0]?.gateway ?? null),
+			wifiConfigurable: wireless && sources.managedDevices?.has(entry.ifname) === true,
+			gateway: interfaceRoutes[0]?.gateway ?? activeProfile?.gateway ?? null,
 			// NetworkManager knows the resolvers PER LINK, which is the only correct
 			// answer on a systemd-resolved host: there /etc/resolv.conf holds the
 			// 127.0.0.53 stub, so reporting it would show every machine the same
 			// fictional nameserver — and would contradict the servers the user had
 			// just set. Only when NM is absent do we fall back to resolv.conf, which
 			// is system-wide and so is attributed to the default-route interface.
-			dns: sources.nmDns?.get(entry.ifname) ?? (entry.ifname === defaultDev ? (sources.resolvers ?? []) : []),
+			dns: sources.nmDns !== undefined ? (sources.nmDns.get(entry.ifname) ?? []) : entry.ifname === defaultDev ? (sources.resolvers ?? []) : [],
 		};
 		if (wireless) {
 			const iw = sources.iwLinks?.get(entry.ifname);
@@ -275,28 +293,12 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 	return result;
 }
 
-/**
- * The environment every child process in this module runs under.
- *
- * The C locale is not a preference, it is what makes the parsing correct. This
- * module matches literal English tokens — `running` from `nmcli general`,
- * `unmanaged` from `nmcli device status`, `Not connected.` from `iw` — and
- * nmcli's own documentation recommends the C locale for machine parsing
- * precisely because those strings are translated otherwise. On a localised host
- * the effect is not a parse error but a wrong answer: `isLinuxWritable()`
- * returns false on a perfectly writable machine, and a device NetworkManager
- * refuses to touch is offered to the user as configurable.
- */
-export function cLocaleEnv(): NodeJS.ProcessEnv {
-	return { ...process.env, LC_ALL: 'C', LANG: 'C' };
-}
-
 /** Run the first candidate binary that exists, returning stdout. Throws when every candidate is missing or exits non-zero. */
 async function runFirst(candidates: string[], args: string[], timeoutMs: number = EXEC_TIMEOUT_MS): Promise<string> {
 	let lastError: unknown = new Error(`no candidate found for ${args.join(' ')}`);
 	for (const bin of candidates) {
 		try {
-			const { stdout } = await execFileAsync(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: cLocaleEnv() });
+			const { stdout } = await execFileAsync(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: C_LOCALE_ENV });
 			return stdout;
 		} catch (err) {
 			lastError = err;
@@ -304,6 +306,46 @@ async function runFirst(candidates: string[], args: string[], timeoutMs: number 
 			// other failure (non-zero exit, timeout) is the real answer: `ip` ran and
 			// said no, so a further candidate would only repeat it.
 			if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+		}
+	}
+	throw lastError;
+}
+
+/** `execFile` cannot feed stdin; use this only for nmcli's password prompt. */
+async function runFirstWithInput(candidates: string[], args: string[], input: string, timeoutMs: number): Promise<string> {
+	let lastError: unknown = new Error(`no candidate found for ${args.join(' ')}`);
+	for (const bin of candidates) {
+		try {
+			return await new Promise<string>((resolve, reject) => {
+				const child = spawn(bin, args, { env: C_LOCALE_ENV, stdio: ['pipe', 'pipe', 'pipe'] });
+				let stdout = '';
+				let stderr = '';
+				let timedOut = false;
+				const timer = setTimeout(() => {
+					timedOut = true;
+					child.kill('SIGKILL');
+				}, timeoutMs);
+				child.stdout.on('data', chunk => (stdout += String(chunk)));
+				child.stderr.on('data', chunk => (stderr += String(chunk)));
+				child.stdin.on('error', () => {});
+				child.on('error', error => {
+					clearTimeout(timer);
+					reject(error);
+				});
+				child.on('close', code => {
+					clearTimeout(timer);
+					if (!timedOut && code === 0) resolve(stdout);
+					else {
+						const error = new Error(timedOut ? `${bin} timed out` : `${bin} failed with exit code ${code ?? 'unknown'}`);
+						Object.assign(error, { stdout, stderr, code });
+						reject(error);
+					}
+				});
+				child.stdin.end(input);
+			});
+		} catch (error) {
+			lastError = error;
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 		}
 	}
 	throw lastError;
@@ -337,7 +379,7 @@ function readResolvers(): string[] {
 
 /** Read the live Linux network state. Throws when `ip` is absent or fails — the caller degrades to the address-only reader. */
 export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
-	const [addr, link, route] = await Promise.all([runFirst(IP_CANDIDATES, ['-j', 'addr']), runFirst(IP_CANDIDATES, ['-j', '-d', 'link']), runFirst(IP_CANDIDATES, ['-j', 'route', 'show', 'default'])]);
+	const [addr, link, route, route6] = await Promise.all([runFirst(IP_CANDIDATES, ['-j', 'addr']), runFirst(IP_CANDIDATES, ['-j', '-d', 'link']), runFirst(IP_CANDIDATES, ['-j', 'route', 'show', 'default']), runFirst(IP_CANDIDATES, ['-j', '-6', 'route', 'show', 'default']).catch(() => '[]')]);
 	const names = (JSON.parse(addr) as IpAddrEntry[]).map(e => e.ifname);
 	const wireless = new Set(names.filter(isWireless));
 	const iwLinks = new Map<string, string>();
@@ -349,8 +391,8 @@ export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
 			// rather than being guessed from anything else.
 		}
 	}
-	const active = await readLinuxActiveProfiles();
-	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: await readNetworkManagerDns(), managed: await readManagedDevices(), ipv4Methods: active?.methods, activeProfiles: active?.devices });
+	const [nmDevices, profiles] = await Promise.all([readNetworkManagerDevices(), readNetworkManagerProfiles()]);
+	return parseLinuxNetworkState({ addr, link, route, route6, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: nmDevices?.dns, activeConnections: profiles?.connections, ipv4Profiles: profiles?.ipv4Profiles, managedDevices: nmDevices?.managedDevices });
 }
 
 /**
@@ -364,10 +406,40 @@ export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
  * the UI keeps the read-only view rather than offering an edit that would not stick.
  */
 const NMCLI_CANDIDATES = ['/usr/bin/nmcli', '/bin/nmcli', 'nmcli'];
-/** Reconfiguring an interface renegotiates DHCP and can rebuild routes, which is far slower than a read. */
-const APPLY_TIMEOUT_MS = 45000;
+const BUSCTL_CANDIDATES = ['/usr/bin/busctl', '/bin/busctl', 'busctl'];
+/** Match NetworkManager's documented default activation wait explicitly. */
+const NMCLI_ACTIVATION_WAIT_SECONDS = 90;
+export const NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS: number = EXEC_TIMEOUT_MS;
+export const NETWORK_MANAGER_MUTATION_TIMEOUT_MS: number = (NMCLI_ACTIVATION_WAIT_SECONDS + 5) * 1000;
+export const NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS: number = NETWORK_MANAGER_MUTATION_TIMEOUT_MS;
+export const NETWORK_MANAGER_CHECKPOINT_SAFETY_MS: number = 30000;
 /** A rescan has to wait for the radio to sweep every channel. */
 const WIFI_SCAN_TIMEOUT_MS = 30000;
+/**
+ * Every child process {@link applyLinuxIPv4} may run inside the checkpoint, in
+ * the order it runs them, each at its own timeout. The pre-checks and the two
+ * read-backs are as much a part of the transaction as the activation is: the
+ * checkpoint has to outlive all of them, or NetworkManager starts its automatic
+ * rollback while the explicit one is still to come.
+ */
+export const NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS: number =
+	2 * EXEC_TIMEOUT_MS + // resolve the active profile and read it back to judge it
+	EXEC_TIMEOUT_MS + // ipv6.method, before an IPv6 resolver is offered to it
+	NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS +
+	NETWORK_MANAGER_MUTATION_TIMEOUT_MS +
+	EXEC_TIMEOUT_MS + // the profile is still the one active on the device
+	EXEC_TIMEOUT_MS + // method, address and route, read together
+	EXEC_TIMEOUT_MS; // profile and live resolvers, read together
+/** The same for {@link connectLinuxWifi}: the join, then the scan that confirms it. */
+export const NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS: number = NETWORK_MANAGER_MUTATION_TIMEOUT_MS + WIFI_SCAN_TIMEOUT_MS;
+/**
+ * How long NetworkManager holds the checkpoint before rolling back on its own.
+ *
+ * Long enough for the slowest transaction, the explicit rollback that may follow
+ * it, and a margin on top — so the automatic rollback is a backstop for a
+ * process that died, never a second rollback racing our own.
+ */
+export const NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS: number = Math.ceil((Math.max(NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS, NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS) + NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS + NETWORK_MANAGER_CHECKPOINT_SAFETY_MS) / 1000) + 1;
 
 /**
  * Split one `nmcli -t` output line into fields.
@@ -398,6 +470,9 @@ export function splitNmcliFields(line: string): string[] {
 
 /** The polkit action that persisting a connection change needs. */
 const NM_MODIFY_PERMISSION = 'org.freedesktop.NetworkManager.settings.modify.system';
+const NM_CONTROL_PERMISSION = 'org.freedesktop.NetworkManager.network-control';
+const NM_WIFI_SCAN_PERMISSION = 'org.freedesktop.NetworkManager.wifi.scan';
+const NM_CHECKPOINT_PERMISSION = 'org.freedesktop.NetworkManager.checkpoint-rollback';
 
 /**
  * Read one permission verdict out of `nmcli -t -f PERMISSION,VALUE general permissions`.
@@ -424,66 +499,40 @@ export function parseNmcliPermission(text: string, permission: string): string |
  * fails. Reporting the capability from "nmcli exists" alone would put an edit
  * form in front of the user whose Save could never succeed.
  */
-export async function isLinuxWritable(): Promise<boolean> {
+/** Probe address and Wi-Fi rights separately; custom polkit policies may differ. */
+export async function readLinuxCapabilities(): Promise<NetCapabilities> {
 	try {
-		if (!(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'RUNNING', 'general'])).trim().startsWith('running')) return false;
-		return parseNmcliPermission(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'PERMISSION,VALUE', 'general', 'permissions']), NM_MODIFY_PERMISSION) === 'yes';
+		if (!(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'RUNNING', 'general'])).trim().startsWith('running')) return { ipv4: false, wifi: false, staticGatewayRequired: false };
+		await runFirst(BUSCTL_CANDIDATES, ['--version']);
+		return parseLinuxCapabilities(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'PERMISSION,VALUE', 'general', 'permissions']));
 	} catch {
-		return false;
+		return { ipv4: false, wifi: false, staticGatewayRequired: false };
 	}
 }
 
 /**
- * Per-interface resolvers from `nmcli -t -f GENERAL.DEVICE,IP4.DNS device show`.
+ * Per-interface resolvers from NetworkManager, including IPv4 and IPv6.
  *
  * Returns undefined — not an empty map — when NetworkManager is absent or fails,
  * so the caller can tell "NM says this link has no resolvers" apart from "there
  * is no NM to ask" and fall back to /etc/resolv.conf only in the latter case.
  */
-/**
- * Devices NetworkManager actually owns, or undefined when it cannot be asked.
- *
- * The interface list comes from the kernel and includes devices another stack
- * manages — a networkd NIC, a container bridge. Offering an edit for those shows
- * the user an action that can only end in an error, because the apply needs an
- * active NetworkManager profile on the device.
- */
-async function readManagedDevices(): Promise<Set<string> | undefined> {
+async function readNetworkManagerDevices(): Promise<{ dns: Map<string, string[]>; managedDevices: Set<string> } | undefined> {
 	try {
-		return parseNmcliManagedDevices(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'DEVICE,STATE', 'device', 'status']));
-	} catch {
-		return undefined;
-	}
-}
-
-/** Devices from `nmcli -t -f DEVICE,STATE device status` that NetworkManager is not ignoring. */
-export function parseNmcliManagedDevices(text: string): Set<string> {
-	const managed = new Set<string>();
-	for (const line of text.split(/\r?\n/)) {
-		if (!line.trim()) continue;
-		const [device, state] = splitNmcliFields(line);
-		// "unmanaged" is NetworkManager saying the device belongs to something else;
-		// every other state (connected, disconnected, unavailable) is still its own.
-		if (device && state && state !== 'unmanaged') managed.add(device);
-	}
-	return managed;
-}
-
-async function readNetworkManagerDns(): Promise<Map<string, string[]> | undefined> {
-	try {
-		return parseNmcliDns(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'GENERAL.DEVICE,IP4.DNS', 'device', 'show']));
+		const text = await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'GENERAL.DEVICE,GENERAL.NM-MANAGED,IP4.DNS,IP6.DNS', 'device', 'show']);
+		return { dns: parseNmcliDns(text), managedDevices: parseNmcliManagedDevices(text) };
 	} catch {
 		return undefined;
 	}
 }
 
 /**
- * Parse the per-device blocks of `nmcli -t -f GENERAL.DEVICE,IP4.DNS device show`.
+ * Parse the per-device blocks of NetworkManager DNS output.
  *
  * Output is one blank-line-separated block per device: a `GENERAL.DEVICE` line
  * followed by zero or more `IP4.DNS[n]` lines. A device with no resolvers still
- * gets an entry (an empty array), which is what lets the caller distinguish it
- * from a device NetworkManager does not manage at all.
+ * gets an entry with an empty array so callers can distinguish it from a missing
+ * read. Whether NetworkManager manages the device is parsed separately.
  */
 export function parseNmcliDns(text: string): Map<string, string[]> {
 	const result = new Map<string, string[]>();
@@ -492,97 +541,148 @@ export function parseNmcliDns(text: string): Map<string, string[]> {
 		const fields = splitNmcliFields(line.trim());
 		const key = fields[0];
 		if (!key) continue;
+		// NetworkManager versions disagree on whether ':' inside an IPv6 value is
+		// escaped in terse mode. Rejoining the value fields accepts both forms.
+		const value = fields.slice(1).join(':');
 		if (key === 'GENERAL.DEVICE') {
-			device = fields[1] ?? null;
+			device = value || null;
 			if (device) result.set(device, []);
-		} else if (device && key.startsWith('IP4.DNS')) {
-			if (fields[1]) result.get(device)?.push(fields[1]);
+		} else if (device && (key.startsWith('IP4.DNS') || key.startsWith('IP6.DNS'))) {
+			if (value) result.get(device)?.push(value);
 		}
 	}
 	return result;
 }
 
-/**
- * Name of the NetworkManager profile currently active on a device.
- *
- * Modifying the active profile (rather than creating a new one) is what makes an
- * edit idempotent: applying twice leaves one profile, not two competing ones.
- */
-async function activeConnection(device: string): Promise<string | null> {
-	// Asked for by UUID, not NAME: profile names are not unique, so a host with two
-	// profiles of the same name would leave `connection modify` free to pick either
-	// — and the one it picks may not be the one on this device.
-	const out = await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'UUID,DEVICE', 'connection', 'show', '--active']);
-	return parseNmcliActiveUUID(out, device);
-}
-
-/** Pick the UUID of the profile active on `device` out of `nmcli -t -f UUID,DEVICE` output. */
-export function parseNmcliActiveUUID(text: string, device: string): string | null {
-	return parseNmcliActiveUUIDs(text).get(device) ?? null;
-}
-
-/** Every device with an active profile, mapped to that profile's UUID. */
-export function parseNmcliActiveUUIDs(text: string): Map<string, string> {
-	const result = new Map<string, string>();
-	for (const line of text.split(/\r?\n/)) {
-		if (!line.trim()) continue;
-		const [uuid, device] = splitNmcliFields(line);
-		// A profile with no device is active but not on anything (a VPN awaiting a
-		// base connection), and the first profile on a device is the one that owns it.
-		if (uuid && device && !result.has(device)) result.set(device, uuid);
+/** Parse the devices NetworkManager owns independently of connection state. */
+export function parseNmcliManagedDevices(text: string): Set<string> {
+	const result = new Set<string>();
+	let device: string | null = null;
+	for (const line of text.split('\n')) {
+		const fields = splitNmcliFields(line.trim());
+		const key = fields[0];
+		const value = fields.slice(1).join(':');
+		if (key === 'GENERAL.DEVICE') device = value || null;
+		else if (key === 'GENERAL.NM-MANAGED' && device && value.trim().toLowerCase() === 'yes') result.add(device);
 	}
 	return result;
 }
 
-/**
- * Translate NetworkManager's `ipv4.method` into the model's addressing mode.
- *
- * Only `auto` and `manual` have a counterpart. `link-local`, `shared` and
- * `disabled` are real methods the model cannot name, and calling any of them
- * DHCP or static would put a mode in the editor that saving would then impose.
- */
-export function nmcliMethodToMode(method: string): NetAddressMode {
+/** Parse active NetworkManager profile UUIDs keyed by their device. */
+export function parseNmcliActiveConnections(text: string): Map<string, string> {
+	const result = new Map<string, string>();
+	for (const line of text.split('\n')) {
+		if (!line.trim()) continue;
+		const [uuid, device] = splitNmcliFields(line);
+		if (uuid && device) result.set(device, uuid);
+	}
+	return result;
+}
+
+/** Map only the two NetworkManager methods this editor can preserve exactly. */
+export function parseNmcliIPv4Method(text: string): NetInterfaceInfo['ipv4Mode'] {
+	const method = text.trim().toLowerCase();
 	if (method === 'auto') return 'dhcp';
 	if (method === 'manual') return 'static';
 	return 'unknown';
 }
 
+/** Accept only a plain profile the editor can replace without preserving hidden routing policy. */
+export function parseNmcliIPv4Profile(text: string, expectedDevice: string, activeInstances: number): NmcliIPv4Profile {
+	const values = new Map<string, string>();
+	for (const line of text.split('\n')) {
+		const fields = splitNmcliFields(line.trim());
+		const key = fields[0]?.toLowerCase();
+		if (key) values.set(key, fields.slice(1).join(':').trim());
+	}
+	const method = values.get('ipv4.method') ?? '';
+	const gatewayText = values.get('ipv4.gateway') ?? '';
+	const addresses = values.get('ipv4.addresses') ?? '';
+	const interfaceName = values.get('connection.interface-name') || null;
+	const multiConnectMatch = (values.get('connection.multi-connect') ?? '').match(/^-?\d+/);
+	const multiConnect = multiConnectMatch ? Number(multiConnectMatch[0]) : null;
+	const addressMatch = addresses.match(/^([^/]+)\/(\d{1,2})$/);
+	const simpleManualAddress = !!addressMatch && validateIPv4Config({ mode: 'static', address: addressMatch[1] ?? '', prefixLength: Number(addressMatch[2]), gateway: gatewayText }) === null;
+	const knownMethod = method === 'auto' || method === 'manual';
+	const boundOnce = interfaceName === expectedDevice && (multiConnect === 0 || multiConnect === 1) && activeInstances === 1;
+	const safe = boundOnce && knownMethod && values.get('ipv4.never-default') === 'no' && (values.get('ipv4.routes') ?? '') === '' && ['', '0'].includes(values.get('ipv4.route-table') ?? '') && (values.get('ipv4.routing-rules') ?? '') === '' && (gatewayText === '' || isIPv4(gatewayText)) && (method === 'auto' ? addresses === '' && gatewayText === '' : simpleManualAddress);
+	return { method, gateway: gatewayText || null, address: simpleManualAddress ? (addressMatch?.[1] ?? null) : null, prefixLength: simpleManualAddress && addressMatch ? Number(addressMatch[2]) : null, safe };
+}
+
+/** The one IPv4 address the kernel holds on a device, and whether it came from a lease. */
+export interface LiveIPv4Address {
+	address: string;
+	prefixLength: number;
+	leased: boolean;
+}
+
 /**
- * The NetworkManager profiles currently active, and each one's `ipv4.method`.
+ * True when the saved profile still describes what the kernel is actually using.
  *
- * Two answers from one read because both come from the same list. The set of
- * devices decides whether an interface can be edited at all — the apply edits the
- * ACTIVE profile, so a device without one has nothing to edit — and the methods
- * decide what addressing mode to report for those that can.
+ * The screen shows the kernel's state and the form saves back into the profile,
+ * so the two have to agree before an edit can round-trip. `nmcli connection
+ * modify` without a reapply leaves them apart, and either direction is dangerous:
+ * a profile that already holds the next static address would have it overwritten
+ * by the one on screen, and a profile switched to DHCP would have that switch
+ * activated by the `device reapply` a DNS-only save runs — changing the address
+ * the user never touched. Both are the thing the baseline check exists to prevent
+ * one layer up, so a divergent interface is not offered for editing at all.
  *
- * One `nmcli` call to list the active profiles, then one per profile: a host has
- * a handful of them, and the read already spawns `iw` once per wireless device.
- * Undefined when NetworkManager cannot be asked at all, so the caller falls back
- * to the kernel rather than reporting every interface as unknown.
+ * The origin of the live address decides it in both directions, which is why a
+ * numeric match is not enough on its own: a profile switched to manual over an
+ * address the kernel is still leasing looks identical to one that owns it, and
+ * saving the form would activate that pending switch. A DHCP profile agrees with
+ * a leased address, and with having none yet: the link may be down, no server may
+ * have answered, or the kernel may hold only the link-local fallback.
  */
-async function readLinuxActiveProfiles(): Promise<{ devices: Set<string>; methods: Map<string, NetAddressMode> } | undefined> {
-	let active: Map<string, string>;
+export function nmcliProfileMatchesLive(profile: NmcliIPv4Profile, live: LiveIPv4Address | null, liveGateway: string | null): boolean {
+	if (parseNmcliIPv4Method(profile.method) === 'static') return live !== null && !live.leased && profile.address === live.address && profile.prefixLength === live.prefixLength && profile.gateway === liveGateway;
+	return live === null || live.leased || live.address.startsWith('169.254.');
+}
+
+const NMCLI_IPV4_PROFILE_FIELDS = 'connection.interface-name,connection.multi-connect,ipv4.method,ipv4.never-default,ipv4.gateway,ipv4.addresses,ipv4.routes,ipv4.route-table,ipv4.routing-rules';
+
+async function readNmcliIPv4Profile(uuid: string, device: string, activeInstances: number): Promise<NmcliIPv4Profile> {
+	const profile = await runFirst(NMCLI_CANDIDATES, ['-t', '-f', NMCLI_IPV4_PROFILE_FIELDS, 'connection', 'show', 'uuid', uuid]);
+	return parseNmcliIPv4Profile(profile, device, activeInstances);
+}
+
+/** Active profiles and their exact IPv4 method. Any incomplete read stays read-only. */
+async function readNetworkManagerProfiles(): Promise<{ connections: Map<string, string>; ipv4Profiles: Map<string, NmcliIPv4Profile> } | undefined> {
 	try {
-		active = parseNmcliActiveUUIDs(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'UUID,DEVICE', 'connection', 'show', '--active']));
+		const connections = await activeConnections();
+		const ipv4Profiles = new Map<string, NmcliIPv4Profile>();
+		const activeCounts = new Map<string, number>();
+		for (const uuid of connections.values()) activeCounts.set(uuid, (activeCounts.get(uuid) ?? 0) + 1);
+		await Promise.all(
+			[...connections].map(async ([device, uuid]) => {
+				ipv4Profiles.set(device, await readNmcliIPv4Profile(uuid, device, activeCounts.get(uuid) ?? 0));
+			})
+		);
+		return { connections, ipv4Profiles };
 	} catch {
 		return undefined;
 	}
-	const methods = new Map<string, NetAddressMode>();
-	for (const [device, uuid] of active) {
-		try {
-			methods.set(device, nmcliMethodToMode(parseNmcliProperties(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'ipv4.method', 'connection', 'show', 'uuid', uuid])).get('ipv4.method') ?? ''));
-		} catch {
-			// This one profile could not be read. Falling back to the kernel here
-			// answers a DIFFERENT question: the kernel describes the address currently
-			// ON the interface, while the editor changes the mode the PROFILE stores.
-			// A DHCP profile whose lease has lapsed, or one carrying a manual secondary
-			// address, reads as static from the kernel — and the editor would then
-			// offer, and on save impose, a mode the user never chose. `unknown` is the
-			// honest answer, and the form declines to apply it.
-			methods.set(device, 'unknown');
-		}
-	}
-	return { devices: new Set(active.keys()), methods };
+}
+
+/** Fresh active-profile lookup shared by the read and apply paths. */
+async function activeConnections(): Promise<Map<string, string>> {
+	return parseNmcliActiveConnections(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'UUID,DEVICE', 'connection', 'show', '--active']));
+}
+
+/**
+ * UUID of the NetworkManager profile currently active on a device.
+ *
+ * Modifying the active profile (rather than creating a new one) is what makes an
+ * edit idempotent: applying twice leaves one profile, not two competing ones.
+ */
+async function editableActiveConnection(device: string): Promise<string> {
+	const connections = await activeConnections();
+	const uuid = connections.get(device);
+	if (!uuid) throw new Error(`no NetworkManager profile is active on ${device}`);
+	const instances = [...connections.values()].filter(activeUUID => activeUUID === uuid).length;
+	if (!(await readNmcliIPv4Profile(uuid, device, instances)).safe) throw new Error(`NetworkManager profile on ${device} is not bound exclusively to that device`);
+	return uuid;
 }
 
 /**
@@ -592,514 +692,283 @@ async function readLinuxActiveProfiles(): Promise<{ devices: Set<string>; method
  * stale `ipv4.addresses` on a profile whose method changed, and that address
  * comes back the moment the user switches to static again.
  */
-export function nmcliModifyArgs(uuid: string, config: NetIPv4Config): string[] {
-	// `uuid <UUID>` rather than a bare argument: nmcli would otherwise match the
-	// value against names first, and a profile named like another one's UUID — or
-	// simply two profiles sharing a name — makes the target ambiguous.
-	const base = ['connection', 'modify', 'uuid', uuid];
-	if (config.mode === 'dhcp') return [...base, 'ipv4.method', 'auto', 'ipv4.addresses', '', 'ipv4.gateway', '', 'ipv4.dns', '', 'ipv4.ignore-auto-dns', 'no'];
-	const dns = config.dns ?? [];
-	return [
-		...base,
-		'ipv4.method',
-		'manual',
-		'ipv4.addresses',
-		`${config.address}/${config.prefixLength}`,
-		'ipv4.gateway',
-		config.gateway ?? '',
-		'ipv4.dns',
-		dns.join(','),
-		// Without this a static profile still merges resolvers handed out by any
-		// other active connection, so the user's DNS choice silently does nothing.
-		'ipv4.ignore-auto-dns',
-		dns.length > 0 ? 'yes' : 'no',
-	];
+function nmcliDnsArgs(config: NetIPv4Config): string[] {
+	if (config.dns === undefined) return [];
+	const ignoreAutomatic = config.dns.length > 0 ? 'yes' : 'no';
+	return ['ipv4.dns', config.dns.filter(isIPv4).join(','), 'ipv4.ignore-auto-dns', ignoreAutomatic, 'ipv6.dns', config.dns.filter(isIPv6).join(','), 'ipv6.ignore-auto-dns', ignoreAutomatic];
 }
 
 /**
- * Build the `nmcli connection up` arguments that re-apply an edited profile.
- *
- * `ifname <device>` is not optional here. Without it NetworkManager is free to
- * pick any device the profile is compatible with, and a profile that is not
- * hard-bound to one interface (no `connection.interface-name`, a generic wired
- * profile) can then come up on a DIFFERENT adapter from the one the user edited
- * — leaving the edited interface down and reconfiguring another.
+ * NetworkManager refuses `ipv6.dns` on a profile whose IPv6 method is
+ * `disabled` or `ignore`, and would only say so after the profile update has
+ * started. Say it first, as a request the host cannot honour rather than a
+ * failed change.
  */
-export function nmcliActivateArgs(uuid: string, device: string): string[] {
-	return ['connection', 'up', 'uuid', uuid, 'ifname', device];
+export function assertIPv6DnsAllowed(ipv6Method: string, dns: readonly string[] | undefined): void {
+	if (!dns?.some(isIPv6)) return;
+	const method = ipv6Method.trim();
+	if (method === 'disabled' || method === 'ignore') throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'IPv6 resolvers need IPv6 enabled on this profile');
 }
 
-/**
- * The IPv4 properties an apply rewrites, and so the ones worth reading first.
- *
- * Exactly the set {@link nmcliModifyArgs} writes: restoring a subset would leave
- * the profile a mixture of the old configuration and the failed new one, which is
- * a third state that was never true of the machine.
- */
-const NM_IPV4_FIELDS = ['ipv4.method', 'ipv4.addresses', 'ipv4.gateway', 'ipv4.dns', 'ipv4.ignore-auto-dns'] as const;
-
-/**
- * Read the requested properties out of `nmcli -t -f <fields> connection show`.
- *
- * Terse mode prints one `key:value` line per field. An unset property prints as
- * empty or as nmcli's `--` placeholder, and both become an empty string — which
- * is also how a value is CLEARED on the way back in, so the round trip is exact.
- */
-export function parseNmcliProperties(text: string): Map<string, string> {
-	const result = new Map<string, string>();
-	for (const line of text.split(/\r?\n/)) {
-		if (!line.trim()) continue;
-		const [key, ...rest] = splitNmcliFields(line);
-		if (!key) continue;
-		const value = rest.join(':');
-		result.set(key, value === '--' ? '' : value);
-	}
-	return result;
+export function nmcliModifyArgs(connectionUUID: string, config: NetIPv4Config, addressingChanged: boolean = true): string[] {
+	const base = ['connection', 'modify', 'uuid', connectionUUID];
+	const dns = nmcliDnsArgs(config);
+	if (!addressingChanged) return [...base, ...dns];
+	if (config.mode === 'dhcp') return [...base, 'ipv4.method', 'auto', 'ipv4.addresses', '', 'ipv4.gateway', '', ...dns];
+	return [...base, 'ipv4.method', 'manual', 'ipv4.addresses', `${config.address}/${config.prefixLength}`, 'ipv4.gateway', config.gateway ?? '', ...dns];
 }
 
-/** Build the `nmcli connection modify` arguments that put a snapshot back verbatim. */
-export function nmcliRestoreArgs(uuid: string, snapshot: Map<string, string>): string[] {
-	const args = ['connection', 'modify', 'uuid', uuid];
-	for (const field of NM_IPV4_FIELDS) args.push(field, snapshot.get(field) ?? '');
-	return args;
+/** Address one active profile unambiguously even when display names collide. */
+export function nmcliActivateArgs(connectionUUID: string, device: string): string[] {
+	return ['connection', 'up', 'uuid', connectionUUID, 'ifname', device];
 }
 
-/**
- * A restorable snapshot parsed out of `nmcli connection show` output, or null
- * when the output does not hold one.
- *
- * Completeness is the whole check. {@link nmcliRestoreArgs} writes an EMPTY value
- * for every field the snapshot does not carry, so restoring from a partial
- * reading would not put the profile back — it would clear precisely the
- * properties that failed to read. A snapshot is all five fields or it is nothing.
- */
-export function parseLinuxIPv4Snapshot(text: string): Map<string, string> | null {
-	const properties = parseNmcliProperties(text);
-	return NM_IPV4_FIELDS.every(field => properties.has(field)) ? properties : null;
+export function assertNmcliActiveConnection(connections: Map<string, string>, device: string, expectedUUID: string): void {
+	if (connections.get(device) !== expectedUUID || [...connections.values()].filter(uuid => uuid === expectedUUID).length !== 1) throw new Error(`NetworkManager activated the profile on an unexpected device`);
 }
 
-/** The profile's current IPv4 properties, or null when a complete set could not be read. */
-async function readLinuxIPv4Properties(uuid: string): Promise<Map<string, string> | null> {
+const NM_SERVICE = 'org.freedesktop.NetworkManager';
+const NM_PATH = '/org/freedesktop/NetworkManager';
+const NM_INTERFACE = 'org.freedesktop.NetworkManager';
+const NM_CHECKPOINT_DELETE_NEW_CONNECTIONS = 2;
+
+/** Create a device checkpoint that also removes profiles created by a failed mutation. */
+export function networkManagerCheckpointCreateArgs(devicePath: string): string[] {
+	return ['--system', 'call', NM_SERVICE, NM_PATH, NM_INTERFACE, 'CheckpointCreate', 'aouu', '1', devicePath, String(NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS), String(NM_CHECKPOINT_DELETE_NEW_CONNECTIONS)];
+}
+
+/** Finish a checkpoint explicitly; rollback is never left waiting for an interactive timeout. */
+export function networkManagerCheckpointFinishArgs(method: 'CheckpointDestroy' | 'CheckpointRollback', checkpointPath: string): string[] {
+	return ['--system', 'call', NM_SERVICE, NM_PATH, NM_INTERFACE, method, 'o', checkpointPath];
+}
+
+/** Parse the stable object-path output of `busctl call ... CheckpointCreate`. */
+export function parseNetworkManagerCheckpointPath(output: string): string {
+	const match = output.trim().match(/^o\s+"?(\/org\/freedesktop\/NetworkManager\/Checkpoint\/\d+)"?$/);
+	if (!match?.[1]) throw new Error('NetworkManager returned an invalid checkpoint path');
+	return match[1];
+}
+
+/** Reject a D-Bus rollback that completed but failed for any checkpointed device. */
+export function assertNetworkManagerRollback(output: string): void {
+	const header = output.trim().match(/^a\{su\}\s+(\d+)\s*(.*)$/s);
+	if (!header) throw new Error('NetworkManager returned an invalid rollback result');
+	const expected = Number(header[1]);
+	const entries = [...(header[2] ?? '').matchAll(/"([^"]+)"\s+(\d+)/g)];
+	if (expected === 0 || entries.length !== expected || entries.some(entry => Number(entry[2]) !== 0)) throw new Error('NetworkManager failed to roll back a checkpointed device');
+}
+
+/** Transaction invariant shared by IPv4 and Wi-Fi mutations. */
+export async function withNetworkManagerCheckpoint<T>(operations: { create: () => Promise<string>; mutate: () => Promise<T>; commit: (checkpointPath: string) => Promise<void>; rollback: (checkpointPath: string) => Promise<void> }): Promise<T> {
+	const checkpointPath = await operations.create();
 	try {
-		return parseLinuxIPv4Snapshot(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', NM_IPV4_FIELDS.join(','), 'connection', 'show', 'uuid', uuid]));
-	} catch {
-		return null;
+		const result = await operations.mutate();
+		await operations.commit(checkpointPath);
+		return result;
+	} catch (error) {
+		try {
+			await operations.rollback(checkpointPath);
+		} catch (rollbackError) {
+			throw new AggregateError([error, rollbackError], 'network mutation failed and rollback also failed');
+		}
+		throw error;
 	}
 }
 
+async function networkManagerDevicePath(device: string): Promise<string> {
+	const path = (await runFirst(NMCLI_CANDIDATES, ['-g', 'GENERAL.DBUS-PATH', 'device', 'show', device])).trim();
+	if (!/^\/org\/freedesktop\/NetworkManager\/Devices\/\d+$/.test(path)) throw new Error(`NetworkManager returned an invalid D-Bus path for ${device}`);
+	return path;
+}
+
+async function createNetworkManagerCheckpoint(devicePath: string): Promise<string> {
+	return parseNetworkManagerCheckpointPath(await runFirst(BUSCTL_CANDIDATES, networkManagerCheckpointCreateArgs(devicePath)));
+}
+
+async function destroyNetworkManagerCheckpoint(checkpointPath: string): Promise<void> {
+	await runFirst(BUSCTL_CANDIDATES, networkManagerCheckpointFinishArgs('CheckpointDestroy', checkpointPath));
+}
+
+async function rollbackNetworkManagerCheckpoint(checkpointPath: string): Promise<void> {
+	assertNetworkManagerRollback(await runFirst(BUSCTL_CANDIDATES, networkManagerCheckpointFinishArgs('CheckpointRollback', checkpointPath), NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS));
+}
+
+async function withDeviceCheckpoint<T>(device: string, mutate: () => Promise<T>): Promise<T> {
+	const devicePath = await networkManagerDevicePath(device);
+	return withNetworkManagerCheckpoint({
+		create: () => createNetworkManagerCheckpoint(devicePath),
+		mutate,
+		commit: destroyNetworkManagerCheckpoint,
+		rollback: rollbackNetworkManagerCheckpoint,
+	});
+}
+
+/** Apply an IPv4 configuration to one device and bring the profile back up. Throws when NetworkManager does not own the device. */
+export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addressingChanged: boolean = true, requireLease: boolean = true): Promise<void> {
+	await withDeviceCheckpoint(device, async () => {
+		const connectionUUID = await editableActiveConnection(device);
+		if (config.dns?.some(isIPv6)) assertIPv6DnsAllowed(await runFirst(NMCLI_CANDIDATES, ['-g', 'ipv6.method', 'connection', 'show', 'uuid', connectionUUID]), config.dns);
+		await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connectionUUID, config, addressingChanged), NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS);
+		// Switching to DHCP with the carrier down is a change to the saved profile,
+		// not something that can be activated: NetworkManager cannot complete IP
+		// configuration without a link and fails the activation. The profile is the
+		// whole change; NetworkManager acts on it when the carrier returns.
+		if (!requireLease && config.mode === 'dhcp') {
+			// Everything this branch wrote still gets read back, resolvers included —
+			// they are saved to the profile whether or not the link is up, and a
+			// change that is never verified is a change nobody knows happened. Only
+			// the live side is skipped: with no carrier the device reports none.
+			const [method, profileDns] = await Promise.all([runFirst(NMCLI_CANDIDATES, ['-g', 'ipv4.method', 'connection', 'show', 'uuid', connectionUUID]), config.dns === undefined ? Promise.resolve('') : runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'ipv4.dns,ipv4.ignore-auto-dns,ipv6.dns,ipv6.ignore-auto-dns', 'connection', 'show', 'uuid', connectionUUID])]);
+			assertLinuxIPv4Method(config, method);
+			assertLinuxDnsApplied(config, profileDns, null, device);
+			return;
+		}
+		const activate = addressingChanged ? nmcliActivateArgs(connectionUUID, device) : ['device', 'reapply', device];
+		await runFirst(NMCLI_CANDIDATES, ['--wait', String(NMCLI_ACTIVATION_WAIT_SECONDS), ...activate], NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
+		assertNmcliActiveConnection(await activeConnections(), device, connectionUUID);
+		if (addressingChanged) {
+			const [method, addr, route] = await Promise.all([runFirst(NMCLI_CANDIDATES, ['-g', 'ipv4.method', 'connection', 'show', 'uuid', connectionUUID]), runFirst(IP_CANDIDATES, ['-j', 'addr', 'show', 'dev', device]), runFirst(IP_CANDIDATES, ['-j', 'route', 'show', 'default', 'dev', device])]);
+			assertLinuxIPv4Applied(config, method, addr, route, requireLease);
+		}
+		if (config.dns !== undefined) {
+			const [profileDns, liveDns] = await Promise.all([runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'ipv4.dns,ipv4.ignore-auto-dns,ipv6.dns,ipv6.ignore-auto-dns', 'connection', 'show', 'uuid', connectionUUID]), runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'GENERAL.DEVICE,IP4.DNS,IP6.DNS', 'device', 'show', device])]);
+			assertLinuxDnsApplied(config, profileDns, liveDns, device);
+		}
+	});
+}
+
+/** Verify the live address and route before committing the NetworkManager checkpoint. */
+/** The saved profile carries the requested addressing method. */
+export function assertLinuxIPv4Method(config: NetIPv4Config, methodText: string): void {
+	if (methodText.trim() !== (config.mode === 'dhcp' ? 'auto' : 'manual')) throw new Error('NetworkManager did not preserve the requested IPv4 method');
+}
+
+export function assertLinuxIPv4Applied(config: NetIPv4Config, methodText: string, addrJson: string, routeJson: string, requireLease: boolean = true): void {
+	assertLinuxIPv4Method(config, methodText);
+	const addresses = (JSON.parse(addrJson) as IpAddrEntry[]).flatMap(entry => entry.addr_info ?? []).filter(address => address.family === 'inet');
+	if (config.mode === 'dhcp') {
+		// With the link down the method is what gets saved; the lease follows the cable.
+		// A leftover static address is not a lease. Without the origin check, a DHCP
+		// switch that never got an answer would pass on the address it was supposed
+		// to replace.
+		if (requireLease && !addresses.some(address => isLeasedAddress(address) && address.local !== '0.0.0.0' && !address.local.startsWith('169.254.') && address.scope !== 'host')) throw new Error('NetworkManager did not obtain a usable IPv4 lease');
+		return;
+	}
+	if (addresses.length !== 1 || addresses[0]?.local !== config.address || addresses[0]?.prefixlen !== config.prefixLength) throw new Error('NetworkManager did not apply the requested IPv4 address');
+	const routes = JSON.parse(routeJson) as IpRouteEntry[];
+	if (config.gateway) {
+		if (routes.length !== 1 || routes[0]?.gateway !== config.gateway) throw new Error('NetworkManager did not apply the requested IPv4 gateway');
+	} else if (routes.length !== 0) throw new Error('NetworkManager kept an unexpected default route');
+}
+
+function parseNmcliProfileValues(text: string): Map<string, string> {
+	const values = new Map<string, string>();
+	for (const line of text.split('\n')) {
+		const fields = splitNmcliFields(line.trim());
+		const key = fields[0]?.toLowerCase();
+		if (key) values.set(key, fields.slice(1).join(':').trim());
+	}
+	return values;
+}
+
+function dnsList(value: string | undefined): string[] {
+	return (value ?? '')
+		.split(',')
+		.map(server => server.trim())
+		.filter(Boolean);
+}
+
+function sameAddresses(actual: string[], expected: string[]): boolean {
+	const left = [...new Set(actual)].sort();
+	const right = [...new Set(expected)].sort();
+	return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 /**
- * Apply an IPv4 configuration to one device and bring the profile back up.
- * Throws when NetworkManager does not own the device.
+ * Verify the resolvers a change asked for.
  *
- * `connection modify` rewrites the stored profile immediately and permanently,
- * before `connection up` has had a chance to prove the new configuration works.
- * A failed activation therefore used to leave the profile on disk permanently
- * changed — and because the connection that was already running often keeps
- * working, the damage only surfaced at the next reconnect or reboot, far from
- * anything the user could connect it to. Reading the properties first is what
- * makes the change undoable.
- *
- * Two things follow from that, and both were missing. Nothing may be changed
- * without a complete snapshot: an unreadable profile is not a profile to edit
- * hopefully, because the rollback would have nothing to write back. And the
- * `connection modify` has to be INSIDE the guard — it is the step that rewrites
- * the profile permanently, so a failure or a timeout in it left the stored
- * configuration changed with no rollback attempted at all.
+ * `liveText` is what the device reports now, and is only meaningful once the
+ * profile has been activated. With the carrier down there is nothing to activate
+ * and no resolvers to read back, so pass `null`: the saved policy is the whole
+ * change there, and it is still verified.
  */
-export async function applyLinuxIPv4(device: string, config: NetIPv4Config): Promise<void> {
-	const connection = await activeConnection(device);
-	if (!connection) throw new Error(`no NetworkManager profile is active on ${device}`);
-	const snapshot = await readLinuxIPv4Properties(connection);
-	if (!snapshot) throw new Error(`the current IPv4 configuration of ${device} could not be read in full, so it will not be changed`);
-	try {
-		// Permanent the moment it returns, and permanent as well if it times out
-		// having already applied — which is why the rollback has to cover it.
-		await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connection, config), APPLY_TIMEOUT_MS);
-		// `connection up` re-applies the edited profile in place. The device drops for
-		// a moment either way — that is inherent to changing an address, not to this.
-		await runFirst(NMCLI_CANDIDATES, nmcliActivateArgs(connection, device), APPLY_TIMEOUT_MS);
-	} catch (err) {
-		const rollback = await restoreLinuxIPv4(connection, device, snapshot);
-		// Both, not just the first: a rollback that failed leaves the profile in a
-		// state the activation error says nothing about.
-		if (rollback) throw new Error(`${(err as Error).message} — and undoing the change failed: ${rollback}`);
-		throw err;
-	}
+export function assertLinuxDnsApplied(config: NetIPv4Config, profileText: string, liveText: string | null, device: string): void {
+	if (config.dns === undefined) return;
+	const values = parseNmcliProfileValues(profileText);
+	const custom = config.dns.length > 0;
+	const expected4 = config.dns.filter(isIPv4);
+	const expected6 = config.dns.filter(isIPv6);
+	if (values.get('ipv4.ignore-auto-dns') !== (custom ? 'yes' : 'no') || values.get('ipv6.ignore-auto-dns') !== (custom ? 'yes' : 'no') || !sameAddresses(dnsList(values.get('ipv4.dns')), expected4) || !sameAddresses(dnsList(values.get('ipv6.dns')), expected6)) throw new Error('NetworkManager did not preserve the requested DNS policy');
+	if (custom && liveText !== null && !sameAddresses(parseNmcliDns(liveText).get(device) ?? [], config.dns)) throw new Error('NetworkManager did not apply the requested DNS servers');
+}
+
+export function assertLinuxWifiConnected(networks: NetWifiNetwork[], ssid: string, bssid: string | null): void {
+	const active = networks.find(network => network.active && network.ssid === ssid && (bssid === null || network.bssid?.toLowerCase() === bssid.toLowerCase()));
+	if (!active) throw new Error('NetworkManager did not connect to the requested Wi-Fi access point');
 }
 
 /**
- * Put the profile's IPv4 properties back and bring it up again. Returns what
- * went wrong, or null when the rollback succeeded.
- *
- * Re-activating is part of the rollback, not an extra: the failed `connection up`
- * may well have torn the old connection down before it gave up, so restoring the
- * file alone would leave the device configured correctly and switched off.
- *
- * The snapshot is not nullable. {@link applyLinuxIPv4} refuses to change anything
- * without one, so "there was nothing to restore from" is a state this function
- * can no longer be reached in.
- */
-async function restoreLinuxIPv4(uuid: string, device: string, snapshot: Map<string, string>): Promise<string | null> {
-	try {
-		await runFirst(NMCLI_CANDIDATES, nmcliRestoreArgs(uuid, snapshot), APPLY_TIMEOUT_MS);
-	} catch (err) {
-		return `the profile still holds the rejected configuration (${(err as Error).message})`;
-	}
-	try {
-		await runFirst(NMCLI_CANDIDATES, nmcliActivateArgs(uuid, device), APPLY_TIMEOUT_MS);
-	} catch (err) {
-		return `the profile was restored but could not be brought back up (${(err as Error).message})`;
-	}
-	return null;
-}
-
-/**
- * Parse `nmcli -t -f SSID,SIGNAL,SECURITY,IN-USE device wifi list`.
+ * Parse `nmcli -t -f SSID,BSSID,SIGNAL,SECURITY,IN-USE device wifi list`.
  *
  * Hidden networks report an empty SSID and are dropped: they cannot be joined by
  * name, so offering an unnamed row would be offering something that fails.
- * Duplicates (one row per access point for a roaming network) collapse to the strongest.
+ * Every BSSID stays distinct so equal SSIDs with different security cannot be
+ * mistaken for the same network.
  */
 export function parseNmcliWifiList(text: string): NetWifiNetwork[] {
-	const best = new Map<string, NetWifiNetwork>();
+	const networks = new Map<string, NetWifiNetwork>();
 	for (const line of text.split('\n')) {
 		if (!line.trim()) continue;
-		const [ssid, signal, security, inUse] = splitNmcliFields(line);
+		const [ssid, rawBssid, signal, security, inUse] = splitNmcliFields(line);
 		if (!ssid) continue;
+		const bssid = rawBssid && /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(rawBssid) ? rawBssid.toUpperCase() : null;
 		const parsed = signal ? parseInt(signal, 10) : NaN;
+		const securityName = security?.trim() ?? '';
+		const enterprise = /(?:802\.1X|ENTERPRISE|EAP)/i.test(securityName);
+		const obsolete = /\bWEP\b/i.test(securityName);
 		const entry: NetWifiNetwork = {
 			ssid,
+			bssid,
 			signal: Number.isFinite(parsed) ? Math.min(100, Math.max(0, parsed)) : null,
 			// nmcli leaves SECURITY empty for an open network and prints the key
 			// management (WPA2, WPA3, WEP, 802.1X) otherwise.
-			secured: !!security?.trim(),
+			secured: securityName.length > 0,
+			security: securityName,
+			supported: securityName.length === 0 || (/\bWPA\d*\b/i.test(securityName) && !enterprise && !obsolete),
 			active: inUse?.trim() === '*',
 		};
-		const previous = best.get(ssid);
-		if (!previous) best.set(ssid, entry);
-		// The strongest access point wins the signal, but IN-USE belongs to the
-		// network, not to that row: on a roaming network the host is regularly
-		// associated with the weaker of two access points, and dropping the marker
-		// with the losing row stops the UI showing which network it is on.
-		else best.set(ssid, { ...((entry.signal ?? -1) > (previous.signal ?? -1) ? entry : previous), active: previous.active || entry.active });
+		const key = `${ssid}\0${bssid ?? ''}\0${securityName}`;
+		const previous = networks.get(key);
+		if (!previous) networks.set(key, entry);
+		else if ((entry.signal ?? -1) > (previous.signal ?? -1)) networks.set(key, { ...entry, active: previous.active || entry.active });
+		else if (entry.active && !previous.active) networks.set(key, { ...previous, active: true });
 	}
-	return [...best.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
+	return [...networks.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
 }
 
 /** Scan for Wi-Fi networks reachable from one device. */
 export async function scanLinuxWifi(device: string): Promise<NetWifiNetwork[]> {
-	return parseNmcliWifiList(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'SSID,SIGNAL,SECURITY,IN-USE', 'device', 'wifi', 'list', 'ifname', device, '--rescan', 'yes'], WIFI_SCAN_TIMEOUT_MS));
+	return parseNmcliWifiList(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'SSID,BSSID,SIGNAL,SECURITY,IN-USE', 'device', 'wifi', 'list', 'ifname', device, '--rescan', 'yes'], WIFI_SCAN_TIMEOUT_MS));
 }
 
-/**
- * How this module reaches nmcli.
- *
- * A parameter rather than a direct call, so the join's rollback can be driven
- * through every one of its outcomes without a radio, a NetworkManager or a saved
- * profile to damage.
- */
-export type NmcliRunner = (args: string[], timeoutMs?: number) => Promise<string>;
-
-/** The real thing: the first nmcli on disk, with this module's own timeouts. */
-const runNmcli: NmcliRunner = (args, timeoutMs) => runFirst(NMCLI_CANDIDATES, args, timeoutMs);
-
-/** `connection.type` of a Wi-Fi profile, as `nmcli -t -f TYPE connection show` prints it. */
-const NM_WIFI_TYPE = '802-11-wireless';
-
-/**
- * The `802-11-wireless-security` properties a join can overwrite, and so the ones
- * it has to be able to put back.
- *
- * `device wifi connect` does not create a profile when a compatible one is already
- * saved. It writes the supplied key into THAT profile — `psk` for WPA/SAE,
- * `wep-key0` and `wep-key-type` for WEP — commits it, and only then starts the
- * association. The commit carries neither `to-disk` nor `in-memory`, and for a
- * profile that already lives on disk that means the key is persisted. So a wrong
- * password replaced a correct saved one before anything had proved it works, the
- * association then failed, and the next autoconnect or reboot failed with it.
- */
-const NM_WIFI_SECRET_FIELDS = ['802-11-wireless-security.psk', '802-11-wireless-security.wep-key0', '802-11-wireless-security.wep-key-type'] as const;
-
-/** What nmcli prints in place of a secret it holds but will not hand over. */
-const NM_HIDDEN_SECRET = '<hidden>';
-
-/** UUIDs of the saved Wi-Fi profiles in `nmcli -t -f UUID,TYPE connection show` output. */
-export function parseNmcliWifiProfileUUIDs(text: string): string[] {
-	const uuids: string[] = [];
-	for (const line of text.split(/\r?\n/)) {
-		if (!line.trim()) continue;
-		const [uuid, type] = splitNmcliFields(line);
-		if (uuid && type === NM_WIFI_TYPE) uuids.push(uuid);
-	}
-	return uuids;
+/** Map NetworkManager's three independent policy decisions to real capabilities. */
+export function parseLinuxCapabilities(text: string): NetCapabilities {
+	const modify = parseNmcliPermission(text, NM_MODIFY_PERMISSION);
+	const activate = parseNmcliPermission(text, NM_CONTROL_PERMISSION);
+	const checkpoint = parseNmcliPermission(text, NM_CHECKPOINT_PERMISSION);
+	const nativeIPv4 = modify === 'yes' && activate === 'yes' && checkpoint === 'yes';
+	const helperIPv4 = !nativeIPv4 && [modify, activate, checkpoint].every(verdict => verdict === 'yes' || verdict === 'auth');
+	return {
+		ipv4: nativeIPv4 || helperIPv4,
+		...(helperIPv4 && { ipv4Elevation: true }),
+		wifi: nativeIPv4 && parseNmcliPermission(text, NM_WIFI_SCAN_PERMISSION) === 'yes',
+		staticGatewayRequired: false,
+	};
 }
 
-/**
- * The restorable security properties of one saved profile, or null when one of
- * them exists but could not be read.
- *
- * Only the fields nmcli actually reported are captured, and the restore writes
- * back only those — an absent field is one this profile does not have, and
- * writing an empty value for it would clear a property rather than restore it.
- * A profile with no `802-11-wireless-security` setting at all reports none of
- * them and yields an empty snapshot, which is the right answer: there is no
- * stored key on it for a join to destroy.
- *
- * `<hidden>` is the one value that is not a value. It means nmcli knows a secret
- * is there and did not print it, so the profile CAN be damaged and CANNOT be put
- * back — the opposite of an empty reading, and the two must not be confused.
- */
-export function parseLinuxWifiSecrets(text: string): Map<string, string> | null {
-	const properties = parseNmcliProperties(text);
-	const snapshot = new Map<string, string>();
-	for (const field of NM_WIFI_SECRET_FIELDS) {
-		const value = properties.get(field);
-		if (value === undefined) continue;
-		if (value === NM_HIDDEN_SECRET) return null;
-		snapshot.set(field, value);
-	}
-	return snapshot;
-}
-
-/** Build the `nmcli connection modify` arguments that put a Wi-Fi snapshot back verbatim. */
-export function nmcliWifiRestoreArgs(uuid: string, snapshot: Map<string, string>): string[] {
-	const args = ['connection', 'modify', 'uuid', uuid];
-	for (const field of NM_WIFI_SECRET_FIELDS) {
-		const value = snapshot.get(field);
-		if (value !== undefined) args.push(field, value);
-	}
-	return args;
-}
-
-/** One saved profile a join could overwrite, and the properties to put back if it does. */
-interface WifiProfileSnapshot {
-	readonly uuid: string;
-	readonly snapshot: Map<string, string>;
-}
-
-/** Every Wi-Fi profile that existed before a join, and which of them it can overwrite. */
-interface WifiJoinSnapshot {
-	/** UUID of every saved Wi-Fi profile, whatever SSID it carries. */
-	readonly known: ReadonlySet<string>;
-	/** The ones carrying the SSID being joined, with the properties to put back. */
-	readonly profiles: readonly WifiProfileSnapshot[];
-}
-
-/** One profile's security properties as nmcli prints them. Throws when the read failed. */
-async function readWifiSecrets(run: NmcliRunner, uuid: string): Promise<string> {
-	return run(['--show-secrets', '-t', '-f', NM_WIFI_SECRET_FIELDS.join(','), 'connection', 'show', 'uuid', uuid]);
-}
-
-/** One profile's security properties, or null when nmcli refused either the read or a secret in it. */
-async function readWifiSecretsOrNull(run: NmcliRunner, uuid: string): Promise<Map<string, string> | null> {
-	try {
-		return parseLinuxWifiSecrets(await readWifiSecrets(run, uuid));
-	} catch {
-		return null;
-	}
-}
-
-/**
- * The SSID one saved profile carries.
- *
- * Both sides of every comparison against this are nmcli terse output put through
- * the same unescaping, so a name carrying a colon or a backslash is compared as
- * the user sees it rather than as nmcli escaped it.
- */
-async function readWifiSsid(run: NmcliRunner, uuid: string): Promise<string> {
-	return parseNmcliProperties(await run(['-t', '-f', '802-11-wireless.ssid', 'connection', 'show', 'uuid', uuid])).get('802-11-wireless.ssid') ?? '';
-}
-
-/** Whether a profile's current properties hold the password an attempt supplied. */
-function holdsWifiPassword(properties: Map<string, string>, password: string): boolean {
-	return NM_WIFI_SECRET_FIELDS.some(field => properties.get(field) === password);
-}
-
-/**
- * Snapshot every saved profile this join could overwrite, before it is attempted.
- *
- * Which profile `device wifi connect` picks is nmcli's decision, made against the
- * live access point, and it is not reproducible from here. So every saved profile
- * carrying this SSID is snapshotted rather than a guess at the one profile: a
- * profile nmcli can reuse for this network is one that carries its SSID, and
- * putting back a profile the join never touched is not something the restore
- * does — see {@link restoreLinuxWifiSecrets}.
- *
- * Nothing here is optional. A profile whose SSID could not be read might be the
- * target, and one whose key exists but could not be read is one a failed join
- * would damage with no way back — so both refuse the join outright instead of
- * proceeding on the assumption that they are neither. Refusing costs the user an
- * attempt; guessing costs them a working network.
- *
- * A profile that stores no key at all is the one thing left out, because it has
- * nothing to lose and no restore to build: `connection modify` with no properties
- * is not a command, so keeping it would mean reporting a failed rollback for a
- * profile that was never at risk. nmcli does not reuse such a profile for a
- * secured network either — its key management does not match the access point.
- */
-async function snapshotLinuxWifiProfiles(run: NmcliRunner, ssid: string): Promise<WifiJoinSnapshot> {
-	let uuids: string[];
-	try {
-		uuids = parseNmcliWifiProfileUUIDs(await run(['-t', '-f', 'UUID,TYPE', 'connection', 'show']));
-	} catch {
-		throw new Error('the saved Wi-Fi networks could not be listed, so none of them will be changed');
-	}
-	const profiles: WifiProfileSnapshot[] = [];
-	for (const uuid of uuids) {
-		let saved: string;
-		try {
-			saved = await readWifiSsid(run, uuid);
-		} catch {
-			throw new Error('a saved Wi-Fi network could not be read, so no saved password will be changed');
-		}
-		if (saved !== ssid) continue;
-		const snapshot = await readWifiSecretsOrNull(run, uuid);
-		if (!snapshot) throw new Error('the password already saved for this network could not be read, so it will not be replaced');
-		if (snapshot.size > 0) profiles.push({ uuid, snapshot });
-	}
-	// Every UUID, not only the matching ones: what makes a profile a candidate for
-	// having been left behind is that it was not here before, and a profile filtered
-	// out by SSID was still here. See {@link reportWifiProfileLeftByJoin}.
-	return { known: new Set(uuids), profiles };
-}
-
-/**
- * Put back what a failed join overwrote. Returns what went wrong, or null when
- * the undo succeeded or there was nothing to undo.
- *
- * Every profile is re-read first, and only one that now holds the password THIS
- * attempt supplied is a candidate. A join that failed before nmcli ever reached a
- * profile — the ordinary case, a network out of range or an association that never
- * came up — matches nothing and leaves every keyfile exactly as it was, rather
- * than rewriting each one with its own values.
- *
- * Holding that password is evidence, not proof. Another tool writing the same
- * value into a different profile leaves one indistinguishable from a profile this
- * attempt wrote, and nmcli exposes nothing that separates them: not its output,
- * which names no profile when an activation fails, and not the profile itself,
- * whose timestamp only moves on a successful activation. So the single-candidate
- * case is not identified, it is assumed — one profile holding the attempt's
- * password is taken to be the attempt's work and put back.
- *
- * What that assumption cannot cover is the case where it is provably wrong. nmcli
- * writes ONE profile per join, so two profiles holding this attempt's password
- * means at least one of them belongs to something else, and which one is exactly
- * what cannot be read. Nothing is written then, and the caller is told. That
- * leaves the profile this attempt really did clobber still holding the failed
- * password — a network the user has to re-enter — which is the lesser of the two
- * against silently discarding an edit another program made and reported as saved.
- *
- * The re-read is a check, not a lock, and the gap between it and the write is
- * real: a change another tool commits inside that gap is overwritten by the
- * restore and lost without a word. Nothing here closes it. nmcli has no
- * conditional modify, and the guard NetworkManager does have — the `version-id`
- * argument to Update2, which rejects a write whose profile has moved on — cannot
- * be reached from here: nmcli exposes no flag for it, and the version-id is not a
- * D-Bus property, so only a libnm client can read one to pass back. The gap is
- * one nmcli invocation wide, which is as narrow as it goes without libnm.
- *
- * Overwriting is still the better of the two errors. Refusing to restore unless
- * the profile were provably untouched would trade that rare lost edit for leaving
- * the password that just failed saved on every ordinary failed join — a profile
- * broken every time, to avoid breaking one during a collision that lasts as long
- * as one process spawn.
- *
- * What nmcli said is deliberately not part of what is reported. The restoring
- * command carries the previous passphrase as an argv entry, and the message
- * execFile builds for a failed child is the entire command line — so quoting it
- * would put the passphrase into the error the caller logs and returns.
- */
-async function restoreLinuxWifiSecrets(run: NmcliRunner, profiles: readonly WifiProfileSnapshot[], password: string): Promise<string | null> {
-	const unreadable: string[] = [];
-	const candidates: WifiProfileSnapshot[] = [];
-	for (const profile of profiles) {
-		const current = await readWifiSecretsOrNull(run, profile.uuid);
-		if (!current) unreadable.push(profile.uuid);
-		else if (holdsWifiPassword(current, password)) candidates.push(profile);
-	}
-	if (candidates.length > 1) return `more than one saved profile for this network now holds the password that just failed, so which of them this attempt changed cannot be told from which another program changed — none of them were put back (${candidates.map(p => p.uuid).join(', ')})`;
-	const target = candidates[0];
-	if (target) {
-		// Re-read rather than reuse what the loop above read: with more than one saved
-		// profile that reading is several nmcli invocations old, and this check is only
-		// worth what its age allows.
-		const current = await readWifiSecretsOrNull(run, target.uuid);
-		if (!current) unreadable.push(target.uuid);
-		// Still this attempt's, and not already what it replaced — a password matching
-		// the saved one destroyed nothing by being written over it.
-		else if (holdsWifiPassword(current, password) && NM_WIFI_SECRET_FIELDS.some(field => current.get(field) !== target.snapshot.get(field))) {
-			// Nothing may be awaited between that check and this write. The check is the
-			// only thing standing between the restore and a concurrent edit, and every
-			// suspension point added here widens the window in which one is lost.
-			try {
-				await run(nmcliWifiRestoreArgs(target.uuid, target.snapshot), APPLY_TIMEOUT_MS);
-			} catch {
-				return `this network's previous password could not be put back, so the one that just failed is the one now saved for it (${target.uuid})`;
-			}
-		}
-	}
-	if (unreadable.length > 0) return `this network's saved password could not be re-read, so whether the one that just failed replaced it is not known (${unreadable.join(', ')})`;
-	return null;
-}
-
-/**
- * Name the saved network a failed join may have left behind. Nothing is deleted.
- *
- * A join for a network no saved profile carries has nothing to put back — there was
- * no password to overwrite — but it is not the harmless case it looks like. nmcli
- * reaches `nm_client_add_and_activate_connection_async()` for it, which adds the
- * profile to disk first and attempts the association second: the association fails,
- * and a profile the host did not have stays behind holding a password nothing ever
- * verified. Undoing an operation that CREATED something would mean deleting it.
- *
- * Deleting it is what this deliberately does not do, because the attribution it
- * would rest on is not sound. Everything observable about a leftover profile — that
- * it was absent from the listing taken before the join, that it carries the SSID
- * being joined, that it holds the password this attempt supplied, that it is the
- * only one of its kind — is equally true of a profile ANOTHER program saved for
- * this same network, with this same password, in the moment between that listing
- * and the join. That is not a narrow window either: `device wifi connect` reuses a
- * compatible saved profile rather than adding a second one, so such a profile is
- * the very one nmcli would then have written and failed on. Nothing nmcli exposes
- * separates the two cases — its output names no profile when an activation fails,
- * and a profile's timestamp only moves on a successful activation — so no test
- * written here can tell "the profile this attempt created" from "the profile
- * someone else created and this attempt used".
- *
- * Weighed against a stray profile the user is told about, and can delete in one
- * click, destroying a network someone deliberately saved is the worse error. So the
- * leftover is reported by UUID and left where it is. The report reads no secrets:
- * the password is not part of the attribution because it never distinguished
- * anything.
- *
- * Preventing the profile instead of removing it would be the cleaner shape, and it
- * is not reachable: the volatile add exists in libnm, not in nmcli, and building
- * the profile ourselves means deciding its security type without the access point
- * that `device wifi connect` reads it from.
- */
-async function reportWifiProfileLeftByJoin(run: NmcliRunner, known: ReadonlySet<string>, ssid: string): Promise<string | null> {
-	let uuids: string[];
-	try {
-		uuids = parseNmcliWifiProfileUUIDs(await run(['-t', '-f', 'UUID,TYPE', 'connection', 'show']));
-	} catch {
-		return 'whether the attempt saved a new network of its own could not be checked';
-	}
-	const appeared: string[] = [];
-	for (const uuid of uuids) {
-		if (known.has(uuid)) continue;
-		let saved: string | null;
-		try {
-			saved = await readWifiSsid(run, uuid);
-		} catch {
-			// Unreadable is not "some other SSID": a profile that cannot be identified is
-			// one this attempt may well have left, so it is reported rather than skipped.
-			saved = null;
-		}
-		if (saved !== null && saved !== ssid) continue;
-		appeared.push(uuid);
-	}
-	if (appeared.length === 0) return null;
-	return `a saved network for this one appeared while the attempt ran and may be holding the password that just failed — which program saved it cannot be told from here, so it was left in place for you to remove (${appeared.join(', ')})`;
+/** Build the public part of a Wi-Fi connect command; the secret is never an argument. */
+export function nmcliWifiConnectArgs(device: string, ssid: string, askForPassword: boolean, bssid: string | null = null): string[] {
+	return [...(askForPassword ? ['--ask'] : []), 'device', 'wifi', 'connect', ssid, ...(bssid ? ['bssid', bssid] : []), 'ifname', device];
 }
 
 /**
@@ -1107,34 +976,16 @@ async function reportWifiProfileLeftByJoin(run: NmcliRunner, known: ReadonlySet<
  *
  * `device wifi connect` reuses a saved profile when one exists and creates one
  * otherwise, so the same call covers both "reconnect to a known network" and
- * "join a new one with a password". The password is passed as a separate argv
- * entry — never interpolated into a command line — so no quoting rule applies to it.
- *
- * Reusing a saved profile is also what makes a failed attempt destructive, which
- * is what the snapshot around it is for: see {@link NM_WIFI_SECRET_FIELDS} for
- * what a join overwrites and when. Without a password there is nothing to
- * overwrite — nmcli commits the profile it found unchanged — so the join runs on
- * its own.
- *
- * Creating a profile is the other half, and it has no undo: a first join to a new
- * network snapshots to nothing, and a failed one leaves behind a profile that can
- * only be named to the user, never deleted on their behalf. See
- * {@link reportWifiProfileLeftByJoin}.
+ * "join a new one with a password". A password is supplied through stdin to
+ * `nmcli --ask`, never argv, so another local user cannot read it from
+ * `/proc/<pid>/cmdline` while the command is running.
  */
-export async function connectLinuxWifi(device: string, ssid: string, password: string, run: NmcliRunner = runNmcli): Promise<void> {
-	const args = ['device', 'wifi', 'connect', ssid, 'ifname', device];
-	if (!password) {
-		await run(args, APPLY_TIMEOUT_MS);
-		return;
-	}
-	const before = await snapshotLinuxWifiProfiles(run, ssid);
-	try {
-		await run([...args, 'password', password], APPLY_TIMEOUT_MS);
-	} catch (err) {
-		const rollback = [await restoreLinuxWifiSecrets(run, before.profiles, password), await reportWifiProfileLeftByJoin(run, before.known, ssid)].filter(note => note !== null);
-		// Both, not just the first: a rollback that failed leaves the saved network in
-		// a state the join's own error says nothing about.
-		if (rollback.length > 0) throw new Error(`${(err as Error).message} — and the attempt could not be fully undone: ${rollback.join('; ')}`);
-		throw err;
-	}
+export async function connectLinuxWifi(device: string, ssid: string, password: string, bssid: string | null = null): Promise<void> {
+	const args = ['--wait', String(NMCLI_ACTIVATION_WAIT_SECONDS), ...nmcliWifiConnectArgs(device, ssid, !!password, bssid)];
+	await withDeviceCheckpoint(device, async () => {
+		if (password) await runFirstWithInput(NMCLI_CANDIDATES, args, `${password}\n`, NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
+		else await runFirst(NMCLI_CANDIDATES, args, NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
+		const networks = parseNmcliWifiList(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'SSID,BSSID,SIGNAL,SECURITY,IN-USE', 'device', 'wifi', 'list', 'ifname', device, '--rescan', 'no'], WIFI_SCAN_TIMEOUT_MS));
+		assertLinuxWifiConnected(networks, ssid, bssid);
+	});
 }

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { CodedError, ErrorCodes } from '@shared';
-import { applyMacIPv4, macApplyArgs, macDbmToQuality, readMacDnsServers, macRestoreArgs, parseMacServiceSnapshot, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDhcpDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceDns, parseServiceInfo, parseServiceOrder, parseServiceRouter, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { assertMacIPv4Applied, hasMacWritePrivilege, macApplyArgs, macRestoreRequiresLease, withMacRollback, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseScopedDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -65,6 +64,12 @@ destination: default
       flags: <UP,GATEWAY,DONE,STATIC,PRCLONING,GLOBAL>
 `;
 
+const ROUTES = `Routing tables
+Internet:
+Destination        Gateway            Flags               Netif Expire
+default            192.0.2.1          UGScg                 en0
+`;
+
 const AIRPORT = `Wi-Fi:
 
       Interfaces:
@@ -107,6 +112,12 @@ describe('parseServiceOrder', () => {
 	it('skips a disabled service, because writing to it silently does nothing', () => {
 		expect(parseServiceOrder(SERVICE_ORDER).has('en4')).toBe(false);
 	});
+
+	it('keeps a device with multiple enabled services read-only', () => {
+		const duplicate = `${SERVICE_ORDER}\n(5) Backup Wi-Fi\n(Hardware Port: Wi-Fi, Device: en0)\n`;
+		expect(parseServiceBindings(duplicate).get('en0')).toEqual(['Wi-Fi', 'Backup Wi-Fi']);
+		expect(parseServiceOrder(duplicate).has('en0')).toBe(false);
+	});
 });
 
 describe('parseIfconfig', () => {
@@ -145,21 +156,14 @@ describe('parseDefaultRoute', () => {
 	it('yields nulls when there is no default route', () => {
 		expect(parseDefaultRoute('route: writing to routing socket: not in table')).toEqual({ device: null, gateway: null });
 	});
-});
 
-describe('parseServiceRouter', () => {
-	it('reads the router of the service, so a secondary one keeps its gateway', () => {
-		expect(parseServiceRouter('Manual Configuration\nIP address: 198.51.100.2\nRouter: 198.51.100.1\n')).toBe('198.51.100.1');
-	});
-
-	it('treats the literal "none" as no router', () => {
-		// macOS prints this for a service with no gateway configured; taking it
-		// verbatim would put the word into the edit form gateway field.
-		expect(parseServiceRouter('Manual Configuration\nRouter: none\n')).toBeNull();
-	});
-
-	it('reports nothing when the output carries no router at all', () => {
-		expect(parseServiceRouter('** Error: The parameters were not valid.')).toBeNull();
+	it('reads every default route from the routing table', () => {
+		const routes = `${ROUTES}default            198.51.100.1       UGScIg                en0\ndefault            203.0.113.1        UGScIg                en4\n`;
+		expect(parseDefaultRoutes(routes)).toEqual([
+			{ device: 'en0', gateway: '192.0.2.1' },
+			{ device: 'en0', gateway: '198.51.100.1' },
+			{ device: 'en4', gateway: '203.0.113.1' },
+		]);
 	});
 });
 
@@ -167,13 +171,6 @@ describe('parseServiceInfo', () => {
 	it('distinguishes the addressing modes', () => {
 		expect(parseServiceInfo('DHCP Configuration\nIP address: 192.0.2.2\n')).toBe('dhcp');
 		expect(parseServiceInfo('Manual Configuration\nIP address: 192.0.2.2\n')).toBe('static');
-	});
-
-	// BOOTP and DHCP are different protocols with different networksetup verbs,
-	// and the model has no word for BOOTP. Reported as DHCP, merely opening the
-	// editor and pressing Save ran `-setdhcp` and converted the service to a
-	// protocol the user never chose.
-	it('refuses to call BOOTP a form of DHCP', () => {
 		expect(parseServiceInfo('BOOTP Configuration\n')).toBe('unknown');
 	});
 
@@ -181,6 +178,26 @@ describe('parseServiceInfo', () => {
 		expect(parseServiceInfo('** Error: The parameters were not valid.')).toBe('unknown');
 	});
 });
+
+describe('parseServiceGateway', () => {
+	it('reads a router from each service own configuration', () => {
+		expect(parseServiceGateway('Manual Configuration\nRouter: 198.51.100.1\n')).toBe('198.51.100.1');
+		expect(parseServiceGateway('DHCP Configuration\nRouter: none\n')).toBeNull();
+	});
+});
+
+describe('parseServiceIPv4', () => {
+	it('reads a manual address stored for an inactive service', () => {
+		expect(parseServiceIPv4('Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\n')).toEqual({ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 });
+	});
+
+	it('does not invent an address from DHCP or a malformed mask', () => {
+		expect(parseServiceIPv4('DHCP Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\n')).toBeNull();
+		expect(parseServiceIPv4('Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.0.255.0\n')).toBeNull();
+	});
+});
+
+const SCUTIL = 'DNS configuration\n\nresolver #1\n  nameserver[0] : 2001:db8::53\n  if_index : 17 (en0)\n  flags    : Request AAAA records\n  reach    : 0x00000002 (Reachable)\n\nresolver #2\n  domain   : local\n  options  : mdns\n  timeout  : 5\n\nDNS configuration (for scoped queries)\n\nresolver #1\n  nameserver[0] : 2001:db8::53\n  nameserver[1] : 2001:db8::54\n  if_index : 17 (en0)\n  flags    : Scoped, Request AAAA records\n  reach    : 0x00000002 (Reachable)\n\nresolver #2\n  nameserver[0] : 192.0.2.1\n  if_index : 21 (en4)\n  flags    : Scoped, Request A records\n';
 
 describe('DNS', () => {
 	it('reads servers the user set', () => {
@@ -196,6 +213,30 @@ describe('DNS', () => {
 		// reporting an empty list there would tell the user they have no resolvers.
 		expect(parseDhcpDns('domain_name_server (ip_mult): {192.0.2.1, 198.51.100.1}')).toEqual(['192.0.2.1', '198.51.100.1']);
 		expect(parseDhcpDns('subnet_mask (ip): 255.255.255.0')).toEqual([]);
+	});
+
+	it('keeps a link-local resolver together with the zone macOS prints', () => {
+		// A router advertisement usually names a link-local server, and scutil spells
+		// it with the zone. The shared IPv6 validator rejects `%` on purpose, so
+		// without the reader accounting for it the only resolver a host has is lost.
+		const withZone = SCUTIL.replaceAll('2001:db8::53', 'fe80::1%en0');
+		expect(parseScopedDns(withZone, 'en0')).toEqual(['fe80::1%en0', '2001:db8::54']);
+		expect(parseServiceDns('fe80::1%en0\n192.0.2.1\n')).toEqual(['fe80::1%en0', '192.0.2.1']);
+		// A zone is an IPv6 thing, there is only ever one, and it names an interface.
+		expect(parseServiceDns('192.0.2.1%en0\nfe80::1%\nfe80::1%en0%en1\nfe80::1%en 0\n')).toEqual([]);
+	});
+
+	it('reads the resolvers scoped to one device, whichever family delivered them', () => {
+		// `ipconfig getpacket` only ever describes an IPv4 lease, so a host whose
+		// resolvers arrive over IPv6 is invisible to it. The scoped section of
+		// `scutil --dns` names one resolver per interface and carries both families.
+		const scutil = SCUTIL;
+		expect(parseScopedDns(scutil, 'en0')).toEqual(['2001:db8::53', '2001:db8::54']);
+		expect(parseScopedDns(scutil, 'en4')).toEqual(['192.0.2.1']);
+		expect(parseScopedDns(scutil, 'en5')).toEqual([]);
+		// The unscoped section above it describes the host, not an interface, and
+		// must not answer for a device that has no scoped resolver of its own.
+		expect(parseScopedDns(scutil.split('DNS configuration (for scoped queries)')[0] as string, 'en0')).toEqual([]);
 	});
 });
 
@@ -230,11 +271,27 @@ describe('parseMacNetworkState', () => {
 		serviceOrder: SERVICE_ORDER,
 		ifconfig: IFCONFIG,
 		route: ROUTE,
+		routes: ROUTES,
 		serviceInfo: new Map([['en0', 'DHCP Configuration\n']]),
 		serviceDns: new Map([['en0', "There aren't any DNS Servers set on Wi-Fi."]]),
 		dhcpPacket: new Map([['en0', 'domain_name_server (ip_mult): {192.0.2.1}']]),
 		airport: AIRPORT,
 	};
+
+	it('follows the IPv6 default route when the host has no IPv4 one', () => {
+		// `route -n get -inet6 default` prints the same key-value block as the IPv4
+		// call, so the existing parser reads it unchanged.
+		const route6 = '   route to: default\ndestination: default\n  interface: en0\n      flags: <UP,GATEWAY,DONE>\n';
+		const noIPv4 = parseMacNetworkState({ ...sources, route: '', routes: '' });
+		expect(noIPv4.some(item => item.defaultRoute)).toBe(false);
+		const viaIPv6 = parseMacNetworkState({ ...sources, route: '', routes: '', route6 });
+		expect(viaIPv6.find(item => item.defaultRoute)?.id).toBe('en0');
+		// The gateway shown stays the IPv4 one, which an IPv6-only host does not have.
+		expect(viaIPv6.find(item => item.defaultRoute)?.gateway).toBeNull();
+		// A host with no IPv6 default route prints an error instead of a block, and
+		// the parser finds no interface in it.
+		expect(parseMacNetworkState({ ...sources, route: '', routes: '', route6: 'route: writing to routing socket: not in table' }).some(item => item.defaultRoute)).toBe(false);
+	});
 
 	it('builds the Wi-Fi interface from every source at once', () => {
 		const en0 = parseMacNetworkState(sources).find(i => i.id === 'en0');
@@ -244,33 +301,96 @@ describe('parseMacNetworkState', () => {
 			link: 'up',
 			defaultRoute: true,
 			ipv4Mode: 'dhcp',
+			ipv4Configurable: true,
 			gateway: '192.0.2.1',
 			dns: ['192.0.2.1'],
 		});
 		expect(en0?.wifi).toEqual({ ssid: null, signal: 60, radio: 'unknown' });
 	});
 
+	it('shows the resolvers an IPv6-only host was handed', () => {
+		// No manual servers and no IPv4 lease to read them from: without the scoped
+		// source the screen would claim the machine has no resolvers at all.
+		const noLease = { ...sources, dhcpPacket: new Map<string, string>(), resolvers: SCUTIL };
+		expect(parseMacNetworkState(noLease).find(i => i.id === 'en0')?.dns).toEqual(['2001:db8::53', '2001:db8::54']);
+		// The servers the user set stay ahead of what the network offered.
+		const manual = new Map(sources.serviceDns).set('en0', '198.51.100.1\n');
+		expect(parseMacNetworkState({ ...noLease, serviceDns: manual }).find(i => i.id === 'en0')?.dns).toEqual(['198.51.100.1']);
+	});
+
+	it('shows a zoned resolver as the whole answer when there is no IPv4 lease behind it', () => {
+		const withZone = SCUTIL.replace('nameserver[0] : 2001:db8::53\n  nameserver[1] : 2001:db8::54', 'nameserver[0] : fe80::1%en0');
+		const zoned = { ...sources, dhcpPacket: new Map<string, string>(), resolvers: withZone };
+		expect(parseMacNetworkState(zoned).find(i => i.id === 'en0')?.dns).toEqual(['fe80::1%en0']);
+	});
+
 	it('drops loopback', () => {
 		expect(parseMacNetworkState(sources).some(i => i.id === 'lo0')).toBe(false);
 	});
 
-	it('attributes the gateway only to the default-route interface', () => {
-		expect(parseMacNetworkState(sources).find(i => i.id === 'bridge0')?.gateway).toBeNull();
+	it('reads a gateway for a secondary service without calling it the default route', () => {
+		const withBridgeAddress = IFCONFIG.replace('\tstatus: inactive\n', '\tinet 198.51.100.10 netmask 0xffffff00 broadcast 198.51.100.255\n\tstatus: inactive\n');
+		const serviceInfo = new Map(sources.serviceInfo).set('bridge0', 'Manual Configuration\nRouter: 198.51.100.1\n');
+		const bridge = parseMacNetworkState({ ...sources, ifconfig: withBridgeAddress, serviceInfo }).find(i => i.id === 'bridge0');
+		expect(bridge).toMatchObject({ defaultRoute: false, gateway: '198.51.100.1', ipv4Configurable: true });
+	});
+
+	it('keeps a configured manual address visible while the link is inactive', () => {
+		const serviceInfo = new Map(sources.serviceInfo).set('bridge0', 'Manual Configuration\nIP address: 198.51.100.10\nSubnet mask: 255.255.255.0\nRouter: 198.51.100.1\n');
+		const bridge = parseMacNetworkState({ ...sources, serviceInfo }).find(i => i.id === 'bridge0');
+		expect(bridge?.addresses).toContainEqual({ family: 'ipv4', address: '198.51.100.10', prefixLength: 24 });
+		expect(bridge?.ipv4Configurable).toBe(true);
+	});
+
+	it('keeps a manual service without a router read-only', () => {
+		const serviceInfo = new Map(sources.serviceInfo).set('bridge0', 'Manual Configuration\nIP address: 198.51.100.10\nSubnet mask: 255.255.255.0\nRouter: none\n');
+		const bridge = parseMacNetworkState({ ...sources, serviceInfo }).find(i => i.id === 'bridge0');
+		expect(bridge).toMatchObject({ ipv4Mode: 'static', gateway: null, ipv4Configurable: false });
+		const defaultService = parseMacNetworkState({ ...sources, serviceInfo: new Map([['en0', 'Manual Configuration\nIP address: 192.0.2.232\nSubnet mask: 255.255.255.0\nRouter: none\n']]) }).find(i => i.id === 'en0');
+		expect(defaultService).toMatchObject({ ipv4Mode: 'static', gateway: '192.0.2.1', ipv4Configurable: false });
+	});
+
+	it('keeps a manual /32 service with an off-link router read-only', () => {
+		const serviceInfo = new Map(sources.serviceInfo).set('bridge0', 'Manual Configuration\nIP address: 198.51.100.10\nSubnet mask: 255.255.255.255\nRouter: 198.51.100.1\n');
+		expect(parseMacNetworkState({ ...sources, serviceInfo }).find(i => i.id === 'bridge0')?.ipv4Configurable).toBe(false);
 	});
 
 	it('leaves wifi undefined on a wired interface', () => {
 		expect(parseMacNetworkState(sources).find(i => i.id === 'bridge0')?.wifi).toBeUndefined();
 	});
 
-	it('marks a device no enabled service covers as unconfigurable', () => {
-		// en4 is present in the service order but DISABLED (the `*3` entry), so
-		// parseServiceOrder skips it and every networksetup write for that device
-		// would fail in serviceForDevice. A record is still created for it, because
-		// the kernel reports the interface — it just must not be offered for editing.
-		const withDisabled = { ...sources, ifconfig: `${IFCONFIG}en4: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500\n\tether 02:00:5e:30:00:04\n\tstatus: inactive\n` };
-		const parsed = parseMacNetworkState(withDisabled);
-		expect(parsed.find(i => i.id === 'en4')?.ipv4Configurable).toBe(false);
-		expect(parsed.find(i => i.id === 'en0')?.ipv4Configurable).toBe(true);
+	it('marks a device without an enabled network service read-only', () => {
+		expect(parseMacNetworkState({ ...sources, serviceOrder: '' }).find(i => i.id === 'en0')?.ipv4Configurable).toBe(false);
+	});
+
+	it('marks unknown-mode and multi-address services read-only', () => {
+		const unknown = parseMacNetworkState({ ...sources, serviceInfo: new Map([['en0', 'unrecognised']]) }).find(i => i.id === 'en0');
+		expect(unknown?.ipv4Configurable).toBe(false);
+		const multi = parseMacNetworkState({ ...sources, ifconfig: IFCONFIG.replace('\tinet 192.0.2.232 netmask 0xffffff00', '\tinet 192.0.2.231 netmask 0xffffff00\n\tinet 192.0.2.232 netmask 0xffffff00') }).find(i => i.id === 'en0');
+		expect(multi?.ipv4Configurable).toBe(false);
+	});
+
+	it('marks duplicate services and multiple default routes read-only', () => {
+		const duplicateService = `${SERVICE_ORDER}\n(5) Backup Wi-Fi\n(Hardware Port: Wi-Fi, Device: en0)\n`;
+		expect(parseMacNetworkState({ ...sources, serviceOrder: duplicateService }).find(i => i.id === 'en0')?.ipv4Configurable).toBe(false);
+		const duplicateRoute = `${ROUTES}default            198.51.100.1       UGScIg                en0\n`;
+		expect(parseMacNetworkState({ ...sources, routes: duplicateRoute }).find(i => i.id === 'en0')?.ipv4Configurable).toBe(false);
+	});
+
+	it('does not copy one Wi-Fi reading to multiple wireless devices', () => {
+		const extraPort = HARDWARE_PORTS.replace('VLAN Configurations', 'Hardware Port: Wi-Fi\nDevice: en1\nEthernet Address: f6:c9:50:19:52:16\n\nVLAN Configurations');
+		const extraIfconfig = `${IFCONFIG}\nen1: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500\n\tether f6:c9:50:19:52:16\n\tstatus: active\n`;
+		const parsed = parseMacNetworkState({ ...sources, hardwarePorts: extraPort, ifconfig: extraIfconfig });
+		expect(parsed.find(i => i.id === 'en0')?.wifi).toBeUndefined();
+		expect(parsed.find(i => i.id === 'en1')?.wifi).toBeUndefined();
+	});
+});
+
+describe('macOS write privilege', () => {
+	it('offers network changes only to an effective root process', () => {
+		expect(hasMacWritePrivilege(0)).toBe(true);
+		expect(hasMacWritePrivilege(501)).toBe(false);
+		expect(hasMacWritePrivilege(undefined)).toBe(false);
 	});
 });
 
@@ -282,168 +402,46 @@ describe('macApplyArgs', () => {
 		]);
 	});
 
-	it('refuses a static configuration with no gateway rather than building a short command', () => {
-		// `-setmanual` is documented as taking four mandatory values: service,
-		// address, subnet mask and router. Emitting only three produced a command
-		// networksetup rejects, and it did so only after the user had been told the
-		// configuration was valid. A gateway-less static address is legitimate on an
-		// isolated segment — macOS simply has no networksetup spelling for it, so the
-		// refusal is explicit and carries the code the UI can translate.
-		let thrown: CodedError | null = null;
-		try {
-			macApplyArgs('Wi-Fi', { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
-		} catch (err) {
-			thrown = err as CodedError;
-		}
-		expect(thrown).toBeInstanceOf(CodedError);
-		expect(thrown?.code).toBe(ErrorCodes.NETCONFIG_UNSUPPORTED);
+	it("rejects a manual configuration without networksetup's required router", () => {
+		expect(() => macApplyArgs('Wi-Fi', { mode: 'static', address: '192.0.2.10', prefixLength: 24 })).toThrow('requires a router');
 	});
 
-	it('places the router as the fourth mandatory value, never as an optional extra', () => {
-		expect(macApplyArgs('Wi-Fi', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' })[0]).toHaveLength(5);
-	});
-
-	it('clears the resolvers with the Empty sentinel when switching to DHCP', () => {
-		// -setdhcp on its own leaves a manual DNS entry in place, so a user who set
-		// one would keep it after asking for full automatic configuration.
-		expect(macApplyArgs('Wi-Fi', { mode: 'dhcp' })).toEqual([
+	it('leaves DNS untouched unless the user explicitly changes it', () => {
+		expect(macApplyArgs('Wi-Fi', { mode: 'dhcp' })).toEqual([['-setdhcp', 'Wi-Fi']]);
+		expect(macApplyArgs('Wi-Fi', { mode: 'dhcp', dns: [] })).toEqual([
 			['-setdhcp', 'Wi-Fi'],
 			['-setdnsservers', 'Wi-Fi', 'Empty'],
 		]);
+		expect(macApplyArgs('Wi-Fi', { mode: 'dhcp', dns: ['2001:db8::53', '127.0.0.1'] })).toEqual([
+			['-setdhcp', 'Wi-Fi'],
+			['-setdnsservers', 'Wi-Fi', '2001:db8::53', '127.0.0.1'],
+		]);
+	});
+
+	it('changes only DNS when addressing is unchanged', () => {
+		expect(macApplyArgs('Wi-Fi', { mode: 'dhcp', dns: ['192.0.2.53'] }, false)).toEqual([['-setdnsservers', 'Wi-Fi', '192.0.2.53']]);
+		expect(macApplyArgs('Wi-Fi', { mode: 'dhcp' }, false)).toEqual([]);
 	});
 
 	it('passes a service name with spaces as one argument', () => {
 		expect(macApplyArgs('Thunderbolt Bridge', { mode: 'dhcp' })[0]).toEqual(['-setdhcp', 'Thunderbolt Bridge']);
 	});
-
-	// `-setdnsservers` replaces the whole resolver list, both families at once,
-	// while the editor only ever holds IPv4 servers. Writing the form's list
-	// verbatim deleted every manually configured IPv6 resolver — even when the
-	// user had changed nothing but an address.
-	it('keeps the IPv6 resolvers the editor cannot express', () => {
-		const args = macApplyArgs('Wi-Fi', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.1'] }, ['198.51.100.1', '2001:db8::1', '2001:db8::2']);
-		expect(args[1]).toEqual(['-setdnsservers', 'Wi-Fi', '192.0.2.1', '2001:db8::1', '2001:db8::2']);
-	});
-
-	it('drops the IPv4 resolvers it is replacing, keeping only the IPv6 ones', () => {
-		const args = macApplyArgs('Wi-Fi', { mode: 'dhcp' }, ['198.51.100.1', '2001:db8::1']);
-		expect(args[1]).toEqual(['-setdnsservers', 'Wi-Fi', '2001:db8::1']);
-	});
-
-	it('still clears the list entirely when there is nothing at all to keep', () => {
-		expect(macApplyArgs('Wi-Fi', { mode: 'dhcp' }, ['198.51.100.1'])[1]).toEqual(['-setdnsservers', 'Wi-Fi', 'Empty']);
-	});
 });
 
-/**
- * The address and the resolvers are two separate `networksetup` commands with
- * nothing joining them, so the second failing leaves the first already applied.
- */
-describe('parseMacServiceSnapshot', () => {
-	const MANUAL = 'Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\nEthernet Address: 00:11:22:33:44:55\n';
-	const DHCP = 'DHCP Configuration\nIP address: 198.51.100.24\nSubnet mask: 255.255.255.0\nRouter: 198.51.100.1\n';
-
-	it('captures the whole manual configuration, mask and router included', () => {
-		const snapshot = parseMacServiceSnapshot(MANUAL, '192.0.2.1\n2001:db8::1\n');
-		expect(snapshot).toEqual({ mode: 'static', address: '192.0.2.10', mask: '255.255.255.0', router: '192.0.2.1', dns: ['192.0.2.1', '2001:db8::1'] });
+describe('macOS apply verification', () => {
+	it('requires a live DHCP lease before reporting success', () => {
+		expect(() => assertMacIPv4Applied({ mode: 'dhcp' }, 'DHCP Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\n', "There aren't any DNS Servers set on Wi-Fi.\n", true)).not.toThrow();
+		expect(() => assertMacIPv4Applied({ mode: 'dhcp' }, 'DHCP Configuration\nIP address: none\n', "There aren't any DNS Servers set on Wi-Fi.\n", true)).toThrow('lease');
+		// With the link down only the saved mode can be verified; the lease follows the cable.
+		expect(() => assertMacIPv4Applied({ mode: 'dhcp' }, 'DHCP Configuration\nIP address: none\n', "There aren't any DNS Servers set on Wi-Fi.\n", true, false)).not.toThrow();
+		expect(() => assertMacIPv4Applied({ mode: 'dhcp' }, 'Manually using DHCP Router\nIP address: none\n', "There aren't any DNS Servers set on Wi-Fi.\n", true, false)).toThrow();
 	});
 
-	it('captures a DHCP service as DHCP rather than as its current lease', () => {
-		expect(parseMacServiceSnapshot(DHCP, "There aren't any DNS Servers set.\n")).toEqual({ mode: 'dhcp', address: '198.51.100.24', mask: '255.255.255.0', router: '198.51.100.1', dns: [] });
-	});
-
-	it('reads the literal "none" as absent rather than as a value', () => {
-		const snapshot = parseMacServiceSnapshot('Manual Configuration\nIP address: none\nSubnet mask: none\nRouter: none\n', NO_DNS);
-		expect([snapshot?.address, snapshot?.mask, snapshot?.router]).toEqual([null, null, null]);
-	});
-
-	// `runOptional` answers an empty string for a command that could not run, was
-	// refused, or named a service that has gone — and an empty string used to parse
-	// as "this service has no manual resolvers". The apply then wrote that absence
-	// to the service as fact, deleting DNS the read had merely failed to see, and
-	// the rollback had nothing correct left to put back.
-	it('refuses a snapshot whose resolver reading established nothing', () => {
-		expect(parseMacServiceSnapshot(MANUAL, '')).toBeNull();
-		expect(parseMacServiceSnapshot(MANUAL, '** Error: The parameters were not valid.\n')).toBeNull();
-	});
-
-	it('refuses a snapshot whose -getinfo reading established nothing', () => {
-		expect(parseMacServiceSnapshot('', NO_DNS)).toBeNull();
-		expect(parseMacServiceSnapshot('   \n', NO_DNS)).toBeNull();
-	});
-});
-
-/** What macOS really answers for a service with no manual resolvers. */
-const NO_DNS = "There aren't any DNS Servers set on Wi-Fi.\n";
-
-describe('readMacDnsServers', () => {
-	it('separates a real absence from a failed reading', () => {
-		expect(readMacDnsServers(NO_DNS)).toEqual({ kind: 'none' });
-		expect(readMacDnsServers('')).toEqual({ kind: 'readError' });
-	});
-
-	it('reports the servers a successful reading listed, both families', () => {
-		expect(readMacDnsServers('192.0.2.1\n2001:db8::1\n')).toEqual({ kind: 'values', servers: ['192.0.2.1', '2001:db8::1'] });
-	});
-
-	it('treats an error message as a failed reading, not as an empty list', () => {
-		expect(readMacDnsServers('** Error: Command requires admin privileges.\n')).toEqual({ kind: 'readError' });
-	});
-});
-
-describe('macRestoreArgs', () => {
-	/** A snapshot these fixtures are known to produce; a null here is a broken case, not a result. */
-	function snapshotOf(info: string, dns: string = NO_DNS) {
-		const snapshot = parseMacServiceSnapshot(info, dns);
-		if (!snapshot) throw new Error('the fixture did not produce a snapshot');
-		return snapshot;
-	}
-
-	it('puts a manual configuration back exactly, resolvers of both families included', () => {
-		expect(macRestoreArgs('Wi-Fi', snapshotOf('Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\n', '192.0.2.1\n2001:db8::1\n'))).toEqual([
-			['-setmanual', 'Wi-Fi', '192.0.2.10', '255.255.255.0', '192.0.2.1'],
-			['-setdnsservers', 'Wi-Fi', '192.0.2.1', '2001:db8::1'],
-		]);
-	});
-
-	it('puts a DHCP service back as DHCP, not as the address it happened to hold', () => {
-		const snapshot = snapshotOf('DHCP Configuration\nIP address: 198.51.100.24\nRouter: 198.51.100.1\n');
-		expect(macRestoreArgs('Wi-Fi', snapshot)?.[0]).toEqual(['-setdhcp', 'Wi-Fi']);
-		// A service that really has no manual resolvers is restored to having none.
-		expect(macRestoreArgs('Wi-Fi', snapshot)?.[1]).toEqual(['-setdnsservers', 'Wi-Fi', 'Empty']);
-	});
-
-	// Null is a real answer: `-setmanual` takes a router as a mandatory value, so
-	// a static service without one cannot be written back at all. Saying so lets
-	// the caller report an un-undone change rather than guess at one.
-	it('reports that a configuration with no networksetup form cannot be restored', () => {
-		expect(macRestoreArgs('Wi-Fi', snapshotOf('Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: none\n'))).toBeNull();
-		expect(macRestoreArgs('Wi-Fi', snapshotOf('Automatic Configuration\n'))).toBeNull();
-	});
-});
-
-/**
- * What the apply does with a snapshot it cannot write back.
- *
- * `macRestoreArgs` returning null used to be discovered only in the rollback — by
- * which time `-setmanual` or `-setdhcp` had already replaced a configuration that
- * has no networksetup spelling to return to, and the user was told the change
- * failed AND could not be undone. Nothing has been written until the first
- * `networksetup` call, so the refusal belongs before it.
- *
- * Driving that needs macOS and a service in one of those states; the ordering
- * inside the function is asserted instead, where it is just as visible.
- */
-describe('applyMacIPv4', () => {
-	const body = applyMacIPv4.toString();
-
-	it('consults the rollback before it runs any networksetup command', () => {
-		for (const step of ['macRestoreArgs', 'NETWORKSETUP']) expect(body).toContain(step);
-		expect(body.indexOf('macRestoreArgs')).toBeLessThan(body.indexOf('NETWORKSETUP'));
-	});
-
-	it('refuses rather than proceeding when there is no way back', () => {
-		expect(body).toContain('cannot be written back');
+	it('checks static addressing and explicit DNS exactly', () => {
+		const info = 'Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\n';
+		expect(() => assertMacIPv4Applied({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53', '2001:db8::53'] }, info, '192.0.2.53\n2001:db8::53\n', true)).not.toThrow();
+		expect(() => assertMacIPv4Applied({ mode: 'static', address: '192.0.2.11', prefixLength: 24, gateway: '192.0.2.1' }, info, '', true)).toThrow('IPv4');
+		expect(() => assertMacIPv4Applied({ mode: 'dhcp', dns: [] }, info, '192.0.2.53\n', false)).toThrow('DNS');
 	});
 });
 
@@ -454,5 +452,76 @@ describe('netmaskFromPrefix', () => {
 		expect(netmaskFromPrefix(8)).toBe('255.0.0.0');
 		expect(netmaskFromPrefix(23)).toBe('255.255.254.0');
 		expect(netmaskFromPrefix(32)).toBe('255.255.255.255');
+	});
+});
+
+describe('withMacRollback', () => {
+	it('keeps the change when it verifies', async () => {
+		let rolledBack = false;
+		expect(
+			await withMacRollback(
+				async () => 'applied',
+				async () => {
+					rolledBack = true;
+				}
+			)
+		).toBe('applied');
+		expect(rolledBack).toBe(false);
+	});
+
+	it('reports the original failure when the restore verifies', async () => {
+		// The user needs to know why the change did not take; the machine is back the
+		// way it was, so that failure is the whole story.
+		const applyFailed = new Error('address did not become usable');
+		let rolledBack = false;
+		await expect(
+			withMacRollback(
+				async () => {
+					throw applyFailed;
+				},
+				async () => {
+					rolledBack = true;
+				}
+			)
+		).rejects.toBe(applyFailed);
+		expect(rolledBack).toBe(true);
+	});
+
+	it('reports both failures when the restore cannot be verified', async () => {
+		// `networksetup` exiting zero is not the service being back. A restore whose
+		// read-back disagrees leaves the machine somewhere neither the user nor the
+		// app asked for, and saying only "apply failed" would hide that.
+		const failure = await withMacRollback(
+			async () => {
+				throw new Error('address did not become usable');
+			},
+			async () => {
+				throw new Error('DHCP restore obtained no address');
+			}
+		).catch((error: Error) => error);
+		expect(failure.message).toContain('address did not become usable');
+		expect(failure.message).toContain('DHCP restore obtained no address');
+	});
+});
+
+describe('macRestoreRequiresLease', () => {
+	const leased = 'DHCP Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\n';
+	const noLease = 'DHCP Configuration\n';
+	const linkLocal = 'DHCP Configuration\nIP address: 169.254.10.2\nSubnet mask: 255.255.0.0\n';
+	const manual = 'Manual Configuration\nIP address: 192.0.2.10\nSubnet mask: 255.255.255.0\nRouter: 192.0.2.1\n';
+
+	it('asks the restore for a lease only when the service had one before', () => {
+		expect(macRestoreRequiresLease({ mode: 'dhcp' }, leased, true)).toBe(true);
+		// The link was up and nothing answered, so the restore will not get an
+		// address either. Demanding one would report a failed restore for a service
+		// that is exactly back where it started.
+		expect(macRestoreRequiresLease({ mode: 'dhcp' }, noLease, true)).toBe(false);
+		expect(macRestoreRequiresLease({ mode: 'dhcp' }, linkLocal, true)).toBe(false);
+	});
+
+	it('leaves every other case as the change itself was judged', () => {
+		expect(macRestoreRequiresLease({ mode: 'dhcp' }, leased, false)).toBe(false);
+		expect(macRestoreRequiresLease({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }, manual, true)).toBe(true);
+		expect(macRestoreRequiresLease({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }, manual, false)).toBe(false);
 	});
 });
