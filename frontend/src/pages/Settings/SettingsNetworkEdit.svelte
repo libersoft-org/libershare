@@ -287,7 +287,7 @@
 			<div class="note">{$t('settings.network.applyWarning')}</div>
 
 			<div role="group" data-mouse-activate-area={areaID}>
-				<Select bind:value={mode} label={$t('settings.network.addressing')} position={[0, 0]} flex>
+				<Select bind:value={mode} label={$t('settings.network.addressing')} position={[0, 0]} disabled={busy} flex>
 					<SelectOption value="dhcp" label={$t('settings.network.dhcp')} />
 					<SelectOption value="static" label={$t('settings.network.static')} />
 				</Select>
@@ -295,20 +295,20 @@
 
 			{#if mode === 'static'}
 				<div role="group" data-mouse-activate-area={areaID}>
-					<Input bind:value={address} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, 1]} flex />
-					<Input bind:value={prefix} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, 2]} flex />
-					<Input bind:value={gateway} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, 3]} flex />
+					<Input bind:value={address} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, 1]} disabled={busy} flex />
+					<Input bind:value={prefix} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, 2]} disabled={busy} flex />
+					<Input bind:value={gateway} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, 3]} disabled={busy} flex />
 				</div>
 			{/if}
 
 			<div role="group" data-mouse-activate-area={areaID}>
-				<Select bind:value={dnsMode} label={$t('settings.network.dnsPolicy')} position={[0, 1 + staticRows]} flex>
+				<Select bind:value={dnsMode} label={$t('settings.network.dnsPolicy')} position={[0, 1 + staticRows]} disabled={busy} flex>
 					<SelectOption value="unchanged" label={$t('settings.network.dnsUnchanged')} />
 					<SelectOption value="automatic" label={$t('settings.network.dnsAutomatic')} />
 					<SelectOption value="custom" label={$t('settings.network.dnsCustom')} />
 				</Select>
 				{#if dnsMode === 'custom'}
-					<Input bind:value={dns} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 2001:db8::53" position={[0, 2 + staticRows]} flex />
+					<Input bind:value={dns} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 2001:db8::53" position={[0, 2 + staticRows]} disabled={busy} flex />
 				{/if}
 			</div>
 
@@ -336,7 +336,7 @@
 			{/each}
 			{#if joinSSID}
 				<div role="group" data-mouse-activate-area={areaID}>
-					<Input bind:value={password} label={$t('settings.network.passwordFor', { ssid: joinSSID })} type="password" position={[0, wifiBaseY + 1 + networks.length]} flex />
+					<Input bind:value={password} label={$t('settings.network.passwordFor', { ssid: joinSSID })} type="password" position={[0, wifiBaseY + 1 + networks.length]} disabled={busy} flex />
 				</div>
 				<ButtonBar justify="center" basePosition={[0, wifiBaseY + 2 + networks.length]}>
 					<Button icon="/img/check.svg" label={$t('settings.network.join')} disabled={busy || scanning} onConfirm={join} />
