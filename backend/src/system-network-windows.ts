@@ -426,6 +426,11 @@ function getWlanApi(): WlanApi | null {
 	return wlanApi;
 }
 
+/** The loaded library, for the FFI test that checks every declared symbol really bound. */
+export function loadWlanApiForTest(): WlanApi | null {
+	return getWlanApi();
+}
+
 /** Format the 16 raw GUID bytes at `offset` as the canonical `{XXXXXXXX-XXXX-...}` string Windows prints. */
 function guidToString(base: Pointer, offset: number): string {
 	const bytes = new Uint8Array(toArrayBuffer(base, offset, 16));

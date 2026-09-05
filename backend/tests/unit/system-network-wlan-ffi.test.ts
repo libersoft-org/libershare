@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { FFIType } from 'bun:ffi';
-import { isWindowsInterfaceID, readWindowsWifi, WLAN_SYMBOLS } from '../../src/system-network-windows.ts';
+import { isWindowsInterfaceID, loadWlanApiForTest, readWindowsWifi, WLAN_SYMBOLS } from '../../src/system-network-windows.ts';
 
 /**
  * The ABI of the WLAN client handle.
@@ -58,6 +58,18 @@ describe('WLAN_SYMBOLS', () => {
  * Read-only: nothing here scans, writes a profile or associates.
  */
 describe.if(process.platform === 'win32')('readWindowsWifi against the live WLAN service', () => {
+	it('binds every entry point the join path calls, not only the read path', () => {
+		// A function declared on the interface but left out of the symbol table binds
+		// to nothing and throws "is not a function" the first time it is reached — on
+		// the join path that is the moment a user presses Connect, which no read-path
+		// test and no type ever visits. Asking the loaded library for each name is the
+		// only check that covers the ones nothing here calls.
+		const api = loadWlanApiForTest() as unknown as Record<string, unknown> | null;
+		expect(api).not.toBeNull();
+		const missing = Object.keys(WLAN_SYMBOLS).filter(name => typeof api?.[name] !== 'function');
+		expect(missing).toEqual([]);
+	});
+
 	it('completes a full open/enumerate/query/close cycle without throwing', () => {
 		const result = readWindowsWifi();
 		expect(result).toBeInstanceOf(Map);
