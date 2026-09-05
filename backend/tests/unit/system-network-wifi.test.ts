@@ -73,6 +73,29 @@ describe('parseAvailableNetworks', () => {
 		]);
 	});
 
+	it('takes every security field from one row, whatever order Windows listed them in', () => {
+		// Two access points answering to one name can advertise different security.
+		// Merging them field by field produced a reading no access point gave: an open
+		// row beside a WPA2 row yielded `secured` from one and `security` from the
+		// other, so the form asked for a password the profile then declared open — and
+		// which answer came out depended on the listing order alone.
+		const wpaFirst = parseAvailableNetworks(
+			buildList([
+				{ ssid: 'Guest', signal: 40, secured: true, auth: 7 },
+				{ ssid: 'Guest', signal: 80, secured: false, auth: 1 },
+			])
+		);
+		const openFirst = parseAvailableNetworks(
+			buildList([
+				{ ssid: 'Guest', signal: 80, secured: false, auth: 1 },
+				{ ssid: 'Guest', signal: 40, secured: true, auth: 7 },
+			])
+		);
+		expect(wpaFirst).toEqual(openFirst);
+		// And the surviving row is the strongest one, described consistently.
+		expect(wpaFirst[0]).toMatchObject({ ssid: 'Guest', signal: 80, secured: false, security: '' });
+	});
+
 	it('sorts strongest first regardless of the order Windows returned', () => {
 		const list = buildList([
 			{ ssid: 'Weak', signal: 12 },

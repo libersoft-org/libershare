@@ -1421,9 +1421,21 @@ export function parseAvailableNetworks(list: Pointer): NetWifiNetwork[] {
 		// and the wire contract does not have a field for.
 		const entry: NetWifiNetwork = { ssid: found.ssid, bssid: found.bssid, signal: found.signal, secured: found.secured, security: found.security, supported: found.supported, active: found.active };
 		const previous = best.get(entry.ssid);
-		if (!previous) best.set(entry.ssid, entry);
-		else if ((entry.signal ?? -1) > (previous.signal ?? -1)) best.set(entry.ssid, { ...entry, active: previous.active || entry.active, secured: previous.secured || entry.secured });
-		else if (entry.active) best.set(entry.ssid, { ...previous, active: true });
+		if (!previous) {
+			best.set(entry.ssid, entry);
+			continue;
+		}
+		// One row wins outright and every field describing the NETWORK comes from it.
+		// Merging them field by field invented readings no access point advertised:
+		// an open row beside a WPA2 row of the same name produced `secured` from one
+		// and `security` from the other, so the form asked for a password the profile
+		// then declared open — and which of the two answers came out depended on the
+		// order Windows happened to list them in.
+		const strongest = (entry.signal ?? -1) > (previous.signal ?? -1) ? entry : previous;
+		// `active` is the exception, and not a merge: it says this interface is
+		// associated with this network, which is true of the network whichever of its
+		// access points carries the association.
+		best.set(entry.ssid, { ...strongest, active: previous.active || entry.active });
 	}
 	return [...best.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
 }
