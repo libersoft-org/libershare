@@ -34,8 +34,6 @@ export function assertString(value: unknown, name: string, maxLength: number, mi
 	return value;
 }
 
-
-
 /** A single CPU-times sample: accumulated idle ticks and total ticks across all cores. */
 interface ICpuSample {
 	idle: number;

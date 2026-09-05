@@ -541,7 +541,6 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 	return readNetworkStateUnlocked(primaryInterface);
 }
 
-
 /** A bounded string that can be written to a child process stdin. Empty = open network. */
 export function isValidWifiPassword(password: unknown): password is string {
 	return typeof password === 'string' && !/[\0\r\n]/.test(password) && new TextEncoder().encode(password).byteLength <= MAX_WIFI_PASSWORD_BYTES;

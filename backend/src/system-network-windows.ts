@@ -417,14 +417,7 @@ function getWlanApi(): WlanApi | null {
 	if (wlanUnavailable) return null;
 	if (!wlanApi) {
 		try {
-			const lib = dlopen('wlanapi.dll', {
-				WlanOpenHandle: { args: [FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanCloseHandle: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.u32 },
-				WlanEnumInterfaces: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanQueryInterface: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanFreeMemory: { args: [FFIType.ptr], returns: FFIType.void },
-			});
-			wlanApi = lib.symbols as unknown as WlanApi;
+			wlanApi = dlopen('wlanapi.dll', WLAN_SYMBOLS).symbols as unknown as WlanApi;
 		} catch {
 			wlanUnavailable = true;
 			return null;
@@ -713,7 +706,6 @@ function windowsSnapshotSteps(): string[] {
 	];
 }
 
-
 /**
  * True for an active-only object a lease did NOT hand out.
  *
@@ -737,9 +729,6 @@ function windowsSnapshotSteps(): string[] {
  */
 const NOT_FROM_A_LEASE = '$r.ValidLifetime -eq [TimeSpan]::MaxValue';
 
-
-
-
 /** Everything restoring one kind of snapshotted object needs — see {@link restorePerStore}. */
 interface RestorableKind {
 	/** The variable the create template reads its properties from. */
@@ -762,7 +751,6 @@ interface RestorableKind {
 	/** What this kind is called in the message a failed removal ends with. */
 	readonly noun: string;
 }
-
 
 /**
  * Check that the ActiveStore half of a create-both really went away, and say so if
@@ -852,7 +840,6 @@ function restorePerStore(kind: RestorableKind, active: string, persistent: strin
 	const branches = [...(activeOnlyCondition ? [`(-not (${activeOnlyCondition})) { if ($null -ne ${twin}) { ${item} = ${twin}; ${persistentOnly} } }`] : []), `($null -eq ${twin}) { ${activeOnly} }`, `(${alike}) { ${inBothStores} }`];
 	return [`foreach (${activeCopy} in ${active}) { ${twin} = @(${persistent} | Where-Object { $_.${identity} -eq ${activeCopy}.${identity} })[0]; ${item} = ${activeCopy}; if ${branches.join(' elseif ')} else { ${diverged} } }`, `foreach (${item} in ${persistent}) { if (${active}.${identity} -notcontains ${item}.${identity}) { ${persistentOnly} } }`];
 }
-
 
 /**
  * Refuse an interface carrying more than one IPv4 address, counted on the machine
@@ -995,8 +982,6 @@ export function windowsAddressingUnchanged(config: NetIPv4Config): string {
 	};
 	return `$addressingUnchanged = ($oldDhcp -ne 'Enabled') -and (${inStore('$oldActiveAddresses', '$oldActiveRoutes')}) -and (${inStore('$oldPersistentAddresses', '$oldPersistentRoutes')})`;
 }
-
-
 
 /** How long duplicate address detection may run before the apply gives up on it. */
 const DAD_TIMEOUT_MS = 15000;
