@@ -248,8 +248,23 @@ export function isWifiHexKey(key: unknown): key is string {
  */
 export function isValidSSID(ssid: unknown): ssid is string {
 	if (typeof ssid !== 'string' || SSID_FORBIDDEN.test(ssid)) return false;
-	const length = new TextEncoder().encode(ssid).length;
-	return length >= 1 && length <= 32;
+	return ssidOctets(ssid) >= 1 && ssidOctets(ssid) <= 32;
+}
+
+/**
+ * The 802.11 octet length of an SSID given as text.
+ *
+ * An SSID is a byte sequence and is not required to be UTF-8, so a scanner
+ * decodes an undecodable octet to U+FFFD. Measuring the decoded form with a
+ * plain encoder charges 3 bytes for that one byte, and a name of 30 letters plus
+ * one such octet — 31 on the air — comes back as 33 and is refused as too long.
+ * The network is then listed and cannot be joined. Each replacement character is
+ * therefore counted as the single octet it is the smallest possible stand-in
+ * for; a name that is genuinely too long is still refused.
+ */
+function ssidOctets(ssid: string): number {
+	const replacements = ssid.match(/�/g)?.length ?? 0;
+	return new TextEncoder().encode(ssid).length - replacements * 2;
 }
 
 /**

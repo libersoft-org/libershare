@@ -1023,6 +1023,23 @@ describe('parseElevation', () => {
 	});
 });
 
+describe('isValidSSID on a name the radio reported', () => {
+	it('measures the octets on the air, not the ones a lossy decode produced', () => {
+		// An SSID is a byte sequence and need not be UTF-8, so a scanner decodes an
+		// undecodable octet to U+FFFD. Re-encoding that display form charges 3 bytes
+		// for the one byte it stands for, and a 31-octet name came back as 33 and was
+		// refused — the network was listed and could not be joined.
+		const decode = (bytes: number[]): string => new TextDecoder().decode(Uint8Array.from(bytes));
+		const ascii = (text: string): number[] => [...new TextEncoder().encode(text)];
+		expect(isValidSSID(decode([...ascii('a'.repeat(30)), 0xff]))).toBe(true);
+		expect(isValidSSID(decode([...ascii('b'.repeat(31)), 0xff]))).toBe(true);
+		// 33 octets on the air is still too long, replacement character or not.
+		expect(isValidSSID(decode([...ascii('c'.repeat(32)), 0xff]))).toBe(false);
+		expect(isValidSSID('d'.repeat(33))).toBe(false);
+		expect(isValidSSID('d'.repeat(32))).toBe(true);
+	});
+});
+
 describe('isWifiHexKey', () => {
 	it('recognises exactly 64 hexadecimal digits, in either case', () => {
 		expect(isWifiHexKey('0123456789abcdef'.repeat(4))).toBe(true);
