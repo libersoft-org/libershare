@@ -5,7 +5,19 @@ import { CodedError, ErrorCodes, isIPv4, isIPv6, validateIPv4Config } from '@sha
 import type { NetAddress, NetCapabilities, NetInterfaceInfo, NetIPv4Config, NetLink, NetWifiInfo, NetWifiNetwork } from '@shared';
 
 const execFileAsync = promisify(execFile);
-const C_LOCALE_ENV = { ...process.env, LC_ALL: 'C', LANG: 'C' };
+/**
+ * The environment every child process in this module runs under.
+ *
+ * The C locale is not a preference, it is what makes the parsing correct. This
+ * module matches literal English tokens - `running` from `nmcli general`,
+ * `unmanaged` from `nmcli device status`, `Not connected.` from `iw` - and nmcli's
+ * own documentation recommends the C locale for machine parsing precisely
+ * because those strings are translated otherwise. On a localised host the effect
+ * is not a parse error but a wrong answer: a writable machine reports itself
+ * read-only, and a device NetworkManager refuses to touch is offered as
+ * configurable.
+ */
+export const C_LOCALE_ENV: NodeJS.ProcessEnv = { ...process.env, LC_ALL: 'C', LANG: 'C' };
 
 /**
  * Linux host network state, read entirely through `ip -j` (iproute2's JSON

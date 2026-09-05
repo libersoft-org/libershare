@@ -1,5 +1,5 @@
 import { dlopen, FFIType, ptr, read, toArrayBuffer, type Pointer } from 'bun:ffi';
-import { validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetMedium, type NetLink, type NetAddressMode, type NetWifiInfo } from '@shared';
+import { isValidWifiKey, isWifiHexKey, validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetMedium, type NetLink, type NetAddressMode, type NetWifiInfo, type NetWifiNetwork } from '@shared';
 
 /**
  * Windows host network state.
@@ -20,12 +20,10 @@ import { validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv
  * second, separate one-shot ({@link windowsApplyIPv4Command}) built only from
  * values the shared validator has already accepted.
  *
- * Wi-Fi on Windows is READ-ONLY here. Scanning and joining need either
- * WlanScan/WlanGetAvailableNetworkList/WlanConnect over this FFI surface or the
- * localized text tables of `netsh wlan`, and neither can be exercised on any
- * machine available to this project — every host reachable from it is wired.
- * Writing that blind would ship an unverified join path, so the capability is
- * reported as false and the UI does not offer it.
+ * Wi-Fi scanning and joining use the same `wlanapi.dll` surface (WlanScan,
+ * WlanGetAvailableNetworkList, WlanSetProfile, WlanConnect) rather than `netsh
+ * wlan`, whose output is a localized text table that would have to be re-parsed
+ * per display language.
  */
 
 // NDIS_PHYSICAL_MEDIUM values we can map with confidence (ntddndis.h). Anything
@@ -45,6 +43,8 @@ const MEDIA_STATE_DISCONNECTED = 2;
 const AF_INET = 2;
 const AF_INET6 = 23;
 // AddressState (Get-NetIPAddress): 0 Invalid, 1 Tentative, 2 Duplicate, 3 Deprecated, 4 Preferred.
+const ADDRESS_STATE_TENTATIVE = 1;
+const ADDRESS_STATE_DUPLICATE = 2;
 const ADDRESS_STATE_PREFERRED = 4;
 // PrefixOrigin: 2 = WellKnown. SuffixOrigin: 4 = LinkLayerAddress.
 // This exact pair identifies Windows' automatic IPv4 link-local fallback.
@@ -304,7 +304,11 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 			addresses: interfaceAddresses,
 			ipv4Mode,
 			ipv4Configurable: guid !== null && ipv4Mode !== 'unknown' && staticShapeSafe && ipv4RowCount === visibleIPv4.length && ipv4RowCount <= 1 && interfaceRoutes.length <= 1 && (ipv4Mode !== 'static' || isSimplePersistentStaticState(ifIndex, addresses, persistentAddresses, routes, persistentRoutes)) && (medium !== 'wireless' || radio !== undefined),
-			wifiConfigurable: false,
+			// Scanning and joining go through the WLAN service, which needs no elevated
+			// token - an adapter the service lists is one it can drive. The IPv4 rules
+			// above are unrelated: an adapter whose addressing this app will not touch
+			// can still be asked to join a network.
+			wifiConfigurable: medium === 'wireless' && guid !== null && radio !== undefined,
 			gateway: interfaceRoutes[0]?.NextHop ?? null,
 			dns: dnsByIndex.get(ifIndex) ?? [],
 		};
@@ -334,6 +338,10 @@ const RADIO_OFF = 2;
 const ERROR_INVALID_STATE = 5023;
 /** WLAN_CONNECTION_ATTRIBUTES: isState(4) + wlanConnectionMode(4) + strProfileName[256] (512) = 520. */
 const CONN_ASSOCIATION_OFFSET = 520;
+/** WLAN_CONNECTION_ATTRIBUTES.isState is the first member. */
+const CONN_STATE_OFFSET = 0;
+/** WLAN_INTERFACE_STATE: 1 = wlan_interface_state_connected. Every other value is on the way to or from it. */
+const INTERFACE_STATE_CONNECTED = 1;
 /** WLAN_ASSOCIATION_ATTRIBUTES: DOT11_SSID = ULONG uSSIDLength + UCHAR ucSSID[32]. */
 const ASSOC_SSID_LENGTH_OFFSET = CONN_ASSOCIATION_OFFSET;
 const ASSOC_SSID_OFFSET = CONN_ASSOCIATION_OFFSET + 4;
@@ -354,8 +362,52 @@ interface WlanApi {
 	WlanCloseHandle: (handle: WlanHandle, reserved: null) => number;
 	WlanEnumInterfaces: (handle: WlanHandle, reserved: null, list: Pointer) => number;
 	WlanQueryInterface: (handle: WlanHandle, guid: Pointer, opcode: number, reserved: null, size: Pointer, data: Pointer, valueType: Pointer) => number;
+	WlanScan: (handle: WlanHandle, guid: Pointer, ssid: null, ieData: null, reserved: null) => number;
+	WlanGetAvailableNetworkList: (handle: WlanHandle, guid: Pointer, flags: number, reserved: null, list: Pointer) => number;
+	WlanSetProfile: (handle: WlanHandle, guid: Pointer, flags: number, xml: Pointer, security: null, overwrite: number, reserved: null, reasonCode: Pointer) => number;
+	WlanGetProfile: (handle: WlanHandle, guid: Pointer, name: Pointer, reserved: null, xml: Pointer, flags: Pointer, access: null) => number;
+	WlanDeleteProfile: (handle: WlanHandle, guid: Pointer, name: Pointer, reserved: null) => number;
+	WlanGetProfileCustomUserData: (handle: WlanHandle, guid: Pointer, name: Pointer, reserved: null, size: Pointer, data: Pointer) => number;
+	WlanSetProfileCustomUserData: (handle: WlanHandle, guid: Pointer, name: Pointer, size: number, data: Pointer | null, reserved: null) => number;
+	WlanConnect: (handle: WlanHandle, guid: Pointer, parameters: Pointer, reserved: null) => number;
+	WlanReasonCodeToString: (reason: number, size: number, buffer: Pointer, reserved: null) => number;
 	WlanFreeMemory: (memory: Pointer) => void;
 }
+
+/** One FFI symbol declaration: the ABI of each parameter, and of the result. */
+export interface WlanSymbol {
+	readonly args: readonly FFIType[];
+	readonly returns: FFIType;
+}
+
+/**
+ * The wlanapi.dll symbol table handed to `dlopen`.
+ *
+ * Lifted out of {@link getWlanApi} so the declared ABI of each parameter is a
+ * value a test can assert rather than a literal buried inside a lazy loader.
+ *
+ * Every leading `HANDLE` is {@link FFIType.u64}, never `ptr` — see
+ * {@link WlanHandle}. `WlanOpenHandle`'s fourth argument is the exception that
+ * proves it: that one really is a pointer, to the caller's output buffer.
+ */
+export const WLAN_SYMBOLS: Record<keyof WlanApi, WlanSymbol> = {
+	WlanOpenHandle: { args: [FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanCloseHandle: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.u32 },
+	WlanEnumInterfaces: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanQueryInterface: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanScan: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanGetAvailableNetworkList: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanSetProfile: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanGetProfile: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanDeleteProfile: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanGetProfileCustomUserData: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanSetProfileCustomUserData: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanConnect: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	// The one entry point here that takes no handle at all: a reason code is
+	// translated by the DLL itself, so the first argument is the code.
+	WlanReasonCodeToString: { args: [FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanFreeMemory: { args: [FFIType.ptr], returns: FFIType.void },
+};
 
 let wlanApi: WlanApi | null = null;
 let wlanUnavailable = false;
@@ -365,20 +417,18 @@ function getWlanApi(): WlanApi | null {
 	if (wlanUnavailable) return null;
 	if (!wlanApi) {
 		try {
-			const lib = dlopen('wlanapi.dll', {
-				WlanOpenHandle: { args: [FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanCloseHandle: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.u32 },
-				WlanEnumInterfaces: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanQueryInterface: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
-				WlanFreeMemory: { args: [FFIType.ptr], returns: FFIType.void },
-			});
-			wlanApi = lib.symbols as unknown as WlanApi;
+			wlanApi = dlopen('wlanapi.dll', WLAN_SYMBOLS).symbols as unknown as WlanApi;
 		} catch {
 			wlanUnavailable = true;
 			return null;
 		}
 	}
 	return wlanApi;
+}
+
+/** The loaded library, for the FFI test that checks every declared symbol really bound. */
+export function loadWlanApiForTest(): WlanApi | null {
+	return getWlanApi();
 }
 
 /** Format the 16 raw GUID bytes at `offset` as the canonical `{XXXXXXXX-XXXX-...}` string Windows prints. */
@@ -425,14 +475,46 @@ function readRadioState(data: Pointer, size: number): NetWifiInfo['radio'] {
  * is what makes that acceptable: an out-of-range signal or SSID length yields
  * `null` (widget renders "unknown"), never a plausible-looking wrong percentage.
  */
-export function readConnectionAttributes(data: Pointer, size: number): { ssid: string | null; signal: number | null } {
-	if (size < ASSOC_SIGNAL_QUALITY_OFFSET + 4) return { ssid: null, signal: null };
+export function readConnectionAttributes(data: Pointer, size: number): { ssid: string | null; signal: number | null; connected: boolean } {
+	if (size < ASSOC_SIGNAL_QUALITY_OFFSET + 4) return { ssid: null, signal: null, connected: false };
+	// The SSID is filled in while the adapter is still ASSOCIATING, so its presence
+	// is a statement of intent, not of success. Only `isState` says whether the
+	// adapter is actually on the network.
+	const connected = read.u32(data, CONN_STATE_OFFSET) === INTERFACE_STATE_CONNECTED;
 	const signalRaw = read.u32(data, ASSOC_SIGNAL_QUALITY_OFFSET);
 	const ssidLength = read.u32(data, ASSOC_SSID_LENGTH_OFFSET);
-	if (signalRaw > 100 || ssidLength > MAX_SSID_LENGTH) return { ssid: null, signal: null };
+	if (signalRaw > 100 || ssidLength > MAX_SSID_LENGTH) return { ssid: null, signal: null, connected };
 	const ssidBytes = new Uint8Array(toArrayBuffer(data, ASSOC_SSID_OFFSET, MAX_SSID_LENGTH)).subarray(0, ssidLength);
 	const ssid = ssidLength > 0 ? new TextDecoder().decode(ssidBytes) : null;
-	return { ssid, signal: signalRaw };
+	return { ssid, signal: signalRaw, connected };
+}
+
+/**
+ * Adapters the last {@link readWindowsWifi} found actually associated, as opposed
+ * to merely attempting it. Kept beside the map rather than inside `NetWifiInfo`
+ * because it answers a question only the join path asks, and `link` already tells
+ * the UI the same thing.
+ */
+
+/**
+ * Run one WlanQueryInterface and map the returned buffer, freeing it afterwards.
+ *
+ * A non-zero result yields null; the common one is ERROR_INVALID_STATE
+ * ({@link ERROR_INVALID_STATE}), which just means the adapter is not associated
+ * and is not worth logging.
+ */
+function queryInterface<T>(api: WlanApi, handle: WlanHandle, guidPtr: Pointer, opcode: number, map: (data: Pointer, size: number) => T): T | null {
+	const size = new Uint32Array(1);
+	const dataOut = new BigUint64Array(1);
+	const valueType = new Uint32Array(1);
+	const rc = api.WlanQueryInterface(handle, guidPtr, opcode, null, ptr(size), ptr(dataOut), ptr(valueType));
+	if (rc !== 0) return null;
+	const data = Number(dataOut[0]) as Pointer;
+	try {
+		return map(data, size[0]!);
+	} finally {
+		api.WlanFreeMemory(data);
+	}
 }
 
 /**
@@ -441,54 +523,54 @@ export function readConnectionAttributes(data: Pointer, size: number): { ssid: s
  * — the caller then leaves `wifi` undefined rather than guessing.
  */
 export function readWindowsWifi(): Map<string, NetWifiInfo> {
-	const result = new Map<string, NetWifiInfo>();
+	try {
+		return withWlanHandle((api, handle) => {
+			const result = new Map<string, NetWifiInfo>();
+			const listOut = new BigUint64Array(1);
+			if (api.WlanEnumInterfaces(handle, null, ptr(listOut)) !== 0) return result;
+			const list = Number(listOut[0]) as Pointer;
+			try {
+				const count = read.u32(list, 0);
+				for (let i = 0; i < count; i++) {
+					const base = WLAN_INTERFACE_LIST_HEADER + i * WLAN_INTERFACE_INFO_SIZE;
+					const guid = guidToString(list, base);
+					const guidPtr = ((list as unknown as number) + base) as unknown as Pointer;
+					const radio = queryInterface(api, handle, guidPtr, OPCODE_RADIO_STATE, readRadioState) ?? 'unknown';
+					const connection = queryInterface(api, handle, guidPtr, OPCODE_CURRENT_CONNECTION, readConnectionAttributes);
+					result.set(guid, { ssid: connection?.ssid ?? null, signal: connection?.signal ?? null, radio });
+				}
+			} finally {
+				api.WlanFreeMemory(list);
+			}
+			return result;
+		});
+	} catch {
+		// Reading Wi-Fi is best-effort: a host with no WLAN service simply has no
+		// wireless detail to report, which is not a reason to fail the whole read.
+		return new Map();
+	}
+}
+
+/**
+ * Open a WLAN client handle, run `fn`, and close the handle whatever happens.
+ *
+ * Every WLAN call needs one, and leaking it would hold a handle in the WLAN
+ * service for the life of the process. Client version 2 is Vista and later, which
+ * every supported Windows negotiates.
+ */
+function withWlanHandle<T>(fn: (api: WlanApi, handle: WlanHandle) => T): T {
 	const api = getWlanApi();
-	if (!api) return result;
+	if (!api) throw new Error('the Windows WLAN service is not available on this host');
 	const negotiated = new Uint32Array(1);
 	const handleOut = new BigUint64Array(1);
 	// Client version 2 = Vista and later; every supported Windows negotiates it.
-	if (api.WlanOpenHandle(2, null, ptr(negotiated), ptr(handleOut)) !== 0) return result;
+	const rc = api.WlanOpenHandle(2, null, ptr(negotiated), ptr(handleOut));
+	if (rc !== 0) throw new Error(wlanErrorMessage(rc));
 	const handle: WlanHandle = handleOut[0]!;
 	try {
-		const listOut = new BigUint64Array(1);
-		if (api.WlanEnumInterfaces(handle, null, ptr(listOut)) !== 0) return result;
-		const list = Number(listOut[0]) as Pointer;
-		try {
-			const count = read.u32(list, 0);
-			for (let i = 0; i < count; i++) {
-				const base = WLAN_INTERFACE_LIST_HEADER + i * WLAN_INTERFACE_INFO_SIZE;
-				const guid = guidToString(list, base);
-				const guidPtr = ((list as unknown as number) + base) as unknown as Pointer;
-				const radio = query(guidPtr, OPCODE_RADIO_STATE, readRadioState) ?? 'unknown';
-				const connection = query(guidPtr, OPCODE_CURRENT_CONNECTION, readConnectionAttributes);
-				result.set(guid, { ssid: connection?.ssid ?? null, signal: connection?.signal ?? null, radio });
-			}
-		} finally {
-			api.WlanFreeMemory(list);
-		}
+		return fn(api, handle);
 	} finally {
 		api.WlanCloseHandle(handle, null);
-	}
-	return result;
-
-	/**
-	 * Run one WlanQueryInterface and map the returned buffer, freeing it afterwards.
-	 * A non-zero result yields null; the common one is ERROR_INVALID_STATE
-	 * ({@link ERROR_INVALID_STATE}), which just means the adapter is not associated
-	 * and is not worth logging.
-	 */
-	function query<T>(guidPtr: Pointer, opcode: number, map: (data: Pointer, size: number) => T): T | null {
-		const size = new Uint32Array(1);
-		const dataOut = new BigUint64Array(1);
-		const valueType = new Uint32Array(1);
-		const rc = api!.WlanQueryInterface(handle, guidPtr, opcode, null, ptr(size), ptr(dataOut), ptr(valueType));
-		if (rc !== 0) return null;
-		const data = Number(dataOut[0]) as Pointer;
-		try {
-			return map(data, size[0]!);
-		} finally {
-			api!.WlanFreeMemory(data);
-		}
 	}
 }
 
@@ -505,16 +587,482 @@ export function isWindowsInterfaceID(id: string): boolean {
 }
 
 /**
+ * Wrap a removal step so that "there was nothing to remove" passes and every
+ * other failure still stops the script.
+ *
+ * `-ErrorAction SilentlyContinue` swallowed all of them alike: an adapter that
+ * is already on DHCP has no address to delete, but so does one where the delete
+ * was refused with access-denied or failed in the CIM provider — and the steps
+ * that follow then ran on top of an unknown partial state. Measured on Windows
+ * 11: a removal that matches nothing raises `CategoryInfo.Category` of
+ * `ObjectNotFound`, while a genuine failure raises anything but, so that one
+ * category is the whole of what may be ignored.
+ */
+function tolerateMissing(command: string): string {
+	return ignoringMissing(`${command} -ErrorAction Stop`);
+}
+
+/**
+ * The same tolerance around a whole statement rather than one cmdlet call — for a
+ * reading that has to assign its result, where `-ErrorAction Stop` belongs inside
+ * the pipeline instead of after it.
+ */
+function ignoringMissing(statement: string): string {
+	return `try { ${statement} } catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw } }`;
+}
+
+/** The cmdlet that lists one interface's IPv4 addresses, minus the store to read. */
+const ADDRESS_QUERY = 'Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4';
+/** The same for its IPv4 default routes. */
+const ROUTE_QUERY = "Get-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0'";
+/** Everything a restored address has to carry, plus the origins the guard reads. */
+const ADDRESS_PROPERTIES = 'IPAddress, PrefixLength, PrefixOrigin, SuffixOrigin, SkipAsSource, ValidLifetime, PreferredLifetime, Type';
+/** The same for a route. */
+const ROUTE_PROPERTIES = 'NextHop, RouteMetric, Protocol, Publish, ValidLifetime, PreferredLifetime';
+
+/**
+ * Read one policy store's worth of objects into a variable, leaving it empty when
+ * the interface simply has none — and only then. See {@link windowsSnapshotSteps}
+ * for why a failed reading may not fall through as an empty list.
+ */
+function perStoreSnapshot(variable: string, store: string, query: string, properties: string): string[] {
+	return [`${variable} = @()`, ignoringMissing(`${variable} = @(${query} -PolicyStore ${store} -ErrorAction Stop | Select-Object ${properties})`)];
+}
+
+/**
+ * Capture everything the apply below is about to overwrite.
+ *
+ * Runs before the first destructive step, because from that point on the machine
+ * no longer knows what it used to be: the addresses are gone, the default routes
+ * are gone, and a failure two steps later would leave an interface with neither
+ * the old configuration nor the new one. What is captured is exactly what
+ * {@link windowsRestoreSteps} puts back — DHCP state, every IPv4 address with its
+ * prefix, every IPv4 default route with its metric, and the resolver list.
+ *
+ * Not one of the four may fail open. `-ErrorAction SilentlyContinue` made "this
+ * adapter has no static address" and "the address provider could not be reached"
+ * the same empty list — and an empty list is what the restore writes back, so a
+ * reading that failed here is a rollback that silently deletes the configuration
+ * it was supposed to preserve. The other three legitimately return nothing on an
+ * adapter that is simply unconfigured, which is `ObjectNotFound` and only that;
+ * every other failure aborts the apply before anything has been removed.
+ *
+ * Each object is captured with the properties a restore has to hand back, not
+ * merely the ones that identify it. An address re-created from `IPAddress` and
+ * `PrefixLength` alone comes back with `SkipAsSource` false and an infinite
+ * lifetime whatever it had before, and a default route re-created from `NextHop`
+ * and `RouteMetric` alone comes back as an ordinary published-by-nobody NetMgmt
+ * route — so a rollback reported as "the change was undone" left the host in a
+ * measurably different state. `New-NetIPAddress` and `New-NetRoute` both accept
+ * exactly these back (verified against their parameter binding on Windows 11,
+ * including an infinite `TimeSpan.MaxValue` lifetime), and the objects never
+ * leave PowerShell, so they need no projection to survive the round trip.
+ *
+ * `PrefixOrigin` and `SuffixOrigin` are captured for a different purpose: they
+ * cannot be written back at all — Windows decides them — so they are what
+ * {@link WINDOWS_ORIGIN_GUARD} refuses on rather than what the restore replays.
+ *
+ * Both policy stores are read, because they are genuinely different sets and the
+ * apply touches both. `Get-NetIPAddress` and `Get-NetRoute` answer for the ACTIVE
+ * store unless told otherwise, while `New-NetIPAddress` and `New-NetRoute` write
+ * to the active AND the persistent store unless told otherwise. Reading one store
+ * and writing two is what made a rejected configuration outlive its own rollback:
+ * the new address went into both stores, the restore removed only the active copy,
+ * and the next boot loaded the rejected address back out of the persistent one.
+ * Measured on Windows 11, where the persistent store legitimately holds addresses
+ * the active store does not — a manual address on an adapter that is not currently
+ * present is persistent-only, and every DHCP address is active-only.
+ *
+ * The two readings are merged into `$oldAddresses` and `$oldRoutes` — the union,
+ * deduplicated on the identity the guards compare (the address, the next hop) and
+ * keeping the active copy of anything held twice, because that is the one carrying
+ * the origins. That union is what the guards count and what the comparison reads;
+ * the per-store arrays are what the restore replays, each into the store it came
+ * from.
+ *
+ * The resolver snapshot deliberately does NOT use `Get-DnsClientServerAddress`.
+ * That cmdlet reports the EFFECTIVE list, which on a DHCP interface is the one
+ * the lease handed out — and writing an effective list back with
+ * `-ServerAddresses` pins it as a MANUAL override, so an interface that had been
+ * taking its resolvers from DHCP silently stops honouring future DHCP changes.
+ * Measured on Windows 11: a DHCP interface reports an effective server while its
+ * static `NameServer` registry value is empty, and the DHCP-supplied value lives
+ * under `DhcpNameServer` instead. `NameServer` is therefore the only reading that
+ * answers "was this a manual override?", which is the question the restore asks.
+ */
+function windowsSnapshotSteps(): string[] {
+	return [
+		'$oldDhcp = (Get-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop).Dhcp',
+		...perStoreSnapshot('$oldActiveAddresses', 'ActiveStore', ADDRESS_QUERY, ADDRESS_PROPERTIES),
+		...perStoreSnapshot('$oldPersistentAddresses', 'PersistentStore', ADDRESS_QUERY, ADDRESS_PROPERTIES),
+		'$oldAddresses = @($oldActiveAddresses + @($oldPersistentAddresses | Where-Object { $oldActiveAddresses.IPAddress -notcontains $_.IPAddress }))',
+		...perStoreSnapshot('$oldActiveRoutes', 'ActiveStore', ROUTE_QUERY, ROUTE_PROPERTIES),
+		...perStoreSnapshot('$oldPersistentRoutes', 'PersistentStore', ROUTE_QUERY, ROUTE_PROPERTIES),
+		'$oldRoutes = @($oldActiveRoutes + @($oldPersistentRoutes | Where-Object { $oldActiveRoutes.NextHop -notcontains $_.NextHop }))',
+		// Empty for an interface on automatic DNS, and only then. Windows writes the
+		// value comma-separated but has historically also used spaces, so both split.
+		//
+		// The whole key is read rather than the one value: `-Name NameServer` on an
+		// interface that never had a manual override raises InvalidArgument, which is
+		// indistinguishable from a real read failure by category. Reading the key
+		// leaves an absent value as $null — the honest "no override" — while a key
+		// that cannot be read at all still throws.
+		'$oldDnsManual = @((Get-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)" -ErrorAction Stop).NameServer -split \'[,\\s]+\' | Where-Object { $_ })',
+	];
+}
+
+/**
+ * True for an active-only object a lease did NOT hand out.
+ *
+ * A DHCP interface's addresses and default route come back by themselves once the
+ * lease is re-acquired, so re-adding them by hand would install a static copy the
+ * lease then duplicates. But Windows lets an interface take its address from DHCP
+ * and still carry a default route somebody added — and that route exists nowhere
+ * but on this machine, so a rollback that re-enables DHCP and stops there deletes
+ * it for good. If it was the only path into the network the host is administered
+ * over, the host is then unreachable.
+ *
+ * The two are told apart by LIFETIME, not by `Protocol`. Measured on Windows 11: a
+ * DHCP-supplied default route reports `Protocol` NetMgmt with a lifetime counting
+ * down with the lease, and a route added by hand or by a VPN client on the same
+ * interface reports NetMgmt as well, with an infinite lifetime. Protocol therefore
+ * separates nothing; the countdown does. A route in the persistent store is never
+ * a lease's either, and is restored without consulting this at all.
+ *
+ * What this cannot tell apart is a manual route somebody gave a finite lifetime on
+ * a DHCP interface. That one is treated as the lease's and is not put back.
+ */
+const NOT_FROM_A_LEASE = '$r.ValidLifetime -eq [TimeSpan]::MaxValue';
+
+/** Everything restoring one kind of snapshotted object needs — see {@link restorePerStore}. */
+interface RestorableKind {
+	/** The variable the create template reads its properties from. */
+	readonly item: string;
+	/** The property matching an object in one store to its twin in the other. */
+	readonly identity: string;
+	/**
+	 * The properties a restore actually writes back, and so the ones deciding whether
+	 * one create can cover both stores.
+	 *
+	 * The origins are deliberately absent: Windows assigns them and no create can ask
+	 * for them, so two copies differing only there are as alike as anything put back
+	 * could be. {@link WINDOWS_ORIGIN_GUARD} is what refuses the ones that matter.
+	 */
+	readonly properties: readonly string[];
+	readonly create: string;
+	readonly removeActive: string;
+	/** The listing {@link activeCopyGone} re-reads, minus the store to read. */
+	readonly query: string;
+	/** What this kind is called in the message a failed removal ends with. */
+	readonly noun: string;
+}
+
+/**
+ * Check that the ActiveStore half of a create-both really went away, and say so if
+ * it did not.
+ *
+ * The persistent-only reconstruction is two provider writes, and nothing binds them
+ * together: `New-*` can succeed and `Remove-*` can then fail, be refused, or never
+ * run because the process died — leaving the object in BOTH stores when the whole
+ * point was to reach the persistent one alone. A removal can also report success
+ * without the object leaving, which no `-ErrorAction` catches.
+ *
+ * This does not make the pair atomic; it makes a partial one visible. The store is
+ * re-read, the removal retried once if a surplus copy is still there, and a copy
+ * that survives both is thrown on — which reaches the caller as "the change failed
+ * and rolling it back also failed", rather than as a rollback quietly reporting
+ * that it had put things back.
+ *
+ * The re-read tolerates `ObjectNotFound` and nothing else, for the same reason
+ * {@link windowsSnapshotSteps} does: "the object is gone" and "the store could not
+ * be read" must not both answer "no surplus copy".
+ */
+function activeCopyGone(kind: RestorableKind): string {
+	const { item, identity, query, removeActive, noun } = kind;
+	const reread = `$surplus = @(); ${ignoringMissing(`$surplus = @(${query} -PolicyStore ActiveStore -ErrorAction Stop | Where-Object { $_.${identity} -eq ${item}.${identity} })`)}`;
+	return `${reread}; if ($surplus.Count -gt 0) { ${tolerateMissing(removeActive)}; ${reread}; if ($surplus.Count -gt 0) { throw "a restored ${noun} could not be taken back out of the active store" } }`;
+}
+
+/**
+ * Re-create one kind of snapshotted object, each into the store it came from.
+ *
+ * The two stores are matched on identity — the address itself, or a route's next
+ * hop, both of which are unique per interface within one store — but an identity
+ * held in both is NOT one object. `Set-NetIPAddress` and `Set-NetRoute` can be
+ * pointed at the active store alone, so the same next hop legitimately exists as an
+ * active route at metric 5 with a half-hour lifetime and a persistent one at metric
+ * 100 with an infinite one. Matching on identity and then re-creating both copies
+ * from the ACTIVE one restored the machine's startup configuration as something it
+ * had never been, inside a rollback reporting that it had changed nothing. So the
+ * one-create shortcut is taken only when every property a restore writes back is
+ * equal; otherwise each store gets its own copy, the persistent variant first
+ * (which reaches both stores) and the active variant after its copy is removed.
+ *
+ * `activeOnlyCondition` decides whether the ACTIVE copy may be written back at all,
+ * and is therefore asked BEFORE the twin is consulted rather than inside the
+ * twin-less branch. A lease writes only the active store, so a persistent twin says
+ * nothing about where the active copy came from: an active default route counting
+ * down with the lease, beside a persistent one on the same next hop, took the
+ * "identical" or "diverged" path and had the lease's own route re-created by hand —
+ * which is exactly what {@link NOT_FROM_A_LEASE} exists to prevent. An active copy
+ * that fails the condition is dropped and only its persistent twin is put back, the
+ * persistent-only way; the twin is always this machine's own and always goes back.
+ *
+ * The persistent-only case cannot be written the way it reads. There is no
+ * `-PolicyStore PersistentStore` to create with: `New-NetIPAddress` is documented
+ * "Specify ActiveStore only", and `New-NetRoute` says of PersistentStore, in as
+ * many words, "Cannot be used" — on both cmdlets the parameter exists to create an
+ * object in JUST the active store, and omitting it is the only way to reach the
+ * persistent one at all. Emitting it anyway made the rollback fail exactly when it
+ * was needed: the removals ahead of it had already cleared both stores, so an
+ * interface whose address was persistent-only came out of a failed apply with no
+ * address in either. So the object is created into both stores and its active copy
+ * taken away again, which leaves the persistent store holding it and the active
+ * store as it was.
+ *
+ * Those are two separate provider writes and the pair is not atomic. Between them
+ * the object really is in force on the interface — the network stack routes by it,
+ * a change notification carries it, and another process reading the active store
+ * sees it — and if the second write does not happen the object simply stays in both
+ * stores. Nothing here prevents either; {@link activeCopyGone} is what keeps the
+ * second case from passing for a completed rollback.
+ */
+function restorePerStore(kind: RestorableKind, active: string, persistent: string, activeOnlyCondition: string = ''): string[] {
+	const { item, identity, create, removeActive } = kind;
+	const inBothStores = `${create} -ErrorAction Stop | Out-Null`;
+	const activeOnly = `${create} -PolicyStore ActiveStore -ErrorAction Stop | Out-Null`;
+	const persistentOnly = `${inBothStores}; ${tolerateMissing(removeActive)}; ${activeCopyGone(kind)}`;
+	// The loop variable is held apart from the one the templates read, so the
+	// differing case can point them at the persistent copy and then back again.
+	const activeCopy = `${item}Active`;
+	const twin = `${item}Twin`;
+	const alike = kind.properties.map(property => `${activeCopy}.${property} -eq ${twin}.${property}`).join(' -and ');
+	const diverged = `${item} = ${twin}; ${inBothStores}; ${item} = ${activeCopy}; ${tolerateMissing(removeActive)}; ${activeCopyGone(kind)}; ${activeOnly}`;
+	// First, and so ahead of anything the twin decides: an active copy the caller will
+	// not write back is not written back whether or not a twin exists. What the twin
+	// then adds is that there is still something to restore — its own copy, and only
+	// into the store it was found in.
+	const branches = [...(activeOnlyCondition ? [`(-not (${activeOnlyCondition})) { if ($null -ne ${twin}) { ${item} = ${twin}; ${persistentOnly} } }`] : []), `($null -eq ${twin}) { ${activeOnly} }`, `(${alike}) { ${inBothStores} }`];
+	return [`foreach (${activeCopy} in ${active}) { ${twin} = @(${persistent} | Where-Object { $_.${identity} -eq ${activeCopy}.${identity} })[0]; ${item} = ${activeCopy}; if ${branches.join(' elseif ')} else { ${diverged} } }`, `foreach (${item} in ${persistent}) { if (${active}.${identity} -notcontains ${item}.${identity}) { ${persistentOnly} } }`];
+}
+
+/**
+ * Refuse an interface carrying more than one IPv4 address, counted on the machine
+ * itself rather than in the reading.
+ *
+ * `ipv4EditObjection` already refuses aliases, but it counts what
+ * {@link parseWindowsNetworkState} REPORTS — and that reader drops every address
+ * Windows does not call `Preferred`, because a tentative or deprecated address is
+ * not one the host can be reached on. The apply is not so selective: a single
+ * `Remove-NetIPAddress -AddressFamily IPv4` takes ALL of them. So an interface
+ * holding one preferred address beside a deprecated one looked like a plain
+ * single-address interface, passed the check, and lost the address nobody had
+ * been shown.
+ *
+ * Counted out of the snapshot, which is the same query with no state filter, so
+ * this costs no extra call. Placed after the snapshot and before the first
+ * removal — nothing has been changed yet, so the refusal is free.
+ *
+ * NO address is exempt, and in particular not `169.254.*`. That prefix was
+ * excluded on the grounds that a link-local address only exists because DHCP did
+ * not answer — but the prefix does not say who created it. Windows distinguishes
+ * an automatic APIPA address (`PrefixOrigin` WellKnown, `SuffixOrigin`
+ * LinkLayerAddress) from one a user configured by hand (both `Manual`), and the
+ * text `169.254.` is identical in the two cases. The removal that follows takes
+ * every IPv4 address on the interface either way, so exempting the prefix let a
+ * manually configured link-local alias pass the count and then be deleted — an
+ * alias the reader also hides, so it was not even visible beforehand.
+ */
+export const WINDOWS_ALIAS_GUARD: string = `if (@($oldAddresses).Count -gt 1) { throw "this interface carries several IPv4 addresses, which this app cannot preserve" }`;
+
+/**
+ * The same refusal for default routes, and for the same reason.
+ *
+ * {@link parseWindowsNetworkState} reports at most ONE gateway per interface — it
+ * ranks the competing default routes and keeps the best — so the configuration
+ * the user edits can express one. The apply removes ALL of them and creates at
+ * most one, which on an interface carrying a backup route, or a second default
+ * route installed by a VPN client or by device management, destroys the extra
+ * ones for good while reporting success. The user need not even have touched the
+ * gateway: a DNS-only change ran the same removal.
+ *
+ * Refusing is the honest answer until the configuration can carry more than one
+ * route. Counted out of the snapshot, so it costs no extra call, and placed
+ * before the first removal, so nothing has to be undone.
+ */
+export const WINDOWS_ROUTE_GUARD: string = `if (@($oldRoutes).Count -gt 1) { throw "this interface carries several IPv4 default routes, which this app cannot preserve" }`;
+
+/**
+ * Refuse an interface holding a static address whose provenance the restore
+ * cannot reproduce.
+ *
+ * {@link windowsRestoreSteps} re-creates a static interface's addresses with
+ * `New-NetIPAddress`, and everything Windows makes that way is `Manual` in both
+ * `PrefixOrigin` and `SuffixOrigin`. There is no parameter for either — the stack
+ * assigns them from HOW the address came to exist — so an address that got its
+ * prefix from a router advertisement, or its suffix from the link layer, comes
+ * back as a different object however carefully the rest is replayed.
+ *
+ * Only the static branch is checked, because the DHCP branch does not re-create
+ * anything: it re-enables DHCP and lets the lease put the addresses back.
+ *
+ * Measured on Windows 11: a hand-configured address reports Manual/Manual, a
+ * lease reports Dhcp/Dhcp, and an automatic APIPA address reports
+ * WellKnown/LinkLayerAddress — which is also the pair that tells that address
+ * apart from a link-local one a user set by hand.
+ */
+export const WINDOWS_ORIGIN_GUARD: string = `if ($oldDhcp -ne 'Enabled') { foreach ($a in $oldAddresses) { if ($a.PrefixOrigin -ne 'Manual' -or $a.SuffixOrigin -ne 'Manual') { throw "this interface carries an IPv4 address this app could not put back if the change failed" } } }`;
+
+/**
+ * Why Windows cannot apply this configuration at all, or null when it can.
+ *
+ * The shared validator answers whether a configuration is coherent, not whether
+ * every platform can express it, and there is one combination it accepts that
+ * `New-NetIPAddress` cannot take: a `/32` with a gateway. The validator waives
+ * the on-link requirement at that length deliberately — a host route has no
+ * subnet, so an off-link gateway is the normal arrangement — while
+ * `-DefaultGateway` is documented to require a gateway inside the address's own
+ * subnet, and a `/32` has none.
+ *
+ * Left to the apply, the refusal arrives from the middle of the mutation: the old
+ * addresses and routes are already gone by then and only the rollback stands
+ * between the user and an unconfigured interface. Asked here, before the lock is
+ * taken, nothing has happened yet.
+ *
+ * Expressing it properly is an on-link sequence — the address without a gateway,
+ * a host route to the gateway, then the default route through it — which needs
+ * both routes snapshotted and restored as accurately as the address is. Until
+ * that exists, saying no is the honest answer.
+ */
+export function windowsIPv4Objection(config: NetIPv4Config): string | null {
+	if (config.mode !== 'static' || !config.gateway) return null;
+	return config.prefixLength === 32 ? 'Windows cannot set a gateway on an address that has no subnet of its own (/32)' : null;
+}
+
+/**
+ * Decide, on the machine, whether the requested addressing is already in place —
+ * so a change to the resolvers alone does not rewrite it.
+ *
+ * The removal and re-creation exist because `New-NetIPAddress` adds rather than
+ * replaces. When the address, the prefix and the gateway are all already what was
+ * asked for there is nothing to replace, and running the rewrite anyway destroys
+ * and re-makes objects for no gain: the new default route comes back with the
+ * metric `New-NetIPAddress` picks rather than the one it had, and every step in
+ * between is a window in which the interface has no configuration at all. The
+ * user need not even have looked at the addressing — the settings form sends the
+ * whole configuration back whichever field was edited, so this was the ordinary
+ * cost of changing a DNS server.
+ *
+ * The comparison is against the snapshot rather than against the reading the
+ * client sent, so it describes the host as it is now. It leans on
+ * {@link WINDOWS_ROUTE_GUARD} having already refused more than one default route,
+ * which is what makes "the gateway" a single value worth comparing.
+ *
+ * Each store is asked SEPARATELY and both have to agree, because the write this
+ * skips would have reached both. `New-NetIPAddress` and `New-NetRoute` with no
+ * `-PolicyStore` create the object in the active AND the persistent store, so
+ * "already applied" means "in force now AND at the next boot" — two questions with
+ * two answers.
+ *
+ * Neither store may answer for the other. Asked of the UNION, an interface whose
+ * address and gateway existed only in the persistent store — an ordinary state, and
+ * one this code treats as legitimate everywhere else — looked already-configured to
+ * a user submitting those same values while changing a DNS server: nothing was
+ * created, duplicate address detection never ran, and the apply reported success on
+ * an interface still holding no active IPv4 address at all. Asked of the ACTIVE
+ * store alone, the mirror image: an interface configured active-only, or whose
+ * persistent copy is an OLDER address or gateway, reported success and came back at
+ * the next boot as nothing, or as the old configuration. Requiring both is what
+ * makes the skipped rewrite equivalent to the rewrite — and where the persistent
+ * copy is missing or stale the rewrite runs, which repairs it: the removals clear
+ * both stores and the create writes both.
+ *
+ * The union stays where it belongs: counting what the destructive steps will take,
+ * and deciding what the rollback puts back.
+ */
+export function windowsAddressingUnchanged(config: NetIPv4Config): string {
+	const inStore = (addresses: string, routes: string): string => {
+		const route = config.gateway ? `(@(${routes}).Count -eq 1) -and (${routes}[0].NextHop -eq '${config.gateway}')` : `(@(${routes}).Count -eq 0)`;
+		return `(@(${addresses}).Count -eq 1) -and (${addresses}[0].IPAddress -eq '${config.address}') -and (${addresses}[0].PrefixLength -eq ${config.prefixLength}) -and ${route}`;
+	};
+	return `$addressingUnchanged = ($oldDhcp -ne 'Enabled') -and (${inStore('$oldActiveAddresses', '$oldActiveRoutes')}) -and (${inStore('$oldPersistentAddresses', '$oldPersistentRoutes')})`;
+}
+
+/** How long duplicate address detection may run before the apply gives up on it. */
+const DAD_TIMEOUT_MS = 15000;
+/** How often the address state is re-read while duplicate address detection runs. */
+const DAD_POLL_MS = 250;
+
+/**
+ * Wait for a freshly created address to become usable, and fail the apply if it
+ * does not.
+ *
+ * `New-NetIPAddress` returns as soon as the object exists, and Windows then runs
+ * duplicate address detection: until that finishes the address is `Tentative`,
+ * and it can end as `Duplicate` because some other device on the segment already
+ * answers for it. Checking only that an object with the requested IP exists —
+ * which is all the apply used to do — reports success for both outcomes.
+ *
+ * That is not merely optimistic, it contradicts the reader: it accepts only
+ * `Preferred` addresses, so the state broadcast right after a "successful" apply
+ * showed an interface with no IPv4 address at all.
+ *
+ * `Deprecated` and `Invalid` are failures for the same reason `Duplicate` is —
+ * the reader will not report them, so calling the apply a success would leave the
+ * UI contradicting itself — but they are described separately, because the answer
+ * to a duplicate is to pick another address and the answer to the others is not.
+ */
+export function windowsAddressStateWait(address: string): string {
+	const found = `@(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq '${address}' })`;
+	// `$state` is read again after the loop: `break` leaves it Preferred, and
+	// falling out of the `while` leaves whatever the last poll saw, which is the
+	// only way to tell a timeout apart from a success.
+	const poll = [`$found = ${found}`, 'if ($found.Count -eq 0) { throw "the address was accepted but is not on the interface" }', '$state = [int]$found[0].AddressState', `if ($state -eq ${ADDRESS_STATE_PREFERRED}) { break }`, `if ($state -eq ${ADDRESS_STATE_DUPLICATE}) { throw "another device on this network is already using that address" }`, `if ($state -ne ${ADDRESS_STATE_TENTATIVE}) { throw "Windows accepted the address but will not use it" }`, `Start-Sleep -Milliseconds ${DAD_POLL_MS}`].join('; ');
+	return [`$deadline = (Get-Date).AddMilliseconds(${DAD_TIMEOUT_MS})`, '$state = 0', `do { ${poll} } while ((Get-Date) -lt $deadline)`, `if ($state -ne ${ADDRESS_STATE_PREFERRED}) { throw "Windows is still checking the new address for duplicates" }`].join('; ');
+}
+
+/**
  * Build the PowerShell one-shot that applies an IPv4 configuration.
  *
  * The interface is resolved by GUID rather than by name because `netsh` and the
  * `-InterfaceAlias` parameters take a localized, user-renameable string, while
  * the GUID is what the reader already reports as the interface id.
  *
- * The existing address and default route are removed first so a repeated apply
- * cannot stack a second address on the adapter — `New-NetIPAddress` adds, it does
- * not replace. Both removals tolerate "there was nothing there", which is the
- * normal state of an adapter currently on DHCP.
+ * The shape is snapshot → mutate → verify, with a restore on any failure. The
+ * existing address and default route have to be removed before the new ones are
+ * written — `New-NetIPAddress` adds, it does not replace, so a repeated apply
+ * would otherwise stack a second address on the adapter — and that is precisely
+ * what makes the snapshot mandatory: between the removal and the last step the
+ * interface holds no usable configuration at all, and a failure anywhere in
+ * between would leave it that way. {@link windowsSnapshotSteps} records what was
+ * there and {@link windowsRestoreSteps} puts it back before the error is
+ * rethrown. A rollback that itself fails is reported alongside the original
+ * failure rather than in place of it, because the machine is then in a state
+ * neither error alone describes.
+ *
+ * A static apply is verified before it is called a success: PowerShell can report
+ * a clean run for a `New-NetIPAddress` the stack did not honour, and an
+ * unverified apply would answer "done" while the interface still has no address.
+ * That verification waits for duplicate address detection rather than merely
+ * looking the object up — see {@link windowsAddressStateWait}.
+ *
+ * `$addressingChanged` is what keeps the rollback proportionate to the change. A
+ * configuration whose address, prefix and gateway already match is not rewritten,
+ * and the settings form posts the whole configuration whichever field was edited —
+ * so the common apply is a DNS-only one that never touches the addressing. Undoing
+ * such a failure by clearing every address and default route and rebuilding them
+ * is destructive for nothing: it can alter store membership, a route's metric or
+ * an address's type, and it does so on an interface the user only changed the
+ * resolvers of. The flag is raised at the first destructive step, so the rollback
+ * repairs the addressing exactly when the apply disturbed it. Duplicate address
+ * detection hangs off the same flag — there is no new address to check when none
+ * was created.
+ *
+ * `$dnsWriteStarted` is the same idea for the other half. The resolvers used to be
+ * restored unconditionally, so an apply that failed before ever calling
+ * `Set-DnsClientServerAddress` — at the first address removal, say — still wrote the
+ * snapshot's DNS back, overwriting a resolver change some other process had made in
+ * between. A rollback may only undo what this apply actually did.
  *
  * Every interpolated value has been through the shared validator, so each one is
  * a dotted-quad literal, a small integer, or a GUID. No quoting rule protects
@@ -577,4 +1125,1032 @@ export const WINDOWS_ELEVATION_COMMAND: string = '[Security.Principal.WindowsPri
 /** True when the one-shot above reported an elevated token. */
 export function parseElevation(stdout: string): boolean {
 	return stdout.trim().toLowerCase() === 'true';
+}
+
+// ---------------------------------------------------------------------------
+// wlanapi.dll (scanning and joining)
+// ---------------------------------------------------------------------------
+
+/**
+ * WLAN_AVAILABLE_NETWORK, x64 (wlanapi.h). Every member is a DWORD or a DWORD
+ * array, so the struct needs no padding and its size is the plain sum:
+ *
+ *   strProfileName[256] WCHAR   512  @   0
+ *   dot11Ssid (DOT11_SSID)       36  @ 512   ULONG uSSIDLength + UCHAR ucSSID[32]
+ *   dot11BssType                  4  @ 548
+ *   uNumberOfBssids               4  @ 552
+ *   bNetworkConnectable           4  @ 556
+ *   wlanNotConnectableReason      4  @ 560
+ *   uNumberOfPhyTypes             4  @ 564
+ *   dot11PhyTypes[8]             32  @ 568
+ *   bMorePhyTypes                 4  @ 600
+ *   wlanSignalQuality             4  @ 604
+ *   bSecurityEnabled              4  @ 608
+ *   dot11DefaultAuthAlgorithm     4  @ 612
+ *   dot11DefaultCipherAlgorithm   4  @ 616
+ *   dwFlags                       4  @ 620
+ *   dwReserved                    4  @ 624
+ */
+const AVAILABLE_NETWORK_SIZE = 628;
+const AVAILABLE_PROFILE_NAME_OFFSET = 0;
+/** strProfileName is a WCHAR[256] field, NUL-padded rather than NUL-terminated when full. */
+const AVAILABLE_PROFILE_NAME_CHARS = 256;
+const AVAILABLE_SSID_LENGTH_OFFSET = 512;
+/** bNetworkConnectable: FALSE when Windows already knows it cannot join this network. */
+const AVAILABLE_CONNECTABLE_OFFSET = 556;
+/** wlanNotConnectableReason: a WLAN reason code, meaningful only when the flag above is FALSE. */
+const AVAILABLE_NOT_CONNECTABLE_REASON_OFFSET = 560;
+const AVAILABLE_SSID_OFFSET = 516;
+const AVAILABLE_SIGNAL_OFFSET = 604;
+const AVAILABLE_SECURITY_OFFSET = 608;
+const AVAILABLE_AUTH_OFFSET = 612;
+const AVAILABLE_FLAGS_OFFSET = 620;
+/** Offset of the first WLAN_AVAILABLE_NETWORK inside WLAN_AVAILABLE_NETWORK_LIST (dwNumberOfItems + dwIndex). */
+const AVAILABLE_LIST_HEADER = 8;
+/** WLAN_AVAILABLE_NETWORK_CONNECTED — the interface is currently associated with this network. */
+const AVAILABLE_NETWORK_CONNECTED = 0x00000001;
+/**
+ * Refuse to walk a list longer than this. The count comes out of a struct whose
+ * layout is asserted, not negotiated, so a wrong offset would otherwise have us
+ * read gigabytes of unrelated memory instead of failing.
+ */
+const MAX_AVAILABLE_NETWORKS = 512;
+
+/** WLAN_CONNECTION_MODE: connect using a stored profile, by name. The only mode used here. */
+const CONNECTION_MODE_PROFILE = 0;
+/** dot11_BSS_type_infrastructure — an access point, as opposed to ad-hoc. */
+const BSS_TYPE_INFRASTRUCTURE = 1;
+/** WlanSetProfile with bOverwrite FALSE: this network is already saved, and we asked not to replace it. */
+const ERROR_ALREADY_EXISTS = 183;
+/**
+ * ERROR_NOT_FOUND — the ONLY `WlanGetProfile` result that means "Windows holds
+ * nothing under this name". Every other non-zero code (access denied, invalid
+ * handle, out of memory, an RPC failure) leaves the question unanswered, and
+ * reading one as absence is how a profile that did exist gets overwritten with no
+ * backup and then deleted by the rollback.
+ */
+const ERROR_NOT_FOUND = 1168;
+/**
+ * ERROR_FILE_NOT_FOUND — the only `WlanGetProfileCustomUserData` result that means
+ * "this profile has no custom data". Measured on Windows 11 both for a profile that
+ * never had any and for one whose data a rewrite discarded.
+ */
+const ERROR_FILE_NOT_FOUND = 2;
+/** DOT11_AUTH_ALGO_WPA3_SAE — WPA3-Personal, which needs a different profile than WPA2. */
+const AUTH_ALGO_WPA3_SAE = 9;
+/** WLAN_PROFILE_GROUP_POLICY — pushed by policy. Not this app's to replace, and not restorable if it were. */
+const WLAN_PROFILE_GROUP_POLICY = 0x00000001;
+/** WLAN_PROFILE_USER — visible to this account only, which is all a one-off join needs. */
+const WLAN_PROFILE_USER = 0x00000002;
+/** Buffer given to WlanReasonCodeToString. Microsoft's own samples use this size. */
+const WLAN_REASON_TEXT_CHARS = 256;
+
+/**
+ * How long to let the radio sweep before reading the network list.
+ *
+ * WlanScan is asynchronous: it returns as soon as the request is queued and the
+ * results appear in the interface's list some seconds later. Microsoft documents
+ * four seconds as the point at which a caller that is not listening for the
+ * scan-complete notification should give up waiting, so that is what we wait.
+ */
+const SCAN_SETTLE_MS = 4000;
+/** How long to wait for an association after WlanConnect accepted the request. */
+const JOIN_TIMEOUT_MS = 20000;
+/** How often the association is re-read while waiting for a join to complete. */
+const JOIN_POLL_MS = 500;
+
+/**
+ * Turn a Win32 result code into something a user can act on.
+ *
+ * These are the codes the WLAN calls in this module actually return; anything
+ * else keeps its hexadecimal form rather than being described as something it
+ * might not be.
+ */
+export function wlanErrorMessage(code: number): string {
+	switch (code) {
+		case 5:
+			return 'access denied by Windows';
+		case 87:
+			return 'the WLAN service rejected the request as invalid';
+		case 1062:
+			return 'the WLAN AutoConfig service is not running';
+		case 1168:
+			// ERROR_NOT_FOUND. Whether the missing thing is a saved profile or the
+			// interface itself depends on the call — a scan on a Wi-Fi Direct virtual
+			// adapter answers with this too, and naming only the profile there would
+			// describe a cause that has nothing to do with what was asked.
+			return 'Windows found no matching interface or saved profile';
+		case 1223:
+			return 'the request was cancelled';
+		case 2150899714:
+			return 'the Wi-Fi radio is switched off';
+		case ERROR_INVALID_STATE:
+			return 'the adapter is not in a state that allows this';
+		default:
+			return `Wi-Fi error 0x${(code >>> 0).toString(16).toUpperCase()}`;
+	}
+}
+
+/**
+ * The 16 raw bytes of a `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}` GUID.
+ *
+ * The inverse of {@link guidToString}: the first three fields are little-endian
+ * words and the last two are byte sequences, which is what makes a GUID's text
+ * form and its memory form disagree. Throws rather than returning a wrong GUID,
+ * because a malformed one would silently address a different adapter.
+ */
+export function guidToBytes(guid: string): Uint8Array {
+	if (!isWindowsInterfaceID(guid)) throw new Error('not a Windows interface GUID');
+	const hex = guid.replace(/[{}-]/g, '');
+	const raw = new Uint8Array(16);
+	for (let i = 0; i < 16; i++) raw[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+	const bytes = new Uint8Array(16);
+	bytes.set([raw[3]!, raw[2]!, raw[1]!, raw[0]!, raw[5]!, raw[4]!, raw[7]!, raw[6]!]);
+	bytes.set(raw.subarray(8), 8);
+	return bytes;
+}
+
+/** A NUL-terminated UTF-16LE string, which is what every `LPCWSTR` parameter here expects. */
+export function utf16z(text: string): Uint16Array {
+	const out = new Uint16Array(text.length + 1);
+	for (let i = 0; i < text.length; i++) out[i] = text.charCodeAt(i);
+	return out;
+}
+
+/** First block of characters mapped by {@link readUtf16z}; comfortably larger than any real profile. */
+const INITIAL_UTF16_BLOCK = 1024;
+
+/**
+ * Read a NUL-terminated UTF-16LE string back out of a pointer the WLAN API
+ * allocated. The counterpart of {@link utf16z}, for the profile document
+ * WlanGetProfile hands back.
+ *
+ * The length is not known up front, so the buffer is walked to the terminator;
+ * the cap is a safety stop for a pointer that is not the string we think it is,
+ * well above any real profile (a WLAN profile is a few hundred characters).
+ * Reaching that cap without finding a terminator is an ERROR, never a shorter
+ * string — see the throw below.
+ */
+export function readUtf16z(pointer: Pointer, maxChars: number = 65536): string {
+	// Mapped in growing blocks rather than as one 128 KiB view. The length of the
+	// allocation is not knowable from here, so every character mapped beyond the
+	// terminator is a read of memory that may not belong to this buffer; a real
+	// profile is a few hundred characters, and starting small means the usual case
+	// never maps more than the first block.
+	for (let mapped = Math.min(INITIAL_UTF16_BLOCK, maxChars); ; mapped = Math.min(mapped * 2, maxChars)) {
+		const view = new Uint16Array(toArrayBuffer(pointer, 0, mapped * 2));
+		const end = view.indexOf(0);
+		if (end !== -1) return String.fromCharCode(...view.subarray(0, end));
+		// No terminator yet. Growing is only worthwhile while there is room left.
+		if (mapped >= maxChars) break;
+	}
+	// Returning the first `maxChars` here would be a silent truncation, and the
+	// caller's whole purpose is to hand this document back to WlanSetProfile — a
+	// truncated profile is not a smaller profile, it is a malformed one that would
+	// replace a working network's saved configuration.
+	throw new Error('the WLAN profile document is not NUL-terminated within its expected length');
+}
+
+/**
+ * A WLAN_CONNECTION_PARAMETERS for a connect-by-profile, x64:
+ *
+ *   wlanConnectionMode   4  @  0   (4 bytes of padding follow, the next member is a pointer)
+ *   strProfile           8  @  8
+ *   pDot11Ssid           8  @ 16   NULL — the profile already names the network
+ *   pDesiredBssidList    8  @ 24   NULL — any access point of that network will do
+ *   dot11BssType         4  @ 32
+ *   dwFlags              4  @ 36
+ *
+ * The profile address is passed as a bigint so this stays a pure function a test
+ * can check byte for byte.
+ */
+export function encodeConnectionParameters(profile: bigint): Uint8Array {
+	const bytes = new Uint8Array(40);
+	const view = new DataView(bytes.buffer);
+	view.setUint32(0, CONNECTION_MODE_PROFILE, true);
+	view.setBigUint64(8, profile, true);
+	view.setUint32(32, BSS_TYPE_INFRASTRUCTURE, true);
+	return bytes;
+}
+
+/**
+ * Read a fixed-size, NUL-padded UTF-16LE field out of a struct.
+ *
+ * Unlike {@link readUtf16z} the length is known from the layout, and a field
+ * filled to capacity carries no terminator at all — so running off the end is the
+ * normal case rather than an error.
+ */
+function readFixedUtf16(base: Pointer, offset: number, maxChars: number): string {
+	const view = new Uint16Array(toArrayBuffer(base, offset, maxChars * 2));
+	const end = view.indexOf(0);
+	return String.fromCharCode(...view.subarray(0, end === -1 ? maxChars : end));
+}
+
+/** Escape the five XML metacharacters. An SSID may legally contain any of them. */
+function escapeXml(text: string): string {
+	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+/**
+ * A WLAN profile document for one network.
+ *
+ * Windows will not associate with a network it has no profile for, and a profile
+ * is only expressible as this XML — there is no struct form. An empty password
+ * produces an open-network profile.
+ *
+ * `sae` selects WPA3-Personal instead of WPA2. It is not a preference but a
+ * requirement of the access point: a WPA3-only network refuses a WPA2PSK profile
+ * and a WPA2 network refuses a WPA3SAE one, so the caller passes what the scan
+ * said the network actually uses.
+ *
+ * The join is a one-off: `<connectionMode>manual</connectionMode>` means Windows
+ * will not re-associate with this network by itself later. `auto` was the wrong
+ * default because the user is never asked — the UI offers Connect and nothing
+ * else — so an explicit single join to a guest or conference network silently
+ * changed the machine's long-term behaviour, up to and including auto-joining an
+ * open network of that name anywhere in the world. A "remember this network"
+ * option would be the way to offer the other mode; until one exists, the mode the
+ * user did not ask for is the one not to pick.
+ *
+ * ponytail: WPA2PSK and WPA3SAE cover personal networks, including the WPA2/WPA3
+ * transition mode consumer access points ship with (which advertises itself as
+ * WPA2 and accepts the WPA2 profile). Enterprise 802.1X and OWE "enhanced open"
+ * are not covered — those fail with a reason code from Windows rather than
+ * silently doing nothing, and would need their own profile shapes.
+ */
+export function windowsWifiProfileXml(profileName: string, ssidBytes: Uint8Array, password: string, sae: boolean = false): string {
+	// The profile name and the SSID are two different things. Windows keeps them
+	// apart — the profile name is a case-sensitive label the user or a policy can
+	// change, the SSID is what goes on the air — and writing the SSID into both
+	// created a second, competing profile whenever the real one was named anything
+	// else.
+	const name = escapeXml(profileName);
+	// The SSID goes in as `<hex>` rather than `<name>`, because an SSID is a byte
+	// sequence and is not guaranteed to be UTF-8. Round-tripping it through text
+	// replaces every undecodable octet with U+FFFD, and the profile would then
+	// target a network that does not exist. `<hex>` is authoritative and `<name>`
+	// is ignored when it is present, so only the hex form is emitted.
+	const hex = [...ssidBytes].map(byte => byte.toString(16).padStart(2, '0').toUpperCase()).join('');
+	// A 64-hex credential is a raw 256-bit PSK, not a passphrase, and the profile
+	// has to say so: announced as `passPhrase` Windows hashes it a second time, so
+	// the profile is written, accepted, and then simply never authenticates.
+	const keyType = isWifiHexKey(password) ? 'networkKey' : 'passPhrase';
+	const security = password ? `<authEncryption><authentication>${sae ? 'WPA3SAE' : 'WPA2PSK'}</authentication><encryption>AES</encryption><useOneX>false</useOneX></authEncryption><sharedKey><keyType>${keyType}</keyType><protected>false</protected><keyMaterial>${escapeXml(password)}</keyMaterial></sharedKey>` : `<authEncryption><authentication>open</authentication><encryption>none</encryption><useOneX>false</useOneX></authEncryption>`;
+	return `<?xml version="1.0"?><WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1"><name>${name}</name><SSIDConfig><SSID><hex>${hex}</hex></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>manual</connectionMode><MSM><security>${security}</security></MSM></WLANProfile>`;
+}
+
+/**
+ * Decode a WLAN_AVAILABLE_NETWORK_LIST into the networks a user could join.
+ *
+ * Hidden networks report a zero-length SSID and are dropped for the same reason
+ * the Linux reader drops them: they cannot be joined by name, so an unnamed row
+ * would offer something that fails. One SSID can appear more than once (a roaming
+ * network, or the same name with and without a stored profile), so entries
+ * collapse to the strongest reading — carrying `active` and `secured` across,
+ * since only one of the duplicates is the associated one.
+ *
+ * Implausible readings are dropped rather than reported: a signal above 100 or an
+ * SSID longer than the 32 octets DOT11_SSID can hold means the offsets are being
+ * read against something that is not this struct.
+ */
+export function parseAvailableNetworks(list: Pointer): NetWifiNetwork[] {
+	const best = new Map<string, NetWifiNetwork>();
+	for (const found of availableNetworks(list)) {
+		// Projected explicitly rather than by rest-spread: the decoded entry carries
+		// the raw SSID bytes and the stored profile name, which the join path needs
+		// and the wire contract does not have a field for.
+		const entry: NetWifiNetwork = { ssid: found.ssid, bssid: found.bssid, signal: found.signal, secured: found.secured, security: found.security, supported: found.supported, active: found.active };
+		const previous = best.get(entry.ssid);
+		if (!previous) best.set(entry.ssid, entry);
+		else if ((entry.signal ?? -1) > (previous.signal ?? -1)) best.set(entry.ssid, { ...entry, active: previous.active || entry.active, secured: previous.secured || entry.secured });
+		else if (entry.active) best.set(entry.ssid, { ...previous, active: true });
+	}
+	return [...best.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
+}
+
+/**
+ * The scan entry for one network name, or null when the list does not hold it.
+ *
+ * This is what a join resolves its target from: the profile name Windows itself
+ * uses for the network, the SSID exactly as the radio reported it, and the
+ * authentication algorithm that decides between a WPA2 and a WPA3 profile. A
+ * network that is not in the list yields null, and the caller then falls back to
+ * what the user asked for, which is the best available answer rather than a
+ * guess about a network nobody can currently see.
+ *
+ * ponytail: a name is not an identity — one SSID can be several access points,
+ * and on a WPA2/WPA3 transition network they can differ in authentication. The
+ * strongest entry is taken, which is also the one the radio is likeliest to
+ * associate with. Resolving this properly needs a scan identity (interface +
+ * BSSID + SSID bytes) carried through the API, which the wire contract has no
+ * field for.
+ */
+export function findScannedNetwork(list: Pointer, ssid: string): AvailableNetwork | null {
+	let best: AvailableNetwork | null = null;
+	for (const entry of availableNetworks(list)) if (entry.ssid === ssid && (!best || (entry.signal ?? -1) > (best.signal ?? -1))) best = entry;
+	return best;
+}
+
+/** DOT11_AUTH_ALGO_80211_OPEN — no authentication at all. */
+const AUTH_ALGO_OPEN = 1;
+/** DOT11_AUTH_ALGO_RSNA_PSK — WPA2-Personal. Note 6 is RSNA, which is 802.1X enterprise and NOT this. */
+const AUTH_ALGO_RSNA_PSK = 7;
+
+/**
+ * The security label and joinability of one scanned network.
+ *
+ * The wire contract carries a scanner label because the Linux reader has one
+ * from nmcli; Windows reports a DOT11_AUTH_ALGORITHM instead, so the label is
+ * built from it. Only open, WPA2-PSK and WPA3-SAE are offered - everything else
+ * (802.1X enterprise, the legacy WPA-None modes) needs a profile shape this app
+ * does not write, and offering it would hand the user a button that fails.
+ */
+function windowsWifiSecurity(auth: number, secured: boolean): { security: string; supported: boolean } {
+	if (!secured) return { security: '', supported: auth === AUTH_ALGO_OPEN };
+	if (auth === AUTH_ALGO_WPA3_SAE) return { security: 'WPA3', supported: true };
+	if (auth === AUTH_ALGO_RSNA_PSK) return { security: 'WPA2', supported: true };
+	return { security: 'WPA-ENTERPRISE', supported: false };
+}
+
+/** One decoded WLAN_AVAILABLE_NETWORK, plus the fields the public list has no room for. */
+export type AvailableNetwork = NetWifiNetwork & {
+	/** DOT11_AUTH_ALGORITHM, as Windows last saw the network advertise it. */
+	auth: number;
+	/** The SSID as the radio reported it. Copied out of the list, which the caller frees. */
+	ssidBytes: Uint8Array;
+	/** Windows' own name for the stored profile of this network. Empty when nothing is stored. */
+	profileName: string;
+	/** False when Windows has already decided it cannot associate with this network. */
+	connectable: boolean;
+	/** Why not, as a WLAN reason code. Meaningful only when {@link connectable} is false. */
+	notConnectableReason: number;
+};
+
+/** Walk the entries of a WLAN_AVAILABLE_NETWORK_LIST, skipping the ones that cannot be offered. */
+function* availableNetworks(list: Pointer): Generator<AvailableNetwork> {
+	const count = read.u32(list, 0);
+	// A count past the cap is not a long list to be trimmed, it is evidence that
+	// this buffer is not the structure we think it is — a wrong header offset, a
+	// stale pointer, a layout change. Clamping and walking anyway read whatever
+	// followed the allocation and reported it as networks; the only safe reading
+	// of a corrupt structure is to refuse it. Windows' own list does not approach
+	// this many entries even in the densest environment.
+	if (count > MAX_AVAILABLE_NETWORKS) throw new Error(`the WLAN network list declares ${count} entries, which is not a plausible scan result`);
+	const decoder = new TextDecoder();
+	for (let i = 0; i < count; i++) {
+		const base = AVAILABLE_LIST_HEADER + i * AVAILABLE_NETWORK_SIZE;
+		const ssidLength = read.u32(list, base + AVAILABLE_SSID_LENGTH_OFFSET);
+		const signal = read.u32(list, base + AVAILABLE_SIGNAL_OFFSET);
+		if (ssidLength === 0 || ssidLength > MAX_SSID_LENGTH || signal > 100) continue;
+		// `slice`, not `subarray`: the caller frees the list as soon as this
+		// generator is drained, and the bytes have to outlive it.
+		const ssidBytes = new Uint8Array(toArrayBuffer(list, base + AVAILABLE_SSID_OFFSET, MAX_SSID_LENGTH)).slice(0, ssidLength);
+		const secured = read.u32(list, base + AVAILABLE_SECURITY_OFFSET) !== 0;
+		const auth = read.u32(list, base + AVAILABLE_AUTH_OFFSET);
+		yield {
+			// Lossy by nature — an SSID is not guaranteed to be UTF-8 — so this form
+			// is for display and for matching what the user picked, never for
+			// building a profile. `ssidBytes` is the authoritative value.
+			ssid: decoder.decode(ssidBytes),
+			ssidBytes,
+			profileName: readFixedUtf16(list, base + AVAILABLE_PROFILE_NAME_OFFSET, AVAILABLE_PROFILE_NAME_CHARS),
+			signal,
+			secured,
+			active: (read.u32(list, base + AVAILABLE_FLAGS_OFFSET) & AVAILABLE_NETWORK_CONNECTED) !== 0,
+			auth,
+			...windowsWifiSecurity(auth, secured),
+			// WLAN_AVAILABLE_NETWORK describes a NETWORK, not one access point, and
+			// carries no BSSID. The Linux reader has one and uses it to tell equal
+			// names apart; here the profile names the SSID and the WLAN service picks
+			// the access point itself, so there is nothing honest to put here.
+			bssid: null,
+			connectable: read.u32(list, base + AVAILABLE_CONNECTABLE_OFFSET) !== 0,
+			notConnectableReason: read.u32(list, base + AVAILABLE_NOT_CONNECTABLE_REASON_OFFSET),
+		};
+	}
+}
+
+/**
+ * Explain a refused scan.
+ *
+ * Windows gates the available-network APIs on the location permission, so a scan
+ * that comes back access-denied is almost never about privileges — it is the
+ * location setting, and saying only "access denied" sends the user looking in the
+ * wrong place. Every other code keeps its ordinary description.
+ */
+export function wlanScanErrorMessage(code: number): string {
+	return code === 5 ? 'Windows refused the scan: allow location access for this app in Windows privacy settings' : wlanErrorMessage(code);
+}
+
+/** Scan for the Wi-Fi networks one adapter can see. */
+export async function scanWindowsWifi(guid: string): Promise<NetWifiNetwork[]> {
+	const guidBytes = guidToBytes(guid);
+	const scanResult = withWlanHandle((api, handle) => api.WlanScan(handle, ptr(guidBytes), null, null, null));
+	await delay(SCAN_SETTLE_MS);
+	const networks = withWlanHandle((api, handle) => {
+		const listOut = new BigUint64Array(1);
+		const rc = api.WlanGetAvailableNetworkList(handle, ptr(guidBytes), 0, null, ptr(listOut));
+		if (rc !== 0) throw new Error(wlanScanErrorMessage(rc));
+		const list = Number(listOut[0]) as Pointer;
+		try {
+			return parseAvailableNetworks(list);
+		} finally {
+			api.WlanFreeMemory(list);
+		}
+	});
+	// A refused scan is only worth reporting when it left us with nothing to show.
+	// Windows declines a rescan that comes too soon after the last one, and in that
+	// case the list it already holds is a perfectly good answer.
+	if (networks.length === 0 && scanResult !== 0) throw new Error(wlanScanErrorMessage(scanResult));
+	return networks;
+}
+
+/**
+ * Join a Wi-Fi network, and wait until the adapter is actually on it.
+ *
+ * Windows only associates through a stored profile, so the whole job is deciding
+ * which profile to connect by:
+ *
+ *  - With a password, the profile is written first, replacing any earlier one —
+ *    that is what lets a user fix a network whose key has changed.
+ *  - Without one, the stored profile is used as it stands. Only if there is none
+ *    to use is a profile written, and then with overwrite off, so this path can
+ *    never quietly replace a saved key with an open-network profile. A network
+ *    that turns out not to be open then simply fails to associate.
+ *
+ * WlanConnect merely queues the association: it returns success long before the
+ * adapter has associated, and a wrong password produces no error from it at all.
+ * So the association is confirmed by re-reading it, and a join that never lands
+ * is reported as a failure rather than as the success WlanConnect claimed.
+ *
+ * EVERY step that can change stored state is inside one try/catch, and the catch
+ * undoes exactly what was done. This used to be three separate concerns and none
+ * of them held: the profile overwrite and the synchronous WlanConnect happened
+ * BEFORE the guard, so an immediately-refused connect threw past the restore
+ * entirely; a profile this attempt had CREATED was never deleted, only "restored"
+ * to nothing; and the restoring write ignored its own return code, its reason
+ * code and the profile's original flags alike. One failed attempt could therefore
+ * leave a network's stored configuration permanently changed or a dead profile
+ * behind, and report neither.
+ */
+export async function connectWindowsWifi(guid: string, ssid: string, password: string): Promise<void> {
+	const guidBytes = guidToBytes(guid);
+	// Everything about the target is resolved once, from the list the WLAN service
+	// already holds — no scan is triggered, so this costs a call and not four
+	// seconds. Null when the network is not currently visible.
+	const lookup = withWlanHandle((api, handle) => readScannedNetwork(api, handle, guidBytes, ssid));
+	// A list that could not be read is not a network that is not there. Everything
+	// below falls back to values GUESSED from what the user typed — the SSID as
+	// text, the SSID as the profile name, WPA2 — and then writes a profile out of
+	// them. That fallback is right for a network which is genuinely not visible;
+	// running it because the WLAN service hiccuped is how a transient error came to
+	// overwrite a saved network's configuration.
+	if (lookup.kind === 'readError') throw new Error(`the list of visible networks could not be read, so this network was not joined (${lookup.message})`);
+	const scanned = lookup.kind === 'found' ? lookup.network : null;
+	// A profile name is NOT an SSID. Windows keeps the two apart, the profile name
+	// is case-sensitive, and `WLAN_AVAILABLE_NETWORK` already carries the real one —
+	// so addressing everything below by SSID meant an existing custom-named profile
+	// was never found, never backed up, and a second competing profile was created
+	// beside it. The SSID is only the fallback for a network the scan cannot see.
+	const profileName = scanned?.profileName || ssid;
+	// The SSID is a byte sequence, not text. The decoded form is what the user
+	// picked from and what the association is checked against, but the profile is
+	// built from the bytes the radio actually reported.
+	const ssidBytes = scanned?.ssidBytes ?? new TextEncoder().encode(ssid);
+	// WPA2 is the right default for a network the list does not name: it is what
+	// the transition mode most access points run advertises, and it is also what an
+	// out-of-date list would have said.
+	const sae = scanned?.auth === AUTH_ALGO_WPA3_SAE;
+	// Windows sets `bNetworkConnectable` FALSE when it has already decided it
+	// cannot associate — an unsupported authentication or cipher, a policy
+	// restriction. Attempting anyway spent twenty seconds waiting for an
+	// association that was never going to happen and then told the user to check
+	// the password, which was not the problem. The reason code Windows supplied
+	// alongside it is the answer, so it is asked for by name.
+	if (scanned && !scanned.connectable) throw new Error(withWlanHandle(api => wlanReasonText(api, scanned.notConnectableReason)) ?? 'Windows reports that this network cannot be joined');
+	if (password) assertWindowsWifiKey(password, sae);
+	// Held in a local of its own: WLAN_CONNECTION_PARAMETERS stores only the
+	// ADDRESS of the profile name, so the array behind it has to outlive the call.
+	const profileNameW = utf16z(profileName);
+	const parameters = encodeConnectionParameters(BigInt(ptr(profileNameW)));
+	const profileXml = windowsWifiProfileXml(profileName, ssidBytes, password, sae);
+	/** What this attempt did to the profile store, or null while it has done nothing. */
+	let change: ProfileChange | null = null;
+	try {
+		withWlanHandle((api, handle) => {
+			if (password) {
+				change = writeJoinProfile(api, handle, guidBytes, profileName, profileXml);
+				connectByProfile(api, handle, guidBytes, parameters);
+				return;
+			}
+			const rc = api.WlanConnect(handle, ptr(guidBytes), ptr(parameters), null);
+			if (rc === 0) return;
+			// Nothing stored for this name. The only network that can be joined without a
+			// key is an open one, so give Windows an open profile to work from — but
+			// never in place of one it already holds. When one does already exist, the
+			// failed connect is the real story and its code is the one worth reporting.
+			if (writeProfile(api, handle, guidBytes, profileXml, WLAN_PROFILE_USER, 0) === ERROR_ALREADY_EXISTS) throw new Error(wlanErrorMessage(rc));
+			change = { replaced: null, created: true, written: readWrittenProfile(api, handle, guidBytes, profileName) };
+			connectByProfile(api, handle, guidBytes, parameters);
+		});
+		await waitForAssociation(guid, ssid);
+	} catch (err) {
+		const rollback = undoWifiProfileChange(guidBytes, profileName, change);
+		// Both errors, not just the first. A rollback that failed leaves the machine
+		// in a state neither error describes on its own, and reporting only the
+		// original one would claim the attempt had been undone.
+		if (rollback) throw new Error(`${(err as Error).message} — and undoing the attempt failed: ${rollback}`);
+		throw err;
+	}
+}
+
+/**
+ * Refuse a credential the chosen mechanism or the Windows profile schema could
+ * not accept, before anything is written.
+ *
+ * Two constraints the shared validator cannot apply. It does not know whether
+ * this access point runs WPA3 SAE, where a raw 64-hex PSK is written, accepted
+ * and then simply never authenticates. And the Microsoft profile schema is
+ * narrower than 802.11i: `passPhrase` key material is 8 to 63 PRINTABLE ASCII
+ * characters, so a passphrase carrying an accented letter is refused by
+ * WlanSetProfile with an opaque reason code rather than by anything that can
+ * explain itself — and on Windows the profile is written BEFORE the association
+ * is attempted, so that refusal comes after a working profile was replaced.
+ */
+export function assertWindowsWifiKey(password: string, sae: boolean): void {
+	if (isWifiHexKey(password)) {
+		if (sae) throw new Error('this network uses WPA3, which takes a passphrase rather than a raw 64-digit key');
+		return;
+	}
+	if (!isValidWifiKey(sae ? 'WPA3' : 'WPA2', password)) throw new Error('the password is not one a WPA2 or WPA3 personal network could accept');
+	if (!/^[\x20-\x7e]+$/.test(password)) throw new Error('Windows accepts only printable ASCII characters in a Wi-Fi passphrase');
+}
+
+/** A stored WLAN profile, as {@link readStoredProfile} found it. */
+export interface StoredProfile {
+	/** The document exactly as Windows holds it, key material still encrypted. */
+	readonly xml: string;
+	/** WLAN_PROFILE_* flags. Writing it back with any others changes its scope. */
+	readonly flags: number;
+	/**
+	 * The opaque per-profile blob another WLAN client may keep beside this profile,
+	 * or null when it keeps none.
+	 *
+	 * Windows stores it separately from the document and DISCARDS it whenever the
+	 * document is rewritten with different content — measured on Windows 11: an
+	 * identical `WlanSetProfile` leaves it alone, one that changes the profile (which
+	 * every join does, because it writes the key the user just typed) drops it, and
+	 * a delete takes it with the profile. It belongs to whoever wrote it — enterprise
+	 * provisioning, a vendor's connection manager — and this app has no way to
+	 * reconstruct it, so the only honest thing is to hand it back.
+	 */
+	readonly customUserData: Uint8Array | null;
+}
+
+/**
+ * What {@link readStoredProfile} found: the profile, its PROVABLE absence, or a
+ * failure that is neither.
+ *
+ * The third case is the whole reason this is a union rather than a nullable
+ * profile. `WlanGetProfile` answers ERROR_NOT_FOUND for a name Windows holds
+ * nothing under, but it also answers access-denied, an invalid handle, out of
+ * memory and RPC failures — and collapsing all of those to `null` told the caller
+ * the profile did not exist. It then overwrote a profile it had no backup of and,
+ * on failure, DELETED one it had never created.
+ */
+export type StoredProfileResult = { readonly kind: 'found'; readonly profile: StoredProfile } | { readonly kind: 'notFound' } | { readonly kind: 'error'; readonly message: string };
+
+/**
+ * The stored profile for one profile name.
+ *
+ * The key material comes back encrypted (reading it in the clear needs elevation
+ * this app does not have), which is exactly what a restore needs: the same user
+ * on the same machine can hand that ciphertext straight back, so the saved key
+ * survives without ever being seen.
+ *
+ * The flags matter as much as the document. `WlanGetProfile` reports whether the
+ * profile is all-user, per-user or pushed by group policy, and those are not
+ * interchangeable — a per-user profile written back as all-user is a different
+ * object, and a policy profile must not be touched at all.
+ *
+ * Only ERROR_NOT_FOUND is absence. A success that hands back a null document is
+ * an error too: there is then nothing to restore from, which is exactly the
+ * situation the caller must not proceed into.
+ *
+ * A custom-data blob that could not be READ makes the whole reading an error, for
+ * the same reason. Every caller of this either overwrites the profile or decides
+ * whether the profile is still its own, and both need a snapshot they can hand
+ * back; "the document, and no idea about the blob beside it" is not one.
+ */
+export function readStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string): StoredProfileResult {
+	const name = utf16z(profileName);
+	const xmlOut = new BigUint64Array(1);
+	// In/out: zero asks for the profile as stored, without the plaintext key.
+	const flags = new Uint32Array(1);
+	const rc = api.WlanGetProfile(handle, ptr(guidBytes), ptr(name), null, ptr(xmlOut), ptr(flags), null);
+	if (rc === ERROR_NOT_FOUND) return { kind: 'notFound' };
+	if (rc !== 0) return { kind: 'error', message: wlanErrorMessage(rc) };
+	if (xmlOut[0] === 0n) return { kind: 'error', message: 'the WLAN service reported a saved profile but returned no document for it' };
+	const xmlPointer = Number(xmlOut[0]) as Pointer;
+	try {
+		const custom = readProfileCustomUserData(api, handle, guidBytes, name);
+		if (custom.kind === 'error') return { kind: 'error', message: `the data another program stores with this network could not be read (${custom.message})` };
+		return { kind: 'found', profile: { xml: readUtf16z(xmlPointer), flags: flags[0] ?? 0, customUserData: custom.kind === 'found' ? custom.data : null } };
+	} catch (err) {
+		// A document that cannot be read back is a document that cannot be restored.
+		return { kind: 'error', message: (err as Error).message };
+	} finally {
+		api.WlanFreeMemory(xmlPointer);
+	}
+}
+
+/**
+ * What reading a profile's custom user data established: the blob, its PROVABLE
+ * absence, or a failure that is neither.
+ *
+ * A union for the same reason {@link StoredProfileResult} is one. Every non-zero
+ * code used to read as "there is none", so `ERROR_INVALID_HANDLE`,
+ * `ERROR_INVALID_PARAMETER`, an access denial and an RPC failure all reported the
+ * same thing an empty profile does. The consequence was not symmetrical with the
+ * profile document's: on the overwrite path the caller then wrote its own profile,
+ * destroying a blob it had no copy of, and reported the join a success; on the
+ * rollback path it reported the data restored when it had never been read.
+ */
+type CustomDataResult = { readonly kind: 'none' } | { readonly kind: 'found'; readonly data: Uint8Array } | { readonly kind: 'error'; readonly message: string };
+
+/**
+ * The custom user data stored against one profile.
+ *
+ * Only ERROR_FILE_NOT_FOUND is an absence — see {@link ERROR_FILE_NOT_FOUND}. A
+ * clean read that hands back nothing is one too: there is then provably no blob to
+ * lose.
+ *
+ * `name` is the already-encoded profile name, because every caller has one.
+ */
+function readProfileCustomUserData(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, name: Uint16Array): CustomDataResult {
+	const size = new Uint32Array(1);
+	const dataOut = new BigUint64Array(1);
+	const rc = api.WlanGetProfileCustomUserData(handle, ptr(guidBytes), ptr(name), null, ptr(size), ptr(dataOut));
+	if (rc === ERROR_FILE_NOT_FOUND) return { kind: 'none' };
+	if (rc !== 0) return { kind: 'error', message: wlanErrorMessage(rc) };
+	const length = size[0] ?? 0;
+	if (dataOut[0] === 0n || length === 0) return { kind: 'none' };
+	const pointer = Number(dataOut[0]) as Pointer;
+	try {
+		// Copied out before the buffer is freed — a view over freed memory is not data.
+		return { kind: 'found', data: new Uint8Array(toArrayBuffer(pointer, 0, length)).slice() };
+	} finally {
+		api.WlanFreeMemory(pointer);
+	}
+}
+
+/**
+ * Put somebody else's custom user data back after this attempt rewrote the profile
+ * out from under it, and say whether that worked.
+ *
+ * The return code used to be discarded on the grounds that the write which lost the
+ * data had already happened, so failing here would report a failure for a join that
+ * worked. That holds on the ROLLBACK path and nowhere else. On the overwrite path
+ * this runs inside {@link writeJoinProfile}, before the association is even
+ * attempted — so a failure there can be reported honestly, the original profile put
+ * back, and no connection made. `WlanSetProfileCustomUserData` has its own ways to
+ * fail (a removed USB adapter, a handle that has gone stale), and silently losing
+ * another program's data is not something to report as success.
+ *
+ * Nothing is written when the snapshot found no data: there is then nothing to
+ * lose, and a zero-length write is a clear rather than a no-op.
+ */
+function restoreProfileCustomUserData(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, name: Uint16Array, data: Uint8Array | null): string | null {
+	if (!data || data.length === 0) return null;
+	const rc = api.WlanSetProfileCustomUserData(handle, ptr(guidBytes), ptr(name), data.length, ptr(data), null);
+	return rc === 0 ? null : wlanErrorMessage(rc);
+}
+
+/** What one attempt did to the stored profiles, so the rollback knows what to undo. */
+export interface ProfileChange {
+	/** The profile this attempt overwrote, or null when it created one. */
+	readonly replaced: StoredProfile | null;
+	/** True when nothing was stored under this name before this attempt. */
+	readonly created: boolean;
+	/**
+	 * What Windows held under this name immediately AFTER the write — this
+	 * attempt's fingerprint on the profile store, and the only evidence the
+	 * rollback has that the profile it is about to touch is still its own.
+	 *
+	 * Not the document that was written: Windows normalizes what it is given and
+	 * stores the key material encrypted, so the two never match. Read back instead,
+	 * through the same call the rollback uses, so the comparison is like for like.
+	 * Null when that read-back failed, which leaves the rollback unable to prove
+	 * ownership and so unwilling to act.
+	 */
+	readonly written: StoredProfile | null;
+}
+
+/**
+ * Write the profile a keyed join needs, and report what that did to what Windows
+ * already held.
+ *
+ * Read before overwriting: the typed key may be wrong, and the profile being
+ * replaced may be the working one the user has had for years. The FLAGS come back
+ * with it, because restoring an all-user or a per-user profile as flags 0 changes
+ * its scope — a different profile in all but name, and a rollback that fails for
+ * that reason alone.
+ *
+ * The absent case is where the race lives. Between the read that found nothing
+ * and the write, another process — a second client of this app, netsh, the
+ * Windows UI, a policy refresh — can save a profile under that name. Writing with
+ * `bOverwrite` TRUE would replace it and, because this attempt believed it had
+ * CREATED the profile, a later rollback would DELETE a network the user had just
+ * saved. So the first write asks not to overwrite: ERROR_ALREADY_EXISTS is
+ * Windows answering that the absence no longer holds, and the profile that
+ * appeared is then read, backed up and overwritten like any other existing one.
+ */
+export function writeJoinProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string, profileXml: string): ProfileChange {
+	const stored = readStoredProfile(api, handle, guidBytes, profileName);
+	// A read that FAILED is not a read that found nothing. Proceeding on one would
+	// overwrite a profile with no backup taken, and the rollback would then delete
+	// a network the user had saved for years. Only a provable absence lets this
+	// attempt create a profile of its own.
+	if (stored.kind === 'error') throw new Error(`the saved configuration of this network could not be read, so it will not be replaced (${stored.message})`);
+	if (stored.kind === 'found') return overwrite(stored.profile);
+	// Believed absent — and asking not to overwrite is what makes that belief
+	// checkable rather than merely assumed. Anything but ERROR_ALREADY_EXISTS means
+	// the write landed on the empty name it was aimed at.
+	if (writeProfile(api, handle, guidBytes, profileXml, WLAN_PROFILE_USER, 0) !== ERROR_ALREADY_EXISTS) return { replaced: null, created: true, written: readWrittenProfile(api, handle, guidBytes, profileName) };
+	const raced = readStoredProfile(api, handle, guidBytes, profileName);
+	// It existed a moment ago and cannot be read now: there is a profile here that
+	// this attempt cannot back up, so it does not touch it.
+	if (raced.kind !== 'found') throw new Error('another process saved a profile for this network while it was being joined, and it could not be read');
+	return overwrite(raced.profile);
+
+	/**
+	 * Replace an existing profile, keeping its scope. A new one would be created
+	 * per-user instead: creating one for every account on the machine needs a
+	 * privilege the Wi-Fi capability never established, and a one-off join has no
+	 * business reaching outside this account.
+	 */
+	function overwrite(existing: StoredProfile): ProfileChange {
+		// A group-policy profile is not this app's to replace. The overwrite is
+		// refused on most hosts, and where it is not, nothing here can put a policy
+		// profile back afterwards.
+		if ((existing.flags & WLAN_PROFILE_GROUP_POLICY) !== 0) throw new Error('this network is managed by group policy and cannot be changed here');
+		writeProfile(api, handle, guidBytes, profileXml, existing.flags, 1);
+		// The write just discarded whatever another WLAN client kept beside this
+		// profile — see StoredProfile.customUserData. Replacing the credentials is
+		// what the user asked for; destroying somebody else's metadata is not, so it
+		// goes straight back, before the fingerprint is taken.
+		const lost = restoreProfileCustomUserData(api, handle, guidBytes, utf16z(profileName), existing.customUserData);
+		// Nothing has been connected yet, so this failure is one that can still be
+		// answered honestly: put the document back as it was and stop. Carrying on
+		// would associate successfully and report a join that had quietly destroyed
+		// another program's data.
+		if (lost) throw new Error(`the data another program stores with this network could not be put back, so this network was not joined (${lost})${describeRestore(writeStoredProfile(api, handle, guidBytes, profileName, existing))}`);
+		return { replaced: existing, created: false, written: readWrittenProfile(api, handle, guidBytes, profileName) };
+	}
+}
+
+/**
+ * The profile as Windows holds it right after a write — see
+ * {@link ProfileChange.written}.
+ *
+ * Anything but a clean read yields null rather than an error: the write itself
+ * succeeded, so failing the join over a fingerprint that could not be taken would
+ * report a failure that did not happen. What it costs instead is the rollback's
+ * ability to prove the profile is still its own, which that path answers for
+ * itself.
+ */
+function readWrittenProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string): StoredProfile | null {
+	const stored = readStoredProfile(api, handle, guidBytes, profileName);
+	return stored.kind === 'found' ? stored.profile : null;
+}
+
+/**
+ * Put a snapshotted profile back exactly as it was, document, scope and the data
+ * another program stores beside it, and report what went wrong rather than throwing.
+ *
+ * Shared by the two paths that undo a write — the overwrite giving up because the
+ * custom data could not be handed back, and the rollback after a failed
+ * association — because "restore this profile" means the same thing in both, and
+ * restoring only the document leaves half the object behind.
+ */
+function writeStoredProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string, profile: StoredProfile): string | null {
+	const name = utf16z(profileName);
+	const document = utf16z(profile.xml);
+	const reason = new Uint32Array(1);
+	const rc = api.WlanSetProfile(handle, ptr(guidBytes), profile.flags, ptr(document), null, 1, null, ptr(reason));
+	if (rc !== 0) return `the previous profile could not be restored (${describeProfileFailure(api, rc, reason[0] ?? 0)})`;
+	// That WlanSetProfile discarded the custom data again, exactly as the write being
+	// undone did, so it goes back too — and a failure here is reported rather than
+	// swallowed, because the restore is then only partly done.
+	const lost = restoreProfileCustomUserData(api, handle, guidBytes, name, profile.customUserData);
+	return lost ? `the previous profile was restored but the data another program stores with it was not (${lost})` : null;
+}
+
+/** A restore outcome as a clause to append to an error, or nothing when it worked. */
+function describeRestore(failure: string | null): string {
+	return failure ? ` — and ${failure}` : '';
+}
+
+/**
+ * Whether two custom-data snapshots are the same blob, BY CONTENT.
+ *
+ * Reference equality would answer no to two identical reads, since each one copies
+ * the bytes out of a buffer the WLAN service then frees — so the fingerprint would
+ * report a conflict on every profile that has custom data at all.
+ */
+function sameCustomUserData(a: Uint8Array | null, b: Uint8Array | null): boolean {
+	if (a === null || b === null) return a === b;
+	return a.length === b.length && a.every((byte, index) => byte === b[index]);
+}
+
+/**
+ * Write a profile document, turning a refusal into an error that carries the
+ * reason code. Returns the raw result so the caller can tell the one tolerable
+ * outcome — ERROR_ALREADY_EXISTS after asking not to overwrite — from a failure.
+ */
+function writeProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileXml: string, flags: number, overwrite: number): number {
+	const document = utf16z(profileXml);
+	const reason = new Uint32Array(1);
+	const rc = api.WlanSetProfile(handle, ptr(guidBytes), flags, ptr(document), null, overwrite, null, ptr(reason));
+	if (rc !== 0 && rc !== ERROR_ALREADY_EXISTS) throw new Error(describeProfileFailure(api, rc, reason[0] ?? 0));
+	return rc;
+}
+
+/** Queue an association through a stored profile, or fail with the code Windows gave. */
+function connectByProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, parameters: Uint8Array): void {
+	const rc = api.WlanConnect(handle, ptr(guidBytes), ptr(parameters), null);
+	if (rc !== 0) throw new Error(wlanErrorMessage(rc));
+}
+
+/**
+ * Undo what the failed attempt wrote — but only while the profile is still the
+ * one it wrote.
+ *
+ * The two undo actions are different, not one with a null in it. A profile this
+ * attempt CREATED has to be deleted — "restoring what was there before" would
+ * mean writing nothing and leaving the new one standing, which is how a failed
+ * join used to leave a dead profile behind. A profile it OVERWROTE goes back with
+ * the flags it had, so its scope is unchanged.
+ *
+ * What both share is that they are only correct if nobody else has touched the
+ * profile in the meantime, and up to twenty seconds pass between the write and
+ * the rollback while the adapter tries to associate. The host mutex covers this
+ * process and nothing else: the Windows network UI, `netsh`, a group policy
+ * refresh, the Network List Manager and a second instance of this app can all
+ * save a profile under that name inside that window. Deleting or overwriting
+ * unconditionally would then discard a change the user had just made — the same
+ * hazard the write path already refuses, arriving from the other end.
+ *
+ * So the profile is re-read and compared against {@link ProfileChange.written},
+ * the fingerprint taken right after the write. Equal means it is still ours and
+ * the undo runs. Anything else — changed, removed, or a fingerprint that could
+ * not be taken — means the third party's version stands and this reports the
+ * conflict instead of resolving it.
+ *
+ * ALL THREE parts of the fingerprint are compared, the custom user data included.
+ * Comparing only the document and the flags left the one part another WLAN client
+ * can change on its own out of the test: during the same twenty-second window a
+ * vendor's connection manager can write its blob and touch nothing else, and the
+ * rollback then judged the profile still its own — deleting the newly created
+ * profile along with the foreign blob, or overwriting the profile and putting the
+ * older blob back over the newer one. (This is not the deferred race between two
+ * adjacent wlanapi calls; it is the long window this whole function exists for.)
+ *
+ * The one exception is a profile this attempt created that has since been
+ * deleted: the undo's whole goal was for it not to exist, and it does not.
+ */
+export function undoProfileChange(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string, change: ProfileChange): string | null {
+	if (!change.written) return 'what this attempt saved for this network could not be read back, so its configuration was left as it stands';
+	const current = readStoredProfile(api, handle, guidBytes, profileName);
+	if (current.kind === 'error') return `this network's saved configuration could not be re-read, so it was left as it stands (${current.message})`;
+	if (current.kind === 'notFound') return change.created ? null : 'another process removed this network while it was being joined, so the previous configuration was not put back';
+	if (current.profile.xml !== change.written.xml || current.profile.flags !== change.written.flags || !sameCustomUserData(current.profile.customUserData, change.written.customUserData)) return 'another process changed this network while it was being joined, so its configuration was left as it stands';
+	const name = utf16z(profileName);
+	if (change.created) {
+		const rc = api.WlanDeleteProfile(handle, ptr(guidBytes), ptr(name), null);
+		return rc === 0 ? null : `the profile this attempt created could not be deleted (${wlanErrorMessage(rc)})`;
+	}
+	return writeStoredProfile(api, handle, guidBytes, profileName, change.replaced as StoredProfile);
+}
+
+/** {@link undoProfileChange} on a handle of its own — the one used for the join is long closed by the time an association times out. */
+function undoWifiProfileChange(guidBytes: Uint8Array, profileName: string, change: ProfileChange | null): string | null {
+	if (!change || (!change.created && !change.replaced)) return null;
+	try {
+		return withWlanHandle((api, handle) => undoProfileChange(api, handle, guidBytes, profileName, change));
+	} catch (err) {
+		return `the WLAN service could not be reached to undo it (${(err as Error).message})`;
+	}
+}
+
+/**
+ * Describe a refused WlanSetProfile, reason code included.
+ *
+ * The reason code is the whole point of the out-parameter that used to be
+ * allocated and then discarded: WlanSetProfile answers the same Win32 code for
+ * an unsupported cipher, a schema violation and a policy restriction alike, and
+ * only the reason code separates them. Windows can put it into words in the
+ * user's own language, so it is asked rather than printing a bare number.
+ */
+function describeProfileFailure(api: WlanApi, rc: number, reason: number): string {
+	const text = wlanReasonText(api, reason);
+	return text ? `${wlanErrorMessage(rc)}: ${text}` : wlanErrorMessage(rc);
+}
+
+/** Windows' own wording for a WLAN reason code, or null when it has none for it. */
+function wlanReasonText(api: WlanApi, reason: number): string | null {
+	if (reason === 0) return null;
+	const buffer = new Uint16Array(WLAN_REASON_TEXT_CHARS);
+	if (api.WlanReasonCodeToString(reason, buffer.length, ptr(buffer), null) !== 0) return null;
+	const end = buffer.indexOf(0);
+	const text = String.fromCharCode(...buffer.subarray(0, end === -1 ? buffer.length : end)).trim();
+	return text.length > 0 ? text : null;
+}
+
+/**
+ * What a lookup in the WLAN service's own network list established.
+ *
+ * `notFound` and `readError` are not the same answer, and treating them as one
+ * was how a transient WLAN failure came to trigger the destructive fallback: the
+ * caller took `null` for "this network is not currently visible", carried on with
+ * a guessed profile name, guessed SSID bytes and a guessed security type, and
+ * wrote a profile from them. A list that could not be read says nothing about the
+ * network, so nothing may be guessed from it.
+ */
+type ScanLookup = { readonly kind: 'found'; readonly network: AvailableNetwork } | { readonly kind: 'notFound' } | { readonly kind: 'readError'; readonly message: string };
+
+/**
+ * What the WLAN service currently knows about one network name on one adapter.
+ *
+ * Reads the list the service already holds — no scan is triggered, so this costs
+ * a call and not four seconds.
+ */
+function readScannedNetwork(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, ssid: string): ScanLookup {
+	const listOut = new BigUint64Array(1);
+	const rc = api.WlanGetAvailableNetworkList(handle, ptr(guidBytes), 0, null, ptr(listOut));
+	if (rc !== 0) return { kind: 'readError', message: wlanScanErrorMessage(rc) };
+	const list = Number(listOut[0]) as Pointer;
+	try {
+		const network = findScannedNetwork(list, ssid);
+		return network ? { kind: 'found', network } : { kind: 'notFound' };
+	} catch (err) {
+		// A list that describes itself impossibly (see MAX_AVAILABLE_NETWORKS) is a
+		// structure we cannot read, not a network that is not there.
+		return { kind: 'readError', message: (err as Error).message };
+	} finally {
+		api.WlanFreeMemory(list);
+	}
+}
+
+/**
+ * The association of ONE adapter, read straight from the WLAN service.
+ *
+ * Asked for by GUID rather than taken from {@link readWindowsWifi}, which
+ * describes every adapter and answers on the wire contract - it has no field for
+ * whether the radio is actually on the network, only for the name it is
+ * associating with. Null when the adapter has no current connection, which is
+ * what an unassociated one reports.
+ */
+function readAssociation(guid: string): { ssid: string | null; connected: boolean } | null {
+	try {
+		return withWlanHandle((api, handle) => {
+			const guidBytes = guidToBytes(guid);
+			return queryInterface(api, handle, ptr(guidBytes), OPCODE_CURRENT_CONNECTION, readConnectionAttributes);
+		});
+	} catch {
+		// A service that cannot be asked right now is not an adapter that has
+		// joined; the caller polls again until its own deadline.
+		return null;
+	}
+}
+
+/** Poll the adapter's association until it reports the requested network, or give up. */
+async function waitForAssociation(guid: string, ssid: string): Promise<void> {
+	const deadline = Date.now() + JOIN_TIMEOUT_MS;
+	for (;;) {
+		// Both conditions matter: the adapter has to be ON a network, and it has to be
+		// THIS one. WlanConnect only queues the attempt, and the SSID shows up in the
+		// connection attributes while the adapter is still associating — so a check on
+		// the name alone reports a join that never happened.
+		const association = readAssociation(guid);
+		if (association?.connected && association.ssid === ssid) return;
+		if (Date.now() >= deadline) throw new Error('the adapter did not join the network — check the password');
+		await delay(JOIN_POLL_MS);
+	}
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * True when this host has a WLAN stack the app can drive.
+ *
+ * Enumerating the interfaces is the probe: `wlanapi.dll` is present on every
+ * desktop Windows whether or not the machine has a radio, so loading it proves
+ * nothing, while an adapter in the list is exactly the thing scanning and joining
+ * need. Unlike applying an address, none of this needs an elevated token.
+ */
+export function isWindowsWifiConfigurable(): boolean {
+	return readWindowsWifi().size > 0;
 }

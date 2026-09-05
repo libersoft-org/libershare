@@ -194,12 +194,60 @@ export function validateIPv4Config(value: unknown, capabilities?: Pick<NetCapabi
 }
 
 /**
+ * Control characters an SSID a USER typed must not contain.
+ *
+ * A scanned name is whatever the radio reported and is not filtered here; this
+ * is the gate for a name the user supplied. Windows builds its WLAN profile as
+ * XML and falls back to the typed SSID for the profile name, and XML 1.0 cannot
+ * carry these code points even escaped - the profile would be rejected as
+ * malformed rather than as a wrong name. Tab, LF and CR are legal there and stay
+ * out of the set.
+ */
+const SSID_FORBIDDEN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/;
+
+/**
+ * A key the network's own security can carry.
+ *
+ * The rule is not the same for both WPA generations, and measured against
+ * NetworkManager 1.52: a WPA-PSK key is 8 to 63 bytes, or exactly 64 hexadecimal
+ * digits of the pre-shared key itself — it counts bytes, so a four-character
+ * accented passphrase passes as eight. WPA3 replaces that with SAE, which
+ * derives from the password rather than hashing it to a fixed-length key and so
+ * accepts any length; holding a WPA3 network to the PSK rule would refuse a
+ * short password that works.
+ *
+ * Only networks this app offers to join reach here — open ones take no key, and
+ * anything but WPA personal is refused earlier. The check exists so a key that
+ * cannot work is named as such, instead of arriving as a generic activation
+ * failure that says nothing about what to type instead.
+ */
+export function isValidWifiKey(security: string, password: string): boolean {
+	if (/WPA3|SAE/i.test(security)) return password.length > 0;
+	const bytes = new TextEncoder().encode(password).byteLength;
+	return /^[0-9a-f]{64}$/i.test(password) || (bytes >= 8 && bytes <= 63);
+}
+
+/**
+ * True when a Wi-Fi credential is a raw 256-bit pre-shared key rather than a
+ * passphrase: exactly 64 hexadecimal digits.
+ *
+ * The distinction is not cosmetic. A Windows WLAN profile has to declare which
+ * of the two it carries - `<keyType>networkKey</keyType>` for this form and
+ * `passPhrase` for the other - and a raw key announced as a passphrase is hashed
+ * a second time, so the profile is written, accepted, and then never
+ * authenticates.
+ */
+export function isWifiHexKey(key: unknown): key is string {
+	return typeof key === 'string' && /^[0-9a-f]{64}$/i.test(key);
+}
+
+/**
  * True for an SSID the 802.11 standard can actually carry: 1-32 octets once
  * encoded as UTF-8. Length is counted in bytes, not characters, because a
  * 20-character name with accents already exceeds the field.
  */
 export function isValidSSID(ssid: unknown): ssid is string {
-	if (typeof ssid !== 'string' || ssid.includes('\0')) return false;
+	if (typeof ssid !== 'string' || SSID_FORBIDDEN.test(ssid)) return false;
 	const length = new TextEncoder().encode(ssid).length;
 	return length >= 1 && length <= 32;
 }

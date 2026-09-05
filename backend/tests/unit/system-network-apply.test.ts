@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { canonicalDnsServer, ErrorCodes, ipv4BaselineOf, isIPv4, isIPv6, isValidSSID, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
+import { canonicalDnsServer, ErrorCodes, ipv4BaselineOf, isIPv4, isIPv6, isValidSSID, isValidWifiKey, isWifiHexKey, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
 import { assertIPv6DnsAllowed, assertLinuxDnsApplied, assertLinuxIPv4Applied, assertLinuxIPv4Method, assertLinuxWifiConnected, assertNetworkManagerRollback, assertNmcliActiveConnection, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
-import { assertAppliedIPv4State, assertDeviceName, assertIPv4Baseline, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiKey, isValidWifiPassword, leaseRequired, MAX_WIFI_PASSWORD_BYTES, planIPv4Change, readCachedCapabilities, resetNetworkCapabilitiesCache, runNetworkMutation } from '../../src/system-network.ts';
+import { assertAppliedIPv4State, assertDeviceName, assertIPv4Baseline, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, leaseRequired, MAX_WIFI_PASSWORD_BYTES, planIPv4Change, readCachedCapabilities, resetNetworkCapabilitiesCache, runNetworkMutation } from '../../src/system-network.ts';
 
 describe('isIPv4', () => {
 	it('accepts ordinary dotted quads', () => {
@@ -1020,6 +1020,23 @@ describe('parseElevation', () => {
 	it('treats anything else as not elevated', () => {
 		expect(parseElevation('False\r\n')).toBe(false);
 		expect(parseElevation('')).toBe(false);
+	});
+});
+
+describe('isWifiHexKey', () => {
+	it('recognises exactly 64 hexadecimal digits, in either case', () => {
+		expect(isWifiHexKey('0123456789abcdef'.repeat(4))).toBe(true);
+		expect(isWifiHexKey('0123456789ABCDEF'.repeat(4))).toBe(true);
+	});
+
+	it('refuses anything that is not one', () => {
+		// Off by one in either direction, a non-hex digit in the last place, and the
+		// wrong type. A false positive here writes a Windows profile that declares a
+		// passphrase as a raw key, which is accepted and then never authenticates.
+		expect(isWifiHexKey('0123456789abcdef'.repeat(3))).toBe(false);
+		expect(isWifiHexKey(`${'0123456789abcdef'.repeat(4)}0`)).toBe(false);
+		expect(isWifiHexKey(`${'a'.repeat(63)}z`)).toBe(false);
+		expect(isWifiHexKey(undefined)).toBe(false);
 	});
 });
 

@@ -37,6 +37,18 @@
 	let isSelected = $derived(navArea && effectivePosition ? navArea.isSelected(effectivePosition) : menuButtons ? menuButtons.isSelected(index) : selected);
 	let isPressed = $derived(navArea && effectivePosition ? navArea.isPressed(effectivePosition) : menuButtons ? menuButtons.isPressed(index) : pressed);
 
+	// Both ways in have to honour `disabled`, not just the mouse. The registered
+	// confirm is what Enter on a selected item calls, and it used to be `onConfirm`
+	// straight through — so a button greyed out on screen still fired from the
+	// keyboard. Anywhere `disabled` means "an operation is already in flight", that
+	// was a second one started on top of the first.
+	// Passed unconditionally, and reading both props at call time: the two consumers
+	// only ever invoke it as `onConfirm?.()`, so an item that has one but does
+	// nothing is the same to them as one that has none.
+	function confirm(): void {
+		if (!disabled) onConfirm?.();
+	}
+
 	function handleClick(): void {
 		if (disabled) return;
 		// Mirror keyboard: pressing Enter on a focused item plays the confirm sound via
@@ -56,12 +68,12 @@
 				navItem(
 					() => effectivePosition,
 					() => el,
-					onConfirm,
+					confirm,
 					{ noDelegateMouse: true }
 				)
 			);
 		if (menuButtons) {
-			const { index: idx, unregister } = menuButtons.register({ onConfirm });
+			const { index: idx, unregister } = menuButtons.register({ onConfirm: confirm });
 			index = idx;
 			return unregister;
 		}

@@ -352,7 +352,7 @@
 			"addressing": "Addressing",
 			"applying": "Applying…",
 			"applied": "Configuration applied.",
-			"applyWarning": "Changing the address restarts the connection. If you get it wrong you may lose access to this machine over the network.",
+			"applyWarning": "Changing the network settings restarts the connection. If you get it wrong you may lose access to this machine over the network.",
 			"invalidField": "Check the {field} field.",
 			"field": {
 				"mode": "addressing mode",

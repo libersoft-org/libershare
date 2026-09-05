@@ -2,8 +2,8 @@ import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
-import { CodedError, ErrorCodes, ipv4BaselineOf, isSelectableInterface, isValidSSID, normalizeDnsServers, sameIPv4Baseline, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
-import { isWindowsInterfaceID, parseElevation, parseWindowsNetworkState, readWindowsWifi, windowsApplyIPv4Command, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
+import { CodedError, ErrorCodes, ipv4BaselineOf, isSelectableInterface, isValidSSID, isValidWifiKey, normalizeDnsServers, sameIPv4Baseline, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
+import { connectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND, windowsApplyIPv4Command } from './system-network-windows.ts';
 import { applyLinuxIPv4, connectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
 import { applyMacIPv4, isMacWifiConfigurable, isMacWritable, readMacNetworkState } from './system-network-macos.ts';
 import { networkHelperAvailable, runElevatedNetworkHelper } from './network-helper-client.ts';
@@ -25,10 +25,10 @@ const WINDOWS_SYSTEM_ENV = process.platform === 'win32' ? windowsSystemEnvironme
  *    of `yes` on Linux, and an effective root process on macOS. The answer is
  *    probed once and cached, so the UI can hide an edit the process could never
  *    complete instead of letting the user discover it when Save fails.
- *  - Wi-Fi scan/join applies on Linux only. See system-network-windows.ts and
- *    system-network-macos.ts for why the other two are deliberately absent rather
- *    than written blind — on macOS the operating system withholds every network
- *    name from a process without Location access, so there is nothing to offer.
+ *  - Wi-Fi scan/join applies on Windows (wlanapi, no elevation needed) and on a
+ *    Linux host running NetworkManager. It does not apply on macOS, where the
+ *    operating system withholds every network name from a process without
+ *    Location access — see system-network-macos.ts for the measurements.
  *
  * Applying can drop the very interface the caller reached us on. That is inherent
  * to changing an address and is the user's decision to make, so it is not
@@ -186,7 +186,8 @@ async function readWindows(): Promise<NetInterfaceInfo[]> {
 }
 
 /**
- * Read the current network state.
+ * Read the current network state WITHOUT waiting for a reconfiguration to
+ * finish.
  *
  * Results are cached for {@link CACHE_TTL_MS} and concurrent callers share the
  * one in-flight read, so a poll tick and an RPC call arriving together cost a
@@ -238,7 +239,11 @@ export function resolvePrimaryID(interfaces: NetInterfaceInfo[], primaryInterfac
 	return interfaces.find(i => i.defaultRoute)?.id ?? null;
 }
 
-/** Drop the cached reading — used by tests so a stale entry cannot leak between cases. */
+/**
+ * Drop the cached reading — after an apply, and in tests so a stale entry cannot
+ * leak between cases. A read already in flight cannot be cancelled, so instead the
+ * generation is bumped and that read is left to finish and publish nothing.
+ */
 export function resetNetworkStateCache(): void {
 	stateCache.reset();
 }
@@ -368,10 +373,14 @@ async function probeCapabilities(): Promise<NetCapabilities> {
 	if (process.platform === 'win32') {
 		// The Get/Set-Net* cmdlets refuse outright without an elevated token, so the
 		// capability is that token — probed before the user reaches Save rather than
-		// user when Save fails. Wi-Fi is deliberately read-only.
+		// user when Save fails.
 		const native = await isWindowsElevated();
 		const elevated = !native && (await networkHelperAvailable('win32'));
-		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi: false, staticGatewayRequired: false };
+		// Wi-Fi is the exception to that token: the WLAN service takes scan and join
+		// from an ordinary user, so the capability is whether the service lists an
+		// adapter at all. A host with no radio, or a stripped image with no WLAN
+		// stack, lists none and the screen offers nothing.
+		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi: isWindowsWifiConfigurable(), staticGatewayRequired: false };
 	} else if (process.platform === 'linux') {
 		const capability = await readLinuxCapabilities();
 		if (capability.ipv4Elevation && !(await networkHelperAvailable('linux'))) return { ...capability, ipv4: false, ipv4Elevation: false };
@@ -489,7 +498,7 @@ export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 	return runNetworkMutation(async () => {
 		await assertWirelessInterface(interfaceID);
 		try {
-			return await run(() => scanLinuxWifi(assertDeviceName(interfaceID)));
+			return await run(() => scanPlatformWifi(interfaceID));
 		} catch (error) {
 			resetNetworkCapabilitiesCache();
 			throw error;
@@ -511,7 +520,7 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 	await assertWirelessInterface(interfaceID);
 	let available: NetWifiNetwork[];
 	try {
-		available = await run(() => scanLinuxWifi(assertDeviceName(interfaceID)));
+		available = await run(() => scanPlatformWifi(interfaceID));
 	} catch (error) {
 		resetNetworkCapabilitiesCache();
 		throw error;
@@ -522,7 +531,7 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 	if (!network.supported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi authentication method is not supported');
 	if (network.secured && !isValidWifiKey(network.security, password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
 	try {
-		await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password, network.bssid));
+		await run(() => joinPlatformWifi(interfaceID, ssid, password, network.bssid), [password]);
 	} catch (error) {
 		resetNetworkCapabilitiesCache();
 		throw error;
@@ -532,40 +541,50 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 	return readNetworkStateUnlocked(primaryInterface);
 }
 
-/**
- * A key the network's own security can carry.
- *
- * The rule is not the same for both WPA generations, and measured against
- * NetworkManager 1.52: a WPA-PSK key is 8 to 63 bytes, or exactly 64 hexadecimal
- * digits of the pre-shared key itself — it counts bytes, so a four-character
- * accented passphrase passes as eight. WPA3 replaces that with SAE, which
- * derives from the password rather than hashing it to a fixed-length key and so
- * accepts any length; holding a WPA3 network to the PSK rule would refuse a
- * short password that works.
- *
- * Only networks this app offers to join reach here — open ones take no key, and
- * anything but WPA personal is refused earlier. The check exists so a key that
- * cannot work is named as such, instead of arriving as a generic activation
- * failure that says nothing about what to type instead.
- */
-export function isValidWifiKey(security: string, password: string): boolean {
-	if (/WPA3|SAE/i.test(security)) return password.length > 0;
-	const bytes = new TextEncoder().encode(password).byteLength;
-	return /^[0-9a-f]{64}$/i.test(password) || (bytes >= 8 && bytes <= 63);
-}
-
 /** A bounded string that can be written to a child process stdin. Empty = open network. */
 export function isValidWifiPassword(password: unknown): password is string {
 	return typeof password === 'string' && !/[\0\r\n]/.test(password) && new TextEncoder().encode(password).byteLength <= MAX_WIFI_PASSWORD_BYTES;
 }
 
 /**
+ * Scan on whichever platform this host runs.
+ *
+ * Both readers answer in the same shape, and the id each one needs is checked
+ * by its own boundary guard - a Windows adapter GUID is not a device name and
+ * neither is accepted where the other belongs.
+ */
+function scanPlatformWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
+	if (process.platform === 'win32') return scanWindowsWifi(assertWindowsGuid(interfaceID));
+	return scanLinuxWifi(assertDeviceName(interfaceID));
+}
+
+/**
+ * Join on whichever platform this host runs.
+ *
+ * The BSSID only reaches NetworkManager. Windows addresses the network through
+ * a WLAN profile, which names the SSID and lets the service pick the access
+ * point - there is no per-BSSID form of that call, and pinning one would defeat
+ * the roaming the service does on its own.
+ */
+function joinPlatformWifi(interfaceID: string, ssid: string, password: string, bssid: string | null): Promise<void> {
+	if (process.platform === 'win32') return connectWindowsWifi(assertWindowsGuid(interfaceID), ssid, password);
+	return connectLinuxWifi(assertDeviceName(interfaceID), ssid, password, bssid);
+}
+
+/** Validate a Windows adapter id before it addresses the WLAN service. Same boundary check as {@link assertDeviceName}. */
+function assertWindowsGuid(interfaceID: string): string {
+	if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+	return interfaceID;
+}
+
+/**
  * Refuse a Wi-Fi operation the interface cannot perform.
  *
- * Without this the request reaches nmcli, which answers "Device 'enp6s18' is not
- * a Wi-Fi device" — a true statement, but one that surfaces as a command failure
- * for what is really a bad request. The medium comes from the same read the UI
- * displays, so the two can never disagree about which interfaces are wireless.
+ * Without this the request reaches the platform tool, which answers "Device
+ * 'enp6s18' is not a Wi-Fi device" — a true statement, but one that surfaces as
+ * a command failure for what is really a bad request. The medium comes from the
+ * same read the UI displays, so the two can never disagree about which
+ * interfaces are wireless.
  */
 async function assertWirelessInterface(interfaceID: string): Promise<void> {
 	const supported = await readCapabilities();
@@ -591,6 +610,11 @@ export function assertWifiConfigurableInterface(interfaces: NetInterfaceInfo[], 
  * and macOS. The check exists because the id crosses the API boundary from a
  * client, not because the tools would misparse it: arguments are passed as argv,
  * never through a shell.
+ *
+ * The limit is counted in BYTES, which is what IFNAMSIZ measures. `.length`
+ * counts UTF-16 code units, so a name of accented characters passed a
+ * 15-character check while being well over 15 octets — and the kernel then
+ * truncates or refuses a name the boundary had already accepted.
  */
 export function assertDeviceName(interfaceID: string): string {
 	if (!interfaceID || new TextEncoder().encode(interfaceID).byteLength > 15 || /[/\0]/.test(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
@@ -625,13 +649,78 @@ export function firstLine(text: string | undefined): string {
 	);
 }
 
-async function run<T>(action: () => Promise<T>): Promise<T> {
+/** Replace every occurrence of each secret with `<redacted>`. Empty secrets are ignored. */
+export function redactSecrets(text: string, secrets: readonly string[]): string {
+	let result = text;
+	for (const secret of secrets) if (secret.length > 0) result = result.split(secret).join('<redacted>');
+	return result;
+}
+
+/**
+ * The string-valued fields of a child-process failure that can carry the argv.
+ *
+ * `stack` is in the list because an already-materialized stack keeps the message
+ * it was rendered with, so scrubbing `message` alone leaves the secret in the
+ * trace a logger would print.
+ */
+const SCRUBBED_ERROR_FIELDS = ['message', 'stack', 'cmd', 'command', 'stdout', 'stderr'] as const;
+/** How far down a `cause` chain to keep scrubbing. Deep enough for any wrapper, bounded against a cycle. */
+const SCRUB_MAX_DEPTH = 4;
+
+/**
+ * Strip secret values out of a failed child process's error, in place.
+ *
+ * `execFile` builds both `message` and `cmd` out of the whole argv, so a
+ * passphrase passed as an argument sits in both — and on a TIMEOUT `stderr` is
+ * empty, which is precisely when {@link run} falls back to `message`. Measured
+ * against a real failing child: the secret appeared verbatim in `message` and
+ * `cmd` on a non-zero exit and on a timeout alike.
+ *
+ * The object is mutated rather than only read so that a later log of the raw
+ * error, or a `JSON.stringify` of it in a bug report, cannot leak what the
+ * returned detail no longer carries.
+ */
+export function scrubChildError<T>(err: T, secrets: readonly string[]): T {
+	const usable = secrets.filter(secret => secret.length > 0);
+	if (usable.length === 0) return err;
+	let node: any = err;
+	for (let depth = 0; node && typeof node === 'object' && depth < SCRUB_MAX_DEPTH; depth++) {
+		for (const field of SCRUBBED_ERROR_FIELDS) if (typeof node[field] === 'string') assignQuietly(node, field, redactSecrets(node[field], usable));
+		if (Array.isArray(node.spawnargs))
+			assignQuietly(
+				node,
+				'spawnargs',
+				node.spawnargs.map((arg: unknown) => (typeof arg === 'string' ? redactSecrets(arg, usable) : arg))
+			);
+		node = node.cause;
+	}
+	return err;
+}
+
+/** Assign, tolerating a getter-only or frozen property — a failed scrub of one field must not abort the rest. */
+function assignQuietly(target: Record<string, unknown>, key: string, value: unknown): void {
+	try {
+		target[key] = value;
+	} catch {
+		// Read-only property. What it holds still reaches nobody: the detail below is
+		// built by redacting a copy, never by reading the object back.
+	}
+}
+
+/**
+ * Run a configuration command, turning any failure into one coded error.
+ *
+ * `secrets` are values the caller handed to a child process that must never
+ * reach the log or the client — see {@link scrubChildError}.
+ */
+export async function run<T>(action: () => Promise<T>, secrets: readonly string[] = []): Promise<T> {
 	try {
 		return await action();
 	} catch (err) {
 		if (err instanceof CodedError) throw err;
+		scrubChildError(err, secrets);
 		const failure = err as { stderr?: string | Buffer; stdout?: string | Buffer };
 		const detail = failure.stderr?.toString().trim() || failure.stdout?.toString().trim();
-		throw new CodedError(ErrorCodes.NETCONFIG_FAILED, firstLine(detail) || (err as Error).message || 'command failed');
+		throw new CodedError(ErrorCodes.NETCONFIG_FAILED, redactSecrets(firstLine(detail) || (err as Error).message || 'command failed', secrets));
 	}
 }
