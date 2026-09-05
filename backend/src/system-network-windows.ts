@@ -1363,14 +1363,17 @@ function escapeXml(text: string): string {
  * and a WPA2 network refuses a WPA3SAE one, so the caller passes what the scan
  * said the network actually uses.
  *
- * The join is a one-off: `<connectionMode>manual</connectionMode>` means Windows
- * will not re-associate with this network by itself later. `auto` was the wrong
- * default because the user is never asked — the UI offers Connect and nothing
- * else — so an explicit single join to a guest or conference network silently
- * changed the machine's long-term behaviour, up to and including auto-joining an
- * open network of that name anywhere in the world. A "remember this network"
- * option would be the way to offer the other mode; until one exists, the mode the
- * user did not ask for is the one not to pick.
+ * A NEW profile is written `manual`: the user is never asked - the UI offers
+ * Connect and nothing else - so an explicit single join to a guest or conference
+ * network must not silently change the machine's long-term behaviour, up to and
+ * including auto-joining an open network of that name anywhere in the world. A
+ * "remember this network" option would be the way to offer the other mode.
+ *
+ * Replacing an EXISTING profile is the opposite case, and the caller passes that
+ * profile's own mode back in. The setting is the user's, made in Windows and not
+ * here; overwriting it turned a home network that had auto-joined for years into
+ * one that no longer connects on its own, and a successful join never put it
+ * back.
  *
  * ponytail: WPA2PSK and WPA3SAE cover personal networks, including the WPA2/WPA3
  * transition mode consumer access points ship with (which advertises itself as
@@ -1378,7 +1381,7 @@ function escapeXml(text: string): string {
  * are not covered — those fail with a reason code from Windows rather than
  * silently doing nothing, and would need their own profile shapes.
  */
-export function windowsWifiProfileXml(profileName: string, ssidBytes: Uint8Array, password: string, sae: boolean = false): string {
+export function windowsWifiProfileXml(profileName: string, ssidBytes: Uint8Array, password: string, sae: boolean = false, connectionMode: 'auto' | 'manual' = 'manual'): string {
 	// The profile name and the SSID are two different things. Windows keeps them
 	// apart — the profile name is a case-sensitive label the user or a policy can
 	// change, the SSID is what goes on the air — and writing the SSID into both
@@ -1396,7 +1399,7 @@ export function windowsWifiProfileXml(profileName: string, ssidBytes: Uint8Array
 	// the profile is written, accepted, and then simply never authenticates.
 	const keyType = isWifiHexKey(password) ? 'networkKey' : 'passPhrase';
 	const security = password ? `<authEncryption><authentication>${sae ? 'WPA3SAE' : 'WPA2PSK'}</authentication><encryption>AES</encryption><useOneX>false</useOneX></authEncryption><sharedKey><keyType>${keyType}</keyType><protected>false</protected><keyMaterial>${escapeXml(password)}</keyMaterial></sharedKey>` : `<authEncryption><authentication>open</authentication><encryption>none</encryption><useOneX>false</useOneX></authEncryption>`;
-	return `<?xml version="1.0"?><WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1"><name>${name}</name><SSIDConfig><SSID><hex>${hex}</hex></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>manual</connectionMode><MSM><security>${security}</security></MSM></WLANProfile>`;
+	return `<?xml version="1.0"?><WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1"><name>${name}</name><SSIDConfig><SSID><hex>${hex}</hex></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>${connectionMode}</connectionMode><MSM><security>${security}</security></MSM></WLANProfile>`;
 }
 
 /**
@@ -1645,13 +1648,13 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 	// ADDRESS of the profile name, so the array behind it has to outlive the call.
 	const profileNameW = utf16z(profileName);
 	const parameters = encodeConnectionParameters(BigInt(ptr(profileNameW)));
-	const profileXml = windowsWifiProfileXml(profileName, ssidBytes, password, sae);
+	const buildProfile = (connectionMode: 'auto' | 'manual'): string => windowsWifiProfileXml(profileName, ssidBytes, password, sae, connectionMode);
 	/** What this attempt did to the profile store, or null while it has done nothing. */
 	let change: ProfileChange | null = null;
 	try {
 		withWlanHandle((api, handle) => {
 			if (password) {
-				change = writeJoinProfile(api, handle, guidBytes, profileName, profileXml);
+				change = writeJoinProfile(api, handle, guidBytes, profileName, buildProfile);
 				connectByProfile(api, handle, guidBytes, parameters);
 				return;
 			}
@@ -1661,7 +1664,7 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 			// key is an open one, so give Windows an open profile to work from — but
 			// never in place of one it already holds. When one does already exist, the
 			// failed connect is the real story and its code is the one worth reporting.
-			if (writeProfile(api, handle, guidBytes, profileXml, WLAN_PROFILE_USER, 0) === ERROR_ALREADY_EXISTS) throw new Error(wlanErrorMessage(rc));
+			if (writeProfile(api, handle, guidBytes, buildProfile('manual'), WLAN_PROFILE_USER, 0) === ERROR_ALREADY_EXISTS) throw new Error(wlanErrorMessage(rc));
 			change = { replaced: null, created: true, written: readWrittenProfile(api, handle, guidBytes, profileName) };
 			connectByProfile(api, handle, guidBytes, parameters);
 		});
@@ -1859,6 +1862,18 @@ export interface ProfileChange {
 }
 
 /**
+ * The connection mode a stored profile declares.
+ *
+ * Read from the document Windows handed back rather than assumed, and defaulted
+ * to `manual` when the element is absent or unreadable: that is what this app
+ * would have written anyway, so an unreadable profile is never upgraded to
+ * auto-joining on its behalf.
+ */
+export function profileConnectionMode(xml: string): 'auto' | 'manual' {
+	return /<connectionMode>\s*auto\s*<\/connectionMode>/i.test(xml) ? 'auto' : 'manual';
+}
+
+/**
  * Write the profile a keyed join needs, and report what that did to what Windows
  * already held.
  *
@@ -1877,7 +1892,26 @@ export interface ProfileChange {
  * Windows answering that the absence no longer holds, and the profile that
  * appeared is then read, backed up and overwritten like any other existing one.
  */
-export function writeJoinProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string, profileXml: string): ProfileChange {
+/**
+ * Write the profile a keyed join needs, and report what that did to what Windows
+ * already held.
+ *
+ * Read before overwriting: the typed key may be wrong, and the profile being
+ * replaced may be the working one the user has had for years. The FLAGS come back
+ * with it, because restoring an all-user or a per-user profile as flags 0 changes
+ * its scope — a different profile in all but name, and a rollback that fails for
+ * that reason alone.
+ *
+ * The absent case is where the race lives. Between the read that found nothing
+ * and the write, another process — a second client of this app, netsh, the
+ * Windows UI, a policy refresh — can save a profile under that name. Writing with
+ * `bOverwrite` TRUE would replace it and, because this attempt believed it had
+ * CREATED the profile, a later rollback would DELETE a network the user had just
+ * saved. So the first write asks not to overwrite: ERROR_ALREADY_EXISTS is
+ * Windows answering that the absence no longer holds, and the profile that
+ * appeared is then read, backed up and overwritten like any other existing one.
+ */
+export function writeJoinProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string, buildProfile: (connectionMode: 'auto' | 'manual') => string): ProfileChange {
 	const stored = readStoredProfile(api, handle, guidBytes, profileName);
 	// A read that FAILED is not a read that found nothing. Proceeding on one would
 	// overwrite a profile with no backup taken, and the rollback would then delete
@@ -1888,7 +1922,7 @@ export function writeJoinProfile(api: WlanApi, handle: WlanHandle, guidBytes: Ui
 	// Believed absent — and asking not to overwrite is what makes that belief
 	// checkable rather than merely assumed. Anything but ERROR_ALREADY_EXISTS means
 	// the write landed on the empty name it was aimed at.
-	if (writeProfile(api, handle, guidBytes, profileXml, WLAN_PROFILE_USER, 0) !== ERROR_ALREADY_EXISTS) return { replaced: null, created: true, written: readWrittenProfile(api, handle, guidBytes, profileName) };
+	if (writeProfile(api, handle, guidBytes, buildProfile('manual'), WLAN_PROFILE_USER, 0) !== ERROR_ALREADY_EXISTS) return { replaced: null, created: true, written: readWrittenProfile(api, handle, guidBytes, profileName) };
 	const raced = readStoredProfile(api, handle, guidBytes, profileName);
 	// It existed a moment ago and cannot be read now: there is a profile here that
 	// this attempt cannot back up, so it does not touch it.
@@ -1906,7 +1940,11 @@ export function writeJoinProfile(api: WlanApi, handle: WlanHandle, guidBytes: Ui
 		// refused on most hosts, and where it is not, nothing here can put a policy
 		// profile back afterwards.
 		if ((existing.flags & WLAN_PROFILE_GROUP_POLICY) !== 0) throw new Error('this network is managed by group policy and cannot be changed here');
-		writeProfile(api, handle, guidBytes, profileXml, existing.flags, 1);
+		// The document is built HERE, from the profile that is being replaced, so the
+		// user's own connection mode survives the join. Built before the call it was
+		// always `manual`, and a home network that had auto-joined for years quietly
+		// stopped doing so — on SUCCESS, where nothing rolls anything back.
+		writeProfile(api, handle, guidBytes, buildProfile(profileConnectionMode(existing.xml)), existing.flags, 1);
 		// The write just discarded whatever another WLAN client kept beside this
 		// profile — see StoredProfile.customUserData. Replacing the credentials is
 		// what the user asked for; destroying somebody else's metadata is not, so it
