@@ -230,6 +230,22 @@ export function parseServiceCurrentIPv4(text: string): NetAddress | null {
 }
 
 /**
+ * Accept a resolver spelled the way macOS prints it.
+ *
+ * `scutil` appends the zone to a link-local server (`fe80::1%en0`), which is the
+ * usual shape of a resolver learned from a router advertisement - exactly the
+ * case the scoped source exists for. The shared validators reject `%` on purpose,
+ * because the values they guard reach an elevated writer, so the zone is
+ * accounted for here instead of widening them.
+ */
+function isMacResolver(value: string): boolean {
+	const zone = value.indexOf('%');
+	if (zone < 0) return isIPv4(value) || isIPv6(value);
+	// Only IPv6 carries a zone, and only one, and an interface name is alphanumeric.
+	return zone === value.lastIndexOf('%') && /^[0-9a-z]{1,15}$/i.test(value.slice(zone + 1)) && isIPv6(value.slice(0, zone));
+}
+
+/**
  * Resolvers from `networksetup -getdnsservers <service>`.
  *
  * This reports only servers the USER set. When addressing is left on DHCP macOS
@@ -243,7 +259,7 @@ export function parseServiceDns(text: string): string[] {
 	return text
 		.split('\n')
 		.map(line => line.trim())
-		.filter(line => isIPv4(line) || isIPv6(line));
+		.filter(line => isMacResolver(line));
 }
 
 /**
@@ -258,7 +274,7 @@ export function parseDhcpDns(text: string): string[] {
 	return line[1]
 		.split(',')
 		.map(server => server.trim())
-		.filter(server => isIPv4(server) || isIPv6(server));
+		.filter(server => isMacResolver(server));
 }
 
 /**
@@ -299,7 +315,7 @@ export function parseScopedDns(text: string, device: string): string[] {
 	for (const block of scoped.split(/^resolver #\d+$/m)) {
 		const owner = block.match(/^\s*if_index\s*:\s*\d+\s*\((.+?)\)\s*$/m);
 		if (owner?.[1] !== device) continue;
-		const servers = [...block.matchAll(/^\s*nameserver\[\d+\]\s*:\s*(\S+)\s*$/gm)].map(match => match[1] as string).filter(server => isIPv4(server) || isIPv6(server));
+		const servers = [...block.matchAll(/^\s*nameserver\[\d+\]\s*:\s*(\S+)\s*$/gm)].map(match => match[1] as string).filter(server => isMacResolver(server));
 		if (servers.length > 0) return servers;
 	}
 	return [];

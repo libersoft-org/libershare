@@ -215,6 +215,17 @@ describe('DNS', () => {
 		expect(parseDhcpDns('subnet_mask (ip): 255.255.255.0')).toEqual([]);
 	});
 
+	it('keeps a link-local resolver together with the zone macOS prints', () => {
+		// A router advertisement usually names a link-local server, and scutil spells
+		// it with the zone. The shared IPv6 validator rejects `%` on purpose, so
+		// without the reader accounting for it the only resolver a host has is lost.
+		const withZone = SCUTIL.replaceAll('2001:db8::53', 'fe80::1%en0');
+		expect(parseScopedDns(withZone, 'en0')).toEqual(['fe80::1%en0', '2001:db8::54']);
+		expect(parseServiceDns('fe80::1%en0\n192.0.2.1\n')).toEqual(['fe80::1%en0', '192.0.2.1']);
+		// A zone is an IPv6 thing, there is only ever one, and it names an interface.
+		expect(parseServiceDns('192.0.2.1%en0\nfe80::1%\nfe80::1%en0%en1\nfe80::1%en 0\n')).toEqual([]);
+	});
+
 	it('reads the resolvers scoped to one device, whichever family delivered them', () => {
 		// `ipconfig getpacket` only ever describes an IPv4 lease, so a host whose
 		// resolvers arrive over IPv6 is invisible to it. The scoped section of
@@ -305,6 +316,12 @@ describe('parseMacNetworkState', () => {
 		// The servers the user set stay ahead of what the network offered.
 		const manual = new Map(sources.serviceDns).set('en0', '198.51.100.1\n');
 		expect(parseMacNetworkState({ ...noLease, serviceDns: manual }).find(i => i.id === 'en0')?.dns).toEqual(['198.51.100.1']);
+	});
+
+	it('shows a zoned resolver as the whole answer when there is no IPv4 lease behind it', () => {
+		const withZone = SCUTIL.replace('nameserver[0] : 2001:db8::53\n  nameserver[1] : 2001:db8::54', 'nameserver[0] : fe80::1%en0');
+		const zoned = { ...sources, dhcpPacket: new Map<string, string>(), resolvers: withZone };
+		expect(parseMacNetworkState(zoned).find(i => i.id === 'en0')?.dns).toEqual(['fe80::1%en0']);
 	});
 
 	it('drops loopback', () => {
