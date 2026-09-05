@@ -36,6 +36,13 @@ const errorCodes = [
 	'NETWORK_NOT_STARTED',
 	'NETWORK_PORT_IN_USE',
 
+	// Host network configuration (Settings -> Network). Distinct from the LISH
+	// network codes above: these are about the operating system's own interfaces.
+	'NETCONFIG_INVALID',
+	'NETCONFIG_UNSUPPORTED',
+	'NETCONFIG_FAILED',
+	'NETCONFIG_STALE',
+
 	// Peers — codes prefixed PEER_ are remote-peer-scoped; the frontend peer
 	// fallback (peerFallback.ts) treats them as retryable on the next peer.
 	'PEER_UNREACHABLE',

@@ -4,7 +4,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import type { PeerCountEntry } from '../protocol/network.ts';
 import { type Settings } from '../settings.ts';
-import { CodedError, type ErrorCode, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, formatBytes } from '@shared';
+import { CodedError, type ErrorCode, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, formatBytes, type NetworkStateInfo } from '@shared';
 import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
@@ -15,7 +15,7 @@ import { initUploadHandlers } from './upload.ts';
 import { initLISHsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
 import { initEventsHandlers } from './events.ts';
-import { initSystemHandlers } from './system.ts';
+import { initSystemHandlers, restrictNetworkCapabilities } from './system.ts';
 import { initRelayHandlers } from './relay.ts';
 import { initSearchManager } from './search.ts';
 import { buildFactoryResetHandler } from './factory-reset-orchestrator.ts';
@@ -54,6 +54,8 @@ export function handleHealthProbe(req: globalThis.Request): Response | null {
 
 /** Longest params blob written to the log; enough to identify a call, short of dumping a file upload. */
 const MAX_LOGGED_PARAMS = 1000;
+/** Request fields whose values must never reach logs, regardless of nesting. */
+const SENSITIVE_PARAM_NAME = /(?:password|passphrase|token|secret|authorization|api[-_]?key)/i;
 
 /**
  * Serialise request params for the log, truncated. Some methods carry a whole
@@ -64,8 +66,26 @@ const MAX_LOGGED_PARAMS = 1000;
  * `Buffer`, whose `toJSON` would run before this replacer ever sees it.
  */
 export function formatParamsForLog(params: unknown): string {
-	const json = JSON.stringify(params, (_key, value) => (value instanceof Uint8Array ? `<${value.byteLength} bytes>` : value)) ?? String(params);
+	const json =
+		JSON.stringify(params, (key, value) => {
+			if (key && SENSITIVE_PARAM_NAME.test(key)) return '[REDACTED]';
+			return value instanceof Uint8Array ? `<${value.byteLength} bytes>` : value;
+		}) ?? String(params);
 	return json.length <= MAX_LOGGED_PARAMS ? json : json.slice(0, MAX_LOGGED_PARAMS) + `…(${json.length} chars)`;
+}
+
+/** Host network administration requires authenticated API mode on the same machine. */
+export function canAdministerHostNetwork(apiTokenConfigured: boolean, isLocalClient: boolean): boolean {
+	return apiTokenConfigured && isLocalClient;
+}
+
+export function networkStateForClient(state: NetworkStateInfo, apiTokenConfigured: boolean, isLocalClient: boolean): NetworkStateInfo {
+	return restrictNetworkCapabilities(state, canAdministerHostNetwork(apiTokenConfigured, isLocalClient));
+}
+
+/** Match Bun's peer address against loopback and every address owned by this host. */
+export function isLocalClientAddress(clientIP: string, localAddresses: ReadonlySet<string>): boolean {
+	return localAddresses.has(clientIP);
 }
 
 /** Byte length of the header-length prefix on a binary request frame. */
@@ -206,7 +226,6 @@ export class APIServer {
 	private readonly settings: Settings;
 	private readonly host: string;
 	private readonly port: number;
-	private readonly localAddresses: Set<string>;
 	private readonly secure: boolean;
 	private readonly keyFile?: string | undefined;
 	private readonly certFile?: string | undefined;
@@ -249,7 +268,6 @@ export class APIServer {
 		this.keyFile = options.keyFile;
 		this.certFile = options.certFile;
 		this.apiToken = options.apiToken || undefined;
-		this.localAddresses = getLocalAddresses();
 		const emitTo = (client: ClientSocket, event: string, data: any): void => this.emit(client, event, data);
 		const broadcastFn = (event: string, data: any): void => this.broadcast(event, data);
 		const broadcastExceptFn = (event: string, data: any, except?: unknown): void => this.broadcast(event, data, except as ClientSocket | undefined);
@@ -268,7 +286,13 @@ export class APIServer {
 			}
 			return false;
 		};
-		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers);
+		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers, !!this.apiToken);
+		const networkAdmin = <P, R>(handler: (params: P) => R): ((params: P, client: ClientSocket) => R) => {
+			return (params, client) => {
+				if (!canAdministerHostNetwork(!!this.apiToken, client.data.isLocalClient)) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'host network administration requires an authenticated client on this machine');
+				return handler(params);
+			};
+		};
 		this._system = _system;
 		_system.startPolling();
 		const _relay = initRelayHandlers(this.networks, broadcastFn, hasSubscribers);
@@ -414,6 +438,10 @@ export class APIServer {
 			'system.cpu': _system.cpu,
 			'system.setVolume': _system.setVolume,
 			'system.getVolume': _system.getVolume,
+			'system.network': async (_params, client) => networkStateForClient(await _system.network(), !!this.apiToken, client.data.isLocalClient),
+			'system.networkApply': networkAdmin(_system.networkApply),
+			'system.wifiScan': networkAdmin(_system.wifiScan),
+			'system.wifiConnect': networkAdmin(_system.wifiConnect),
 			// Relay
 			'relay.stats': _relay.stats,
 		};
@@ -441,7 +469,7 @@ export class APIServer {
 				if (!self.isAuthorized(url)) return self.unauthorizedResponse();
 				const clientIP = server.requestIP(req)?.address ?? '';
 				const upgraded = server.upgrade(req, {
-					data: { subscribedEvents: new Set<string>(), isLocalClient: self.localAddresses.has(clientIP) },
+					data: { subscribedEvents: new Set<string>(), isLocalClient: isLocalClientAddress(clientIP, getLocalAddresses()) },
 				});
 				if (upgraded) return undefined;
 				return new Response('Expected WebSocket', { status: 400 });
@@ -629,12 +657,13 @@ export class APIServer {
 	 * broadcast — a factory reset reloading the very tab that is about to show its result.
 	 */
 	private broadcast(event: string, data: any, except?: ClientSocket): void {
-		const msg = JSON.stringify({ event, data });
+		const sharedMessage = event === 'system:network' ? null : JSON.stringify({ event, data });
 		let sent = 0;
 		for (const client of this.clients) {
 			if (client === except) continue;
 			if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) {
-				client.send(msg);
+				const message = sharedMessage ?? JSON.stringify({ event, data: networkStateForClient(data as NetworkStateInfo, !!this.apiToken, client.data.isLocalClient) });
+				client.send(message);
 				sent++;
 			}
 		}

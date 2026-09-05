@@ -2,7 +2,7 @@
 export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE } from './product.ts';
 
 // Utils
-export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End } from './utils.ts';
+export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End, deriveConnectionStatus, isSelectableInterface, ipv4BaselineOf, sameIPv4Baseline, isIPv4, isIPv6, isValidSSID, MAX_DNS_LIST_BYTES, MAX_DNS_SERVERS, canonicalDnsServer, normalizeDnsServers, validateIPv4Config } from './utils.ts';
 
 // Compression
 
@@ -402,4 +402,155 @@ export interface RelayStats {
 	activeTunnels: number;
 	downloadSpeed: number;
 	uploadSpeed: number;
+}
+
+// Host network state
+//
+// Deliberately platform-agnostic: every OS-specific enum (Windows
+// NdisPhysicalMedium, Linux `info_kind`, macOS hardware port) is collapsed by
+// the backend reader before the document crosses the wire, so neither the
+// frontend nor the shared projection ever has to know which host produced it.
+
+/** How an interface is physically attached. 'other' = tunnel/virtual/bridge/unknown. */
+export type NetMedium = 'wired' | 'wireless' | 'other';
+
+/** Carrier state of a link. 'unknown' = the platform reader could not tell. */
+export type NetLink = 'up' | 'down' | 'unknown';
+
+/** How an address family is configured. 'unknown' = not determinable on this host. */
+export type NetAddressMode = 'dhcp' | 'static' | 'unknown';
+
+/** A single address bound to an interface. */
+export interface NetAddress {
+	family: 'ipv4' | 'ipv6';
+	address: string;
+	prefixLength: number;
+}
+
+/** Wireless association state of an interface. */
+export interface NetWifiInfo {
+	/** Null when not associated, or when the OS withholds it. */
+	ssid: string | null;
+	/** 0-100 signal QUALITY, never dBm, never a driver-scaled bar count. Null = unknown. */
+	signal: number | null;
+	radio: 'on' | 'off' | 'unknown';
+}
+
+/** One network interface of the host, as reported by the OS. */
+export interface NetInterfaceInfo {
+	/** Stable key used by settings + the widget. Windows: adapter GUID. Linux/macOS: device name. */
+	id: string;
+	/** OS friendly name, already localized by the OS — display only, never matched against. */
+	name: string;
+	medium: NetMedium;
+	link: NetLink;
+	/** True for the interface carrying the IPv4 default route. */
+	defaultRoute: boolean;
+	mac: string | null;
+	addresses: NetAddress[];
+	ipv4Mode: NetAddressMode;
+	/** True only when the platform apply path can resolve this exact interface. */
+	ipv4Configurable: boolean;
+	/** True only when the platform Wi-Fi path manages this exact wireless device. */
+	wifiConfigurable: boolean;
+	gateway: string | null;
+	dns: string[];
+	/** Present only when medium === 'wireless'. */
+	wifi?: NetWifiInfo;
+}
+
+/** Read-only snapshot of the host's network configuration. */
+export interface NetworkStateInfo {
+	interfaces: NetInterfaceInfo[];
+	/** id of the interface the app treats as primary: the user's pick, else the default-route one, else null. */
+	primaryID: string | null;
+	/** 'full' = medium/link/DHCP known. 'addressesOnly' = addresses + MAC only. */
+	detail: 'full' | 'addressesOnly';
+	/** False until the first successful read settles — mirrors the volume `known` pattern. */
+	known: boolean;
+	/** What this host actually lets the app change. Both false on a read-only platform. */
+	capabilities: NetCapabilities;
+}
+
+/**
+ * What the host's configuration backend supports.
+ *
+ * Reported per host rather than assumed per platform: the same Linux build is
+ * writable on a NetworkManager desktop and read-only on a systemd-networkd
+ * server, and the UI must not offer an edit that would silently not stick.
+ */
+export interface NetCapabilities {
+	/** Address, gateway and DNS of an interface can be changed. */
+	ipv4: boolean;
+	/** The next IPv4 mutation must run through the trusted privileged helper. */
+	ipv4Elevation?: boolean;
+	/** Wi-Fi networks can be scanned and joined. */
+	wifi: boolean;
+	/** Static IPv4 requires a gateway because the platform tool has no no-router form. */
+	staticGatewayRequired: boolean;
+}
+
+/**
+ * Desired IPv4 configuration for one interface.
+ *
+ * IPv4 only: IPv6 is left to the OS. Every supported host autoconfigures it, and
+ * a half-configured IPv6 stack breaks connectivity in ways that are far harder to
+ * back out of than a wrong IPv4 address.
+ */
+export interface NetIPv4Config {
+	mode: 'dhcp' | 'static';
+	/** Required when mode is 'static', ignored otherwise. */
+	address?: string;
+	/** Required when mode is 'static'. 1-32. */
+	prefixLength?: number;
+	/** Optional even for 'static' — an interface on an isolated segment has no gateway. */
+	gateway?: string;
+	/**
+	 * Resolver update requested by the user. Undefined preserves the current
+	 * resolver policy, an empty array selects automatic DNS, and a non-empty
+	 * array replaces it with the listed IPv4/IPv6 resolvers.
+	 */
+	dns?: string[];
+}
+
+/**
+ * The IPv4 facts an edit form was seeded from.
+ *
+ * Sent back with the change so that a form opened on one configuration cannot
+ * quietly overwrite a different one that arrived in the meantime — DHCP switched
+ * on by a system tool, another client's edit. The backend compares it with a
+ * fresh read and refuses a stale form instead of applying it.
+ */
+export interface NetIPv4Baseline {
+	mode: NetAddressMode;
+	address: string | null;
+	prefixLength: number | null;
+	gateway: string | null;
+	dns: string[];
+}
+
+/** One network seen by a Wi-Fi scan. */
+export interface NetWifiNetwork {
+	ssid: string;
+	/** Access-point identity used to disambiguate equal SSIDs. */
+	bssid: string | null;
+	/** 0-100 signal quality, never dBm. Null = the scanner did not report one. */
+	signal: number | null;
+	/** False for a genuinely open network — the UI must not ask for a password. */
+	secured: boolean;
+	/** Scanner security label, for display and capability decisions. */
+	security: string;
+	/** True only for open and personal WPA networks the one-password form supports. */
+	supported: boolean;
+	/** True when the interface is currently associated with this network. */
+	active: boolean;
+}
+
+/** What the footer connection widget renders. Derived from NetworkStateInfo, never fabricated. */
+export interface ConnectionStatus {
+	kind: 'wired' | 'wifi' | 'wifiOff' | 'none' | 'unknown';
+	connected: boolean;
+	signal: number | null;
+	ssid: string | null;
+	interfaceName: string | null;
 }

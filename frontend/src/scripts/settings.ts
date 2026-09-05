@@ -50,6 +50,8 @@ export const autoStartSharing = writable(true);
 export const autoStartDownloading = writable(true);
 export const autoErrorRecovery = writable(true);
 export const autoConnectNewNetworks = writable(true);
+/** Host interface id the UI treats as primary. Empty = follow the default route. */
+export const primaryInterface = writable('');
 export const mdnsEnabled = writable(true);
 export const mdnsInterval = writable(10000);
 export const upnpEnabled = writable(true);
@@ -141,6 +143,7 @@ export async function loadSettings(): Promise<void> {
 		autoStartDownloading.set(settings.network.autoStartDownloading);
 		autoErrorRecovery.set(settings.network.autoErrorRecovery ?? true);
 		autoConnectNewNetworks.set(settings.network.autoConnectNewNetworks ?? true);
+		primaryInterface.set(settings.network.primaryInterface ?? '');
 		mdnsEnabled.set(settings.network.mdnsEnabled ?? true);
 		mdnsInterval.set(settings.network.mdnsInterval ?? 10000);
 		upnpEnabled.set(settings.network.upnpEnabled ?? false);
@@ -294,6 +297,20 @@ export function setAutoConnectNewNetworks(enabled: boolean): void {
 
 export function setAutoErrorRecovery(enabled: boolean): void {
 	updateSetting(autoErrorRecovery, 'network.autoErrorRecovery', enabled);
+}
+
+/** Pick the displayed primary interface, rolling the optimistic store back on failure. */
+export async function setPrimaryInterface(id: string): Promise<boolean> {
+	const previous = get(primaryInterface);
+	primaryInterface.set(id);
+	try {
+		await api.settings.set('network.primaryInterface', id);
+		return true;
+	} catch (error) {
+		primaryInterface.set(previous);
+		console.error('[Settings] Error saving network.primaryInterface:', error);
+		return false;
+	}
 }
 
 export function setMdnsEnabled(enabled: boolean): void {

@@ -1,14 +1,21 @@
 import os from 'os';
 import { statfs } from 'fs/promises';
 import { readFileSync } from 'fs';
-import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, CodedError, ErrorCodes } from '@shared';
+import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type NetIPv4Baseline, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork, CodedError, ErrorCodes } from '@shared';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
+import { applyIPv4Unlocked, connectWifiUnlocked, readNetworkState, readNetworkStateUnlocked, runNetworkMutation, scanWifi } from '../system-network.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
 const POLL_INTERVAL_MS = 5000;
+/**
+ * Broadcast the network state on every Nth poll tick (5 s × 2 = 10 s). A read
+ * costs a PowerShell spawn on Windows and link state does not change faster than
+ * a user notices, so the slower cadence is deliberate.
+ */
+const NETWORK_POLL_EVERY_N_TICKS = 2;
 /** A single CPU-times sample: accumulated idle ticks and total ticks across all cores. */
 interface ICpuSample {
 	idle: number;
@@ -20,11 +27,44 @@ interface SystemHandlers {
 	cpu: () => SystemCPUInfo;
 	setVolume: (p: { volume: number }) => Promise<{ success: boolean; available: boolean }>;
 	getVolume: () => Promise<{ volume: number | null; available: boolean }>;
+	network: () => Promise<NetworkStateInfo>;
+	networkApply: (p: { interfaceID: string; config: NetIPv4Config; expected: NetIPv4Baseline }) => Promise<NetworkStateInfo>;
+	wifiScan: (p: { interfaceID: string }) => Promise<NetWifiNetwork[]>;
+	wifiConnect: (p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string }) => Promise<NetworkStateInfo>;
 	startPolling: () => void;
 	stopPolling: () => void;
 }
 
-export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, hasSubscribers: HasSubscribersFn): SystemHandlers {
+/**
+ * Run one host change and publish the state it left behind.
+ *
+ * The network lock is held through the read-back. Released any earlier, a
+ * change queued behind this one could start before the read, and what got
+ * published as this change's result would be a mix of the two. Both callbacks
+ * therefore have to be the lock-free variants.
+ */
+export function runAndPublishNetworkMutation(action: () => Promise<NetworkStateInfo>, readCurrent: () => Promise<NetworkStateInfo>, publish: (state: NetworkStateInfo) => void): Promise<NetworkStateInfo> {
+	return runNetworkMutation(async () => {
+		try {
+			const state = await action();
+			publish(state);
+			return state;
+		} catch (error) {
+			try {
+				publish(await readCurrent());
+			} catch {}
+			throw error;
+		}
+	});
+}
+
+/** Remove mutation capabilities when this API instance has no authentication token. */
+export function restrictNetworkCapabilities(state: NetworkStateInfo, networkAdminEnabled: boolean): NetworkStateInfo {
+	if (networkAdminEnabled) return state;
+	return { ...state, capabilities: { ...state.capabilities, ipv4: false, ipv4Elevation: false, wifi: false } };
+}
+
+export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, hasSubscribers: HasSubscribersFn, networkAdminEnabled: boolean): SystemHandlers {
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	let volumeMonitor: VolumeMonitor | null = null;
 
@@ -234,6 +274,48 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		return { used: total - free, total };
 	}
 
+	/** Live host network state, with the user's primary-interface preference applied. */
+	async function getNetworkState(): Promise<NetworkStateInfo> {
+		return restrictNetworkCapabilities(await readNetworkState(settings.get('network.primaryInterface') ?? ''), networkAdminEnabled);
+	}
+
+	/**
+	 * Apply an IPv4 configuration and answer with the state that resulted.
+	 *
+	 * The fresh state is read here rather than left to the next poll tick because
+	 * the caller has just changed the very interface it is watching and needs to
+	 * see the outcome — including the case where the address did not take.
+	 */
+	async function applyNetworkConfig(p: { interfaceID: string; config: NetIPv4Config; expected: NetIPv4Baseline }): Promise<NetworkStateInfo> {
+		assert(p, ['interfaceID', 'config', 'expected']);
+		const primary = settings.get('network.primaryInterface') ?? '';
+		return runAndPublishNetworkMutation(
+			() => applyIPv4Unlocked(p.interfaceID, p.config, primary, true, p.expected),
+			() => readNetworkStateUnlocked(primary),
+			state => broadcast('system:network', state)
+		);
+	}
+
+	async function scanWifiNetworks(p: { interfaceID: string }): Promise<NetWifiNetwork[]> {
+		assert(p, ['interfaceID']);
+		return await scanWifi(p.interfaceID);
+	}
+
+	async function joinWifiNetwork(p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string }): Promise<NetworkStateInfo> {
+		assert(p, ['interfaceID', 'ssid']);
+		const primary = settings.get('network.primaryInterface') ?? '';
+		return runAndPublishNetworkMutation(
+			() => connectWifiUnlocked(p.interfaceID, p.ssid, p.password ?? '', primary, p.bssid ?? null),
+			() => readNetworkStateUnlocked(primary),
+			state => broadcast('system:network', state)
+		);
+	}
+
+	let networkTick = 0;
+	// A Windows read takes 1.4-1.8 s, so it is deliberately not awaited on the
+	// broadcast path — a slow read simply skips ticks until it settles.
+	let networkReadInFlight = false;
+
 	function startPolling(): void {
 		if (pollInterval) return;
 		pollInterval = setInterval(async () => {
@@ -243,6 +325,15 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 				try {
 					broadcast('system:storage', await getStorageInfo());
 				} catch {}
+			}
+			if (++networkTick % NETWORK_POLL_EVERY_N_TICKS === 0 && hasSubscribers('system:network') && !networkReadInFlight) {
+				networkReadInFlight = true;
+				void getNetworkState()
+					.then(state => broadcast('system:network', state))
+					.catch(() => {})
+					.finally(() => {
+						networkReadInFlight = false;
+					});
 			}
 			const volumeWanted = hasSubscribers('system:volumeChanged');
 			// Run the instant push monitor while a client listens and a device is
@@ -278,5 +369,5 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		}
 	}
 
-	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, startPolling, stopPolling };
+	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, network: getNetworkState, networkApply: applyNetworkConfig, wifiScan: scanWifiNetworks, wifiConnect: joinWifiNetwork, startPolling, stopPolling };
 }
