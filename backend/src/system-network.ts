@@ -186,18 +186,17 @@ async function readWindows(): Promise<NetInterfaceInfo[]> {
 }
 
 /**
- * Read the current network state WITHOUT waiting for a reconfiguration to
- * finish.
+ * Read the current network state, waiting for any reconfiguration in progress.
+ *
+ * A read that started in the middle of a multi-step apply would capture the gap
+ * between "old address removed" and "new address created", and the periodic
+ * broadcaster would publish that gap as the current state of the host — so this
+ * takes the same lock the mutations take.
  *
  * Results are cached for {@link CACHE_TTL_MS} and concurrent callers share the
  * one in-flight read, so a poll tick and an RPC call arriving together cost a
  * single spawn. A failed platform read degrades to the address-only reader
  * rather than throwing — a settings screen showing addresses beats an error.
- *
- * Waits for any host change in progress. A read that started in the middle of
- * a multi-step apply would capture the gap between "old address removed" and
- * "new address created", and the periodic broadcaster would publish that gap as
- * the current state of the host.
  */
 export function readNetworkState(primaryInterface: string = ''): Promise<NetworkStateInfo> {
 	return runNetworkMutation(() => readNetworkStateUnlocked(primaryInterface));
