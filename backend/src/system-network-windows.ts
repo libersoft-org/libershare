@@ -1113,9 +1113,17 @@ export function parseAvailableNetworks(list: Pointer): NetWifiNetwork[] {
 		// the raw SSID bytes and the stored profile name, which the join path needs
 		// and the wire contract does not have a field for.
 		const entry: NetWifiNetwork = { ssid: found.ssid, bssid: found.bssid, signal: found.signal, secured: found.secured, security: found.security, supported: found.supported, active: found.active };
-		const previous = best.get(entry.ssid);
+		// Access points are collapsed per NAME AND SECURITY, never per name alone.
+		// One name can sit on two networks that are not the same network at all — an
+		// open guest AP and an unrelated WPA2 one — and folding those together
+		// invented readings neither advertised: the security of the stronger row with
+		// the association of the weaker, so an open network the interface was on came
+		// back as "WPA2, connected". Keyed this way each row still describes one real
+		// network, and access points that agree still collapse into a single row.
+		const key = `${entry.ssid} ${entry.security}`;
+		const previous = best.get(key);
 		if (!previous) {
-			best.set(entry.ssid, entry);
+			best.set(key, entry);
 			continue;
 		}
 		// One row wins outright and every field describing the NETWORK comes from it.
@@ -1125,10 +1133,10 @@ export function parseAvailableNetworks(list: Pointer): NetWifiNetwork[] {
 		// then declared open — and which of the two answers came out depended on the
 		// order Windows happened to list them in.
 		const strongest = (entry.signal ?? -1) > (previous.signal ?? -1) ? entry : previous;
-		// `active` is the exception, and not a merge: it says this interface is
-		// associated with this network, which is true of the network whichever of its
-		// access points carries the association.
-		best.set(entry.ssid, { ...strongest, active: previous.active || entry.active });
+		// `active` now only ever carries across access points of the SAME network, so
+		// it says what it means: this interface is associated with this network,
+		// whichever of its access points holds the association.
+		best.set(key, { ...strongest, active: previous.active || entry.active });
 	}
 	return [...best.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
 }

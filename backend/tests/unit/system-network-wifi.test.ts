@@ -1177,3 +1177,41 @@ describe('undoProfileChange', () => {
 		expect(writes).toEqual([]);
 	});
 });
+
+describe('parseAvailableNetworks with one name on differently secured access points', () => {
+	// Real case: an open guest network the interface is ON, and an unrelated WPA2
+	// network of the same name with a stronger signal.
+	const rows = [
+		{ ssid: 'Guests', signal: 40, secured: false, auth: 1, cipher: 0, active: true },
+		{ ssid: 'Guests', signal: 80, secured: true, auth: 7, cipher: 4, active: false },
+	];
+
+	it('never reports the association of one row with the security of another', () => {
+		// The merged row claimed "Guests, WPA2, connected" — a reading neither access
+		// point advertised, and the one the join guard then refuses as already joined.
+		for (const order of [rows, [...rows].reverse()]) {
+			const networks = parseAvailableNetworks(buildList(order));
+			const joined = networks.filter(item => item.active);
+			expect(joined).toHaveLength(1);
+			expect(joined[0]).toMatchObject({ ssid: 'Guests', secured: false, signal: 40 });
+		}
+	});
+
+	it('keeps both, because they are not the same network', () => {
+		const networks = parseAvailableNetworks(buildList(rows));
+		expect(networks.map(item => [item.security, item.signal, item.active])).toEqual([
+			['WPA2', 80, false],
+			['', 40, true],
+		]);
+	});
+
+	it('still collapses access points that agree on security', () => {
+		const same = [
+			{ ssid: 'Office', signal: 30, secured: true, auth: 7, cipher: 4, active: true },
+			{ ssid: 'Office', signal: 90, secured: true, auth: 7, cipher: 4, active: false },
+		];
+		const networks = parseAvailableNetworks(buildList(same));
+		expect(networks).toHaveLength(1);
+		expect(networks[0]).toMatchObject({ signal: 90, active: true });
+	});
+});
