@@ -59,6 +59,9 @@ export type NetworkFormMessage = 'keep' | 'stale' | 'reseedSilent' | 'reseedAnno
 export function networkFormMessage(update: NetworkFormUpdate, reported: boolean): NetworkFormMessage {
 	if (update === 'keep') return 'keep';
 	if (update === 'stale') return 'stale';
+	// The FIRST fill is not a reload. Announcing it tells someone who merely opened
+	// the screen that their form was reloaded, which never happened.
+	if (update === 'seed') return 'reseedSilent';
 	return reported ? 'reseedSilent' : 'reseedAnnounce';
 }
 

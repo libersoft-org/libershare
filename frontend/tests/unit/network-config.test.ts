@@ -132,3 +132,12 @@ describe('networkFormMessage', () => {
 		expect(networkFormMessage('keep', false)).toBe('keep');
 	});
 });
+
+describe('networkFormMessage on the first fill', () => {
+	it('does not tell someone who just opened the screen that the form was reloaded', () => {
+		// 'seed' is the initial fill, not a re-seed. Folding it in with 'reseed'
+		// announced a reload that never happened.
+		expect(networkFormMessage('seed', false)).toBe('reseedSilent');
+		expect(networkFormMessage('seed', true)).toBe('reseedSilent');
+	});
+});
