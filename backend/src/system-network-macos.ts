@@ -319,10 +319,16 @@ function indentOf(line: string): number {
  * heading to its own first row. Both are structure the report chooses, never text
  * a user picked, which is what makes the step trustworthy for locating the column
  * network names start in.
+ *
+ * The interface is looked up only among the children of `Interfaces:`, at their
+ * own depth. A device id is also a legal network name, so a neighbour called
+ * "en1" appears in the FIRST radio's list looking exactly like the second radio's
+ * heading — matching it anywhere in the report handed back that network's rows as
+ * if they were the other adapter's, and the real adapter then scanned as empty.
  */
 function airportInterfaceBlock(text: string, device: string): { lines: string[]; depth: number; step: number } {
 	const lines = text.split('\n');
-	const start = lines.findIndex(line => line.trim() === `${device}:`);
+	const start = findInterfaceHeading(lines, device);
 	if (start < 0) return { lines: [], depth: 0, step: 0 };
 	const depth = indentOf(lines[start]!);
 	const block: string[] = [];
@@ -332,6 +338,30 @@ function airportInterfaceBlock(text: string, device: string): { lines: string[];
 	}
 	const first = block.find(line => line.trim() && indentOf(line) > depth);
 	return { lines: block, depth, step: first ? indentOf(first) - depth : 2 };
+}
+
+/**
+ * Index of one adapter's heading, searched only where headings live.
+ *
+ * `Interfaces:` owns them, and they all sit one nesting step in from it, so the
+ * depth is fixed by the first child rather than by anything a network is called.
+ * Without the heading there is nothing to attribute rows to, and -1 says so.
+ */
+function findInterfaceHeading(lines: string[], device: string): number {
+	const listIndex = lines.findIndex(line => line.trim() === 'Interfaces:');
+	if (listIndex < 0) return -1;
+	const listDepth = indentOf(lines[listIndex]!);
+	let headingDepth = -1;
+	for (let index = listIndex + 1; index < lines.length; index++) {
+		const line = lines[index]!;
+		if (!line.trim()) continue;
+		const depth = indentOf(line);
+		// A wrapped value can start in column zero, so only a key ends the list.
+		if (depth <= listDepth && line.trim().endsWith(':')) return -1;
+		if (headingDepth < 0 && depth > listDepth) headingDepth = depth;
+		if (depth === headingDepth && line.trim() === `${device}:`) return index;
+	}
+	return -1;
 }
 
 /** Turn one parsed `system_profiler` network entry into the shape the picker renders. */

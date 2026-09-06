@@ -761,3 +761,23 @@ describe('macSummarySsidVisible', () => {
 		expect(macSummarySsidVisible('')).toBeNull();
 	});
 });
+
+describe('parseAirportScan when a network is named after an adapter', () => {
+	// A device id is a legal SSID. This report has a neighbour called "en1" sitting
+	// in en0's list, above the real en1 heading.
+	const TWO_RADIOS = ['Wi-Fi:', '', '      Interfaces:', '        en0:', '          Card Type: Wi-Fi', '          Status: Connected', '          Other Local Wi-Fi Networks:', '            en1:', '              Signal / Noise: -50 dBm / -90 dBm', '            Office:', '              Signal / Noise: -55 dBm / -90 dBm', '        en1:', '          Card Type: Wi-Fi', '          Status: Connected', '          Other Local Wi-Fi Networks:', '            SecondRadio:', '              Signal / Noise: -60 dBm / -90 dBm'].join('\n');
+
+	it('gives the second radio its own networks, not the neighbour with its name', () => {
+		// Matching the name anywhere in the report handed back that network's rows as
+		// if they were the adapter's, and the real adapter then scanned as empty.
+		expect(parseAirportScan(TWO_RADIOS, 'en1').map(item => item.ssid)).toEqual(['SecondRadio']);
+	});
+
+	it('still lists the neighbour under the radio that saw it', () => {
+		expect(parseAirportScan(TWO_RADIOS, 'en0').map(item => item.ssid)).toEqual(['en1', 'Office']);
+	});
+
+	it('reports nothing for a device the report has no heading for', () => {
+		expect(parseAirportScan(TWO_RADIOS, 'en9')).toEqual([]);
+	});
+});
