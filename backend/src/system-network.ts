@@ -25,10 +25,11 @@ const WINDOWS_SYSTEM_ENV = process.platform === 'win32' ? windowsSystemEnvironme
  *    of `yes` on Linux, and an effective root process on macOS. The answer is
  *    probed once and cached, so the UI can hide an edit the process could never
  *    complete instead of letting the user discover it when Save fails.
- *  - Wi-Fi scan/join applies on Windows (wlanapi, no elevation needed) and on a
- *    Linux host running NetworkManager. It does not apply on macOS, where the
- *    operating system withholds every network name from a process without
- *    Location access — see system-network-macos.ts for the measurements.
+ *  - Wi-Fi scan/join applies on Windows (wlanapi, no elevation needed), on a
+ *    Linux host running NetworkManager, and on macOS — but on macOS only while
+ *    the operating system is willing to name the networks, which it withholds
+ *    from a process without Location access. See system-network-macos.ts for the
+ *    measurements and for the passphrase exposure that path still carries.
  *
  * Applying can drop the very interface the caller reached us on. That is inherent
  * to changing an address and is the user's decision to make, so it is not
