@@ -666,13 +666,16 @@ export async function scanMacWifi(device: string): Promise<NetWifiNetwork[]> {
 /**
  * Build the `networksetup` join.
  *
- * The passphrase is the last positional argument because macOS ships no other
- * way in: `networksetup` reads nothing from stdin, and the `security` tool that
- * could pre-seed the keychain takes the passphrase on its command line too.
- * Measured on macOS 15.7.4: an unprivileged local user CAN read another user's
- * full argv, so the passphrase is exposed for as long as the call runs. That is
- * a real and unavoidable difference from the Windows and Linux paths, which both
- * keep it out of argv, and it is the reason the call is kept as short as possible.
+ * KNOWN WEAKNESS, not a solved problem. The passphrase is the last positional
+ * argument, and measured on macOS 15.7.4 an unprivileged local user CAN read
+ * another user's full argv — so it is readable by any local account for as long
+ * as the call runs. The Windows and Linux paths both keep it out of argv.
+ *
+ * This is a limit of `networksetup`, which reads nothing from stdin, and NOT of
+ * macOS: CoreWLAN's `CWInterface.associate(to:password:)` takes the passphrase
+ * directly and would close this hole. Reaching it needs a native helper the
+ * bundle does not ship yet, so the exposure stands until that exists rather than
+ * being hidden behind a claim that nothing better is possible.
  */
 export function macJoinArgs(device: string, ssid: string, password: string): string[] {
 	return ['-setairportnetwork', device, ssid, ...(password ? [password] : [])];
