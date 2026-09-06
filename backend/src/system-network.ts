@@ -535,8 +535,8 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 		resetNetworkCapabilitiesCache();
 		throw error;
 	}
-	const matches = available.filter(item => item.ssid === ssid);
-	const network = bssid === null ? (matches.length === 1 ? matches[0] : undefined) : matches.find(item => item.bssid?.toLowerCase() === bssid.toLowerCase());
+	const network = resolveJoinTarget(available, ssid, bssid);
+	if (network === 'ambiguous') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'more than one network here goes by that name, so there is no way to tell which one to join');
 	if (!network) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'network is no longer available');
 	if (!network.supported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi authentication method is not supported');
 	if (isAlreadyJoined(network)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'this interface is already connected to that network');
@@ -634,6 +634,25 @@ async function assertWirelessInterface(interfaceID: string): Promise<void> {
 	resetNetworkStateCache();
 	const state = await readNetworkStateUnlocked();
 	assertWifiConfigurableInterface(state.interfaces, interfaceID);
+}
+
+/**
+ * Which scanned row a join is about, when the caller named one.
+ *
+ * One name can belong to two networks that are not the same network — an open
+ * guest access point and an unrelated secured one — and a scan reports both. With
+ * an access point named, that settles it. Without one, and with more than one
+ * candidate, there is nothing to choose by: joining either would connect the user
+ * to something they did not pick and would describe it with the other one's
+ * security. That case is refused as `ambiguous` rather than guessed, and it is
+ * deliberately NOT the same answer as a network that has gone away — telling the
+ * user it disappeared sends them looking for the wrong fault.
+ */
+export function resolveJoinTarget(available: NetWifiNetwork[], ssid: string, bssid: string | null): NetWifiNetwork | 'ambiguous' | null {
+	const matches = available.filter(item => item.ssid === ssid);
+	if (bssid !== null) return matches.find(item => item.bssid?.toLowerCase() === bssid.toLowerCase()) ?? null;
+	if (matches.length > 1) return 'ambiguous';
+	return matches[0] ?? null;
 }
 
 /** Recheck the exact device at the API boundary; global host capability is not enough. */

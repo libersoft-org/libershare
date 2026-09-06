@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { isAlreadyJoined, readNetworkState, readNetworkStateUnlocked, runNetworkMutation } from '../../src/system-network.ts';
+import { isAlreadyJoined, readNetworkState, resolveJoinTarget, readNetworkStateUnlocked, runNetworkMutation } from '../../src/system-network.ts';
 
 /**
  * The ordering guarantees the whole write path rests on.
@@ -68,5 +68,33 @@ describe('already-joined guard', () => {
 	it('reads the scan row, which is the freshest statement about this interface', () => {
 		expect(isAlreadyJoined({ active: true })).toBe(true);
 		expect(isAlreadyJoined({ active: false })).toBe(false);
+	});
+});
+
+describe('resolveJoinTarget', () => {
+	const row = (ssid: string, security: string, bssid: string | null, active = false) => ({ ssid, bssid, signal: 50, secured: security !== '', security, supported: true, active });
+	const open = row('Guests', '', null, true);
+	const secured = row('Guests', 'WPA2', null);
+
+	it('takes the only row of that name', () => {
+		expect(resolveJoinTarget([open, row('Office', 'WPA2', null)], 'Office', null)).toMatchObject({ ssid: 'Office' });
+	});
+
+	it('refuses to choose between two networks sharing a name', () => {
+		// Picking either would connect the user to something they did not choose and
+		// describe it with the other one's security.
+		expect(resolveJoinTarget([open, secured], 'Guests', null)).toBe('ambiguous');
+		expect(resolveJoinTarget([secured, open], 'Guests', null)).toBe('ambiguous');
+	});
+
+	it('tells a gone network apart from an ambiguous one', () => {
+		// Two different answers, because they send the user to two different faults.
+		expect(resolveJoinTarget([secured], 'Missing', null)).toBeNull();
+	});
+
+	it('lets a named access point settle it', () => {
+		const withBssid = [row('Guests', '', 'AA:BB:CC:DD:EE:01'), row('Guests', 'WPA2', 'AA:BB:CC:DD:EE:02')];
+		expect(resolveJoinTarget(withBssid, 'Guests', 'aa:bb:cc:dd:ee:02')).toMatchObject({ security: 'WPA2' });
+		expect(resolveJoinTarget(withBssid, 'Guests', 'AA:BB:CC:DD:EE:99')).toBeNull();
 	});
 });
