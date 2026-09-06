@@ -1,5 +1,5 @@
 import { dlopen, FFIType, ptr, read, toArrayBuffer, type Pointer } from 'bun:ffi';
-import { isValidWifiKey, isWifiHexKey, validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetMedium, type NetLink, type NetAddressMode, type NetWifiInfo, type NetWifiNetwork } from '@shared';
+import { isWifiHexKey, validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetMedium, type NetLink, type NetAddressMode, type NetWifiInfo, type NetWifiNetwork } from '@shared';
 
 /**
  * Windows host network state.
@@ -1344,8 +1344,15 @@ export function assertWindowsWifiKey(password: string, sae: boolean): void {
 		if (sae) throw new Error('this network uses WPA3, which takes a passphrase rather than a raw 64-digit key');
 		return;
 	}
-	if (!isValidWifiKey(sae ? 'WPA3' : 'WPA2', password)) throw new Error('the password is not one a WPA2 or WPA3 personal network could accept');
+	// The Microsoft profile schema, not the 802.11 rule the shared validator
+	// applies: `passPhrase` key material is 8 to 63 PRINTABLE ASCII characters, and
+	// that holds for WPA3SAE here as much as for WPA2PSK. NetworkManager sets no
+	// length for SAE — measured — which is why this cannot live in the shared
+	// check. Refused here it is refused before anything is written; refused by
+	// WlanSetProfile it comes back as an opaque reason code, after a working
+	// profile has already been replaced.
 	if (!/^[\x20-\x7e]+$/.test(password)) throw new Error('Windows accepts only printable ASCII characters in a Wi-Fi passphrase');
+	if (password.length < 8 || password.length > 63) throw new Error('Windows saves a Wi-Fi passphrase of 8 to 63 characters');
 }
 
 /** A stored WLAN profile, as {@link readStoredProfile} found it. */

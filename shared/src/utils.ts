@@ -237,7 +237,7 @@ export function isValidWifiKey(security: string, password: string): boolean {
  * a second time, so the profile is written, accepted, and then never
  * authenticates.
  */
-export function isWifiHexKey(key: unknown): key is string {
+export function isWifiHexKey(key: unknown): boolean {
 	return typeof key === 'string' && /^[0-9a-f]{64}$/i.test(key);
 }
 

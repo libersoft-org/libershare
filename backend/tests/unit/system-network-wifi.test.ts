@@ -484,8 +484,15 @@ describe('assertWindowsWifiKey', () => {
 		expect(() => assertWindowsWifiKey('pass word', false)).not.toThrow();
 	});
 
-	it('refuses a passphrase of the wrong length before anything is written', () => {
-		for (const key of ['short', 'x'.repeat(64)]) expect(() => assertWindowsWifiKey(key, false)).toThrow();
+	it('refuses a passphrase of the wrong length under BOTH mechanisms', () => {
+		// The shared validator holds WPA3 to no length at all, because NetworkManager
+		// does not — measured. The Windows profile schema does, so the boundary is
+		// checked here for SAE as much as for PSK; letting a 5-character WPA3 key
+		// through only moved the refusal to an opaque WlanSetProfile reason code.
+		for (const sae of [false, true]) {
+			for (const key of ['', 'x', 'x'.repeat(7), 'x'.repeat(64), 'x'.repeat(100)]) expect(() => assertWindowsWifiKey(key, sae)).toThrow();
+			for (const key of ['x'.repeat(8), 'x'.repeat(63)]) expect(() => assertWindowsWifiKey(key, sae)).not.toThrow();
+		}
 	});
 });
 
