@@ -743,6 +743,18 @@ function target(newProfile: string): JoinTarget {
 }
 
 describe('writeJoinProfile', () => {
+	it('stops when Windows refuses the overwrite instead of reporting it as written', () => {
+		// ERROR_ALREADY_EXISTS answers a CREATE — the name was taken. Answered to an
+		// overwrite it means Windows did NOT write, which it documents for a profile
+		// whose scope changed since it was read. Tolerating it there reported a
+		// password as saved that was never stored, and then associated through the old
+		// profile and called that success.
+		const { api, restored } = joinApi([{ rc: 0, xml: stored('old'), flags: USER_FLAGS }], [ALREADY_EXISTS]);
+		expect(() => writeJoinProfile(api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>'))).toThrow();
+		// And it stops there: no custom data is put back for a write that did not land.
+		expect(restored).toEqual([]);
+	});
+
 	it('refuses a profile of the same name that belongs to another network', () => {
 		// A profile NAME is not a network — Windows lets them differ, and this app
 		// falls back to the SSID for the name when the scan names no profile. A saved

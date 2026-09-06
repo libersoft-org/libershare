@@ -1689,11 +1689,17 @@ function sameCustomUserData(a: Uint8Array | null, b: Uint8Array | null): boolean
  * reason code. Returns the raw result so the caller can tell the one tolerable
  * outcome — ERROR_ALREADY_EXISTS after asking not to overwrite — from a failure.
  */
-function writeProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileXml: string, flags: number, overwrite: number): number {
+function writeProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileXml: string, flags: number, overwrite: 0 | 1): number {
 	const document = utf16z(profileXml);
 	const reason = new Uint32Array(1);
 	const rc = api.WlanSetProfile(handle, ptr(guidBytes), flags, ptr(document), null, overwrite, null, ptr(reason));
-	if (rc !== 0 && rc !== ERROR_ALREADY_EXISTS) throw new Error(describeProfileFailure(api, rc, reason[0] ?? 0));
+	// ERROR_ALREADY_EXISTS is an answer to a CREATE: it says the name was taken, and
+	// the caller decides what to do about that. Answered to an overwrite it means
+	// Windows did not write - documented for a profile whose scope has changed since
+	// it was read - and tolerating it there reported a password as saved that was
+	// never stored, then went on to associate through the old profile and call that
+	// success.
+	if (rc !== 0 && !(overwrite === 0 && rc === ERROR_ALREADY_EXISTS)) throw new Error(describeProfileFailure(api, rc, reason[0] ?? 0));
 	return rc;
 }
 
