@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { assertMacIPv4Applied, hasMacWritePrivilege, macApplyArgs, macRestoreRequiresLease, withMacRollback, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseScopedDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { assertMacIPv4Applied, assertMacJoinAccepted, assertMacWifiConnected, hasMacWritePrivilege, macApplyArgs, macJoinArgs, macRestoreRequiresLease, macWifiNamesVisible, withMacRollback, macDbmToQuality, netmaskFromPrefix, parseAirport, parseAirportScan, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseScopedDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -308,6 +308,21 @@ describe('parseMacNetworkState', () => {
 		expect(en0?.wifi).toEqual({ ssid: null, signal: 60, radio: 'unknown' });
 	});
 
+	it('offers Wi-Fi only while macOS is naming the networks', () => {
+		// The picker is addressed by name, so a report full of `<redacted>` is an
+		// interface that cannot be configured even though the radio works.
+		expect(parseMacNetworkState(sources).find(i => i.id === 'en0')?.wifiConfigurable).toBe(false);
+		expect(parseMacNetworkState({ ...sources, airport: AIRPORT_NAMED }).find(i => i.id === 'en0')?.wifiConfigurable).toBe(true);
+		// A radio macOS did not describe at all cannot be scanned, so it is not offered.
+		expect(parseMacNetworkState({ ...sources, airport: AIRPORT_NAMED.replace('        en0:', '        en5:') }).find(i => i.id === 'en0')?.wifiConfigurable).toBe(false);
+		// Wired interfaces are never offered, whatever the report says.
+		expect(
+			parseMacNetworkState({ ...sources, airport: AIRPORT_NAMED })
+				.filter(i => i.medium !== 'wireless')
+				.every(i => !i.wifiConfigurable)
+		).toBe(true);
+	});
+
 	it('shows the resolvers an IPv6-only host was handed', () => {
 		// No manual servers and no IPv4 lease to read them from: without the scoped
 		// source the screen would claim the machine has no resolvers at all.
@@ -523,5 +538,151 @@ describe('macRestoreRequiresLease', () => {
 		expect(macRestoreRequiresLease({ mode: 'dhcp' }, leased, false)).toBe(false);
 		expect(macRestoreRequiresLease({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }, manual, true)).toBe(true);
 		expect(macRestoreRequiresLease({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }, manual, false)).toBe(false);
+	});
+});
+
+/**
+ * The same report a host that HAS been granted Location Services access prints.
+ *
+ * Captured from macOS 15.7.4 and then de-redacted; the wrapped `Firmware Version`
+ * value, whose second line starts in column zero, is verbatim and is the reason
+ * the interface block cannot be cut on indentation alone.
+ */
+const AIRPORT_NAMED = `Wi-Fi:
+
+      Interfaces:
+        en0:
+          Card Type: Wi-Fi  (0x14E4, 0x4387)
+          Firmware Version: wl0: Mar 23 2025 19:56:28 version 20.130.17.0.8.7.197 FWID 01-764e34b7
+IO80211_driverkit-1485.13 "IO80211_driverkit-1485.13" Jan 30 2026 21:54:12
+          Country Code: CZ
+          Status: Connected
+          Current Network Information:
+            office-wifi:
+              PHY Mode: 802.11ax
+              Channel: 128 (5GHz, 80MHz)
+              Security: WPA2/WPA3 Personal
+              Signal / Noise: -70 dBm / -90 dBm
+          Other Local Wi-Fi Networks:
+            guest-open:
+              PHY Mode: 802.11n
+              Security: None
+              Signal / Noise: -60 dBm / -92 dBm
+            corp-8021x:
+              PHY Mode: 802.11ax
+              Security: WPA2 Enterprise
+              Signal / Noise: -55 dBm / -92 dBm
+            museum-wep:
+              PHY Mode: 802.11g
+              Security: WEP
+              Signal / Noise: -50 dBm / -92 dBm
+            office-wifi:
+              PHY Mode: 802.11ax
+              Security: WPA2/WPA3 Personal
+              Signal / Noise: -80 dBm / -92 dBm
+        en1:
+          Card Type: Wi-Fi  (0x14E4, 0x4388)
+          Status: Connected
+          Other Local Wi-Fi Networks:
+            other-radio-only:
+              Security: WPA2 Personal
+              Signal / Noise: -65 dBm / -92 dBm
+`;
+
+describe('parseAirportScan', () => {
+	it('reads both lists and marks only the joined network active', () => {
+		const networks = parseAirportScan(AIRPORT_NAMED, 'en0');
+		expect(networks.map(item => item.ssid)).toEqual(['museum-wep', 'corp-8021x', 'guest-open', 'office-wifi']);
+		expect(networks.filter(item => item.active).map(item => item.ssid)).toEqual(['office-wifi']);
+	});
+
+	it('keeps the strongest access point of a repeated name without losing the association', () => {
+		// The joined entry is reported at -70 dBm and a second one at -80 dBm; the
+		// row must carry the better signal AND stay the one shown as connected.
+		const office = parseAirportScan(AIRPORT_NAMED, 'en0').find(item => item.ssid === 'office-wifi');
+		expect(office).toMatchObject({ signal: macDbmToQuality(-70), active: true, secured: true, security: 'WPA2/WPA3 Personal', supported: true });
+	});
+
+	it('reports an open network as unsecured with no security label', () => {
+		expect(parseAirportScan(AIRPORT_NAMED, 'en0').find(item => item.ssid === 'guest-open')).toMatchObject({ secured: false, security: '', supported: true });
+	});
+
+	it('shows enterprise and WEP networks but refuses to offer them', () => {
+		const networks = parseAirportScan(AIRPORT_NAMED, 'en0');
+		expect(networks.find(item => item.ssid === 'corp-8021x')).toMatchObject({ secured: true, supported: false });
+		expect(networks.find(item => item.ssid === 'museum-wep')).toMatchObject({ secured: true, supported: false });
+	});
+
+	it('never reports a BSSID, because system_profiler does not print one', () => {
+		expect(parseAirportScan(AIRPORT_NAMED, 'en0').every(item => item.bssid === null)).toBe(true);
+	});
+
+	it('attributes networks to the radio that saw them', () => {
+		expect(parseAirportScan(AIRPORT_NAMED, 'en1').map(item => item.ssid)).toEqual(['other-radio-only']);
+		expect(parseAirportScan(AIRPORT_NAMED, 'en0').some(item => item.ssid === 'other-radio-only')).toBe(false);
+		expect(parseAirportScan(AIRPORT_NAMED, 'en9')).toEqual([]);
+	});
+
+	it('drops the networks macOS refused to name', () => {
+		// Every row of the real report is `<redacted>` without Location access, and
+		// networksetup is addressed by name, so none of them can be offered.
+		expect(parseAirportScan(AIRPORT, 'en0')).toEqual([]);
+	});
+});
+
+describe('macWifiNamesVisible', () => {
+	it('treats a single redaction as proof the permission is missing', () => {
+		expect(macWifiNamesVisible(AIRPORT)).toBe(false);
+		expect(macWifiNamesVisible(AIRPORT_NAMED)).toBe(true);
+	});
+
+	it('does not read an empty report as an answer', () => {
+		// system_profiler was never run, or failed; that is not a grant.
+		expect(macWifiNamesVisible('')).toBe(false);
+		expect(macWifiNamesVisible('   \n')).toBe(false);
+	});
+});
+
+describe('macJoinArgs', () => {
+	it('passes the passphrase as the last positional argument', () => {
+		expect(macJoinArgs('en0', 'office-wifi', 'hunter2hunter2')).toEqual(['-setairportnetwork', 'en0', 'office-wifi', 'hunter2hunter2']);
+	});
+
+	it('omits the passphrase entirely for an open network', () => {
+		// An empty string would be offered to macOS as a key and rejected.
+		expect(macJoinArgs('en0', 'guest-open', '')).toEqual(['-setairportnetwork', 'en0', 'guest-open']);
+	});
+
+	it('keeps a name that looks like an option as a value', () => {
+		expect(macJoinArgs('en0', '-setdhcp', 'hunter2hunter2')[2]).toBe('-setdhcp');
+	});
+});
+
+describe('assertMacJoinAccepted', () => {
+	it('accepts the silence networksetup prints on success', () => {
+		expect(() => assertMacJoinAccepted('')).not.toThrow();
+		expect(() => assertMacJoinAccepted('\n')).not.toThrow();
+	});
+
+	it('rejects a refusal that arrived on stdout with exit status 0', () => {
+		// Measured on macOS 15.7.4: networksetup reports this and still exits 0, so
+		// the exit status alone would call a failed join a success.
+		expect(() => assertMacJoinAccepted('Could not find network office-wifi.\n')).toThrow('Could not find network office-wifi.');
+	});
+});
+
+describe('assertMacWifiConnected', () => {
+	const joined = parseAirportScan(AIRPORT_NAMED, 'en0');
+
+	it('accepts the network the scan reports as active', () => {
+		expect(() => assertMacWifiConnected(joined, 'office-wifi')).not.toThrow();
+	});
+
+	it('rejects a network that is merely in range', () => {
+		expect(() => assertMacWifiConnected(joined, 'guest-open')).toThrow('did not connect');
+	});
+
+	it('rejects an empty scan', () => {
+		expect(() => assertMacWifiConnected([], 'office-wifi')).toThrow('did not connect');
 	});
 });
