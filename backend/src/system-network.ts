@@ -5,7 +5,7 @@ import { Mutex } from 'async-mutex';
 import { CodedError, ErrorCodes, ipv4BaselineOf, isSelectableInterface, isValidSSID, isValidWifiKey, normalizeDnsServers, sameIPv4Baseline, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
 import { connectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND, windowsApplyIPv4Command } from './system-network-windows.ts';
 import { applyLinuxIPv4, connectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
-import { applyMacIPv4, isMacWifiConfigurable, isMacWritable, readMacNetworkState } from './system-network-macos.ts';
+import { applyMacIPv4, connectMacWifi, isMacWifiConfigurable, isMacWritable, readMacNetworkState, scanMacWifi } from './system-network-macos.ts';
 import { networkHelperAvailable, runElevatedNetworkHelper } from './network-helper-client.ts';
 import { windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
 
@@ -386,10 +386,11 @@ async function probeCapabilities(): Promise<NetCapabilities> {
 		return capability;
 	} else if (process.platform === 'darwin') {
 		// networksetup persists a change and is present on every macOS install, so
-		// addressing is editable. Wi-Fi is not: see isMacWifiConfigurable.
-		const native = await isMacWritable();
+		// addressing is editable. Wi-Fi is editable only while macOS is willing to
+		// tell us the network names: see isMacWifiConfigurable.
+		const [native, wifi] = await Promise.all([isMacWritable(), isMacWifiConfigurable()]);
 		const elevated = !native && (await networkHelperAvailable('darwin'));
-		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi: isMacWifiConfigurable(), staticGatewayRequired: true };
+		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi, staticGatewayRequired: true };
 	} else {
 		// Everything else reads through os.networkInterfaces(), which cannot even
 		// report whether an address came from DHCP. Offering to edit a configuration
@@ -582,6 +583,7 @@ export function isValidWifiPassword(password: unknown): password is string {
  */
 function scanPlatformWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 	if (process.platform === 'win32') return scanWindowsWifi(assertWindowsGuid(interfaceID));
+	if (process.platform === 'darwin') return scanMacWifi(assertDeviceName(interfaceID));
 	return scanLinuxWifi(assertDeviceName(interfaceID));
 }
 
@@ -595,6 +597,9 @@ function scanPlatformWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
  */
 function joinPlatformWifi(interfaceID: string, ssid: string, password: string, bssid: string | null): Promise<void> {
 	if (process.platform === 'win32') return connectWindowsWifi(assertWindowsGuid(interfaceID), ssid, password);
+	// macOS is addressed by name only: system_profiler never reports a BSSID, so
+	// there is no access point to pin the join to.
+	if (process.platform === 'darwin') return connectMacWifi(assertDeviceName(interfaceID), ssid, password);
 	return connectLinuxWifi(assertDeviceName(interfaceID), ssid, password, bssid);
 }
 
@@ -626,7 +631,7 @@ export function assertWifiConfigurableInterface(interfaces: NetInterfaceInfo[], 
 	const target = interfaces.find(i => i.id === interfaceID);
 	if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
 	if (target.medium !== 'wireless') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'not a wireless interface');
-	if (!target.wifiConfigurable) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi interface is not managed by NetworkManager');
+	if (!target.wifiConfigurable) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host cannot configure that Wi-Fi interface');
 }
 
 /**

@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
-import { isIPv4, isIPv6, validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetLink, type NetMedium } from '@shared';
+import { isIPv4, isIPv6, validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetLink, type NetMedium, type NetWifiNetwork } from '@shared';
 
 const execFileAsync = promisify(execFile);
 const C_LOCALE_ENV = { ...process.env, LC_ALL: 'C', LANG: 'C' };
@@ -16,20 +16,22 @@ const C_LOCALE_ENV = { ...process.env, LC_ALL: 'C', LANG: 'C' };
  * `networksetup` is addressed by SERVICE name ("Wi-Fi", "Thunderbolt Bridge")
  * while everything else speaks DEVICE names (en0, bridge0).
  *
- * Wi-Fi is READ-ONLY and partially blind, by the operating system's design:
- * since macOS 14 the SSID is withheld from any process that has not been granted
- * Location Services access, and both `ipconfig getsummary` and `system_profiler`
- * return the literal string `<redacted>` instead. Measured on macOS 15.7.4 even
- * when running as root. A scan is therefore a list of unnamed networks, which
- * cannot be offered as something to join — so {@link isMacWifiConfigurable} is
- * false and the UI does not show Wi-Fi actions on this platform. The signal
- * strength, security and connection state are NOT redacted and are reported.
+ * Wi-Fi is scanned and joined through the same two tools, but only when macOS
+ * lets this process read network names. Since macOS 14 the SSID is withheld from
+ * any process that has not been granted Location Services access, and both
+ * `ipconfig getsummary` and `system_profiler` substitute the literal string
+ * `<redacted>` — measured on macOS 15.7.4 even when running as root. Joining does
+ * NOT need that access, but choosing what to join does, so the capability follows
+ * the names: see {@link isMacWifiConfigurable}. Signal strength, security and
+ * connection state are never redacted and are always reported.
  */
 
 /** Hard cap on any single tool invocation. These are local BSD utilities; a slow one is a hung one. */
 const EXEC_TIMEOUT_MS = 5000;
 /** Reconfiguring a service renegotiates DHCP, which is far slower than a read. */
 const APPLY_TIMEOUT_MS = 45000;
+/** `system_profiler SPAirPortDataType` drives a real radio scan and measures ~3 s on an idle host. */
+const WIFI_SCAN_TIMEOUT_MS = 20000;
 /** `<redacted>` is what macOS substitutes for a network name when Location access was not granted. */
 const REDACTED = '<redacted>';
 
@@ -296,6 +298,125 @@ export function parseAirport(text: string): { connected: boolean; ssid: string |
 	};
 }
 
+/** Leading-space count, which is the only structure `system_profiler` gives its output. */
+function indentOf(line: string): number {
+	return line.length - line.trimStart().length;
+}
+
+/**
+ * The lines `system_profiler SPAirPortDataType` prints about one interface.
+ *
+ * The report nests every interface under `Interfaces:` and separates them by
+ * indentation alone, so a host with two radios describes both in one document and
+ * the block has to be cut out before anything in it can be attributed to a device.
+ *
+ * Indentation alone does not end the block, because a value may wrap: the
+ * firmware version of a real adapter carries an embedded newline whose second
+ * line starts in column zero. Only a key — a line ending in a colon — at or above
+ * the interface's own depth begins something new. Measured on macOS 15.7.4.
+ */
+function airportInterfaceBlock(text: string, device: string): string[] {
+	const lines = text.split('\n');
+	const start = lines.findIndex(line => line.trim() === `${device}:`);
+	if (start < 0) return [];
+	const depth = indentOf(lines[start]!);
+	const block: string[] = [];
+	for (const line of lines.slice(start + 1)) {
+		if (line.trim().endsWith(':') && indentOf(line) <= depth) break;
+		block.push(line);
+	}
+	return block;
+}
+
+/** Turn one parsed `system_profiler` network entry into the shape the picker renders. */
+function airportNetwork(ssid: string, fields: Map<string, string>, active: boolean): NetWifiNetwork {
+	const security = fields.get('Security') ?? '';
+	const open = security === '' || /^(?:none|open)$/i.test(security);
+	const dbm = fields.get('Signal / Noise')?.match(/(-?\d+)\s*dBm/);
+	return {
+		ssid,
+		// system_profiler never prints a BSSID, and networksetup takes no BSSID
+		// either, so two access points sharing a name cannot be told apart here.
+		bssid: null,
+		signal: dbm?.[1] ? macDbmToQuality(parseInt(dbm[1], 10)) : null,
+		secured: !open,
+		security: open ? '' : security,
+		supported: open || (/\bWPA\d*\b/i.test(security) && !/(?:Enterprise|802\.1X|EAP)/i.test(security) && !/\bWEP\b/i.test(security)),
+		active,
+	};
+}
+
+/**
+ * Parse the networks one interface can see out of `system_profiler SPAirPortDataType`.
+ *
+ * The report has two lists — the network currently joined, and everything else in
+ * range — and both carry the same fields, so they are read by one pass that only
+ * changes what it calls "active". Entries macOS refused to name are dropped
+ * rather than shown: `networksetup` is addressed by name, so an unnamed row would
+ * be an offer that cannot be honoured.
+ */
+export function parseAirportScan(text: string, device: string): NetWifiNetwork[] {
+	const networks = new Map<string, NetWifiNetwork>();
+	let joined = false;
+	let listDepth = -1;
+	let nameDepth = -1;
+	let ssid: string | null = null;
+	let fields = new Map<string, string>();
+	const flush = (): void => {
+		if (ssid !== null && ssid !== REDACTED) {
+			const entry = airportNetwork(ssid, fields, joined);
+			const previous = networks.get(ssid);
+			// One name can appear on several access points; keep the strongest of
+			// them, but never lose the fact that one of them is the joined one.
+			const stronger = !previous || (entry.signal ?? -1) > (previous.signal ?? -1) ? entry : previous;
+			networks.set(ssid, { ...stronger, active: (previous?.active ?? false) || entry.active });
+		}
+		ssid = null;
+		fields = new Map();
+	};
+	for (const line of airportInterfaceBlock(text, device)) {
+		if (!line.trim()) continue;
+		const depth = indentOf(line);
+		const label = line.trim();
+		if (label === 'Current Network Information:' || label === 'Other Local Wi-Fi Networks:') {
+			flush();
+			joined = label.startsWith('Current');
+			listDepth = depth;
+			nameDepth = -1;
+			continue;
+		}
+		if (listDepth < 0) continue;
+		if (depth <= listDepth) {
+			flush();
+			listDepth = -1;
+			continue;
+		}
+		// The first row of a list fixes the depth network names sit at, so the
+		// parser does not depend on system_profiler's indentation step staying two.
+		if (nameDepth < 0) nameDepth = depth;
+		if (depth === nameDepth) {
+			flush();
+			ssid = label.replace(/:$/, '');
+			continue;
+		}
+		const separator = label.indexOf(':');
+		if (ssid !== null && separator > 0) fields.set(label.slice(0, separator).trim(), label.slice(separator + 1).trim());
+	}
+	flush();
+	return [...networks.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
+}
+
+/**
+ * True when macOS is printing real network names to this process.
+ *
+ * A single `<redacted>` anywhere in the report proves Location Services access
+ * was not granted, because macOS redacts every name or none. An empty report
+ * proves nothing was asked, so it is not taken as an answer either.
+ */
+export function macWifiNamesVisible(airport: string): boolean {
+	return airport.trim() !== '' && !airport.includes(REDACTED);
+}
+
 /**
  * Effective resolvers for one device from `scutil --dns`.
  *
@@ -370,6 +491,7 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 	const routeDetailKnown = sources.routes === undefined || sources.routes.trim() !== '';
 	const routes = sources.routes === undefined ? (route.device && route.gateway ? [{ device: route.device, gateway: route.gateway }] : []) : parseDefaultRoutes(sources.routes);
 	const airport = sources.airport ? parseAirport(sources.airport) : null;
+	const namesVisible = macWifiNamesVisible(sources.airport ?? '');
 	const wirelessDevices = [...ports].filter(([, port]) => mapMedium(port) === 'wireless').map(([device]) => device);
 
 	const result: NetInterfaceInfo[] = [];
@@ -400,7 +522,9 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 			addresses,
 			ipv4Mode,
 			ipv4Configurable: routeDetailKnown && services.has(device) && ipv4Mode !== 'unknown' && staticShapeSafe && ipv4Addresses.length <= 1 && deviceRoutes.length <= 1,
-			wifiConfigurable: false,
+			// Per device, not per host: a second radio macOS did not describe in the
+			// report cannot be scanned, so it is not offered either.
+			wifiConfigurable: medium === 'wireless' && namesVisible && airportInterfaceBlock(sources.airport ?? '', device).length > 0,
 			gateway,
 			// Manually set servers win; otherwise fall back to what the DHCP lease
 			// handed out, so a DHCP link reports the resolvers it actually uses.
@@ -486,16 +610,72 @@ export function hasMacWritePrivilege(effectiveUID: number | undefined): boolean 
 }
 
 /**
- * Wi-Fi configuration is not offered on macOS.
+ * Whether this host can offer Wi-Fi at all.
  *
- * Joining needs a network name, and macOS withholds every name from a process
- * without Location Services access — a scan comes back as a list of `<redacted>`
- * entries. Rather than ship a picker that cannot name anything, the capability is
- * reported as false. This is a constant, not a probe: the answer cannot change
- * without the user granting the permission to this binary in System Settings.
+ * Joining does not need Location Services access, but CHOOSING what to join
+ * does: without it every name in a scan is `<redacted>`, and `networksetup` is
+ * addressed by name, so the picker would list rows that cannot be acted on. The
+ * capability therefore follows the names rather than the radio. The answer
+ * changes the moment the user grants or revokes the permission in System
+ * Settings, so it is a probe and not the constant it used to be; the caller
+ * caches it.
  */
-export function isMacWifiConfigurable(): boolean {
-	return false;
+export async function isMacWifiConfigurable(): Promise<boolean> {
+	const ports = parseHardwarePorts(await runOptional(NETWORKSETUP, ['-listallhardwareports']));
+	if (![...ports.values()].some(port => /^Wi-Fi$/i.test(port))) return false;
+	return macWifiNamesVisible(await runOptional('/usr/sbin/system_profiler', ['SPAirPortDataType']));
+}
+
+/** Scan for the Wi-Fi networks one interface can see. */
+export async function scanMacWifi(device: string): Promise<NetWifiNetwork[]> {
+	return parseAirportScan(await run('/usr/sbin/system_profiler', ['SPAirPortDataType'], WIFI_SCAN_TIMEOUT_MS), device);
+}
+
+/**
+ * Build the `networksetup` join.
+ *
+ * The passphrase is the last positional argument because macOS ships no other
+ * way in: `networksetup` reads nothing from stdin, and the `security` tool that
+ * could pre-seed the keychain takes the passphrase on its command line too.
+ * Measured on macOS 15.7.4: an unprivileged local user CAN read another user's
+ * full argv, so the passphrase is exposed for as long as the call runs. That is
+ * a real and unavoidable difference from the Windows and Linux paths, which both
+ * keep it out of argv, and it is the reason the call is kept as short as possible.
+ */
+export function macJoinArgs(device: string, ssid: string, password: string): string[] {
+	return ['-setairportnetwork', device, ssid, ...(password ? [password] : [])];
+}
+
+/**
+ * `networksetup` reports a refused join on stdout and still exits 0, so an empty
+ * stdout is the only evidence of success it offers.
+ */
+export function assertMacJoinAccepted(output: string): void {
+	const message = output.trim();
+	if (message) throw new Error(message);
+}
+
+/** The scan is the only proof of association macOS gives us that is not redacted away. */
+export function assertMacWifiConnected(networks: NetWifiNetwork[], ssid: string): void {
+	if (!networks.some(network => network.active && network.ssid === ssid)) throw new Error('macOS did not connect to the requested Wi-Fi network');
+}
+
+/**
+ * Join a Wi-Fi network.
+ *
+ * `-setairportnetwork` returns once the association has settled, but
+ * `system_profiler` reports a snapshot that can still be a moment behind it, so
+ * the confirming scan is retried rather than believed the first time.
+ */
+export async function connectMacWifi(device: string, ssid: string, password: string): Promise<void> {
+	assertMacJoinAccepted(await run(NETWORKSETUP, macJoinArgs(device, ssid, password), APPLY_TIMEOUT_MS));
+	let networks: NetWifiNetwork[] = [];
+	for (let attempt = 0; attempt < 3; attempt++) {
+		if (attempt > 0) await delay(1000);
+		networks = await scanMacWifi(device);
+		if (networks.some(network => network.active && network.ssid === ssid)) return;
+	}
+	assertMacWifiConnected(networks, ssid);
 }
 
 /** Dotted-quad netmask for a prefix length, which is the only form `networksetup -setmanual` accepts. */
