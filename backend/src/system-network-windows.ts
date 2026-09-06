@@ -914,16 +914,23 @@ function escapeXml(text: string): string {
 }
 
 /**
- * The `<security>` element a join needs, for a new profile and for an edited one
- * alike. Empty password means an open network.
+ * The `<sharedKey>` element for one credential, or empty for an open network.
  */
-function joinSecurityElement(password: string, sae: boolean): string {
+function sharedKeyElement(password: string): string {
 	// A 64-hex credential is a raw 256-bit PSK, not a passphrase, and the profile
 	// has to say so: announced as `passPhrase` Windows hashes it a second time, so
 	// the profile is written, accepted, and then simply never authenticates.
 	const keyType = isWifiHexKey(password) ? 'networkKey' : 'passPhrase';
-	if (!password) return '<authEncryption><authentication>open</authentication><encryption>none</encryption><useOneX>false</useOneX></authEncryption>';
-	return `<authEncryption><authentication>${sae ? 'WPA3SAE' : 'WPA2PSK'}</authentication><encryption>AES</encryption><useOneX>false</useOneX></authEncryption><sharedKey><keyType>${keyType}</keyType><protected>false</protected><keyMaterial>${escapeXml(password)}</keyMaterial></sharedKey>`;
+	return password ? `<sharedKey><keyType>${keyType}</keyType><protected>false</protected><keyMaterial>${escapeXml(password)}</keyMaterial></sharedKey>` : '';
+}
+
+/**
+ * The `<security>` element a NEW profile needs. Empty password means an open network.
+ */
+function joinSecurityElement(password: string, sae: boolean): string {
+	const method = password ? (sae ? 'WPA3SAE' : 'WPA2PSK') : 'open';
+	const cipher = password ? 'AES' : 'none';
+	return `<authEncryption><authentication>${method}</authentication><encryption>${cipher}</encryption><useOneX>false</useOneX></authEncryption>${sharedKeyElement(password)}`;
 }
 
 /**
@@ -954,23 +961,44 @@ function unescapeXml(text: string): string {
 }
 
 /**
- * The stored document with only its credentials replaced.
+ * The stored document with its credentials changed and nothing else.
  *
- * A join must not rewrite a profile the user already has. Regenerating it kept
- * the SSID and the credentials and silently dropped everything else the document
- * carried - MAC randomisation, band preferences, whatever a future Windows adds -
- * and on SUCCESS nothing puts those back. Only the one element the join is
- * actually changing is replaced.
+ * A join must not rewrite a profile the user already has. Replacing the whole
+ * `<security>` element still dropped what lived inside it beside the key - a
+ * profile with `<FIPSMode>true</FIPSMode>` came back without it, which is a
+ * security setting and not a formatting detail - so only the three elements the
+ * join actually decides are touched: the method, the cipher and the key.
  *
- * Null when the document has no `<security>` element to replace, which no
- * profile Windows hands back should be missing; the caller refuses rather than
- * falling back to a regenerated document, because that is the data loss this
- * exists to prevent.
+ * Every write goes through {@link spliceAt}, never `String.replace` with a computed
+ * replacement: there `$$`, `$&` and `$`` in the text are substitution syntax, so a
+ * password containing one was silently rewritten before it ever reached Windows.
+ *
+ * Null when the document is not shaped like one Windows hands back. The caller
+ * then refuses rather than falling back to a generated document, because that
+ * fallback is the data loss this exists to prevent.
  */
 export function withJoinCredentials(xml: string, password: string, sae: boolean): string | null {
-	const security = /<security>[\s\S]*?<\/security>/i;
-	if (!security.test(xml)) return null;
-	return xml.replace(security, `<security>${joinSecurityElement(password, sae)}</security>`);
+	const security = xml.match(/<security>[\s\S]*?<\/security>/i);
+	if (!security) return null;
+	const method = xml.slice(security.index).match(/<authentication>[\s\S]*?<\/authentication>/i);
+	const cipher = xml.slice(security.index).match(/<encryption>[\s\S]*?<\/encryption>/i);
+	if (!method || !cipher) return null;
+	let edited = security[0];
+	edited = spliceAt(edited, method[0], `<authentication>${password ? (sae ? 'WPA3SAE' : 'WPA2PSK') : 'open'}</authentication>`);
+	edited = spliceAt(edited, cipher[0], `<encryption>${password ? 'AES' : 'none'}</encryption>`);
+	const key = sharedKeyElement(password);
+	const stored = edited.match(/<sharedKey>[\s\S]*?<\/sharedKey>/i);
+	// An open profile has no key element to replace, so the new one goes where
+	// the schema puts it: straight after the method it belongs to.
+	if (stored) edited = spliceAt(edited, stored[0], key);
+	else if (key) edited = spliceAt(edited, '</authEncryption>', `</authEncryption>${key}`);
+	return spliceAt(xml, security[0], edited);
+}
+
+/** Replace the first occurrence of `find` with `insert`, taking `insert` literally. */
+function spliceAt(text: string, find: string, insert: string): string {
+	const at = text.indexOf(find);
+	return at < 0 ? text : text.slice(0, at) + insert + text.slice(at + find.length);
 }
 
 /**

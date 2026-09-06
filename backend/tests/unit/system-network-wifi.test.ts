@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { ptr, toArrayBuffer, type Pointer } from 'bun:ffi';
-import { assertWindowsWifiKey, type JoinTarget, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readStoredProfile, readUtf16z, undoProfileChange, writeJoinProfile, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
+import { assertWindowsWifiKey, withJoinCredentials, type JoinTarget, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readStoredProfile, readUtf16z, undoProfileChange, writeJoinProfile, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
 
 /**
  * The Windows Wi-Fi surface is FFI, so most of what can go wrong is a struct
@@ -329,6 +329,58 @@ describe('encodeConnectionParameters', () => {
 	});
 });
 
+describe('withJoinCredentials', () => {
+	/** A stored WPA2 profile carrying settings that live INSIDE the security element. */
+	const wpa2 = '<WLANProfile><MSM><security><authEncryption><authentication>WPA2PSK</authentication><encryption>AES</encryption><useOneX>false</useOneX></authEncryption><sharedKey><keyType>passPhrase</keyType><keyMaterial>OLD</keyMaterial></sharedKey><FIPSMode>true</FIPSMode><PMKCacheMode>enabled</PMKCacheMode></security></MSM></WLANProfile>';
+	const openProfile = '<WLANProfile><MSM><security><authEncryption><authentication>open</authentication><encryption>none</encryption><useOneX>false</useOneX></authEncryption><FIPSMode>true</FIPSMode></security></MSM></WLANProfile>';
+
+	/** The key material as stored, with the five XML entities turned back. */
+	function storedKey(xml: string): string {
+		const raw = xml.match(/<keyMaterial>([\s\S]*?)<\/keyMaterial>/)?.[1] ?? '';
+		return raw.replace(/&(amp|lt|gt|quot|apos);/g, (_, name: string) => ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" })[name] as string);
+	}
+
+	it('writes the password exactly as typed, dollars and all', () => {
+		// `String.replace` reads `$$`, `$&`, `$'` and a dollar-backtick in the
+		// REPLACEMENT as substitution syntax. A password containing one was rewritten
+		// on its way into the profile — `Heslo$$123` was stored as `Heslo$123`, and
+		// `$&` pasted the whole matched element into the key. The user then typed the
+		// right password and Windows refused it.
+		for (const password of ['Heslo$$123', 'a$&b', "c$'d", 'e$`f', 'p<&>"x', 'plain123']) {
+			expect(storedKey(withJoinCredentials(wpa2, password, false) as string)).toBe(password);
+		}
+	});
+
+	it('keeps the settings that live beside the key inside the security element', () => {
+		// Replacing the whole `<security>` element preserved the profile around it and
+		// still dropped what was inside — FIPSMode is a security setting, not noise.
+		const edited = withJoinCredentials(wpa2, 'nove-heslo', false) as string;
+		expect(edited).toContain('<FIPSMode>true</FIPSMode>');
+		expect(edited).toContain('<PMKCacheMode>enabled</PMKCacheMode>');
+		expect(edited).toContain('<useOneX>false</useOneX>');
+		expect(edited).not.toContain('OLD');
+	});
+
+	it('moves a profile between the methods a join can need, keeping the rest', () => {
+		expect(withJoinCredentials(wpa2, 'x'.repeat(10), true)).toContain('<authentication>WPA3SAE</authentication>');
+		// An open profile has no key element to replace, so the new one is inserted.
+		const secured = withJoinCredentials(openProfile, 'heslo1234', false) as string;
+		expect(secured).toContain('<authentication>WPA2PSK</authentication>');
+		expect(secured).toContain('<keyMaterial>heslo1234</keyMaterial>');
+		expect(secured).toContain('<FIPSMode>true</FIPSMode>');
+		// And back: no password means no key element at all.
+		const opened = withJoinCredentials(wpa2, '', false) as string;
+		expect(opened).toContain('<authentication>open</authentication>');
+		expect(opened).not.toContain('<sharedKey>');
+		expect(opened).toContain('<FIPSMode>true</FIPSMode>');
+	});
+
+	it('refuses a document that is not shaped like one Windows hands back', () => {
+		expect(withJoinCredentials('<WLANProfile/>', 'x', false)).toBeNull();
+		expect(withJoinCredentials('<WLANProfile><MSM><security></security></MSM></WLANProfile>', 'x', false)).toBeNull();
+	});
+});
+
 describe('windowsWifiProfileXml', () => {
 	const bar = new TextEncoder().encode('Coffee Bar');
 	const modern = new TextEncoder().encode('Modern Net');
@@ -647,7 +699,7 @@ const SSID_HEX = '4578616D706C65';
  * asks for the plaintext key. `marker` distinguishes one fixture from another.
  */
 function stored(marker: string): string {
-	return `<WLANProfile><name>Example</name><SSIDConfig><SSID><hex>${SSID_HEX}</hex></SSID></SSIDConfig><connectionMode>auto</connectionMode><MacRandomization><enableRandomization>true</enableRandomization></MacRandomization><MSM><security><authEncryption><authentication>WPA2PSK</authentication></authEncryption><sharedKey><keyMaterial>${marker}</keyMaterial></sharedKey></security></MSM></WLANProfile>`;
+	return `<WLANProfile><name>Example</name><SSIDConfig><SSID><hex>${SSID_HEX}</hex></SSID></SSIDConfig><connectionMode>auto</connectionMode><MacRandomization><enableRandomization>true</enableRandomization></MacRandomization><MSM><security><authEncryption><authentication>WPA2PSK</authentication><encryption>AES</encryption><useOneX>false</useOneX></authEncryption><sharedKey><keyType>passPhrase</keyType><keyMaterial>${marker}</keyMaterial></sharedKey><FIPSMode>true</FIPSMode></security></MSM></WLANProfile>`;
 }
 
 /** What a join is trying to write, for the network every fixture here belongs to. */
@@ -685,6 +737,7 @@ describe('writeJoinProfile', () => {
 		const document = written[0] as string;
 		expect(document).toContain('<enableRandomization>true</enableRandomization>');
 		expect(document).toContain('<connectionMode>auto</connectionMode>');
+		expect(document).toContain('<FIPSMode>true</FIPSMode>');
 		expect(document).toContain(`<hex>${SSID_HEX}</hex>`);
 		// And the one thing the join is actually changing did change.
 		expect(document).toContain('<keyMaterial>hunter2000</keyMaterial>');
