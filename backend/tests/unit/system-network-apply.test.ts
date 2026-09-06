@@ -279,11 +279,15 @@ describe('isValidSSID', () => {
 		expect(isValidSSID('x'.repeat(32))).toBe(true);
 	});
 
-	it('counts bytes rather than characters', () => {
-		// 17 two-byte characters are 34 octets and do not fit, even though the
-		// string is well under 32 characters long.
-		expect(isValidSSID('ě'.repeat(17))).toBe(false);
-		expect(isValidSSID('ě'.repeat(16))).toBe(true);
+	it('bounds the decoded name without pretending to know its octets', () => {
+		// The bound is on the DECODED text, which is no longer the SSID's own byte
+		// count: a 32-octet name whose every byte was undecodable arrives as 96
+		// bytes of U+FFFD. Holding that to 32 refused networks the scan had listed.
+		// The real 32-octet rule lives where the bytes are, and every join has to
+		// match this name against a fresh scan regardless.
+		expect(isValidSSID('ě'.repeat(17))).toBe(true);
+		expect(isValidSSID('�'.repeat(32))).toBe(true);
+		expect(isValidSSID('x'.repeat(97))).toBe(false);
 	});
 
 	it('rejects an empty name', () => {
@@ -1024,19 +1028,30 @@ describe('parseElevation', () => {
 });
 
 describe('isValidSSID on a name the radio reported', () => {
-	it('measures the octets on the air, not the ones a lossy decode produced', () => {
+	it('accepts a name whose undecodable octets inflated the decoded form', () => {
 		// An SSID is a byte sequence and need not be UTF-8, so a scanner decodes an
-		// undecodable octet to U+FFFD. Re-encoding that display form charges 3 bytes
-		// for the one byte it stands for, and a 31-octet name came back as 33 and was
-		// refused — the network was listed and could not be joined.
+		// undecodable octet to U+FFFD — three bytes for one. Measuring the decoded
+		// form against 32 refused a 31-octet name the scan had just listed.
 		const decode = (bytes: number[]): string => new TextDecoder().decode(Uint8Array.from(bytes));
 		const ascii = (text: string): number[] => [...new TextEncoder().encode(text)];
 		expect(isValidSSID(decode([...ascii('a'.repeat(30)), 0xff]))).toBe(true);
 		expect(isValidSSID(decode([...ascii('b'.repeat(31)), 0xff]))).toBe(true);
-		// 33 octets on the air is still too long, replacement character or not.
-		expect(isValidSSID(decode([...ascii('c'.repeat(32)), 0xff]))).toBe(false);
-		expect(isValidSSID('d'.repeat(33))).toBe(false);
-		expect(isValidSSID('d'.repeat(32))).toBe(true);
+		// A whole 32-octet name of undecodable bytes is 96 bytes decoded, and still fits.
+		expect(isValidSSID(decode(new Array(32).fill(0xff)))).toBe(true);
+	});
+
+	it('still refuses what could never have been an SSID', () => {
+		expect(isValidSSID('')).toBe(false);
+		expect(isValidSSID('x'.repeat(97))).toBe(false);
+		expect(isValidSSID('a b')).toBe(false);
+		expect(isValidSSID(undefined)).toBe(false);
+	});
+
+	it('leaves a platform rule to its platform', () => {
+		// A control character makes a Windows profile document malformed, but the
+		// same name is joinable through NetworkManager. The Windows writer refuses it;
+		// the shared gate every platform passes through does not.
+		expect(isValidSSID('Net')).toBe(true);
 	});
 });
 

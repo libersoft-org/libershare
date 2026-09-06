@@ -908,6 +908,24 @@ function readFixedUtf16(base: Pointer, offset: number, maxChars: number): string
 	return String.fromCharCode(...view.subarray(0, end === -1 ? maxChars : end));
 }
 
+/**
+ * Control characters an XML 1.0 document cannot carry, even escaped.
+ *
+ * A WLAN profile IS a document, and the profile name goes into it as text - the
+ * SSID itself is written as hex and is safe whatever bytes it holds. A name
+ * carrying one of these makes WlanSetProfile refuse the document as malformed
+ * rather than as a wrong name, so it is refused here where that can be said.
+ * Tab, LF and CR are legal there and stay out of the set. This is a WINDOWS rule
+ * and lives on the Windows side: the same name is perfectly joinable through
+ * NetworkManager.
+ */
+const XML_FORBIDDEN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/;
+
+/** Refuse a profile name a WLAN profile document could not carry. */
+export function assertProfileNameWritable(profileName: string): void {
+	if (XML_FORBIDDEN.test(profileName)) throw new Error('this network name contains characters a Windows profile cannot store');
+}
+
 /** Escape the five XML metacharacters. An SSID may legally contain any of them. */
 function escapeXml(text: string): string {
 	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
@@ -1305,6 +1323,7 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 	// the password, which was not the problem. The reason code Windows supplied
 	// alongside it is the answer, so it is asked for by name.
 	if (scanned && !scanned.connectable) throw new Error(withWlanHandle(api => wlanReasonText(api, scanned.notConnectableReason)) ?? 'Windows reports that this network cannot be joined');
+	assertProfileNameWritable(profileName);
 	if (password) assertWindowsWifiKey(password, sae);
 	// Held in a local of its own: WLAN_CONNECTION_PARAMETERS stores only the
 	// ADDRESS of the profile name, so the array behind it has to outlive the call.

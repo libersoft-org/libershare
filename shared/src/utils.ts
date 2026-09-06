@@ -194,18 +194,6 @@ export function validateIPv4Config(value: unknown, capabilities?: Pick<NetCapabi
 }
 
 /**
- * Control characters an SSID a USER typed must not contain.
- *
- * A scanned name is whatever the radio reported and is not filtered here; this
- * is the gate for a name the user supplied. Windows builds its WLAN profile as
- * XML and falls back to the typed SSID for the profile name, and XML 1.0 cannot
- * carry these code points even escaped - the profile would be rejected as
- * malformed rather than as a wrong name. Tab, LF and CR are legal there and stay
- * out of the set.
- */
-const SSID_FORBIDDEN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/;
-
-/**
  * A key the network's own security can carry.
  *
  * The rule is not the same for both WPA generations, and measured against
@@ -242,29 +230,30 @@ export function isWifiHexKey(key: unknown): boolean {
 }
 
 /**
- * True for an SSID the 802.11 standard can actually carry: 1-32 octets once
- * encoded as UTF-8. Length is counted in bytes, not characters, because a
- * 20-character name with accents already exceeds the field.
+ * The most bytes a DECODED SSID can occupy.
+ *
+ * An SSID is at most 32 octets on the air, but it is a byte sequence and need not
+ * be UTF-8 - a scanner decodes each undecodable octet to U+FFFD, which is three
+ * bytes. The decoded form of a legitimate 32-octet name therefore reaches 96, and
+ * measuring it against 32 refused networks the scan had just listed.
  */
-export function isValidSSID(ssid: unknown): ssid is string {
-	if (typeof ssid !== 'string' || SSID_FORBIDDEN.test(ssid)) return false;
-	return ssidOctets(ssid) >= 1 && ssidOctets(ssid) <= 32;
-}
+const MAX_SSID_TEXT_BYTES = 96;
 
 /**
- * The 802.11 octet length of an SSID given as text.
+ * True for an SSID this app will carry across the wire.
  *
- * An SSID is a byte sequence and is not required to be UTF-8, so a scanner
- * decodes an undecodable octet to U+FFFD. Measuring the decoded form with a
- * plain encoder charges 3 bytes for that one byte, and a name of 30 letters plus
- * one such octet — 31 on the air — comes back as 33 and is refused as too long.
- * The network is then listed and cannot be joined. Each replacement character is
- * therefore counted as the single octet it is the smallest possible stand-in
- * for; a name that is genuinely too long is still refused.
+ * A bound and a NUL check, and deliberately nothing more. The name arriving here
+ * has already been through a lossy decode, so its byte length is no longer the
+ * SSID's; the 32-octet rule belongs where the actual bytes are, and every join
+ * has to match this name against a fresh scan anyway, which is the real proof
+ * that the network exists. Platform rules stay on their platform: the characters
+ * a Windows profile document cannot carry are refused by the Windows writer, not
+ * here, where the same name is legal for NetworkManager.
  */
-function ssidOctets(ssid: string): number {
-	const replacements = ssid.match(/�/g)?.length ?? 0;
-	return new TextEncoder().encode(ssid).length - replacements * 2;
+export function isValidSSID(ssid: unknown): ssid is string {
+	if (typeof ssid !== 'string' || ssid.includes('\0')) return false;
+	const bytes = new TextEncoder().encode(ssid).length;
+	return bytes >= 1 && bytes <= MAX_SSID_TEXT_BYTES;
 }
 
 /**

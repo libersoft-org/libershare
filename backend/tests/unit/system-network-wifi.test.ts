@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { ptr, toArrayBuffer, type Pointer } from 'bun:ffi';
-import { assertWindowsWifiKey, type AvailableNetwork, openJoinDecision, withJoinCredentials, type JoinTarget, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readStoredProfile, readUtf16z, undoProfileChange, writeJoinProfile, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
+import { assertProfileNameWritable, assertWindowsWifiKey, type AvailableNetwork, openJoinDecision, withJoinCredentials, type JoinTarget, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readStoredProfile, readUtf16z, undoProfileChange, writeJoinProfile, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
 
 /**
  * The Windows Wi-Fi surface is FFI, so most of what can go wrong is a struct
@@ -367,6 +367,16 @@ describe('encodeConnectionParameters', () => {
 		// dot11_BSS_type_infrastructure, and no flags.
 		expect(view.getUint32(32, true)).toBe(1);
 		expect(view.getUint32(36, true)).toBe(0);
+	});
+});
+
+describe('assertProfileNameWritable', () => {
+	it('refuses only what a profile document cannot carry', () => {
+		expect(() => assertProfileNameWritable('Bubu & Dudu')).not.toThrow();
+		expect(() => assertProfileNameWritable('tab	here')).not.toThrow();
+		// The shared gate lets this through, because NetworkManager joins it happily;
+		// it is XML that cannot carry it, so it is refused here and nowhere else.
+		expect(() => assertProfileNameWritable('Net')).toThrow(/cannot store/);
 	});
 });
 
