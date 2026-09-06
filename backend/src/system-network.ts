@@ -529,6 +529,7 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 	const network = bssid === null ? (matches.length === 1 ? matches[0] : undefined) : matches.find(item => item.bssid?.toLowerCase() === bssid.toLowerCase());
 	if (!network) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'network is no longer available');
 	if (!network.supported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi authentication method is not supported');
+	if (isAlreadyJoined(network)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'this interface is already connected to that network');
 	if (network.secured && !isValidWifiKey(network.security, password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
 	try {
 		await run(() => joinPlatformWifi(interfaceID, ssid, password, network.bssid), [password]);
@@ -539,6 +540,33 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 		resetNetworkStateCache();
 	}
 	return readNetworkStateUnlocked(primaryInterface);
+}
+
+/**
+ * True when this interface is ALREADY associated with the named network.
+ *
+ * Such a join cannot be verified and must not be attempted. Windows confirms an
+ * association by polling whether the adapter is connected and to which SSID —
+ * and if it was already connected to that SSID, the very first poll sees the
+ * still-live old connection and reports success before Windows has finished the
+ * new attempt. A wrong password is then never noticed, because success has been
+ * reported and no rollback runs. It is also destructive for nothing: on Windows
+ * a join rewrites the stored profile before associating, so re-joining the
+ * current network replaces a working saved configuration to arrive back where it
+ * started.
+ *
+ * The scan row is the freshest statement there is about this interface — taken
+ * inside the mutation lock a moment before — and the frontend marking the row is
+ * not the same as the backend refusing it: a stale snapshot, a state change
+ * mid-operation or a direct RPC call all reach here regardless.
+ *
+ * ponytail: this closes the false-success path for the case that produces it.
+ * Proving an association in general needs `WlanRegisterNotification` and a
+ * notification-driven state machine correlated by interface, profile and
+ * attempt — a redesign, not a guard.
+ */
+export function isAlreadyJoined(network: Pick<NetWifiNetwork, 'active'>): boolean {
+	return network.active;
 }
 
 /** A bounded string that can be written to a child process stdin. Empty = open network. */
