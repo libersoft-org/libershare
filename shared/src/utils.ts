@@ -216,6 +216,21 @@ export function isValidWifiKey(security: string, password: string): boolean {
 }
 
 /**
+ * Whether one scanned row names a target a join can resolve on its own.
+ *
+ * One name can belong to two networks that are not the same network, and a scan
+ * reports both. An access point of its own settles which is meant; without one,
+ * and with a second row of the same name, nothing does. Shared so the screen
+ * offers exactly what the join will accept — a row that looked available and was
+ * then refused after the user had already typed the password is worse than a row
+ * that says up front it cannot be told apart.
+ */
+export function isUnambiguousWifiTarget(networks: readonly { ssid: string; bssid: string | null }[], row: { ssid: string; bssid: string | null }): boolean {
+	if (row.bssid !== null) return true;
+	return networks.filter(item => item.ssid === row.ssid).length === 1;
+}
+
+/**
  * True when a Wi-Fi credential is a raw 256-bit pre-shared key rather than a
  * passphrase: exactly 64 hexadecimal digits.
  *

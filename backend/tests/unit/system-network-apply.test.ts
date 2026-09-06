@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { canonicalDnsServer, ErrorCodes, ipv4BaselineOf, isIPv4, isIPv6, isValidSSID, isValidWifiKey, isWifiHexKey, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
+import { canonicalDnsServer, ErrorCodes, ipv4BaselineOf, isIPv4, isIPv6, isUnambiguousWifiTarget, isValidSSID, isValidWifiKey, isWifiHexKey, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
 import { assertIPv6DnsAllowed, assertLinuxDnsApplied, assertLinuxIPv4Applied, assertLinuxIPv4Method, assertLinuxWifiConnected, assertNetworkManagerRollback, assertNmcliActiveConnection, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
-import { assertAppliedIPv4State, assertDeviceName, assertIPv4Baseline, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, leaseRequired, MAX_WIFI_PASSWORD_BYTES, planIPv4Change, readCachedCapabilities, resetNetworkCapabilitiesCache, runNetworkMutation } from '../../src/system-network.ts';
+import { assertAppliedIPv4State, assertDeviceName, assertIPv4Baseline, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, leaseRequired, MAX_WIFI_PASSWORD_BYTES, planIPv4Change, readCachedCapabilities, resetNetworkCapabilitiesCache, resolveJoinTarget, runNetworkMutation } from '../../src/system-network.ts';
 
 describe('isIPv4', () => {
 	it('accepts ordinary dotted quads', () => {
@@ -1107,5 +1107,36 @@ describe('isValidWifiKey', () => {
 			expect(isValidWifiKey(security, 'z'.repeat(64))).toBe(true);
 			expect(isValidWifiKey(security, '')).toBe(false);
 		}
+	});
+});
+
+describe('isUnambiguousWifiTarget', () => {
+	const row = (ssid: string, bssid: string | null) => ({ ssid, bssid });
+
+	it('accepts a name only one network in range goes by', () => {
+		expect(isUnambiguousWifiTarget([row('Office', null), row('Guests', null)], row('Office', null))).toBe(true);
+	});
+
+	it('refuses a name two networks share with nothing to tell them apart', () => {
+		// macOS reports no BSSID at all, so this is its normal shape for a name
+		// carried by an open access point and an unrelated secured one.
+		const rows = [row('Guests', null), row('Guests', null)];
+		expect(isUnambiguousWifiTarget(rows, rows[0]!)).toBe(false);
+	});
+
+	it('accepts a shared name once an access point is named', () => {
+		const rows = [row('Guests', 'AA:BB:CC:DD:EE:01'), row('Guests', 'AA:BB:CC:DD:EE:02')];
+		expect(isUnambiguousWifiTarget(rows, rows[0]!)).toBe(true);
+	});
+
+	it('is the rule the join itself applies, so the screen cannot offer more', () => {
+		// Both sides read this one function; drifting apart is what let the screen
+		// accept a row the join then refused after the password had been typed.
+		const rows: NetWifiNetwork[] = [
+			{ ssid: 'Guests', bssid: null, signal: 40, secured: false, security: '', supported: true, active: false },
+			{ ssid: 'Guests', bssid: null, signal: 80, secured: true, security: 'WPA2', supported: true, active: false },
+		];
+		expect(isUnambiguousWifiTarget(rows, rows[0]!)).toBe(false);
+		expect(resolveJoinTarget(rows, 'Guests', null)).toBe('ambiguous');
 	});
 });

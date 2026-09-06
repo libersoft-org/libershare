@@ -6,7 +6,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { applyInterfaceConfig, joinWifiNetwork, networkState, refreshNetworkState, scanWifiNetworks } from '../../scripts/networkState.ts';
 	import { networkConfigFormFrom, networkConfigFromForm, networkFormMessage, networkFormUpdate, validateNetworkConfigForm, type DnsUpdateMode, type NetworkConfigForm } from '../../scripts/networkConfig.ts';
-	import { ipv4BaselineOf, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Baseline, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
+	import { ipv4BaselineOf, isUnambiguousWifiTarget, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Baseline, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -256,6 +256,25 @@
 		return duplicate && network.bssid ? `${network.ssid} — ${network.bssid}` : network.ssid;
 	}
 
+	/**
+	 * Offer only what a join will accept.
+	 *
+	 * Every one of these is refused by the backend anyway; leaving the row live let
+	 * the user pick it, type a password and only then be told no. The already-joined
+	 * case is the worst of the three, because the password is typed in full first.
+	 */
+	function joinable(network: NetWifiNetwork): boolean {
+		return network.supported && !network.active && isUnambiguousWifiTarget(networks, network);
+	}
+
+	/** What the row says about itself, with the reason it cannot be picked winning. */
+	function networkStatus(network: NetWifiNetwork): string {
+		if (!network.supported) return $t('settings.network.unsupportedSecurity');
+		if (network.active) return $t('settings.network.alreadyJoined');
+		if (!isUnambiguousWifiTarget(networks, network)) return $t('settings.network.ambiguousName');
+		return network.secured ? $t('settings.network.secured') : $t('settings.network.open');
+	}
+
 	// Row positions shift with the mode: the static fields exist only in 'static'.
 	let staticRows = $derived(mode === 'static' ? 3 : 0);
 	let dnsRows = $derived(dnsMode === 'custom' ? 2 : 1);
@@ -358,9 +377,9 @@
 			</ButtonBar>
 			{#each networks as network, index (`${network.ssid}:${network.bssid ?? ''}:${network.security}`)}
 				<div role="group" data-mouse-activate-area={areaID}>
-					<Button label="{networkLabel(network)}{network.active ? ' ✓' : ''}" position={[0, wifiBaseY + 1 + index]} onConfirm={() => selectNetwork(network)} disabled={busy || scanning || !network.supported} />
+					<Button label="{networkLabel(network)}{network.active ? ' ✓' : ''}" position={[0, wifiBaseY + 1 + index]} onConfirm={() => selectNetwork(network)} disabled={busy || scanning || !joinable(network)} />
 					<div class="network">
-						<span>{network.supported ? (network.secured ? $t('settings.network.secured') : $t('settings.network.open')) : $t('settings.network.unsupportedSecurity')}</span>
+						<span>{networkStatus(network)}</span>
 						<span>{network.signal !== null ? `${network.signal}%` : '—'}</span>
 					</div>
 				</div>

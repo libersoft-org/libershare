@@ -2,7 +2,7 @@ import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
-import { CodedError, ErrorCodes, ipv4BaselineOf, isSelectableInterface, isValidSSID, isValidWifiKey, normalizeDnsServers, sameIPv4Baseline, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
+import { CodedError, ErrorCodes, ipv4BaselineOf, isSelectableInterface, isUnambiguousWifiTarget, isValidSSID, isValidWifiKey, normalizeDnsServers, sameIPv4Baseline, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
 import { connectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND, windowsApplyIPv4Command } from './system-network-windows.ts';
 import { applyLinuxIPv4, connectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
 import { applyMacIPv4, connectMacWifi, isMacWifiConfigurable, isMacWritable, readMacNetworkState, scanMacWifi } from './system-network-macos.ts';
@@ -651,7 +651,9 @@ async function assertWirelessInterface(interfaceID: string): Promise<void> {
 export function resolveJoinTarget(available: NetWifiNetwork[], ssid: string, bssid: string | null): NetWifiNetwork | 'ambiguous' | null {
 	const matches = available.filter(item => item.ssid === ssid);
 	if (bssid !== null) return matches.find(item => item.bssid?.toLowerCase() === bssid.toLowerCase()) ?? null;
-	if (matches.length > 1) return 'ambiguous';
+	// The same rule the screen greys the row out with, so what is offered and what
+	// is accepted cannot drift apart.
+	if (matches[0] && !isUnambiguousWifiTarget(available, matches[0])) return 'ambiguous';
 	return matches[0] ?? null;
 }
 

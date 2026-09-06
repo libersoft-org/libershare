@@ -337,6 +337,8 @@
 			"staleState": "Zobrazené síťové údaje jsou zastaralé. Změny jsou vypnuté, dokud se nenačte aktuální stav.",
 			"liveUpdatesUnavailable": "Průběžné aktualizace sítě nejsou dostupné. Tento snímek se obnoví po opětovném připojení.",
 			"unsupportedSecurity": "Nepodporované ověřování",
+			"alreadyJoined": "Připojeno",
+			"ambiguousName": "Nelze jednoznačně vybrat",
 			"gateway": "Brána",
 			"dns": "DNS",
 			"ssid": "Název sítě",
