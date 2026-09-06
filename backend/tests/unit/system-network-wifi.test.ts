@@ -835,8 +835,18 @@ describe('writeJoinProfile', () => {
 		// whose scope changed since it was read. Tolerating it there reported a
 		// password as saved that was never stored, and then associated through the old
 		// profile and called that success.
-		const { api, restored } = joinApi([{ rc: 0, xml: stored('old'), flags: USER_FLAGS }], [ALREADY_EXISTS]);
-		expect(() => writeJoinProfile(api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>'))).toThrow();
+		// Scripted with enough reads for the WHOLE happy path, so the only thing that
+		// can stop this attempt is the refused write itself. Without that the test
+		// passed on the mock running out of scripted reads — it threw, but not for
+		// the reason it claimed to be pinning.
+		const { api, restored } = joinApi(
+			[
+				{ rc: 0, xml: stored('old'), flags: USER_FLAGS },
+				{ rc: 0, xml: stored('normalized'), flags: USER_FLAGS },
+			],
+			[ALREADY_EXISTS]
+		);
+		expect(() => writeJoinProfile(api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>'))).toThrow(/0xB7/);
 		// And it stops there: no custom data is put back for a write that did not land.
 		expect(restored).toEqual([]);
 	});

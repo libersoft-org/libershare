@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { readNetworkState, readNetworkStateUnlocked, runNetworkMutation } from '../../src/system-network.ts';
+import { isAlreadyJoined, readNetworkState, readNetworkStateUnlocked, runNetworkMutation } from '../../src/system-network.ts';
 
 /**
  * The ordering guarantees the whole write path rests on.
@@ -50,5 +50,23 @@ describe('network mutation serialisation', () => {
 		// is already inside of, and the request would hang until the test timeout.
 		const state = await runNetworkMutation(() => readNetworkStateUnlocked());
 		expect(state.known).toBe(true);
+	});
+});
+
+/**
+ * The guard that keeps a join off the network the interface is already on.
+ *
+ * Its whole reason to exist is that the association cannot then be told apart
+ * from the one a new attempt would produce: the first poll sees the still-live
+ * old connection and reports success, so a wrong password is never noticed and
+ * no rollback runs.
+ */
+describe('already-joined guard', () => {
+	// The DECISION is pinned here. Its call site sits behind a live scan, so only a
+	// real adapter exercises it — verified on Windows: a second join of the network
+	// the interface was already on came back "already connected to that network".
+	it('reads the scan row, which is the freshest statement about this interface', () => {
+		expect(isAlreadyJoined({ active: true })).toBe(true);
+		expect(isAlreadyJoined({ active: false })).toBe(false);
 	});
 });
