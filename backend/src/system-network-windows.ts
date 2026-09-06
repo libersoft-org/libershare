@@ -914,6 +914,66 @@ function escapeXml(text: string): string {
 }
 
 /**
+ * The `<security>` element a join needs, for a new profile and for an edited one
+ * alike. Empty password means an open network.
+ */
+function joinSecurityElement(password: string, sae: boolean): string {
+	// A 64-hex credential is a raw 256-bit PSK, not a passphrase, and the profile
+	// has to say so: announced as `passPhrase` Windows hashes it a second time, so
+	// the profile is written, accepted, and then simply never authenticates.
+	const keyType = isWifiHexKey(password) ? 'networkKey' : 'passPhrase';
+	if (!password) return '<authEncryption><authentication>open</authentication><encryption>none</encryption><useOneX>false</useOneX></authEncryption>';
+	return `<authEncryption><authentication>${sae ? 'WPA3SAE' : 'WPA2PSK'}</authentication><encryption>AES</encryption><useOneX>false</useOneX></authEncryption><sharedKey><keyType>${keyType}</keyType><protected>false</protected><keyMaterial>${escapeXml(password)}</keyMaterial></sharedKey>`;
+}
+
+/**
+ * The SSID a stored profile targets, as uppercase hex.
+ *
+ * Windows keeps the profile NAME and the SSID apart, so a name says nothing
+ * about which network a profile belongs to: a profile called "Office" can target
+ * any SSID at all. Null when the document names no SSID, which is a document
+ * this code will not reason about.
+ */
+export function profileSsidHex(xml: string): string | null {
+	const hex = xml.match(/<hex>\s*([0-9a-f]+)\s*<\/hex>/i);
+	if (hex?.[1]) return hex[1].toUpperCase();
+	// Older documents carry the name form instead; it is only unambiguous for an
+	// SSID that really is text, which is exactly when Windows writes it.
+	const name = xml.match(/<SSID>[\s\S]*?<name>([\s\S]*?)<\/name>[\s\S]*?<\/SSID>/i);
+	return name?.[1] === undefined ? null : ssidHex(new TextEncoder().encode(unescapeXml(name[1])));
+}
+
+/** The SSID bytes as the uppercase hex a WLAN profile carries. */
+function ssidHex(ssidBytes: Uint8Array): string {
+	return [...ssidBytes].map(byte => byte.toString(16).padStart(2, '0').toUpperCase()).join('');
+}
+
+/** The five entities `escapeXml` produces, back to the characters they stand for. */
+function unescapeXml(text: string): string {
+	return text.replace(/&(amp|lt|gt|quot|apos);/g, (_, name: string) => ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" })[name] as string);
+}
+
+/**
+ * The stored document with only its credentials replaced.
+ *
+ * A join must not rewrite a profile the user already has. Regenerating it kept
+ * the SSID and the credentials and silently dropped everything else the document
+ * carried - MAC randomisation, band preferences, whatever a future Windows adds -
+ * and on SUCCESS nothing puts those back. Only the one element the join is
+ * actually changing is replaced.
+ *
+ * Null when the document has no `<security>` element to replace, which no
+ * profile Windows hands back should be missing; the caller refuses rather than
+ * falling back to a regenerated document, because that is the data loss this
+ * exists to prevent.
+ */
+export function withJoinCredentials(xml: string, password: string, sae: boolean): string | null {
+	const security = /<security>[\s\S]*?<\/security>/i;
+	if (!security.test(xml)) return null;
+	return xml.replace(security, `<security>${joinSecurityElement(password, sae)}</security>`);
+}
+
+/**
  * A WLAN profile document for one network.
  *
  * Windows will not associate with a network it has no profile for, and a profile
@@ -931,11 +991,9 @@ function escapeXml(text: string): string {
  * including auto-joining an open network of that name anywhere in the world. A
  * "remember this network" option would be the way to offer the other mode.
  *
- * Replacing an EXISTING profile is the opposite case, and the caller passes that
- * profile's own mode back in. The setting is the user's, made in Windows and not
- * here; overwriting it turned a home network that had auto-joined for years into
- * one that no longer connects on its own, and a successful join never put it
- * back.
+ * Replacing an EXISTING profile never goes through here: that path edits the
+ * stored document instead, so the mode the user chose in Windows - and
+ * everything else it carries - stays exactly as it was.
  *
  * ponytail: WPA2PSK and WPA3SAE cover personal networks, including the WPA2/WPA3
  * transition mode consumer access points ship with (which advertises itself as
@@ -943,7 +1001,7 @@ function escapeXml(text: string): string {
  * are not covered — those fail with a reason code from Windows rather than
  * silently doing nothing, and would need their own profile shapes.
  */
-export function windowsWifiProfileXml(profileName: string, ssidBytes: Uint8Array, password: string, sae: boolean = false, connectionMode: 'auto' | 'manual' = 'manual'): string {
+export function windowsWifiProfileXml(profileName: string, ssidBytes: Uint8Array, password: string, sae: boolean = false): string {
 	// The profile name and the SSID are two different things. Windows keeps them
 	// apart — the profile name is a case-sensitive label the user or a policy can
 	// change, the SSID is what goes on the air — and writing the SSID into both
@@ -955,13 +1013,9 @@ export function windowsWifiProfileXml(profileName: string, ssidBytes: Uint8Array
 	// replaces every undecodable octet with U+FFFD, and the profile would then
 	// target a network that does not exist. `<hex>` is authoritative and `<name>`
 	// is ignored when it is present, so only the hex form is emitted.
-	const hex = [...ssidBytes].map(byte => byte.toString(16).padStart(2, '0').toUpperCase()).join('');
-	// A 64-hex credential is a raw 256-bit PSK, not a passphrase, and the profile
-	// has to say so: announced as `passPhrase` Windows hashes it a second time, so
-	// the profile is written, accepted, and then simply never authenticates.
-	const keyType = isWifiHexKey(password) ? 'networkKey' : 'passPhrase';
-	const security = password ? `<authEncryption><authentication>${sae ? 'WPA3SAE' : 'WPA2PSK'}</authentication><encryption>AES</encryption><useOneX>false</useOneX></authEncryption><sharedKey><keyType>${keyType}</keyType><protected>false</protected><keyMaterial>${escapeXml(password)}</keyMaterial></sharedKey>` : `<authEncryption><authentication>open</authentication><encryption>none</encryption><useOneX>false</useOneX></authEncryption>`;
-	return `<?xml version="1.0"?><WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1"><name>${name}</name><SSIDConfig><SSID><hex>${hex}</hex></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>${connectionMode}</connectionMode><MSM><security>${security}</security></MSM></WLANProfile>`;
+	const hex = ssidHex(ssidBytes);
+	const security = joinSecurityElement(password, sae);
+	return `<?xml version="1.0"?><WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1"><name>${name}</name><SSIDConfig><SSID><hex>${hex}</hex></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>manual</connectionMode><MSM><security>${security}</security></MSM></WLANProfile>`;
 }
 
 /**
@@ -1210,13 +1264,16 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 	// ADDRESS of the profile name, so the array behind it has to outlive the call.
 	const profileNameW = utf16z(profileName);
 	const parameters = encodeConnectionParameters(BigInt(ptr(profileNameW)));
-	const buildProfile = (connectionMode: 'auto' | 'manual'): string => windowsWifiProfileXml(profileName, ssidBytes, password, sae, connectionMode);
+	// A profile this join CREATES is written `manual`: the user is never asked, so
+	// a one-off join must not make the machine re-associate by itself later. An
+	// existing profile is edited instead, and keeps whatever it already said.
+	const target: JoinTarget = { ssidHex: ssidHex(ssidBytes), password, sae, newProfile: () => windowsWifiProfileXml(profileName, ssidBytes, password, sae) };
 	/** What this attempt did to the profile store, or null while it has done nothing. */
 	let change: ProfileChange | null = null;
 	try {
 		withWlanHandle((api, handle) => {
 			if (password) {
-				change = writeJoinProfile(api, handle, guidBytes, profileName, buildProfile);
+				change = writeJoinProfile(api, handle, guidBytes, profileName, target);
 				connectByProfile(api, handle, guidBytes, parameters);
 				return;
 			}
@@ -1226,7 +1283,7 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 			// key is an open one, so give Windows an open profile to work from — but
 			// never in place of one it already holds. When one does already exist, the
 			// failed connect is the real story and its code is the one worth reporting.
-			if (writeProfile(api, handle, guidBytes, buildProfile('manual'), WLAN_PROFILE_USER, 0) === ERROR_ALREADY_EXISTS) throw new Error(wlanErrorMessage(rc));
+			if (writeProfile(api, handle, guidBytes, target.newProfile(), WLAN_PROFILE_USER, 0) === ERROR_ALREADY_EXISTS) throw new Error(wlanErrorMessage(rc));
 			change = { replaced: null, created: true, written: readWrittenProfile(api, handle, guidBytes, profileName) };
 			connectByProfile(api, handle, guidBytes, parameters);
 		});
@@ -1423,16 +1480,14 @@ export interface ProfileChange {
 	readonly written: StoredProfile | null;
 }
 
-/**
- * The connection mode a stored profile declares.
- *
- * Read from the document Windows handed back rather than assumed, and defaulted
- * to `manual` when the element is absent or unreadable: that is what this app
- * would have written anyway, so an unreadable profile is never upgraded to
- * auto-joining on its behalf.
- */
-export function profileConnectionMode(xml: string): 'auto' | 'manual' {
-	return /<connectionMode>\s*auto\s*<\/connectionMode>/i.test(xml) ? 'auto' : 'manual';
+/** What a join is trying to write, and to which network. */
+export interface JoinTarget {
+	/** The SSID as uppercase hex — the only unambiguous statement of which network this is. */
+	readonly ssidHex: string;
+	readonly password: string;
+	readonly sae: boolean;
+	/** The document to write when this network has no profile yet. */
+	newProfile(): string;
 }
 
 /**
@@ -1454,7 +1509,7 @@ export function profileConnectionMode(xml: string): 'auto' | 'manual' {
  * Windows answering that the absence no longer holds, and the profile that
  * appeared is then read, backed up and overwritten like any other existing one.
  */
-export function writeJoinProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string, buildProfile: (connectionMode: 'auto' | 'manual') => string): ProfileChange {
+export function writeJoinProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Array, profileName: string, target: JoinTarget): ProfileChange {
 	const stored = readStoredProfile(api, handle, guidBytes, profileName);
 	// A read that FAILED is not a read that found nothing. Proceeding on one would
 	// overwrite a profile with no backup taken, and the rollback would then delete
@@ -1465,7 +1520,7 @@ export function writeJoinProfile(api: WlanApi, handle: WlanHandle, guidBytes: Ui
 	// Believed absent — and asking not to overwrite is what makes that belief
 	// checkable rather than merely assumed. Anything but ERROR_ALREADY_EXISTS means
 	// the write landed on the empty name it was aimed at.
-	if (writeProfile(api, handle, guidBytes, buildProfile('manual'), WLAN_PROFILE_USER, 0) !== ERROR_ALREADY_EXISTS) return { replaced: null, created: true, written: readWrittenProfile(api, handle, guidBytes, profileName) };
+	if (writeProfile(api, handle, guidBytes, target.newProfile(), WLAN_PROFILE_USER, 0) !== ERROR_ALREADY_EXISTS) return { replaced: null, created: true, written: readWrittenProfile(api, handle, guidBytes, profileName) };
 	const raced = readStoredProfile(api, handle, guidBytes, profileName);
 	// It existed a moment ago and cannot be read now: there is a profile here that
 	// this attempt cannot back up, so it does not touch it.
@@ -1483,11 +1538,16 @@ export function writeJoinProfile(api: WlanApi, handle: WlanHandle, guidBytes: Ui
 		// refused on most hosts, and where it is not, nothing here can put a policy
 		// profile back afterwards.
 		if ((existing.flags & WLAN_PROFILE_GROUP_POLICY) !== 0) throw new Error('this network is managed by group policy and cannot be changed here');
-		// The document is built HERE, from the profile that is being replaced, so the
-		// user's own connection mode survives the join. Built before the call it was
-		// always `manual`, and a home network that had auto-joined for years quietly
-		// stopped doing so — on SUCCESS, where nothing rolls anything back.
-		writeProfile(api, handle, guidBytes, buildProfile(profileConnectionMode(existing.xml)), existing.flags, 1);
+		// A profile NAME is not a network. Windows lets the two differ, so a stored
+		// profile called the same thing as the network being joined may belong to a
+		// completely different SSID — and overwriting it destroys that network's
+		// saved configuration on SUCCESS, where nothing rolls anything back.
+		if (profileSsidHex(existing.xml) !== target.ssidHex) throw new Error('a different network is already saved under this name in Windows, so it was not replaced');
+		// Only the credentials change. Regenerating the document kept the SSID and
+		// the key and dropped everything else the user had set on this profile.
+		const edited = withJoinCredentials(existing.xml, target.password, target.sae);
+		if (edited === null) throw new Error('the saved configuration of this network is not in a shape this app can edit, so it was left alone');
+		writeProfile(api, handle, guidBytes, edited, existing.flags, 1);
 		// The write just discarded whatever another WLAN client kept beside this
 		// profile — see StoredProfile.customUserData. Replacing the credentials is
 		// what the user asked for; destroying somebody else's metadata is not, so it

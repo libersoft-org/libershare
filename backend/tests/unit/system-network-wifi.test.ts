@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { ptr, toArrayBuffer, type Pointer } from 'bun:ffi';
-import { assertWindowsWifiKey, profileConnectionMode, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readStoredProfile, readUtf16z, undoProfileChange, writeJoinProfile, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
+import { assertWindowsWifiKey, type JoinTarget, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readStoredProfile, readUtf16z, undoProfileChange, writeJoinProfile, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
 
 /**
  * The Windows Wi-Fi surface is FFI, so most of what can go wrong is a struct
@@ -329,20 +329,6 @@ describe('encodeConnectionParameters', () => {
 	});
 });
 
-describe('profileConnectionMode', () => {
-	it('reads the mode a stored profile declares', () => {
-		expect(profileConnectionMode('<WLANProfile><connectionMode>auto</connectionMode></WLANProfile>')).toBe('auto');
-		expect(profileConnectionMode('<WLANProfile><connectionMode>manual</connectionMode></WLANProfile>')).toBe('manual');
-	});
-
-	it('falls back to manual for a document that does not say', () => {
-		// Never the other way round: an unreadable profile must not be upgraded to
-		// auto-joining on the user's behalf.
-		expect(profileConnectionMode('<WLANProfile/>')).toBe('manual');
-		expect(profileConnectionMode('')).toBe('manual');
-	});
-});
-
 describe('windowsWifiProfileXml', () => {
 	const bar = new TextEncoder().encode('Coffee Bar');
 	const modern = new TextEncoder().encode('Modern Net');
@@ -373,16 +359,6 @@ describe('windowsWifiProfileXml', () => {
 	// of that name somewhere else entirely.
 	it('joins once rather than saving a network to be auto-joined later', () => {
 		for (const password of ['', 'hunter2000']) expect(windowsWifiProfileXml('Coffee Bar', bar, password)).toContain('<connectionMode>manual</connectionMode>');
-	});
-
-	it('emits the mode it is given, so replacing a profile keeps the choice the user made', () => {
-		// A home network the user set to connect automatically must still do so after
-		// a join through this app. Overwriting it with `manual` changed the machine's
-		// long-term behaviour on SUCCESS, where nothing rolls anything back.
-		expect(windowsWifiProfileXml('Home', bar, 'hunter2000', false, 'auto')).toContain('<connectionMode>auto</connectionMode>');
-		expect(windowsWifiProfileXml('Home', bar, 'hunter2000', false, 'manual')).toContain('<connectionMode>manual</connectionMode>');
-		expect(windowsWifiProfileXml('Coffee Bar', bar, '')).not.toContain('<connectionMode>auto</connectionMode>');
-		expect(windowsWifiProfileXml('Coffee Bar', bar, '')).not.toContain('<connectionMode>auto</connectionMode>');
 	});
 
 	it('builds a WPA2 personal profile carrying the passphrase', () => {
@@ -608,7 +584,7 @@ interface RecordedWrite {
  * order — and records every WlanSetProfile. `setResults` supplies the Win32 code
  * each write returns, so the ERROR_ALREADY_EXISTS race can be reproduced exactly.
  */
-function joinApi(reads: ScriptedRead[], setResults: number[] = [], customSetResult: number = 0) {
+function joinApi(reads: ScriptedRead[], setResults: number[] = [], documents: string[] = [], customSetResult: number = 0) {
 	const writes: RecordedWrite[] = [];
 	/** Every custom-user-data blob handed back, in order, as text. */
 	const restored: string[] = [];
@@ -641,8 +617,9 @@ function joinApi(reads: ScriptedRead[], setResults: number[] = [], customSetResu
 			restored.push(new TextDecoder().decode(new Uint8Array(toArrayBuffer(data, 0, size))));
 			return customSetResult;
 		},
-		WlanSetProfile: (_handle: bigint, _guid: Pointer, flags: number, _xml: Pointer, _security: null, overwrite: number) => {
+		WlanSetProfile: (_handle: bigint, _guid: Pointer, flags: number, xml: Pointer, _security: null, overwrite: number) => {
 			writes.push({ flags, overwrite });
+			documents.push(readUtf16z(xml));
 			return setResults[writeIndex++] ?? 0;
 		},
 		WlanReasonCodeToString: () => 1,
@@ -661,14 +638,75 @@ const ALREADY_EXISTS = 183;
 const USER_FLAGS = 2;
 const POLICY_FLAGS = 1;
 
+/** The SSID every fake profile below targets, as the hex a WLAN profile carries. */
+const SSID_HEX = '4578616D706C65';
+
+/**
+ * A stored profile as Windows hands one back: the SSID it belongs to, the user's
+ * own settings around it, and the credentials — encrypted, because nothing here
+ * asks for the plaintext key. `marker` distinguishes one fixture from another.
+ */
+function stored(marker: string): string {
+	return `<WLANProfile><name>Example</name><SSIDConfig><SSID><hex>${SSID_HEX}</hex></SSID></SSIDConfig><connectionMode>auto</connectionMode><MacRandomization><enableRandomization>true</enableRandomization></MacRandomization><MSM><security><authEncryption><authentication>WPA2PSK</authentication></authEncryption><sharedKey><keyMaterial>${marker}</keyMaterial></sharedKey></security></MSM></WLANProfile>`;
+}
+
+/** What a join is trying to write, for the network every fixture here belongs to. */
+function target(newProfile: string): JoinTarget {
+	return { ssidHex: SSID_HEX, password: 'hunter2000', sae: false, newProfile: () => newProfile };
+}
+
 describe('writeJoinProfile', () => {
+	it('refuses a profile of the same name that belongs to another network', () => {
+		// A profile NAME is not a network — Windows lets them differ, and this app
+		// falls back to the SSID for the name when the scan names no profile. A saved
+		// "Office" pointing at another SSID must not be destroyed by joining a new
+		// network that happens to be called the same, least of all on SUCCESS where
+		// nothing rolls anything back.
+		const foreign = stored('other network').replace(SSID_HEX, '4F7468657231');
+		const { api, writes } = joinApi([{ rc: 0, xml: foreign, flags: USER_FLAGS }]);
+		expect(() => writeJoinProfile(api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>'))).toThrow(/a different network is already saved under this name/);
+		expect(writes).toEqual([]);
+	});
+
+	it('changes only the credentials of a profile it replaces', () => {
+		// Regenerating the document kept the SSID and the key and dropped everything
+		// else the user had set — MAC randomisation, the connection mode, whatever a
+		// later Windows adds — and a successful join left the stripped version behind.
+		const written: string[] = [];
+		const { api } = joinApi(
+			[
+				{ rc: 0, xml: stored('old key'), flags: USER_FLAGS },
+				{ rc: 0, xml: stored('old key'), flags: USER_FLAGS },
+			],
+			[],
+			written
+		);
+		writeJoinProfile(api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>'));
+		const document = written[0] as string;
+		expect(document).toContain('<enableRandomization>true</enableRandomization>');
+		expect(document).toContain('<connectionMode>auto</connectionMode>');
+		expect(document).toContain(`<hex>${SSID_HEX}</hex>`);
+		// And the one thing the join is actually changing did change.
+		expect(document).toContain('<keyMaterial>hunter2000</keyMaterial>');
+		expect(document).not.toContain('old key');
+	});
+
+	it('refuses a stored profile it cannot edit rather than replacing it wholesale', () => {
+		// No `<security>` to swap means this is not a document this code understands,
+		// and writing a generated one over it is exactly the loss above.
+		const odd = `<WLANProfile><SSIDConfig><SSID><hex>${SSID_HEX}</hex></SSID></SSIDConfig></WLANProfile>`;
+		const { api, writes } = joinApi([{ rc: 0, xml: odd, flags: USER_FLAGS }]);
+		expect(() => writeJoinProfile(api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>'))).toThrow(/not in a shape this app can edit/);
+		expect(writes).toEqual([]);
+	});
+
 	it('overwrites an existing profile keeping its scope, and marks it for restore', () => {
 		const { api, writes } = joinApi([
-			{ rc: 0, xml: '<WLANProfile>old</WLANProfile>', flags: USER_FLAGS },
-			{ rc: 0, xml: '<WLANProfile>normalized</WLANProfile>', flags: USER_FLAGS },
+			{ rc: 0, xml: stored('old'), flags: USER_FLAGS },
+			{ rc: 0, xml: stored('normalized'), flags: USER_FLAGS },
 		]);
-		const change = writeJoinProfile(api, 1n, ANY_GUID, 'Example', () => '<WLANProfile>new</WLANProfile>');
-		expect(change).toEqual({ replaced: { xml: '<WLANProfile>old</WLANProfile>', flags: USER_FLAGS, customUserData: null }, created: false, written: { xml: '<WLANProfile>normalized</WLANProfile>', flags: USER_FLAGS, customUserData: null } });
+		const change = writeJoinProfile(api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>'));
+		expect(change).toEqual({ replaced: { xml: stored('old'), flags: USER_FLAGS, customUserData: null }, created: false, written: { xml: stored('normalized'), flags: USER_FLAGS, customUserData: null } });
 		// Rewritten with the flags it already had — restoring a per-user profile as
 		// all-user would be a different object under the same name.
 		expect(writes).toEqual([{ flags: USER_FLAGS, overwrite: 1 }]);
@@ -679,10 +717,10 @@ describe('writeJoinProfile', () => {
 	// user asked for; destroying somebody else's metadata is not.
 	it('hands the custom user data back after overwriting a profile', () => {
 		const { api, restored } = joinApi([
-			{ rc: 0, xml: '<WLANProfile>old</WLANProfile>', flags: USER_FLAGS, custom: 'vendor-metadata' },
-			{ rc: 0, xml: '<WLANProfile>normalized</WLANProfile>', flags: USER_FLAGS, custom: 'vendor-metadata' },
+			{ rc: 0, xml: stored('old'), flags: USER_FLAGS, custom: 'vendor-metadata' },
+			{ rc: 0, xml: stored('normalized'), flags: USER_FLAGS, custom: 'vendor-metadata' },
 		]);
-		writeJoinProfile(api, 1n, ANY_GUID, 'Example', () => '<WLANProfile>new</WLANProfile>');
+		writeJoinProfile(api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>'));
 		expect(restored).toEqual(['vendor-metadata']);
 	});
 
@@ -693,13 +731,14 @@ describe('writeJoinProfile', () => {
 	it('refuses the join when the custom user data cannot be handed back', () => {
 		const { api, writes } = joinApi(
 			[
-				{ rc: 0, xml: '<WLANProfile>old</WLANProfile>', flags: USER_FLAGS, custom: 'vendor-metadata' },
-				{ rc: 0, xml: '<WLANProfile>normalized</WLANProfile>', flags: USER_FLAGS, custom: 'vendor-metadata' },
+				{ rc: 0, xml: stored('old'), flags: USER_FLAGS, custom: 'vendor-metadata' },
+				{ rc: 0, xml: stored('normalized'), flags: USER_FLAGS, custom: 'vendor-metadata' },
 			],
+			[],
 			[],
 			CUSTOM_DATA_WRITE_FAILED
 		);
-		expect(() => writeJoinProfile(api, 1n, ANY_GUID, 'Example', () => '<WLANProfile>new</WLANProfile>')).toThrow(/could not be put back, so this network was not joined/);
+		expect(() => writeJoinProfile(api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>'))).toThrow(/could not be put back, so this network was not joined/);
 		// The overwrite, and then the write that puts the original document back.
 		expect(writes).toEqual([
 			{ flags: USER_FLAGS, overwrite: 1 },
@@ -709,17 +748,17 @@ describe('writeJoinProfile', () => {
 
 	it('writes no custom user data for a profile that had none', () => {
 		const { api, restored } = joinApi([
-			{ rc: 0, xml: '<WLANProfile>old</WLANProfile>', flags: USER_FLAGS },
-			{ rc: 0, xml: '<WLANProfile>normalized</WLANProfile>', flags: USER_FLAGS },
+			{ rc: 0, xml: stored('old'), flags: USER_FLAGS },
+			{ rc: 0, xml: stored('normalized'), flags: USER_FLAGS },
 		]);
-		writeJoinProfile(api, 1n, ANY_GUID, 'Example', () => '<WLANProfile>new</WLANProfile>');
+		writeJoinProfile(api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>'));
 		// A zero-length write is a clear, not a no-op, so there is nothing to send.
 		expect(restored).toEqual([]);
 	});
 
 	it('creates a profile only when Windows confirms the name was free', () => {
-		const { api, writes } = joinApi([{ rc: NOT_FOUND }, { rc: 0, xml: '<WLANProfile>normalized</WLANProfile>', flags: USER_FLAGS }]);
-		expect(writeJoinProfile(api, 1n, ANY_GUID, 'Example', () => '<WLANProfile/>')).toEqual({ replaced: null, created: true, written: { xml: '<WLANProfile>normalized</WLANProfile>', flags: USER_FLAGS, customUserData: null } });
+		const { api, writes } = joinApi([{ rc: NOT_FOUND }, { rc: 0, xml: stored('normalized'), flags: USER_FLAGS }]);
+		expect(writeJoinProfile(api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>'))).toEqual({ replaced: null, created: true, written: { xml: stored('normalized'), flags: USER_FLAGS, customUserData: null } });
 		// bOverwrite FALSE: the write is what CHECKS the absence, not just what acts on it.
 		expect(writes).toEqual([{ flags: USER_FLAGS, overwrite: 0 }]);
 	});
@@ -729,11 +768,11 @@ describe('writeJoinProfile', () => {
 	// it while this attempt believed it had CREATED it — and the rollback would
 	// then delete a network the user had just saved.
 	it('does not claim to have created a profile that appeared mid-attempt', () => {
-		const { api, writes } = joinApi([{ rc: NOT_FOUND }, { rc: 0, xml: '<WLANProfile>raced</WLANProfile>', flags: USER_FLAGS }, { rc: 0, xml: '<WLANProfile>normalized</WLANProfile>', flags: USER_FLAGS }], [ALREADY_EXISTS]);
-		const change = writeJoinProfile(api, 1n, ANY_GUID, 'Example', () => '<WLANProfile/>');
+		const { api, writes } = joinApi([{ rc: NOT_FOUND }, { rc: 0, xml: stored('raced'), flags: USER_FLAGS }, { rc: 0, xml: stored('normalized'), flags: USER_FLAGS }], [ALREADY_EXISTS]);
+		const change = writeJoinProfile(api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>'));
 		// created FALSE is the whole point: the rollback restores rather than deletes.
 		expect(change.created).toBe(false);
-		expect(change.replaced).toEqual({ xml: '<WLANProfile>raced</WLANProfile>', flags: USER_FLAGS, customUserData: null });
+		expect(change.replaced).toEqual({ xml: stored('raced'), flags: USER_FLAGS, customUserData: null });
 		expect(writes).toEqual([
 			{ flags: USER_FLAGS, overwrite: 0 },
 			{ flags: USER_FLAGS, overwrite: 1 },
@@ -742,24 +781,24 @@ describe('writeJoinProfile', () => {
 
 	it('leaves a raced profile alone when it cannot be backed up', () => {
 		const { api, writes } = joinApi([{ rc: NOT_FOUND }, { rc: 5 }], [ALREADY_EXISTS]);
-		expect(() => writeJoinProfile(api, 1n, ANY_GUID, 'Example', () => '<WLANProfile/>')).toThrow();
+		expect(() => writeJoinProfile(api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>'))).toThrow();
 		// The refused overwrite is the only write attempted; nothing was replaced.
 		expect(writes).toEqual([{ flags: USER_FLAGS, overwrite: 0 }]);
 	});
 
 	it('writes nothing at all when the existing profile could not be read', () => {
 		const { api, writes } = joinApi([{ rc: 5 }]);
-		expect(() => writeJoinProfile(api, 1n, ANY_GUID, 'Example', () => '<WLANProfile/>')).toThrow();
+		expect(() => writeJoinProfile(api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>'))).toThrow();
 		expect(writes).toEqual([]);
 	});
 
 	it('refuses a group-policy profile, before and after the race', () => {
-		const policy = joinApi([{ rc: 0, xml: '<WLANProfile/>', flags: POLICY_FLAGS }]);
-		expect(() => writeJoinProfile(policy.api, 1n, ANY_GUID, 'Example', () => '<WLANProfile/>')).toThrow(/group policy/);
+		const policy = joinApi([{ rc: 0, xml: stored('kept'), flags: POLICY_FLAGS }]);
+		expect(() => writeJoinProfile(policy.api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>'))).toThrow(/group policy/);
 		expect(policy.writes).toEqual([]);
 		// A policy profile pushed between the read and the write is refused too.
-		const raced = joinApi([{ rc: NOT_FOUND }, { rc: 0, xml: '<WLANProfile/>', flags: POLICY_FLAGS }], [ALREADY_EXISTS]);
-		expect(() => writeJoinProfile(raced.api, 1n, ANY_GUID, 'Example', () => '<WLANProfile/>')).toThrow(/group policy/);
+		const raced = joinApi([{ rc: NOT_FOUND }, { rc: 0, xml: stored('kept'), flags: POLICY_FLAGS }], [ALREADY_EXISTS]);
+		expect(() => writeJoinProfile(raced.api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>'))).toThrow(/group policy/);
 		expect(raced.writes).toEqual([{ flags: USER_FLAGS, overwrite: 0 }]);
 	});
 
@@ -767,15 +806,15 @@ describe('writeJoinProfile', () => {
 	// encrypted, so what comes back is never what was sent — which is exactly why
 	// the fingerprint is read rather than assumed.
 	it('fingerprints the profile as Windows stores it, not as it was written', () => {
-		const { api } = joinApi([{ rc: NOT_FOUND }, { rc: 0, xml: '<WLANProfile>as stored</WLANProfile>', flags: USER_FLAGS }]);
-		expect(writeJoinProfile(api, 1n, ANY_GUID, 'Example', () => '<WLANProfile>as written</WLANProfile>').written?.xml).toBe('<WLANProfile>as stored</WLANProfile>');
+		const { api } = joinApi([{ rc: NOT_FOUND }, { rc: 0, xml: stored('as stored'), flags: USER_FLAGS }]);
+		expect(writeJoinProfile(api, 1n, ANY_GUID, 'Example', target(stored('as written'))).written?.xml).toBe(stored('as stored'));
 	});
 
 	it('reports no fingerprint rather than failing when the read-back does not answer', () => {
 		// The write succeeded; failing the join over a fingerprint would report a
 		// failure that did not happen. What it costs is the rollback's proof.
 		const { api } = joinApi([{ rc: NOT_FOUND }, { rc: 5 }]);
-		expect(writeJoinProfile(api, 1n, ANY_GUID, 'Example', () => '<WLANProfile/>').written).toBeNull();
+		expect(writeJoinProfile(api, 1n, ANY_GUID, 'Example', target('<WLANProfile>new</WLANProfile>')).written).toBeNull();
 	});
 });
 
@@ -789,8 +828,8 @@ describe('writeJoinProfile', () => {
  * a change the user had just made.
  */
 describe('undoProfileChange', () => {
-	const WRITTEN = { xml: '<WLANProfile>ours</WLANProfile>', flags: USER_FLAGS, customUserData: null };
-	const PREVIOUS = { xml: '<WLANProfile>theirs</WLANProfile>', flags: USER_FLAGS, customUserData: null };
+	const WRITTEN = { xml: stored('ours'), flags: USER_FLAGS, customUserData: null };
+	const PREVIOUS = { xml: stored('theirs'), flags: USER_FLAGS, customUserData: null };
 
 	/** A WlanApi that answers one WlanGetProfile and records the delete and the write. */
 	function undoApi(read: ScriptedRead, customSetResult: number = 0) {
@@ -855,14 +894,14 @@ describe('undoProfileChange', () => {
 	});
 
 	it('keeps a profile another process changed, rather than deleting it', () => {
-		const { api, deletes, writes } = undoApi({ rc: 0, xml: '<WLANProfile>someone else</WLANProfile>', flags: USER_FLAGS });
+		const { api, deletes, writes } = undoApi({ rc: 0, xml: stored('someone else'), flags: USER_FLAGS });
 		expect(undoProfileChange(api, 1n, ANY_GUID, 'Example', { replaced: null, created: true, written: WRITTEN })).toContain('another process changed');
 		expect(deletes).toEqual([]);
 		expect(writes).toEqual([]);
 	});
 
 	it('keeps a profile another process changed, rather than overwriting it back', () => {
-		const { api, writes } = undoApi({ rc: 0, xml: '<WLANProfile>someone else</WLANProfile>', flags: USER_FLAGS });
+		const { api, writes } = undoApi({ rc: 0, xml: stored('someone else'), flags: USER_FLAGS });
 		expect(undoProfileChange(api, 1n, ANY_GUID, 'Example', { replaced: PREVIOUS, created: false, written: WRITTEN })).toContain('another process changed');
 		expect(writes).toEqual([]);
 	});
