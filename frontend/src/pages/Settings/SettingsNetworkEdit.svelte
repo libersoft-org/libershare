@@ -47,6 +47,17 @@
 	let baseline = $state<NetIPv4Baseline | null>(null);
 	let seededForm: NetworkConfigForm | null = null;
 	let stale = $state(false);
+	/**
+	 * True while a message the just-finished operation produced is on screen.
+	 *
+	 * An apply or a join CHANGES the interface it runs on — a failed Wi-Fi join
+	 * drops the association it started from, so the address goes and comes back.
+	 * The reseed below then fired on this form's own side effect and replaced
+	 * "check the password" with "the form was reloaded", clearing `failed` with it,
+	 * so the user was told nothing had gone wrong. The form still reseeds; only the
+	 * announcement is withheld, because the operation already said what happened.
+	 */
+	let reported = false;
 	$effect(() => {
 		if (!iface || busy) return;
 		const update = networkFormUpdate(ipv4BaselineOf(iface), baseline, formDirty());
@@ -55,13 +66,15 @@
 			stale = true;
 			failed = true;
 			message = $t('settings.network.changedOutside');
+			reported = false;
 			return;
 		}
 		seedFrom(iface);
-		if (update === 'reseed') {
+		if (update === 'reseed' && !reported) {
 			failed = false;
 			message = $t('settings.network.reloadedFromHost');
 		}
+		reported = false;
 	});
 
 	function seedFrom(source: NetInterfaceInfo): void {
@@ -144,9 +157,11 @@
 			seedCurrentInterface();
 			failed = false;
 			message = $t('settings.network.applied');
+			reported = true;
 		} catch (error) {
 			failed = true;
 			message = translateError(error);
+			reported = true;
 			try {
 				const current = (await refreshNetworkState()).interfaces.find(item => item.id === interfaceID);
 				// A stale form is reloaded so the user sees what they would now be
@@ -210,10 +225,12 @@
 			joinSSID = '';
 			joinBSSID = null;
 			password = '';
+			reported = true;
 		} catch (error) {
 			await syncAfterWifiMutation();
 			failed = true;
 			message = translateError(error);
+			reported = true;
 		} finally {
 			busy = false;
 			void refreshWifiNetworks();
