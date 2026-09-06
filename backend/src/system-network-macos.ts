@@ -414,11 +414,17 @@ export function parseAirportScan(text: string, device: string): NetWifiNetwork[]
 		const flush = (): void => {
 			if (ssid !== null && ssid !== REDACTED) {
 				const entry = airportNetwork(ssid, fields, list.joined);
-				const previous = networks.get(ssid);
-				// One name can appear on several access points; keep the strongest of
-				// them, but never lose the fact that one of them is the joined one.
+				// Keyed by NAME AND SECURITY, never by name alone: one name can sit on
+				// two networks that are not the same network — an open guest AP and an
+				// unrelated WPA2 one — and folding those together reported the security
+				// of the stronger with the association of the weaker, so an open network
+				// this host was joined to came back as "WPA2, connected".
+				const key = `${ssid} ${entry.security}`;
+				const previous = networks.get(key);
+				// Access points that agree still collapse: keep the strongest of them,
+				// and never lose the fact that one of them carries the association.
 				const stronger = !previous || (entry.signal ?? -1) > (previous.signal ?? -1) ? entry : previous;
-				networks.set(ssid, { ...stronger, active: (previous?.active ?? false) || entry.active });
+				networks.set(key, { ...stronger, active: (previous?.active ?? false) || entry.active });
 			}
 			ssid = null;
 			fields = new Map();

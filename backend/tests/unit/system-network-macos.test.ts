@@ -781,3 +781,30 @@ describe('parseAirportScan when a network is named after an adapter', () => {
 		expect(parseAirportScan(TWO_RADIOS, 'en9')).toEqual([]);
 	});
 });
+
+describe('parseAirportScan with one name on differently secured access points', () => {
+	// The joined network is the open one; an unrelated stronger WPA2 network shares
+	// its name. macOS lists the joined one in its own section, so the two arrive
+	// from different lists and used to be folded together by name alone.
+	const MIXED = ['Wi-Fi:', '', '      Interfaces:', '        en0:', '          Card Type: Wi-Fi', '          Status: Connected', '          Current Network Information:', '            Guests:', '              Security: None', '              Signal / Noise: -80 dBm / -90 dBm', '          Other Local Wi-Fi Networks:', '            Guests:', '              Security: WPA2 Personal', '              Signal / Noise: -60 dBm / -90 dBm'].join('\n');
+
+	it('never reports the association of one network with the security of another', () => {
+		const joined = parseAirportScan(MIXED, 'en0').filter(item => item.active);
+		expect(joined).toHaveLength(1);
+		expect(joined[0]).toMatchObject({ ssid: 'Guests', secured: false, security: '' });
+	});
+
+	it('keeps both, because they are not the same network', () => {
+		expect(parseAirportScan(MIXED, 'en0').map(item => [item.security, item.active])).toEqual([
+			['WPA2 Personal', false],
+			['', true],
+		]);
+	});
+
+	it('still collapses access points that agree on security', () => {
+		const same = MIXED.replace('              Security: None', '              Security: WPA2 Personal');
+		const networks = parseAirportScan(same, 'en0');
+		expect(networks).toHaveLength(1);
+		expect(networks[0]).toMatchObject({ signal: macDbmToQuality(-60), active: true });
+	});
+});
