@@ -686,3 +686,29 @@ describe('assertMacWifiConnected', () => {
 		expect(() => assertMacWifiConnected([], 'office-wifi')).toThrow('did not connect');
 	});
 });
+
+describe('parseAirportScan on names that look like structure', () => {
+	const block = (rows: string) => ['Wi-Fi:', '', '      Interfaces:', '        en0:', '          Status: Connected', rows].join('\n');
+
+	it('keeps a name that begins with a space, and the network after it', () => {
+		// The leading space is part of the SSID; trimming it would offer a network
+		// that does not exist. Reading the column from the first row instead of the
+		// shallowest one also swallowed the next entry as a field of this one.
+		const networks = parseAirportScan(block(['          Other Local Wi-Fi Networks:', '             Office:', '              Security: WPA2 Personal', '              Signal / Noise: -50 dBm / -90 dBm', '            Guest:', '              Security: None', '              Signal / Noise: -60 dBm / -90 dBm'].join('\n')), 'en0');
+		expect(networks.map(item => item.ssid)).toEqual([' Office', 'Guest']);
+		expect(networks.find(item => item.ssid === 'Guest')).toMatchObject({ secured: false, signal: macDbmToQuality(-60) });
+	});
+
+	it('treats a network named after a list heading as a network', () => {
+		// A heading only counts at the depth headings sit at; deeper is an SSID.
+		const networks = parseAirportScan(block(['          Other Local Wi-Fi Networks:', '            Current Network Information:', '              Security: WPA2 Personal', '              Signal / Noise: -55 dBm / -90 dBm', '            Guest:', '              Security: None', '              Signal / Noise: -65 dBm / -90 dBm'].join('\n')), 'en0');
+		expect(networks.map(item => item.ssid)).toEqual(['Current Network Information', 'Guest']);
+		// It is in the "other" list, so it must not be reported as the joined one.
+		expect(networks.every(item => !item.active)).toBe(true);
+	});
+
+	it('still tells the joined list from the other one', () => {
+		const networks = parseAirportScan(block(['          Current Network Information:', '            Home:', '              Signal / Noise: -40 dBm / -90 dBm', '          Other Local Wi-Fi Networks:', '            Guest:', '              Signal / Noise: -70 dBm / -90 dBm'].join('\n')), 'en0');
+		expect(networks.filter(item => item.active).map(item => item.ssid)).toEqual(['Home']);
+	});
+});

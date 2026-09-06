@@ -354,56 +354,88 @@ function airportNetwork(ssid: string, fields: Map<string, string>, active: boole
  * changes what it calls "active". Entries macOS refused to name are dropped
  * rather than shown: `networksetup` is addressed by name, so an unnamed row would
  * be an offer that cannot be honoured.
+ *
+ * A network name is whatever the report prints, and that includes names an
+ * ordinary parser would mistake for structure. The two defences are depth: a list
+ * heading only counts at the depth headings sit at, so a network CALLED "Current
+ * Network Information" stays a network; and the name is cut at a fixed column
+ * rather than trimmed, so a name that begins with a space keeps it and is still
+ * told apart from the fields underneath it. Getting either wrong renames a
+ * network, which then cannot be joined, or swallows the one after it.
  */
 export function parseAirportScan(text: string, device: string): NetWifiNetwork[] {
 	const networks = new Map<string, NetWifiNetwork>();
-	let joined = false;
-	let listDepth = -1;
-	let nameDepth = -1;
-	let ssid: string | null = null;
-	let fields = new Map<string, string>();
-	const flush = (): void => {
-		if (ssid !== null && ssid !== REDACTED) {
-			const entry = airportNetwork(ssid, fields, joined);
-			const previous = networks.get(ssid);
-			// One name can appear on several access points; keep the strongest of
-			// them, but never lose the fact that one of them is the joined one.
-			const stronger = !previous || (entry.signal ?? -1) > (previous.signal ?? -1) ? entry : previous;
-			networks.set(ssid, { ...stronger, active: (previous?.active ?? false) || entry.active });
+	for (const list of airportLists(airportInterfaceBlock(text, device))) {
+		// The column names start in is the SHALLOWEST one in the list, taken over the
+		// whole list before any of it is read. Taking it from the first row instead
+		// would let a name that begins with a space set the column one too deep, and
+		// every ordinary name after it would then read as a field of that first entry.
+		const nameRows = list.body.filter(line => line.trim().endsWith(':'));
+		if (nameRows.length === 0) continue;
+		const nameDepth = Math.min(...nameRows.map(indentOf));
+		let ssid: string | null = null;
+		let fields = new Map<string, string>();
+		const flush = (): void => {
+			if (ssid !== null && ssid !== REDACTED) {
+				const entry = airportNetwork(ssid, fields, list.joined);
+				const previous = networks.get(ssid);
+				// One name can appear on several access points; keep the strongest of
+				// them, but never lose the fact that one of them is the joined one.
+				const stronger = !previous || (entry.signal ?? -1) > (previous.signal ?? -1) ? entry : previous;
+				networks.set(ssid, { ...stronger, active: (previous?.active ?? false) || entry.active });
+			}
+			ssid = null;
+			fields = new Map();
+		};
+		for (const line of list.body) {
+			const label = line.trim();
+			// Only a name ends in a colon with nothing after it; every field line in
+			// the measured report is `Key: value`. Cutting at the fixed column keeps a
+			// leading space that belongs to the name, which trimming would delete —
+			// renaming the network into one that cannot be joined.
+			if (label.endsWith(':')) {
+				flush();
+				ssid = line.slice(nameDepth).trimEnd().replace(/:$/, '');
+				continue;
+			}
+			const separator = label.indexOf(':');
+			if (ssid !== null && separator > 0) fields.set(label.slice(0, separator).trim(), label.slice(separator + 1).trim());
 		}
-		ssid = null;
-		fields = new Map();
-	};
-	for (const line of airportInterfaceBlock(text, device)) {
+		flush();
+	}
+	return [...networks.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
+}
+
+/**
+ * Split one interface block into its two network lists.
+ *
+ * Both headings sit at the same depth, so the first one seen fixes it. A later
+ * line carrying the same text but deeper is a network NAMED after a heading, not
+ * a heading — without that check such a network renames itself and swallows the
+ * rows beneath it.
+ */
+function airportLists(lines: string[]): { joined: boolean; body: string[] }[] {
+	const lists: { joined: boolean; body: string[] }[] = [];
+	let headingDepth = -1;
+	let current: { joined: boolean; body: string[] } | null = null;
+	for (const line of lines) {
 		if (!line.trim()) continue;
 		const depth = indentOf(line);
 		const label = line.trim();
-		if (label === 'Current Network Information:' || label === 'Other Local Wi-Fi Networks:') {
-			flush();
-			joined = label.startsWith('Current');
-			listDepth = depth;
-			nameDepth = -1;
+		if ((label === 'Current Network Information:' || label === 'Other Local Wi-Fi Networks:') && (headingDepth < 0 || depth === headingDepth)) {
+			headingDepth = depth;
+			current = { joined: label.startsWith('Current'), body: [] };
+			lists.push(current);
 			continue;
 		}
-		if (listDepth < 0) continue;
-		if (depth <= listDepth) {
-			flush();
-			listDepth = -1;
+		if (!current) continue;
+		if (depth <= headingDepth) {
+			current = null;
 			continue;
 		}
-		// The first row of a list fixes the depth network names sit at, so the
-		// parser does not depend on system_profiler's indentation step staying two.
-		if (nameDepth < 0) nameDepth = depth;
-		if (depth === nameDepth) {
-			flush();
-			ssid = label.replace(/:$/, '');
-			continue;
-		}
-		const separator = label.indexOf(':');
-		if (ssid !== null && separator > 0) fields.set(label.slice(0, separator).trim(), label.slice(separator + 1).trim());
+		current.body.push(line);
 	}
-	flush();
-	return [...networks.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
+	return lists;
 }
 
 /**
