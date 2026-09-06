@@ -662,8 +662,30 @@ export function hasMacWritePrivilege(effectiveUID: number | undefined): boolean 
  */
 export async function isMacWifiConfigurable(): Promise<boolean> {
 	const ports = parseHardwarePorts(await runOptional(NETWORKSETUP, ['-listallhardwareports']));
-	if (![...ports.values()].some(port => /^Wi-Fi$/i.test(port))) return false;
+	const wireless = [...ports].filter(([, port]) => /^Wi-Fi$/i.test(port)).map(([device]) => device);
+	if (wireless.length === 0) return false;
+	// This runs on every capability read, and a capability that can be granted
+	// while the app is running has to be re-read often. `ipconfig getsummary`
+	// answers the same question in ~8 ms where `system_profiler` takes ~3 s,
+	// because it reports the association rather than driving a scan — but it can
+	// only answer for a radio that is associated, so a silent one falls back.
+	for (const device of wireless) {
+		const summary = macSummarySsidVisible(await runOptional('/usr/sbin/ipconfig', ['getsummary', device]));
+		if (summary !== null) return summary;
+	}
 	return macWifiNamesVisible(await runOptional('/usr/sbin/system_profiler', ['SPAirPortDataType']));
+}
+
+/**
+ * Whether `ipconfig getsummary` named the network this radio is on.
+ *
+ * Null means it did not say — the radio is not associated, so the report carries
+ * no name either way and proves nothing about the permission.
+ */
+export function macSummarySsidVisible(summary: string): boolean | null {
+	const ssid = summary.match(/^\s*SSID\s*:\s*(.+?)\s*$/m);
+	if (!ssid?.[1]) return null;
+	return ssid[1] !== REDACTED;
 }
 
 /** Scan for the Wi-Fi networks one interface can see. */

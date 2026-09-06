@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { assertMacIPv4Applied, assertMacJoinAccepted, assertMacWifiConnected, hasMacWritePrivilege, macApplyArgs, macJoinArgs, macRestoreRequiresLease, macWifiNamesVisible, withMacRollback, macDbmToQuality, netmaskFromPrefix, parseAirport, parseAirportScan, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseScopedDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { assertMacIPv4Applied, assertMacJoinAccepted, macSummarySsidVisible, assertMacWifiConnected, hasMacWritePrivilege, macApplyArgs, macJoinArgs, macRestoreRequiresLease, macWifiNamesVisible, withMacRollback, macDbmToQuality, netmaskFromPrefix, parseAirport, parseAirportScan, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseScopedDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -732,3 +732,19 @@ describe('parseAirportScan when a name is the only entry in its list', () => {
 	});
 });
 
+describe('macSummarySsidVisible', () => {
+	it('reads a withheld name as the permission being missing', () => {
+		expect(macSummarySsidVisible('  BSSID : <redacted>\n  SSID : <redacted>\n')).toBe(false);
+	});
+
+	it('reads a real name as the permission being granted', () => {
+		expect(macSummarySsidVisible('  SSID : office-wifi\n  BSSID : 0:1:2:3:4:5\n')).toBe(true);
+	});
+
+	it('answers nothing for a radio that is not associated', () => {
+		// No name is reported either way, so this proves nothing about the permission
+		// and the caller has to fall back to the slower report.
+		expect(macSummarySsidVisible('  BSSID : 0\n')).toBeNull();
+		expect(macSummarySsidVisible('')).toBeNull();
+	});
+});
