@@ -38,7 +38,7 @@ export function networkFormUpdate(current: NetIPv4Baseline, baseline: NetIPv4Bas
 }
 
 /** What a fresh reading of the interface means for the message the form is showing. */
-export type NetworkFormMessage = 'keep' | 'stale' | 'reseedSilent' | 'reseedAnnounce';
+export type NetworkFormMessage = 'keep' | 'stale' | 'staleSilent' | 'reseedSilent' | 'reseedAnnounce';
 
 /**
  * Whether a re-seed may replace what the form is currently saying.
@@ -58,7 +58,13 @@ export type NetworkFormMessage = 'keep' | 'stale' | 'reseedSilent' | 'reseedAnno
  */
 export function networkFormMessage(update: NetworkFormUpdate, reported: boolean): NetworkFormMessage {
 	if (update === 'keep') return 'keep';
-	if (update === 'stale') return 'stale';
+	// Going stale is a STATE, and it shows as one: Save greys out and a reload
+	// button appears. The wording is what has to give way, because the change under
+	// a half-typed form is very often this form's own failed attempt — a wrong
+	// password drops the association and takes the address with it. Saying
+	// "changed outside" there hides the reason the user actually needs and blames
+	// somebody else for it. The form still goes stale either way.
+	if (update === 'stale') return reported ? 'staleSilent' : 'stale';
 	// The FIRST fill is not a reload. Announcing it tells someone who merely opened
 	// the screen that their form was reloaded, which never happened.
 	if (update === 'seed') return 'reseedSilent';

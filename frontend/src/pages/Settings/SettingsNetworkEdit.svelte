@@ -69,11 +69,15 @@
 		const update = networkFormUpdate(ipv4BaselineOf(iface), baseline, formDirty());
 		const announcement = networkFormMessage(update, reported);
 		if (announcement === 'keep') return;
-		if (announcement === 'stale') {
+		if (announcement === 'stale' || announcement === 'staleSilent') {
 			stale = true;
-			failed = true;
-			message = $t('settings.network.changedOutside');
-			reported = false;
+			// Blocking Save and offering the reload button is the whole state; the
+			// wording is only added when there is nothing more useful on screen.
+			if (announcement === 'stale') {
+				failed = true;
+				message = $t('settings.network.changedOutside');
+				reported = false;
+			}
 			return;
 		}
 		seedFrom(iface);
@@ -108,6 +112,8 @@
 		if (iface) seedFrom(iface);
 		failed = false;
 		message = '';
+		// The message this protected is gone, so the protection goes with it.
+		reported = false;
 	}
 
 	function seedCurrentInterface(): void {

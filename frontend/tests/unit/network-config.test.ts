@@ -120,10 +120,13 @@ describe('networkFormMessage', () => {
 		expect(networkFormMessage('reseed', reported)).toBe('reseedAnnounce');
 	});
 
-	it('lets a real outside change through whatever the form was saying', () => {
-		// The host moving under a form being typed into is news that supersedes the
-		// previous result, so it is reported even while a message is protected.
-		expect(networkFormMessage('stale', true)).toBe('stale');
+	it('goes stale either way, but keeps a result the operation just reported', () => {
+		// The change under a half-typed form is very often this form's own failed
+		// attempt: a wrong password drops the association and takes the address with
+		// it. Saying "changed outside" there hid the reason the user needed and
+		// blamed somebody else for it. Save still greys out and the reload button
+		// still appears, because that is the state, not the wording.
+		expect(networkFormMessage('stale', true)).toBe('staleSilent');
 		expect(networkFormMessage('stale', false)).toBe('stale');
 	});
 
@@ -139,5 +142,19 @@ describe('networkFormMessage on the first fill', () => {
 		// announced a reload that never happened.
 		expect(networkFormMessage('seed', false)).toBe('reseedSilent');
 		expect(networkFormMessage('seed', true)).toBe('reseedSilent');
+	});
+});
+
+describe('networkFormMessage through a failed join on a half-typed form', () => {
+	it('keeps the reason across the stale reading and every re-seed after it', () => {
+		// The exact sequence: the user is editing DNS, a join fails, the interface
+		// moves because of that failure, and the readings arrive one after another.
+		let reported = true;
+		expect(networkFormMessage('stale', reported)).toBe('staleSilent');
+		expect(networkFormMessage('reseed', reported)).toBe('reseedSilent');
+		expect(networkFormMessage('reseed', reported)).toBe('reseedSilent');
+		// Reloading the form drops the message, so the protection drops with it.
+		reported = false;
+		expect(networkFormMessage('stale', reported)).toBe('stale');
 	});
 });
