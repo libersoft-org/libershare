@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { canOpenNetworkConfig, networkConfigFormFrom, networkConfigFromForm, networkFormUpdate, validateNetworkConfigForm, visiblePrimaryInterface, type NetworkConfigForm } from '../../src/scripts/networkConfig.ts';
+import { canOpenNetworkConfig, networkConfigFormFrom, networkConfigFromForm, networkFormMessage, networkFormUpdate, validateNetworkConfigForm, visiblePrimaryInterface, type NetworkConfigForm } from '../../src/scripts/networkConfig.ts';
 import type { NetInterfaceInfo, NetIPv4Baseline } from '@shared';
 
 const iface: NetInterfaceInfo = {
@@ -99,5 +99,36 @@ describe('open form against a moving host', () => {
 	it('seeds the first reading, which has no baseline to compare against', () => {
 		expect(networkFormUpdate(opened, null, false)).toBe('seed');
 		expect(networkFormUpdate(opened, null, true)).toBe('seed');
+	});
+});
+
+describe('networkFormMessage', () => {
+	it('announces a re-seed when nothing else is on screen', () => {
+		expect(networkFormMessage('reseed', false)).toBe('reseedAnnounce');
+	});
+
+	it('keeps quiet through EVERY re-seed a finished operation causes', () => {
+		// A failed join drops the association it started from, so the address goes
+		// and comes back: one attempt arrives as several re-seeds. Announcing on any
+		// of them replaces "check the password" with "the form was reloaded".
+		let reported = true;
+		expect(networkFormMessage('reseed', reported)).toBe('reseedSilent');
+		expect(networkFormMessage('reseed', reported)).toBe('reseedSilent');
+		expect(networkFormMessage('reseed', reported)).toBe('reseedSilent');
+		// The protection ends where the message does: at the next operation.
+		reported = false;
+		expect(networkFormMessage('reseed', reported)).toBe('reseedAnnounce');
+	});
+
+	it('lets a real outside change through whatever the form was saying', () => {
+		// The host moving under a form being typed into is news that supersedes the
+		// previous result, so it is reported even while a message is protected.
+		expect(networkFormMessage('stale', true)).toBe('stale');
+		expect(networkFormMessage('stale', false)).toBe('stale');
+	});
+
+	it('does nothing when the host still matches the form', () => {
+		expect(networkFormMessage('keep', true)).toBe('keep');
+		expect(networkFormMessage('keep', false)).toBe('keep');
 	});
 });

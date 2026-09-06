@@ -37,6 +37,31 @@ export function networkFormUpdate(current: NetIPv4Baseline, baseline: NetIPv4Bas
 	return dirty ? 'stale' : 'reseed';
 }
 
+/** What a fresh reading of the interface means for the message the form is showing. */
+export type NetworkFormMessage = 'keep' | 'stale' | 'reseedSilent' | 'reseedAnnounce';
+
+/**
+ * Whether a re-seed may replace what the form is currently saying.
+ *
+ * A re-seed normally announces itself, because the fields changed under the user
+ * and they deserve to know why. It must NOT announce while the form is still
+ * showing the result of an operation the user started: a failed join or save
+ * settles over SEVERAL readings — the address disappears and comes back — and
+ * every one of them arrives as a re-seed. Announcing on any of them replaces
+ * "check the password" with "the form was reloaded" and clears the failure with
+ * it, telling the user nothing went wrong.
+ *
+ * `reported` therefore lasts as long as the message it protects, not for one
+ * update: it is set when an operation reports, and cleared when the next
+ * operation starts or when the host really did change under a form being typed
+ * into, which is news that supersedes the old result.
+ */
+export function networkFormMessage(update: NetworkFormUpdate, reported: boolean): NetworkFormMessage {
+	if (update === 'keep') return 'keep';
+	if (update === 'stale') return 'stale';
+	return reported ? 'reseedSilent' : 'reseedAnnounce';
+}
+
 /** A missing saved adapter is rendered as Automatic, matching backend fallback. */
 export function visiblePrimaryInterface(preferredID: string, interfaces: NetInterfaceInfo[]): string {
 	return preferredID && interfaces.some(iface => iface.id === preferredID) ? preferredID : '';

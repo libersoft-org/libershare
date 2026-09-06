@@ -5,7 +5,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { applyInterfaceConfig, joinWifiNetwork, networkState, refreshNetworkState, scanWifiNetworks } from '../../scripts/networkState.ts';
-	import { networkConfigFormFrom, networkConfigFromForm, networkFormUpdate, validateNetworkConfigForm, type DnsUpdateMode, type NetworkConfigForm } from '../../scripts/networkConfig.ts';
+	import { networkConfigFormFrom, networkConfigFromForm, networkFormMessage, networkFormUpdate, validateNetworkConfigForm, type DnsUpdateMode, type NetworkConfigForm } from '../../scripts/networkConfig.ts';
 	import { ipv4BaselineOf, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Baseline, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -56,13 +56,20 @@
 	 * "check the password" with "the form was reloaded", clearing `failed` with it,
 	 * so the user was told nothing had gone wrong. The form still reseeds; only the
 	 * announcement is withheld, because the operation already said what happened.
+	 *
+	 * The flag lasts as long as the message it protects. One failed attempt settles
+	 * over SEVERAL state updates — the address disappears and comes back — so
+	 * clearing it after the first of them would let the second one overwrite the
+	 * very message this exists to keep. It is cleared where the message is: when the
+	 * next operation starts, or when the host really did change under the form.
 	 */
 	let reported = false;
 	$effect(() => {
 		if (!iface || busy) return;
 		const update = networkFormUpdate(ipv4BaselineOf(iface), baseline, formDirty());
-		if (update === 'keep') return;
-		if (update === 'stale') {
+		const announcement = networkFormMessage(update, reported);
+		if (announcement === 'keep') return;
+		if (announcement === 'stale') {
 			stale = true;
 			failed = true;
 			message = $t('settings.network.changedOutside');
@@ -70,11 +77,10 @@
 			return;
 		}
 		seedFrom(iface);
-		if (update === 'reseed' && !reported) {
+		if (announcement === 'reseedAnnounce') {
 			failed = false;
 			message = $t('settings.network.reloadedFromHost');
 		}
-		reported = false;
 	});
 
 	function seedFrom(source: NetInterfaceInfo): void {
@@ -152,6 +158,7 @@
 		const config = networkConfigFromForm(form) as NetIPv4Config;
 		busy = true;
 		message = '';
+		reported = false;
 		try {
 			await applyInterfaceConfig(interfaceID, config, expected);
 			seedCurrentInterface();
@@ -217,6 +224,7 @@
 		if (!ssid || busy || scanning) return;
 		busy = true;
 		message = '';
+		reported = false;
 		try {
 			const state = await joinWifiNetwork(interfaceID, ssid, bssid, password);
 			await syncAfterWifiMutation(state);
