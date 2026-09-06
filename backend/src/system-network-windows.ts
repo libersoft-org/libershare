@@ -1305,13 +1305,16 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 				connectByProfile(api, handle, guidBytes, parameters);
 				return;
 			}
-			const rc = api.WlanConnect(handle, ptr(guidBytes), ptr(parameters), null);
-			if (rc === 0) return;
-			// Nothing stored for this name. The only network that can be joined without a
-			// key is an open one, so give Windows an open profile to work from — but
-			// never in place of one it already holds. When one does already exist, the
-			// failed connect is the real story and its code is the one worth reporting.
-			if (writeProfile(api, handle, guidBytes, target.newProfile(), WLAN_PROFILE_USER, 0) === ERROR_ALREADY_EXISTS) throw new Error(wlanErrorMessage(rc));
+			// The profile is addressed BY NAME here too, so what it holds is checked
+			// before it is used. Connecting first and asking afterwards let
+			// `WlanConnect` associate with whatever network the stored profile named.
+			if (openJoinDecision(readStoredProfile(api, handle, guidBytes, profileName), target) === 'connect') {
+				connectByProfile(api, handle, guidBytes, parameters);
+				return;
+			}
+			// Believed absent, and the write is what makes that checkable: anything but
+			// ERROR_ALREADY_EXISTS means it landed on the empty name it was aimed at.
+			if (writeProfile(api, handle, guidBytes, target.newProfile(), WLAN_PROFILE_USER, 0) === ERROR_ALREADY_EXISTS) throw new Error('another process saved a profile for this network while it was being joined, so it was not joined');
 			change = { replaced: null, created: true, written: readWrittenProfile(api, handle, guidBytes, profileName) };
 			connectByProfile(api, handle, guidBytes, parameters);
 		});
@@ -1526,6 +1529,36 @@ export interface JoinTarget {
 }
 
 /**
+ * Refuse a stored profile that belongs to a different network.
+ *
+ * A profile NAME is not a network: Windows lets the two differ, and this app
+ * falls back to the SSID for the name when the scan names no profile. Both the
+ * write and the connect address the profile BY NAME, so without this a saved
+ * "Cafe" pointing at another SSID would be overwritten by one join and used to
+ * associate by another - `WlanConnect` takes the networks from the profile it is
+ * given, not from the name it was asked for.
+ */
+function assertProfileIsForNetwork(xml: string, target: JoinTarget): void {
+	if (profileSsidHex(xml) !== target.ssidHex) throw new Error('a different network is already saved under this name in Windows, so this one was not joined');
+}
+
+/**
+ * What an open-network join should do about the profile stored under this name:
+ * use it, or create one.
+ *
+ * A decision of its own because the branch it drives is pure FFI on both sides,
+ * which is how it came to skip the ownership check the keyed branch had. Throws
+ * rather than returning a third case: neither an unreadable profile nor one
+ * belonging to another network leaves anything safe to do.
+ */
+export function openJoinDecision(stored: StoredProfileResult, target: JoinTarget): 'connect' | 'create' {
+	if (stored.kind === 'error') throw new Error(`the saved configuration of this network could not be read, so it was not joined (${stored.message})`);
+	if (stored.kind === 'notFound') return 'create';
+	assertProfileIsForNetwork(stored.profile.xml, target);
+	return 'connect';
+}
+
+/**
  * Write the profile a keyed join needs, and report what that did to what Windows
  * already held.
  *
@@ -1577,7 +1610,7 @@ export function writeJoinProfile(api: WlanApi, handle: WlanHandle, guidBytes: Ui
 		// profile called the same thing as the network being joined may belong to a
 		// completely different SSID — and overwriting it destroys that network's
 		// saved configuration on SUCCESS, where nothing rolls anything back.
-		if (profileSsidHex(existing.xml) !== target.ssidHex) throw new Error('a different network is already saved under this name in Windows, so it was not replaced');
+		assertProfileIsForNetwork(existing.xml, target);
 		// Only the credentials change. Regenerating the document kept the SSID and
 		// the key and dropped everything else the user had set on this profile.
 		const edited = withJoinCredentials(existing.xml, target.password, target.sae);

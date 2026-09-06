@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { ptr, toArrayBuffer, type Pointer } from 'bun:ffi';
-import { assertWindowsWifiKey, withJoinCredentials, type JoinTarget, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readStoredProfile, readUtf16z, undoProfileChange, writeJoinProfile, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
+import { assertWindowsWifiKey, openJoinDecision, withJoinCredentials, type JoinTarget, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readStoredProfile, readUtf16z, undoProfileChange, writeJoinProfile, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
 
 /**
  * The Windows Wi-Fi surface is FFI, so most of what can go wrong is a struct
@@ -326,6 +326,34 @@ describe('encodeConnectionParameters', () => {
 		// dot11_BSS_type_infrastructure, and no flags.
 		expect(view.getUint32(32, true)).toBe(1);
 		expect(view.getUint32(36, true)).toBe(0);
+	});
+});
+
+describe('openJoinDecision', () => {
+	const SSID = '4578616D706C65';
+	const mine = { kind: 'found' as const, profile: { xml: `<WLANProfile><SSIDConfig><SSID><hex>${SSID}</hex></SSID></SSIDConfig></WLANProfile>`, flags: 2, customUserData: null } };
+	const theirs = { kind: 'found' as const, profile: { xml: '<WLANProfile><SSIDConfig><SSID><hex>4F7468657231</hex></SSID></SSIDConfig></WLANProfile>', flags: 2, customUserData: null } };
+	const target: JoinTarget = { ssidHex: SSID, password: '', sae: false, newProfile: () => '<WLANProfile/>' };
+
+	it('uses a stored profile that really belongs to this network', () => {
+		expect(openJoinDecision(mine, target)).toBe('connect');
+	});
+
+	it('refuses one of the same name that belongs to another network', () => {
+		// This is the open-network branch, where nothing is written — so nothing is
+		// rolled back either. `WlanConnect` takes the networks from the profile it is
+		// handed, so using this one would associate the machine with the OTHER
+		// network and leave it there.
+		expect(() => openJoinDecision(theirs, target)).toThrow(/a different network is already saved under this name/);
+	});
+
+	it('creates one when the name is genuinely free', () => {
+		expect(openJoinDecision({ kind: 'notFound' }, target)).toBe('create');
+	});
+
+	it('refuses a profile it could not read rather than guessing', () => {
+		// Not the same as absent: writing here would replace a profile with no backup.
+		expect(() => openJoinDecision({ kind: 'error', message: 'access denied by Windows' }, target)).toThrow(/could not be read/);
 	});
 });
 
