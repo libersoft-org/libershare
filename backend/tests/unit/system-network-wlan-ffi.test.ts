@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { FFIType } from 'bun:ffi';
-import { isWindowsInterfaceID, loadWlanApiForTest, readWindowsWifi, WLAN_SYMBOLS } from '../../src/system-network-windows.ts';
+import { hasWlanAdapter, isWindowsInterfaceID, loadWlanApiForTest, openWlanHandleForTest, readWindowsWifi, WLAN_SYMBOLS } from '../../src/system-network-windows.ts';
 
 /**
  * The ABI of the WLAN client handle.
@@ -70,15 +70,25 @@ describe.if(process.platform === 'win32')('readWindowsWifi against the live WLAN
 		expect(missing).toEqual([]);
 	});
 
-	it('completes a full open/enumerate/query/close cycle without throwing', () => {
-		const result = readWindowsWifi();
-		expect(result).toBeInstanceOf(Map);
+	it('really talks to the service, rather than swallowing a failure as an empty answer', () => {
+		// `readWindowsWifi` is best-effort by design: a service it cannot reach yields
+		// an empty Map, which is the right answer for the screen and a useless one for
+		// a test. Asserting the TYPE therefore passed on a host where nothing worked.
+		// `withWlanHandle` throws instead, so this is the check that the handle really
+		// opened; a host with no WLAN stack at all is skipped below rather than
+		// counted as a successful conversation with one.
+		expect(() => openWlanHandleForTest()).not.toThrow();
 	});
 
 	it('keys every adapter it found by a canonical interface GUID', () => {
-		// Empty on a host with no radio, which is a legitimate outcome; when there IS
-		// one, a wrong handle or struct offset shows up as a malformed key.
-		for (const [guid, info] of readWindowsWifi()) {
+		const adapters = readWindowsWifi();
+		// A machine with no radio has nothing to describe, and saying so is honest —
+		// but it must not be reported as having exercised the read path either.
+		if (adapters.size === 0) {
+			expect(hasWlanAdapter()).toBe(false);
+			return;
+		}
+		for (const [guid, info] of adapters) {
 			expect(isWindowsInterfaceID(guid)).toBe(true);
 			expect(['on', 'off', 'unknown']).toContain(info.radio);
 			if (info.signal !== null) expect(info.signal).toBeLessThanOrEqual(100);
@@ -86,8 +96,9 @@ describe.if(process.platform === 'win32')('readWindowsWifi against the live WLAN
 	});
 
 	it('is repeatable, so the handle is really being released each time', () => {
-		// A leaked handle would eventually have WlanOpenHandle refuse; running the
-		// cycle many times is the cheap way to notice.
-		for (let i = 0; i < 20; i++) expect(readWindowsWifi()).toBeInstanceOf(Map);
+		// A leaked handle would eventually have WlanOpenHandle refuse. The open is
+		// what proves that, so it is the open that is repeated — twenty type checks
+		// on an empty Map proved nothing.
+		for (let i = 0; i < 20; i++) expect(() => openWlanHandleForTest()).not.toThrow();
 	});
 });

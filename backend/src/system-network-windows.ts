@@ -424,6 +424,32 @@ function getWlanApi(): WlanApi | null {
 	return wlanApi;
 }
 
+/**
+ * Open and close a WLAN client handle, for the FFI test.
+ *
+ * Throws when the service cannot be reached — which is the point: {@link
+ * readWindowsWifi} is best-effort and answers an unreachable service with an
+ * empty map, so a test asserting its return TYPE passed on a host where nothing
+ * worked at all.
+ */
+export function openWlanHandleForTest(): void {
+	withWlanHandle(() => undefined);
+}
+
+/** Whether this host has a WLAN adapter at all, for the FFI test to tell 'none' from 'unreachable'. */
+export function hasWlanAdapter(): boolean {
+	return withWlanHandle((api, handle) => {
+		const listOut = new BigUint64Array(1);
+		if (api.WlanEnumInterfaces(handle, null, ptr(listOut)) !== 0) return false;
+		const list = Number(listOut[0]) as Pointer;
+		try {
+			return read.u32(list, 0) > 0;
+		} finally {
+			api.WlanFreeMemory(list);
+		}
+	});
+}
+
 /** The loaded library, for the FFI test that checks every declared symbol really bound. */
 export function loadWlanApiForTest(): WlanApi | null {
 	return getWlanApi();
