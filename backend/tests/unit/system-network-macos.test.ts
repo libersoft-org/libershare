@@ -321,6 +321,9 @@ describe('parseMacNetworkState', () => {
 				.filter(i => i.medium !== 'wireless')
 				.every(i => !i.wifiConfigurable)
 		).toBe(true);
+		// A neighbour whose own name contains the marker is not a withheld name and
+		// must not take the screen's Wi-Fi section away from a host that can read it.
+		expect(parseMacNetworkState({ ...sources, airport: AIRPORT_NAMED.replace('            guest-open:', '            Guest-<redacted>:') }).find(i => i.id === 'en0')?.wifiConfigurable).toBe(true);
 	});
 
 	it('shows the resolvers an IPv6-only host was handed', () => {
@@ -634,6 +637,16 @@ describe('macWifiNamesVisible', () => {
 	it('treats a single redaction as proof the permission is missing', () => {
 		expect(macWifiNamesVisible(AIRPORT)).toBe(false);
 		expect(macWifiNamesVisible(AIRPORT_NAMED)).toBe(true);
+	});
+
+	it('does not mistake a neighbour NAMED after the marker for a withheld name', () => {
+		// macOS hides a name by printing a row that is only the marker. A network
+		// legitimately called "Guest-<redacted>" is a name we can read, and searching
+		// the whole report for the marker turned that neighbour into a reason to
+		// disable Wi-Fi configuration on a host naming every network perfectly well.
+		const neighbour = AIRPORT_NAMED.replace('            guest-open:', '            Guest-<redacted>:');
+		expect(macWifiNamesVisible(neighbour)).toBe(true);
+		expect(parseAirportScan(neighbour, 'en0').map(item => item.ssid)).toContain('Guest-<redacted>');
 	});
 
 	it('does not read an empty report as an answer', () => {

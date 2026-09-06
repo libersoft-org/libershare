@@ -454,7 +454,13 @@ function airportLists(block: { lines: string[]; depth: number; step: number }): 
  * proves nothing was asked, so it is not taken as an answer either.
  */
 export function macWifiNamesVisible(airport: string): boolean {
-	return airport.trim() !== '' && !airport.includes(REDACTED);
+	// Match the withheld NAME ROW, not the text anywhere in the document. macOS
+	// prints a hidden name as a row of its own, and a network legitimately called
+	// something like "Guest-<redacted>" is a name we can read: searching the whole
+	// report for the marker turned that neighbour into a reason to disable Wi-Fi
+	// configuration on a host that was naming every network perfectly well.
+	if (airport.trim() === '') return false;
+	return !airport.split('\n').some(line => line.trim() === `${REDACTED}:`);
 }
 
 /**
