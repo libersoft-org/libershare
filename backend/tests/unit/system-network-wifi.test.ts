@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { ptr, toArrayBuffer, type Pointer } from 'bun:ffi';
-import { assertWindowsWifiKey, openJoinDecision, withJoinCredentials, type JoinTarget, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readStoredProfile, readUtf16z, undoProfileChange, writeJoinProfile, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
+import { assertWindowsWifiKey, type AvailableNetwork, openJoinDecision, withJoinCredentials, type JoinTarget, encodeConnectionParameters, findScannedNetwork, guidToBytes, parseAvailableNetworks, readStoredProfile, readUtf16z, undoProfileChange, writeJoinProfile, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
 
 /**
  * The Windows Wi-Fi surface is FFI, so most of what can go wrong is a struct
@@ -32,6 +32,12 @@ interface NetworkFields {
 	notConnectableReason?: number;
 	/** Overrides the SSID's own byte length — used to forge an impossible one. */
 	ssidLength?: number;
+}
+
+/** The one network a lookup found, or null — an ambiguous answer is a test failure here. */
+function onlyMatch(found: ReturnType<typeof findScannedNetwork>): AvailableNetwork | null {
+	expect(found).not.toBe('ambiguous');
+	return found === 'ambiguous' ? null : found;
 }
 
 /** Buffers must outlive the pointers handed to the decoder, so every one is retained. */
@@ -179,13 +185,48 @@ describe('parseAvailableNetworks', () => {
 });
 
 describe('findScannedNetwork', () => {
+	it('refuses a name two different networks decode to', () => {
+		// `Café` and `Cafè` are two DIFFERENT SSIDs that both display as `Caf`
+		// plus a replacement character. Picking the stronger of them joined whichever
+		// happened to be closer at that instant, and the answer flipped between the
+		// list the user saw and the join that followed.
+		const a = [0x43, 0x61, 0x66, 0xe9];
+		const b = [0x43, 0x61, 0x66, 0xe8];
+		const name = new TextDecoder().decode(Uint8Array.from(a));
+		expect(
+			findScannedNetwork(
+				buildList([
+					{ ssid: name, ssidOctets: a, signal: 40 },
+					{ ssid: name, ssidOctets: b, signal: 80 },
+				]),
+				name
+			)
+		).toBe('ambiguous');
+		expect(
+			findScannedNetwork(
+				buildList([
+					{ ssid: name, ssidOctets: b, signal: 80 },
+					{ ssid: name, ssidOctets: a, signal: 40 },
+				]),
+				name
+			)
+		).toBe('ambiguous');
+	});
+
+	it('still picks the strongest access point of ONE network', () => {
+		const rows = [
+			{ ssid: 'Roaming', signal: 30 },
+			{ ssid: 'Roaming', signal: 88 },
+		];
+		expect(onlyMatch(findScannedNetwork(buildList(rows), 'Roaming'))?.signal).toBe(88);
+	});
 	it('reports the algorithm Windows recorded for a network', () => {
 		const list = buildList([
 			{ ssid: 'Modern Net', signal: 70, auth: 9 },
 			{ ssid: 'Older Net', signal: 70, auth: 7 },
 		]);
-		expect(findScannedNetwork(list, 'Modern Net')?.auth).toBe(9);
-		expect(findScannedNetwork(list, 'Older Net')?.auth).toBe(7);
+		expect(onlyMatch(findScannedNetwork(list, 'Modern Net'))?.auth).toBe(9);
+		expect(onlyMatch(findScannedNetwork(list, 'Older Net'))?.auth).toBe(7);
 	});
 
 	it('reports null for a name the list does not contain', () => {
@@ -198,12 +239,12 @@ describe('findScannedNetwork', () => {
 	// competing with it.
 	it('carries the profile name Windows itself uses, not the SSID', () => {
 		const list = buildList([{ ssid: 'Coffee Bar', signal: 70, profileName: 'Work laptop - cafe' }]);
-		expect(findScannedNetwork(list, 'Coffee Bar')?.profileName).toBe('Work laptop - cafe');
+		expect(onlyMatch(findScannedNetwork(list, 'Coffee Bar'))?.profileName).toBe('Work laptop - cafe');
 	});
 
 	it('reports an empty profile name for a network nothing is stored for', () => {
 		const list = buildList([{ ssid: 'Coffee Bar', signal: 70, profileName: '' }]);
-		expect(findScannedNetwork(list, 'Coffee Bar')?.profileName).toBe('');
+		expect(onlyMatch(findScannedNetwork(list, 'Coffee Bar'))?.profileName).toBe('');
 	});
 
 	// An SSID is a byte sequence. The decoded text is lossy for anything that is
@@ -212,7 +253,7 @@ describe('findScannedNetwork', () => {
 	it('keeps the raw SSID octets beside the decoded text', () => {
 		const octets = [0x4e, 0x65, 0x74, 0xff, 0xfe];
 		const list = buildList([{ ssid: '', signal: 70, ssidOctets: octets, ssidLength: octets.length }]);
-		const entry = findScannedNetwork(list, 'Net\uFFFD\uFFFD');
+		const entry = onlyMatch(findScannedNetwork(list, 'Net\uFFFD\uFFFD'));
 		expect(entry).not.toBeNull();
 		expect([...(entry?.ssidBytes ?? [])]).toEqual(octets);
 	});
@@ -225,10 +266,10 @@ describe('findScannedNetwork', () => {
 			{ ssid: 'Enterprise Net', signal: 70, connectable: false, notConnectableReason: 0x00028001 },
 			{ ssid: 'Coffee Bar', signal: 70 },
 		]);
-		expect(findScannedNetwork(list, 'Enterprise Net')?.connectable).toBe(false);
-		expect(findScannedNetwork(list, 'Enterprise Net')?.notConnectableReason).toBe(0x00028001);
-		expect(findScannedNetwork(list, 'Coffee Bar')?.connectable).toBe(true);
-		expect(findScannedNetwork(list, 'Coffee Bar')?.notConnectableReason).toBe(0);
+		expect(onlyMatch(findScannedNetwork(list, 'Enterprise Net'))?.connectable).toBe(false);
+		expect(onlyMatch(findScannedNetwork(list, 'Enterprise Net'))?.notConnectableReason).toBe(0x00028001);
+		expect(onlyMatch(findScannedNetwork(list, 'Coffee Bar'))?.connectable).toBe(true);
+		expect(onlyMatch(findScannedNetwork(list, 'Coffee Bar'))?.notConnectableReason).toBe(0);
 	});
 
 	it('picks the strongest entry when one name is on several access points', () => {
@@ -236,7 +277,7 @@ describe('findScannedNetwork', () => {
 			{ ssid: 'Roaming Net', signal: 30, auth: 7 },
 			{ ssid: 'Roaming Net', signal: 88, auth: 9 },
 		]);
-		expect(findScannedNetwork(list, 'Roaming Net')?.auth).toBe(9);
+		expect(onlyMatch(findScannedNetwork(list, 'Roaming Net'))?.auth).toBe(9);
 	});
 });
 

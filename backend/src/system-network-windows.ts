@@ -1104,10 +1104,24 @@ export function parseAvailableNetworks(list: Pointer): NetWifiNetwork[] {
  * BSSID + SSID bytes) carried through the API, which the wire contract has no
  * field for.
  */
-export function findScannedNetwork(list: Pointer, ssid: string): AvailableNetwork | null {
+export function findScannedNetwork(list: Pointer, ssid: string): AvailableNetwork | 'ambiguous' | null {
 	let best: AvailableNetwork | null = null;
-	for (const entry of availableNetworks(list)) if (entry.ssid === ssid && (!best || (entry.signal ?? -1) > (best.signal ?? -1))) best = entry;
+	for (const entry of availableNetworks(list)) {
+		if (entry.ssid !== ssid) continue;
+		// An SSID is a byte sequence, and a decode is lossy: two DIFFERENT networks
+		// whose names differ only in an undecodable octet arrive here under one
+		// display name. Picking the strongest of those would join whichever happened
+		// to be closer at that instant, which is not the network the user chose - and
+		// the choice would flip between the list and the join.
+		if (best && !sameBytes(best.ssidBytes, entry.ssidBytes)) return 'ambiguous';
+		if (!best || (entry.signal ?? -1) > (best.signal ?? -1)) best = entry;
+	}
 	return best;
+}
+
+/** Byte-for-byte equality of two SSIDs, which is the only identity an SSID has. */
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+	return a.length === b.length && a.every((byte, index) => byte === b[index]);
 }
 
 /** DOT11_AUTH_ALGO_80211_OPEN — no authentication at all. */
@@ -1265,6 +1279,10 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 	// running it because the WLAN service hiccuped is how a transient error came to
 	// overwrite a saved network's configuration.
 	if (lookup.kind === 'readError') throw new Error(`the list of visible networks could not be read, so this network was not joined (${lookup.message})`);
+	// Two networks whose names differ only in a byte no decode can show apart. The
+	// user picked one of them and there is no way to tell which, so neither is
+	// joined rather than the stronger one being guessed at.
+	if (lookup.kind === 'ambiguous') throw new Error('more than one network is broadcasting this name, and they cannot be told apart by name alone');
 	const scanned = lookup.kind === 'found' ? lookup.network : null;
 	// A profile name is NOT an SSID. Windows keeps the two apart, the profile name
 	// is case-sensitive, and `WLAN_AVAILABLE_NETWORK` already carries the real one —
@@ -1804,7 +1822,7 @@ function wlanReasonText(api: WlanApi, reason: number): string | null {
  * wrote a profile from them. A list that could not be read says nothing about the
  * network, so nothing may be guessed from it.
  */
-type ScanLookup = { readonly kind: 'found'; readonly network: AvailableNetwork } | { readonly kind: 'notFound' } | { readonly kind: 'readError'; readonly message: string };
+type ScanLookup = { readonly kind: 'found'; readonly network: AvailableNetwork } | { readonly kind: 'notFound' } | { readonly kind: 'ambiguous' } | { readonly kind: 'readError'; readonly message: string };
 
 /**
  * What the WLAN service currently knows about one network name on one adapter.
@@ -1819,6 +1837,7 @@ function readScannedNetwork(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Ar
 	const list = Number(listOut[0]) as Pointer;
 	try {
 		const network = findScannedNetwork(list, ssid);
+		if (network === 'ambiguous') return { kind: 'ambiguous' };
 		return network ? { kind: 'found', network } : { kind: 'notFound' };
 	} catch (err) {
 		// A list that describes itself impossibly (see MAX_AVAILABLE_NETWORKS) is a
