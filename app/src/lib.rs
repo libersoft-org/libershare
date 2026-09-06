@@ -118,10 +118,12 @@ fn app_fullscreen(window: tauri::Window) {
 /// user could pick. The grant follows the responsible process, which for the
 /// backend this app spawns is this bundle, so asking once here covers both.
 ///
-/// Nothing is done with the location itself. The request is fire-and-forget: macOS
-/// shows the prompt at most once per install and answers later through a delegate
-/// this app does not need, because the permission is read back from whether the
-/// names arrive.
+/// Nothing is done with the location itself. The answer arrives through a delegate
+/// this app does not install, because the permission is read back from whether the
+/// network names stop being redacted — but the request is still asynchronous, and
+/// macOS abandons it if the manager that made it goes away first. The manager is
+/// therefore kept for the life of the process rather than dropped at the end of
+/// this function, which would race the prompt and could leave it never shown.
 #[cfg(target_os = "macos")]
 fn request_location_access() {
 	use objc2_core_location::{CLAuthorizationStatus, CLLocationManager};
@@ -133,6 +135,9 @@ fn request_location_access() {
 	if unsafe { manager.authorizationStatus() } == CLAuthorizationStatus::NotDetermined {
 		unsafe { manager.requestWhenInUseAuthorization() };
 	}
+	// One manager per process, held deliberately: it is main-thread bound, so it
+	// cannot live in a static, and there is nothing later that would release it.
+	std::mem::forget(manager);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
