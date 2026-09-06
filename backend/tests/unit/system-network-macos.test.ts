@@ -712,3 +712,23 @@ describe('parseAirportScan on names that look like structure', () => {
 		expect(networks.filter(item => item.active).map(item => item.ssid)).toEqual(['Home']);
 	});
 });
+
+describe('parseAirportScan when a name is the only entry in its list', () => {
+	const block = (rows: string[]) => ['Wi-Fi:', '', '      Interfaces:', '        en0:', '          Card Type: Wi-Fi', '          Status: Connected', ...rows].join('\n');
+
+	it('keeps a leading space when nothing else in the list can reveal the column', () => {
+		// The column comes from the report's nesting, not from the names: measuring it
+		// from the shallowest name would take this SSID's own space for indentation.
+		const networks = parseAirportScan(block(['          Other Local Wi-Fi Networks:', '             Office:', '              Signal / Noise: -50 dBm / -90 dBm']), 'en0');
+		expect(networks.map(item => item.ssid)).toEqual([' Office']);
+	});
+
+	it('keeps it for the joined network too, which is always alone in its list', () => {
+		// This one matters most: the join is confirmed by matching the name exactly,
+		// so losing the space reports a successful connection as a failure.
+		const networks = parseAirportScan(block(['          Current Network Information:', '             Office:', '              Signal / Noise: -40 dBm / -90 dBm']), 'en0');
+		expect(networks.map(item => [item.ssid, item.active])).toEqual([[' Office', true]]);
+		expect(() => assertMacWifiConnected(networks, ' Office')).not.toThrow();
+	});
+});
+

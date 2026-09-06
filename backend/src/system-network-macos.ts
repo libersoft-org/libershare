@@ -314,18 +314,24 @@ function indentOf(line: string): number {
  * firmware version of a real adapter carries an embedded newline whose second
  * line starts in column zero. Only a key — a line ending in a colon — at or above
  * the interface's own depth begins something new. Measured on macOS 15.7.4.
+ *
+ * The nesting step is reported alongside the lines, measured from the interface
+ * heading to its own first row. Both are structure the report chooses, never text
+ * a user picked, which is what makes the step trustworthy for locating the column
+ * network names start in.
  */
-function airportInterfaceBlock(text: string, device: string): string[] {
+function airportInterfaceBlock(text: string, device: string): { lines: string[]; depth: number; step: number } {
 	const lines = text.split('\n');
 	const start = lines.findIndex(line => line.trim() === `${device}:`);
-	if (start < 0) return [];
+	if (start < 0) return { lines: [], depth: 0, step: 0 };
 	const depth = indentOf(lines[start]!);
 	const block: string[] = [];
 	for (const line of lines.slice(start + 1)) {
 		if (line.trim().endsWith(':') && indentOf(line) <= depth) break;
 		block.push(line);
 	}
-	return block;
+	const first = block.find(line => line.trim() && indentOf(line) > depth);
+	return { lines: block, depth, step: first ? indentOf(first) - depth : 2 };
 }
 
 /** Turn one parsed `system_profiler` network entry into the shape the picker renders. */
@@ -365,14 +371,14 @@ function airportNetwork(ssid: string, fields: Map<string, string>, active: boole
  */
 export function parseAirportScan(text: string, device: string): NetWifiNetwork[] {
 	const networks = new Map<string, NetWifiNetwork>();
-	for (const list of airportLists(airportInterfaceBlock(text, device))) {
-		// The column names start in is the SHALLOWEST one in the list, taken over the
-		// whole list before any of it is read. Taking it from the first row instead
-		// would let a name that begins with a space set the column one too deep, and
-		// every ordinary name after it would then read as a field of that first entry.
-		const nameRows = list.body.filter(line => line.trim().endsWith(':'));
-		if (nameRows.length === 0) continue;
-		const nameDepth = Math.min(...nameRows.map(indentOf));
+	const block = airportInterfaceBlock(text, device);
+	for (const list of airportLists(block)) {
+		// The column names start in comes from the report's own nesting — one step in
+		// from the list heading — and NEVER from the names themselves. Measuring it
+		// from the shallowest name breaks on a list whose only entry begins with a
+		// space: that space is part of the SSID, and taking it for indentation
+		// silently renames the network into one that cannot be joined.
+		const nameDepth = list.depth + block.step;
 		let ssid: string | null = null;
 		let fields = new Map<string, string>();
 		const flush = (): void => {
@@ -414,17 +420,19 @@ export function parseAirportScan(text: string, device: string): NetWifiNetwork[]
  * a heading — without that check such a network renames itself and swallows the
  * rows beneath it.
  */
-function airportLists(lines: string[]): { joined: boolean; body: string[] }[] {
-	const lists: { joined: boolean; body: string[] }[] = [];
-	let headingDepth = -1;
-	let current: { joined: boolean; body: string[] } | null = null;
-	for (const line of lines) {
+function airportLists(block: { lines: string[]; depth: number; step: number }): { joined: boolean; depth: number; body: string[] }[] {
+	const lists: { joined: boolean; depth: number; body: string[] }[] = [];
+	// Both headings sit one step in from the interface, so the depth is known from
+	// the structure before any of them is seen — a network named after a heading
+	// cannot pass itself off as the first one.
+	const headingDepth = block.depth + block.step;
+	let current: { joined: boolean; depth: number; body: string[] } | null = null;
+	for (const line of block.lines) {
 		if (!line.trim()) continue;
 		const depth = indentOf(line);
 		const label = line.trim();
-		if ((label === 'Current Network Information:' || label === 'Other Local Wi-Fi Networks:') && (headingDepth < 0 || depth === headingDepth)) {
-			headingDepth = depth;
-			current = { joined: label.startsWith('Current'), body: [] };
+		if ((label === 'Current Network Information:' || label === 'Other Local Wi-Fi Networks:') && depth === headingDepth) {
+			current = { joined: label.startsWith('Current'), depth, body: [] };
 			lists.push(current);
 			continue;
 		}
@@ -556,7 +564,7 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 			ipv4Configurable: routeDetailKnown && services.has(device) && ipv4Mode !== 'unknown' && staticShapeSafe && ipv4Addresses.length <= 1 && deviceRoutes.length <= 1,
 			// Per device, not per host: a second radio macOS did not describe in the
 			// report cannot be scanned, so it is not offered either.
-			wifiConfigurable: medium === 'wireless' && namesVisible && airportInterfaceBlock(sources.airport ?? '', device).length > 0,
+			wifiConfigurable: medium === 'wireless' && namesVisible && airportInterfaceBlock(sources.airport ?? '', device).lines.length > 0,
 			gateway,
 			// Manually set servers win; otherwise fall back to what the DHCP lease
 			// handed out, so a DHCP link reports the resolvers it actually uses.
