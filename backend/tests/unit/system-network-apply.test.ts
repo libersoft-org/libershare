@@ -357,7 +357,9 @@ describe('network mutation serialization', () => {
 
 describe('network capability cache', () => {
 	const denied = { ipv4: false, wifi: false, staticGatewayRequired: false };
-	const allowed = { ipv4: true, wifi: false, staticGatewayRequired: false };
+	const allowed = { ipv4: true, wifi: true, staticGatewayRequired: false };
+	// A host that can already change addressing but cannot yet read Wi-Fi names.
+	const partial = { ipv4: true, wifi: false, staticGatewayRequired: false };
 	afterEach(resetNetworkCapabilitiesCache);
 
 	it('retries a negative result quickly and retains a positive result longer', async () => {
@@ -367,6 +369,21 @@ describe('network capability cache', () => {
 		expect(await readCachedCapabilities(probe, 0)).toEqual(denied);
 		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS - 1)).toEqual(denied);
 		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS)).toEqual(allowed);
+		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS + CAPABILITY_POSITIVE_TTL_MS - 1)).toEqual(allowed);
+		expect(probes).toBe(2);
+	});
+
+	it('keeps re-checking while any capability is still false', async () => {
+		// Location Services on macOS is granted while the app runs and nothing tells
+		// us: holding `ipv4 true, wifi false` for the long interval left the Wi-Fi
+		// section greyed out for minutes after the user had already allowed it.
+		resetNetworkCapabilitiesCache();
+		let probes = 0;
+		const probe = async () => (++probes === 1 ? partial : allowed);
+		expect(await readCachedCapabilities(probe, 0)).toEqual(partial);
+		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS - 1)).toEqual(partial);
+		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS)).toEqual(allowed);
+		// Once nothing is outstanding the answer is held for the long interval.
 		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS + CAPABILITY_POSITIVE_TTL_MS - 1)).toEqual(allowed);
 		expect(probes).toBe(2);
 	});

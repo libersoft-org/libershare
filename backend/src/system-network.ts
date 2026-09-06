@@ -336,7 +336,17 @@ export function assertAppliedIPv4State(state: NetworkStateInfo, interfaceID: str
 	}
 }
 
-/** What this host lets the app change, with short-lived negative results. */
+/**
+ * What this host lets the app change, with short-lived negative results.
+ *
+ * "Negative" means ANY capability that is still false, not "no capability at
+ * all". A permission the user can grant while the app is running — Location
+ * Services on macOS, which is what makes Wi-Fi names readable — turns a false
+ * into a true with nothing to tell us about it, so a host that can already do
+ * one thing must not sit on the other for the long interval. Holding
+ * `ipv4 = true, wifi = false` for five minutes left the Wi-Fi section greyed out
+ * long after the user had granted the permission it was waiting for.
+ */
 export const CAPABILITY_NEGATIVE_TTL_MS: number = 15_000;
 export const CAPABILITY_POSITIVE_TTL_MS: number = 5 * 60_000;
 let capabilityCache: { value: NetCapabilities; expiresAt: number } | null = null;
@@ -355,7 +365,7 @@ export async function readCachedCapabilities(probe: () => Promise<NetCapabilitie
 	const generation = capabilityGeneration;
 	const pending = probe().then(value => {
 		if (generation === capabilityGeneration) {
-			const writable = value.ipv4 || value.wifi;
+			const writable = value.ipv4 && value.wifi;
 			capabilityCache = { value, expiresAt: now + (writable ? CAPABILITY_POSITIVE_TTL_MS : CAPABILITY_NEGATIVE_TTL_MS) };
 		}
 		return value;
