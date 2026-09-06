@@ -726,6 +726,8 @@ const AVAILABLE_SSID_OFFSET = 516;
 const AVAILABLE_SIGNAL_OFFSET = 604;
 const AVAILABLE_SECURITY_OFFSET = 608;
 const AVAILABLE_AUTH_OFFSET = 612;
+/** WLAN_AVAILABLE_NETWORK.dot11DefaultCipherAlgorithm, the field after the authentication one. */
+const AVAILABLE_CIPHER_OFFSET = 616;
 const AVAILABLE_FLAGS_OFFSET = 620;
 /** Offset of the first WLAN_AVAILABLE_NETWORK inside WLAN_AVAILABLE_NETWORK_LIST (dwNumberOfItems + dwIndex). */
 const AVAILABLE_LIST_HEADER = 8;
@@ -1142,6 +1144,11 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
 	return a.length === b.length && a.every((byte, index) => byte === b[index]);
 }
 
+/** DOT11_CIPHER_ALGO_NONE — what an open network reports. */
+const CIPHER_ALGO_NONE = 0;
+/** DOT11_CIPHER_ALGO_CCMP — AES, and the only cipher the profiles here name. */
+const CIPHER_ALGO_CCMP = 4;
+
 /** DOT11_AUTH_ALGO_80211_OPEN — no authentication at all. */
 const AUTH_ALGO_OPEN = 1;
 /** DOT11_AUTH_ALGO_RSNA_PSK — WPA2-Personal. Note 6 is RSNA, which is 802.1X enterprise and NOT this. */
@@ -1156,10 +1163,17 @@ const AUTH_ALGO_RSNA_PSK = 7;
  * (802.1X enterprise, the legacy WPA-None modes) needs a profile shape this app
  * does not write, and offering it would hand the user a button that fails.
  */
-function windowsWifiSecurity(auth: number, secured: boolean): { security: string; supported: boolean } {
-	if (!secured) return { security: '', supported: auth === AUTH_ALGO_OPEN };
-	if (auth === AUTH_ALGO_WPA3_SAE) return { security: 'WPA3', supported: true };
-	if (auth === AUTH_ALGO_RSNA_PSK) return { security: 'WPA2', supported: true };
+function windowsWifiSecurity(auth: number, cipher: number, secured: boolean): { security: string; supported: boolean } {
+	if (!secured) return { security: '', supported: auth === AUTH_ALGO_OPEN && cipher === CIPHER_ALGO_NONE };
+	// The authentication method is only half the answer. `joinSecurityElement` writes
+	// `<encryption>AES</encryption>` and nothing else, so a network running WPA2 with
+	// TKIP was offered as joinable and then handed a profile demanding a cipher it
+	// does not speak — the association failed and the message sent the user to check
+	// a password that was never the problem. Supporting TKIP is not the fix; not
+	// claiming to support it is.
+	const usable = cipher === CIPHER_ALGO_CCMP;
+	if (auth === AUTH_ALGO_WPA3_SAE) return { security: 'WPA3', supported: usable };
+	if (auth === AUTH_ALGO_RSNA_PSK) return { security: usable ? 'WPA2' : 'WPA2-TKIP', supported: usable };
 	return { security: 'WPA-ENTERPRISE', supported: false };
 }
 
@@ -1198,6 +1212,7 @@ function* availableNetworks(list: Pointer): Generator<AvailableNetwork> {
 		const ssidBytes = new Uint8Array(toArrayBuffer(list, base + AVAILABLE_SSID_OFFSET, MAX_SSID_LENGTH)).slice(0, ssidLength);
 		const secured = read.u32(list, base + AVAILABLE_SECURITY_OFFSET) !== 0;
 		const auth = read.u32(list, base + AVAILABLE_AUTH_OFFSET);
+		const cipher = read.u32(list, base + AVAILABLE_CIPHER_OFFSET);
 		yield {
 			// Lossy by nature — an SSID is not guaranteed to be UTF-8 — so this form
 			// is for display and for matching what the user picked, never for
@@ -1209,7 +1224,7 @@ function* availableNetworks(list: Pointer): Generator<AvailableNetwork> {
 			secured,
 			active: (read.u32(list, base + AVAILABLE_FLAGS_OFFSET) & AVAILABLE_NETWORK_CONNECTED) !== 0,
 			auth,
-			...windowsWifiSecurity(auth, secured),
+			...windowsWifiSecurity(auth, cipher, secured),
 			// WLAN_AVAILABLE_NETWORK describes a NETWORK, not one access point, and
 			// carries no BSSID. The Linux reader has one and uses it to tell equal
 			// names apart; here the profile names the SSID and the WLAN service picks

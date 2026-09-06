@@ -30,6 +30,8 @@ interface NetworkFields {
 	connectable?: boolean;
 	/** wlanNotConnectableReason, meaningful only when connectable is false. */
 	notConnectableReason?: number;
+	/** dot11DefaultCipherAlgorithm. Defaults to CCMP for a secured row and NONE for an open one. */
+	cipher?: number;
 	/** Overrides the SSID's own byte length — used to forge an impossible one. */
 	ssidLength?: number;
 }
@@ -61,6 +63,7 @@ function buildList(networks: NetworkFields[], declaredCount: number = networks.l
 		view.setUint32(base + 604, network.signal, true);
 		view.setUint32(base + 608, network.secured === false ? 0 : 1, true);
 		view.setUint32(base + 612, network.auth ?? 7, true);
+		view.setUint32(base + 616, network.cipher ?? (network.secured === false ? 0 : 4), true);
 		view.setUint32(base + 620, network.active ? 1 : 0, true);
 	});
 	retained.push(bytes);
@@ -77,6 +80,38 @@ describe('parseAvailableNetworks', () => {
 			{ ssid: 'Coffee Bar', bssid: null, signal: 71, secured: true, security: 'WPA2', supported: true, active: true },
 			{ ssid: 'Open Guest Net', bssid: null, signal: 40, secured: false, security: '', supported: false, active: false },
 		]);
+	});
+
+	it('offers only the cipher it can actually write a profile for', () => {
+		// The authentication method is half the answer: every profile this app writes
+		// says `<encryption>AES</encryption>`, so a WPA2 network running TKIP was
+		// offered as joinable and then handed a profile demanding a cipher it does not
+		// speak. The association failed and the message sent the user to check a
+		// password that was never the problem.
+		const rows = parseAvailableNetworks(
+			buildList([
+				{ ssid: 'Aes Net', signal: 80, auth: 7, cipher: 4 },
+				{ ssid: 'Tkip Net', signal: 70, auth: 7, cipher: 2 },
+				{ ssid: 'Sae Net', signal: 60, auth: 9, cipher: 4 },
+				{ ssid: 'Sae Tkip', signal: 50, auth: 9, cipher: 2 },
+			])
+		);
+		const byName = (name: string) => rows.find(row => row.ssid === name);
+		expect(byName('Aes Net')).toMatchObject({ security: 'WPA2', supported: true });
+		expect(byName('Sae Net')).toMatchObject({ security: 'WPA3', supported: true });
+		expect(byName('Tkip Net')).toMatchObject({ supported: false });
+		expect(byName('Sae Tkip')).toMatchObject({ supported: false });
+	});
+
+	it('calls an open network open only when it really carries no cipher', () => {
+		const rows = parseAvailableNetworks(
+			buildList([
+				{ ssid: 'Open', signal: 80, secured: false, auth: 1, cipher: 0 },
+				{ ssid: 'Odd', signal: 70, secured: false, auth: 1, cipher: 2 },
+			])
+		);
+		expect(rows.find(row => row.ssid === 'Open')).toMatchObject({ security: '', supported: true });
+		expect(rows.find(row => row.ssid === 'Odd')).toMatchObject({ supported: false });
 	});
 
 	it('takes every security field from one row, whatever order Windows listed them in', () => {
