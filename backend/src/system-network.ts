@@ -516,17 +516,18 @@ export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 	});
 }
 
-/** Join a Wi-Fi network on one interface. An empty password means an open network. */
-export function connectWifi(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null): Promise<NetworkStateInfo> {
-	return runNetworkMutation(() => connectWifiUnlocked(interfaceID, ssid, password, primaryInterface, bssid));
+/** Join a visible network, checking its fresh security against the client's selected scan label when supplied. */
+export function connectWifi(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null, expectedSecurity?: string): Promise<NetworkStateInfo> {
+	return runNetworkMutation(() => connectWifiUnlocked(interfaceID, ssid, password, primaryInterface, bssid, expectedSecurity));
 }
 
 /** {@link connectWifi} for a caller that already holds the network mutation lock. */
-export async function connectWifiUnlocked(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null): Promise<NetworkStateInfo> {
+export async function connectWifiUnlocked(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null, expectedSecurity?: string): Promise<NetworkStateInfo> {
 	if (typeof interfaceID !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
 	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
 	if (!isValidWifiPassword(password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
 	if (bssid !== null && typeof bssid !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid bssid');
+	if (expectedSecurity !== undefined && (typeof expectedSecurity !== 'string' || expectedSecurity.length > 64 || /[\0\r\n]/.test(expectedSecurity))) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid expected Wi-Fi security');
 	await assertWirelessInterface(interfaceID);
 	let available: NetWifiNetwork[];
 	try {
@@ -538,8 +539,10 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 	const network = resolveJoinTarget(available, ssid, bssid);
 	if (network === 'ambiguous') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'more than one network here goes by that name, so there is no way to tell which one to join');
 	if (!network) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'network is no longer available');
+	if (expectedSecurity !== undefined && network.security !== expectedSecurity) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'Wi-Fi security changed; scan and select the network again');
 	if (!network.supported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi authentication method is not supported');
 	if (isAlreadyJoined(network)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'this interface is already connected to that network');
+	if (!network.secured && password !== '') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'this network is open; scan and select it again without a password');
 	if (network.secured && !isValidWifiKey(network.security, password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
 	try {
 		await run(() => joinPlatformWifi(interfaceID, ssid, password, network.bssid, network.security), [password]);

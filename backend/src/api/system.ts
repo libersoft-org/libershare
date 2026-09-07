@@ -48,7 +48,7 @@ interface SystemHandlers {
 	network: () => Promise<NetworkStateInfo>;
 	networkApply: (p: { interfaceID: string; config: NetIPv4Config; expected: NetIPv4Baseline }) => Promise<NetworkStateInfo>;
 	wifiScan: (p: { interfaceID: string }) => Promise<NetWifiNetwork[]>;
-	wifiConnect: (p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string }) => Promise<NetworkStateInfo>;
+	wifiConnect: (p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string; expectedSecurity?: string }) => Promise<NetworkStateInfo>;
 	startPolling: () => void;
 	stopPolling: () => void;
 }
@@ -319,11 +319,11 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		return await scanWifi(assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID));
 	}
 
-	async function joinWifiNetwork(p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string }): Promise<NetworkStateInfo> {
+	async function joinWifiNetwork(p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string; expectedSecurity?: string }): Promise<NetworkStateInfo> {
 		assert(p, ['interfaceID', 'ssid']);
 		const primary = settings.get('network.primaryInterface') ?? '';
 		return runAndPublishNetworkMutation(
-			() => connectWifiUnlocked(p.interfaceID, p.ssid, p.password ?? '', primary, p.bssid ?? null),
+			() => connectWifiUnlocked(p.interfaceID, p.ssid, p.password ?? '', primary, p.bssid ?? null, p.expectedSecurity),
 			() => readNetworkStateUnlocked(primary),
 			state => broadcast('system:network', state)
 		);
