@@ -605,10 +605,8 @@ function scanPlatformWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 /**
  * Join on whichever platform this host runs.
  *
- * The BSSID only reaches NetworkManager. Windows addresses the network through
- * a WLAN profile, which names the SSID and lets the service pick the access
- * point - there is no per-BSSID form of that call, and pinning one would defeat
- * the roaming the service does on its own.
+ * Windows chooses an access point from the profile's network. Linux and macOS
+ * receive the selected BSSID when the scanner provides one.
  */
 function joinPlatformWifi(interfaceID: string, password: string, network: NetWifiNetwork): Promise<void> {
 	if (process.platform === 'win32') {
