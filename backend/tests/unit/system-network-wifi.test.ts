@@ -238,6 +238,25 @@ describe('Windows scan connectability', () => {
 			expect(selected?.unavailableReason).toBe(target?.connectable ? undefined : reasonText(policyReason) ?? undefined);
 		}
 	});
+
+	it('shows the saved profile refusal even when an unnamed reading is stronger', () => {
+		const saved = { ...blocked, profileName: 'Saved connection' };
+		const unnamed = { ...allowed, profileName: '', signal: 95 };
+		for (const rows of [[saved, unnamed], [unnamed, saved]]) {
+			const list = buildList(rows);
+			expect(parseAvailableNetworks(list, reasonText)[0]).toMatchObject({ signal: 95, supported: true, connectable: false, unavailableReason: reasonText(policyReason) });
+		}
+	});
+
+	it('disables equivalent networks with multiple saved profiles', () => {
+		const first = { ...allowed, profileName: 'Saved connection' };
+		const second = { ...allowed, profileName: 'Other connection', signal: 95 };
+		for (const rows of [[first, second], [second, first]]) {
+			const list = buildList(rows);
+			expect(parseAvailableNetworks(list)[0]).toMatchObject({ supported: true, connectable: false });
+			expect(parseAvailableNetworks(list)[0]?.unavailableReason).toContain('saved profile');
+		}
+	});
 });
 
 describe('findScannedNetwork', () => {

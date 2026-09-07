@@ -86,38 +86,39 @@ const JOIN_POLL_MS = 500;
  * read against something that is not this struct.
  */
 export function parseAvailableNetworks(list: Pointer, reasonText?: (reason: number) => string | null): NetWifiNetwork[] {
-	const best = new Map<string, NetWifiNetwork>();
+	const groups = new Map<string, AvailableNetwork[]>();
 	for (const found of availableNetworks(list)) {
-		// Native profile details stay local; the hex identity survives the lossy display name.
-		const unavailableReason = found.connectable ? null : reasonText?.(found.notConnectableReason);
-		const entry: NetWifiNetwork = { ssid: found.ssid, ssidHex: ssidHex(found.ssidBytes), bssid: found.bssid, signal: found.signal, secured: found.secured, security: found.security, supported: found.supported, active: found.active, connectable: found.connectable, ...(unavailableReason ? { unavailableReason } : {}) };
 		// Different raw SSIDs can decode to the same text, so text cannot be the key.
-		const key = `${entry.ssidHex}\0${entry.security}`;
-		const previous = best.get(key);
-		if (!previous) {
-			best.set(key, entry);
-			continue;
-		}
-		// One row wins outright and every field describing the NETWORK comes from it.
-		// Merging them field by field invented readings no access point advertised:
-		// an open row beside a WPA2 row of the same name produced `secured` from one
-		// and `security` from the other, so the form asked for a password the profile
-		// then declared open — and which of the two answers came out depended on the
-		// order Windows happened to list them in.
-		const strongest = (entry.signal ?? -1) > (previous.signal ?? -1) ? entry : previous;
-		// `active` now only ever carries across access points of the SAME network, so
-		// it says what it means: this interface is associated with this network,
-		// whichever of its access points holds the association.
-		best.set(key, { ...strongest, active: previous.active || entry.active });
+		const key = `${ssidHex(found.ssidBytes)}\0${found.security}`;
+		const group = groups.get(key);
+		if (group) group.push(found);
+		else groups.set(key, [found]);
 	}
-	return [...best.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
+	return [...groups.values()].map(group => {
+		const selection = selectScannedNetwork(group);
+		const ambiguous = selection === 'ambiguous';
+		const found = selection && !ambiguous ? selection : group.reduce((a, b) => (a.signal ?? -1) >= (b.signal ?? -1) ? a : b);
+		const unavailableReason = ambiguous ? AMBIGUOUS_NETWORK : found.connectable ? null : reasonText?.(found.notConnectableReason);
+		// Profile names remain native-only; the UI gets the same eligibility as the final join lookup.
+		return { ssid: found.ssid, ssidHex: ssidHex(found.ssidBytes), bssid: found.bssid, signal: found.signal, secured: found.secured, security: found.security, supported: found.supported, active: group.some(entry => entry.active), connectable: !ambiguous && found.connectable, ...(unavailableReason ? { unavailableReason } : {}) };
+	}).sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
 }
 
-/** Pick the strongest equivalent entry, refusing names shared by different SSID bytes or security modes. */
+const AMBIGUOUS_NETWORK = 'more than one network or saved profile matches this name, so it cannot be selected by name alone';
+
+/** Keep the unique saved profile independently of signal; refuse ambiguous network or profile identities. */
 export function findScannedNetwork(list: Pointer, ssid: string): AvailableNetwork | 'ambiguous' | null {
+	return selectScannedNetwork([...availableNetworks(list)].filter(entry => entry.ssid === ssid));
+}
+
+function selectScannedNetwork(entries: AvailableNetwork[]): AvailableNetwork | 'ambiguous' | null {
 	let best: AvailableNetwork | null = null;
-	for (const entry of availableNetworks(list)) {
-		if (entry.ssid !== ssid) continue;
+	let profile: AvailableNetwork | null = null;
+	for (const entry of entries) {
+		if (entry.profileName) {
+			if (profile && profile.profileName !== entry.profileName) return 'ambiguous';
+			if (!profile || (entry.signal ?? -1) > (profile.signal ?? -1)) profile = entry;
+		}
 		if (!best) {
 			best = entry;
 			continue;
@@ -126,7 +127,8 @@ export function findScannedNetwork(list: Pointer, ssid: string): AvailableNetwor
 		const strongest: AvailableNetwork = (entry.signal ?? -1) > (best.signal ?? -1) ? entry : best;
 		best = { ...strongest, active: best.active || entry.active };
 	}
-	return best;
+	// Connectability belongs to the saved profile row; an unnamed row must not bypass its refusal.
+	return best ? { ...(profile ?? best), signal: best.signal, active: best.active } : null;
 }
 
 /** Byte-for-byte equality of two SSIDs, which is the only identity an SSID has. */
@@ -294,7 +296,7 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 	// The WLAN list can change after the shared scan. Validate it before touching profiles.
 	const lookup = withWlanHandle((api, handle) => readScannedNetwork(api, handle, guidBytes, ssid));
 	if (lookup.kind === 'readError') throw new Error(`the list of visible networks could not be read, so this network was not joined (${lookup.message})`);
-	if (lookup.kind === 'ambiguous') throw new Error('more than one network is broadcasting this name, and they cannot be told apart by name alone');
+	if (lookup.kind === 'ambiguous') throw new Error(AMBIGUOUS_NETWORK);
 	if (lookup.kind === 'notFound') throw new Error('this Wi-Fi network is no longer visible; scan and select it again');
 	const scanned = lookup.network;
 	if (ssidHex(scanned.ssidBytes) !== expectedSsidHex.toUpperCase()) throw new Error('Wi-Fi identity changed; scan and select the network again');

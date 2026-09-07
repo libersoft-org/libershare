@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { resolve } from 'node:path';
 import type { NetworkFields } from '../helpers/windows-wifi.ts';
+import { windowsWifiProfileXml } from '../../src/system-network-windows-profiles.ts';
 
 interface Scenario {
 	selected: string;
@@ -13,6 +14,7 @@ interface Scenario {
 	associationAuth?: number;
 	associationCipher?: number;
 	associationSecured?: boolean;
+	storedProfile?: string;
 }
 
 interface Result {
@@ -24,6 +26,8 @@ interface Result {
 	encryption: string | null;
 	code?: string;
 	detail?: string;
+	profiles?: Record<string, string>;
+	connectionProfiles?: string[];
 }
 
 /** Exercise both real Windows scan/join functions with isolated WLAN buffers and profile calls. */
@@ -42,6 +46,8 @@ function attempt(scenario: Scenario): Result {
 		const lists = [buildList(input.first), buildList(input.second)];
 		let listReads = 0, writes = 0, connections = 0;
 		let savedXml = null;
+		const profiles = new Map(input.storedProfile ? [['Saved connection', input.storedProfile]] : []);
+		const connectionProfiles = [];
 		const retained = [];
 		const api = {
 			WlanScan: () => 0,
@@ -51,17 +57,30 @@ function attempt(scenario: Scenario): Result {
 				return 0;
 			},
 			WlanGetProfile: (_handle, _guid, _name, _reserved, output, flags) => {
-				if (savedXml === null) return 1168;
-				const xml = native.utf16z(savedXml);
+				const stored = profiles.get(native.readUtf16z(_name));
+				if (stored === undefined) return 1168;
+				const xml = native.utf16z(stored);
 				retained.push(xml);
 				new BigUint64Array(toArrayBuffer(output, 0, 8))[0] = BigInt(ptr(xml));
 				new Uint32Array(toArrayBuffer(flags, 0, 4))[0] = 2;
 				return 0;
 			},
-			WlanSetProfile: (_handle, _guid, _flags, xml) => { writes++; savedXml = native.readUtf16z(xml); return 0; },
+			WlanSetProfile: (_handle, _guid, _flags, xml, _security, overwrite) => {
+				const document = native.readUtf16z(xml);
+				const name = document.match(/<name>(.*?)<\\/name>/)[1];
+				if (!overwrite && profiles.has(name)) return 183;
+				writes++;
+				savedXml = document;
+				profiles.set(name, document);
+				return 0;
+			},
 			WlanGetProfileCustomUserData: () => 2,
-			WlanDeleteProfile: () => { savedXml = null; return 0; },
-			WlanConnect: () => { connections++; return 0; },
+			WlanDeleteProfile: (_handle, _guid, name) => { profiles.delete(native.readUtf16z(name)); savedXml = null; return 0; },
+			WlanConnect: (_handle, _guid, parameters) => {
+				connections++;
+				connectionProfiles.push(native.readUtf16z(Number(new DataView(toArrayBuffer(parameters, 0, 16)).getBigUint64(8, true))));
+				return 0;
+			},
 			WlanReasonCodeToString: () => 87,
 			WlanFreeMemory: () => {},
 		};
@@ -116,6 +135,7 @@ function attempt(scenario: Scenario): Result {
 			else await connectWifi(guid, ssid, password, '', null, input.selected, input.expectedSsidHex);
 		}
 		catch (error) { failure = { code: error.code, detail: error.detail }; }
+		if (input.storedProfile) Object.assign(failure ??= {}, { profiles: Object.fromEntries(profiles), connectionProfiles });
 		process.stdout.write('RESULT:' + JSON.stringify({ lists: listReads, writes, connections, ssidHex: savedXml?.match(/<hex>(.*?)<\\/hex>/)?.[1] ?? null, authentication: savedXml?.match(/<authentication>(.*?)<\\/authentication>/)?.[1] ?? null, encryption: savedXml?.match(/<encryption>(.*?)<\\/encryption>/)?.[1] ?? null, ...failure }) + '\\n');
 	`;
 	const result = Bun.spawnSync([process.execPath, '--eval', script], { cwd: resolve(import.meta.dir, '../..'), timeout: 10_000 });
@@ -129,6 +149,42 @@ function attempt(scenario: Scenario): Result {
 const wpa2: NetworkFields = { ssid: 'Example', signal: 70, auth: 7, cipher: 4 };
 const wpa3: NetworkFields = { ...wpa2, auth: 9 };
 const open: NetworkFields = { ...wpa2, auth: 1, cipher: 0, secured: false };
+
+describe('Windows profile selection across duplicate scan records', () => {
+	const storedProfile = windowsWifiProfileXml('Saved connection', new TextEncoder().encode('Example'), 'previous-password')
+		.replace('<connectionMode>manual</connectionMode>', '<connectionMode>auto</connectionMode>');
+	const named = { ...wpa2, profileName: 'Saved connection' };
+	const unnamed = { ...wpa2, profileName: '' };
+
+	it.each([
+		{ label: 'unnamed first at equal signal', second: [unnamed, named] },
+		{ label: 'named first at equal signal', second: [named, unnamed] },
+		{ label: 'stronger unnamed first', second: [{ ...unnamed, signal: 95 }, named] },
+		{ label: 'stronger unnamed last', second: [named, { ...unnamed, signal: 95 }] },
+		{ label: 'stronger named first', second: [{ ...named, signal: 95 }, unnamed] },
+		{ label: 'stronger named last', second: [unnamed, { ...named, signal: 95 }] },
+	])('updates the existing profile with $label', ({ second }) => {
+		const result = attempt({ selected: 'WPA2', first: [wpa2], second, storedProfile });
+		expect(result.code).toBeUndefined();
+		expect(result).toMatchObject({ writes: 1, connections: 1, connectionProfiles: ['Saved connection'] });
+		expect(Object.keys(result.profiles!)).toEqual(['Saved connection']);
+		expect(result.profiles!['Saved connection']).toBe(storedProfile.replace('previous-password', 'example-password'));
+	});
+
+	it.each([
+		{ label: 'first', second: [named, { ...named, profileName: 'Other connection', signal: 95 }] },
+		{ label: 'last', second: [{ ...named, profileName: 'Other connection', signal: 95 }, named] },
+	])('refuses multiple stored profiles with the original $label', ({ second }) => {
+		const result = attempt({ selected: 'WPA2', first: [wpa2], second, storedProfile });
+		expect(result).toMatchObject({ writes: 0, connections: 0, code: 'NETCONFIG_FAILED', profiles: { 'Saved connection': storedProfile } });
+	});
+
+	it.each([false, true])('preserves the stored profile refusal (reversed=%s)', reversed => {
+		const second = [{ ...unnamed, signal: 95 }, { ...named, connectable: false }];
+		const result = attempt({ selected: 'WPA2', first: [wpa2], second: reversed ? second.reverse() : second, storedProfile });
+		expect(result).toMatchObject({ writes: 0, connections: 0, code: 'NETCONFIG_FAILED', profiles: { 'Saved connection': storedProfile } });
+	});
+});
 
 describe('Windows security between the common scan and native profile write', () => {
 	it.each([
