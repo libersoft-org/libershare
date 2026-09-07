@@ -30,6 +30,11 @@ const ASSOC_SSID_LENGTH_OFFSET = CONN_ASSOCIATION_OFFSET;
 const ASSOC_SSID_OFFSET = CONN_ASSOCIATION_OFFSET + 4;
 /** WLAN_ASSOCIATION_ATTRIBUTES: ssid(36) + bssType(4) + bssid(6, padded to 8) + phyType(4) + phyIndex(4) = 56. */
 const ASSOC_SIGNAL_QUALITY_OFFSET = CONN_ASSOCIATION_OFFSET + 56;
+/** WLAN_SECURITY_ATTRIBUTES follows the 68-byte WLAN_ASSOCIATION_ATTRIBUTES. */
+const CONN_SECURITY_OFFSET = CONN_ASSOCIATION_OFFSET + 68;
+const CONN_AUTH_OFFSET = CONN_SECURITY_OFFSET + 8;
+const CONN_CIPHER_OFFSET = CONN_SECURITY_OFFSET + 12;
+const CONNECTION_ATTRIBUTES_SIZE = CONN_CIPHER_OFFSET + 4;
 /** DOT11_SSID caps the SSID at 32 octets — a longer value means we read the wrong offset. */
 export const MAX_SSID_LENGTH = 32;
 
@@ -175,27 +180,31 @@ function readRadioState(data: Pointer, size: number): NetWifiInfo['radio'] {
 	return sawOff ? 'off' : 'unknown';
 }
 
-/**
- * Extract the SSID and signal quality from a WLAN_CONNECTION_ATTRIBUTES buffer.
- *
- * The struct offsets are documentation-derived — the machine this was written on
- * had its Wi-Fi radio soft-killed and associating would have been a mutation, so
- * they could not be confirmed against a populated struct. The sanity gate below
- * is what makes that acceptable: an out-of-range signal or SSID length yields
- * `null` (widget renders "unknown"), never a plausible-looking wrong percentage.
- */
-export function readConnectionAttributes(data: Pointer, size: number): { ssid: string | null; signal: number | null; connected: boolean } {
-	if (size < ASSOC_SIGNAL_QUALITY_OFFSET + 4) return { ssid: null, signal: null, connected: false };
+export interface WlanConnectionAttributes {
+	ssid: string | null;
+	ssidHex: string | null;
+	signal: number | null;
+	connected: boolean;
+	secured: boolean | null;
+	auth: number | null;
+	cipher: number | null;
+}
+
+/** Decode the 604-byte WLAN_CONNECTION_ATTRIBUTES, retaining identity and security for join verification. */
+export function readConnectionAttributes(data: Pointer, size: number): WlanConnectionAttributes {
+	const unknown: WlanConnectionAttributes = { ssid: null, ssidHex: null, signal: null, connected: false, secured: null, auth: null, cipher: null };
+	if (size < CONNECTION_ATTRIBUTES_SIZE) return unknown;
 	// The SSID is filled in while the adapter is still ASSOCIATING, so its presence
 	// is a statement of intent, not of success. Only `isState` says whether the
 	// adapter is actually on the network.
 	const connected = read.u32(data, CONN_STATE_OFFSET) === INTERFACE_STATE_CONNECTED;
 	const signalRaw = read.u32(data, ASSOC_SIGNAL_QUALITY_OFFSET);
 	const ssidLength = read.u32(data, ASSOC_SSID_LENGTH_OFFSET);
-	if (signalRaw > 100 || ssidLength > MAX_SSID_LENGTH) return { ssid: null, signal: null, connected };
+	if (signalRaw > 100 || ssidLength > MAX_SSID_LENGTH) return { ...unknown, connected };
 	const ssidBytes = new Uint8Array(toArrayBuffer(data, ASSOC_SSID_OFFSET, MAX_SSID_LENGTH)).subarray(0, ssidLength);
 	const ssid = ssidLength > 0 ? new TextDecoder().decode(ssidBytes) : null;
-	return { ssid, signal: signalRaw, connected };
+	const ssidHex = ssidLength > 0 ? Buffer.from(ssidBytes).toString('hex').toUpperCase() : null;
+	return { ssid, ssidHex, signal: signalRaw, connected, secured: read.u32(data, CONN_SECURITY_OFFSET) !== 0, auth: read.u32(data, CONN_AUTH_OFFSET), cipher: read.u32(data, CONN_CIPHER_OFFSET) };
 }
 
 /**
@@ -482,7 +491,7 @@ export function wlanReasonText(api: WlanApi, reason: number): string | null {
  * associating with. Null when the adapter has no current connection, which is
  * what an unassociated one reports.
  */
-export function readAssociation(guid: string): { ssid: string | null; connected: boolean } | null {
+export function readAssociation(guid: string): WlanConnectionAttributes | null {
 	try {
 		return withWlanHandle((api, handle) => {
 			const guidBytes = guidToBytes(guid);

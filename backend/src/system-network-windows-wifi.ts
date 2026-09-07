@@ -301,7 +301,7 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 	if (scanned.security !== expectedSecurity) throw new Error('Wi-Fi security changed; scan and select the network again');
 	if (!scanned.supported) throw new Error('this Wi-Fi authentication method is not supported');
 	const association = readAssociation(guid);
-	if (scanned.active || (association?.connected && association.ssid === ssid)) throw new Error('this interface is already connected to that network');
+	if (scanned.active || (association?.connected && association.ssidHex === expectedSsidHex.toUpperCase())) throw new Error('this interface is already connected to that network');
 	// A profile name is NOT an SSID. Windows keeps the two apart, the profile name
 	// is case-sensitive, and `WLAN_AVAILABLE_NETWORK` already carries the real one —
 	// so addressing everything below by SSID meant an existing custom-named profile
@@ -353,7 +353,7 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 			change = { replaced: null, created: true, written: readWrittenProfile(api, handle, guidBytes, profileName) };
 			connectByProfile(api, handle, guidBytes, parameters);
 		});
-		await waitForAssociation(guid, ssid);
+		await waitForAssociation(guid, scanned);
 	} catch (err) {
 		const rollback = undoWifiProfileChange(guidBytes, profileName, change);
 		// Both errors, not just the first. A rollback that failed leaves the machine
@@ -398,15 +398,14 @@ function readScannedNetwork(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Ar
 }
 
 /** Poll the adapter's association until it reports the requested network, or give up. */
-async function waitForAssociation(guid: string, ssid: string): Promise<void> {
+async function waitForAssociation(guid: string, network: AvailableNetwork): Promise<void> {
 	const deadline = Date.now() + JOIN_TIMEOUT_MS;
+	const expectedHex = ssidHex(network.ssidBytes);
+	const expectedCipher = network.secured ? CIPHER_ALGO_CCMP : CIPHER_ALGO_NONE;
 	for (;;) {
-		// Both conditions matter: the adapter has to be ON a network, and it has to be
-		// THIS one. WlanConnect only queues the attempt, and the SSID shows up in the
-		// connection attributes while the adapter is still associating — so a check on
-		// the name alone reports a join that never happened.
+		// WlanConnect only queues an attempt. Another association must not count as its success.
 		const association = readAssociation(guid);
-		if (association?.connected && association.ssid === ssid) return;
+		if (association?.connected && association.ssidHex === expectedHex && association.secured === network.secured && association.auth === network.auth && association.cipher === expectedCipher) return;
 		if (Date.now() >= deadline) throw new Error('the adapter did not join the network — check the password');
 		await delay(JOIN_POLL_MS);
 	}
