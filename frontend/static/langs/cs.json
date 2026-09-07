@@ -338,6 +338,7 @@
 			"liveUpdatesUnavailable": "Průběžné aktualizace sítě nejsou dostupné. Tento snímek se obnoví po opětovném připojení.",
 			"unsupportedSecurity": "Nepodporované ověřování",
 			"notConnectable": "K této síti se nyní nelze připojit.",
+			"selectionChanged": "Vybraná síť již není dostupná se stejným zabezpečením. Vyhledejte sítě a vyberte ji znovu.",
 			"alreadyJoined": "Připojeno",
 			"ambiguousName": "Nelze jednoznačně vybrat",
 			"gateway": "Brána",

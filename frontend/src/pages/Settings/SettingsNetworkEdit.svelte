@@ -37,8 +37,9 @@
 	let scanning = $state(false);
 	let joinSSID = $state('');
 	let joinBSSID = $state<string | null>(null);
+	let joinSecurity = $state<string | null>(null);
 	let password = $state('');
-	let selectedNetwork = $derived(networks.find(network => network.ssid === joinSSID && network.bssid === joinBSSID));
+	let selectedNetwork = $derived(networks.find(network => network.ssid === joinSSID && network.bssid === joinBSSID && network.security === joinSecurity));
 
 	// Seed the form from the live state when the screen opens, then keep it in
 	// step with the host only while the user has not started editing. Re-seeding
@@ -210,11 +211,13 @@
 		if (!network.secured) {
 			joinSSID = '';
 			joinBSSID = null;
+			joinSecurity = null;
 			void join(network);
 			return;
 		}
 		joinSSID = network.ssid;
 		joinBSSID = network.bssid;
+		joinSecurity = network.security;
 	}
 
 	async function join(network?: NetWifiNetwork): Promise<void> {
@@ -225,12 +228,13 @@
 		message = '';
 		reported = false;
 		try {
-			const state = await joinWifiNetwork(interfaceID, ssid, bssid, password);
+			const state = await joinWifiNetwork(interfaceID, ssid, bssid, password, target.security);
 			await syncAfterWifiMutation(state);
 			failed = false;
 			message = $t('settings.network.joined', { ssid });
 			joinSSID = '';
 			joinBSSID = null;
+			joinSecurity = null;
 			password = '';
 			reported = true;
 		} catch (error) {
@@ -385,6 +389,9 @@
 				<ButtonBar justify="center" basePosition={[0, wifiBaseY + 2 + networks.length]}>
 					<Button icon="/img/check.svg" label={$t('settings.network.join')} disabled={busy || scanning || !selectedNetwork || !joinable(selectedNetwork)} onConfirm={join} />
 				</ButtonBar>
+				{#if !selectedNetwork}
+					<div class="note">{$t('settings.network.selectionChanged')}</div>
+				{/if}
 			{/if}
 		{/if}
 
