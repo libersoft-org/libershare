@@ -38,6 +38,7 @@
 	let joinSSID = $state('');
 	let joinBSSID = $state<string | null>(null);
 	let password = $state('');
+	let selectedNetwork = $derived(networks.find(network => network.ssid === joinSSID && network.bssid === joinBSSID));
 
 	// Seed the form from the live state when the screen opens, then keep it in
 	// step with the host only while the user has not started editing. Re-seeding
@@ -201,7 +202,7 @@
 	}
 
 	function selectNetwork(network: NetWifiNetwork): void {
-		if (!network.supported) return;
+		if (!joinable(network)) return;
 		clearMessage();
 		// An open network takes no key, and asking for one would invite the user to
 		// type a password that cannot be used.
@@ -217,9 +218,9 @@
 	}
 
 	async function join(network?: NetWifiNetwork): Promise<void> {
-		const ssid = network?.ssid ?? joinSSID;
-		const bssid = network?.bssid ?? joinBSSID;
-		if (!ssid || busy || scanning) return;
+		const target = network ?? selectedNetwork;
+		if (!target || !joinable(target) || busy || scanning) return;
+		const { ssid, bssid } = target;
 		busy = true;
 		message = '';
 		reported = false;
@@ -256,13 +257,14 @@
 	 * case is the worst of the three, because the password is typed in full first.
 	 */
 	function joinable(network: NetWifiNetwork): boolean {
-		return network.supported && !network.active && isUnambiguousWifiTarget(networks, network);
+		return network.supported && network.connectable !== false && !network.active && isUnambiguousWifiTarget(networks, network);
 	}
 
 	/** What the row says about itself, with the reason it cannot be picked winning. */
 	function networkStatus(network: NetWifiNetwork): string {
 		if (!network.supported) return $t('settings.network.unsupportedSecurity');
 		if (network.active) return $t('settings.network.alreadyJoined');
+		if (network.connectable === false) return network.unavailableReason || $t('settings.network.notConnectable');
 		if (!isUnambiguousWifiTarget(networks, network)) return $t('settings.network.ambiguousName');
 		return network.secured ? $t('settings.network.secured') : $t('settings.network.open');
 	}
@@ -381,7 +383,7 @@
 					<Input bind:value={password} onchange={clearMessage} label={$t('settings.network.passwordFor', { ssid: joinSSID })} type="password" position={[0, wifiBaseY + 1 + networks.length]} disabled={busy} flex />
 				</div>
 				<ButtonBar justify="center" basePosition={[0, wifiBaseY + 2 + networks.length]}>
-					<Button icon="/img/check.svg" label={$t('settings.network.join')} disabled={busy || scanning} onConfirm={join} />
+					<Button icon="/img/check.svg" label={$t('settings.network.join')} disabled={busy || scanning || !selectedNetwork || !joinable(selectedNetwork)} onConfirm={join} />
 				</ButtonBar>
 			{/if}
 		{/if}

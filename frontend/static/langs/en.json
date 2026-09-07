@@ -337,6 +337,7 @@
 			"staleState": "The displayed network data is stale. Changes are disabled until the current state can be loaded.",
 			"liveUpdatesUnavailable": "Live network updates are unavailable. This snapshot will refresh after reconnection.",
 			"unsupportedSecurity": "Unsupported authentication",
+			"notConnectable": "This network cannot be joined right now.",
 			"alreadyJoined": "Connected",
 			"ambiguousName": "Cannot tell which one",
 			"gateway": "Gateway",

@@ -542,6 +542,10 @@ export interface NetWifiNetwork {
 	security: string;
 	/** True only for open and personal WPA networks the one-password form supports. */
 	supported: boolean;
+	/** False when the host reports that association is unavailable, independently of security support. */
+	connectable?: boolean;
+	/** Host-provided explanation when connectable is false. */
+	unavailableReason?: string;
 	/** True when the interface is currently associated with this network. */
 	active: boolean;
 }
