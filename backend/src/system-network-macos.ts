@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { associateMacWifi } from './system-network-corewlan.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { isIPv4, isIPv6, validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetLink, type NetMedium, type NetWifiNetwork } from '@shared';
@@ -16,14 +17,10 @@ const C_LOCALE_ENV = { ...process.env, LC_ALL: 'C', LANG: 'C' };
  * `networksetup` is addressed by SERVICE name ("Wi-Fi", "Thunderbolt Bridge")
  * while everything else speaks DEVICE names (en0, bridge0).
  *
- * Wi-Fi is scanned and joined through the same two tools, but only when macOS
- * lets this process read network names. Since macOS 14 the SSID is withheld from
- * any process that has not been granted Location Services access, and both
- * `ipconfig getsummary` and `system_profiler` substitute the literal string
- * `<redacted>` — measured on macOS 15.7.4 even when running as root. Joining does
- * NOT need that access, but choosing what to join does, so the capability follows
- * the names: see {@link isMacWifiConfigurable}. Signal strength, security and
- * connection state are never redacted and are always reported.
+ * Wi-Fi scans use system_profiler; association uses CoreWLAN in a native worker.
+ * Both target selection and verification need Location Services access because
+ * macOS hides SSID data without it, even from root. The capability follows name
+ * visibility: see {@link isMacWifiConfigurable}.
  */
 
 /** Hard cap on any single tool invocation. These are local BSD utilities; a slow one is a hung one. */
@@ -371,8 +368,8 @@ function airportNetwork(ssid: string, fields: Map<string, string>, active: boole
 	const dbm = fields.get('Signal / Noise')?.match(/(-?\d+)\s*dBm/);
 	return {
 		ssid,
-		// system_profiler never prints a BSSID, and networksetup takes no BSSID
-		// either, so two access points sharing a name cannot be told apart here.
+		// system_profiler never prints a BSSID, so the picker cannot distinguish
+		// access points sharing a name. CoreWLAN verifies the target again at join.
 		bssid: null,
 		signal: dbm?.[1] ? macDbmToQuality(parseInt(dbm[1], 10)) : null,
 		secured: !open,
@@ -388,7 +385,7 @@ function airportNetwork(ssid: string, fields: Map<string, string>, active: boole
  * The report has two lists — the network currently joined, and everything else in
  * range — and both carry the same fields, so they are read by one pass that only
  * changes what it calls "active". Entries macOS refused to name are dropped
- * rather than shown: `networksetup` is addressed by name, so an unnamed row would
+ * rather than shown: the picker is addressed by name, so an unnamed row would
  * be an offer that cannot be honoured.
  *
  * A network name is whatever the report prints, and that includes names an
@@ -694,9 +691,9 @@ export function hasMacWritePrivilege(effectiveUID: number | undefined): boolean 
 /**
  * Whether this host can offer Wi-Fi at all.
  *
- * Joining does not need Location Services access, but CHOOSING what to join
- * does: without it every name in a scan is `<redacted>`, and `networksetup` is
- * addressed by name, so the picker would list rows that cannot be acted on. The
+ * Target selection and association verification need Location Services access:
+ * without it every name in a scan is `<redacted>`, so the picker would
+ * list rows that cannot be acted on. The
  * capability therefore follows the names rather than the radio. The answer
  * changes the moment the user grants or revokes the permission in System
  * Settings, so it is a probe and not the constant it used to be; the caller
@@ -735,34 +732,7 @@ export async function scanMacWifi(device: string): Promise<NetWifiNetwork[]> {
 	return parseAirportScan(await run('/usr/sbin/system_profiler', ['SPAirPortDataType'], WIFI_SCAN_TIMEOUT_MS), device);
 }
 
-/**
- * Build the `networksetup` join.
- *
- * KNOWN WEAKNESS, not a solved problem. The passphrase is the last positional
- * argument, and measured on macOS 15.7.4 an unprivileged local user CAN read
- * another user's full argv — so it is readable by any local account for as long
- * as the call runs. The Windows and Linux paths both keep it out of argv.
- *
- * This is a limit of `networksetup`, which reads nothing from stdin, and NOT of
- * macOS: CoreWLAN's `CWInterface.associate(to:password:)` takes the passphrase
- * directly and would close this hole. Reaching it needs a native helper the
- * bundle does not ship yet, so the exposure stands until that exists rather than
- * being hidden behind a claim that nothing better is possible.
- */
-export function macJoinArgs(device: string, ssid: string, password: string): string[] {
-	return ['-setairportnetwork', device, ssid, ...(password ? [password] : [])];
-}
-
-/**
- * `networksetup` reports a refused join on stdout and still exits 0, so an empty
- * stdout is the only evidence of success it offers.
- */
-export function assertMacJoinAccepted(output: string): void {
-	const message = output.trim();
-	if (message) throw new Error(message);
-}
-
-/** The scan is the only proof of association macOS gives us that is not redacted away. */
+/** Confirm the association reported by the macOS network snapshot. */
 export function assertMacWifiConnected(networks: NetWifiNetwork[], ssid: string): void {
 	if (!networks.some(network => network.active && network.ssid === ssid)) throw new Error('macOS did not connect to the requested Wi-Fi network');
 }
@@ -770,12 +740,12 @@ export function assertMacWifiConnected(networks: NetWifiNetwork[], ssid: string)
 /**
  * Join a Wi-Fi network.
  *
- * `-setairportnetwork` returns once the association has settled, but
+ * CoreWLAN returns once the association has settled, but
  * `system_profiler` reports a snapshot that can still be a moment behind it, so
  * the confirming scan is retried rather than believed the first time.
  */
-export async function connectMacWifi(device: string, ssid: string, password: string): Promise<void> {
-	assertMacJoinAccepted(await run(NETWORKSETUP, macJoinArgs(device, ssid, password), APPLY_TIMEOUT_MS));
+export async function connectMacWifi(device: string, ssid: string, password: string, security: string): Promise<void> {
+	await associateMacWifi(device, ssid, password, security);
 	let networks: NetWifiNetwork[] = [];
 	for (let attempt = 0; attempt < 3; attempt++) {
 		if (attempt > 0) await delay(1000);

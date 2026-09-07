@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { assertMacIPv4Applied, assertMacJoinAccepted, macSummarySsidVisible, assertMacWifiConnected, hasMacWritePrivilege, macApplyArgs, macJoinArgs, macRestoreRequiresLease, macWifiNamesVisible, withMacRollback, macDbmToQuality, netmaskFromPrefix, parseAirport, parseAirportScan, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseScopedDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { assertMacIPv4Applied, macSummarySsidVisible, assertMacWifiConnected, hasMacWritePrivilege, macApplyArgs, macRestoreRequiresLease, macWifiNamesVisible, withMacRollback, macDbmToQuality, netmaskFromPrefix, parseAirport, parseAirportScan, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseScopedDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -653,34 +653,6 @@ describe('macWifiNamesVisible', () => {
 		// system_profiler was never run, or failed; that is not a grant.
 		expect(macWifiNamesVisible('')).toBe(false);
 		expect(macWifiNamesVisible('   \n')).toBe(false);
-	});
-});
-
-describe('macJoinArgs', () => {
-	it('passes the passphrase as the last positional argument', () => {
-		expect(macJoinArgs('en0', 'office-wifi', 'hunter2hunter2')).toEqual(['-setairportnetwork', 'en0', 'office-wifi', 'hunter2hunter2']);
-	});
-
-	it('omits the passphrase entirely for an open network', () => {
-		// An empty string would be offered to macOS as a key and rejected.
-		expect(macJoinArgs('en0', 'guest-open', '')).toEqual(['-setairportnetwork', 'en0', 'guest-open']);
-	});
-
-	it('keeps a name that looks like an option as a value', () => {
-		expect(macJoinArgs('en0', '-setdhcp', 'hunter2hunter2')[2]).toBe('-setdhcp');
-	});
-});
-
-describe('assertMacJoinAccepted', () => {
-	it('accepts the silence networksetup prints on success', () => {
-		expect(() => assertMacJoinAccepted('')).not.toThrow();
-		expect(() => assertMacJoinAccepted('\n')).not.toThrow();
-	});
-
-	it('rejects a refusal that arrived on stdout with exit status 0', () => {
-		// Measured on macOS 15.7.4: networksetup reports this and still exits 0, so
-		// the exit status alone would call a failed join a success.
-		expect(() => assertMacJoinAccepted('Could not find network office-wifi.\n')).toThrow('Could not find network office-wifi.');
 	});
 });
 

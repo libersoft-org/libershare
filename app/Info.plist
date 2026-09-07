@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>NSLocationWhenInUseUsageDescription</key>
+	<key>NSLocationUsageDescription</key>
 	<string>LiberShare needs your location to read the names of nearby Wi-Fi networks. macOS hides those names from apps without this permission. Your location is never stored or sent anywhere.</string>
 </dict>
 </plist>
