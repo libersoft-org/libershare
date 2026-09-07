@@ -77,8 +77,8 @@ describe('parseAvailableNetworks', () => {
 			{ ssid: 'Open Guest Net', signal: 40, secured: false },
 		]);
 		expect(parseAvailableNetworks(list)).toEqual([
-			{ ssid: 'Coffee Bar', bssid: null, signal: 71, secured: true, security: 'WPA2', supported: true, active: true },
-			{ ssid: 'Open Guest Net', bssid: null, signal: 40, secured: false, security: '', supported: false, active: false },
+			{ ssid: 'Coffee Bar', bssid: null, signal: 71, secured: true, security: 'WPA2', supported: true, active: true, connectable: true },
+			{ ssid: 'Open Guest Net', bssid: null, signal: 40, secured: false, security: '', supported: false, active: false, connectable: true },
 		]);
 	});
 
@@ -152,7 +152,7 @@ describe('parseAvailableNetworks', () => {
 			{ ssid: 'Roaming Net', signal: 88 },
 			{ ssid: 'Roaming Net', signal: 61 },
 		]);
-		expect(parseAvailableNetworks(list)).toEqual([{ ssid: 'Roaming Net', bssid: null, signal: 88, secured: true, security: 'WPA2', supported: true, active: false }]);
+		expect(parseAvailableNetworks(list)).toEqual([{ ssid: 'Roaming Net', bssid: null, signal: 88, secured: true, security: 'WPA2', supported: true, active: false, connectable: true }]);
 	});
 
 	it('keeps the connected flag when the associated entry is not the strongest one', () => {
@@ -160,12 +160,12 @@ describe('parseAvailableNetworks', () => {
 			{ ssid: 'Roaming Net', signal: 30, active: true },
 			{ ssid: 'Roaming Net', signal: 88 },
 		]);
-		expect(parseAvailableNetworks(list)[0]).toEqual({ ssid: 'Roaming Net', bssid: null, signal: 88, secured: true, security: 'WPA2', supported: true, active: true });
+		expect(parseAvailableNetworks(list)[0]).toEqual({ ssid: 'Roaming Net', bssid: null, signal: 88, secured: true, security: 'WPA2', supported: true, active: true, connectable: true });
 		const reversed = buildList([
 			{ ssid: 'Roaming Net', signal: 88 },
 			{ ssid: 'Roaming Net', signal: 30, active: true },
 		]);
-		expect(parseAvailableNetworks(reversed)[0]).toEqual({ ssid: 'Roaming Net', bssid: null, signal: 88, secured: true, security: 'WPA2', supported: true, active: true });
+		expect(parseAvailableNetworks(reversed)[0]).toEqual({ ssid: 'Roaming Net', bssid: null, signal: 88, secured: true, security: 'WPA2', supported: true, active: true, connectable: true });
 	});
 
 	it('drops a hidden network, which has no name to join by', () => {
@@ -216,6 +216,60 @@ describe('parseAvailableNetworks', () => {
 
 	it('returns nothing for an empty list', () => {
 		expect(parseAvailableNetworks(buildList([]))).toEqual([]);
+	});
+});
+
+describe('Windows scan connectability', () => {
+	const policyReason = 0x2800b;
+	const reasonText = (reason: number) => reason === policyReason ? 'Připojení zakazuje zásada systému.' : null;
+	const blocked: NetworkFields = { ssid: 'Example', signal: 80, auth: 7, cipher: 4, connectable: false, notConnectableReason: policyReason };
+	const allowed: NetworkFields = { ...blocked, signal: 40, connectable: true };
+
+	it('publishes an OS refusal separately from supported WPA2 authentication', () => {
+		const list = buildList([blocked, { ...allowed, ssid: 'Other' }]);
+		const [unavailable, available] = parseAvailableNetworks(list, reasonText);
+		expect(unavailable).toMatchObject({ ssid: 'Example', security: 'WPA2', supported: true, connectable: false, unavailableReason: 'Připojení zakazuje zásada systému.' });
+		expect(available).toMatchObject({ ssid: 'Other', supported: true, connectable: true });
+		expect(available).not.toHaveProperty('unavailableReason');
+	});
+
+	it('keeps the refusal when Windows has no explanation for it', () => {
+		const list = buildList([blocked]);
+		for (const rows of [parseAvailableNetworks(list), parseAvailableNetworks(list, () => null)]) {
+			expect(rows[0]).toMatchObject({ supported: true, connectable: false });
+			expect(rows[0]).not.toHaveProperty('unavailableReason');
+		}
+	});
+
+	it('does not offer a weaker connectable row when the join selects a stronger refused row', () => {
+		for (const rows of [[blocked, allowed], [allowed, blocked]]) {
+			const list = buildList(rows);
+			expect(parseAvailableNetworks(list, reasonText)).toHaveLength(1);
+			expect(parseAvailableNetworks(list, reasonText)[0]).toMatchObject({ signal: 80, connectable: false, unavailableReason: reasonText(policyReason) });
+			expect(onlyMatch(findScannedNetwork(list, 'Example'))).toMatchObject({ connectable: false, notConnectableReason: policyReason });
+		}
+	});
+
+	it('does not carry a weaker refusal into a connectable selection', () => {
+		const stronger = { ...allowed, signal: 90 };
+		for (const rows of [[blocked, stronger], [stronger, blocked]]) {
+			const list = buildList(rows);
+			const [selected] = parseAvailableNetworks(list, reasonText);
+			expect(selected).toMatchObject({ signal: 90, connectable: true });
+			expect(selected).not.toHaveProperty('unavailableReason');
+			expect(onlyMatch(findScannedNetwork(list, 'Example'))).toMatchObject({ connectable: true });
+		}
+	});
+
+	it('uses the same first-row tie break as the join for equal signals', () => {
+		const equal = { ...allowed, signal: blocked.signal };
+		for (const rows of [[blocked, equal], [equal, blocked]]) {
+			const list = buildList(rows);
+			const [selected] = parseAvailableNetworks(list, reasonText);
+			const target = onlyMatch(findScannedNetwork(list, 'Example'));
+			expect(selected?.connectable).toBe(target?.connectable);
+			expect(selected?.unavailableReason).toBe(target?.connectable ? undefined : reasonText(policyReason) ?? undefined);
+		}
 	});
 });
 

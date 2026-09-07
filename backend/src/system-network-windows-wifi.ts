@@ -85,13 +85,14 @@ const JOIN_POLL_MS = 500;
  * SSID longer than the 32 octets DOT11_SSID can hold means the offsets are being
  * read against something that is not this struct.
  */
-export function parseAvailableNetworks(list: Pointer): NetWifiNetwork[] {
+export function parseAvailableNetworks(list: Pointer, reasonText?: (reason: number) => string | null): NetWifiNetwork[] {
 	const best = new Map<string, NetWifiNetwork>();
 	for (const found of availableNetworks(list)) {
 		// Projected explicitly rather than by rest-spread: the decoded entry carries
 		// the raw SSID bytes and the stored profile name, which the join path needs
 		// and the wire contract does not have a field for.
-		const entry: NetWifiNetwork = { ssid: found.ssid, bssid: found.bssid, signal: found.signal, secured: found.secured, security: found.security, supported: found.supported, active: found.active };
+		const unavailableReason = found.connectable ? null : reasonText?.(found.notConnectableReason);
+		const entry: NetWifiNetwork = { ssid: found.ssid, bssid: found.bssid, signal: found.signal, secured: found.secured, security: found.security, supported: found.supported, active: found.active, connectable: found.connectable, ...(unavailableReason ? { unavailableReason } : {}) };
 		// Access points are collapsed per NAME AND SECURITY, never per name alone.
 		// One name can sit on two networks that are not the same network at all — an
 		// open guest AP and an unrelated WPA2 one — and folding those together
@@ -272,7 +273,7 @@ export async function scanWindowsWifi(guid: string): Promise<NetWifiNetwork[]> {
 		if (rc !== 0) throw new Error(wlanScanErrorMessage(rc));
 		const list = Number(listOut[0]) as Pointer;
 		try {
-			return parseAvailableNetworks(list);
+			return parseAvailableNetworks(list, reason => wlanReasonText(api, reason));
 		} finally {
 			api.WlanFreeMemory(list);
 		}
