@@ -596,7 +596,6 @@ docker_inner_build() {
 	build_backend
 	sync_product_info
 	sign_macos_network_binaries
-	prepare_macos_sidecars
 
 	# ── Naming (after sync_product_info sets PRODUCT_VERSION) ──
 	VERSION="$PRODUCT_VERSION"
