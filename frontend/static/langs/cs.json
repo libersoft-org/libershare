@@ -339,6 +339,7 @@
 			"disconnected": "Odpojeno od sítě.",
 			"currentConnection": "Aktuální připojení",
 			"notConnected": "Nepřipojeno",
+			"connectedNameUnavailable": "Připojeno — název sítě není dostupný",
 			"automatic": "Automaticky (výchozí trasa)",
 			"dhcp": "DHCP",
 			"static": "Statická adresa",

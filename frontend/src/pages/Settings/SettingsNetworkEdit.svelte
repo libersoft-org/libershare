@@ -24,6 +24,12 @@
 	let iface = $derived($networkState.interfaces.find(i => i.id === interfaceID));
 	let canEditIPv4 = $derived($networkState.known && $networkState.detail === 'full' && !!iface && iface.ipv4Configurable && $networkState.capabilities.ipv4);
 	let canEditWifi = $derived($networkState.known && $networkState.detail === 'full' && !!iface && iface.wifiConfigurable && $networkState.capabilities.wifi);
+	let currentWifiLabel = $derived.by(() => {
+		if (!$networkState.known) return $t('settings.network.linkUnknown');
+		if (iface?.link === 'down' || iface?.wifi?.radio === 'off') return $t('settings.network.notConnected');
+		if (iface?.wifi?.ssid) return iface.wifi.ssid;
+		return $t(iface?.link === 'up' ? 'settings.network.connectedNameUnavailable' : 'settings.network.linkUnknown');
+	});
 
 	let mode = $state<NetAddressMode>('unknown');
 	let address = $state('');
@@ -437,7 +443,7 @@
 				<div class="connection-main">
 					<div>
 						<div class="note">{$t('settings.network.currentConnection')}</div>
-						<h4>{iface.wifi?.ssid ?? $t('settings.network.notConnected')}</h4>
+						<h4>{currentWifiLabel}</h4>
 						<div class="connection-details">
 							{#if iface.wifi?.signal !== null && iface.wifi?.signal !== undefined}<span>{$t('settings.network.signal')}: {iface.wifi.signal}%</span>{/if}
 							{#each iface.addresses as item}<span>{item.family === 'ipv4' ? 'IPv4' : 'IPv6'}: {item.address}</span>{/each}

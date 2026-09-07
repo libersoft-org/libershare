@@ -339,6 +339,7 @@
 			"disconnected": "Disconnected from the network.",
 			"currentConnection": "Current connection",
 			"notConnected": "Not connected",
+			"connectedNameUnavailable": "Connected — network name is unavailable",
 			"automatic": "Automatic (default route)",
 			"dhcp": "DHCP",
 			"static": "Static",

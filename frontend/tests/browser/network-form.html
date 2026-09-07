@@ -78,6 +78,7 @@
 				disconnectCalls++;
 				if (waitForDisconnect) await new Promise((resolve, reject) => { pendingDisconnect = { resolve, reject }; });
 				host.interfaces[0].wifi = { ssid: null, signal: null, radio: 'on' };
+				host.interfaces[0].link = 'down';
 				host.interfaces[0].addresses = [];
 				return structuredClone(host);
 			}
@@ -526,6 +527,37 @@
 					}
 				});
 			}
+			for (const state of [
+				{ name: 'connected with a withheld SSID', link: 'up', wifi: { ssid: null, signal: 74, radio: 'on' }, expected: 'connectedNameUnavailable' },
+				{ name: 'connected without Wi-Fi details', link: 'up', expected: 'connectedNameUnavailable' },
+				{ name: 'connected with an empty SSID', link: 'up', wifi: { ssid: '', signal: null, radio: 'on' }, expected: 'connectedNameUnavailable' },
+				{ name: 'unknown with a withheld SSID', link: 'unknown', wifi: { ssid: null, signal: null, radio: 'on' }, expected: 'linkUnknown' },
+				{ name: 'unknown without Wi-Fi details', link: 'unknown', expected: 'linkUnknown' },
+				{ name: 'disconnected with a configured IP address', link: 'down', wifi: { ssid: null, signal: null, radio: 'on' }, expected: 'notConnected' },
+				{ name: 'radio off with a configured IP address', link: 'up', wifi: { ssid: null, signal: null, radio: 'off' }, expected: 'notConnected' },
+				{ name: 'stale connected snapshot', link: 'up', known: false, wifi: { ssid: 'Previous network', signal: 74, radio: 'on' }, expected: 'linkUnknown' },
+			]) {
+				await test(`current Wi-Fi status distinguishes ${state.name}`, async () => {
+					host.interfaces[0].link = state.link;
+					host.interfaces[0].wifi = state.wifi;
+					host.known = state.known ?? true;
+					networkState.set(structuredClone(host));
+					await settle();
+					const current = target.querySelector('.connection');
+					assert(current.querySelector('h4').textContent === label(`settings.network.${state.expected}`), `Incorrect status: ${current.querySelector('h4').textContent}`);
+					assert(current.textContent.includes('192.0.2.10'), 'The test lost its configured address');
+				});
+			}
+
+			await test('current connection adopts a newly readable network name without remounting', async () => {
+				host.interfaces[0].wifi = { ssid: null, signal: 74, radio: 'on' };
+				networkState.set(structuredClone(host)); await settle();
+				assert(target.querySelector('.connection h4').textContent === label('settings.network.connectedNameUnavailable'), 'Missing name was treated as disconnected');
+				host.interfaces[0].wifi.ssid = 'Newly visible network';
+				networkState.set(structuredClone(host)); await settle();
+				assert(target.querySelector('.connection h4').textContent === 'Newly visible network', 'New name was not displayed');
+				assert(button(label('settings.network.disconnect')), 'Confirmed connection has no disconnect action');
+			});
 		} catch (error) {
 			results.push({ name: 'harness', passed: false, error: error.message });
 			output.textContent += `\nFAIL harness: ${error.stack}`;
