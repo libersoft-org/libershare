@@ -295,207 +295,6 @@ export function parseAirport(text: string): { connected: boolean; ssid: string |
 	};
 }
 
-/** Leading-space count, which is the only structure `system_profiler` gives its output. */
-function indentOf(line: string): number {
-	return line.length - line.trimStart().length;
-}
-
-/**
- * The lines `system_profiler SPAirPortDataType` prints about one interface.
- *
- * The report nests every interface under `Interfaces:` and separates them by
- * indentation alone, so a host with two radios describes both in one document and
- * the block has to be cut out before anything in it can be attributed to a device.
- *
- * Indentation alone does not end the block, because a value may wrap: the
- * firmware version of a real adapter carries an embedded newline whose second
- * line starts in column zero. Only a key — a line ending in a colon — at or above
- * the interface's own depth begins something new. Measured on macOS 15.7.4.
- *
- * The nesting step is reported alongside the lines, measured from the interface
- * heading to its own first row. Both are structure the report chooses, never text
- * a user picked, which is what makes the step trustworthy for locating the column
- * network names start in.
- *
- * The interface is looked up only among the children of `Interfaces:`, at their
- * own depth. A device id is also a legal network name, so a neighbour called
- * "en1" appears in the FIRST radio's list looking exactly like the second radio's
- * heading — matching it anywhere in the report handed back that network's rows as
- * if they were the other adapter's, and the real adapter then scanned as empty.
- */
-function airportInterfaceBlock(text: string, device: string): { lines: string[]; depth: number; step: number } {
-	const lines = text.split('\n');
-	const start = findInterfaceHeading(lines, device);
-	if (start < 0) return { lines: [], depth: 0, step: 0 };
-	const depth = indentOf(lines[start]!);
-	const block: string[] = [];
-	for (const line of lines.slice(start + 1)) {
-		if (line.trim().endsWith(':') && indentOf(line) <= depth) break;
-		block.push(line);
-	}
-	const first = block.find(line => line.trim() && indentOf(line) > depth);
-	return { lines: block, depth, step: first ? indentOf(first) - depth : 2 };
-}
-
-/**
- * Index of one adapter's heading, searched only where headings live.
- *
- * `Interfaces:` owns them, and they all sit one nesting step in from it, so the
- * depth is fixed by the first child rather than by anything a network is called.
- * Without the heading there is nothing to attribute rows to, and -1 says so.
- */
-function findInterfaceHeading(lines: string[], device: string): number {
-	const listIndex = lines.findIndex(line => line.trim() === 'Interfaces:');
-	if (listIndex < 0) return -1;
-	const listDepth = indentOf(lines[listIndex]!);
-	let headingDepth = -1;
-	for (let index = listIndex + 1; index < lines.length; index++) {
-		const line = lines[index]!;
-		if (!line.trim()) continue;
-		const depth = indentOf(line);
-		// A wrapped value can start in column zero, so only a key ends the list.
-		if (depth <= listDepth && line.trim().endsWith(':')) return -1;
-		if (headingDepth < 0 && depth > listDepth) headingDepth = depth;
-		if (depth === headingDepth && line.trim() === `${device}:`) return index;
-	}
-	return -1;
-}
-
-/** Turn one parsed `system_profiler` network entry into the shape the picker renders. */
-function airportNetwork(ssid: string, fields: Map<string, string>, active: boolean): NetWifiNetwork {
-	const security = fields.get('Security') ?? '';
-	const open = security === '' || /^(?:none|open)$/i.test(security);
-	const dbm = fields.get('Signal / Noise')?.match(/(-?\d+)\s*dBm/);
-	return {
-		ssid,
-		// system_profiler never prints a BSSID, so the picker cannot distinguish
-		// access points sharing a name. CoreWLAN verifies the target again at join.
-		bssid: null,
-		signal: dbm?.[1] ? macDbmToQuality(parseInt(dbm[1], 10)) : null,
-		secured: !open,
-		security: open ? '' : security,
-		supported: open || (/\bWPA\d*\b/i.test(security) && !/(?:Enterprise|802\.1X|EAP)/i.test(security) && !/\bWEP\b/i.test(security)),
-		active,
-	};
-}
-
-/**
- * Parse the networks one interface can see out of `system_profiler SPAirPortDataType`.
- *
- * The report has two lists — the network currently joined, and everything else in
- * range — and both carry the same fields, so they are read by one pass that only
- * changes what it calls "active". Entries macOS refused to name are dropped
- * rather than shown: the picker is addressed by name, so an unnamed row would
- * be an offer that cannot be honoured.
- *
- * A network name is whatever the report prints, and that includes names an
- * ordinary parser would mistake for structure. The two defences are depth: a list
- * heading only counts at the depth headings sit at, so a network CALLED "Current
- * Network Information" stays a network; and the name is cut at a fixed column
- * rather than trimmed, so a name that begins with a space keeps it and is still
- * told apart from the fields underneath it. Getting either wrong renames a
- * network, which then cannot be joined, or swallows the one after it.
- */
-export function parseAirportScan(text: string, device: string): NetWifiNetwork[] {
-	const networks = new Map<string, NetWifiNetwork>();
-	const block = airportInterfaceBlock(text, device);
-	for (const list of airportLists(block)) {
-		// The column names start in comes from the report's own nesting — one step in
-		// from the list heading — and NEVER from the names themselves. Measuring it
-		// from the shallowest name breaks on a list whose only entry begins with a
-		// space: that space is part of the SSID, and taking it for indentation
-		// silently renames the network into one that cannot be joined.
-		const nameDepth = list.depth + block.step;
-		let ssid: string | null = null;
-		let fields = new Map<string, string>();
-		const flush = (): void => {
-			if (ssid !== null && ssid !== REDACTED) {
-				const entry = airportNetwork(ssid, fields, list.joined);
-				// Keyed by NAME AND SECURITY, never by name alone: one name can sit on
-				// two networks that are not the same network — an open guest AP and an
-				// unrelated WPA2 one — and folding those together reported the security
-				// of the stronger with the association of the weaker, so an open network
-				// this host was joined to came back as "WPA2, connected".
-				const key = `${ssid} ${entry.security}`;
-				const previous = networks.get(key);
-				// Access points that agree still collapse: keep the strongest of them,
-				// and never lose the fact that one of them carries the association.
-				const stronger = !previous || (entry.signal ?? -1) > (previous.signal ?? -1) ? entry : previous;
-				networks.set(key, { ...stronger, active: (previous?.active ?? false) || entry.active });
-			}
-			ssid = null;
-			fields = new Map();
-		};
-		for (const line of list.body) {
-			const label = line.trim();
-			// Only a name ends in a colon with nothing after it; every field line in
-			// the measured report is `Key: value`. Cutting at the fixed column keeps a
-			// leading space that belongs to the name, which trimming would delete —
-			// renaming the network into one that cannot be joined.
-			if (label.endsWith(':')) {
-				flush();
-				ssid = line.slice(nameDepth).trimEnd().replace(/:$/, '');
-				continue;
-			}
-			const separator = label.indexOf(':');
-			if (ssid !== null && separator > 0) fields.set(label.slice(0, separator).trim(), label.slice(separator + 1).trim());
-		}
-		flush();
-	}
-	return [...networks.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
-}
-
-/**
- * Split one interface block into its two network lists.
- *
- * Both headings sit at the same depth, so the first one seen fixes it. A later
- * line carrying the same text but deeper is a network NAMED after a heading, not
- * a heading — without that check such a network renames itself and swallows the
- * rows beneath it.
- */
-function airportLists(block: { lines: string[]; depth: number; step: number }): { joined: boolean; depth: number; body: string[] }[] {
-	const lists: { joined: boolean; depth: number; body: string[] }[] = [];
-	// Both headings sit one step in from the interface, so the depth is known from
-	// the structure before any of them is seen — a network named after a heading
-	// cannot pass itself off as the first one.
-	const headingDepth = block.depth + block.step;
-	let current: { joined: boolean; depth: number; body: string[] } | null = null;
-	for (const line of block.lines) {
-		if (!line.trim()) continue;
-		const depth = indentOf(line);
-		const label = line.trim();
-		if ((label === 'Current Network Information:' || label === 'Other Local Wi-Fi Networks:') && depth === headingDepth) {
-			current = { joined: label.startsWith('Current'), depth, body: [] };
-			lists.push(current);
-			continue;
-		}
-		if (!current) continue;
-		if (depth <= headingDepth) {
-			current = null;
-			continue;
-		}
-		current.body.push(line);
-	}
-	return lists;
-}
-
-/**
- * True when macOS is printing real network names to this process.
- *
- * A single `<redacted>` anywhere in the report proves Location Services access
- * was not granted, because macOS redacts every name or none. An empty report
- * proves nothing was asked, so it is not taken as an answer either.
- */
-export function macWifiNamesVisible(airport: string): boolean {
-	// Match the withheld NAME ROW, not the text anywhere in the document. macOS
-	// prints a hidden name as a row of its own, and a network legitimately called
-	// something like "Guest-<redacted>" is a name we can read: searching the whole
-	// report for the marker turned that neighbour into a reason to disable Wi-Fi
-	// configuration on a host that was naming every network perfectly well.
-	if (airport.trim() === '') return false;
-	return !airport.split('\n').some(line => line.trim() === `${REDACTED}:`);
-}
-
 /**
  * Effective resolvers for one device from `scutil --dns`.
  *
@@ -570,7 +369,6 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 	const routeDetailKnown = sources.routes === undefined || sources.routes.trim() !== '';
 	const routes = sources.routes === undefined ? (route.device && route.gateway ? [{ device: route.device, gateway: route.gateway }] : []) : parseDefaultRoutes(sources.routes);
 	const airport = sources.airport ? parseAirport(sources.airport) : null;
-	const namesVisible = macWifiNamesVisible(sources.airport ?? '');
 	const wirelessDevices = [...ports].filter(([, port]) => mapMedium(port) === 'wireless').map(([device]) => device);
 
 	const result: NetInterfaceInfo[] = [];
@@ -602,9 +400,7 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 			addresses,
 			ipv4Mode,
 			ipv4Configurable: routeDetailKnown && services.has(device) && ipv4Mode !== 'unknown' && staticShapeSafe && ipv4Addresses.length <= 1 && deviceRoutes.length <= 1,
-			// Per device, not per host: a second radio macOS did not describe in the
-			// report cannot be scanned, so it is not offered either.
-			wifiConfigurable: medium === 'wireless' && (sources.nativeWifi !== undefined ? !!nativeWifi?.configurable : namesVisible && airportInterfaceBlock(sources.airport ?? '', device).lines.length > 0),
+			wifiConfigurable: medium === 'wireless' && !!nativeWifi?.configurable,
 			gateway,
 			// Manually set servers win; otherwise fall back to what the DHCP lease
 			// handed out, so a DHCP link reports the resolvers it actually uses.
@@ -701,26 +497,9 @@ export async function isMacWifiConfigurable(): Promise<boolean> {
 	}
 }
 
-/**
- * Whether `ipconfig getsummary` named the network this radio is on.
- *
- * Null means it did not say — the radio is not associated, so the report carries
- * no name either way and proves nothing about the permission.
- */
-export function macSummarySsidVisible(summary: string): boolean | null {
-	const ssid = summary.match(/^\s*SSID\s*:\s*(.+?)\s*$/m);
-	if (!ssid?.[1]) return null;
-	return ssid[1] !== REDACTED;
-}
-
 /** Scan for the Wi-Fi networks one interface can see. */
 export async function scanMacWifi(device: string): Promise<NetWifiNetwork[]> {
 	return scanCoreWlanWifi(device);
-}
-
-/** Confirm the association reported by the macOS network snapshot. */
-export function assertMacWifiConnected(networks: NetWifiNetwork[], ssid: string): void {
-	if (!networks.some(network => network.active && network.ssid === ssid)) throw new Error('macOS did not connect to the requested Wi-Fi network');
 }
 
 /** Associate and verify the native raw SSID and selected access point. */
