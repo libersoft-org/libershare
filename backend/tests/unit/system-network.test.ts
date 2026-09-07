@@ -503,14 +503,18 @@ describe('readConnectionAttributes sanity gate', () => {
 	const buffers: Uint8Array[] = [];
 
 	/** Build a WLAN_CONNECTION_ATTRIBUTES-shaped buffer with the given SSID length and signal. */
-	function buffer(ssidLength: number, signal: number, ssid = 'Example Net', state = 1): { pointer: Pointer; size: number } {
+	function buffer(ssidLength: number, signal: number, ssid: string | Uint8Array = 'Example Net', state = 1, auth = 7, cipher = 4, secured = true): { pointer: Pointer; size: number } {
 		const bytes = new Uint8Array(640);
 		const view = new DataView(bytes.buffer);
 		// isState is the first member: 1 = wlan_interface_state_connected.
 		view.setUint32(0, state, true);
 		view.setUint32(520, ssidLength, true);
-		new Uint8Array(bytes.buffer, 524, 32).set(new TextEncoder().encode(ssid).subarray(0, 32));
+		const octets = typeof ssid === 'string' ? new TextEncoder().encode(ssid) : ssid;
+		new Uint8Array(bytes.buffer, 524, 32).set(octets.subarray(0, 32));
 		view.setUint32(576, signal, true);
+		view.setUint32(588, secured ? 1 : 0, true);
+		view.setUint32(596, auth, true);
+		view.setUint32(600, cipher, true);
 		// Hold a reference so the buffer cannot be collected while the pointer is live.
 		buffers.push(bytes);
 		return { pointer: ptr(bytes), size: bytes.length };
@@ -518,17 +522,17 @@ describe('readConnectionAttributes sanity gate', () => {
 
 	it('accepts a plausible reading', () => {
 		const b = buffer(11, 73);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: 'Example Net', signal: 73, connected: true });
+		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: 'Example Net', ssidHex: '4578616D706C65204E6574', signal: 73, connected: true, secured: true, auth: 7, cipher: 4 });
 	});
 
 	it('reports an associated adapter with a hidden SSID as signal-only', () => {
 		const b = buffer(0, 42);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: 42, connected: true });
+		expect(readConnectionAttributes(b.pointer, b.size)).toMatchObject({ ssid: null, ssidHex: null, signal: 42, connected: true });
 	});
 
 	it('rejects an out-of-range signal rather than reporting a wrong percentage', () => {
 		const b = buffer(11, 4294967295);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: null, connected: true });
+		expect(readConnectionAttributes(b.pointer, b.size)).toMatchObject({ ssid: null, ssidHex: null, signal: null, connected: true });
 	});
 
 	it('does not call an adapter that is still associating connected', () => {
@@ -536,17 +540,38 @@ describe('readConnectionAttributes sanity gate', () => {
 		// join that watches the name alone reports success before there is one. Every
 		// state but wlan_interface_state_connected is on the way to or from it.
 		const b = buffer(11, 73, 'Example Net', 6);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: 'Example Net', signal: 73, connected: false });
+		expect(readConnectionAttributes(b.pointer, b.size)).toMatchObject({ ssid: 'Example Net', ssidHex: '4578616D706C65204E6574', signal: 73, connected: false });
 	});
 
 	it('rejects an impossible SSID length', () => {
 		const b = buffer(99, 50);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: null, connected: true });
+		expect(readConnectionAttributes(b.pointer, b.size)).toMatchObject({ ssid: null, ssidHex: null, signal: null, connected: true });
 	});
 
 	it('rejects a buffer too small to hold the fields it would read', () => {
 		const b = buffer(11, 73);
-		expect(readConnectionAttributes(b.pointer, 64)).toEqual({ ssid: null, signal: null, connected: false });
+		expect(readConnectionAttributes(b.pointer, 64)).toMatchObject({ ssid: null, ssidHex: null, signal: null, connected: false });
+	});
+
+	it('keeps different SSID bytes distinct when their decoded names are equal', () => {
+		const first = buffer(1, 70, Uint8Array.of(0xff));
+		const second = buffer(1, 70, Uint8Array.of(0xfe));
+		expect(readConnectionAttributes(first.pointer, 604)).toMatchObject({ ssid: '\uFFFD', ssidHex: 'FF', connected: true });
+		expect(readConnectionAttributes(second.pointer, 604)).toMatchObject({ ssid: '\uFFFD', ssidHex: 'FE', connected: true });
+	});
+
+	it('requires the security fields before an association can be verified', () => {
+		const b = buffer(11, 70);
+		expect(readConnectionAttributes(b.pointer, 580)).toMatchObject({ ssidHex: null, connected: false });
+	});
+
+	it.each([
+		{ secured: true, auth: 9, cipher: 4 },
+		{ secured: true, auth: 7, cipher: 8 },
+		{ secured: false, auth: 1, cipher: 0 },
+	])('reads the advertised security fields: $secured/$auth/$cipher', security => {
+		const b = buffer(11, 70, 'Example Net', 1, security.auth, security.cipher, security.secured);
+		expect(readConnectionAttributes(b.pointer, 604)).toMatchObject({ ssidHex: '4578616D706C65204E6574', connected: true, ...security });
 	});
 });
 

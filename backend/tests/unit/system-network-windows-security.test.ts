@@ -9,6 +9,10 @@ interface Scenario {
 	alreadyAssociated?: boolean;
 	expectedSsidHex?: unknown;
 	viaRpc?: boolean;
+	associationSsidOctets?: number[];
+	associationAuth?: number;
+	associationCipher?: number;
+	associationSecured?: boolean;
 }
 
 interface Result {
@@ -56,6 +60,7 @@ function attempt(scenario: Scenario): Result {
 			},
 			WlanSetProfile: (_handle, _guid, _flags, xml) => { writes++; savedXml = native.readUtf16z(xml); return 0; },
 			WlanGetProfileCustomUserData: () => 2,
+			WlanDeleteProfile: () => { savedXml = null; return 0; },
 			WlanConnect: () => { connections++; return 0; },
 			WlanReasonCodeToString: () => 87,
 			WlanFreeMemory: () => {},
@@ -64,7 +69,19 @@ function attempt(scenario: Scenario): Result {
 			...native,
 			withWlanHandle: callback => callback(api, 1n),
 			readWindowsWifi: () => new Map([[guid, { radio: 'on', ssid: connections ? ssid : null, signal: 80 }]]),
-			readAssociation: () => ({ connected: connections > 0 || !!input.alreadyAssociated, ssid: connections > 0 || input.alreadyAssociated ? ssid : null }),
+			readAssociation: () => {
+				const octets = connections > 0 && input.associationSsidOctets ? input.associationSsidOctets : input.first[0].ssidOctets ?? new TextEncoder().encode(ssid);
+				const bytes = new Uint8Array(604);
+				const view = new DataView(bytes.buffer);
+				view.setUint32(0, connections > 0 || input.alreadyAssociated ? 1 : 4, true);
+				view.setUint32(520, octets.length, true);
+				bytes.set(octets, 524);
+				view.setUint32(576, 70, true);
+				view.setUint32(588, (input.associationSecured ?? input.first[0].secured) === false ? 0 : 1, true);
+				view.setUint32(596, input.associationAuth ?? input.first[0].auth ?? 7, true);
+				view.setUint32(600, input.associationCipher ?? input.first[0].cipher ?? 4, true);
+				return native.readConnectionAttributes(ptr(bytes), bytes.length);
+			},
 		}));
 		const report = { adapters: [{ ifIndex: 1, Name: 'Wi-Fi', InterfaceGuid: guid, Media: 9, IfType: 71, State: 2 }], addresses: [], persistentAddresses: [], interfaces: [{ ifIndex: 1, Family: 2, Dhcp: 1 }], routes: [], persistentRoutes: [], routes6: [], dns: [] };
 		const execFile = () => { throw new Error('Only the promised state reader is allowed'); };
@@ -77,6 +94,12 @@ function attempt(scenario: Scenario): Result {
 		Object.defineProperty(process, 'platform', { value: 'win32' });
 		const timer = globalThis.setTimeout;
 		globalThis.setTimeout = (callback, delay, ...args) => timer(callback, delay === 4000 ? 0 : delay, ...args);
+		if (input.associationSsidOctets || input.associationAuth !== undefined || input.associationCipher !== undefined || input.associationSecured !== undefined) {
+			const now = Date.now;
+			let polls = 0;
+			Date.now = () => now() + (connections ? ++polls * 10001 : 0);
+			globalThis.setTimeout = (callback, delay, ...args) => timer(callback, delay === 4000 || delay === 500 ? 0 : delay, ...args);
+		}
 		const { connectWifi, readCachedCapabilities } = await import('./src/system-network.ts');
 		await readCachedCapabilities(async () => ({ ipv4: true, wifi: true, staticGatewayRequired: false }));
 		let rpc;
@@ -179,5 +202,32 @@ describe('Windows raw SSID identity through wifiConnect RPC', () => {
 	it('accepts a lowercase identity without changing its bytes', () => {
 		const result = attempt({ viaRpc: true, selected: 'WPA2', expectedSsidHex: 'ff', first: [network], second: [network] });
 		expect(result).toEqual({ lists: 2, writes: 1, connections: 1, ssidHex: 'FF', authentication: 'WPA2PSK', encryption: 'AES' });
+	});
+});
+
+describe('Windows association verifies the raw SSID returned by the native decoder', () => {
+	const network: NetworkFields = { ...wpa2, ssid: '\uFFFD', ssidOctets: [0xff] };
+
+	it('does not report another raw SSID as a successful join and removes the attempted profile', () => {
+		const result = attempt({ selected: 'WPA2', expectedSsidHex: 'FF', first: [network], second: [network], associationSsidOctets: [0xfe] });
+		expect(result).toMatchObject({ lists: 2, writes: 1, connections: 1, ssidHex: null, code: 'NETCONFIG_FAILED' });
+		expect(result.detail).toContain('the adapter did not join the network');
+	});
+
+	it('reports success when the decoder returns the requested raw SSID', () => {
+		const result = attempt({ selected: 'WPA2', expectedSsidHex: 'FF', first: [network], second: [network], associationSsidOctets: [0xff] });
+		expect(result).toEqual({ lists: 2, writes: 1, connections: 1, ssidHex: 'FF', authentication: 'WPA2PSK', encryption: 'AES' });
+	});
+});
+
+describe('Windows association verifies the security returned by the native decoder', () => {
+	it.each([
+		{ label: 'WPA2 after selecting WPA3', associationAuth: 7 },
+		{ label: 'a different cipher', associationCipher: 8 },
+		{ label: 'security disabled', associationSecured: false },
+	])('does not report success for $label', fields => {
+		const result = attempt({ selected: 'WPA3', first: [wpa3], second: [wpa3], ...fields });
+		expect(result).toMatchObject({ lists: 2, writes: 1, connections: 1, ssidHex: null, code: 'NETCONFIG_FAILED' });
+		expect(result.detail).toContain('the adapter did not join the network');
 	});
 });
