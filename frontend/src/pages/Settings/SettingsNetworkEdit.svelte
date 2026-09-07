@@ -191,10 +191,12 @@
 			if (networks.length === 0) {
 				failed = false;
 				message = $t('settings.network.noWifiFound');
+				reported = true;
 			}
 		} catch (error) {
 			failed = true;
 			message = translateError(error);
+			reported = true;
 		} finally {
 			scanning = false;
 		}

@@ -201,6 +201,41 @@
 				});
 			}
 
+			for (const failed of [false, true]) {
+				for (const dirty of [false, true]) {
+					await test(`${failed ? 'failed' : 'empty'} scan survives changed host updates with ${dirty ? 'dirty' : 'clean'} IPv4 form`, async () => {
+						if (dirty) await edit(address(), '192.0.2.30');
+						wifi = [];
+						scanFails = failed;
+						await click(label('settings.network.scan'));
+						const result = failed ? 'Test scan failed' : label('settings.network.noWifiFound');
+						assert(message() === result, 'Scan result missing before host update');
+						for (const next of ['192.0.2.41', '192.0.2.42']) {
+							await publish(next);
+							assert(message() === result, `Host update replaced scan result: ${message()}`);
+							assert(!!target.querySelector('.message.failed') === failed, 'Host update changed scan result severity');
+							assert(address().value === (dirty ? '192.0.2.30' : next), 'Incorrect field reseed after scan');
+							assert(save().classList.contains('disabled') === dirty, 'Incorrect stale Save state after scan');
+							if (dirty) assert(target.textContent.includes(label('settings.network.reloadRequired')), 'Scan result hid stale Save explanation');
+						}
+						await edit(address(), '192.0.2.60');
+						await publish('192.0.2.61');
+						assert(message() === label('settings.network.changedOutside'), 'New edit retained protection of the previous scan result');
+					});
+				}
+			}
+
+			await test('a new successful scan clears the previous scan failure protection', async () => {
+				scanFails = true;
+				await click(label('settings.network.scan'));
+				await publish('192.0.2.41');
+				scanFails = false;
+				await click(label('settings.network.scan'));
+				assert(message() === '', 'Retry did not clear the previous failure');
+				await publish('192.0.2.42');
+				assert(message() === label('settings.network.reloadedFromHost'), 'Successful retry kept the old result protection');
+			});
+
 			for (const dirty of [false, true]) {
 				await test(`failed join survives multiple host updates with ${dirty ? 'dirty' : 'clean'} IPv4 form`, async () => {
 					if (dirty) await edit(address(), '192.0.2.30');
