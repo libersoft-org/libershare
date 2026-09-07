@@ -542,4 +542,3 @@ describe('undoProfileChange', () => {
 		expect(writes).toEqual([]);
 	});
 });
-

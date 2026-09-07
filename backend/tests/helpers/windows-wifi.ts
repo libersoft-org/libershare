@@ -51,4 +51,3 @@ export function buildList(networks: NetworkFields[], declaredCount: number = net
 	retained.push(bytes);
 	return ptr(bytes);
 }
-
