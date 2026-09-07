@@ -10,7 +10,7 @@
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
-	import Icon from '../../components/Icon/Icon.svelte';
+	import Tabs from '../../components/Tabs/Tabs.svelte';
 	import SettingsNetworkEdit from './SettingsNetworkEdit.svelte';
 	interface Props {
 		areaID: string;
@@ -22,6 +22,13 @@
 	// Tunnels, bridges and container veth pairs would flood the picker, so an
 	// 'other' interface is only listed when it actually carries traffic.
 	let interfaces = $derived($networkState.interfaces.filter(isSelectableInterface));
+	let medium = $state('wireless');
+	let visibleInterfaces = $derived(interfaces.filter(iface => iface.medium === medium).sort((a, b) => Number(b.link === 'up') - Number(a.link === 'up') || a.name.localeCompare(b.name)));
+	let tabs = $derived([
+		{ id: 'wireless', icon: '/img/wifi.svg', label: `${$t('settings.network.wifi')} (${interfaces.filter(iface => iface.medium === 'wireless').length})` },
+		{ id: 'wired', icon: '/img/ethernet.svg', label: `${$t('settings.network.wired')} (${interfaces.filter(iface => iface.medium === 'wired').length})` },
+		{ id: 'other', icon: '/img/network.svg', label: `${$t('settings.network.otherAdapters')} (${interfaces.filter(iface => iface.medium === 'other').length})` },
+	]);
 	let selectedPrimary = $derived(visiblePrimaryInterface($primaryInterface, interfaces));
 	// Editing is offered only where the host can actually carry it out, so the app
 	// never presents a form whose Save would always fail. `detail` matters as much
@@ -84,48 +91,47 @@
 		padding: 2vh;
 		gap: 1vh;
 		overflow-y: auto;
+		color: var(--secondary-foreground);
 	}
 
 	.container {
 		display: flex;
 		flex-direction: column;
-		gap: 1vh;
-		width: 1000px;
+		gap: 1.2vh;
+		width: 960px;
 		max-width: 100%;
 	}
 
 	.note {
-		font-size: 1.8vh;
+		font-size: clamp(12px, 1.6vh, 15px);
 		color: var(--disabled-foreground);
+		line-height: 1.45;
 	}
 
 	.iface {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5vh;
+		min-width: 0;
 	}
 
-	.head {
-		display: flex;
-		align-items: center;
-		gap: 1vh;
-	}
-
-	.head :global(.icon) {
-		flex: 0 0 auto;
-	}
-
-	.configure {
-		padding: 0 0 1vh 4vh;
-	}
+	.iface :global(.row) { flex-wrap: nowrap; }
+	.iface :global(.button), .settings > :global(.button-bar .button) { transform: none !important; box-shadow: none !important; }
+	.footer-choice { margin-top: 1vh; }
+	.footer-choice .note { margin-top: 0.8vh; }
+	.section-label { margin: 0 0 0.8vh; font-size: clamp(13px, 1.8vh, 17px); font-weight: 600; }
 
 	.detail {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5vh 2vh;
-		padding: 0 1vh 1vh 4vh;
-		font-size: 1.8vh;
+		gap: 0.4vh 1.4vh;
+		font-size: clamp(12px, 1.55vh, 15px);
 		color: var(--disabled-foreground);
+		line-height: 1.45;
+	}
+	.detail span { overflow-wrap: anywhere; }
+	.link-up { color: var(--color-success, var(--primary-foreground)); }
+	.empty { padding: 3vh 1.5vh; text-align: center; }
+	@media (max-width: 620px) {
+		.iface :global(.row) { flex-wrap: wrap; }
+		.iface :global(.switch-row) { flex-basis: 100%; }
 	}
 </style>
 
@@ -134,53 +140,57 @@
 {:else}
 	<div class="settings">
 		<div class="container">
-			<div class="note">{editable ? $t('settings.network.editableNote') : $t('settings.network.readOnlyNote')}</div>
-			<div class="note">{$t('settings.network.primaryHint')}</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<Tabs {tabs} bind:activeID={medium} position={[0, 0]} />
+			</div>
 			{#if !$networkState.known && interfaces.length > 0}<div class="note">{$t('settings.network.staleState')}</div>{/if}
 			{#if !$networkSubscriptionActive}<div class="note">{$t('settings.network.liveUpdatesUnavailable')}</div>{/if}
 			{#if primaryFailed}<div class="note">{$t('settings.network.primarySaveFailed')}</div>{/if}
 			{#if $networkState.detail === 'addressesOnly'}
 				<div class="note">{$t('settings.network.detailLimited')}</div>
 			{/if}
-			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.network.automatic')} checked={selectedPrimary === ''} position={[0, 0]} disabled={primaryBusy} onToggle={() => void pick('')} />
-			</div>
-			{#each interfaces as iface, index (iface.id)}
+			{#each visibleInterfaces as iface, index (iface.id)}
 				<div class="iface">
-					<div class="head">
-						<Icon img={iconFor(iface)} alt="" size="3vh" padding="0" colorVariable="--primary-foreground" />
-						<div role="group" data-mouse-activate-area={areaID} style="flex: 1 1 auto;">
-							<SwitchRow label="{iface.name} — {linkLabel(iface)}" checked={selectedPrimary === iface.id} position={[0, index + 1]} disabled={primaryBusy} onToggle={() => void pick(iface.id)} />
-						</div>
+					<div role="group" data-mouse-activate-area={areaID}>
+						<SwitchRow label={iface.name} icon={iconFor(iface)} padding="1.2vh 1.5vh" checked={selectedPrimary === iface.id} position={[0, index + 1]} disabled={primaryBusy} onToggle={() => void pick(iface.id)}>
+							{#snippet children()}
+								<div class="detail">
+									<span class:link-up={iface.link === 'up'}>{linkLabel(iface)}</span>
+									{#if iface.addresses.some(address => address.family === 'ipv4')}<span>{modeLabel(iface)}</span>{/if}
+									{#if iface.wifi?.ssid}<span>{iface.wifi.ssid}{iface.wifi.signal !== null ? ` · ${iface.wifi.signal}%` : ''}</span>{/if}
+								</div>
+								{#if iface.addresses.length || iface.gateway || iface.dns.length}
+									<div class="detail">
+										{#each iface.addresses as address (address.address)}<span>{address.family === 'ipv4' ? 'IPv4' : 'IPv6'} {address.address}/{address.prefixLength}</span>{/each}
+										{#if iface.gateway}<span>{$t('settings.network.gateway')}: {iface.gateway}</span>{/if}
+										{#if iface.dns.length}<span>{$t('settings.network.dns')}: {iface.dns.join(', ')}</span>{/if}
+									</div>
+								{/if}
+								{/snippet}
+							{#snippet actions()}
+								{#if canOpenNetworkConfig(iface, $networkState.capabilities, $networkState.detail, $networkState.known)}
+									<Button icon="/img/edit.svg" label={$t('settings.network.configure')} padding="1vh 1.5vh" position={[1, index + 1]} onConfirm={() => (editing = iface.id)} />
+								{/if}
+							{/snippet}
+						</SwitchRow>
 					</div>
-					<div class="detail">
-						<span>{modeLabel(iface)}</span>
-						{#each iface.addresses as address (address.address)}
-							<span>{address.address}/{address.prefixLength}</span>
-						{/each}
-						{#if iface.gateway}<span>{$t('settings.network.gateway')}: {iface.gateway}</span>{/if}
-						{#if iface.dns.length > 0}<span>{$t('settings.network.dns')}: {iface.dns.join(', ')}</span>{/if}
-						{#if iface.wifi}
-							<span>{$t('settings.network.ssid')}: {iface.wifi.ssid ?? '—'}</span>
-							<span>{$t('settings.network.signal')}: {iface.wifi.signal !== null ? `${iface.wifi.signal}%` : '—'}</span>
-						{/if}
-					</div>
-					{#if canOpenNetworkConfig(iface, $networkState.capabilities, $networkState.detail, $networkState.known)}
-						<div role="group" data-mouse-activate-area={areaID} class="configure">
-							<Button icon="/img/edit.svg" label={$t('settings.network.configure')} position={[1, index + 1]} onConfirm={() => (editing = iface.id)} />
-						</div>
-					{/if}
 				</div>
 			{:else}
 				<!-- Only after a read has settled — before that the list is empty because
 			     nothing has been asked yet, not because the host has no interfaces. -->
 				{#if $networkState.known}
-					<div class="note">{$t('settings.network.noInterfaces')}</div>
+					<div class="note empty">{$t('settings.network.noAdapters')}</div>
 				{/if}
 			{/each}
+			<div class="footer-choice" role="group" data-mouse-activate-area={areaID}>
+				<div class="section-label">{$t('settings.network.footerInterface')}</div>
+				<SwitchRow label={$t('settings.network.automatic')} checked={selectedPrimary === ''} position={[0, visibleInterfaces.length + 1]} padding="1vh 1.5vh" disabled={primaryBusy} onToggle={() => void pick('')} />
+				<div class="note">{$t('settings.network.primaryHint')}</div>
+			</div>
+			{#if !editable}<div class="note">{$t('settings.network.readOnlyNote')}</div>{/if}
 		</div>
-		<ButtonBar justify="center" basePosition={[0, interfaces.length + 1]}>
-			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
+		<ButtonBar justify="center" basePosition={[0, visibleInterfaces.length + 2]}>
+			<Button icon="/img/back.svg" label={$t('common.back')} position={[0, visibleInterfaces.length + 2]} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 {/if}

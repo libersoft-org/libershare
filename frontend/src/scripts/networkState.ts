@@ -103,3 +103,9 @@ export async function joinWifiNetwork(interfaceID: string, ssid: string, bssid: 
 	storeSnapshot(await api.call<NetworkStateInfo>('system.wifiConnect', { interfaceID, ssid, bssid, password, ...(expectedSecurity !== undefined ? { expectedSecurity } : {}), ...(expectedSsidHex !== undefined ? { expectedSsidHex } : {}) }));
 	return get(networkState);
 }
+
+/** Disconnect the selected Wi-Fi interface and publish the confirmed host state. */
+export async function disconnectWifiNetwork(interfaceID: string): Promise<NetworkStateInfo> {
+	storeSnapshot(await api.call<NetworkStateInfo>('system.wifiDisconnect', { interfaceID }));
+	return get(networkState);
+}
