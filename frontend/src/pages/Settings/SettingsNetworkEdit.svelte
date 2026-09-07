@@ -47,23 +47,8 @@
 	let baseline = $state<NetIPv4Baseline | null>(null);
 	let seededForm: NetworkConfigForm | null = null;
 	let stale = $state(false);
-	/**
-	 * True while a message the just-finished operation produced is on screen.
-	 *
-	 * An apply or a join CHANGES the interface it runs on — a failed Wi-Fi join
-	 * drops the association it started from, so the address goes and comes back.
-	 * The reseed below then fired on this form's own side effect and replaced
-	 * "check the password" with "the form was reloaded", clearing `failed` with it,
-	 * so the user was told nothing had gone wrong. The form still reseeds; only the
-	 * announcement is withheld, because the operation already said what happened.
-	 *
-	 * The flag lasts as long as the message it protects. One failed attempt settles
-	 * over SEVERAL state updates — the address disappears and comes back — so
-	 * clearing it after the first of them would let the second one overwrite the
-	 * very message this exists to keep. It is cleared where the message is: when the
-	 * next operation starts, or when the host really did change under the form.
-	 */
-	let reported = false;
+	// Automatic host updates preserve an operation's result until the next user edit or operation.
+	let reported = $state(false);
 	$effect(() => {
 		if (!iface || busy) return;
 		const update = networkFormUpdate(ipv4BaselineOf(iface), baseline, formDirty());
@@ -106,6 +91,12 @@
 
 	function formDirty(): boolean {
 		return JSON.stringify(currentForm()) !== JSON.stringify(seededForm);
+	}
+
+	function clearMessage(): void {
+		reported = false;
+		failed = stale;
+		message = stale ? $t('settings.network.changedOutside') : '';
 	}
 
 	function reloadForm(): void {
@@ -194,7 +185,7 @@
 	async function scan(): Promise<void> {
 		if (scanning || busy) return;
 		scanning = true;
-		message = '';
+		clearMessage();
 		try {
 			networks = await scanWifiNetworks(interfaceID);
 			if (networks.length === 0) {
@@ -211,6 +202,7 @@
 
 	function selectNetwork(network: NetWifiNetwork): void {
 		if (!network.supported) return;
+		clearMessage();
 		// An open network takes no key, and asking for one would invite the user to
 		// type a password that cannot be used.
 		password = '';
@@ -337,7 +329,7 @@
 			<div class="note">{$t('settings.network.applyWarning')}</div>
 
 			<div role="group" data-mouse-activate-area={areaID}>
-				<Select bind:value={mode} label={$t('settings.network.addressing')} position={[0, 0]} disabled={busy} flex>
+				<Select bind:value={mode} onchange={clearMessage} label={$t('settings.network.addressing')} position={[0, 0]} disabled={busy} flex>
 					<SelectOption value="dhcp" label={$t('settings.network.dhcp')} />
 					<SelectOption value="static" label={$t('settings.network.static')} />
 				</Select>
@@ -345,20 +337,20 @@
 
 			{#if mode === 'static'}
 				<div role="group" data-mouse-activate-area={areaID}>
-					<Input bind:value={address} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, 1]} disabled={busy} flex />
-					<Input bind:value={prefix} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, 2]} disabled={busy} flex />
-					<Input bind:value={gateway} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, 3]} disabled={busy} flex />
+					<Input bind:value={address} onchange={clearMessage} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, 1]} disabled={busy} flex />
+					<Input bind:value={prefix} onchange={clearMessage} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, 2]} disabled={busy} flex />
+					<Input bind:value={gateway} onchange={clearMessage} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, 3]} disabled={busy} flex />
 				</div>
 			{/if}
 
 			<div role="group" data-mouse-activate-area={areaID}>
-				<Select bind:value={dnsMode} label={$t('settings.network.dnsPolicy')} position={[0, 1 + staticRows]} disabled={busy} flex>
+				<Select bind:value={dnsMode} onchange={clearMessage} label={$t('settings.network.dnsPolicy')} position={[0, 1 + staticRows]} disabled={busy} flex>
 					<SelectOption value="unchanged" label={$t('settings.network.dnsUnchanged')} />
 					<SelectOption value="automatic" label={$t('settings.network.dnsAutomatic')} />
 					<SelectOption value="custom" label={$t('settings.network.dnsCustom')} />
 				</Select>
 				{#if dnsMode === 'custom'}
-					<Input bind:value={dns} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 2001:db8::53" position={[0, 2 + staticRows]} disabled={busy} flex />
+					<Input bind:value={dns} onchange={clearMessage} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 2001:db8::53" position={[0, 2 + staticRows]} disabled={busy} flex />
 				{/if}
 			</div>
 
@@ -386,7 +378,7 @@
 			{/each}
 			{#if joinSSID}
 				<div role="group" data-mouse-activate-area={areaID}>
-					<Input bind:value={password} label={$t('settings.network.passwordFor', { ssid: joinSSID })} type="password" position={[0, wifiBaseY + 1 + networks.length]} disabled={busy} flex />
+					<Input bind:value={password} onchange={clearMessage} label={$t('settings.network.passwordFor', { ssid: joinSSID })} type="password" position={[0, wifiBaseY + 1 + networks.length]} disabled={busy} flex />
 				</div>
 				<ButtonBar justify="center" basePosition={[0, wifiBaseY + 2 + networks.length]}>
 					<Button icon="/img/check.svg" label={$t('settings.network.join')} disabled={busy || scanning} onConfirm={join} />
@@ -396,6 +388,9 @@
 
 		{#if message}
 			<div class="message" class:failed>{message}</div>
+		{/if}
+		{#if stale && message !== $t('settings.network.changedOutside')}
+			<div class="note">{$t('settings.network.reloadRequired')}</div>
 		{/if}
 	</div>
 	<ButtonBar justify="center" basePosition={[0, buttonsY + 1]}>

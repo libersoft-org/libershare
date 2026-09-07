@@ -51,10 +51,8 @@ export type NetworkFormMessage = 'keep' | 'stale' | 'staleSilent' | 'reseedSilen
  * "check the password" with "the form was reloaded" and clears the failure with
  * it, telling the user nothing went wrong.
  *
- * `reported` therefore lasts as long as the message it protects, not for one
- * update: it is set when an operation reports, and cleared when the next
- * operation starts or when the host really did change under a form being typed
- * into, which is news that supersedes the old result.
+ * `reported` survives automatic updates. User input or a new operation clears
+ * it, so later host changes can explain why a newly edited form cannot save.
  */
 export function networkFormMessage(update: NetworkFormUpdate, reported: boolean): NetworkFormMessage {
 	if (update === 'keep') return 'keep';

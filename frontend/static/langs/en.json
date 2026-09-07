@@ -377,6 +377,7 @@
 			"errorFailed": "The network configuration could not be applied: {detail}",
 			"errorStale": "The interface configuration changed while this form was open. The form has been reloaded; review it and save again.",
 			"changedOutside": "The interface configuration changed outside this form. Reload the form to see the current values; your edits will be discarded.",
+			"reloadRequired": "The interface configuration changed. Reload the form before saving; your edits will be discarded.",
 			"reloadedFromHost": "The interface configuration changed outside this form and the form was reloaded.",
 			"reloadForm": "Reload"
 		},
