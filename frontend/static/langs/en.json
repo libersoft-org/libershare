@@ -326,6 +326,7 @@
 			"title": "Network",
 			"wired": "Wired",
 			"otherAdapters": "Other",
+			"virtualAdapter": "Virtual adapter",
 			"footerInterface": "Footer interface",
 			"noAdapters": "There are no adapters in this group.",
 			"availableNetworks": "Available networks",

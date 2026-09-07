@@ -26,6 +26,10 @@
 			{ ...base, id: 'wired0', name: 'Wired adapter', medium: 'wired', defaultRoute: true },
 			{ ...base, id: 'wired1', name: 'Second wired adapter', medium: 'wired' },
 			{ ...base, id: 'vpn0', name: 'VPN session', medium: 'other' },
+			{ ...base, id: 'virtual-wifi', name: 'Virtual wireless adapter', medium: 'wireless', virtual: true, description: 'Wi-Fi Direct adapter' },
+			{ ...base, id: 'hidden-wifi', name: 'Hidden wireless adapter', medium: 'wireless', virtual: true, hidden: true, link: 'down' },
+			{ ...base, id: 'virtual-wired', name: 'Virtual Ethernet adapter', medium: 'wired', virtual: true, link: 'down' },
+			{ ...base, id: 'hidden-active', name: 'Active tunnel', medium: 'other', hidden: true },
 		] };
 		api.call = async method => {
 			if (method === 'system.network') return structuredClone(host);
@@ -61,6 +65,13 @@
 				assert(root.textContent.includes('VPN session') && !root.textContent.includes('Wired adapter'), 'Other tab did not show VPN');
 				assert(writes === 0, 'Changing display category changed settings');
 			});
+			await test('OS metadata separates virtual adapters and hides only inactive hidden interfaces', async () => {
+				assert(tab(get(t)('settings.network.wifi')).textContent.includes('(1)'), 'Virtual or hidden adapter inflated the Wi-Fi count');
+				assert(tab(get(t)('settings.network.wired')).textContent.includes('(2)'), 'Virtual adapter inflated the wired count');
+				assert(root.textContent.includes('Virtual wireless adapter') && root.textContent.includes('Wi-Fi Direct adapter'), 'Other tab lost the virtual device description');
+				assert(root.textContent.includes('Virtual Ethernet adapter') && root.textContent.includes('Active tunnel'), 'Other tab hid virtual or active hidden connections');
+				assert(!root.textContent.includes('Hidden wireless adapter'), 'Inactive hidden adapter is still shown');
+			});
 			await test('a pending footer selection cannot be submitted twice by click or Enter', async () => {
 				const control = root.querySelector('[role="switch"][aria-label="VPN session"]');
 				control.click(); await settle();
@@ -89,7 +100,7 @@
 			api.settings.set = originalSet;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.networkListTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 4 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 5 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

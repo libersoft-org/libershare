@@ -21,13 +21,13 @@
 
 	// Tunnels, bridges and container veth pairs would flood the picker, so an
 	// 'other' interface is only listed when it actually carries traffic.
-	let interfaces = $derived($networkState.interfaces.filter(isSelectableInterface));
+	let interfaces = $derived($networkState.interfaces.filter(iface => isSelectableInterface(iface) && !(iface.hidden === true && iface.link !== 'up' && !iface.defaultRoute)));
 	let medium = $state('wireless');
-	let visibleInterfaces = $derived(interfaces.filter(iface => iface.medium === medium).sort((a, b) => Number(b.link === 'up') - Number(a.link === 'up') || a.name.localeCompare(b.name)));
+	let visibleInterfaces = $derived(interfaces.filter(iface => interfaceGroup(iface) === medium).sort((a, b) => Number(b.link === 'up') - Number(a.link === 'up') || a.name.localeCompare(b.name)));
 	let tabs = $derived([
-		{ id: 'wireless', icon: '/img/wifi.svg', label: `${$t('settings.network.wifi')} (${interfaces.filter(iface => iface.medium === 'wireless').length})` },
-		{ id: 'wired', icon: '/img/ethernet.svg', label: `${$t('settings.network.wired')} (${interfaces.filter(iface => iface.medium === 'wired').length})` },
-		{ id: 'other', icon: '/img/network.svg', label: `${$t('settings.network.otherAdapters')} (${interfaces.filter(iface => iface.medium === 'other').length})` },
+		{ id: 'wireless', icon: '/img/wifi.svg', label: `${$t('settings.network.wifi')} (${interfaces.filter(iface => interfaceGroup(iface) === 'wireless').length})` },
+		{ id: 'wired', icon: '/img/ethernet.svg', label: `${$t('settings.network.wired')} (${interfaces.filter(iface => interfaceGroup(iface) === 'wired').length})` },
+		{ id: 'other', icon: '/img/network.svg', label: `${$t('settings.network.otherAdapters')} (${interfaces.filter(iface => interfaceGroup(iface) === 'other').length})` },
 	]);
 	let selectedPrimary = $derived(visiblePrimaryInterface($primaryInterface, interfaces));
 	// Editing is offered only where the host can actually carry it out, so the app
@@ -41,9 +41,14 @@
 	let primaryBusy = $state(false);
 
 	function iconFor(iface: NetInterfaceInfo): string {
+		if (iface.virtual) return '/img/network.svg';
 		if (iface.medium === 'wired') return '/img/ethernet.svg';
 		if (iface.medium === 'wireless') return '/img/wifi.svg';
 		return '/img/network.svg';
+	}
+
+	function interfaceGroup(iface: NetInterfaceInfo): string {
+		return iface.virtual ? 'other' : iface.medium;
 	}
 
 	function linkLabel(iface: NetInterfaceInfo): string {
@@ -154,6 +159,9 @@
 					<div role="group" data-mouse-activate-area={areaID}>
 						<SwitchRow label={iface.name} icon={iconFor(iface)} padding="1.2vh 1.5vh" checked={selectedPrimary === iface.id} position={[0, index + 1]} disabled={primaryBusy} onToggle={() => void pick(iface.id)}>
 							{#snippet children()}
+								{#if iface.description || iface.virtual}
+									<div class="detail">{#if iface.virtual}<span>{$t('settings.network.virtualAdapter')}</span>{/if}{#if iface.description}<span>{iface.description}</span>{/if}</div>
+								{/if}
 								<div class="detail">
 									<span class:link-up={iface.link === 'up'}>{linkLabel(iface)}</span>
 									{#if iface.addresses.some(address => address.family === 'ipv4')}<span>{modeLabel(iface)}</span>{/if}

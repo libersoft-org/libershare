@@ -326,6 +326,7 @@
 			"title": "Síť",
 			"wired": "Kabel",
 			"otherAdapters": "Ostatní",
+			"virtualAdapter": "Virtuální adaptér",
 			"footerInterface": "Zobrazení v dolní liště",
 			"noAdapters": "V této skupině nejsou žádné adaptéry.",
 			"availableNetworks": "Dostupné sítě",

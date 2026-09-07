@@ -353,7 +353,6 @@
 	.connection-main { display: flex; align-items: center; justify-content: space-between; gap: 1.4vh; flex-wrap: wrap; }
 	.connection h4 { font-size: clamp(17px, 2.2vh, 23px); margin: 0.6vh 0; overflow-wrap: anywhere; }
 	.connection-details { display: flex; gap: 0.5vh 2vh; flex-wrap: wrap; font-size: clamp(13px, 1.65vh, 17px); }
-	.device { font-size: clamp(12px, 1.5vh, 15px); opacity: 0.75; }
 	.section { padding: 1.8vh 0; border-top: 1px solid var(--secondary-softer-background); }
 	.toolbar { margin-bottom: 1.2vh; flex-wrap: wrap; }
 	.note { font-size: clamp(13px, 1.65vh, 17px); line-height: 1.45; color: var(--secondary-foreground); opacity: 0.85; }
@@ -429,8 +428,7 @@
 		<header class="header">
 			<Icon img={iface?.medium === 'wireless' ? '/img/wifi.svg' : '/img/ethernet.svg'} size="3.2vh" colorVariable="--primary-foreground" />
 			<div>
-				<h2>{iface?.name ?? interfaceID}</h2>
-				{#if iface?.name !== interfaceID}<div class="device">{interfaceID}</div>{/if}
+				<h2>{iface?.name ?? $t('settings.network.title')}</h2>
 			</div>
 		</header>
 
