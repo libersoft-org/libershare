@@ -3,9 +3,9 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
 import { CodedError, ErrorCodes, ipv4BaselineOf, isSelectableInterface, isValidSSID, isValidWifiKey, normalizeDnsServers, sameIPv4Baseline, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
-import { connectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND, windowsApplyIPv4Command } from './system-network-windows.ts';
-import { applyLinuxIPv4, connectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
-import { applyMacIPv4, connectMacWifi, isMacWifiConfigurable, isMacWritable, readMacNetworkState, scanMacWifi } from './system-network-macos.ts';
+import { connectWindowsWifi, disconnectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND, windowsApplyIPv4Command } from './system-network-windows.ts';
+import { applyLinuxIPv4, connectLinuxWifi, disconnectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
+import { applyMacIPv4, connectMacWifi, disconnectMacWifi, isMacWifiConfigurable, isMacWritable, readMacNetworkState, scanMacWifi } from './system-network-macos.ts';
 import { assertMacWifiMutationIdle } from './system-network-corewlan.ts';
 import { networkHelperAvailable, runElevatedNetworkHelper } from './network-helper-client.ts';
 import { windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
@@ -791,4 +791,28 @@ export async function run<T>(action: () => Promise<T>, secrets: readonly string[
 		const detail = failure.stderr?.toString().trim() || failure.stdout?.toString().trim();
 		throw new CodedError(ErrorCodes.NETCONFIG_FAILED, redactSecrets(firstLine(detail) || (err as Error).message || 'command failed', secrets));
 	}
+}
+
+/** Disconnect and publish a fresh snapshot while holding the host mutation lock. */
+export function disconnectWifi(interfaceID: string, primaryInterface: string = ''): Promise<NetworkStateInfo> {
+	return runNetworkMutation(() => disconnectWifiUnlocked(interfaceID, primaryInterface));
+}
+
+/** Disconnect for callers that already own the host mutation lock. */
+export async function disconnectWifiUnlocked(interfaceID: string, primaryInterface: string = ''): Promise<NetworkStateInfo> {
+	if (typeof interfaceID !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+	await assertWirelessInterface(interfaceID);
+	try {
+		await run(() => {
+			if (process.platform === 'win32') return disconnectWindowsWifi(assertWindowsGuid(interfaceID));
+			if (process.platform === 'darwin') return disconnectMacWifi(assertDeviceName(interfaceID));
+			return disconnectLinuxWifi(assertDeviceName(interfaceID));
+		});
+	} catch (error) {
+		resetNetworkCapabilitiesCache();
+		throw error;
+	} finally {
+		resetNetworkStateCache();
+	}
+	return readNetworkStateUnlocked(primaryInterface);
 }

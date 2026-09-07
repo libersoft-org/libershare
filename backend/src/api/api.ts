@@ -79,6 +79,14 @@ export function canAdministerHostNetwork(apiTokenConfigured: boolean, isLocalCli
 	return apiTokenConfigured && isLocalClient;
 }
 
+/** Apply the host-only authorization gate before invoking a network mutation. */
+export function hostNetworkAdminHandler<P, R>(apiTokenConfigured: boolean, handler: (params: P) => R): (params: P, client: Pick<ClientSocket, 'data'>) => R {
+	return (params, client) => {
+		if (!canAdministerHostNetwork(apiTokenConfigured, client.data.isLocalClient)) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'host network administration requires an authenticated client on this machine');
+		return handler(params);
+	};
+}
+
 export function networkStateForClient(state: NetworkStateInfo, apiTokenConfigured: boolean, isLocalClient: boolean): NetworkStateInfo {
 	return restrictNetworkCapabilities(state, canAdministerHostNetwork(apiTokenConfigured, isLocalClient));
 }
@@ -287,12 +295,7 @@ export class APIServer {
 			return false;
 		};
 		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers, !!this.apiToken);
-		const networkAdmin = <P, R>(handler: (params: P) => R): ((params: P, client: ClientSocket) => R) => {
-			return (params, client) => {
-				if (!canAdministerHostNetwork(!!this.apiToken, client.data.isLocalClient)) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'host network administration requires an authenticated client on this machine');
-				return handler(params);
-			};
-		};
+		const networkAdmin = <P, R>(handler: (params: P) => R) => hostNetworkAdminHandler(!!this.apiToken, handler);
 		this._system = _system;
 		_system.startPolling();
 		const _relay = initRelayHandlers(this.networks, broadcastFn, hasSubscribers);
@@ -442,6 +445,7 @@ export class APIServer {
 			'system.networkApply': networkAdmin(_system.networkApply),
 			'system.wifiScan': networkAdmin(_system.wifiScan),
 			'system.wifiConnect': networkAdmin(_system.wifiConnect),
+			'system.wifiDisconnect': networkAdmin(_system.wifiDisconnect),
 			// Relay
 			'relay.stats': _relay.stats,
 		};

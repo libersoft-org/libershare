@@ -1,6 +1,6 @@
 import { ptr, read, toArrayBuffer, type Pointer } from 'bun:ffi';
 import type { NetWifiNetwork } from '@shared';
-import { type WlanApi, type WlanHandle, MAX_SSID_LENGTH, ERROR_ALREADY_EXISTS, WLAN_PROFILE_USER, withWlanHandle, guidToBytes, utf16z, encodeConnectionParameters, readFixedUtf16, wlanErrorMessage, wlanReasonText, readAssociation } from './system-network-windows-wlan.ts';
+import { type WlanApi, type WlanHandle, MAX_SSID_LENGTH, ERROR_ALREADY_EXISTS, WLAN_PROFILE_USER, withWlanHandle, guidToBytes, utf16z, encodeConnectionParameters, readFixedUtf16, wlanErrorMessage, wlanReasonText, readAssociation, isWindowsWifiDisconnected } from './system-network-windows-wlan.ts';
 import { assertProfileNameWritable, assertWindowsWifiKey, type JoinTarget, type ProfileChange, ssidHex, windowsWifiProfileXml, writeJoinProfile, openJoinDecision, readStoredProfile, writeProfile, readWrittenProfile, undoWifiProfileChange } from './system-network-windows-profiles.ts';
 
 
@@ -415,4 +415,20 @@ async function waitForAssociation(guid: string, network: AvailableNetwork): Prom
 
 function delay(ms: number): Promise<void> {
 	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Disconnect the radio without deleting or modifying its saved profiles. */
+export async function disconnectWindowsWifi(guid: string): Promise<void> {
+	const guidBytes = guidToBytes(guid);
+	if (isWindowsWifiDisconnected(guid)) return;
+	withWlanHandle((api, handle) => {
+		const rc = api.WlanDisconnect(handle, ptr(guidBytes), null);
+		if (rc !== 0) throw new Error(wlanErrorMessage(rc));
+	});
+	const deadline = Date.now() + JOIN_TIMEOUT_MS;
+	do {
+		if (isWindowsWifiDisconnected(guid)) return;
+		await new Promise(resolve => setTimeout(resolve, JOIN_POLL_MS));
+	} while (Date.now() < deadline);
+	throw new Error('Windows did not disconnect the Wi-Fi interface');
 }

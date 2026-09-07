@@ -5,7 +5,7 @@ import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type Ne
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
-import { applyIPv4Unlocked, connectWifiUnlocked, readNetworkState, readNetworkStateUnlocked, runNetworkMutation, scanWifi } from '../system-network.ts';
+import { applyIPv4Unlocked, connectWifiUnlocked, disconnectWifiUnlocked, readNetworkState, readNetworkStateUnlocked, runNetworkMutation, scanWifi } from '../system-network.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -47,6 +47,7 @@ interface SystemHandlers {
 	getVolume: () => Promise<{ volume: number | null; available: boolean }>;
 	network: () => Promise<NetworkStateInfo>;
 	networkApply: (p: { interfaceID: string; config: NetIPv4Config; expected: NetIPv4Baseline }) => Promise<NetworkStateInfo>;
+	wifiDisconnect: (p: { interfaceID: string }) => Promise<NetworkStateInfo>;
 	wifiScan: (p: { interfaceID: string }) => Promise<NetWifiNetwork[]>;
 	wifiConnect: (p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string; expectedSecurity?: string; expectedSsidHex?: string }) => Promise<NetworkStateInfo>;
 	startPolling: () => void;
@@ -314,6 +315,17 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		);
 	}
 
+	async function leaveWifiNetwork(p: { interfaceID: string }): Promise<NetworkStateInfo> {
+		assert(p, ['interfaceID']);
+		const interfaceID = assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID);
+		const primary = settings.get('network.primaryInterface') ?? '';
+		return runAndPublishNetworkMutation(
+			() => disconnectWifiUnlocked(interfaceID, primary),
+			() => readNetworkStateUnlocked(primary),
+			state => broadcast('system:network', state)
+		);
+	}
+
 	async function scanWifiNetworks(p: { interfaceID: string }): Promise<NetWifiNetwork[]> {
 		assert(p, ['interfaceID']);
 		return await scanWifi(assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID));
@@ -387,5 +399,5 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		}
 	}
 
-	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, network: getNetworkState, networkApply: applyNetworkConfig, wifiScan: scanWifiNetworks, wifiConnect: joinWifiNetwork, startPolling, stopPolling };
+	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, network: getNetworkState, networkApply: applyNetworkConfig, wifiScan: scanWifiNetworks, wifiConnect: joinWifiNetwork, wifiDisconnect: leaveWifiNetwork, startPolling, stopPolling };
 }

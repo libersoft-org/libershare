@@ -25,6 +25,7 @@ const CONN_ASSOCIATION_OFFSET = 520;
 const CONN_STATE_OFFSET = 0;
 /** WLAN_INTERFACE_STATE: 1 = wlan_interface_state_connected. Every other value is on the way to or from it. */
 const INTERFACE_STATE_CONNECTED = 1;
+const INTERFACE_STATE_DISCONNECTED = 4;
 /** WLAN_ASSOCIATION_ATTRIBUTES: DOT11_SSID = ULONG uSSIDLength + UCHAR ucSSID[32]. */
 const ASSOC_SSID_LENGTH_OFFSET = CONN_ASSOCIATION_OFFSET;
 const ASSOC_SSID_OFFSET = CONN_ASSOCIATION_OFFSET + 4;
@@ -57,6 +58,7 @@ export interface WlanApi {
 	WlanDeleteProfile: (handle: WlanHandle, guid: Pointer, name: Pointer, reserved: null) => number;
 	WlanGetProfileCustomUserData: (handle: WlanHandle, guid: Pointer, name: Pointer, reserved: null, size: Pointer, data: Pointer) => number;
 	WlanSetProfileCustomUserData: (handle: WlanHandle, guid: Pointer, name: Pointer, size: number, data: Pointer | null, reserved: null) => number;
+	WlanDisconnect: (handle: WlanHandle, guid: Pointer, reserved: null) => number;
 	WlanConnect: (handle: WlanHandle, guid: Pointer, parameters: Pointer, reserved: null) => number;
 	WlanReasonCodeToString: (reason: number, size: number, buffer: Pointer, reserved: null) => number;
 	WlanFreeMemory: (memory: Pointer) => void;
@@ -90,6 +92,7 @@ export const WLAN_SYMBOLS: Record<keyof WlanApi, WlanSymbol> = {
 	WlanDeleteProfile: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 	WlanGetProfileCustomUserData: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 	WlanSetProfileCustomUserData: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+	WlanDisconnect: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 	WlanConnect: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 	// The one entry point here that takes no handle at all: a reason code is
 	// translated by the DLL itself, so the first argument is the code.
@@ -514,4 +517,26 @@ export function readAssociation(guid: string): WlanConnectionAttributes | null {
  */
 export function isWindowsWifiConfigurable(): boolean {
 	return readWindowsWifi().size > 0;
+}
+
+/** Read the interface state strictly; a failed query is not proof of disconnection. */
+export function isWindowsWifiDisconnected(guid: string): boolean {
+	return withWlanHandle((api, handle) => {
+		const output = new BigUint64Array(1);
+		const rc = api.WlanEnumInterfaces(handle, null, ptr(output));
+		if (rc !== 0) throw new Error(wlanErrorMessage(rc));
+		const list = Number(output[0]) as Pointer;
+		if (!list) throw new Error('Windows did not return Wi-Fi interface state');
+		try {
+			const count = read.u32(list, 0);
+			if (count > 512) throw new Error('Windows returned an invalid Wi-Fi interface list');
+			for (let index = 0; index < count; index++) {
+				const offset = WLAN_INTERFACE_LIST_HEADER + index * WLAN_INTERFACE_INFO_SIZE;
+				if (guidToString(list, offset).toUpperCase() === guid.toUpperCase()) return read.u32(list, offset + WLAN_INTERFACE_INFO_SIZE - 4) === INTERFACE_STATE_DISCONNECTED;
+			}
+			throw new Error('Windows Wi-Fi interface is unavailable');
+		} finally {
+			api.WlanFreeMemory(list);
+		}
+	});
 }
