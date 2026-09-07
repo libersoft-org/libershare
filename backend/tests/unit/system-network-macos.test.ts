@@ -308,6 +308,19 @@ describe('parseMacNetworkState', () => {
 		expect(en0?.wifi).toEqual({ ssid: null, signal: 60, radio: 'unknown' });
 	});
 
+	it('uses authorized native Wi-Fi metadata even while system_profiler redacts names', () => {
+		const nativeWifi = [{ device: 'en0', configurable: true, wifi: { ssid: 'Office', signal: 72, radio: 'on' as const } }];
+		const state = parseMacNetworkState({ ...sources, nativeWifi });
+		expect(state.find(item => item.id === 'en0')).toMatchObject({ wifiConfigurable: true, wifi: nativeWifi[0]!.wifi, ipv4Configurable: true, gateway: '192.0.2.1' });
+		expect(state.filter(item => item.medium !== 'wireless').every(item => !item.wifiConfigurable && item.wifi === undefined)).toBe(true);
+	});
+
+	it('does not replace denied or missing native state with an old readable report', () => {
+		const denied = [{ device: 'en0', configurable: false, wifi: { ssid: null, signal: 60, radio: 'on' as const } }];
+		expect(parseMacNetworkState({ ...sources, airport: AIRPORT_NAMED, nativeWifi: denied }).find(item => item.id === 'en0')).toMatchObject({ wifiConfigurable: false, wifi: { ssid: null } });
+		expect(parseMacNetworkState({ ...sources, airport: AIRPORT_NAMED, nativeWifi: [] }).find(item => item.id === 'en0')).toMatchObject({ wifiConfigurable: false, ipv4Configurable: true });
+	});
+
 	it('offers Wi-Fi only while macOS is naming the networks', () => {
 		// The picker is addressed by name, so a report full of `<redacted>` is an
 		// interface that cannot be configured even though the radio works.

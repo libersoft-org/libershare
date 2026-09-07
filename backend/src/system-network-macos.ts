@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { associateMacWifi } from './system-network-corewlan.ts';
+import { associateMacWifi, readCoreWlanWifi, scanCoreWlanWifi, type MacWifiInterface } from './system-network-corewlan.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { isIPv4, isIPv6, validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetLink, type NetMedium, type NetWifiNetwork } from '@shared';
@@ -17,7 +17,7 @@ const C_LOCALE_ENV = { ...process.env, LC_ALL: 'C', LANG: 'C' };
  * `networksetup` is addressed by SERVICE name ("Wi-Fi", "Thunderbolt Bridge")
  * while everything else speaks DEVICE names (en0, bridge0).
  *
- * Wi-Fi scans use system_profiler; association uses CoreWLAN in a native worker.
+ * Wi-Fi state, scans and association use CoreWLAN in a native worker.
  * Both target selection and verification need Location Services access because
  * macOS hides SSID data without it, even from root. The capability follows name
  * visibility: see {@link isMacWifiConfigurable}.
@@ -27,8 +27,6 @@ const C_LOCALE_ENV = { ...process.env, LC_ALL: 'C', LANG: 'C' };
 const EXEC_TIMEOUT_MS = 5000;
 /** Reconfiguring a service renegotiates DHCP, which is far slower than a read. */
 const APPLY_TIMEOUT_MS = 45000;
-/** `system_profiler SPAirPortDataType` drives a real radio scan and measures ~3 s on an idle host. */
-const WIFI_SCAN_TIMEOUT_MS = 20000;
 /** `<redacted>` is what macOS substitutes for a network name when Location access was not granted. */
 const REDACTED = '<redacted>';
 
@@ -56,6 +54,8 @@ export interface MacNetworkSources {
 	resolvers?: string;
 	/** `system_profiler SPAirPortDataType`, when a Wi-Fi port exists. */
 	airport?: string;
+	/** Native per-interface Wi-Fi data takes precedence over optional legacy reports. */
+	nativeWifi?: MacWifiInterface[];
 }
 
 /**
@@ -578,6 +578,7 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 		if (entry.loopback) continue;
 		const port = ports.get(device);
 		const medium = mapMedium(port);
+		const nativeWifi = sources.nativeWifi?.find(wifi => wifi.device === device);
 		const defaultRoute = device === (route.device ?? route6Device);
 		const deviceRoutes = routes.filter(entry => entry.device === device);
 		const serviceInfo = sources.serviceInfo?.get(device) ?? '';
@@ -603,13 +604,15 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 			ipv4Configurable: routeDetailKnown && services.has(device) && ipv4Mode !== 'unknown' && staticShapeSafe && ipv4Addresses.length <= 1 && deviceRoutes.length <= 1,
 			// Per device, not per host: a second radio macOS did not describe in the
 			// report cannot be scanned, so it is not offered either.
-			wifiConfigurable: medium === 'wireless' && namesVisible && airportInterfaceBlock(sources.airport ?? '', device).lines.length > 0,
+			wifiConfigurable: medium === 'wireless' && (sources.nativeWifi !== undefined ? !!nativeWifi?.configurable : namesVisible && airportInterfaceBlock(sources.airport ?? '', device).lines.length > 0),
 			gateway,
 			// Manually set servers win; otherwise fall back to what the DHCP lease
 			// handed out, so a DHCP link reports the resolvers it actually uses.
 			dns: pickDns(sources, device),
 		};
-		if (medium === 'wireless' && airport && wirelessDevices.length === 1 && wirelessDevices[0] === device) {
+		if (medium === 'wireless' && sources.nativeWifi !== undefined) {
+			if (nativeWifi) info.wifi = nativeWifi.wifi;
+		} else if (medium === 'wireless' && airport && wirelessDevices.length === 1 && wirelessDevices[0] === device) {
 			info.wifi = {
 				ssid: airport.connected ? airport.ssid : null,
 				signal: airport.connected ? airport.signal : null,
@@ -661,8 +664,9 @@ export async function readMacNetworkState(): Promise<NetInterfaceInfo[]> {
 	}
 
 	const hasWifi = [...parseHardwarePorts(hardwarePorts).values()].some(port => /^Wi-Fi$/i.test(port));
-	const airport = hasWifi ? await runOptional('/usr/sbin/system_profiler', ['SPAirPortDataType']) : '';
-	return parseMacNetworkState({ hardwarePorts, serviceOrder, ifconfig, route, route6, routes, serviceInfo, serviceDns, dhcpPacket, resolvers, airport });
+	// A native read failure leaves Wi-Fi unknown without discarding valid IPv4 state.
+	const nativeWifi = hasWifi ? await readCoreWlanWifi().catch(() => []) : [];
+	return parseMacNetworkState({ hardwarePorts, serviceOrder, ifconfig, route, route6, routes, serviceInfo, serviceDns, dhcpPacket, resolvers, nativeWifi });
 }
 
 /**
@@ -688,31 +692,13 @@ export function hasMacWritePrivilege(effectiveUID: number | undefined): boolean 
 	return effectiveUID === 0;
 }
 
-/**
- * Whether this host can offer Wi-Fi at all.
- *
- * Target selection and association verification need Location Services access:
- * without it every name in a scan is `<redacted>`, so the picker would
- * list rows that cannot be acted on. The
- * capability therefore follows the names rather than the radio. The answer
- * changes the moment the user grants or revokes the permission in System
- * Settings, so it is a probe and not the constant it used to be; the caller
- * caches it.
- */
+/** Query native name access in the same bundle context used to scan and associate. */
 export async function isMacWifiConfigurable(): Promise<boolean> {
-	const ports = parseHardwarePorts(await runOptional(NETWORKSETUP, ['-listallhardwareports']));
-	const wireless = [...ports].filter(([, port]) => /^Wi-Fi$/i.test(port)).map(([device]) => device);
-	if (wireless.length === 0) return false;
-	// This runs on every capability read, and a capability that can be granted
-	// while the app is running has to be re-read often. `ipconfig getsummary`
-	// answers the same question in ~8 ms where `system_profiler` takes ~3 s,
-	// because it reports the association rather than driving a scan — but it can
-	// only answer for a radio that is associated, so a silent one falls back.
-	for (const device of wireless) {
-		const summary = macSummarySsidVisible(await runOptional('/usr/sbin/ipconfig', ['getsummary', device]));
-		if (summary !== null) return summary;
+	try {
+		return (await readCoreWlanWifi()).some(wifi => wifi.configurable);
+	} catch {
+		return false;
 	}
-	return macWifiNamesVisible(await runOptional('/usr/sbin/system_profiler', ['SPAirPortDataType']));
 }
 
 /**
@@ -729,7 +715,7 @@ export function macSummarySsidVisible(summary: string): boolean | null {
 
 /** Scan for the Wi-Fi networks one interface can see. */
 export async function scanMacWifi(device: string): Promise<NetWifiNetwork[]> {
-	return parseAirportScan(await run('/usr/sbin/system_profiler', ['SPAirPortDataType'], WIFI_SCAN_TIMEOUT_MS), device);
+	return scanCoreWlanWifi(device);
 }
 
 /** Confirm the association reported by the macOS network snapshot. */
@@ -737,22 +723,9 @@ export function assertMacWifiConnected(networks: NetWifiNetwork[], ssid: string)
 	if (!networks.some(network => network.active && network.ssid === ssid)) throw new Error('macOS did not connect to the requested Wi-Fi network');
 }
 
-/**
- * Join a Wi-Fi network.
- *
- * CoreWLAN returns once the association has settled, but
- * `system_profiler` reports a snapshot that can still be a moment behind it, so
- * the confirming scan is retried rather than believed the first time.
- */
-export async function connectMacWifi(device: string, ssid: string, password: string, security: string): Promise<void> {
-	await associateMacWifi(device, ssid, password, security);
-	let networks: NetWifiNetwork[] = [];
-	for (let attempt = 0; attempt < 3; attempt++) {
-		if (attempt > 0) await delay(1000);
-		networks = await scanMacWifi(device);
-		if (networks.some(network => network.active && network.ssid === ssid)) return;
-	}
-	assertMacWifiConnected(networks, ssid);
+/** Associate and verify the native raw SSID and selected access point. */
+export function connectMacWifi(device: string, ssid: string, password: string, security: string, bssid: string | null = null, ssidHex: string | null = null): Promise<void> {
+	return associateMacWifi(device, ssid, password, security, bssid, ssidHex);
 }
 
 /** Dotted-quad netmask for a prefix length, which is the only form `networksetup -setmanual` accepts. */
