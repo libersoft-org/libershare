@@ -25,8 +25,8 @@ describe('parseAvailableNetworks', () => {
 			{ ssid: 'Open Guest Net', signal: 40, secured: false },
 		]);
 		expect(parseAvailableNetworks(list)).toEqual([
-			{ ssid: 'Coffee Bar', bssid: null, signal: 71, secured: true, security: 'WPA2', supported: true, active: true, connectable: true },
-			{ ssid: 'Open Guest Net', bssid: null, signal: 40, secured: false, security: '', supported: false, active: false, connectable: true },
+			{ ssid: 'Coffee Bar', ssidHex: '436F6666656520426172', bssid: null, signal: 71, secured: true, security: 'WPA2', supported: true, active: true, connectable: true },
+			{ ssid: 'Open Guest Net', ssidHex: '4F70656E204775657374204E6574', bssid: null, signal: 40, secured: false, security: '', supported: false, active: false, connectable: true },
 		]);
 	});
 
@@ -100,7 +100,7 @@ describe('parseAvailableNetworks', () => {
 			{ ssid: 'Roaming Net', signal: 88 },
 			{ ssid: 'Roaming Net', signal: 61 },
 		]);
-		expect(parseAvailableNetworks(list)).toEqual([{ ssid: 'Roaming Net', bssid: null, signal: 88, secured: true, security: 'WPA2', supported: true, active: false, connectable: true }]);
+		expect(parseAvailableNetworks(list)).toEqual([{ ssid: 'Roaming Net', ssidHex: '526F616D696E67204E6574', bssid: null, signal: 88, secured: true, security: 'WPA2', supported: true, active: false, connectable: true }]);
 	});
 
 	it('keeps the connected flag when the associated entry is not the strongest one', () => {
@@ -108,12 +108,12 @@ describe('parseAvailableNetworks', () => {
 			{ ssid: 'Roaming Net', signal: 30, active: true },
 			{ ssid: 'Roaming Net', signal: 88 },
 		]);
-		expect(parseAvailableNetworks(list)[0]).toEqual({ ssid: 'Roaming Net', bssid: null, signal: 88, secured: true, security: 'WPA2', supported: true, active: true, connectable: true });
+		expect(parseAvailableNetworks(list)[0]).toEqual({ ssid: 'Roaming Net', ssidHex: '526F616D696E67204E6574', bssid: null, signal: 88, secured: true, security: 'WPA2', supported: true, active: true, connectable: true });
 		const reversed = buildList([
 			{ ssid: 'Roaming Net', signal: 88 },
 			{ ssid: 'Roaming Net', signal: 30, active: true },
 		]);
-		expect(parseAvailableNetworks(reversed)[0]).toEqual({ ssid: 'Roaming Net', bssid: null, signal: 88, secured: true, security: 'WPA2', supported: true, active: true, connectable: true });
+		expect(parseAvailableNetworks(reversed)[0]).toEqual({ ssid: 'Roaming Net', ssidHex: '526F616D696E67204E6574', bssid: null, signal: 88, secured: true, security: 'WPA2', supported: true, active: true, connectable: true });
 	});
 
 	it('drops a hidden network, which has no name to join by', () => {
@@ -127,6 +127,25 @@ describe('parseAvailableNetworks', () => {
 	it('decodes a non-ASCII name from its UTF-8 octets', () => {
 		const list = buildList([{ ssid: 'Kavárna Přízemí', signal: 66 }]);
 		expect(parseAvailableNetworks(list)[0]?.ssid).toBe('Kavárna Přízemí');
+	});
+
+	it('publishes the original SSID bytes when the display name is lossy', () => {
+		const list = buildList([{ ssid: '\uFFFD', ssidOctets: [0xff], signal: 70 }]);
+		expect(parseAvailableNetworks(list)[0]).toMatchObject({ ssid: '\uFFFD', ssidHex: 'FF' });
+	});
+
+	it('keeps different raw SSIDs separate without sharing their active flag', () => {
+		const entries: NetworkFields[] = [
+			{ ssid: '\uFFFD', ssidOctets: [0xff], signal: 30, active: true },
+			{ ssid: '\uFFFD', ssidOctets: [0xfe], signal: 80 },
+		];
+		for (const order of [entries, [...entries].reverse()]) {
+			const rows = parseAvailableNetworks(buildList(order));
+			expect(rows.map(row => [row.ssid, row.ssidHex, row.signal, row.active])).toEqual([
+				['\uFFFD', 'FE', 80, false],
+				['\uFFFD', 'FF', 30, true],
+			]);
+		}
 	});
 
 	// Negative controls: a wrong offset shows up as an impossible field value, and
