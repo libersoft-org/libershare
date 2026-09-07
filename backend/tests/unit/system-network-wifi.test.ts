@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { ptr, type Pointer } from 'bun:ffi';
+import { buildList, type NetworkFields } from '../helpers/windows-wifi.ts';
 import { type AvailableNetwork, findScannedNetwork, parseAvailableNetworks } from '../../src/system-network-windows.ts';
 
 /**
@@ -12,62 +12,10 @@ import { type AvailableNetwork, findScannedNetwork, parseAvailableNetworks } fro
  * SSIDs here are invented; no real network name appears in this repository.
  */
 
-/** WLAN_AVAILABLE_NETWORK, x64. */
-const NETWORK_SIZE = 628;
-const LIST_HEADER = 8;
-
-interface NetworkFields {
-	ssid: string;
-	signal: number;
-	secured?: boolean;
-	active?: boolean;
-	auth?: number;
-	/** Windows' own name for the stored profile. Not the SSID, and often not equal to it. */
-	profileName?: string;
-	/** Raw SSID octets, for a name that is not valid UTF-8 and so has no text form. */
-	ssidOctets?: number[];
-	/** bNetworkConnectable. Real lists set this TRUE for anything joinable. */
-	connectable?: boolean;
-	/** wlanNotConnectableReason, meaningful only when connectable is false. */
-	notConnectableReason?: number;
-	/** dot11DefaultCipherAlgorithm. Defaults to CCMP for a secured row and NONE for an open one. */
-	cipher?: number;
-	/** Overrides the SSID's own byte length — used to forge an impossible one. */
-	ssidLength?: number;
-}
-
 /** The one network a lookup found, or null — an ambiguous answer is a test failure here. */
 function onlyMatch(found: ReturnType<typeof findScannedNetwork>): AvailableNetwork | null {
 	expect(found).not.toBe('ambiguous');
 	return found === 'ambiguous' ? null : found;
-}
-
-/** Buffers must outlive the pointers handed to the decoder, so every one is retained. */
-const retained: Uint8Array[] = [];
-
-/** Build a WLAN_AVAILABLE_NETWORK_LIST holding the given networks. */
-function buildList(networks: NetworkFields[], declaredCount: number = networks.length): Pointer {
-	const bytes = new Uint8Array(LIST_HEADER + networks.length * NETWORK_SIZE);
-	const view = new DataView(bytes.buffer);
-	view.setUint32(0, declaredCount, true);
-	view.setUint32(4, 0, true);
-	networks.forEach((network, index) => {
-		const base = LIST_HEADER + index * NETWORK_SIZE;
-		const name = network.ssidOctets ? Uint8Array.from(network.ssidOctets) : new TextEncoder().encode(network.ssid);
-		const profile = network.profileName ?? network.ssid;
-		for (let i = 0; i < profile.length && i < 256; i++) view.setUint16(base + i * 2, profile.charCodeAt(i), true);
-		view.setUint32(base + 512, network.ssidLength ?? name.length, true);
-		bytes.set(name.subarray(0, 32), base + 516);
-		view.setUint32(base + 556, network.connectable === false ? 0 : 1, true);
-		view.setUint32(base + 560, network.notConnectableReason ?? 0, true);
-		view.setUint32(base + 604, network.signal, true);
-		view.setUint32(base + 608, network.secured === false ? 0 : 1, true);
-		view.setUint32(base + 612, network.auth ?? 7, true);
-		view.setUint32(base + 616, network.cipher ?? (network.secured === false ? 0 : 4), true);
-		view.setUint32(base + 620, network.active ? 1 : 0, true);
-	});
-	retained.push(bytes);
-	return ptr(bytes);
 }
 
 describe('parseAvailableNetworks', () => {
@@ -361,12 +309,13 @@ describe('findScannedNetwork', () => {
 		expect(onlyMatch(findScannedNetwork(list, 'Coffee Bar'))?.notConnectableReason).toBe(0);
 	});
 
-	it('picks the strongest entry when one name is on several access points', () => {
-		const list = buildList([
+	it('refuses mixed WPA2 and WPA3 entries regardless of signal or scan order', () => {
+		const rows = [
 			{ ssid: 'Roaming Net', signal: 30, auth: 7 },
 			{ ssid: 'Roaming Net', signal: 88, auth: 9 },
-		]);
-		expect(onlyMatch(findScannedNetwork(list, 'Roaming Net'))?.auth).toBe(9);
+		];
+		expect(findScannedNetwork(buildList(rows), 'Roaming Net')).toBe('ambiguous');
+		expect(findScannedNetwork(buildList([...rows].reverse()), 'Roaming Net')).toBe('ambiguous');
 	});
 });
 
