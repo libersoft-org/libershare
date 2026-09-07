@@ -10,6 +10,15 @@ export interface MacWifiInterface {
 
 type CoreWlanRequest = { operation: 'state' } | { operation: 'scan'; device: string } | { operation: 'associate'; device: string; ssidHex: string; password: string; securityType: number; bssid: string | null };
 
+// Shared worker phase: 0 = preparing/reading, 1 = association started, 2 = cancelled.
+let pending: { worker: Worker; phase: Int32Array; associationUnsettled: boolean } | null = null;
+const NATIVE_BUSY = 'macOS Wi-Fi native operation is still finishing; try again after it has stopped';
+
+/** A timed-out native association must not overlap even an elevated IPv4 change. */
+export function assertMacWifiMutationIdle(): void {
+	if (pending && (pending.associationUnsettled || Atomics.load(pending.phase, 0) === 1)) throw new Error(NATIVE_BUSY);
+}
+
 /** CWSecurity values from CoreWLANTypes.h, matched to the scanner labels. */
 export function macSecurityType(security: string): number {
 	const label = security
@@ -32,19 +41,44 @@ export function macSsidHex(ssid: string, ssidHex: string | null = null): string 
 
 /** Keep synchronous native calls off the backend event loop; credentials stay in process memory. */
 function runCoreWlan<T>(request: CoreWlanRequest): Promise<T> {
+	if (pending) return Promise.reject(new Error(NATIVE_BUSY));
 	return new Promise((resolve, reject) => {
 		const worker = new Worker(coreWlanWorkerPath);
-		worker.addEventListener('close', () => reject(new Error('macOS Wi-Fi native worker exited before reporting its result')));
+		const current = { worker, phase: new Int32Array(new SharedArrayBuffer(4)), associationUnsettled: false };
+		pending = current;
+		let result: { error?: Error; value?: T } | undefined;
+		let expired = false;
+		const timer = setTimeout(() => {
+			expired = true;
+			current.associationUnsettled = Atomics.exchange(current.phase, 0, 2) === 1;
+			worker.terminate();
+			reject(new Error(current.associationUnsettled
+				? 'macOS Wi-Fi association timed out; its result is unknown and further network changes are blocked until the native operation stops'
+				: 'macOS Wi-Fi native operation timed out before any association was started'));
+		}, request.operation === 'associate' ? 45_000 : 20_000);
+		worker.addEventListener('close', () => {
+			clearTimeout(timer);
+			if (pending === current) pending = null;
+			if (expired) return;
+			if (!result) reject(new Error('macOS Wi-Fi native worker exited before reporting its result'));
+			else if (result.error) reject(result.error);
+			else resolve(result.value as T);
+		});
 		worker.onmessage = (event: MessageEvent<{ error?: string; result: T }>) => {
-			if (event.data.error) reject(new Error(event.data.error));
-			else resolve(event.data.result);
+			if (expired) return;
+			result = event.data.error ? { error: new Error(event.data.error) } : { value: event.data.result };
 			worker.terminate();
 		};
 		worker.onerror = () => {
-			reject(new Error('macOS Wi-Fi native worker failed'));
+			result = { error: new Error('macOS Wi-Fi native worker failed') };
 			worker.terminate();
 		};
-		worker.postMessage(request);
+		try {
+			worker.postMessage({ ...request, phase: current.phase });
+		} catch {
+			result = { error: new Error('macOS Wi-Fi native worker could not receive the request') };
+			worker.terminate();
+		}
 	});
 }
 

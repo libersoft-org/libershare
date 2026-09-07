@@ -6,6 +6,7 @@ import { CodedError, ErrorCodes, ipv4BaselineOf, isSelectableInterface, isValidS
 import { connectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND, windowsApplyIPv4Command } from './system-network-windows.ts';
 import { applyLinuxIPv4, connectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
 import { applyMacIPv4, connectMacWifi, isMacWifiConfigurable, isMacWritable, readMacNetworkState, scanMacWifi } from './system-network-macos.ts';
+import { assertMacWifiMutationIdle } from './system-network-corewlan.ts';
 import { networkHelperAvailable, runElevatedNetworkHelper } from './network-helper-client.ts';
 import { windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
 
@@ -468,6 +469,7 @@ export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Conf
 	let usedHelper = false;
 	try {
 		await run(async () => {
+			if (process.platform === 'darwin') assertMacWifiMutationIdle();
 			if (supported.ipv4Elevation) {
 				if (!allowPrivilegeEscalation) throw new Error('network helper cannot recursively request privileges');
 				// The helper reads the host again on its own; it gets the baseline this

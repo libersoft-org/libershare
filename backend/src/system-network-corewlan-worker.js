@@ -36,6 +36,11 @@ export function coreWlanAssociationMatches(actual, ssidHex, bssid, securityType)
 
 const SECURITY_LABELS = { 0: '', 2: 'WPA Personal', 3: 'WPA/WPA2 Personal', 4: 'WPA2 Personal', 11: 'WPA3 Personal', 13: 'WPA2/WPA3 Personal' };
 
+/** Shared phase: preparing 0 -> associating 1 competes atomically with parent cancellation 2. */
+export function beginCoreWlanAssociation(phase) {
+	if (Atomics.compareExchange(phase, 0, 0, 1) !== 0) throw new Error('macOS Wi-Fi operation was cancelled before association');
+}
+
 function signalQuality(rssi) {
 	return rssi === 0 ? null : Math.max(0, Math.min(100, 2 * (rssi + 100)));
 }
@@ -210,7 +215,10 @@ function run(request) {
 		if (snapshot(iface).ssidHex === ssidHex) throw new Error('macOS is already connected to that Wi-Fi network');
 		// The selected CWNetwork retains its BSSID. Never issue a name-only join.
 		errorBuffer[0] = 0n;
-		if (!calls.symbols.join(iface, selector('associateToNetwork:password:error:'), network, securityType === 0 ? 0n : string(password), ptr(errorBuffer))) throw nativeError('association');
+		const method = selector('associateToNetwork:password:error:');
+		const key = securityType === 0 ? 0n : string(password);
+		beginCoreWlanAssociation(request.phase);
+		if (!calls.symbols.join(iface, method, network, key, ptr(errorBuffer))) throw nativeError('association');
 		const actual = snapshot(iface);
 		const selected = candidates.find(candidate => candidate.network === network);
 		if (!coreWlanAssociationMatches(actual, ssidHex, selected.bssid, securityType)) throw new Error('macOS did not connect to the requested Wi-Fi network with the requested security');
