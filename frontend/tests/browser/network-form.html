@@ -24,6 +24,7 @@
 		let joinFails = false;
 		let scanFails = false;
 		let applyCalls = 0;
+		let joinCalls = [];
 		const testNetwork = { ssid: 'Test network', bssid: null, security: 'WPA2', secured: true, supported: true, active: false, signal: 80 };
 		let wifi = [testNetwork];
 
@@ -59,6 +60,7 @@
 				return structuredClone(wifi);
 			}
 			if (method === 'system.wifiConnect') {
+				joinCalls.push(params);
 				if (joinFails) {
 					host.interfaces[0].addresses = [];
 					throw new Error('Test join rejected: check the password');
@@ -120,6 +122,7 @@
 			scanFails = false;
 			wifi = [testNetwork];
 			applyCalls = 0;
+			joinCalls = [];
 			networkSubscriptionActive.set(true);
 			networkState.set(structuredClone(host));
 			component = mount(SettingsNetworkEdit, { target, props: { areaID: 'network-browser-test', interfaceID: 'wifi0' } });
@@ -224,52 +227,92 @@
 				});
 			}
 
-			for (const device of ['keyboard', 'gamepad']) {
-				await test(`disabled Wi-Fi row ignores ${device} confirm while an enabled row accepts it`, async () => {
-					wifi = [{ ...testNetwork, ssid: 'Active network', active: true }, testNetwork];
-					await click(label('settings.network.scan'));
-					const originalGamepads = Object.getOwnPropertyDescriptor(navigator, 'getGamepads');
-					const pad = { axes: [0, 0], buttons: Array.from({ length: 17 }, () => ({ pressed: false })) };
-					Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [pad] });
-					const frames = async () => {
-						for (let frame = 0; frame < 3; frame++) await new Promise(requestAnimationFrame);
-						await settle();
-					};
-					const confirm = async () => {
-						if (device === 'keyboard') {
-							window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
-							window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter' }));
+			for (const blockedBy of ['active', 'policy'])
+				for (const device of ['keyboard', 'gamepad']) {
+					await test(`${blockedBy === 'policy' ? 'policy-' : ''}disabled Wi-Fi row ignores ${device} confirm while an enabled row accepts it`, async () => {
+						const policyReason = 'Test policy blocks this network';
+						wifi = blockedBy === 'active' ? [{ ...testNetwork, ssid: 'Active network', active: true }, testNetwork] : [{ ...testNetwork, security: 'WPA2/AES', connectable: false, unavailableReason: policyReason }];
+						await click(label('settings.network.scan'));
+						const originalGamepads = Object.getOwnPropertyDescriptor(navigator, 'getGamepads');
+						const pad = { axes: [0, 0], buttons: Array.from({ length: 17 }, () => ({ pressed: false })) };
+						Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [pad] });
+						const frames = async () => {
+							for (let frame = 0; frame < 3; frame++) await new Promise(requestAnimationFrame);
 							await settle();
-						} else {
-							assert(document.hasFocus(), 'Gamepad test needs a focused browser tab');
-							pad.buttons[0].pressed = true;
-							await frames();
-							pad.buttons[0].pressed = false;
-							await frames();
-						}
-					};
-					try {
-						startInput();
-						const active = button('Active network ✓');
-						for (let step = 0; step < 15 && !active.classList.contains('selected'); step++) {
-							emit('down');
+						};
+						const confirm = async () => {
+							if (device === 'keyboard') {
+								window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+								window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter' }));
+								await settle();
+							} else {
+								assert(document.hasFocus(), 'Gamepad test needs a focused browser tab');
+								pad.buttons[0].pressed = true;
+								await frames();
+								pad.buttons[0].pressed = false;
+								await frames();
+							}
+						};
+						try {
+							startInput();
+							const active = button(blockedBy === 'active' ? 'Active network ✓' : 'Test network');
+							for (let step = 0; step < 15 && !active.classList.contains('selected'); step++) {
+								emit('down');
+								await settle();
+							}
+							assert(active.classList.contains('selected') && active.classList.contains('disabled'), 'Disabled row not selected through navigation');
+							await confirm();
+							assert(!target.querySelector('input[type="password"]'), 'Disabled row requested a password');
+							assert(joinCalls.length === 0, 'Disabled row submitted a Wi-Fi connection');
+							if (blockedBy === 'policy') {
+								assert(target.textContent.includes(policyReason), 'Policy reason was not displayed');
+								wifi = [{ ...testNetwork, security: 'WPA2/AES', connectable: true }];
+								await click(label('settings.network.scan'));
+							} else emit('down');
 							await settle();
+							assert(button('Test network').classList.contains('selected'), 'Enabled row not selected through navigation');
+							await confirm();
+							assert(target.querySelector('input[type="password"]'), 'Enabled row did not accept confirm');
+							if (blockedBy === 'policy') {
+								await edit(target.querySelector('input[type="password"]'), 'test-network-password');
+								await click(label('settings.network.join'));
+								assert(joinCalls.length === 1 && joinCalls[0].ssid === testNetwork.ssid && joinCalls[0].password === 'test-network-password', 'Connectable control did not submit credentials');
+							}
+						} finally {
+							stopInput();
+							if (originalGamepads) Object.defineProperty(navigator, 'getGamepads', originalGamepads);
+							else delete navigator.getGamepads;
 						}
-						assert(active.classList.contains('selected') && active.classList.contains('disabled'), 'Disabled row not selected through navigation');
-						await confirm();
-						assert(!target.querySelector('input[type="password"]'), 'Disabled row requested a password');
-						emit('down');
-						await settle();
-						assert(button('Test network').classList.contains('selected'), 'Enabled row not selected through navigation');
-						await confirm();
-						assert(target.querySelector('input[type="password"]'), 'Enabled row did not accept confirm');
-					} finally {
-						stopInput();
-						if (originalGamepads) Object.defineProperty(navigator, 'getGamepads', originalGamepads);
-						else delete navigator.getGamepads;
-					}
-				});
-			}
+					});
+				}
+
+			await test('policy-disabled Wi-Fi row explains its state and ignores mouse click', async () => {
+				wifi = [{ ...testNetwork, security: 'WPA2/AES', connectable: false, unavailableReason: 'Test policy blocks this network' }];
+				await click(label('settings.network.scan'));
+				await click('Test network');
+				assert(!target.querySelector('input[type="password"]') && joinCalls.length === 0, 'Policy-disabled click opened or submitted the join');
+				assert(target.textContent.includes('Test policy blocks this network'), 'Policy reason was not displayed');
+			});
+
+			await test('missing policy reason uses an unavailable notice instead of unsupported security', async () => {
+				wifi = [{ ...testNetwork, security: 'WPA2/AES', connectable: false }];
+				await click(label('settings.network.scan'));
+				const status = target.querySelector('.network span').textContent;
+				assert(button('Test network').classList.contains('disabled'), 'Unavailable network remains enabled');
+				assert(status && !status.startsWith('{') && status !== label('settings.network.unsupportedSecurity') && status !== label('settings.network.secured'), `Missing generic unavailable explanation: ${status}`);
+			});
+
+			await test('refreshed scan blocks a join form opened before policy changed', async () => {
+				wifi = [{ ...testNetwork, security: 'WPA2/AES', connectable: true }];
+				await click(label('settings.network.scan'));
+				await click('Test network');
+				await edit(target.querySelector('input[type="password"]'), 'test-network-password');
+				wifi = [{ ...wifi[0], connectable: false, unavailableReason: 'Test policy blocks this network' }];
+				await click(label('settings.network.scan'));
+				await click(label('settings.network.join'));
+				assert(joinCalls.length === 0, 'Stale join form submitted after policy blocked the network');
+				assert(button(label('settings.network.join')).classList.contains('disabled'), 'Stale join submit remains enabled');
+			});
 		} catch (error) {
 			results.push({ name: 'harness', passed: false, error: error.message });
 			output.textContent += `\nFAIL harness: ${error.stack}`;
