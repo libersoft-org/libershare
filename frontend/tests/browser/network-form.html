@@ -340,6 +340,44 @@
 				assert(joinCalls.length === 1, 'Selected network was not submitted');
 				assert(joinCalls[0].expectedSecurity === 'WPA2', 'Request adopted unseen security instead of the selected WPA2');
 			});
+
+			await test('changed raw SSID bytes invalidate a selection with the same display name', async () => {
+				wifi = [{ ...testNetwork, ssid: '\uFFFD', ssidHex: 'FF' }];
+				await click(label('settings.network.scan'));
+				await click('\uFFFD');
+				await edit(target.querySelector('input[type="password"]'), 'test-network-password');
+				wifi = [{ ...wifi[0], ssidHex: 'FE' }];
+				await click(label('settings.network.scan'));
+				assert(button(label('settings.network.join')).classList.contains('disabled'), 'Replacement raw SSID retained the previous join');
+				assert(target.textContent.includes(label('settings.network.selectionChanged')), 'Raw SSID replacement has no explanation');
+				await click(label('settings.network.join'));
+				assert(joinCalls.length === 0, 'Old selection submitted the replacement raw SSID');
+			});
+
+			await test('join request retains selected raw SSID bytes before an unseen scan change', async () => {
+				wifi = [{ ...testNetwork, ssid: '\uFFFD', ssidHex: 'FF' }];
+				await click(label('settings.network.scan'));
+				await click('\uFFFD');
+				await edit(target.querySelector('input[type="password"]'), 'test-network-password');
+				wifi = [{ ...wifi[0], ssidHex: 'FE' }];
+				await click(label('settings.network.join'));
+				assert(joinCalls.length === 1, 'Selected raw SSID was not submitted');
+				assert(joinCalls[0].expectedSsidHex === 'FF' && joinCalls[0].expectedSecurity === 'WPA2', 'Request lost the selected raw SSID or security');
+			});
+
+			await test('different raw SSIDs sharing a display name render as disabled ambiguous rows', async () => {
+				wifi = ['FF', 'FE'].map(ssidHex => ({ ...testNetwork, ssid: '\uFFFD', ssidHex }));
+				await click(label('settings.network.scan'));
+				const rows = [...target.querySelectorAll('[role="button"]')].filter(item => item.textContent.trim() === '\uFFFD');
+				assert(rows.length === 2, 'Distinct raw SSIDs failed to render as separate rows');
+				for (const row of rows) {
+					assert(row.classList.contains('disabled'), 'Ambiguous display name remains selectable');
+					row.click();
+				}
+				await settle();
+				assert(!target.querySelector('input[type="password"]') && joinCalls.length === 0, 'Ambiguous raw SSID opened or submitted a join');
+				assert(target.textContent.includes(label('settings.network.ambiguousName')), 'Ambiguous raw SSIDs have no explanation');
+			});
 		} catch (error) {
 			results.push({ name: 'harness', passed: false, error: error.message });
 			output.textContent += `\nFAIL harness: ${error.stack}`;
