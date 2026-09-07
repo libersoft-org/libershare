@@ -615,9 +615,7 @@ function joinPlatformWifi(interfaceID: string, password: string, network: NetWif
 		if (!network.ssidHex) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'Windows did not report the Wi-Fi network identity');
 		return connectWindowsWifi(assertWindowsGuid(interfaceID), network.ssid, password, network.security, network.ssidHex);
 	}
-	// macOS is addressed by name only: system_profiler never reports a BSSID, so
-	// there is no access point to pin the join to.
-	if (process.platform === 'darwin') return connectMacWifi(assertDeviceName(interfaceID), network.ssid, password, network.security);
+	if (process.platform === 'darwin') return connectMacWifi(assertDeviceName(interfaceID), network.ssid, password, network.security, network.bssid, network.ssidHex);
 	return connectLinuxWifi(assertDeviceName(interfaceID), network.ssid, password, network.bssid);
 }
 
