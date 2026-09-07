@@ -442,6 +442,12 @@ export interface NetInterfaceInfo {
 	id: string;
 	/** OS friendly name, already localized by the OS — display only, never matched against. */
 	name: string;
+	/** Present only when the OS explicitly classifies the adapter as virtual or physical. */
+	virtual?: boolean;
+	/** Present only when the OS explicitly marks whether an adapter is hidden. */
+	hidden?: boolean;
+	/** OS adapter description, for distinguishing hardware from virtual interfaces. */
+	description?: string;
 	medium: NetMedium;
 	link: NetLink;
 	/** True for the interface carrying the IPv4 default route. */

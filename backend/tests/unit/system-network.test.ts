@@ -173,6 +173,36 @@ describe('parseWindowsNetworkState', () => {
 		expect(adapter.link).toBe(link);
 	});
 
+	it.each([
+		{ media: 9, virtual: false, description: 'Wireless adapter', medium: 'wireless' },
+		{ media: 9, virtual: true, description: 'Virtual wireless adapter', medium: 'wireless' },
+		{ media: 14, virtual: true, description: 'Virtual Ethernet adapter', medium: 'wired' },
+	])('preserves explicit virtual=$virtual separately from $medium link type', ({ media, virtual, description, medium }) => {
+		const doc = simpleWindowsStaticDoc();
+		doc['adapters'] = { ...(doc['adapters'] as object), Media: media, Virtual: virtual, InterfaceDescription: description };
+		expect(parseWindowsNetworkState(JSON.stringify(doc))[0]).toMatchObject({ virtual, description, medium });
+	});
+
+	it.each([{}, { Virtual: null, InterfaceDescription: null }, { Virtual: 'false', InterfaceDescription: 7 }, { Virtual: 0, InterfaceDescription: '' }])('does not invent metadata absent from the OS: %j', metadata => {
+		const doc = simpleWindowsStaticDoc();
+		doc['adapters'] = { ...(doc['adapters'] as object), ...metadata };
+		const adapter = parseWindowsNetworkState(JSON.stringify(doc))[0]!;
+		expect(adapter).not.toHaveProperty('virtual');
+		expect(adapter).not.toHaveProperty('description');
+	});
+
+	it.each([{ value: 0, hidden: false }, { value: 1, hidden: true }])('retains the explicit OS hidden flag $value', ({ value, hidden }) => {
+		const doc = simpleWindowsStaticDoc();
+		doc['adapters'] = { ...(doc['adapters'] as object), Hidden: value };
+		expect(parseWindowsNetworkState(JSON.stringify(doc))[0]).toMatchObject({ hidden });
+	});
+
+	it.each([undefined, null, 2, '1'])('does not infer a hidden flag from %j', value => {
+		const doc = simpleWindowsStaticDoc();
+		doc['adapters'] = { ...(doc['adapters'] as object), Hidden: value };
+		expect(parseWindowsNetworkState(JSON.stringify(doc))[0]).not.toHaveProperty('hidden');
+	});
+
 	it('keeps an addressed stack that has no adapter row (RAS/VPN wintun)', () => {
 		const ras = byID(result, 'ifIndex:69');
 		expect(ras.medium).toBe('other');
