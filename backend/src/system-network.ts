@@ -26,10 +26,9 @@ const WINDOWS_SYSTEM_ENV = process.platform === 'win32' ? windowsSystemEnvironme
  *    probed once and cached, so the UI can hide an edit the process could never
  *    complete instead of letting the user discover it when Save fails.
  *  - Wi-Fi scan/join applies on Windows (wlanapi, no elevation needed), on a
- *    Linux host running NetworkManager, and on macOS — but on macOS only while
+ *    Linux host running NetworkManager, and on macOS through CoreWLAN, only while
  *    the operating system is willing to name the networks, which it withholds
- *    from a process without Location access. See system-network-macos.ts for the
- *    measurements and for the passphrase exposure that path still carries.
+ *    from a process without Location access.
  *
  * Applying can drop the very interface the caller reached us on. That is inherent
  * to changing an address and is the user's decision to make, so it is not
@@ -543,7 +542,7 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 	if (isAlreadyJoined(network)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'this interface is already connected to that network');
 	if (network.secured && !isValidWifiKey(network.security, password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
 	try {
-		await run(() => joinPlatformWifi(interfaceID, ssid, password, network.bssid), [password]);
+		await run(() => joinPlatformWifi(interfaceID, ssid, password, network.bssid, network.security), [password]);
 	} catch (error) {
 		resetNetworkCapabilitiesCache();
 		throw error;
@@ -606,11 +605,11 @@ function scanPlatformWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
  * point - there is no per-BSSID form of that call, and pinning one would defeat
  * the roaming the service does on its own.
  */
-function joinPlatformWifi(interfaceID: string, ssid: string, password: string, bssid: string | null): Promise<void> {
+function joinPlatformWifi(interfaceID: string, ssid: string, password: string, bssid: string | null, security: string): Promise<void> {
 	if (process.platform === 'win32') return connectWindowsWifi(assertWindowsGuid(interfaceID), ssid, password);
 	// macOS is addressed by name only: system_profiler never reports a BSSID, so
 	// there is no access point to pin the join to.
-	if (process.platform === 'darwin') return connectMacWifi(assertDeviceName(interfaceID), ssid, password);
+	if (process.platform === 'darwin') return connectMacWifi(assertDeviceName(interfaceID), ssid, password, security);
 	return connectLinuxWifi(assertDeviceName(interfaceID), ssid, password, bssid);
 }
 
