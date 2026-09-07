@@ -13,6 +13,7 @@ interface LifecycleResult {
 	mutationRecovered: boolean;
 	entered: number;
 	lateAssociation: number;
+	resultWasUndefined: boolean;
 }
 
 function scenario(mode: string, ignoreTerminate = false): LifecycleResult {
@@ -41,12 +42,13 @@ function scenario(mode: string, ignoreTerminate = false): LifecycleResult {
 		};
 		const timer = globalThis.setTimeout;
 		globalThis.setTimeout = (callback, delay, ...args) => timer(callback, delay === 20000 || delay === 45000 ? 120 : delay, ...args);
-		const { readCoreWlanWifi, associateMacWifi, assertMacWifiMutationIdle } = await import(${JSON.stringify(module)});
+		const { readCoreWlanWifi, associateMacWifi, disconnectCoreWlanWifi, assertMacWifiMutationIdle } = await import(${JSON.stringify(module)});
 		const associate = ${JSON.stringify(mode)} === 'in-flight' || ${JSON.stringify(mode)} === 'late-associate';
 		const started = performance.now();
-		let error = null;
+		let error = null, operationResult;
 		try {
-			if (associate) await associateMacWifi('en0', 'Example', 'example-password', 'WPA2');
+			if (${JSON.stringify(mode)}.startsWith('disconnect-') || ${JSON.stringify(mode)} === 'late-disconnect') operationResult = await disconnectCoreWlanWifi('en0');
+			else if (associate) await associateMacWifi('en0', 'Example', 'example-password', 'WPA2');
 			else await readCoreWlanWifi();
 		} catch (failure) { error = failure.message; }
 		const elapsed = performance.now() - started;
@@ -60,11 +62,14 @@ function scenario(mode: string, ignoreTerminate = false): LifecycleResult {
 		const recovered = await readCoreWlanWifi();
 		let mutationRecovered = true;
 		try { assertMacWifiMutationIdle(); } catch { mutationRecovered = false; }
-		console.log('RESULT:' + JSON.stringify({ error, elapsed, mutationBlocked, createdAtTimeout, createdAfterNext, nextError, recovered, mutationRecovered, entered: marker[0], lateAssociation: marker[1] }));
+		console.log('RESULT:' + JSON.stringify({ error, elapsed, mutationBlocked, createdAtTimeout, createdAfterNext, nextError, recovered, mutationRecovered, entered: marker[0], lateAssociation: marker[1], resultWasUndefined: operationResult === undefined }));
 	`;
 	const child = Bun.spawnSync([process.execPath, '--eval', script], { timeout: 5_000 });
 	if (child.exitCode !== 0) throw new Error(child.stderr.toString());
-	const result = child.stdout.toString().split(/\r?\n/).find(line => line.startsWith('RESULT:'));
+	const result = child.stdout
+		.toString()
+		.split(/\r?\n/)
+		.find(line => line.startsWith('RESULT:'));
 	expect(result).toBeDefined();
 	return JSON.parse(result!.slice(7));
 }
@@ -89,7 +94,7 @@ describe('CoreWLAN worker deadlines and native lifetime', () => {
 
 	it('prevents late association even if worker termination cannot stop execution', () => {
 		const result = scenario('late-associate', true);
-		expect(result.error).toContain('before any association');
+		expect(result.error).toContain('before any network change');
 		expect(result.lateAssociation).toBe(-1);
 		expect(result.mutationBlocked).toBe(false);
 		expect(result.nextError).toContain('still finishing');
@@ -102,6 +107,31 @@ describe('CoreWLAN worker deadlines and native lifetime', () => {
 		expect(result.nextError).toContain('still finishing');
 		expect(result.createdAfterNext).toBe(1);
 		expect(result.mutationRecovered).toBe(true);
+	});
+
+	it('blocks a late disconnect after the request deadline', () => {
+		const result = scenario('late-disconnect', true);
+		expect(result.error).toContain('before any network change');
+		expect(result.lateAssociation).toBe(-1);
+		expect(result.mutationBlocked).toBe(false);
+		expect(result.nextError).toContain('still finishing');
+	});
+
+	it('reports a timed-out disconnect as unknown until the native write closes', () => {
+		const result = scenario('disconnect-in-flight');
+		expect(result.error).toContain('disconnect timed out; its result is unknown');
+		expect(result.error).not.toContain('association');
+		expect(result.mutationBlocked).toBe(true);
+		expect(result.createdAfterNext).toBe(1);
+		expect(result.mutationRecovered).toBe(true);
+	});
+
+	it('accepts the undefined disconnect result and releases the slot before resolving', () => {
+		const result = scenario('disconnect-success');
+		expect(result.error).toBeNull();
+		expect(result.resultWasUndefined).toBe(true);
+		expect(result.nextError).toBeNull();
+		expect(result.createdAfterNext).toBe(2);
 	});
 
 	it('keeps the deadline active when a message arrives but the worker cannot close', () => {

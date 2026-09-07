@@ -36,9 +36,27 @@ export function coreWlanAssociationMatches(actual, ssidHex, bssid, securityType)
 
 const SECURITY_LABELS = { 0: '', 2: 'WPA Personal', 3: 'WPA/WPA2 Personal', 4: 'WPA2 Personal', 11: 'WPA3 Personal', 13: 'WPA2/WPA3 Personal' };
 
-/** Shared phase: preparing 0 -> associating 1 competes atomically with parent cancellation 2. */
-export function beginCoreWlanAssociation(phase) {
-	if (Atomics.compareExchange(phase, 0, 0, 1) !== 0) throw new Error('macOS Wi-Fi operation was cancelled before association');
+/** Shared phase: preparing 0 -> mutating 1 competes atomically with parent cancellation 2. */
+export function beginCoreWlanMutation(phase) {
+	if (Atomics.compareExchange(phase, 0, 0, 1) !== 0) throw new Error('macOS Wi-Fi operation was cancelled before the network change');
+}
+
+/** Hidden SSIDs alone cannot prove disconnection; station mode must also have ended. */
+export function coreWlanDisconnected(current) {
+	return current.interfaceMode === 0 && !current.ssidHex && !current.bssid;
+}
+
+export function disconnectCoreWlanInterface(phase, disconnect, snapshot) {
+	if (snapshot().interfaceMode !== 1) throw new Error('macOS Wi-Fi interface is not connected as a station');
+	beginCoreWlanMutation(phase);
+	disconnect();
+	// CoreWLAN has a void disconnect API; allow five seconds for the radio state to settle.
+	for (let attempt = 0; attempt < 50; attempt++) {
+		if (Atomics.load(phase, 0) !== 1) throw new Error('macOS Wi-Fi disconnect verification was cancelled');
+		if (coreWlanDisconnected(snapshot())) return;
+		Atomics.wait(phase, 0, 1, 100);
+	}
+	throw new Error('macOS did not confirm Wi-Fi disconnection');
 }
 
 function signalQuality(rssi) {
@@ -109,6 +127,7 @@ function run(request) {
 		integer: { ptr: message, args: [FFIType.u64, FFIType.ptr], returns: FFIType.i64_fast },
 		flag: { ptr: message, args: [FFIType.u64, FFIType.ptr], returns: FFIType.bool },
 		supports: { ptr: message, args: [FFIType.u64, FFIType.ptr, FFIType.i64], returns: FFIType.bool },
+		disconnect: { ptr: message, args: [FFIType.u64, FFIType.ptr], returns: FFIType.void },
 		join: { ptr: message, args: [FFIType.u64, FFIType.ptr, FFIType.u64, FFIType.u64, FFIType.ptr], returns: FFIType.bool },
 	});
 	const frameworkPath = Buffer.from('/System/Library/Frameworks/CoreWLAN.framework/CoreWLAN\0');
@@ -149,6 +168,7 @@ function run(request) {
 	};
 	const snapshot = iface => ({
 		device: text(get(iface, 'interfaceName')),
+		interfaceMode: integer(iface, 'interfaceMode'),
 		ssidHex: bytes(get(iface, 'ssidData'))?.toString('hex') ?? null,
 		bssid: text(get(iface, 'bssid'))?.toLowerCase() ?? null,
 		securityType: integer(iface, 'security'),
@@ -208,6 +228,14 @@ function run(request) {
 			if (networks.length && !networks.some(network => network.ssidHex)) throw new Error('macOS did not expose Wi-Fi network names');
 			return coreWlanScanRows(networks, snapshot(iface));
 		}
+		if (request.operation === 'disconnect') {
+			const method = selector('disassociate');
+			return disconnectCoreWlanInterface(
+				request.phase,
+				() => calls.symbols.disconnect(iface, method),
+				() => snapshot(iface)
+			);
+		}
 		if (request.operation !== 'associate') throw new Error('Unsupported macOS Wi-Fi operation');
 		const { ssidHex, bssid, password, securityType } = request;
 		const candidates = scan(iface, ssidHex);
@@ -217,7 +245,7 @@ function run(request) {
 		errorBuffer[0] = 0n;
 		const method = selector('associateToNetwork:password:error:');
 		const key = securityType === 0 ? 0n : string(password);
-		beginCoreWlanAssociation(request.phase);
+		beginCoreWlanMutation(request.phase);
 		if (!calls.symbols.join(iface, method, network, key, ptr(errorBuffer))) throw nativeError('association');
 		const actual = snapshot(iface);
 		const selected = candidates.find(candidate => candidate.network === network);
@@ -239,7 +267,7 @@ if (!isMainThread)
 			self.postMessage({ result: run(event.data) });
 		} catch (error) {
 			const password = event.data.password;
-			const message = error instanceof Error ? error.message : 'macOS Wi-Fi association failed';
+			const message = error instanceof Error ? error.message : 'macOS Wi-Fi operation failed';
 			self.postMessage({ error: password ? message.split(password).join('[redacted]') : message });
 		} finally {
 			event.data.password = '';

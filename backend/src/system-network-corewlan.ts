@@ -8,15 +8,15 @@ export interface MacWifiInterface {
 	configurable: boolean;
 }
 
-type CoreWlanRequest = { operation: 'state' } | { operation: 'scan'; device: string } | { operation: 'associate'; device: string; ssidHex: string; password: string; securityType: number; bssid: string | null };
+type CoreWlanRequest = { operation: 'state' } | { operation: 'scan'; device: string } | { operation: 'disconnect'; device: string } | { operation: 'associate'; device: string; ssidHex: string; password: string; securityType: number; bssid: string | null };
 
-// Shared worker phase: 0 = preparing/reading, 1 = association started, 2 = cancelled.
-let pending: { worker: Worker; phase: Int32Array; associationUnsettled: boolean } | null = null;
+// Shared worker phase: 0 = preparing/reading, 1 = mutation started, 2 = cancelled.
+let pending: { worker: Worker; phase: Int32Array; mutationUnsettled: boolean } | null = null;
 const NATIVE_BUSY = 'macOS Wi-Fi native operation is still finishing; try again after it has stopped';
 
-/** A timed-out native association must not overlap even an elevated IPv4 change. */
+/** A timed-out native Wi-Fi mutation must not overlap even an elevated IPv4 change. */
 export function assertMacWifiMutationIdle(): void {
-	if (pending && (pending.associationUnsettled || Atomics.load(pending.phase, 0) === 1)) throw new Error(NATIVE_BUSY);
+	if (pending && (pending.mutationUnsettled || Atomics.load(pending.phase, 0) === 1)) throw new Error(NATIVE_BUSY);
 }
 
 /** CWSecurity values from CoreWLANTypes.h, matched to the scanner labels. */
@@ -44,18 +44,19 @@ function runCoreWlan<T>(request: CoreWlanRequest): Promise<T> {
 	if (pending) return Promise.reject(new Error(NATIVE_BUSY));
 	return new Promise((resolve, reject) => {
 		const worker = new Worker(coreWlanWorkerPath);
-		const current = { worker, phase: new Int32Array(new SharedArrayBuffer(4)), associationUnsettled: false };
+		const current = { worker, phase: new Int32Array(new SharedArrayBuffer(4)), mutationUnsettled: false };
 		pending = current;
 		let result: { error?: Error; value?: T } | undefined;
 		let expired = false;
-		const timer = setTimeout(() => {
-			expired = true;
-			current.associationUnsettled = Atomics.exchange(current.phase, 0, 2) === 1;
-			worker.terminate();
-			reject(new Error(current.associationUnsettled
-				? 'macOS Wi-Fi association timed out; its result is unknown and further network changes are blocked until the native operation stops'
-				: 'macOS Wi-Fi native operation timed out before any association was started'));
-		}, request.operation === 'associate' ? 45_000 : 20_000);
+		const timer = setTimeout(
+			() => {
+				expired = true;
+				current.mutationUnsettled = Atomics.exchange(current.phase, 0, 2) === 1;
+				worker.terminate();
+				reject(new Error(current.mutationUnsettled ? `macOS Wi-Fi ${request.operation === 'disconnect' ? 'disconnect' : 'association'} timed out; its result is unknown and further network changes are blocked until the native operation stops` : 'macOS Wi-Fi native operation timed out before any network change was started'));
+			},
+			request.operation === 'associate' ? 45_000 : 20_000
+		);
 		worker.addEventListener('close', () => {
 			clearTimeout(timer);
 			if (pending === current) pending = null;
@@ -95,4 +96,8 @@ export function associateMacWifi(device: string, ssid: string, password: string,
 	if (securityType === 0 && password) throw new Error('An open Wi-Fi network does not accept a password');
 	if (bssid !== null && !/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(bssid)) throw new Error('macOS cannot identify the requested access point');
 	return runCoreWlan({ operation: 'associate', device, ssidHex: macSsidHex(ssid, ssidHex), password, securityType, bssid: bssid?.toLowerCase() ?? null });
+}
+
+export function disconnectCoreWlanWifi(device: string): Promise<void> {
+	return runCoreWlan({ operation: 'disconnect', device });
 }

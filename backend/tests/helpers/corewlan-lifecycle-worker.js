@@ -1,5 +1,5 @@
 import { dlopen, FFIType } from 'bun:ffi';
-import { beginCoreWlanAssociation } from '../../src/system-network-corewlan-worker.js';
+import { beginCoreWlanMutation } from '../../src/system-network-corewlan-worker.js';
 
 function blockNative() {
 	const windows = process.platform === 'win32';
@@ -15,14 +15,15 @@ self.onmessage = ({ data }) => {
 	if (data.mode === 'error') throw new Error('worker failure');
 	if (data.mode === 'empty-close') return process.exit(0);
 	if (data.mode === 'silent') return;
+	if (data.mode === 'disconnect-success') return self.postMessage({ result: undefined });
 	if (data.mode === 'success') return self.postMessage({ result: [] });
-	if (data.mode === 'in-flight') beginCoreWlanAssociation(data.phase);
+	if (data.mode === 'in-flight' || data.mode === 'disconnect-in-flight') beginCoreWlanMutation(data.phase);
 	if (data.mode === 'message-before-close') self.postMessage({ result: [] });
 	Atomics.store(data.marker, 0, 1);
 	blockNative();
-	if (data.mode === 'late-associate') {
+	if (data.mode === 'late-associate' || data.mode === 'late-disconnect') {
 		try {
-			beginCoreWlanAssociation(data.phase);
+			beginCoreWlanMutation(data.phase);
 			Atomics.store(data.marker, 1, 1);
 		} catch {
 			Atomics.store(data.marker, 1, -1);

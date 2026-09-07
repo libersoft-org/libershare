@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { associateMacWifi, readCoreWlanWifi, scanCoreWlanWifi, type MacWifiInterface } from './system-network-corewlan.ts';
+import { associateMacWifi, disconnectCoreWlanWifi, readCoreWlanWifi, scanCoreWlanWifi, type MacWifiInterface } from './system-network-corewlan.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { isIPv4, isIPv6, validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetLink, type NetMedium, type NetWifiNetwork } from '@shared';
@@ -505,6 +505,10 @@ export async function scanMacWifi(device: string): Promise<NetWifiNetwork[]> {
 /** Associate and verify the native raw SSID and selected access point. */
 export function connectMacWifi(device: string, ssid: string, password: string, security: string, bssid: string | null = null, ssidHex: string | null = null): Promise<void> {
 	return associateMacWifi(device, ssid, password, security, bssid, ssidHex);
+}
+
+export function disconnectMacWifi(device: string): Promise<void> {
+	return disconnectCoreWlanWifi(device);
 }
 
 /** Dotted-quad netmask for a prefix length, which is the only form `networksetup -setmanual` accepts. */
