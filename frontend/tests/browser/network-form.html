@@ -6,6 +6,7 @@
 	<pre id="results">Running...</pre>
 	<div id="form"></div>
 	<script type="module">
+		import '/src/app.css';
 		import { mount, unmount, tick } from 'svelte';
 		import { get } from 'svelte/store';
 		import SettingsNetworkEdit from '/src/pages/Settings/SettingsNetworkEdit.svelte';
@@ -22,6 +23,11 @@
 		let component;
 		let host;
 		let joinFails = false;
+		let waitForJoin = false;
+		let waitForDisconnect = false;
+		let pendingJoin;
+		let pendingDisconnect;
+		let disconnectCalls = 0;
 		let scanFails = false;
 		let applyCalls = 0;
 		let joinCalls = [];
@@ -61,10 +67,18 @@
 			}
 			if (method === 'system.wifiConnect') {
 				joinCalls.push(params);
+				if (waitForJoin) await new Promise((resolve, reject) => { pendingJoin = { resolve, reject }; });
 				if (joinFails) {
 					host.interfaces[0].addresses = [];
 					throw new Error('Test join rejected: check the password');
 				}
+				return structuredClone(host);
+			}
+			if (method === 'system.wifiDisconnect') {
+				disconnectCalls++;
+				if (waitForDisconnect) await new Promise((resolve, reject) => { pendingDisconnect = { resolve, reject }; });
+				host.interfaces[0].wifi = { ssid: null, signal: null, radio: 'on' };
+				host.interfaces[0].addresses = [];
 				return structuredClone(host);
 			}
 			if (method === 'system.networkApply') {
@@ -88,7 +102,7 @@
 		}
 
 		function button(label) {
-			const found = [...target.querySelectorAll('[role="button"]')].find(item => item.textContent.trim() === label);
+			const found = [...target.querySelectorAll('[role="button"]')].find(item => (item.getAttribute('aria-label') ?? item.textContent.trim()) === label);
 			assert(found, `Missing button: ${label}`);
 			return found;
 		}
@@ -119,6 +133,11 @@
 			if (component) await unmount(component);
 			host = initialHost();
 			joinFails = false;
+			waitForJoin = false;
+			waitForDisconnect = false;
+			pendingJoin = undefined;
+			pendingDisconnect = undefined;
+			disconnectCalls = 0;
 			scanFails = false;
 			wifi = [testNetwork];
 			applyCalls = 0;
@@ -332,7 +351,7 @@
 			await test('missing policy reason uses an unavailable notice instead of unsupported security', async () => {
 				wifi = [{ ...testNetwork, security: 'WPA2/AES', connectable: false }];
 				await click(label('settings.network.scan'));
-				const status = target.querySelector('.network span').textContent;
+				const status = target.querySelector('.network-status').textContent;
 				assert(button('Test network').classList.contains('disabled'), 'Unavailable network remains enabled');
 				assert(status && !status.startsWith('{') && status !== label('settings.network.unsupportedSecurity') && status !== label('settings.network.secured'), `Missing generic unavailable explanation: ${status}`);
 			});
@@ -355,7 +374,7 @@
 				await edit(target.querySelector('input[type="password"]'), 'test-network-password');
 				wifi = [{ ...testNetwork, security: '', secured: false }];
 				await click(label('settings.network.scan'));
-				const submit = [...target.querySelectorAll('[role="button"]')].find(item => item.textContent.trim() === label('settings.network.join'));
+				const submit = [...target.querySelectorAll('[role="button"]')].find(item => (item.getAttribute('aria-label') ?? item.textContent.trim()) === label('settings.network.join'));
 				assert(!submit || submit.classList.contains('disabled'), 'Changed security leaves the previous join enabled');
 				assert(target.textContent.includes(label('settings.network.selectionChanged')), 'Changed selection has no explanation');
 				submit?.click();
@@ -403,7 +422,7 @@
 			await test('different raw SSIDs sharing a display name render as disabled ambiguous rows', async () => {
 				wifi = ['FF', 'FE'].map(ssidHex => ({ ...testNetwork, ssid: '\uFFFD', ssidHex }));
 				await click(label('settings.network.scan'));
-				const rows = [...target.querySelectorAll('[role="button"]')].filter(item => item.textContent.trim() === '\uFFFD');
+				const rows = [...target.querySelectorAll('[role="button"]')].filter(item => (item.getAttribute('aria-label') ?? item.textContent.trim()) === '\uFFFD');
 				assert(rows.length === 2, 'Distinct raw SSIDs failed to render as separate rows');
 				for (const row of rows) {
 					assert(row.classList.contains('disabled'), 'Ambiguous display name remains selectable');
@@ -413,6 +432,100 @@
 				assert(!target.querySelector('input[type="password"]') && joinCalls.length === 0, 'Ambiguous raw SSID opened or submitted a join');
 				assert(target.textContent.includes(label('settings.network.ambiguousName')), 'Ambiguous raw SSIDs have no explanation');
 			});
+
+			await test('Wi-Fi status, authentication and signal are inside the network button', async () => {
+				await click(label('settings.network.scan'));
+				const row = button('Test network');
+				assert(row.querySelector('.network-name')?.textContent === 'Test network', 'Network name is outside its button');
+				assert(row.querySelector('.network-status')?.textContent.includes(label('settings.network.secured')), 'Security status is outside its button');
+				assert(row.querySelector('.security')?.textContent.includes('WPA2'), 'Authentication method is outside its button');
+				assert(row.querySelector('.signal')?.textContent.includes('80%'), 'Signal is outside its button');
+				assert(row.getAttribute('aria-label') === 'Test network', 'Rich button lost its accessible name');
+			});
+
+			await test('inline password panel preserves keyboard order before the next network', async () => {
+				wifi = [testNetwork, { ...testNetwork, ssid: 'Second network' }];
+				await click(label('settings.network.scan'));
+				const row = button('Test network');
+				for (let step = 0; step < 15 && !row.classList.contains('selected'); step++) {
+					emit('down');
+					await settle();
+				}
+				assert(row.classList.contains('selected'), 'Network row could not be selected by keyboard');
+				await click('Test network');
+				assert(row.closest('.wifi-row').nextElementSibling?.classList.contains('join-panel'), 'Password panel is not beside its selected network');
+				emit('down');
+				await settle();
+				assert(target.querySelector('input[type="password"]').closest('.input-field').classList.contains('selected'), 'Keyboard skipped the inline password');
+				emit('down');
+				await settle();
+				assert(button(label('settings.network.join')).classList.contains('selected'), 'Keyboard skipped the inline Join action');
+				emit('down');
+				await settle();
+				assert(button('Second network').classList.contains('selected'), 'Keyboard order collided with the following network');
+			});
+
+			for (const failed of [false, true]) {
+				await test(`pending join is visible and blocks duplicate confirmation before ${failed ? 'failure' : 'success'}`, async () => {
+					await click(label('settings.network.scan'));
+					await click('Test network');
+					await edit(target.querySelector('input[type="password"]'), 'test-network-password');
+					waitForJoin = true;
+					const submit = button(label('settings.network.join'));
+					submit.click();
+					await settle();
+					try {
+						assert(joinCalls.length === 1 && pendingJoin, 'Join request did not start');
+						const status = target.querySelector('.join-panel .joining[role="status"]');
+						assert(status?.textContent.includes('Test network') && status.textContent.includes(label('settings.network.joining')), 'Pending join has no visible network-specific status');
+						assert(target.querySelector('input[type="password"]').disabled && submit.classList.contains('disabled'), 'Pending join controls remain editable');
+						submit.click();
+						window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+						window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter' }));
+						await settle();
+						assert(joinCalls.length === 1, 'Repeated confirmation sent a second join request');
+						if (failed) pendingJoin.reject(new Error('Deferred join failed'));
+						else pendingJoin.resolve();
+						await settle();
+						assert(!target.querySelector('.joining'), 'Completed join still reports progress');
+						assert(message() === (failed ? 'Deferred join failed' : get(t)('settings.network.joined', { ssid: 'Test network' })), 'Join result missing');
+						assert(target.querySelector('.wifi-list .message'), 'Join result is detached from the selected network');
+					} finally {
+						pendingJoin?.resolve();
+						await settle();
+					}
+				});
+
+				await test(`current connection and pending disconnect survive ${failed ? 'failure' : 'success'}`, async () => {
+					host.interfaces[0].wifi = { ssid: 'Connected network', signal: 74, radio: 'on' };
+					networkState.set(structuredClone(host));
+					await settle();
+					const current = target.querySelector('.connection');
+					assert(current.textContent.includes('Connected network') && current.textContent.includes('74%') && current.textContent.includes('192.0.2.10'), 'Current connection details require a scan');
+					assert(!target.querySelector('.wifi-row'), 'Current connection test unexpectedly scanned');
+					waitForDisconnect = true;
+					const disconnect = button(label('settings.network.disconnect'));
+					disconnect.click();
+					await settle();
+					try {
+						assert(disconnectCalls === 1 && pendingDisconnect, 'Disconnect request did not start');
+						assert(current.querySelector('.joining[role="status"]')?.textContent.includes(label('settings.network.disconnecting')), 'Disconnect progress is missing');
+						assert(current.textContent.includes('Connected network'), 'UI claimed disconnection before the host replied');
+						disconnect.click();
+						await settle();
+						assert(disconnectCalls === 1, 'Repeated click submitted a second disconnect');
+						if (failed) pendingDisconnect.reject(new Error('Deferred disconnect failed'));
+						else pendingDisconnect.resolve();
+						await settle();
+						assert(!current.querySelector('.joining'), 'Completed disconnect still reports progress');
+						assert(current.textContent.includes(failed ? 'Connected network' : label('settings.network.notConnected')), 'Current connection disagrees with the host reply');
+						assert(message() === (failed ? 'Deferred disconnect failed' : label('settings.network.disconnected')), 'Disconnect result is missing');
+					} finally {
+						pendingDisconnect?.resolve();
+						await settle();
+					}
+				});
+			}
 		} catch (error) {
 			results.push({ name: 'harness', passed: false, error: error.message });
 			output.textContent += `\nFAIL harness: ${error.stack}`;
