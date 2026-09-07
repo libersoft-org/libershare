@@ -313,6 +313,33 @@
 				assert(joinCalls.length === 0, 'Stale join form submitted after policy blocked the network');
 				assert(button(label('settings.network.join')).classList.contains('disabled'), 'Stale join submit remains enabled');
 			});
+
+			await test('security change after selection requires a new network selection', async () => {
+				await click(label('settings.network.scan'));
+				await click('Test network');
+				await edit(target.querySelector('input[type="password"]'), 'test-network-password');
+				wifi = [{ ...testNetwork, security: '', secured: false }];
+				await click(label('settings.network.scan'));
+				const submit = [...target.querySelectorAll('[role="button"]')].find(item => item.textContent.trim() === label('settings.network.join'));
+				assert(!submit || submit.classList.contains('disabled'), 'Changed security leaves the previous join enabled');
+				assert(target.textContent.includes(label('settings.network.selectionChanged')), 'Changed selection has no explanation');
+				submit?.click();
+				await settle();
+				assert(joinCalls.length === 0, 'Previous selection joined the replacement open network');
+				await click('Test network');
+				assert(joinCalls.length === 1, 'Explicit open-network selection did not join');
+				assert(joinCalls[0].password === '' && joinCalls[0].expectedSecurity === '', 'Explicit open join retained the previous credentials or security');
+			});
+
+			await test('join request preserves selected security when the network changes before submission', async () => {
+				await click(label('settings.network.scan'));
+				await click('Test network');
+				await edit(target.querySelector('input[type="password"]'), 'test-network-password');
+				wifi = [{ ...testNetwork, security: '', secured: false }];
+				await click(label('settings.network.join'));
+				assert(joinCalls.length === 1, 'Selected network was not submitted');
+				assert(joinCalls[0].expectedSecurity === 'WPA2', 'Request adopted unseen security instead of the selected WPA2');
+			});
 		} catch (error) {
 			results.push({ name: 'harness', passed: false, error: error.message });
 			output.textContent += `\nFAIL harness: ${error.stack}`;
