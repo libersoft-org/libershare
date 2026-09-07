@@ -609,7 +609,7 @@ function scanPlatformWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
  * the roaming the service does on its own.
  */
 function joinPlatformWifi(interfaceID: string, ssid: string, password: string, bssid: string | null, security: string): Promise<void> {
-	if (process.platform === 'win32') return connectWindowsWifi(assertWindowsGuid(interfaceID), ssid, password);
+	if (process.platform === 'win32') return connectWindowsWifi(assertWindowsGuid(interfaceID), ssid, password, security);
 	// macOS is addressed by name only: system_profiler never reports a BSSID, so
 	// there is no access point to pin the join to.
 	if (process.platform === 'darwin') return connectMacWifi(assertDeviceName(interfaceID), ssid, password, security);

@@ -121,34 +121,18 @@ export function parseAvailableNetworks(list: Pointer, reasonText?: (reason: numb
 	return [...best.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
 }
 
-/**
- * The scan entry for one network name, or null when the list does not hold it.
- *
- * This is what a join resolves its target from: the profile name Windows itself
- * uses for the network, the SSID exactly as the radio reported it, and the
- * authentication algorithm that decides between a WPA2 and a WPA3 profile. A
- * network that is not in the list yields null, and the caller then falls back to
- * what the user asked for, which is the best available answer rather than a
- * guess about a network nobody can currently see.
- *
- * ponytail: a name is not an identity — one SSID can be several access points,
- * and on a WPA2/WPA3 transition network they can differ in authentication. The
- * strongest entry is taken, which is also the one the radio is likeliest to
- * associate with. Resolving this properly needs a scan identity (interface +
- * BSSID + SSID bytes) carried through the API, which the wire contract has no
- * field for.
- */
+/** Pick the strongest equivalent entry, refusing names shared by different SSID bytes or security modes. */
 export function findScannedNetwork(list: Pointer, ssid: string): AvailableNetwork | 'ambiguous' | null {
 	let best: AvailableNetwork | null = null;
 	for (const entry of availableNetworks(list)) {
 		if (entry.ssid !== ssid) continue;
-		// An SSID is a byte sequence, and a decode is lossy: two DIFFERENT networks
-		// whose names differ only in an undecodable octet arrive here under one
-		// display name. Picking the strongest of those would join whichever happened
-		// to be closer at that instant, which is not the network the user chose - and
-		// the choice would flip between the list and the join.
-		if (best && !sameBytes(best.ssidBytes, entry.ssidBytes)) return 'ambiguous';
-		if (!best || (entry.signal ?? -1) > (best.signal ?? -1)) best = entry;
+		if (!best) {
+			best = entry;
+			continue;
+		}
+		if (!sameBytes(best.ssidBytes, entry.ssidBytes) || best.security !== entry.security || best.auth !== entry.auth || best.secured !== entry.secured) return 'ambiguous';
+		const strongest: AvailableNetwork = (entry.signal ?? -1) > (best.signal ?? -1) ? entry : best;
+		best = { ...strongest, active: best.active || entry.active };
 	}
 	return best;
 }
@@ -313,47 +297,39 @@ export async function scanWindowsWifi(guid: string): Promise<NetWifiNetwork[]> {
  * leave a network's stored configuration permanently changed or a dead profile
  * behind, and report neither.
  */
-export async function connectWindowsWifi(guid: string, ssid: string, password: string): Promise<void> {
+export async function connectWindowsWifi(guid: string, ssid: string, password: string, expectedSecurity: string): Promise<void> {
 	const guidBytes = guidToBytes(guid);
-	// Everything about the target is resolved once, from the list the WLAN service
-	// already holds — no scan is triggered, so this costs a call and not four
-	// seconds. Null when the network is not currently visible.
+	// The WLAN list can change after the shared scan. Validate it before touching profiles.
 	const lookup = withWlanHandle((api, handle) => readScannedNetwork(api, handle, guidBytes, ssid));
-	// A list that could not be read is not a network that is not there. Everything
-	// below falls back to values GUESSED from what the user typed — the SSID as
-	// text, the SSID as the profile name, WPA2 — and then writes a profile out of
-	// them. That fallback is right for a network which is genuinely not visible;
-	// running it because the WLAN service hiccuped is how a transient error came to
-	// overwrite a saved network's configuration.
 	if (lookup.kind === 'readError') throw new Error(`the list of visible networks could not be read, so this network was not joined (${lookup.message})`);
-	// Two networks whose names differ only in a byte no decode can show apart. The
-	// user picked one of them and there is no way to tell which, so neither is
-	// joined rather than the stronger one being guessed at.
 	if (lookup.kind === 'ambiguous') throw new Error('more than one network is broadcasting this name, and they cannot be told apart by name alone');
-	const scanned = lookup.kind === 'found' ? lookup.network : null;
+	if (lookup.kind === 'notFound') throw new Error('this Wi-Fi network is no longer visible; scan and select it again');
+	const scanned = lookup.network;
+	if (scanned.security !== expectedSecurity) throw new Error('Wi-Fi security changed; scan and select the network again');
+	if (!scanned.supported) throw new Error('this Wi-Fi authentication method is not supported');
+	const association = readAssociation(guid);
+	if (scanned.active || (association?.connected && association.ssid === ssid)) throw new Error('this interface is already connected to that network');
 	// A profile name is NOT an SSID. Windows keeps the two apart, the profile name
 	// is case-sensitive, and `WLAN_AVAILABLE_NETWORK` already carries the real one —
 	// so addressing everything below by SSID meant an existing custom-named profile
 	// was never found, never backed up, and a second competing profile was created
-	// beside it. The SSID is only the fallback for a network the scan cannot see.
-	const profileName = scanned?.profileName || ssid;
+	// beside it. A visible network without a profile gets its SSID as the new name.
+	const profileName = scanned.profileName || ssid;
 	// The SSID is a byte sequence, not text. The decoded form is what the user
 	// picked from and what the association is checked against, but the profile is
 	// built from the bytes the radio actually reported.
-	const ssidBytes = scanned?.ssidBytes ?? new TextEncoder().encode(ssid);
-	// WPA2 is the right default for a network the list does not name: it is what
-	// the transition mode most access points run advertises, and it is also what an
-	// out-of-date list would have said.
-	const sae = scanned?.auth === AUTH_ALGO_WPA3_SAE;
+	const ssidBytes = scanned.ssidBytes;
+	const sae = scanned.auth === AUTH_ALGO_WPA3_SAE;
 	// Windows sets `bNetworkConnectable` FALSE when it has already decided it
 	// cannot associate — an unsupported authentication or cipher, a policy
 	// restriction. Attempting anyway spent twenty seconds waiting for an
 	// association that was never going to happen and then told the user to check
 	// the password, which was not the problem. The reason code Windows supplied
 	// alongside it is the answer, so it is asked for by name.
-	if (scanned && !scanned.connectable) throw new Error(withWlanHandle(api => wlanReasonText(api, scanned.notConnectableReason)) ?? 'Windows reports that this network cannot be joined');
+	if (!scanned.connectable) throw new Error(withWlanHandle(api => wlanReasonText(api, scanned.notConnectableReason)) ?? 'Windows reports that this network cannot be joined');
 	assertProfileNameWritable(profileName);
-	if (password) assertWindowsWifiKey(password, sae);
+	if (scanned.secured) assertWindowsWifiKey(password, sae);
+	else if (password !== '') throw new Error('this network is now open; scan and select it again without a password');
 	// Held in a local of its own: WLAN_CONNECTION_PARAMETERS stores only the
 	// ADDRESS of the profile name, so the array behind it has to outlive the call.
 	const profileNameW = utf16z(profileName);
@@ -401,16 +377,7 @@ function connectByProfile(api: WlanApi, handle: WlanHandle, guidBytes: Uint8Arra
 	if (rc !== 0) throw new Error(wlanErrorMessage(rc));
 }
 
-/**
- * What a lookup in the WLAN service's own network list established.
- *
- * `notFound` and `readError` are not the same answer, and treating them as one
- * was how a transient WLAN failure came to trigger the destructive fallback: the
- * caller took `null` for "this network is not currently visible", carried on with
- * a guessed profile name, guessed SSID bytes and a guessed security type, and
- * wrote a profile from them. A list that could not be read says nothing about the
- * network, so nothing may be guessed from it.
- */
+/** Only a found, unambiguous WLAN entry can authorize a profile write. */
 type ScanLookup = { readonly kind: 'found'; readonly network: AvailableNetwork } | { readonly kind: 'notFound' } | { readonly kind: 'ambiguous' } | { readonly kind: 'readError'; readonly message: string };
 
 /**
