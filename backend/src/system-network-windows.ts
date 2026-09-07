@@ -42,6 +42,12 @@ const IF_TYPE_IEEE80211 = 71;
 // MediaConnectionState (Get-NetAdapter): 0 Unknown, 1 Connected, 2 Disconnected.
 const MEDIA_STATE_CONNECTED = 1;
 const MEDIA_STATE_DISCONNECTED = 2;
+// NetIPInterface.ConnectionState uses 0 for disconnected, unlike MediaConnectionState.
+const IP_STATE_DISCONNECTED = 0;
+const IP_STATE_CONNECTED = 1;
+// IF_OPER_STATUS: down and not present both prove that an adapter cannot carry traffic.
+const OPER_STATUS_DOWN = 2;
+const OPER_STATUS_NOT_PRESENT = 6;
 // AddressFamily as projected by [int]: 2 = IPv4 (AF_INET), 23 = IPv6 (AF_INET6).
 const AF_INET = 2;
 const AF_INET6 = 23;
@@ -69,7 +75,7 @@ const DHCP_ENABLED = 1;
  * because Windows PowerShell serializes an empty array inside a calculated
  * property as `{}` and a one-element array as a bare string.
  */
-export const WINDOWS_STATE_COMMAND: string = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', "function Read-OptionalNetRows([scriptblock]$Query) { try { @(& $Query) } catch { if ($_.FullyQualifiedErrorId -like 'CmdletizationQuery_NotFound*') { @() } else { throw } } }", "$adapters = @(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Select-Object ifIndex, Name, InterfaceGuid, MacAddress, @{n='Media';e={[int]$_.NdisPhysicalMedium}}, @{n='IfType';e={[int]$_.InterfaceType}}, @{n='Hidden';e={[int]$_.Hidden}}, @{n='State';e={[int]$_.MediaConnectionState}})", "$addresses = @(Get-NetIPAddress -PolicyStore ActiveStore -ErrorAction Stop | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}}, @{n='PrefixOrigin';e={[int]$_.PrefixOrigin}}, @{n='SuffixOrigin';e={[int]$_.SuffixOrigin}}, @{n='Type';e={[int]$_.Type}}, @{n='SkipAsSource';e={[bool]$_.SkipAsSource}}, @{n='Infinite';e={$_.ValidLifetime -eq [TimeSpan]::MaxValue -and $_.PreferredLifetime -eq [TimeSpan]::MaxValue}})", "$persistentAddresses = @(Read-OptionalNetRows { Get-NetIPAddress -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction Stop } | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}}, @{n='PrefixOrigin';e={[int]$_.PrefixOrigin}}, @{n='SuffixOrigin';e={[int]$_.SuffixOrigin}}, @{n='Type';e={[int]$_.Type}}, @{n='SkipAsSource';e={[bool]$_.SkipAsSource}}, @{n='Infinite';e={$_.ValidLifetime -eq [TimeSpan]::MaxValue -and $_.PreferredLifetime -eq [TimeSpan]::MaxValue}})", "$interfaces = @(Get-NetIPInterface -ErrorAction Stop | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, @{n='Dhcp';e={[int]$_.Dhcp}})", "$routes = @(Get-NetRoute -PolicyStore ActiveStore -ErrorAction Stop | Where-Object DestinationPrefix -eq '0.0.0.0/0' | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric, @{n='Protocol';e={[int]$_.Protocol}}, @{n='Publish';e={[int]$_.Publish}}, @{n='Infinite';e={$_.ValidLifetime -eq [TimeSpan]::MaxValue}})", "$persistentRoutes = @(Read-OptionalNetRows { Get-NetRoute -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction Stop } | Where-Object DestinationPrefix -eq '0.0.0.0/0' | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric, @{n='Protocol';e={[int]$_.Protocol}}, @{n='Publish';e={[int]$_.Publish}}, @{n='Infinite';e={$_.ValidLifetime -eq [TimeSpan]::MaxValue}})", "$routes6 = @(Read-OptionalNetRows { Get-NetRoute -AddressFamily IPv6 -PolicyStore ActiveStore -ErrorAction Stop } | Where-Object DestinationPrefix -eq '::/0' | Select-Object ifIndex, RouteMetric, InterfaceMetric)", "$dns = @(Get-DnsClientServerAddress -ErrorAction Stop | Select-Object InterfaceIndex, @{n='Servers';e={($_.ServerAddresses -join ',')}})", '[pscustomobject]@{adapters=$adapters; addresses=$addresses; persistentAddresses=$persistentAddresses; interfaces=$interfaces; routes=$routes; routes6=$routes6; persistentRoutes=$persistentRoutes; dns=$dns} | ConvertTo-Json -Depth 6 -Compress'].join('; ');
+export const WINDOWS_STATE_COMMAND: string = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', "function Read-OptionalNetRows([scriptblock]$Query) { try { @(& $Query) } catch { if ($_.FullyQualifiedErrorId -like 'CmdletizationQuery_NotFound*') { @() } else { throw } } }", "$adapters = @(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Select-Object ifIndex, Name, InterfaceGuid, MacAddress, @{n='Media';e={[int]$_.NdisPhysicalMedium}}, @{n='IfType';e={[int]$_.InterfaceType}}, @{n='Hidden';e={[int]$_.Hidden}}, @{n='State';e={[int]$_.MediaConnectionState}}, @{n='OperationalState';e={[int]$_.InterfaceOperationalStatus}})", "$addresses = @(Get-NetIPAddress -PolicyStore ActiveStore -ErrorAction Stop | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}}, @{n='PrefixOrigin';e={[int]$_.PrefixOrigin}}, @{n='SuffixOrigin';e={[int]$_.SuffixOrigin}}, @{n='Type';e={[int]$_.Type}}, @{n='SkipAsSource';e={[bool]$_.SkipAsSource}}, @{n='Infinite';e={$_.ValidLifetime -eq [TimeSpan]::MaxValue -and $_.PreferredLifetime -eq [TimeSpan]::MaxValue}})", "$persistentAddresses = @(Read-OptionalNetRows { Get-NetIPAddress -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction Stop } | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}}, @{n='PrefixOrigin';e={[int]$_.PrefixOrigin}}, @{n='SuffixOrigin';e={[int]$_.SuffixOrigin}}, @{n='Type';e={[int]$_.Type}}, @{n='SkipAsSource';e={[bool]$_.SkipAsSource}}, @{n='Infinite';e={$_.ValidLifetime -eq [TimeSpan]::MaxValue -and $_.PreferredLifetime -eq [TimeSpan]::MaxValue}})", "$interfaces = @(Get-NetIPInterface -ErrorAction Stop | Select-Object ifIndex, InterfaceAlias, @{n='ConnectionState';e={[int]$_.ConnectionState}}, @{n='Family';e={[int]$_.AddressFamily}}, @{n='Dhcp';e={[int]$_.Dhcp}})", "$routes = @(Get-NetRoute -PolicyStore ActiveStore -ErrorAction Stop | Where-Object DestinationPrefix -eq '0.0.0.0/0' | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric, @{n='Protocol';e={[int]$_.Protocol}}, @{n='Publish';e={[int]$_.Publish}}, @{n='Infinite';e={$_.ValidLifetime -eq [TimeSpan]::MaxValue}})", "$persistentRoutes = @(Read-OptionalNetRows { Get-NetRoute -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction Stop } | Where-Object DestinationPrefix -eq '0.0.0.0/0' | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric, @{n='Protocol';e={[int]$_.Protocol}}, @{n='Publish';e={[int]$_.Publish}}, @{n='Infinite';e={$_.ValidLifetime -eq [TimeSpan]::MaxValue}})", "$routes6 = @(Read-OptionalNetRows { Get-NetRoute -AddressFamily IPv6 -PolicyStore ActiveStore -ErrorAction Stop } | Where-Object DestinationPrefix -eq '::/0' | Select-Object ifIndex, RouteMetric, InterfaceMetric)", "$dns = @(Get-DnsClientServerAddress -ErrorAction Stop | Select-Object InterfaceIndex, @{n='Servers';e={($_.ServerAddresses -join ',')}})", '[pscustomobject]@{adapters=$adapters; addresses=$addresses; persistentAddresses=$persistentAddresses; interfaces=$interfaces; routes=$routes; routes6=$routes6; persistentRoutes=$persistentRoutes; dns=$dns} | ConvertTo-Json -Depth 6 -Compress'].join('; ');
 
 interface WindowsAdapterRow {
 	ifIndex: number;
@@ -82,6 +88,7 @@ interface WindowsAdapterRow {
 	/** 1 when Windows hides the adapter from the network UI (miniports, tunnels). */
 	Hidden?: number;
 	State: number;
+	OperationalState?: number;
 }
 interface WindowsAddressRow {
 	ifIndex: number;
@@ -98,6 +105,8 @@ interface WindowsAddressRow {
 }
 interface WindowsInterfaceRow {
 	ifIndex: number;
+	InterfaceAlias?: string;
+	ConnectionState?: number;
 	Family: number;
 	Dhcp: number;
 }
@@ -175,9 +184,10 @@ function mapMedium(media: number, ifType: number = 0, hidden: number = 0): NetMe
 	return 'other';
 }
 
-function mapLink(state: number): NetLink {
+function mapLink(state: number, operationalState?: number): NetLink {
 	if (state === MEDIA_STATE_CONNECTED) return 'up';
 	if (state === MEDIA_STATE_DISCONNECTED) return 'down';
+	if (operationalState === OPER_STATUS_DOWN || operationalState === OPER_STATUS_NOT_PRESENT) return 'down';
 	return 'unknown';
 }
 
@@ -274,12 +284,15 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 	const seen = new Set<number>();
 	for (const adapter of adapters) {
 		seen.add(adapter.ifIndex);
-		result.push(buildInterface(adapter.ifIndex, adapter.Name, mapMedium(adapter.Media, adapter.IfType, adapter.Hidden), mapLink(adapter.State), adapter.MacAddress, adapter.InterfaceGuid ? normalizeGuid(adapter.InterfaceGuid) : null));
+		result.push(buildInterface(adapter.ifIndex, adapter.Name, mapMedium(adapter.Media, adapter.IfType, adapter.Hidden), mapLink(adapter.State, adapter.OperationalState), adapter.MacAddress, adapter.InterfaceGuid ? normalizeGuid(adapter.InterfaceGuid) : null));
 	}
 	// Addressed stacks with no adapter row (RAS/VPN) — keep them, medium unknown.
 	for (const ifIndex of addressesByIndex.keys()) {
 		if (seen.has(ifIndex)) continue;
-		result.push(buildInterface(ifIndex, `#${ifIndex}`, 'other', 'unknown', '', null));
+		const rows = ipInterfaces.filter(row => row.ifIndex === ifIndex);
+		const name = rows.find(row => row.InterfaceAlias?.trim())?.InterfaceAlias ?? `#${ifIndex}`;
+		const link: NetLink = rows.some(row => row.ConnectionState === IP_STATE_CONNECTED) ? 'up' : rows.length > 0 && rows.every(row => row.ConnectionState === IP_STATE_DISCONNECTED) ? 'down' : 'unknown';
+		result.push(buildInterface(ifIndex, name, 'other', link, '', null));
 	}
 	return result;
 

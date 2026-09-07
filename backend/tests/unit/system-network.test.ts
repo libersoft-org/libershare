@@ -59,6 +59,8 @@ describe('WINDOWS_STATE_COMMAND', () => {
 	it('projects the enums it parses to integers so the OS display language cannot matter', () => {
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.NdisPhysicalMedium');
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.MediaConnectionState');
+		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.InterfaceOperationalStatus');
+		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.ConnectionState');
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.Dhcp');
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.AddressState');
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.PrefixOrigin');
@@ -139,6 +141,36 @@ describe('parseWindowsNetworkState', () => {
 	it('classifies media it cannot map with confidence as other', () => {
 		expect(byID(result, ID.tunnel).medium).toBe('other'); // NdisPhysicalMedium 0
 		expect(byID(result, ID.bluetooth).medium).toBe('other'); // Bluetooth PAN, 10
+	});
+
+	it.each([
+		{ rows: [{ Family: 2, InterfaceAlias: 'Example VPN', ConnectionState: 1 }], name: 'Example VPN', link: 'up' },
+		{ rows: [{ Family: 23, InterfaceAlias: 'Example VPN', ConnectionState: 1 }], name: 'Example VPN', link: 'up' },
+		{ rows: [{ Family: 2, InterfaceAlias: '', ConnectionState: 0 }, { Family: 23, InterfaceAlias: 'Example VPN', ConnectionState: 1 }], name: 'Example VPN', link: 'up' },
+		{ rows: [{ Family: 2, InterfaceAlias: 'Example VPN', ConnectionState: 0 }], name: 'Example VPN', link: 'down' },
+		{ rows: [{ Family: 2, InterfaceAlias: 'Example VPN' }], name: 'Example VPN', link: 'unknown' },
+		{ rows: [{ Family: 2 }], name: '#5', link: 'unknown' },
+	])('uses IP interface metadata for an adapterless stack: $link, $name', ({ rows, name, link }) => {
+		const doc = { ...simpleWindowsStaticDoc(), adapters: [], interfaces: rows.map(row => ({ ifIndex: 5, Dhcp: 0, ...row })) };
+		const stack = byID(parseWindowsNetworkState(JSON.stringify(doc)), 'ifIndex:5');
+		expect(stack).toMatchObject({ name, link, medium: 'other', ipv4Configurable: false, wifiConfigurable: false });
+	});
+
+	it.each([
+		{ state: 0, operational: 2, link: 'down' },
+		{ state: 0, operational: 6, link: 'down' },
+		{ state: 0, operational: 1, link: 'unknown' },
+		{ state: 0, operational: 4, link: 'unknown' },
+		{ state: 1, operational: 2, link: 'up' },
+		{ state: 2, operational: 1, link: 'down' },
+	])('only falls back from unknown media to a proven inactive adapter: $state/$operational', ({ state, operational, link }) => {
+		const doc = simpleWindowsStaticDoc();
+		doc['adapters'] = { ...(doc['adapters'] as object), State: state, OperationalState: operational };
+		doc['interfaces'] = { ifIndex: 5, Family: 2, Dhcp: 0, InterfaceAlias: 'Another alias', ConnectionState: 1 };
+		const adapter = parseWindowsNetworkState(JSON.stringify(doc))[0]!;
+		expect(adapter.name).toBe('Ethernet');
+		expect(adapter.id).toBe('{11111111-2222-3333-4444-555555555555}');
+		expect(adapter.link).toBe(link);
 	});
 
 	it('keeps an addressed stack that has no adapter row (RAS/VPN wintun)', () => {
