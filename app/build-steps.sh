@@ -113,3 +113,12 @@ sign_macos_network_binaries() {
 	codesign --force --options runtime --timestamp --identifier "${PRODUCT_IDENTIFIER}.backend" --sign "$APPLE_SIGNING_IDENTITY" "$ROOT_DIR/backend/build/lish-backend"
 	codesign --force --options runtime --timestamp --identifier "${PRODUCT_IDENTIFIER}.network-helper" --sign "$APPLE_SIGNING_IDENTITY" "$ROOT_DIR/backend/build/lish-network-helper"
 }
+
+prepare_macos_sidecars() {
+	[ "$BUILD_OS" = "macos" ] || return 0
+	# Tauri installs external binaries beside the app executable in Contents/MacOS.
+	# CoreWLAN cannot use the app's location grant from a binary under Resources.
+	for _sidecar in lish-backend lish-network-helper; do
+		cp "$ROOT_DIR/backend/build/$_sidecar" "$ROOT_DIR/backend/build/$_sidecar-$RUST_TARGET"
+	done
+}

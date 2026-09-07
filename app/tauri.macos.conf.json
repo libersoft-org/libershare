@@ -3,9 +3,6 @@
 		"macOS": {
 			"entitlements": "Entitlements.plist"
 		},
-		"resources": {
-			"../backend/build/lish-backend": "./lish-backend",
-			"../backend/build/lish-network-helper": "./lish-network-helper"
-		}
+		"externalBin": ["../backend/build/lish-backend", "../backend/build/lish-network-helper"]
 	}
 }
