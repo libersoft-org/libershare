@@ -517,17 +517,18 @@ export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 }
 
 /** Join a visible network, checking its fresh security against the client's selected scan label when supplied. */
-export function connectWifi(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null, expectedSecurity?: string): Promise<NetworkStateInfo> {
-	return runNetworkMutation(() => connectWifiUnlocked(interfaceID, ssid, password, primaryInterface, bssid, expectedSecurity));
+export function connectWifi(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null, expectedSecurity?: string, expectedSsidHex?: string): Promise<NetworkStateInfo> {
+	return runNetworkMutation(() => connectWifiUnlocked(interfaceID, ssid, password, primaryInterface, bssid, expectedSecurity, expectedSsidHex));
 }
 
 /** {@link connectWifi} for a caller that already holds the network mutation lock. */
-export async function connectWifiUnlocked(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null, expectedSecurity?: string): Promise<NetworkStateInfo> {
+export async function connectWifiUnlocked(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null, expectedSecurity?: string, expectedSsidHex?: string): Promise<NetworkStateInfo> {
 	if (typeof interfaceID !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
 	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
 	if (!isValidWifiPassword(password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
 	if (bssid !== null && typeof bssid !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid bssid');
 	if (expectedSecurity !== undefined && (typeof expectedSecurity !== 'string' || expectedSecurity.length > 64 || /[\0\r\n]/.test(expectedSecurity))) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid expected Wi-Fi security');
+	if (expectedSsidHex !== undefined && (typeof expectedSsidHex !== 'string' || !/^(?:[0-9a-f]{2}){1,32}$/i.test(expectedSsidHex))) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid expected Wi-Fi identity');
 	await assertWirelessInterface(interfaceID);
 	let available: NetWifiNetwork[];
 	try {
@@ -539,13 +540,14 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 	const network = resolveJoinTarget(available, ssid, bssid);
 	if (network === 'ambiguous') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'more than one network here goes by that name, so there is no way to tell which one to join');
 	if (!network) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'network is no longer available');
+	if (expectedSsidHex !== undefined && network.ssidHex?.toUpperCase() !== expectedSsidHex.toUpperCase()) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'Wi-Fi identity changed; scan and select the network again');
 	if (expectedSecurity !== undefined && network.security !== expectedSecurity) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'Wi-Fi security changed; scan and select the network again');
 	if (!network.supported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi authentication method is not supported');
 	if (isAlreadyJoined(network)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'this interface is already connected to that network');
 	if (!network.secured && password !== '') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'this network is open; scan and select it again without a password');
 	if (network.secured && !isValidWifiKey(network.security, password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
 	try {
-		await run(() => joinPlatformWifi(interfaceID, ssid, password, network.bssid, network.security), [password]);
+		await run(() => joinPlatformWifi(interfaceID, password, network), [password]);
 	} catch (error) {
 		resetNetworkCapabilitiesCache();
 		throw error;
@@ -608,12 +610,15 @@ function scanPlatformWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
  * point - there is no per-BSSID form of that call, and pinning one would defeat
  * the roaming the service does on its own.
  */
-function joinPlatformWifi(interfaceID: string, ssid: string, password: string, bssid: string | null, security: string): Promise<void> {
-	if (process.platform === 'win32') return connectWindowsWifi(assertWindowsGuid(interfaceID), ssid, password, security);
+function joinPlatformWifi(interfaceID: string, password: string, network: NetWifiNetwork): Promise<void> {
+	if (process.platform === 'win32') {
+		if (!network.ssidHex) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'Windows did not report the Wi-Fi network identity');
+		return connectWindowsWifi(assertWindowsGuid(interfaceID), network.ssid, password, network.security, network.ssidHex);
+	}
 	// macOS is addressed by name only: system_profiler never reports a BSSID, so
 	// there is no access point to pin the join to.
-	if (process.platform === 'darwin') return connectMacWifi(assertDeviceName(interfaceID), ssid, password, security);
-	return connectLinuxWifi(assertDeviceName(interfaceID), ssid, password, bssid);
+	if (process.platform === 'darwin') return connectMacWifi(assertDeviceName(interfaceID), network.ssid, password, network.security);
+	return connectLinuxWifi(assertDeviceName(interfaceID), network.ssid, password, network.bssid);
 }
 
 /** Validate a Windows adapter id before it addresses the WLAN service. Same boundary check as {@link assertDeviceName}. */

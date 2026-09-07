@@ -35,11 +35,9 @@
 	let failed = $state(false);
 	let networks = $state<NetWifiNetwork[]>([]);
 	let scanning = $state(false);
-	let joinSSID = $state('');
-	let joinBSSID = $state<string | null>(null);
-	let joinSecurity = $state<string | null>(null);
+	let selection = $state<NetWifiNetwork | null>(null);
 	let password = $state('');
-	let selectedNetwork = $derived(networks.find(network => network.ssid === joinSSID && network.bssid === joinBSSID && network.security === joinSecurity));
+	let selectedNetwork = $derived(networks.find(network => selection && network.ssid === selection.ssid && network.bssid === selection.bssid && network.security === selection.security && network.ssidHex === selection.ssidHex));
 
 	// Seed the form from the live state when the screen opens, then keep it in
 	// step with the host only while the user has not started editing. Re-seeding
@@ -209,15 +207,11 @@
 		// type a password that cannot be used.
 		password = '';
 		if (!network.secured) {
-			joinSSID = '';
-			joinBSSID = null;
-			joinSecurity = null;
+			selection = null;
 			void join(network);
 			return;
 		}
-		joinSSID = network.ssid;
-		joinBSSID = network.bssid;
-		joinSecurity = network.security;
+		selection = { ...network };
 	}
 
 	async function join(network?: NetWifiNetwork): Promise<void> {
@@ -228,13 +222,11 @@
 		message = '';
 		reported = false;
 		try {
-			const state = await joinWifiNetwork(interfaceID, ssid, bssid, password, target.security);
+			const state = await joinWifiNetwork(interfaceID, ssid, bssid, password, target.security, target.ssidHex);
 			await syncAfterWifiMutation(state);
 			failed = false;
 			message = $t('settings.network.joined', { ssid });
-			joinSSID = '';
-			joinBSSID = null;
-			joinSecurity = null;
+			selection = null;
 			password = '';
 			reported = true;
 		} catch (error) {
@@ -278,7 +270,7 @@
 	let dnsRows = $derived(dnsMode === 'custom' ? 2 : 1);
 	let saveY = $derived(canEditIPv4 ? 1 + staticRows + dnsRows : 0);
 	let wifiBaseY = $derived(canEditIPv4 ? saveY + 1 : 0);
-	let buttonsY = $derived(canEditWifi ? wifiBaseY + 2 + networks.length + (joinSSID ? 1 : 0) : wifiBaseY);
+	let buttonsY = $derived(canEditWifi ? wifiBaseY + 2 + networks.length + (selection ? 1 : 0) : wifiBaseY);
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));
 </script>
@@ -373,7 +365,7 @@
 			<ButtonBar justify="center" basePosition={[0, wifiBaseY]}>
 				<Button icon="/img/search.svg" label={scanning ? $t('settings.network.scanning') : $t('settings.network.scan')} disabled={scanning || busy} onConfirm={scan} />
 			</ButtonBar>
-			{#each networks as network, index (`${network.ssid}:${network.bssid ?? ''}:${network.security}`)}
+			{#each networks as network, index (`${network.ssid}:${network.bssid ?? ''}:${network.security}:${network.ssidHex ?? ''}`)}
 				<div role="group" data-mouse-activate-area={areaID}>
 					<Button label="{networkLabel(network)}{network.active ? ' ✓' : ''}" position={[0, wifiBaseY + 1 + index]} onConfirm={() => selectNetwork(network)} disabled={busy || scanning || !joinable(network)} />
 					<div class="network">
@@ -382,9 +374,9 @@
 					</div>
 				</div>
 			{/each}
-			{#if joinSSID}
+			{#if selection}
 				<div role="group" data-mouse-activate-area={areaID}>
-					<Input bind:value={password} onchange={clearMessage} label={$t('settings.network.passwordFor', { ssid: joinSSID })} type="password" position={[0, wifiBaseY + 1 + networks.length]} disabled={busy} flex />
+					<Input bind:value={password} onchange={clearMessage} label={$t('settings.network.passwordFor', { ssid: selection.ssid })} type="password" position={[0, wifiBaseY + 1 + networks.length]} disabled={busy} flex />
 				</div>
 				<ButtonBar justify="center" basePosition={[0, wifiBaseY + 2 + networks.length]}>
 					<Button icon="/img/check.svg" label={$t('settings.network.join')} disabled={busy || scanning || !selectedNetwork || !joinable(selectedNetwork)} onConfirm={join} />

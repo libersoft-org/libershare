@@ -338,7 +338,7 @@
 			"liveUpdatesUnavailable": "Live network updates are unavailable. This snapshot will refresh after reconnection.",
 			"unsupportedSecurity": "Unsupported authentication",
 			"notConnectable": "This network cannot be joined right now.",
-			"selectionChanged": "The selected network is no longer available with the same security. Scan and select it again.",
+			"selectionChanged": "The selected network has changed or is no longer available. Scan and select it again.",
 			"alreadyJoined": "Connected",
 			"ambiguousName": "Cannot tell which one",
 			"gateway": "Gateway",

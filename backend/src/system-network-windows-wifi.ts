@@ -77,9 +77,9 @@ const JOIN_POLL_MS = 500;
  * Hidden networks report a zero-length SSID and are dropped for the same reason
  * the Linux reader drops them: they cannot be joined by name, so an unnamed row
  * would offer something that fails. One SSID can appear more than once (a roaming
- * network, or the same name with and without a stored profile), so entries
- * collapse to the strongest reading — carrying `active` and `secured` across,
- * since only one of the duplicates is the associated one.
+ * network, or the same name with and without a stored profile). Equivalent SSID
+ * bytes and security collapse to the strongest reading, retaining the active
+ * flag when any duplicate is associated.
  *
  * Implausible readings are dropped rather than reported: a signal above 100 or an
  * SSID longer than the 32 octets DOT11_SSID can hold means the offsets are being
@@ -88,19 +88,11 @@ const JOIN_POLL_MS = 500;
 export function parseAvailableNetworks(list: Pointer, reasonText?: (reason: number) => string | null): NetWifiNetwork[] {
 	const best = new Map<string, NetWifiNetwork>();
 	for (const found of availableNetworks(list)) {
-		// Projected explicitly rather than by rest-spread: the decoded entry carries
-		// the raw SSID bytes and the stored profile name, which the join path needs
-		// and the wire contract does not have a field for.
+		// Native profile details stay local; the hex identity survives the lossy display name.
 		const unavailableReason = found.connectable ? null : reasonText?.(found.notConnectableReason);
-		const entry: NetWifiNetwork = { ssid: found.ssid, bssid: found.bssid, signal: found.signal, secured: found.secured, security: found.security, supported: found.supported, active: found.active, connectable: found.connectable, ...(unavailableReason ? { unavailableReason } : {}) };
-		// Access points are collapsed per NAME AND SECURITY, never per name alone.
-		// One name can sit on two networks that are not the same network at all — an
-		// open guest AP and an unrelated WPA2 one — and folding those together
-		// invented readings neither advertised: the security of the stronger row with
-		// the association of the weaker, so an open network the interface was on came
-		// back as "WPA2, connected". Keyed this way each row still describes one real
-		// network, and access points that agree still collapse into a single row.
-		const key = `${entry.ssid}\0${entry.security}`;
+		const entry: NetWifiNetwork = { ssid: found.ssid, ssidHex: ssidHex(found.ssidBytes), bssid: found.bssid, signal: found.signal, secured: found.secured, security: found.security, supported: found.supported, active: found.active, connectable: found.connectable, ...(unavailableReason ? { unavailableReason } : {}) };
+		// Different raw SSIDs can decode to the same text, so text cannot be the key.
+		const key = `${entry.ssidHex}\0${entry.security}`;
 		const previous = best.get(key);
 		if (!previous) {
 			best.set(key, entry);
@@ -297,7 +289,7 @@ export async function scanWindowsWifi(guid: string): Promise<NetWifiNetwork[]> {
  * leave a network's stored configuration permanently changed or a dead profile
  * behind, and report neither.
  */
-export async function connectWindowsWifi(guid: string, ssid: string, password: string, expectedSecurity: string): Promise<void> {
+export async function connectWindowsWifi(guid: string, ssid: string, password: string, expectedSecurity: string, expectedSsidHex: string): Promise<void> {
 	const guidBytes = guidToBytes(guid);
 	// The WLAN list can change after the shared scan. Validate it before touching profiles.
 	const lookup = withWlanHandle((api, handle) => readScannedNetwork(api, handle, guidBytes, ssid));
@@ -305,6 +297,7 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 	if (lookup.kind === 'ambiguous') throw new Error('more than one network is broadcasting this name, and they cannot be told apart by name alone');
 	if (lookup.kind === 'notFound') throw new Error('this Wi-Fi network is no longer visible; scan and select it again');
 	const scanned = lookup.network;
+	if (ssidHex(scanned.ssidBytes) !== expectedSsidHex.toUpperCase()) throw new Error('Wi-Fi identity changed; scan and select the network again');
 	if (scanned.security !== expectedSecurity) throw new Error('Wi-Fi security changed; scan and select the network again');
 	if (!scanned.supported) throw new Error('this Wi-Fi authentication method is not supported');
 	const association = readAssociation(guid);

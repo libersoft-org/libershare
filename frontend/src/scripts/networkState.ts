@@ -99,7 +99,7 @@ export function scanWifiNetworks(interfaceID: string): Promise<NetWifiNetwork[]>
 }
 
 /** Join a Wi-Fi network. An empty password means an open network. */
-export async function joinWifiNetwork(interfaceID: string, ssid: string, bssid: string | null, password: string, expectedSecurity?: string): Promise<NetworkStateInfo> {
-	storeSnapshot(await api.call<NetworkStateInfo>('system.wifiConnect', { interfaceID, ssid, bssid, password, ...(expectedSecurity !== undefined ? { expectedSecurity } : {}) }));
+export async function joinWifiNetwork(interfaceID: string, ssid: string, bssid: string | null, password: string, expectedSecurity?: string, expectedSsidHex?: string): Promise<NetworkStateInfo> {
+	storeSnapshot(await api.call<NetworkStateInfo>('system.wifiConnect', { interfaceID, ssid, bssid, password, ...(expectedSecurity !== undefined ? { expectedSecurity } : {}), ...(expectedSsidHex !== undefined ? { expectedSsidHex } : {}) }));
 	return get(networkState);
 }

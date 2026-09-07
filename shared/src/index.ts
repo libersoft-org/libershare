@@ -532,6 +532,8 @@ export interface NetIPv4Baseline {
 /** One network seen by a Wi-Fi scan. */
 export interface NetWifiNetwork {
 	ssid: string;
+	/** Original SSID bytes as hex when available; the display name may be a lossy decode. */
+	ssidHex?: string;
 	/** Access-point identity used to disambiguate equal SSIDs. */
 	bssid: string | null;
 	/** 0-100 signal quality, never dBm. Null = the scanner did not report one. */
