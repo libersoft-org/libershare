@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
 import { CodedError, ErrorCodes, ipv4BaselineOf, isSelectableInterface, isValidSSID, isValidWifiKey, normalizeDnsServers, sameIPv4Baseline, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
-import { connectWindowsWifi, disconnectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND, windowsApplyIPv4Command } from './system-network-windows.ts';
+import { assertWindowsWifiMutationIdle, connectWindowsWifi, disconnectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND, windowsApplyIPv4Command } from './system-network-windows.ts';
 import { applyLinuxIPv4, connectLinuxWifi, disconnectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
 import { applyMacIPv4, connectMacWifi, disconnectMacWifi, isMacWifiConfigurable, isMacWritable, readMacNetworkState, scanMacWifi } from './system-network-macos.ts';
 import { assertMacWifiMutationIdle } from './system-network-corewlan.ts';
@@ -469,6 +469,7 @@ export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Conf
 	let usedHelper = false;
 	try {
 		await run(async () => {
+			if (process.platform === 'win32') assertWindowsWifiMutationIdle();
 			if (process.platform === 'darwin') assertMacWifiMutationIdle();
 			if (supported.ipv4Elevation) {
 				if (!allowPrivilegeEscalation) throw new Error('network helper cannot recursively request privileges');
@@ -508,6 +509,7 @@ export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 	// A scan is a device operation; letting it overlap an apply on the same host
 	// would race NetworkManager and let the scan read a half-applied state.
 	return runNetworkMutation(async () => {
+		if (process.platform === 'win32') await run(async () => assertWindowsWifiMutationIdle());
 		await assertWirelessInterface(interfaceID);
 		try {
 			return await run(() => scanPlatformWifi(interfaceID));
@@ -531,6 +533,7 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 	if (bssid !== null && typeof bssid !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid bssid');
 	if (expectedSecurity !== undefined && (typeof expectedSecurity !== 'string' || expectedSecurity.length > 64 || /[\0\r\n]/.test(expectedSecurity))) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid expected Wi-Fi security');
 	if (expectedSsidHex !== undefined && (typeof expectedSsidHex !== 'string' || !/^(?:[0-9a-f]{2}){1,32}$/i.test(expectedSsidHex))) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid expected Wi-Fi identity');
+	if (process.platform === 'win32') await run(async () => assertWindowsWifiMutationIdle());
 	await assertWirelessInterface(interfaceID);
 	let available: NetWifiNetwork[];
 	try {
@@ -801,6 +804,7 @@ export function disconnectWifi(interfaceID: string, primaryInterface: string = '
 /** Disconnect for callers that already own the host mutation lock. */
 export async function disconnectWifiUnlocked(interfaceID: string, primaryInterface: string = ''): Promise<NetworkStateInfo> {
 	if (typeof interfaceID !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+	if (process.platform === 'win32') await run(async () => assertWindowsWifiMutationIdle());
 	await assertWirelessInterface(interfaceID);
 	try {
 		await run(() => {
