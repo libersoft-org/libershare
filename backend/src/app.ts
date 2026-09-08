@@ -1,4 +1,5 @@
 import { dirname, join } from 'path';
+import { errorName, isTransientError } from './transient-errors.ts';
 import { productName, productVersion } from '@shared';
 import { resolveHealthcheckPort } from './healthcheck.ts';
 import { setupLogger, type LogLevel } from './logger.ts';
@@ -157,85 +158,6 @@ async function shutdown(): Promise<void> {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-// Transient libp2p errors that can occur during normal peer churn, stream
-// timeouts, connection drops, etc. These must not crash the process.
-const TRANSIENT_ERRORS = new Set([
-	// Stream errors (@libp2p/interface)
-	'StreamStateError',
-	'StreamResetError',
-	'StreamAbortedError',
-	'StreamBufferError',
-	'StreamClosedError',
-	// Connection errors (@libp2p/interface, libp2p core)
-	'ConnectionClosedError',
-	'ConnectionClosingError',
-	'ConnectionFailedError',
-	'ConnectionDeniedError',
-	'ConnectionInterceptedError',
-	// Muxer errors (@libp2p/interface, @chainsafe/libp2p-yamux)
-	'MuxerClosedError',
-	'MuxerUnavailableError',
-	'InvalidFrameError',
-	'ReceiveWindowExceededError',
-	'InvalidStateError',
-	'StreamAlreadyExistsError',
-	'BothClientsError',
-	// Dial errors (libp2p core)
-	'DialError',
-	'DialDeniedError',
-	'NoValidAddressesError',
-	'TransportUnavailableError',
-	// Timeout & abort
-	'AbortError',
-	'TimeoutError',
-	// Crypto / handshake (noise, relay)
-	'EncryptionFailedError',
-	'InvalidCryptoExchangeError',
-	// Protocol / message errors from misbehaving peers
-	'ProtocolError',
-	'InvalidMessageError',
-	'UnsupportedProtocolError',
-	'UnexpectedPeerError',
-	'UnexpectedEOFError',
-	'InvalidMessageLengthError',
-	'InvalidDataLengthError',
-	// Resource limits
-	'TooManyInboundProtocolStreamsError',
-	'TooManyOutboundProtocolStreamsError',
-	'QueueFullError',
-	'RateLimitError',
-	'LimitedConnectionError',
-	// Relay limits (@libp2p/circuit-relay-v2)
-	'TransferLimitError',
-	'DurationLimitError',
-	'RelayQueueFullError',
-	'HadEnoughRelaysError',
-	'DoubleRelayError',
-]);
-
-function isTransientError(err: any): boolean {
-	const name = err?.constructor?.name || err?.name || '';
-	if (TRANSIENT_ERRORS.has(name)) return true;
-	// Node EventEmitter wraps stream 'error' events with no listener as
-	// `Error: Unhandled error.` libp2p stream/muxer paths emit DOMException
-	// TimeoutError / AbortError on the underlying socket when a peer goes silent
-	// and no listener is attached. Both forms are transient.
-	const msg: string = err?.message ?? '';
-	const ctxMsg: string = err?.context?.message ?? '';
-	if (msg.startsWith('Unhandled error.') && /TimeoutError|AbortError|ECONNRESET|EPIPE/i.test(msg)) return true;
-	if (msg.includes('Unhandled error') && (ctxMsg.includes('timed out') || ctxMsg.includes('aborted') || ctxMsg.includes('closed') || ctxMsg.includes('reset'))) return true;
-	// Cause-chain check (Node may set .cause on wrapped errors).
-	const causeName = err?.cause?.constructor?.name || err?.cause?.name || '';
-	if (causeName === 'TimeoutError' || causeName === 'AbortError') return true;
-	// A UDP discovery socket (SSDP behind UPnP NAT, mDNS) binding to an interface
-	// address that is being reconfigured — just added and still tentative, or just
-	// removed — fails with EADDRNOTAVAIL, and the library surfaces that as an
-	// unhandled 'error' event. Seen live right after the app's own IPv4 change;
-	// the host must survive its own network change.
-	if (err?.code === 'EADDRNOTAVAIL' && /^bind /.test(msg)) return true;
-	return false;
-}
-
 // Rate-limiter for the highest-frequency transient error coming from gossipsub
 // internals (StreamStateError: "Cannot write to a stream that is closed").
 // This is a known issue in @chainsafe/libp2p-gossipsub where sendRpc does not
@@ -260,7 +182,7 @@ function logTransientRateLimited(kind: 'error' | 'rejection', name: string, mess
 
 process.on('uncaughtException', err => {
 	if (isTransientError(err)) {
-		const name = (err as any)?.constructor?.name || err.name || '';
+		const name = errorName(err);
 		logTransientRateLimited('error', name, err.message);
 		return;
 	}
@@ -277,7 +199,7 @@ process.on('uncaughtException', err => {
 
 process.on('unhandledRejection', (reason: any) => {
 	if (isTransientError(reason)) {
-		const name = reason?.constructor?.name || reason?.name || '';
+		const name = errorName(reason);
 		logTransientRateLimited('rejection', name, reason?.message ?? '');
 		return;
 	}
