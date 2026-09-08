@@ -427,17 +427,23 @@ export function windowsSyncEnabled(mode: WindowsSyncMode, start: WindowsStartMod
 	return true;
 }
 
-/**
- * Read the sync result out of `w32tm /query /status`. The field names stay English
- * on a localized host, only the timestamp is localized — so the presence of a real
- * value is the signal, never its format. Returns null when the line is missing.
- */
+/** Read current synchronization from recognized w32tm fields; unknown localized labels remain unknown. */
 export function parseWindowsSyncStatus(output: string): boolean | null {
-	const match = output.match(/Last Successful Sync Time:\s*(.*)/);
-	if (!match) return null;
-	const value = (match[1] ?? '').trim();
+	const fields = new Map<string, string>();
+	for (const line of output.split(/\r?\n/)) {
+		const match = /^[ \t]*(Leap Indicator|Last Successful Sync Time):[ \t]*(.*)$/.exec(line);
+		if (!match) continue;
+		if (fields.has(match[1]!)) return null;
+		fields.set(match[1]!, match[2]!.trim());
+	}
+	const leap = /^([0-3])(?:[ \t]*\([^()]*\))?$/.exec(fields.get('Leap Indicator') ?? '');
+	if (!leap) return null;
+	// LI=3 means unsynchronized even when Windows retains an earlier successful timestamp.
+	if (leap[1] === '3') return false;
+	const value = fields.get('Last Successful Sync Time');
 	if (!value) return null;
-	return !/unspecified/i.test(value);
+	if (/^unspecified$/i.test(value)) return false;
+	return /\p{Nd}/u.test(value) ? true : null;
 }
 
 /** Last resolved Windows-to-IANA pair. The scan below is not free, and the zone rarely changes. */

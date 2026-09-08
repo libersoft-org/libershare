@@ -155,6 +155,38 @@ describe('parseWindowsSyncStatus', () => {
 		expect(parseWindowsSyncStatus(W32TM_STATUS_NEVER)).toBe(false);
 	});
 
+	it('prefers current loss of synchronization over a historical successful timestamp', () => {
+		expect(parseWindowsSyncStatus(W32TM_STATUS.replace('0(no warning)', '3(not synchronized)'))).toBe(false);
+	});
+
+	it.each([0, 1, 2])('accepts synchronized leap indicator %i without parsing the localized timestamp', indicator => {
+		expect(parseWindowsSyncStatus(`Leap Indicator: ${indicator}\nLast Successful Sync Time: 08/14/2026 8:55:55 PM\n`)).toBe(true);
+	});
+
+	it.each(['\n', '\r\n'])('does not consume the next field after an empty value with %j', newline => {
+		expect(parseWindowsSyncStatus(`Leap Indicator: 0${newline}Last Successful Sync Time: \t${newline}Source: ntp.example.org${newline}`)).toBeNull();
+		expect(parseWindowsSyncStatus(`Leap Indicator: \t${newline}Last Successful Sync Time: 14.08.2026 20:55:55${newline}`)).toBeNull();
+	});
+
+	it.each(['', '4', 'unknown', '30', '0 invalid'])('does not infer current synchronization from history when the leap indicator is %j', indicator => {
+		expect(parseWindowsSyncStatus(`Leap Indicator: ${indicator}\nLast Successful Sync Time: 14.08.2026 20:55:55\n`)).toBeNull();
+	});
+
+	it('returns unknown for missing or unrecognized localized status fields', () => {
+		expect(parseWindowsSyncStatus('Last Successful Sync Time: 14.08.2026 20:55:55\n')).toBeNull();
+		expect(parseWindowsSyncStatus('Sprungindikator: 0\nLetzte erfolgreiche Synchronisierungszeit: 14.08.2026 20:55:55\n')).toBeNull();
+		expect(parseWindowsSyncStatus('Leap Indicator: 0\nLetzte erfolgreiche Synchronisierungszeit: 14.08.2026 20:55:55\n')).toBeNull();
+	});
+
+	it('rejects duplicate status fields instead of selecting a possibly stale answer', () => {
+		expect(parseWindowsSyncStatus(W32TM_STATUS + 'Leap Indicator: 3(not synchronized)\r\n')).toBeNull();
+		expect(parseWindowsSyncStatus(W32TM_STATUS + 'Last Successful Sync Time: unspecified\r\n')).toBeNull();
+	});
+
+	it.each(['unknown', 'not available', 'nicht angegeben'])('does not mistake the timestamp marker %j for a successful sync', value => {
+		expect(parseWindowsSyncStatus(`Leap Indicator: 0\nLast Successful Sync Time: ${value}\n`)).toBeNull();
+	});
+
 	it('returns null when the field is absent or has no value', () => {
 		expect(parseWindowsSyncStatus('Stratum: 5\r\n')).toBeNull();
 		expect(parseWindowsSyncStatus('Last Successful Sync Time: \r\n')).toBeNull();
