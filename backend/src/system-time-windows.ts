@@ -1,3 +1,5 @@
+import { type SystemCommand, processTimezone, listSystemTimezones, tryRead, type PlatformStatus } from './system-time-common.ts';
+
 import { dlopen, FFIType, ptr } from 'bun:ffi';
 import { win32 } from 'node:path';
 
@@ -256,4 +258,293 @@ export function probeDomainMembership(): DomainMembership {
 	} catch {
 		return 'unknown';
 	}
+}
+
+
+
+/** Registry key holding the Windows Time service configuration (NTP peers and sync type). */
+const W32TIME_PARAMS_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters';
+
+/** The service key itself, whose `Start` value is the start type (`sc qc` localizes its output). */
+const W32TIME_SERVICE_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time';
+
+/**
+ * Root of group policy's own W32Time configuration, relative to `HKEY_LOCAL_MACHINE`
+ * ({@link probeLocalMachineKey} takes the subkey, not a full path). When this key exists, an
+ * administrator's policy owns the settings and the values under
+ * {@link W32TIME_PARAMS_KEY} need not be the ones in effect — policy values override the
+ * local W32Time configuration.
+ *
+ * The ROOT rather than the individual branches under it. Policy lands in several of
+ * them — "Configure Windows NTP Client" writes `TimeProviders\NtpClient`, "Global
+ * Configuration Settings" writes `Config`, a couple of older values land in
+ * `Parameters` — and enumerating a hand-picked set answers "unmanaged" for every branch
+ * not on the list, `TimeProviders\NtpServer` included. A subkey cannot exist without its
+ * parent, so the parent is the one question that covers all of them, present and future.
+ */
+const W32TIME_POLICY_KEY = 'SOFTWARE\\Policies\\Microsoft\\W32Time';
+
+/**
+ * A failure HRESULT in command output: `0x8` followed by seven hex digits
+ * (`0x80070005` access denied, `0x80070522` privilege not held, `0x800706B5` the
+ * service is not running).
+ *
+ * Matched on the code, never on the sentence around it — `w32tm` localizes its
+ * messages, so a Czech or German host prints a translated reason next to the same
+ * number. Success output cannot collide: it carries no HRESULT, and the identifiers it
+ * does print (`ReferenceId: 0xC0000210`) are not in the `0x8` failure range.
+ */
+export const W32TM_ERROR_RE: RegExp = /0x8[0-9A-Fa-f]{7}/;
+
+/** A `w32tm` step, with the output check that its zero exit code makes necessary. */
+export function w32tm(...args: string[]): SystemCommand {
+	return { cmd: 'w32tm', args, failOnOutput: W32TM_ERROR_RE };
+}
+
+/** ERROR_SERVICE_ALREADY_RUNNING — `sc start` against a service that is already up. */
+export const SC_ALREADY_RUNNING = 1056;
+
+/** ERROR_SERVICE_NOT_ACTIVE — `sc stop` against a service that is already down. */
+export const SC_NOT_ACTIVE = 1062;
+
+/**
+ * Extract the value of a `REG_SZ`/`REG_DWORD` entry from `reg query ... /v NAME`
+ * output, whose payload line is `    NAME    REG_SZ    value`. Returns null when the
+ * entry is absent.
+ */
+export function parseRegValue(output: string, name: string): string | null {
+	for (const line of output.split('\n')) {
+		const match = line.trim().match(/^(\S+)\s+REG_\w+\s+(.*)$/);
+		if (match && match[1] === name) return (match[2] ?? '').trim();
+	}
+	return null;
+}
+
+/**
+ * Turn the Windows `NtpServer` registry value (`time.windows.com,0x9 other.example.org,0x9`)
+ * into the first plain host name, dropping the trailing `,0x<flags>` suffix.
+ */
+export function parseWindowsNtpServer(value: string | null): string | null {
+	if (!value) return null;
+	const first = value.trim().split(/\s+/)[0];
+	if (!first) return null;
+	const host = first.split(',')[0];
+	return host ? host : null;
+}
+
+/**
+ * How Windows Time is configured to obtain the time, from the `Type` registry value.
+ *
+ * - `domain-hierarchy` (`NT5DS`): the Active Directory time hierarchy. The default on
+ *   a domain member and the one thing this application must never overwrite.
+ * - `manual` (`NTP`): a configured peer list.
+ * - `all` (`AllSync`): the domain hierarchy plus the peer list.
+ * - `none` (`NoSync`): no time source at all.
+ * - `managed`: group policy owns the configuration, so the registry under
+ *   `Services\W32Time` is not the effective one and writing it is pointless at best.
+ * - `unknown`: the value could not be read, which is never assumed to be safe.
+ */
+export type WindowsSyncMode = 'domain-hierarchy' | 'manual' | 'all' | 'none' | 'managed' | 'unknown';
+
+/** Service start type from the `Start` registry value. `disabled` means it cannot run at all. */
+export type WindowsStartMode = 'automatic' | 'on-demand' | 'disabled' | 'unknown';
+
+/**
+ * Classify the Windows time source. Group policy wins over the service's own registry
+ * values: when a policy is present those values need not be the effective configuration
+ * (finding: the raw key is not the same thing as what W32Time actually uses).
+ */
+export function parseWindowsSyncMode(typeValue: string | null, policyManaged: boolean): WindowsSyncMode {
+	if (policyManaged) return 'managed';
+	if (typeValue === 'NT5DS') return 'domain-hierarchy';
+	if (typeValue === 'NTP') return 'manual';
+	if (typeValue === 'AllSync') return 'all';
+	if (typeValue === 'NoSync') return 'none';
+	return 'unknown';
+}
+
+/**
+ * Read the service start type out of `reg query ...\Services\W32Time /v Start`.
+ * `0x0`-`0x2` all start without being asked, `0x3` is trigger/demand start and `0x4`
+ * is disabled.
+ */
+export function parseWindowsStartMode(output: string | null): WindowsStartMode {
+	const raw = output === null ? null : parseRegValue(output, 'Start');
+	if (raw === '0x0' || raw === '0x1' || raw === '0x2') return 'automatic';
+	if (raw === '0x3') return 'on-demand';
+	if (raw === '0x4') return 'disabled';
+	return 'unknown';
+}
+
+/**
+ * Whether Windows is set up to synchronise the clock, or null when that cannot be told.
+ *
+ * Deliberately NOT "the service is running right now". Windows Time is trigger-started
+ * on a workgroup machine: it synchronises, stops again, and is still fully configured —
+ * reading the live run state would show synchronisation as off, let the UI offer a
+ * manual clock set, and have W32Time overwrite it at the next trigger.
+ */
+/**
+ * True when this application may change the host's time source.
+ *
+ * False for a domain member, for a group-policy-managed host and whenever the mode
+ * could not be read. Those are configurations an administrator owns: switching a domain
+ * member off `NT5DS`, or disabling W32Time on one, detaches it from the forest's time
+ * and eventually breaks Kerberos, and neither the previous mode nor the peer list is
+ * anywhere we could restore it from.
+ *
+ * `AllSync` is in that group too. Windows defines it as using EVERY available source,
+ * which on a domain member includes the AD hierarchy — so it is not the "just a peer
+ * list" that `NTP` is, and disabling W32Time on such a host detaches it exactly as
+ * disabling it on an `NT5DS` one does.
+ *
+ * The mode alone decides none of this, which is why `membership` is asked for and why
+ * only a PROVEN `standalone` passes. A forest-root PDC pointed at an external time
+ * source is configured the Microsoft-documented way — local `Type=NTP`, no policy branch
+ * — and so reads here as an ordinary `manual` host, while being the machine every clock
+ * in the forest follows. Stopping and disabling W32Time on it takes the root out of the
+ * domain time hierarchy for good, and Kerberos fails as the clocks drift apart. A domain
+ * member that is NOT the authority is refused along with it: nothing available here
+ * separates the two, and mistaking the authority for a plain member is the expensive
+ * direction of that guess. `unknown` — an unreadable join state — is refused for the
+ * same reason.
+ */
+export function windowsSyncIsOurs(mode: WindowsSyncMode, membership: DomainMembership): boolean {
+	if (membership !== 'standalone') return false;
+	return mode === 'manual' || mode === 'none';
+}
+
+export function windowsSyncEnabled(mode: WindowsSyncMode, start: WindowsStartMode): boolean | null {
+	if (start === 'disabled') return false;
+	if (mode === 'none') return false;
+	if (mode === 'unknown' || start === 'unknown') return null;
+	return true;
+}
+
+/**
+ * Read the sync result out of `w32tm /query /status`. The field names stay English
+ * on a localized host, only the timestamp is localized — so the presence of a real
+ * value is the signal, never its format. Returns null when the line is missing.
+ */
+export function parseWindowsSyncStatus(output: string): boolean | null {
+	const match = output.match(/Last Successful Sync Time:\s*(.*)/);
+	if (!match) return null;
+	const value = (match[1] ?? '').trim();
+	if (!value) return null;
+	return !/unspecified/i.test(value);
+}
+
+/** Last resolved Windows-to-IANA pair. The scan below is not free, and the zone rarely changes. */
+let windowsZoneCache: { windowsId: string; iana: string } | null = null;
+
+/**
+ * IANA identifier for a Windows timezone ID, found by scanning the runtime's zone list
+ * for one that converts back to it — CLDR maps only IANA to Windows, and the reverse is
+ * many-to-one.
+ *
+ * The zone the process already reports is tried first and wins when it maps to the same
+ * Windows ID: several IANA zones share one, and picking CLDR's representative would
+ * rename the user's `Europe/Prague` to another city in the same Windows zone.
+ */
+/**
+ * Point the cache at the zone that was just written.
+ *
+ * Several IANA zones share one Windows identifier, so a change from `Europe/Prague` to
+ * `Europe/Budapest` leaves `tzutil /g` answering exactly as before — and the cache, keyed
+ * on that identifier, kept handing back the zone from before the change. The host was
+ * correctly reconfigured while the UI showed the old city and the user's change looked
+ * like it had been undone.
+ */
+export function rememberWindowsZone(windowsId: string, iana: string): void {
+	windowsZoneCache = { windowsId, iana };
+}
+
+export function windowsToIanaTimezone(windowsId: string): string | null {
+	if (windowsZoneCache?.windowsId === windowsId) return windowsZoneCache.iana;
+	const own = processTimezone();
+	const match = ianaToWindowsTimezoneId(own) === windowsId ? own : (listSystemTimezones().find(zone => ianaToWindowsTimezoneId(zone) === windowsId) ?? null);
+	if (match !== null) windowsZoneCache = { windowsId, iana: match };
+	return match;
+}
+
+/**
+ * Read the host timezone out of `tzutil /g`. The suffix Windows appends when daylight
+ * saving is switched off for the zone is not part of the identifier.
+ */
+export function parseTzutilZone(output: string | null): string | null {
+	const id = (output ?? '').trim().replace(/_dstoff$/, '');
+	return id.length > 0 ? id : null;
+}
+
+/**
+ * True when group policy owns this host's time configuration — or when that could not be
+ * established, which is treated the same way.
+ *
+ * Failing closed is the whole point: "no policy" lets the application stop, disable and
+ * reconfigure W32Time, so it may only be concluded from a branch that DEFINITELY is not
+ * there. Only `absent` is that proof; `present` and `unreadable` alike yield a managed
+ * host, the capabilities go false and the UI shows the controls as somebody else's to
+ * change.
+ *
+ * This used to ask `reg query` and read its exit code. That code cannot carry the answer:
+ * `reg` documents only 0 and 1, and exits 1 both for a key that is absent and for one this
+ * process may not open — so a policy branch carrying its own restrictive ACL, which is
+ * exactly the branch an administrator locks down, arrived here spelled "absent" and the
+ * host was declared ours to reconfigure. Probing the key itself replaces that guess with
+ * the Win32 error code, which distinguishes the two (see {@link probeLocalMachineKey}).
+ */
+export function readWindowsPolicyManaged(probe: RegistryKeyProbe = probeLocalMachineKey): boolean {
+	return probe(W32TIME_POLICY_KEY) !== 'absent';
+}
+
+/**
+ * The Windows time source and service start type, as read from the registry, plus the
+ * host's domain join state — which no registry value under `W32Time` carries and which
+ * decides ownership just as much as the mode does (see {@link windowsSyncIsOurs}).
+ */
+export interface WindowsModeState {
+	mode: WindowsSyncMode;
+	start: WindowsStartMode;
+	membership: DomainMembership;
+}
+
+/** Reads {@link WindowsModeState}. Injectable so a write's safety check can be tested off a real host. */
+export type WindowsModeReader = () => Promise<WindowsModeState>;
+
+/**
+ * Read the Windows time source and service start type. Both the status read and the
+ * enable/disable write need them — the write to decide whether it may rewrite the
+ * source at all, which is not something it can infer from the requested value.
+ */
+export async function readWindowsMode(): Promise<WindowsModeState> {
+	const type = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'Type']);
+	const start = await tryRead('reg', ['query', W32TIME_SERVICE_KEY, '/v', 'Start']);
+	const policyManaged = readWindowsPolicyManaged();
+	// Read here rather than by the caller so a write's safety check gets the join state
+	// from the same read it gets the mode from, inside the same lock.
+	const membership = probeDomainMembership();
+	return { mode: parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policyManaged), start: parseWindowsStartMode(start), membership };
+}
+
+/** Read the Windows (W32Time) part of the status. */
+export async function readWindowsStatus(): Promise<PlatformStatus> {
+	// Everything here is read from the registry rather than from `sc query` / `w32tm
+	// /query /configuration`: the first localizes its field NAMES as well as its values
+	// (a German host prints `ZUSTAND`, not `STATE`), and the second needs elevation.
+	// Registry value names are identifiers and are the same in every language.
+	const params = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'NtpServer']);
+	const status = await tryRead('w32tm', ['/query', '/status']);
+	// tzutil answers with a Windows identifier, which has to be mapped back to IANA.
+	const zone = parseTzutilZone(await tryRead('tzutil', ['/g']));
+	const { mode, start, membership } = await readWindowsMode();
+	// A time source an administrator owns is read-only here, so the UI disables the
+	// controls instead of offering a change that would detach the host from its domain.
+	const ours = windowsSyncIsOurs(mode, membership);
+	return {
+		timezone: zone === null ? null : windowsToIanaTimezone(zone),
+		ntpEnabled: windowsSyncEnabled(mode, start),
+		ntpSynchronized: status === null ? null : parseWindowsSyncStatus(status),
+		ntpServer: parseWindowsNtpServer(params === null ? null : parseRegValue(params, 'NtpServer')),
+		capabilities: { setClock: true, setTimezone: canConvertTimezoneId(), setNtpServer: ours, setNtpEnabled: ours },
+	};
 }
