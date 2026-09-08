@@ -73,13 +73,15 @@ const JOIN_POLL_MS = 500;
 const CANCEL_TIMEOUT_MS = 5000;
 const WINDOWS_WIFI_BUSY = 'a previous Windows Wi-Fi operation has an unknown result; further network changes are blocked until it is confirmed disconnected';
 interface PendingWifiRecovery {
+	kind: 'join';
 	guid: string;
 	profileName: string;
 	ssidHex: string;
 	change: ProfileChange | null;
 	cancelAccepted: boolean;
 }
-let pendingWifiRecovery: PendingWifiRecovery | null = null;
+type PendingWifiOperation = PendingWifiRecovery | { kind: 'disconnect'; guid: string };
+let pendingWifiOperation: PendingWifiOperation | null = null;
 
 function cancelPendingJoin(pending: PendingWifiRecovery): void {
 	const guidBytes = guidToBytes(pending.guid);
@@ -92,7 +94,7 @@ function cancelPendingJoin(pending: PendingWifiRecovery): void {
 
 function restoreStoppedJoin(pending: PendingWifiRecovery): string | null {
 	const rollback = undoWifiProfileChange(guidToBytes(pending.guid), pending.profileName, pending.change);
-	if (pendingWifiRecovery === pending) pendingWifiRecovery = null;
+	if (pendingWifiOperation === pending) pendingWifiOperation = null;
 	return rollback;
 }
 
@@ -102,27 +104,35 @@ function canCancelJoin(current: ReturnType<typeof readWindowsWifiOperationState>
 
 /** Finish deferred cleanup before allowing another local network mutation. */
 export function assertWindowsWifiMutationIdle(): void {
-	const pending = pendingWifiRecovery;
+	const pending = pendingWifiOperation;
 	if (!pending) return;
 	let stopped = false;
 	try {
-		const current = readWindowsWifiOperationState(pending.guid);
-		if (canCancelJoin(current, pending)) {
-			// Accepted cancellation is not completion; a late own association must be cancelled again.
-			if (current.state !== 4 || !pending.cancelAccepted) cancelPendingJoin(pending);
+		if (pending.kind === 'disconnect') {
 			stopped = isWindowsWifiDisconnected(pending.guid);
+		} else {
+			const current = readWindowsWifiOperationState(pending.guid);
+			if (canCancelJoin(current, pending)) {
+				// Accepted cancellation is not completion; a late own association must be cancelled again.
+				if (current.state !== 4 || !pending.cancelAccepted) cancelPendingJoin(pending);
+				stopped = isWindowsWifiDisconnected(pending.guid);
+			}
 		}
 	} catch {
 		// Keep the recovery record when the service cannot prove termination.
 	}
 	if (!stopped) throw new Error(WINDOWS_WIFI_BUSY);
+	if (pending.kind === 'disconnect') {
+		pendingWifiOperation = null;
+		return;
+	}
 	const rollback = restoreStoppedJoin(pending);
 	if (rollback) throw new Error(`the Windows Wi-Fi operation stopped, but its profile recovery failed: ${rollback}`);
 }
 
 /** Stop an accepted join before changing any profile it may still be consuming. */
 async function stopFailedJoin(pending: PendingWifiRecovery): Promise<string | null> {
-	pendingWifiRecovery = pending;
+	pendingWifiOperation = pending;
 	try {
 		const current = readWindowsWifiOperationState(pending.guid);
 		if (!canCancelJoin(current, pending)) throw new Error('the current Wi-Fi operation belongs to another profile or cannot be identified');
@@ -434,7 +444,7 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 		await waitForAssociation(guid, scanned);
 	} catch (err) {
 		const rollback = joinAccepted
-			? await stopFailedJoin({ guid, profileName, ssidHex: target.ssidHex, change, cancelAccepted: false })
+			? await stopFailedJoin({ kind: 'join', guid, profileName, ssidHex: target.ssidHex, change, cancelAccepted: false })
 			: undoWifiProfileChange(guidBytes, profileName, change);
 		// Both errors, not just the first. A rollback that failed leaves the machine
 		// in a state neither error describes on its own, and reporting only the
@@ -503,11 +513,19 @@ export async function disconnectWindowsWifi(guid: string): Promise<void> {
 	withWlanHandle((api, handle) => {
 		const rc = api.WlanDisconnect(handle, ptr(guidBytes), null);
 		if (rc !== 0) throw new Error(wlanErrorMessage(rc));
+		pendingWifiOperation = { kind: 'disconnect', guid };
 	});
-	const deadline = Date.now() + JOIN_TIMEOUT_MS;
-	do {
-		if (isWindowsWifiDisconnected(guid)) return;
-		await new Promise(resolve => setTimeout(resolve, JOIN_POLL_MS));
-	} while (Date.now() < deadline);
-	throw new Error('Windows did not disconnect the Wi-Fi interface');
+	try {
+		const deadline = Date.now() + JOIN_TIMEOUT_MS;
+		do {
+			if (isWindowsWifiDisconnected(guid)) {
+				pendingWifiOperation = null;
+				return;
+			}
+			await delay(JOIN_POLL_MS);
+		} while (Date.now() < deadline);
+		throw new Error('Windows did not disconnect the Wi-Fi interface');
+	} catch (error) {
+		throw new Error(`${(error as Error).message}; ${WINDOWS_WIFI_BUSY}`);
+	}
 }
