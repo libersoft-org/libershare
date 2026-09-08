@@ -31,7 +31,10 @@ describe('buildSetClockCommands', () => {
 	});
 
 	it('builds the windows argv with an unambiguous ISO timestamp', () => {
-		expect(buildSetClockCommands('win32', AT)).toEqual([{ cmd: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', "Set-Date -Date '2026-08-14T23:46:28'"] }]);
+		const [command] = buildSetClockCommands('win32', AT);
+		expect(command?.cmd).toBe('powershell');
+		expect(command?.args.slice(0, 3)).toEqual(['-NoProfile', '-NonInteractive', '-Command']);
+		expect(command?.args[3]).toContain("Set-Date -Date '2026-08-14T23:46:28' -ErrorAction Stop");
 	});
 
 	it('zero-pads single-digit parts', () => {

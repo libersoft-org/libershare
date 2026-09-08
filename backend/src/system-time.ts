@@ -22,7 +22,20 @@ export function buildSetClockCommands(platform: SystemPlatform, when: LocalDateT
 	const time = `${pad2(when.hours)}:${pad2(when.minutes)}:${pad2(when.seconds)}`;
 	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-time', `${date} ${time}`] }];
 	if (platform === 'darwin') return [{ cmd: MAC_SYSTEMSETUP, args: ['-settime', time] }];
-	return [{ cmd: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', `Set-Date -Date '${date}T${time}'`] }];
+	// powershell.exe otherwise collapses native errors to exit 1 and localized text.
+	const script = `try { Set-Date -Date '${date}T${time}' -ErrorAction Stop | Out-Null } catch {
+		[Console]::Error.WriteLine($_.Exception.Message)
+		$failure = $_.Exception
+		$nativeCode = 1
+		while ($null -ne $failure) {
+			if ($failure -is [System.ComponentModel.Win32Exception] -and $failure.NativeErrorCode -ne 0) { $nativeCode = $failure.NativeErrorCode; break }
+			if ($failure -is [System.UnauthorizedAccessException]) { $nativeCode = 5; break }
+			$failure = $failure.InnerException
+		}
+		[Console]::Error.WriteLine('LISH_TIME_WIN32_ERROR=' + $nativeCode)
+		exit 1
+	}`;
+	return [{ cmd: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', script] }];
 }
 
 /**

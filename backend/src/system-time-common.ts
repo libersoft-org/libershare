@@ -212,6 +212,8 @@ export function classifyFailure(platform: SystemPlatform, code: number | null, o
 	// simply hit an error.
 	if (text.includes('ntp not supported')) return 'unsupported';
 	if (platform === 'win32') {
+		// PowerShell's native code survives runtimes that truncate process exit codes to 8 bits.
+		if (/^LISH_TIME_WIN32_ERROR=(?:5|1314)\r?$/m.test(output)) return 'permission-denied';
 		// Codes only, never the message: it is localized and w32tm even writes it to
 		// stdout. 5 = ERROR_ACCESS_DENIED (sc), 1314 = ERROR_PRIVILEGE_NOT_HELD, and
 		// the HRESULT forms of both as returned by w32tm and Set-Date — those arrive
