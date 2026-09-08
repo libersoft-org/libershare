@@ -345,7 +345,7 @@ describe('writeFileAtomically', () => {
 
 	it('still treats a genuinely absent original as nothing to restore', async () => {
 		const path = join(dir, '90-libershare.conf');
-		const missing = (): Promise<string> => Promise.reject(Object.assign(new Error('no such file'), { code: 'ENOENT' }));
+		const missing = (file: string): Promise<string> => readFile(file, 'utf8');
 		const rollback = await writeFileAtomically(path, 'new\n', missing);
 		expect((await rollback()).state).toBe('restored-durable');
 		expect(await readdir(dir)).toEqual([]);

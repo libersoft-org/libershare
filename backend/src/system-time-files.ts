@@ -1,5 +1,6 @@
-import { open, access, mkdir, readFile, rename, unlink } from 'node:fs/promises';
+import { open, access, mkdir, readFile, rename, unlink, lstat } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { constants, type BigIntStats } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 /**
@@ -106,11 +107,72 @@ async function makeDirectoryDurably(dir: string, syncDir: (d: string) => Promise
 		// extended-length form, so the rest of the chain cannot be derived from its answer.
 		// An `EEXIST` here means the level was already there; anything else (a file in the
 		// way, no permission) is a real failure.
-		await mkdir(level).catch((err: { code?: string }) => {
-			if (err.code !== 'EEXIST') throw err;
-		});
+		let created = false;
+		try {
+			await mkdir(level, { mode: 0o755 });
+			created = true;
+		} catch (err) {
+			if ((err as { code?: string }).code !== 'EEXIST') throw err;
+		}
+		if (created && process.platform !== 'win32') await prepareCreatedDirectory(level);
 		await syncDir(dirname(level));
 	}
+}
+
+/** Correct restrictive umasks only on directories this operation created, using the opened inode. */
+async function prepareCreatedDirectory(path: string): Promise<void> {
+	const created = await lstat(path, { bigint: true });
+	const handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+	try {
+		const opened = await handle.stat({ bigint: true });
+		if (!created.isDirectory() || created.dev !== opened.dev || created.ino !== opened.ino) throw new Error('the new time configuration directory changed before its permissions were set');
+		await handle.chmod(0o755);
+		await handle.sync().catch((error: { code?: string }) => {
+			if (!DIRECTORY_SYNC_UNSUPPORTED.has(error.code ?? '')) throw error;
+		});
+	} finally {
+		await handle.close();
+	}
+}
+
+interface FileMetadata {
+	dev: bigint;
+	ino: bigint;
+	mode: number;
+	uid: number;
+	gid: number;
+	size: bigint;
+	mtimeNs: bigint;
+	ctimeNs: bigint;
+}
+interface FileSnapshot extends FileMetadata {
+	content: string;
+}
+function metadata(stats: BigIntStats): FileMetadata {
+	return { dev: stats.dev, ino: stats.ino, mode: Number(stats.mode & 0o7777n), uid: Number(stats.uid), gid: Number(stats.gid), size: stats.size, mtimeNs: stats.mtimeNs, ctimeNs: stats.ctimeNs };
+}
+async function readMetadata(path: string): Promise<FileMetadata | null> {
+	try {
+		const stats = await lstat(path, { bigint: true });
+		if (!stats.isFile()) throw new Error('the time configuration is not a regular file');
+		return metadata(stats);
+	} catch (error) {
+		if ((error as { code?: string }).code === 'ENOENT') return null;
+		throw error;
+	}
+}
+function sameFile(left: FileMetadata | null, right: FileMetadata | null): boolean {
+	return left === null || right === null ? left === right : left.dev === right.dev && left.ino === right.ino && left.mode === right.mode && left.uid === right.uid && left.gid === right.gid;
+}
+async function readSnapshot(path: string, readOriginal: (path: string) => Promise<string>): Promise<FileSnapshot | null> {
+	const before = await readMetadata(path);
+	const content = await readOriginal(path).catch((error: { code?: string }) => {
+		if (error.code === 'ENOENT') return null;
+		throw error;
+	});
+	const after = await readMetadata(path);
+	if (!sameFile(before, after) || before?.size !== after?.size || before?.mtimeNs !== after?.mtimeNs || before?.ctimeNs !== after?.ctimeNs || (content === null) !== (after === null)) throw new Error('the time configuration changed while it was being read');
+	return after === null || content === null ? null : { ...after, content };
 }
 
 /**
@@ -125,25 +187,29 @@ async function makeDirectoryDurably(dir: string, syncDir: (d: string) => Promise
 export type RollbackResult = { state: 'restored-durable' } | { state: 'restored-not-durable'; error: unknown } | { state: 'not-restored'; error: unknown };
 
 export async function writeFileAtomically(path: string, content: string, readOriginal: (p: string) => Promise<string> = p => readFile(p, 'utf8'), syncDir: (dir: string) => Promise<void> = syncDirectory): Promise<() => Promise<RollbackResult>> {
-	// ENOENT is the ONLY error that means "there was nothing here". Reading every other
-	// one — EACCES, EIO, EISDIR — as absence hands the rollback a `previous` of null, and
-	// null makes it DELETE the file: a permission fault on a live configuration would
-	// have the rollback remove it rather than restore it. An unknown original means the
-	// write cannot be undone, so it does not happen at all.
-	const previous = await readOriginal(path).catch((err: { code?: string }) => {
-		if (err.code === 'ENOENT') return null;
-		throw err;
-	});
+	return publishFile(path, content, { mode: 0o644 }, readOriginal, syncDir);
+}
+
+async function publishFile(path: string, content: string, permissions: { mode: number; uid?: number; gid?: number }, readOriginal: (path: string) => Promise<string>, syncDir: (dir: string) => Promise<void>): Promise<() => Promise<RollbackResult>> {
+	const previous = await readSnapshot(path, readOriginal);
 	await makeDirectoryDurably(dirname(path), syncDir);
 	// Same directory, or the rename would cross a filesystem boundary and stop being atomic.
 	const temp = `${path}.libershare-${process.pid}-${randomUUID()}.tmp`;
 	let renamed = false;
+	let written: FileMetadata;
 	try {
 		// `wx`, not `w`: an existing name is a collision to report, never one to overwrite.
 		const handle = await open(temp, 'wx');
 		try {
 			await handle.writeFile(content, 'utf8');
+			if (process.platform !== 'win32' && permissions.uid !== undefined && permissions.gid !== undefined) {
+				const owner = await handle.stat();
+				if (owner.uid !== permissions.uid || owner.gid !== permissions.gid) await handle.chown(permissions.uid, permissions.gid);
+			}
+			// chown can clear permission bits, so restore/set the mode after ownership and before fsync.
+			await handle.chmod(permissions.mode);
 			await handle.sync();
+			written = metadata(await handle.stat({ bigint: true }));
 		} finally {
 			await handle.close();
 		}
@@ -171,20 +237,18 @@ export async function writeFileAtomically(path: string, content: string, readOri
 		// flush failing after that point is a durability warning and not a failed restore.
 		let visible = false;
 		try {
-			const current = await readOriginal(path).catch((err: { code?: string }) => {
-				if (err.code === 'ENOENT') return null;
-				throw err;
-			});
-			// The process lock cannot protect edits made by another administrator.
-			// This check preserves observed foreign changes, but is not an atomic filesystem CAS.
-			if (current !== content && !(previous === null && current === null)) throw new Error('the time configuration changed after this operation wrote it; it was left untouched');
+			const current = await readSnapshot(path, readOriginal);
+			// Preserve observed content, inode, permission or ownership changes made outside our lock.
+			// This remains a checked update, not an atomic filesystem compare-and-swap.
+			if (current === null ? previous !== null : current.content !== content || !sameFile(current, written)) throw new Error('the time configuration changed after this operation wrote it; it was left untouched');
 			if (previous !== null) {
-				await writeFileAtomically(
+				await publishFile(
 					path,
+					previous.content,
 					previous,
 					async target => {
 						const latest = await readOriginal(target);
-						if (latest !== content) throw new Error('the time configuration changed before restoration; it was left untouched');
+						if (latest !== content || !sameFile(await readMetadata(target), written)) throw new Error('the time configuration changed before restoration; it was left untouched');
 						return latest;
 					},
 					syncDir
