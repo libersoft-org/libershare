@@ -108,8 +108,8 @@ export function assertWindowsWifiMutationIdle(): void {
 	try {
 		const current = readWindowsWifiOperationState(pending.guid);
 		if (canCancelJoin(current, pending)) {
-			// A disconnected reading alone does not flush an earlier queued WlanConnect.
-			if (!pending.cancelAccepted) cancelPendingJoin(pending);
+			// Accepted cancellation is not completion; a late own association must be cancelled again.
+			if (current.state !== 4 || !pending.cancelAccepted) cancelPendingJoin(pending);
 			stopped = isWindowsWifiDisconnected(pending.guid);
 		}
 	} catch {

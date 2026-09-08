@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { resolve } from 'node:path';
 
-function scenario(input: { state?: 'ours' | 'idle' | 'foreign' | 'unknown' | 'same-ssid-other-profile'; cancelFails?: boolean; cancelStuck?: boolean; recover?: boolean; recoverOwn?: boolean; foreignProfileEdit?: boolean; probeConflicts?: boolean; rollbackFails?: boolean; synchronousFailure?: boolean }): any {
+function scenario(input: { state?: 'ours' | 'idle' | 'foreign' | 'unknown' | 'same-ssid-other-profile'; cancelFails?: boolean; cancelStuck?: boolean; recover?: boolean; recoverOwn?: boolean; recoverForeign?: boolean; foreignProfileEdit?: boolean; probeConflicts?: boolean; rollbackFails?: boolean; synchronousFailure?: boolean }): any {
 	const script = `
 		import { mock } from 'bun:test';
 		import { ptr, toArrayBuffer } from 'bun:ffi';
@@ -31,7 +31,8 @@ function scenario(input: { state?: 'ours' | 'idle' | 'foreign' | 'unknown' | 'sa
 			readAssociation:()=>null,
 			isWindowsWifiDisconnected:()=>!queued,
 			readWindowsWifiOperationState:()=>{
-				if(recovery && input.recoverOwn && !cancelled)return {state:1,profileName:'Saved connection',ssidHex:hex};
+				if(recovery && input.recoverForeign)return {state:1,profileName:'Other connection',ssidHex:'4F74686572'};
+				if(recovery && input.recoverOwn && queued)return {state:1,profileName:'Saved connection',ssidHex:hex};
 				if(recovery || (cancelled&&!queued) || input.state==='idle') return {state:4,profileName:null,ssidHex:null};
 				if(input.state==='unknown')throw new Error('native state unavailable');
 				if(input.state==='same-ssid-other-profile')return {state:1,profileName:'Other connection',ssidHex:hex};
@@ -53,10 +54,11 @@ function scenario(input: { state?: 'ours' | 'idle' | 'foreign' | 'unknown' | 'sa
 		}
 		let blocked=false;try{wifi.assertWindowsWifiMutationIdle?.();}catch{blocked=true;}
 		if(input.foreignProfileEdit)xml=original.replace('previous-password','external-password');
-		if(input.recover){recovery=true;queued=!!input.recoverOwn;}
+		const cancelsBeforeRecovery=cancels;
+		if(input.recover){recovery=true;queued=!!input.recoverOwn||!!input.recoverForeign;}
 		let recoveryBlocked=false,recoveryError=null;try{wifi.assertWindowsWifiMutationIdle?.();}catch(error){recoveryBlocked=true;recoveryError=error.message;}
 		let nextBlocked=false;try{wifi.assertWindowsWifiMutationIdle?.();}catch{nextBlocked=true;}
-		console.log('RESULT:'+JSON.stringify({failure,beforeRecovery,blocked,recoveryBlocked,recoveryError,nextBlocked,cancels,restored:xml===original,conflictErrors,foreignProfileRetained:xml.includes('external-password'),events,calls}));
+		console.log('RESULT:'+JSON.stringify({failure,beforeRecovery,blocked,recoveryBlocked,recoveryError,nextBlocked,cancels,cancelsBeforeRecovery,restored:xml===original,conflictErrors,foreignProfileRetained:xml.includes('external-password'),events,calls}));
 	`;
 	const result = Bun.spawnSync([process.execPath, '--eval', script], { cwd: resolve(import.meta.dir, '../..'), timeout: 10000 });
 	if (result.exitCode !== 0) throw new Error(result.stderr.toString());
@@ -110,6 +112,21 @@ describe('Windows join cancellation before profile rollback', () => {
 		expect(result.recoveryBlocked).toBe(false);
 		expect(result.cancels).toBe(1);
 		expect(result.restored).toBe(true);
+	});
+	it('reissues cancellation for a late own association after an earlier cancellation was accepted', () => {
+		const result = scenario({ cancelStuck: true, recover: true, recoverOwn: true });
+		expect(result.beforeRecovery).toMatchObject({ cancels: 1, restored: false });
+		expect(result.recoveryBlocked).toBe(false);
+		expect(result.cancels).toBe(result.cancelsBeforeRecovery + 1);
+		expect(result.restored).toBe(true);
+		expect(result.nextBlocked).toBe(false);
+	});
+	it('does not reissue cancellation after the unfinished attempt is replaced by a foreign connection', () => {
+		const result = scenario({ cancelStuck: true, recover: true, recoverForeign: true });
+		expect(result.beforeRecovery.cancels).toBe(1);
+		expect(result.recoveryBlocked).toBe(true);
+		expect(result.cancels).toBe(result.cancelsBeforeRecovery);
+		expect(result.restored).toBe(false);
 	});
 	it('never overwrites a profile edited while the failed operation is quarantined', () => {
 		const result = scenario({ cancelStuck: true, recover: true, foreignProfileEdit: true });
