@@ -28,7 +28,7 @@
 			"nsis": {
 				"displayLanguageSelector": true,
 				"installerIcon": "icons/icon.ico",
-				"installMode": "both",
+				"installMode": "perMachine",
 				"headerImage": "nsis-img/nsis-header.bmp",
 				"sidebarImage": "nsis-img/nsis-sidebar.bmp",
 				"startMenuFolder": "{{PRODUCT_NAME}}",

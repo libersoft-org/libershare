@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { Network } from '../../../src/protocol/network.ts';
+import { installBootstrapRegistry } from '../helpers/bootstrap-registry.ts';
 
 /**
  * The `peer:discovery` handler. libp2p delivers these events from mDNS, identify and
@@ -34,6 +35,7 @@ function bareNetwork(opts: { connected?: boolean; dialFails?: boolean } = {}) {
 	(network as any).recentDisconnects = [];
 	(network as any).lastMeshChange = new Map();
 	(network as any).pubsub = null;
+	installBootstrapRegistry(network, []);
 	(network as any).node = {
 		peerId: { toString: () => 'selfID' },
 		addEventListener(event: string, handler: Handler) {
@@ -149,10 +151,10 @@ describe('peer:discovery — a dial that lands after leave-network', () => {
 		(network as any).peerDisconnectHandlers = new Set();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
-		(network as any).bootstrapMultiaddrs = [];
 		(network as any).recentDisconnects = [];
 		(network as any).lastMeshChange = new Map();
 		(network as any).pubsub = { getTopics: () => [] };
+		installBootstrapRegistry(network, []);
 		(network as any).peerAnnounce = { getRecentMembers: () => [] };
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
@@ -307,6 +309,7 @@ describe('peer:discovery — a skipped duplicate writes nothing of its own', () 
 		(network as any).recentDisconnects = [];
 		(network as any).lastMeshChange = new Map();
 		(network as any).pubsub = null;
+		installBootstrapRegistry(network, []);
 		(network as any).node = {
 			peerId: { toString: () => 'selfID' },
 			addEventListener(event: string, handler: Handler) {

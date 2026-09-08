@@ -6,6 +6,7 @@ const errorCodes = [
 	'PARSE_ERROR',
 	'METHOD_REQUIRED',
 	'UNKNOWN_METHOD',
+	'REQUEST_TIMEOUT',
 
 	// LISH
 	'LISH_NOT_FOUND',
@@ -34,6 +35,13 @@ const errorCodes = [
 	'NO_VALID_NETWORKS',
 	'NETWORK_NOT_STARTED',
 	'NETWORK_PORT_IN_USE',
+
+	// Host network configuration (Settings -> Network). Distinct from the LISH
+	// network codes above: these are about the operating system's own interfaces.
+	'NETCONFIG_INVALID',
+	'NETCONFIG_UNSUPPORTED',
+	'NETCONFIG_FAILED',
+	'NETCONFIG_STALE',
 
 	// Peers — codes prefixed PEER_ are remote-peer-scoped; the frontend peer
 	// fallback (peerFallback.ts) treats them as retryable on the next peer.
@@ -80,8 +88,24 @@ const errorCodes = [
 	'MISSING_PARAMETER',
 	'UNSUPPORTED_COMPRESSION',
 	'UNSUPPORTED_DECOMPRESSION',
+	'AMBIGUOUS_DEFLATE',
+	'DECOMPRESSED_TOO_LARGE',
+	'MESSAGE_TOO_LARGE',
 	'HTTP_ERROR',
+	'RESPONSE_TOO_LARGE',
 	'INVALID_SIZE_FORMAT',
+
+	// Upload
+	'UPLOAD_TOO_LARGE',
+	'UPLOAD_NOT_FOUND',
+	'TOO_MANY_UPLOADS',
+	'UPLOAD_INVALID_CHUNK',
+	'UPLOAD_CHUNK_TOO_LARGE',
+	'UPLOAD_BUSY',
+	'UPLOAD_QUOTA_EXCEEDED',
+	'UPLOAD_CLEANUP_PENDING',
+	'IMPORT_BUSY',
+	'CLIENT_DISCONNECTED',
 
 	// Download events
 	'DOWNLOAD_ERROR',

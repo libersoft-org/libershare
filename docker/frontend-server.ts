@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import product from './product.json';
+import { productName, MAX_API_MESSAGE_SIZE } from './product.ts';
 
 const root = '/app/build';
 const port = Number(process.env['PORT'] ?? 6003);
@@ -39,6 +39,18 @@ type ClientData = {
 	reconnectAttempt: number;
 	reconnectTimer?: ReturnType<typeof setTimeout>;
 	/**
+	 * Set once an upstream connection has been established for this client. From
+	 * that point a drop is no longer transparently recoverable — see
+	 * {@link connectUpstream} — so the browser socket is closed instead.
+	 */
+	upstreamOpened: boolean;
+	/**
+	 * Incremented on every dial. Callbacks captured by an earlier dial compare
+	 * against it and do nothing when they no longer match, so a socket that was
+	 * superseded cannot forward traffic or schedule further reconnects.
+	 */
+	upstreamGeneration: number;
+	/**
 	 * Upstream URL with the client's original query string preserved so the
 	 * backend sees `?token=…` (and any future query params) when
 	 * authentication is enabled. Computed at upgrade time and reused on
@@ -76,21 +88,57 @@ function pendingByteSize(pending: ClientData['pending']): number {
 
 function connectUpstream(ws: import('bun').ServerWebSocket<ClientData>): void {
 	if (ws.data.closed) return;
+	// Any socket from an earlier dial is abandoned here rather than left to linger:
+	// one that opened after being superseded would otherwise stay connected,
+	// holding a backend session nothing routes to.
+	ws.data.upstream?.close();
+	const generation = ++ws.data.upstreamGeneration;
+	/** True once a newer dial has replaced this one, whose callbacks must then go quiet. */
+	const superseded = (): boolean => ws.data.upstreamGeneration !== generation;
 	const upstream = new WebSocket(ws.data.upstreamUrl);
 	ws.data.upstream = upstream;
 	upstream.onopen = () => {
+		// A dial that lost the race must not become the live socket: `ws.data.upstream`
+		// already points at a newer one, so anything sent here would go out on a
+		// connection no later message will ever use.
+		if (superseded()) {
+			upstream.close();
+			return;
+		}
+		ws.data.upstreamOpened = true;
 		ws.data.reconnectAttempt = 0;
 		for (const message of ws.data.pending.splice(0)) upstream.send(message);
 	};
 	upstream.onmessage = event => {
+		if (superseded()) return;
 		if (ws.readyState === WebSocket.OPEN) ws.send(event.data);
 	};
+	// An ordinary failure fires both `onerror` and `onclose`, so without this each
+	// drop would be handled twice: two attempts counted, two timers scheduled, and
+	// only the later one kept in `reconnectTimer` — leaving the earlier to fire
+	// unchecked and produce a second live upstream.
+	let handled = false;
 	const handleDrop = (): void => {
+		if (handled || superseded()) return;
+		handled = true;
 		if (ws.data.closed) return;
-		// Exponential backoff capped at MAX_RECONNECT_DELAY_MS. The browser
-		// tab stays connected to this proxy while we retry the upstream — so
-		// a backend rolling restart no longer forces every open page to
-		// reload to recover its WebSocket session.
+		// Once a session has been established, a silent reconnect is a lie: the
+		// backend has already torn down everything keyed to the old socket —
+		// event subscriptions, and in-progress uploads, which are owned by socket
+		// identity and can never be continued over a replacement. Meanwhile the
+		// browser is still waiting on a request whose reply died with that socket,
+		// and its WsClient only rejects pending requests when its own socket
+		// closes. Closing here is what lets it fail fast, reconnect and redo its
+		// handshake from scratch.
+		if (ws.data.upstreamOpened) {
+			console.warn('[proxy] established upstream session lost; closing client to force re-handshake');
+			ws.close(1011, 'upstream session lost');
+			return;
+		}
+		// Before the first successful open there is no session to lose, so
+		// retrying is transparent. Exponential backoff capped at
+		// MAX_RECONNECT_DELAY_MS — a backend that is still starting up does not
+		// force every open page to reload.
 		const attempt = ws.data.reconnectAttempt++;
 		if (attempt === RECONNECT_WARN_AFTER_ATTEMPTS) {
 			console.warn(`[proxy] upstream still unreachable after ${attempt} attempts; will keep retrying every ${MAX_RECONNECT_DELAY_MS}ms`);
@@ -114,7 +162,7 @@ Bun.serve({
 		const url = new URL(request.url);
 		if (url.pathname === '/ws') {
 			const upgraded = server.upgrade<ClientData>(request, {
-				data: { pending: [], closed: false, reconnectAttempt: 0, upstreamUrl: buildUpstreamUrl(url) },
+				data: { pending: [], closed: false, reconnectAttempt: 0, upstreamOpened: false, upstreamGeneration: 0, upstreamUrl: buildUpstreamUrl(url) },
 			});
 			if (upgraded) return undefined;
 			return new Response('Expected WebSocket', { status: 400 });
@@ -132,6 +180,9 @@ Bun.serve({
 		});
 	},
 	websocket: {
+		// Match the backend's limit — otherwise this proxy is the one that quietly
+		// drops the connection on a large frame, before the backend ever sees it.
+		maxPayloadLength: MAX_API_MESSAGE_SIZE,
 		open(ws) {
 			connectUpstream(ws);
 		},
@@ -167,4 +218,4 @@ Bun.serve({
 });
 
 const protocol = tlsEnabled ? 'https' : 'http';
-console.log(`${product.name} frontend listening on ${protocol}://0.0.0.0:${port}`);
+console.log(`${productName} frontend listening on ${protocol}://0.0.0.0:${port}`);

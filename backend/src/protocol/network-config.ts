@@ -28,6 +28,9 @@ import { peerIdFromString } from '@libp2p/peer-id';
 import { extractDestinationPeerID, destinationPeerIDOf } from './multiaddr-utils.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 
+/** Keep recovery metadata only as long as libp2p can keep the peer itself. */
+export const PEERSTORE_MAX_PEER_AGE_MS = 7_200_000;
+
 /** A gossipsub direct-peer entry: a peer id and its multiaddrs. */
 export interface DirectPeer {
 	id: any;
@@ -242,7 +245,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			// writing to closed streams (100+/h), which in turn prevented
 			// SUBSCRIBE RPC propagation → fragmented pubsub mesh.
 			maxAddressAge: 1_800_000, // 30 min (default 3_600_000 = 1h)
-			maxPeerAge: 7_200_000, // 2h (default 21_600_000 = 6h)
+			maxPeerAge: PEERSTORE_MAX_PEER_AGE_MS, // 2h (default 21_600_000 = 6h)
 		},
 		services: {
 			identify: identify(),

@@ -10,9 +10,18 @@ import { ErrorRecovery } from './error-recovery.ts';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setPeerEmit, startPeerEmitter, subscribePeers, unsubscribePeers, getDebugSnapshot } from '../protocol/peer-tracker.ts';
+import { type ProgressInfo } from '../protocol/progress-reporter.ts';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
 type BroadcastFn = (event: string, data: any) => void;
+
+export function buildDownloadProgressEvent(dataServer: Pick<DataServer, 'getTransferStats'>, lishID: string, info: ProgressInfo): { lishID: string; totalDownloadedBytes: number } & ProgressInfo {
+	return { lishID, ...info, totalDownloadedBytes: dataServer.getTransferStats(lishID).downloadedBytes };
+}
+
+export function buildDownloadCompleteEvent(dataServer: Pick<DataServer, 'getTransferStats'>, downloadDir: string, lishID: string): { downloadDir: string; lishID: string; totalDownloadedBytes: number } {
+	return { downloadDir, lishID, totalDownloadedBytes: dataServer.getTransferStats(lishID).downloadedBytes };
+}
 
 interface ActiveTransfer {
 	lishID: string;
@@ -465,8 +474,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 		const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
 
-		downloader.setProgressCallback?.((info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => {
-			send('transfer.download:progress', { lishID, ...info });
+		downloader.setProgressCallback?.((info: ProgressInfo) => {
+			send('transfer.download:progress', buildDownloadProgressEvent(dataServer, lishID, info));
 		});
 		downloader.setRetryCallback?.(info => {
 			if (info.resolved) send('transfer.download:resumed', { lishID });
@@ -477,7 +486,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			.download()
 			.then(() => {
 				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
-				send('transfer.download:complete', { downloadDir, lishID });
+				send('transfer.download:complete', buildDownloadCompleteEvent(dataServer, downloadDir, lishID));
 			})
 			.catch(err => {
 				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
@@ -524,8 +533,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		const claim = await claimActiveDownloader(activeDownloaders, lishID, downloader);
 		if (!claim.claimed) return claim.downloader;
 		const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
-		downloader.setProgressCallback?.((info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => {
-			send('transfer.download:progress', { lishID, ...info });
+		downloader.setProgressCallback?.((info: ProgressInfo) => {
+			send('transfer.download:progress', buildDownloadProgressEvent(dataServer, lishID, info));
 		});
 		downloader.setRetryCallback?.(info => {
 			if (info.resolved) send('transfer.download:resumed', { lishID });
@@ -536,7 +545,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		const lifecycle = running
 			.then(async () => {
 				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
-				send('transfer.download:complete', { downloadDir, lishID });
+				send('transfer.download:complete', buildDownloadCompleteEvent(dataServer, downloadDir, lishID));
 				if (finalizeDownloadAdmitted) {
 					try {
 						await finalizeDownloadAdmitted(lishID);

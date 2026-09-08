@@ -832,16 +832,6 @@ export class Networks {
 	}
 
 	/** Configured-bootstrap peer IDs of every joined network except `exceptID`. */
-	/** Canonical bootstrap ADDRESSES configured for every joined network except `exceptID`. */
-	private configuredBootstrapAddressesElsewhere(exceptID: string): Set<string> {
-		const out = new Set<string>();
-		for (const nid of this.joinedNetworks) {
-			if (nid === exceptID) continue;
-			for (const address of Networks.cleanBootstrapList(this.get(nid)?.bootstrapPeers ?? [])) out.add(normalizeMultiaddrForCompare(address));
-		}
-		return out;
-	}
-
 	private configuredBootstrapPeerIDsElsewhere(exceptID: string): Set<string> {
 		const out = new Set<string>();
 		for (const nid of this.joinedNetworks) {
@@ -931,13 +921,12 @@ export class Networks {
 		// skips its cleanup entirely — so the left network's own address went on counting
 		// as a configured bootstrap: force-dialed by the parked probe, exempt from the
 		// stale sweep, and disagreeing with what the UI shows as configured.
-		const configuredElsewhere = this.configuredBootstrapAddressesElsewhere(id);
-		this.network.pruneBootstrapAddresses(outgoing.filter(address => !configuredElsewhere.has(normalizeMultiaddrForCompare(address))));
+		this.network.pruneBootstrapAddresses(outgoing, id);
 
 		const stillConfigured = this.configuredBootstrapPeerIDsElsewhere(id);
 		for (const pid of new Set(Networks.bootstrapPeerIDsOf(outgoing))) {
 			if (stillConfigured.has(pid)) continue;
-			this.network.pruneConfiguredBootstrapPeer(pid);
+			this.network.pruneConfiguredBootstrapPeer(pid, id);
 			if (stillJoinedPeers.has(pid)) continue;
 			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
 			await this.releasePeer(pid, id, epoch);
@@ -1376,7 +1365,7 @@ export class Networks {
 		const nextIDs = new Set(Networks.bootstrapPeerIDsOf(cleaned));
 		const elsewhere = this.configuredBootstrapPeerIDsElsewhere(id);
 		for (const pid of Networks.bootstrapPeerIDsOf(installed)) {
-			if (!nextIDs.has(pid) && !elsewhere.has(pid)) this.network.pruneConfiguredBootstrapPeer(pid);
+			if (!nextIDs.has(pid) && !elsewhere.has(pid)) this.network.pruneConfiguredBootstrapPeer(pid, id);
 		}
 		// Addresses that left the list while their peer ID stayed — the user edited a
 		// host or port. The identity-level prune above cannot see those, so recovery
@@ -1385,9 +1374,8 @@ export class Networks {
 		// equality would treat two spellings of one address (DNS case, IPv6 form) as
 		// different entries here and as the same one during the prune below.
 		const keptAddresses = new Set(cleaned.map(normalizeMultiaddrForCompare));
-		const elsewhereAddresses = this.configuredBootstrapAddressesElsewhere(id);
-		const dropped = Networks.cleanBootstrapList(installed).filter(a => !keptAddresses.has(normalizeMultiaddrForCompare(a)) && !elsewhereAddresses.has(normalizeMultiaddrForCompare(a)));
-		this.network.pruneBootstrapAddresses(dropped);
+		const dropped = Networks.cleanBootstrapList(installed).filter(a => !keptAddresses.has(normalizeMultiaddrForCompare(a)));
+		this.network.pruneBootstrapAddresses(dropped, id);
 		this.network.pruneBootstrapStatus(id, cleaned);
 		const entry = this.beginBootstrapInstall(id, cleaned);
 		if (this.joinedNetworks.has(id) && cleaned.length > 0) {

@@ -4,7 +4,7 @@ import { homedir, platform } from 'os';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { Utils } from '../utils.ts';
-import { CodedError, ErrorCodes, detectCompression, type ErrorCode, type FsInfo, type FsEntry, type FsListResult, type IPathExistsResult, type SuccessResponse, type CompressionAlgorithm } from '@shared';
+import { CodedError, ErrorCodes, type ErrorCode, type FsInfo, type FsEntry, type FsListResult, type IPathExistsResult, type SuccessResponse, type CompressionAlgorithm } from '@shared';
 import { isContainer } from '../container.ts';
 const assert = Utils.assertParams;
 const isWindows = platform() === 'win32';
@@ -71,7 +71,6 @@ interface FsHandlers {
 	list: (p: { path?: string }) => Promise<FsListResult>;
 	readText: (p: { path: string }) => Promise<{ content: string }>;
 	readCompressed: (p: { path: string; algorithm?: CompressionAlgorithm; prettyJSON?: boolean }) => Promise<{ content: string }>;
-	decompressText: (p: { data: string; fileName?: string; algorithm?: CompressionAlgorithm; prettyJSON?: boolean }) => Promise<{ content: string }>;
 	delete: (p: { path: string }) => Promise<void>;
 	mkdir: (p: { path: string }) => Promise<void>;
 	open: (p: { path: string }) => Promise<void>;
@@ -81,18 +80,23 @@ interface FsHandlers {
 	writeCompressed: (p: { path: string; content: string; algorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 }
 
-export function initFsHandlers(): FsHandlers {
+/** Every path a browse can start from. On Windows that means probing drive letters, which touches the disk. */
+async function listRootPaths(): Promise<string[]> {
+	return isWindows ? (await getWindowsDrives()).map(d => d.path) : ['/'];
+}
+
+export function initFsHandlers(containerCheck: () => Promise<boolean> = isContainer, listRoots: () => Promise<string[]> = listRootPaths): FsHandlers {
 	async function info(_p: any, client?: any): Promise<FsInfo> {
 		const plat = platform();
-		const roots = isWindows ? (await getWindowsDrives()).map(d => d.path) : ['/'];
+		const roots = await listRoots();
 		const isLocal = client?.data?.isLocalClient ?? false;
-		const inContainer = await isContainer();
+		const inContainer = await containerCheck();
 		return {
 			platform: plat === 'win32' ? 'windows' : plat === 'darwin' ? 'darwin' : 'linux',
 			separator: sep,
 			home: homedir(),
 			roots,
-			localFilesystem: isLocal && !inContainer,
+			localFilesystem: localFilesystemAvailable(isLocal, inContainer),
 		};
 	}
 
@@ -155,20 +159,6 @@ export function initFsHandlers(): FsHandlers {
 			const content = await Utils.readFileCompressed(p.path, p.algorithm);
 			return { content: p.prettyJSON ? prettyPrintJSON(content) : content };
 		});
-	}
-
-	/**
-	 * Decompress a base64-encoded file uploaded from the client's own machine.
-	 * The algorithm is taken from `algorithm`, else detected from `fileName`;
-	 * an uncompressed upload is returned as-is.
-	 */
-	async function decompressText(p: { data: string; fileName?: string; algorithm?: CompressionAlgorithm; prettyJSON?: boolean }): Promise<{ content: string }> {
-		assert(p, ['data']);
-		const bytes = Buffer.from(p.data, 'base64');
-		const algorithm = p.algorithm ?? detectCompression(p.fileName ?? '');
-		const decoded = algorithm ? Utils.decompress(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength), algorithm) : bytes;
-		const content = new TextDecoder().decode(decoded);
-		return { content: p.prettyJSON ? prettyPrintJSON(content) : content };
 	}
 
 	async function del(p: { path: string }): Promise<void> {
@@ -237,5 +227,10 @@ export function initFsHandlers(): FsHandlers {
 		});
 	}
 
-	return { info, list, readText, readCompressed, decompressText, delete: del, mkdir: mkdirFn, open, rename: renameFn, exists, writeText, writeCompressed };
+	return { info, list, readText, readCompressed, delete: del, mkdir: mkdirFn, open, rename: renameFn, exists, writeText, writeCompressed };
+}
+
+/** Host paths are meaningful only to a same-host client outside a container. */
+function localFilesystemAvailable(isLocalClient: boolean, inContainer: boolean): boolean {
+	return isLocalClient && !inContainer;
 }

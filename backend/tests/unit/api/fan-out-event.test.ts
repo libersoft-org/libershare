@@ -61,4 +61,25 @@ describe('fanOutEvent', () => {
 	it('counts nothing when there are no clients at all', () => {
 		expect(fanOutEvent([], 'e', 'payload')).toBe(0);
 	});
+
+	it('builds client-specific payloads without leaking data between clients', () => {
+		const local: string[] = [];
+		const remote: string[] = [];
+		const a = { ...client(['system:network'], local), local: true };
+		const b = { ...client(['system:network'], remote), local: false };
+		expect(fanOutEvent([a, b], 'system:network', target => target.local ? 'full' : 'redacted')).toBe(2);
+		expect(local).toEqual(['full']);
+		expect(remote).toEqual(['redacted']);
+	});
+
+	it('continues after a client-specific payload cannot be built', () => {
+		const received: string[] = [];
+		const broken = client(['e'], []);
+		const good = client(['e'], received);
+		expect(fanOutEvent([broken, good], 'e', target => {
+			if (target === broken) throw new Error('Cannot serialize this client');
+			return 'payload';
+		})).toBe(1);
+		expect(received).toEqual(['payload']);
+	});
 });

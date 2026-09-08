@@ -1,0 +1,43 @@
+{
+	"adapters": [
+		{ "ifIndex": 63, "Name": "VPN Tunnel", "InterfaceGuid": "{FC01FCD5-2B9D-2FD8-78D8-CB78B313E2B2}", "MacAddress": "", "Media": 0, "State": 1 },
+		{ "ifIndex": 27, "Name": "Připojení k místní síti Bluetooth", "InterfaceGuid": "{F46752A1-9B1B-43B2-8BBB-EEAAC5AEB2AD}", "MacAddress": "02-00-5E-10-00-01", "Media": 10, "State": 2 },
+		{ "ifIndex": 26, "Name": "VMware Network Adapter VMnet1", "InterfaceGuid": "{EC68985B-8060-47BA-8631-3B4C8F0F2D95}", "MacAddress": "02-00-5E-10-00-02", "Media": 14, "State": 0 },
+		{ "ifIndex": 20, "Name": "Ethernet", "InterfaceGuid": "{901F20ED-4B31-4803-B655-ED47D47AD070}", "MacAddress": "02-00-5E-10-00-03", "Media": 14, "State": 1 },
+		{ "ifIndex": 17, "Name": "Připojení k místní síti* 10", "InterfaceGuid": "{83A903DA-2D0F-40A4-AEAE-8504AE7BDEB0}", "MacAddress": "02-00-5E-10-00-04", "Media": 9, "State": 2 },
+		{ "ifIndex": 12, "Name": "Ethernet 4", "InterfaceGuid": "{3E0713DD-C5DB-4F8C-B105-6A804AD4AA33}", "MacAddress": "02-00-5E-10-00-05", "Media": 14, "State": 2 },
+		{ "ifIndex": 3, "Name": "Wi-Fi", "InterfaceGuid": "{1227A929-7D30-456E-B9C1-DBD0899A8950}", "MacAddress": "02-00-5E-10-00-06", "Media": 9, "State": 2 }
+	],
+	"addresses": [
+		{ "ifIndex": 12, "Family": 23, "IPAddress": "fe80::c193:5eba:4ec9:d3a5%12", "PrefixLength": 64, "State": 3 },
+		{ "ifIndex": 63, "Family": 23, "IPAddress": "fe80::723e:7ca:789d:a5aa%63", "PrefixLength": 64, "State": 4 },
+		{ "ifIndex": 20, "Family": 23, "IPAddress": "fe80::c16a:d2b4:e506:e773%20", "PrefixLength": 64, "State": 4 },
+		{ "ifIndex": 1, "Family": 23, "IPAddress": "::1", "PrefixLength": 128, "State": 4 },
+		{ "ifIndex": 69, "Family": 23, "IPAddress": "fe80::e070:5afc:d0a5:1950%69", "PrefixLength": 64, "State": 4 },
+		{ "ifIndex": 12, "Family": 2, "IPAddress": "169.254.86.18", "PrefixLength": 16, "State": 1 },
+		{ "ifIndex": 63, "Family": 2, "IPAddress": "198.51.100.2", "PrefixLength": 16, "State": 4 },
+		{ "ifIndex": 17, "Family": 2, "IPAddress": "169.254.213.71", "PrefixLength": 16, "State": 1 },
+		{ "ifIndex": 20, "Family": 2, "IPAddress": "192.0.2.10", "PrefixLength": 24, "State": 4 },
+		{ "ifIndex": 3, "Family": 2, "IPAddress": "169.254.229.48", "PrefixLength": 16, "State": 1 },
+		{ "ifIndex": 1, "Family": 2, "IPAddress": "127.0.0.1", "PrefixLength": 8, "State": 4 },
+		{ "ifIndex": 69, "Family": 2, "IPAddress": "203.0.113.200", "PrefixLength": 32, "State": 4 }
+	],
+	"interfaces": [
+		{ "ifIndex": 20, "Family": 23, "Dhcp": 1 },
+		{ "ifIndex": 3, "Family": 23, "Dhcp": 1 },
+		{ "ifIndex": 12, "Family": 2, "Dhcp": 1 },
+		{ "ifIndex": 63, "Family": 2, "Dhcp": 0 },
+		{ "ifIndex": 17, "Family": 2, "Dhcp": 0 },
+		{ "ifIndex": 20, "Family": 2, "Dhcp": 1 },
+		{ "ifIndex": 3, "Family": 2, "Dhcp": 1 },
+		{ "ifIndex": 1, "Family": 2, "Dhcp": 0 },
+		{ "ifIndex": 69, "Family": 2, "Dhcp": 0 }
+	],
+	"routes": [{ "ifIndex": 20, "NextHop": "192.0.2.1", "RouteMetric": 0 }],
+	"dns": [
+		{ "InterfaceIndex": 63, "Servers": "" },
+		{ "InterfaceIndex": 20, "Servers": "192.0.2.1,192.0.2.2" },
+		{ "InterfaceIndex": 69, "Servers": "203.0.113.1" },
+		{ "InterfaceIndex": 3, "Servers": "192.0.2.1" }
+	]
+}

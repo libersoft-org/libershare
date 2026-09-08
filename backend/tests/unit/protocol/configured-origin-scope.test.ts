@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { multiaddr } from '@multiformats/multiaddr';
 import { Network, normalizeMultiaddrForCompare } from '../../../src/protocol/network.ts';
 import { BootstrapStatusTracker } from '../../../src/protocol/bootstrap-status.ts';
+import { installBootstrapRegistry } from '../helpers/bootstrap-registry.ts';
 
 const PEER_ID = '12D3KooWAnfqA6Wap96ixVfxhHeGUDMriBG4Nncp5tqu8q71EVv2';
 const SELF_ID = '12D3KooWMztFaEQCMchucczv2c7D1PY8LRWVVJLU9MWkdfU4zg9C';
@@ -13,15 +14,14 @@ const NET_B = 'bbbbbbbb-0000-0000-0000-000000000002';
 function harness() {
 	const tracker = new BootstrapStatusTracker();
 	const network = Object.create(Network.prototype) as Network;
+	installBootstrapRegistry(network, []);
 	(network as any).runEpoch = 1;
 	(network as any).bootstrapTracker = tracker;
 	(network as any).configuredBootstrapAddresses = new Set<string>();
 	(network as any).configuredBootstrapAddressesByNet = new Map();
 	(network as any).configuredBootstrapPeerIDs = new Set<string>();
 	(network as any).bootstrapPeerIDs = new Set<string>();
-	(network as any).bootstrapMultiaddrs = [] as any[];
 	(network as any).redialBackoff = new Map();
-	(network as any).addressProbeBackoff = new Map();
 	(network as any).unreachableQuarantine = new Map();
 	(network as any).redialSuppressedByNet = new Map();
 	(network as any).bootstrapGeneration = new Map();
