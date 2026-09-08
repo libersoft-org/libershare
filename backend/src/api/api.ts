@@ -4,7 +4,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import type { PeerCountEntry } from '../protocol/network.ts';
 import { type Settings } from '../settings.ts';
-import { CodedError, type ErrorCode, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, formatBytes, type NetworkStateInfo } from '@shared';
+import { CodedError, type ErrorCode, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, formatBytes, type NetworkStateInfo, type SystemTimeStatus } from '@shared';
 import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
@@ -16,6 +16,7 @@ import { initLISHsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
 import { initEventsHandlers } from './events.ts';
 import { initSystemHandlers, restrictNetworkCapabilities } from './system.ts';
+import { createTimeApiHandlers, timeStatusForClient } from './system-time.ts';
 import { initRelayHandlers } from './relay.ts';
 import { initSearchManager } from './search.ts';
 import { buildFactoryResetHandler } from './factory-reset-orchestrator.ts';
@@ -471,13 +472,7 @@ export class APIServer {
 			'system.cpu': _system.cpu,
 			'system.setVolume': _system.setVolume,
 			'system.getVolume': _system.getVolume,
-			'system.getTime': _system.getTime,
-			'system.listTimezones': _system.listTimezones,
-			'system.setClock': _system.setClock,
-			'system.setTimezone': _system.setTimezone,
-			'system.setNtpServer': _system.setNtpServer,
-			'system.setNtpEnabled': _system.setNtpEnabled,
-			'system.applyTimeSettings': _system.applyTimeSettings,
+			...createTimeApiHandlers(_system, !!this.apiToken),
 			'system.network': async (_params, client) => networkStateForClient(await _system.network(), !!this.apiToken, client.data.isLocalClient),
 			'system.networkApply': networkAdmin(_system.networkApply),
 			'system.wifiScan': networkAdmin(_system.wifiScan),
@@ -698,8 +693,14 @@ export class APIServer {
 	 * broadcast — a factory reset reloading the very tab that is about to show its result.
 	 */
 	private broadcast(event: string, data: any, except?: ClientSocket): void {
-		const sharedMessage = event === 'system:network' ? null : JSON.stringify({ event, data });
-		const sent = fanOutEvent(this.clients, event, client => sharedMessage ?? JSON.stringify({ event, data: networkStateForClient(data as NetworkStateInfo, !!this.apiToken, client.data.isLocalClient) }), except);
+		const sharedMessage = event === 'system:network' || event === 'system:timeChanged' ? null : JSON.stringify({ event, data });
+		const sent = fanOutEvent(this.clients, event, client => {
+			if (sharedMessage !== null) return sharedMessage;
+			const state = event === 'system:network'
+				? networkStateForClient(data as NetworkStateInfo, !!this.apiToken, client.data.isLocalClient)
+				: timeStatusForClient(data as SystemTimeStatus, !!this.apiToken, client.data.isLocalClient);
+			return JSON.stringify({ event, data: state });
+		}, except);
 		if (event.startsWith('transfer.')) {
 			const d = data as any;
 			const extra = d.peers !== undefined ? ` peers=${d.peers}` : '';

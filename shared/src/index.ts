@@ -457,11 +457,11 @@ export interface SystemTimeStatus {
 	ntpSynchronized: boolean | null;
 	/** Configured NTP server address, or null when none is configured / it cannot be read. */
 	ntpServer: string | null;
-	/** What this host can do, independent of whether the current process is privileged enough. */
+	/** Operations available to this client; the OS may still require elevated privileges. */
 	capabilities: SystemTimeCapabilities;
 }
 
-/** The changed fields of one atomic system-time settings save. */
+/** The changed fields of one serialized system-time settings save. */
 export interface SystemTimeChanges {
 	ntpEnabled?: boolean;
 	ntpServer?: string;
