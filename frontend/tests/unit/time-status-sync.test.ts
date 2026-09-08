@@ -7,7 +7,8 @@
  * so it runs under `bun test` without the Svelte runtime.
  */
 import { test, expect } from 'bun:test';
-import { createStatusGate, formatHostClock, loadFailureMessage, loadMayApply, planTimeChanges, syncSwitchIsDirty, writeFailureMessage, type TimeSavePlan } from '../../src/scripts/timeStatusSync.ts';
+import { createStatusGate, formatHostClock, formatHostDate, timeStatusChanged, loadFailureMessage, loadMayApply, planTimeChanges, syncSwitchIsDirty, writeFailureMessage, type TimeSavePlan } from '../../src/scripts/timeStatusSync.ts';
+import type { SystemTimeStatus } from '@shared';
 
 test('a read that nothing overtook is applied', () => {
 	const gate = createStatusGate();
@@ -122,6 +123,49 @@ test('host clock follows the autumn DST overlap in its own timezone', () => {
 
 test('host clock falls back to the reported offset when the browser does not know the zone', () => {
 	expect(formatHostClock(Date.UTC(2026, 0, 1, 10, 20, 30), 'Unknown/Host_Zone', 90)).toEqual({ hours: '11', minutes: '50', seconds: '30' });
+});
+
+test('fixed Windows offset overrides summer DST rules of a recognized timezone', () => {
+	expect(formatHostClock(Date.UTC(2026, 6, 1, 12), 'Europe/Prague', 60, 'fixed')).toEqual({ hours: '13', minutes: '00', seconds: '00' });
+});
+
+test('fixed offset keeps the local midnight independent of timezone DST', () => {
+	expect(formatHostClock(Date.UTC(2026, 6, 1, 22, 30), 'Europe/Prague', 60, 'fixed')).toEqual({ hours: '23', minutes: '30', seconds: '00' });
+	expect(formatHostDate(Date.UTC(2026, 6, 1, 22, 30), 'Europe/Prague', 60, 'fixed')).toBe('2026-07-01');
+	expect(formatHostDate(Date.UTC(2026, 6, 1, 22, 30), 'Europe/Prague', 60)).toBe('2026-07-02');
+	expect(formatHostDate(Date.UTC(2026, 6, 1, 23, 30), 'Europe/Prague', 60, 'fixed')).toBe('2026-07-02');
+});
+
+const heartbeatStatus: SystemTimeStatus = {
+	supported: true, nowMs: Date.UTC(2026, 6, 1, 12), timezone: 'Europe/Prague', timezoneSource: 'intl', utcOffsetMinutes: 120,
+	ntpEnabled: true, ntpSynchronized: false, ntpServer: 'example.org',
+	capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: true },
+};
+
+test('normal heartbeat progress and synchronization completion preserve drafts', () => {
+	expect(timeStatusChanged(heartbeatStatus, { ...heartbeatStatus, nowMs: heartbeatStatus.nowMs + 15000 }, 15000)).toBe(false);
+	expect(timeStatusChanged(heartbeatStatus, { ...heartbeatStatus, ntpSynchronized: true }, 0)).toBe(false);
+	expect(timeStatusChanged(heartbeatStatus, { ...heartbeatStatus, timezoneOffsetMode: 'zone' }, 0)).toBe(false);
+});
+
+test('clock corrections exclude elapsed monotonic time and allow two seconds of jitter', () => {
+	expect(timeStatusChanged(heartbeatStatus, { ...heartbeatStatus, nowMs: heartbeatStatus.nowMs + 17000 }, 15000)).toBe(false);
+	expect(timeStatusChanged(heartbeatStatus, { ...heartbeatStatus, nowMs: heartbeatStatus.nowMs + 17001 }, 15000)).toBe(true);
+	expect(timeStatusChanged(heartbeatStatus, { ...heartbeatStatus, nowMs: heartbeatStatus.nowMs - 300000 }, 15000)).toBe(true);
+});
+
+test('changing timezone offset mode invalidates the same-zone draft', () => {
+	expect(timeStatusChanged(heartbeatStatus, { ...heartbeatStatus, timezoneOffsetMode: 'fixed' }, 0)).toBe(true);
+	expect(timeStatusChanged(heartbeatStatus, { ...heartbeatStatus, utcOffsetMinutes: 60 }, 0)).toBe(true);
+});
+
+test('changed time settings and revoked capabilities invalidate drafts', () => {
+	for (const next of [
+		{ ...heartbeatStatus, timezone: 'UTC' },
+		{ ...heartbeatStatus, ntpServer: 'other.example.org' },
+		{ ...heartbeatStatus, ntpEnabled: false },
+		{ ...heartbeatStatus, capabilities: { ...heartbeatStatus.capabilities, setNtpServer: false } },
+	]) expect(timeStatusChanged(heartbeatStatus, next, 0)).toBe(true);
 });
 
 test('a write failure keeps its own reason when the reload also failed', () => {

@@ -1,4 +1,4 @@
-import type { SystemTimeChanges } from '@shared';
+import type { SystemTimeChanges, SystemTimeStatus } from '@shared';
 
 export const NTP_PRESETS: readonly string[] = ['tik.cesnet.cz', 'tak.cesnet.cz'];
 
@@ -128,23 +128,40 @@ export interface HostClock {
 	seconds: string;
 }
 
-/** Format a host timestamp in its timezone, including offset changes across DST. */
-export function formatHostClock(nowMs: number, timezone: string, fallbackOffsetMinutes: number): HostClock {
-	try {
-		const parts = new Intl.DateTimeFormat('en-GB', {
-			timeZone: timezone,
-			hour: '2-digit',
-			minute: '2-digit',
-			second: '2-digit',
-			hourCycle: 'h23',
-		}).formatToParts(new Date(nowMs));
-		const value = (type: Intl.DateTimeFormatPartTypes): string => parts.find(part => part.type === type)?.value ?? '';
-		const clock = { hours: value('hour'), minutes: value('minute'), seconds: value('second') };
-		if (clock.hours && clock.minutes && clock.seconds) return clock;
-	} catch {}
-	const fallback = new Date(nowMs + fallbackOffsetMinutes * 60000);
-	const pad = (value: number): string => String(value).padStart(2, '0');
-	return { hours: pad(fallback.getUTCHours()), minutes: pad(fallback.getUTCMinutes()), seconds: pad(fallback.getUTCSeconds()) };
+/** Use the OS offset directly when automatic timezone/DST adjustment is disabled. */
+function hostTimeParts(nowMs: number, timezone: string, offsetMinutes: number, mode: 'zone' | 'fixed', fields: Intl.DateTimeFormatOptions): Intl.DateTimeFormatPart[] {
+	if (mode === 'zone') {
+		try { return new Intl.DateTimeFormat('en-GB', { ...fields, timeZone: timezone }).formatToParts(new Date(nowMs)); } catch {}
+	}
+	return new Intl.DateTimeFormat('en-GB', { ...fields, timeZone: 'UTC' }).formatToParts(new Date(nowMs + offsetMinutes * 60000));
+}
+
+/** Format the host wall clock using its reported offset mode, defaulting to normal zone/DST rules. */
+export function formatHostClock(nowMs: number, timezone: string, offsetMinutes: number, mode: 'zone' | 'fixed' = 'zone'): HostClock {
+	const parts = hostTimeParts(nowMs, timezone, offsetMinutes, mode, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+	const value = (type: Intl.DateTimeFormatPartTypes): string => parts.find(part => part.type === type)?.value ?? '';
+	return { hours: value('hour'), minutes: value('minute'), seconds: value('second') };
+}
+
+/** ISO calendar date in the same host-local frame as the editable clock fields. */
+export function formatHostDate(nowMs: number, timezone: string, offsetMinutes: number, mode: 'zone' | 'fixed' = 'zone'): string {
+	const parts = hostTimeParts(nowMs, timezone, offsetMinutes, mode, { year: 'numeric', month: '2-digit', day: '2-digit' });
+	return ['year', 'month', 'day'].map(type => parts.find(part => part.type === type)?.value ?? '').join('-');
+}
+
+/** Configuration changes or corrections beyond 2 s of read/transport jitter invalidate an existing draft. */
+export function timeStatusChanged(previous: SystemTimeStatus, next: SystemTimeStatus, elapsedMs: number): boolean {
+	return previous.supported !== next.supported
+		|| previous.timezone !== next.timezone
+		|| previous.utcOffsetMinutes !== next.utcOffsetMinutes
+		|| (previous.timezoneOffsetMode ?? 'zone') !== (next.timezoneOffsetMode ?? 'zone')
+		|| previous.ntpEnabled !== next.ntpEnabled
+		|| (previous.ntpServer ?? '') !== (next.ntpServer ?? '')
+		|| previous.capabilities.setClock !== next.capabilities.setClock
+		|| previous.capabilities.setTimezone !== next.capabilities.setTimezone
+		|| previous.capabilities.setNtpServer !== next.capabilities.setNtpServer
+		|| previous.capabilities.setNtpEnabled !== next.capabilities.setNtpEnabled
+		|| Math.abs(next.nowMs - previous.nowMs - elapsedMs) > 2000;
 }
 
 /**

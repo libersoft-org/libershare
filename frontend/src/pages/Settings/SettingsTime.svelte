@@ -7,7 +7,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { api } from '../../scripts/api.ts';
 	import { connected } from '../../scripts/ws-client.ts';
-	import { NTP_PRESETS, createStatusGate, formatHostClock, loadFailureMessage, loadMayApply, planTimeChanges, syncSwitchIsDirty, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
+	import { NTP_PRESETS, createStatusGate, formatHostClock, formatHostDate, timeStatusChanged, loadFailureMessage, loadMayApply, planTimeChanges, syncSwitchIsDirty, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
 	import { type SystemTimeChanges, type SystemTimeOutcome, type SystemTimeResult, type SystemTimeStatus } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -32,6 +32,7 @@
 	let stale = $state(false);
 	let successMessage = $state('');
 	let displayClock = $state('');
+	let displayDate = $state('');
 	let zonesUnavailable = $state(false);
 	let destroyed = false;
 	let subscriptionGeneration = 0;
@@ -72,8 +73,9 @@
 		// The backend may run on a different machine (or in a different zone) than the
 		// browser, so the host's wall clock is reconstructed from its own UTC offset
 		// instead of the browser's local getters.
-		({ hours, minutes, seconds } = formatHostClock(next.nowMs, next.timezone, next.utcOffsetMinutes));
+		({ hours, minutes, seconds } = formatHostClock(next.nowMs, next.timezone, next.utcOffsetMinutes, next.timezoneOffsetMode));
 		displayClock = `${hours}:${minutes}:${seconds}`;
+		displayDate = formatHostDate(next.nowMs, next.timezone, next.utcOffsetMinutes, next.timezoneOffsetMode);
 		// An unreadable sync state shows the switch off, but `syncUnknown` keeps the clock
 		// locked: the baseline matches, so merely opening the page never writes anything.
 		autoSync = next.ntpEnabled ?? false;
@@ -177,20 +179,27 @@
 
 	onMount(() => {
 		const ticker = setInterval(() => {
-			if (!status || stale) return;
-			const clock = formatHostClock(status.nowMs + performance.now() - readAt, status.timezone, status.utcOffsetMinutes);
+			if (!status) return;
+			const nowMs = status.nowMs + performance.now() - readAt;
+			const clock = formatHostClock(nowMs, status.timezone, status.utcOffsetMinutes, status.timezoneOffsetMode);
 			displayClock = `${clock.hours}:${clock.minutes}:${clock.seconds}`;
-			if (!busy && !clockEdited) resyncClockFields();
+			displayDate = formatHostDate(nowMs, status.timezone, status.utcOffsetMinutes, status.timezoneOffsetMode);
+			if (!busy && !stale && !clockEdited) resyncClockFields();
 		}, 1000);
 		offTimeChanged = api.on('system:timeChanged', (next: SystemTimeStatus) => {
 			if (busy || destroyed) return;
-			if (hasChanges) {
-				statusGate.supersede();
-				loading = false;
-				stale = true;
-				return;
-			}
-			applyStatus(next);
+			if (!status || (!hasChanges && !stale)) { applyStatus(next); return; }
+			const receivedAt = performance.now();
+			const keepClockEdit = clockEdited;
+			if (status && timeStatusChanged(status, next, receivedAt - readAt)) stale = true;
+			statusGate.supersede();
+			loading = false;
+			status = next;
+			readAt = receivedAt;
+			const clock = formatHostClock(next.nowMs, next.timezone, next.utcOffsetMinutes, next.timezoneOffsetMode);
+			displayClock = `${clock.hours}:${clock.minutes}:${clock.seconds}`;
+			displayDate = formatHostDate(next.nowMs, next.timezone, next.utcOffsetMinutes, next.timezoneOffsetMode);
+			if (!keepClockEdit && !stale) resyncClockFields();
 		});
 		void refresh();
 		let firstEmission = true;
@@ -220,7 +229,7 @@
 	/** Put the clock fields back on the host's current time and re-baseline them. */
 	function resyncClockFields(): void {
 		if (!status) return;
-		({ hours, minutes, seconds } = formatHostClock(status.nowMs + (performance.now() - readAt), status.timezone, status.utcOffsetMinutes));
+		({ hours, minutes, seconds } = formatHostClock(status.nowMs + (performance.now() - readAt), status.timezone, status.utcOffsetMinutes, status.timezoneOffsetMode));
 		// Move the baseline with them, or the change itself would read as a user edit.
 		loaded = { ...loaded, clock: `${hours}:${minutes}:${seconds}` };
 	}
@@ -354,6 +363,7 @@
 	.hint { font-size: clamp(13px, 1.65vh, 17px); line-height: 1.45; color: var(--secondary-foreground); opacity: 0.85; }
 	.snapshot { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1.5vh 3vh; background: var(--secondary-background); padding: 1.6vh; border-radius: 1vh; }
 	.host-clock { font-size: clamp(28px, 4.4vh, 46px); font-variant-numeric: tabular-nums; line-height: 1.2; }
+	.host-date { font-size: clamp(14px, 1.8vh, 18px); font-variant-numeric: tabular-nums; }
 	.zone { font-size: clamp(13px, 1.7vh, 18px); margin-top: 0.4vh; }
 	.sync-status { display: flex; flex-direction: column; gap: 0.7vh; font-size: clamp(13px, 1.7vh, 18px); }
 	.sync-status dt { color: var(--disabled-foreground); font-size: clamp(12px, 1.5vh, 16px); }
@@ -395,7 +405,7 @@
 		{#if syncUnknown}<Alert type="warning" message={syncUnknownLocked ? $t('settings.time.syncUnknownLocked') : $t('settings.time.syncUnknown')} />{/if}
 		{#if status}
 			<section class="snapshot" aria-label={$t('settings.time.currentTime')}>
-				<div><div class="hint">{$t(stale || !liveUpdates ? 'settings.time.lastKnownTime' : 'settings.time.currentTime')}</div><div class="host-clock">{displayClock}</div><div class="zone">{status.timezone}</div></div>
+				<div><div class="hint">{$t(stale || !liveUpdates ? 'settings.time.lastKnownTime' : 'settings.time.currentTime')}</div><div class="host-clock">{displayClock}</div><div class="host-date">{displayDate}</div><div class="zone">{status.timezone}</div></div>
 				<dl class="sync-status">
 					<div><dt>{$t('settings.time.autoSync')}</dt><dd data-time-sync-enabled>{$t(status.ntpEnabled === null ? 'settings.time.unknown' : status.ntpEnabled ? 'settings.time.enabled' : 'settings.time.disabled')}</dd></div>
 					<div><dt>{$t('settings.time.syncResult')}</dt><dd data-time-sync-result>{$t(status.ntpSynchronized === null ? 'settings.time.syncUnreported' : status.ntpSynchronized ? 'settings.time.synchronized' : 'settings.time.notSynchronized')}</dd></div>

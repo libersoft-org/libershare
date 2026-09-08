@@ -242,6 +242,71 @@
 					assert(control.getAttribute('aria-checked') === 'false' && writes.length === 0, 'Enabled switch did not accept input or saved eagerly');
 				} finally { stopInput(); if (originalGamepads) Object.defineProperty(navigator, 'getGamepads', originalGamepads); else delete navigator.getGamepads; }
 			}, { status: { capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: false } } });
+			await test('fixed summer offset drives snapshot, editable fields and ticker', async () => {
+				assert(target.querySelector('.host-clock').textContent === '13:00:00' && clock()[0].value === '13', 'Windows fixed offset was replaced with IANA summer time');
+				await new Promise(resolve => setTimeout(resolve, 1100)); await settle();
+				assert(target.querySelector('.host-clock').textContent.startsWith('13:00:') && clock()[0].value === '13', 'Clock ticker lost the fixed offset');
+				assert(writes.length === 0, 'Clock display performed a system write');
+			}, { status: { nowMs: Date.UTC(2026, 6, 1, 12), utcOffsetMinutes: 60, timezoneOffsetMode: 'fixed' } });
+			await test('fixed offset rolls the host date over at its actual midnight', async () => {
+				assert(target.querySelector('.host-date').textContent === '2026-07-01' && target.querySelector('.host-clock').textContent === '23:30:00', 'Host date followed automatic DST instead of its actual offset');
+				host.nowMs += 3600000; changed(structuredClone(host)); await settle();
+				assert(target.querySelector('.host-date').textContent === '2026-07-02' && target.querySelector('.host-clock').textContent === '00:30:00', 'Host-local midnight did not update the date');
+				assert(writes.length === 0, 'Midnight display performed a write');
+			}, { status: { nowMs: Date.UTC(2026, 6, 1, 22, 30), utcOffsetMinutes: 60, timezoneOffsetMode: 'fixed' } });
+			await test('an external five-minute correction refreshes the clean clock without a write', async () => {
+				host.nowMs += 300000; changed(structuredClone(host)); await settle();
+				assert(target.querySelector('.host-clock').textContent === '12:25:30', 'External time correction was not displayed');
+				assert(clock()[1].value === '25' && writes.length === 0 && save().classList.contains('disabled'), 'External correction dirtied or wrote the clock');
+			});
+			await test('synchronization completion updates an untouched screen without saving', async () => {
+				host.ntpSynchronized = true; changed(structuredClone(host)); await settle();
+				assert(target.querySelector('[data-time-sync-result]').textContent === label('settings.time.synchronized') && writes.length === 0, 'Synchronization result waited for an app write');
+			}, { status: { ntpSynchronized: false } });
+			await test('normal fifteen-second heartbeats preserve server and clock drafts', async () => {
+				await edit(server(), 'typed.example.org'); await edit(clock()[0], '7');
+				const ownNow = Object.getOwnPropertyDescriptor(performance, 'now');
+				const realNow = performance.now.bind(performance); let elapsed = 0;
+				Object.defineProperty(performance, 'now', { configurable: true, value: () => realNow() + elapsed });
+				try {
+					for (let heartbeat = 0; heartbeat < 3; heartbeat++) {
+						elapsed += 15000; host.nowMs += 15000; changed(structuredClone(host)); await settle();
+						assert(server().value === 'typed.example.org' && clock()[0].value === '7', 'A heartbeat overwrote unsaved values');
+						assert(!save().classList.contains('disabled') && !target.textContent.includes(label('settings.time.changedOutside')), 'Normal elapsed time made the form stale');
+					}
+					assert(target.querySelector('.host-clock').textContent === '12:21:15' && writes.length === 0, 'Readonly clock did not follow heartbeats independently of its draft');
+				} finally { if (ownNow) Object.defineProperty(performance, 'now', ownNow); else delete performance.now; }
+			}, { status: { ntpEnabled: false } });
+			await test('synchronization result changes preserve unrelated edits', async () => {
+				await edit(server(), 'typed.example.org'); host.ntpSynchronized = true; changed(structuredClone(host)); await settle();
+				assert(server().value === 'typed.example.org' && !save().classList.contains('disabled'), 'Synchronization completion invalidated an unrelated draft');
+				assert(target.querySelector('[data-time-sync-result]').textContent === label('settings.time.synchronized'), 'Draft blocked the current sync result');
+				assert(writes.length === 0, 'Sync completion submitted a mutation');
+			}, { status: { ntpSynchronized: false } });
+			await test('a significant external correction blocks a draft but updates the readonly clock', async () => {
+				await edit(server(), 'typed.example.org'); host.nowMs += 300000; changed(structuredClone(host)); await settle();
+				assert(save().classList.contains('disabled') && target.textContent.includes(label('settings.time.changedOutside')), 'A significant clock correction left the old draft writable');
+				assert(server().value === 'typed.example.org' && target.querySelector('.host-clock').textContent === '12:25:30', 'Correction erased the draft or hid the current clock');
+				changed(structuredClone(host)); await settle(); await click(label('common.save'));
+				assert(save().classList.contains('disabled') && writes.length === 0, 'A later heartbeat silently cleared an existing conflict');
+			});
+			await test('offset-mode changes invalidate same-zone drafts and update the clock', async () => {
+				await edit(server(), 'typed.example.org'); host.timezoneOffsetMode = 'fixed'; changed(structuredClone(host)); await settle();
+				assert(save().classList.contains('disabled') && server().value === 'typed.example.org', 'Offset-mode change left a stale draft writable');
+				assert(target.querySelector('.host-clock').textContent === '13:00:00', 'Mode change did not update the readonly clock');
+			}, { status: { nowMs: Date.UTC(2026, 6, 1, 12), utcOffsetMinutes: 60 } });
+			await test('revoked capabilities immediately lock an existing draft', async () => {
+				await edit(server(), 'typed.example.org'); host.capabilities.setNtpServer = false; changed(structuredClone(host)); await settle();
+				assert(server().disabled && save().classList.contains('disabled'), 'Capability revocation left the draft editable');
+				await click('tik.cesnet.cz'); await click(label('common.save')); assert(writes.length === 0 && server().value === 'typed.example.org', 'Revocation was bypassed by a preset');
+			});
+			const initialRead = deferred();
+			await test('a heartbeat before the initial read seeds the form and supersedes that read', async () => {
+				changed({ ...host, ntpServer: 'heartbeat.example.org' }); await settle();
+				initialRead.resolve(structuredClone(host)); await settle();
+				assert(server().value === 'heartbeat.example.org' && save().classList.contains('disabled'), 'Initial heartbeat left an unseeded or dirty form');
+				assert(!target.textContent.includes(label('settings.time.changedOutside')) && writes.length === 0, 'First status was mistaken for an external conflict');
+			}, { readWait: initialRead });
 		} finally {
 			if (component) await unmount(component);
 			Object.assign(api, originals);
