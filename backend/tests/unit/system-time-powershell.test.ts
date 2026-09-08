@@ -17,7 +17,7 @@ describe.if(process.platform === 'win32')('PowerShell clock error transport', ()
 		const commands = buildSetClockCommands('win32', { year: 2026, month: 9, day: 9, hours: 12, minutes: 34, seconds: 56 });
 		let observed: RunOutcome | undefined;
 		const result = await runAll('win32', commands, async (cmd, args) => {
-			observed = await run(cmd, [...args.slice(0, -1), fixture + args.at(-1)]);
+			observed = await run(cmd, [...args.slice(0, -1), fixture + args[args.length - 1]]);
 			return observed;
 		});
 		expect(observed).toMatchObject({ kind: 'failed', code: 1 });
@@ -26,7 +26,7 @@ describe.if(process.platform === 'win32')('PowerShell clock error transport', ()
 	});
 	it('keeps successful clock command completion successful', async () => {
 		const fixture = "function Set-Date { [CmdletBinding()] param([datetime]$Date) if ($Date.ToString('yyyy-MM-ddTHH:mm:ss') -ne '2026-09-09T12:34:56') { throw 'Wrong date' } }; ";
-		const result = await runAll('win32', buildSetClockCommands('win32', { year: 2026, month: 9, day: 9, hours: 12, minutes: 34, seconds: 56 }), (cmd, args) => run(cmd, [...args.slice(0, -1), fixture + args.at(-1)]));
+		const result = await runAll('win32', buildSetClockCommands('win32', { year: 2026, month: 9, day: 9, hours: 12, minutes: 34, seconds: 56 }), (cmd, args) => run(cmd, [...args.slice(0, -1), fixture + args[args.length - 1]]));
 		expect(result.success).toBe(true);
 	});
 });

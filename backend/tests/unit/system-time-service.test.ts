@@ -25,7 +25,7 @@ describe('Windows Time service transitions', () => {
 				expect(target).toBe(enabled);
 				let now = 0, reads = 0;
 				const reached = await waitForWindowsTimeService(target, () => {
-					expect(calls.at(-1)).toBe(`sc ${enabled ? 'start' : 'stop'} w32time`);
+					expect(calls[calls.length - 1]).toBe(`sc ${enabled ? 'start' : 'stop'} w32time`);
 					return ++reads < 4 ? null : enabled;
 				}, async ms => { now += ms; }, () => now);
 				expect(now).toBe(750);
