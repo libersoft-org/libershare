@@ -283,6 +283,18 @@
 				assert(target.querySelector('[data-time-sync-result]').textContent === label('settings.time.synchronized'), 'Draft blocked the current sync result');
 				assert(writes.length === 0, 'Sync completion submitted a mutation');
 			}, { status: { ntpSynchronized: false } });
+			await test('runtime synchronization changes keep the configured NTP server during a timezone edit', async () => {
+				const zone = target.querySelector('select'); zone.value = 'UTC'; zone.dispatchEvent(new Event('change', { bubbles: true })); await settle();
+				for (const synchronized of [true, false, true]) {
+					host.ntpSynchronized = synchronized; changed(structuredClone(host)); await settle();
+					assert(server().value === 'configured.example.org' && zone.value === 'UTC', 'A runtime update replaced the configured server or timezone draft');
+					assert(!save().classList.contains('disabled') && !target.textContent.includes(label('settings.time.changedOutside')), 'Runtime synchronization locked the unrelated draft');
+					assert(target.querySelector('[data-time-sync-result]').textContent === label(synchronized ? 'settings.time.synchronized' : 'settings.time.notSynchronized'), 'Runtime synchronization status was not refreshed');
+				}
+				assert(writes.length === 0, 'A runtime update saved configuration');
+				await click(label('common.save'));
+				assert(JSON.stringify(writes) === JSON.stringify([{ timezone: 'UTC' }]) && server().value === 'configured.example.org', 'Saving the timezone also rewrote the configured NTP server');
+			}, { status: { ntpServer: 'configured.example.org', ntpSynchronized: false } });
 			await test('a significant external correction blocks a draft but updates the readonly clock', async () => {
 				await edit(server(), 'typed.example.org'); host.nowMs += 300000; changed(structuredClone(host)); await settle();
 				assert(save().classList.contains('disabled') && target.textContent.includes(label('settings.time.changedOutside')), 'A significant clock correction left the old draft writable');
