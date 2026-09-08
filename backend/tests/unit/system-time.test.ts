@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { resolve } from 'node:path';
 import { classifyFailure, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, type PlatformStatusReader, resolveSystemExecutable, timezoneOffsetMinutes, parseYesNo, validateClockParts } from '../../src/system-time.ts';
 import { windowsSystemLibraryPath } from '../../src/system-time-windows.ts';
 
@@ -431,6 +432,26 @@ describe('getSystemTimeStatus clock sampling', () => {
 });
 
 describe('listSystemTimezones', () => {
+	it('accepts UTC when the runtime canonical list omits that valid timezone', async () => {
+		const child = Bun.spawn([process.execPath, resolve(import.meta.dir, '../helpers/system-time-timezones.js')], { stdout: 'pipe', stderr: 'pipe' });
+		const deadline = setTimeout(() => child.kill('SIGKILL'), 10_000);
+		try {
+			const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+			expect(exitCode).toBe(0);
+			expect(stderr).toBe('');
+			const result = JSON.parse(stdout);
+			expect(result).toMatchObject({ canonicalIncludesUtc: false, utcResolves: true, utcAvailable: true, result: { success: true, outcome: 'ok' } });
+			expect(result.calls).toHaveLength(1);
+			expect(result.calls[0].args).toContain('UTC');
+		} finally {
+			clearTimeout(deadline);
+			if (child.exitCode === null) {
+				child.kill('SIGKILL');
+				await child.exited;
+			}
+		}
+	});
+
 	it('returns the IANA list the runtime resolves against', () => {
 		const zones = listSystemTimezones();
 		expect(zones.length).toBeGreaterThan(100);
