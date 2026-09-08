@@ -24,7 +24,7 @@
 		let component, host, changed, subscribeWait, readWait, saveWait;
 		let readFails, zonesFail, subscribeFails, writeResult, transportFails;
 		let writes = [], order = [], backCalls = 0;
-		const initial = () => ({ supported: true, nowMs: Date.UTC(2026, 8, 8, 10, 20, 30), timezone: 'Europe/Prague', utcOffsetMinutes: 120, timezoneSource: 'iana', ntpEnabled: true, ntpSynchronized: true, ntpServer: 'custom.example.org', capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: true } });
+		const initial = () => ({ supported: true, nowMs: Date.UTC(2026, 8, 8, 10, 20, 30), timezone: 'Europe/Prague', utcOffsetMinutes: 120, timezoneSource: 'intl', ntpEnabled: true, ntpSynchronized: true, ntpServer: 'custom.example.org', capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: true } });
 		const label = key => get(t)(key);
 		const assert = (value, message) => { if (!value) throw new Error(message); };
 		const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
