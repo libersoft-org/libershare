@@ -56,7 +56,10 @@ describe('Windows native disconnect', () => {
 	});
 
 	it('does not turn a failed state query into successful disconnection', () => {
-		expect(windowsDisconnect([false, 'query failed'])).toMatchObject({ disconnects: 1, failure: 'query failed' });
+		const result = windowsDisconnect([false, 'query failed']);
+		expect(result.disconnects).toBe(1);
+		expect(result.failure).toContain('query failed');
+		expect(result.failure).toContain('unknown result');
 	});
 
 	it('reports an interface which remains connected', () => {
