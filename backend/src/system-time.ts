@@ -1,11 +1,12 @@
 import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, run, validateClockParts, runAll, listSystemTimezones, isValidNtpServer } from './system-time-common.ts';
 import { MAC_SYSTEMSETUP, readMacStatus } from './system-time-macos.ts';
-import { w32tm, type WindowsSyncMode, SC_ALREADY_RUNNING, SC_NOT_ACTIVE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled, readWindowsTimeZone, type WindowsTimeZoneState } from './system-time-windows.ts';
+import { w32tm, type WindowsSyncMode, SC_ALREADY_RUNNING, SC_NOT_ACTIVE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled, readWindowsTimeZone, readWindowsTimeServiceRunning, type WindowsTimeZoneState } from './system-time-windows.ts';
 import { readLinuxStatus, TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn, verifyTimesyncdServer } from './system-time-linux.ts';
 import { type SystemTimeStatus, type SystemTimeResult, type SystemTimeChanges, type SystemTimeStep } from '@shared';
 import { Mutex } from 'async-mutex';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { syncDirectory, type RollbackResult, writeFileAtomically } from './system-time-files.ts';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 // ---------------------------------------------------------------------------
 // Command builders (pure)
@@ -508,7 +509,7 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
  * `readStatus` and `exec` are injectable so the sequencing and the outcome mapping can
  * be exercised without touching the host's time service.
  */
-export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = run, readMode: WindowsModeReader = readWindowsMode): Promise<SystemTimeResult> {
+export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = run, readMode: WindowsModeReader = readWindowsMode, waitForService: (running: boolean) => Promise<boolean> = waitForWindowsTimeService): Promise<SystemTimeResult> {
 	const platform = process.platform;
 	if (!isSupportedPlatform(platform)) return result('unsupported', `time synchronisation cannot be switched on ${platform}`);
 	return withSystemTimeLock(async () => {
@@ -525,12 +526,31 @@ export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Pr
 			if (state.refusal) return state.refusal;
 			mode = state.mode;
 		}
-		return runAll(platform, buildSetNtpEnabledCommands(platform, enabled, mode), exec);
+		const commands = buildSetNtpEnabledCommands(platform, enabled, mode);
+		if (platform !== 'win32') return runAll(platform, commands, exec);
+		return runAll(platform, commands, async (cmd, args) => {
+			const outcome = await exec(cmd, args);
+			if (cmd !== 'sc' || args[0] !== (enabled ? 'start' : 'stop')) return outcome;
+			const accepted = outcome.kind === 'ok' || (outcome.kind === 'failed' && outcome.code === (enabled ? SC_ALREADY_RUNNING : SC_NOT_ACTIVE));
+			if (!accepted || await waitForService(enabled)) return outcome;
+			return { kind: 'failed', code: null, output: `Windows Time did not reach the ${enabled ? 'running' : 'stopped'} state within 15 seconds; the service transition may still be in progress` };
+		});
 	});
+}
+
+/** SCM accepts start/stop before completion. Poll for at most 15 s under the time-write lock. */
+export async function waitForWindowsTimeService(running: boolean, read: () => boolean | null = readWindowsTimeServiceRunning, pause: (ms: number) => Promise<void> = sleep, now: () => number = () => performance.now()): Promise<boolean> {
+	const deadline = now() + 15000;
+	while (true) {
+		if (read() === running) return true;
+		const remaining = deadline - now();
+		if (remaining <= 0) return false;
+		await pause(Math.min(250, remaining));
+	}
 }
 export { resolveSystemExecutable, type SystemPlatform, type SystemCommand, type LocalDateTime, isSupportedPlatform, isValidNtpServer, validateClockParts, parseTimedatectlShow, parseYesNo, classifyFailure, firstLine, listSystemTimezones, getTimezoneSource, timezoneOffsetMinutes, type RunOutcome, type CommandRunner, runAll, type PlatformStatus, type PlatformStatusReader } from './system-time-common.ts';
 
-export { TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, parseTimesyncServer, parseTimesyncConfig, type UnitState, parseUnitLoadStates, canonicalUnitName, unitIsLoaded, COMPETING_NTP_UNITS, competingNtpUnits, parseAnyUnitActive, type ExtractedWords, extractWordsChecked, extractWords, readTimedatedEnvironment, readNtpUnitsList, firstUsableNtpUnit, canConfigureTimesyncdServer, buildTimesyncdDropIn } from './system-time-linux.ts';
+export { TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, parseTimesyncConfig, type UnitState, parseUnitLoadStates, canonicalUnitName, unitIsLoaded, COMPETING_NTP_UNITS, competingNtpUnits, parseAnyUnitActive, type ExtractedWords, extractWordsChecked, extractWords, readTimedatedEnvironment, readNtpUnitsList, firstUsableNtpUnit, canConfigureTimesyncdServer, buildTimesyncdDropIn } from './system-time-linux.ts';
 
 export { syncDirectory, type RollbackResult, writeFileAtomically } from './system-time-files.ts';
 

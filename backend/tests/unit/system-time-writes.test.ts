@@ -214,7 +214,7 @@ describe('setSystemNtpEnabled', () => {
 				calls.push(line);
 				return line === 'w32tm /resync' ? { kind: 'ok', output: 'The computer did not resync because no time data was available. (0x800705B4)\r\n' } : { kind: 'ok', output: '' };
 			};
-			const r = await setSystemNtpEnabled(true, capable, exec, ourWindowsHost);
+			const r = await setSystemNtpEnabled(true, capable, exec, ourWindowsHost, async () => true);
 			expect(r.success).toBe(false);
 			expect(r.outcome).toBe('error');
 			expect(calls).toContain('w32tm /resync');
@@ -229,7 +229,7 @@ describe('setSystemNtpEnabled', () => {
 				{ kind: 'ok', output: '' },
 				{ kind: 'failed', code: 1056, output: '[SC] StartService FAILED 1056:\r\n' },
 			]);
-			expect((await setSystemNtpEnabled(true, capable, exec, ourWindowsHost)).success).toBe(true);
+			expect((await setSystemNtpEnabled(true, capable, exec, ourWindowsHost, async () => true)).success).toBe(true);
 		});
 	});
 
