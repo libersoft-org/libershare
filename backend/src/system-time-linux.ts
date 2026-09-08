@@ -17,22 +17,6 @@ export const TIMESYNCD_DROPIN_PATH = '/etc/systemd/timesyncd.conf.d/90-libershar
 /** systemd unit that reads {@link TIMESYNCD_DROPIN_PATH}. */
 export const TIMESYNCD_UNIT = 'systemd-timesyncd.service';
 
-/**
- * Pick the NTP server to display from `timedatectl show-timesync`. `ServerName` is
- * the peer actually in use and wins, because a DHCP-supplied `LinkNTPServers` entry
- * silently overrides the configured `SystemNTPServers` list — showing the configured
- * value alone would claim a server that is not being used. Only the first entry is
- * reported: the UI configures exactly one server.
- */
-export function parseTimesyncServer(output: string): string | null {
-	const map = parseTimedatectlShow(output);
-	const first = (value: string | undefined): string | null => {
-		const token = (value ?? '').trim().split(/\s+/)[0];
-		return token ? token : null;
-	};
-	return first(map['ServerName']) ?? first(map['SystemNTPServers']) ?? first(map['LinkNTPServers']) ?? first(map['FallbackNTPServers']);
-}
-
 /** Read the ordered files emitted by systemd-analyze, without guessing directory precedence. */
 function parseTimesyncServerLists(output: string): Record<'NTP' | 'FallbackNTP', string[]> | null {
 	if (output.includes('\0')) return null;
@@ -94,9 +78,10 @@ function parseTimesyncServerLists(output: string): Record<'NTP' | 'FallbackNTP',
 	return servers;
 }
 
+/** The editable server belongs to NTP=, not DHCP peers or the separate FallbackNTP setting. */
 export function parseTimesyncConfig(output: string): string | null {
 	const servers = parseTimesyncServerLists(output);
-	return servers?.NTP[0] ?? servers?.FallbackNTP[0] ?? null;
+	return servers?.NTP[0] ?? null;
 }
 
 /** A single-server write must survive later overrides before any daemon restart. */
@@ -633,7 +618,6 @@ export async function readLinuxStatus(): Promise<PlatformStatus> {
 	}
 	const map = parseTimedatectlShow(show);
 	const canNtp = parseYesNo(map['CanNTP']) ?? false;
-	const timesync = canNtp ? await tryRead('timedatectl', ['show-timesync', '--all']) : null;
 	// Only timesyncd's configuration file is written by us, so the capability is "would
 	// this host's timedated actually use timesyncd" — a chrony host ignores the drop-in.
 	// That is decided by the provider ordering timedated itself reads, checked against each
@@ -655,12 +639,9 @@ export async function readLinuxStatus(): Promise<PlatformStatus> {
 	const states = unit === null ? null : parseUnitLoadStates(unit);
 	const competing = canNtp ? await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', '--', ...competingNtpUnits(ordered, states)]) : null;
 	const configurable = canConfigureTimesyncdServer(ordered, unit, competing);
-	let ntpServer = timesync === null ? null : parseTimesyncServer(timesync);
-	if (ntpServer === null && configurable) {
-		// show-timesync is unavailable while the service is stopped; the OS still knows file precedence.
-		const configuration = await tryRead('systemd-analyze', ['--no-pager', 'cat-config', 'systemd/timesyncd.conf']);
-		if (configuration !== null) ntpServer = parseTimesyncConfig(configuration);
-	}
+	// The editable field must reflect the effective saved NTP= list even while another peer is active.
+	const configuration = configurable ? await tryRead('systemd-analyze', ['--no-pager', 'cat-config', 'systemd/timesyncd.conf']) : null;
+	const ntpServer = configuration === null ? null : parseTimesyncConfig(configuration);
 	return {
 		// `timedatectl show` was read above and already carries it — no extra probe.
 		timezone: map['Timezone'] ?? null,

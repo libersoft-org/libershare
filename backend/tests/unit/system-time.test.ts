@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { resolve } from 'node:path';
-import { classifyFailure, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, type PlatformStatusReader, resolveSystemExecutable, timezoneOffsetMinutes, parseYesNo, validateClockParts } from '../../src/system-time.ts';
+import { classifyFailure, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, type PlatformStatusReader, resolveSystemExecutable, timezoneOffsetMinutes, parseYesNo, validateClockParts } from '../../src/system-time.ts';
 import { windowsSystemLibraryPath } from '../../src/system-time-windows.ts';
 
 // ---------------------------------------------------------------------------
@@ -86,31 +86,6 @@ describe('parseYesNo', () => {
 		expect(parseYesNo('maybe')).toBeNull();
 		expect(parseYesNo('')).toBeNull();
 		expect(parseYesNo('Yes')).toBeNull();
-	});
-});
-
-describe('parseTimesyncServer', () => {
-	it('prefers the peer actually in use over the configured list', () => {
-		const out = 'SystemNTPServers=ntp1.example.org ntp2.example.org\nFallbackNTPServers=ntp3.example.org\nServerName=ntp9.example.org\nServerAddress=192.0.2.10\n';
-		expect(parseTimesyncServer(out)).toBe('ntp9.example.org');
-	});
-
-	it('reads the peer out of full show-timesync output', () => {
-		expect(parseTimesyncServer(TIMEDATECTL_TIMESYNC)).toBe('ntp1.example.org');
-	});
-
-	it('falls back to the first configured server', () => {
-		expect(parseTimesyncServer('SystemNTPServers=ntp1.example.org ntp2.example.org\nServerName=\n')).toBe('ntp1.example.org');
-	});
-
-	it('falls back past an empty configured list to the link and fallback ones', () => {
-		expect(parseTimesyncServer('SystemNTPServers=\nLinkNTPServers=ntp-dhcp.example.org\nFallbackNTPServers=ntp3.example.org\n')).toBe('ntp-dhcp.example.org');
-		expect(parseTimesyncServer('SystemNTPServers=\nLinkNTPServers=\nFallbackNTPServers=ntp3.example.org ntp4.example.org\n')).toBe('ntp3.example.org');
-	});
-
-	it('returns null when nothing is configured', () => {
-		expect(parseTimesyncServer('SystemNTPServers=\nServerName=\n')).toBeNull();
-		expect(parseTimesyncServer('')).toBeNull();
 	});
 });
 

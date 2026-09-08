@@ -22,9 +22,9 @@ describe('effective timesyncd configuration', () => {
 		expect(parseTimesyncConfig('[Time]\nNTP=first.example.org\nNTP=later.example.org\n')).toBe('first.example.org');
 	});
 
-	it('uses explicit fallback servers only when the effective NTP list is empty', () => {
+	it('does not substitute fallback servers for an empty configured NTP list', () => {
 		expect(parseTimesyncConfig('[Time]\nFallbackNTP=fallback.example.org\nNTP=first.example.org\n')).toBe('first.example.org');
-		expect(parseTimesyncConfig('[Time]\nFallbackNTP=fallback.example.org\nNTP=first.example.org\nNTP=\n')).toBe('fallback.example.org');
+		expect(parseTimesyncConfig('[Time]\nFallbackNTP=fallback.example.org\nNTP=first.example.org\nNTP=\n')).toBeNull();
 		expect(parseTimesyncConfig('[Time]\nFallbackNTP=fallback.example.org\nFallbackNTP=\n')).toBeNull();
 	});
 
@@ -66,6 +66,7 @@ describe('effective timesyncd configuration', () => {
 interface StatusScenario {
 	config: string | null;
 	runtime?: string | null;
+	enabled?: boolean;
 	owner?: 'ours' | 'foreign' | 'unknown' | 'masked';
 	competing?: boolean;
 	canNtp?: boolean;
@@ -75,7 +76,7 @@ interface StatusResult {
 	commands: Array<{ command: string; args: string[] }>;
 }
 
-async function offlineStatus(input: StatusScenario): Promise<StatusResult> {
+async function readStatusScenario(input: StatusScenario): Promise<StatusResult> {
 	const script = `
 		import {mock} from 'bun:test';
 		const common = await import('./src/system-time-common.ts');
@@ -85,7 +86,7 @@ async function offlineStatus(input: StatusScenario): Promise<StatusResult> {
 		const owner=input.owner??'ours';
 		async function read(command,args){
 			commands.push({command,args});
-			if(command==='timedatectl'&&args[0]==='show')return 'Timezone=Europe/Prague\\nCanNTP='+(input.canNtp===false?'no':'yes')+'\\nNTP=no\\nNTPSynchronized=no\\n';
+			if(command==='timedatectl'&&args[0]==='show')return 'Timezone=Europe/Prague\\nCanNTP='+(input.canNtp===false?'no':'yes')+'\\nNTP='+(input.enabled?'yes':'no')+'\\nNTPSynchronized=no\\n';
 			if(command==='timedatectl'&&args[0]==='show-timesync')return input.runtime??null;
 			if(command==='systemctl'&&args[0]==='show-environment')return owner==='unknown'?null:'';
 			if(command==='systemctl'&&args.includes('Environment'))return 'LoadState=loaded\\nEnvironment=SYSTEMD_TIMEDATED_NTP_SERVICES='+(owner==='foreign'?'chronyd.service:':'')+unit+'\\n';
@@ -116,36 +117,49 @@ async function offlineStatus(input: StatusScenario): Promise<StatusResult> {
 	}
 }
 
-describe('Linux NTP status while timesyncd is stopped', () => {
+describe('Linux configured NTP server status', () => {
 	it.each([
 		[OWN_CONFIG, 'saved.example.org'],
 		[OVERRIDDEN_CONFIG, 'override.example.org'],
 	] as const)('reads the effective configured server without activating the daemon', async (config, server) => {
-		const result = await offlineStatus({ config });
+		const result = await readStatusScenario({ config });
 		expect(result.status).toMatchObject({ ntpEnabled: false, ntpServer: server, capabilities: { setNtpServer: true } });
 		expect(result.commands.filter(call => call.command === 'systemd-analyze')).toEqual([{ command: 'systemd-analyze', args: ['--no-pager', 'cat-config', 'systemd/timesyncd.conf'] }]);
 	});
 
-	it('keeps a live timesyncd server ahead of configuration and skips the extra read', async () => {
-		const result = await offlineStatus({ config: OWN_CONFIG, runtime: 'ServerName=active.example.org\n' });
-		expect(result.status.ntpServer).toBe('active.example.org');
-		expect(result.commands.some(call => call.command === 'systemd-analyze')).toBe(false);
+	it('reports configured A instead of active or DHCP peer B while synchronization is enabled', async () => {
+		const result = await readStatusScenario({ config: OWN_CONFIG, enabled: true, runtime: 'ServerName=active.example.org\nSystemNTPServers=loaded-before-save.example.org\nLinkNTPServers=dhcp.example.org\n' });
+		expect(result.status).toMatchObject({ ntpEnabled: true, ntpServer: 'saved.example.org' });
+		expect(result.commands.some(call => call.command === 'systemd-analyze')).toBe(true);
+		expect(result.commands.some(call => call.args.includes('show-timesync'))).toBe(false);
+	});
+
+	it('does not report an active peer change as a configured server change', async () => {
+		const before = await readStatusScenario({ config: OWN_CONFIG, enabled: true, runtime: 'ServerName=peer-one.example.org\n' });
+		const after = await readStatusScenario({ config: OWN_CONFIG, enabled: true, runtime: 'ServerName=peer-two.example.org\n' });
+		expect(before.status.ntpServer).toBe('saved.example.org');
+		expect(after.status).toEqual(before.status);
+	});
+
+	it.each([null, '[Time]\nNTP=\nFallbackNTP=fallback.example.org\n'])('does not fill an unknown or empty saved server from runtime or fallback data', async config => {
+		const result = await readStatusScenario({ config, enabled: true, runtime: 'ServerName=active.example.org\nLinkNTPServers=dhcp.example.org\nFallbackNTPServers=builtin.example.org\n' });
+		expect(result.status.ntpServer).toBeNull();
 	});
 
 	it.each(['foreign', 'unknown', 'masked'] as const)('does not trust a timesyncd drop-in when ownership is %s', async owner => {
-		const result = await offlineStatus({ config: OWN_CONFIG, owner });
+		const result = await readStatusScenario({ config: OWN_CONFIG, owner });
 		expect(result.status.ntpServer).toBeNull();
 		expect(result.commands.some(call => call.command === 'systemd-analyze')).toBe(false);
 	});
 
 	it.each([{ competing: true }, { canNtp: false }])('does not read a server for a host timesyncd cannot safely manage: %j', async options => {
-		const result = await offlineStatus({ config: OWN_CONFIG, ...options });
+		const result = await readStatusScenario({ config: OWN_CONFIG, ...options });
 		expect(result.status.ntpServer).toBeNull();
 		expect(result.commands.some(call => call.command === 'systemd-analyze')).toBe(false);
 	});
 
 	it.each([null, '[Time]\nNTP="invalid.example.org"\n'])('returns unknown when effective configuration cannot be read or parsed', async config => {
-		const result = await offlineStatus({ config });
+		const result = await readStatusScenario({ config });
 		expect(result.status.ntpServer).toBeNull();
 	});
 });
