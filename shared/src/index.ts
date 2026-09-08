@@ -440,6 +440,8 @@ export interface SystemTimeStatus {
 	timezone: string;
 	/** Minutes to ADD to UTC to get local time — positive east of Greenwich (e.g. 120 for CEST). */
 	utcOffsetMinutes: number;
+	/** Use the observed OS offset when named timezone rules cannot represent host policy. */
+	timezoneOffsetMode?: 'zone' | 'fixed';
 	/** Where {@link SystemTimeStatus.timezone} and the selectable list come from. */
 	timezoneSource: SystemTimezoneSource;
 	/**
