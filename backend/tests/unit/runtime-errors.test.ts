@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { resolve } from 'node:path';
 
 /** Trigger the real process boundary outside Bun's test runner error listeners. */
-function runWithErrorHandlers(kind: 'exception' | 'rejection', error: string, count = 1): ReturnType<typeof Bun.spawnSync> {
+function runWithErrorHandlers(kind: 'exception' | 'rejection', error: string, count = 1) {
 	const script = `
 		import { installRuntimeErrorHandlers } from './src/runtime-errors.ts';
 		installRuntimeErrorHandlers();
