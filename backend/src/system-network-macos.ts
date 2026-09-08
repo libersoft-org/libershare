@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
+import { associateMacWifi, disconnectCoreWlanWifi, readCoreWlanWifi, scanCoreWlanWifi, type MacWifiInterface } from './system-network-corewlan.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
-import { isIPv4, isIPv6, validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetLink, type NetMedium } from '@shared';
+import { isIPv4, isIPv6, validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetLink, type NetMedium, type NetWifiNetwork } from '@shared';
 
 const execFileAsync = promisify(execFile);
 const C_LOCALE_ENV = { ...process.env, LC_ALL: 'C', LANG: 'C' };
@@ -16,14 +17,10 @@ const C_LOCALE_ENV = { ...process.env, LC_ALL: 'C', LANG: 'C' };
  * `networksetup` is addressed by SERVICE name ("Wi-Fi", "Thunderbolt Bridge")
  * while everything else speaks DEVICE names (en0, bridge0).
  *
- * Wi-Fi is READ-ONLY and partially blind, by the operating system's design:
- * since macOS 14 the SSID is withheld from any process that has not been granted
- * Location Services access, and both `ipconfig getsummary` and `system_profiler`
- * return the literal string `<redacted>` instead. Measured on macOS 15.7.4 even
- * when running as root. A scan is therefore a list of unnamed networks, which
- * cannot be offered as something to join — so {@link isMacWifiConfigurable} is
- * false and the UI does not show Wi-Fi actions on this platform. The signal
- * strength, security and connection state are NOT redacted and are reported.
+ * Wi-Fi state, scans and association use CoreWLAN in a native worker.
+ * Both target selection and verification need Location Services access because
+ * macOS hides SSID data without it, even from root. The capability follows name
+ * visibility: see {@link isMacWifiConfigurable}.
  */
 
 /** Hard cap on any single tool invocation. These are local BSD utilities; a slow one is a hung one. */
@@ -57,6 +54,8 @@ export interface MacNetworkSources {
 	resolvers?: string;
 	/** `system_profiler SPAirPortDataType`, when a Wi-Fi port exists. */
 	airport?: string;
+	/** Native per-interface Wi-Fi data takes precedence over optional legacy reports. */
+	nativeWifi?: MacWifiInterface[];
 }
 
 /**
@@ -377,6 +376,7 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 		if (entry.loopback) continue;
 		const port = ports.get(device);
 		const medium = mapMedium(port);
+		const nativeWifi = sources.nativeWifi?.find(wifi => wifi.device === device);
 		const defaultRoute = device === (route.device ?? route6Device);
 		const deviceRoutes = routes.filter(entry => entry.device === device);
 		const serviceInfo = sources.serviceInfo?.get(device) ?? '';
@@ -400,13 +400,15 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 			addresses,
 			ipv4Mode,
 			ipv4Configurable: routeDetailKnown && services.has(device) && ipv4Mode !== 'unknown' && staticShapeSafe && ipv4Addresses.length <= 1 && deviceRoutes.length <= 1,
-			wifiConfigurable: false,
+			wifiConfigurable: medium === 'wireless' && !!nativeWifi?.configurable,
 			gateway,
 			// Manually set servers win; otherwise fall back to what the DHCP lease
 			// handed out, so a DHCP link reports the resolvers it actually uses.
 			dns: pickDns(sources, device),
 		};
-		if (medium === 'wireless' && airport && wirelessDevices.length === 1 && wirelessDevices[0] === device) {
+		if (medium === 'wireless' && sources.nativeWifi !== undefined) {
+			if (nativeWifi) info.wifi = nativeWifi.wifi;
+		} else if (medium === 'wireless' && airport && wirelessDevices.length === 1 && wirelessDevices[0] === device) {
 			info.wifi = {
 				ssid: airport.connected ? airport.ssid : null,
 				signal: airport.connected ? airport.signal : null,
@@ -458,8 +460,9 @@ export async function readMacNetworkState(): Promise<NetInterfaceInfo[]> {
 	}
 
 	const hasWifi = [...parseHardwarePorts(hardwarePorts).values()].some(port => /^Wi-Fi$/i.test(port));
-	const airport = hasWifi ? await runOptional('/usr/sbin/system_profiler', ['SPAirPortDataType']) : '';
-	return parseMacNetworkState({ hardwarePorts, serviceOrder, ifconfig, route, route6, routes, serviceInfo, serviceDns, dhcpPacket, resolvers, airport });
+	// A native read failure leaves Wi-Fi unknown without discarding valid IPv4 state.
+	const nativeWifi = hasWifi ? await readCoreWlanWifi().catch(() => []) : [];
+	return parseMacNetworkState({ hardwarePorts, serviceOrder, ifconfig, route, route6, routes, serviceInfo, serviceDns, dhcpPacket, resolvers, nativeWifi });
 }
 
 /**
@@ -485,17 +488,27 @@ export function hasMacWritePrivilege(effectiveUID: number | undefined): boolean 
 	return effectiveUID === 0;
 }
 
-/**
- * Wi-Fi configuration is not offered on macOS.
- *
- * Joining needs a network name, and macOS withholds every name from a process
- * without Location Services access — a scan comes back as a list of `<redacted>`
- * entries. Rather than ship a picker that cannot name anything, the capability is
- * reported as false. This is a constant, not a probe: the answer cannot change
- * without the user granting the permission to this binary in System Settings.
- */
-export function isMacWifiConfigurable(): boolean {
-	return false;
+/** Query native name access in the same bundle context used to scan and associate. */
+export async function isMacWifiConfigurable(): Promise<boolean> {
+	try {
+		return (await readCoreWlanWifi()).some(wifi => wifi.configurable);
+	} catch {
+		return false;
+	}
+}
+
+/** Scan for the Wi-Fi networks one interface can see. */
+export async function scanMacWifi(device: string): Promise<NetWifiNetwork[]> {
+	return scanCoreWlanWifi(device);
+}
+
+/** Associate and verify the native raw SSID and selected access point. */
+export function connectMacWifi(device: string, ssid: string, password: string, security: string, bssid: string | null = null, ssidHex: string | null = null): Promise<void> {
+	return associateMacWifi(device, ssid, password, security, bssid, ssidHex);
+}
+
+export function disconnectMacWifi(device: string): Promise<void> {
+	return disconnectCoreWlanWifi(device);
 }
 
 /** Dotted-quad netmask for a prefix length, which is the only form `networksetup -setmanual` accepts. */

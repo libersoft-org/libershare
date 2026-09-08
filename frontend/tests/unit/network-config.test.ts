@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { canOpenNetworkConfig, networkConfigFormFrom, networkConfigFromForm, networkFormUpdate, validateNetworkConfigForm, visiblePrimaryInterface, type NetworkConfigForm } from '../../src/scripts/networkConfig.ts';
+import { canOpenNetworkConfig, networkConfigFormFrom, networkConfigFromForm, networkFormMessage, networkFormUpdate, validateNetworkConfigForm, visiblePrimaryInterface, type NetworkConfigForm } from '../../src/scripts/networkConfig.ts';
 import type { NetInterfaceInfo, NetIPv4Baseline } from '@shared';
 
 const iface: NetInterfaceInfo = {
@@ -99,5 +99,62 @@ describe('open form against a moving host', () => {
 	it('seeds the first reading, which has no baseline to compare against', () => {
 		expect(networkFormUpdate(opened, null, false)).toBe('seed');
 		expect(networkFormUpdate(opened, null, true)).toBe('seed');
+	});
+});
+
+describe('networkFormMessage', () => {
+	it('announces a re-seed when nothing else is on screen', () => {
+		expect(networkFormMessage('reseed', false)).toBe('reseedAnnounce');
+	});
+
+	it('keeps quiet through EVERY re-seed a finished operation causes', () => {
+		// A failed join drops the association it started from, so the address goes
+		// and comes back: one attempt arrives as several re-seeds. Announcing on any
+		// of them replaces "check the password" with "the form was reloaded".
+		let reported = true;
+		expect(networkFormMessage('reseed', reported)).toBe('reseedSilent');
+		expect(networkFormMessage('reseed', reported)).toBe('reseedSilent');
+		expect(networkFormMessage('reseed', reported)).toBe('reseedSilent');
+		// The protection ends where the message does: at the next operation.
+		reported = false;
+		expect(networkFormMessage('reseed', reported)).toBe('reseedAnnounce');
+	});
+
+	it('goes stale either way, but keeps a result the operation just reported', () => {
+		// The change under a half-typed form is very often this form's own failed
+		// attempt: a wrong password drops the association and takes the address with
+		// it. Saying "changed outside" there hid the reason the user needed and
+		// blamed somebody else for it. Save still greys out and the reload button
+		// still appears, because that is the state, not the wording.
+		expect(networkFormMessage('stale', true)).toBe('staleSilent');
+		expect(networkFormMessage('stale', false)).toBe('stale');
+	});
+
+	it('does nothing when the host still matches the form', () => {
+		expect(networkFormMessage('keep', true)).toBe('keep');
+		expect(networkFormMessage('keep', false)).toBe('keep');
+	});
+});
+
+describe('networkFormMessage on the first fill', () => {
+	it('does not tell someone who just opened the screen that the form was reloaded', () => {
+		// 'seed' is the initial fill, not a re-seed. Folding it in with 'reseed'
+		// announced a reload that never happened.
+		expect(networkFormMessage('seed', false)).toBe('reseedSilent');
+		expect(networkFormMessage('seed', true)).toBe('reseedSilent');
+	});
+});
+
+describe('networkFormMessage through a failed join on a half-typed form', () => {
+	it('keeps the reason across the stale reading and every re-seed after it', () => {
+		// The exact sequence: the user is editing DNS, a join fails, the interface
+		// moves because of that failure, and the readings arrive one after another.
+		let reported = true;
+		expect(networkFormMessage('stale', reported)).toBe('staleSilent');
+		expect(networkFormMessage('reseed', reported)).toBe('reseedSilent');
+		expect(networkFormMessage('reseed', reported)).toBe('reseedSilent');
+		// Reloading the form drops the message, so the protection drops with it.
+		reported = false;
+		expect(networkFormMessage('stale', reported)).toBe('stale');
 	});
 });

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>Network adapter browser regressions</title>
+	<pre id="results">Running...</pre>
+	<div id="form"></div>
+	<script type="module">
+		import { mount, unmount, tick } from 'svelte';
+		import { get } from 'svelte/store';
+		import SettingsNetwork from '/src/pages/Settings/SettingsNetwork.svelte';
+		import { api } from '/src/scripts/api.ts';
+		import { primaryInterface } from '/src/scripts/settings.ts';
+		import { networkState, networkSubscriptionActive } from '/src/scripts/networkState.ts';
+		import { translations, t } from '/src/scripts/language.ts';
+		import { emit } from '/src/scripts/areas.ts';
+		const root = document.querySelector('#form');
+		const results = [];
+		let component;
+		let writes = 0;
+		let finishWrite;
+		const originalCall = api.call;
+		const originalSet = api.settings.set;
+		const base = { link: 'up', defaultRoute: false, mac: null, addresses: [{ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 }], ipv4Mode: 'dhcp', ipv4Configurable: false, wifiConfigurable: false, gateway: null, dns: [] };
+		const host = { known: true, detail: 'full', capabilities: { ipv4: false, wifi: true, staticGatewayRequired: false }, primaryID: 'wired0', interfaces: [
+			{ ...base, id: 'wifi0', name: 'Wireless adapter', medium: 'wireless', wifiConfigurable: true, wifi: { ssid: 'Example network', signal: 84, radio: 'on' } },
+			{ ...base, id: 'wired0', name: 'Wired adapter', medium: 'wired', defaultRoute: true },
+			{ ...base, id: 'wired1', name: 'Second wired adapter', medium: 'wired' },
+			{ ...base, id: 'vpn0', name: 'VPN session', medium: 'other' },
+			{ ...base, id: 'virtual-wifi', name: 'Virtual wireless adapter', medium: 'wireless', virtual: true, description: 'Wi-Fi Direct adapter' },
+			{ ...base, id: 'hidden-wifi', name: 'Hidden wireless adapter', medium: 'wireless', virtual: true, hidden: true, link: 'down' },
+			{ ...base, id: 'virtual-wired', name: 'Virtual Ethernet adapter', medium: 'wired', virtual: true, link: 'down' },
+			{ ...base, id: 'hidden-active', name: 'Active tunnel', medium: 'other', hidden: true },
+		] };
+		api.call = async method => {
+			if (method === 'system.network') return structuredClone(host);
+			if (method === 'system.wifiScan') return [];
+			throw new Error(`Unexpected API: ${method}`);
+		};
+		api.settings.set = async () => { writes++; await new Promise(resolve => finishWrite = resolve); return true; };
+		async function settle() { await tick(); await new Promise(resolve => setTimeout(resolve, 0)); await tick(); }
+		function assert(value, message) { if (!value) throw new Error(message); }
+		function tab(prefix) { return [...root.querySelectorAll('.tab')].find(item => item.textContent.trim().startsWith(prefix)); }
+		async function test(name, action) {
+			try { await action(); results.push({ name, passed: true }); }
+			catch (error) { results.push({ name, passed: false, error: error.message }); }
+		}
+		try {
+			await new Promise(resolve => { const unsubscribe = translations.subscribe(value => { if (value.settings?.network) queueMicrotask(() => { unsubscribe(); resolve(); }); }); });
+			primaryInterface.set('');
+			networkSubscriptionActive.set(true);
+			networkState.set(structuredClone(host));
+			component = mount(SettingsNetwork, { target: root, props: { areaID: 'network-list-test' } });
+			await settle();
+			await test('Wi-Fi rows contain their icon, addresses and configure action', async () => {
+				const row = root.querySelector('[role="switch"][aria-label="Wireless adapter"]')?.closest('.row');
+				assert(row?.querySelector('.icon'), 'Icon is outside the row');
+				assert(row.textContent.includes('192.0.2.10') && row.textContent.includes('Example network'), 'Details are outside the row');
+				assert(row.querySelector('[role="button"]'), 'Configure action is outside the row');
+				assert(!root.textContent.includes('Wired adapter'), 'Wired adapter leaks into Wi-Fi tab');
+			});
+			await test('category tabs only change the displayed adapters', async () => {
+				tab(get(t)('settings.network.wired')).click(); await settle();
+				assert(root.textContent.includes('Wired adapter') && !root.textContent.includes('Wireless adapter'), 'Wired tab did not filter adapters');
+				tab(get(t)('settings.network.otherAdapters')).click(); await settle();
+				assert(root.textContent.includes('VPN session') && !root.textContent.includes('Wired adapter'), 'Other tab did not show VPN');
+				assert(writes === 0, 'Changing display category changed settings');
+			});
+			await test('OS metadata separates virtual adapters and hides only inactive hidden interfaces', async () => {
+				assert(tab(get(t)('settings.network.wifi')).textContent.includes('(1)'), 'Virtual or hidden adapter inflated the Wi-Fi count');
+				assert(tab(get(t)('settings.network.wired')).textContent.includes('(2)'), 'Virtual adapter inflated the wired count');
+				assert(root.textContent.includes('Virtual wireless adapter') && root.textContent.includes('Wi-Fi Direct adapter'), 'Other tab lost the virtual device description');
+				assert(root.textContent.includes('Virtual Ethernet adapter') && root.textContent.includes('Active tunnel'), 'Other tab hid virtual or active hidden connections');
+				assert(!root.textContent.includes('Hidden wireless adapter'), 'Inactive hidden adapter is still shown');
+			});
+			await test('a pending footer selection cannot be submitted twice by click or Enter', async () => {
+				const control = root.querySelector('[role="switch"][aria-label="VPN session"]');
+				control.click(); await settle();
+				assert(writes === 1, 'Initial selection did not reach settings API');
+				assert(control.getAttribute('aria-disabled') === 'true', 'Pending selector is not disabled');
+				control.click(); control.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await settle();
+				assert(writes === 1, 'Disabled selection submitted a duplicate write');
+				finishWrite(); await settle();
+				assert(get(primaryInterface) === 'vpn0', 'Completed choice was not retained');
+			});
+			await test('keyboard navigation keeps Back separate after switching to a larger adapter group', async () => {
+				tab(get(t)('settings.network.wired')).click(); await settle();
+				const back = [...root.querySelectorAll('.button')].find(item => item.textContent.trim() === get(t)('common.back'));
+				let reachedBack = false;
+				for (let step = 0; step < 6; step++) {
+					emit('down'); await settle();
+					assert(!(back.classList.contains('selected') && root.querySelector('.row.selected')), 'Back shares the selected position with an adapter or Automatic');
+					if (back.classList.contains('selected')) { reachedBack = true; break; }
+				}
+				assert(reachedBack, 'Keyboard could not reach Back');
+			});
+		} finally {
+			finishWrite?.();
+			if (component) await unmount(component);
+			api.call = originalCall;
+			api.settings.set = originalSet;
+			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+			window.networkListTestResults = results;
+			document.documentElement.dataset.testStatus = results.length === 5 && results.every(result => result.passed) ? 'passed' : 'failed';
+		}
+	</script>
+</html>

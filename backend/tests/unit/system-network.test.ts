@@ -59,6 +59,8 @@ describe('WINDOWS_STATE_COMMAND', () => {
 	it('projects the enums it parses to integers so the OS display language cannot matter', () => {
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.NdisPhysicalMedium');
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.MediaConnectionState');
+		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.InterfaceOperationalStatus');
+		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.ConnectionState');
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.Dhcp');
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.AddressState');
 		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.PrefixOrigin');
@@ -139,6 +141,66 @@ describe('parseWindowsNetworkState', () => {
 	it('classifies media it cannot map with confidence as other', () => {
 		expect(byID(result, ID.tunnel).medium).toBe('other'); // NdisPhysicalMedium 0
 		expect(byID(result, ID.bluetooth).medium).toBe('other'); // Bluetooth PAN, 10
+	});
+
+	it.each([
+		{ rows: [{ Family: 2, InterfaceAlias: 'Example VPN', ConnectionState: 1 }], name: 'Example VPN', link: 'up' },
+		{ rows: [{ Family: 23, InterfaceAlias: 'Example VPN', ConnectionState: 1 }], name: 'Example VPN', link: 'up' },
+		{ rows: [{ Family: 2, InterfaceAlias: '', ConnectionState: 0 }, { Family: 23, InterfaceAlias: 'Example VPN', ConnectionState: 1 }], name: 'Example VPN', link: 'up' },
+		{ rows: [{ Family: 2, InterfaceAlias: 'Example VPN', ConnectionState: 0 }], name: 'Example VPN', link: 'down' },
+		{ rows: [{ Family: 2, InterfaceAlias: 'Example VPN' }], name: 'Example VPN', link: 'unknown' },
+		{ rows: [{ Family: 2 }], name: '#5', link: 'unknown' },
+	])('uses IP interface metadata for an adapterless stack: $link, $name', ({ rows, name, link }) => {
+		const doc = { ...simpleWindowsStaticDoc(), adapters: [], interfaces: rows.map(row => ({ ifIndex: 5, Dhcp: 0, ...row })) };
+		const stack = byID(parseWindowsNetworkState(JSON.stringify(doc)), 'ifIndex:5');
+		expect(stack).toMatchObject({ name, link, medium: 'other', ipv4Configurable: false, wifiConfigurable: false });
+	});
+
+	it.each([
+		{ state: 0, operational: 2, link: 'down' },
+		{ state: 0, operational: 6, link: 'down' },
+		{ state: 0, operational: 1, link: 'unknown' },
+		{ state: 0, operational: 4, link: 'unknown' },
+		{ state: 1, operational: 2, link: 'up' },
+		{ state: 2, operational: 1, link: 'down' },
+	])('only falls back from unknown media to a proven inactive adapter: $state/$operational', ({ state, operational, link }) => {
+		const doc = simpleWindowsStaticDoc();
+		doc['adapters'] = { ...(doc['adapters'] as object), State: state, OperationalState: operational };
+		doc['interfaces'] = { ifIndex: 5, Family: 2, Dhcp: 0, InterfaceAlias: 'Another alias', ConnectionState: 1 };
+		const adapter = parseWindowsNetworkState(JSON.stringify(doc))[0]!;
+		expect(adapter.name).toBe('Ethernet');
+		expect(adapter.id).toBe('{11111111-2222-3333-4444-555555555555}');
+		expect(adapter.link).toBe(link);
+	});
+
+	it.each([
+		{ media: 9, virtual: false, description: 'Wireless adapter', medium: 'wireless' },
+		{ media: 9, virtual: true, description: 'Virtual wireless adapter', medium: 'wireless' },
+		{ media: 14, virtual: true, description: 'Virtual Ethernet adapter', medium: 'wired' },
+	])('preserves explicit virtual=$virtual separately from $medium link type', ({ media, virtual, description, medium }) => {
+		const doc = simpleWindowsStaticDoc();
+		doc['adapters'] = { ...(doc['adapters'] as object), Media: media, Virtual: virtual, InterfaceDescription: description };
+		expect(parseWindowsNetworkState(JSON.stringify(doc))[0]).toMatchObject({ virtual, description, medium });
+	});
+
+	it.each([{}, { Virtual: null, InterfaceDescription: null }, { Virtual: 'false', InterfaceDescription: 7 }, { Virtual: 0, InterfaceDescription: '' }])('does not invent metadata absent from the OS: %j', metadata => {
+		const doc = simpleWindowsStaticDoc();
+		doc['adapters'] = { ...(doc['adapters'] as object), ...metadata };
+		const adapter = parseWindowsNetworkState(JSON.stringify(doc))[0]!;
+		expect(adapter).not.toHaveProperty('virtual');
+		expect(adapter).not.toHaveProperty('description');
+	});
+
+	it.each([{ value: 0, hidden: false }, { value: 1, hidden: true }])('retains the explicit OS hidden flag $value', ({ value, hidden }) => {
+		const doc = simpleWindowsStaticDoc();
+		doc['adapters'] = { ...(doc['adapters'] as object), Hidden: value };
+		expect(parseWindowsNetworkState(JSON.stringify(doc))[0]).toMatchObject({ hidden });
+	});
+
+	it.each([undefined, null, 2, '1'])('does not infer a hidden flag from %j', value => {
+		const doc = simpleWindowsStaticDoc();
+		doc['adapters'] = { ...(doc['adapters'] as object), Hidden: value };
+		expect(parseWindowsNetworkState(JSON.stringify(doc))[0]).not.toHaveProperty('hidden');
 	});
 
 	it('keeps an addressed stack that has no adapter row (RAS/VPN wintun)', () => {
@@ -503,12 +565,18 @@ describe('readConnectionAttributes sanity gate', () => {
 	const buffers: Uint8Array[] = [];
 
 	/** Build a WLAN_CONNECTION_ATTRIBUTES-shaped buffer with the given SSID length and signal. */
-	function buffer(ssidLength: number, signal: number, ssid = 'Example Net'): { pointer: Pointer; size: number } {
+	function buffer(ssidLength: number, signal: number, ssid: string | Uint8Array = 'Example Net', state = 1, auth = 7, cipher = 4, secured = true): { pointer: Pointer; size: number } {
 		const bytes = new Uint8Array(640);
 		const view = new DataView(bytes.buffer);
+		// isState is the first member: 1 = wlan_interface_state_connected.
+		view.setUint32(0, state, true);
 		view.setUint32(520, ssidLength, true);
-		new Uint8Array(bytes.buffer, 524, 32).set(new TextEncoder().encode(ssid).subarray(0, 32));
+		const octets = typeof ssid === 'string' ? new TextEncoder().encode(ssid) : ssid;
+		new Uint8Array(bytes.buffer, 524, 32).set(octets.subarray(0, 32));
 		view.setUint32(576, signal, true);
+		view.setUint32(588, secured ? 1 : 0, true);
+		view.setUint32(596, auth, true);
+		view.setUint32(600, cipher, true);
 		// Hold a reference so the buffer cannot be collected while the pointer is live.
 		buffers.push(bytes);
 		return { pointer: ptr(bytes), size: bytes.length };
@@ -516,27 +584,56 @@ describe('readConnectionAttributes sanity gate', () => {
 
 	it('accepts a plausible reading', () => {
 		const b = buffer(11, 73);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: 'Example Net', signal: 73 });
+		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: 'Example Net', ssidHex: '4578616D706C65204E6574', signal: 73, connected: true, secured: true, auth: 7, cipher: 4 });
 	});
 
 	it('reports an associated adapter with a hidden SSID as signal-only', () => {
 		const b = buffer(0, 42);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: 42 });
+		expect(readConnectionAttributes(b.pointer, b.size)).toMatchObject({ ssid: null, ssidHex: null, signal: 42, connected: true });
 	});
 
 	it('rejects an out-of-range signal rather than reporting a wrong percentage', () => {
 		const b = buffer(11, 4294967295);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: null });
+		expect(readConnectionAttributes(b.pointer, b.size)).toMatchObject({ ssid: null, ssidHex: null, signal: null, connected: true });
+	});
+
+	it('does not call an adapter that is still associating connected', () => {
+		// The SSID is filled in while the association is still being negotiated, so a
+		// join that watches the name alone reports success before there is one. Every
+		// state but wlan_interface_state_connected is on the way to or from it.
+		const b = buffer(11, 73, 'Example Net', 6);
+		expect(readConnectionAttributes(b.pointer, b.size)).toMatchObject({ ssid: 'Example Net', ssidHex: '4578616D706C65204E6574', signal: 73, connected: false });
 	});
 
 	it('rejects an impossible SSID length', () => {
 		const b = buffer(99, 50);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: null });
+		expect(readConnectionAttributes(b.pointer, b.size)).toMatchObject({ ssid: null, ssidHex: null, signal: null, connected: true });
 	});
 
 	it('rejects a buffer too small to hold the fields it would read', () => {
 		const b = buffer(11, 73);
-		expect(readConnectionAttributes(b.pointer, 64)).toEqual({ ssid: null, signal: null });
+		expect(readConnectionAttributes(b.pointer, 64)).toMatchObject({ ssid: null, ssidHex: null, signal: null, connected: false });
+	});
+
+	it('keeps different SSID bytes distinct when their decoded names are equal', () => {
+		const first = buffer(1, 70, Uint8Array.of(0xff));
+		const second = buffer(1, 70, Uint8Array.of(0xfe));
+		expect(readConnectionAttributes(first.pointer, 604)).toMatchObject({ ssid: '\uFFFD', ssidHex: 'FF', connected: true });
+		expect(readConnectionAttributes(second.pointer, 604)).toMatchObject({ ssid: '\uFFFD', ssidHex: 'FE', connected: true });
+	});
+
+	it('requires the security fields before an association can be verified', () => {
+		const b = buffer(11, 70);
+		expect(readConnectionAttributes(b.pointer, 580)).toMatchObject({ ssidHex: null, connected: false });
+	});
+
+	it.each([
+		{ secured: true, auth: 9, cipher: 4 },
+		{ secured: true, auth: 7, cipher: 8 },
+		{ secured: false, auth: 1, cipher: 0 },
+	])('reads the advertised security fields: $secured/$auth/$cipher', security => {
+		const b = buffer(11, 70, 'Example Net', 1, security.auth, security.cipher, security.secured);
+		expect(readConnectionAttributes(b.pointer, 604)).toMatchObject({ ssidHex: '4578616D706C65204E6574', connected: true, ...security });
 	});
 });
 

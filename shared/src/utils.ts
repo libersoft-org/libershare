@@ -194,14 +194,81 @@ export function validateIPv4Config(value: unknown, capabilities?: Pick<NetCapabi
 }
 
 /**
- * True for an SSID the 802.11 standard can actually carry: 1-32 octets once
- * encoded as UTF-8. Length is counted in bytes, not characters, because a
- * 20-character name with accents already exceeds the field.
+ * A key the network's own security can carry.
+ *
+ * The rule is not the same for both WPA generations, and measured against
+ * NetworkManager 1.52: a WPA-PSK key is 8 to 63 bytes, or exactly 64 hexadecimal
+ * digits of the pre-shared key itself — it counts bytes, so a four-character
+ * accented passphrase passes as eight. WPA3 replaces that with SAE, which
+ * derives from the password rather than hashing it to a fixed-length key and so
+ * accepts any length; holding a WPA3 network to the PSK rule would refuse a
+ * short password that works.
+ *
+ * Only networks this app offers to join reach here — open ones take no key, and
+ * anything but WPA personal is refused earlier. The check exists so a key that
+ * cannot work is named as such, instead of arriving as a generic activation
+ * failure that says nothing about what to type instead.
+ */
+export function isValidWifiKey(security: string, password: string): boolean {
+	if (/WPA3|SAE/i.test(security)) return password.length > 0;
+	const bytes = new TextEncoder().encode(password).byteLength;
+	return /^[0-9a-f]{64}$/i.test(password) || (bytes >= 8 && bytes <= 63);
+}
+
+/**
+ * Whether one scanned row names a target a join can resolve on its own.
+ *
+ * One name can belong to two networks that are not the same network, and a scan
+ * reports both. An access point of its own settles which is meant; without one,
+ * and with a second row of the same name, nothing does. Shared so the screen
+ * offers exactly what the join will accept — a row that looked available and was
+ * then refused after the user had already typed the password is worse than a row
+ * that says up front it cannot be told apart.
+ */
+export function isUnambiguousWifiTarget(networks: readonly { ssid: string; bssid: string | null }[], row: { ssid: string; bssid: string | null }): boolean {
+	if (row.bssid !== null) return true;
+	return networks.filter(item => item.ssid === row.ssid).length === 1;
+}
+
+/**
+ * True when a Wi-Fi credential is a raw 256-bit pre-shared key rather than a
+ * passphrase: exactly 64 hexadecimal digits.
+ *
+ * The distinction is not cosmetic. A Windows WLAN profile has to declare which
+ * of the two it carries - `<keyType>networkKey</keyType>` for this form and
+ * `passPhrase` for the other - and a raw key announced as a passphrase is hashed
+ * a second time, so the profile is written, accepted, and then never
+ * authenticates.
+ */
+export function isWifiHexKey(key: unknown): boolean {
+	return typeof key === 'string' && /^[0-9a-f]{64}$/i.test(key);
+}
+
+/**
+ * The most bytes a DECODED SSID can occupy.
+ *
+ * An SSID is at most 32 octets on the air, but it is a byte sequence and need not
+ * be UTF-8 - a scanner decodes each undecodable octet to U+FFFD, which is three
+ * bytes. The decoded form of a legitimate 32-octet name therefore reaches 96, and
+ * measuring it against 32 refused networks the scan had just listed.
+ */
+const MAX_SSID_TEXT_BYTES = 96;
+
+/**
+ * True for an SSID this app will carry across the wire.
+ *
+ * A bound and a NUL check, and deliberately nothing more. The name arriving here
+ * has already been through a lossy decode, so its byte length is no longer the
+ * SSID's; the 32-octet rule belongs where the actual bytes are, and every join
+ * has to match this name against a fresh scan anyway, which is the real proof
+ * that the network exists. Platform rules stay on their platform: the characters
+ * a Windows profile document cannot carry are refused by the Windows writer, not
+ * here, where the same name is legal for NetworkManager.
  */
 export function isValidSSID(ssid: unknown): ssid is string {
 	if (typeof ssid !== 'string' || ssid.includes('\0')) return false;
-	const length = new TextEncoder().encode(ssid).length;
-	return length >= 1 && length <= 32;
+	const bytes = new TextEncoder().encode(ssid).length;
+	return bytes >= 1 && bytes <= MAX_SSID_TEXT_BYTES;
 }
 
 /**

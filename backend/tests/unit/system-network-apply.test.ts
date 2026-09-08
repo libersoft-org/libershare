@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { canonicalDnsServer, ErrorCodes, ipv4BaselineOf, isIPv4, isIPv6, isValidSSID, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo } from '@shared';
+import { canonicalDnsServer, ErrorCodes, ipv4BaselineOf, isIPv4, isIPv6, isUnambiguousWifiTarget, isValidSSID, isValidWifiKey, isWifiHexKey, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
 import { assertIPv6DnsAllowed, assertLinuxDnsApplied, assertLinuxIPv4Applied, assertLinuxIPv4Method, assertLinuxWifiConnected, assertNetworkManagerRollback, assertNmcliActiveConnection, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
-import { assertAppliedIPv4State, assertDeviceName, assertIPv4Baseline, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiKey, isValidWifiPassword, leaseRequired, MAX_WIFI_PASSWORD_BYTES, planIPv4Change, readCachedCapabilities, resetNetworkCapabilitiesCache, runNetworkMutation } from '../../src/system-network.ts';
+import { assertAppliedIPv4State, assertDeviceName, assertIPv4Baseline, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, leaseRequired, MAX_WIFI_PASSWORD_BYTES, planIPv4Change, readCachedCapabilities, resetNetworkCapabilitiesCache, resolveJoinTarget, runNetworkMutation } from '../../src/system-network.ts';
 
 describe('isIPv4', () => {
 	it('accepts ordinary dotted quads', () => {
@@ -279,11 +279,15 @@ describe('isValidSSID', () => {
 		expect(isValidSSID('x'.repeat(32))).toBe(true);
 	});
 
-	it('counts bytes rather than characters', () => {
-		// 17 two-byte characters are 34 octets and do not fit, even though the
-		// string is well under 32 characters long.
-		expect(isValidSSID('ě'.repeat(17))).toBe(false);
-		expect(isValidSSID('ě'.repeat(16))).toBe(true);
+	it('bounds the decoded name without pretending to know its octets', () => {
+		// The bound is on the DECODED text, which is no longer the SSID's own byte
+		// count: a 32-octet name whose every byte was undecodable arrives as 96
+		// bytes of U+FFFD. Holding that to 32 refused networks the scan had listed.
+		// The real 32-octet rule lives where the bytes are, and every join has to
+		// match this name against a fresh scan regardless.
+		expect(isValidSSID('ě'.repeat(17))).toBe(true);
+		expect(isValidSSID('�'.repeat(32))).toBe(true);
+		expect(isValidSSID('x'.repeat(97))).toBe(false);
 	});
 
 	it('rejects an empty name', () => {
@@ -353,7 +357,9 @@ describe('network mutation serialization', () => {
 
 describe('network capability cache', () => {
 	const denied = { ipv4: false, wifi: false, staticGatewayRequired: false };
-	const allowed = { ipv4: true, wifi: false, staticGatewayRequired: false };
+	const allowed = { ipv4: true, wifi: true, staticGatewayRequired: false };
+	// A host that can already change addressing but cannot yet read Wi-Fi names.
+	const partial = { ipv4: true, wifi: false, staticGatewayRequired: false };
 	afterEach(resetNetworkCapabilitiesCache);
 
 	it('retries a negative result quickly and retains a positive result longer', async () => {
@@ -363,6 +369,21 @@ describe('network capability cache', () => {
 		expect(await readCachedCapabilities(probe, 0)).toEqual(denied);
 		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS - 1)).toEqual(denied);
 		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS)).toEqual(allowed);
+		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS + CAPABILITY_POSITIVE_TTL_MS - 1)).toEqual(allowed);
+		expect(probes).toBe(2);
+	});
+
+	it('keeps re-checking while any capability is still false', async () => {
+		// Location Services on macOS is granted while the app runs and nothing tells
+		// us: holding `ipv4 true, wifi false` for the long interval left the Wi-Fi
+		// section greyed out for minutes after the user had already allowed it.
+		resetNetworkCapabilitiesCache();
+		let probes = 0;
+		const probe = async () => (++probes === 1 ? partial : allowed);
+		expect(await readCachedCapabilities(probe, 0)).toEqual(partial);
+		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS - 1)).toEqual(partial);
+		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS)).toEqual(allowed);
+		// Once nothing is outstanding the answer is held for the long interval.
 		expect(await readCachedCapabilities(probe, CAPABILITY_NEGATIVE_TTL_MS + CAPABILITY_POSITIVE_TTL_MS - 1)).toEqual(allowed);
 		expect(probes).toBe(2);
 	});
@@ -1023,6 +1044,51 @@ describe('parseElevation', () => {
 	});
 });
 
+describe('isValidSSID on a name the radio reported', () => {
+	it('accepts a name whose undecodable octets inflated the decoded form', () => {
+		// An SSID is a byte sequence and need not be UTF-8, so a scanner decodes an
+		// undecodable octet to U+FFFD — three bytes for one. Measuring the decoded
+		// form against 32 refused a 31-octet name the scan had just listed.
+		const decode = (bytes: number[]): string => new TextDecoder().decode(Uint8Array.from(bytes));
+		const ascii = (text: string): number[] => [...new TextEncoder().encode(text)];
+		expect(isValidSSID(decode([...ascii('a'.repeat(30)), 0xff]))).toBe(true);
+		expect(isValidSSID(decode([...ascii('b'.repeat(31)), 0xff]))).toBe(true);
+		// A whole 32-octet name of undecodable bytes is 96 bytes decoded, and still fits.
+		expect(isValidSSID(decode(new Array(32).fill(0xff)))).toBe(true);
+	});
+
+	it('still refuses what could never have been an SSID', () => {
+		expect(isValidSSID('')).toBe(false);
+		expect(isValidSSID('x'.repeat(97))).toBe(false);
+		expect(isValidSSID('a b')).toBe(false);
+		expect(isValidSSID(undefined)).toBe(false);
+	});
+
+	it('leaves a platform rule to its platform', () => {
+		// A control character makes a Windows profile document malformed, but the
+		// same name is joinable through NetworkManager. The Windows writer refuses it;
+		// the shared gate every platform passes through does not.
+		expect(isValidSSID('Net')).toBe(true);
+	});
+});
+
+describe('isWifiHexKey', () => {
+	it('recognises exactly 64 hexadecimal digits, in either case', () => {
+		expect(isWifiHexKey('0123456789abcdef'.repeat(4))).toBe(true);
+		expect(isWifiHexKey('0123456789ABCDEF'.repeat(4))).toBe(true);
+	});
+
+	it('refuses anything that is not one', () => {
+		// Off by one in either direction, a non-hex digit in the last place, and the
+		// wrong type. A false positive here writes a Windows profile that declares a
+		// passphrase as a raw key, which is accepted and then never authenticates.
+		expect(isWifiHexKey('0123456789abcdef'.repeat(3))).toBe(false);
+		expect(isWifiHexKey(`${'0123456789abcdef'.repeat(4)}0`)).toBe(false);
+		expect(isWifiHexKey(`${'a'.repeat(63)}z`)).toBe(false);
+		expect(isWifiHexKey(undefined)).toBe(false);
+	});
+});
+
 describe('isValidWifiKey', () => {
 	// Measured against NetworkManager 1.52: it counts bytes for a WPA-PSK key, so
 	// four accented characters pass as eight, and 64 characters are a key only when
@@ -1041,5 +1107,36 @@ describe('isValidWifiKey', () => {
 			expect(isValidWifiKey(security, 'z'.repeat(64))).toBe(true);
 			expect(isValidWifiKey(security, '')).toBe(false);
 		}
+	});
+});
+
+describe('isUnambiguousWifiTarget', () => {
+	const row = (ssid: string, bssid: string | null) => ({ ssid, bssid });
+
+	it('accepts a name only one network in range goes by', () => {
+		expect(isUnambiguousWifiTarget([row('Office', null), row('Guests', null)], row('Office', null))).toBe(true);
+	});
+
+	it('refuses a name two networks share with nothing to tell them apart', () => {
+		// macOS reports no BSSID at all, so this is its normal shape for a name
+		// carried by an open access point and an unrelated secured one.
+		const rows = [row('Guests', null), row('Guests', null)];
+		expect(isUnambiguousWifiTarget(rows, rows[0]!)).toBe(false);
+	});
+
+	it('accepts a shared name once an access point is named', () => {
+		const rows = [row('Guests', 'AA:BB:CC:DD:EE:01'), row('Guests', 'AA:BB:CC:DD:EE:02')];
+		expect(isUnambiguousWifiTarget(rows, rows[0]!)).toBe(true);
+	});
+
+	it('is the rule the join itself applies, so the screen cannot offer more', () => {
+		// Both sides read this one function; drifting apart is what let the screen
+		// accept a row the join then refused after the password had been typed.
+		const rows: NetWifiNetwork[] = [
+			{ ssid: 'Guests', bssid: null, signal: 40, secured: false, security: '', supported: true, active: false },
+			{ ssid: 'Guests', bssid: null, signal: 80, secured: true, security: 'WPA2', supported: true, active: false },
+		];
+		expect(isUnambiguousWifiTarget(rows, rows[0]!)).toBe(false);
+		expect(resolveJoinTarget(rows, 'Guests', null)).toBe('ambiguous');
 	});
 });

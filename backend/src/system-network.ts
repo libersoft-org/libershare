@@ -2,10 +2,11 @@ import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
-import { CodedError, ErrorCodes, ipv4BaselineOf, isSelectableInterface, isValidSSID, normalizeDnsServers, sameIPv4Baseline, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
-import { isWindowsInterfaceID, parseElevation, parseWindowsNetworkState, readWindowsWifi, windowsApplyIPv4Command, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
-import { applyLinuxIPv4, connectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
-import { applyMacIPv4, isMacWifiConfigurable, isMacWritable, readMacNetworkState } from './system-network-macos.ts';
+import { CodedError, ErrorCodes, ipv4BaselineOf, isSelectableInterface, isValidSSID, isValidWifiKey, normalizeDnsServers, sameIPv4Baseline, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
+import { assertWindowsWifiMutationIdle, connectWindowsWifi, disconnectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND, windowsApplyIPv4Command } from './system-network-windows.ts';
+import { applyLinuxIPv4, connectLinuxWifi, disconnectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
+import { applyMacIPv4, connectMacWifi, disconnectMacWifi, isMacWifiConfigurable, isMacWritable, readMacNetworkState, scanMacWifi } from './system-network-macos.ts';
+import { assertMacWifiMutationIdle } from './system-network-corewlan.ts';
 import { networkHelperAvailable, runElevatedNetworkHelper } from './network-helper-client.ts';
 import { windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
 
@@ -25,10 +26,10 @@ const WINDOWS_SYSTEM_ENV = process.platform === 'win32' ? windowsSystemEnvironme
  *    of `yes` on Linux, and an effective root process on macOS. The answer is
  *    probed once and cached, so the UI can hide an edit the process could never
  *    complete instead of letting the user discover it when Save fails.
- *  - Wi-Fi scan/join applies on Linux only. See system-network-windows.ts and
- *    system-network-macos.ts for why the other two are deliberately absent rather
- *    than written blind — on macOS the operating system withholds every network
- *    name from a process without Location access, so there is nothing to offer.
+ *  - Wi-Fi scan/join applies on Windows (wlanapi, no elevation needed), on a
+ *    Linux host running NetworkManager, and on macOS through CoreWLAN, only while
+ *    the operating system is willing to name the networks, which it withholds
+ *    from a process without Location access.
  *
  * Applying can drop the very interface the caller reached us on. That is inherent
  * to changing an address and is the user's decision to make, so it is not
@@ -186,17 +187,17 @@ async function readWindows(): Promise<NetInterfaceInfo[]> {
 }
 
 /**
- * Read the current network state.
+ * Read the current network state, waiting for any reconfiguration in progress.
+ *
+ * A read that started in the middle of a multi-step apply would capture the gap
+ * between "old address removed" and "new address created", and the periodic
+ * broadcaster would publish that gap as the current state of the host — so this
+ * takes the same lock the mutations take.
  *
  * Results are cached for {@link CACHE_TTL_MS} and concurrent callers share the
  * one in-flight read, so a poll tick and an RPC call arriving together cost a
  * single spawn. A failed platform read degrades to the address-only reader
  * rather than throwing — a settings screen showing addresses beats an error.
- *
- * Waits for any host change in progress. A read that started in the middle of
- * a multi-step apply would capture the gap between "old address removed" and
- * "new address created", and the periodic broadcaster would publish that gap as
- * the current state of the host.
  */
 export function readNetworkState(primaryInterface: string = ''): Promise<NetworkStateInfo> {
 	return runNetworkMutation(() => readNetworkStateUnlocked(primaryInterface));
@@ -238,7 +239,11 @@ export function resolvePrimaryID(interfaces: NetInterfaceInfo[], primaryInterfac
 	return interfaces.find(i => i.defaultRoute)?.id ?? null;
 }
 
-/** Drop the cached reading — used by tests so a stale entry cannot leak between cases. */
+/**
+ * Drop the cached reading — after an apply, and in tests so a stale entry cannot
+ * leak between cases. A read already in flight cannot be cancelled, so instead the
+ * generation is bumped and that read is left to finish and publish nothing.
+ */
 export function resetNetworkStateCache(): void {
 	stateCache.reset();
 }
@@ -332,7 +337,17 @@ export function assertAppliedIPv4State(state: NetworkStateInfo, interfaceID: str
 	}
 }
 
-/** What this host lets the app change, with short-lived negative results. */
+/**
+ * What this host lets the app change, with short-lived negative results.
+ *
+ * "Negative" means ANY capability that is still false, not "no capability at
+ * all". A permission the user can grant while the app is running — Location
+ * Services on macOS, which is what makes Wi-Fi names readable — turns a false
+ * into a true with nothing to tell us about it, so a host that can already do
+ * one thing must not sit on the other for the long interval. Holding
+ * `ipv4 = true, wifi = false` for five minutes left the Wi-Fi section greyed out
+ * long after the user had granted the permission it was waiting for.
+ */
 export const CAPABILITY_NEGATIVE_TTL_MS: number = 15_000;
 export const CAPABILITY_POSITIVE_TTL_MS: number = 5 * 60_000;
 let capabilityCache: { value: NetCapabilities; expiresAt: number } | null = null;
@@ -351,7 +366,7 @@ export async function readCachedCapabilities(probe: () => Promise<NetCapabilitie
 	const generation = capabilityGeneration;
 	const pending = probe().then(value => {
 		if (generation === capabilityGeneration) {
-			const writable = value.ipv4 || value.wifi;
+			const writable = value.ipv4 && value.wifi;
 			capabilityCache = { value, expiresAt: now + (writable ? CAPABILITY_POSITIVE_TTL_MS : CAPABILITY_NEGATIVE_TTL_MS) };
 		}
 		return value;
@@ -368,20 +383,25 @@ async function probeCapabilities(): Promise<NetCapabilities> {
 	if (process.platform === 'win32') {
 		// The Get/Set-Net* cmdlets refuse outright without an elevated token, so the
 		// capability is that token — probed before the user reaches Save rather than
-		// user when Save fails. Wi-Fi is deliberately read-only.
+		// user when Save fails.
 		const native = await isWindowsElevated();
 		const elevated = !native && (await networkHelperAvailable('win32'));
-		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi: false, staticGatewayRequired: false };
+		// Wi-Fi is the exception to that token: the WLAN service takes scan and join
+		// from an ordinary user, so the capability is whether the service lists an
+		// adapter at all. A host with no radio, or a stripped image with no WLAN
+		// stack, lists none and the screen offers nothing.
+		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi: isWindowsWifiConfigurable(), staticGatewayRequired: false };
 	} else if (process.platform === 'linux') {
 		const capability = await readLinuxCapabilities();
 		if (capability.ipv4Elevation && !(await networkHelperAvailable('linux'))) return { ...capability, ipv4: false, ipv4Elevation: false };
 		return capability;
 	} else if (process.platform === 'darwin') {
 		// networksetup persists a change and is present on every macOS install, so
-		// addressing is editable. Wi-Fi is not: see isMacWifiConfigurable.
-		const native = await isMacWritable();
+		// addressing is editable. Wi-Fi is editable only while macOS is willing to
+		// tell us the network names: see isMacWifiConfigurable.
+		const [native, wifi] = await Promise.all([isMacWritable(), isMacWifiConfigurable()]);
 		const elevated = !native && (await networkHelperAvailable('darwin'));
-		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi: isMacWifiConfigurable(), staticGatewayRequired: true };
+		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi, staticGatewayRequired: true };
 	} else {
 		// Everything else reads through os.networkInterfaces(), which cannot even
 		// report whether an address came from DHCP. Offering to edit a configuration
@@ -449,6 +469,8 @@ export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Conf
 	let usedHelper = false;
 	try {
 		await run(async () => {
+			if (process.platform === 'win32') assertWindowsWifiMutationIdle();
+			if (process.platform === 'darwin') assertMacWifiMutationIdle();
 			if (supported.ipv4Elevation) {
 				if (!allowPrivilegeEscalation) throw new Error('network helper cannot recursively request privileges');
 				// The helper reads the host again on its own; it gets the baseline this
@@ -487,9 +509,10 @@ export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 	// A scan is a device operation; letting it overlap an apply on the same host
 	// would race NetworkManager and let the scan read a half-applied state.
 	return runNetworkMutation(async () => {
+		if (process.platform === 'win32') await run(async () => assertWindowsWifiMutationIdle());
 		await assertWirelessInterface(interfaceID);
 		try {
-			return await run(() => scanLinuxWifi(assertDeviceName(interfaceID)));
+			return await run(() => scanPlatformWifi(interfaceID));
 		} catch (error) {
 			resetNetworkCapabilitiesCache();
 			throw error;
@@ -497,32 +520,39 @@ export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 	});
 }
 
-/** Join a Wi-Fi network on one interface. An empty password means an open network. */
-export function connectWifi(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null): Promise<NetworkStateInfo> {
-	return runNetworkMutation(() => connectWifiUnlocked(interfaceID, ssid, password, primaryInterface, bssid));
+/** Join a visible network, checking its fresh security against the client's selected scan label when supplied. */
+export function connectWifi(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null, expectedSecurity?: string, expectedSsidHex?: string): Promise<NetworkStateInfo> {
+	return runNetworkMutation(() => connectWifiUnlocked(interfaceID, ssid, password, primaryInterface, bssid, expectedSecurity, expectedSsidHex));
 }
 
 /** {@link connectWifi} for a caller that already holds the network mutation lock. */
-export async function connectWifiUnlocked(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null): Promise<NetworkStateInfo> {
+export async function connectWifiUnlocked(interfaceID: string, ssid: string, password: string, primaryInterface: string = '', bssid: string | null = null, expectedSecurity?: string, expectedSsidHex?: string): Promise<NetworkStateInfo> {
 	if (typeof interfaceID !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
 	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
 	if (!isValidWifiPassword(password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
 	if (bssid !== null && typeof bssid !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid bssid');
+	if (expectedSecurity !== undefined && (typeof expectedSecurity !== 'string' || expectedSecurity.length > 64 || /[\0\r\n]/.test(expectedSecurity))) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid expected Wi-Fi security');
+	if (expectedSsidHex !== undefined && (typeof expectedSsidHex !== 'string' || !/^(?:[0-9a-f]{2}){1,32}$/i.test(expectedSsidHex))) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid expected Wi-Fi identity');
+	if (process.platform === 'win32') await run(async () => assertWindowsWifiMutationIdle());
 	await assertWirelessInterface(interfaceID);
 	let available: NetWifiNetwork[];
 	try {
-		available = await run(() => scanLinuxWifi(assertDeviceName(interfaceID)));
+		available = await run(() => scanPlatformWifi(interfaceID));
 	} catch (error) {
 		resetNetworkCapabilitiesCache();
 		throw error;
 	}
-	const matches = available.filter(item => item.ssid === ssid);
-	const network = bssid === null ? (matches.length === 1 ? matches[0] : undefined) : matches.find(item => item.bssid?.toLowerCase() === bssid.toLowerCase());
+	const network = resolveJoinTarget(available, ssid, bssid);
+	if (network === 'ambiguous') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'more than one network here goes by that name, so there is no way to tell which one to join');
 	if (!network) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'network is no longer available');
+	if (expectedSsidHex !== undefined && network.ssidHex?.toUpperCase() !== expectedSsidHex.toUpperCase()) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'Wi-Fi identity changed; scan and select the network again');
+	if (expectedSecurity !== undefined && network.security !== expectedSecurity) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'Wi-Fi security changed; scan and select the network again');
 	if (!network.supported) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi authentication method is not supported');
+	if (isAlreadyJoined(network)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'this interface is already connected to that network');
+	if (!network.secured && password !== '') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'this network is open; scan and select it again without a password');
 	if (network.secured && !isValidWifiKey(network.security, password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid password');
 	try {
-		await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password, network.bssid));
+		await run(() => joinPlatformWifi(interfaceID, password, network), [password]);
 	} catch (error) {
 		resetNetworkCapabilitiesCache();
 		throw error;
@@ -533,25 +563,30 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 }
 
 /**
- * A key the network's own security can carry.
+ * True when this interface is ALREADY associated with the named network.
  *
- * The rule is not the same for both WPA generations, and measured against
- * NetworkManager 1.52: a WPA-PSK key is 8 to 63 bytes, or exactly 64 hexadecimal
- * digits of the pre-shared key itself — it counts bytes, so a four-character
- * accented passphrase passes as eight. WPA3 replaces that with SAE, which
- * derives from the password rather than hashing it to a fixed-length key and so
- * accepts any length; holding a WPA3 network to the PSK rule would refuse a
- * short password that works.
+ * Such a join cannot be verified and must not be attempted. Windows confirms an
+ * association by polling whether the adapter is connected and to which SSID —
+ * and if it was already connected to that SSID, the very first poll sees the
+ * still-live old connection and reports success before Windows has finished the
+ * new attempt. A wrong password is then never noticed, because success has been
+ * reported and no rollback runs. It is also destructive for nothing: on Windows
+ * a join rewrites the stored profile before associating, so re-joining the
+ * current network replaces a working saved configuration to arrive back where it
+ * started.
  *
- * Only networks this app offers to join reach here — open ones take no key, and
- * anything but WPA personal is refused earlier. The check exists so a key that
- * cannot work is named as such, instead of arriving as a generic activation
- * failure that says nothing about what to type instead.
+ * The scan row is the freshest statement there is about this interface — taken
+ * inside the mutation lock a moment before — and the frontend marking the row is
+ * not the same as the backend refusing it: a stale snapshot, a state change
+ * mid-operation or a direct RPC call all reach here regardless.
+ *
+ * ponytail: this closes the false-success path for the case that produces it.
+ * Proving an association in general needs `WlanRegisterNotification` and a
+ * notification-driven state machine correlated by interface, profile and
+ * attempt — a redesign, not a guard.
  */
-export function isValidWifiKey(security: string, password: string): boolean {
-	if (/WPA3|SAE/i.test(security)) return password.length > 0;
-	const bytes = new TextEncoder().encode(password).byteLength;
-	return /^[0-9a-f]{64}$/i.test(password) || (bytes >= 8 && bytes <= 63);
+export function isAlreadyJoined(network: Pick<NetWifiNetwork, 'active'>): boolean {
+	return network.active;
 }
 
 /** A bounded string that can be written to a child process stdin. Empty = open network. */
@@ -560,12 +595,47 @@ export function isValidWifiPassword(password: unknown): password is string {
 }
 
 /**
+ * Scan on whichever platform this host runs.
+ *
+ * Both readers answer in the same shape, and the id each one needs is checked
+ * by its own boundary guard - a Windows adapter GUID is not a device name and
+ * neither is accepted where the other belongs.
+ */
+function scanPlatformWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
+	if (process.platform === 'win32') return scanWindowsWifi(assertWindowsGuid(interfaceID));
+	if (process.platform === 'darwin') return scanMacWifi(assertDeviceName(interfaceID));
+	return scanLinuxWifi(assertDeviceName(interfaceID));
+}
+
+/**
+ * Join on whichever platform this host runs.
+ *
+ * Windows chooses an access point from the profile's network. Linux and macOS
+ * receive the selected BSSID when the scanner provides one.
+ */
+function joinPlatformWifi(interfaceID: string, password: string, network: NetWifiNetwork): Promise<void> {
+	if (process.platform === 'win32') {
+		if (!network.ssidHex) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'Windows did not report the Wi-Fi network identity');
+		return connectWindowsWifi(assertWindowsGuid(interfaceID), network.ssid, password, network.security, network.ssidHex);
+	}
+	if (process.platform === 'darwin') return connectMacWifi(assertDeviceName(interfaceID), network.ssid, password, network.security, network.bssid, network.ssidHex);
+	return connectLinuxWifi(assertDeviceName(interfaceID), network.ssid, password, network.bssid);
+}
+
+/** Validate a Windows adapter id before it addresses the WLAN service. Same boundary check as {@link assertDeviceName}. */
+function assertWindowsGuid(interfaceID: string): string {
+	if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+	return interfaceID;
+}
+
+/**
  * Refuse a Wi-Fi operation the interface cannot perform.
  *
- * Without this the request reaches nmcli, which answers "Device 'enp6s18' is not
- * a Wi-Fi device" — a true statement, but one that surfaces as a command failure
- * for what is really a bad request. The medium comes from the same read the UI
- * displays, so the two can never disagree about which interfaces are wireless.
+ * Without this the request reaches the platform tool, which answers "Device
+ * 'enp6s18' is not a Wi-Fi device" — a true statement, but one that surfaces as
+ * a command failure for what is really a bad request. The medium comes from the
+ * same read the UI displays, so the two can never disagree about which
+ * interfaces are wireless.
  */
 async function assertWirelessInterface(interfaceID: string): Promise<void> {
 	const supported = await readCapabilities();
@@ -575,12 +645,32 @@ async function assertWirelessInterface(interfaceID: string): Promise<void> {
 	assertWifiConfigurableInterface(state.interfaces, interfaceID);
 }
 
+/**
+ * Which scanned row a join is about, when the caller named one.
+ *
+ * One name can belong to two networks that are not the same network — an open
+ * guest access point and an unrelated secured one — and a scan reports both. With
+ * an access point named, that settles it. Without one, and with more than one
+ * candidate, there is nothing to choose by: joining either would connect the user
+ * to something they did not pick and would describe it with the other one's
+ * security. That case is refused as `ambiguous` rather than guessed, and it is
+ * deliberately NOT the same answer as a network that has gone away — telling the
+ * user it disappeared sends them looking for the wrong fault.
+ */
+export function resolveJoinTarget(available: NetWifiNetwork[], ssid: string, bssid: string | null): NetWifiNetwork | 'ambiguous' | null {
+	const matches = available.filter(item => item.ssid === ssid);
+	if (bssid !== null) return matches.find(item => item.bssid?.toLowerCase() === bssid.toLowerCase()) ?? null;
+	// Scan rows carrying BSSIDs do not identify which one a name-only request chose.
+	if (matches.length > 1) return 'ambiguous';
+	return matches[0] ?? null;
+}
+
 /** Recheck the exact device at the API boundary; global host capability is not enough. */
 export function assertWifiConfigurableInterface(interfaces: NetInterfaceInfo[], interfaceID: string): void {
 	const target = interfaces.find(i => i.id === interfaceID);
 	if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
 	if (target.medium !== 'wireless') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'not a wireless interface');
-	if (!target.wifiConfigurable) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this Wi-Fi interface is not managed by NetworkManager');
+	if (!target.wifiConfigurable) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host cannot configure that Wi-Fi interface');
 }
 
 /**
@@ -591,6 +681,11 @@ export function assertWifiConfigurableInterface(interfaces: NetInterfaceInfo[], 
  * and macOS. The check exists because the id crosses the API boundary from a
  * client, not because the tools would misparse it: arguments are passed as argv,
  * never through a shell.
+ *
+ * The limit is counted in BYTES, which is what IFNAMSIZ measures. `.length`
+ * counts UTF-16 code units, so a name of accented characters passed a
+ * 15-character check while being well over 15 octets — and the kernel then
+ * truncates or refuses a name the boundary had already accepted.
  */
 export function assertDeviceName(interfaceID: string): string {
 	if (!interfaceID || new TextEncoder().encode(interfaceID).byteLength > 15 || /[/\0]/.test(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
@@ -625,13 +720,103 @@ export function firstLine(text: string | undefined): string {
 	);
 }
 
-async function run<T>(action: () => Promise<T>): Promise<T> {
+/** Replace every occurrence of each secret with `<redacted>`. Empty secrets are ignored. */
+export function redactSecrets(text: string, secrets: readonly string[]): string {
+	let result = text;
+	for (const secret of secrets) if (secret.length > 0) result = result.split(secret).join('<redacted>');
+	return result;
+}
+
+/**
+ * The string-valued fields of a child-process failure that can carry the argv.
+ *
+ * `stack` is in the list because an already-materialized stack keeps the message
+ * it was rendered with, so scrubbing `message` alone leaves the secret in the
+ * trace a logger would print.
+ */
+const SCRUBBED_ERROR_FIELDS = ['message', 'stack', 'cmd', 'command', 'stdout', 'stderr'] as const;
+/** How far down a `cause` chain to keep scrubbing. Deep enough for any wrapper, bounded against a cycle. */
+const SCRUB_MAX_DEPTH = 4;
+
+/**
+ * Strip secret values out of a failed child process's error, in place.
+ *
+ * `execFile` builds both `message` and `cmd` out of the whole argv, so a
+ * passphrase passed as an argument sits in both — and on a TIMEOUT `stderr` is
+ * empty, which is precisely when {@link run} falls back to `message`. Measured
+ * against a real failing child: the secret appeared verbatim in `message` and
+ * `cmd` on a non-zero exit and on a timeout alike.
+ *
+ * The object is mutated rather than only read so that a later log of the raw
+ * error, or a `JSON.stringify` of it in a bug report, cannot leak what the
+ * returned detail no longer carries.
+ */
+export function scrubChildError<T>(err: T, secrets: readonly string[]): T {
+	const usable = secrets.filter(secret => secret.length > 0);
+	if (usable.length === 0) return err;
+	let node: any = err;
+	for (let depth = 0; node && typeof node === 'object' && depth < SCRUB_MAX_DEPTH; depth++) {
+		for (const field of SCRUBBED_ERROR_FIELDS) if (typeof node[field] === 'string') assignQuietly(node, field, redactSecrets(node[field], usable));
+		if (Array.isArray(node.spawnargs))
+			assignQuietly(
+				node,
+				'spawnargs',
+				node.spawnargs.map((arg: unknown) => (typeof arg === 'string' ? redactSecrets(arg, usable) : arg))
+			);
+		node = node.cause;
+	}
+	return err;
+}
+
+/** Assign, tolerating a getter-only or frozen property — a failed scrub of one field must not abort the rest. */
+function assignQuietly(target: Record<string, unknown>, key: string, value: unknown): void {
+	try {
+		target[key] = value;
+	} catch {
+		// Read-only property. What it holds still reaches nobody: the detail below is
+		// built by redacting a copy, never by reading the object back.
+	}
+}
+
+/**
+ * Run a configuration command, turning any failure into one coded error.
+ *
+ * `secrets` are values the caller handed to a child process that must never
+ * reach the log or the client — see {@link scrubChildError}.
+ */
+export async function run<T>(action: () => Promise<T>, secrets: readonly string[] = []): Promise<T> {
 	try {
 		return await action();
 	} catch (err) {
 		if (err instanceof CodedError) throw err;
+		scrubChildError(err, secrets);
 		const failure = err as { stderr?: string | Buffer; stdout?: string | Buffer };
 		const detail = failure.stderr?.toString().trim() || failure.stdout?.toString().trim();
-		throw new CodedError(ErrorCodes.NETCONFIG_FAILED, firstLine(detail) || (err as Error).message || 'command failed');
+		throw new CodedError(ErrorCodes.NETCONFIG_FAILED, redactSecrets(firstLine(detail) || (err as Error).message || 'command failed', secrets));
 	}
+}
+
+/** Disconnect and publish a fresh snapshot while holding the host mutation lock. */
+export function disconnectWifi(interfaceID: string, primaryInterface: string = ''): Promise<NetworkStateInfo> {
+	return runNetworkMutation(() => disconnectWifiUnlocked(interfaceID, primaryInterface));
+}
+
+/** Disconnect for callers that already own the host mutation lock. */
+export async function disconnectWifiUnlocked(interfaceID: string, primaryInterface: string = ''): Promise<NetworkStateInfo> {
+	if (typeof interfaceID !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+	if (process.platform === 'win32') await run(async () => assertWindowsWifiMutationIdle());
+	await assertWirelessInterface(interfaceID);
+	try {
+		await run(() => {
+			if (process.platform === 'win32') return disconnectWindowsWifi(assertWindowsGuid(interfaceID));
+			if (process.platform === 'darwin') return disconnectMacWifi(assertDeviceName(interfaceID));
+			return disconnectLinuxWifi(assertDeviceName(interfaceID));
+		});
+	} catch (error) {
+		resetNetworkCapabilitiesCache();
+		throw error;
+	} finally {
+		resetNetworkStateCache();
+	}
+	return readNetworkStateUnlocked(primaryInterface);
 }

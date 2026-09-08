@@ -2,7 +2,7 @@
 export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE } from './product.ts';
 
 // Utils
-export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End, deriveConnectionStatus, isSelectableInterface, ipv4BaselineOf, sameIPv4Baseline, isIPv4, isIPv6, isValidSSID, MAX_DNS_LIST_BYTES, MAX_DNS_SERVERS, canonicalDnsServer, normalizeDnsServers, validateIPv4Config } from './utils.ts';
+export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End, deriveConnectionStatus, isSelectableInterface, ipv4BaselineOf, sameIPv4Baseline, isIPv4, isIPv6, isValidSSID, isUnambiguousWifiTarget, isValidWifiKey, isWifiHexKey, MAX_DNS_LIST_BYTES, MAX_DNS_SERVERS, canonicalDnsServer, normalizeDnsServers, validateIPv4Config } from './utils.ts';
 
 // Compression
 
@@ -442,6 +442,12 @@ export interface NetInterfaceInfo {
 	id: string;
 	/** OS friendly name, already localized by the OS — display only, never matched against. */
 	name: string;
+	/** Present only when the OS explicitly classifies the adapter as virtual or physical. */
+	virtual?: boolean;
+	/** Present only when the OS explicitly marks whether an adapter is hidden. */
+	hidden?: boolean;
+	/** OS adapter description, for distinguishing hardware from virtual interfaces. */
+	description?: string;
 	medium: NetMedium;
 	link: NetLink;
 	/** True for the interface carrying the IPv4 default route. */
@@ -532,6 +538,8 @@ export interface NetIPv4Baseline {
 /** One network seen by a Wi-Fi scan. */
 export interface NetWifiNetwork {
 	ssid: string;
+	/** Original SSID bytes as hex when available; the display name may be a lossy decode. */
+	ssidHex?: string;
 	/** Access-point identity used to disambiguate equal SSIDs. */
 	bssid: string | null;
 	/** 0-100 signal quality, never dBm. Null = the scanner did not report one. */
@@ -542,6 +550,10 @@ export interface NetWifiNetwork {
 	security: string;
 	/** True only for open and personal WPA networks the one-password form supports. */
 	supported: boolean;
+	/** False when the host reports that association is unavailable, independently of security support. */
+	connectable?: boolean;
+	/** Host-provided explanation when connectable is false. */
+	unavailableReason?: string;
 	/** True when the interface is currently associated with this network. */
 	active: boolean;
 }

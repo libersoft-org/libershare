@@ -308,6 +308,23 @@ describe('parseMacNetworkState', () => {
 		expect(en0?.wifi).toEqual({ ssid: null, signal: 60, radio: 'unknown' });
 	});
 
+	it('uses authorized native Wi-Fi metadata even while system_profiler redacts names', () => {
+		const nativeWifi = [{ device: 'en0', configurable: true, wifi: { ssid: 'Office', signal: 72, radio: 'on' as const } }];
+		const state = parseMacNetworkState({ ...sources, nativeWifi });
+		expect(state.find(item => item.id === 'en0')).toMatchObject({ wifiConfigurable: true, wifi: nativeWifi[0]!.wifi, ipv4Configurable: true, gateway: '192.0.2.1' });
+		expect(state.filter(item => item.medium !== 'wireless').every(item => !item.wifiConfigurable && item.wifi === undefined)).toBe(true);
+	});
+
+	it('does not replace denied or missing native state with an old readable report', () => {
+		const denied = [{ device: 'en0', configurable: false, wifi: { ssid: null, signal: 60, radio: 'on' as const } }];
+		expect(parseMacNetworkState({ ...sources, airport: AIRPORT_NAMED, nativeWifi: denied }).find(item => item.id === 'en0')).toMatchObject({ wifiConfigurable: false, wifi: { ssid: null } });
+		expect(parseMacNetworkState({ ...sources, airport: AIRPORT_NAMED, nativeWifi: [] }).find(item => item.id === 'en0')).toMatchObject({ wifiConfigurable: false, ipv4Configurable: true });
+	});
+
+	it('requires native Wi-Fi metadata even when a saved CLI report exposes names', () => {
+		expect(parseMacNetworkState({ ...sources, airport: AIRPORT_NAMED }).every(iface => !iface.wifiConfigurable)).toBe(true);
+	});
+
 	it('shows the resolvers an IPv6-only host was handed', () => {
 		// No manual servers and no IPv4 lease to read them from: without the scoped
 		// source the screen would claim the machine has no resolvers at all.
@@ -525,3 +542,5 @@ describe('macRestoreRequiresLease', () => {
 		expect(macRestoreRequiresLease({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }, manual, false)).toBe(false);
 	});
 });
+
+const AIRPORT_NAMED = AIRPORT.replaceAll('<redacted>', 'Office');

@@ -37,6 +37,38 @@ export function networkFormUpdate(current: NetIPv4Baseline, baseline: NetIPv4Bas
 	return dirty ? 'stale' : 'reseed';
 }
 
+/** What a fresh reading of the interface means for the message the form is showing. */
+export type NetworkFormMessage = 'keep' | 'stale' | 'staleSilent' | 'reseedSilent' | 'reseedAnnounce';
+
+/**
+ * Whether a re-seed may replace what the form is currently saying.
+ *
+ * A re-seed normally announces itself, because the fields changed under the user
+ * and they deserve to know why. It must NOT announce while the form is still
+ * showing the result of an operation the user started: a failed join or save
+ * settles over SEVERAL readings — the address disappears and comes back — and
+ * every one of them arrives as a re-seed. Announcing on any of them replaces
+ * "check the password" with "the form was reloaded" and clears the failure with
+ * it, telling the user nothing went wrong.
+ *
+ * `reported` survives automatic updates. User input or a new operation clears
+ * it, so later host changes can explain why a newly edited form cannot save.
+ */
+export function networkFormMessage(update: NetworkFormUpdate, reported: boolean): NetworkFormMessage {
+	if (update === 'keep') return 'keep';
+	// Going stale is a STATE, and it shows as one: Save greys out and a reload
+	// button appears. The wording is what has to give way, because the change under
+	// a half-typed form is very often this form's own failed attempt — a wrong
+	// password drops the association and takes the address with it. Saying
+	// "changed outside" there hides the reason the user actually needs and blames
+	// somebody else for it. The form still goes stale either way.
+	if (update === 'stale') return reported ? 'staleSilent' : 'stale';
+	// The FIRST fill is not a reload. Announcing it tells someone who merely opened
+	// the screen that their form was reloaded, which never happened.
+	if (update === 'seed') return 'reseedSilent';
+	return reported ? 'reseedSilent' : 'reseedAnnounce';
+}
+
 /** A missing saved adapter is rendered as Automatic, matching backend fallback. */
 export function visiblePrimaryInterface(preferredID: string, interfaces: NetInterfaceInfo[]): string {
 	return preferredID && interfaces.some(iface => iface.id === preferredID) ? preferredID : '';

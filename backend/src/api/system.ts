@@ -5,7 +5,7 @@ import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type Ne
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
-import { applyIPv4Unlocked, connectWifiUnlocked, readNetworkState, readNetworkStateUnlocked, runNetworkMutation, scanWifi } from '../system-network.ts';
+import { applyIPv4Unlocked, connectWifiUnlocked, disconnectWifiUnlocked, readNetworkState, readNetworkStateUnlocked, runNetworkMutation, scanWifi } from '../system-network.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -16,6 +16,24 @@ const POLL_INTERVAL_MS = 5000;
  * a user notices, so the slower cadence is deliberate.
  */
 const NETWORK_POLL_EVERY_N_TICKS = 2;
+/**
+ * Upper bounds on the network parameters a client may send.
+ *
+ * `assertParams` only establishes that a value is not `undefined`, so without
+ * these an object, an array or a megabyte-long string reaches the platform code
+ * and fails somewhere far from the request that caused it. The limits are the
+ * widest any real value can be: a Windows adapter GUID is 38 characters, an SSID
+ * is 32 octets, and a WPA passphrase is 63 characters or a 64-character hex key.
+ */
+const MAX_INTERFACE_ID = 64;
+
+/** Require a bounded string, naming the offending parameter when it is not one. */
+export function assertString(value: unknown, name: string, maxLength: number, minLength: number = 1): string {
+	if (typeof value !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `${name} must be a string`);
+	if (value.length < minLength || value.length > maxLength) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `${name} must be ${minLength}-${maxLength} characters`);
+	return value;
+}
+
 /** A single CPU-times sample: accumulated idle ticks and total ticks across all cores. */
 interface ICpuSample {
 	idle: number;
@@ -29,8 +47,9 @@ interface SystemHandlers {
 	getVolume: () => Promise<{ volume: number | null; available: boolean }>;
 	network: () => Promise<NetworkStateInfo>;
 	networkApply: (p: { interfaceID: string; config: NetIPv4Config; expected: NetIPv4Baseline }) => Promise<NetworkStateInfo>;
+	wifiDisconnect: (p: { interfaceID: string }) => Promise<NetworkStateInfo>;
 	wifiScan: (p: { interfaceID: string }) => Promise<NetWifiNetwork[]>;
-	wifiConnect: (p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string }) => Promise<NetworkStateInfo>;
+	wifiConnect: (p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string; expectedSecurity?: string; expectedSsidHex?: string }) => Promise<NetworkStateInfo>;
 	startPolling: () => void;
 	stopPolling: () => void;
 }
@@ -296,16 +315,27 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		);
 	}
 
-	async function scanWifiNetworks(p: { interfaceID: string }): Promise<NetWifiNetwork[]> {
+	async function leaveWifiNetwork(p: { interfaceID: string }): Promise<NetworkStateInfo> {
 		assert(p, ['interfaceID']);
-		return await scanWifi(p.interfaceID);
+		const interfaceID = assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID);
+		const primary = settings.get('network.primaryInterface') ?? '';
+		return runAndPublishNetworkMutation(
+			() => disconnectWifiUnlocked(interfaceID, primary),
+			() => readNetworkStateUnlocked(primary),
+			state => broadcast('system:network', state)
+		);
 	}
 
-	async function joinWifiNetwork(p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string }): Promise<NetworkStateInfo> {
+	async function scanWifiNetworks(p: { interfaceID: string }): Promise<NetWifiNetwork[]> {
+		assert(p, ['interfaceID']);
+		return await scanWifi(assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID));
+	}
+
+	async function joinWifiNetwork(p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string; expectedSecurity?: string; expectedSsidHex?: string }): Promise<NetworkStateInfo> {
 		assert(p, ['interfaceID', 'ssid']);
 		const primary = settings.get('network.primaryInterface') ?? '';
 		return runAndPublishNetworkMutation(
-			() => connectWifiUnlocked(p.interfaceID, p.ssid, p.password ?? '', primary, p.bssid ?? null),
+			() => connectWifiUnlocked(p.interfaceID, p.ssid, p.password ?? '', primary, p.bssid ?? null, p.expectedSecurity, p.expectedSsidHex),
 			() => readNetworkStateUnlocked(primary),
 			state => broadcast('system:network', state)
 		);
@@ -369,5 +399,5 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		}
 	}
 
-	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, network: getNetworkState, networkApply: applyNetworkConfig, wifiScan: scanWifiNetworks, wifiConnect: joinWifiNetwork, startPolling, stopPolling };
+	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, network: getNetworkState, networkApply: applyNetworkConfig, wifiScan: scanWifiNetworks, wifiConnect: joinWifiNetwork, wifiDisconnect: leaveWifiNetwork, startPolling, stopPolling };
 }
