@@ -54,6 +54,7 @@
 	// Decides which of several in-flight status answers is allowed to fill the form.
 	const statusGate = createStatusGate();
 	const timezoneGate = createStatusGate();
+	let foregroundRead: (() => boolean) | null = null;
 
 	// When the snapshot in `status` was taken, so the displayed clock can be advanced
 	// from it without asking the host again every second. Read off performance.now()
@@ -109,9 +110,11 @@
 	 */
 	async function load(background = false): Promise<string> {
 		const current = statusGate.begin();
+		if (!background) foregroundRead = current;
 		const currentTimezones = timezoneGate.begin();
 		loading = true;
 		const [statusResult, zonesResult] = await Promise.allSettled([api.call<SystemTimeStatus>('system.getTime'), api.call<string[]>('system.listTimezones')]);
+		if (foregroundRead === current) foregroundRead = null;
 		// A broadcast, or a later read, may have landed while this one was out. Its state is
 		// the fresher one and this answer predates it — applying it anyway would rewind the
 		// form to what the host looked like before the change it has already been told about.
@@ -188,6 +191,8 @@
 		}, 1000);
 		offTimeChanged = api.on('system:timeChanged', (next: SystemTimeStatus) => {
 			if (busy || destroyed) return;
+			// A fresh event can fulfill a requested reload, but must not discard later edits.
+			if (foregroundRead?.()) { foregroundRead = null; applyStatus(next); return; }
 			if (!status || (!hasChanges && !stale)) { applyStatus(next); return; }
 			const receivedAt = performance.now();
 			const keepClockEdit = clockEdited;
@@ -207,6 +212,7 @@
 			if (firstEmission) { firstEmission = false; return; }
 			if (!isConnected) {
 				liveUpdates = false;
+				foregroundRead = null;
 				subscriptionGeneration++;
 				statusGate.supersede();
 				timezoneGate.supersede();
@@ -221,6 +227,7 @@
 
 	onDestroy(() => {
 		destroyed = true;
+		foregroundRead = null;
 		subscriptionGeneration++;
 		statusGate.supersede();
 		timezoneGate.supersede();

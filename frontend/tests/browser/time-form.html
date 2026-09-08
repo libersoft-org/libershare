@@ -322,6 +322,32 @@
 					assert(!target.textContent.includes(label('settings.time.zonesUnavailable')), 'An old catalog failure replaced a newer successful result');
 				}, { zonesWait: oldZones });
 			}
+			for (const alreadyStale of [false, true]) await test(`explicit reload replaces a ${alreadyStale ? 'stale' : 'dirty'} draft when a heartbeat arrives first`, async () => {
+				await edit(server(), 'draft.example.org');
+				if (alreadyStale) { host.ntpServer = 'external.example.org'; changed(structuredClone(host)); await settle(); }
+				const response = deferred(); readWait = response;
+				await click(label('settings.time.reload'));
+				try {
+					changed(structuredClone(host)); await settle();
+					response.resolve(structuredClone(host)); await settle();
+					assert(server().value === host.ntpServer, 'Explicit reload kept the old draft after a heartbeat');
+					assert(!server().disabled && save().classList.contains('disabled'), 'Explicit reload did not clear the stale state and rebase the form');
+					assert(!target.textContent.includes(label('settings.time.changedOutside')) && writes.length === 0, 'Reload retained a conflict or performed a write');
+				} finally { response.resolve(structuredClone(host)); await settle(); }
+			});
+			await test('a heartbeat completes reload once and preserves a newer draft against the delayed read', async () => {
+				await edit(server(), 'first-draft.example.org');
+				const older = structuredClone(host), response = deferred(); readWait = response;
+				await click(label('settings.time.reload'));
+				try {
+					host.ntpServer = 'newer.example.org'; changed(structuredClone(host)); await settle();
+					assert(server().value === 'newer.example.org' && !server().disabled, 'Fresh heartbeat did not fulfill the requested reload');
+					await edit(server(), 'second-draft.example.org'); changed(structuredClone(host)); await settle();
+					response.resolve(older); await settle();
+					assert(server().value === 'second-draft.example.org' && !save().classList.contains('disabled'), 'Consumed reload intent or an old reply discarded the new draft');
+					assert(writes.length === 0, 'Status reload performed a mutation');
+				} finally { response.resolve(older); await settle(); }
+			});
 		} finally {
 			if (component) await unmount(component);
 			Object.assign(api, originals);
