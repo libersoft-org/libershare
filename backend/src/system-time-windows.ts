@@ -421,6 +421,8 @@ export function windowsSyncIsOurs(mode: WindowsSyncMode, membership: DomainMembe
 }
 
 export function windowsSyncEnabled(mode: WindowsSyncMode, start: WindowsStartMode): boolean | null {
+	// Policy ownership does not reveal the effective client configuration.
+	if (mode === 'managed') return null;
 	if (start === 'disabled') return false;
 	if (mode === 'none') return false;
 	if (mode === 'unknown' || start === 'unknown') return null;
@@ -556,7 +558,7 @@ export async function readWindowsStatus(readZone: () => WindowsTimeZoneState | n
 		...(zone ? { utcOffsetMinutes: zone.utcOffsetMinutes, timezoneOffsetMode: 'fixed' as const } : {}),
 		ntpEnabled: windowsSyncEnabled(mode, start),
 		ntpSynchronized: status === null ? null : parseWindowsSyncStatus(status),
-		ntpServer: parseWindowsNtpServer(params === null ? null : parseRegValue(params, 'NtpServer')),
+		ntpServer: mode === 'manual' || mode === 'none' ? parseWindowsNtpServer(params === null ? null : parseRegValue(params, 'NtpServer')) : null,
 		capabilities: { setClock: zone !== null && running !== null && running !== undefined && !(windowsSyncEnabled(mode, start) === false && running && mode !== 'none'), setTimezone: zone !== null && canConvertTimezoneId(), setNtpServer: ours, setNtpEnabled: ours },
 	};
 }

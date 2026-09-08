@@ -122,7 +122,11 @@ describe('windowsSyncEnabled', () => {
 	});
 
 	it('is on for every mode that names a time source', () => {
-		for (const mode of ['domain-hierarchy', 'manual', 'all', 'managed'] as const) expect(windowsSyncEnabled(mode, 'automatic')).toBe(true);
+		for (const mode of ['domain-hierarchy', 'manual', 'all'] as const) expect(windowsSyncEnabled(mode, 'automatic')).toBe(true);
+	});
+
+	it.each(['automatic', 'on-demand', 'disabled', 'unknown'] as const)('does not infer effective synchronization from managed ownership and start=%s', start => {
+		expect(windowsSyncEnabled('managed', start)).toBeNull();
 	});
 
 	it('is definitively off when the service is disabled or has no source', () => {
