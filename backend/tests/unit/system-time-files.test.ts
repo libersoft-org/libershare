@@ -236,6 +236,60 @@ describe('writeFileAtomically', () => {
 		expect((await rollback()).state).toBe('not-restored');
 	});
 
+	it('preserves an external edit instead of restoring the previous file over it', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await writeFile(path, 'original\n');
+		const rollback = await writeFileAtomically(path, 'ours\n');
+		await writeFile(path, 'external\n');
+		expect((await rollback()).state).toBe('not-restored');
+		expect(await readFile(path, 'utf8')).toBe('external\n');
+	});
+
+	it('keeps the published file when its rollback ownership read fails', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await writeFile(path, 'original\n');
+		let reads = 0;
+		const readOriginal = async (file: string): Promise<string> => {
+			if (++reads === 2) throw Object.assign(new Error('ownership read failed'), { code: 'EIO' });
+			return readFile(file, 'utf8');
+		};
+		const rollback = await writeFileAtomically(path, 'ours\n', readOriginal);
+		expect((await rollback()).state).toBe('not-restored');
+		expect(await readFile(path, 'utf8')).toBe('ours\n');
+		expect(reads).toBe(2);
+	});
+
+	it('preserves an external edit observed while preparing the restoration', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await writeFile(path, 'original\n');
+		let reads = 0;
+		const readOriginal = async (file: string): Promise<string> => {
+			if (++reads === 3) await writeFile(file, 'external\n');
+			return readFile(file, 'utf8');
+		};
+		const rollback = await writeFileAtomically(path, 'ours\n', readOriginal);
+		expect((await rollback()).state).toBe('not-restored');
+		expect(await readFile(path, 'utf8')).toBe('external\n');
+		expect(reads).toBe(3);
+	});
+
+	it('does not delete an external replacement of a file the operation created', async () => {
+		const path = join(dir, '90-libershare.conf');
+		const rollback = await writeFileAtomically(path, 'ours\n');
+		await writeFile(path, 'external\n');
+		expect((await rollback()).state).toBe('not-restored');
+		expect(await readFile(path, 'utf8')).toBe('external\n');
+	});
+
+	it('does not recreate an existing file removed after publication', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await writeFile(path, 'original\n');
+		const rollback = await writeFileAtomically(path, 'ours\n');
+		await rm(path);
+		expect((await rollback()).state).toBe('not-restored');
+		await expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+	});
+
 	it('treats a file that is already gone as restored', async () => {
 		const path = join(dir, '90-libershare.conf');
 		const rollback = await writeFileAtomically(path, 'new\n');
@@ -404,6 +458,23 @@ describe('applyTimesyncdDropIn', () => {
 		expect(r.success).toBe(false);
 		expect(calls).toEqual(['systemctl restart systemd-timesyncd']);
 		expect(r.message).toContain('could not be restored');
+	});
+
+	it('preserves a concurrent drop-in edit and does not describe it as the requested server', async () => {
+		await writeFile(path, '[Time]\nNTP=old.example.org\n');
+		const external = '[Time]\nNTP=external.example.org\n';
+		let restarts = 0;
+		const exec: CommandRunner = async () => {
+			restarts++;
+			await writeFile(path, external);
+			return { kind: 'failed', code: 1, output: 'daemon restart failed' };
+		};
+		const result = await applyTimesyncdDropIn('requested.example.org', true, path, exec);
+		expect(result.success).toBe(false);
+		expect(restarts).toBe(1);
+		expect(await readFile(path, 'utf8')).toBe(external);
+		expect(result.message).toContain('could not be restored');
+		expect(result.message).not.toContain('still holds the new server');
 	});
 
 	it('removes a drop-in it created when the restart fails', async () => {

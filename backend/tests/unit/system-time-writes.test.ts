@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { applySystemTimeSettings, buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, clockWriteRefusal, getSystemTimeStatus, listSystemTimezones, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type SystemCommand, type SystemTimeWriters, type WindowsModeState, W32TM_ERROR_RE, withSystemTimeLock } from '../../src/system-time.ts';
-import type { SystemTimeStatus } from '@shared';
+import type { SystemTimeChanges, SystemTimeStatus } from '@shared';
 import { W32TM_STATUS, fakeRunner } from '../helpers/system-time-fixtures.ts';
 
 const AT = { year: 2026, month: 8, day: 14, hours: 23, minutes: 46, seconds: 28 };
@@ -554,6 +554,20 @@ describe('applySystemTimeSettings', () => {
 			...overrides,
 		};
 	}
+
+	const invalidChanges: Array<[string, SystemTimeChanges]> = [
+		['NTP server', { ntpEnabled: false, ntpServer: 'bad host' }],
+		['clock', { ntpEnabled: false, clock: { hours: 25, minutes: 0, seconds: 0 } }],
+		['timezone', { ntpEnabled: false, timezone: 'Mars/Olympus_Mons' }],
+	];
+	it.each(invalidChanges)('validates the whole save before disabling NTP for an invalid %s', async (_field, changes) => {
+		const calls: string[] = [];
+		const result = await applySystemTimeSettings(changes, writers(calls));
+		expect(result).toMatchObject({ success: false, outcome: 'invalid-input' });
+		expect(result.changed).not.toBe(true);
+		expect(result.stateMayHaveChanged).not.toBe(true);
+		expect(calls).toEqual([]);
+	});
 
 	it('applies one save in dependency order under one operation', async () => {
 		const calls: string[] = [];
