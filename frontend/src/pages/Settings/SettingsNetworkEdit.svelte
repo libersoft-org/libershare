@@ -24,6 +24,7 @@
 	let iface = $derived($networkState.interfaces.find(i => i.id === interfaceID));
 	let canEditIPv4 = $derived($networkState.known && $networkState.detail === 'full' && !!iface && iface.ipv4Configurable && $networkState.capabilities.ipv4);
 	let canEditWifi = $derived($networkState.known && $networkState.detail === 'full' && !!iface && iface.wifiConfigurable && $networkState.capabilities.wifi);
+	let canDisconnect = $derived(canEditWifi && iface?.link === 'up' && iface?.wifi?.radio !== 'off');
 	let currentWifiLabel = $derived.by(() => {
 		if (!$networkState.known) return $t('settings.network.linkUnknown');
 		if (iface?.link === 'down' || iface?.wifi?.radio === 'off') return $t('settings.network.notConnected');
@@ -264,7 +265,7 @@
 	}
 
 	async function disconnect(): Promise<void> {
-		if (busy || scanning || !canEditWifi || !iface?.wifi?.ssid) return;
+		if (busy || scanning || !canDisconnect) return;
 		clearMessage();
 		busy = true;
 		disconnecting = true;
@@ -320,7 +321,7 @@
 	// Row positions shift with the mode: the static fields exist only in 'static'.
 	let staticRows = $derived(mode === 'static' ? 3 : 0);
 	let dnsRows = $derived(dnsMode === 'custom' ? 2 : 1);
-	let ipv4BaseY = $derived(canEditWifi && iface?.wifi?.ssid ? 1 : 0);
+	let ipv4BaseY = $derived(canDisconnect ? 1 : 0);
 	let saveY = $derived(canEditIPv4 ? ipv4BaseY + 1 + staticRows + dnsRows : ipv4BaseY);
 	let wifiBaseY = $derived(canEditIPv4 ? saveY + 1 : ipv4BaseY);
 	let selectionIndex = $derived(selectedNetwork ? networks.indexOf(selectedNetwork) : -1);
@@ -449,7 +450,7 @@
 							{#each iface.addresses as item}<span>{item.family === 'ipv4' ? 'IPv4' : 'IPv6'}: {item.address}</span>{/each}
 						</div>
 					</div>
-					{#if canEditWifi && iface.wifi?.ssid}
+					{#if canDisconnect}
 						<ButtonBar basePosition={[0, 0]}>
 							<Button icon="/img/cross.svg" label={disconnecting ? $t('settings.network.disconnecting') : $t('settings.network.disconnect')} position={[0, 0]} padding="0.9vh 1.4vh" fontSize="clamp(14px, 1.8vh, 18px)" disabled={busy || scanning} onConfirm={disconnect} />
 						</ButtonBar>

@@ -558,6 +558,63 @@
 				assert(target.querySelector('.connection h4').textContent === 'Newly visible network', 'New name was not displayed');
 				assert(button(label('settings.network.disconnect')), 'Confirmed connection has no disconnect action');
 			});
+
+			for (const details of [
+				{ name: 'withheld SSID', wifi: { ssid: null, signal: 74, radio: 'on' } },
+				{ name: 'missing Wi-Fi details', wifi: undefined },
+				{ name: 'empty SSID', wifi: { ssid: '', signal: null, radio: 'on' } },
+			]) {
+				await test(`connected controllable adapter can disconnect with ${details.name}`, async () => {
+					host.interfaces[0].wifi = details.wifi;
+					networkState.set(structuredClone(host)); await settle();
+					const disconnect = button(label('settings.network.disconnect'));
+					assert(target.querySelector('.connection h4').textContent === label('settings.network.connectedNameUnavailable'), 'Unavailable name was misreported');
+					waitForDisconnect = true;
+					disconnect.click(); await settle();
+					try {
+						assert(disconnectCalls === 1 && pendingDisconnect, 'Nameless adapter did not reach disconnect API');
+						assert(disconnect.classList.contains('disabled') && target.querySelector('.connection .joining[role="status"]'), 'Nameless disconnect has no pending protection');
+						disconnect.click(); await settle();
+						assert(disconnectCalls === 1, 'Nameless disconnect was submitted twice');
+						pendingDisconnect.resolve(); await settle();
+						assert(target.querySelector('.connection h4').textContent === label('settings.network.notConnected'), 'Host disconnection was not shown');
+						assert(!target.querySelector('.connection [role="button"]'), 'Disconnected adapter still offers disconnect');
+						assert(message() === label('settings.network.disconnected'), 'Nameless disconnect result is missing');
+					} finally { pendingDisconnect?.resolve(); await settle(); }
+				});
+			}
+
+			await test('a nameless connected adapter reserves a navigation row before IPv4', async () => {
+				const disconnect = button(label('settings.network.disconnect'));
+				assert(disconnect.classList.contains('selected'), 'Disconnect does not occupy the first navigation row');
+				emit('down'); await settle();
+				assert(target.querySelector('.fields .select-field').classList.contains('selected'), 'Keyboard skipped IPv4 addressing after disconnect');
+				assert(!disconnect.classList.contains('selected'), 'Disconnect collides with IPv4 navigation');
+			});
+
+			for (const state of [
+				{ name: 'unknown link', link: 'unknown' },
+				{ name: 'down link', link: 'down' },
+				{ name: 'radio off', radio: 'off' },
+				{ name: 'stale snapshot', known: false },
+				{ name: 'disabled host capability', capable: false },
+				{ name: 'noncontrollable adapter', configurable: false },
+				{ name: 'limited snapshot', detail: 'addressesOnly' },
+			]) {
+				await test(`disconnect rejects a previously rendered action after ${state.name}`, async () => {
+					const previousAction = button(label('settings.network.disconnect'));
+					host.interfaces[0].link = state.link ?? 'up';
+					host.interfaces[0].wifi = { ssid: 'Previous network', signal: 74, radio: state.radio ?? 'on' };
+					host.interfaces[0].wifiConfigurable = state.configurable ?? true;
+					host.capabilities.wifi = state.capable ?? true;
+					host.known = state.known ?? true;
+					host.detail = state.detail ?? 'full';
+					networkState.set(structuredClone(host));
+					previousAction.click(); await settle();
+					assert(disconnectCalls === 0, 'Stale action bypassed the current disconnect guard');
+					assert(!target.querySelector('.connection [role="button"]'), 'Unavailable adapter offers disconnect');
+				});
+			}
 		} catch (error) {
 			results.push({ name: 'harness', passed: false, error: error.message });
 			output.textContent += `\nFAIL harness: ${error.stack}`;
