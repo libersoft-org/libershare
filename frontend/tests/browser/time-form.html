@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>System time browser regressions</title>
+	<style>#results { white-space: pre-wrap; overflow-wrap: anywhere; }</style>
+	<pre id="results">Running...</pre>
+	<div id="form"></div>
+	<script type="module">
+		import '/src/app.css';
+		import { mount, unmount, tick } from 'svelte';
+		import { get } from 'svelte/store';
+		import SettingsTime from '/src/pages/Settings/SettingsTime.svelte';
+		import { api } from '/src/scripts/api.ts';
+		import { connected } from '/src/scripts/ws-client.ts';
+		import { translations, t } from '/src/scripts/language.ts';
+		import { menuStructure } from '/src/scripts/menu.ts';
+		import { emit } from '/src/scripts/areas.ts';
+		import { startInput, stopInput } from '/src/scripts/input/input.ts';
+
+		const target = document.querySelector('#form');
+		const output = document.querySelector('#results');
+		const results = [];
+		const originals = { call: api.call, on: api.on, subscribe: api.subscribe, unsubscribe: api.unsubscribe };
+		let component, host, changed, subscribeWait, readWait, saveWait;
+		let readFails, zonesFail, subscribeFails, writeResult, transportFails;
+		let writes = [], order = [], backCalls = 0;
+		const initial = () => ({ supported: true, nowMs: Date.UTC(2026, 8, 8, 10, 20, 30), timezone: 'Europe/Prague', utcOffsetMinutes: 120, timezoneSource: 'iana', ntpEnabled: true, ntpSynchronized: true, ntpServer: 'custom.example.org', capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: true } });
+		const label = key => get(t)(key);
+		const assert = (value, message) => { if (!value) throw new Error(message); };
+		const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+		const settle = async () => { await tick(); await new Promise(resolve => setTimeout(resolve, 0)); await tick(); };
+		function button(name) { const el = [...target.querySelectorAll('[role="button"]')].find(el => (el.getAttribute('aria-label') ?? el.textContent.trim()) === name); assert(el, `Missing button: ${name}`); return el; }
+		const server = () => target.querySelector('input[type="text"]');
+		const clock = () => [...target.querySelectorAll('input[type="number"]')];
+		const save = () => button(label('common.save'));
+		async function click(name) { button(name).click(); await settle(); }
+		async function edit(el, value) { el.value = value; el.dispatchEvent(new Event('input', { bubbles: true })); await settle(); }
+
+		api.on = (event, handler) => { if (event === 'system:timeChanged') changed = handler; return () => { if (changed === handler) changed = undefined; }; };
+		api.subscribe = async () => { order.push('subscribe'); if (subscribeWait) await subscribeWait.promise; if (subscribeFails) throw new Error('Subscription unavailable'); order.push('subscribed'); };
+		api.unsubscribe = async () => {};
+		api.call = async (method, params) => {
+			if (method === 'system.getTime') { order.push('read'); if (readWait) { const wait = readWait; readWait = undefined; return wait.promise; } if (readFails) throw new Error('Status read failed'); return structuredClone(host); }
+			if (method === 'system.listTimezones') { if (zonesFail) throw new Error('Timezone list unavailable'); return ['UTC', 'Europe/Prague', 'Europe/London']; }
+			if (method !== 'system.applyTimeSettings') throw new Error(`Unexpected API method ${method}`);
+			writes.push(structuredClone(params));
+			if (saveWait) await saveWait.promise;
+			if (transportFails) throw new Error('Transport interrupted');
+			if (writeResult.success || writeResult.changed) {
+				if (params.ntpServer !== undefined) host.ntpServer = params.ntpServer;
+				if (params.ntpEnabled !== undefined) host.ntpEnabled = params.ntpEnabled;
+				if (params.timezone !== undefined) host.timezone = params.timezone;
+				changed?.(structuredClone(host));
+			}
+			return structuredClone(writeResult);
+		};
+
+		async function reset(options = {}) {
+			if (component) await unmount(component);
+			connected.set(true);
+			host = { ...initial(), ...options.status };
+			writes = []; order = []; backCalls = 0;
+			readFails = options.readFails ?? false; zonesFail = options.zonesFail ?? false; subscribeFails = options.subscribeFails ?? false;
+			subscribeWait = options.subscribeWait; readWait = options.readWait; saveWait = undefined;
+			writeResult = { success: true, outcome: 'ok', message: null }; transportFails = false;
+			component = mount(SettingsTime, { target, props: { areaID: 'time-browser-test', onBack: () => backCalls++ } });
+			await settle();
+		}
+		async function test(name, action, options) {
+			try { await reset(options); await action(); results.push({ name, passed: true }); }
+			catch (error) { results.push({ name, passed: false, error: error.message }); }
+			output.textContent = JSON.stringify(results, null, 2);
+		}
+
+		try {
+			await new Promise(resolve => { const off = translations.subscribe(value => { if (value.settings?.time) queueMicrotask(() => { off(); resolve(); }); }); });
+			await test('system time and NTP remain inside the Time settings menu', async () => {
+				const find = (value, id) => { if (!value || typeof value !== 'object') return null; if (value.id === id) return value; return Object.values(value).map(item => find(item, id)).find(Boolean); };
+				const timeMenu = find(get(menuStructure), 'time');
+				assert(timeMenu?.submenu.some(item => item.id === 'time-system' && item.component === SettingsTime), 'Time settings moved outside the Time menu');
+				assert(timeMenu.submenu.some(item => item.id === 'time-format') && timeMenu.submenu.some(item => item.id === 'time-seconds'), 'Footer time preferences disappeared');
+			});
+			await test('opening preserves the OS server and sends no time mutation', async () => {
+				assert(server().value === 'custom.example.org' && writes.length === 0 && save().classList.contains('disabled'), 'Opening changed existing settings');
+				assert(order.indexOf('subscribed') < order.indexOf('read'), 'Read preceded subscription acknowledgement');
+			});
+			await test('the form and all three clock fields fit the available viewport', async () => {
+				const width = document.documentElement.clientWidth;
+				assert(document.documentElement.scrollWidth <= width, 'The time screen overflows horizontally');
+				for (const el of target.querySelectorAll('.settings, .container, .snapshot, .alert, .row, .presets .button, input, select')) {
+					const bounds = el.getBoundingClientRect();
+					assert(el.scrollWidth <= el.clientWidth, 'A time control hides its own horizontal overflow');
+					assert(bounds.left >= 0 && bounds.right <= width + 0.5, 'A time control exceeds the viewport');
+				}
+				assert(clock().length === 3, 'A manual clock field is missing');
+				for (const input of clock()) {
+					const bounds = input.getBoundingClientRect();
+					assert(bounds.left >= 0 && bounds.right <= width + 0.5 && bounds.width > 0, 'A clock field is outside the viewport');
+				}
+			});
+			await test('an empty server offers tik without making the form dirty', async () => {
+				assert(server().value === '' && server().placeholder === 'tik.cesnet.cz', 'Missing server was silently replaced');
+				assert(save().classList.contains('disabled') && writes.length === 0, 'Default offer wrote the host');
+				await click('tik.cesnet.cz'); await click(label('common.save'));
+				assert(JSON.stringify(writes) === JSON.stringify([{ ntpServer: 'tik.cesnet.cz' }]), 'Preset did not use one changed-fields write');
+			}, { status: { ntpServer: null } });
+			await test('tak is an explicit alternative and custom servers remain editable', async () => {
+				await click('tak.cesnet.cz'); assert(server().value === 'tak.cesnet.cz' && writes.length === 0, 'Preset performed an eager write');
+				await edit(server(), 'another.example.org'); await click(label('common.save'));
+				assert(writes.length === 1 && writes[0].ntpServer === 'another.example.org', 'Custom server was replaced with a preset');
+			});
+			for (const value of [true, false, null]) await test(`synchronization result ${value} remains distinct from enabled configuration`, async () => {
+				const key = value === null ? 'syncUnreported' : value ? 'synchronized' : 'notSynchronized';
+				assert(target.querySelector('[data-time-sync-result]').textContent === label(`settings.time.${key}`), 'Synchronization result was guessed');
+				assert(target.querySelector('[data-time-sync-enabled]').textContent === label('settings.time.enabled'), 'Result changed enabled state');
+			}, { status: { ntpEnabled: true, ntpSynchronized: value } });
+			await test('unknown synchronization never enables manual clock editing', async () => {
+				assert(target.querySelector('[data-time-sync-enabled]').textContent === label('settings.time.unknown'), 'Unknown state looks disabled');
+				assert(clock().every(input => input.disabled), 'Unknown synchronization permits a manual clock write');
+				assert(save().classList.contains('disabled') && writes.length === 0, 'Unknown state became an implicit setting');
+			}, { status: { ntpEnabled: null, ntpSynchronized: null } });
+			const subscription = deferred();
+			await test('initial loading waits for subscribe before reading the host', async () => {
+				assert(target.querySelector('[role="status"]')?.textContent.includes(label('settings.time.loading')), 'Loading has no explanation');
+				assert(!order.includes('read') && writes.length === 0, 'Host read raced subscription');
+				subscription.resolve(); await settle(); assert(server(), 'Status did not render after subscription');
+			}, { subscribeWait: subscription });
+			await test('failed initial read stays visible and can be retried', async () => {
+				assert(target.querySelector('.error-message')?.textContent.includes('Status read failed'), 'Read failure is hidden');
+				readFails = false; await click(label('settings.time.reload')); assert(server(), 'Reload did not recover');
+			}, { readFails: true });
+			await test('failed subscription shows a read-only snapshot until retry succeeds', async () => {
+				assert(server().disabled && target.textContent.includes(label('settings.time.updatesUnavailable')), 'Unsubscribed snapshot permits writes');
+				subscribeFails = false; await click(label('settings.time.reload')); assert(!server().disabled, 'Successful subscription retry stayed locked');
+			}, { subscribeFails: true });
+			await test('read-only capability blocks preset clicks and manual changes', async () => {
+				const previous = server().value; await click('tik.cesnet.cz'); await click(label('common.save'));
+				assert(server().disabled && server().value === previous && clock().every(input => input.disabled) && writes.length === 0, 'Read-only controls reached a mutation');
+			}, { status: { capabilities: { setClock: false, setTimezone: false, setNtpServer: false, setNtpEnabled: false } } });
+			await test('unavailable timezone list preserves the host timezone', async () => {
+				assert(target.querySelector('select').value === 'Europe/Prague', 'Timezone lookup failure erased the selected timezone');
+				assert(target.textContent.includes(label('settings.time.zonesUnavailable')), 'Timezone lookup failure has no explanation');
+			}, { zonesFail: true });
+			await test('one pending save locks controls and preserves its own broadcast', async () => {
+				await click('tak.cesnet.cz'); saveWait = deferred();
+				const submit = save(); submit.click(); await settle();
+				try {
+					assert(writes.length === 1 && submit.classList.contains('disabled') && server().disabled, 'Pending save is not locked');
+					assert(target.textContent.includes(label('settings.time.saving')), 'Pending save has no status');
+					submit.click(); await settle(); assert(writes.length === 1, 'Duplicate save reached the API');
+					saveWait.resolve(); await settle();
+					assert(target.querySelector('.success-message') && !target.textContent.includes(label('settings.time.changedOutside')) && backCalls === 0, 'Own save hid its result or became stale');
+					assert(server().value === 'tak.cesnet.cz' && save().classList.contains('disabled'), 'Save did not adopt the confirmed state');
+				} finally { saveWait.resolve(); await settle(); }
+			});
+			await test('partial refusal keeps its reason and adopts the host readback', async () => {
+				await click('tak.cesnet.cz'); writeResult = { success: false, outcome: 'error', message: 'Second step failed', changed: true, stateMayHaveChanged: true };
+				await click(label('common.save'));
+				assert(target.querySelector('.error-message')?.textContent.includes('Second step failed') && target.textContent.includes(label('settings.time.errorPartial')), 'Partial failure lost its warning');
+				assert(server().value === 'tak.cesnet.cz' && !target.querySelector('.success-message'), 'Partial failure fabricated success or discarded host state');
+			});
+			await test('transport and reload failures preserve both explanations', async () => {
+				await click('tik.cesnet.cz'); transportFails = true; readFails = true; await click(label('common.save'));
+				const error = target.querySelector('.error-message')?.textContent ?? '';
+				assert(error.includes('Transport interrupted') && error.includes('Status read failed') && error.includes(label('settings.time.errorPartial')), 'Reload masked the save failure');
+				assert(save().classList.contains('disabled'), 'A failed readback left uncertain values writable');
+				readFails = false; transportFails = false; await click(label('settings.time.reload'));
+				assert(!server().disabled, 'A verified reload did not release the stale form');
+			});
+			await test('external writes block an edited form until explicit reload', async () => {
+				await edit(server(), 'typed.example.org'); host.ntpServer = 'external.example.org'; changed(structuredClone(host)); await settle();
+				assert(server().value === 'typed.example.org' && save().classList.contains('disabled'), 'External write overwrote or left a stale edit writable');
+				assert(target.textContent.includes(label('settings.time.changedOutside')), 'Stale form lacks an explanation');
+				await click(label('common.save')); assert(writes.length === 0, 'Stale save reached the API');
+				await click(label('settings.time.reload')); assert(server().value === 'external.example.org', 'Explicit reload did not adopt external state');
+			});
+			await test('a broadcast supersedes a pending reconnect read', async () => {
+				const older = structuredClone(host); const reply = deferred(); readWait = reply;
+				connected.set(false); connected.set(true); await settle();
+				host.ntpServer = 'broadcast.example.org'; changed(structuredClone(host)); await settle();
+				reply.resolve(older); await settle(); assert(server().value === 'broadcast.example.org', 'Old reconnect read overwrote a broadcast');
+			});
+			await test('an edit made during a reconnect read is not replaced', async () => {
+				const reply = deferred(); readWait = reply; connected.set(false); connected.set(true); await settle();
+				await edit(server(), 'typed.example.org'); reply.resolve({ ...host, ntpServer: 'remote.example.org' }); await settle();
+				assert(server().value === 'typed.example.org', 'Background read replaced a typed value');
+			});
+			await test('reconnect during an own save does not report an external conflict', async () => {
+				await click('tak.cesnet.cz'); saveWait = deferred(); save().click(); await settle();
+				try {
+					connected.set(false); connected.set(true); await settle();
+					assert(!target.textContent.includes(label('settings.time.changedOutside')), 'Own in-flight save was marked as an external write');
+					saveWait.resolve(); await settle();
+					assert(server().value === 'tak.cesnet.cz' && target.querySelector('.success-message'), 'Own save did not finish after reconnect');
+				} finally { saveWait.resolve(); await settle(); }
+			});
+			await test('reconnect catch-up blocks saving until a fresh host read settles', async () => {
+				const reply = deferred(); readWait = reply; connected.set(false); connected.set(true); await settle();
+				try {
+					assert(server().disabled, 'Reconnect exposed an editable stale snapshot');
+					await click('tik.cesnet.cz'); await click(label('common.save')); assert(writes.length === 0, 'Reconnect catch-up allowed a stale save');
+				} finally { reply.resolve(structuredClone(host)); await settle(); }
+				assert(!server().disabled, 'Fresh reconnect snapshot remained locked');
+			});
+			await test('a timezone-only save never sends the ticking clock', async () => {
+				const zone = target.querySelector('select'); zone.value = 'UTC'; zone.dispatchEvent(new Event('change', { bubbles: true })); await settle(); await click(label('common.save'));
+				assert(JSON.stringify(writes) === JSON.stringify([{ timezone: 'UTC' }]), 'Timezone change rewound the host clock');
+			});
+			await test('server, timezone, synchronization and manual clock use one atomic save', async () => {
+				target.querySelector('[role="switch"]').click(); await settle();
+				await click('tik.cesnet.cz');
+				await edit(clock()[0], '7'); await edit(clock()[1], '8'); await edit(clock()[2], '9');
+				const zone = target.querySelector('select'); zone.value = 'UTC'; zone.dispatchEvent(new Event('change', { bubbles: true })); await settle();
+				await click(label('common.save'));
+				assert(writes.length === 1 && JSON.stringify(writes[0]) === JSON.stringify({ ntpEnabled: false, ntpServer: 'tik.cesnet.cz', timezone: 'UTC', clock: { hours: 7, minutes: 8, seconds: 9 } }), 'The combined edit was split, changed or incompletely saved');
+			});
+			await test('an empty manual hour is invalid rather than midnight', async () => {
+				await edit(clock()[0], ''); await click(label('common.save'));
+				assert(writes.length === 0 && target.querySelector('.error-message')?.textContent.includes(label('settings.time.errorInvalidInput')), 'Blank hour reached a clock mutation');
+			}, { status: { ntpEnabled: false } });
+			await test('unknown synchronization can be explicitly saved off without choosing a server', async () => {
+				const control = target.querySelector('[role="switch"]'); control.click(); await settle(); control.click(); await settle();
+				await click(label('common.save'));
+				assert(JSON.stringify(writes) === JSON.stringify([{ ntpEnabled: false }]), 'Explicit off silently chose a server or was discarded');
+				assert(clock().every(input => !input.disabled), 'Confirmed disabled synchronization did not unlock manual time');
+			}, { status: { ntpEnabled: null, ntpSynchronized: null, ntpServer: null } });
+			for (const [instant, expected] of [[Date.UTC(2026, 2, 29, 0, 59, 59), '01:59:59'], [Date.UTC(2026, 2, 29, 1), '03:00:00'], [Date.UTC(2026, 9, 25, 1), '02:00:00']]) await test(`host clock uses its timezone at ${new Date(instant).toISOString()}`, async () => {
+				assert(target.querySelector('.host-clock').textContent === expected, 'Displayed host clock used the browser offset');
+			}, { status: { nowMs: instant, utcOffsetMinutes: 60 } });
+			for (const device of ['keyboard', 'gamepad']) await test(`disabled synchronization ignores ${device} and enabled synchronization accepts it`, async () => {
+				const originalGamepads = Object.getOwnPropertyDescriptor(navigator, 'getGamepads');
+				const pad = { axes: [0, 0], buttons: Array.from({ length: 17 }, () => ({ pressed: false })) };
+				Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [pad] });
+				const frames = async () => { for (let i = 0; i < 3; i++) await new Promise(requestAnimationFrame); await settle(); };
+				const confirm = async () => { if (device === 'keyboard') { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter' })); await settle(); } else { pad.buttons[0].pressed = true; await frames(); pad.buttons[0].pressed = false; await frames(); } };
+				try {
+					startInput(); const control = target.querySelector('[role="switch"]');
+					for (let step = 0; step < 6 && !control.closest('.row').classList.contains('selected'); step++) { emit('up'); await settle(); }
+					assert(control.closest('.row').classList.contains('selected'), 'Synchronization row cannot be reached through navigation');
+					await confirm(); assert(control.getAttribute('aria-checked') === 'true' && writes.length === 0, 'Disabled switch changed');
+					host.capabilities.setNtpEnabled = true; changed(structuredClone(host)); await settle(); await confirm();
+					assert(control.getAttribute('aria-checked') === 'false' && writes.length === 0, 'Enabled switch did not accept input or saved eagerly');
+				} finally { stopInput(); if (originalGamepads) Object.defineProperty(navigator, 'getGamepads', originalGamepads); else delete navigator.getGamepads; }
+			}, { status: { capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: false } } });
+		} finally {
+			if (component) await unmount(component);
+			Object.assign(api, originals);
+			window.timeFormTestResults = results;
+			document.documentElement.dataset.testStatus = results.length && results.every(item => item.passed) ? 'passed' : 'failed';
+		}
+	</script>
+</html>

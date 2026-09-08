@@ -7,10 +7,11 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { api } from '../../scripts/api.ts';
 	import { connected } from '../../scripts/ws-client.ts';
-	import { createStatusGate, formatHostClock, loadFailureMessage, loadMayApply, planTimeChanges, syncSwitchIsDirty, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
+	import { NTP_PRESETS, createStatusGate, formatHostClock, loadFailureMessage, loadMayApply, planTimeChanges, syncSwitchIsDirty, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
 	import { type SystemTimeChanges, type SystemTimeOutcome, type SystemTimeResult, type SystemTimeStatus } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
+	import Icon from '../../components/Icon/Icon.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import Select from '../../components/Input/Select.svelte';
@@ -26,6 +27,14 @@
 	let timezones = $state<string[]>([]);
 	let errorMessage = $state('');
 	let busy = $state(false);
+	let loading = $state(true);
+	let liveUpdates = $state(false);
+	let stale = $state(false);
+	let successMessage = $state('');
+	let displayClock = $state('');
+	let zonesUnavailable = $state(false);
+	let destroyed = false;
+	let subscriptionGeneration = 0;
 	// Editable copies of the host state
 	let autoSync = $state(false);
 	let ntpServer = $state('');
@@ -57,11 +66,14 @@
 		// read still in flight is now answering an older question.
 		statusGate.supersede();
 		status = next;
+		stale = false;
+		loading = false;
 		readAt = performance.now();
 		// The backend may run on a different machine (or in a different zone) than the
 		// browser, so the host's wall clock is reconstructed from its own UTC offset
 		// instead of the browser's local getters.
 		({ hours, minutes, seconds } = formatHostClock(next.nowMs, next.timezone, next.utcOffsetMinutes));
+		displayClock = `${hours}:${minutes}:${seconds}`;
 		// An unreadable sync state shows the switch off, but `syncUnknown` keeps the clock
 		// locked: the baseline matches, so merely opening the page never writes anything.
 		autoSync = next.ntpEnabled ?? false;
@@ -94,15 +106,24 @@
 	 */
 	async function load(background = false): Promise<string> {
 		const current = statusGate.begin();
+		loading = true;
 		const [statusResult, zonesResult] = await Promise.allSettled([api.call<SystemTimeStatus>('system.getTime'), api.call<string[]>('system.listTimezones')]);
 		// A broadcast, or a later read, may have landed while this one was out. Its state is
 		// the fresher one and this answer predates it — applying it anyway would rewind the
 		// form to what the host looked like before the change it has already been told about.
 		const mayApply = loadMayApply({ fresh: current(), background, busy, dirty: hasChanges });
+		if (current()) {
+			loading = false;
+			if (background && !busy && hasChanges) stale = true;
+		}
 		// Under the same guard as the status, and no longer ahead of it: written first, an
 		// older answer replaced a newer one's list — or blanked it — while its own status was
 		// correctly thrown away as stale.
-		if (mayApply) timezones = zonesResult.status === 'fulfilled' ? zonesResult.value : [];
+		if (mayApply) {
+			timezones = zonesResult.status === 'fulfilled' ? zonesResult.value : [];
+			zonesUnavailable = zonesResult.status === 'rejected';
+			loading = false;
+		}
 		if (statusResult.status === 'rejected') return loadFailureMessage(translateError(statusResult.reason), mayApply);
 		if (mayApply) applyStatus(statusResult.value);
 		return '';
@@ -116,66 +137,82 @@
 
 	let offTimeChanged: (() => void) | void;
 
+	async function refresh(background = false): Promise<void> {
+		const generation = ++subscriptionGeneration;
+		const current = (): boolean => generation === subscriptionGeneration && !destroyed;
+		if (!background) loading = true;
+		try {
+			await api.subscribe('system:timeChanged');
+			if (!current() || destroyed) return;
+			liveUpdates = true;
+		} catch {
+			if (!current() || destroyed) return;
+			liveUpdates = false;
+		}
+		if (background && busy) return;
+		if (background && hasChanges) {
+			stale = true;
+			loading = false;
+			return;
+		}
+		await reload(background);
+	}
+
+	function clearFeedback(): void {
+		errorMessage = '';
+		successMessage = '';
+	}
+
+	function selectServer(server: string): void {
+		if (busy || loading || stale || !liveUpdates || !status?.capabilities.setNtpServer) return;
+		ntpServer = server;
+		clearFeedback();
+	}
+
+	async function reloadForm(): Promise<void> {
+		if (busy || loading) return;
+		clearFeedback();
+		await refresh();
+	}
+
 	onMount(() => {
-		// Keep the clock fields on the host's current time until the user types in them.
-		// Filled once at load they would go stale while the page is open, and a save that
-		// only changed the timezone would write back the time the page was opened at.
-		const tick = setInterval(() => {
-			if (!status || busy || clockEdited) return;
-			resyncClockFields();
+		const ticker = setInterval(() => {
+			if (!status || stale) return;
+			const clock = formatHostClock(status.nowMs + performance.now() - readAt, status.timezone, status.utcOffsetMinutes);
+			displayClock = `${clock.hours}:${clock.minutes}:${clock.seconds}`;
+			if (!busy && !clockEdited) resyncClockFields();
 		}, 1000);
-		// Another window writing the time must not leave this form showing the old host
-		// state — the backend broadcasts the fresh status after every successful write.
 		offTimeChanged = api.on('system:timeChanged', (next: SystemTimeStatus) => {
-			// Never over an edit in progress: re-filling the form here would throw away
-			// what the user has typed without saying so. They keep their values, and the
-			// save that follows overwrites whatever the other window wrote — last write
-			// wins. There is no conflict detection: the values carry no revision, so this
-			// screen cannot tell "changed underneath me" from "unchanged". Detecting it
-			// needs a revision on the status and a precondition on the write.
-			if (!busy && !hasChanges) applyStatus(next);
-		});
-		// Subscribe before the first read, just like after a reconnect. Reading first leaves
-		// a gap where another window can change the host after our snapshot was taken but
-		// before the server starts sending us events, leaving this form stale indefinitely.
-		void api
-			.subscribe('system:timeChanged')
-			.catch(() => {})
-			.then(() => void reload());
-		// The backend keeps subscriptions per connection, so a dropped socket takes this
-		// one with it and the page would sit there silently stale for as long as it is
-		// open. Re-subscribe on every reconnect and re-read what was missed while down —
-		// never over an edit in progress, which is the same rule the event handler follows.
-		let firstEmission = true;
-		const offConnected = connected.subscribe(isConnected => {
-			// The store replays its current value on subscribe; the initial subscribe above
-			// has that covered.
-			if (firstEmission) {
-				firstEmission = false;
+			if (busy || destroyed) return;
+			if (hasChanges) {
+				statusGate.supersede();
+				loading = false;
+				stale = true;
 				return;
 			}
-			if (!isConnected) return;
-			// Subscribe BEFORE reading, and wait for it. Fired side by side, the read can be
-			// answered while the subscription is still being registered — and a change made in
-			// exactly that window is broadcast to nobody and is already absent from the answer
-			// that arrives, so the form sits on a state the host has left with nothing left to
-			// correct it.
-			void api
-				.subscribe('system:timeChanged')
-				.catch(() => {})
-				.then(() => {
-					// Checked again when the answer lands: the read takes a round trip, and the
-					// user can start typing or saving inside it.
-					if (!busy && !hasChanges) void reload(true);
-				});
+			applyStatus(next);
 		});
-		return () => {
-			clearInterval(tick);
-			offConnected();
-		};
+		void refresh();
+		let firstEmission = true;
+		const offConnected = connected.subscribe(isConnected => {
+			if (firstEmission) { firstEmission = false; return; }
+			if (!isConnected) {
+				liveUpdates = false;
+				subscriptionGeneration++;
+				statusGate.supersede();
+				loading = false;
+				if (!busy && hasChanges) stale = true;
+				return;
+			}
+			void refresh(true);
+		});
+		return () => { clearInterval(ticker); offConnected(); };
 	});
 
 	onDestroy(() => {
+		destroyed = true;
+		subscriptionGeneration++;
+		statusGate.supersede();
 		offTimeChanged?.();
 		api.unsubscribe('system:timeChanged').catch(() => {});
 	});
@@ -189,7 +226,8 @@
 	}
 
 	function toggleAutoSync(): void {
-		if (busy || !status?.capabilities.setNtpEnabled) return;
+		if (busy || loading || stale || !liveUpdates || !status?.capabilities.setNtpEnabled) return;
+		clearFeedback();
 		// A hand-set clock cannot survive automatic synchronisation, so switching it on
 		// gives up the edit. Do that visibly — put the live time back and say so — rather
 		// than leaving the typed value on screen for the save to quietly ignore.
@@ -224,7 +262,10 @@
 		// The refusal is the news; a re-read that also failed is a detail appended to it,
 		// never a replacement. Losing the refusal here left the user with a message about
 		// reading the time and no idea why their save had not gone through.
-		errorMessage = writeFailureMessage(outcomeMessage(res), await load());
+		const reason = res.changed || res.stateMayHaveChanged ? withDetail(tt('settings.time.errorPartial'), outcomeMessage(res)) : outcomeMessage(res);
+		const failure = await load();
+		if (failure) stale = true;
+		errorMessage = writeFailureMessage(reason, failure);
 		return false;
 	}
 
@@ -245,8 +286,8 @@
 	}
 
 	async function saveSettings(): Promise<void> {
-		if (!status || busy || !hasChanges) return;
-		errorMessage = '';
+		if (!status?.supported || busy || loading || stale || !liveUpdates || !hasChanges) return;
+		clearFeedback();
 		// A hand-set clock only survives with synchronisation off, so a save that leaves
 		// it on discards the edit instead of writing a value the daemon overwrites
 		// seconds later — which would look like the clock silently refused to change.
@@ -262,12 +303,18 @@
 		busy = true;
 		try {
 			if (!(await apply(api.call<SystemTimeResult>('system.applyTimeSettings', changes)))) return;
-			addNotification(tt('settings.time.saved'), 'success');
-			onBack?.();
+			successMessage = tt('settings.time.saved');
+			const failure = await load();
+			if (failure) {
+				stale = true;
+				errorMessage = withDetail(tt('settings.time.savedReadFailed'), failure);
+			}
 		} catch (e) {
 			// Transport failure does not prove the host applied nothing. Re-read it and keep
 			// the partial-save warning even if that read fails too.
-			errorMessage = writeFailureMessage(withDetail(tt('settings.time.errorPartial'), translateError(e)), await load());
+			const failure = await load();
+			if (failure) stale = true;
+			errorMessage = writeFailureMessage(withDetail(tt('settings.time.errorPartial'), translateError(e)), failure);
 		} finally {
 			busy = false;
 		}
@@ -287,7 +334,8 @@
 	// the two messages together are a dead end — nothing on this screen can resolve the
 	// state, so say where it can be resolved instead of asking for the impossible.
 	let syncUnknownLocked = $derived(syncUnknown && !status?.capabilities.setNtpEnabled);
-	let clockDisabled = $derived(busy || autoSync || syncUnknown || !status?.capabilities.setClock);
+	let formDisabled = $derived(busy || loading || stale || !liveUpdates || !status?.supported);
+	let clockDisabled = $derived(formDisabled || autoSync || syncUnknown || !status?.capabilities.setClock);
 	// Nothing to write means nothing to report: without this the button runs no request
 	// at all and still announces the settings as saved.
 	let syncDirty = $derived(syncSwitchIsDirty(autoSync, loaded.syncReported, autoSyncTouched));
@@ -297,72 +345,105 @@
 </script>
 
 <style>
-	.settings {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		height: 100%;
-		padding: 2vh;
-		gap: 1vh;
-		overflow-y: auto;
-	}
-
-	.container {
-		display: flex;
-		flex-direction: column;
-		gap: 1vh;
-		width: 1000px;
-		max-width: 100%;
-	}
-
-	.clock {
-		display: flex;
-		gap: 1vh;
-	}
-
-	.hint {
-		font-size: 2vh;
-		color: var(--disabled-foreground);
-	}
+	.settings { display: flex; flex-direction: column; align-items: center; height: 100%; padding: 2vh 2vw; gap: 1.5vh; overflow-y: auto; box-sizing: border-box; color: var(--secondary-foreground); }
+	.container { display: flex; flex-direction: column; width: min(100%, 820px); gap: 1.4vh; min-width: 0; }
+	h2, h3, p, dl { margin: 0; }
+	h2 { font-size: clamp(20px, 2.7vh, 28px); color: var(--primary-foreground); }
+	h3 { font-size: clamp(16px, 2vh, 21px); }
+	.heading, .pending { display: flex; gap: 1.2vh; align-items: center; }
+	.hint { font-size: clamp(13px, 1.65vh, 17px); line-height: 1.45; color: var(--secondary-foreground); opacity: 0.85; }
+	.snapshot { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1.5vh 3vh; background: var(--secondary-background); padding: 1.6vh; border-radius: 1vh; }
+	.host-clock { font-size: clamp(28px, 4.4vh, 46px); font-variant-numeric: tabular-nums; line-height: 1.2; }
+	.zone { font-size: clamp(13px, 1.7vh, 18px); margin-top: 0.4vh; }
+	.sync-status { display: flex; flex-direction: column; gap: 0.7vh; font-size: clamp(13px, 1.7vh, 18px); }
+	.sync-status dt { color: var(--disabled-foreground); font-size: clamp(12px, 1.5vh, 16px); }
+	.sync-status dd { margin: 0; }
+	.section { display: flex; flex-direction: column; gap: 1vh; padding-top: 1.4vh; border-top: 1px solid var(--secondary-softer-background); }
+	.clock { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1vh; }
+	.container :global(.input-field), .container :global(.select-field) { min-width: 0; }
+	.container :global(.label) { color: var(--secondary-foreground); font-size: clamp(13px, 1.7vh, 18px); }
+	.container :global(.alert) { font-size: clamp(13px, 1.65vh, 17px); padding: clamp(10px, 1.4vh, 16px); }
+	.container :global(.switch) { min-width: 72px; width: 72px; min-height: 42px; height: 42px; }
+	.container :global(.slider) { border-width: 3px; border-radius: 21px; }
+	.container :global(.slider:before) { width: 30px; height: 30px; left: 3px; bottom: 3px; }
+	.container :global(.slider.checked:before) { transform: translateX(30px); }
+	.container :global(input), .container :global(select) { min-width: 0; width: 100%; box-sizing: border-box; color: var(--secondary-foreground); background-color: var(--secondary-background); }
+	.container :global(.input-field.disabled input), .container :global(.select-field.disabled select) { color: var(--disabled-foreground); background-color: var(--secondary-hard-background); }
+	.settings :global(.button), .settings :global(.button.selected), .settings :global(.button:hover) { transform: none; box-shadow: none; }
+	.presets :global(.button) { flex: 1; min-width: 0; text-align: left; justify-content: flex-start; white-space: normal; opacity: 1; }
+	.presets :global(.button.disabled) { opacity: 0.6; }
+	.preset-copy { display: flex; flex-direction: column; gap: 0.2vh; }
+	.preset-copy strong { font-size: clamp(14px, 1.8vh, 19px); }
+	.preset-copy span { font-size: clamp(12px, 1.5vh, 16px); font-weight: normal; }
+	.pending { padding: 1.3vh; background: var(--secondary-background); border-radius: 1vh; font-size: clamp(14px, 1.8vh, 19px); }
+	.spinner { width: 16px; height: 16px; border: 2px solid var(--secondary-softer-background); border-top-color: var(--primary-foreground); border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
+	@keyframes spin { to { transform: rotate(360deg); } }
+	@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+	@media (max-width: 540px) { .settings { padding: 1.5vh 3vw; } .presets :global(.button-bar) { flex-direction: column !important; } .snapshot { align-items: flex-start; } }
 </style>
 
 <div class="settings">
-	<div class="container">
-		{#if errorMessage}
-			<Alert type="error" message={errorMessage} />
-		{/if}
-		{#if status && !status.supported}
-			<Alert type="warning" message={$t('settings.time.unsupported')} />
-		{/if}
-		{#if syncUnknown}
-			<Alert type="warning" message={syncUnknownLocked ? $t('settings.time.syncUnknownLocked') : $t('settings.time.syncUnknown')} />
-		{/if}
+	<div class="container" aria-busy={loading || busy}>
+		<header class="heading"><Icon img="/img/time.svg" size="3vh" colorVariable="--primary-foreground" /><h2>{$t('settings.time.title')}</h2></header>
+		{#if loading}<div class="pending" role="status"><span class="spinner" aria-hidden="true"></span>{$t('settings.time.loading')}</div>{/if}
+		{#if busy}<div class="pending" role="status" aria-live="polite"><span class="spinner" aria-hidden="true"></span>{$t('settings.time.saving')}</div>{/if}
+		{#if errorMessage}<div class="error-message" role="alert"><Alert type="error" message={errorMessage} /></div>{/if}
+		{#if successMessage}<div class="success-message" role="status"><Alert type="info" message={successMessage} /></div>{/if}
+		{#if stale}<Alert type="warning" message={$t('settings.time.changedOutside')} />{/if}
+		{#if status && !liveUpdates}<Alert type="warning" message={$t('settings.time.updatesUnavailable')} />{/if}
+		{#if status && !status.supported}<Alert type="warning" message={$t('settings.time.unsupported')} />{/if}
+		{#if syncUnknown}<Alert type="warning" message={syncUnknownLocked ? $t('settings.time.syncUnknownLocked') : $t('settings.time.syncUnknown')} />{/if}
 		{#if status}
-			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.time.autoSync') + ':'} checked={autoSync} disabled={busy || !status.capabilities.setNtpEnabled} position={[0, 0]} onToggle={toggleAutoSync} />
-			</div>
-			<div role="group" data-mouse-activate-area={areaID}>
-				<Input bind:value={ntpServer} label={$t('settings.time.ntpServer')} placeholder={$t('settings.time.ntpServerPlaceholder')} disabled={busy || !status.capabilities.setNtpServer} position={[0, 1]} flex />
-			</div>
-			<div class="clock" role="group" data-mouse-activate-area={areaID}>
-				<Input bind:value={hours} label={$t('settings.time.hours')} type="number" min={0} max={23} disabled={clockDisabled} position={[0, 2]} flex />
-				<Input bind:value={minutes} label={$t('settings.time.minutes')} type="number" min={0} max={59} disabled={clockDisabled} position={[1, 2]} flex />
-				<Input bind:value={seconds} label={$t('settings.time.seconds')} type="number" min={0} max={59} disabled={clockDisabled} position={[2, 2]} flex />
-			</div>
-			{#if autoSync}
-				<div class="hint">{$t('settings.time.autoSyncHint')}</div>
-			{/if}
-			<div role="group" data-mouse-activate-area={areaID}>
-				<Select bind:value={timezone} label={$t('settings.time.timezone')} disabled={busy || !status.capabilities.setTimezone || selectableTimezones.length === 0} position={[0, 3]} flex>
-					{#each selectableTimezones as zone (zone)}
-						<SelectOption value={zone} label={zone} />
-					{/each}
-				</Select>
-			</div>
+			<section class="snapshot" aria-label={$t('settings.time.currentTime')}>
+				<div><div class="hint">{$t(stale || !liveUpdates ? 'settings.time.lastKnownTime' : 'settings.time.currentTime')}</div><div class="host-clock">{displayClock}</div><div class="zone">{status.timezone}</div></div>
+				<dl class="sync-status">
+					<div><dt>{$t('settings.time.autoSync')}</dt><dd data-time-sync-enabled>{$t(status.ntpEnabled === null ? 'settings.time.unknown' : status.ntpEnabled ? 'settings.time.enabled' : 'settings.time.disabled')}</dd></div>
+					<div><dt>{$t('settings.time.syncResult')}</dt><dd data-time-sync-result>{$t(status.ntpSynchronized === null ? 'settings.time.syncUnreported' : status.ntpSynchronized ? 'settings.time.synchronized' : 'settings.time.notSynchronized')}</dd></div>
+				</dl>
+			</section>
+			{#if !Object.values(status.capabilities).some(Boolean)}<p class="hint">{$t('settings.time.readOnly')}</p>{/if}
+			<section class="section" aria-label={$t('settings.time.autoSync')}>
+				<div role="group" data-mouse-activate-area={areaID}>
+					<SwitchRow label={$t('settings.time.autoSync')} checked={autoSync} icon="/img/time.svg" padding="1.2vh 1.5vh" disabled={formDisabled || !status.capabilities.setNtpEnabled} position={[0, 0]} onToggle={toggleAutoSync}>
+						<p class="hint">{$t('settings.time.ntpHint')}</p>
+					</SwitchRow>
+				</div>
+				<div role="group" data-mouse-activate-area={areaID}>
+					<Input bind:value={ntpServer} onchange={clearFeedback} label={$t('settings.time.ntpServer')} placeholder={NTP_PRESETS[0]} disabled={formDisabled || !status.capabilities.setNtpServer} position={[0, 1]} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.9vh 1.2vh" flex />
+				</div>
+				{#if !ntpServer}<p class="hint">{$t('settings.time.serverUnconfigured')}</p>{/if}
+				<div class="presets">
+					<ButtonBar basePosition={[0, 2]} gap="1vh">
+						{#each NTP_PRESETS as server, index}
+							<Button label={server} icon="/img/network.svg" active={ntpServer.trim() === server} position={[index, 2]} padding="1vh 1.4vh" disabled={formDisabled || !status.capabilities.setNtpServer} onConfirm={() => selectServer(server)}>
+								<div class="preset-copy"><strong>{server}</strong><span>{$t(index === 0 ? 'settings.time.presetRecommended' : 'settings.time.presetAlternative')}</span></div>
+							</Button>
+						{/each}
+					</ButtonBar>
+				</div>
+			</section>
+			<section class="section" aria-label={$t('settings.time.timezone')}>
+				<div role="group" data-mouse-activate-area={areaID}>
+					<Select bind:value={timezone} onchange={clearFeedback} label={$t('settings.time.timezone')} disabled={formDisabled || !status.capabilities.setTimezone || selectableTimezones.length === 0} position={[0, 3]} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.9vh 1.2vh" flex>
+						{#each selectableTimezones as zone (zone)}<SelectOption value={zone} label={zone} />{/each}
+					</Select>
+				</div>
+				{#if zonesUnavailable}<p class="hint">{$t('settings.time.zonesUnavailable')}</p>{/if}
+			</section>
+			<section class="section" aria-label={$t('settings.time.manualTime')}>
+				<h3>{$t('settings.time.manualTime')}</h3>
+				<div class="clock" role="group" data-mouse-activate-area={areaID}>
+					<Input bind:value={hours} onchange={clearFeedback} label={$t('settings.time.hours')} type="number" min={0} max={23} disabled={clockDisabled} position={[0, 4]} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.9vh 1.2vh" flex />
+					<Input bind:value={minutes} onchange={clearFeedback} label={$t('settings.time.minutes')} type="number" min={0} max={59} disabled={clockDisabled} position={[1, 4]} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.9vh 1.2vh" flex />
+					<Input bind:value={seconds} onchange={clearFeedback} label={$t('settings.time.seconds')} type="number" min={0} max={59} disabled={clockDisabled} position={[2, 4]} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.9vh 1.2vh" flex />
+				</div>
+				{#if autoSync}<p class="hint">{$t('settings.time.autoSyncHint')}</p>{/if}
+			</section>
 		{/if}
 	</div>
-	<ButtonBar justify="center" basePosition={[0, 4]}>
-		<Button icon="/img/save.svg" label={$t('common.save')} disabled={busy || !status || !status.supported || !hasChanges} onConfirm={saveSettings} />
-		<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
+	<ButtonBar justify="center" basePosition={[0, 5]} gap="1vh">
+		<Button icon="/img/save.svg" label={busy ? $t('settings.time.saving') : $t('common.save')} position={[0, 5]} width="auto" fontSize="clamp(14px, 1.8vh, 18px)" padding="1vh 1.5vh" disabled={formDisabled || !status || !hasChanges} onConfirm={saveSettings} />
+		<Button icon="/img/time.svg" label={$t('settings.time.reload')} position={[1, 5]} width="auto" fontSize="clamp(14px, 1.8vh, 18px)" padding="1vh 1.5vh" disabled={busy || loading} onConfirm={reloadForm} />
+		<Button icon="/img/back.svg" label={$t('common.back')} position={[2, 5]} width="auto" fontSize="clamp(14px, 1.8vh, 18px)" padding="1vh 1.5vh" onConfirm={onBack} />
 	</ButtonBar>
 </div>

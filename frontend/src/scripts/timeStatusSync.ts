@@ -1,5 +1,7 @@
 import type { SystemTimeChanges } from '@shared';
 
+export const NTP_PRESETS: readonly string[] = ['tik.cesnet.cz', 'tak.cesnet.cz'];
+
 /**
  * The two ordering rules the system-time settings form depends on, kept out of the
  * component so they can be exercised without a DOM.
