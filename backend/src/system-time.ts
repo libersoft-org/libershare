@@ -517,7 +517,7 @@ export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Pr
 }
 export { resolveSystemExecutable, type SystemPlatform, type SystemCommand, type LocalDateTime, isSupportedPlatform, isValidNtpServer, validateClockParts, parseTimedatectlShow, parseYesNo, classifyFailure, firstLine, listSystemTimezones, getTimezoneSource, timezoneOffsetMinutes, type RunOutcome, type CommandRunner, runAll, type PlatformStatus, type PlatformStatusReader } from './system-time-common.ts';
 
-export { TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, parseTimesyncServer, type UnitState, parseUnitLoadStates, canonicalUnitName, unitIsLoaded, COMPETING_NTP_UNITS, competingNtpUnits, parseAnyUnitActive, type ExtractedWords, extractWordsChecked, extractWords, readTimedatedEnvironment, readNtpUnitsList, firstUsableNtpUnit, canConfigureTimesyncdServer, buildTimesyncdDropIn } from './system-time-linux.ts';
+export { TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, parseTimesyncServer, parseTimesyncConfig, type UnitState, parseUnitLoadStates, canonicalUnitName, unitIsLoaded, COMPETING_NTP_UNITS, competingNtpUnits, parseAnyUnitActive, type ExtractedWords, extractWordsChecked, extractWords, readTimedatedEnvironment, readNtpUnitsList, firstUsableNtpUnit, canConfigureTimesyncdServer, buildTimesyncdDropIn } from './system-time-linux.ts';
 
 export { syncDirectory, type RollbackResult, writeFileAtomically } from './system-time-files.ts';
 

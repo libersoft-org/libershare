@@ -12,6 +12,7 @@ const EXEC_TIMEOUT_MS = 5000;
 const LINUX_EXECUTABLES: Readonly<Record<string, string>> = {
 	timedatectl: '/usr/bin/timedatectl',
 	systemctl: '/usr/bin/systemctl',
+	'systemd-analyze': '/usr/bin/systemd-analyze',
 };
 
 /** Resolve a privileged helper without consulting PATH. Unknown relative names fail closed. */

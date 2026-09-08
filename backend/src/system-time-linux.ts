@@ -1,7 +1,6 @@
-import { parseTimedatectlShow, type CommandRunner, run, type PlatformStatus, tryRead, UNREADABLE_STATUS, parseYesNo } from './system-time-common.ts';
+import { parseTimedatectlShow, type CommandRunner, run, type PlatformStatus, tryRead, UNREADABLE_STATUS, parseYesNo, isValidNtpServer } from './system-time-common.ts';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-
 
 /**
  * Drop-in that carries our NTP server on systemd hosts. A drop-in is used instead of
@@ -32,6 +31,67 @@ export function parseTimesyncServer(output: string): string | null {
 		return token ? token : null;
 	};
 	return first(map['ServerName']) ?? first(map['SystemNTPServers']) ?? first(map['LinkNTPServers']) ?? first(map['FallbackNTPServers']);
+}
+
+/** Read the ordered files emitted by systemd-analyze, without guessing directory precedence. */
+export function parseTimesyncConfig(output: string): string | null {
+	if (output.includes('\0')) return null;
+	const servers: Record<'NTP' | 'FallbackNTP', string[]> = { NTP: [], FallbackNTP: [] };
+	let section = '';
+	let continuation = '';
+	let bomSeen = false;
+	const strip = (value: string): string => value.replace(/^[ \t\r]+|[ \t\r]+$/g, '');
+	const apply = (logical: string): boolean => {
+		const line = strip(logical);
+		if (!line) return true;
+		if (line.startsWith('[')) {
+			const match = /^\[([^\]]+)\]$/.exec(line);
+			if (!match) return false;
+			section = match[1]!;
+			return true;
+		}
+		if (!section) return false;
+		if (section !== 'Time') return true;
+		const equals = line.indexOf('=');
+		if (equals < 1) return false;
+		const key = strip(line.slice(0, equals));
+		if (key !== 'NTP' && key !== 'FallbackNTP') return true;
+		const value = strip(line.slice(equals + 1));
+		if (!value) {
+			servers[key] = [];
+			return true;
+		}
+		// timesyncd-conf.c uses extract_first_word(..., flags=0), not EXTRACT_UNQUOTE.
+		const parsed = extractWordsChecked(value, false);
+		if (parsed.error || parsed.words.some(word => !isValidNtpServer(word))) return false;
+		for (const word of parsed.words) if (!servers[key].includes(word)) servers[key].push(word);
+		return true;
+	};
+	for (let physical of output.split(/\r?\n/)) {
+		// Each source file starts a fresh section context; a missing [Time] must not inherit one.
+		if (/^# \/(?:etc|run|usr\/local\/lib|usr\/lib)\/systemd\/timesyncd\.conf(?:\.d\/[^/]+\.conf)?$/.test(physical)) {
+			if (continuation && !apply(continuation)) return null;
+			continuation = '';
+			section = '';
+			bomSeen = false;
+			continue;
+		}
+		if (/^[ \t\r]*[#;]/.test(physical)) continue;
+		if (!bomSeen && physical.startsWith('\uFEFF')) {
+			physical = physical.slice(1);
+			bomSeen = true;
+		}
+		const logical = continuation + physical;
+		const trailing = /\\+$/.exec(logical)?.[0].length ?? 0;
+		if (trailing % 2 === 1) {
+			continuation = logical.slice(0, -1) + ' ';
+			continue;
+		}
+		continuation = '';
+		if (!apply(logical)) return null;
+	}
+	if (continuation && !apply(continuation)) return null;
+	return servers.NTP[0] ?? servers.FallbackNTP[0] ?? null;
 }
 
 /** What systemd answered about one unit: the name it prefers for it, and its `LoadState`. */
@@ -575,12 +635,19 @@ export async function readLinuxStatus(): Promise<PlatformStatus> {
 	// name would be counted as a daemon competing with itself.
 	const states = unit === null ? null : parseUnitLoadStates(unit);
 	const competing = canNtp ? await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', '--', ...competingNtpUnits(ordered, states)]) : null;
+	const configurable = canConfigureTimesyncdServer(ordered, unit, competing);
+	let ntpServer = timesync === null ? null : parseTimesyncServer(timesync);
+	if (ntpServer === null && configurable) {
+		// show-timesync is unavailable while the service is stopped; the OS still knows file precedence.
+		const configuration = await tryRead('systemd-analyze', ['--no-pager', 'cat-config', 'systemd/timesyncd.conf']);
+		if (configuration !== null) ntpServer = parseTimesyncConfig(configuration);
+	}
 	return {
 		// `timedatectl show` was read above and already carries it — no extra probe.
 		timezone: map['Timezone'] ?? null,
 		ntpEnabled: parseYesNo(map['NTP']),
 		ntpSynchronized: parseYesNo(map['NTPSynchronized']),
-		ntpServer: timesync === null ? null : parseTimesyncServer(timesync),
-		capabilities: { setClock: true, setTimezone: true, setNtpEnabled: canNtp, setNtpServer: canConfigureTimesyncdServer(ordered, unit, competing) },
+		ntpServer,
+		capabilities: { setClock: true, setTimezone: true, setNtpEnabled: canNtp, setNtpServer: configurable },
 	};
 }
