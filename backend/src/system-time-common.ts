@@ -4,7 +4,6 @@ import { win32, isAbsolute } from 'node:path';
 import { isIP } from 'node:net';
 import { type SystemTimeOutcome, type SystemTimezoneSource, type SystemTimeResult, type SystemTimeStep, type SystemTimeCapabilities, type SystemTimeStatus } from '@shared';
 
-
 const execFileAsync = promisify(execFile);
 
 /** Hard cap on how long any time-related child process may run before we give up. */
@@ -251,7 +250,10 @@ const intlValues = Intl as unknown as { supportedValuesOf?: (key: string) => str
  */
 export function listSystemTimezones(): string[] {
 	try {
-		return intlValues.supportedValuesOf?.('timeZone') ?? [];
+		const zones = intlValues.supportedValuesOf?.('timeZone') ?? [];
+		// Canonical timezone lists can omit UTC even while the runtime accepts it.
+		if (zones.length > 0 && !zones.includes('UTC') && timezoneOffsetMinutes('UTC') !== null) return [...zones, 'UTC'].sort();
+		return zones;
 	} catch {
 		return [];
 	}
