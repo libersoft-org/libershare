@@ -119,6 +119,18 @@
 				assert(clock().every(input => input.disabled), 'Unknown synchronization permits a manual clock write');
 				assert(save().classList.contains('disabled') && writes.length === 0, 'Unknown state became an implicit setting');
 			}, { status: { ntpEnabled: null, ntpSynchronized: null } });
+			await test('unknown managed NTP remains locked while the timezone can still be saved', async () => {
+				const synchronization = target.querySelector('[role="switch"]'), zone = target.querySelector('select');
+				assert(target.querySelector('[data-time-sync-enabled]').textContent === label('settings.time.unknown'), 'Managed synchronization was guessed as enabled or disabled');
+				assert(server().value === '' && server().disabled && synchronization.getAttribute('aria-disabled') === 'true', 'An unreported managed server became an editable local configuration');
+				assert(clock().every(input => input.disabled) && target.textContent.includes(label('settings.time.syncUnknownLocked')), 'Unknown managed synchronization did not lock manual time with an explanation');
+				await click('tik.cesnet.cz'); synchronization.click(); await settle();
+				assert(server().value === '' && save().classList.contains('disabled') && writes.length === 0, 'Locked NTP controls changed the host or dirtied the form');
+				assert(!zone.disabled, 'Managed NTP unnecessarily disabled timezone editing');
+				zone.value = 'UTC'; zone.dispatchEvent(new Event('change', { bubbles: true })); await settle();
+				await click(label('common.save'));
+				assert(JSON.stringify(writes) === JSON.stringify([{ timezone: 'UTC' }]) && server().value === '', 'Timezone save also wrote unknown NTP or clock values');
+			}, { status: { ntpEnabled: null, ntpSynchronized: null, ntpServer: null, capabilities: { setClock: true, setTimezone: true, setNtpServer: false, setNtpEnabled: false } } });
 			const subscription = deferred();
 			await test('initial loading waits for subscribe before reading the host', async () => {
 				assert(target.querySelector('[role="status"]')?.textContent.includes(label('settings.time.loading')), 'Loading has no explanation');
