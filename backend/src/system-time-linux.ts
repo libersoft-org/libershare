@@ -34,7 +34,7 @@ export function parseTimesyncServer(output: string): string | null {
 }
 
 /** Read the ordered files emitted by systemd-analyze, without guessing directory precedence. */
-export function parseTimesyncConfig(output: string): string | null {
+function parseTimesyncServerLists(output: string): Record<'NTP' | 'FallbackNTP', string[]> | null {
 	if (output.includes('\0')) return null;
 	const servers: Record<'NTP' | 'FallbackNTP', string[]> = { NTP: [], FallbackNTP: [] };
 	let section = '';
@@ -91,7 +91,26 @@ export function parseTimesyncConfig(output: string): string | null {
 		if (!apply(logical)) return null;
 	}
 	if (continuation && !apply(continuation)) return null;
-	return servers.NTP[0] ?? servers.FallbackNTP[0] ?? null;
+	return servers;
+}
+
+export function parseTimesyncConfig(output: string): string | null {
+	const servers = parseTimesyncServerLists(output);
+	return servers?.NTP[0] ?? servers?.FallbackNTP[0] ?? null;
+}
+
+/** A single-server write must survive later overrides before any daemon restart. */
+export async function verifyTimesyncdServer(server: string, exec: CommandRunner = run): Promise<string | null> {
+	try {
+		const configuration = await exec('systemd-analyze', ['--no-pager', 'cat-config', 'systemd/timesyncd.conf']);
+		if (configuration.kind !== 'ok') return 'the effective systemd-timesyncd configuration could not be read';
+		const servers = parseTimesyncServerLists(configuration.output);
+		if (servers === null) return 'the effective systemd-timesyncd configuration could not be interpreted safely';
+		if (servers.NTP.length !== 1 || servers.NTP[0] !== server) return 'the effective systemd-timesyncd NTP server list differs from the requested server; another configuration file may override it';
+		return null;
+	} catch {
+		return 'the effective systemd-timesyncd configuration could not be read';
+	}
 }
 
 /** What systemd answered about one unit: the name it prefers for it, and its `LoadState`. */
