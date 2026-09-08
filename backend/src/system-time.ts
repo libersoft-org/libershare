@@ -1,7 +1,7 @@
 import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, run, validateClockParts, runAll, listSystemTimezones, isValidNtpServer } from './system-time-common.ts';
 import { MAC_SYSTEMSETUP, readMacStatus } from './system-time-macos.ts';
-import { w32tm, type WindowsSyncMode, SC_ALREADY_RUNNING, SC_NOT_ACTIVE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled } from './system-time-windows.ts';
-import { readLinuxStatus, TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn } from './system-time-linux.ts';
+import { w32tm, type WindowsSyncMode, SC_ALREADY_RUNNING, SC_NOT_ACTIVE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled, readWindowsTimeZone, type WindowsTimeZoneState } from './system-time-windows.ts';
+import { readLinuxStatus, TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn, verifyTimesyncdServer } from './system-time-linux.ts';
 import { type SystemTimeStatus, type SystemTimeResult, type SystemTimeChanges, type SystemTimeStep } from '@shared';
 import { Mutex } from 'async-mutex';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -30,10 +30,10 @@ export function buildSetClockCommands(platform: SystemPlatform, when: LocalDateT
  * there yields an empty list, meaning "this change cannot be expressed on this host"
  * — the caller reports that as unsupported rather than running anything.
  */
-export function buildSetTimezoneCommands(platform: SystemPlatform, timezone: string, windowsId: string | null): SystemCommand[] {
+export function buildSetTimezoneCommands(platform: SystemPlatform, timezone: string, windowsId: string | null, daylightDisabled = false): SystemCommand[] {
 	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-timezone', timezone] }];
 	if (platform === 'darwin') return [{ cmd: MAC_SYSTEMSETUP, args: ['-settimezone', timezone] }];
-	return windowsId ? [{ cmd: 'tzutil', args: ['/s', windowsId] }] : [];
+	return windowsId ? [{ cmd: 'tzutil', args: ['/s', windowsId + (daylightDisabled ? '_dstoff' : '')] }] : [];
 }
 
 /**
@@ -43,7 +43,7 @@ export function buildSetTimezoneCommands(platform: SystemPlatform, timezone: str
  * an explicit resync afterwards, otherwise the new peer is not contacted until the
  * next poll interval (which defaults to hours).
  *
- * `syncRunning` says whether automatic synchronisation is currently on. When it is
+ * `syncRunning` is the service's actual running state, not its start policy. When it is
  * off there is deliberately nothing to run on Linux: `systemctl restart` STARTS a
  * stopped unit, so restarting here would switch the sync daemon back on behind the
  * user's back and let it step the clock they are about to set by hand. The drop-in
@@ -57,15 +57,16 @@ export function buildSetTimezoneCommands(platform: SystemPlatform, timezone: str
  * Without them `w32tm /config` still writes the registry, and the service reads it when
  * it next starts (which is what switching synchronisation back on does).
  */
-export function buildSetNtpServerCommands(platform: SystemPlatform, server: string, syncRunning: boolean): SystemCommand[] {
+export function buildSetNtpServerCommands(platform: SystemPlatform, server: string, syncRunning: boolean, syncEnabled = true): SystemCommand[] {
 	if (platform === 'linux') return syncRunning ? [{ cmd: 'systemctl', args: ['restart', 'systemd-timesyncd'] }] : [];
 	if (platform === 'darwin') return [{ cmd: MAC_SYSTEMSETUP, args: ['-setnetworktimeserver', server] }];
 	// 0x8 is the plain client flag. 0x9 would add 0x1 (SpecialInterval), which makes the
 	// peer poll at SpecialPollInterval — a standalone host defaults that to 604800s, so
 	// the peer would be contacted weekly instead of on the normal poll interval.
 	const peers = `/manualpeerlist:${server},0x8`;
-	if (!syncRunning) return [w32tm('/config', peers, '/syncfromflags:manual')];
-	return [w32tm('/config', peers, '/syncfromflags:manual', '/update'), w32tm('/resync')];
+	// Editing a peer list must preserve Type=NoSync; only the explicit enable operation changes it.
+	if (!syncRunning) return [w32tm('/config', peers)];
+	return [w32tm('/config', peers, '/update'), ...(syncEnabled ? [w32tm('/resync')] : [])];
 }
 
 /**
@@ -153,7 +154,7 @@ export async function getSystemTimeStatus(readPlatform: PlatformStatusReader = r
 		timezone,
 		// getTimezoneOffset() counts the other way (minutes to add to LOCAL to get UTC)
 		// and answers for the process, so it is only the fallback for an unknown zone.
-		utcOffsetMinutes: timezoneOffsetMinutes(timezone) ?? -new Date().getTimezoneOffset(),
+		utcOffsetMinutes: specific.utcOffsetMinutes ?? timezoneOffsetMinutes(timezone) ?? -new Date().getTimezoneOffset(),
 		timezoneSource: getTimezoneSource(),
 	};
 }
@@ -359,7 +360,7 @@ export async function setSystemClock(hours: number, minutes: number, seconds: nu
  *
  * `exec` is injectable so the ordering can be exercised without moving the host's zone.
  */
-export async function setSystemTimezone(timezone: string, exec: CommandRunner = run): Promise<SystemTimeResult> {
+export async function setSystemTimezone(timezone: string, exec: CommandRunner = run, readWindowsZone: () => WindowsTimeZoneState | null = readWindowsTimeZone): Promise<SystemTimeResult> {
 	const known = listSystemTimezones();
 	if (known.length === 0) return result('unsupported', 'this runtime has no timezone database');
 	if (!known.includes(timezone)) return result('invalid-input', `unknown timezone: ${timezone}`);
@@ -374,7 +375,9 @@ export async function setSystemTimezone(timezone: string, exec: CommandRunner = 
 	}
 
 	return withSystemTimeLock(async () => {
-		const r = await runAll(platform, buildSetTimezoneCommands(platform, timezone, windowsId), exec);
+		const currentZone = platform === 'win32' ? readWindowsZone() : null;
+		if (platform === 'win32' && currentZone === null) return result('error', 'cannot read the Windows daylight saving preference, so the timezone was left unchanged');
+		const r = await runAll(platform, buildSetTimezoneCommands(platform, timezone, windowsId, currentZone?.daylightDisabled ?? false), exec);
 		// Only so this process FORMATS in the new zone: writing the OS timezone does not
 		// invalidate a running process's ICU cache. What the status reports is read back
 		// from the OS, so an inherited or stale TZ can no longer misrepresent the host.
@@ -404,12 +407,15 @@ export async function setSystemNtpServer(server: string, readStatus: () => Promi
 		// has to still be ours at the moment of writing — not merely when the status the
 		// capability came from was read (see checkWindowsWritable).
 		let syncRunning = status.ntpEnabled === true;
+		let syncEnabled = status.ntpEnabled === true;
 		if (platform === 'win32') {
 			const state = await checkWindowsWritable(readMode);
 			if (state.refusal) return state.refusal;
-			syncRunning = windowsSyncEnabled(state.mode, state.start) === true;
+			if (typeof state.running !== 'boolean') return result('error', 'cannot determine whether Windows Time is running, so its configuration was left unchanged');
+			syncRunning = state.running;
+			syncEnabled = windowsSyncEnabled(state.mode, state.start) === true;
 		}
-		const commands = buildSetNtpServerCommands(platform, server, syncRunning);
+		const commands = buildSetNtpServerCommands(platform, server, syncRunning, syncEnabled);
 		// A platform whose whole change is the file write above has no command to run, and
 		// runAll would read the empty list as "unsupported on this platform".
 		if (commands.length === 0) return result('ok');
@@ -447,6 +453,13 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
 			if (e.published) return { ...result('error', `${path} now holds the new server but could not be flushed to disk (${e.message ?? 'the directory flush failed'}), so systemd-timesyncd was not restarted onto it`), changed: true, stateMayHaveChanged: true };
 			if (e.code === 'EACCES' || e.code === 'EPERM') return result('permission-denied', `cannot write ${path}`);
 			return result('error', e.message ?? `cannot write ${path}`);
+		}
+		const verification = await verifyTimesyncdServer(server, exec);
+		if (verification !== null) {
+			const restored = await rollback();
+			if (restored.state === 'not-restored') return { ...result('error', `${verification} (${path} could not be restored safely; its current configuration was left untouched)`), changed: true, stateMayHaveChanged: true };
+			if (restored.state === 'restored-not-durable') return { ...result('error', `${verification} (${path} was restored but could not be flushed to disk, so it may not survive a crash)`), stateMayHaveChanged: true };
+			return result('error', verification);
 		}
 		const commands = buildSetNtpServerCommands('linux', server, syncRunning);
 		// Synchronisation is off, so there is deliberately no restart — the drop-in on disk

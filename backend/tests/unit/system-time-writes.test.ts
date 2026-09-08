@@ -71,7 +71,7 @@ describe('buildSetNtpServerCommands', () => {
 
 	it('configures the peer and resyncs on windows while synchronisation is on', () => {
 		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', true)).toEqual([
-			{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8', '/syncfromflags:manual', '/update'], failOnOutput: W32TM_ERROR_RE },
+			{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8', '/update'], failOnOutput: W32TM_ERROR_RE },
 			{ cmd: 'w32tm', args: ['/resync'], failOnOutput: W32TM_ERROR_RE },
 		]);
 	});
@@ -87,7 +87,7 @@ describe('buildSetNtpServerCommands', () => {
 	 * registry write happens without it, and the service reads it when it next starts.
 	 */
 	it('skips the resync and the update notification on windows while synchronisation is off', () => {
-		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', false)).toEqual([{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8', '/syncfromflags:manual'], failOnOutput: W32TM_ERROR_RE }]);
+		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', false)).toEqual([{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8'], failOnOutput: W32TM_ERROR_RE }]);
 	});
 
 	it('sets the single supported server on macOS', () => {
@@ -306,13 +306,37 @@ describe('setSystemNtpServer', () => {
 
 	const capable = async (): Promise<SystemTimeStatus> => statusFixture();
 
+	it('does not enable synchronization or resync when configuring a running NoSync service', async () => {
+		await onPlatform('win32', async () => {
+			const { exec, calls } = fakeRunner([]);
+			const mode = async (): Promise<WindowsModeState> => ({ mode: 'none', start: 'automatic', membership: 'standalone', running: true });
+			expect((await setSystemNtpServer('ntp.example.org', capable, mode, exec)).success).toBe(true);
+			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8 /update']);
+		});
+	});
+	it('does not notify or resync a stopped trigger-start service just because policy enables it', async () => {
+		await onPlatform('win32', async () => {
+			const { exec, calls } = fakeRunner([]);
+			const mode = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'on-demand', membership: 'standalone', running: false });
+			expect((await setSystemNtpServer('ntp.example.org', capable, mode, exec)).success).toBe(true);
+			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8']);
+		});
+	});
+	it('refuses a server write when the service running state is unknown', async () => {
+		await onPlatform('win32', async () => {
+			const { exec, calls } = fakeRunner([]);
+			const mode = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'on-demand', membership: 'standalone', running: null });
+			expect((await setSystemNtpServer('ntp.example.org', capable, mode, exec)).success).toBe(false);
+			expect(calls).toEqual([]);
+		});
+	});
 	it('writes the peer list on a host whose time source is ours', async () => {
 		await onPlatform('win32', async () => {
 			const { exec, calls } = fakeRunner([]);
-			const ours = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'disabled', membership: 'standalone' });
+			const ours = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'disabled', membership: 'standalone', running: false });
 			expect((await setSystemNtpServer('ntp.example.org', capable, ours, exec)).success).toBe(true);
-			// Start mode `disabled` means the service is not running, so nothing is asked of it.
-			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8 /syncfromflags:manual']);
+			// The SCM reports stopped, so the peer update does not notify or start the service.
+			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8']);
 		});
 	});
 
@@ -731,5 +755,40 @@ describe('on a platform with no time backend', () => {
 				expect(r.message).toContain('freebsd');
 			}
 		});
+	});
+});
+
+it('keeps an authoritative fixed OS offset instead of recomputing it from an IANA zone', async () => {
+	const status = await getSystemTimeStatus(async () => ({ timezone: 'Europe/Prague', utcOffsetMinutes: 345, timezoneOffsetMode: 'fixed' as const, ntpEnabled: false, ntpSynchronized: null, ntpServer: null, capabilities: { setClock: true, setTimezone: true, setNtpEnabled: true, setNtpServer: true } }));
+	expect(status.utcOffsetMinutes).toBe(345);
+	expect(status.timezoneOffsetMode).toBe('fixed');
+});
+
+describe.if(process.platform === 'win32')('Windows timezone preference preservation', () => {
+	it('keeps disabled daylight saving when selecting a timezone', async () => {
+		const original = process.env['TZ'];
+		try {
+			const { exec, calls } = fakeRunner([]);
+			const result = await setSystemTimezone('Europe/Prague', exec, () => ({ windowsId: 'Central Europe Standard Time', utcOffsetMinutes: 60, daylightDisabled: true }));
+			expect(result.success).toBe(true);
+			expect(calls).toHaveLength(1);
+			expect(calls[0]).toEndWith('_dstoff');
+		} finally {
+			if (original === undefined) delete process.env['TZ'];
+			else process.env['TZ'] = original;
+		}
+	});
+	it('does not change a timezone when its current daylight preference cannot be read', async () => {
+		const { exec, calls } = fakeRunner([]);
+		const result = await setSystemTimezone('Europe/Prague', exec, () => null);
+		expect(result.success).toBe(false);
+		expect(calls).toEqual([]);
+	});
+	it('uses the authoritative OS offset for the date of a manual clock write', async () => {
+		const { exec, calls } = fakeRunner([]);
+		const status = statusFixture({ nowMs: Date.UTC(2026, 6, 1, 22, 30), utcOffsetMinutes: 60, timezoneOffsetMode: 'fixed' });
+		const result = await setSystemClock(12, 0, 0, async () => status, exec);
+		expect(result.success).toBe(true);
+		expect(calls[0]).toContain('2026-07-01T12:00:00');
 	});
 });

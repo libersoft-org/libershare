@@ -4,8 +4,8 @@ import { dlopen, FFIType, ptr } from 'bun:ffi';
 import { win32 } from 'node:path';
 
 /**
- * Windows-only helpers that need an in-process system call rather than a child process:
- * the ICU timezone conversion below, and the registry key probe at the bottom of the file.
+ * Windows time policy and native readers. ICU, registry, SCM and timezone APIs avoid
+ * localized command output where it cannot establish ownership or actual host state.
  */
 
 /** Address a Windows system DLL directly so an elevated process never searches for it. */
@@ -125,6 +125,10 @@ const ERROR_FILE_NOT_FOUND = 2;
 interface Advapi32 {
 	RegOpenKeyExW: (hKey: bigint, subKey: number, options: number, sam: number, out: number) => number;
 	RegCloseKey: (hKey: bigint) => number;
+	OpenSCManagerW: (machine: null, database: null, access: number) => bigint;
+	OpenServiceW: (manager: bigint, name: number, access: number) => bigint;
+	QueryServiceStatusEx: (service: bigint, level: number, data: number, size: number, needed: number) => number;
+	CloseServiceHandle: (handle: bigint) => number;
 }
 
 // null means "tried and unavailable" — the probe runs at most once either way.
@@ -137,6 +141,10 @@ function getAdvapi32(): Advapi32 | null {
 			const lib = dlopen(windowsSystemLibraryPath('advapi32.dll'), {
 				RegOpenKeyExW: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
 				RegCloseKey: { args: [FFIType.u64], returns: FFIType.i32 },
+				OpenSCManagerW: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32], returns: FFIType.u64 },
+				OpenServiceW: { args: [FFIType.u64, FFIType.ptr, FFIType.u32], returns: FFIType.u64 },
+				QueryServiceStatusEx: { args: [FFIType.u64, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
+				CloseServiceHandle: { args: [FFIType.u64], returns: FFIType.i32 },
 			});
 			advapi32 = lib.symbols as unknown as Advapi32;
 		} catch {
@@ -259,8 +267,6 @@ export function probeDomainMembership(): DomainMembership {
 		return 'unknown';
 	}
 }
-
-
 
 /** Registry key holding the Windows Time service configuration (NTP peers and sync type). */
 const W32TIME_PARAMS_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters';
@@ -506,6 +512,8 @@ export interface WindowsModeState {
 	mode: WindowsSyncMode;
 	start: WindowsStartMode;
 	membership: DomainMembership;
+	/** Actual SCM state, separate from start policy. Missing or null is unknown. */
+	running?: boolean | null;
 }
 
 /** Reads {@link WindowsModeState}. Injectable so a write's safety check can be tested off a real host. */
@@ -523,28 +531,107 @@ export async function readWindowsMode(): Promise<WindowsModeState> {
 	// Read here rather than by the caller so a write's safety check gets the join state
 	// from the same read it gets the mode from, inside the same lock.
 	const membership = probeDomainMembership();
-	return { mode: parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policyManaged), start: parseWindowsStartMode(start), membership };
+	return { mode: parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policyManaged), start: parseWindowsStartMode(start), membership, running: readWindowsTimeServiceRunning() };
 }
 
 /** Read the Windows (W32Time) part of the status. */
-export async function readWindowsStatus(): Promise<PlatformStatus> {
-	// Everything here is read from the registry rather than from `sc query` / `w32tm
-	// /query /configuration`: the first localizes its field NAMES as well as its values
-	// (a German host prints `ZUSTAND`, not `STATE`), and the second needs elevation.
-	// Registry value names are identifiers and are the same in every language.
+export async function readWindowsStatus(readZone: () => WindowsTimeZoneState | null = readWindowsTimeZone, readMode: WindowsModeReader = readWindowsMode): Promise<PlatformStatus> {
+	// Registry names establish policy; SCM and timezone APIs supply actual runtime state.
 	const params = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'NtpServer']);
 	const status = await tryRead('w32tm', ['/query', '/status']);
-	// tzutil answers with a Windows identifier, which has to be mapped back to IANA.
-	const zone = parseTzutilZone(await tryRead('tzutil', ['/g']));
-	const { mode, start, membership } = await readWindowsMode();
+	const { mode, start, membership, running } = await readMode();
+	// Sample the native offset after asynchronous reads, near the final clock sample.
+	const zone = readZone();
 	// A time source an administrator owns is read-only here, so the UI disables the
 	// controls instead of offering a change that would detach the host from its domain.
 	const ours = windowsSyncIsOurs(mode, membership);
 	return {
-		timezone: zone === null ? null : windowsToIanaTimezone(zone),
+		timezone: zone?.windowsId ? windowsToIanaTimezone(zone.windowsId) : null,
+		...(zone ? { utcOffsetMinutes: zone.utcOffsetMinutes, timezoneOffsetMode: 'fixed' as const } : {}),
 		ntpEnabled: windowsSyncEnabled(mode, start),
 		ntpSynchronized: status === null ? null : parseWindowsSyncStatus(status),
 		ntpServer: parseWindowsNtpServer(params === null ? null : parseRegValue(params, 'NtpServer')),
-		capabilities: { setClock: true, setTimezone: canConvertTimezoneId(), setNtpServer: ours, setNtpEnabled: ours },
+		capabilities: { setClock: zone !== null && running !== null && running !== undefined && !(windowsSyncEnabled(mode, start) === false && running && mode !== 'none'), setTimezone: zone !== null && canConvertTimezoneId(), setNtpServer: ours, setNtpEnabled: ours },
 	};
+}
+
+/** QueryServiceStatusEx returns SERVICE_STATUS_PROCESS: nine DWORDs, current state at offset 4. */
+export function parseWindowsServiceRunning(bytes: Uint8Array): boolean | null {
+	if (bytes.byteLength < 36) return null;
+	const state = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(4, true);
+	return state === 4 ? true : state === 1 ? false : null;
+}
+
+/** Query only W32Time status; no service start, stop or configuration access is requested. */
+export function readWindowsTimeServiceRunning(): boolean | null {
+	const api = getAdvapi32();
+	if (!api) return null;
+	let manager = 0n;
+	let service = 0n;
+	try {
+		manager = api.OpenSCManagerW(null, null, 0x0001); // SC_MANAGER_CONNECT
+		if (manager === 0n) return null;
+		const name = toWideCString('W32Time');
+		service = api.OpenServiceW(manager, ptr(name), 0x0004); // SERVICE_QUERY_STATUS
+		if (service === 0n) return null;
+		const bytes = new Uint8Array(36);
+		const needed = new Uint32Array(1);
+		if (!api.QueryServiceStatusEx(service, 0, ptr(bytes), bytes.length, ptr(needed))) return null;
+		return parseWindowsServiceRunning(bytes);
+	} catch {
+		return null;
+	} finally {
+		if (service !== 0n) api.CloseServiceHandle(service);
+		if (manager !== 0n) api.CloseServiceHandle(manager);
+	}
+}
+
+export interface WindowsTimeZoneState {
+	windowsId: string | null;
+	utcOffsetMinutes: number;
+	daylightDisabled: boolean;
+}
+
+/** DYNAMIC_TIME_ZONE_INFORMATION is 432 bytes; biases are minutes west of UTC. */
+export function parseWindowsTimeZone(bytes: Uint8Array, state: number): WindowsTimeZoneState | null {
+	if (bytes.byteLength < 432 || ![0, 1, 2].includes(state)) return null;
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	const bias = view.getInt32(0, true);
+	// GetDynamicTimeZoneInformation tells which bias applies NOW, including disabled DST.
+	const seasonalBias = state === 1 ? view.getInt32(84, true) : state === 2 ? view.getInt32(168, true) : 0;
+	const utcOffsetMinutes = -(bias + seasonalBias) || 0;
+	const disabled = view.getUint8(428);
+	if (Math.abs(utcOffsetMinutes) > 24 * 60 || disabled > 1) return null;
+	let windowsId = '';
+	for (let index = 0; index < 128; index++) {
+		const character = view.getUint16(172 + index * 2, true);
+		if (character === 0) break;
+		windowsId += String.fromCharCode(character);
+	}
+	return { windowsId: windowsId || null, utcOffsetMinutes, daylightDisabled: disabled === 1 };
+}
+
+interface WindowsTimezoneApi {
+	GetDynamicTimeZoneInformation: (data: number) => number;
+}
+let timezoneApi: WindowsTimezoneApi | null | undefined;
+
+/** Read the effective OS timezone without relying on process TZ or IANA DST rules. */
+export function readWindowsTimeZone(): WindowsTimeZoneState | null {
+	if (timezoneApi === undefined) {
+		try {
+			timezoneApi = dlopen(windowsSystemLibraryPath('kernel32.dll'), {
+				GetDynamicTimeZoneInformation: { args: [FFIType.ptr], returns: FFIType.u32 },
+			}).symbols as unknown as WindowsTimezoneApi;
+		} catch {
+			timezoneApi = null;
+		}
+	}
+	if (!timezoneApi) return null;
+	try {
+		const bytes = new Uint8Array(432);
+		return parseWindowsTimeZone(bytes, timezoneApi.GetDynamicTimeZoneInformation(ptr(bytes)));
+	} catch {
+		return null;
+	}
 }

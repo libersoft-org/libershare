@@ -410,7 +410,7 @@ const NO_CAPABILITIES: SystemTimeCapabilities = { setClock: false, setTimezone: 
  * The half of the status that comes from the OS. `timezone` is the host's own setting,
  * null when it could not be read — the process's zone then stands in for it.
  */
-export type PlatformStatus = Pick<SystemTimeStatus, 'ntpEnabled' | 'ntpSynchronized' | 'ntpServer' | 'capabilities'> & { timezone: string | null };
+export type PlatformStatus = Pick<SystemTimeStatus, 'ntpEnabled' | 'ntpSynchronized' | 'ntpServer' | 'capabilities'> & { timezone: string | null; utcOffsetMinutes?: number; timezoneOffsetMode?: 'zone' | 'fixed' };
 
 /** Nothing could be read: every value unknown and every capability off. */
 export const UNREADABLE_STATUS: PlatformStatus = { ntpEnabled: null, ntpSynchronized: null, ntpServer: null, timezone: null, capabilities: NO_CAPABILITIES };
