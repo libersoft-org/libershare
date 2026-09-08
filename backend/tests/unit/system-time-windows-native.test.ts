@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { resolve } from 'node:path';
+import { setTimeout as scheduleTimeout, clearTimeout as cancelTimeout } from 'node:timers';
 import { getSystemTimeStatus, setSystemClock } from '../../src/system-time.ts';
 import { parseWindowsServiceRunning, parseWindowsTimeZone, readWindowsTimeServiceRunning, readWindowsTimeZone, readWindowsStatus } from '../../src/system-time-windows.ts';
 
@@ -51,7 +52,7 @@ describe('Windows native time structures', () => {
 });
 
 describe('SCM read handle lifetime', () => {
-	it.each(['running', 'stopped', 'query-failed', 'open-failed'])('opens only query access and releases native handles: %s', mode => {
+	it.each(['running', 'stopped', 'query-failed', 'open-failed'])('opens only query access and releases native handles: %s', async mode => {
 		const script = `
 			import {mock} from 'bun:test';
 			const ffi=await import('bun:ffi');const calls=[];
@@ -64,9 +65,21 @@ describe('SCM read handle lifetime', () => {
 			const {readWindowsTimeServiceRunning}=await import('./src/system-time-windows.ts');
 			console.log(JSON.stringify({running:readWindowsTimeServiceRunning(),calls}));
 		`;
-		const child = Bun.spawnSync([process.execPath, '--eval', script], { cwd: resolve(import.meta.dir, '../..'), timeout: 5000 });
-		expect(child.exitCode).toBe(0);
-		const result = JSON.parse(child.stdout.toString());
+		const child = Bun.spawn([process.execPath, '--eval', script], { cwd: resolve(import.meta.dir, '../..'), stdout: 'pipe', stderr: 'pipe' });
+		const deadline = scheduleTimeout(() => child.kill('SIGKILL'), 5000);
+		let result;
+		try {
+			const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+			if (exitCode !== 0) throw new Error(`SCM fixture exited ${exitCode}: ${stderr}`);
+			expect(stderr).toBe('');
+			result = JSON.parse(stdout);
+		} finally {
+			cancelTimeout(deadline);
+			if (child.exitCode === null) {
+				child.kill('SIGKILL');
+				await child.exited;
+			}
+		}
 		expect(result.running).toBe(mode === 'running' ? true : mode === 'stopped' ? false : null);
 		expect(result.calls.slice(0, 2)).toEqual([
 			['manager', 1],
@@ -80,7 +93,7 @@ describe('SCM read handle lifetime', () => {
 						['close', 1],
 					]
 		);
-	});
+	}, 10000);
 });
 
 it('does not offer clock or timezone writes when the native timezone read failed', async () => {
