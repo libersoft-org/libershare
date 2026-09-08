@@ -1,9 +1,16 @@
 import { dlopen, FFIType, ptr } from 'bun:ffi';
+import { win32 } from 'node:path';
 
 /**
  * Windows-only helpers that need an in-process system call rather than a child process:
  * the ICU timezone conversion below, and the registry key probe at the bottom of the file.
  */
+
+/** Address a Windows system DLL directly so an elevated process never searches for it. */
+export function windowsSystemLibraryPath(name: string, systemRoot: string | undefined = process.env['SystemRoot']): string {
+	const root = systemRoot && win32.isAbsolute(systemRoot) ? systemRoot : 'C:\\Windows';
+	return win32.join(root, 'System32', name);
+}
 
 /**
  * IANA to Windows timezone identifier conversion, done in-process through the ICU
@@ -45,7 +52,7 @@ let icu: Icu | null | undefined;
 function getIcu(): Icu | null {
 	if (icu === undefined) {
 		try {
-			const lib = dlopen('icu.dll', {
+			const lib = dlopen(windowsSystemLibraryPath('icu.dll'), {
 				ucal_getWindowsTimeZoneID: { args: [FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.ptr], returns: FFIType.i32 },
 			});
 			icu = lib.symbols as unknown as Icu;
@@ -125,7 +132,7 @@ let advapi32: Advapi32 | null | undefined;
 function getAdvapi32(): Advapi32 | null {
 	if (advapi32 === undefined) {
 		try {
-			const lib = dlopen('advapi32.dll', {
+			const lib = dlopen(windowsSystemLibraryPath('advapi32.dll'), {
 				RegOpenKeyExW: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
 				RegCloseKey: { args: [FFIType.u64], returns: FFIType.i32 },
 			});
@@ -204,7 +211,7 @@ let netapi32: Netapi32 | null | undefined;
 function getNetapi32(): Netapi32 | null {
 	if (netapi32 === undefined) {
 		try {
-			const lib = dlopen('netapi32.dll', {
+			const lib = dlopen(windowsSystemLibraryPath('netapi32.dll'), {
 				NetGetJoinInformation: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
 				NetApiBufferFree: { args: [FFIType.u64], returns: FFIType.i32 },
 			});

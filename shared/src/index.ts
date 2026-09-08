@@ -461,6 +461,14 @@ export interface SystemTimeStatus {
 	capabilities: SystemTimeCapabilities;
 }
 
+/** The changed fields of one atomic system-time settings save. */
+export interface SystemTimeChanges {
+	ntpEnabled?: boolean;
+	ntpServer?: string;
+	timezone?: string;
+	clock?: { hours: number; minutes: number; seconds: number };
+}
+
 /**
  * How a system-time write ended.
  * - `ok`: the OS applied the change.

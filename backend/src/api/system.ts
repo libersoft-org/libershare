@@ -1,11 +1,11 @@
 import os from 'os';
 import { statfs } from 'fs/promises';
 import { readFileSync } from 'fs';
-import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type SystemTimeResult, type SystemTimeStatus, CodedError, ErrorCodes } from '@shared';
+import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type SystemTimeChanges, type SystemTimeResult, type SystemTimeStatus, CodedError, ErrorCodes } from '@shared';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
-import { getSystemTimeStatus, listSystemTimezones, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, withSystemTimeLock } from '../system-time.ts';
+import { applySystemTimeSettings, getSystemTimeStatus, listSystemTimezones, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, withSystemTimeLock } from '../system-time.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -27,6 +27,7 @@ interface SystemHandlers {
 	setTimezone: (p: { timezone: string }) => Promise<SystemTimeResult>;
 	setNtpServer: (p: { server: string }) => Promise<SystemTimeResult>;
 	setNtpEnabled: (p: { enabled: boolean }) => Promise<SystemTimeResult>;
+	applyTimeSettings: (p: SystemTimeChanges) => Promise<SystemTimeResult>;
 	startPolling: () => void;
 	stopPolling: () => void;
 }
@@ -183,6 +184,36 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		assert(p, ['enabled']);
 		if (typeof p.enabled !== 'boolean') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'enabled must be a boolean');
 		return applyTimeWrite(() => setSystemNtpEnabled(p.enabled));
+	}
+
+	/** Validate and apply every changed time field as one serialized save. */
+	function applyTimeSettings(p: SystemTimeChanges): Promise<SystemTimeResult> {
+		if (!p || typeof p !== 'object' || Array.isArray(p)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'time settings must be an object');
+		const allowed = new Set(['ntpEnabled', 'ntpServer', 'timezone', 'clock']);
+		const keys = Object.keys(p);
+		if (keys.length === 0 || keys.some(key => !allowed.has(key))) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'time settings must contain only supported changed fields');
+		const changes: SystemTimeChanges = {};
+		if (p.ntpEnabled !== undefined) {
+			if (typeof p.ntpEnabled !== 'boolean') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'ntpEnabled must be a boolean');
+			changes.ntpEnabled = p.ntpEnabled;
+		}
+		if (p.ntpServer !== undefined) {
+			if (typeof p.ntpServer !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'ntpServer must be a string');
+			changes.ntpServer = p.ntpServer.trim();
+		}
+		if (p.timezone !== undefined) {
+			if (typeof p.timezone !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'timezone must be a string');
+			changes.timezone = p.timezone;
+		}
+		if (p.clock !== undefined) {
+			if (!p.clock || typeof p.clock !== 'object' || Array.isArray(p.clock)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'clock must be an object');
+			assert(p.clock, ['hours', 'minutes', 'seconds']);
+			for (const key of ['hours', 'minutes', 'seconds'] as const) {
+				if (typeof p.clock[key] !== 'number' || !Number.isFinite(p.clock[key])) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `clock.${key} must be a number`);
+			}
+			changes.clock = { hours: p.clock.hours, minutes: p.clock.minutes, seconds: p.clock.seconds };
+		}
+		return applyTimeWrite(() => applySystemTimeSettings(changes));
 	}
 
 	// Detect OS-side volume changes (system tray, media keys, device plug/unplug)
@@ -373,5 +404,5 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		}
 	}
 
-	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, getTime, listTimezones, setClock, setTimezone, setNtpServer, setNtpEnabled, startPolling, stopPolling };
+	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, getTime, listTimezones, setClock, setTimezone, setNtpServer, setNtpEnabled, applyTimeSettings, startPolling, stopPolling };
 }

@@ -1,3 +1,5 @@
+import type { SystemTimeChanges } from '@shared';
+
 /**
  * The two ordering rules the system-time settings form depends on, kept out of the
  * component so they can be exercised without a DOM.
@@ -88,12 +90,6 @@ export function loadFailureMessage(failure: string, mayApply: boolean): string {
 	return mayApply ? failure : '';
 }
 
-/** One request a save has to make. */
-export interface TimeWrite {
-	method: string;
-	params: Record<string, unknown>;
-}
-
 /**
  * Everything a save writes, read off the form ONCE before the first request.
  *
@@ -110,26 +106,43 @@ export interface TimeSavePlan {
 }
 
 /**
- * The requests a save makes, in the order the OS requires.
+ * The changed fields sent in one request. The backend owns their execution order.
  *
- * Derived from a plan rather than from the live form, and that is the point: a save is up to
- * five round trips, and reading a reactive value BETWEEN two of them lets a status answer
- * landing mid-save decide what the remaining steps write — or whether they run at all. The
- * plan is taken before the first request, so every step belongs to the save the user asked
- * for.
- *
- * The order is not cosmetic. Synchronisation goes off first, because the OS refuses a manual
- * clock set while a daemon owns the clock, and back on last, so a clock set in the same save
- * is not stepped over by the sync that follows it.
+ * Derived from a plan rather than from the live form so every field belongs to the save the
+ * user pressed. The backend orders these fields and applies them under one lock.
  */
-export function planTimeWrites(plan: TimeSavePlan): TimeWrite[] {
-	const writes: TimeWrite[] = [];
-	if (!plan.autoSync && plan.syncDirty) writes.push({ method: 'system.setNtpEnabled', params: { enabled: false } });
-	if (plan.ntpServer !== plan.loaded.ntpServer) writes.push({ method: 'system.setNtpServer', params: { server: plan.ntpServer } });
-	if (plan.timezone !== plan.loaded.timezone) writes.push({ method: 'system.setTimezone', params: { timezone: plan.timezone } });
-	if (plan.clock) writes.push({ method: 'system.setClock', params: { ...plan.clock } });
-	if (plan.autoSync && plan.syncDirty) writes.push({ method: 'system.setNtpEnabled', params: { enabled: true } });
-	return writes;
+export function planTimeChanges(plan: TimeSavePlan): SystemTimeChanges {
+	const changes: SystemTimeChanges = {};
+	if (plan.syncDirty) changes.ntpEnabled = plan.autoSync;
+	if (plan.ntpServer !== plan.loaded.ntpServer) changes.ntpServer = plan.ntpServer;
+	if (plan.timezone !== plan.loaded.timezone) changes.timezone = plan.timezone;
+	if (plan.clock) changes.clock = { ...plan.clock };
+	return changes;
+}
+
+export interface HostClock {
+	hours: string;
+	minutes: string;
+	seconds: string;
+}
+
+/** Format a host timestamp in its timezone, including offset changes across DST. */
+export function formatHostClock(nowMs: number, timezone: string, fallbackOffsetMinutes: number): HostClock {
+	try {
+		const parts = new Intl.DateTimeFormat('en-GB', {
+			timeZone: timezone,
+			hour: '2-digit',
+			minute: '2-digit',
+			second: '2-digit',
+			hourCycle: 'h23',
+		}).formatToParts(new Date(nowMs));
+		const value = (type: Intl.DateTimeFormatPartTypes): string => parts.find(part => part.type === type)?.value ?? '';
+		const clock = { hours: value('hour'), minutes: value('minute'), seconds: value('second') };
+		if (clock.hours && clock.minutes && clock.seconds) return clock;
+	} catch {}
+	const fallback = new Date(nowMs + fallbackOffsetMinutes * 60000);
+	const pad = (value: number): string => String(value).padStart(2, '0');
+	return { hours: pad(fallback.getUTCHours()), minutes: pad(fallback.getUTCMinutes()), seconds: pad(fallback.getUTCSeconds()) };
 }
 
 /**

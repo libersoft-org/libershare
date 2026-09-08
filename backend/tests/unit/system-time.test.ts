@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, competingNtpUnits, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitLoadStates, type PlatformStatusReader, extractWords, extractWordsChecked, readNtpUnitsList, readTimedatedEnvironment, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, syncDirectory, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
-import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeDomainMembership, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState } from '../../src/system-time-windows.ts';
+import { applySystemTimeSettings, applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, competingNtpUnits, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitLoadStates, type PlatformStatusReader, extractWords, extractWordsChecked, readNtpUnitsList, readTimedatedEnvironment, rememberWindowsZone, resolveSystemExecutable, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, syncDirectory, type CommandRunner, type RunOutcome, type SystemCommand, type SystemTimeWriters, type WindowsModeState, TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
+import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeDomainMembership, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState, windowsSystemLibraryPath } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
 // ---------------------------------------------------------------------------
@@ -46,6 +46,26 @@ describe('isSupportedPlatform', () => {
 
 	it('rejects every other platform', () => {
 		for (const platform of ['freebsd', 'openbsd', 'sunos', 'aix', 'android', 'Linux', '']) expect(isSupportedPlatform(platform)).toBe(false);
+	});
+});
+
+describe('trusted system executables', () => {
+	it('maps every privileged helper to an absolute operating-system path', () => {
+		expect(resolveSystemExecutable('linux', 'timedatectl')).toBe('/usr/bin/timedatectl');
+		expect(resolveSystemExecutable('linux', 'systemctl')).toBe('/usr/bin/systemctl');
+		expect(resolveSystemExecutable('darwin', '/usr/sbin/systemsetup')).toBe('/usr/sbin/systemsetup');
+		expect(resolveSystemExecutable('win32', 'w32tm', 'D:\\Windows')).toBe('D:\\Windows\\System32\\w32tm.exe');
+		expect(resolveSystemExecutable('win32', 'powershell', 'D:\\Windows')).toBe('D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+	});
+
+	it('fails closed for a relative executable outside the allow-list', () => {
+		expect(resolveSystemExecutable('linux', 'sh')).toBeNull();
+		expect(resolveSystemExecutable('win32', 'cmd', 'C:\\Windows')).toBeNull();
+	});
+
+	it('loads Windows DLLs from System32 rather than the DLL search path', () => {
+		expect(windowsSystemLibraryPath('icu.dll', 'D:\\Windows')).toBe('D:\\Windows\\System32\\icu.dll');
+		expect(windowsSystemLibraryPath('advapi32.dll', 'D:\\Windows')).toBe('D:\\Windows\\System32\\advapi32.dll');
 	});
 });
 
@@ -2269,6 +2289,96 @@ describe('the write lock covers every writer', () => {
 		const { exec, calls } = fakeRunner([]);
 		expect((await setSystemClock(1, 2, 3, syncing, exec)).outcome).toBe('auto-sync-enabled');
 		expect(calls).toEqual([]);
+	});
+});
+
+describe('applySystemTimeSettings', () => {
+	const okResult = { success: true, outcome: 'ok' as const, message: null };
+
+	function writers(calls: string[], overrides: Partial<SystemTimeWriters> = {}): SystemTimeWriters {
+		return {
+			setNtpEnabled: async enabled => {
+				calls.push(`ntp:${enabled}`);
+				return okResult;
+			},
+			setNtpServer: async server => {
+				calls.push(`server:${server}`);
+				return okResult;
+			},
+			setTimezone: async timezone => {
+				calls.push(`zone:${timezone}`);
+				return okResult;
+			},
+			setClock: async clock => {
+				calls.push(`clock:${clock.hours}:${clock.minutes}:${clock.seconds}`);
+				return okResult;
+			},
+			...overrides,
+		};
+	}
+
+	it('applies one save in dependency order under one operation', async () => {
+		const calls: string[] = [];
+		const result = await applySystemTimeSettings(
+			{ ntpEnabled: false, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 } },
+			writers(calls)
+		);
+		expect(result).toEqual(okResult);
+		expect(calls).toEqual(['ntp:false', 'server:ntp.example.org', 'zone:Europe/Prague', 'clock:1:2:3']);
+	});
+
+	it('enables NTP only after every other requested change', async () => {
+		const calls: string[] = [];
+		await applySystemTimeSettings({ ntpEnabled: true, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague' }, writers(calls));
+		expect(calls).toEqual(['server:ntp.example.org', 'zone:Europe/Prague', 'ntp:true']);
+	});
+
+	it('stops on failure and reports that an earlier step changed the host', async () => {
+		const calls: string[] = [];
+		const denied = { success: false, outcome: 'permission-denied' as const, message: 'denied' };
+		const result = await applySystemTimeSettings(
+			{ ntpEnabled: false, timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 } },
+			writers(calls, {
+				setTimezone: async timezone => {
+					calls.push(`zone:${timezone}`);
+					return denied;
+				},
+			})
+		);
+		expect(result).toEqual({ ...denied, changed: true, stateMayHaveChanged: true });
+		expect(calls).toEqual(['ntp:false', 'zone:Europe/Prague']);
+	});
+
+	it('does not interleave two clients saves', async () => {
+		const calls: string[] = [];
+		let releaseFirst!: () => void;
+		let firstStarted!: () => void;
+		const started = new Promise<void>(resolve => (firstStarted = resolve));
+		const release = new Promise<void>(resolve => (releaseFirst = resolve));
+		const firstWriters = writers(calls, {
+			setNtpEnabled: async enabled => {
+				calls.push(`first-ntp:${enabled}`);
+				firstStarted();
+				await release;
+				return okResult;
+			},
+		});
+		const secondWriters = writers(calls, {
+			setNtpEnabled: async enabled => {
+				calls.push(`second-ntp:${enabled}`);
+				return okResult;
+			},
+		});
+
+		const first = applySystemTimeSettings({ ntpEnabled: false, timezone: 'Europe/Prague' }, firstWriters);
+		await started;
+		const second = applySystemTimeSettings({ ntpEnabled: false, timezone: 'UTC' }, secondWriters);
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(calls).toEqual(['first-ntp:false']);
+		releaseFirst();
+		await Promise.all([first, second]);
+		expect(calls).toEqual(['first-ntp:false', 'zone:Europe/Prague', 'second-ntp:false', 'zone:UTC']);
 	});
 });
 

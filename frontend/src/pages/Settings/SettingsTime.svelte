@@ -7,8 +7,8 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { api } from '../../scripts/api.ts';
 	import { connected } from '../../scripts/ws-client.ts';
-	import { createStatusGate, loadFailureMessage, loadMayApply, planTimeWrites, syncSwitchIsDirty, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
-	import { type SystemTimeOutcome, type SystemTimeResult, type SystemTimeStatus } from '@shared';
+	import { createStatusGate, formatHostClock, loadFailureMessage, loadMayApply, planTimeChanges, syncSwitchIsDirty, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
+	import { type SystemTimeChanges, type SystemTimeOutcome, type SystemTimeResult, type SystemTimeStatus } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
@@ -44,10 +44,6 @@
 	// Decides which of several in-flight status answers is allowed to fill the form.
 	const statusGate = createStatusGate();
 
-	function pad(value: number): string {
-		return String(value).padStart(2, '0');
-	}
-
 	// When the snapshot in `status` was taken, so the displayed clock can be advanced
 	// from it without asking the host again every second. Read off performance.now()
 	// rather than the wall clock: the browser's own clock can be stepped (by its NTP
@@ -65,10 +61,7 @@
 		// The backend may run on a different machine (or in a different zone) than the
 		// browser, so the host's wall clock is reconstructed from its own UTC offset
 		// instead of the browser's local getters.
-		const hostLocal = new Date(next.nowMs + next.utcOffsetMinutes * 60000);
-		hours = pad(hostLocal.getUTCHours());
-		minutes = pad(hostLocal.getUTCMinutes());
-		seconds = pad(hostLocal.getUTCSeconds());
+		({ hours, minutes, seconds } = formatHostClock(next.nowMs, next.timezone, next.utcOffsetMinutes));
 		// An unreadable sync state shows the switch off, but `syncUnknown` keeps the clock
 		// locked: the baseline matches, so merely opening the page never writes anything.
 		autoSync = next.ntpEnabled ?? false;
@@ -190,10 +183,7 @@
 	/** Put the clock fields back on the host's current time and re-baseline them. */
 	function resyncClockFields(): void {
 		if (!status) return;
-		const hostLocal = new Date(status.nowMs + (performance.now() - readAt) + status.utcOffsetMinutes * 60000);
-		hours = pad(hostLocal.getUTCHours());
-		minutes = pad(hostLocal.getUTCMinutes());
-		seconds = pad(hostLocal.getUTCSeconds());
+		({ hours, minutes, seconds } = formatHostClock(status.nowMs + (performance.now() - readAt), status.timezone, status.utcOffsetMinutes));
 		// Move the baseline with them, or the change itself would read as a user edit.
 		loaded = { ...loaded, clock: `${hours}:${minutes}:${seconds}` };
 	}
@@ -265,30 +255,18 @@
 			errorMessage = tt('settings.time.errorInvalidInput');
 			return;
 		}
-		// Every value the save writes, read ONCE, here, before anything is in flight. The
-		// steps below are up to five round trips with the form still live behind them, so a
-		// reactive value re-read between two of them lets something that landed mid-save
-		// decide what a later step writes — or skip it, by moving the baseline it compares
-		// against. The plan makes that impossible locally, rather than leaving it to depend on
-		// every other place in this file keeping its `busy` guard right.
+		// Snapshot every changed value before the request. The backend applies the snapshot
+		// under one lock, so another client cannot interleave its own save between fields.
 		const plan = { autoSync, syncDirty, ntpServer: ntpServer.trim(), timezone, clock, loaded: { ntpServer: loaded.ntpServer, timezone: loaded.timezone } };
+		const changes: SystemTimeChanges = planTimeChanges(plan);
 		busy = true;
 		try {
-			for (const write of planTimeWrites(plan)) {
-				if (!(await apply(api.call<SystemTimeResult>(write.method, write.params)))) return;
-			}
+			if (!(await apply(api.call<SystemTimeResult>('system.applyTimeSettings', changes)))) return;
 			addNotification(tt('settings.time.saved'), 'success');
 			onBack?.();
 		} catch (e) {
-			// The save is up to five separate calls, so an exception here can land between
-			// two of them with the earlier ones already applied on the host. What the form
-			// shows is then a mixture of what was written and what was not — re-read the
-			// host and say so, instead of leaving the user looking at values that are only
-			// half true.
-			// The partial-save warning outlives the reload. It used to be assigned first and
-			// then overwritten whenever the re-read it triggers failed too — so the one thing
-			// the user had to be told, that part of the save may already be on the host, was
-			// replaced by a message about the read.
+			// Transport failure does not prove the host applied nothing. Re-read it and keep
+			// the partial-save warning even if that read fails too.
 			errorMessage = writeFailureMessage(withDetail(tt('settings.time.errorPartial'), translateError(e)), await load());
 		} finally {
 			busy = false;

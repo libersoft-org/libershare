@@ -3,11 +3,11 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { access, mkdir, open, readdir, readFile, rename, unlink } from 'node:fs/promises';
 import { isIP } from 'node:net';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, win32 } from 'node:path';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeDomainMembership, probeLocalMachineKey, type DomainMembership, type RegistryKeyProbe } from './system-time-windows.ts';
-import type { SystemTimeCapabilities, SystemTimeOutcome, SystemTimeResult, SystemTimeStatus, SystemTimeStep, SystemTimezoneSource } from '@shared';
+import type { SystemTimeCapabilities, SystemTimeChanges, SystemTimeOutcome, SystemTimeResult, SystemTimeStatus, SystemTimeStep, SystemTimezoneSource } from '@shared';
 
 const execFileAsync = promisify(execFile);
 
@@ -16,6 +16,30 @@ const EXEC_TIMEOUT_MS = 5000;
 
 /** `systemsetup` is not on a default non-root PATH on macOS, so it is always addressed absolutely. */
 const MAC_SYSTEMSETUP = '/usr/sbin/systemsetup';
+
+const LINUX_EXECUTABLES: Readonly<Record<string, string>> = {
+	timedatectl: '/usr/bin/timedatectl',
+	systemctl: '/usr/bin/systemctl',
+};
+
+/** Resolve a privileged helper without consulting PATH. Unknown relative names fail closed. */
+export function resolveSystemExecutable(platform: string, command: string, systemRoot: string | undefined = process.env['SystemRoot']): string | null {
+	if (platform === 'win32') {
+		if (win32.isAbsolute(command)) return command;
+		const root = systemRoot && win32.isAbsolute(systemRoot) ? systemRoot : 'C:\\Windows';
+		const system32 = win32.join(root, 'System32');
+		const executables: Readonly<Record<string, string>> = {
+			powershell: win32.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+			tzutil: win32.join(system32, 'tzutil.exe'),
+			w32tm: win32.join(system32, 'w32tm.exe'),
+			sc: win32.join(system32, 'sc.exe'),
+			reg: win32.join(system32, 'reg.exe'),
+		};
+		return executables[command] ?? null;
+	}
+	if (isAbsolute(command)) return command;
+	return platform === 'linux' ? (LINUX_EXECUTABLES[command] ?? null) : null;
+}
 
 /**
  * Drop-in that carries our NTP server on systemd hosts. A drop-in is used instead of
@@ -1176,9 +1200,11 @@ export type RunOutcome = { kind: 'ok'; output: string } | { kind: 'missing' } | 
  */
 async function run(cmd: string, args: string[]): Promise<RunOutcome> {
 	try {
+		const executable = resolveSystemExecutable(process.platform, cmd);
+		if (!executable) return { kind: 'missing' };
 		// SIGKILL: the promise settles only after the child actually exits, so a
 		// wedged helper ignoring the default SIGTERM would hang the caller forever.
-		const { stdout } = await execFileAsync(cmd, args, { timeout: EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true, env: { ...process.env, LC_ALL: 'C' } });
+		const { stdout } = await execFileAsync(executable, args, { timeout: EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true, env: { ...process.env, LC_ALL: 'C' } });
 		return { kind: 'ok', output: stdout.toString() };
 	} catch (err) {
 		const e = err as { code?: number | string; killed?: boolean; signal?: string | null; stdout?: string; stderr?: string; message?: string };
@@ -1494,6 +1520,55 @@ const lockHeld = new AsyncLocalStorage<true>();
 export function withSystemTimeLock<T>(fn: () => Promise<T>): Promise<T> {
 	if (lockHeld.getStore()) return fn();
 	return systemTimeWriteLock.runExclusive(() => lockHeld.run(true, fn));
+}
+
+export interface SystemTimeWriters {
+	setNtpEnabled: (enabled: boolean) => Promise<SystemTimeResult>;
+	setNtpServer: (server: string) => Promise<SystemTimeResult>;
+	setTimezone: (timezone: string) => Promise<SystemTimeResult>;
+	setClock: (clock: NonNullable<SystemTimeChanges['clock']>) => Promise<SystemTimeResult>;
+}
+
+const defaultSystemTimeWriters: SystemTimeWriters = {
+	setNtpEnabled: enabled => setSystemNtpEnabled(enabled),
+	setNtpServer: server => setSystemNtpServer(server),
+	setTimezone: timezone => setSystemTimezone(timezone),
+	setClock: clock => setSystemClock(clock.hours, clock.minutes, clock.seconds),
+};
+
+/** Apply one settings snapshot without allowing another client's save to interleave. */
+export function applySystemTimeSettings(changes: SystemTimeChanges, writers: SystemTimeWriters = defaultSystemTimeWriters): Promise<SystemTimeResult> {
+	return withSystemTimeLock(async () => {
+		const operations: Array<() => Promise<SystemTimeResult>> = [];
+		if (changes.ntpEnabled === false) operations.push(() => writers.setNtpEnabled(false));
+		const ntpServer = changes.ntpServer;
+		const timezone = changes.timezone;
+		const clock = changes.clock;
+		if (ntpServer !== undefined) operations.push(() => writers.setNtpServer(ntpServer));
+		if (timezone !== undefined) operations.push(() => writers.setTimezone(timezone));
+		if (clock !== undefined) operations.push(() => writers.setClock(clock));
+		if (changes.ntpEnabled === true) operations.push(() => writers.setNtpEnabled(true));
+		if (operations.length === 0) return result('invalid-input', 'no system-time setting was provided');
+
+		let completed = false;
+		const steps: SystemTimeStep[] = [];
+		for (const operation of operations) {
+			const operationResult = await operation();
+			if (operationResult.steps) steps.push(...operationResult.steps);
+			if (!operationResult.success) {
+				const partial = completed || operationResult.changed === true;
+				const attempted = completed || operationResult.stateMayHaveChanged === true;
+				return {
+					...operationResult,
+					...(partial ? { changed: true } : {}),
+					...(attempted ? { stateMayHaveChanged: true } : {}),
+					...(steps.length > 0 ? { steps } : {}),
+				};
+			}
+			completed = true;
+		}
+		return result('ok');
+	});
 }
 
 /** Why a host whose time source somebody else owns is left alone. */

@@ -283,6 +283,7 @@ export class APIServer {
 			'system.setTimezone': _system.setTimezone,
 			'system.setNtpServer': _system.setNtpServer,
 			'system.setNtpEnabled': _system.setNtpEnabled,
+			'system.applyTimeSettings': _system.applyTimeSettings,
 			// Relay
 			'relay.stats': _relay.stats,
 		};

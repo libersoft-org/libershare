@@ -7,7 +7,7 @@
  * so it runs under `bun test` without the Svelte runtime.
  */
 import { test, expect } from 'bun:test';
-import { createStatusGate, loadFailureMessage, loadMayApply, planTimeWrites, syncSwitchIsDirty, writeFailureMessage, type TimeSavePlan } from '../../src/scripts/timeStatusSync.ts';
+import { createStatusGate, formatHostClock, loadFailureMessage, loadMayApply, planTimeChanges, syncSwitchIsDirty, writeFailureMessage, type TimeSavePlan } from '../../src/scripts/timeStatusSync.ts';
 
 test('a read that nothing overtook is applied', () => {
 	const gate = createStatusGate();
@@ -83,23 +83,16 @@ const FULL_PLAN: TimeSavePlan = { autoSync: false, syncDirty: true, ntpServer: '
  * clock — and the clock after the values it depends on.
  */
 test('the writes run in the order the OS requires', () => {
-	expect(planTimeWrites(FULL_PLAN)).toEqual([
-		{ method: 'system.setNtpEnabled', params: { enabled: false } },
-		{ method: 'system.setNtpServer', params: { server: 'ntp.example.org' } },
-		{ method: 'system.setTimezone', params: { timezone: 'Europe/Prague' } },
-		{ method: 'system.setClock', params: { hours: 1, minutes: 2, seconds: 3 } },
-	]);
+	expect(planTimeChanges(FULL_PLAN)).toEqual({ ntpEnabled: false, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 } });
 });
 
 /** Switching synchronisation back on goes last, or it would step over the clock just set. */
 test('synchronisation is switched back on after everything else', () => {
-	const writes = planTimeWrites({ ...FULL_PLAN, autoSync: true, clock: null });
-	expect(writes[writes.length - 1]).toEqual({ method: 'system.setNtpEnabled', params: { enabled: true } });
-	expect(writes.filter(w => w.method === 'system.setNtpEnabled')).toHaveLength(1);
+	expect(planTimeChanges({ ...FULL_PLAN, autoSync: true, clock: null })).toEqual({ ntpEnabled: true, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague' });
 });
 
 test('an unchanged value is not written', () => {
-	expect(planTimeWrites({ ...FULL_PLAN, syncDirty: false, ntpServer: 'old.example.org', timezone: 'UTC', clock: null })).toEqual([]);
+	expect(planTimeChanges({ ...FULL_PLAN, syncDirty: false, ntpServer: 'old.example.org', timezone: 'UTC', clock: null })).toEqual({});
 });
 
 /**
@@ -109,12 +102,26 @@ test('an unchanged value is not written', () => {
  */
 test('the writes come from the plan, not from a form that moved underneath it', () => {
 	const plan = { ...FULL_PLAN };
-	const writes = planTimeWrites(plan);
+	const changes = planTimeChanges(plan);
 	plan.ntpServer = 'overwritten.example.org';
 	plan.timezone = 'UTC';
 	plan.syncDirty = false;
-	expect(planTimeWrites(FULL_PLAN)).toEqual(writes);
-	expect(writes).toContainEqual({ method: 'system.setNtpServer', params: { server: 'ntp.example.org' } });
+	expect(planTimeChanges(FULL_PLAN)).toEqual(changes);
+	expect(changes.ntpServer).toBe('ntp.example.org');
+});
+
+test('host clock follows the spring DST jump in its own timezone', () => {
+	expect(formatHostClock(Date.UTC(2026, 2, 29, 0, 59, 59), 'Europe/Prague', 60)).toEqual({ hours: '01', minutes: '59', seconds: '59' });
+	expect(formatHostClock(Date.UTC(2026, 2, 29, 1, 0, 0), 'Europe/Prague', 60)).toEqual({ hours: '03', minutes: '00', seconds: '00' });
+});
+
+test('host clock follows the autumn DST overlap in its own timezone', () => {
+	expect(formatHostClock(Date.UTC(2026, 9, 25, 0, 59, 59), 'Europe/Prague', 120)).toEqual({ hours: '02', minutes: '59', seconds: '59' });
+	expect(formatHostClock(Date.UTC(2026, 9, 25, 1, 0, 0), 'Europe/Prague', 120)).toEqual({ hours: '02', minutes: '00', seconds: '00' });
+});
+
+test('host clock falls back to the reported offset when the browser does not know the zone', () => {
+	expect(formatHostClock(Date.UTC(2026, 0, 1, 10, 20, 30), 'Unknown/Host_Zone', 90)).toEqual({ hours: '11', minutes: '50', seconds: '30' });
 });
 
 test('a write failure keeps its own reason when the reload also failed', () => {
