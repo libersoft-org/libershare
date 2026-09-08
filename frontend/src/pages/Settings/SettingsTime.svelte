@@ -53,6 +53,7 @@
 	let autoSyncTouched = $state(false);
 	// Decides which of several in-flight status answers is allowed to fill the form.
 	const statusGate = createStatusGate();
+	const timezoneGate = createStatusGate();
 
 	// When the snapshot in `status` was taken, so the displayed clock can be advanced
 	// from it without asking the host again every second. Read off performance.now()
@@ -108,6 +109,7 @@
 	 */
 	async function load(background = false): Promise<string> {
 		const current = statusGate.begin();
+		const currentTimezones = timezoneGate.begin();
 		loading = true;
 		const [statusResult, zonesResult] = await Promise.allSettled([api.call<SystemTimeStatus>('system.getTime'), api.call<string[]>('system.listTimezones')]);
 		// A broadcast, or a later read, may have landed while this one was out. Its state is
@@ -118,13 +120,11 @@
 			loading = false;
 			if (background && !busy && hasChanges) stale = true;
 		}
-		// Under the same guard as the status, and no longer ahead of it: written first, an
-		// older answer replaced a newer one's list — or blanked it — while its own status was
-		// correctly thrown away as stale.
-		if (mayApply) {
+		// Heartbeats supersede clock snapshots, not the independently requested timezone catalog.
+		// A newer catalog request still invalidates an older reply, including a failed one.
+		if (loadMayApply({ fresh: currentTimezones(), background, busy, dirty: hasChanges })) {
 			timezones = zonesResult.status === 'fulfilled' ? zonesResult.value : [];
 			zonesUnavailable = zonesResult.status === 'rejected';
-			loading = false;
 		}
 		if (statusResult.status === 'rejected') return loadFailureMessage(translateError(statusResult.reason), mayApply);
 		if (mayApply) applyStatus(statusResult.value);
@@ -209,6 +209,7 @@
 				liveUpdates = false;
 				subscriptionGeneration++;
 				statusGate.supersede();
+				timezoneGate.supersede();
 				loading = false;
 				if (!busy && hasChanges) stale = true;
 				return;
@@ -222,6 +223,7 @@
 		destroyed = true;
 		subscriptionGeneration++;
 		statusGate.supersede();
+		timezoneGate.supersede();
 		offTimeChanged?.();
 		api.unsubscribe('system:timeChanged').catch(() => {});
 	});
