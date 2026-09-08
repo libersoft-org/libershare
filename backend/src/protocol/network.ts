@@ -20,7 +20,7 @@ import { canonicalMultiaddr, extractDestinationPeerID } from './multiaddr-utils.
 import { CodedError, ErrorCodes, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
-import { type MeshPeer } from '@chainsafe/libp2p-gossipsub';
+import { type MeshPeer, type SubscriptionChangeData } from '@chainsafe/libp2p-gossipsub';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
 import { applyGossipsubPatches } from './gossipsub-patches.ts';
 import { BootstrapStatusTracker } from './bootstrap-status.ts';
@@ -31,15 +31,6 @@ export type { SearchLishsMessage } from './lish-handlers.ts';
 export { isSearchAdvertisableLish } from './lish-handlers.ts';
 import { PeerAnnounceManager, type PeerAnnounceMessage } from './peer-announce.ts';
 type PubSub = any; // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
-
-/**
- * How long after a connection opens a peer may still read our shared-LISH listing
- * without appearing as a subscriber of a joined topic. Covers gossipsub SUBSCRIBE
- * propagation for a freshly-dialed peer (the unicast search fallback's window);
- * past it, absence from every joined topic is treated as "not ours to serve".
- * See {@link Network.canListSharesTo}.
- */
-const SUBSCRIBE_PROPAGATION_GRACE_MS = 30_000;
 
 /** Result of dialing a protocol stream: the opened stream plus how the underlying connection is routed. */
 export interface IDialResult {
@@ -93,6 +84,15 @@ const WANT_RESPONSE_COOLDOWN_MS = 60_000;
 const WANT_RESPONSE_CLEANUP_INTERVAL_MS = 5 * 60_000;
 /** Search query dedup window — same `searchID` arriving via mesh within this period is ignored. */
 const SEARCH_DEDUP_TTL_MS = 5 * 60_000;
+/**
+ * How far back a recently-seen subscription may be used as evidence that a peer is
+ * still a lishnet member. gossipsub drops a peer from the subscriber view the instant
+ * the connection goes, so this covers the reconnect gap before the peer re-sends its
+ * subscriptions on the new stream. Deliberately far shorter than peer-announce's
+ * re-advertising TTL, which is a discovery aid and would keep a peer authorized for
+ * minutes after it stopped being a member.
+ */
+const RECENT_MEMBERSHIP_AUTH_MS = 60_000;
 /**
  * Consecutive re-dial failures after which a peer is treated as gone and evicted
  * (peerStore + bootstrap sets + its discovered status rows). Combined with
@@ -523,6 +523,13 @@ export class Network {
 	 */
 	private readonly peerDisconnectHandlers = new Set<(peerID: string) => void>();
 
+	/**
+	 * Handlers subscribed via {@link onPeerSubscribe}. Held at Network level for the
+	 * same reason as {@link peerDisconnectHandlers} — the gossipsub listener that feeds
+	 * them is reinstalled per node, the subscriptions are not.
+	 */
+	private readonly peerSubscribeHandlers = new Set<(peerID: string, topic: string) => void>();
+
 	/** Handles incoming LISH-serving pubsub messages (want, searchLishs). */
 	private readonly lishHandlers: LISHServingHandlers;
 
@@ -610,6 +617,7 @@ export class Network {
 			wantResponseCooldownMs: WANT_RESPONSE_COOLDOWN_MS,
 			getNode: (): Libp2p | null => this.node,
 			dialByPeerId: (peerID, protocol): Promise<IDialResult> => this.dialProtocolByPeerId(peerID, protocol),
+			canServePubsubRequestTo: (peerID): boolean => this.canServePubsubRequestTo(peerID),
 		});
 		// Lets the discovered-row cap keep live participants and drop dead addresses first.
 		this.bootstrapTracker.setMembersProvider((networkID): Set<string> => new Set(this.getTopicPeers(networkID)));
@@ -685,6 +693,20 @@ export class Network {
 	 * their per-LISH peer manager immediately, instead of waiting for the next
 	 * failed dial/probe to notice the dead connection.
 	 */
+	/**
+	 * Subscribe to "a peer joined one of our lishnet topics" for the duration of the
+	 * returned disposer. The handler receives the peer ID and the topic it subscribed to.
+	 *
+	 * A peer becomes servable at this moment and not before: until its SUBSCRIBE lands,
+	 * the membership gates have nothing to go on and refuse it. Anything that asked the
+	 * peer for something on `peer:connect` alone therefore asked too early, and this is
+	 * the event that says when asking again is worth it.
+	 */
+	onPeerSubscribe(handler: (peerID: string, topic: string) => void): () => void {
+		this.peerSubscribeHandlers.add(handler);
+		return () => this.peerSubscribeHandlers.delete(handler);
+	}
+
 	onPeerDisconnect(handler: (peerID: string) => void): () => void {
 		this.peerDisconnectHandlers.add(handler);
 		return () => this.peerDisconnectHandlers.delete(handler);
@@ -885,9 +907,13 @@ export class Network {
 
 		this.addListener(this.pubsub, 'gossipsub:graft', (evt: CustomEvent<MeshPeer>) => {
 			trace(`[NET] GRAFT: ${evt.detail.peerId} joined ${evt.detail.topic}`);
-			this.lastMeshChange.set(evt.detail.topic, Date.now());
 			this.noteMeshGraft(evt.detail);
+			this.lastMeshChange.set(evt.detail.topic, Date.now());
 			this.schedulePeerCountCheck();
+		});
+
+		this.addListener(this.pubsub, 'subscription-change', (evt: CustomEvent<SubscriptionChangeData>) => {
+			this.noteSubscriptionChange(evt.detail);
 		});
 
 		this.addListener(this.pubsub, 'gossipsub:prune', (evt: CustomEvent<MeshPeer>) => {
@@ -1128,6 +1154,11 @@ export class Network {
 			this.recentDisconnects.push({ ts: Date.now(), peerID, remaining, wasBootstrap });
 			if (this.recentDisconnects.length > Network.NET_CHURN_BUFFER) this.recentDisconnects.shift();
 			trace(`[NET-DISC] peer=${peerID.slice(0, 16)} remaining=${remaining} bootstrap=${wasBootstrap}`);
+			// Start the reconnect grace here rather than leaving it on whatever the last
+			// announce tick happened to stamp — at saturation that tick is further apart
+			// than the grace itself, so a peer subscribed the whole time could drop
+			// already outside it. Only peers a topic already lists are touched.
+			this.peerAnnounce.touchKnownMember(peerID);
 			// Fix C: clear per-peer state on disconnect to prevent unbounded growth
 			this.dcutrPeers.delete(peerID);
 			// `@chainsafe/libp2p-gossipsub` v14 removes the peer from `this.mesh`
@@ -2790,19 +2821,51 @@ export class Network {
 	}
 
 	/**
-	 * Record a mesh GRAFT as topic membership. GRAFT is the earliest proof a peer is on
-	 * a topic — it precedes the peer showing up in getSubscribers and does not wait for
-	 * the announce cadence — so this is what lets leave-network hang up a peer the live
-	 * snapshot would still be blind to.
+	 * Track lishnet topic membership from gossipsub's subscription updates.
+	 *
+	 * A mesh GRAFT deliberately does NOT feed this. In the gossipsub build we pin,
+	 * `handleGraft` never checks that the peer has subscribed, and the `gossipsub:graft`
+	 * event is dispatched after the accept/reject decision for BOTH outcomes — a GRAFT
+	 * refused for backoff, a negative score or a full mesh still fires it. Recording
+	 * that as membership let a peer mint evidence it had never even claimed.
+	 * `subscription-change` is the peer's own statement about the topic, which is
+	 * exactly what the live subscriber view is built from, so the two agree by
+	 * construction — and it arrives the moment the RPC is processed, so leave-network
+	 * and the listing gate still see a peer the announce cadence has not caught up with.
+	 *
+	 * A withdrawal is honoured immediately: gossipsub drops the peer from its subscriber
+	 * map on `subscribe: false`, and a recent-membership union that outlived it would
+	 * keep authorizing a claim the peer has just retracted.
 	 *
 	 * Split out of the listener so a test can feed it a real gossipsub payload: the
 	 * event carries `peerId`, and reading it as `peerID` silently records nothing.
 	 */
+	private noteSubscriptionChange(detail: SubscriptionChangeData | undefined): void {
+		const peerId = detail?.peerId?.toString();
+		if (!peerId) return;
+		for (const sub of detail?.subscriptions ?? []) {
+			const topic = sub?.topic;
+			if (!topic?.startsWith(LISH_TOPIC_PREFIX)) continue;
+			if (!sub.subscribe) {
+				this.peerAnnounce.forgetMember(topic, peerId);
+				continue;
+			}
+			this.peerAnnounce.noteMember(topic, peerId);
+			for (const h of this.peerSubscribeHandlers) {
+				try {
+					h(peerId, topic);
+				} catch (err: any) {
+					trace(`[NET] onPeerSubscribe handler error: ${err?.message ?? err}`);
+				}
+			}
+		}
+	}
+
+	/** Record a mesh GRAFT against the bootstrap status tracker. Membership is not taken from it; see above. */
 	private noteMeshGraft(detail: MeshPeer | undefined): void {
 		const topic = detail?.topic;
 		const peerId = detail?.peerId;
 		if (!topic?.startsWith(LISH_TOPIC_PREFIX) || !peerId) return;
-		this.peerAnnounce.noteMember(topic, peerId);
 		this.bootstrapTracker.recordNetworkMember(topic.slice(LISH_TOPIC_PREFIX.length), peerId);
 	}
 
@@ -2857,21 +2920,48 @@ export class Network {
 	}
 
 	/**
+	 * Membership evidence for a lishnet WE are joined to, tolerant of the gossipsub
+	 * subscriber view lagging: the live snapshot ({@link sharesJoinedTopicWith}), or
+	 * peer-announce's recently-seen subscriber union for the same topic.
+	 *
+	 * The union is read with a much shorter window than the one peer-announce keeps for
+	 * re-advertising. The gap this has to cover is a peer that dropped and is dialing
+	 * back — gossipsub clears its subscriber entry on disconnect and only relearns it
+	 * once the new stream carries its subscriptions — which is seconds, whereas the
+	 * discovery TTL is minutes and a read that far back is not evidence of present
+	 * membership. An explicit unsubscribe revokes the entry outright, so the window
+	 * never outlives a claim the peer has withdrawn.
+	 *
+	 * Only topics we are currently subscribed to are consulted, so a lishnet we left
+	 * can never grant membership.
+	 */
+	private sharesJoinedOrRecentTopicWith(peerID: string): boolean {
+		if (this.sharesJoinedTopicWith(peerID)) return true;
+		if (!this.pubsub) return false;
+		for (const topic of this.pubsub.getTopics()) {
+			if (!topic.startsWith(LISH_TOPIC_PREFIX)) continue;
+			if (this.peerAnnounce.getRecentMembers(topic, RECENT_MEMBERSHIP_AUTH_MS).includes(peerID)) return true;
+		}
+		return false;
+	}
+
+	/**
 	 * Softer gate for the low-sensitivity shared-LISH LISTING (getLishs) only —
 	 * data requests (getLish/getChunk) stay on the strict {@link sharesJoinedTopicWith}
-	 * fail-closed gate. {@link sharesJoinedTopicWith} relies on gossipsub's subscriber
-	 * view, which lags for a freshly-connected peer whose SUBSCRIBE has not propagated
-	 * yet — the exact window the unicast search fallback targets, so the listing must
-	 * not be withheld there.
+	 * fail-closed gate, which needs a synced gossipsub SUBSCRIBE.
 	 *
-	 * The soft path is therefore bounded to that window instead of lasting forever.
-	 * An unbounded soft gate collapses to "am I in ANY lishnet?", which means a peer
-	 * of a lishnet we left keeps listing our shares for as long as we stay in some
-	 * other lishnet — redial suppression is then the only thing standing in the way,
-	 * so any peer the leave-time disconnect missed still sees everything we share.
-	 * Connection age is the discriminator: a peer that has been connected longer than
-	 * the propagation window and still shares no joined topic is not a lagging
-	 * SUBSCRIBE, it is a peer with no business reading our listing.
+	 * An unbounded soft gate collapses to "am I in ANY lishnet?", which means a peer of
+	 * a lishnet we left keeps listing our shares for as long as we stay in some other
+	 * lishnet — redial suppression is then the only thing standing in the way, so any
+	 * peer the leave-time disconnect missed still sees everything we share.
+	 *
+	 * Membership is therefore what authorizes the listing. It accepts the wider
+	 * {@link sharesJoinedOrRecentTopicWith} evidence so the unicast search fallback
+	 * still reaches a member whose subscription is momentarily missing from the live
+	 * snapshot because it just reconnected. A bare transport connection — a relay client, a bootstrap dial, a peer
+	 * of a lishnet we are not in, or one we deliberately left before a restart dropped
+	 * the in-memory redial suppression — carries no such evidence and learns nothing
+	 * about what we share.
 	 */
 	canListSharesTo(peerID: string): boolean {
 		if (this.isRedialSuppressed(peerID)) return false;
@@ -2881,34 +2971,40 @@ export class Network {
 		// A shared joined topic is the real authorization — no time limit on it.
 		if (this.sharesJoinedTopicWith(peerID)) return true;
 		// Infrastructure peers (active relay / bootstrap) are kept connected across a
-		// leave without being redial-suppressed, so they never get the soft path — a
-		// relay of a network we just left would otherwise browse our shares.
-		if (this.isBootstrapOrRelayPeer(peerID)) return false;
-		return this.connectionAgeMs(peerID) <= SUBSCRIBE_PROPAGATION_GRACE_MS;
+		// leave without being redial-suppressed, and peer-announce may still list one
+		// as a recent member of a topic it serves. Hold them to the live snapshot so a
+		// relay of a network we just left cannot browse our shares.
+		if (this.isBootstrapOrRelayPeer(peerID)) return this.sharesJoinedTopicWith(peerID);
+		return this.sharesJoinedOrRecentTopicWith(peerID);
 	}
 
 	/**
-	 * Age of the longest-lived open connection to a peer, in ms; Infinity when we
-	 * have none. The OLDEST connection wins deliberately: a peer that reconnects
-	 * while an earlier connection is still open must not buy itself a fresh grace
-	 * window, which would reopen the hole the window exists to close.
+	 * Membership gate for a catalog request that arrived over pubsub instead of a
+	 * unicast dial. gossipsub hands a topic message to the application because WE are
+	 * subscribed to the topic — it never checks the publisher against it — and it
+	 * pushes our whole subscription list down every freshly attached stream, so a peer
+	 * that only opened a transport connection learns our topic IDs and can publish on
+	 * them. Without this, the pubsub `searchLishs` path returns the very catalog rows
+	 * {@link canListSharesTo} withholds over unicast.
+	 *
+	 * Only a publisher we are DIRECTLY connected to can be judged. gossipsub builds its
+	 * subscriber view purely from the subscription lists of direct neighbours and never
+	 * relays them, so a legitimate member two hops away carries no local membership
+	 * evidence and refusing it would break multi-hop search for honest peers. This
+	 * therefore closes the bare-neighbour bypass and nothing more: an ACL that also
+	 * covers the multi-hop case needs a verifiable membership proof carried in the
+	 * request, not a local view of who is subscribed.
 	 */
-	private connectionAgeMs(peerID: string): number {
-		if (!this.node) return Infinity;
-		let age = Infinity;
+	canServePubsubRequestTo(peerID: string): boolean {
+		if (!this.node) return false;
+		let direct: boolean;
 		try {
-			const now = Date.now();
-			for (const c of this.node.getConnections()) {
-				if (c.remotePeer.toString() !== peerID) continue;
-				const opened = c.timeline?.open;
-				// A connection with no open timestamp is not evidence of freshness.
-				const candidate = typeof opened === 'number' ? now - opened : Infinity;
-				if (age === Infinity || candidate > age) age = candidate;
-			}
+			direct = this.node.getPeers().some(p => p.toString() === peerID);
 		} catch {
-			return Infinity;
+			return false;
 		}
-		return age;
+		if (!direct) return true;
+		return this.canListSharesTo(peerID);
 	}
 
 	/**

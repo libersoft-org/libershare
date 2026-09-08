@@ -15,6 +15,28 @@ export const LISH_TOPIC_PREFIX = 'lish/';
 export const DEFAULT_ACCEPT_PX_THRESHOLD = 5;
 
 /**
+ * Longest `searchID` we accept on the pubsub search path.
+ *
+ * The ID is echoed into the response and kept in the dedup map for the whole dedup
+ * window, so its length is attacker-controlled memory held on our side. Our own IDs are
+ * `randomUUID()` (36 chars); the slack covers a peer using some other unique-ID scheme.
+ * Without a bound a single peer can park hundreds of kilobytes per query — deduplication
+ * cannot stop it, since a fresh ID per request is what makes the entries unique.
+ */
+export const MAX_SEARCH_ID_LENGTH = 64;
+
+/**
+ * Longest search query we accept, on EVERY path that takes one.
+ *
+ * A query is lowercased once and then substring-matched against the id and the name of
+ * every advertised LISH, so its length is multiplied by the size of the catalog. The
+ * bound lived only on the pubsub path, which left the unicast `getLishs` request free to
+ * carry a string up to the whole protocol frame limit for the same work. The UI never
+ * sends anything remotely this long.
+ */
+export const MAX_SEARCH_QUERY_LENGTH = 256;
+
+/**
  * Returns the pubsub topic name for a given lishnet/network ID.
  */
 export function lishTopic(networkID: string): string {

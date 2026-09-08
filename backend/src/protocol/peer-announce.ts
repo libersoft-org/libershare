@@ -78,6 +78,19 @@ const PEER_ANNOUNCE_MAX_ADDRS_PER_PEER = 3;
 const PEER_ANNOUNCE_MEMBER_TTL_MS = PEER_ANNOUNCE_INTERVAL_SATURATED_MS * 3;
 
 /**
+ * Monotonic millisecond clock for membership timestamps.
+ *
+ * The listing gate reads these ages as an authorization window, so they must not be
+ * steerable from outside. `Date.now()` follows the wall clock: an NTP correction or a
+ * user moving the system time backwards stretches every window by however far it
+ * moved, which on a security TTL means an expired membership becoming valid again.
+ * `performance.now()` counts from process start and no one can push it around.
+ */
+function monotonicNow(): number {
+	return performance.now();
+}
+
+/**
  * Per-source announce budget, in unique addresses admitted per minute.
  *
  * Every address that survives intake costs a dial, a status row and a snapshot, and
@@ -203,8 +216,9 @@ export class PeerAnnounceManager {
 	 * Per-topic recently-seen subscribers (peerID → last-seen ms). Lets a
 	 * momentarily-disconnected same-network peer stay an eligible transitive-announce
 	 * target (see PEER_ANNOUNCE_MEMBER_TTL_MS) without ever admitting a peer of
-	 * another network — a peerID only enters a topic's map via that topic's own
-	 * getSubscribers, so the cross-network leak stays closed. Pruned each emit().
+	 * another network — a peerID only enters a topic's map through a subscription to
+	 * THAT topic (its own getSubscribers snapshot, or a `subscription-change` naming
+	 * it), so the cross-network leak stays closed. Pruned each emit().
 	 */
 	private readonly topicMembers = new Map<string, Map<string, number>>();
 	/** Per-announcing-peer intake budget — see {@link AnnounceRateLimiter}. */
@@ -222,22 +236,21 @@ export class PeerAnnounceManager {
 	 * disconnected at query time is still reported. Used by leave-network to suppress
 	 * offline content peers that a live subscriber snapshot would miss.
 	 */
-	getRecentMembers(topic: string): string[] {
+	getRecentMembers(topic: string, maxAgeMs: number = PEER_ANNOUNCE_MEMBER_TTL_MS): string[] {
 		const members = this.topicMembers.get(topic);
 		if (!members) return [];
-		const now = Date.now();
+		const now = monotonicNow();
 		const out: string[] = [];
-		for (const [pid, seen] of members) if (now - seen <= PEER_ANNOUNCE_MEMBER_TTL_MS) out.push(pid);
+		for (const [pid, seen] of members) if (now - seen <= maxAgeMs) out.push(pid);
 		return out;
 	}
 
 	/**
-	 * Record a peer as a member of a topic outside the emit cycle. Fed by the
-	 * gossipsub GRAFT event, which fires the moment a peer joins our mesh for the
-	 * topic — earlier and independently of both the announce cadence and the
-	 * {@link PEER_ANNOUNCE_MIN_PEER_STORE} broadcast threshold. leave-network reads
-	 * this cache to decide who to hang up, so it must be populated on a two-node
-	 * network that never emits an announce at all.
+	 * Record a peer as a member of a topic outside the emit cycle. Fed by gossipsub's
+	 * `subscription-change` event, so a peer is recorded the moment its SUBSCRIBE is
+	 * processed rather than whenever the next announce tick happens to run. Both
+	 * leave-network and the listing gate read this cache, so it must be populated even
+	 * on a node that never emits an announce at all.
 	 */
 	noteMember(topic: string, peerID: string): void {
 		let members = this.topicMembers.get(topic);
@@ -245,18 +258,45 @@ export class PeerAnnounceManager {
 			members = new Map<string, number>();
 			this.topicMembers.set(topic, members);
 		}
-		members.set(peerID, Date.now());
+		members.set(peerID, monotonicNow());
 	}
 
 	/**
-	 * Refresh every topic's membership from the live subscriber snapshot and drop
-	 * entries past the TTL. Split out of {@link emit} so membership tracking never
-	 * depends on whether this tick actually broadcasts — a small network stays below
-	 * the announce threshold forever, and leave-network still needs to know who was
-	 * on the topic.
+	 * Drop a peer from a topic's membership. Fed by `subscription-change` with
+	 * `subscribe: false` — an explicit UNSUBSCRIBE is the peer stating it has left, and
+	 * gossipsub drops it from the live subscriber view immediately. Letting the recent
+	 * union outlive that would keep the peer authorized for the rest of the window on
+	 * the strength of a claim it has just withdrawn.
 	 */
-	refreshMembers(lishTopics: string[], pubsub: any): void {
-		const now = Date.now();
+	forgetMember(topic: string, peerID: string): void {
+		this.topicMembers.get(topic)?.delete(peerID);
+	}
+
+	/**
+	 * Re-stamp a peer in every topic that already lists it — never adding it to one.
+	 *
+	 * Called when the peer disconnects, which is exactly when the reconnect grace the
+	 * listing gate reads from these stamps has to start. Otherwise the stamps only
+	 * advance on the announce tick, whose interval scales with peerStore size and at
+	 * saturation runs longer than that grace window: a peer subscribed continuously for
+	 * hours could drop carrying a stamp already too old to be of any use. Restricting
+	 * this to peers a topic already lists keeps the grace to subscriptions we saw.
+	 */
+	touchKnownMember(peerID: string): void {
+		const now = monotonicNow();
+		for (const members of this.topicMembers.values()) {
+			if (members.has(peerID)) members.set(peerID, now);
+		}
+	}
+
+	/**
+	 * Record the current subscribers of each joined topic and drop entries older than
+	 * {@link PEER_ANNOUNCE_MEMBER_TTL_MS}. Split out of the announce broadcast so it
+	 * still runs on a node too small to advertise itself — readers of the membership
+	 * map must not go blind exactly on the nodes with the fewest peers.
+	 */
+	private refreshTopicMembers(pubsub: any, lishTopics: string[]): void {
+		const now = monotonicNow();
 		for (const t of this.topicMembers.keys()) if (!lishTopics.includes(t)) this.topicMembers.delete(t);
 		for (const topic of lishTopics) {
 			let members = this.topicMembers.get(topic);
@@ -267,7 +307,7 @@ export class PeerAnnounceManager {
 			try {
 				for (const p of pubsub.getSubscribers(topic)) members.set(p.toString(), now);
 			} catch {
-				/* pubsub may be mid-teardown — keep whatever we already know */
+				// topic may be tearing down — keep what we already have
 			}
 			for (const [pid, seen] of members) if (now - seen > PEER_ANNOUNCE_MEMBER_TTL_MS) members.delete(pid);
 		}
@@ -292,6 +332,10 @@ export class PeerAnnounceManager {
 	 * node's mesh. The rate-limiter buckets are the same kind of thing from the other
 	 * side: an exhausted budget surviving a restart throttles a source that has not sent
 	 * anything to THIS run yet.
+	 *
+	 * Membership is also what the listing gate reads as authorization, so a peer recorded
+	 * before the restart must not satisfy it afterwards — on a fresh node with no
+	 * connections, let alone a subscription from that peer.
 	 */
 	stop(): void {
 		this.stopped = true;
@@ -450,17 +494,21 @@ export class PeerAnnounceManager {
 		const pubsub = this.deps.getPubsub();
 		if (!node || !pubsub) return;
 		const lishTopics = pubsub.getTopics().filter((t: string) => t.startsWith(LISH_TOPIC_PREFIX));
-		// Membership first, and unconditionally: it feeds leave-network's disconnect
-		// set, which must work on a network too small to ever clear the announce
-		// threshold below. Broadcasting is what the threshold gates, not tracking.
-		this.refreshMembers(lishTopics, pubsub);
+		// Membership bookkeeping is purely local and its readers (leave-network, the
+		// listing gate) must never be blinded by something that only concerns the
+		// broadcast, so nothing that can fail or bail out may run ahead of it. Both
+		// orderings below are load-bearing: refreshTopicMembers is also what evicts
+		// topics we have left, so returning early on an empty list would strand the last
+		// lishnet's members in the map, and a peerStore read that throws or stalls would
+		// otherwise skip the refresh entirely despite being irrelevant to it.
+		this.refreshTopicMembers(pubsub, lishTopics);
+		if (lishTopics.length === 0) return;
 		const allPeers = await node.peerStore.all();
 		// The node and pubsub captured above belong to the run this tick started in; a
 		// restart landing in that await would otherwise have us publish the previous run's
 		// addresses onto the new node's topics.
 		if (this.isSuperseded(generation)) return;
 		if (allPeers.length < PEER_ANNOUNCE_MIN_PEER_STORE) return;
-		if (lishTopics.length === 0) return;
 		const localCidrs = getLocalCidrs();
 		const myID = node.peerId.toString();
 		// Our own multiaddrs (shared across all topics — we are a member of every
@@ -500,10 +548,12 @@ export class PeerAnnounceManager {
 			try {
 				for (const p of pubsub.getSubscribers(topic)) current.add(p.toString());
 			} catch {}
-			// Membership was already refreshed above; read the resulting set.
-			const members = this.topicMembers.get(topic) ?? new Map<string, number>();
 			// No one currently subscribed → the broadcast would reach nobody, skip it.
 			if (current.size === 0) continue;
+			// Refreshed above by refreshTopicMembers: the recently-seen union for this
+			// topic, so a peer that just dropped from the live snapshot is still
+			// re-advertised for others to re-dial.
+			const members = this.topicMembers.get(topic) ?? new Map<string, number>();
 			const collected = new Set<string>(selfAddrs);
 			let transitiveAdded = 0;
 			for (const peer of allPeers) {
