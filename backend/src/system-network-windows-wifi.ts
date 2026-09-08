@@ -1,6 +1,6 @@
 import { ptr, read, toArrayBuffer, type Pointer } from 'bun:ffi';
 import type { NetWifiNetwork } from '@shared';
-import { type WlanApi, type WlanHandle, MAX_SSID_LENGTH, ERROR_ALREADY_EXISTS, WLAN_PROFILE_USER, withWlanHandle, guidToBytes, utf16z, encodeConnectionParameters, readFixedUtf16, wlanErrorMessage, wlanReasonText, readAssociation, isWindowsWifiDisconnected } from './system-network-windows-wlan.ts';
+import { type WlanApi, type WlanHandle, MAX_SSID_LENGTH, ERROR_ALREADY_EXISTS, WLAN_PROFILE_USER, withWlanHandle, guidToBytes, utf16z, encodeConnectionParameters, readFixedUtf16, wlanErrorMessage, wlanReasonText, readAssociation, isWindowsWifiDisconnected, readWindowsWifiOperationState } from './system-network-windows-wlan.ts';
 import { assertProfileNameWritable, assertWindowsWifiKey, type JoinTarget, type ProfileChange, ssidHex, windowsWifiProfileXml, writeJoinProfile, openJoinDecision, readStoredProfile, writeProfile, readWrittenProfile, undoWifiProfileChange } from './system-network-windows-profiles.ts';
 
 
@@ -70,6 +70,76 @@ const SCAN_SETTLE_MS = 4000;
 const JOIN_TIMEOUT_MS = 20000;
 /** How often the association is re-read while waiting for a join to complete. */
 const JOIN_POLL_MS = 500;
+const CANCEL_TIMEOUT_MS = 5000;
+const WINDOWS_WIFI_BUSY = 'a previous Windows Wi-Fi operation has an unknown result; further network changes are blocked until it is confirmed disconnected';
+interface PendingWifiRecovery {
+	guid: string;
+	profileName: string;
+	ssidHex: string;
+	change: ProfileChange | null;
+	cancelAccepted: boolean;
+}
+let pendingWifiRecovery: PendingWifiRecovery | null = null;
+
+function cancelPendingJoin(pending: PendingWifiRecovery): void {
+	const guidBytes = guidToBytes(pending.guid);
+	withWlanHandle((api, handle) => {
+		const rc = api.WlanDisconnect(handle, ptr(guidBytes), null);
+		if (rc !== 0) throw new Error(wlanErrorMessage(rc));
+	});
+	pending.cancelAccepted = true;
+}
+
+function restoreStoppedJoin(pending: PendingWifiRecovery): string | null {
+	const rollback = undoWifiProfileChange(guidToBytes(pending.guid), pending.profileName, pending.change);
+	if (pendingWifiRecovery === pending) pendingWifiRecovery = null;
+	return rollback;
+}
+
+function canCancelJoin(current: ReturnType<typeof readWindowsWifiOperationState>, pending: PendingWifiRecovery): boolean {
+	return current.state === 4 || ([1, 5, 6, 7].includes(current.state) && current.profileName === pending.profileName && current.ssidHex === pending.ssidHex);
+}
+
+/** Finish deferred cleanup before allowing another local network mutation. */
+export function assertWindowsWifiMutationIdle(): void {
+	const pending = pendingWifiRecovery;
+	if (!pending) return;
+	let stopped = false;
+	try {
+		const current = readWindowsWifiOperationState(pending.guid);
+		if (canCancelJoin(current, pending)) {
+			// A disconnected reading alone does not flush an earlier queued WlanConnect.
+			if (!pending.cancelAccepted) cancelPendingJoin(pending);
+			stopped = isWindowsWifiDisconnected(pending.guid);
+		}
+	} catch {
+		// Keep the recovery record when the service cannot prove termination.
+	}
+	if (!stopped) throw new Error(WINDOWS_WIFI_BUSY);
+	const rollback = restoreStoppedJoin(pending);
+	if (rollback) throw new Error(`the Windows Wi-Fi operation stopped, but its profile recovery failed: ${rollback}`);
+}
+
+/** Stop an accepted join before changing any profile it may still be consuming. */
+async function stopFailedJoin(pending: PendingWifiRecovery): Promise<string | null> {
+	pendingWifiRecovery = pending;
+	try {
+		const current = readWindowsWifiOperationState(pending.guid);
+		if (!canCancelJoin(current, pending)) throw new Error('the current Wi-Fi operation belongs to another profile or cannot be identified');
+		// Windows has no compare-and-disconnect API: this check cannot lock out other processes.
+		// Never cancel a known foreign connection, and never skip cancellation for an idle reading.
+		cancelPendingJoin(pending);
+		const deadline = Date.now() + CANCEL_TIMEOUT_MS;
+		for (;;) {
+			if (isWindowsWifiDisconnected(pending.guid)) return restoreStoppedJoin(pending);
+			if (Date.now() >= deadline) break;
+			await delay(JOIN_POLL_MS);
+		}
+	} catch {
+		// The original profile remains untouched until a later strict read proves termination.
+	}
+	throw new Error(WINDOWS_WIFI_BUSY);
+}
 
 /**
  * Decode a WLAN_AVAILABLE_NETWORK_LIST into the networks a user could join.
@@ -242,6 +312,7 @@ export function wlanScanErrorMessage(code: number): string {
 
 /** Scan for the Wi-Fi networks one adapter can see. */
 export async function scanWindowsWifi(guid: string): Promise<NetWifiNetwork[]> {
+	assertWindowsWifiMutationIdle();
 	const guidBytes = guidToBytes(guid);
 	const scanResult = withWlanHandle((api, handle) => api.WlanScan(handle, ptr(guidBytes), null, null, null));
 	await delay(SCAN_SETTLE_MS);
@@ -292,6 +363,7 @@ export async function scanWindowsWifi(guid: string): Promise<NetWifiNetwork[]> {
  * behind, and report neither.
  */
 export async function connectWindowsWifi(guid: string, ssid: string, password: string, expectedSecurity: string, expectedSsidHex: string): Promise<void> {
+	assertWindowsWifiMutationIdle();
 	const guidBytes = guidToBytes(guid);
 	// The WLAN list can change after the shared scan. Validate it before touching profiles.
 	const lookup = withWlanHandle((api, handle) => readScannedNetwork(api, handle, guidBytes, ssid));
@@ -335,11 +407,13 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 	const target: JoinTarget = { ssidHex: ssidHex(ssidBytes), password, sae, newProfile: () => windowsWifiProfileXml(profileName, ssidBytes, password, sae) };
 	/** What this attempt did to the profile store, or null while it has done nothing. */
 	let change: ProfileChange | null = null;
+	let joinAccepted = false;
 	try {
 		withWlanHandle((api, handle) => {
 			if (password) {
 				change = writeJoinProfile(api, handle, guidBytes, profileName, target);
 				connectByProfile(api, handle, guidBytes, parameters);
+				joinAccepted = true;
 				return;
 			}
 			// The profile is addressed BY NAME here too, so what it holds is checked
@@ -347,6 +421,7 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 			// `WlanConnect` associate with whatever network the stored profile named.
 			if (openJoinDecision(readStoredProfile(api, handle, guidBytes, profileName), target) === 'connect') {
 				connectByProfile(api, handle, guidBytes, parameters);
+				joinAccepted = true;
 				return;
 			}
 			// Believed absent, and the write is what makes that checkable: anything but
@@ -354,10 +429,13 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 			if (writeProfile(api, handle, guidBytes, target.newProfile(), WLAN_PROFILE_USER, 0) === ERROR_ALREADY_EXISTS) throw new Error('another process saved a profile for this network while it was being joined, so it was not joined');
 			change = { replaced: null, created: true, written: readWrittenProfile(api, handle, guidBytes, profileName) };
 			connectByProfile(api, handle, guidBytes, parameters);
+			joinAccepted = true;
 		});
 		await waitForAssociation(guid, scanned);
 	} catch (err) {
-		const rollback = undoWifiProfileChange(guidBytes, profileName, change);
+		const rollback = joinAccepted
+			? await stopFailedJoin({ guid, profileName, ssidHex: target.ssidHex, change, cancelAccepted: false })
+			: undoWifiProfileChange(guidBytes, profileName, change);
 		// Both errors, not just the first. A rollback that failed leaves the machine
 		// in a state neither error describes on its own, and reporting only the
 		// original one would claim the attempt had been undone.
@@ -419,6 +497,7 @@ function delay(ms: number): Promise<void> {
 
 /** Disconnect the radio without deleting or modifying its saved profiles. */
 export async function disconnectWindowsWifi(guid: string): Promise<void> {
+	assertWindowsWifiMutationIdle();
 	const guidBytes = guidToBytes(guid);
 	if (isWindowsWifiDisconnected(guid)) return;
 	withWlanHandle((api, handle) => {

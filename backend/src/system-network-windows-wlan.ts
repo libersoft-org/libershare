@@ -521,6 +521,10 @@ export function isWindowsWifiConfigurable(): boolean {
 
 /** Read the interface state strictly; a failed query is not proof of disconnection. */
 export function isWindowsWifiDisconnected(guid: string): boolean {
+	return readWindowsWifiInterfaceState(guid) === INTERFACE_STATE_DISCONNECTED;
+}
+
+function readWindowsWifiInterfaceState(guid: string): number {
 	return withWlanHandle((api, handle) => {
 		const output = new BigUint64Array(1);
 		const rc = api.WlanEnumInterfaces(handle, null, ptr(output));
@@ -532,11 +536,40 @@ export function isWindowsWifiDisconnected(guid: string): boolean {
 			if (count > 512) throw new Error('Windows returned an invalid Wi-Fi interface list');
 			for (let index = 0; index < count; index++) {
 				const offset = WLAN_INTERFACE_LIST_HEADER + index * WLAN_INTERFACE_INFO_SIZE;
-				if (guidToString(list, offset).toUpperCase() === guid.toUpperCase()) return read.u32(list, offset + WLAN_INTERFACE_INFO_SIZE - 4) === INTERFACE_STATE_DISCONNECTED;
+				if (guidToString(list, offset).toUpperCase() === guid.toUpperCase()) return read.u32(list, offset + WLAN_INTERFACE_INFO_SIZE - 4);
 			}
 			throw new Error('Windows Wi-Fi interface is unavailable');
 		} finally {
 			api.WlanFreeMemory(list);
+		}
+	});
+}
+
+export interface WindowsWifiOperationState {
+	state: number;
+	profileName: string | null;
+	ssidHex: string | null;
+}
+
+/** One native snapshot of the active or pending profile, without reading its key. */
+export function readWindowsWifiOperationState(guid: string): WindowsWifiOperationState {
+	return withWlanHandle((api, handle) => {
+		const guidBytes = guidToBytes(guid);
+		const size = new Uint32Array(1);
+		const output = new BigUint64Array(1);
+		const valueType = new Uint32Array(1);
+		const rc = api.WlanQueryInterface(handle, ptr(guidBytes), OPCODE_CURRENT_CONNECTION, null, ptr(size), ptr(output), ptr(valueType));
+		// Privacy can deny connection identity while interface enumeration still proves disconnection.
+		if (rc !== 0) return { state: readWindowsWifiInterfaceState(guid), profileName: null, ssidHex: null };
+		const data = Number(output[0]) as Pointer;
+		if (!data) throw new Error('Windows did not report the current Wi-Fi operation');
+		try {
+			if (size[0]! < CONNECTION_ATTRIBUTES_SIZE) throw new Error('Windows returned incomplete Wi-Fi operation state');
+			const state = read.u32(data, CONN_STATE_OFFSET);
+			if (state > 7) throw new Error('Windows returned invalid Wi-Fi operation state');
+			return { state, profileName: readFixedUtf16(data, 8, 256) || null, ssidHex: readConnectionAttributes(data, size[0]!).ssidHex };
+		} finally {
+			api.WlanFreeMemory(data);
 		}
 	});
 }

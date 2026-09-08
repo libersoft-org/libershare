@@ -1,7 +1,7 @@
 import { validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetMedium, type NetLink, type NetAddressMode, type NetWifiInfo } from '@shared';
 export { type WlanSymbol, WLAN_SYMBOLS, openWlanHandleForTest, hasWlanAdapter, loadWlanApiForTest, readConnectionAttributes, readWindowsWifi, isWindowsInterfaceID, wlanErrorMessage, guidToBytes, utf16z, readUtf16z, encodeConnectionParameters, isWindowsWifiConfigurable } from './system-network-windows-wlan.ts';
 export { assertProfileNameWritable, profileSsidHex, withJoinCredentials, windowsWifiProfileXml, assertWindowsWifiKey, type StoredProfile, type StoredProfileResult, readStoredProfile, type ProfileChange, type JoinTarget, openJoinDecision, writeJoinProfile, undoProfileChange } from './system-network-windows-profiles.ts';
-export { parseAvailableNetworks, findScannedNetwork, type AvailableNetwork, wlanScanErrorMessage, scanWindowsWifi, connectWindowsWifi, disconnectWindowsWifi } from './system-network-windows-wifi.ts';
+export { parseAvailableNetworks, findScannedNetwork, type AvailableNetwork, wlanScanErrorMessage, scanWindowsWifi, connectWindowsWifi, disconnectWindowsWifi, assertWindowsWifiMutationIdle } from './system-network-windows-wifi.ts';
 
 
 /**

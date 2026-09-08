@@ -46,6 +46,7 @@ function attempt(scenario: Scenario): Result {
 		const lists = [buildList(input.first), buildList(input.second)];
 		let listReads = 0, writes = 0, connections = 0;
 		let savedXml = null;
+		let disconnected = false;
 		const profiles = new Map(input.storedProfile ? [['Saved connection', input.storedProfile]] : []);
 		const connectionProfiles = [];
 		const retained = [];
@@ -81,18 +82,15 @@ function attempt(scenario: Scenario): Result {
 				connectionProfiles.push(native.readUtf16z(Number(new DataView(toArrayBuffer(parameters, 0, 16)).getBigUint64(8, true))));
 				return 0;
 			},
+			WlanDisconnect: () => { disconnected = true; return 0; },
 			WlanReasonCodeToString: () => 87,
 			WlanFreeMemory: () => {},
 		};
-		mock.module('./src/system-network-windows-wlan.ts', () => ({
-			...native,
-			withWlanHandle: callback => callback(api, 1n),
-			readWindowsWifi: () => new Map([[guid, { radio: 'on', ssid: connections ? ssid : null, signal: 80 }]]),
-			readAssociation: () => {
+		const associationSnapshot = () => {
 				const octets = connections > 0 && input.associationSsidOctets ? input.associationSsidOctets : input.first[0].ssidOctets ?? new TextEncoder().encode(ssid);
 				const bytes = new Uint8Array(604);
 				const view = new DataView(bytes.buffer);
-				view.setUint32(0, connections > 0 || input.alreadyAssociated ? 1 : 4, true);
+				view.setUint32(0, !disconnected && (connections > 0 || input.alreadyAssociated) ? 1 : 4, true);
 				view.setUint32(520, octets.length, true);
 				bytes.set(octets, 524);
 				view.setUint32(576, 70, true);
@@ -100,7 +98,14 @@ function attempt(scenario: Scenario): Result {
 				view.setUint32(596, input.associationAuth ?? input.first[0].auth ?? 7, true);
 				view.setUint32(600, input.associationCipher ?? input.first[0].cipher ?? 4, true);
 				return native.readConnectionAttributes(ptr(bytes), bytes.length);
-			},
+		};
+		mock.module('./src/system-network-windows-wlan.ts', () => ({
+			...native,
+			withWlanHandle: callback => callback(api, 1n),
+			readWindowsWifi: () => new Map([[guid, { radio: 'on', ssid: connections ? ssid : null, signal: 80 }]]),
+			readAssociation: associationSnapshot,
+			isWindowsWifiDisconnected: () => disconnected,
+			readWindowsWifiOperationState: () => ({ state: disconnected ? 4 : 1, profileName: disconnected ? null : connectionProfiles.at(-1), ssidHex: disconnected ? null : associationSnapshot().ssidHex }),
 		}));
 		const report = { adapters: [{ ifIndex: 1, Name: 'Wi-Fi', InterfaceGuid: guid, Media: 9, IfType: 71, State: 2 }], addresses: [], persistentAddresses: [], interfaces: [{ ifIndex: 1, Family: 2, Dhcp: 1 }], routes: [], persistentRoutes: [], routes6: [], dns: [] };
 		const execFile = () => { throw new Error('Only the promised state reader is allowed'); };
@@ -264,10 +269,10 @@ describe('Windows raw SSID identity through wifiConnect RPC', () => {
 describe('Windows association verifies the raw SSID returned by the native decoder', () => {
 	const network: NetworkFields = { ...wpa2, ssid: '\uFFFD', ssidOctets: [0xff] };
 
-	it('does not report another raw SSID as a successful join and removes the attempted profile', () => {
+	it('does not report another raw SSID as success or roll back while termination is unknown', () => {
 		const result = attempt({ selected: 'WPA2', expectedSsidHex: 'FF', first: [network], second: [network], associationSsidOctets: [0xfe] });
-		expect(result).toMatchObject({ lists: 2, writes: 1, connections: 1, ssidHex: null, code: 'NETCONFIG_FAILED' });
-		expect(result.detail).toContain('the adapter did not join the network');
+		expect(result).toMatchObject({ lists: 2, writes: 1, connections: 1, ssidHex: 'FF', code: 'NETCONFIG_FAILED' });
+		expect(result.detail).toContain('unknown result');
 	});
 
 	it('reports success when the decoder returns the requested raw SSID', () => {
