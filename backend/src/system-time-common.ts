@@ -318,9 +318,12 @@ export async function run(cmd: string, args: string[]): Promise<RunOutcome> {
 	try {
 		const executable = resolveSystemExecutable(process.platform, cmd);
 		if (!executable) return { kind: 'missing' };
+		// System tools must use the host timezone, not a process-local formatting override.
+		const environment = { ...process.env, LC_ALL: 'C' };
+		delete environment['TZ'];
 		// SIGKILL: the promise settles only after the child actually exits, so a
 		// wedged helper ignoring the default SIGTERM would hang the caller forever.
-		const { stdout } = await execFileAsync(executable, args, { timeout: EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true, env: { ...process.env, LC_ALL: 'C' } });
+		const { stdout } = await execFileAsync(executable, args, { timeout: EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true, env: environment });
 		return { kind: 'ok', output: stdout.toString() };
 	} catch (err) {
 		const e = err as { code?: number | string; killed?: boolean; signal?: string | null; stdout?: string; stderr?: string; message?: string };
