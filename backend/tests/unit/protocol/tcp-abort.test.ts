@@ -13,8 +13,28 @@ interface Result {
 	serverErrors: string[];
 }
 
-function runChild(mode: string) {
-	return Bun.spawnSync([process.execPath, resolve(import.meta.dir, '../../helpers/tcp-abort-fixture.js'), mode], { cwd: resolve(import.meta.dir, '../../..'), timeout: 10_000 });
+function runChild(mode: string, expectedExit = 0) {
+	const started = performance.now();
+	const child = Bun.spawnSync([process.execPath, resolve(import.meta.dir, '../../helpers/tcp-abort-fixture.js'), mode], { cwd: resolve(import.meta.dir, '../../..'), timeout: 10_000 });
+	if (child.exitCode !== expectedExit) {
+		const error = (child as typeof child & { error?: unknown }).error;
+		throw new Error(
+			`TCP subprocess failed: ${JSON.stringify({
+				mode,
+				expectedExit,
+				exitCode: child.exitCode,
+				signalCode: child.signalCode ?? null,
+				success: child.success,
+				elapsedMs: Math.round(performance.now() - started),
+				executable: process.execPath,
+				spawnMocked: 'mock' in Bun.spawnSync,
+				error: error instanceof Error ? { name: error.name, message: error.message, code: Reflect.get(error, 'code'), stack: error.stack } : (error ?? null),
+				stdout: child.stdout?.toString() ?? null,
+				stderr: child.stderr?.toString() ?? null,
+			})}`
+		);
+	}
+	return child;
 }
 
 function scenario(mode: string, warningName?: string): Result {
@@ -83,7 +103,7 @@ describe('real libp2p TCP socket abort lifecycle', () => {
 	});
 
 	it('exits for an unknown established socket error without a caller error listener', () => {
-		const child = runChild('unowned-established-error');
+		const child = runChild('unowned-established-error', 1);
 		expect(child.exitCode).toBe(1);
 		expect(child.stderr.toString()).toContain('[FATAL] Uncaught exception');
 		expect(child.stderr.toString()).toContain('unowned established socket failure');
