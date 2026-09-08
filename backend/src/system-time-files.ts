@@ -2,7 +2,6 @@ import { open, access, mkdir, readFile, rename, unlink } from 'node:fs/promises'
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-
 /**
  * Errors from a directory flush that mean "there is no such operation here", as opposed
  * to "it was attempted and failed".
@@ -172,8 +171,25 @@ export async function writeFileAtomically(path: string, content: string, readOri
 		// flush failing after that point is a durability warning and not a failed restore.
 		let visible = false;
 		try {
-			if (previous !== null) await writeFileAtomically(path, previous, readOriginal, syncDir);
-			else {
+			const current = await readOriginal(path).catch((err: { code?: string }) => {
+				if (err.code === 'ENOENT') return null;
+				throw err;
+			});
+			// The process lock cannot protect edits made by another administrator.
+			// This check preserves observed foreign changes, but is not an atomic filesystem CAS.
+			if (current !== content && !(previous === null && current === null)) throw new Error('the time configuration changed after this operation wrote it; it was left untouched');
+			if (previous !== null) {
+				await writeFileAtomically(
+					path,
+					previous,
+					async target => {
+						const latest = await readOriginal(target);
+						if (latest !== content) throw new Error('the time configuration changed before restoration; it was left untouched');
+						return latest;
+					},
+					syncDir
+				);
+			} else {
 				// Already gone is the state being restored to, not a failure.
 				await unlink(path).catch((err: { code?: string }) => (err.code === 'ENOENT' ? undefined : Promise.reject(err)));
 				visible = true;

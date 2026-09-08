@@ -7,7 +7,6 @@ import { Mutex } from 'async-mutex';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { syncDirectory, type RollbackResult, writeFileAtomically } from './system-time-files.ts';
 
-
 // ---------------------------------------------------------------------------
 // Command builders (pure)
 // ---------------------------------------------------------------------------
@@ -121,12 +120,10 @@ function readPlatformStatus(platform: SystemPlatform): Promise<PlatformStatus> {
 }
 
 /**
- * Read the host's current time configuration. Never throws — an unreadable or
- * unsupported host yields a status with `supported: false` and no capabilities, so
- * a kiosk failure cannot crash the backend.
- *
- * The clock and the timezone always come from the process itself (`Date.now()` and
- * ICU); only the NTP state needs the OS tooling.
+ * Read the host's current time configuration. Unreadable state has no capabilities;
+ * platforms without an implemented backend also report `supported: false`.
+ * The clock comes from Date.now(); the timezone and NTP settings come from the OS,
+ * with the process timezone used only when the host timezone cannot be read.
  */
 export async function getSystemTimeStatus(readPlatform: PlatformStatusReader = readPlatformStatus): Promise<SystemTimeStatus> {
 	const platform = process.platform;
@@ -218,6 +215,17 @@ const defaultSystemTimeWriters: SystemTimeWriters = {
 
 /** Apply one settings snapshot without allowing another client's save to interleave. */
 export function applySystemTimeSettings(changes: SystemTimeChanges, writers: SystemTimeWriters = defaultSystemTimeWriters): Promise<SystemTimeResult> {
+	// Validate the complete input before an earlier field can change the host.
+	if (changes.ntpServer !== undefined && !isValidNtpServer(changes.ntpServer)) return Promise.resolve(result('invalid-input', 'the NTP server must be a host name or IP address without spaces or special characters'));
+	if (changes.timezone !== undefined) {
+		const known = listSystemTimezones();
+		if (known.length === 0) return Promise.resolve(result('unsupported', 'this runtime has no timezone database'));
+		if (!known.includes(changes.timezone)) return Promise.resolve(result('invalid-input', `unknown timezone: ${changes.timezone}`));
+	}
+	if (changes.clock !== undefined) {
+		const invalid = validateClockParts(changes.clock.hours, changes.clock.minutes, changes.clock.seconds);
+		if (invalid) return Promise.resolve(result('invalid-input', invalid));
+	}
 	return withSystemTimeLock(async () => {
 		const operations: Array<() => Promise<SystemTimeResult>> = [];
 		if (changes.ntpEnabled === false) operations.push(() => writers.setNtpEnabled(false));
@@ -448,12 +456,9 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
 		if (!r.success) {
 			const restored = await rollback();
 			const reason = r.message ?? 'the change could not be applied';
-			// Nothing is restarted onto a file that is not back. The restart loads whatever is
-			// on disk, and after a failed restore that is the new server — so retrying it here
-			// could SUCCEED and make the rejected configuration live, immediately, while the
-			// API answers that the change could not be applied and was not restored. Leaving
-			// the daemon alone keeps the failure to the file, which the message names.
-			if (restored.state === 'not-restored') return { ...r, message: `${reason} (and ${path} still holds the new server — it could not be restored, so systemd-timesyncd was left as it is and the host will adopt that server at the next start)` };
+			// A restart would load the current file, which may be our rejected value or a
+			// later administrator's edit. Do not activate either after a failed rollback.
+			if (restored.state === 'not-restored') return { ...r, changed: true, stateMayHaveChanged: true, message: `${reason} (${path} could not be restored safely; its current configuration and systemd-timesyncd were left as they are)` };
 			// Both restored states get the restart: the visible file is the original one either
 			// way, and only its durability is in question. Skipping it over a failed flush left
 			// the daemon stopped, or running the configuration just withdrawn, while the file
