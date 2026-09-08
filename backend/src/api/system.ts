@@ -11,6 +11,7 @@ const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
 const POLL_INTERVAL_MS = 5000;
+const TIME_POLL_INTERVAL_MS = 15000;
 /**
  * Broadcast the network state on every Nth poll tick (5 s × 2 = 10 s). A read
  * costs a PowerShell spawn on Windows and link state does not change faster than
@@ -198,7 +199,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	 * reported through `supported: false` and empty capabilities.
 	 */
 	function getTime(): Promise<SystemTimeStatus> {
-		return getSystemTimeStatus();
+		return withSystemTimeLock(getSystemTimeStatus);
 	}
 
 	/** IANA timezone identifiers this host accepts, for the timezone picker. Empty on a runtime without a timezone database. */
@@ -471,10 +472,31 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	// A Windows read takes 1.4-1.8 s, so it is deliberately not awaited on the
 	// broadcast path — a slow read simply skips ticks until it settles.
 	let networkReadInFlight = false;
+	let timeReadInFlight = false;
+	let nextTimeRead = 0;
+	let timePollingGeneration = 0;
+
+	function pollTime(generation: number): void {
+		if (generation !== timePollingGeneration || !pollInterval || timeReadInFlight || !hasSubscribers('system:timeChanged')) return;
+		const now = performance.now();
+		if (now < nextTimeRead) return;
+		nextTimeRead = now + TIME_POLL_INTERVAL_MS;
+		timeReadInFlight = true;
+		void withSystemTimeLock(async () => {
+			if (generation !== timePollingGeneration || !pollInterval || !hasSubscribers('system:timeChanged')) return;
+			const status = await getSystemTimeStatus();
+			if (generation === timePollingGeneration && pollInterval && hasSubscribers('system:timeChanged')) broadcast('system:timeChanged', status);
+		})
+			.catch(error => console.warn('[system-time] Could not refresh host time:', (error as Error).message))
+			.finally(() => { timeReadInFlight = false; });
+	}
 
 	function startPolling(): void {
 		if (pollInterval) return;
+		const generation = ++timePollingGeneration;
+		nextTimeRead = 0;
 		pollInterval = setInterval(async () => {
+			pollTime(generation);
 			if (hasSubscribers('system:cpu')) broadcast('system:cpu', getCpuInfo());
 			if (hasSubscribers('system:ram')) broadcast('system:ram', getRamInfo());
 			if (hasSubscribers('system:storage')) {
@@ -515,6 +537,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	}
 
 	function stopPolling(): void {
+		timePollingGeneration++;
 		if (pollInterval) {
 			clearInterval(pollInterval);
 			pollInterval = null;
