@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { buildSetTimezoneCommands, parseRegValue, parseTzutilZone, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, readWindowsPolicyManaged } from '../../src/system-time.ts';
-import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeDomainMembership, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState } from '../../src/system-time-windows.ts';
+import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeDomainMembership, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState, parseWindowsNtpClientEnabled, windowsSyncEnabled } from '../../src/system-time-windows.ts';
 import { W32TM_STATUS } from '../helpers/system-time-fixtures.ts';
 
 /** `reg query HKLM\\...\\W32Time\\Parameters`, CRLF and mixed value kinds as captured. */
@@ -418,5 +418,31 @@ describe.skipIf(process.platform !== 'win32')('windows ICU timezone conversion (
 
 	it('returns null for a Windows identifier no IANA zone maps to', () => {
 		expect(windowsToIanaTimezone('Not A Real Standard Time')).toBeNull();
+	});
+});
+
+describe('the NTP client provider switch', () => {
+	/**
+	 * Windows keeps this flag apart from `Type` and from the service, so a host can look
+	 * perfectly configured - Type=NTP, service running - and never ask anyone for the time.
+	 * Reported as synchronising, it also blocks the manual clock, and the toggle could not
+	 * fix it because the enable sequence never touched this key.
+	 */
+	it('reads an explicit off and defaults everything else to on', () => {
+		expect(parseWindowsNtpClientEnabled('    Enabled    REG_DWORD    0x0')).toBe(false);
+		expect(parseWindowsNtpClientEnabled('    Enabled    REG_DWORD    0x1')).toBe(true);
+		// Absent is the Windows default, and unreadable says more about the probe than the host.
+		expect(parseWindowsNtpClientEnabled('    Other    REG_DWORD    0x0')).toBe(true);
+		expect(parseWindowsNtpClientEnabled(null)).toBe(true);
+	});
+
+	it('outranks a healthy-looking mode and service', () => {
+		expect(windowsSyncEnabled('manual', 'automatic')).toBe(true);
+		expect(windowsSyncEnabled('manual', 'automatic', true)).toBe(true);
+		expect(windowsSyncEnabled('manual', 'automatic', false)).toBe(false);
+		expect(windowsSyncEnabled('all', 'automatic', false)).toBe(false);
+		// The states that were already decided keep their answer.
+		expect(windowsSyncEnabled('managed', 'automatic', false)).toBeNull();
+		expect(windowsSyncEnabled('manual', 'disabled', true)).toBe(false);
 	});
 });

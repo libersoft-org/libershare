@@ -1,6 +1,6 @@
 import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, run, validateClockParts, runAll, listSystemTimezones, isValidNtpServer } from './system-time-common.ts';
 import { MAC_SYSTEMSETUP, readMacStatus } from './system-time-macos.ts';
-import { w32tm, type WindowsSyncMode, SC_ALREADY_RUNNING, SC_NOT_ACTIVE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled, readWindowsTimeZone, readWindowsTimeServiceRunning, type WindowsTimeZoneState } from './system-time-windows.ts';
+import { w32tm, W32TIME_NTP_CLIENT_KEY, type WindowsSyncMode, SC_ALREADY_RUNNING, SC_NOT_ACTIVE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled, readWindowsTimeZone, readWindowsTimeServiceRunning, type WindowsTimeZoneState } from './system-time-windows.ts';
 import { readLinuxStatus, TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn, verifyTimesyncdServer } from './system-time-linux.ts';
 import { type SystemTimeStatus, type SystemTimeResult, type SystemTimeChanges, type SystemTimeStep } from '@shared';
 import { Mutex } from 'async-mutex';
@@ -112,11 +112,15 @@ export function buildSetNtpServerCommands(platform: SystemPlatform, server: stri
  * rewritten at all. It defaults to `unknown`, which rewrites nothing — the safe default
  * for a caller that could not determine it.
  */
-export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: boolean, mode: WindowsSyncMode = 'unknown'): SystemCommand[] {
+export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: boolean, mode: WindowsSyncMode = 'unknown', ntpClientEnabled = true): SystemCommand[] {
 	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-ntp', enabled ? 'true' : 'false'] }];
 	if (platform === 'darwin') return [{ cmd: MAC_SYSTEMSETUP, args: ['-setusingnetworktime', enabled ? 'on' : 'off'] }];
 	if (enabled) {
 		return [
+			// Only when Windows says the provider is off. Switching synchronisation on has to
+			// switch on the thing that does it: the service can be running and the source can be
+			// a peer list while this separate flag keeps the client from ever asking anyone.
+			...(ntpClientEnabled ? [] : [{ cmd: 'reg', args: ['add', W32TIME_NTP_CLIENT_KEY, '/v', 'Enabled', '/t', 'REG_DWORD', '/d', '1', '/f'] }]),
 			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'auto'] },
 			{ cmd: 'sc', args: ['start', 'w32time'], benignCodes: [SC_ALREADY_RUNNING] },
 			// ONLY for a host with no time source at all (Type=NoSync), which is the one
@@ -515,7 +519,7 @@ export async function setSystemNtpServer(server: string, readStatus: () => Promi
 			if (state.refusal) return state.refusal;
 			if (typeof state.running !== 'boolean') return result('error', 'cannot determine whether Windows Time is running, so its configuration was left unchanged');
 			syncRunning = state.running;
-			syncEnabled = windowsSyncEnabled(state.mode, state.start) === true;
+			syncEnabled = windowsSyncEnabled(state.mode, state.start, state.ntpClientEnabled) === true;
 		}
 		const commands = buildSetNtpServerCommands(platform, server, syncRunning, syncEnabled);
 		// A platform whose whole change is the file write above has no command to run, and
@@ -627,12 +631,14 @@ export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Pr
 		// and disabling W32Time on a host that has since become a domain member or gained a
 		// policy is exactly the change this must never make.
 		let mode: WindowsSyncMode = 'unknown';
+		let clientEnabled = true;
 		if (platform === 'win32') {
 			const state = await checkWindowsWritable(readMode);
 			if (state.refusal) return state.refusal;
 			mode = state.mode;
+			clientEnabled = state.ntpClientEnabled !== false;
 		}
-		const commands = buildSetNtpEnabledCommands(platform, enabled, mode);
+		const commands = buildSetNtpEnabledCommands(platform, enabled, mode, clientEnabled);
 		if (platform !== 'win32') return runAll(platform, commands, exec);
 		return runAll(platform, commands, async (cmd, args) => {
 			const outcome = await exec(cmd, args);

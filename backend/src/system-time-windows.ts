@@ -270,6 +270,13 @@ const W32TIME_PARAMS_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\
 const W32TIME_SERVICE_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time';
 
 /**
+ * The NTP client provider's own on/off switch, which Windows keeps SEPARATELY from the
+ * service and from `Type`. A host can be `Type=NTP` with the service running and still not
+ * synchronise, because the client that would do it is switched off here.
+ */
+export const W32TIME_NTP_CLIENT_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\TimeProviders\\NtpClient';
+
+/**
  * Root of group policy's own W32Time configuration, relative to `HKEY_LOCAL_MACHINE`
  * ({@link probeLocalMachineKey} takes the subkey, not a full path). When this key exists, an
  * administrator's policy owns the settings and the values under
@@ -378,6 +385,18 @@ export function parseWindowsStartMode(output: string | null): WindowsStartMode {
 }
 
 /**
+ * Is the NTP client provider switched on? `false` only for an explicit `0x0`.
+ *
+ * An ABSENT value is enabled: that is the Windows default, and treating a key we simply
+ * have not been given as "off" would report every ordinary host as not synchronising.
+ * An unreadable key is the same answer for the same reason — this branch is world-readable
+ * on a healthy host, so a failure here says more about the probe than about the client.
+ */
+export function parseWindowsNtpClientEnabled(output: string | null): boolean {
+	return (output === null ? null : parseRegValue(output, 'Enabled')) !== '0x0';
+}
+
+/**
  * Whether Windows is set up to synchronise the clock, or null when that cannot be told.
  *
  * Deliberately NOT "the service is running right now". Windows Time is trigger-started
@@ -415,10 +434,13 @@ export function windowsSyncIsOurs(mode: WindowsSyncMode, membership: DomainMembe
 	return mode === 'manual' || mode === 'none';
 }
 
-export function windowsSyncEnabled(mode: WindowsSyncMode, start: WindowsStartMode): boolean | null {
+export function windowsSyncEnabled(mode: WindowsSyncMode, start: WindowsStartMode, ntpClientEnabled = true): boolean | null {
 	// Policy ownership does not reveal the effective client configuration.
 	if (mode === 'managed') return null;
 	if (start === 'disabled') return false;
+	// The provider's own switch outranks a healthy-looking Type and service: with the NTP
+	// client off, nothing asks a peer for the time however the rest is configured.
+	if (!ntpClientEnabled) return false;
 	if (mode === 'none') return false;
 	if (mode === 'unknown' || start === 'unknown') return null;
 	return true;
@@ -517,6 +539,8 @@ export interface WindowsModeState {
 	membership: DomainMembership;
 	/** Actual SCM state, separate from start policy. Missing or null is unknown. */
 	running?: boolean | null;
+	/** The NTP client provider's own switch. False only when Windows says it is off. */
+	ntpClientEnabled?: boolean;
 }
 
 /** Reads {@link WindowsModeState}. Injectable so a write's safety check can be tested off a real host. */
@@ -530,11 +554,14 @@ export type WindowsModeReader = () => Promise<WindowsModeState>;
 export async function readWindowsMode(): Promise<WindowsModeState> {
 	const type = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'Type']);
 	const start = await tryRead('reg', ['query', W32TIME_SERVICE_KEY, '/v', 'Start']);
+	// Its own switch, not derivable from Type or from the service: a host can be Type=NTP
+	// with the service up and still not synchronise because this provider is off.
+	const client = await tryRead('reg', ['query', W32TIME_NTP_CLIENT_KEY, '/v', 'Enabled']);
 	const policyManaged = readWindowsPolicyManaged();
 	// Read here rather than by the caller so a write's safety check gets the join state
 	// from the same read it gets the mode from, inside the same lock.
 	const membership = probeDomainMembership();
-	return { mode: parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policyManaged), start: parseWindowsStartMode(start), membership, running: readWindowsTimeServiceRunning() };
+	return { mode: parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policyManaged), start: parseWindowsStartMode(start), membership, running: readWindowsTimeServiceRunning(), ntpClientEnabled: parseWindowsNtpClientEnabled(client) };
 }
 
 /** Read the Windows (W32Time) part of the status. */
@@ -542,7 +569,7 @@ export async function readWindowsStatus(readZone: () => WindowsTimeZoneState | n
 	// Registry names establish policy; SCM and timezone APIs supply actual runtime state.
 	const params = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'NtpServer']);
 	const status = await tryRead('w32tm', ['/query', '/status']);
-	const { mode, start, membership, running } = await readMode();
+	const { mode, start, membership, running, ntpClientEnabled } = await readMode();
 	// Sample the native offset after asynchronous reads, near the final clock sample.
 	const zone = readZone();
 	// A time source an administrator owns is read-only here, so the UI disables the
@@ -551,10 +578,10 @@ export async function readWindowsStatus(readZone: () => WindowsTimeZoneState | n
 	return {
 		timezone: zone?.windowsId ? windowsToIanaTimezone(zone.windowsId) : null,
 		...(zone ? { utcOffsetMinutes: zone.utcOffsetMinutes, timezoneOffsetMode: 'fixed' as const } : {}),
-		ntpEnabled: windowsSyncEnabled(mode, start),
+		ntpEnabled: windowsSyncEnabled(mode, start, ntpClientEnabled),
 		ntpSynchronized: status === null ? null : parseWindowsSyncStatus(status),
 		ntpServer: mode === 'manual' || mode === 'none' ? parseWindowsNtpServer(params === null ? null : parseRegValue(params, 'NtpServer')) : null,
-		capabilities: { setClock: zone !== null && running !== null && running !== undefined && !(windowsSyncEnabled(mode, start) === false && running && mode !== 'none'), setTimezone: zone !== null && canConvertTimezoneId(), setNtpServer: ours, setNtpEnabled: ours },
+		capabilities: { setClock: zone !== null && running !== null && running !== undefined && !(windowsSyncEnabled(mode, start, ntpClientEnabled) === false && running && mode !== 'none'), setTimezone: zone !== null && canConvertTimezoneId(), setNtpServer: ours, setNtpEnabled: ours },
 	};
 }
 
