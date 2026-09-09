@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 import { resolve } from 'node:path';
-import { classifyFailure, decodeCommandOutput, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, type PlatformStatusReader, resolveSystemExecutable, timezoneOffsetMinutes, parseYesNo, validateClockParts } from '../../src/system-time.ts';
-import { windowsSystemLibraryPath } from '../../src/system-time-windows.ts';
+import { classifyFailure, decodeCommandOutput, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listHostTimezones, listSystemTimezones, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, type PlatformStatusReader, resetHostTimezones, resolveSystemExecutable, timezoneOffsetMinutes, parseYesNo, validateClockParts } from '../../src/system-time.ts';
+import { ianaToWindowsTimezoneId, windowsSystemLibraryPath } from '../../src/system-time-windows.ts';
 
 // ---------------------------------------------------------------------------
 // Fixtures — real command output, only host-identifying values replaced with
@@ -475,5 +475,52 @@ describe('listSystemTimezones', () => {
 	it('reports where that list came from', () => {
 		expect(getTimezoneSource()).toBe(listSystemTimezones().length > 0 ? 'intl' : 'unavailable');
 		expect(getTimezoneSource()).toBe('intl');
+	});
+});
+describe('listHostTimezones', () => {
+	afterEach(() => resetHostTimezones());
+
+	it('drops the zones Windows has no identifier for', () => {
+		resetHostTimezones();
+		const unconvertible = new Set(['America/Ciudad_Juarez', 'Antarctica/Troll', 'Asia/Urumqi']);
+		const zones = listHostTimezones(
+			'win32',
+			zone => (unconvertible.has(zone) ? null : 'Some Standard Time'),
+			() => true
+		);
+		for (const zone of unconvertible) expect(zones).not.toContain(zone);
+		expect(zones).toContain('Europe/Prague');
+		expect(zones.length).toBe(listSystemTimezones().length - [...unconvertible].filter(zone => listSystemTimezones().includes(zone)).length);
+	});
+
+	it('leaves the runtime list alone off Windows, where the identifier is used as-is', () => {
+		resetHostTimezones();
+		expect(
+			listHostTimezones(
+				'linux',
+				() => null,
+				() => true
+			)
+		).toEqual(listSystemTimezones());
+	});
+
+	it('keeps the whole list on a Windows without ICU rather than offering nothing', () => {
+		resetHostTimezones();
+		expect(
+			listHostTimezones(
+				'win32',
+				() => null,
+				() => false
+			)
+		).toEqual(listSystemTimezones());
+	});
+
+	it.skipIf(process.platform !== 'win32')('offers only zones this host can really be set to', () => {
+		resetHostTimezones();
+		const offered = listHostTimezones();
+		expect(offered.length).toBeGreaterThan(100);
+		expect(offered.every(zone => ianaToWindowsTimezoneId(zone) !== null)).toBe(true);
+		// The point of the filter: the runtime does offer zones that convert to nothing.
+		expect(listSystemTimezones().some(zone => ianaToWindowsTimezoneId(zone) === null)).toBe(true);
 	});
 });

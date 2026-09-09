@@ -127,6 +127,46 @@ export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: bo
 	];
 }
 
+/**
+ * Cached per platform: the ICU zone list does not change while the process runs, and
+ * the Windows filter below costs one FFI conversion per zone across 450-odd of them.
+ */
+let hostTimezones: { platform: string; zones: string[] } | null = null;
+
+/**
+ * The timezones this HOST can actually be set to.
+ *
+ * Not the same list as {@link listSystemTimezones}, and the difference is the whole
+ * point: `tzutil` speaks Windows identifiers, and CLDR has no Windows equivalent for
+ * every IANA zone the runtime offers. On this author's host three of the 455 offered
+ * zones convert to nothing — `America/Ciudad_Juarez`, `Antarctica/Troll` and
+ * `Asia/Urumqi`.
+ *
+ * Offering one of those was not merely a picker that fails at the end. The zone passed
+ * the membership check in {@link applySystemTimeSettings}, so the save proceeded, and the
+ * conversion was only attempted inside {@link setSystemTimezone} — by which time
+ * synchronisation had already been switched off and the NTP server already rewritten. A
+ * value we can tell is unusable before touching anything must be refused before touching
+ * anything, which is what filtering the list at the source achieves for every caller:
+ * the picker no longer offers it, and both validation paths reject it as an unknown zone.
+ *
+ * `platform` and `convert` are injectable so the filter can be exercised off Windows.
+ */
+export function listHostTimezones(platform: string = process.platform, convert: (zone: string) => string | null = ianaToWindowsTimezoneId, canConvert: () => boolean = canConvertTimezoneId): string[] {
+	if (hostTimezones?.platform === platform) return hostTimezones.zones;
+	const zones = listSystemTimezones();
+	// A Windows without ICU converts nothing, and the timezone capability is already off
+	// there — an empty list would additionally erase the zone the host is actually in.
+	const usable = platform !== 'win32' || !canConvert() ? zones : zones.filter(zone => convert(zone) !== null);
+	hostTimezones = { platform, zones: usable };
+	return usable;
+}
+
+/** Forget the cached list. Only for tests that swap the conversion behaviour. */
+export function resetHostTimezones(): void {
+	hostTimezones = null;
+}
+
 /** Dispatch the OS half of the status read to the backend for this platform. */
 function readPlatformStatus(platform: SystemPlatform): Promise<PlatformStatus> {
 	if (platform === 'linux') return readLinuxStatus();
@@ -233,7 +273,9 @@ export function applySystemTimeSettings(changes: SystemTimeChanges, writers: Sys
 	// Validate the complete input before an earlier field can change the host.
 	if (changes.ntpServer !== undefined && !isValidNtpServer(changes.ntpServer)) return Promise.resolve(result('invalid-input', 'the NTP server must be a host name or IP address without spaces or special characters'));
 	if (changes.timezone !== undefined) {
-		const known = listSystemTimezones();
+		// The host's own list, not the runtime's: a zone this platform cannot express has
+		// to fail here, before the first operation below changes anything.
+		const known = listHostTimezones();
 		if (known.length === 0) return Promise.resolve(result('unsupported', 'this runtime has no timezone database'));
 		if (!known.includes(changes.timezone)) return Promise.resolve(result('invalid-input', `unknown timezone: ${changes.timezone}`));
 	}
@@ -361,8 +403,9 @@ export async function setSystemClock(hours: number, minutes: number, seconds: nu
 
 /**
  * Set the system timezone from an IANA identifier. The value must be one the host
- * listed ({@link listSystemTimezones}) — that membership check is also what keeps an
- * arbitrary string out of the Windows conversion command.
+ * listed ({@link listHostTimezones}) — that membership check is also what keeps an
+ * arbitrary string out of the Windows conversion command, and on Windows it is already
+ * restricted to the zones `tzutil` can be given.
  *
  * On success `process.env.TZ` is updated: writing the OS timezone does not
  * invalidate the running process's ICU cache, so without this the backend would keep
@@ -375,7 +418,7 @@ export async function setSystemClock(hours: number, minutes: number, seconds: nu
  * `exec` is injectable so the ordering can be exercised without moving the host's zone.
  */
 export async function setSystemTimezone(timezone: string, exec: CommandRunner = run, readWindowsZone: () => WindowsTimeZoneState | null = readWindowsTimeZone): Promise<SystemTimeResult> {
-	const known = listSystemTimezones();
+	const known = listHostTimezones();
 	if (known.length === 0) return result('unsupported', 'this runtime has no timezone database');
 	if (!known.includes(timezone)) return result('invalid-input', `unknown timezone: ${timezone}`);
 	const platform = process.platform;
@@ -561,7 +604,7 @@ export async function waitForWindowsTimeService(running: boolean, read: () => bo
 		await pause(Math.min(250, remaining));
 	}
 }
-export { resolveSystemExecutable, type SystemPlatform, type SystemCommand, type LocalDateTime, isSupportedPlatform, isValidNtpServer, validateClockParts, parseTimedatectlShow, parseYesNo, classifyFailure, firstLine, listSystemTimezones, getTimezoneSource, timezoneOffsetMinutes, type RunOutcome, type CommandRunner, runAll, type PlatformStatus, type PlatformStatusReader } from './system-time-common.ts';
+export { resolveSystemExecutable, decodeCommandOutput, windowsSystemLibraryPath, type SystemPlatform, type SystemCommand, type LocalDateTime, isSupportedPlatform, isValidNtpServer, validateClockParts, parseTimedatectlShow, parseYesNo, classifyFailure, firstLine, listSystemTimezones, getTimezoneSource, timezoneOffsetMinutes, type RunOutcome, type CommandRunner, runAll, type PlatformStatus, type PlatformStatusReader } from './system-time-common.ts';
 
 export { TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, parseTimesyncConfig, type UnitState, parseUnitLoadStates, canonicalUnitName, unitIsLoaded, COMPETING_NTP_UNITS, competingNtpUnits, parseAnyUnitActive, type ExtractedWords, extractWordsChecked, extractWords, readTimedatedEnvironment, readNtpUnitsList, firstUsableNtpUnit, canConfigureTimesyncdServer, buildTimesyncdDropIn } from './system-time-linux.ts';
 

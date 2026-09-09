@@ -5,7 +5,7 @@ import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type Sy
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
-import { applySystemTimeSettings, getSystemTimeStatus, listSystemTimezones, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, withSystemTimeLock } from '../system-time.ts';
+import { applySystemTimeSettings, getSystemTimeStatus, listHostTimezones, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, withSystemTimeLock } from '../system-time.ts';
 import { applyIPv4Unlocked, connectWifiUnlocked, disconnectWifiUnlocked, readNetworkState, readNetworkStateUnlocked, runNetworkMutation, scanWifi } from '../system-network.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
@@ -202,9 +202,9 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		return withSystemTimeLock(getSystemTimeStatus);
 	}
 
-	/** IANA timezone identifiers this host accepts, for the timezone picker. Empty on a runtime without a timezone database. */
+	/** IANA timezone identifiers this host accepts, for the timezone picker. Excludes zones this platform cannot express. Empty on a runtime without a timezone database. */
 	function listTimezones(): string[] {
-		return listSystemTimezones();
+		return listHostTimezones();
 	}
 
 	/** Run a system-time write and tell every client what the host looks like afterwards. */
