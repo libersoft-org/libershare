@@ -1,5 +1,5 @@
-import { open, access, mkdir, readFile, rename, stat, unlink, lstat } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { open, access, mkdir, readFile, realpath, rename, stat, unlink, lstat } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import { constants, type BigIntStats } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
@@ -204,10 +204,13 @@ async function readSnapshot(path: string, readOriginal: (path: string) => Promis
  * deliberately does not widen. Reporting the problem is the fix, not loosening somebody
  * else's permissions behind their back.
  *
- * Resolved with `stat`, not `lstat`: a path component is often a symlink, and `lstat`
- * answers about the LINK — mode 0777 on every one of them — so a drop-in directory that is
- * really a link into a private tree passed this check while the daemon still could not
- * enter it. The permissions that matter belong to what the name resolves to.
+ * The walk runs over the RESOLVED path, not over the names as written. `stat` alone was
+ * not enough: it answers for what each name points at, but the walk then climbed the
+ * WRITTEN parent, so a link's own ancestors were never asked about. With
+ * `timesyncd.conf.d` a link to `/opt/private/time-config`, the 0755 target passed and the
+ * 0700 `/opt/private` above it — the directory that actually blocks the daemon — was never
+ * looked at. Reproduced: this returned "no problem" while a real read as another user got
+ * EACCES. Resolving first makes the chain the one the kernel walks.
  *
  * Approximated through the OTHER bits, because the service account is neither the owner nor,
  * on any ordinary host, in the owning group. That can only err towards refusing a
@@ -215,8 +218,16 @@ async function readSnapshot(path: string, readOriginal: (path: string) => Promis
  * told why rather than told a lie.
  */
 export async function unreadableByServiceAccount(path: string): Promise<string | null> {
+	// Resolved before the climb, and the file's own target too — the drop-in may itself be a
+	// link somewhere else entirely. An unresolvable path is left to the write to report.
+	const resolved =
+		(await realpath(path).catch(() => null)) ??
+		(await realpath(dirname(path))
+			.then(dir => join(dir, basename(path)))
+			.catch(() => null));
+	if (resolved === null) return null;
 	const parts: string[] = [];
-	for (let current = dirname(path); ; current = dirname(current)) {
+	for (let current = dirname(resolved); ; current = dirname(current)) {
 		parts.unshift(current);
 		if (dirname(current) === current) break;
 	}
@@ -226,8 +237,8 @@ export async function unreadableByServiceAccount(path: string): Promise<string |
 		if (!stats) return null;
 		if ((stats.mode & 0o001) === 0) return `${directory} cannot be entered by the time service's own account`;
 	}
-	const file = await stat(path).catch(() => null);
-	if (file && (file.mode & 0o004) === 0) return `${path} cannot be read by the time service's own account`;
+	const file = await stat(resolved).catch(() => null);
+	if (file && (file.mode & 0o004) === 0) return `${resolved} cannot be read by the time service's own account`;
 	return null;
 }
 

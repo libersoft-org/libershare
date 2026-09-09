@@ -206,4 +206,32 @@ describe.skipIf(process.platform === 'win32')('POSIX time configuration permissi
 		await chmod(hidden, 0o755);
 		expect(await unreadableByServiceAccount(file)).toBeNull();
 	});
+
+	/**
+	 * The half `stat` alone did not cover. Following each name is not the same as walking the
+	 * chain the kernel walks: with the drop-in directory a link to an ACCESSIBLE target, the
+	 * target passed and the private directory above it was never asked about. Reproduced on a
+	 * real host - the check said "no problem" while a read as another user got EACCES.
+	 */
+	it('checks the ancestors of a symlink target, not of the name that was written', async () => {
+		await chmod(root, 0o755);
+		const priv = join(root, 'private');
+		const target = join(priv, 'time-config');
+		await mkdir(priv, { mode: 0o700 });
+		await mkdir(target, { mode: 0o755 });
+		// umask 077 strips the mode `mkdir` was asked for, so set it explicitly.
+		await chmod(target, 0o755);
+		const link = join(root, 'conf.d');
+		await symlink(target, link);
+		const file = join(link, '90-libershare.conf');
+		await writeFile(file, '[Time]', 'utf8');
+		await chmod(file, 0o644);
+		// Everything the name points AT is permissive; the directory above it is not.
+		expect((await stat(target)).mode & 0o777).toBe(0o755);
+		expect(await unreadableByServiceAccount(file)).toContain('private');
+		await readAsNobody(file, true);
+		await chmod(priv, 0o755);
+		expect(await unreadableByServiceAccount(file)).toBeNull();
+		expect(await readAsNobody(file)).toBe('[Time]');
+	});
 });
