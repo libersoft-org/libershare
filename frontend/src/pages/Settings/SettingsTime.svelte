@@ -23,6 +23,25 @@
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
+	/**
+	 * A request the backend accepts and never answers leaves this form busy forever: the
+	 * client only arms a timer when one is asked for, and while `busy` the screen ignores
+	 * broadcasts and disables its own Reload — so nothing else can free it either. A
+	 * dropped socket rejects the pending call, but a HEALTHY socket with no reply does not.
+	 *
+	 * A read is a handful of OS probes and is generously bounded. A save is not one
+	 * command: switching Windows Time off alone waits up to 15 s for the service to
+	 * actually stop, and a full save runs that plus a server write, a timezone change and
+	 * a clock set, each with its own child-process timeout. The limit has to clear the
+	 * whole sequence, or a save that is merely slow gets reported as unfinished.
+	 *
+	 * Timing out is NOT "it did not happen": the write may well have been applied. It is
+	 * therefore reported through the same path as a transport failure — the partial-save
+	 * warning plus a re-read — and never retried. Repeating a clock write would step the
+	 * host's time a second time.
+	 */
+	const READ_TIMEOUT_MS = 30000;
+	const SAVE_TIMEOUT_MS = 120000;
 	let status = $state<SystemTimeStatus | null>(null);
 	let timezones = $state<string[]>([]);
 	let errorMessage = $state('');
@@ -113,7 +132,7 @@
 		if (!background) foregroundRead = current;
 		const currentTimezones = timezoneGate.begin();
 		loading = true;
-		const [statusResult, zonesResult] = await Promise.allSettled([api.call<SystemTimeStatus>('system.getTime'), api.call<string[]>('system.listTimezones')]);
+		const [statusResult, zonesResult] = await Promise.allSettled([api.call<SystemTimeStatus>('system.getTime', {}, READ_TIMEOUT_MS), api.call<string[]>('system.listTimezones', {}, READ_TIMEOUT_MS)]);
 		if (foregroundRead === current) foregroundRead = null;
 		// A broadcast, or a later read, may have landed while this one was out. Its state is
 		// the fresher one and this answer predates it — applying it anyway would rewind the
@@ -147,7 +166,11 @@
 		const current = (): boolean => generation === subscriptionGeneration && !destroyed;
 		if (!background) loading = true;
 		try {
-			await api.subscribe('system:timeChanged');
+			// Bounded like the calls below. `api.subscribe` takes no limit of its own, and an
+			// unanswered one held the screen on its spinner with no way out. Losing the race
+			// lands in the same place a refused subscription does — live updates off, which is
+			// a state the screen already shows and Reload can still retry from.
+			await Promise.race([api.subscribe('system:timeChanged'), new Promise((_, reject) => setTimeout(() => reject(new Error('subscription timed out')), READ_TIMEOUT_MS))]);
 			if (!current() || destroyed) return;
 			liveUpdates = true;
 		} catch {
@@ -333,7 +356,7 @@
 		const changes: SystemTimeChanges = planTimeChanges(plan);
 		busy = true;
 		try {
-			if (!(await apply(api.call<SystemTimeResult>('system.applyTimeSettings', changes)))) return;
+			if (!(await apply(api.call<SystemTimeResult>('system.applyTimeSettings', changes, SAVE_TIMEOUT_MS)))) return;
 			successMessage = tt('settings.time.saved');
 			const failure = await load();
 			if (failure) {

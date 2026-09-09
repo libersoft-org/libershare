@@ -27,7 +27,8 @@
 		const results = [];
 		const originals = { call: api.call, on: api.on, subscribe: api.subscribe, unsubscribe: api.unsubscribe };
 		let component, host, changed, subscribeWait, readWait, saveWait, zonesWait;
-		let readFails, zonesFail, subscribeFails, writeResult, transportFails;
+		let readFails, zonesFail, subscribeFails, writeResult, transportFails, saveTimesOut;
+		let limits = [];
 		let writes = [],
 			order = [],
 			backCalls = 0;
@@ -80,7 +81,10 @@
 			order.push('subscribed');
 		};
 		api.unsubscribe = async () => {};
-		api.call = async (method, params) => {
+		// The real client only arms a timer when the caller asks for one, so the fixture
+		// records what was asked for and refuses to simulate a timeout that could not happen.
+		api.call = async (method, params, timeoutMs) => {
+			limits.push({ method, timeoutMs });
 			if (method === 'system.getTime') {
 				order.push('read');
 				if (readWait) {
@@ -102,6 +106,10 @@
 			}
 			if (method !== 'system.applyTimeSettings') throw new Error(`Unexpected API method ${method}`);
 			writes.push(structuredClone(params));
+			if (saveTimesOut) {
+				assert(typeof timeoutMs === 'number' && timeoutMs > 0, 'Save was sent with no time limit, so it could never give up');
+				throw new Error('Request timed out');
+			}
 			if (saveWait) await saveWait.promise;
 			if (transportFails) throw new Error('Transport interrupted');
 			if (writeResult.success || writeResult.changed) {
@@ -129,6 +137,8 @@
 			saveWait = undefined;
 			writeResult = { success: true, outcome: 'ok', message: null };
 			transportFails = false;
+			saveTimesOut = false;
+			limits = [];
 			component = mount(SettingsTime, { target, props: { areaID: 'time-browser-test', onBack: () => backCalls++ } });
 			await settle();
 		}
@@ -337,6 +347,30 @@
 				transportFails = false;
 				await click(label('settings.time.reload'));
 				assert(!server().disabled, 'A verified reload did not release the stale form');
+			});
+			await test('an unanswered save gives up instead of locking the screen forever', async () => {
+				await click('tik.cesnet.cz');
+				saveTimesOut = true;
+				await click(label('common.save'));
+				const sent = limits.find(entry => entry.method === 'system.applyTimeSettings');
+				assert(sent && typeof sent.timeoutMs === 'number' && sent.timeoutMs > 0, 'The save was sent with no time limit, so it could never give up');
+				assert(writes.length === 1, 'A save that timed out was sent again, which could step the clock twice');
+				assert(!target.textContent.includes(label('settings.time.saving')), 'The form stayed on its saving spinner');
+				assert(!button(label('settings.time.reload')).classList.contains('disabled'), 'Reload stayed disabled, so nothing could free the form');
+				const error = target.querySelector('.error-message')?.textContent ?? '';
+				assert(error.includes(label('settings.time.errorPartial')), 'A timed-out save did not warn that it may already have applied');
+			});
+			await test('every host request carries a limit of its own', async () => {
+				const reads = limits.filter(entry => entry.method !== 'system.applyTimeSettings');
+				assert(reads.length > 0, 'The form made no host reads to check');
+				assert(
+					reads.every(entry => typeof entry.timeoutMs === 'number' && entry.timeoutMs > 0),
+					'A host read was sent without a time limit'
+				);
+				await click('tik.cesnet.cz');
+				await click(label('common.save'));
+				const save = limits.find(entry => entry.method === 'system.applyTimeSettings');
+				assert(save && typeof save.timeoutMs === 'number' && save.timeoutMs > 0, 'The save was sent without a time limit');
 			});
 			await test('external writes block an edited form until explicit reload', async () => {
 				await edit(server(), 'typed.example.org');
