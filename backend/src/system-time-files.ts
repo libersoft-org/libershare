@@ -189,6 +189,44 @@ async function readSnapshot(path: string, readOriginal: (path: string) => Promis
 }
 
 /**
+ * Why an unprivileged service could not read `path`, or null when it can.
+ *
+ * The file is written by this process, which is root on the hosts that can set the clock at
+ * all — and the daemon that has to READ it is not. `systemd-timesyncd` ships with
+ * `User=systemd-timesync` (checked on a running systemd 255), so a drop-in directory an
+ * administrator left at 0700 root is invisible to it while every check made from here
+ * succeeds: the file is there, its content is right, and `systemd-analyze cat-config` reads
+ * it back happily. The save is then reported as applied and the daemon goes on using the
+ * old server — the exact class of silent failure the effective-configuration check exists
+ * to prevent, arriving through the one door that check does not cover.
+ *
+ * Directories this operation creates are 0755 already; this is about the ones it finds and
+ * deliberately does not widen. Reporting the problem is the fix, not loosening somebody
+ * else's permissions behind their back.
+ *
+ * Approximated through the OTHER bits, because the service account is neither the owner nor,
+ * on any ordinary host, in the owning group. That can only err towards refusing a
+ * configuration that would in fact have worked, which is the harmless direction: the user is
+ * told why rather than told a lie.
+ */
+export async function unreadableByServiceAccount(path: string): Promise<string | null> {
+	const parts: string[] = [];
+	for (let current = dirname(path); ; current = dirname(current)) {
+		parts.unshift(current);
+		if (dirname(current) === current) break;
+	}
+	for (const directory of parts) {
+		const stats = await lstat(directory).catch(() => null);
+		// Unreadable to us is not evidence about anyone else; leave that to the write itself.
+		if (!stats) return null;
+		if ((stats.mode & 0o001) === 0) return `${directory} cannot be entered by the time service's own account`;
+	}
+	const file = await lstat(path).catch(() => null);
+	if (file && (file.mode & 0o004) === 0) return `${path} cannot be read by the time service's own account`;
+	return null;
+}
+
+/**
  * What a rollback actually achieved.
  *
  * A boolean could not say this. Restoring is a rename (or an unlink) followed by a directory

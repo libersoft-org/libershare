@@ -5,7 +5,7 @@ import { readLinuxStatus, TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn, verifyTim
 import { type SystemTimeStatus, type SystemTimeResult, type SystemTimeChanges, type SystemTimeStep } from '@shared';
 import { Mutex } from 'async-mutex';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { syncDirectory, type RollbackResult, writeFileAtomically } from './system-time-files.ts';
+import { syncDirectory, unreadableByServiceAccount, type RollbackResult, writeFileAtomically } from './system-time-files.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -560,7 +560,10 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
 			if (e.code === 'EACCES' || e.code === 'EPERM') return result('permission-denied', `cannot write ${path}`);
 			return result('error', e.message ?? `cannot write ${path}`);
 		}
-		const verification = await verifyTimesyncdServer(server, exec);
+		// Reachability before content: `systemd-analyze` reads as US, so a directory the daemon
+		// cannot enter passes every check below while the daemon never sees the file.
+		const unreachable = process.platform === 'win32' ? null : await unreadableByServiceAccount(path);
+		const verification = unreachable ?? (await verifyTimesyncdServer(server, exec));
 		if (verification !== null) {
 			const restored = await rollback();
 			if (restored.state === 'not-restored') return { ...result('error', `${verification} (${path} could not be restored safely; its current configuration was left untouched)`), changed: true, stateMayHaveChanged: true };
