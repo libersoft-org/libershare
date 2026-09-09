@@ -67,7 +67,7 @@ describe('fanOutEvent', () => {
 		const remote: string[] = [];
 		const a = { ...client(['system:network'], local), local: true };
 		const b = { ...client(['system:network'], remote), local: false };
-		expect(fanOutEvent([a, b], 'system:network', target => target.local ? 'full' : 'redacted')).toBe(2);
+		expect(fanOutEvent([a, b], 'system:network', target => (target.local ? 'full' : 'redacted'))).toBe(2);
 		expect(local).toEqual(['full']);
 		expect(remote).toEqual(['redacted']);
 	});
@@ -76,10 +76,12 @@ describe('fanOutEvent', () => {
 		const received: string[] = [];
 		const broken = client(['e'], []);
 		const good = client(['e'], received);
-		expect(fanOutEvent([broken, good], 'e', target => {
-			if (target === broken) throw new Error('Cannot serialize this client');
-			return 'payload';
-		})).toBe(1);
+		expect(
+			fanOutEvent([broken, good], 'e', target => {
+				if (target === broken) throw new Error('Cannot serialize this client');
+				return 'payload';
+			})
+		).toBe(1);
 		expect(received).toEqual(['payload']);
 	});
 });

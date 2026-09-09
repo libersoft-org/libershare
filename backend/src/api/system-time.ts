@@ -16,12 +16,14 @@ export function timeStatusForClient(status: SystemTimeStatus, authenticated: boo
 
 /** Bind every host-time write to authenticated clients on this machine. */
 export function createTimeApiHandlers(system: TimeSystem, authenticated: boolean): Record<string, TimeHandler> {
-	const protect = <P>(write: (params: P) => Promise<SystemTimeResult>) => async (params: P, client: TimeClient): Promise<SystemTimeResult> => {
-		if (!authenticated || !client.data.isLocalClient) {
-			return { success: false, outcome: 'permission-denied', message: 'Changing system time requires an authenticated client on this machine' };
-		}
-		return write(params);
-	};
+	const protect =
+		<P>(write: (params: P) => Promise<SystemTimeResult>) =>
+		async (params: P, client: TimeClient): Promise<SystemTimeResult> => {
+			if (!authenticated || !client.data.isLocalClient) {
+				return { success: false, outcome: 'permission-denied', message: 'Changing system time requires an authenticated client on this machine' };
+			}
+			return write(params);
+		};
 	return {
 		'system.getTime': async (_params, client) => timeStatusForClient(await system.getTime(), authenticated, client.data.isLocalClient),
 		'system.listTimezones': system.listTimezones,

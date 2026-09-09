@@ -192,8 +192,15 @@
 		offTimeChanged = api.on('system:timeChanged', (next: SystemTimeStatus) => {
 			if (busy || destroyed) return;
 			// A fresh event can fulfill a requested reload, but must not discard later edits.
-			if (foregroundRead?.()) { foregroundRead = null; applyStatus(next); return; }
-			if (!status || (!hasChanges && !stale)) { applyStatus(next); return; }
+			if (foregroundRead?.()) {
+				foregroundRead = null;
+				applyStatus(next);
+				return;
+			}
+			if (!status || (!hasChanges && !stale)) {
+				applyStatus(next);
+				return;
+			}
 			const receivedAt = performance.now();
 			const keepClockEdit = clockEdited;
 			if (status && timeStatusChanged(status, next, receivedAt - readAt)) stale = true;
@@ -209,7 +216,10 @@
 		void refresh();
 		let firstEmission = true;
 		const offConnected = connected.subscribe(isConnected => {
-			if (firstEmission) { firstEmission = false; return; }
+			if (firstEmission) {
+				firstEmission = false;
+				return;
+			}
 			if (!isConnected) {
 				liveUpdates = false;
 				foregroundRead = null;
@@ -222,7 +232,10 @@
 			}
 			void refresh(true);
 		});
-		return () => { clearInterval(ticker); offConnected(); };
+		return () => {
+			clearInterval(ticker);
+			offConnected();
+		};
 	});
 
 	onDestroy(() => {
@@ -363,47 +376,214 @@
 </script>
 
 <style>
-	.settings { display: flex; flex-direction: column; align-items: center; height: 100%; padding: 2vh 2vw; gap: 1.5vh; overflow-y: auto; box-sizing: border-box; color: var(--secondary-foreground); }
-	.container { display: flex; flex-direction: column; width: min(100%, 820px); gap: 1.4vh; min-width: 0; }
-	h2, h3, p, dl { margin: 0; }
-	h2 { font-size: clamp(20px, 2.7vh, 28px); color: var(--primary-foreground); }
-	h3 { font-size: clamp(16px, 2vh, 21px); }
-	.heading, .pending { display: flex; gap: 1.2vh; align-items: center; }
-	.hint { font-size: clamp(13px, 1.65vh, 17px); line-height: 1.45; color: var(--secondary-foreground); opacity: 0.85; }
-	.snapshot { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1.5vh 3vh; background: var(--secondary-background); padding: 1.6vh; border-radius: 1vh; }
-	.host-clock { font-size: clamp(28px, 4.4vh, 46px); font-variant-numeric: tabular-nums; line-height: 1.2; }
-	.host-date { font-size: clamp(14px, 1.8vh, 18px); font-variant-numeric: tabular-nums; }
-	.zone { font-size: clamp(13px, 1.7vh, 18px); margin-top: 0.4vh; }
-	.sync-status { display: flex; flex-direction: column; gap: 0.7vh; font-size: clamp(13px, 1.7vh, 18px); }
-	.sync-status dt { color: var(--disabled-foreground); font-size: clamp(12px, 1.5vh, 16px); }
-	.sync-status dd { margin: 0; }
-	.section { display: flex; flex-direction: column; gap: 1vh; padding-top: 1.4vh; border-top: 1px solid var(--secondary-softer-background); }
-	.clock { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1vh; }
-	.container :global(.input-field), .container :global(.select-field) { min-width: 0; }
-	.container :global(.label) { color: var(--secondary-foreground); font-size: clamp(13px, 1.7vh, 18px); }
-	.container :global(.alert) { font-size: clamp(13px, 1.65vh, 17px); padding: clamp(10px, 1.4vh, 16px); }
-	.container :global(.switch) { min-width: 72px; width: 72px; min-height: 42px; height: 42px; }
-	.container :global(.slider) { border-width: 3px; border-radius: 21px; }
-	.container :global(.slider:before) { width: 30px; height: 30px; left: 3px; bottom: 3px; }
-	.container :global(.slider.checked:before) { transform: translateX(30px); }
-	.container :global(input), .container :global(select) { min-width: 0; width: 100%; box-sizing: border-box; color: var(--secondary-foreground); background-color: var(--secondary-background); }
-	.container :global(.input-field.disabled input), .container :global(.select-field.disabled select) { color: var(--disabled-foreground); background-color: var(--secondary-hard-background); }
-	.settings :global(.button), .settings :global(.button.selected), .settings :global(.button:hover) { transform: none; box-shadow: none; }
-	.presets :global(.button) { flex: 1; min-width: 0; text-align: left; justify-content: flex-start; white-space: normal; opacity: 1; }
-	.presets :global(.button.disabled) { opacity: 0.6; }
-	.preset-copy { display: flex; flex-direction: column; gap: 0.2vh; }
-	.preset-copy strong { font-size: clamp(14px, 1.8vh, 19px); }
-	.preset-copy span { font-size: clamp(12px, 1.5vh, 16px); font-weight: normal; }
-	.pending { padding: 1.3vh; background: var(--secondary-background); border-radius: 1vh; font-size: clamp(14px, 1.8vh, 19px); }
-	.spinner { width: 16px; height: 16px; border: 2px solid var(--secondary-softer-background); border-top-color: var(--primary-foreground); border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
-	@keyframes spin { to { transform: rotate(360deg); } }
-	@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
-	@media (max-width: 540px) { .settings { padding: 1.5vh 3vw; } .presets :global(.button-bar) { flex-direction: column !important; } .snapshot { align-items: flex-start; } }
+	.settings {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		height: 100%;
+		padding: 2vh 2vw;
+		gap: 1.5vh;
+		overflow-y: auto;
+		box-sizing: border-box;
+		color: var(--secondary-foreground);
+	}
+	.container {
+		display: flex;
+		flex-direction: column;
+		width: min(100%, 820px);
+		gap: 1.4vh;
+		min-width: 0;
+	}
+	h2,
+	h3,
+	p,
+	dl {
+		margin: 0;
+	}
+	h2 {
+		font-size: clamp(20px, 2.7vh, 28px);
+		color: var(--primary-foreground);
+	}
+	h3 {
+		font-size: clamp(16px, 2vh, 21px);
+	}
+	.heading,
+	.pending {
+		display: flex;
+		gap: 1.2vh;
+		align-items: center;
+	}
+	.hint {
+		font-size: clamp(13px, 1.65vh, 17px);
+		line-height: 1.45;
+		color: var(--secondary-foreground);
+		opacity: 0.85;
+	}
+	.snapshot {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 1.5vh 3vh;
+		background: var(--secondary-background);
+		padding: 1.6vh;
+		border-radius: 1vh;
+	}
+	.host-clock {
+		font-size: clamp(28px, 4.4vh, 46px);
+		font-variant-numeric: tabular-nums;
+		line-height: 1.2;
+	}
+	.host-date {
+		font-size: clamp(14px, 1.8vh, 18px);
+		font-variant-numeric: tabular-nums;
+	}
+	.zone {
+		font-size: clamp(13px, 1.7vh, 18px);
+		margin-top: 0.4vh;
+	}
+	.sync-status {
+		display: flex;
+		flex-direction: column;
+		gap: 0.7vh;
+		font-size: clamp(13px, 1.7vh, 18px);
+	}
+	.sync-status dt {
+		color: var(--disabled-foreground);
+		font-size: clamp(12px, 1.5vh, 16px);
+	}
+	.sync-status dd {
+		margin: 0;
+	}
+	.section {
+		display: flex;
+		flex-direction: column;
+		gap: 1vh;
+		padding-top: 1.4vh;
+		border-top: 1px solid var(--secondary-softer-background);
+	}
+	.clock {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 1vh;
+	}
+	.container :global(.input-field),
+	.container :global(.select-field) {
+		min-width: 0;
+	}
+	.container :global(.label) {
+		color: var(--secondary-foreground);
+		font-size: clamp(13px, 1.7vh, 18px);
+	}
+	.container :global(.alert) {
+		font-size: clamp(13px, 1.65vh, 17px);
+		padding: clamp(10px, 1.4vh, 16px);
+	}
+	.container :global(.switch) {
+		min-width: 72px;
+		width: 72px;
+		min-height: 42px;
+		height: 42px;
+	}
+	.container :global(.slider) {
+		border-width: 3px;
+		border-radius: 21px;
+	}
+	.container :global(.slider:before) {
+		width: 30px;
+		height: 30px;
+		left: 3px;
+		bottom: 3px;
+	}
+	.container :global(.slider.checked:before) {
+		transform: translateX(30px);
+	}
+	.container :global(input),
+	.container :global(select) {
+		min-width: 0;
+		width: 100%;
+		box-sizing: border-box;
+		color: var(--secondary-foreground);
+		background-color: var(--secondary-background);
+	}
+	.container :global(.input-field.disabled input),
+	.container :global(.select-field.disabled select) {
+		color: var(--disabled-foreground);
+		background-color: var(--secondary-hard-background);
+	}
+	.settings :global(.button),
+	.settings :global(.button.selected),
+	.settings :global(.button:hover) {
+		transform: none;
+		box-shadow: none;
+	}
+	.presets :global(.button) {
+		flex: 1;
+		min-width: 0;
+		text-align: left;
+		justify-content: flex-start;
+		white-space: normal;
+		opacity: 1;
+	}
+	.presets :global(.button.disabled) {
+		opacity: 0.6;
+	}
+	.preset-copy {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2vh;
+	}
+	.preset-copy strong {
+		font-size: clamp(14px, 1.8vh, 19px);
+	}
+	.preset-copy span {
+		font-size: clamp(12px, 1.5vh, 16px);
+		font-weight: normal;
+	}
+	.pending {
+		padding: 1.3vh;
+		background: var(--secondary-background);
+		border-radius: 1vh;
+		font-size: clamp(14px, 1.8vh, 19px);
+	}
+	.spinner {
+		width: 16px;
+		height: 16px;
+		border: 2px solid var(--secondary-softer-background);
+		border-top-color: var(--primary-foreground);
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+		flex-shrink: 0;
+	}
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.spinner {
+			animation: none;
+		}
+	}
+	@media (max-width: 540px) {
+		.settings {
+			padding: 1.5vh 3vw;
+		}
+		.presets :global(.button-bar) {
+			flex-direction: column !important;
+		}
+		.snapshot {
+			align-items: flex-start;
+		}
+	}
 </style>
 
 <div class="settings">
 	<div class="container" aria-busy={loading || busy}>
-		<header class="heading"><Icon img="/img/time.svg" size="3vh" colorVariable="--primary-foreground" /><h2>{$t('settings.time.title')}</h2></header>
+		<header class="heading">
+			<Icon img="/img/time.svg" size="3vh" colorVariable="--primary-foreground" />
+			<h2>{$t('settings.time.title')}</h2>
+		</header>
 		{#if loading}<div class="pending" role="status"><span class="spinner" aria-hidden="true"></span>{$t('settings.time.loading')}</div>{/if}
 		{#if busy}<div class="pending" role="status" aria-live="polite"><span class="spinner" aria-hidden="true"></span>{$t('settings.time.saving')}</div>{/if}
 		{#if errorMessage}<div class="error-message" role="alert"><Alert type="error" message={errorMessage} /></div>{/if}
@@ -414,10 +594,21 @@
 		{#if syncUnknown}<Alert type="warning" message={syncUnknownLocked ? $t('settings.time.syncUnknownLocked') : $t('settings.time.syncUnknown')} />{/if}
 		{#if status}
 			<section class="snapshot" aria-label={$t('settings.time.currentTime')}>
-				<div><div class="hint">{$t(stale || !liveUpdates ? 'settings.time.lastKnownTime' : 'settings.time.currentTime')}</div><div class="host-clock">{displayClock}</div><div class="host-date">{displayDate}</div><div class="zone">{status.timezone}</div></div>
+				<div>
+					<div class="hint">{$t(stale || !liveUpdates ? 'settings.time.lastKnownTime' : 'settings.time.currentTime')}</div>
+					<div class="host-clock">{displayClock}</div>
+					<div class="host-date">{displayDate}</div>
+					<div class="zone">{status.timezone}</div>
+				</div>
 				<dl class="sync-status">
-					<div><dt>{$t('settings.time.autoSync')}</dt><dd data-time-sync-enabled>{$t(status.ntpEnabled === null ? 'settings.time.unknown' : status.ntpEnabled ? 'settings.time.enabled' : 'settings.time.disabled')}</dd></div>
-					<div><dt>{$t('settings.time.syncResult')}</dt><dd data-time-sync-result>{$t(status.ntpSynchronized === null ? 'settings.time.syncUnreported' : status.ntpSynchronized ? 'settings.time.synchronized' : 'settings.time.notSynchronized')}</dd></div>
+					<div>
+						<dt>{$t('settings.time.autoSync')}</dt>
+						<dd data-time-sync-enabled>{$t(status.ntpEnabled === null ? 'settings.time.unknown' : status.ntpEnabled ? 'settings.time.enabled' : 'settings.time.disabled')}</dd>
+					</div>
+					<div>
+						<dt>{$t('settings.time.syncResult')}</dt>
+						<dd data-time-sync-result>{$t(status.ntpSynchronized === null ? 'settings.time.syncUnreported' : status.ntpSynchronized ? 'settings.time.synchronized' : 'settings.time.notSynchronized')}</dd>
+					</div>
 				</dl>
 			</section>
 			{#if !Object.values(status.capabilities).some(Boolean)}<p class="hint">{$t('settings.time.readOnly')}</p>{/if}

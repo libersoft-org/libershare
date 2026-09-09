@@ -545,7 +545,7 @@ export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Pr
 			const outcome = await exec(cmd, args);
 			if (cmd !== 'sc' || args[0] !== (enabled ? 'start' : 'stop')) return outcome;
 			const accepted = outcome.kind === 'ok' || (outcome.kind === 'failed' && outcome.code === (enabled ? SC_ALREADY_RUNNING : SC_NOT_ACTIVE));
-			if (!accepted || await waitForService(enabled)) return outcome;
+			if (!accepted || (await waitForService(enabled))) return outcome;
 			return { kind: 'failed', code: null, output: `Windows Time did not reach the ${enabled ? 'running' : 'stopped'} state within 15 seconds; the service transition may still be in progress` };
 		});
 	});

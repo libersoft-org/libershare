@@ -137,8 +137,14 @@ test('fixed offset keeps the local midnight independent of timezone DST', () => 
 });
 
 const heartbeatStatus: SystemTimeStatus = {
-	supported: true, nowMs: Date.UTC(2026, 6, 1, 12), timezone: 'Europe/Prague', timezoneSource: 'intl', utcOffsetMinutes: 120,
-	ntpEnabled: true, ntpSynchronized: false, ntpServer: 'example.org',
+	supported: true,
+	nowMs: Date.UTC(2026, 6, 1, 12),
+	timezone: 'Europe/Prague',
+	timezoneSource: 'intl',
+	utcOffsetMinutes: 120,
+	ntpEnabled: true,
+	ntpSynchronized: false,
+	ntpServer: 'example.org',
 	capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: true },
 };
 
@@ -165,7 +171,8 @@ test('changed time settings and revoked capabilities invalidate drafts', () => {
 		{ ...heartbeatStatus, ntpServer: 'other.example.org' },
 		{ ...heartbeatStatus, ntpEnabled: false },
 		{ ...heartbeatStatus, capabilities: { ...heartbeatStatus.capabilities, setNtpServer: false } },
-	]) expect(timeStatusChanged(heartbeatStatus, next, 0)).toBe(true);
+	])
+		expect(timeStatusChanged(heartbeatStatus, next, 0)).toBe(true);
 });
 
 test('a write failure keeps its own reason when the reload also failed', () => {

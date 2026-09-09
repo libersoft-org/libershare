@@ -488,7 +488,9 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 			if (generation === timePollingGeneration && pollInterval && hasSubscribers('system:timeChanged')) broadcast('system:timeChanged', status);
 		})
 			.catch(error => console.warn('[system-time] Could not refresh host time:', (error as Error).message))
-			.finally(() => { timeReadInFlight = false; });
+			.finally(() => {
+				timeReadInFlight = false;
+			});
 	}
 
 	function startPolling(): void {

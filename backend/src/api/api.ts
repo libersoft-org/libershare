@@ -694,13 +694,16 @@ export class APIServer {
 	 */
 	private broadcast(event: string, data: any, except?: ClientSocket): void {
 		const sharedMessage = event === 'system:network' || event === 'system:timeChanged' ? null : JSON.stringify({ event, data });
-		const sent = fanOutEvent(this.clients, event, client => {
-			if (sharedMessage !== null) return sharedMessage;
-			const state = event === 'system:network'
-				? networkStateForClient(data as NetworkStateInfo, !!this.apiToken, client.data.isLocalClient)
-				: timeStatusForClient(data as SystemTimeStatus, !!this.apiToken, client.data.isLocalClient);
-			return JSON.stringify({ event, data: state });
-		}, except);
+		const sent = fanOutEvent(
+			this.clients,
+			event,
+			client => {
+				if (sharedMessage !== null) return sharedMessage;
+				const state = event === 'system:network' ? networkStateForClient(data as NetworkStateInfo, !!this.apiToken, client.data.isLocalClient) : timeStatusForClient(data as SystemTimeStatus, !!this.apiToken, client.data.isLocalClient);
+				return JSON.stringify({ event, data: state });
+			},
+			except
+		);
 		if (event.startsWith('transfer.')) {
 			const d = data as any;
 			const extra = d.peers !== undefined ? ` peers=${d.peers}` : '';

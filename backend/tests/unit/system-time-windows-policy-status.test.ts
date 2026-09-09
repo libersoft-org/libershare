@@ -60,6 +60,9 @@ it('reports only confirmed Windows settings while preserving policy write protec
 		}
 	} finally {
 		clearTimeout(deadline);
-		if (child.exitCode === null) { child.kill('SIGKILL'); await child.exited; }
+		if (child.exitCode === null) {
+			child.kill('SIGKILL');
+			await child.exited;
+		}
 	}
 }, 15000);

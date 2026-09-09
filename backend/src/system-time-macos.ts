@@ -1,6 +1,5 @@
 import { type PlatformStatus, tryRead } from './system-time-common.ts';
 
-
 /** `systemsetup` is not on a default non-root PATH on macOS, so it is always addressed absolutely. */
 export const MAC_SYSTEMSETUP = '/usr/sbin/systemsetup';
 

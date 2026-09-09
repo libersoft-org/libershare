@@ -131,7 +131,9 @@ export interface HostClock {
 /** Use the OS offset directly when automatic timezone/DST adjustment is disabled. */
 function hostTimeParts(nowMs: number, timezone: string, offsetMinutes: number, mode: 'zone' | 'fixed', fields: Intl.DateTimeFormatOptions): Intl.DateTimeFormatPart[] {
 	if (mode === 'zone') {
-		try { return new Intl.DateTimeFormat('en-GB', { ...fields, timeZone: timezone }).formatToParts(new Date(nowMs)); } catch {}
+		try {
+			return new Intl.DateTimeFormat('en-GB', { ...fields, timeZone: timezone }).formatToParts(new Date(nowMs));
+		} catch {}
 	}
 	return new Intl.DateTimeFormat('en-GB', { ...fields, timeZone: 'UTC' }).formatToParts(new Date(nowMs + offsetMinutes * 60000));
 }
@@ -151,17 +153,7 @@ export function formatHostDate(nowMs: number, timezone: string, offsetMinutes: n
 
 /** Configuration changes or corrections beyond 2 s of read/transport jitter invalidate an existing draft. */
 export function timeStatusChanged(previous: SystemTimeStatus, next: SystemTimeStatus, elapsedMs: number): boolean {
-	return previous.supported !== next.supported
-		|| previous.timezone !== next.timezone
-		|| previous.utcOffsetMinutes !== next.utcOffsetMinutes
-		|| (previous.timezoneOffsetMode ?? 'zone') !== (next.timezoneOffsetMode ?? 'zone')
-		|| previous.ntpEnabled !== next.ntpEnabled
-		|| (previous.ntpServer ?? '') !== (next.ntpServer ?? '')
-		|| previous.capabilities.setClock !== next.capabilities.setClock
-		|| previous.capabilities.setTimezone !== next.capabilities.setTimezone
-		|| previous.capabilities.setNtpServer !== next.capabilities.setNtpServer
-		|| previous.capabilities.setNtpEnabled !== next.capabilities.setNtpEnabled
-		|| Math.abs(next.nowMs - previous.nowMs - elapsedMs) > 2000;
+	return previous.supported !== next.supported || previous.timezone !== next.timezone || previous.utcOffsetMinutes !== next.utcOffsetMinutes || (previous.timezoneOffsetMode ?? 'zone') !== (next.timezoneOffsetMode ?? 'zone') || previous.ntpEnabled !== next.ntpEnabled || (previous.ntpServer ?? '') !== (next.ntpServer ?? '') || previous.capabilities.setClock !== next.capabilities.setClock || previous.capabilities.setTimezone !== next.capabilities.setTimezone || previous.capabilities.setNtpServer !== next.capabilities.setNtpServer || previous.capabilities.setNtpEnabled !== next.capabilities.setNtpEnabled || Math.abs(next.nowMs - previous.nowMs - elapsedMs) > 2000;
 }
 
 /**

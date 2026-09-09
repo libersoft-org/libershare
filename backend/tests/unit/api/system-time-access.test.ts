@@ -18,17 +18,37 @@ const ok: SystemTimeResult = { success: true, outcome: 'ok', message: null };
 const writes = ['setClock', 'setTimezone', 'setNtpServer', 'setNtpEnabled', 'applyTimeSettings'] as const;
 
 describe('system time API authorization', () => {
-	for (const [authenticated, local] of [[false, false], [false, true], [true, false], [true, true]] as const) {
+	for (const [authenticated, local] of [
+		[false, false],
+		[false, true],
+		[true, false],
+		[true, true],
+	] as const) {
 		it(`guards every time mutation with token=${authenticated} and local=${local}`, async () => {
 			const called: string[] = [];
 			const system = {
 				getTime: async () => status,
 				listTimezones: () => ['UTC'],
-				setClock: async () => { called.push('setClock'); return ok; },
-				setTimezone: async () => { called.push('setTimezone'); return ok; },
-				setNtpServer: async () => { called.push('setNtpServer'); return ok; },
-				setNtpEnabled: async () => { called.push('setNtpEnabled'); return ok; },
-				applyTimeSettings: async () => { called.push('applyTimeSettings'); return ok; },
+				setClock: async () => {
+					called.push('setClock');
+					return ok;
+				},
+				setTimezone: async () => {
+					called.push('setTimezone');
+					return ok;
+				},
+				setNtpServer: async () => {
+					called.push('setNtpServer');
+					return ok;
+				},
+				setNtpEnabled: async () => {
+					called.push('setNtpEnabled');
+					return ok;
+				},
+				applyTimeSettings: async () => {
+					called.push('applyTimeSettings');
+					return ok;
+				},
 			};
 			const handlers = createTimeApiHandlers(system, authenticated);
 			const client = { data: { isLocalClient: local } };
@@ -63,7 +83,12 @@ describe('system time API authorization', () => {
 		});
 		const local = makeClient(true, localMessages);
 		const remote = makeClient(false, remoteMessages);
-		const dead = { ...makeClient(true, []), send: () => { throw new Error('closed'); } };
+		const dead = {
+			...makeClient(true, []),
+			send: () => {
+				throw new Error('closed');
+			},
+		};
 		const api = Object.create(APIServer.prototype) as APIServer;
 		Object.assign(api, { apiToken: 'fixture-token', clients: new Set([local, dead, remote]) });
 		api.broadcastEvent('system:timeChanged', status);

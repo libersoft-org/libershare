@@ -71,6 +71,9 @@ it('refreshes external time changes without overlapping writes or publishing aft
 		expect(result.clears).toBe(2);
 	} finally {
 		clearTimeout(deadline);
-		if (child.exitCode === null) { child.kill('SIGKILL'); await child.exited; }
+		if (child.exitCode === null) {
+			child.kill('SIGKILL');
+			await child.exited;
+		}
 	}
 });
