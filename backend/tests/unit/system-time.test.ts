@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 import { classifyFailure, decodeCommandOutput, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listHostTimezones, listSystemTimezones, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, type PlatformStatusReader, resetHostTimezones, resolveSystemExecutable, timezoneOffsetMinutes, parseYesNo, validateClockParts } from '../../src/system-time.ts';
 import { ianaToWindowsTimezoneId, windowsSystemLibraryPath } from '../../src/system-time-windows.ts';
 
@@ -499,7 +500,8 @@ describe('listHostTimezones', () => {
 			listHostTimezones(
 				'linux',
 				() => null,
-				() => true
+				() => true,
+				null
 			)
 		).toEqual(listSystemTimezones());
 	});
@@ -513,6 +515,41 @@ describe('listHostTimezones', () => {
 				() => false
 			)
 		).toEqual(listSystemTimezones());
+	});
+
+	// The POSIX half of the same rule. ICU names zones the host's tzdata need not carry:
+	// on a systemd host 18 of 445 were refused by `timedatectl set-timezone`, `Asia/Calcutta`
+	// and `Europe/Kiev` among them, each one reproducing the same half-applied save.
+	it('drops the zones a POSIX host has no tzdata file for', () => {
+		resetHostTimezones();
+		const legacy = new Set(['Asia/Calcutta', 'Europe/Kiev', 'America/Buenos_Aires']);
+		const zones = listHostTimezones(
+			'linux',
+			() => 'unused',
+			() => true,
+			zone => !legacy.has(zone)
+		);
+		for (const zone of legacy) expect(zones).not.toContain(zone);
+		expect(zones).toContain('Europe/Prague');
+	});
+
+	it('offers the runtime list unfiltered where the host has no zoneinfo directory', () => {
+		resetHostTimezones();
+		expect(
+			listHostTimezones(
+				'linux',
+				() => null,
+				() => true,
+				null
+			)
+		).toEqual(listSystemTimezones());
+	});
+
+	it.skipIf(process.platform === 'win32')('offers only zones this host has tzdata for', () => {
+		resetHostTimezones();
+		const offered = listHostTimezones();
+		expect(offered.length).toBeGreaterThan(100);
+		for (const zone of offered) expect(existsSync(join('/usr/share/zoneinfo', zone))).toBe(true);
 	});
 
 	it.skipIf(process.platform !== 'win32')('offers only zones this host can really be set to', () => {

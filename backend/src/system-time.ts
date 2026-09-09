@@ -7,6 +7,8 @@ import { Mutex } from 'async-mutex';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { syncDirectory, type RollbackResult, writeFileAtomically } from './system-time-files.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Command builders (pure)
@@ -150,16 +152,52 @@ let hostTimezones: { platform: string; zones: string[] } | null = null;
  * anything, which is what filtering the list at the source achieves for every caller:
  * the picker no longer offers it, and both validation paths reject it as an unknown zone.
  *
- * `platform` and `convert` are injectable so the filter can be exercised off Windows.
+ * The same gap exists on the POSIX platforms, for the opposite reason. There the OS takes
+ * the IANA name unchanged, but only for a zone its own tzdata carries — and the runtime's
+ * ICU list is not that set. Measured on a systemd host: 18 of the 445 zones offered were
+ * rejected by `timedatectl set-timezone` with "Invalid or not installed time zone", among
+ * them `Asia/Calcutta` and `Europe/Kiev` — the legacy aliases ICU still names canonically
+ * while the distribution ships them in a separate package. Those are ordinary picks, not
+ * exotic ones, and each of them reproduced the same half-applied save.
+ *
+ * A zone is offered there when `/usr/share/zoneinfo` carries it, which is the test systemd
+ * itself applies before writing. The list `timedatectl list-timezones` prints is a
+ * DIFFERENT and narrower thing — it comes from `zone1970.tab` and omits aliases the host
+ * would in fact accept — so filtering by it would refuse zones that work.
+ *
+ * If the directory is not there at all, nothing is filtered: an empty picker is worse than
+ * one that occasionally offers too much, and that host's writes fail visibly anyway.
+ *
+ * `platform`, `convert` and `zoneInstalled` are injectable so both filters can be
+ * exercised on either kind of host.
  */
-export function listHostTimezones(platform: string = process.platform, convert: (zone: string) => string | null = ianaToWindowsTimezoneId, canConvert: () => boolean = canConvertTimezoneId): string[] {
+export function listHostTimezones(platform: string = process.platform, convert: (zone: string) => string | null = ianaToWindowsTimezoneId, canConvert: () => boolean = canConvertTimezoneId, zoneInstalled: ((zone: string) => boolean) | null = installedZoneCheck()): string[] {
 	if (hostTimezones?.platform === platform) return hostTimezones.zones;
 	const zones = listSystemTimezones();
 	// A Windows without ICU converts nothing, and the timezone capability is already off
 	// there — an empty list would additionally erase the zone the host is actually in.
-	const usable = platform !== 'win32' || !canConvert() ? zones : zones.filter(zone => convert(zone) !== null);
+	const filter = platform === 'win32' ? (canConvert() ? (zone: string) => convert(zone) !== null : null) : zoneInstalled;
+	const usable = filter ? zones.filter(filter) : zones;
 	hostTimezones = { platform, zones: usable };
 	return usable;
+}
+
+/** Directory every POSIX host validates a timezone name against before accepting it. */
+const ZONEINFO_DIR = '/usr/share/zoneinfo';
+
+/**
+ * Is this zone installed on the host? Null when the question cannot be asked — no zoneinfo
+ * directory — so the caller offers the runtime's list unfiltered rather than nothing.
+ *
+ * The name is joined and then checked to still be inside the directory: it comes from ICU
+ * here, but the guard costs nothing and keeps a `..` out of a filesystem probe for good.
+ */
+function installedZoneCheck(): ((zone: string) => boolean) | null {
+	if (process.platform === 'win32' || !existsSync(ZONEINFO_DIR)) return null;
+	return zone => {
+		const path = join(ZONEINFO_DIR, zone);
+		return path.startsWith(ZONEINFO_DIR + '/') && existsSync(path);
+	};
 }
 
 /** Forget the cached list. Only for tests that swap the conversion behaviour. */
