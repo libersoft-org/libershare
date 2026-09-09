@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { chmod, chown, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { writeFileAtomically } from '../../src/system-time-files.ts';
+import { unreadableByServiceAccount, writeFileAtomically } from '../../src/system-time-files.ts';
 
 async function restrictiveUmask<T>(action: () => Promise<T>): Promise<T> {
 	const previous = process.umask(0o077);
@@ -164,5 +164,25 @@ describe.skipIf(process.platform === 'win32')('POSIX time configuration permissi
 		await chown(file, 65534, 65534);
 		expect((await rollback()).state).toBe('not-restored');
 		expect((await stat(file)).uid).toBe(65534);
+	});
+
+	/**
+	 * systemd-timesyncd runs as `systemd-timesync`, not as root (checked on a running systemd
+	 * 255), so a drop-in directory an administrator left at 0700 is invisible to it - while
+	 * every check made from a root process succeeds and the save is reported as applied.
+	 */
+	it('spots a configuration the time service could never read', async () => {
+		const parent = join(root, 'private');
+		const file = join(parent, '90-libershare.conf');
+		await mkdir(parent, { mode: 0o700 });
+		await writeFile(file, '[Time]', 'utf8');
+		await chmod(file, 0o644);
+		expect(await unreadableByServiceAccount(file)).toContain('cannot be entered');
+		// The fixture root is itself 0700 under umask 077, and the walk is right to say so.
+		await chmod(root, 0o755);
+		await chmod(parent, 0o755);
+		expect(await unreadableByServiceAccount(file)).toBeNull();
+		await chmod(file, 0o640);
+		expect(await unreadableByServiceAccount(file)).toContain('cannot be read');
 	});
 });
