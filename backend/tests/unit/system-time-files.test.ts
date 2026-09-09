@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { applyTimesyncdDropIn, syncDirectory, type CommandRunner, type RunOutcome, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
@@ -153,6 +153,33 @@ describe('writeFileAtomically', () => {
 		expect(await readFile(path, 'utf8')).toBe('administrator\n');
 		// And nothing of ours was left lying next to it.
 		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
+	});
+
+	/**
+	 * The same window, with a symlink instead of a file. `readMetadata` refuses anything that
+	 * is not a regular file - and the guard was swallowing that refusal into "nothing is
+	 * here", which matched the absence the write started from, so the rename replaced the
+	 * administrator's link with our own file. A regular file appearing at the same instant was
+	 * refused correctly the whole time; only this shape got through.
+	 */
+	it.skipIf(process.platform === 'win32')('refuses to replace a symlink that appeared while the first write was staging', async () => {
+		const path = join(dir, '90-libershare.conf');
+		const administrator = join(dir, 'admin.conf');
+		await writeFile(administrator, 'theirs\n', 'utf8');
+		let made = false;
+		const write = writeFileAtomically(
+			path,
+			'ours\n',
+			p => readFile(p, 'utf8'),
+			async () => {
+				if (made) return;
+				made = true;
+				await symlink(administrator, path);
+			}
+		);
+		await expect(write).rejects.toThrow('not a regular file');
+		expect((await lstat(path)).isSymbolicLink()).toBe(true);
+		expect(await readFile(path, 'utf8')).toBe('theirs\n');
 	});
 
 	it('creates a missing parent directory', async () => {

@@ -297,7 +297,13 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 		// it does not close it. There is no compare-and-swap for a rename on POSIX, so the
 		// honest claim is "an observed change is preserved", never "no concurrent writer can
 		// lose an edit".
-		if (!unchangedSince(await readMetadata(path).catch(() => null), guard)) throw new Error('the time configuration changed while this operation was staging its replacement; it was left untouched');
+		// NOT `.catch(() => null)`. `readMetadata` answers null for a genuine absence and throws
+		// for everything else — including a path that is no longer a regular file. Swallowing
+		// that turned "an administrator just put a symlink here" into "nothing is here", which
+		// matched the absence this write started from, so the rename went ahead and replaced the
+		// link with our file. Reproduced: a regular file created at the same instant was
+		// correctly refused while a symlink was not.
+		if (!unchangedSince(await readMetadata(path), guard)) throw new Error('the time configuration changed while this operation was staging its replacement; it was left untouched');
 		await rename(temp, path);
 		renamed = true;
 		published = await readMetadata(path).catch(() => null);
