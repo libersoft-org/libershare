@@ -576,7 +576,6 @@
 			"autoSync": "Automatic synchronization (NTP)",
 			"autoSyncHint": "The clock is set automatically. Switch automatic synchronization off to set it by hand.",
 			"ntpServer": "NTP server",
-			"ntpServerPlaceholder": "tik.cesnet.cz",
 			"hours": "Hours",
 			"minutes": "Minutes",
 			"seconds": "Seconds",
