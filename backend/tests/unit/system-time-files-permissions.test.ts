@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { chmod, chown, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, chown, lstat, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { unreadableByServiceAccount, writeFileAtomically } from '../../src/system-time-files.ts';
@@ -184,5 +184,26 @@ describe.skipIf(process.platform === 'win32')('POSIX time configuration permissi
 		expect(await unreadableByServiceAccount(file)).toBeNull();
 		await chmod(file, 0o640);
 		expect(await unreadableByServiceAccount(file)).toContain('cannot be read');
+	});
+
+	/**
+	 * A path component is often a symlink, and `lstat` answers about the LINK — 0777 on every
+	 * one of them — so a drop-in directory that is really a link into a private tree passed
+	 * the check while the daemon still could not enter it.
+	 */
+	it('follows a symlink to the directory whose permissions actually apply', async () => {
+		await chmod(root, 0o755);
+		const hidden = join(root, 'hidden');
+		const link = join(root, 'conf.d');
+		await mkdir(hidden, { mode: 0o700 });
+		await symlink(hidden, link);
+		const file = join(link, '90-libershare.conf');
+		await writeFile(file, '[Time]', 'utf8');
+		await chmod(file, 0o644);
+		// The link itself is world-everything; what matters is the 0700 directory behind it.
+		expect((await lstat(link)).mode & 0o777).toBe(0o777);
+		expect(await unreadableByServiceAccount(file)).toContain('cannot be entered');
+		await chmod(hidden, 0o755);
+		expect(await unreadableByServiceAccount(file)).toBeNull();
 	});
 });

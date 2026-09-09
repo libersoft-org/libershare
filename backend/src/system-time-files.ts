@@ -1,4 +1,4 @@
-import { open, access, mkdir, readFile, rename, unlink, lstat } from 'node:fs/promises';
+import { open, access, mkdir, readFile, rename, stat, unlink, lstat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { constants, type BigIntStats } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -204,6 +204,11 @@ async function readSnapshot(path: string, readOriginal: (path: string) => Promis
  * deliberately does not widen. Reporting the problem is the fix, not loosening somebody
  * else's permissions behind their back.
  *
+ * Resolved with `stat`, not `lstat`: a path component is often a symlink, and `lstat`
+ * answers about the LINK — mode 0777 on every one of them — so a drop-in directory that is
+ * really a link into a private tree passed this check while the daemon still could not
+ * enter it. The permissions that matter belong to what the name resolves to.
+ *
  * Approximated through the OTHER bits, because the service account is neither the owner nor,
  * on any ordinary host, in the owning group. That can only err towards refusing a
  * configuration that would in fact have worked, which is the harmless direction: the user is
@@ -216,12 +221,12 @@ export async function unreadableByServiceAccount(path: string): Promise<string |
 		if (dirname(current) === current) break;
 	}
 	for (const directory of parts) {
-		const stats = await lstat(directory).catch(() => null);
+		const stats = await stat(directory).catch(() => null);
 		// Unreadable to us is not evidence about anyone else; leave that to the write itself.
 		if (!stats) return null;
 		if ((stats.mode & 0o001) === 0) return `${directory} cannot be entered by the time service's own account`;
 	}
-	const file = await lstat(path).catch(() => null);
+	const file = await stat(path).catch(() => null);
 	if (file && (file.mode & 0o004) === 0) return `${path} cannot be read by the time service's own account`;
 	return null;
 }
