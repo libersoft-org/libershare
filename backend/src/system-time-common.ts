@@ -87,21 +87,33 @@ function getConsoleText(): ConsoleTextApi | null {
  *
  * Falls back to UTF-8 whenever the call cannot be made or does not answer, which is
  * also every non-Windows host: those already run with `LC_ALL=C` and speak UTF-8.
+ *
+ * NOT for our own PowerShell script, which is why {@link run} exempts it. PowerShell has
+ * no fixed output encoding: it writes through `[Console]::OutputEncoding`, which follows
+ * the console it inherited. Measured both ways on the same host - started from a UTF-8
+ * terminal it emitted UTF-8, started with no console it emitted cp852 - so an OEM
+ * conversion is right for one of them and mangles the other. The script pins the encoding
+ * instead and is read as what it pinned.
+ *
+ * `readCodePage` is injectable so the conversion can be exercised for a code page other
+ * than the one the test host happens to have.
  */
-export function decodeCommandOutput(bytes: Uint8Array, platform: string = process.platform): string {
+export function decodeCommandOutput(bytes: Uint8Array, platform: string = process.platform, readCodePage?: () => number): string {
 	if (platform !== 'win32' || bytes.byteLength === 0) return Buffer.from(bytes).toString('utf8');
-	const api = getConsoleText();
-	if (!api) return Buffer.from(bytes).toString('utf8');
+	const api = readCodePage ? null : getConsoleText();
+	if (!readCodePage && !api) return Buffer.from(bytes).toString('utf8');
 	try {
-		const codePage = api.GetOEMCP() || api.GetConsoleOutputCP();
+		const codePage = readCodePage ? readCodePage() : api!.GetOEMCP() || api!.GetConsoleOutputCP();
 		// 65001 is UTF-8 itself; nothing to convert, and the fast path is also the one a
 		// host whose OEM code page is already UTF-8 takes.
 		if (!codePage || codePage === 65001) return Buffer.from(bytes).toString('utf8');
 		const source = new Uint8Array(bytes);
-		const needed = api.MultiByteToWideChar(codePage, 0, ptr(source), source.length, 0 as unknown as number, 0);
+		const convert = api ?? getConsoleText();
+		if (!convert) return Buffer.from(bytes).toString('utf8');
+		const needed = convert.MultiByteToWideChar(codePage, 0, ptr(source), source.length, 0 as unknown as number, 0);
 		if (needed <= 0) return Buffer.from(bytes).toString('utf8');
 		const wide = new Uint16Array(needed);
-		if (api.MultiByteToWideChar(codePage, 0, ptr(source), source.length, ptr(wide), wide.length) !== needed) return Buffer.from(bytes).toString('utf8');
+		if (convert.MultiByteToWideChar(codePage, 0, ptr(source), source.length, ptr(wide), wide.length) !== needed) return Buffer.from(bytes).toString('utf8');
 		// Chunked: spreading a long message into String.fromCharCode blows the argument limit.
 		let text = '';
 		for (let index = 0; index < wide.length; index += 8192) text += String.fromCharCode(...wide.subarray(index, index + 8192));
@@ -394,6 +406,15 @@ export type RunOutcome = { kind: 'ok'; output: string } | { kind: 'missing' } | 
  * interpreted as a command. `LC_ALL=C` pins the child's messages to English, which
  * is what {@link classifyFailure} matches on for Linux and macOS.
  */
+/**
+ * Read one command's output. Every Windows console tool goes through the OEM conversion
+ * except our own PowerShell script, which pins its output encoding to UTF-8 itself (see
+ * buildSetClockCommands) and would be corrupted by converting it as anything else.
+ */
+function decode(cmd: string, bytes: Uint8Array): string {
+	return cmd === 'powershell' ? Buffer.from(bytes).toString('utf8') : decodeCommandOutput(bytes);
+}
+
 export async function run(cmd: string, args: string[]): Promise<RunOutcome> {
 	try {
 		const executable = resolveSystemExecutable(process.platform, cmd);
@@ -406,13 +427,13 @@ export async function run(cmd: string, args: string[]): Promise<RunOutcome> {
 		// `encoding: 'buffer'` because the bytes are not UTF-8 on a localized Windows
 		// console — see decodeCommandOutput.
 		const { stdout } = await execFileAsync(executable, args, { timeout: EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true, env: environment, encoding: 'buffer' });
-		return { kind: 'ok', output: decodeCommandOutput(stdout) };
+		return { kind: 'ok', output: decode(cmd, stdout) };
 	} catch (err) {
 		const e = err as { code?: number | string; killed?: boolean; signal?: string | null; stdout?: Uint8Array; stderr?: Uint8Array; message?: string };
 		if (e.killed || e.signal) return { kind: 'timeout' };
 		if (e.code === 'ENOENT') return { kind: 'missing' };
 		// w32tm prints its errors to stdout, timedatectl to stderr — read both.
-		const output = `${e.stdout ? decodeCommandOutput(e.stdout) : ''}\n${e.stderr ? decodeCommandOutput(e.stderr) : ''}`.trim() || (e.message ?? '');
+		const output = `${e.stdout ? decode(cmd, e.stdout) : ''}\n${e.stderr ? decode(cmd, e.stderr) : ''}`.trim() || (e.message ?? '');
 		return { kind: 'failed', code: typeof e.code === 'number' ? e.code : null, output };
 	}
 }

@@ -145,17 +145,20 @@ describe('decodeCommandOutput', () => {
 		expect(decodeCommandOutput(Buffer.from('[SC] OpenService FAILED 5:', 'utf8'), 'win32')).toBe('[SC] OpenService FAILED 5:');
 	});
 
-	it.skipIf(process.platform !== 'win32')('decodes an OEM code page rather than mangling it into replacement characters', () => {
-		const decoded = decodeCommandOutput(CP852_DENIAL, 'win32');
-		// Whatever this host's console code page is, the ASCII skeleton and the HRESULT
-		// classifyFailure matches on must survive intact.
-		expect(decoded).toContain('The following error occurred');
-		expect(decoded).toContain('0x80070005');
+	// The code page is PINNED, not read off the host. Reading it made the assertion depend
+	// on where the test ran: these bytes are cp852, and a host whose OEM code page is 65001
+	// takes the UTF-8 path and produces exactly the replacement characters being asserted
+	// against. The conversion itself is Windows-only, so the case still needs a Windows host.
+	it.skipIf(process.platform !== 'win32')('decodes cp852 rather than mangling it into replacement characters', () => {
+		const decoded = decodeCommandOutput(CP852_DENIAL, 'win32', () => 852);
+		expect(decoded).toBe('The following error occurred: Přístup byl odepřen. (0x80070005)');
+		expect(decoded).not.toContain('�');
+		// The HRESULT classifyFailure matches on survives the conversion either way.
 		expect(classifyFailure('win32', 1, decoded)).toBe('permission-denied');
-		// On a cp852 host the accented characters come back as themselves. Elsewhere the
-		// bytes mean something else, so only assert that nothing was lost to U+FFFD.
-		if (decoded.includes('Přístup')) expect(decoded).toContain('odepřen');
-		else expect(decoded).not.toContain('�');
+	});
+
+	it('takes the UTF-8 path when the host code page already is UTF-8', () => {
+		expect(decodeCommandOutput(Buffer.from('Přístup byl odepřen.', 'utf8'), 'win32', () => 65001)).toBe('Přístup byl odepřen.');
 	});
 
 	it('would have produced replacement characters without the code-page conversion', () => {

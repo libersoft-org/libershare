@@ -25,7 +25,14 @@ export function buildSetClockCommands(platform: SystemPlatform, when: LocalDateT
 	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-time', `${date} ${time}`] }];
 	if (platform === 'darwin') return [{ cmd: MAC_SYSTEMSETUP, args: ['-settime', time] }];
 	// powershell.exe otherwise collapses native errors to exit 1 and localized text.
-	const script = `try { Set-Date -Date '${date}T${time}' -ErrorAction Stop | Out-Null } catch {
+	// The encoding is pinned first: PowerShell writes through `[Console]::OutputEncoding`,
+	// which follows whatever console it inherited, so the same script emits UTF-8 when
+	// started from a UTF-8 terminal and the OEM code page when started with no console at
+	// all. Both were measured on one host. Reading it therefore needs a known encoding
+	// rather than a guessed one, and `run` reads this command as UTF-8 on that promise.
+	// Explicitly BOM-less: a preamble would land in the middle of the captured output.
+	const script = `[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+	try { Set-Date -Date '${date}T${time}' -ErrorAction Stop | Out-Null } catch {
 		[Console]::Error.WriteLine($_.Exception.Message)
 		$failure = $_.Exception
 		$nativeCode = 1
