@@ -92,6 +92,37 @@ describe('writeFileAtomically', () => {
 		expect(await readdir(join(dir, 'made-here'))).toEqual([]);
 	});
 
+	/**
+	 * The window the earlier check does not cover. A rollback reads the file, decides it is
+	 * still its own, and only THEN stages the replacement - a create, a write, an fsync and a
+	 * close. An administrator editing the file inside that stretch had the edit overwritten,
+	 * and the rollback still answered `restored-durable`: a clean undo reported over somebody
+	 * else's change. The directory flush is the hook, because it runs after the rollback's own
+	 * check has passed and before anything is renamed.
+	 */
+	it('refuses to overwrite an edit made while the rollback was staging its replacement', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await writeFile(path, 'original\n', 'utf8');
+		let rollingBack = false;
+		let edited = false;
+		const rollback = await writeFileAtomically(
+			path,
+			'ours\n',
+			p => readFile(p, 'utf8'),
+			async () => {
+				if (!rollingBack || edited) return;
+				edited = true;
+				await writeFile(path, 'administrator\n', 'utf8');
+			}
+		);
+		expect(await readFile(path, 'utf8')).toBe('ours\n');
+		rollingBack = true;
+		const restored = await rollback();
+		expect(edited).toBe(true);
+		expect(restored.state).toBe('not-restored');
+		expect(await readFile(path, 'utf8')).toBe('administrator\n');
+	});
+
 	it('creates a missing parent directory', async () => {
 		const path = join(dir, 'timesyncd.conf.d', '90-libershare.conf');
 		await writeFileAtomically(path, 'x\n');

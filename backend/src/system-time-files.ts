@@ -164,6 +164,19 @@ async function readMetadata(path: string): Promise<FileMetadata | null> {
 function sameFile(left: FileMetadata | null, right: FileMetadata | null): boolean {
 	return left === null || right === null ? left === right : left.dev === right.dev && left.ino === right.ino && left.mode === right.mode && left.uid === right.uid && left.gid === right.gid;
 }
+/**
+ * The same file AND untouched since it was measured.
+ *
+ * {@link sameFile} answers identity only — device, inode, mode, ownership — which an edit
+ * made in place does not change: `writeFile` truncates the existing inode, so a check built
+ * on identity alone waved an administrator's rewrite straight through. Size and the two
+ * timestamps are what make it an unchanged-since test rather than a same-name test.
+ */
+function unchangedSince(current: FileMetadata | null, expected: FileMetadata | null): boolean {
+	if (!sameFile(current, expected)) return false;
+	return current?.size === expected?.size && current?.mtimeNs === expected?.mtimeNs && current?.ctimeNs === expected?.ctimeNs;
+}
+
 async function readSnapshot(path: string, readOriginal: (path: string) => Promise<string>): Promise<FileSnapshot | null> {
 	const before = await readMetadata(path);
 	const content = await readOriginal(path).catch((error: { code?: string }) => {
@@ -190,13 +203,16 @@ export async function writeFileAtomically(path: string, content: string, readOri
 	return publishFile(path, content, { mode: 0o644 }, readOriginal, syncDir);
 }
 
-async function publishFile(path: string, content: string, permissions: { mode: number; uid?: number; gid?: number }, readOriginal: (path: string) => Promise<string>, syncDir: (dir: string) => Promise<void>): Promise<() => Promise<RollbackResult>> {
+async function publishFile(path: string, content: string, permissions: { mode: number; uid?: number; gid?: number }, readOriginal: (path: string) => Promise<string>, syncDir: (dir: string) => Promise<void>, expected?: FileMetadata | null): Promise<() => Promise<RollbackResult>> {
 	const previous = await readSnapshot(path, readOriginal);
 	await makeDirectoryDurably(dirname(path), syncDir);
 	// Same directory, or the rename would cross a filesystem boundary and stop being atomic.
 	const temp = `${path}.libershare-${process.pid}-${randomUUID()}.tmp`;
 	let renamed = false;
 	let written: FileMetadata;
+	// Measured AFTER the swap, not on the staging file: the rename itself moves ctime, so a
+	// staged measurement compares unequal to the very file it just published.
+	let published: FileMetadata | null = null;
 	try {
 		// `wx`, not `w`: an existing name is a collision to report, never one to overwrite.
 		const handle = await open(temp, 'wx');
@@ -213,8 +229,17 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 		} finally {
 			await handle.close();
 		}
+		// Re-checked HERE, immediately before the swap, and not only when the operation began.
+		// Staging the replacement takes a create, a write, an fsync and a close, and an edit
+		// landing anywhere in that stretch was overwritten by a rollback that then reported a
+		// clean restore. This narrows the window to the gap between the check and the rename;
+		// it does not close it. There is no compare-and-swap for a rename on POSIX, so the
+		// honest claim is "an observed change is preserved", never "no concurrent writer can
+		// lose an edit".
+		if (expected !== undefined && !unchangedSince(await readMetadata(path).catch(() => null), expected)) throw new Error('the time configuration changed while this operation was staging its replacement; it was left untouched');
 		await rename(temp, path);
 		renamed = true;
+		published = await readMetadata(path).catch(() => null);
 		await syncDir(dirname(path));
 	} catch (err) {
 		// Only up to the rename is the temporary file the thing to remove. Afterwards it IS
@@ -251,7 +276,8 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 						if (latest !== content || !sameFile(await readMetadata(target), written)) throw new Error('the time configuration changed before restoration; it was left untouched');
 						return latest;
 					},
-					syncDir
+					syncDir,
+					published
 				);
 			} else {
 				// Already gone is the state being restored to, not a failure.
