@@ -543,6 +543,11 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
 			if (!back.success) caveats.push('systemd-timesyncd could not be restarted onto it');
 			if (restored.state === 'restored-not-durable') caveats.push('the restore could not be flushed to disk, so it may not survive a crash or a power loss');
 			if (caveats.length > 0) return { ...r, message: `${reason} (${path} was restored, but ${caveats.join(', and ')})` };
+			// Durably restored AND the daemon is back on the original file: the host is as it
+			// was found, so the `changed` flags `runAll` set on the way in no longer describe
+			// it. Carried through, they had the UI warn that part of a cleanly undone save
+			// might still be applied — a caveat about a state that does not exist.
+			return { ...result('error', reason), ...(r.steps ? { steps: r.steps } : {}) };
 		}
 		return r;
 	});

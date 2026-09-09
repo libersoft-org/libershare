@@ -391,6 +391,11 @@ describe('applyTimesyncdDropIn', () => {
 		expect(r.outcome).toBe('error');
 		expect(await readFile(path, 'utf8')).toBe('[Time]\nNTP=\nNTP=old.example.org\n');
 		expect(calls).toEqual(['systemctl restart systemd-timesyncd', 'systemctl restart systemd-timesyncd']);
+		// The undo is complete, so the host is as it was found. Carrying the `changed` flags
+		// the stopped sequence set had the UI warn that part of the save might still be
+		// applied — about a state that no longer exists anywhere.
+		expect(r.changed).not.toBe(true);
+		expect(r.stateMayHaveChanged).not.toBe(true);
 	});
 
 	/**
