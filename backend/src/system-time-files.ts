@@ -218,27 +218,38 @@ async function readSnapshot(path: string, readOriginal: (path: string) => Promis
  * told why rather than told a lie.
  */
 export async function unreadableByServiceAccount(path: string): Promise<string | null> {
-	// Resolved before the climb, and the file's own target too — the drop-in may itself be a
-	// link somewhere else entirely. An unresolvable path is left to the write to report.
+	// BOTH chains, because path resolution walks both. The name as written is walked
+	// component by component, and where a component is a link the target's own chain is
+	// walked too — so a directory can block the daemon from either side. Checking only the
+	// resolved chain missed a link sitting inside a 0700 directory whose target was public:
+	// reproduced on a real host, where this returned "no problem" while a read through the
+	// link got EACCES and a read straight at the target succeeded. Checking only the written
+	// chain was the mirror image, missed a round earlier.
+	//
+	// ponytail: two chains, not a full recursive resolution. A link whose target path itself
+	// passes through further links can still hide a directory from this check; the write then
+	// reports it the ordinary way. Walk it properly if that ever turns up in the wild.
 	const resolved =
 		(await realpath(path).catch(() => null)) ??
 		(await realpath(dirname(path))
 			.then(dir => join(dir, basename(path)))
 			.catch(() => null));
-	if (resolved === null) return null;
-	const parts: string[] = [];
-	for (let current = dirname(resolved); ; current = dirname(current)) {
-		parts.unshift(current);
-		if (dirname(current) === current) break;
-	}
-	for (const directory of parts) {
+	const ancestors = (from: string): string[] => {
+		const parts: string[] = [];
+		for (let current = dirname(from); ; current = dirname(current)) {
+			parts.unshift(current);
+			if (dirname(current) === current) break;
+		}
+		return parts;
+	};
+	for (const directory of new Set([...ancestors(path), ...(resolved === null ? [] : ancestors(resolved))])) {
 		const stats = await stat(directory).catch(() => null);
 		// Unreadable to us is not evidence about anyone else; leave that to the write itself.
-		if (!stats) return null;
+		if (!stats) continue;
 		if ((stats.mode & 0o001) === 0) return `${directory} cannot be entered by the time service's own account`;
 	}
-	const file = await stat(resolved).catch(() => null);
-	if (file && (file.mode & 0o004) === 0) return `${resolved} cannot be read by the time service's own account`;
+	const file = await stat(resolved ?? path).catch(() => null);
+	if (file && (file.mode & 0o004) === 0) return `${resolved ?? path} cannot be read by the time service's own account`;
 	return null;
 }
 
