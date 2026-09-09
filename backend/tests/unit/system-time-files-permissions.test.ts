@@ -208,30 +208,57 @@ describe.skipIf(process.platform === 'win32')('POSIX time configuration permissi
 	});
 
 	/**
-	 * The half `stat` alone did not cover. Following each name is not the same as walking the
-	 * chain the kernel walks: with the drop-in directory a link to an ACCESSIBLE target, the
-	 * target passed and the private directory above it was never asked about. Reproduced on a
-	 * real host - the check said "no problem" while a read as another user got EACCES.
+	 * Both sides of a link. Resolution walks the name as written AND, where a component is a
+	 * link, the target's own chain — so a 0700 directory blocks the daemon whichever side it
+	 * sits on. Each direction was missed by a fix aimed at the other.
+	 *
+	 * Mode bits only, so this needs no privileges and runs wherever POSIX permissions do.
 	 */
-	it('checks the ancestors of a symlink target, not of the name that was written', async () => {
+	it.each([
+		['the directory holding the link', 'locked'],
+		['the directory above the target', 'private'],
+	])('refuses when %s is closed', async (_side, closed) => {
 		await chmod(root, 0o755);
-		const priv = join(root, 'private');
-		const target = join(priv, 'time-config');
-		await mkdir(priv, { mode: 0o700 });
-		await mkdir(target, { mode: 0o755 });
-		// umask 077 strips the mode `mkdir` was asked for, so set it explicitly.
-		await chmod(target, 0o755);
-		const link = join(root, 'conf.d');
+		const locked = join(root, 'locked');
+		const private_ = join(root, 'private');
+		const target = join(private_, 'time-config');
+		for (const directory of [locked, private_, target]) {
+			await mkdir(directory);
+			// umask 077 strips the mode `mkdir` was asked for, so set it explicitly.
+			await chmod(directory, 0o755);
+		}
+		const link = join(locked, 'conf.d');
 		await symlink(target, link);
 		const file = join(link, '90-libershare.conf');
 		await writeFile(file, '[Time]', 'utf8');
 		await chmod(file, 0o644);
-		// Everything the name points AT is permissive; the directory above it is not.
-		expect((await stat(target)).mode & 0o777).toBe(0o755);
-		expect(await unreadableByServiceAccount(file)).toContain('private');
-		await readAsNobody(file, true);
-		await chmod(priv, 0o755);
+		// Everything open: nothing to report.
 		expect(await unreadableByServiceAccount(file)).toBeNull();
+		await chmod(join(root, closed), 0o700);
+		expect(await unreadableByServiceAccount(file)).toContain(closed);
+	});
+
+	/**
+	 * The same arrangement read for real, which is the only thing that proves the mode bits
+	 * were the right question. Needs root to become another user, like every other cross-user
+	 * case here, so it carries the same guard rather than the suite-level one.
+	 */
+	it.skipIf(process.platform !== 'linux' || process.getuid?.() !== 0)('agrees with a real read through the link', async () => {
+		await chmod(root, 0o755);
+		const locked = join(root, 'locked');
+		const target = join(root, 'public');
+		for (const directory of [locked, target]) {
+			await mkdir(directory);
+			await chmod(directory, 0o755);
+		}
+		const link = join(locked, 'conf.d');
+		await symlink(target, link);
+		await writeFile(join(target, '90-libershare.conf'), '[Time]', 'utf8');
+		await chmod(join(target, '90-libershare.conf'), 0o644);
+		const file = join(link, '90-libershare.conf');
 		expect(await readAsNobody(file)).toBe('[Time]');
+		await chmod(locked, 0o700);
+		expect(await unreadableByServiceAccount(file)).toContain('locked');
+		await readAsNobody(file, true);
 	});
 });
