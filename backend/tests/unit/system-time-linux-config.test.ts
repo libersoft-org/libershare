@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { applyTimesyncdDropIn, type CommandRunner, buildTimesyncdDropIn, parseTimesyncConfig, resolveSystemExecutable } from '../../src/system-time.ts';
@@ -172,6 +172,9 @@ describe('verification of a published timesyncd drop-in', () => {
 	const laterReset = '# /etc/systemd/timesyncd.conf.d/99-local.conf\n[Time]\nNTP=\nNTP=override.example.org\n';
 	beforeEach(async () => {
 		dir = await mkdtemp(join(tmpdir(), 'lish-timesync-verify-'));
+		// 0700 from `mkdtemp` is a directory the time service's own account could not enter, so
+		// every positive case here would be refused for a reason unrelated to what it tests.
+		if (process.platform !== 'win32') await chmod(dir, 0o755);
 		file = join(dir, '90-libershare.conf');
 		await writeFile(file, original);
 	});

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { applyTimesyncdDropIn, syncDirectory, type CommandRunner, type RunOutcome, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
@@ -29,6 +29,11 @@ describe('writeFileAtomically', () => {
 
 	beforeEach(async () => {
 		dir = await mkdtemp(join(tmpdir(), 'lish-time-'));
+		// `mkdtemp` makes a 0700 directory, which the time service's own account could not
+		// enter — so every positive case here would be refused for a reason that has nothing to
+		// do with what it is testing. The cases that WANT an unreachable directory build their
+		// own (see the permissions suite).
+		if (process.platform !== 'win32') await chmod(dir, 0o755);
 	});
 
 	afterEach(async () => {
@@ -246,9 +251,24 @@ describe('writeFileAtomically', () => {
 	 * truncates the first one's file, the first renames the second's content into place
 	 * and the second then fails with ENOENT on a name that is already gone.
 	 */
-	it('stages concurrent writes under separate temporary names', async () => {
+	/**
+	 * Two writers, one path. The original bug was a temporary name shared by every call: the
+	 * second write truncated the first one's staging file and renamed it away, so the first
+	 * published the second's content and the second failed with ENOENT. Unique names fixed
+	 * that, and the pre-rename guard now decides the outcome — one write publishes, the other
+	 * sees the file it measured has changed and withdraws.
+	 *
+	 * Whichever wins, the file holds ONE writer's content in full and no staging file is left.
+	 * A torn or mixed result is the failure this guards against.
+	 */
+	it('lets one of two concurrent writes publish and leaves nothing half-written', async () => {
 		const path = join(dir, '90-libershare.conf');
-		await Promise.all([writeFileAtomically(path, 'first\n'), writeFileAtomically(path, 'second\n')]);
+		const results = await Promise.allSettled([writeFileAtomically(path, 'first\n'), writeFileAtomically(path, 'second\n')]);
+		// Both may well succeed: if the second reads the file only after the first has already
+		// renamed, it measured the published state and is replacing it legitimately. What must
+		// never happen is neither of them landing, or a refusal for any other reason.
+		expect(results.some(r => r.status === 'fulfilled')).toBe(true);
+		for (const r of results) if (r.status === 'rejected') expect(String(r.reason)).toContain('staging its replacement');
 		expect(['first\n', 'second\n']).toContain(await readFile(path, 'utf8'));
 		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
 	});
@@ -389,6 +409,11 @@ describe('applyTimesyncdDropIn', () => {
 
 	beforeEach(async () => {
 		dir = await mkdtemp(join(tmpdir(), 'lish-time-'));
+		// `mkdtemp` makes a 0700 directory, which the time service's own account could not
+		// enter — so every positive case here would be refused for a reason that has nothing to
+		// do with what it is testing. The cases that WANT an unreachable directory build their
+		// own (see the permissions suite).
+		if (process.platform !== 'win32') await chmod(dir, 0o755);
 		path = join(dir, '90-libershare.conf');
 	});
 
