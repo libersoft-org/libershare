@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { applySystemTimeSettings, buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, clockWriteRefusal, getSystemTimeStatus, listSystemTimezones, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type SystemCommand, type SystemTimeWriters, type WindowsModeState, W32TM_ERROR_RE, withSystemTimeLock } from '../../src/system-time.ts';
+import { applySystemTimeSettings, buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, clockWriteRefusal, getSystemTimeStatus, listHostTimezones, listSystemTimezones, resetHostTimezones, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type SystemCommand, type SystemTimeWriters, type WindowsModeState, W32TM_ERROR_RE, withSystemTimeLock } from '../../src/system-time.ts';
 import type { SystemTimeChanges, SystemTimeStatus } from '@shared';
 import { W32TM_STATUS, fakeRunner } from '../helpers/system-time-fixtures.ts';
 
@@ -594,6 +594,41 @@ describe('applySystemTimeSettings', () => {
 		expect(result.changed).not.toBe(true);
 		expect(result.stateMayHaveChanged).not.toBe(true);
 		expect(calls).toEqual([]);
+	});
+
+	/**
+	 * The case a made-up name does NOT cover, and the one that actually happened: a zone the
+	 * runtime offers and the host refuses. `Mars/Olympus_Mons` never reaches the host's own
+	 * check, so it proves nothing about the ordering — while `Asia/Calcutta` on a systemd host
+	 * and `Antarctica/Troll` on Windows are in every picker and rejected only at the moment of
+	 * writing, by which time synchronisation was already off and the NTP server already
+	 * rewritten. Nothing may run for one of those.
+	 *
+	 * The host filter is primed under the real platform so this holds on either kind of host:
+	 * Windows takes the conversion branch, everything else the tzdata one, and both refuse the
+	 * same zone here.
+	 */
+	it('runs nothing for a zone the runtime offers but the host cannot be set to', async () => {
+		resetHostTimezones();
+		try {
+			const rejected = 'Europe/Prague';
+			expect(listSystemTimezones()).toContain(rejected);
+			listHostTimezones(
+				process.platform,
+				zone => (zone === rejected ? null : 'Some Standard Time'),
+				() => true,
+				zone => zone !== rejected
+			);
+			expect(listHostTimezones()).not.toContain(rejected);
+			const calls: string[] = [];
+			const result = await applySystemTimeSettings({ ntpEnabled: false, ntpServer: 'ntp.example.org', timezone: rejected }, writers(calls));
+			expect(result).toMatchObject({ success: false, outcome: 'invalid-input' });
+			expect(result.changed).not.toBe(true);
+			expect(result.stateMayHaveChanged).not.toBe(true);
+			expect(calls).toEqual([]);
+		} finally {
+			resetHostTimezones();
+		}
 	});
 
 	it('applies one save in dependency order under one operation', async () => {
