@@ -128,6 +128,33 @@ describe('writeFileAtomically', () => {
 		expect(await readFile(path, 'utf8')).toBe('administrator\n');
 	});
 
+	/**
+	 * The same window on the way IN. The original is read, the replacement is staged, and an
+	 * edit landing between the two was published over without a word — and the rollback then
+	 * restored the content from BEFORE that edit, losing it a second time. Only the rollback
+	 * was guarded; the first write, which is the one that actually overwrites, was not.
+	 */
+	it('refuses to overwrite an edit made while the first write was staging', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await writeFile(path, 'original\n', 'utf8');
+		let edited = false;
+		const write = writeFileAtomically(
+			path,
+			'ours\n',
+			p => readFile(p, 'utf8'),
+			async () => {
+				if (edited) return;
+				edited = true;
+				await writeFile(path, 'administrator\n', 'utf8');
+			}
+		);
+		await expect(write).rejects.toThrow('staging its replacement');
+		expect(edited).toBe(true);
+		expect(await readFile(path, 'utf8')).toBe('administrator\n');
+		// And nothing of ours was left lying next to it.
+		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
+	});
+
 	it('creates a missing parent directory', async () => {
 		const path = join(dir, 'timesyncd.conf.d', '90-libershare.conf');
 		await writeFileAtomically(path, 'x\n');

@@ -248,6 +248,13 @@ export async function writeFileAtomically(path: string, content: string, readOri
 
 async function publishFile(path: string, content: string, permissions: { mode: number; uid?: number; gid?: number }, readOriginal: (path: string) => Promise<string>, syncDir: (dir: string) => Promise<void>, expected?: FileMetadata | null): Promise<() => Promise<RollbackResult>> {
 	const previous = await readSnapshot(path, readOriginal);
+	// The first write guards the same window the rollback does. It was left open on the way
+	// IN: the original is read, the replacement is staged, and an edit landing between the two
+	// was overwritten without a word — and then the rollback, which does check, faithfully
+	// restored the content from before that edit, so the administrator's change was gone twice
+	// over. `expected` defaults to what was just read, which refuses only a change made DURING
+	// this call; replacing a file that was already different is still the whole point.
+	const guard = expected === undefined ? previous : expected;
 	await makeDirectoryDurably(dirname(path), syncDir);
 	// Same directory, or the rename would cross a filesystem boundary and stop being atomic.
 	const temp = `${path}.libershare-${process.pid}-${randomUUID()}.tmp`;
@@ -279,7 +286,7 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 		// it does not close it. There is no compare-and-swap for a rename on POSIX, so the
 		// honest claim is "an observed change is preserved", never "no concurrent writer can
 		// lose an edit".
-		if (expected !== undefined && !unchangedSince(await readMetadata(path).catch(() => null), expected)) throw new Error('the time configuration changed while this operation was staging its replacement; it was left untouched');
+		if (!unchangedSince(await readMetadata(path).catch(() => null), guard)) throw new Error('the time configuration changed while this operation was staging its replacement; it was left untouched');
 		await rename(temp, path);
 		renamed = true;
 		published = await readMetadata(path).catch(() => null);
