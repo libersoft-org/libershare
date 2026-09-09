@@ -2,6 +2,7 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { win32, isAbsolute } from 'node:path';
 import { isIP } from 'node:net';
+import { dlopen, FFIType, ptr } from 'bun:ffi';
 import { type SystemTimeOutcome, type SystemTimezoneSource, type SystemTimeResult, type SystemTimeStep, type SystemTimeCapabilities, type SystemTimeStatus } from '@shared';
 
 const execFileAsync = promisify(execFile);
@@ -32,6 +33,82 @@ export function resolveSystemExecutable(platform: string, command: string, syste
 	}
 	if (isAbsolute(command)) return command;
 	return platform === 'linux' ? (LINUX_EXECUTABLES[command] ?? null) : null;
+}
+
+/** Address a Windows system DLL directly so an elevated process never searches for it. */
+export function windowsSystemLibraryPath(name: string, systemRoot: string | undefined = process.env['SystemRoot']): string {
+	const root = systemRoot && win32.isAbsolute(systemRoot) ? systemRoot : 'C:\\Windows';
+	return win32.join(root, 'System32', name);
+}
+
+interface ConsoleTextApi {
+	GetConsoleOutputCP: () => number;
+	GetOEMCP: () => number;
+	MultiByteToWideChar: (codePage: number, flags: number, input: number, inputLength: number, output: number, outputLength: number) => number;
+}
+
+// null means "tried and unavailable" — the probe runs at most once either way.
+let consoleText: ConsoleTextApi | null | undefined;
+
+function getConsoleText(): ConsoleTextApi | null {
+	if (consoleText === undefined) {
+		try {
+			consoleText = dlopen(windowsSystemLibraryPath('kernel32.dll'), {
+				GetConsoleOutputCP: { args: [], returns: FFIType.u32 },
+				GetOEMCP: { args: [], returns: FFIType.u32 },
+				MultiByteToWideChar: { args: [FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+			}).symbols as unknown as ConsoleTextApi;
+		} catch {
+			consoleText = null;
+		}
+	}
+	return consoleText;
+}
+
+/**
+ * Turn the raw bytes a child process wrote into text.
+ *
+ * UTF-8 everywhere but Windows, where the console tools this module runs —
+ * `w32tm`, `sc`, `tzutil` — emit their LOCALIZED messages in the console's OEM code
+ * page, not in UTF-8. Read as UTF-8 those bytes are not valid sequences at all, so
+ * every accented character became U+FFFD: a Czech host reported "P<?><?>stup byl
+ * odep<?>en" where the OS had said "Přístup byl odepřen". Nothing decides anything on
+ * that text — {@link classifyFailure} matches exit codes and the ASCII HRESULT — but it
+ * is the only concrete detail a refused write gives the operator, and it arrived
+ * unreadable on every host whose Windows is not English.
+ *
+ * The code page is asked of Windows rather than assumed: it is cp852 on this author's
+ * Czech host, cp866 on a Russian one, cp437 on a US one. `GetOEMCP` is the one to ask,
+ * NOT `GetConsoleOutputCP`: the child's output here is a PIPE, and the console code page
+ * describes a terminal this process may not even have. Measured on the Czech host —
+ * `GetConsoleOutputCP` answered 65001 while `w32tm` was in fact emitting cp852, which is
+ * exactly what `GetOEMCP` answers. Conversion goes through Windows' own
+ * `MultiByteToWideChar`, so no code-page table is carried here.
+ *
+ * Falls back to UTF-8 whenever the call cannot be made or does not answer, which is
+ * also every non-Windows host: those already run with `LC_ALL=C` and speak UTF-8.
+ */
+export function decodeCommandOutput(bytes: Uint8Array, platform: string = process.platform): string {
+	if (platform !== 'win32' || bytes.byteLength === 0) return Buffer.from(bytes).toString('utf8');
+	const api = getConsoleText();
+	if (!api) return Buffer.from(bytes).toString('utf8');
+	try {
+		const codePage = api.GetOEMCP() || api.GetConsoleOutputCP();
+		// 65001 is UTF-8 itself; nothing to convert, and the fast path is also the one a
+		// host whose OEM code page is already UTF-8 takes.
+		if (!codePage || codePage === 65001) return Buffer.from(bytes).toString('utf8');
+		const source = new Uint8Array(bytes);
+		const needed = api.MultiByteToWideChar(codePage, 0, ptr(source), source.length, 0 as unknown as number, 0);
+		if (needed <= 0) return Buffer.from(bytes).toString('utf8');
+		const wide = new Uint16Array(needed);
+		if (api.MultiByteToWideChar(codePage, 0, ptr(source), source.length, ptr(wide), wide.length) !== needed) return Buffer.from(bytes).toString('utf8');
+		// Chunked: spreading a long message into String.fromCharCode blows the argument limit.
+		let text = '';
+		for (let index = 0; index < wide.length; index += 8192) text += String.fromCharCode(...wide.subarray(index, index + 8192));
+		return text;
+	} catch {
+		return Buffer.from(bytes).toString('utf8');
+	}
 }
 
 /** Platforms with an implemented time backend. Anything else is reported as unsupported. */
@@ -326,14 +403,16 @@ export async function run(cmd: string, args: string[]): Promise<RunOutcome> {
 		delete environment['TZ'];
 		// SIGKILL: the promise settles only after the child actually exits, so a
 		// wedged helper ignoring the default SIGTERM would hang the caller forever.
-		const { stdout } = await execFileAsync(executable, args, { timeout: EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true, env: environment });
-		return { kind: 'ok', output: stdout.toString() };
+		// `encoding: 'buffer'` because the bytes are not UTF-8 on a localized Windows
+		// console — see decodeCommandOutput.
+		const { stdout } = await execFileAsync(executable, args, { timeout: EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true, env: environment, encoding: 'buffer' });
+		return { kind: 'ok', output: decodeCommandOutput(stdout) };
 	} catch (err) {
-		const e = err as { code?: number | string; killed?: boolean; signal?: string | null; stdout?: string; stderr?: string; message?: string };
+		const e = err as { code?: number | string; killed?: boolean; signal?: string | null; stdout?: Uint8Array; stderr?: Uint8Array; message?: string };
 		if (e.killed || e.signal) return { kind: 'timeout' };
 		if (e.code === 'ENOENT') return { kind: 'missing' };
 		// w32tm prints its errors to stdout, timedatectl to stderr — read both.
-		const output = `${e.stdout ?? ''}\n${e.stderr ?? ''}`.trim() || (e.message ?? '');
+		const output = `${e.stdout ? decodeCommandOutput(e.stdout) : ''}\n${e.stderr ? decodeCommandOutput(e.stderr) : ''}`.trim() || (e.message ?? '');
 		return { kind: 'failed', code: typeof e.code === 'number' ? e.code : null, output };
 	}
 }

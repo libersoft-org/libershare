@@ -1,18 +1,13 @@
-import { type SystemCommand, processTimezone, listSystemTimezones, tryRead, type PlatformStatus } from './system-time-common.ts';
+import { type SystemCommand, processTimezone, listSystemTimezones, tryRead, type PlatformStatus, windowsSystemLibraryPath } from './system-time-common.ts';
 
 import { dlopen, FFIType, ptr } from 'bun:ffi';
-import { win32 } from 'node:path';
 
 /**
  * Windows time policy and native readers. ICU, registry, SCM and timezone APIs avoid
  * localized command output where it cannot establish ownership or actual host state.
  */
 
-/** Address a Windows system DLL directly so an elevated process never searches for it. */
-export function windowsSystemLibraryPath(name: string, systemRoot: string | undefined = process.env['SystemRoot']): string {
-	const root = systemRoot && win32.isAbsolute(systemRoot) ? systemRoot : 'C:\\Windows';
-	return win32.join(root, 'System32', name);
-}
+export { windowsSystemLibraryPath };
 
 /**
  * IANA to Windows timezone identifier conversion, done in-process through the ICU

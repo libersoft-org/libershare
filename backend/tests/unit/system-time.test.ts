@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { resolve } from 'node:path';
-import { classifyFailure, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, type PlatformStatusReader, resolveSystemExecutable, timezoneOffsetMinutes, parseYesNo, validateClockParts } from '../../src/system-time.ts';
+import { classifyFailure, decodeCommandOutput, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, type PlatformStatusReader, resolveSystemExecutable, timezoneOffsetMinutes, parseYesNo, validateClockParts } from '../../src/system-time.ts';
 import { windowsSystemLibraryPath } from '../../src/system-time-windows.ts';
 
 // ---------------------------------------------------------------------------
@@ -121,6 +121,44 @@ describe('parseSystemsetupOnOff', () => {
 		expect(parseSystemsetupOnOff('Network Time: dunno\n')).toBeNull();
 		expect(parseSystemsetupOnOff(SYSTEMSETUP_DENIED)).toBeNull();
 		expect(parseSystemsetupOnOff('')).toBeNull();
+	});
+});
+
+describe('decodeCommandOutput', () => {
+	/**
+	 * `w32tm /config` refusing an unelevated caller on a Czech host, captured byte for
+	 * byte. 0xFD is `ř` and 0xA1 is `í` in cp852 — neither is a valid UTF-8 sequence on
+	 * its own, so reading these bytes as UTF-8 turns both into U+FFFD.
+	 */
+	const CP852_DENIAL = Uint8Array.from(Buffer.from('54686520666f6c6c6f77696e67206572726f72206f636375727265643a2050fda1737475702062796c206f646570fd656e2e20283078383030373030303529', 'hex'));
+
+	it('reads UTF-8 off Windows, where the child already speaks it', () => {
+		expect(decodeCommandOutput(Buffer.from('Přístup byl odepřen.', 'utf8'), 'linux')).toBe('Přístup byl odepřen.');
+	});
+
+	it('leaves an empty output empty', () => {
+		expect(decodeCommandOutput(new Uint8Array(0), 'win32')).toBe('');
+	});
+
+	it('keeps plain ASCII identical whichever code page the host has', () => {
+		expect(decodeCommandOutput(Buffer.from('[SC] OpenService FAILED 5:', 'utf8'), 'win32')).toBe('[SC] OpenService FAILED 5:');
+	});
+
+	it.skipIf(process.platform !== 'win32')('decodes an OEM code page rather than mangling it into replacement characters', () => {
+		const decoded = decodeCommandOutput(CP852_DENIAL, 'win32');
+		// Whatever this host's console code page is, the ASCII skeleton and the HRESULT
+		// classifyFailure matches on must survive intact.
+		expect(decoded).toContain('The following error occurred');
+		expect(decoded).toContain('0x80070005');
+		expect(classifyFailure('win32', 1, decoded)).toBe('permission-denied');
+		// On a cp852 host the accented characters come back as themselves. Elsewhere the
+		// bytes mean something else, so only assert that nothing was lost to U+FFFD.
+		if (decoded.includes('Přístup')) expect(decoded).toContain('odepřen');
+		else expect(decoded).not.toContain('�');
+	});
+
+	it('would have produced replacement characters without the code-page conversion', () => {
+		expect(Buffer.from(CP852_DENIAL).toString('utf8')).toContain('�');
 	});
 });
 
