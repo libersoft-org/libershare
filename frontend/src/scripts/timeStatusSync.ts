@@ -134,7 +134,43 @@ export interface HostClock {
 	seconds: string;
 }
 
-/** Use the OS offset directly when automatic timezone/DST adjustment is disabled. */
+/**
+ * The offset the host reports for `zone` at `at`, as THIS runtime understands the zone.
+ * Null when it does not know it at all.
+ */
+function browserOffsetMinutes(zone: string, at: number): number | null {
+	try {
+		const parts: Record<string, string> = {};
+		for (const part of new Intl.DateTimeFormat('en-US', { timeZone: zone, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(new Date(at))) parts[part.type] = part.value;
+		const local = Date.UTC(Number(parts['year']), Number(parts['month']) - 1, Number(parts['day']), Number(parts['hour']) % 24, Number(parts['minute']), Number(parts['second']));
+		if (!Number.isFinite(local)) return null;
+		return Math.round((local - Math.floor(at / 1000) * 1000) / 60000);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Which rules this screen may reconstruct the host clock with.
+ *
+ * `zone` uses the named zone's rules, which is what survives a daylight-saving change while
+ * the page is open — a fixed offset would be an hour out from the transition onwards.
+ * But knowing the NAME is not the same as agreeing about it: the browser carries its own
+ * timezone database, and where it disagrees with the host's the screen was labelling
+ * somebody else's time as the host's. Measured with a deliberate one-hour disagreement, the
+ * rendered clock was out by an hour AND by a day across midnight.
+ *
+ * So the two are compared once, at the instant the snapshot was taken, and the zone's rules
+ * are used only while they answer what the host answered. Where they do not, the host's own
+ * number wins and the daylight-saving limitation is accepted — being an hour out from a
+ * transition is better than being an hour out immediately.
+ */
+export function effectiveOffsetMode(status: Pick<SystemTimeStatus, 'timezone' | 'utcOffsetMinutes' | 'nowMs' | 'timezoneOffsetMode'>): 'zone' | 'fixed' {
+	if ((status.timezoneOffsetMode ?? 'zone') === 'fixed') return 'fixed';
+	return browserOffsetMinutes(status.timezone, status.nowMs) === status.utcOffsetMinutes ? 'zone' : 'fixed';
+}
+
+/** Use the OS offset directly when the host's rules cannot be reproduced here. */
 function hostTimeParts(nowMs: number, timezone: string, offsetMinutes: number, mode: 'zone' | 'fixed', fields: Intl.DateTimeFormatOptions): Intl.DateTimeFormatPart[] {
 	if (mode === 'zone') {
 		try {

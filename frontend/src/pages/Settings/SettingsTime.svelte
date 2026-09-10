@@ -7,7 +7,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { api } from '../../scripts/api.ts';
 	import { connected } from '../../scripts/ws-client.ts';
-	import { NTP_PRESETS, createStatusGate, formatHostClock, formatHostDate, timeStatusChanged, loadFailureMessage, loadMayApply, planTimeChanges, syncSwitchIsDirty, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
+	import { NTP_PRESETS, createStatusGate, effectiveOffsetMode, formatHostClock, formatHostDate, timeStatusChanged, loadFailureMessage, loadMayApply, planTimeChanges, syncSwitchIsDirty, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
 	import { type SystemTimeChanges, type SystemTimeOutcome, type SystemTimeResult, type SystemTimeStatus } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -81,6 +81,9 @@
 	// client, or by the very host change being made here) and the displayed time would
 	// jump with it.
 	let readAt = 0;
+	// Whether the named zone's rules may be trusted for this snapshot, or the host's own
+	// number has to be used because the browser's timezone database disagrees with it.
+	let offsetMode: 'zone' | 'fixed' = 'zone';
 
 	/** Fill the form from a host status snapshot and remember it as the comparison baseline. */
 	function applyStatus(next: SystemTimeStatus): void {
@@ -91,12 +94,13 @@
 		stale = false;
 		loading = false;
 		readAt = performance.now();
+		offsetMode = effectiveOffsetMode(next);
 		// The backend may run on a different machine (or in a different zone) than the
 		// browser, so the host's wall clock is reconstructed from its own UTC offset
 		// instead of the browser's local getters.
-		({ hours, minutes, seconds } = formatHostClock(next.nowMs, next.timezone, next.utcOffsetMinutes, next.timezoneOffsetMode));
+		({ hours, minutes, seconds } = formatHostClock(next.nowMs, next.timezone, next.utcOffsetMinutes, offsetMode));
 		displayClock = `${hours}:${minutes}:${seconds}`;
-		displayDate = formatHostDate(next.nowMs, next.timezone, next.utcOffsetMinutes, next.timezoneOffsetMode);
+		displayDate = formatHostDate(next.nowMs, next.timezone, next.utcOffsetMinutes, offsetMode);
 		// An unreadable sync state shows the switch off, but `syncUnknown` keeps the clock
 		// locked: the baseline matches, so merely opening the page never writes anything.
 		autoSync = next.ntpEnabled ?? false;
@@ -207,9 +211,9 @@
 		const ticker = setInterval(() => {
 			if (!status) return;
 			const nowMs = status.nowMs + performance.now() - readAt;
-			const clock = formatHostClock(nowMs, status.timezone, status.utcOffsetMinutes, status.timezoneOffsetMode);
+			const clock = formatHostClock(nowMs, status.timezone, status.utcOffsetMinutes, offsetMode);
 			displayClock = `${clock.hours}:${clock.minutes}:${clock.seconds}`;
-			displayDate = formatHostDate(nowMs, status.timezone, status.utcOffsetMinutes, status.timezoneOffsetMode);
+			displayDate = formatHostDate(nowMs, status.timezone, status.utcOffsetMinutes, offsetMode);
 			if (!busy && !stale && !clockEdited) resyncClockFields();
 		}, 1000);
 		offTimeChanged = api.on('system:timeChanged', (next: SystemTimeStatus) => {
@@ -231,9 +235,10 @@
 			loading = false;
 			status = next;
 			readAt = receivedAt;
-			const clock = formatHostClock(next.nowMs, next.timezone, next.utcOffsetMinutes, next.timezoneOffsetMode);
+			offsetMode = effectiveOffsetMode(next);
+			const clock = formatHostClock(next.nowMs, next.timezone, next.utcOffsetMinutes, offsetMode);
 			displayClock = `${clock.hours}:${clock.minutes}:${clock.seconds}`;
-			displayDate = formatHostDate(next.nowMs, next.timezone, next.utcOffsetMinutes, next.timezoneOffsetMode);
+			displayDate = formatHostDate(next.nowMs, next.timezone, next.utcOffsetMinutes, offsetMode);
 			if (!keepClockEdit && !stale) resyncClockFields();
 		});
 		void refresh();
@@ -274,7 +279,7 @@
 	/** Put the clock fields back on the host's current time and re-baseline them. */
 	function resyncClockFields(): void {
 		if (!status) return;
-		({ hours, minutes, seconds } = formatHostClock(status.nowMs + (performance.now() - readAt), status.timezone, status.utcOffsetMinutes, status.timezoneOffsetMode));
+		({ hours, minutes, seconds } = formatHostClock(status.nowMs + (performance.now() - readAt), status.timezone, status.utcOffsetMinutes, offsetMode));
 		// Move the baseline with them, or the change itself would read as a user edit.
 		loaded = { ...loaded, clock: `${hours}:${minutes}:${seconds}` };
 	}

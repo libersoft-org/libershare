@@ -6,8 +6,8 @@
  * flight at once — a re-read, a broadcast and the outcome of a write. The module is pure,
  * so it runs under `bun test` without the Svelte runtime.
  */
-import { test, expect } from 'bun:test';
-import { createStatusGate, formatHostClock, formatHostDate, timeStatusChanged, loadFailureMessage, loadMayApply, planTimeChanges, syncSwitchIsDirty, writeFailureMessage, type TimeSavePlan } from '../../src/scripts/timeStatusSync.ts';
+import { describe, test, expect } from 'bun:test';
+import { createStatusGate, effectiveOffsetMode, formatHostClock, formatHostDate, timeStatusChanged, loadFailureMessage, loadMayApply, planTimeChanges, syncSwitchIsDirty, writeFailureMessage, type TimeSavePlan } from '../../src/scripts/timeStatusSync.ts';
 import type { SystemTimeStatus } from '@shared';
 
 test('a read that nothing overtook is applied', () => {
@@ -228,4 +228,41 @@ test('an older background read that failed does not overwrite a newer error', ()
 
 test('a read that may still fill the form still reports why it could not', () => {
 	expect(loadFailureMessage('the time could not be read', true)).toBe('the time could not be read');
+});
+
+describe('effectiveOffsetMode', () => {
+	const snapshot = (over: Record<string, unknown> = {}) => ({ timezone: 'Europe/Prague', nowMs: Date.UTC(2026, 6, 1, 10, 0, 0), utcOffsetMinutes: 120, ...over }) as never;
+
+	test('trusts the zone rules while they answer what the host answered', () => {
+		expect(effectiveOffsetMode(snapshot())).toBe('zone');
+	});
+
+	/**
+	 * Knowing the NAME is not agreeing about it. The browser carries its own timezone
+	 * database, and where it disagrees the screen was labelling somebody else's time as the
+	 * host's — measured as an hour out, and a day out across midnight.
+	 */
+	test('falls back to the host number when the browser database disagrees', () => {
+		expect(effectiveOffsetMode(snapshot({ utcOffsetMinutes: 60 }))).toBe('fixed');
+	});
+
+	test('stays fixed where the host already said so', () => {
+		expect(effectiveOffsetMode(snapshot({ timezoneOffsetMode: 'fixed' }))).toBe('fixed');
+	});
+
+	test('falls back for a zone this runtime does not know at all', () => {
+		expect(effectiveOffsetMode(snapshot({ timezone: 'Not/AZone' }))).toBe('fixed');
+	});
+
+	/** The disagreement the fallback exists for: an hour and a calendar day. */
+	test('renders the host time rather than the browser interpretation', () => {
+		const nowMs = Date.UTC(2026, 0, 1, 18, 30, 0);
+		const status = { timezone: 'Asia/Karachi', nowMs, utcOffsetMinutes: 360 } as never;
+		const mode = effectiveOffsetMode(status);
+		expect(mode).toBe('fixed');
+		expect(formatHostDate(nowMs, 'Asia/Karachi', 360, mode)).toBe('2026-01-02');
+		expect(formatHostClock(nowMs, 'Asia/Karachi', 360, mode).hours).toBe('00');
+		// What it used to show, and the reason this is not a cosmetic difference.
+		expect(formatHostDate(nowMs, 'Asia/Karachi', 360, 'zone')).toBe('2026-01-01');
+	});
 });

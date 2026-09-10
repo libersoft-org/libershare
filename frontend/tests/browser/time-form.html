@@ -492,18 +492,33 @@
 				},
 				{ status: { ntpEnabled: null, ntpSynchronized: null, ntpServer: null } }
 			);
-			for (const [instant, expected] of [
-				[Date.UTC(2026, 2, 29, 0, 59, 59), '01:59:59'],
-				[Date.UTC(2026, 2, 29, 1), '03:00:00'],
-				[Date.UTC(2026, 9, 25, 1), '02:00:00'],
+			// The offset each case carries is the one the zone really has at that instant, because
+			// that is the only status a backend produces: `utcOffsetMinutes` is computed for the very
+			// `nowMs` it is sent with. A snapshot that disagrees with its own zone now MEANS something
+			// else — the browser's timezone database differs from the host's — and is covered below.
+			for (const [instant, offset, expected] of [
+				[Date.UTC(2026, 2, 29, 0, 59, 59), 60, '01:59:59'],
+				[Date.UTC(2026, 2, 29, 1), 120, '03:00:00'],
+				[Date.UTC(2026, 9, 25, 1), 60, '02:00:00'],
 			])
 				await test(
 					`host clock uses its timezone at ${new Date(instant).toISOString()}`,
 					async () => {
-						assert(target.querySelector('.host-clock').textContent === expected, 'Displayed host clock used the browser offset');
+						assert(target.querySelector('.host-clock').textContent === expected, 'Displayed host clock ignored the daylight-saving rules of the host zone');
 					},
-					{ status: { nowMs: instant, utcOffsetMinutes: 60 } }
+					{ status: { nowMs: instant, utcOffsetMinutes: offset } }
 				);
+			// The reviewer's case, at component level: the host names a zone this browser also knows,
+			// and reports an offset its own database disagrees with. Trusting the local rules showed
+			// somebody else's time under the host's label — an hour out, and a day out over midnight.
+			await test(
+				'host clock follows the host offset when the browser database disagrees',
+				async () => {
+					assert(target.querySelector('.host-clock').textContent === '00:30:00', 'Displayed host clock used the browser rules instead of the host offset');
+					assert(target.querySelector('.host-date').textContent === '2026-01-02', 'Displayed host date used the browser rules instead of the host offset');
+				},
+				{ status: { timezone: 'Asia/Karachi', nowMs: Date.UTC(2026, 0, 1, 18, 30, 0), utcOffsetMinutes: 360 } }
+			);
 			for (const device of ['keyboard', 'gamepad'])
 				await test(
 					`disabled synchronization ignores ${device} and enabled synchronization accepts it`,
