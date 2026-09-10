@@ -323,6 +323,14 @@
 		// never a replacement. Losing the refusal here left the user with a message about
 		// reading the time and no idea why their save had not gone through.
 		const reason = res.changed || res.stateMayHaveChanged ? withDetail(tt('settings.time.errorPartial'), outcomeMessage(res)) : outcomeMessage(res);
+		// A value the host refused before running anything leaves the form alone. Re-reading is
+		// there for a save that may have half-applied, where what is on screen is exactly what
+		// must not be trusted — but for a mistyped NTP address it threw away the timezone edit
+		// made next to it and left the user to redo work the host never touched.
+		if (res.outcome === 'invalid-input' && !res.changed && !res.stateMayHaveChanged) {
+			errorMessage = reason;
+			return false;
+		}
 		const failure = await load();
 		if (failure) stale = true;
 		errorMessage = writeFailureMessage(reason, failure);

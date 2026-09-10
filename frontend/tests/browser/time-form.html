@@ -372,6 +372,24 @@
 				const save = limits.find(entry => entry.method === 'system.applyTimeSettings');
 				assert(save && typeof save.timeoutMs === 'number' && save.timeoutMs > 0, 'The save was sent without a time limit');
 			});
+			/**
+			 * A value the host refused before running anything must not cost the edits next to it.
+			 * Re-reading is for a save that may have half-applied; for a mistyped NTP address it threw
+			 * away the timezone change made alongside and left the user to redo untouched work.
+			 */
+			await test('an invalid value keeps the rest of the form', async () => {
+				const zone = target.querySelector('select');
+				zone.value = 'UTC';
+				zone.dispatchEvent(new Event('change', { bubbles: true }));
+				await edit(server(), 'https://tik.cesnet.cz');
+				writeResult = { success: false, outcome: 'invalid-input', message: 'the NTP server must be a host name or IP address' };
+				await click(label('common.save'));
+				assert(target.querySelector('.error-message'), 'A refused value reported nothing');
+				assert(server().value === 'https://tik.cesnet.cz', 'A refused value discarded the typed server');
+				assert(zone.value === 'UTC', 'A refused value discarded the timezone edit made next to it');
+				assert(!save().classList.contains('disabled'), 'The form could not be corrected and saved again');
+			});
+
 			await test('external writes block an edited form until explicit reload', async () => {
 				await edit(server(), 'typed.example.org');
 				host.ntpServer = 'external.example.org';
