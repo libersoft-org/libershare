@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { classifyFailure, decodeCommandOutput, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listHostTimezones, listSystemTimezones, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, type PlatformStatusReader, resetHostTimezones, resolveSystemExecutable, timezoneOffsetMinutes, parseYesNo, validateClockParts } from '../../src/system-time.ts';
-import { ianaToWindowsTimezoneId, windowsSystemLibraryPath } from '../../src/system-time-windows.ts';
+import { ianaToWindowsTimezoneId, readWindowsTimeZone, windowsSystemLibraryPath } from '../../src/system-time-windows.ts';
 
 // ---------------------------------------------------------------------------
 // Fixtures — real command output, only host-identifying values replaced with
@@ -407,8 +407,15 @@ describe('getSystemTimeStatus (live, read-only)', () => {
 	it('reports an offset that belongs to the timezone it reports', async () => {
 		const status = await getSystemTimeStatus();
 		expect(status.timezone.length).toBeGreaterThan(0);
-		expect(timezoneOffsetMinutes(status.timezone, new Date(status.nowMs))).not.toBeNull();
-		expect(status.utcOffsetMinutes).toBe(timezoneOffsetMinutes(status.timezone, new Date(status.nowMs)) ?? Number.NaN);
+		const byZoneRules = timezoneOffsetMinutes(status.timezone, new Date(status.nowMs));
+		expect(byZoneRules).not.toBeNull();
+		// Split by the mode the status itself declares. `fixed` exists precisely because the
+		// host's offset may deliberately DIFFER from its zone's rules — Windows with automatic
+		// daylight saving switched off keeps +60 through a summer the zone puts at +120 — so
+		// asserting the zone rules there contradicted the feature this PR adds. In that mode the
+		// offset is checked against what the OS actually reports instead.
+		if ((status.timezoneOffsetMode ?? 'zone') === 'zone') expect(status.utcOffsetMinutes).toBe(byZoneRules ?? Number.NaN);
+		else expect(status.utcOffsetMinutes).toBe(readWindowsTimeZone()?.utcOffsetMinutes);
 	});
 });
 
