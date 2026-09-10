@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { buildSetTimezoneCommands, parseRegValue, parseTzutilZone, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, readWindowsPolicyManaged } from '../../src/system-time.ts';
-import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeDomainMembership, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState, parseWindowsNtpClientEnabled, windowsSyncEnabled } from '../../src/system-time-windows.ts';
+import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeDomainMembership, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState, parseWindowsNtpClientEnabled } from '../../src/system-time-windows.ts';
 import { W32TM_STATUS } from '../helpers/system-time-fixtures.ts';
 
 /** `reg query HKLM\\...\\W32Time\\Parameters`, CRLF and mixed value kinds as captured. */

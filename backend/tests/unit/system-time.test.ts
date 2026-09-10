@@ -415,7 +415,7 @@ describe('getSystemTimeStatus (live, read-only)', () => {
 		// asserting the zone rules there contradicted the feature this PR adds. In that mode the
 		// offset is checked against what the OS actually reports instead.
 		if ((status.timezoneOffsetMode ?? 'zone') === 'zone') expect(status.utcOffsetMinutes).toBe(byZoneRules ?? Number.NaN);
-		else expect(status.utcOffsetMinutes).toBe(readWindowsTimeZone()?.utcOffsetMinutes);
+		else expect(status.utcOffsetMinutes).toBe(readWindowsTimeZone()?.utcOffsetMinutes ?? Number.NaN);
 	});
 });
 
