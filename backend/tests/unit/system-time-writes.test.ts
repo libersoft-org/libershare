@@ -391,12 +391,30 @@ describe('setSystemNtpServer', () => {
 			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8']);
 		});
 	});
-	it('refuses a server write when the service running state is unknown', async () => {
+	/**
+	 * A refused SCM read must not become a refusal of its own. A standard (non-elevated)
+	 * Windows user cannot query W32Time at all - measured error 5 on Windows 11 - and the
+	 * old branch answered such a host with `error: cannot determine whether Windows Time is
+	 * running`, hiding the actual reason that `w32tm /config` states plainly. Unknown is
+	 * read as stopped: the bare registry write, with no `/update` or `/resync` aimed at a
+	 * service that may not be up.
+	 */
+	it('writes the bare peer list when the service running state is unknown', async () => {
 		await onPlatform('win32', async () => {
 			const { exec, calls } = fakeRunner([]);
 			const mode = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'on-demand', membership: 'standalone', running: null });
-			expect((await setSystemNtpServer('ntp.example.org', capable, mode, exec)).success).toBe(false);
-			expect(calls).toEqual([]);
+			expect((await setSystemNtpServer('ntp.example.org', capable, mode, exec)).success).toBe(true);
+			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8']);
+		});
+	});
+	it('reports the refusal w32tm gives an unprivileged caller, not a made-up reason', async () => {
+		await onPlatform('win32', async () => {
+			// What a standard user actually gets: exit 5 and w32tm's own access-denied line.
+			const exec: CommandRunner = async () => ({ kind: 'failed', code: 5, output: 'The following error occurred: Access is denied. (0x80070005)' });
+			const mode = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'on-demand', membership: 'standalone', running: null });
+			const outcome = await setSystemNtpServer('ntp.example.org', capable, mode, exec);
+			expect(outcome.outcome).toBe('permission-denied');
+			expect(outcome.message).toContain('Access is denied');
 		});
 	});
 	it('writes the peer list on a host whose time source is ours', async () => {

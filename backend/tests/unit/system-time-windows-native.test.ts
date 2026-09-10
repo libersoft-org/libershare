@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { resolve } from 'node:path';
 import { setTimeout as scheduleTimeout, clearTimeout as cancelTimeout } from 'node:timers';
 import { getSystemTimeStatus, setSystemClock } from '../../src/system-time.ts';
-import { parseWindowsServiceRunning, parseWindowsTimeZone, readWindowsTimeServiceRunning, readWindowsTimeZone, readWindowsStatus } from '../../src/system-time-windows.ts';
+import { parseWindowsServiceRunning, parseWindowsTimeZone, readWindowsTimeServiceRunning, readWindowsTimeZone, readWindowsStatus, type WindowsModeState } from '../../src/system-time-windows.ts';
 
 function zoneBuffer(disabled = false): Uint8Array {
 	const bytes = new Uint8Array(432);
@@ -123,6 +123,21 @@ it('does not offer clock or timezone writes when the native timezone read failed
 	expect(commands).toBe(0);
 });
 
+/**
+ * A standard (non-elevated) Windows user cannot open W32Time through the SCM at all -
+ * measured error 5 on Windows 11 for both `sc query w32time` and the
+ * QueryServiceStatusEx probe. Switching the capability off for that turned a refused
+ * READ into "this host has no facility for setting the clock", a claim about the host
+ * that was simply untrue. The write is what reports the missing privilege.
+ */
+it('still offers the clock when the service state could not be read', async () => {
+	const status = await readWindowsStatus(
+		() => ({ windowsId: 'UTC', utcOffsetMinutes: 0, daylightDisabled: true }),
+		async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'automatic', membership: 'standalone', running: null })
+	);
+	expect(status.capabilities.setClock).toBe(true);
+});
+
 it('does not offer a manual clock while a disabled-policy service is actually still running', async () => {
 	const status = await readWindowsStatus(
 		() => ({ windowsId: 'UTC', utcOffsetMinutes: 0, daylightDisabled: true }),
@@ -134,7 +149,8 @@ it('does not offer a manual clock while a disabled-policy service is actually st
 
 describe.if(process.platform === 'win32')('Windows native reads on the live host', () => {
 	it('reads service status and effective timezone without writing settings', () => {
-		expect(typeof readWindowsTimeServiceRunning()).toBe('boolean');
+		// null when the process is not elevated: a standard user may not query W32Time.
+		expect(['boolean', 'object']).toContain(typeof readWindowsTimeServiceRunning());
 		const zone = readWindowsTimeZone();
 		expect(zone).not.toBeNull();
 		expect(Number.isFinite(zone?.utcOffsetMinutes)).toBe(true);

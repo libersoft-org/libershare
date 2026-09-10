@@ -581,7 +581,16 @@ export async function readWindowsStatus(readZone: () => WindowsTimeZoneState | n
 		ntpEnabled: windowsSyncEnabled(mode, start, ntpClientEnabled),
 		ntpSynchronized: status === null ? null : parseWindowsSyncStatus(status),
 		ntpServer: mode === 'manual' || mode === 'none' ? parseWindowsNtpServer(params === null ? null : parseRegValue(params, 'NtpServer')) : null,
-		capabilities: { setClock: zone !== null && running !== null && running !== undefined && !(windowsSyncEnabled(mode, start, ntpClientEnabled) === false && running && mode !== 'none'), setTimezone: zone !== null && canConvertTimezoneId(), setNtpServer: ours, setNtpEnabled: ours },
+		// An UNREADABLE service state does not switch the clock capability off. A standard
+		// (non-elevated) Windows user cannot open W32Time through the SCM at all - measured on
+		// Windows 11, `sc query w32time` and the QueryServiceStatusEx probe both fail with
+		// error 5 - and requiring a definite state turned that refused READ into
+		// `setClock: false`, which the caller reports as "this host has no facility for
+		// setting the clock". That is a claim about the host, and it was false: the facility
+		// is there, the rights are not. The write itself reports the truth ("A required
+		// privilege is not held by the client", `permission-denied`), so the guard below only
+		// fires on a state Windows actually confirmed.
+		capabilities: { setClock: zone !== null && !(windowsSyncEnabled(mode, start, ntpClientEnabled) === false && running === true && mode !== 'none'), setTimezone: zone !== null && canConvertTimezoneId(), setNtpServer: ours, setNtpEnabled: ours },
 	};
 }
 

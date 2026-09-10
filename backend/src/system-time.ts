@@ -554,8 +554,15 @@ export async function setSystemNtpServer(server: string, readStatus: () => Promi
 		if (platform === 'win32') {
 			const state = await checkWindowsWritable(readMode);
 			if (state.refusal) return state.refusal;
-			if (typeof state.running !== 'boolean') return result('error', 'cannot determine whether Windows Time is running, so its configuration was left unchanged');
-			syncRunning = state.running;
+			// An unreadable service state is treated as STOPPED rather than refused. A standard
+			// user cannot query W32Time through the SCM (error 5), and refusing here answered a
+			// non-elevated host with "cannot determine whether Windows Time is running" - a
+			// vague `error` that hid the real reason, which `w32tm /config` states plainly one
+			// line later. Stopped is the conservative reading: it builds the bare registry
+			// write, with no `/update` or `/resync` aimed at a service that may not be up
+			// (sending those to a stopped service is what once failed a peer list that HAD
+			// been written). The service reads the new peer at its next poll or start.
+			syncRunning = state.running === true;
 			syncEnabled = windowsSyncEnabled(state.mode, state.start, state.ntpClientEnabled) === true;
 		}
 		const commands = buildSetNtpServerCommands(platform, server, syncRunning, syncEnabled);
