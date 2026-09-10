@@ -303,4 +303,62 @@ describe.skipIf(process.platform === 'win32')('POSIX time configuration permissi
 		await chmod(file, 0o644);
 		expect(await unreadableByServiceAccount(file)).toBeNull();
 	});
+
+	/**
+	 * Entering a directory and listing it are different permissions, and drop-ins are FOUND by
+	 * listing. At 0711 the file is perfectly readable by name and never named at all — measured
+	 * on a real host, where `cat` on the known path succeeded as another user while `ls` on the
+	 * directory was refused.
+	 */
+	it('refuses a drop-in directory that cannot be listed, even though the file reads', async () => {
+		await chmod(root, 0o755);
+		const directory = join(root, 'timesyncd.conf.d');
+		await mkdir(directory);
+		await chmod(directory, 0o755);
+		const file = join(directory, '90-libershare.conf');
+		await writeFile(file, '[Time]', 'utf8');
+		await chmod(file, 0o644);
+		expect(await unreadableByServiceAccount(file)).toBeNull();
+		// Traversable but not listable.
+		await chmod(directory, 0o711);
+		expect(await unreadableByServiceAccount(file)).toContain('cannot be listed');
+	});
+
+	it.skipIf(process.platform !== 'linux' || process.getuid?.() !== 0)('agrees that the file itself still reads at 0711', async () => {
+		await chmod(root, 0o755);
+		const directory = join(root, 'timesyncd.conf.d');
+		await mkdir(directory);
+		await chmod(directory, 0o711);
+		const file = join(directory, '90-libershare.conf');
+		await writeFile(file, '[Time]', 'utf8');
+		await chmod(file, 0o644);
+		// This is the trap: reading by name works, so a read-only probe would call it fine.
+		expect(await readAsNobody(file)).toBe('[Time]');
+		expect(await unreadableByServiceAccount(file)).toContain('cannot be listed');
+	});
+
+	/**
+	 * `..` inside a relative link target must stay a component. `path.join` collapses it, and
+	 * the collapse removed a directory the kernel does traverse: a target of `locked/../public`
+	 * became `public`, so a 0700 `locked` was never asked about while a real read got EACCES.
+	 */
+	it('applies a relative target .. instead of normalising it away', async () => {
+		await chmod(root, 0o755);
+		const open = join(root, 'open');
+		await mkdir(open);
+		await chmod(open, 0o755);
+		const locked = join(open, 'locked');
+		const target = join(open, 'public');
+		for (const directory of [locked, target]) {
+			await mkdir(directory);
+			await chmod(directory, 0o755);
+		}
+		await symlink('locked/../public', join(open, 'conf.d'));
+		const file = join(open, 'conf.d', '90-libershare.conf');
+		await writeFile(join(target, '90-libershare.conf'), '[Time]', 'utf8');
+		await chmod(join(target, '90-libershare.conf'), 0o644);
+		expect(await unreadableByServiceAccount(file)).toBeNull();
+		await chmod(locked, 0o700);
+		expect(await unreadableByServiceAccount(file)).toContain('locked');
+	});
 });

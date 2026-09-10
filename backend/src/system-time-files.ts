@@ -1,5 +1,5 @@
 import { open, access, mkdir, readFile, readlink, rename, stat, unlink, lstat } from 'node:fs/promises';
-import { dirname, posix } from 'node:path';
+import { dirname } from 'node:path';
 import { constants, type BigIntStats } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
@@ -191,6 +191,13 @@ async function readSnapshot(path: string, readOriginal: (path: string) => Promis
 /** `SYMLOOP_MAX` upstream: the hop budget a kernel gives one resolution before ELOOP. */
 const MAX_SYMLINK_HOPS = 40;
 
+/** Where a resolution stopped: the directory that blocked it, or the file and the directory holding it. */
+interface Resolution {
+	blocked: string | null;
+	target: string | null;
+	directory: string | null;
+}
+
 /**
  * Walk `path` the way the kernel resolves it, reporting the first directory an unprivileged
  * process could not enter.
@@ -201,42 +208,63 @@ const MAX_SYMLINK_HOPS = 40;
  * `stat` answered about the target but the climb continued up the WRITTEN parent, and
  * `realpath` gave the final chain but dropped the directories the link itself sits behind.
  * Only walking it hop by hop covers a chain: `conf.d` to `middle/hop` to `public`, with the
- * 0700 on `middle`, is invisible to every shortcut and was reproduced on a real host.
+ * 0700 on `middle`, is invisible to every shortcut.
+ *
+ * `..` is carried as a component and applied by popping, never by normalising the string.
+ * `path.join` collapses it, and the collapse is exactly what hid a directory the kernel does
+ * traverse: a link to `locked/../public` became `public`, so a 0700 `locked` was never asked
+ * about while a real read through the link got EACCES. Node documents that removing `..`
+ * can change how the path resolves, and here it did.
  *
  * `null` for a path that cannot be walked at all — an absence, or something this process may
  * not stat. Neither is evidence about the service account, and the write reports it anyway.
  */
-async function firstUnenterableDirectory(path: string): Promise<{ blocked: string | null; target: string | null }> {
+async function resolveForServiceAccount(path: string): Promise<Resolution> {
+	const nothing: Resolution = { blocked: null, target: null, directory: null };
 	let parts = path.split(/[/\\]+/).filter(Boolean);
-	let current = '/';
+	// Components of the directory reached so far. `..` pops it; nothing is ever normalised.
+	let walked: string[] = [];
+	const here = (): string => '/' + walked.join('/');
 	let index = 0;
 	let hops = 0;
 	while (index < parts.length) {
-		const next = posix.join(current, parts[index]!);
+		const part = parts[index]!;
+		if (part === '.') {
+			index += 1;
+			continue;
+		}
+		if (part === '..') {
+			walked.pop();
+			index += 1;
+			continue;
+		}
+		const next = walked.length === 0 ? '/' + part : here() + '/' + part;
 		const entry = await lstat(next).catch(() => null);
-		if (!entry) return { blocked: null, target: null };
+		if (!entry) return nothing;
 		if (entry.isSymbolicLink()) {
-			if (++hops > MAX_SYMLINK_HOPS) return { blocked: null, target: null };
+			if (++hops > MAX_SYMLINK_HOPS) return nothing;
 			const link = await readlink(next).catch(() => null);
-			if (link === null) return { blocked: null, target: null };
+			if (link === null) return nothing;
 			// An absolute target restarts from the root; a relative one hangs off the directory
-			// the link lives in. Everything after the link comes along unchanged.
-			const base = link.startsWith('/') ? link : posix.join(current, link);
-			parts = [...base.split('/').filter(Boolean), ...parts.slice(index + 1)];
-			current = '/';
+			// the link lives in. Everything after the link comes along unchanged, and every
+			// `..` in the target stays a component for the walk above to apply.
+			const rest = parts.slice(index + 1);
+			const linkParts = link.split('/').filter(Boolean);
+			parts = link.startsWith('/') ? [...linkParts, ...rest] : [...walked, ...linkParts, ...rest];
+			walked = [];
 			index = 0;
 			continue;
 		}
 		if (entry.isDirectory()) {
-			if ((entry.mode & 0o001) === 0) return { blocked: next, target: null };
-			current = next;
+			if ((entry.mode & 0o001) === 0) return { blocked: next, target: null, directory: null };
+			walked.push(part);
 			index += 1;
 			continue;
 		}
 		// Something that is not a directory: only the last component may be one.
-		return index === parts.length - 1 ? { blocked: null, target: next } : { blocked: null, target: null };
+		return index === parts.length - 1 ? { blocked: null, target: next, directory: here() } : nothing;
 	}
-	return { blocked: null, target: current };
+	return { blocked: null, target: null, directory: here() };
 }
 
 /**
@@ -251,6 +279,13 @@ async function firstUnenterableDirectory(path: string): Promise<{ blocked: strin
  * — the exact class of silent failure the effective-configuration check exists to prevent,
  * arriving through the one door that check does not cover.
  *
+ * Three permissions, not one. Entering every directory on the way (`x`) is what the walk
+ * above answers. Reading the file (`r`) is the obvious one. And LISTING the drop-in
+ * directory (`r` on the directory itself) is the one that was missing: drop-ins are found by
+ * scanning that directory, so at 0711 the file is perfectly readable by name and never named
+ * at all. Measured: `cat` on the known path succeeded as another user while `ls` on the
+ * directory was refused.
+ *
  * Directories this operation creates are 0755 already; this is about the ones it finds and
  * deliberately does not widen. Reporting the problem is the fix, not loosening somebody
  * else's permissions behind their back.
@@ -261,8 +296,12 @@ async function firstUnenterableDirectory(path: string): Promise<{ blocked: strin
  * told why rather than told a lie.
  */
 export async function unreadableByServiceAccount(path: string): Promise<string | null> {
-	const { blocked, target } = await firstUnenterableDirectory(path);
+	const { blocked, target, directory } = await resolveForServiceAccount(path);
 	if (blocked !== null) return `${blocked} cannot be entered by the time service's own account`;
+	if (directory !== null) {
+		const holder = await stat(directory).catch(() => null);
+		if (holder && (holder.mode & 0o004) === 0) return `${directory} cannot be listed by the time service's own account, so a drop-in in it would never be found`;
+	}
 	if (target === null) return null;
 	const file = await stat(target).catch(() => null);
 	if (file && (file.mode & 0o004) === 0) return `${target} cannot be read by the time service's own account`;
