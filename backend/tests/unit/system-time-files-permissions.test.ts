@@ -261,4 +261,46 @@ describe.skipIf(process.platform === 'win32')('POSIX time configuration permissi
 		expect(await unreadableByServiceAccount(file)).toContain('locked');
 		await readAsNobody(file, true);
 	});
+
+	/**
+	 * A chain, which every shortcut missed: `conf.d` points at `middle/hop`, `hop` points at
+	 * `public`, and the 0700 sits on `middle` — a directory that appears in neither the written
+	 * path nor the fully resolved one. Only walking hop by hop sees it.
+	 */
+	it('sees a closed directory in the middle of a symlink chain', async () => {
+		await chmod(root, 0o755);
+		const middle = join(root, 'middle');
+		const target = join(root, 'public');
+		for (const directory of [middle, target]) {
+			await mkdir(directory);
+			await chmod(directory, 0o755);
+		}
+		await symlink(target, join(middle, 'hop'));
+		await symlink(join(middle, 'hop'), join(root, 'conf.d'));
+		const file = join(root, 'conf.d', '90-libershare.conf');
+		await writeFile(join(target, '90-libershare.conf'), '[Time]', 'utf8');
+		await chmod(join(target, '90-libershare.conf'), 0o644);
+		expect(await unreadableByServiceAccount(file)).toBeNull();
+		await chmod(middle, 0o700);
+		expect(await unreadableByServiceAccount(file)).toContain('middle');
+	});
+
+	/** A chain that eats itself must run out of hops rather than the event loop. */
+	it('gives up on a symlink loop instead of following it', async () => {
+		await chmod(root, 0o755);
+		await symlink(join(root, 'b'), join(root, 'a'));
+		await symlink(join(root, 'a'), join(root, 'b'));
+		expect(await unreadableByServiceAccount(join(root, 'a', '90-libershare.conf'))).toBeNull();
+	});
+
+	it('reports nothing for an ordinary readable path', async () => {
+		await chmod(root, 0o755);
+		const directory = join(root, 'timesyncd.conf.d');
+		await mkdir(directory);
+		await chmod(directory, 0o755);
+		const file = join(directory, '90-libershare.conf');
+		await writeFile(file, '[Time]', 'utf8');
+		await chmod(file, 0o644);
+		expect(await unreadableByServiceAccount(file)).toBeNull();
+	});
 });

@@ -1,5 +1,5 @@
-import { open, access, mkdir, readFile, realpath, rename, stat, unlink, lstat } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { open, access, mkdir, readFile, readlink, rename, stat, unlink, lstat } from 'node:fs/promises';
+import { dirname, posix } from 'node:path';
 import { constants, type BigIntStats } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
@@ -188,29 +188,72 @@ async function readSnapshot(path: string, readOriginal: (path: string) => Promis
 	return after === null || content === null ? null : { ...after, content };
 }
 
+/** `SYMLOOP_MAX` upstream: the hop budget a kernel gives one resolution before ELOOP. */
+const MAX_SYMLINK_HOPS = 40;
+
+/**
+ * Walk `path` the way the kernel resolves it, reporting the first directory an unprivileged
+ * process could not enter.
+ *
+ * Component by component, because that is where the permission is checked. A component that
+ * is a symlink is replaced by its target and resolution restarts — which is the part three
+ * earlier attempts each got wrong from a different side: `lstat` answered about the link,
+ * `stat` answered about the target but the climb continued up the WRITTEN parent, and
+ * `realpath` gave the final chain but dropped the directories the link itself sits behind.
+ * Only walking it hop by hop covers a chain: `conf.d` to `middle/hop` to `public`, with the
+ * 0700 on `middle`, is invisible to every shortcut and was reproduced on a real host.
+ *
+ * `null` for a path that cannot be walked at all — an absence, or something this process may
+ * not stat. Neither is evidence about the service account, and the write reports it anyway.
+ */
+async function firstUnenterableDirectory(path: string): Promise<{ blocked: string | null; target: string | null }> {
+	let parts = path.split(/[/\\]+/).filter(Boolean);
+	let current = '/';
+	let index = 0;
+	let hops = 0;
+	while (index < parts.length) {
+		const next = posix.join(current, parts[index]!);
+		const entry = await lstat(next).catch(() => null);
+		if (!entry) return { blocked: null, target: null };
+		if (entry.isSymbolicLink()) {
+			if (++hops > MAX_SYMLINK_HOPS) return { blocked: null, target: null };
+			const link = await readlink(next).catch(() => null);
+			if (link === null) return { blocked: null, target: null };
+			// An absolute target restarts from the root; a relative one hangs off the directory
+			// the link lives in. Everything after the link comes along unchanged.
+			const base = link.startsWith('/') ? link : posix.join(current, link);
+			parts = [...base.split('/').filter(Boolean), ...parts.slice(index + 1)];
+			current = '/';
+			index = 0;
+			continue;
+		}
+		if (entry.isDirectory()) {
+			if ((entry.mode & 0o001) === 0) return { blocked: next, target: null };
+			current = next;
+			index += 1;
+			continue;
+		}
+		// Something that is not a directory: only the last component may be one.
+		return index === parts.length - 1 ? { blocked: null, target: next } : { blocked: null, target: null };
+	}
+	return { blocked: null, target: current };
+}
+
 /**
  * Why an unprivileged service could not read `path`, or null when it can.
  *
  * The file is written by this process, which is root on the hosts that can set the clock at
  * all — and the daemon that has to READ it is not. `systemd-timesyncd` ships with
  * `User=systemd-timesync` (checked on a running systemd 255), so a drop-in directory an
- * administrator left at 0700 root is invisible to it while every check made from here
- * succeeds: the file is there, its content is right, and `systemd-analyze cat-config` reads
- * it back happily. The save is then reported as applied and the daemon goes on using the
- * old server — the exact class of silent failure the effective-configuration check exists
- * to prevent, arriving through the one door that check does not cover.
+ * administrator left at 0700 is invisible to it while every check made from here succeeds:
+ * the file is there, its content is right, and `systemd-analyze cat-config` reads it back
+ * happily. The save is then reported as applied and the daemon goes on using the old server
+ * — the exact class of silent failure the effective-configuration check exists to prevent,
+ * arriving through the one door that check does not cover.
  *
  * Directories this operation creates are 0755 already; this is about the ones it finds and
  * deliberately does not widen. Reporting the problem is the fix, not loosening somebody
  * else's permissions behind their back.
- *
- * The walk runs over the RESOLVED path, not over the names as written. `stat` alone was
- * not enough: it answers for what each name points at, but the walk then climbed the
- * WRITTEN parent, so a link's own ancestors were never asked about. With
- * `timesyncd.conf.d` a link to `/opt/private/time-config`, the 0755 target passed and the
- * 0700 `/opt/private` above it — the directory that actually blocks the daemon — was never
- * looked at. Reproduced: this returned "no problem" while a real read as another user got
- * EACCES. Resolving first makes the chain the one the kernel walks.
  *
  * Approximated through the OTHER bits, because the service account is neither the owner nor,
  * on any ordinary host, in the owning group. That can only err towards refusing a
@@ -218,38 +261,11 @@ async function readSnapshot(path: string, readOriginal: (path: string) => Promis
  * told why rather than told a lie.
  */
 export async function unreadableByServiceAccount(path: string): Promise<string | null> {
-	// BOTH chains, because path resolution walks both. The name as written is walked
-	// component by component, and where a component is a link the target's own chain is
-	// walked too — so a directory can block the daemon from either side. Checking only the
-	// resolved chain missed a link sitting inside a 0700 directory whose target was public:
-	// reproduced on a real host, where this returned "no problem" while a read through the
-	// link got EACCES and a read straight at the target succeeded. Checking only the written
-	// chain was the mirror image, missed a round earlier.
-	//
-	// ponytail: two chains, not a full recursive resolution. A link whose target path itself
-	// passes through further links can still hide a directory from this check; the write then
-	// reports it the ordinary way. Walk it properly if that ever turns up in the wild.
-	const resolved =
-		(await realpath(path).catch(() => null)) ??
-		(await realpath(dirname(path))
-			.then(dir => join(dir, basename(path)))
-			.catch(() => null));
-	const ancestors = (from: string): string[] => {
-		const parts: string[] = [];
-		for (let current = dirname(from); ; current = dirname(current)) {
-			parts.unshift(current);
-			if (dirname(current) === current) break;
-		}
-		return parts;
-	};
-	for (const directory of new Set([...ancestors(path), ...(resolved === null ? [] : ancestors(resolved))])) {
-		const stats = await stat(directory).catch(() => null);
-		// Unreadable to us is not evidence about anyone else; leave that to the write itself.
-		if (!stats) continue;
-		if ((stats.mode & 0o001) === 0) return `${directory} cannot be entered by the time service's own account`;
-	}
-	const file = await stat(resolved ?? path).catch(() => null);
-	if (file && (file.mode & 0o004) === 0) return `${resolved ?? path} cannot be read by the time service's own account`;
+	const { blocked, target } = await firstUnenterableDirectory(path);
+	if (blocked !== null) return `${blocked} cannot be entered by the time service's own account`;
+	if (target === null) return null;
+	const file = await stat(target).catch(() => null);
+	if (file && (file.mode & 0o004) === 0) return `${target} cannot be read by the time service's own account`;
 	return null;
 }
 
