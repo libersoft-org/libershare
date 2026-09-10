@@ -675,7 +675,24 @@ export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Pr
 			clientEnabled = state.ntpClientEnabled !== false;
 		}
 		const commands = buildSetNtpEnabledCommands(platform, enabled, mode, clientEnabled);
-		if (platform !== 'win32') return runAll(platform, commands, exec);
+		if (platform !== 'win32') {
+			const outcome = await runAll(platform, commands, exec);
+			// `timedatectl set-ntp` exits 0 even when the provider it tried to start was SKIPPED.
+			// A container blocks systemd-timesyncd through `ConditionVirtualization=!container`,
+			// and this reported `ok` while the service stayed inactive and the clock was never
+			// synchronised — measured in a privileged systemd container, which is a shape this
+			// application is deployed in.
+			//
+			// Confirmed here and deliberately NOT on Windows: there a toggle is a sequence touching
+			// the source mode, the start mode, the peer list and the synchronisation itself, and one
+			// boolean cannot speak for all four (see the comment above). Here the command and the
+			// boolean are the same thing, so reading it back adds a fact instead of hiding three.
+			if (!outcome.success) return outcome;
+			const after = await readStatus();
+			// Only a definite opposite is a failure; an unreadable state stays unreadable.
+			if (after.ntpEnabled !== !enabled) return outcome;
+			return { ...result('error', `the host accepted the request but automatic time synchronisation is still ${enabled ? 'off' : 'on'}; its time service may be unable to run here`), changed: true, stateMayHaveChanged: true };
+		}
 		return runAll(platform, commands, async (cmd, args) => {
 			const outcome = await exec(cmd, args);
 			if (cmd !== 'sc' || args[0] !== (enabled ? 'start' : 'stop')) return outcome;

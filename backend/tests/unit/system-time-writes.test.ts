@@ -179,14 +179,50 @@ describe('setSystemNtpEnabled', () => {
 
 	const capable = async (): Promise<SystemTimeStatus> => statusFixture();
 
+	/**
+	 * A host that ends up in the requested state. The reader is called twice on the POSIX
+	 * path — once for the capability, once to confirm the boolean the command owns — so a
+	 * single static answer would model a host where nothing ever changes.
+	 */
+	function settlesTo(enabled: boolean): () => Promise<SystemTimeStatus> {
+		let read = 0;
+		return async () => statusFixture({ ntpEnabled: read++ === 0 ? !enabled : enabled });
+	}
+
 	/** A Windows host whose time source this application configured itself. */
 	const ourWindowsHost = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'automatic', membership: 'standalone' });
 
 	it('reports success once every step has succeeded', async () => {
 		await onPlatform('linux', async () => {
 			const { exec, calls } = fakeRunner([]);
-			expect(await setSystemNtpEnabled(true, capable, exec)).toEqual({ success: true, outcome: 'ok', message: null });
+			expect(await setSystemNtpEnabled(true, settlesTo(true), exec)).toEqual({ success: true, outcome: 'ok', message: null });
 			expect(calls).toEqual(['timedatectl set-ntp true']);
+		});
+	});
+
+	/**
+	 * `timedatectl set-ntp` exits 0 even when the provider it tried to start was SKIPPED.
+	 * Measured in a privileged systemd container, where systemd-timesyncd is blocked by
+	 * `ConditionVirtualization=!container`: the command succeeded, the service stayed inactive
+	 * and this reported `ok` while the clock was never going to be synchronised.
+	 */
+	it('does not report success when synchronisation did not actually come up', async () => {
+		await onPlatform('linux', async () => {
+			const { exec, calls } = fakeRunner([]);
+			const stuck = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: false });
+			const outcome = await setSystemNtpEnabled(true, stuck, exec);
+			expect(outcome).toMatchObject({ success: false, outcome: 'error' });
+			expect(outcome.message).toContain('still off');
+			expect(calls).toEqual(['timedatectl set-ntp true']);
+		});
+	});
+
+	/** An unreadable state stays unreadable; only a definite opposite is a failure. */
+	it('does not call an unreadable state a failed toggle', async () => {
+		await onPlatform('linux', async () => {
+			const { exec } = fakeRunner([]);
+			const unknown = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: null });
+			expect(await setSystemNtpEnabled(true, unknown, exec)).toEqual({ success: true, outcome: 'ok', message: null });
 		});
 	});
 
