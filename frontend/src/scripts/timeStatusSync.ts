@@ -118,7 +118,13 @@ export function planTimeChanges(plan: TimeSavePlan): SystemTimeChanges {
 	if (plan.syncDirty) changes.ntpEnabled = plan.autoSync;
 	if (plan.ntpServer !== plan.loaded.ntpServer) changes.ntpServer = plan.ntpServer;
 	if (plan.timezone !== plan.loaded.timezone) changes.timezone = plan.timezone;
-	if (plan.clock) changes.clock = { ...plan.clock };
+	if (plan.clock) {
+		changes.clock = { ...plan.clock };
+		// The zone those digits were read in, which is what makes them an instant. Sent with
+		// the clock and nothing else, and it is the LOADED zone even when this same save also
+		// changes it — the user composed the time under the old one.
+		changes.expectedTimezone = plan.loaded.timezone;
+	}
 	return changes;
 }
 

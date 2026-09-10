@@ -341,7 +341,7 @@ const defaultSystemTimeWriters: SystemTimeWriters = {
 };
 
 /** Apply one settings snapshot without allowing another client's save to interleave. */
-export function applySystemTimeSettings(changes: SystemTimeChanges, writers: SystemTimeWriters = defaultSystemTimeWriters): Promise<SystemTimeResult> {
+export function applySystemTimeSettings(changes: SystemTimeChanges, writers: SystemTimeWriters = defaultSystemTimeWriters, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus): Promise<SystemTimeResult> {
 	// Validate the complete input before an earlier field can change the host.
 	if (changes.ntpServer !== undefined && !isValidNtpServer(changes.ntpServer)) return Promise.resolve(result('invalid-input', 'the NTP server must be a host name or IP address without spaces or special characters'));
 	if (changes.timezone !== undefined) {
@@ -356,6 +356,16 @@ export function applySystemTimeSettings(changes: SystemTimeChanges, writers: Sys
 		if (invalid) return Promise.resolve(result('invalid-input', invalid));
 	}
 	return withSystemTimeLock(async () => {
+		// Inside the lock and before the first write: a clock is a wall-clock reading, and the
+		// zone it was read in is what turns it into an instant. Another client switching the
+		// host's zone between this form being filled and this request running makes the same
+		// digits mean a different moment — measured as a host left two hours off real time by a
+		// save whose whole purpose was to correct it. Both requests are individually valid, so
+		// serialising them cannot catch it; only the expectation can.
+		if (changes.expectedTimezone !== undefined) {
+			const current = (await readStatus()).timezone;
+			if (current !== changes.expectedTimezone) return result('stale', `the host timezone is now ${current}, not ${changes.expectedTimezone} as this request was composed against`);
+		}
 		const operations: Array<() => Promise<SystemTimeResult>> = [];
 		if (changes.ntpEnabled === false) operations.push(() => writers.setNtpEnabled(false));
 		const ntpServer = changes.ntpServer;

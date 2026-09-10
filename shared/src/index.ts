@@ -469,6 +469,18 @@ export interface SystemTimeChanges {
 	ntpServer?: string;
 	timezone?: string;
 	clock?: { hours: number; minutes: number; seconds: number };
+	/**
+	 * The timezone the clock in this request was READ IN, sent with `clock` and with nothing
+	 * else. A wall-clock time only means an instant together with a zone: the user looks at
+	 * their watch, sees 12:15 in Prague and types it, and the host is supposed to end up
+	 * correct. Another client switching the host to UTC in between makes 12:15 land two hours
+	 * off real time — the save meant to FIX the clock breaks it instead, and the serialized
+	 * lock cannot see it because both requests are individually valid.
+	 *
+	 * Compared against the host before anything is written. A save that also changes the zone
+	 * still carries the zone it was composed under, not the one it is about to set.
+	 */
+	expectedTimezone?: string;
 }
 
 /**
@@ -480,9 +492,12 @@ export interface SystemTimeChanges {
  * - `auto-sync-enabled`: the clock cannot be set by hand while NTP owns it — switch
  *   automatic synchronisation off first.
  * - `invalid-input`: the value failed validation and no command was ever run.
+ * - `stale`: the request was composed against host state that has since changed, so its
+ *   meaning is no longer the one the user saw — nothing was written and the screen has to
+ *   read the host again.
  * - `error`: anything else; {@link SystemTimeResult.message} carries the underlying text.
  */
-export type SystemTimeOutcome = 'ok' | 'permission-denied' | 'unsupported' | 'auto-sync-enabled' | 'invalid-input' | 'error';
+export type SystemTimeOutcome = 'ok' | 'permission-denied' | 'unsupported' | 'auto-sync-enabled' | 'invalid-input' | 'stale' | 'error';
 
 /** One command of a multi-step system-time write, and how it went. */
 export interface SystemTimeStep {

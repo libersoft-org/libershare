@@ -660,6 +660,38 @@ describe('applySystemTimeSettings', () => {
 		expect(calls).toEqual(['ntp:false', 'zone:Europe/Prague']);
 	});
 
+	/**
+	 * A clock is a wall-clock reading, and the zone it was read in is what turns it into an
+	 * instant. Another client switching the host to UTC between this form being filled and this
+	 * request running makes the same digits mean a different moment: traced as 12:15 composed
+	 * in Prague landing two hours off real time, from a save whose whole purpose was to correct
+	 * the clock. Both requests are individually valid, so serialising them cannot catch it.
+	 */
+	it('writes nothing when the host timezone is no longer the one the clock was read in', async () => {
+		const calls: string[] = [];
+		const result = await applySystemTimeSettings({ clock: { hours: 12, minutes: 15, seconds: 0 }, expectedTimezone: 'Europe/Prague' }, writers(calls), async () => statusFixture({ timezone: 'UTC' }));
+		expect(result).toMatchObject({ success: false, outcome: 'stale' });
+		expect(result.message).toContain('Europe/Prague');
+		expect(result.changed).not.toBe(true);
+		expect(result.stateMayHaveChanged).not.toBe(true);
+		expect(calls).toEqual([]);
+	});
+
+	it('applies the clock when the expectation still holds', async () => {
+		const calls: string[] = [];
+		const result = await applySystemTimeSettings({ clock: { hours: 12, minutes: 15, seconds: 0 }, expectedTimezone: 'Europe/Prague' }, writers(calls), async () => statusFixture({ timezone: 'Europe/Prague' }));
+		expect(result).toEqual(okResult);
+		expect(calls).toEqual(['clock:12:15:0']);
+	});
+
+	/** A save that also moves the zone carries the zone it was composed under, not the new one. */
+	it('checks the expectation before applying a timezone change in the same save', async () => {
+		const calls: string[] = [];
+		const result = await applySystemTimeSettings({ timezone: 'UTC', clock: { hours: 12, minutes: 15, seconds: 0 }, expectedTimezone: 'Europe/Prague' }, writers(calls), async () => statusFixture({ timezone: 'Europe/Prague' }));
+		expect(result).toEqual(okResult);
+		expect(calls).toEqual(['zone:UTC', 'clock:12:15:0']);
+	});
+
 	it('does not interleave two clients saves', async () => {
 		const calls: string[] = [];
 		let releaseFirst!: () => void;

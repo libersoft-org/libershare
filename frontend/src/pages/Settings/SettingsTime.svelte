@@ -301,6 +301,7 @@
 			unsupported: 'settings.time.errorUnsupported',
 			'auto-sync-enabled': 'settings.time.errorAutoSyncEnabled',
 			'invalid-input': 'settings.time.errorInvalidInput',
+			stale: 'settings.time.changedOutside',
 			error: 'settings.time.errorGeneric',
 		};
 		return withDetail(tt(keys[res.outcome]), res.message);

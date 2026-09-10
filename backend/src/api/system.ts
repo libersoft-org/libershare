@@ -249,7 +249,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	/** Validate and apply every changed time field as one serialized save. */
 	function applyTimeSettings(p: SystemTimeChanges): Promise<SystemTimeResult> {
 		if (!p || typeof p !== 'object' || Array.isArray(p)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'time settings must be an object');
-		const allowed = new Set(['ntpEnabled', 'ntpServer', 'timezone', 'clock']);
+		const allowed = new Set(['ntpEnabled', 'ntpServer', 'timezone', 'clock', 'expectedTimezone']);
 		const keys = Object.keys(p);
 		if (keys.length === 0 || keys.some(key => !allowed.has(key))) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'time settings must contain only supported changed fields');
 		const changes: SystemTimeChanges = {};
@@ -264,6 +264,10 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		if (p.timezone !== undefined) {
 			if (typeof p.timezone !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'timezone must be a string');
 			changes.timezone = p.timezone;
+		}
+		if (p.expectedTimezone !== undefined) {
+			if (typeof p.expectedTimezone !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'expectedTimezone must be a string');
+			changes.expectedTimezone = p.expectedTimezone;
 		}
 		if (p.clock !== undefined) {
 			if (!p.clock || typeof p.clock !== 'object' || Array.isArray(p.clock)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'clock must be an object');

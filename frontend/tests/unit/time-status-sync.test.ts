@@ -84,7 +84,10 @@ const FULL_PLAN: TimeSavePlan = { autoSync: false, syncDirty: true, ntpServer: '
  * clock — and the clock after the values it depends on.
  */
 test('the writes run in the order the OS requires', () => {
-	expect(planTimeChanges(FULL_PLAN)).toEqual({ ntpEnabled: false, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 } });
+	// `expectedTimezone` rides along with the clock: the digits only mean an instant
+	// together with the zone they were read in, which is the LOADED one even here, where
+	// this same save also moves the zone.
+	expect(planTimeChanges(FULL_PLAN)).toEqual({ ntpEnabled: false, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 }, expectedTimezone: 'UTC' });
 });
 
 /** Switching synchronisation back on goes last, or it would step over the clock just set. */
