@@ -504,7 +504,7 @@ describe('listHostTimezones', () => {
 				'linux',
 				() => null,
 				() => true,
-				null
+				() => null
 			)
 		).toEqual(listSystemTimezones());
 	});
@@ -520,41 +520,59 @@ describe('listHostTimezones', () => {
 		).toEqual(listSystemTimezones());
 	});
 
-	// The POSIX half of the same rule. ICU names zones the host's tzdata need not carry:
-	// on a systemd host 18 of 445 were refused by `timedatectl set-timezone`, `Asia/Calcutta`
-	// and `Europe/Kiev` among them, each one reproducing the same half-applied save.
-	it('drops the zones a POSIX host has no tzdata file for', () => {
+	/**
+	 * The POSIX half, and the shape the first attempt got wrong. Filtering the runtime list by
+	 * what is installed dropped the legacy alias ICU calls canonical and never offered the
+	 * modern name the host actually has — measured on a systemd host as no India and no Ukraine
+	 * zone at all. The host's own database is the list.
+	 */
+	it('offers the host name where the runtime only knows the legacy alias', () => {
 		resetHostTimezones();
-		const legacy = new Set(['Asia/Calcutta', 'Europe/Kiev', 'America/Buenos_Aires']);
+		const installed = ['Asia/Kolkata', 'Europe/Kyiv', 'America/Nuuk', 'Europe/Prague'];
 		const zones = listHostTimezones(
 			'linux',
 			() => 'unused',
 			() => true,
-			zone => !legacy.has(zone)
+			() => installed
 		);
-		for (const zone of legacy) expect(zones).not.toContain(zone);
-		expect(zones).toContain('Europe/Prague');
+		expect(zones).toEqual([...installed].sort());
+		// The aliases the runtime calls canonical are exactly what the host does not have.
+		for (const alias of ['Asia/Calcutta', 'Europe/Kiev', 'America/Godthab']) expect(zones).not.toContain(alias);
 	});
 
-	it('offers the runtime list unfiltered where the host has no zoneinfo directory', () => {
+	it('drops a host zone this runtime cannot format', () => {
+		resetHostTimezones();
+		const zones = listHostTimezones(
+			'linux',
+			() => 'unused',
+			() => true,
+			() => ['Europe/Prague', 'Factory', 'Not/AZone']
+		);
+		expect(zones).toContain('Europe/Prague');
+		expect(zones).not.toContain('Not/AZone');
+	});
+
+	it('falls back to the runtime list where the host database cannot be read', () => {
 		resetHostTimezones();
 		expect(
 			listHostTimezones(
 				'linux',
 				() => null,
 				() => true,
-				null
+				() => null
 			)
 		).toEqual(listSystemTimezones());
 	});
 
-	it.skipIf(process.platform === 'win32')('offers only zones this host has tzdata for', () => {
+	it.skipIf(process.platform === 'win32')('offers what this host really has', () => {
 		resetHostTimezones();
 		const offered = listHostTimezones();
 		expect(offered.length).toBeGreaterThan(100);
 		for (const zone of offered) expect(existsSync(join('/usr/share/zoneinfo', zone))).toBe(true);
+		// The point of reading the host rather than filtering the runtime: these are the names
+		// a POSIX host carries, and at least one of them is absent from the runtime's own list.
+		expect(offered.some(zone => !listSystemTimezones().includes(zone))).toBe(true);
 	});
-
 	it.skipIf(process.platform !== 'win32')('offers only zones this host can really be set to', () => {
 		resetHostTimezones();
 		const offered = listHostTimezones();

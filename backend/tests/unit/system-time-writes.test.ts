@@ -617,7 +617,7 @@ describe('applySystemTimeSettings', () => {
 				process.platform,
 				zone => (zone === rejected ? null : 'Some Standard Time'),
 				() => true,
-				zone => zone !== rejected
+				() => listSystemTimezones().filter(zone => zone !== rejected)
 			);
 			expect(listHostTimezones()).not.toContain(rejected);
 			const calls: string[] = [];

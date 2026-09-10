@@ -7,7 +7,7 @@ import { Mutex } from 'async-mutex';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { syncDirectory, unreadableByServiceAccount, type RollbackResult, writeFileAtomically } from './system-time-files.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { existsSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -171,44 +171,67 @@ let hostTimezones: { platform: string; zones: string[] } | null = null;
  * while the distribution ships them in a separate package. Those are ordinary picks, not
  * exotic ones, and each of them reproduced the same half-applied save.
  *
- * A zone is offered there when `/usr/share/zoneinfo` carries it, which is the test systemd
- * itself applies before writing. The list `timedatectl list-timezones` prints is a
- * DIFFERENT and narrower thing — it comes from `zone1970.tab` and omits aliases the host
- * would in fact accept — so filtering by it would refuse zones that work.
+ * There the list comes FROM the host's `/usr/share/zoneinfo`, intersected with what this
+ * runtime can format. If that directory cannot be read the runtime's list stands in: an
+ * empty picker is worse than one that occasionally offers too much, and such a host's
+ * writes fail visibly anyway.
  *
- * If the directory is not there at all, nothing is filtered: an empty picker is worse than
- * one that occasionally offers too much, and that host's writes fail visibly anyway.
- *
- * `platform`, `convert` and `zoneInstalled` are injectable so both filters can be
+ * `platform`, `convert` and `readInstalled` are injectable so both branches can be
  * exercised on either kind of host.
  */
-export function listHostTimezones(platform: string = process.platform, convert: (zone: string) => string | null = ianaToWindowsTimezoneId, canConvert: () => boolean = canConvertTimezoneId, zoneInstalled: ((zone: string) => boolean) | null = installedZoneCheck()): string[] {
+export function listHostTimezones(platform: string = process.platform, convert: (zone: string) => string | null = ianaToWindowsTimezoneId, canConvert: () => boolean = canConvertTimezoneId, readInstalled: () => string[] | null = readInstalledZones): string[] {
 	if (hostTimezones?.platform === platform) return hostTimezones.zones;
-	const zones = listSystemTimezones();
-	// A Windows without ICU converts nothing, and the timezone capability is already off
-	// there — an empty list would additionally erase the zone the host is actually in.
-	const filter = platform === 'win32' ? (canConvert() ? (zone: string) => convert(zone) !== null : null) : zoneInstalled;
-	const usable = filter ? zones.filter(filter) : zones;
+	const runtime = listSystemTimezones();
+	let usable: string[];
+	if (platform === 'win32') {
+		// A Windows without ICU converts nothing, and the timezone capability is already off
+		// there — an empty list would additionally erase the zone the host is actually in.
+		usable = canConvert() ? runtime.filter(zone => convert(zone) !== null) : runtime;
+	} else {
+		// The HOST's own names, not the runtime's filtered down. Filtering was the wrong shape:
+		// ICU still calls the legacy aliases canonical — `Asia/Calcutta`, `Europe/Kiev`,
+		// `America/Godthab` — while the distribution ships only `Asia/Kolkata`, `Europe/Kyiv`,
+		// `America/Nuuk`. Dropping the name with no file therefore removed the alias AND never
+		// offered the one that works, so on a real host no India and no Ukraine zone was
+		// selectable at all. Reading the host's database offers the modern name instead.
+		//
+		// Still intersected with what this runtime can format, or the picker would offer a zone
+		// the screen cannot render a clock for.
+		const installed = readInstalled();
+		usable = installed === null ? runtime : installed.filter(zone => timezoneOffsetMinutes(zone) !== null).sort();
+	}
 	hostTimezones = { platform, zones: usable };
 	return usable;
 }
 
-/** Directory every POSIX host validates a timezone name against before accepting it. */
+/** Directory every POSIX host keeps its zone database in, and validates a name against. */
 const ZONEINFO_DIR = '/usr/share/zoneinfo';
 
 /**
- * Is this zone installed on the host? Null when the question cannot be asked — no zoneinfo
- * directory — so the caller offers the runtime's list unfiltered rather than nothing.
+ * The zone names this HOST has, read off its own database. Null when it cannot be read, so
+ * the caller falls back to the runtime's list rather than offering nothing.
  *
- * The name is joined and then checked to still be inside the directory: it comes from ICU
- * here, but the guard costs nothing and keeps a `..` out of a filesystem probe for good.
+ * `Area/Location`, which is why an entry has to start with a capital and carry no extension:
+ * everything else under there is not a zone — the `posix/` and `right/` trees, `zone.tab`,
+ * `leapseconds`, `tzdata.zi`, `localtime`. Measured against `timedatectl list-timezones` on a
+ * systemd 255 host: the two agreed exactly, in both directions.
  */
-function installedZoneCheck(): ((zone: string) => boolean) | null {
-	if (process.platform === 'win32' || !existsSync(ZONEINFO_DIR)) return null;
-	return zone => {
-		const path = join(ZONEINFO_DIR, zone);
-		return path.startsWith(ZONEINFO_DIR + '/') && existsSync(path);
+function readInstalledZones(dir: string = ZONEINFO_DIR): string[] | null {
+	const zones: string[] = [];
+	const walk = (relative: string): void => {
+		for (const name of readdirSync(relative ? join(dir, relative) : dir)) {
+			if (!/^[A-Z]/.test(name) || name.includes('.')) continue;
+			const zone = relative ? `${relative}/${name}` : name;
+			if (statSync(join(dir, zone)).isDirectory()) walk(zone);
+			else zones.push(zone);
+		}
 	};
+	try {
+		walk('');
+	} catch {
+		return null;
+	}
+	return zones.length > 0 ? zones : null;
 }
 
 /** Forget the cached list. Only for tests that swap the conversion behaviour. */
