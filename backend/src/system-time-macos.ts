@@ -1,7 +1,22 @@
-import { type PlatformStatus, tryRead } from './system-time-common.ts';
+import { type PlatformStatus, type SystemCommand, tryRead } from './system-time-common.ts';
 
 /** `systemsetup` is not on a default non-root PATH on macOS, so it is always addressed absolutely. */
 export const MAC_SYSTEMSETUP = '/usr/sbin/systemsetup';
+
+/**
+ * `systemsetup` refuses every operation, reads included, when it is not run as root —
+ * and still EXITS ZERO. Measured on macOS 15.7.4: each of `-settimezone`,
+ * `-setnetworktimeserver`, `-setusingnetworktime` and `-settime` printed
+ * "You need administrator access to run this tool... exiting!" on stdout and exited 0,
+ * changing nothing. Without matching that text every unprivileged write would be
+ * reported as a success, so the message is what decides, not the exit code.
+ */
+export const MAC_NEEDS_ROOT_RE = /administrator access/i;
+
+/** A `systemsetup` write, failing on the refusal it exits zero for. */
+export function macSystemsetup(args: string[]): SystemCommand {
+	return { cmd: MAC_SYSTEMSETUP, args, failOnOutput: MAC_NEEDS_ROOT_RE };
+}
 
 /**
  * Pull the value out of a `systemsetup -get...` line (`Network Time Server: time.apple.com`).

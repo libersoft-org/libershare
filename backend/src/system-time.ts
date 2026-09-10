@@ -1,5 +1,5 @@
 import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, run, validateClockParts, runAll, listSystemTimezones, isValidNtpServer } from './system-time-common.ts';
-import { MAC_SYSTEMSETUP, readMacStatus } from './system-time-macos.ts';
+import { macSystemsetup, readMacStatus } from './system-time-macos.ts';
 import { w32tm, W32TIME_NTP_CLIENT_KEY, type WindowsSyncMode, SC_ALREADY_RUNNING, SC_NOT_ACTIVE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled, readWindowsTimeZone, readWindowsTimeServiceRunning, type WindowsTimeZoneState } from './system-time-windows.ts';
 import { readLinuxStatus, TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn, verifyTimesyncdServer } from './system-time-linux.ts';
 import { type SystemTimeStatus, type SystemTimeResult, type SystemTimeChanges, type SystemTimeStep } from '@shared';
@@ -23,7 +23,7 @@ export function buildSetClockCommands(platform: SystemPlatform, when: LocalDateT
 	const date = `${when.year}-${pad2(when.month)}-${pad2(when.day)}`;
 	const time = `${pad2(when.hours)}:${pad2(when.minutes)}:${pad2(when.seconds)}`;
 	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-time', `${date} ${time}`] }];
-	if (platform === 'darwin') return [{ cmd: MAC_SYSTEMSETUP, args: ['-settime', time] }];
+	if (platform === 'darwin') return [macSystemsetup(['-settime', time])];
 	// powershell.exe otherwise collapses native errors to exit 1 and localized text.
 	// The encoding is pinned first: PowerShell writes through `[Console]::OutputEncoding`,
 	// which follows whatever console it inherited, so the same script emits UTF-8 when
@@ -55,7 +55,7 @@ export function buildSetClockCommands(platform: SystemPlatform, when: LocalDateT
  */
 export function buildSetTimezoneCommands(platform: SystemPlatform, timezone: string, windowsId: string | null, daylightDisabled = false): SystemCommand[] {
 	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-timezone', timezone] }];
-	if (platform === 'darwin') return [{ cmd: MAC_SYSTEMSETUP, args: ['-settimezone', timezone] }];
+	if (platform === 'darwin') return [macSystemsetup(['-settimezone', timezone])];
 	return windowsId ? [{ cmd: 'tzutil', args: ['/s', windowsId + (daylightDisabled ? '_dstoff' : '')] }] : [];
 }
 
@@ -82,7 +82,7 @@ export function buildSetTimezoneCommands(platform: SystemPlatform, timezone: str
  */
 export function buildSetNtpServerCommands(platform: SystemPlatform, server: string, syncRunning: boolean, syncEnabled = true): SystemCommand[] {
 	if (platform === 'linux') return syncRunning ? [{ cmd: 'systemctl', args: ['restart', 'systemd-timesyncd'] }] : [];
-	if (platform === 'darwin') return [{ cmd: MAC_SYSTEMSETUP, args: ['-setnetworktimeserver', server] }];
+	if (platform === 'darwin') return [macSystemsetup(['-setnetworktimeserver', server])];
 	// 0x8 is the plain client flag. 0x9 would add 0x1 (SpecialInterval), which makes the
 	// peer poll at SpecialPollInterval — a standalone host defaults that to 604800s, so
 	// the peer would be contacted weekly instead of on the normal poll interval.
@@ -114,7 +114,7 @@ export function buildSetNtpServerCommands(platform: SystemPlatform, server: stri
  */
 export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: boolean, mode: WindowsSyncMode = 'unknown', ntpClientEnabled = true): SystemCommand[] {
 	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-ntp', enabled ? 'true' : 'false'] }];
-	if (platform === 'darwin') return [{ cmd: MAC_SYSTEMSETUP, args: ['-setusingnetworktime', enabled ? 'on' : 'off'] }];
+	if (platform === 'darwin') return [macSystemsetup(['-setusingnetworktime', enabled ? 'on' : 'off'])];
 	if (enabled) {
 		return [
 			// Only when Windows says the provider is off. Switching synchronisation on has to
@@ -723,6 +723,6 @@ export { TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, parseTimesyncConfig, type UnitSt
 
 export { syncDirectory, type RollbackResult, writeFileAtomically } from './system-time-files.ts';
 
-export { parseSystemsetupValue, parseSystemsetupOnOff } from './system-time-macos.ts';
+export { parseSystemsetupValue, parseSystemsetupOnOff, MAC_NEEDS_ROOT_RE, macSystemsetup } from './system-time-macos.ts';
 
 export { W32TM_ERROR_RE, parseRegValue, parseWindowsNtpServer, type WindowsSyncMode, type WindowsStartMode, parseWindowsSyncMode, parseWindowsStartMode, windowsSyncIsOurs, windowsSyncEnabled, parseWindowsSyncStatus, rememberWindowsZone, windowsToIanaTimezone, parseTzutilZone, readWindowsPolicyManaged, type WindowsModeState, type WindowsModeReader } from './system-time-windows.ts';

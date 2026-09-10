@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { applySystemTimeSettings, buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, clockWriteRefusal, getSystemTimeStatus, listHostTimezones, listSystemTimezones, resetHostTimezones, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type SystemCommand, type SystemTimeWriters, type WindowsModeState, W32TM_ERROR_RE, withSystemTimeLock } from '../../src/system-time.ts';
+import { applySystemTimeSettings, buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, clockWriteRefusal, getSystemTimeStatus, listHostTimezones, listSystemTimezones, resetHostTimezones, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type SystemCommand, type SystemTimeWriters, type WindowsModeState, W32TM_ERROR_RE, MAC_NEEDS_ROOT_RE, withSystemTimeLock } from '../../src/system-time.ts';
 import type { SystemTimeChanges, SystemTimeStatus } from '@shared';
 import { W32TM_STATUS, fakeRunner } from '../helpers/system-time-fixtures.ts';
 
@@ -27,7 +27,7 @@ describe('buildSetClockCommands', () => {
 	});
 
 	it('sends only the time on macOS, leaving the date alone', () => {
-		expect(buildSetClockCommands('darwin', AT)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-settime', '23:46:28'] }]);
+		expect(buildSetClockCommands('darwin', AT)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-settime', '23:46:28'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
 	});
 
 	it('builds the windows argv with an unambiguous ISO timestamp', () => {
@@ -46,7 +46,7 @@ describe('buildSetClockCommands', () => {
 describe('buildSetTimezoneCommands', () => {
 	it('passes the IANA identifier straight through on linux and macOS', () => {
 		expect(buildSetTimezoneCommands('linux', 'Europe/Prague', null)).toEqual([{ cmd: 'timedatectl', args: ['set-timezone', 'Europe/Prague'] }]);
-		expect(buildSetTimezoneCommands('darwin', 'Europe/Prague', null)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-settimezone', 'Europe/Prague'] }]);
+		expect(buildSetTimezoneCommands('darwin', 'Europe/Prague', null)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-settimezone', 'Europe/Prague'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
 	});
 
 	it('uses the converted identifier on windows', () => {
@@ -94,7 +94,37 @@ describe('buildSetNtpServerCommands', () => {
 	});
 
 	it('sets the single supported server on macOS', () => {
-		expect(buildSetNtpServerCommands('darwin', 'ntp.example.org', true)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-setnetworktimeserver', 'ntp.example.org'] }]);
+		expect(buildSetNtpServerCommands('darwin', 'ntp.example.org', true)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-setnetworktimeserver', 'ntp.example.org'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
+	});
+});
+
+describe('macOS systemsetup refusal', () => {
+	/**
+	 * The bug this exists for: `systemsetup` refuses every write when it is not root and
+	 * EXITS ZERO anyway. Measured on macOS 15.7.4 - `-settimezone`, `-setnetworktimeserver`,
+	 * `-setusingnetworktime` and `-settime` each printed the administrator-access line, exited
+	 * 0 and changed nothing, and the writers reported `success: true` for all four. The refusal
+	 * has to be read out of the output, so every builder carries the pattern.
+	 */
+	const REFUSAL = 'You need administrator access to run this tool... exiting!\n';
+
+	it('is what every macOS write is checked for', () => {
+		const commands: SystemCommand[] = [...buildSetClockCommands('darwin', AT), ...buildSetTimezoneCommands('darwin', 'Europe/Prague', null), ...buildSetNtpServerCommands('darwin', 'ntp.example.org', true), ...buildSetNtpEnabledCommands('darwin', true), ...buildSetNtpEnabledCommands('darwin', false)];
+		expect(commands.length).toBe(5);
+		for (const command of commands) expect(command.failOnOutput?.test(REFUSAL)).toBe(true);
+	});
+
+	it('turns an exit-zero refusal into permission-denied, not success', async () => {
+		const runner: CommandRunner = async () => ({ kind: 'ok', output: REFUSAL });
+		const outcome = await runAll('darwin', buildSetTimezoneCommands('darwin', 'Europe/London', null), runner);
+		expect(outcome.success).toBe(false);
+		expect(outcome.outcome).toBe('permission-denied');
+		expect(outcome.message).toContain('administrator access');
+	});
+
+	it('still accepts a write that printed nothing', async () => {
+		const runner: CommandRunner = async () => ({ kind: 'ok', output: '' });
+		expect((await runAll('darwin', buildSetNtpEnabledCommands('darwin', false), runner)).success).toBe(true);
 	});
 });
 
@@ -102,8 +132,8 @@ describe('buildSetNtpEnabledCommands', () => {
 	it('is a single switch on linux and macOS', () => {
 		expect(buildSetNtpEnabledCommands('linux', true)).toEqual([{ cmd: 'timedatectl', args: ['set-ntp', 'true'] }]);
 		expect(buildSetNtpEnabledCommands('linux', false)).toEqual([{ cmd: 'timedatectl', args: ['set-ntp', 'false'] }]);
-		expect(buildSetNtpEnabledCommands('darwin', true)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-setusingnetworktime', 'on'] }]);
-		expect(buildSetNtpEnabledCommands('darwin', false)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-setusingnetworktime', 'off'] }]);
+		expect(buildSetNtpEnabledCommands('darwin', true)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-setusingnetworktime', 'on'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
+		expect(buildSetNtpEnabledCommands('darwin', false)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-setusingnetworktime', 'off'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
 	});
 
 	/**
