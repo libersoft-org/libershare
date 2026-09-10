@@ -481,6 +481,16 @@ export interface SystemTimeChanges {
 	 * still carries the zone it was composed under, not the one it is about to set.
 	 */
 	expectedTimezone?: string;
+	/**
+	 * The offset that zone had when the clock was read, sent alongside it.
+	 *
+	 * The NAME alone is not the meaning. Windows lets automatic daylight saving be switched
+	 * off for a zone, which moves the offset while the identifier stays put — so `Europe/Prague`
+	 * at +120 and `Europe/Prague` at +60 name the same zone and turn the same digits into
+	 * instants an hour apart. Traced: an offset changed under a filled-in form passed the name
+	 * check and wrote the clock an hour off what the user had been looking at.
+	 */
+	expectedOffsetMinutes?: number;
 }
 
 /**

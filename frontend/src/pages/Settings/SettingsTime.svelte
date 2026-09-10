@@ -358,7 +358,7 @@
 		}
 		// Snapshot every changed value before the request. The backend applies the snapshot
 		// under one lock, so another client cannot interleave its own save between fields.
-		const plan = { autoSync, syncDirty, ntpServer: ntpServer.trim(), timezone, clock, loaded: { ntpServer: loaded.ntpServer, timezone: loaded.timezone } };
+		const plan = { autoSync, syncDirty, ntpServer: ntpServer.trim(), timezone, clock, loaded: { ntpServer: loaded.ntpServer, timezone: loaded.timezone, utcOffsetMinutes: status.utcOffsetMinutes } };
 		const changes: SystemTimeChanges = planTimeChanges(plan);
 		busy = true;
 		try {

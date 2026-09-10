@@ -77,7 +77,7 @@ test('a superseded read applies nothing at all, background or not', () => {
 });
 
 /** The plan a save is built from: everything changed, so every step runs. */
-const FULL_PLAN: TimeSavePlan = { autoSync: false, syncDirty: true, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 }, loaded: { ntpServer: 'old.example.org', timezone: 'UTC' } };
+const FULL_PLAN: TimeSavePlan = { autoSync: false, syncDirty: true, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 }, loaded: { ntpServer: 'old.example.org', timezone: 'UTC', utcOffsetMinutes: 0 } };
 
 /**
  * Synchronisation off first — the OS refuses a manual clock set while a daemon owns the
@@ -87,7 +87,7 @@ test('the writes run in the order the OS requires', () => {
 	// `expectedTimezone` rides along with the clock: the digits only mean an instant
 	// together with the zone they were read in, which is the LOADED one even here, where
 	// this same save also moves the zone.
-	expect(planTimeChanges(FULL_PLAN)).toEqual({ ntpEnabled: false, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 }, expectedTimezone: 'UTC' });
+	expect(planTimeChanges(FULL_PLAN)).toEqual({ ntpEnabled: false, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 }, expectedTimezone: 'UTC', expectedOffsetMinutes: 0 });
 });
 
 /** Switching synchronisation back on goes last, or it would step over the clock just set. */

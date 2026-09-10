@@ -363,8 +363,12 @@ export function applySystemTimeSettings(changes: SystemTimeChanges, writers: Sys
 		// save whose whole purpose was to correct it. Both requests are individually valid, so
 		// serialising them cannot catch it; only the expectation can.
 		if (changes.expectedTimezone !== undefined) {
-			const current = (await readStatus()).timezone;
-			if (current !== changes.expectedTimezone) return result('stale', `the host timezone is now ${current}, not ${changes.expectedTimezone} as this request was composed against`);
+			const current = await readStatus();
+			if (current.timezone !== changes.expectedTimezone) return result('stale', `the host timezone is now ${current.timezone}, not ${changes.expectedTimezone} as this request was composed against`);
+			// The offset too, and for the same reason: Windows can switch automatic daylight saving
+			// off for a zone, which moves the offset while the name stays put. Same name at +120 and
+			// at +60 turns the same digits into instants an hour apart.
+			if (changes.expectedOffsetMinutes !== undefined && current.utcOffsetMinutes !== changes.expectedOffsetMinutes) return result('stale', `the host is now ${current.utcOffsetMinutes} minutes from UTC, not ${changes.expectedOffsetMinutes} as this request was composed against`);
 		}
 		const operations: Array<() => Promise<SystemTimeResult>> = [];
 		if (changes.ntpEnabled === false) operations.push(() => writers.setNtpEnabled(false));

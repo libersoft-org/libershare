@@ -713,9 +713,24 @@ describe('applySystemTimeSettings', () => {
 		expect(calls).toEqual([]);
 	});
 
+	/**
+	 * The name alone is not the meaning. Windows lets automatic daylight saving be switched
+	 * off for a zone, which moves the offset while the identifier stays put — so the same name
+	 * at +120 and at +60 turns the same digits into instants an hour apart. Traced: the name
+	 * check passed and the clock was written an hour off what the user had been looking at.
+	 */
+	it('writes nothing when the offset moved under an unchanged zone name', async () => {
+		const calls: string[] = [];
+		const changes = { clock: { hours: 14, minutes: 0, seconds: 0 }, expectedTimezone: 'Europe/Prague', expectedOffsetMinutes: 120 };
+		const result = await applySystemTimeSettings(changes, writers(calls), async () => statusFixture({ timezone: 'Europe/Prague', utcOffsetMinutes: 60 }));
+		expect(result).toMatchObject({ success: false, outcome: 'stale' });
+		expect(result.message).toContain('60');
+		expect(calls).toEqual([]);
+	});
+
 	it('applies the clock when the expectation still holds', async () => {
 		const calls: string[] = [];
-		const result = await applySystemTimeSettings({ clock: { hours: 12, minutes: 15, seconds: 0 }, expectedTimezone: 'Europe/Prague' }, writers(calls), async () => statusFixture({ timezone: 'Europe/Prague' }));
+		const result = await applySystemTimeSettings({ clock: { hours: 12, minutes: 15, seconds: 0 }, expectedTimezone: 'Europe/Prague', expectedOffsetMinutes: 120 }, writers(calls), async () => statusFixture({ timezone: 'Europe/Prague', utcOffsetMinutes: 120 }));
 		expect(result).toEqual(okResult);
 		expect(calls).toEqual(['clock:12:15:0']);
 	});

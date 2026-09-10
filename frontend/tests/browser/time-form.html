@@ -464,7 +464,7 @@
 				zone.dispatchEvent(new Event('change', { bubbles: true }));
 				await settle();
 				await click(label('common.save'));
-				assert(writes.length === 1 && JSON.stringify(writes[0]) === JSON.stringify({ ntpEnabled: false, ntpServer: 'tik.cesnet.cz', timezone: 'UTC', clock: { hours: 7, minutes: 8, seconds: 9 }, expectedTimezone: 'Europe/Prague' }), 'The combined edit was split, changed or incompletely saved');
+				assert(writes.length === 1 && JSON.stringify(writes[0]) === JSON.stringify({ ntpEnabled: false, ntpServer: 'tik.cesnet.cz', timezone: 'UTC', clock: { hours: 7, minutes: 8, seconds: 9 }, expectedTimezone: 'Europe/Prague', expectedOffsetMinutes: 120 }), 'The combined edit was split, changed or incompletely saved');
 			});
 			await test(
 				'an empty manual hour is invalid rather than midnight',

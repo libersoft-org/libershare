@@ -104,7 +104,7 @@ export interface TimeSavePlan {
 	ntpServer: string;
 	timezone: string;
 	clock: { hours: number; minutes: number; seconds: number } | null;
-	loaded: { ntpServer: string; timezone: string };
+	loaded: { ntpServer: string; timezone: string; utcOffsetMinutes: number };
 }
 
 /**
@@ -124,6 +124,9 @@ export function planTimeChanges(plan: TimeSavePlan): SystemTimeChanges {
 		// the clock and nothing else, and it is the LOADED zone even when this same save also
 		// changes it — the user composed the time under the old one.
 		changes.expectedTimezone = plan.loaded.timezone;
+		// And its offset, because the name alone is not the meaning: automatic daylight saving
+		// can be switched off for a zone, moving the offset while the identifier stays put.
+		changes.expectedOffsetMinutes = plan.loaded.utcOffsetMinutes;
 	}
 	return changes;
 }
