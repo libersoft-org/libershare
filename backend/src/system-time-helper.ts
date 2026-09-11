@@ -22,6 +22,15 @@ import { SYSTEM_TIME_OUTCOMES, type SystemTimeChanges, type SystemTimeOutcome, t
 const CHANGE_KEYS = ['clock', 'expectedOffsetMinutes', 'expectedTimezone', 'ntpEnabled', 'ntpServer', 'timezone'];
 const CLOCK_KEYS = ['hours', 'minutes', 'seconds'];
 const MAX_VALUE_LENGTH = 64;
+/**
+ * An NTP address gets its own bound, and it is the one {@link isValidNtpServer} enforces:
+ * a DNS name may be 253 characters.
+ *
+ * 64 was wrong here. `ntp.` + 63 `a`s + `.example.org` is 79 characters, syntactically
+ * valid, accepted by the ordinary validator - and refused at this boundary, so the very
+ * same address saved on a host that needed no privileges and failed on one that did.
+ */
+const MAX_NTP_SERVER_LENGTH = 253;
 const MAX_MESSAGE_LENGTH = 500;
 const MAX_STEPS = 32;
 const MAX_COMMAND_LENGTH = 2048;
@@ -51,7 +60,7 @@ export function isSystemTimeChanges(value: unknown): value is SystemTimeChanges 
 	if (!isPlainObject(value) || !hasOnlyKeys(value, CHANGE_KEYS)) return false;
 	const changes = value as Partial<Record<keyof SystemTimeChanges, unknown>>;
 	if (changes.ntpEnabled !== undefined && typeof changes.ntpEnabled !== 'boolean') return false;
-	if (changes.ntpServer !== undefined && !isBoundedString(changes.ntpServer)) return false;
+	if (changes.ntpServer !== undefined && !isBoundedString(changes.ntpServer, MAX_NTP_SERVER_LENGTH)) return false;
 	if (changes.timezone !== undefined && !isBoundedString(changes.timezone)) return false;
 	if (changes.expectedTimezone !== undefined && !isBoundedString(changes.expectedTimezone)) return false;
 	if (changes.expectedOffsetMinutes !== undefined && !Number.isInteger(changes.expectedOffsetMinutes)) return false;

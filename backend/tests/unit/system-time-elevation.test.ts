@@ -23,7 +23,11 @@ describe('isSystemTimeChanges', () => {
 		expect(isSystemTimeChanges({ timezone: 'Europe/London', extra: 1 })).toBe(false);
 		expect(isSystemTimeChanges({ ntpEnabled: 'true' })).toBe(false);
 		expect(isSystemTimeChanges({ ntpServer: 'a\nb' })).toBe(false);
-		expect(isSystemTimeChanges({ ntpServer: 'a'.repeat(65) })).toBe(false);
+		// The NTP address has the bound the ordinary validator enforces, not the 64 of the
+		// other values: a 79-character name is syntactically valid and used to be refused here.
+		expect(isSystemTimeChanges({ ntpServer: 'ntp.' + 'a'.repeat(63) + '.example.org' })).toBe(true);
+		expect(isSystemTimeChanges({ ntpServer: 'a'.repeat(254) })).toBe(false);
+		expect(isSystemTimeChanges({ timezone: 'a'.repeat(65) })).toBe(false);
 		expect(isSystemTimeChanges({ clock: { hours: 1, minutes: 2 } })).toBe(false);
 		expect(isSystemTimeChanges({ clock: { hours: 1.5, minutes: 2, seconds: 3 } })).toBe(false);
 		expect(isSystemTimeChanges({ expectedOffsetMinutes: '120' })).toBe(false);
