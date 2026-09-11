@@ -99,19 +99,28 @@ export function applySystemTimeSettingsWithElevation(changes: SystemTimeChanges,
 }
 
 /**
- * True when the privileged side never started, so the host is untouched.
+ * True when the host is untouched: a refusal carrying NEITHER change flag.
  *
- * The helper reports a declined authorization and an untrusted binary with NEITHER change
- * flag, because in both cases nothing was run; every outcome that got as far as the host
- * carries one. That distinction is what keeps a CANCELLED prompt from being adopted: on
- * Windows the confirmation below can only check that the requested zone converts to the
- * identifier the host reports, and when two cities share one identifier - Prague and
- * Budapest do - that is true before the change as well as after it. So a user who picked
- * Budapest, was asked for administrator rights and said no would have had Budapest
- * recorded anyway, and every open window would have seen the switch move on its own.
+ * Any outcome that got as far as the host carries one - `runAll` sets
+ * `stateMayHaveChanged` for every command that merely started, and an exception out of the
+ * privileged save sets it too. So a failure without either flag is a refusal decided
+ * before the first write, whatever its reason.
+ *
+ * Keyed on that rather than on one reason, because the reasons are not a closed set. It
+ * used to check `permission-denied` only, which covered the declined prompt and the
+ * untrusted binary but missed `stale` - refused by the staleness check, also before any
+ * write - and equally `unsupported`, `auto-sync-enabled` and a validation `error` from the
+ * privileged side.
+ *
+ * Why it matters at all: on Windows the confirmation below can only check that the
+ * requested zone converts to the identifier the host reports, and when two cities share
+ * one identifier - Prague and Budapest do - that holds before the change as well as after
+ * it. Without this, a save refused without writing anything still moved the name the
+ * screen shows, and another open window read that as a change made elsewhere and locked
+ * its own draft.
  */
 function nothingRan(outcome: SystemTimeResult): boolean {
-	return outcome.outcome === 'permission-denied' && outcome.changed !== true && outcome.stateMayHaveChanged !== true;
+	return !outcome.success && outcome.changed !== true && outcome.stateMayHaveChanged !== true;
 }
 
 /** Reads the zone the host is ACTUALLY in, given the zone that was asked for. */

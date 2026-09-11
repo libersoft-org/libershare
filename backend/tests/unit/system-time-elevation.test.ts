@@ -733,6 +733,36 @@ describe('a save that never reached the host', () => {
 		});
 	});
 
+	/**
+	 * The reason is not what decides it - the flags are. `stale` is refused by the staleness
+	 * check before the first write and carries neither flag, and so do `unsupported`,
+	 * `auto-sync-enabled` and a validation `error` from the privileged side. Keying on
+	 * `permission-denied` alone let every one of those move the name the screen shows: on
+	 * Windows the confirmation can only check that the requested zone converts to the
+	 * identifier the host reports, which holds before the change as well as after it.
+	 */
+	it.each(['stale', 'unsupported', 'auto-sync-enabled', 'invalid-input', 'error'] as const)('records no zone after a refusal that wrote nothing: %s', async outcome => {
+		await withTemporaryTZ(async () => {
+			process.env['TZ'] = 'Europe/Prague';
+			let measured = 0;
+			const refused: SystemTimeResult = { success: false, outcome, message: null };
+			await applySystemTimeSettingsWithElevation(
+				{ timezone: 'Europe/Budapest', clock: { hours: 1, minutes: 2, seconds: 3 } },
+				async () => refused,
+				async () => refused,
+				'win32',
+				() => 0,
+				() => false,
+				() => {
+					measured++;
+					return 'Europe/Budapest';
+				}
+			);
+			expect(process.env['TZ']).toBe('Europe/Prague');
+			expect(measured).toBe(0);
+		});
+	});
+
 	it('records no zone when the helper was not trusted', async () => {
 		await withTemporaryTZ(async () => {
 			process.env['TZ'] = 'Europe/Prague';
