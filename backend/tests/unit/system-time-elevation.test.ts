@@ -219,3 +219,35 @@ describe('applySystemTimeSettingsWithElevation', () => {
 		expect(needsElevation({ success: false, outcome: 'error', message: null })).toBe(false);
 	});
 });
+
+describe('a helper answer that never arrived', () => {
+	/**
+	 * "We did not get an answer" is not "nothing happened". The helper may have applied the
+	 * change and then been killed, or answered something unparsable - and without
+	 * `stateMayHaveChanged` the API skips the read-back, so every open window keeps showing
+	 * a state the host no longer has.
+	 */
+	it('is reported as a state that may have changed', () => {
+		for (const code of [WINDOWS_LAUNCHER_EXIT.timeout, 1, 99]) {
+			const outcome = windowsSystemTimeExit(code);
+			expect(outcome.outcome).toBe('error');
+			expect(outcome.stateMayHaveChanged).toBe(true);
+		}
+		expect(windowsSystemTimeExit(0, true).stateMayHaveChanged).toBe(true);
+	});
+
+	/** The two that PROVE the helper never started stay a plain permission refusal. */
+	it('is not claimed for a helper that never started', () => {
+		for (const code of [WINDOWS_LAUNCHER_EXIT.untrusted, WINDOWS_LAUNCHER_EXIT.cancelled]) {
+			const outcome = windowsSystemTimeExit(code);
+			expect(outcome.outcome).toBe('permission-denied');
+			expect(outcome.stateMayHaveChanged).toBeUndefined();
+		}
+	});
+
+	it('leaves a real outcome alone', () => {
+		const applied = windowsSystemTimeExit(systemTimeExitCode({ success: true, outcome: 'ok', message: null }));
+		expect(applied.success).toBe(true);
+		expect(applied.stateMayHaveChanged).toBeUndefined();
+	});
+});

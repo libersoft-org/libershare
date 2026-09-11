@@ -220,32 +220,66 @@ export async function runElevatedSystemTime(changes: SystemTimeChanges, platform
 	try {
 		response = parseNetworkHelperResponse(platform === 'darwin' ? await runMacHelper(helper, encodeNetworkHelperRequest(request)) : await runLinuxHelper(helper, request));
 	} catch (error) {
-		// Cancelling the authorization dialog lands here: osascript and pkexec both fail
-		// the call rather than answering, so there is no outcome to unpack.
-		return systemTimeHelperFailure(
-			'permission-denied',
-			(error instanceof Error ? error.message : String(error))
-				.replace(/\p{Cc}/gu, ' ')
-				.trim()
-				.slice(0, 500) || 'the privileged helper did not run'
-		);
+		// "We never got an answer" is not "nothing happened". A declined authorization is the
+		// one failure that proves the helper never ran; everything else here - a killed
+		// child, a truncated or unparsable answer, a non-zero exit after the helper was
+		// already up - may have arrived AFTER the host was changed, so it has to carry
+		// `stateMayHaveChanged` or the caller skips the read-back and every open window keeps
+		// showing a state the host no longer has.
+		return helperTransportFailure(error);
 	}
+	// A structured failure is the helper's own answer, produced before it applied anything:
+	// the request decode and the operation dispatch are all that can fail this way.
 	if (!response.ok) return systemTimeHelperFailure('error', response.error);
-	if (!('time' in response)) return systemTimeHelperFailure('error', 'the privileged helper answered the wrong request');
+	if (!('time' in response)) return { ...systemTimeHelperFailure('error', 'the privileged helper answered the wrong request'), stateMayHaveChanged: true };
 	return response.time;
 }
 
-/** What each launcher exit code means to someone who pressed Save on the time screen. */
+/** Text of a thrown value, bounded and free of control characters. */
+function failureText(error: unknown): string {
+	return (
+		(error instanceof Error ? error.message : String(error))
+			.replace(/\p{Cc}/gu, ' ')
+			.trim()
+			.slice(0, 500) || 'the privileged helper did not run'
+	);
+}
+
+/**
+ * A declined authorization, matched on what the two tools say when the person says no.
+ *
+ * `pkexec` documents exit 126 for "the authentication dialog was dismissed" and 127 for
+ * "not authorized"; `osascript` reports a cancelled `with administrator privileges`
+ * dialog as error -128. Both mean the helper was never started.
+ */
+const AUTHORIZATION_DECLINED_RE = /\bexited with 12[67]\b|-128|User canceled|not authorized/i;
+
+function helperTransportFailure(error: unknown): SystemTimeResult {
+	const message = failureText(error);
+	if (AUTHORIZATION_DECLINED_RE.test(message)) return systemTimeHelperFailure('permission-denied', message);
+	return { ...systemTimeHelperFailure('error', message), stateMayHaveChanged: true };
+}
+
+/**
+ * What each launcher exit code means to someone who pressed Save on the time screen.
+ *
+ * Only the two that prove the helper never started - it was not trusted, or the prompt
+ * was declined - are a bare `permission-denied`. A timeout is the helper being KILLED
+ * part-way, so it carries `stateMayHaveChanged`: the change may already be on the host,
+ * and without the flag the caller skips the read-back that would show it.
+ */
 const WINDOWS_LAUNCHER_TIME_FAILURES: Readonly<Record<number, SystemTimeResult>> = {
 	[WINDOWS_LAUNCHER_EXIT.untrusted]: systemTimeHelperFailure('permission-denied', 'the privileged helper is missing or not trusted'),
 	[WINDOWS_LAUNCHER_EXIT.cancelled]: systemTimeHelperFailure('permission-denied', 'the administrator prompt was cancelled'),
-	[WINDOWS_LAUNCHER_EXIT.timeout]: systemTimeHelperFailure('error', 'the privileged helper timed out'),
+	[WINDOWS_LAUNCHER_EXIT.timeout]: { ...systemTimeHelperFailure('error', 'the privileged helper timed out'), stateMayHaveChanged: true },
 };
 
 export function windowsSystemTimeExit(exitCode: unknown, killed: boolean = false): SystemTimeResult {
 	if (killed) return WINDOWS_LAUNCHER_TIME_FAILURES[WINDOWS_LAUNCHER_EXIT.timeout]!;
 	const code = typeof exitCode === 'number' ? exitCode : -1;
-	return parseSystemTimeExitCode(code) ?? WINDOWS_LAUNCHER_TIME_FAILURES[code] ?? systemTimeHelperFailure('error', 'the privileged helper failed');
+	// An unrecognised status is the dangerous one: it came from a launcher that got far
+	// enough to answer, and nothing rules out the helper having run first.
+	return parseSystemTimeExitCode(code) ?? WINDOWS_LAUNCHER_TIME_FAILURES[code] ?? { ...systemTimeHelperFailure('error', 'the privileged helper failed'), stateMayHaveChanged: true };
 }
 
 async function runWindowsSystemTime(encoded: string): Promise<SystemTimeResult> {
@@ -253,8 +287,9 @@ async function runWindowsSystemTime(encoded: string): Promise<SystemTimeResult> 
 	try {
 		await execFileAsync(launcher, ['--request', encoded], { timeout: HELPER_TIMEOUT_MS + 5000, maxBuffer: MAX_HELPER_OUTPUT_BYTES, windowsHide: true, cwd: dirname(launcher) });
 		// Exit 0 is the network path's "applied" and never a packed time outcome, so a
-		// helper that answered with it did not run the request this call made.
-		return systemTimeHelperFailure('error', 'the privileged helper answered the wrong request');
+		// helper that answered with it did not run the request this call made - but it DID
+		// run something, so the host is not known to be untouched.
+		return { ...systemTimeHelperFailure('error', 'the privileged helper answered the wrong request'), stateMayHaveChanged: true };
 	} catch (error) {
 		const failure = error as { code?: unknown; killed?: boolean } | null;
 		return windowsSystemTimeExit(failure?.code, failure?.killed === true);
