@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readlinkSync } from 'node:fs';
 import { type PlatformStatus, type SystemCommand, tryRead } from './system-time-common.ts';
 
 /** `systemsetup` is not on a default non-root PATH on macOS, so it is always addressed absolutely. */
@@ -80,8 +80,38 @@ export function readMacNtpConfServer(path: string = MAC_NTP_CONF): string | null
 	}
 }
 
+/**
+ * The symlink macOS keeps the active zone in, and the only unprivileged way to read it.
+ *
+ * Measured on macOS 15.7.4: `/etc/localtime` is `lrwxr-xr-x root:wheel` pointing at
+ * `/var/db/timezone/zoneinfo/Europe/Prague`, readable by any user, and it follows
+ * `systemsetup -settimezone` immediately.
+ *
+ * Without it the zone came from `systemsetup`, which refuses an unprivileged read, and the
+ * status fell back to the PROCESS zone - so after the privileged helper changed the host,
+ * the backend kept reporting the old zone indefinitely, and sent it as `expectedTimezone`
+ * on the next save, where the helper refused it as composed against state that has changed.
+ */
+const MAC_LOCALTIME = '/etc/localtime';
+
+/** The zone identifier inside a zoneinfo path (`/var/db/timezone/zoneinfo/Europe/Prague`). */
+export function parseZoneinfoLink(target: string): string | null {
+	const match = /\/zoneinfo\/(.+)$/.exec(target.replace(/\\/g, '/'));
+	const zone = match?.[1]?.replace(/^\/+|\/+$/g, '');
+	return zone ? zone : null;
+}
+
+/** Read {@link MAC_LOCALTIME}. Null when it is not a zoneinfo symlink; never throws. */
+export function readMacLocaltimeZone(path: string = MAC_LOCALTIME): string | null {
+	try {
+		return parseZoneinfoLink(readlinkSync(path));
+	} catch {
+		return null;
+	}
+}
+
 /** Read the macOS (`systemsetup`) part of the status. Every subcommand, reads included, needs root. */
-export async function readMacStatus(readNtpConf: () => string | null = readMacNtpConfServer): Promise<PlatformStatus> {
+export async function readMacStatus(readNtpConf: () => string | null = readMacNtpConfServer, readLocaltime: () => string | null = readMacLocaltimeZone): Promise<PlatformStatus> {
 	const zone = await tryRead(MAC_SYSTEMSETUP, ['-gettimezone']);
 	const server = await tryRead(MAC_SYSTEMSETUP, ['-getnetworktimeserver']);
 	const using = await tryRead(MAC_SYSTEMSETUP, ['-getusingnetworktime']);
@@ -89,7 +119,9 @@ export async function readMacStatus(readNtpConf: () => string | null = readMacNt
 	// the capabilities stay true so the UI keeps offering the controls and the write
 	// reports the permission problem.
 	return {
-		timezone: zone === null ? null : parseSystemsetupValue(zone),
+		// `systemsetup` first, then the symlink every user may read. Falling through to the
+		// PROCESS zone is what made an elevated change invisible to this backend forever.
+		timezone: (zone === null ? null : parseSystemsetupValue(zone)) ?? readLocaltime(),
 		ntpEnabled: using === null ? null : parseSystemsetupOnOff(using),
 		// macOS exposes no "last sync succeeded" flag.
 		ntpSynchronized: null,

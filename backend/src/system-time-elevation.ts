@@ -1,7 +1,8 @@
 import type { SystemTimeChanges, SystemTimeResult } from '@shared';
 import { runElevatedSystemTime } from './network-helper-client.ts';
 import { applySystemTimeSettings, withSystemTimeLock } from './system-time.ts';
-import { windowsProcessElevated } from './system-time-windows.ts';
+import { readMacLocaltimeZone } from './system-time-macos.ts';
+import { ianaToWindowsTimezoneId, readWindowsTimeZone, rememberWindowsZone, windowsProcessElevated } from './system-time-windows.ts';
 
 /** A refused write worth asking for rights over. */
 export function needsElevation(outcome: SystemTimeResult): boolean {
@@ -80,8 +81,8 @@ export function localAttemptIsPointless(platform: NodeJS.Platform, uid: number |
  * it between them would let another client's save land in the gap, and the elevated
  * attempt would then be composed against state that no longer holds.
  */
-export function applySystemTimeSettingsWithElevation(changes: SystemTimeChanges, elevate: (changes: SystemTimeChanges) => Promise<SystemTimeResult> = runElevatedSystemTime, apply: (changes: SystemTimeChanges) => Promise<SystemTimeResult> = applySystemTimeSettings, platform: NodeJS.Platform = process.platform, uid: () => number | undefined = () => process.getuid?.(), elevated: () => boolean = () => process.platform === 'win32' && windowsProcessElevated()): Promise<SystemTimeResult> {
-	const elevateAndAdopt = async (): Promise<SystemTimeResult> => adoptTimezone(await elevate(changes), changes);
+export function applySystemTimeSettingsWithElevation(changes: SystemTimeChanges, elevate: (changes: SystemTimeChanges) => Promise<SystemTimeResult> = runElevatedSystemTime, apply: (changes: SystemTimeChanges) => Promise<SystemTimeResult> = applySystemTimeSettings, platform: NodeJS.Platform = process.platform, uid: () => number | undefined = () => process.getuid?.(), elevated: () => boolean = () => process.platform === 'win32' && windowsProcessElevated(), readZone: HostZoneReader = readHostTimezone): Promise<SystemTimeResult> {
+	const elevateAndAdopt = async (): Promise<SystemTimeResult> => adoptTimezone(await elevate(changes), changes, platform, readZone);
 	return withSystemTimeLock(async () => {
 		if (requiresPrivilegesUpFront(platform, uid(), changes, elevated())) return elevateAndAdopt();
 		const local = await apply(changes);
@@ -90,17 +91,59 @@ export function applySystemTimeSettingsWithElevation(changes: SystemTimeChanges,
 	});
 }
 
+/** Reads the zone the host is ACTUALLY in, given the zone that was asked for. */
+export type HostZoneReader = (platform: NodeJS.Platform, requested: string) => string | null;
+
 /**
- * Carry an elevated timezone change back into THIS process.
+ * The host's real timezone, read through something that works without privileges.
+ *
+ * - POSIX: `/etc/localtime`, a world-readable symlink into a zoneinfo tree, which follows
+ *   the change immediately. On macOS it is the ONLY unprivileged source - `systemsetup`
+ *   refuses its reads.
+ * - Windows: the timezone API answers unprivileged, but only in Windows identifiers, and
+ *   several IANA zones share one. So the requested zone is confirmed rather than derived:
+ *   if it converts to the identifier the host now reports, the host is in it.
+ */
+export function readHostTimezone(platform: NodeJS.Platform, requested: string): string | null {
+	if (platform === 'win32') {
+		const current = readWindowsTimeZone()?.windowsId ?? null;
+		return current !== null && ianaToWindowsTimezoneId(requested) === current ? requested : null;
+	}
+	return readMacLocaltimeZone();
+}
+
+/**
+ * Carry an elevated timezone change back into THIS process - the zone the host ENDED UP
+ * in, never the one that was asked for.
  *
  * Writing the OS timezone does not invalidate a running process's ICU cache, so
  * `setSystemTimezone` sets `process.env.TZ` after its own write. When the write happens in
  * the privileged helper instead, that assignment lands in a process that then exits, and
  * the backend keeps formatting in the old zone - which is not only a wrong display: the
- * next clock save sends the stale zone as `expectedTimezone` and the helper refuses it as
+ * next clock save sends the stale zone as `expectedTimezone`, and the helper refuses it as
  * composed against state that has changed.
+ *
+ * Two reasons this MEASURES instead of adopting `changes.timezone`:
+ *
+ * - A save can stop after the zone and before the clock, and then it is a FAILURE that
+ *   nevertheless moved the zone. Adopting only on success left exactly that case stale.
+ * - A save can also fail BEFORE the zone step, and then adopting the requested value would
+ *   record a zone the host is not in.
+ *
+ * On Windows it also repoints the Windows-to-IANA memory. That cache is keyed on the
+ * Windows identifier, and `Europe/Prague` and `Europe/Budapest` share one: without this the
+ * host really moved to Budapest while the screen kept offering Prague, which is what
+ * `setSystemTimezone` calls `rememberWindowsZone` for on the direct path.
  */
-function adoptTimezone(outcome: SystemTimeResult, changes: SystemTimeChanges): SystemTimeResult {
-	if (outcome.success && changes.timezone !== undefined) process.env['TZ'] = changes.timezone;
+function adoptTimezone(outcome: SystemTimeResult, changes: SystemTimeChanges, platform: NodeJS.Platform, readZone: HostZoneReader): SystemTimeResult {
+	const requested = changes.timezone;
+	if (requested === undefined) return outcome;
+	const actual = readZone(platform, requested);
+	if (actual === null) return outcome;
+	process.env['TZ'] = actual;
+	if (platform === 'win32') {
+		const windowsId = ianaToWindowsTimezoneId(actual);
+		if (windowsId !== null) rememberWindowsZone(windowsId, actual);
+	}
 	return outcome;
 }

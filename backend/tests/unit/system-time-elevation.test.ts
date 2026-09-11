@@ -3,13 +3,25 @@ import { SYSTEM_TIME_OUTCOMES, type SystemTimeChanges, type SystemTimeResult } f
 import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, networkHelperExitCode, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
 import { isSystemTimeChanges, isSystemTimeResult, parseSystemTimeExitCode, systemTimeExitCode, SYSTEM_TIME_EXIT_BASE } from '../../src/system-time-helper.ts';
 import { isValidNtpServer } from '../../src/system-time-common.ts';
-import { parseNtpConfServer, readMacNtpConfServer, readMacStatus } from '../../src/system-time-macos.ts';
+import { parseNtpConfServer, parseZoneinfoLink, readMacLocaltimeZone, readMacNtpConfServer, readMacStatus } from '../../src/system-time-macos.ts';
+import { ianaToWindowsTimezoneId, rememberWindowsZone, windowsToIanaTimezone } from '../../src/system-time-windows.ts';
 import { setSystemNtpEnabled } from '../../src/system-time.ts';
 import type { SystemTimeStatus } from '@shared';
 import { applySystemTimeSettingsWithElevation, localAttemptIsPointless, needsElevation, requiresPrivilegesUpFront } from '../../src/system-time-elevation.ts';
 import { windowsSystemTimeExit } from '../../src/network-helper-client.ts';
 import { NETWORK_HELPER_EXIT } from '../../src/network-helper-protocol.ts';
 import { WINDOWS_LAUNCHER_EXIT } from '../../src/network-helper-windows.ts';
+
+/** Run `body` with `process.env.TZ` restored afterwards, whatever it does to it. */
+async function withTemporaryTZ(body: () => Promise<void>): Promise<void> {
+	const before = process.env['TZ'];
+	try {
+		await body();
+	} finally {
+		if (before === undefined) delete process.env['TZ'];
+		else process.env['TZ'] = before;
+	}
+}
 
 /** A status where every capability is available and synchronisation is off. */
 function statusFixture(overrides: Partial<SystemTimeStatus> = {}): SystemTimeStatus {
@@ -429,31 +441,90 @@ describe('deciding privileges before the first write', () => {
 	 * helper, a process that then exits. Without carrying it back, the backend keeps
 	 * formatting in the old zone AND sends it as `expectedTimezone` on the next clock save,
 	 * which the helper then refuses as composed against state that has changed.
+	 *
+	 * What is carried back is the zone the host ENDED UP in, read through something that
+	 * works without privileges - never the zone that was asked for.
 	 */
-	it('adopts an elevated timezone change into this process', async () => {
-		const before = process.env['TZ'];
-		try {
+	it('adopts the zone the host ended up in', async () => {
+		await withTemporaryTZ(async () => {
 			await applySystemTimeSettingsWithElevation(
 				{ timezone: 'Asia/Tokyo' },
 				async () => ({ success: true, outcome: 'ok', message: null }),
 				async () => ({ success: false, outcome: 'permission-denied', message: null }),
 				'darwin',
-				() => 501
+				() => 501,
+				() => false,
+				() => 'Asia/Tokyo'
 			);
 			expect(process.env['TZ']).toBe('Asia/Tokyo');
-			// A refused save must not move this process's zone either.
+		});
+	});
+
+	/**
+	 * The case adopting only on success got wrong: the elevated save moved the ZONE and then
+	 * refused the clock, so it is a failure that nevertheless changed the host. On macOS the
+	 * follow-up read cannot reach `systemsetup`, so the stale process zone would have been
+	 * reported for as long as the backend ran.
+	 */
+	it('adopts it after a save that moved the zone and then failed', async () => {
+		await withTemporaryTZ(async () => {
+			const partial: SystemTimeResult = { success: false, outcome: 'auto-sync-enabled', message: 'automatic time synchronisation is enabled', changed: true, stateMayHaveChanged: true };
+			const outcome = await applySystemTimeSettingsWithElevation(
+				{ timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 } },
+				async () => partial,
+				async () => partial,
+				'darwin',
+				() => 501,
+				() => false,
+				() => 'Europe/Prague'
+			);
+			expect(outcome).toEqual(partial);
+			expect(process.env['TZ']).toBe('Europe/Prague');
+		});
+	});
+
+	/** And the mirror image: a save that failed BEFORE the zone step must not record one. */
+	it('records nothing when the host is not in the requested zone', async () => {
+		await withTemporaryTZ(async () => {
+			process.env['TZ'] = 'Etc/UTC';
 			await applySystemTimeSettingsWithElevation(
 				{ timezone: 'Europe/London' },
 				async () => ({ success: false, outcome: 'permission-denied', message: null }),
 				async () => ({ success: false, outcome: 'permission-denied', message: null }),
 				'darwin',
-				() => 501
+				() => 501,
+				() => false,
+				() => null
 			);
-			expect(process.env['TZ']).toBe('Asia/Tokyo');
-		} finally {
-			if (before === undefined) delete process.env['TZ'];
-			else process.env['TZ'] = before;
-		}
+			expect(process.env['TZ']).toBe('Etc/UTC');
+		});
+	});
+
+	/**
+	 * Windows keys its Windows-to-IANA memory on the Windows identifier, and `Europe/Prague`
+	 * and `Europe/Budapest` share `Central Europe Standard Time`. Without repointing it, a
+	 * save that really moved the host to Budapest kept the screen offering Prague - the very
+	 * thing `rememberWindowsZone` exists for on the direct path.
+	 */
+	it('repoints the Windows zone memory as well', async () => {
+		await withTemporaryTZ(async () => {
+			const windowsId = ianaToWindowsTimezoneId('Europe/Budapest');
+			// No ICU on this host means the timezone capability is off on the direct path too.
+			if (windowsId === null) return;
+			rememberWindowsZone(windowsId, 'Europe/Prague');
+			expect(windowsToIanaTimezone(windowsId)).toBe('Europe/Prague');
+			await applySystemTimeSettingsWithElevation(
+				{ timezone: 'Europe/Budapest', ntpServer: 'tik.cesnet.cz' },
+				async () => ({ success: true, outcome: 'ok', message: null }),
+				async () => ({ success: false, outcome: 'permission-denied', message: null }),
+				'win32',
+				() => 0,
+				() => false,
+				() => 'Europe/Budapest'
+			);
+			expect(windowsToIanaTimezone(windowsId)).toBe('Europe/Budapest');
+			expect(process.env['TZ']).toBe('Europe/Budapest');
+		});
 	});
 });
 
@@ -555,5 +626,34 @@ describe('switching the Windows NTP client provider back on', () => {
 			);
 			expect(probed).toBe(0);
 		});
+	});
+});
+
+describe('the macOS zone an unprivileged reader can still see', () => {
+	/**
+	 * `systemsetup` refuses an unprivileged read, so without this the zone fell through to
+	 * the PROCESS zone - and after the privileged helper changed the host, the backend
+	 * reported the old zone for as long as it ran, and sent it as `expectedTimezone` on the
+	 * next save. Measured on macOS 15.7.4: `/etc/localtime` is a world-readable symlink to
+	 * `/var/db/timezone/zoneinfo/<Zone>` that follows `systemsetup -settimezone` at once.
+	 */
+	it('is the zone inside the localtime symlink', () => {
+		expect(parseZoneinfoLink('/var/db/timezone/zoneinfo/Europe/Prague')).toBe('Europe/Prague');
+		expect(parseZoneinfoLink('/usr/share/zoneinfo/Etc/UTC')).toBe('Etc/UTC');
+		expect(parseZoneinfoLink('../usr/share/zoneinfo/America/New_York')).toBe('America/New_York');
+		expect(parseZoneinfoLink('/etc/localtime')).toBeNull();
+		expect(parseZoneinfoLink('/var/db/timezone/zoneinfo/')).toBeNull();
+	});
+
+	it('is only a fallback: systemsetup stays the authority', async () => {
+		const status = await readMacStatus(
+			() => null,
+			() => 'Pacific/Auckland'
+		);
+		expect(status.timezone).toBe('Pacific/Auckland');
+	});
+
+	it('never throws on a missing link', () => {
+		expect(readMacLocaltimeZone('/definitely/not/here/localtime')).toBeNull();
 	});
 });
