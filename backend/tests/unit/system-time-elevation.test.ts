@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { SYSTEM_TIME_OUTCOMES, type SystemTimeChanges, type SystemTimeResult } from '@shared';
 import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, networkHelperExitCode, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
 import { isSystemTimeChanges, isSystemTimeResult, parseSystemTimeExitCode, systemTimeExitCode, SYSTEM_TIME_EXIT_BASE } from '../../src/system-time-helper.ts';
-import { applySystemTimeSettingsWithElevation, needsElevation } from '../../src/system-time-elevation.ts';
+import { applySystemTimeSettingsWithElevation, localAttemptIsPointless, needsElevation } from '../../src/system-time-elevation.ts';
 import { windowsSystemTimeExit } from '../../src/network-helper-client.ts';
 import { NETWORK_HELPER_EXIT } from '../../src/network-helper-protocol.ts';
 import { WINDOWS_LAUNCHER_EXIT } from '../../src/network-helper-windows.ts';
@@ -249,5 +249,62 @@ describe('a helper answer that never arrived', () => {
 		const applied = windowsSystemTimeExit(systemTimeExitCode({ success: true, outcome: 'ok', message: null }));
 		expect(applied.success).toBe(true);
 		expect(applied.stateMayHaveChanged).toBeUndefined();
+	});
+});
+
+describe('where trying unprivileged first is pointless', () => {
+	/**
+	 * The dead end this closes: on macOS every `systemsetup -get...` needs root (measured
+	 * on 15.7.4), so the status says `ntpEnabled: null`, and a clock write is then refused
+	 * for not knowing whether synchronisation owns the clock. That refusal is an `error`,
+	 * which `needsElevation` does not retry - so a user could switch synchronisation off
+	 * through the helper and still never set the clock, because the confirming read was
+	 * unprivileged again.
+	 */
+	it('is macOS below root, and nothing else', () => {
+		expect(localAttemptIsPointless('darwin', 501)).toBe(true);
+		expect(localAttemptIsPointless('darwin', undefined)).toBe(true);
+		expect(localAttemptIsPointless('darwin', 0)).toBe(false);
+		// A Windows timezone change succeeds unprivileged, and on Linux the unprivileged
+		// path is the authorized one: both must keep their local attempt.
+		expect(localAttemptIsPointless('win32', 501)).toBe(false);
+		expect(localAttemptIsPointless('linux', 501)).toBe(false);
+	});
+
+	it('sends the macOS save straight to the helper, without a pointless local write', async () => {
+		const attempted: string[] = [];
+		const outcome = await applySystemTimeSettingsWithElevation(
+			CHANGES,
+			async () => {
+				attempted.push('elevated');
+				return { success: true, outcome: 'ok', message: null };
+			},
+			async () => {
+				attempted.push('local');
+				return { success: false, outcome: 'error', message: 'cannot determine whether automatic time synchronisation is enabled, so the clock is left alone' };
+			},
+			'darwin',
+			() => 501
+		);
+		expect(attempted).toEqual(['elevated']);
+		expect(outcome.outcome).toBe('ok');
+	});
+
+	it('still writes locally as root on macOS', async () => {
+		const attempted: string[] = [];
+		await applySystemTimeSettingsWithElevation(
+			CHANGES,
+			async () => {
+				attempted.push('elevated');
+				return { success: true, outcome: 'ok', message: null };
+			},
+			async () => {
+				attempted.push('local');
+				return { success: true, outcome: 'ok', message: null };
+			},
+			'darwin',
+			() => 0
+		);
+		expect(attempted).toEqual(['local']);
 	});
 });

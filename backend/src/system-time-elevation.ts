@@ -40,10 +40,33 @@ export function needsElevation(outcome: SystemTimeResult): boolean {
  * between them would let another client's save land in the gap, and the elevated retry
  * would then be composed against state that no longer holds.
  */
-export function applySystemTimeSettingsWithElevation(changes: SystemTimeChanges, elevate: (changes: SystemTimeChanges) => Promise<SystemTimeResult> = runElevatedSystemTime, apply: (changes: SystemTimeChanges) => Promise<SystemTimeResult> = applySystemTimeSettings): Promise<SystemTimeResult> {
+export function applySystemTimeSettingsWithElevation(changes: SystemTimeChanges, elevate: (changes: SystemTimeChanges) => Promise<SystemTimeResult> = runElevatedSystemTime, apply: (changes: SystemTimeChanges) => Promise<SystemTimeResult> = applySystemTimeSettings, platform: NodeJS.Platform = process.platform, uid: () => number | undefined = () => process.getuid?.()): Promise<SystemTimeResult> {
 	return withSystemTimeLock(async () => {
+		if (localAttemptIsPointless(platform, uid())) return elevate(changes);
 		const local = await apply(changes);
 		if (!needsElevation(local)) return local;
 		return elevate(changes);
 	});
+}
+
+/**
+ * True where trying unprivileged first cannot even produce a usable refusal.
+ *
+ * macOS below root is that case. `systemsetup` needs root for its READS too - measured on
+ * macOS 15.7.4, every `-get...` answers "You need administrator access to run this
+ * tool... exiting!" - so the status carries `ntpEnabled: null`, and a clock write is then
+ * refused by {@link clockWriteRefusal} for not knowing whether synchronisation owns the
+ * clock. That refusal is an `error`, not a permission problem, so the retry below never
+ * fired: a user could switch synchronisation off through the helper and STILL not set the
+ * clock, because the confirming read was unprivileged again. There is no unprivileged
+ * source to fix that with - `/var/db/timed` is `_timed`-only, and the file
+ * `/Library/Preferences/com.apple.timed.plist` does not exist - so the whole save goes to
+ * the helper, which reads the state as root and decides on a definite answer.
+ *
+ * Windows and Linux keep trying locally first, and for concrete reasons: a Windows
+ * timezone change succeeds unprivileged, and on Linux the unprivileged path IS the
+ * authorized one.
+ */
+export function localAttemptIsPointless(platform: NodeJS.Platform, uid: number | undefined): boolean {
+	return platform === 'darwin' && uid !== 0;
 }

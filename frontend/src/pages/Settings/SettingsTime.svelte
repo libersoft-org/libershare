@@ -403,7 +403,14 @@
 	// state, so say where it can be resolved instead of asking for the impossible.
 	let syncUnknownLocked = $derived(syncUnknown && !status?.capabilities.setNtpEnabled);
 	let formDisabled = $derived(busy || loading || stale || !liveUpdates || !status?.supported);
-	let clockDisabled = $derived(formDisabled || autoSync || syncUnknown || !status?.capabilities.setClock);
+	// An unknown sync state locks the clock only where nothing can resolve it. Where the
+	// host will let this application switch synchronisation, the save is decided against a
+	// state read WITH the privileges the write needs — on macOS that is the only way the
+	// state can be read at all, and locking the fields on the unprivileged read left the
+	// user no way out: they could switch synchronisation off and the confirming read still
+	// came back unknown. A save that should not happen comes back `auto-sync-enabled` from
+	// that privileged read, which is the refusal this lock was standing in for.
+	let clockDisabled = $derived(formDisabled || autoSync || syncUnknownLocked || !status?.capabilities.setClock);
 	// Nothing to write means nothing to report: without this the button runs no request
 	// at all and still announces the settings as saved.
 	let syncDirty = $derived(syncSwitchIsDirty(autoSync, loaded.syncReported, autoSyncTouched));

@@ -225,13 +225,20 @@
 					{ status: { ntpEnabled: true, ntpSynchronized: value } }
 				);
 			await test(
-				'unknown synchronization never enables manual clock editing',
+				'unknown synchronization offers the clock where the host can still resolve it',
 				async () => {
+					// macOS below root reads NOTHING of its own time state - every `systemsetup -get`
+					// needs root - so `ntpEnabled` is null on every read, including the one right after
+					// the user switches synchronisation off. Locking the fields on that made the screen
+					// a dead end: nothing the user did could ever unlock them. The save decides
+					// instead, against a state read with the privileges the write needs, and comes
+					// back `auto-sync-enabled` when synchronisation really does own the clock.
 					assert(target.querySelector('[data-time-sync-enabled]').textContent === label('settings.time.unknown'), 'Unknown state looks disabled');
 					assert(
-						clock().every(input => input.disabled),
-						'Unknown synchronization permits a manual clock write'
+						clock().every(input => !input.disabled),
+						'Unknown synchronization left the clock locked with no way to resolve it'
 					);
+					assert(target.textContent.includes(label('settings.time.syncUnknown')), 'Unknown synchronization was offered without saying so');
 					assert(save().classList.contains('disabled') && writes.length === 0, 'Unknown state became an implicit setting');
 				},
 				{ status: { ntpEnabled: null, ntpSynchronized: null } }
