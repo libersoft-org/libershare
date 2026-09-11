@@ -679,7 +679,7 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
  * `readStatus` and `exec` are injectable so the sequencing and the outcome mapping can
  * be exercised without touching the host's time service.
  */
-export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = runWrite, readMode: WindowsModeReader = readWindowsMode, waitForService: (running: boolean) => Promise<boolean> = waitForWindowsTimeService): Promise<SystemTimeResult> {
+export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = runWrite, readMode: WindowsModeReader = readWindowsMode, waitForService: (running: boolean) => Promise<boolean> = waitForWindowsTimeService, pause: (ms: number) => Promise<void> = sleep, now: () => number = () => performance.now()): Promise<SystemTimeResult> {
 	const platform = process.platform;
 	if (!isSupportedPlatform(platform)) return result('unsupported', `time synchronisation cannot be switched on ${platform}`);
 	return withSystemTimeLock(async () => {
@@ -712,9 +712,15 @@ export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Pr
 			// boolean cannot speak for all four (see the comment above). Here the command and the
 			// boolean are the same thing, so reading it back adds a fact instead of hiding three.
 			if (!outcome.success) return outcome;
-			const after = await readStatus();
-			// Only a definite opposite is a failure; an unreadable state stays unreadable.
-			if (after.ntpEnabled !== !enabled) return outcome;
+			// Polled, not read once. `timedatectl set-ntp` returns as soon as timedated has
+			// ACCEPTED the request, and the NTP property flips - and the sync service actually
+			// stops or starts - a moment later. Measured on arm64 Ubuntu 24.04 with
+			// systemd-timesyncd running: the immediate read after a successful `set-ntp false`
+			// still answered `NTP=yes`, so a write that had in fact worked was reported as
+			// "the host accepted the request but synchronisation is still on". The very next
+			// call succeeded. The wait is the same shape as the Windows one
+			// ({@link waitForWindowsTimeService}) and for the same reason.
+			if (await settlesToNtpEnabled(enabled, readStatus, pause, now)) return outcome;
 			return { ...result('error', `the host accepted the request but automatic time synchronisation is still ${enabled ? 'off' : 'on'}; its time service may be unable to run here`), changed: true, stateMayHaveChanged: true };
 		}
 		return runAll(platform, commands, async (cmd, args) => {
@@ -726,6 +732,25 @@ export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Pr
 			return { kind: 'failed', code: null, output: `Windows Time did not reach the ${enabled ? 'running' : 'stopped'} state within 15 seconds; the service transition may still be in progress` };
 		});
 	});
+}
+
+/**
+ * Wait for the host's own `NTP=` flag to reach `enabled`, for at most 15 seconds.
+ *
+ * True when it got there, false when it is definitely the opposite the whole time. An
+ * UNREADABLE state (null) also returns true: it is not evidence of failure, and inventing
+ * one from it would report a write that may well have worked as broken.
+ *
+ * Monotonic clock, because this runs around a change to the wall clock.
+ */
+export async function settlesToNtpEnabled(enabled: boolean, readStatus: () => Promise<SystemTimeStatus>, pause: (ms: number) => Promise<void> = sleep, now: () => number = () => performance.now()): Promise<boolean> {
+	const deadline = now() + 15000;
+	while (true) {
+		const after = await readStatus();
+		if (after.ntpEnabled !== !enabled) return true;
+		if (now() >= deadline) return false;
+		await pause(250);
+	}
 }
 
 /** SCM accepts start/stop before completion. Poll for at most 15 s under the time-write lock. */

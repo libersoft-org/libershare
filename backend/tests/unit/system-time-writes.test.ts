@@ -319,11 +319,26 @@ describe('setSystemNtpEnabled', () => {
 	 * `ConditionVirtualization=!container`: the command succeeded, the service stayed inactive
 	 * and this reported `ok` while the clock was never going to be synchronised.
 	 */
+	/**
+	 * A virtual clock for the settle wait, so a test that deliberately never settles runs
+	 * its whole fifteen-second budget without spending fifteen seconds.
+	 */
+	function instantSettle(): { pause: (ms: number) => Promise<void>; now: () => number } {
+		let elapsed = 0;
+		return {
+			pause: async ms => {
+				elapsed += ms;
+			},
+			now: () => elapsed,
+		};
+	}
+
 	it('does not report success when synchronisation did not actually come up', async () => {
 		await onPlatform('linux', async () => {
 			const { exec, calls } = fakeRunner([]);
 			const stuck = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: false });
-			const outcome = await setSystemNtpEnabled(true, stuck, exec);
+			const clock = instantSettle();
+			const outcome = await setSystemNtpEnabled(true, stuck, exec, undefined, undefined, clock.pause, clock.now);
 			expect(outcome).toMatchObject({ success: false, outcome: 'error' });
 			expect(outcome.message).toContain('still off');
 			expect(calls).toEqual(['timedatectl set-ntp true']);
@@ -335,7 +350,8 @@ describe('setSystemNtpEnabled', () => {
 		await onPlatform('linux', async () => {
 			const { exec } = fakeRunner([]);
 			const unknown = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: null });
-			expect(await setSystemNtpEnabled(true, unknown, exec)).toEqual({ success: true, outcome: 'ok', message: null });
+			const clock = instantSettle();
+			expect(await setSystemNtpEnabled(true, unknown, exec, undefined, undefined, clock.pause, clock.now)).toEqual({ success: true, outcome: 'ok', message: null });
 		});
 	});
 
@@ -349,10 +365,50 @@ describe('setSystemNtpEnabled', () => {
 			const { exec } = fakeRunner([{ kind: 'failed', code: 1, output: 'Failed to set ntp: something went wrong\n' }]);
 			// The host reads back exactly as requested, which is what used to erase the error.
 			const readsAsEnabled = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: true });
-			const r = await setSystemNtpEnabled(true, readsAsEnabled, exec);
+			const clock = instantSettle();
+			const r = await setSystemNtpEnabled(true, readsAsEnabled, exec, undefined, undefined, clock.pause, clock.now);
 			expect(r.success).toBe(false);
 			expect(r.outcome).toBe('error');
 			expect(r.message).toBe('Failed to set ntp: something went wrong');
+		});
+	});
+
+	/**
+	 * The bug this exists for, measured on arm64 Ubuntu 24.04 with systemd-timesyncd
+	 * running: `timedatectl set-ntp false` returns as soon as timedated ACCEPTS the
+	 * request, and the flag flips a moment later. A single immediate read still answered
+	 * `NTP=yes`, so a write that had worked was reported as "the host accepted the request
+	 * but synchronisation is still on" - and the very next call succeeded. Only real
+	 * hardware shows it: in a container the service can never start, so the flag never
+	 * flips and the same branch is right.
+	 */
+	it('waits for the flag to catch up instead of failing the write that set it', async () => {
+		await onPlatform('linux', async () => {
+			const { exec } = fakeRunner([]);
+			let reads = 0;
+			// Still the old value for the first few polls, exactly as timedated behaves.
+			const lagging = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: ++reads < 4 });
+			const clock = instantSettle();
+			expect(await setSystemNtpEnabled(false, lagging, exec, undefined, undefined, clock.pause, clock.now)).toEqual({ success: true, outcome: 'ok', message: null });
+			expect(reads).toBe(4);
+		});
+	});
+
+	it('still gives up on a flag that never catches up', async () => {
+		await onPlatform('linux', async () => {
+			const { exec } = fakeRunner([]);
+			let reads = 0;
+			const stuck = async (): Promise<SystemTimeStatus> => {
+				reads++;
+				return statusFixture({ ntpEnabled: true });
+			};
+			const clock = instantSettle();
+			const outcome = await setSystemNtpEnabled(false, stuck, exec, undefined, undefined, clock.pause, clock.now);
+			expect(outcome).toMatchObject({ success: false, outcome: 'error', changed: true });
+			expect(outcome.message).toContain('still on');
+			// Bounded: 15 s of 250 ms polls, not an endless wait.
+			expect(reads).toBeGreaterThan(50);
+			expect(clock.now()).toBe(15000);
 		});
 	});
 
