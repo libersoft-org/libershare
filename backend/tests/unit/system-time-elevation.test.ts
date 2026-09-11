@@ -701,3 +701,73 @@ describe('the same host zone under two different names', () => {
 	});
 });
 
+describe('a save that never reached the host', () => {
+	/**
+	 * A cancelled administrator prompt returns `permission-denied` with NEITHER change flag,
+	 * because nothing ran. Without checking that, the zone was adopted anyway: on Windows the
+	 * confirmation can only check that the requested zone converts to the identifier the host
+	 * reports, and when two cities share one identifier that holds before the change as well
+	 * as after it. So a user who picked Budapest and then said no to the prompt had Budapest
+	 * recorded, and every open window saw the switch move on its own.
+	 */
+	it('records no zone after a cancelled prompt', async () => {
+		await withTemporaryTZ(async () => {
+			process.env['TZ'] = 'Europe/Prague';
+			let measured = 0;
+			const cancelled: SystemTimeResult = { success: false, outcome: 'permission-denied', message: 'the administrator prompt was cancelled' };
+			await applySystemTimeSettingsWithElevation(
+				{ timezone: 'Europe/Budapest', ntpServer: 'tik.cesnet.cz' },
+				async () => cancelled,
+				async () => cancelled,
+				'win32',
+				() => 0,
+				() => false,
+				() => {
+					measured++;
+					return 'Europe/Budapest';
+				}
+			);
+			expect(process.env['TZ']).toBe('Europe/Prague');
+			// Not even measured: nothing ran, so there is nothing to confirm.
+			expect(measured).toBe(0);
+		});
+	});
+
+	it('records no zone when the helper was not trusted', async () => {
+		await withTemporaryTZ(async () => {
+			process.env['TZ'] = 'Europe/Prague';
+			const untrusted: SystemTimeResult = { success: false, outcome: 'permission-denied', message: 'the privileged helper is missing or not trusted' };
+			await applySystemTimeSettingsWithElevation(
+				{ timezone: 'Europe/Budapest' },
+				async () => untrusted,
+				async () => untrusted,
+				'darwin',
+				() => 501,
+				() => false,
+				() => 'Europe/Budapest'
+			);
+			expect(process.env['TZ']).toBe('Europe/Prague');
+		});
+	});
+
+	/**
+	 * A refusal that DID reach the host still carries a flag, and then the zone is measured
+	 * as before - this is the partial save that moved the zone and then failed.
+	 */
+	it('still measures after a refusal that reached the host', async () => {
+		await withTemporaryTZ(async () => {
+			process.env['TZ'] = 'Etc/UTC';
+			const reached: SystemTimeResult = { success: false, outcome: 'permission-denied', message: 'denied half way', stateMayHaveChanged: true };
+			await applySystemTimeSettingsWithElevation(
+				{ timezone: 'Europe/Prague' },
+				async () => reached,
+				async () => reached,
+				'darwin',
+				() => 501,
+				() => false,
+				() => 'Europe/Prague'
+			);
+			expect(process.env['TZ']).toBe('Europe/Prague');
+		});
+	});
+});

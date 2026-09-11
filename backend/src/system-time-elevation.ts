@@ -91,6 +91,22 @@ export function applySystemTimeSettingsWithElevation(changes: SystemTimeChanges,
 	});
 }
 
+/**
+ * True when the privileged side never started, so the host is untouched.
+ *
+ * The helper reports a declined authorization and an untrusted binary with NEITHER change
+ * flag, because in both cases nothing was run; every outcome that got as far as the host
+ * carries one. That distinction is what keeps a CANCELLED prompt from being adopted: on
+ * Windows the confirmation below can only check that the requested zone converts to the
+ * identifier the host reports, and when two cities share one identifier - Prague and
+ * Budapest do - that is true before the change as well as after it. So a user who picked
+ * Budapest, was asked for administrator rights and said no would have had Budapest
+ * recorded anyway, and every open window would have seen the switch move on its own.
+ */
+function nothingRan(outcome: SystemTimeResult): boolean {
+	return outcome.outcome === 'permission-denied' && outcome.changed !== true && outcome.stateMayHaveChanged !== true;
+}
+
 /** Reads the zone the host is ACTUALLY in, given the zone that was asked for. */
 export type HostZoneReader = (platform: NodeJS.Platform, requested: string) => string | null;
 
@@ -129,6 +145,8 @@ export function readHostTimezone(platform: NodeJS.Platform, requested: string): 
  *   nevertheless moved the zone. Adopting only on success left exactly that case stale.
  * - A save can also fail BEFORE the zone step, and then adopting the requested value would
  *   record a zone the host is not in.
+ * - And a save that never ran at all - a declined prompt, an untrusted helper - must record
+ *   nothing, which the measurement alone cannot establish on Windows (see `nothingRan`).
  *
  * On Windows it also repoints the Windows-to-IANA memory. That cache is keyed on the
  * Windows identifier, and `Europe/Prague` and `Europe/Budapest` share one: without this the
@@ -137,7 +155,7 @@ export function readHostTimezone(platform: NodeJS.Platform, requested: string): 
  */
 function adoptTimezone(outcome: SystemTimeResult, changes: SystemTimeChanges, platform: NodeJS.Platform, readZone: HostZoneReader): SystemTimeResult {
 	const requested = changes.timezone;
-	if (requested === undefined) return outcome;
+	if (requested === undefined || nothingRan(outcome)) return outcome;
 	const actual = readZone(platform, requested);
 	if (actual === null) return outcome;
 	process.env['TZ'] = actual;
