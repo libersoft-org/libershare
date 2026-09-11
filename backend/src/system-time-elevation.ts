@@ -1,6 +1,7 @@
 import type { SystemTimeChanges, SystemTimeResult } from '@shared';
 import { runElevatedSystemTime } from './network-helper-client.ts';
 import { applySystemTimeSettings, withSystemTimeLock } from './system-time.ts';
+import { windowsProcessElevated } from './system-time-windows.ts';
 
 /** A refused write worth asking for rights over. */
 export function needsElevation(outcome: SystemTimeResult): boolean {
@@ -16,37 +17,38 @@ export function needsElevation(outcome: SystemTimeResult): boolean {
 }
 
 /**
- * Apply a system-time save, asking for privileges only if the host refuses without them.
+ * True where an unprivileged attempt at THIS change set cannot finish, so the rights have
+ * to be arranged before anything is written.
  *
- * Tried unprivileged first rather than probing for rights up front, which is what the
- * network screen does. Three measured reasons:
+ * The gap this closes: the retry above is refused once a step has completed, and that is
+ * the right rule - but it made a perfectly ordinary save unreachable. On Windows, a save
+ * of a timezone AND a clock applies the timezone unprivileged (`Users` hold
+ * `SeTimeZonePrivilege`, and `tzutil /s` really does write), then meets
+ * `SeSystemtimePrivilege`, which they do not hold. The result carries `changed: true`, so
+ * no prompt ever appeared: the zone moved and the clock did not. The same shape exists on
+ * Linux, where `timedatectl set-ntp` goes through polkit and the drop-in that follows is a
+ * direct write into `/etc`.
  *
- * - A save that only changes the TIMEZONE needs no privileges at all on Windows:
- *   `SeTimeZonePrivilege` is granted to `Users`, and `tzutil /s` really does apply.
- *   Probing first would raise an authorization prompt for a change that was going to
- *   succeed on its own.
- * - On Linux the unprivileged path IS the authorized path: `timedatectl` asks polkit
- *   itself, with the host's own per-action rules. Elevating ahead of it would replace
- *   that with a second, coarser prompt.
- * - The refusal is unambiguous when it happens - `permission-denied` from the OS's own
- *   words - so nothing is guessed from a probe that could disagree with the write.
+ * Deciding up front is what the network screen already does. The per-platform rules are
+ * measured, not assumed:
  *
- * The retry is one prompt for one press of Save, because the whole change set crosses as
- * a single request. The privileged side re-reads this host and re-checks the staleness
- * expectations against it, so a change made while the prompt was open is refused there
- * too rather than applied over.
- *
- * Both attempts happen inside one {@link withSystemTimeLock} section: releasing it
- * between them would let another client's save land in the gap, and the elevated retry
- * would then be composed against state that no longer holds.
+ * - **macOS**: below root, nothing at all works - even `systemsetup`'s READS are refused.
+ * - **Windows**: without an elevated token only the timezone works. Everything else - the
+ *   clock, `w32tm`, the service, the registry - is denied.
+ * - **Linux**: the unprivileged path IS the authorized one, because `timedatectl` and
+ *   `systemctl` ask polkit themselves. The exception is the NTP server, whose change is a
+ *   direct file write into `/etc` that no polkit rule covers.
  */
-export function applySystemTimeSettingsWithElevation(changes: SystemTimeChanges, elevate: (changes: SystemTimeChanges) => Promise<SystemTimeResult> = runElevatedSystemTime, apply: (changes: SystemTimeChanges) => Promise<SystemTimeResult> = applySystemTimeSettings, platform: NodeJS.Platform = process.platform, uid: () => number | undefined = () => process.getuid?.()): Promise<SystemTimeResult> {
-	return withSystemTimeLock(async () => {
-		if (localAttemptIsPointless(platform, uid())) return elevate(changes);
-		const local = await apply(changes);
-		if (!needsElevation(local)) return local;
-		return elevate(changes);
-	});
+export function requiresPrivilegesUpFront(platform: NodeJS.Platform, uid: number | undefined, changes: SystemTimeChanges, elevated: boolean): boolean {
+	if (platform === 'darwin') return localAttemptIsPointless(platform, uid);
+	if (platform === 'win32') return !elevated && writesMoreThanTimezone(changes);
+	if (platform === 'linux') return uid !== 0 && changes.ntpServer !== undefined;
+	return false;
+}
+
+/** Whether the set asks for anything a `Users` member cannot write on Windows. The `expected*` fields are guards, not writes. */
+function writesMoreThanTimezone(changes: SystemTimeChanges): boolean {
+	return changes.ntpEnabled !== undefined || changes.ntpServer !== undefined || changes.clock !== undefined;
 }
 
 /**
@@ -55,18 +57,50 @@ export function applySystemTimeSettingsWithElevation(changes: SystemTimeChanges,
  * macOS below root is that case. `systemsetup` needs root for its READS too - measured on
  * macOS 15.7.4, every `-get...` answers "You need administrator access to run this
  * tool... exiting!" - so the status carries `ntpEnabled: null`, and a clock write is then
- * refused by {@link clockWriteRefusal} for not knowing whether synchronisation owns the
- * clock. That refusal is an `error`, not a permission problem, so the retry below never
- * fired: a user could switch synchronisation off through the helper and STILL not set the
- * clock, because the confirming read was unprivileged again. There is no unprivileged
- * source to fix that with - `/var/db/timed` is `_timed`-only, and the file
- * `/Library/Preferences/com.apple.timed.plist` does not exist - so the whole save goes to
- * the helper, which reads the state as root and decides on a definite answer.
- *
- * Windows and Linux keep trying locally first, and for concrete reasons: a Windows
- * timezone change succeeds unprivileged, and on Linux the unprivileged path IS the
- * authorized one.
+ * refused by `clockWriteRefusal` for not knowing whether synchronisation owns the clock.
+ * That refusal is an `error`, not a permission problem, so the retry never fired: a user
+ * could switch synchronisation off through the helper and STILL not set the clock, because
+ * the confirming read was unprivileged again.
  */
 export function localAttemptIsPointless(platform: NodeJS.Platform, uid: number | undefined): boolean {
 	return platform === 'darwin' && uid !== 0;
+}
+
+/**
+ * Apply a system-time save, asking for privileges when this process cannot finish the job
+ * itself.
+ *
+ * Anything the process CAN do alone is still done alone, which is why the decision is
+ * per-change-set rather than "always elevate": a Windows timezone change needs no
+ * privileges and must raise no prompt, and on Linux `timedatectl` asking polkit is better
+ * than a second, coarser prompt over it.
+ *
+ * The retry after a refusal stays as the safety net for whatever the rules above did not
+ * predict. Both attempts happen inside one {@link withSystemTimeLock} section: releasing
+ * it between them would let another client's save land in the gap, and the elevated
+ * attempt would then be composed against state that no longer holds.
+ */
+export function applySystemTimeSettingsWithElevation(changes: SystemTimeChanges, elevate: (changes: SystemTimeChanges) => Promise<SystemTimeResult> = runElevatedSystemTime, apply: (changes: SystemTimeChanges) => Promise<SystemTimeResult> = applySystemTimeSettings, platform: NodeJS.Platform = process.platform, uid: () => number | undefined = () => process.getuid?.(), elevated: () => boolean = () => process.platform === 'win32' && windowsProcessElevated()): Promise<SystemTimeResult> {
+	const elevateAndAdopt = async (): Promise<SystemTimeResult> => adoptTimezone(await elevate(changes), changes);
+	return withSystemTimeLock(async () => {
+		if (requiresPrivilegesUpFront(platform, uid(), changes, elevated())) return elevateAndAdopt();
+		const local = await apply(changes);
+		if (!needsElevation(local)) return local;
+		return elevateAndAdopt();
+	});
+}
+
+/**
+ * Carry an elevated timezone change back into THIS process.
+ *
+ * Writing the OS timezone does not invalidate a running process's ICU cache, so
+ * `setSystemTimezone` sets `process.env.TZ` after its own write. When the write happens in
+ * the privileged helper instead, that assignment lands in a process that then exits, and
+ * the backend keeps formatting in the old zone - which is not only a wrong display: the
+ * next clock save sends the stale zone as `expectedTimezone` and the helper refuses it as
+ * composed against state that has changed.
+ */
+function adoptTimezone(outcome: SystemTimeResult, changes: SystemTimeChanges): SystemTimeResult {
+	if (outcome.success && changes.timezone !== undefined) process.env['TZ'] = changes.timezone;
+	return outcome;
 }

@@ -118,6 +118,8 @@ const KEY_READ_64 = 0x20019 | 0x0100;
 const ERROR_FILE_NOT_FOUND = 2;
 
 interface Advapi32 {
+	OpenProcessToken: (process: number, access: number, out: number) => number;
+	GetTokenInformation: (token: bigint, klass: number, data: number, size: number, needed: number) => number;
 	RegOpenKeyExW: (hKey: bigint, subKey: number, options: number, sam: number, out: number) => number;
 	RegCloseKey: (hKey: bigint) => number;
 	OpenSCManagerW: (machine: null, database: null, access: number) => bigint;
@@ -134,6 +136,8 @@ function getAdvapi32(): Advapi32 | null {
 	if (advapi32 === undefined) {
 		try {
 			const lib = dlopen(windowsSystemLibraryPath('advapi32.dll'), {
+				OpenProcessToken: { args: [FFIType.i32, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
+				GetTokenInformation: { args: [FFIType.u64, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
 				RegOpenKeyExW: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
 				RegCloseKey: { args: [FFIType.u64], returns: FFIType.i32 },
 				OpenSCManagerW: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32], returns: FFIType.u64 },
@@ -183,6 +187,102 @@ export function probeLocalMachineKey(subKey: string): RegistryKeyState {
 		return code === ERROR_FILE_NOT_FOUND ? 'absent' : 'unreadable';
 	} catch {
 		return 'unreadable';
+	}
+}
+
+/**
+ * `KEY_SET_VALUE | KEY_WOW64_64KEY` - the access a value write needs, asked for without
+ * writing anything.
+ */
+const KEY_WRITE_64 = 0x0002 | 0x0100;
+
+/** ERROR_ACCESS_DENIED - the only code that proves a key may not be written. */
+const ERROR_ACCESS_DENIED = 5;
+
+/** What a value write under `HKEY_LOCAL_MACHINE` would be allowed to do. */
+export type RegistryWriteState = 'writable' | 'denied' | 'absent' | 'unknown';
+
+/**
+ * Whether this process could write a value under `subKey`, asked BEFORE running a command
+ * that would.
+ *
+ * `reg.exe` cannot answer it afterwards: it documents exit 1 for every failure, so a
+ * denied write and a bad key name arrive identically, and the reason it prints is a
+ * localized sentence with no error number in it. That is how switching synchronisation on
+ * against a host whose NTP client is off - the one path that starts with a registry write -
+ * came back as a generic `error` instead of the permission problem that would have asked
+ * for privileges.
+ *
+ * Never throws; anything unexpected is `unknown`, which no caller may read as permission.
+ */
+export function probeLocalMachineKeyWritable(subKey: string): RegistryWriteState {
+	const lib = getAdvapi32();
+	if (!lib) return 'unknown';
+	try {
+		const name = toWideCString(subKey);
+		const handle = new BigUint64Array(1);
+		const code = lib.RegOpenKeyExW(HKEY_LOCAL_MACHINE, ptr(name), 0, KEY_WRITE_64, ptr(handle));
+		if (code === 0) {
+			lib.RegCloseKey(handle[0]!);
+			return 'writable';
+		}
+		if (code === ERROR_ACCESS_DENIED) return 'denied';
+		return code === ERROR_FILE_NOT_FOUND ? 'absent' : 'unknown';
+	} catch {
+		return 'unknown';
+	}
+}
+
+/**
+ * Whether this process runs with an elevated token.
+ *
+ * Asked so a whole change set can be routed to the privileged helper BEFORE its first
+ * write, instead of discovering half way through that the rest needs rights the earlier
+ * steps did not: a save of a timezone and a clock together applied the timezone
+ * unprivileged (`Users` hold `SeTimeZonePrivilege`) and then could not elevate the clock,
+ * because a change already made must not be re-run.
+ *
+ * `TokenElevation` is 20, and -1 is the current-process pseudo-handle. False on anything
+ * unexpected, which routes through the helper - the safe direction, because the helper
+ * re-reads the host and decides for itself.
+ */
+export function windowsProcessElevated(): boolean {
+	const lib = getAdvapi32();
+	if (!lib) return false;
+	const token = new BigUint64Array(1);
+	try {
+		if (!lib.OpenProcessToken(-1, 0x0008, ptr(token))) return false;
+		const elevated = new Uint32Array(1);
+		const returned = new Uint32Array(1);
+		if (!lib.GetTokenInformation(token[0]!, 20, ptr(elevated), 4, ptr(returned))) return false;
+		return elevated[0] === 1;
+	} catch {
+		return false;
+	} finally {
+		if (token[0] !== 0n) closeWindowsHandle(token[0]!);
+	}
+}
+
+interface Kernel32Close {
+	CloseHandle: (handle: bigint) => number;
+}
+let kernel32Close: Kernel32Close | null | undefined;
+
+/** `CloseHandle` lives in kernel32, so it cannot ride along with the advapi32 bindings. */
+function closeWindowsHandle(handle: bigint): void {
+	if (kernel32Close === undefined) {
+		try {
+			kernel32Close = dlopen(windowsSystemLibraryPath('kernel32.dll'), {
+				CloseHandle: { args: [FFIType.u64], returns: FFIType.i32 },
+			}).symbols as unknown as Kernel32Close;
+		} catch {
+			kernel32Close = null;
+		}
+	}
+	try {
+		kernel32Close?.CloseHandle(handle);
+	} catch {
+		// A handle we cannot close is a leak of one handle, never a reason to fail a read.
 	}
 }
 
@@ -274,6 +374,9 @@ const W32TIME_SERVICE_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time'
  * service and from `Type`. A host can be `Type=NTP` with the service running and still not
  * synchronise, because the client that would do it is switched off here.
  */
+/** The same key as {@link W32TIME_NTP_CLIENT_KEY} without the hive, which is what the registry probes take. */
+export const W32TIME_NTP_CLIENT_SUBKEY = 'SYSTEM\\CurrentControlSet\\Services\\W32Time\\TimeProviders\\NtpClient';
+
 export const W32TIME_NTP_CLIENT_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\TimeProviders\\NtpClient';
 
 /**

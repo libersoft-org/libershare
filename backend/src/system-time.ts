@@ -1,6 +1,6 @@
 import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, runWrite, validateClockParts, runAll, listSystemTimezones, isValidNtpServer } from './system-time-common.ts';
 import { macSystemsetup, readMacStatus } from './system-time-macos.ts';
-import { w32tm, w32tmNotifying, windowsClockRefusal, W32TIME_NTP_CLIENT_KEY, type WindowsSyncMode, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled, readWindowsTimeZone, readWindowsTimeServiceRunning, type WindowsTimeZoneState } from './system-time-windows.ts';
+import { w32tm, w32tmNotifying, windowsClockRefusal, probeLocalMachineKeyWritable, type RegistryWriteState, W32TIME_NTP_CLIENT_SUBKEY, W32TIME_NTP_CLIENT_KEY, type WindowsSyncMode, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled, readWindowsTimeZone, readWindowsTimeServiceRunning, type WindowsTimeZoneState } from './system-time-windows.ts';
 import { readLinuxStatus, TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn, verifyTimesyncdServer } from './system-time-linux.ts';
 import { type SystemTimeStatus, type SystemTimeResult, type SystemTimeChanges, type SystemTimeStep } from '@shared';
 import { Mutex } from 'async-mutex';
@@ -679,7 +679,7 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
  * `readStatus` and `exec` are injectable so the sequencing and the outcome mapping can
  * be exercised without touching the host's time service.
  */
-export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = runWrite, readMode: WindowsModeReader = readWindowsMode, waitForService: (running: boolean) => Promise<boolean> = waitForWindowsTimeService, pause: (ms: number) => Promise<void> = sleep, now: () => number = () => performance.now()): Promise<SystemTimeResult> {
+export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = runWrite, readMode: WindowsModeReader = readWindowsMode, waitForService: (running: boolean) => Promise<boolean> = waitForWindowsTimeService, pause: (ms: number) => Promise<void> = sleep, now: () => number = () => performance.now(), probeNtpClientKey: () => RegistryWriteState = () => probeLocalMachineKeyWritable(W32TIME_NTP_CLIENT_SUBKEY)): Promise<SystemTimeResult> {
 	const platform = process.platform;
 	if (!isSupportedPlatform(platform)) return result('unsupported', `time synchronisation cannot be switched on ${platform}`);
 	return withSystemTimeLock(async () => {
@@ -697,6 +697,12 @@ export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Pr
 			if (state.refusal) return state.refusal;
 			mode = state.mode;
 			clientEnabled = state.ntpClientEnabled !== false;
+			// Asked before the first command, because this is the one path that begins with a
+			// REGISTRY write - switching the NTP client provider back on - and `reg.exe` cannot
+			// report its own refusal usably: exit 1 for every failure, and a localized sentence
+			// with no error number. Without this the whole save came back as a generic `error`,
+			// which is not the outcome that asks for privileges.
+			if (enabled && !clientEnabled && probeNtpClientKey() === 'denied') return result('permission-denied', 'the NTP client provider is switched off and this application may not write it; the change needs administrator rights');
 		}
 		const commands = buildSetNtpEnabledCommands(platform, enabled, mode, clientEnabled);
 		if (platform !== 'win32') {
@@ -771,4 +777,4 @@ export { syncDirectory, type RollbackResult, writeFileAtomically } from './syste
 
 export { parseSystemsetupValue, parseSystemsetupOnOff, MAC_NEEDS_ROOT_RE, macSystemsetup } from './system-time-macos.ts';
 
-export { W32TM_ERROR_RE, W32TM_SERVICE_INACTIVE_RE, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, scFailureOutput, w32tmNotifying, type WindowsServiceState, parseWindowsServiceState, readWindowsTimeServiceState, readWindowsMode, windowsServiceRunning, windowsClockRefusal, parseRegValue, parseWindowsNtpServer, type WindowsSyncMode, type WindowsStartMode, parseWindowsSyncMode, parseWindowsStartMode, windowsSyncIsOurs, windowsSyncEnabled, parseWindowsSyncStatus, rememberWindowsZone, windowsToIanaTimezone, parseTzutilZone, readWindowsPolicyManaged, type WindowsModeState, type WindowsModeReader } from './system-time-windows.ts';
+export { W32TM_ERROR_RE, W32TM_SERVICE_INACTIVE_RE, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, scFailureOutput, probeLocalMachineKeyWritable, windowsProcessElevated, type RegistryWriteState, W32TIME_NTP_CLIENT_SUBKEY, w32tmNotifying, type WindowsServiceState, parseWindowsServiceState, readWindowsTimeServiceState, readWindowsMode, windowsServiceRunning, windowsClockRefusal, parseRegValue, parseWindowsNtpServer, type WindowsSyncMode, type WindowsStartMode, parseWindowsSyncMode, parseWindowsStartMode, windowsSyncIsOurs, windowsSyncEnabled, parseWindowsSyncStatus, rememberWindowsZone, windowsToIanaTimezone, parseTzutilZone, readWindowsPolicyManaged, type WindowsModeState, type WindowsModeReader } from './system-time-windows.ts';

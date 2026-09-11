@@ -2,10 +2,39 @@ import { describe, expect, it } from 'bun:test';
 import { SYSTEM_TIME_OUTCOMES, type SystemTimeChanges, type SystemTimeResult } from '@shared';
 import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, networkHelperExitCode, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
 import { isSystemTimeChanges, isSystemTimeResult, parseSystemTimeExitCode, systemTimeExitCode, SYSTEM_TIME_EXIT_BASE } from '../../src/system-time-helper.ts';
-import { applySystemTimeSettingsWithElevation, localAttemptIsPointless, needsElevation } from '../../src/system-time-elevation.ts';
+import { setSystemNtpEnabled } from '../../src/system-time.ts';
+import type { SystemTimeStatus } from '@shared';
+import { applySystemTimeSettingsWithElevation, localAttemptIsPointless, needsElevation, requiresPrivilegesUpFront } from '../../src/system-time-elevation.ts';
 import { windowsSystemTimeExit } from '../../src/network-helper-client.ts';
 import { NETWORK_HELPER_EXIT } from '../../src/network-helper-protocol.ts';
 import { WINDOWS_LAUNCHER_EXIT } from '../../src/network-helper-windows.ts';
+
+/** A status where every capability is available and synchronisation is off. */
+function statusFixture(overrides: Partial<SystemTimeStatus> = {}): SystemTimeStatus {
+	return {
+		supported: true,
+		nowMs: Date.UTC(2026, 8, 11, 12, 0, 0),
+		timezone: 'Europe/Prague',
+		utcOffsetMinutes: 120,
+		timezoneSource: 'intl',
+		ntpEnabled: false,
+		ntpSynchronized: null,
+		ntpServer: 'ntp1.example.org',
+		capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: true },
+		...overrides,
+	};
+}
+
+/** Run `body` with `process.platform` reporting Windows. */
+async function onWindows(body: () => Promise<void>): Promise<void> {
+	const original = Object.getOwnPropertyDescriptor(process, 'platform');
+	Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+	try {
+		await body();
+	} finally {
+		if (original) Object.defineProperty(process, 'platform', original);
+	}
+}
 
 const CHANGES: SystemTimeChanges = { ntpEnabled: false, clock: { hours: 12, minutes: 30, seconds: 0 }, expectedTimezone: 'Europe/Prague', expectedOffsetMinutes: 120 };
 const refused: SystemTimeResult = { success: false, outcome: 'permission-denied', message: 'A required privilege is not held by the client', stateMayHaveChanged: true };
@@ -157,7 +186,9 @@ describe('applySystemTimeSettingsWithElevation', () => {
 				elevated++;
 				return refused;
 			},
-			async () => ({ success: true, outcome: 'ok', message: null })
+			async () => ({ success: true, outcome: 'ok', message: null }),
+			'linux',
+			() => 0
 		);
 		expect(outcome.outcome).toBe('ok');
 		expect(elevated).toBe(0);
@@ -171,7 +202,9 @@ describe('applySystemTimeSettingsWithElevation', () => {
 				seen.push(changes);
 				return { success: true, outcome: 'ok', message: null };
 			},
-			async () => refused
+			async () => refused,
+			'linux',
+			() => 0
 		);
 		expect(outcome.outcome).toBe('ok');
 		expect(seen).toEqual([CHANGES]);
@@ -191,7 +224,9 @@ describe('applySystemTimeSettingsWithElevation', () => {
 				elevated++;
 				return { success: true, outcome: 'ok', message: null };
 			},
-			async () => partial
+			async () => partial,
+			'linux',
+			() => 0
 		);
 		expect(outcome).toEqual(partial);
 		expect(elevated).toBe(0);
@@ -206,7 +241,9 @@ describe('applySystemTimeSettingsWithElevation', () => {
 					elevated++;
 					return { success: true, outcome: 'ok', message: null };
 				},
-				async () => ({ success: false, outcome, message: null })
+				async () => ({ success: false, outcome, message: null }),
+				'linux',
+				() => 0
 			);
 			expect(answer.outcome).toBe(outcome);
 			expect(elevated).toBe(0);
@@ -306,5 +343,175 @@ describe('where trying unprivileged first is pointless', () => {
 			() => 0
 		);
 		expect(attempted).toEqual(['local']);
+	});
+});
+
+describe('deciding privileges before the first write', () => {
+	/**
+	 * The gap this covers: the retry is refused once a step has completed, which is right,
+	 * and it made an ordinary save unreachable. On Windows a save of a timezone AND a clock
+	 * applies the timezone unprivileged - `Users` hold `SeTimeZonePrivilege` and `tzutil /s`
+	 * really writes - then meets `SeSystemtimePrivilege`, which they do not hold. The result
+	 * carried `changed: true`, so no prompt ever appeared and the host was left with a new
+	 * zone and the old clock.
+	 */
+	it('sends a Windows set that needs more than the timezone straight to the helper', () => {
+		expect(requiresPrivilegesUpFront('win32', 0, { timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 } }, false)).toBe(true);
+		expect(requiresPrivilegesUpFront('win32', 0, { ntpEnabled: true }, false)).toBe(true);
+		expect(requiresPrivilegesUpFront('win32', 0, { ntpServer: 'ntp.example.org' }, false)).toBe(true);
+	});
+
+	/** A timezone-only save needs no rights on Windows, so it must raise no prompt. */
+	it('leaves a Windows timezone-only save alone', () => {
+		expect(requiresPrivilegesUpFront('win32', 0, { timezone: 'Europe/Prague' }, false)).toBe(false);
+		expect(requiresPrivilegesUpFront('win32', 0, { timezone: 'Europe/Prague', expectedTimezone: 'Etc/UTC', expectedOffsetMinutes: 0 }, false)).toBe(false);
+	});
+
+	it('leaves an already elevated Windows process alone', () => {
+		expect(requiresPrivilegesUpFront('win32', 0, { clock: { hours: 1, minutes: 2, seconds: 3 } }, true)).toBe(false);
+	});
+
+	/**
+	 * Linux keeps its local attempt, because `timedatectl` and `systemctl` ask polkit
+	 * themselves and that IS the authorized path. The NTP server is the exception: its
+	 * change is a direct write into `/etc` that no polkit rule covers.
+	 */
+	it('only routes the Linux NTP server up front, and not for root', () => {
+		expect(requiresPrivilegesUpFront('linux', 1000, { ntpServer: 'ntp.example.org' }, false)).toBe(true);
+		expect(requiresPrivilegesUpFront('linux', 1000, { clock: { hours: 1, minutes: 2, seconds: 3 } }, false)).toBe(false);
+		expect(requiresPrivilegesUpFront('linux', 1000, { ntpEnabled: false }, false)).toBe(false);
+		expect(requiresPrivilegesUpFront('linux', 0, { ntpServer: 'ntp.example.org' }, false)).toBe(false);
+	});
+
+	it('routes every macOS save below root', () => {
+		expect(requiresPrivilegesUpFront('darwin', 501, { timezone: 'Europe/Prague' }, false)).toBe(true);
+		expect(requiresPrivilegesUpFront('darwin', 0, { timezone: 'Europe/Prague' }, false)).toBe(false);
+	});
+
+	it('does not attempt the Windows timezone-and-clock save locally at all', async () => {
+		const attempted: string[] = [];
+		const outcome = await applySystemTimeSettingsWithElevation(
+			{ timezone: 'Europe/London', clock: { hours: 1, minutes: 2, seconds: 3 } },
+			async () => {
+				attempted.push('elevated');
+				return { success: true, outcome: 'ok', message: null };
+			},
+			async () => {
+				attempted.push('local');
+				return { success: false, outcome: 'permission-denied', message: 'denied after the zone moved', changed: true };
+			},
+			'win32',
+			() => 0,
+			() => false
+		);
+		expect(attempted).toEqual(['elevated']);
+		expect(outcome.outcome).toBe('ok');
+	});
+
+	/**
+	 * Writing the OS timezone does not invalidate a running process's ICU cache, and the
+	 * assignment that compensates for it lives in the writer - which now runs inside the
+	 * helper, a process that then exits. Without carrying it back, the backend keeps
+	 * formatting in the old zone AND sends it as `expectedTimezone` on the next clock save,
+	 * which the helper then refuses as composed against state that has changed.
+	 */
+	it('adopts an elevated timezone change into this process', async () => {
+		const before = process.env['TZ'];
+		try {
+			await applySystemTimeSettingsWithElevation(
+				{ timezone: 'Asia/Tokyo' },
+				async () => ({ success: true, outcome: 'ok', message: null }),
+				async () => ({ success: false, outcome: 'permission-denied', message: null }),
+				'darwin',
+				() => 501
+			);
+			expect(process.env['TZ']).toBe('Asia/Tokyo');
+			// A refused save must not move this process's zone either.
+			await applySystemTimeSettingsWithElevation(
+				{ timezone: 'Europe/London' },
+				async () => ({ success: false, outcome: 'permission-denied', message: null }),
+				async () => ({ success: false, outcome: 'permission-denied', message: null }),
+				'darwin',
+				() => 501
+			);
+			expect(process.env['TZ']).toBe('Asia/Tokyo');
+		} finally {
+			if (before === undefined) delete process.env['TZ'];
+			else process.env['TZ'] = before;
+		}
+	});
+});
+
+
+describe('switching the Windows NTP client provider back on', () => {
+	/**
+	 * The path that begins with a REGISTRY write, and the only one that does. `reg.exe`
+	 * cannot report its own refusal usably - exit 1 for every failure, and a localized
+	 * sentence with no error number - so the whole save came back as a generic `error`,
+	 * which is not the outcome that asks for privileges. The key is asked first instead.
+	 */
+	it('refuses with a permission problem when the key may not be written', async () => {
+		await onWindows(async () => {
+			let commands = 0;
+			const outcome = await setSystemNtpEnabled(
+				true,
+				async () => statusFixture(),
+				async () => {
+					commands++;
+					return { kind: 'ok', output: '' };
+				},
+				async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped', ntpClientEnabled: false }),
+				async () => true,
+				async () => {},
+				() => 0,
+				() => 'denied'
+			);
+			expect(outcome.outcome).toBe('permission-denied');
+			expect(outcome.message).toContain('administrator rights');
+			// Nothing ran: the refusal is decided before the first command.
+			expect(commands).toBe(0);
+		});
+	});
+
+	it('proceeds when the key is writable', async () => {
+		await onWindows(async () => {
+			const calls: string[] = [];
+			const outcome = await setSystemNtpEnabled(
+				true,
+				async () => statusFixture(),
+				async (cmd, args) => {
+					calls.push([cmd, ...args].join(' '));
+					return { kind: 'ok', output: '' };
+				},
+				async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped', ntpClientEnabled: false }),
+				async () => true,
+				async () => {},
+				() => 0,
+				() => 'writable'
+			);
+			expect(outcome.success).toBe(true);
+			expect(calls[0]).toContain('reg add');
+		});
+	});
+
+	/** A provider that is already on never reaches the registry, so its state is irrelevant. */
+	it('does not consult the key when the provider is already on', async () => {
+		await onWindows(async () => {
+			let probed = 0;
+			await setSystemNtpEnabled(
+				true,
+				async () => statusFixture(),
+				async () => ({ kind: 'ok', output: '' }),
+				async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped', ntpClientEnabled: true }),
+				async () => true,
+				async () => {},
+				() => 0,
+				() => {
+					probed++;
+					return 'denied';
+				}
+			);
+			expect(probed).toBe(0);
+		});
 	});
 });
