@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { type PlatformStatus, type SystemCommand, tryRead } from './system-time-common.ts';
 
 /** `systemsetup` is not on a default non-root PATH on macOS, so it is always addressed absolutely. */
@@ -40,8 +41,47 @@ export function parseSystemsetupOnOff(output: string): boolean | null {
 	return null;
 }
 
+/**
+ * Where macOS keeps the configured time server in a file an ordinary user may read.
+ *
+ * Measured on macOS 15.7.4: `/etc/ntp.conf` is `-rw-r--r-- root:wheel` and holds
+ * `server time.euro.apple.com`, and it tracks what `systemsetup -setnetworktimeserver`
+ * writes. That matters because `systemsetup` needs root for its READS as well, so without
+ * this an unprivileged backend showed the server field EMPTY - including right after the
+ * user had successfully saved one through the privileged helper.
+ *
+ * The synchronisation flag has no such source: `/var/db/timed` is `drwxr-x--- _timed` and
+ * `/Library/Preferences/com.apple.timed.plist` does not exist, so `ntpEnabled` stays
+ * unknown below root and the screen says so.
+ */
+const MAC_NTP_CONF = '/etc/ntp.conf';
+
+/**
+ * First `server <address>` line of an `ntp.conf`, or null when there is none.
+ *
+ * Comments are ignored, and so is everything after the address on the line: `ntp.conf`
+ * allows per-server options (`iburst`, `minpoll 4`) that are not part of the name.
+ */
+export function parseNtpConfServer(contents: string): string | null {
+	for (const line of contents.split('\n')) {
+		const bare = line.split('#')[0]!.trim();
+		const match = /^server\s+(\S+)/i.exec(bare);
+		if (match) return match[1]!;
+	}
+	return null;
+}
+
+/** Read {@link MAC_NTP_CONF}. Null when it is not there or cannot be read; never throws. */
+export function readMacNtpConfServer(path: string = MAC_NTP_CONF): string | null {
+	try {
+		return parseNtpConfServer(readFileSync(path, 'utf8'));
+	} catch {
+		return null;
+	}
+}
+
 /** Read the macOS (`systemsetup`) part of the status. Every subcommand, reads included, needs root. */
-export async function readMacStatus(): Promise<PlatformStatus> {
+export async function readMacStatus(readNtpConf: () => string | null = readMacNtpConfServer): Promise<PlatformStatus> {
 	const zone = await tryRead(MAC_SYSTEMSETUP, ['-gettimezone']);
 	const server = await tryRead(MAC_SYSTEMSETUP, ['-getnetworktimeserver']);
 	const using = await tryRead(MAC_SYSTEMSETUP, ['-getusingnetworktime']);
@@ -53,7 +93,9 @@ export async function readMacStatus(): Promise<PlatformStatus> {
 		ntpEnabled: using === null ? null : parseSystemsetupOnOff(using),
 		// macOS exposes no "last sync succeeded" flag.
 		ntpSynchronized: null,
-		ntpServer: server === null ? null : parseSystemsetupValue(server),
+		// `systemsetup` first, because it is the authority; the file is the fallback that keeps
+		// the field populated for an unprivileged reader (see readMacNtpConfServer).
+		ntpServer: (server === null ? null : parseSystemsetupValue(server)) ?? readNtpConf(),
 		capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: true },
 	};
 }

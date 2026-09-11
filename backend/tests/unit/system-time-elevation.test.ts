@@ -2,6 +2,8 @@ import { describe, expect, it } from 'bun:test';
 import { SYSTEM_TIME_OUTCOMES, type SystemTimeChanges, type SystemTimeResult } from '@shared';
 import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, networkHelperExitCode, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
 import { isSystemTimeChanges, isSystemTimeResult, parseSystemTimeExitCode, systemTimeExitCode, SYSTEM_TIME_EXIT_BASE } from '../../src/system-time-helper.ts';
+import { isValidNtpServer } from '../../src/system-time-common.ts';
+import { parseNtpConfServer, readMacNtpConfServer, readMacStatus } from '../../src/system-time-macos.ts';
 import { setSystemNtpEnabled } from '../../src/system-time.ts';
 import type { SystemTimeStatus } from '@shared';
 import { applySystemTimeSettingsWithElevation, localAttemptIsPointless, needsElevation, requiresPrivilegesUpFront } from '../../src/system-time-elevation.ts';
@@ -55,7 +57,20 @@ describe('isSystemTimeChanges', () => {
 		// The NTP address has the bound the ordinary validator enforces, not the 64 of the
 		// other values: a 79-character name is syntactically valid and used to be refused here.
 		expect(isSystemTimeChanges({ ntpServer: 'ntp.' + 'a'.repeat(63) + '.example.org' })).toBe(true);
-		expect(isSystemTimeChanges({ ntpServer: 'a'.repeat(254) })).toBe(false);
+		// The explicit-root form: the ordinary validator strips the dot before measuring, so
+		// 253 characters PLUS a dot is the longest address it accepts, and this boundary has to
+		// accept exactly the same ones. Built from real labels, because a single 253-character
+		// label is invalid on its own - a label may be 63.
+		const longest = ['a'.repeat(63), 'a'.repeat(63), 'a'.repeat(63), 'a'.repeat(61)].join('.');
+		expect(longest.length).toBe(253);
+		expect(isValidNtpServer(longest)).toBe(true);
+		expect(isSystemTimeChanges({ ntpServer: longest })).toBe(true);
+		expect(isValidNtpServer(longest + '.')).toBe(true);
+		expect(isSystemTimeChanges({ ntpServer: longest + '.' })).toBe(true);
+		// One character further out, both sides refuse.
+		const tooLong = ['a'.repeat(63), 'a'.repeat(63), 'a'.repeat(63), 'a'.repeat(62)].join('.') + '.';
+		expect(isValidNtpServer(tooLong)).toBe(false);
+		expect(isSystemTimeChanges({ ntpServer: tooLong })).toBe(false);
 		expect(isSystemTimeChanges({ timezone: 'a'.repeat(65) })).toBe(false);
 		expect(isSystemTimeChanges({ clock: { hours: 1, minutes: 2 } })).toBe(false);
 		expect(isSystemTimeChanges({ clock: { hours: 1.5, minutes: 2, seconds: 3 } })).toBe(false);
@@ -442,6 +457,33 @@ describe('deciding privileges before the first write', () => {
 	});
 });
 
+describe('the macOS server an unprivileged reader can still see', () => {
+	/**
+	 * `systemsetup` needs root for its READS too, so without a second source the server
+	 * field came back EMPTY on an unprivileged backend - including right after the user had
+	 * saved one through the privileged helper. Measured on macOS 15.7.4: `/etc/ntp.conf` is
+	 * `-rw-r--r-- root:wheel` and holds `server time.euro.apple.com`, and it tracks what
+	 * `systemsetup -setnetworktimeserver` writes.
+	 */
+	it('is the first server line of ntp.conf', () => {
+		expect(parseNtpConfServer('server time.euro.apple.com\n')).toBe('time.euro.apple.com');
+		expect(parseNtpConfServer('# comment\n\nserver tik.cesnet.cz iburst\nserver tak.cesnet.cz\n')).toBe('tik.cesnet.cz');
+		// Per-server options are not part of the address, and a commented-out line is not one.
+		expect(parseNtpConfServer('#server old.example.org\nserver ntp.example.org minpoll 4\n')).toBe('ntp.example.org');
+		expect(parseNtpConfServer('')).toBeNull();
+		expect(parseNtpConfServer('restrict default\nfudge 127.127.1.0 stratum 10\n')).toBeNull();
+	});
+
+	it('is only a fallback: systemsetup stays the authority', async () => {
+		const status = await readMacStatus(() => 'from.the.file');
+		// Reads on this test host are not macOS reads at all, so the file is what is left.
+		expect(status.ntpServer).toBe('from.the.file');
+	});
+
+	it('never throws on a missing or unreadable file', () => {
+		expect(readMacNtpConfServer('/definitely/not/here/ntp.conf')).toBeNull();
+	});
+});
 
 describe('switching the Windows NTP client provider back on', () => {
 	/**
