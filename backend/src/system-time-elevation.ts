@@ -1,6 +1,6 @@
 import type { SystemTimeChanges, SystemTimeResult } from '@shared';
 import { runElevatedSystemTime } from './network-helper-client.ts';
-import { applySystemTimeSettings, withSystemTimeLock } from './system-time.ts';
+import { applySystemTimeSettings, validateSystemTimeChanges, withSystemTimeLock } from './system-time.ts';
 import { readMacLocaltimeZone } from './system-time-macos.ts';
 import { ianaToWindowsTimezoneId, readWindowsTimeZone, rememberWindowsZone, windowsProcessElevated } from './system-time-windows.ts';
 
@@ -84,6 +84,13 @@ export function localAttemptIsPointless(platform: NodeJS.Platform, uid: number |
 export function applySystemTimeSettingsWithElevation(changes: SystemTimeChanges, elevate: (changes: SystemTimeChanges) => Promise<SystemTimeResult> = runElevatedSystemTime, apply: (changes: SystemTimeChanges) => Promise<SystemTimeResult> = applySystemTimeSettings, platform: NodeJS.Platform = process.platform, uid: () => number | undefined = () => process.getuid?.(), elevated: () => boolean = () => process.platform === 'win32' && windowsProcessElevated(), readZone: HostZoneReader = readHostTimezone): Promise<SystemTimeResult> {
 	const elevateAndAdopt = async (): Promise<SystemTimeResult> => adoptTimezone(await elevate(changes), changes, platform, readZone);
 	return withSystemTimeLock(async () => {
+		// Before the decision, not after it. A set that goes straight to the helper never met
+		// the value rules here, and the helper's boundary answers a bad value as a generic
+		// `error` - which the screen reloads the form over, throwing away every other field
+		// the user had filled in. Rejecting it here gives the `invalid-input` that keeps their
+		// work, and nothing is sent anywhere.
+		const invalidInput = validateSystemTimeChanges(changes);
+		if (invalidInput) return invalidInput;
 		if (requiresPrivilegesUpFront(platform, uid(), changes, elevated())) return elevateAndAdopt();
 		const local = await apply(changes);
 		if (!needsElevation(local)) return local;

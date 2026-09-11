@@ -838,3 +838,93 @@ describe('an exception out of the privileged save', () => {
 		expect('time' in response && response.time).toEqual(refusal);
 	});
 });
+
+describe('a value the host will never accept', () => {
+	/**
+	 * The exact request from the report: the user clears the NTP address and picks a new
+	 * timezone in the same save. On an unprivileged Linux or macOS host that set goes
+	 * straight to the privileged helper, whose boundary check only knows SHAPES - it refuses
+	 * an empty address as "invalid network helper time changes", a generic `error`. The
+	 * screen keeps a filled-in form only for `invalid-input`, so it reloaded and threw the
+	 * chosen timezone away as well: work lost over a typo, with the wrong reason given.
+	 *
+	 * The form really does send it - `planTimeChanges` includes `ntpServer` whenever it
+	 * differs from what was loaded, empty included.
+	 */
+	const CLEARED_SERVER = { ntpServer: '', timezone: 'Europe/London' } as const;
+
+	it.each(['linux', 'darwin'] as const)('is refused as invalid input before anything is sent: %s', async platform => {
+		let elevated = 0;
+		let applied = 0;
+		const outcome = await applySystemTimeSettingsWithElevation(
+			CLEARED_SERVER,
+			async () => {
+				elevated++;
+				return { success: true, outcome: 'ok', message: null };
+			},
+			async () => {
+				applied++;
+				return { success: true, outcome: 'ok', message: null };
+			},
+			platform,
+			() => 1000
+		);
+		expect(outcome.outcome).toBe('invalid-input');
+		expect(outcome.message).toContain('NTP server');
+		// Neither side ran, so nothing was written and nothing was left half-applied.
+		expect(elevated).toBe(0);
+		expect(applied).toBe(0);
+	});
+
+	/**
+	 * The coupling the report asked for: this is what the OTHER side would have answered,
+	 * so the two are checked against each other rather than against a stub. The boundary
+	 * still refuses it - that is deliberate, it guards requests that did not come from this
+	 * screen - but the value never gets that far any more.
+	 */
+	it('would have come back from the boundary as something else entirely', () => {
+		expect(isSystemTimeChanges(CLEARED_SERVER)).toBe(false);
+		const encoded = Buffer.from(JSON.stringify({ version: 1, operation: 'applySystemTime', changes: CLEARED_SERVER })).toString('base64url');
+		expect(() => decodeNetworkHelperRequest(encoded)).toThrow('invalid network helper time changes');
+	});
+
+	/** The same class, not just the one value: an unknown zone and an impossible clock too. */
+	it.each([
+		[{ timezone: 'Neni/Zona' }, 'unknown timezone'],
+		[{ clock: { hours: 99, minutes: 0, seconds: 0 } }, 'hours'],
+	] as const)('is refused up front for every value rule: %o', async (changes, needle) => {
+		let elevated = 0;
+		const outcome = await applySystemTimeSettingsWithElevation(
+			changes,
+			async () => {
+				elevated++;
+				return { success: true, outcome: 'ok', message: null };
+			},
+			async () => ({ success: true, outcome: 'ok', message: null }),
+			'darwin',
+			() => 501
+		);
+		expect(outcome.outcome).toBe('invalid-input');
+		expect(outcome.message).toContain(needle);
+		expect(elevated).toBe(0);
+	});
+
+	/** And a set that IS valid still reaches the helper, so the guard did not close the path. */
+	it('lets a usable value through to the helper', async () => {
+		let elevated = 0;
+		const outcome = await applySystemTimeSettingsWithElevation(
+			{ ntpServer: 'tik.cesnet.cz', timezone: 'Europe/London' },
+			async () => {
+				elevated++;
+				return { success: true, outcome: 'ok', message: null };
+			},
+			async () => ({ success: false, outcome: 'permission-denied', message: null }),
+			'darwin',
+			() => 501,
+			() => false,
+			() => 'Europe/London'
+		);
+		expect(outcome.outcome).toBe('ok');
+		expect(elevated).toBe(1);
+	});
+});

@@ -380,20 +380,40 @@ export function sameHostZone(platform: NodeJS.Platform, current: string, expecte
 }
 
 /** Apply one settings snapshot without allowing another client's save to interleave. */
-export function applySystemTimeSettings(changes: SystemTimeChanges, writers: SystemTimeWriters = defaultSystemTimeWriters, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus): Promise<SystemTimeResult> {
-	// Validate the complete input before an earlier field can change the host.
-	if (changes.ntpServer !== undefined && !isValidNtpServer(changes.ntpServer)) return Promise.resolve(result('invalid-input', 'the NTP server must be a host name or IP address without spaces or special characters'));
+/**
+ * Why a change set cannot be applied at all, or null when every value is usable.
+ *
+ * Separate from the apply so it can also run BEFORE the decision to elevate. That decision
+ * sends a whole set to the privileged helper without a local attempt, and the helper's
+ * boundary check only knows shapes: it refuses an empty NTP address as
+ * "invalid network helper time changes", a generic `error`. The screen keeps a filled-in
+ * form only for `invalid-input`, so clearing the address while also picking a new timezone
+ * threw the timezone away too - the user lost work over a typo, and was told the wrong
+ * reason for it.
+ *
+ * The privileged side still validates: it re-runs this through {@link applySystemTimeSettings},
+ * which is what keeps a request that did not come from this screen honest.
+ */
+export function validateSystemTimeChanges(changes: SystemTimeChanges): SystemTimeResult | null {
+	if (changes.ntpServer !== undefined && !isValidNtpServer(changes.ntpServer)) return result('invalid-input', 'the NTP server must be a host name or IP address without spaces or special characters');
 	if (changes.timezone !== undefined) {
 		// The host's own list, not the runtime's: a zone this platform cannot express has
 		// to fail here, before the first operation below changes anything.
 		const known = listHostTimezones();
-		if (known.length === 0) return Promise.resolve(result('unsupported', 'this runtime has no timezone database'));
-		if (!known.includes(changes.timezone)) return Promise.resolve(result('invalid-input', `unknown timezone: ${changes.timezone}`));
+		if (known.length === 0) return result('unsupported', 'this runtime has no timezone database');
+		if (!known.includes(changes.timezone)) return result('invalid-input', `unknown timezone: ${changes.timezone}`);
 	}
 	if (changes.clock !== undefined) {
 		const invalid = validateClockParts(changes.clock.hours, changes.clock.minutes, changes.clock.seconds);
-		if (invalid) return Promise.resolve(result('invalid-input', invalid));
+		if (invalid) return result('invalid-input', invalid);
 	}
+	return null;
+}
+
+export function applySystemTimeSettings(changes: SystemTimeChanges, writers: SystemTimeWriters = defaultSystemTimeWriters, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus): Promise<SystemTimeResult> {
+	// Validate the complete input before an earlier field can change the host.
+	const invalidInput = validateSystemTimeChanges(changes);
+	if (invalidInput) return Promise.resolve(invalidInput);
 	return withSystemTimeLock(async () => {
 		// Inside the lock and before the first write: a clock is a wall-clock reading, and the
 		// zone it was read in is what turns it into an instant. Another client switching the
