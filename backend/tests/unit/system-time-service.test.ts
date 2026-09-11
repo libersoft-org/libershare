@@ -2,6 +2,9 @@ import { describe, expect, it } from 'bun:test';
 import { applySystemTimeSettings, setSystemNtpEnabled, setSystemNtpServer, waitForWindowsTimeService, withSystemTimeLock, type CommandRunner, type WindowsModeState } from '../../src/system-time.ts';
 import type { SystemTimeStatus } from '@shared';
 
+/** The blank line `sc.exe` puts between its `[SC] ... FAILED <code>:` line and the localized reason. */
+const CRLF2 = '\r\n\r\n';
+
 const status: SystemTimeStatus = {
 	supported: true,
 	nowMs: 0,
@@ -14,7 +17,7 @@ const status: SystemTimeStatus = {
 	capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: true },
 };
 const readStatus = async () => status;
-const mode = async (): Promise<WindowsModeState> => ({ mode: 'none', start: 'on-demand', membership: 'standalone', running: false });
+const mode = async (): Promise<WindowsModeState> => ({ mode: 'none', start: 'on-demand', membership: 'standalone', service: 'stopped' });
 
 async function windows(body: () => Promise<void>): Promise<void> {
 	const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
@@ -79,7 +82,10 @@ describe('Windows Time service transitions', () => {
 	it.each([true, false])('still confirms the state after an already-running/stopped response: enabled=%s', async enabled => {
 		await windows(async () => {
 			let waits = 0;
-			const exec: CommandRunner = async (cmd, args) => (cmd === 'sc' && args[0] === (enabled ? 'start' : 'stop') ? { kind: 'failed', code: enabled ? 1056 : 1062, output: 'Service already in requested state' } : { kind: 'ok', output: '' });
+			// What `sc` actually answers with: its own small exit code, and the Win32 reason in
+			// the output. Measured on Windows 11 - exit 32 with "[SC] StartService FAILED 1056:"
+			// and exit 38 with "[SC] ControlService FAILED 1062:".
+			const exec: CommandRunner = async (cmd, args) => (cmd === 'sc' && args[0] === (enabled ? 'start' : 'stop') ? { kind: 'failed', code: enabled ? 32 : 38, output: enabled ? '[SC] StartService FAILED 1056:' + CRLF2 + 'An instance of the service is already running.' : '[SC] ControlService FAILED 1062:' + CRLF2 + 'The service has not been started.' } : { kind: 'ok', output: '' });
 			expect(
 				(
 					await setSystemNtpEnabled(enabled, readStatus, exec, mode, async () => {
@@ -170,7 +176,7 @@ describe('Windows Time service transitions', () => {
 				await save;
 				await second;
 			}
-			expect(calls).toEqual(['sc stop w32time', 'sc config w32time start= disabled', 'w32tm /config /manualpeerlist:new.example.org,0x8', 'next writer']);
+			expect(calls).toEqual(['sc stop w32time', 'sc config w32time start= disabled', 'w32tm /config /manualpeerlist:new.example.org,0x8 /update', 'next writer']);
 		});
 	});
 });

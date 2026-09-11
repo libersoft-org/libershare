@@ -142,6 +142,23 @@ export interface SystemCommand {
 	 * exit status alone would report a refused `/resync` or `/config` as saved.
 	 */
 	failOnOutput?: RegExp;
+	/**
+	 * Output that means the step had nothing to do. Treated as success whatever the exit
+	 * code, and checked before {@link SystemCommand.failOnOutput}.
+	 *
+	 * The case it exists for: `w32tm /config ... /update` writes the peer list into the
+	 * registry and then NOTIFIES the Windows Time service. Measured on Windows 11 against a
+	 * stopped service - the registry WAS written, and the command printed
+	 * "The following error occurred: The service has not been started. (0x80070426)" and
+	 * exited 38. So the exit code cannot carry this: it is the HRESULT in the output that
+	 * identifies "there was no service to notify", which is why this is matched on the text
+	 * and applies to a non-zero exit as much as to a zero one.
+	 *
+	 * With it the notification is best-effort, and the caller no longer has to know whether
+	 * the service is up in order to decide whether to send it - a state it cannot read
+	 * reliably anyway.
+	 */
+	benignOutput?: RegExp;
 }
 
 /** Local wall-clock date and time broken into parts. `month` is 1-12. */
@@ -481,6 +498,12 @@ export async function runAll(platform: SystemPlatform, commands: SystemCommand[]
 	for (const command of commands) {
 		const r = await exec(command.cmd, command.args);
 		const done = (): void => void steps.push({ command: [command.cmd, ...command.args].join(' '), ok: true });
+		// Before anything else, including the exit code: a step that reports having had
+		// nothing to do succeeded, and `w32tm` says so with a non-zero status (38 measured).
+		if ((r.kind === 'ok' || r.kind === 'failed') && command.benignOutput?.test(r.output)) {
+			done();
+			continue;
+		}
 		if (r.kind === 'ok') {
 			// Exit 0 is not the whole story for w32tm: it prints the HRESULT of a refusal
 			// and returns zero anyway, so the output has to be read before believing it.

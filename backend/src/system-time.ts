@@ -1,6 +1,6 @@
 import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, run, validateClockParts, runAll, listSystemTimezones, isValidNtpServer } from './system-time-common.ts';
 import { macSystemsetup, readMacStatus } from './system-time-macos.ts';
-import { w32tm, W32TIME_NTP_CLIENT_KEY, type WindowsSyncMode, SC_ALREADY_RUNNING, SC_NOT_ACTIVE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled, readWindowsTimeZone, readWindowsTimeServiceRunning, type WindowsTimeZoneState } from './system-time-windows.ts';
+import { w32tm, w32tmNotifying, windowsClockRefusal, W32TIME_NTP_CLIENT_KEY, type WindowsSyncMode, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled, readWindowsTimeZone, readWindowsTimeServiceRunning, type WindowsTimeZoneState } from './system-time-windows.ts';
 import { readLinuxStatus, TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn, verifyTimesyncdServer } from './system-time-linux.ts';
 import { type SystemTimeStatus, type SystemTimeResult, type SystemTimeChanges, type SystemTimeStep } from '@shared';
 import { Mutex } from 'async-mutex';
@@ -80,16 +80,24 @@ export function buildSetTimezoneCommands(platform: SystemPlatform, timezone: str
  * Without them `w32tm /config` still writes the registry, and the service reads it when
  * it next starts (which is what switching synchronisation back on does).
  */
-export function buildSetNtpServerCommands(platform: SystemPlatform, server: string, syncRunning: boolean, syncEnabled = true): SystemCommand[] {
+export function buildSetNtpServerCommands(platform: SystemPlatform, server: string, daemonRunning: boolean, syncEnabled: boolean = daemonRunning): SystemCommand[] {
+	// `daemonRunning` is a LINUX fact: whether to restart timesyncd, which is the whole
+	// change there. Windows reads `syncEnabled` instead - whether synchronisation is
+	// configured on - and deliberately nothing about its service's runtime state.
+	const syncRunning = daemonRunning;
 	if (platform === 'linux') return syncRunning ? [{ cmd: 'systemctl', args: ['restart', 'systemd-timesyncd'] }] : [];
 	if (platform === 'darwin') return [macSystemsetup(['-setnetworktimeserver', server])];
 	// 0x8 is the plain client flag. 0x9 would add 0x1 (SpecialInterval), which makes the
 	// peer poll at SpecialPollInterval — a standalone host defaults that to 604800s, so
 	// the peer would be contacted weekly instead of on the normal poll interval.
 	const peers = `/manualpeerlist:${server},0x8`;
-	// Editing a peer list must preserve Type=NoSync; only the explicit enable operation changes it.
-	if (!syncRunning) return [w32tm('/config', peers)];
-	return [w32tm('/config', peers, '/update'), ...(syncEnabled ? [w32tm('/resync')] : [])];
+	// `/update` goes out ALWAYS, and "the service is not running" is not a failure of it.
+	// Editing a peer list must preserve Type=NoSync; only the explicit enable operation
+	// changes it, and `/update` does not touch it.
+	// `/resync` still depends on synchronisation being CONFIGURED on, which comes from the
+	// registry and is always readable: forcing a sync on a host whose user has just switched
+	// synchronisation off would be doing the one thing they asked not to happen.
+	return [w32tmNotifying('/config', peers, '/update'), ...(syncEnabled ? [w32tmNotifying('/resync')] : [])];
 }
 
 /**
@@ -122,7 +130,7 @@ export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: bo
 			// a peer list while this separate flag keeps the client from ever asking anyone.
 			...(ntpClientEnabled ? [] : [{ cmd: 'reg', args: ['add', W32TIME_NTP_CLIENT_KEY, '/v', 'Enabled', '/t', 'REG_DWORD', '/d', '1', '/f'] }]),
 			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'auto'] },
-			{ cmd: 'sc', args: ['start', 'w32time'], benignCodes: [SC_ALREADY_RUNNING] },
+			{ cmd: 'sc', args: ['start', 'w32time'], benignOutput: SC_ALREADY_RUNNING_RE },
 			// ONLY for a host with no time source at all (Type=NoSync), which is the one
 			// case where "switch synchronisation on" has to invent one. On every other
 			// mode this REPLACES the source: run unconditionally on a domain member it
@@ -135,7 +143,7 @@ export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: bo
 		];
 	}
 	return [
-		{ cmd: 'sc', args: ['stop', 'w32time'], benignCodes: [SC_NOT_ACTIVE] },
+		{ cmd: 'sc', args: ['stop', 'w32time'], benignOutput: SC_NOT_ACTIVE_RE },
 		{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'disabled'] },
 	];
 }
@@ -472,7 +480,7 @@ export function hostDateParts(nowMs: number, utcOffsetMinutes: number): Pick<Loc
  * `readStatus` and `exec` are injectable so the ordering can be exercised without setting
  * the clock of the machine running the tests.
  */
-export async function setSystemClock(hours: number, minutes: number, seconds: number, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = run): Promise<SystemTimeResult> {
+export async function setSystemClock(hours: number, minutes: number, seconds: number, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = run, readMode: WindowsModeReader = readWindowsMode): Promise<SystemTimeResult> {
 	const invalid = validateClockParts(hours, minutes, seconds);
 	if (invalid) return result('invalid-input', invalid);
 	const platform = process.platform;
@@ -481,6 +489,14 @@ export async function setSystemClock(hours: number, minutes: number, seconds: nu
 		const status = await readStatus();
 		const refusal = clockWriteRefusal(status);
 		if (refusal) return refusal;
+		// Read inside the lock and immediately before the write: what the sync SERVICE is
+		// doing is not in the shared status, which carries the registry's view of
+		// synchronisation. A service that is up despite that, or still starting or stopping,
+		// owns the clock this is about to set.
+		if (platform === 'win32') {
+			const objection = windowsClockRefusal(await readMode());
+			if (objection) return result('auto-sync-enabled', objection);
+		}
 		// The same status the refusal was decided from carries the host's zone offset, so the
 		// date comes from the host rather than from this process.
 		return runAll(platform, buildSetClockCommands(platform, { ...hostDateParts(status.nowMs, status.utcOffsetMinutes), hours, minutes, seconds }), exec);
@@ -549,20 +565,17 @@ export async function setSystemNtpServer(server: string, readStatus: () => Promi
 		// Windows writes the peer list into the service's own registry key, so the source
 		// has to still be ours at the moment of writing — not merely when the status the
 		// capability came from was read (see checkWindowsWritable).
-		let syncRunning = status.ntpEnabled === true;
+		const syncRunning = status.ntpEnabled === true;
 		let syncEnabled = status.ntpEnabled === true;
 		if (platform === 'win32') {
 			const state = await checkWindowsWritable(readMode);
 			if (state.refusal) return state.refusal;
-			// An unreadable service state is treated as STOPPED rather than refused. A standard
-			// user cannot query W32Time through the SCM (error 5), and refusing here answered a
-			// non-elevated host with "cannot determine whether Windows Time is running" - a
-			// vague `error` that hid the real reason, which `w32tm /config` states plainly one
-			// line later. Stopped is the conservative reading: it builds the bare registry
-			// write, with no `/update` or `/resync` aimed at a service that may not be up
-			// (sending those to a stopped service is what once failed a peer list that HAD
-			// been written). The service reads the new peer at its next poll or start.
-			syncRunning = state.running === true;
+			// The service's RUNNING state is deliberately not consulted. It cannot be read
+			// reliably - a service that is starting or stopping reads as neither, and an
+			// unprivileged caller cannot read it at all - and the only thing it used to decide
+			// was whether to send `/update`, which is now sent unconditionally and forgiven
+			// when there is no service to receive it. Guessing "stopped" from an unknown state
+			// is how a RUNNING service was left never told about a new peer.
 			syncEnabled = windowsSyncEnabled(state.mode, state.start, state.ntpClientEnabled) === true;
 		}
 		const commands = buildSetNtpServerCommands(platform, server, syncRunning, syncEnabled);
@@ -707,7 +720,8 @@ export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Pr
 		return runAll(platform, commands, async (cmd, args) => {
 			const outcome = await exec(cmd, args);
 			if (cmd !== 'sc' || args[0] !== (enabled ? 'start' : 'stop')) return outcome;
-			const accepted = outcome.kind === 'ok' || (outcome.kind === 'failed' && outcome.code === (enabled ? SC_ALREADY_RUNNING : SC_NOT_ACTIVE));
+			// The reason is read out of the output: `sc` keeps it there, not in its exit status.
+			const accepted = outcome.kind === 'ok' || (outcome.kind === 'failed' && (enabled ? SC_ALREADY_RUNNING_RE : SC_NOT_ACTIVE_RE).test(outcome.output));
 			if (!accepted || (await waitForService(enabled))) return outcome;
 			return { kind: 'failed', code: null, output: `Windows Time did not reach the ${enabled ? 'running' : 'stopped'} state within 15 seconds; the service transition may still be in progress` };
 		});
@@ -732,4 +746,4 @@ export { syncDirectory, type RollbackResult, writeFileAtomically } from './syste
 
 export { parseSystemsetupValue, parseSystemsetupOnOff, MAC_NEEDS_ROOT_RE, macSystemsetup } from './system-time-macos.ts';
 
-export { W32TM_ERROR_RE, parseRegValue, parseWindowsNtpServer, type WindowsSyncMode, type WindowsStartMode, parseWindowsSyncMode, parseWindowsStartMode, windowsSyncIsOurs, windowsSyncEnabled, parseWindowsSyncStatus, rememberWindowsZone, windowsToIanaTimezone, parseTzutilZone, readWindowsPolicyManaged, type WindowsModeState, type WindowsModeReader } from './system-time-windows.ts';
+export { W32TM_ERROR_RE, W32TM_SERVICE_INACTIVE_RE, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, scFailureOutput, w32tmNotifying, type WindowsServiceState, parseWindowsServiceState, readWindowsTimeServiceState, readWindowsMode, windowsServiceRunning, windowsClockRefusal, parseRegValue, parseWindowsNtpServer, type WindowsSyncMode, type WindowsStartMode, parseWindowsSyncMode, parseWindowsStartMode, windowsSyncIsOurs, windowsSyncEnabled, parseWindowsSyncStatus, rememberWindowsZone, windowsToIanaTimezone, parseTzutilZone, readWindowsPolicyManaged, type WindowsModeState, type WindowsModeReader } from './system-time-windows.ts';

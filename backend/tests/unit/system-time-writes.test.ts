@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'bun:test';
-import { applySystemTimeSettings, buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, clockWriteRefusal, getSystemTimeStatus, listHostTimezones, listSystemTimezones, resetHostTimezones, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type SystemCommand, type SystemTimeWriters, type WindowsModeState, W32TM_ERROR_RE, MAC_NEEDS_ROOT_RE, withSystemTimeLock } from '../../src/system-time.ts';
+import { applySystemTimeSettings, buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, clockWriteRefusal, getSystemTimeStatus, listHostTimezones, listSystemTimezones, resetHostTimezones, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type SystemCommand, type SystemTimeWriters, type WindowsModeState, W32TM_ERROR_RE, W32TM_SERVICE_INACTIVE_RE, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, MAC_NEEDS_ROOT_RE, withSystemTimeLock } from '../../src/system-time.ts';
 import type { SystemTimeChanges, SystemTimeStatus } from '@shared';
 import { W32TM_STATUS, fakeRunner } from '../helpers/system-time-fixtures.ts';
+
+/** The blank line `sc.exe` puts between its `[SC] ... FAILED <code>:` line and the localized reason. */
+const CRLF2 = '\r\n\r\n';
 
 const AT = { year: 2026, month: 8, day: 14, hours: 23, minutes: 46, seconds: 28 };
 
@@ -73,24 +76,50 @@ describe('buildSetNtpServerCommands', () => {
 	});
 
 	it('configures the peer and resyncs on windows while synchronisation is on', () => {
-		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', true)).toEqual([
-			{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8', '/update'], failOnOutput: W32TM_ERROR_RE },
-			{ cmd: 'w32tm', args: ['/resync'], failOnOutput: W32TM_ERROR_RE },
+		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', true, true)).toEqual([
+			{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8', '/update'], failOnOutput: W32TM_ERROR_RE, benignOutput: W32TM_SERVICE_INACTIVE_RE },
+			{ cmd: 'w32tm', args: ['/resync'], failOnOutput: W32TM_ERROR_RE, benignOutput: W32TM_SERVICE_INACTIVE_RE },
 		]);
 	});
 
 	/**
-	 * A resync is a request to the Windows Time service, so with the service stopped it
-	 * can only fail — and the UI arrives here exactly that way, switching synchronisation
-	 * off before writing a server. Configuring the peer list is the whole change then.
+	 * A resync is a request to the Windows Time service, and forcing one while the user has
+	 * just switched synchronisation OFF would do the one thing they asked not to happen. So
+	 * `/resync` follows the configured state, which comes from the registry and is always
+	 * readable.
 	 *
-	 * `/update` goes with it: it notifies the RUNNING service that the configuration
-	 * changed, so against a stopped one it is the same failed request — which is how a
-	 * peer list that had in fact been written came back to the user as an error. The
-	 * registry write happens without it, and the service reads it when it next starts.
+	 * `/update` does NOT: it is sent either way and forgiven when there is no service to
+	 * receive it. It used to be conditional on the service being seen as running, and a
+	 * service that could not be read - or was still starting - was read as stopped, so a
+	 * RUNNING service was never told about the new peer. Measured on Windows 11: with the
+	 * service stopped, `/config ... /update` wrote the peer list into the registry anyway and
+	 * printed only "The service has not been started. (0x80070426)".
 	 */
-	it('skips the resync and the update notification on windows while synchronisation is off', () => {
-		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', false)).toEqual([{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8'], failOnOutput: W32TM_ERROR_RE }]);
+	it('still notifies, but does not force a resync, while synchronisation is off', () => {
+		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', false, false)).toEqual([{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8', '/update'], failOnOutput: W32TM_ERROR_RE, benignOutput: W32TM_SERVICE_INACTIVE_RE }]);
+	});
+
+	/**
+	 * Both kinds, because `w32tm` reports this one with a NON-ZERO status: measured exit 38
+	 * on Windows 11 against a stopped service, with the peer list written to the registry
+	 * all the same. An earlier reading of that measurement said exit 0 - it came from
+	 * `cmd /c "... & echo %errorlevel%"`, where cmd expands the variable while PARSING the
+	 * line and therefore prints the status of whatever ran before.
+	 */
+	it.each(['ok', 'failed'] as const)('treats the missing service as nothing to report, not as a failed write: %s', async kind => {
+		const runner: CommandRunner = async () => (kind === 'ok' ? { kind: 'ok', output: 'The following error occurred: The service has not been started. (0x80070426)' } : { kind: 'failed', code: 38, output: 'The following error occurred: The service has not been started. (0x80070426)' });
+		expect((await runAll('win32', buildSetNtpServerCommands('win32', 'ntp.example.org', false, false), runner)).success).toBe(true);
+	});
+
+	it('still fails when the step reports anything else with a non-zero status', async () => {
+		const runner: CommandRunner = async () => ({ kind: 'failed', code: 5, output: 'The following error occurred: Access is denied. (0x80070005)' });
+		expect((await runAll('win32', buildSetNtpServerCommands('win32', 'ntp.example.org', false, false), runner)).outcome).toBe('permission-denied');
+	});
+
+	it('still fails on any other w32tm refusal', async () => {
+		const runner: CommandRunner = async () => ({ kind: 'ok', output: 'The following error occurred: Access is denied. (0x80070005)' });
+		const outcome = await runAll('win32', buildSetNtpServerCommands('win32', 'ntp.example.org', false, false), runner);
+		expect(outcome.outcome).toBe('permission-denied');
 	});
 
 	it('sets the single supported server on macOS', () => {
@@ -145,7 +174,7 @@ describe('buildSetNtpEnabledCommands', () => {
 	it('gives a host with no time source one, on windows', () => {
 		expect(buildSetNtpEnabledCommands('win32', true, 'none')).toEqual([
 			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'auto'] },
-			{ cmd: 'sc', args: ['start', 'w32time'], benignCodes: [1056] },
+			{ cmd: 'sc', args: ['start', 'w32time'], benignOutput: SC_ALREADY_RUNNING_RE },
 			{ cmd: 'w32tm', args: ['/config', '/syncfromflags:manual', '/update'], failOnOutput: W32TM_ERROR_RE },
 			{ cmd: 'w32tm', args: ['/resync'], failOnOutput: W32TM_ERROR_RE },
 		]);
@@ -173,7 +202,7 @@ describe('buildSetNtpEnabledCommands', () => {
 	it('stops and disables the service on windows, whatever the source was', () => {
 		for (const mode of ['none', 'manual', 'all'] as const) {
 			expect(buildSetNtpEnabledCommands('win32', false, mode)).toEqual([
-				{ cmd: 'sc', args: ['stop', 'w32time'], benignCodes: [1062] },
+				{ cmd: 'sc', args: ['stop', 'w32time'], benignOutput: SC_NOT_ACTIVE_RE },
 				{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'disabled'] },
 			]);
 		}
@@ -188,10 +217,31 @@ describe('buildSetNtpEnabledCommands', () => {
 		// sync type and start mode written, so those steps may not sit behind an abort.
 		const tolerated = (enabled: boolean): string[] =>
 			buildSetNtpEnabledCommands('win32', enabled, 'none')
-				.filter(c => c.benignCodes !== undefined)
+				.filter(c => c.benignOutput !== undefined && c.cmd === 'sc')
 				.map(c => [c.cmd, ...c.args].join(' '));
 		expect(tolerated(true)).toEqual(['sc start w32time']);
 		expect(tolerated(false)).toEqual(['sc stop w32time']);
+	});
+
+	/**
+	 * The bug this exists for: the allowance was keyed on the EXIT CODE being the Win32
+	 * reason, and `sc.exe` does not work that way. Measured on Windows 11 - `sc start`
+	 * against a running service exits 32 and prints "[SC] StartService FAILED 1056:", and
+	 * `sc stop` against a stopped one exits 38 and prints "[SC] ControlService FAILED 1062:".
+	 * Exit codes 1056 and 1062 therefore never arrived, and switching synchronisation on
+	 * where Windows Time was already up reported a failure for a host already in the
+	 * requested state.
+	 */
+	it('tolerates the state sc actually reports, exit code and all', async () => {
+		const alreadyRunning: CommandRunner = async (cmd, args) => (cmd === 'sc' && args[0] === 'start' ? { kind: 'failed', code: 32, output: '[SC] StartService FAILED 1056:' + CRLF2 + 'An instance of the service is already running.' } : { kind: 'ok', output: '' });
+		expect((await runAll('win32', buildSetNtpEnabledCommands('win32', true, 'none'), alreadyRunning)).success).toBe(true);
+		const alreadyStopped: CommandRunner = async (cmd, args) => (cmd === 'sc' && args[0] === 'stop' ? { kind: 'failed', code: 38, output: '[SC] ControlService FAILED 1062:' + CRLF2 + 'The service has not been started.' } : { kind: 'ok', output: '' });
+		expect((await runAll('win32', buildSetNtpEnabledCommands('win32', false, 'none'), alreadyStopped)).success).toBe(true);
+	});
+
+	it('does not tolerate a different sc failure', async () => {
+		const denied: CommandRunner = async () => ({ kind: 'failed', code: 5, output: '[SC] OpenService FAILED 5:' + CRLF2 + 'Access is denied.' });
+		expect((await runAll('win32', buildSetNtpEnabledCommands('win32', false, 'none'), denied)).outcome).toBe('permission-denied');
 	});
 });
 
@@ -378,40 +428,43 @@ describe('setSystemNtpServer', () => {
 	it('does not enable synchronization or resync when configuring a running NoSync service', async () => {
 		await onPlatform('win32', async () => {
 			const { exec, calls } = fakeRunner([]);
-			const mode = async (): Promise<WindowsModeState> => ({ mode: 'none', start: 'automatic', membership: 'standalone', running: true });
+			const mode = async (): Promise<WindowsModeState> => ({ mode: 'none', start: 'automatic', membership: 'standalone', service: 'running' });
 			expect((await setSystemNtpServer('ntp.example.org', capable, mode, exec)).success).toBe(true);
 			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8 /update']);
 		});
 	});
-	it('does not notify or resync a stopped trigger-start service just because policy enables it', async () => {
+	it('does not force a resync while synchronisation is configured off', async () => {
 		await onPlatform('win32', async () => {
 			const { exec, calls } = fakeRunner([]);
-			const mode = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'on-demand', membership: 'standalone', running: false });
+			const mode = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped' });
 			expect((await setSystemNtpServer('ntp.example.org', capable, mode, exec)).success).toBe(true);
-			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8']);
+			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8 /update']);
 		});
 	});
+
 	/**
-	 * A refused SCM read must not become a refusal of its own. A standard (non-elevated)
-	 * Windows user cannot query W32Time at all - measured error 5 on Windows 11 - and the
-	 * old branch answered such a host with `error: cannot determine whether Windows Time is
-	 * running`, hiding the actual reason that `w32tm /config` states plainly. Unknown is
-	 * read as stopped: the bare registry write, with no `/update` or `/resync` aimed at a
-	 * service that may not be up.
+	 * The regression these four cover: the notification used to be conditional on SEEING
+	 * the service run, and every state that is not a definite `running` - a refused read, a
+	 * service still starting, a service still stopping - was read as "stopped, nothing to
+	 * notify". A service that was in fact running was then never told about the new peer and
+	 * kept using the old one, while the save reported success.
+	 *
+	 * `/update` is now sent whatever the state, and forgiven when there turns out to be no
+	 * service to receive it, so none of these states can decide it wrongly any more.
 	 */
-	it('writes the bare peer list when the service running state is unknown', async () => {
+	it.each(['unreadable', 'changing', 'running', 'stopped'] as const)('notifies the service whatever its state reads as: %s', async service => {
 		await onPlatform('win32', async () => {
 			const { exec, calls } = fakeRunner([]);
-			const mode = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'on-demand', membership: 'standalone', running: null });
+			const mode = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'on-demand', membership: 'standalone', service });
 			expect((await setSystemNtpServer('ntp.example.org', capable, mode, exec)).success).toBe(true);
-			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8']);
+			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8 /update', 'w32tm /resync']);
 		});
 	});
 	it('reports the refusal w32tm gives an unprivileged caller, not a made-up reason', async () => {
 		await onPlatform('win32', async () => {
 			// What a standard user actually gets: exit 5 and w32tm's own access-denied line.
 			const exec: CommandRunner = async () => ({ kind: 'failed', code: 5, output: 'The following error occurred: Access is denied. (0x80070005)' });
-			const mode = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'on-demand', membership: 'standalone', running: null });
+			const mode = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'on-demand', membership: 'standalone', service: 'unreadable' });
 			const outcome = await setSystemNtpServer('ntp.example.org', capable, mode, exec);
 			expect(outcome.outcome).toBe('permission-denied');
 			expect(outcome.message).toContain('Access is denied');
@@ -420,10 +473,11 @@ describe('setSystemNtpServer', () => {
 	it('writes the peer list on a host whose time source is ours', async () => {
 		await onPlatform('win32', async () => {
 			const { exec, calls } = fakeRunner([]);
-			const ours = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'disabled', membership: 'standalone', running: false });
+			const ours = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped' });
 			expect((await setSystemNtpServer('ntp.example.org', capable, ours, exec)).success).toBe(true);
-			// The SCM reports stopped, so the peer update does not notify or start the service.
-			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8']);
+			// Synchronisation is configured off, so no resync is forced; the notification goes
+			// out anyway and costs nothing when there is no service to receive it.
+			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8 /update']);
 		});
 	});
 

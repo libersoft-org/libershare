@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { resolve } from 'node:path';
 import { setTimeout as scheduleTimeout, clearTimeout as cancelTimeout } from 'node:timers';
 import { getSystemTimeStatus, setSystemClock } from '../../src/system-time.ts';
-import { parseWindowsServiceRunning, parseWindowsTimeZone, readWindowsTimeServiceRunning, readWindowsTimeZone, readWindowsStatus, type WindowsModeState } from '../../src/system-time-windows.ts';
+import { parseWindowsServiceRunning, parseWindowsServiceState, parseWindowsTimeZone, readWindowsTimeServiceRunning, readWindowsTimeZone, readWindowsStatus, windowsClockRefusal, windowsServiceRunning, type WindowsModeState } from '../../src/system-time-windows.ts';
 
 function zoneBuffer(disabled = false): Uint8Array {
 	const bytes = new Uint8Array(432);
@@ -103,7 +103,7 @@ describe('SCM read handle lifetime', () => {
 it('does not offer clock or timezone writes when the native timezone read failed', async () => {
 	const status = await readWindowsStatus(
 		() => null,
-		async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', running: false })
+		async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped' })
 	);
 	expect(status.capabilities.setClock).toBe(false);
 	expect(status.capabilities.setTimezone).toBe(false);
@@ -133,18 +133,57 @@ it('does not offer clock or timezone writes when the native timezone read failed
 it('still offers the clock when the service state could not be read', async () => {
 	const status = await readWindowsStatus(
 		() => ({ windowsId: 'UTC', utcOffsetMinutes: 0, daylightDisabled: true }),
-		async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'automatic', membership: 'standalone', running: null })
+		async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'automatic', membership: 'standalone', service: 'unreadable' })
 	);
 	expect(status.capabilities.setClock).toBe(true);
 });
 
-it('does not offer a manual clock while a disabled-policy service is actually still running', async () => {
-	const status = await readWindowsStatus(
-		() => ({ windowsId: 'UTC', utcOffsetMinutes: 0, daylightDisabled: true }),
-		async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', running: true })
-	);
+/**
+ * The capability is the FACILITY, so it stays on; what a service in motion or running
+ * against policy forbids is this particular write, and that is decided at write time with
+ * its own reason. The two used to be one boolean, which is how a refused SCM read came
+ * back to the user as "this host has no facility for setting the clock".
+ */
+it('offers the clock facility but refuses the write while a disabled-policy service still runs', async () => {
+	const mode = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'running' });
+	const status = await readWindowsStatus(() => ({ windowsId: 'UTC', utcOffsetMinutes: 0, daylightDisabled: true }), mode);
 	expect(status.ntpEnabled).toBe(false);
-	expect(status.capabilities.setClock).toBe(false);
+	expect(status.capabilities.setClock).toBe(true);
+	expect(windowsClockRefusal(await mode())).toContain('would overwrite a hand-set clock');
+});
+
+/**
+ * The transition the old model could not see: `SERVICE_START_PENDING` and
+ * `SERVICE_STOP_PENDING` both read as neither running nor stopped, and were treated as
+ * "stopped, safe to write". "Start type disabled" and "already stopped" are not the same
+ * state - a service still on its way up finishes a second later and steps the clock back.
+ */
+it('refuses a clock write while the service is starting or stopping', () => {
+	expect(windowsClockRefusal({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'changing' })).toContain('starting or stopping');
+	expect(windowsClockRefusal({ mode: 'none', start: 'disabled', membership: 'standalone', service: 'changing' })).toContain('starting or stopping');
+});
+
+/** An unreadable state says nothing about the host, so it must not refuse: the write reports the real reason. */
+it('does not refuse a clock write merely because the service state could not be read', () => {
+	expect(windowsClockRefusal({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'unreadable' })).toBeNull();
+	expect(windowsClockRefusal({ mode: 'manual', start: 'automatic', membership: 'standalone', service: 'stopped' })).toBeNull();
+});
+
+it('reads each SCM state as itself, not as an unknown', () => {
+	const status = (state: number): Uint8Array => {
+		const bytes = new Uint8Array(36);
+		new DataView(bytes.buffer).setUint32(4, state, true);
+		return bytes;
+	};
+	expect(parseWindowsServiceState(status(4))).toBe('running');
+	expect(parseWindowsServiceState(status(1))).toBe('stopped');
+	// 2 START_PENDING, 3 STOP_PENDING, 5 CONTINUE_PENDING, 6 PAUSE_PENDING, 7 PAUSED
+	for (const state of [2, 3, 5, 6, 7]) expect(parseWindowsServiceState(status(state))).toBe('changing');
+	expect(parseWindowsServiceState(new Uint8Array(8))).toBe('unreadable');
+	expect(windowsServiceRunning('changing')).toBeNull();
+	expect(windowsServiceRunning('unreadable')).toBeNull();
+	expect(windowsServiceRunning('running')).toBe(true);
+	expect(windowsServiceRunning('stopped')).toBe(false);
 });
 
 describe.if(process.platform === 'win32')('Windows native reads on the live host', () => {

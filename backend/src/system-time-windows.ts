@@ -304,9 +304,34 @@ const W32TIME_POLICY_KEY = 'SOFTWARE\\Policies\\Microsoft\\W32Time';
  */
 export const W32TM_ERROR_RE: RegExp = /0x8[0-9A-Fa-f]{7}/;
 
+/**
+ * "There was no running service to notify": `ERROR_SERVICE_NOT_ACTIVE` (0x80070426) and
+ * `RPC_S_SERVER_UNAVAILABLE` (0x800706B5), the two ways `w32tm` reports that the Windows
+ * Time service is not up to receive a request.
+ *
+ * Measured on Windows 11: `w32tm /config /manualpeerlist:... /update` against a stopped
+ * service WROTE the peer list into the registry and then printed
+ * "The following error occurred: The service has not been started. (0x80070426)", exiting
+ * 38. The registry part - the whole persistent change - had succeeded.
+ */
+export const W32TM_SERVICE_INACTIVE_RE: RegExp = /0x8007(?:0426|06B5)/i;
+
 /** A `w32tm` step, with the output check that its zero exit code makes necessary. */
 export function w32tm(...args: string[]): SystemCommand {
 	return { cmd: 'w32tm', args, failOnOutput: W32TM_ERROR_RE };
+}
+
+/**
+ * A `w32tm` step whose only job beyond the registry write is to NOTIFY the running
+ * service, so "the service is not running" is nothing to report.
+ *
+ * This is what lets the caller stop asking whether the service is up. The state read
+ * cannot answer it reliably anyway - a service that is starting or stopping reads as
+ * neither - and guessing "stopped" from an unreadable or transitional state is how a
+ * running service was left never told about a new peer.
+ */
+export function w32tmNotifying(...args: string[]): SystemCommand {
+	return { cmd: 'w32tm', args, failOnOutput: W32TM_ERROR_RE, benignOutput: W32TM_SERVICE_INACTIVE_RE };
 }
 
 /** ERROR_SERVICE_ALREADY_RUNNING — `sc start` against a service that is already up. */
@@ -314,6 +339,28 @@ export const SC_ALREADY_RUNNING = 1056;
 
 /** ERROR_SERVICE_NOT_ACTIVE — `sc stop` against a service that is already down. */
 export const SC_NOT_ACTIVE = 1062;
+
+/**
+ * The Win32 reason `sc.exe` reports, matched in its OUTPUT because that is the only place
+ * it puts it.
+ *
+ * `sc` does NOT exit with the Win32 code, which is what this module assumed. Measured on
+ * Windows 11: `sc start` against a running service exits **32** and prints
+ * "[SC] StartService FAILED 1056:", and `sc stop` against a stopped one exits **38** and
+ * prints "[SC] ControlService FAILED 1062:". So the "it was already in that state"
+ * allowances keyed on exit codes 1056 and 1062 could never fire, and switching
+ * synchronisation on where Windows Time was already running reported a failure for a host
+ * that was already in the requested state.
+ *
+ * Keyed on the `[SC]` tag and the number, never on the sentence: the tag and the code come
+ * from `sc` itself, while the sentence after them is the localized system message.
+ */
+export function scFailureOutput(code: number): RegExp {
+	return new RegExp(String.raw`^\[SC\][^\r\n]*\b${code}\b`, 'm');
+}
+
+export const SC_ALREADY_RUNNING_RE: RegExp = scFailureOutput(SC_ALREADY_RUNNING);
+export const SC_NOT_ACTIVE_RE: RegExp = scFailureOutput(SC_NOT_ACTIVE);
 
 /**
  * Extract the value of a `REG_SZ`/`REG_DWORD` entry from `reg query ... /v NAME`
@@ -537,8 +584,8 @@ export interface WindowsModeState {
 	mode: WindowsSyncMode;
 	start: WindowsStartMode;
 	membership: DomainMembership;
-	/** Actual SCM state, separate from start policy. Missing or null is unknown. */
-	running?: boolean | null;
+	/** Actual SCM state, separate from start policy. Missing means it was not read. */
+	service?: WindowsServiceState;
 	/** The NTP client provider's own switch. False only when Windows says it is off. */
 	ntpClientEnabled?: boolean;
 }
@@ -561,7 +608,31 @@ export async function readWindowsMode(): Promise<WindowsModeState> {
 	// Read here rather than by the caller so a write's safety check gets the join state
 	// from the same read it gets the mode from, inside the same lock.
 	const membership = probeDomainMembership();
-	return { mode: parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policyManaged), start: parseWindowsStartMode(start), membership, running: readWindowsTimeServiceRunning(), ntpClientEnabled: parseWindowsNtpClientEnabled(client) };
+	return { mode: parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policyManaged), start: parseWindowsStartMode(start), membership, service: readWindowsTimeServiceState(), ntpClientEnabled: parseWindowsNtpClientEnabled(client) };
+}
+
+/**
+ * Why a hand-set clock must wait, given the Windows Time service's actual state, or null
+ * when nothing objects.
+ *
+ * Two distinct refusals, neither of which the shared `ntpEnabled` flag can express,
+ * because that flag comes from the REGISTRY - the sync type, the start mode and the NTP
+ * client switch - and says nothing about what the service is doing this second:
+ *
+ * - `running` while the registry says synchronisation is off and the source is not `none`:
+ *   an inconsistency in which the service is up and owns the clock anyway.
+ * - `changing`: the service is starting or stopping. "Start type disabled" and "already
+ *   stopped" are not the same state, and a clock written into the gap can be stepped back
+ *   by a service that finishes coming up a second later.
+ *
+ * `unreadable` deliberately does NOT refuse. It is what a standard user's SCM read
+ * returns, says nothing about the host, and the write itself reports the true reason
+ * (`permission-denied`, in the OS's own words).
+ */
+export function windowsClockRefusal(state: WindowsModeState): string | null {
+	if (state.service === 'changing') return 'the Windows Time service is starting or stopping, so the clock it may take over cannot be set right now';
+	if (state.service === 'running' && windowsSyncEnabled(state.mode, state.start, state.ntpClientEnabled) === false && state.mode !== 'none') return 'the Windows Time service is running even though synchronisation is configured off, so it would overwrite a hand-set clock';
+	return null;
 }
 
 /** Read the Windows (W32Time) part of the status. */
@@ -569,7 +640,7 @@ export async function readWindowsStatus(readZone: () => WindowsTimeZoneState | n
 	// Registry names establish policy; SCM and timezone APIs supply actual runtime state.
 	const params = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'NtpServer']);
 	const status = await tryRead('w32tm', ['/query', '/status']);
-	const { mode, start, membership, running, ntpClientEnabled } = await readMode();
+	const { mode, start, membership, ntpClientEnabled } = await readMode();
 	// Sample the native offset after asynchronous reads, near the final clock sample.
 	const zone = readZone();
 	// A time source an administrator owns is read-only here, so the UI disables the
@@ -581,48 +652,90 @@ export async function readWindowsStatus(readZone: () => WindowsTimeZoneState | n
 		ntpEnabled: windowsSyncEnabled(mode, start, ntpClientEnabled),
 		ntpSynchronized: status === null ? null : parseWindowsSyncStatus(status),
 		ntpServer: mode === 'manual' || mode === 'none' ? parseWindowsNtpServer(params === null ? null : parseRegValue(params, 'NtpServer')) : null,
-		// An UNREADABLE service state does not switch the clock capability off. A standard
-		// (non-elevated) Windows user cannot open W32Time through the SCM at all - measured on
-		// Windows 11, `sc query w32time` and the QueryServiceStatusEx probe both fail with
-		// error 5 - and requiring a definite state turned that refused READ into
-		// `setClock: false`, which the caller reports as "this host has no facility for
-		// setting the clock". That is a claim about the host, and it was false: the facility
-		// is there, the rights are not. The write itself reports the truth ("A required
-		// privilege is not held by the client", `permission-denied`), so the guard below only
-		// fires on a state Windows actually confirmed.
-		capabilities: { setClock: zone !== null && !(windowsSyncEnabled(mode, start, ntpClientEnabled) === false && running === true && mode !== 'none'), setTimezone: zone !== null && canConvertTimezoneId(), setNtpServer: ours, setNtpEnabled: ours },
+		// The CAPABILITY is only "does this host have the facility", which on Windows is the
+		// timezone API answering at all. Whether the clock may be set RIGHT NOW - the sync
+		// service is up, or in motion - is a refusal with its own reason, decided by
+		// `windowsClockRefusal` at write time. Folding those into this boolean is what once
+		// reported "this host has no facility for setting the clock" to a standard user whose
+		// only problem was that the SCM read had been refused.
+		capabilities: { setClock: zone !== null, setTimezone: zone !== null && canConvertTimezoneId(), setNtpServer: ours, setNtpEnabled: ours },
 	};
 }
 
-/** QueryServiceStatusEx returns SERVICE_STATUS_PROCESS: nine DWORDs, current state at offset 4. */
-export function parseWindowsServiceRunning(bytes: Uint8Array): boolean | null {
-	if (bytes.byteLength < 36) return null;
+/**
+ * What the Windows Time service is doing.
+ *
+ * Four values, not a boolean with a null: `changing` and `unreadable` used to collapse
+ * into the same "unknown", and they call for opposite handling. A service that is
+ * STARTING or STOPPING is a service in motion that may take the clock over a second
+ * later, so a write has to wait or be refused; a service whose state could merely not be
+ * READ says nothing about the host - a standard Windows user cannot open W32Time through
+ * the SCM at all (error 5) - and must not be reported as a missing facility.
+ *
+ * Treating either of them as `stopped` is the concrete bug this replaces: it sent the
+ * peer list without the `/update` that tells a RUNNING service about it, and it let a
+ * clock be hand-set while the sync service was still on its way up.
+ */
+export type WindowsServiceState = 'running' | 'stopped' | 'changing' | 'unreadable';
+
+/**
+ * QueryServiceStatusEx returns SERVICE_STATUS_PROCESS: nine DWORDs, current state at
+ * offset 4. `SERVICE_STOPPED` is 1 and `SERVICE_RUNNING` is 4; 2, 3, 5 and 6 are the
+ * pending transitions and 7 is paused, all of them a service in motion rather than an
+ * unknown one. A short buffer is a failed read.
+ */
+export function parseWindowsServiceState(bytes: Uint8Array): WindowsServiceState {
+	if (bytes.byteLength < 36) return 'unreadable';
 	const state = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(4, true);
-	return state === 4 ? true : state === 1 ? false : null;
+	if (state === 4) return 'running';
+	if (state === 1) return 'stopped';
+	return state >= 2 && state <= 7 ? 'changing' : 'unreadable';
 }
 
-/** Query only W32Time status; no service start, stop or configuration access is requested. */
-export function readWindowsTimeServiceRunning(): boolean | null {
+/** {@link parseWindowsServiceState} as the boolean-with-unknown that a settle wait needs. */
+export function parseWindowsServiceRunning(bytes: Uint8Array): boolean | null {
+	return windowsServiceRunning(parseWindowsServiceState(bytes));
+}
+
+/** A service state as the boolean a settle wait compares against; null while it is neither. */
+export function windowsServiceRunning(state: WindowsServiceState): boolean | null {
+	return state === 'running' ? true : state === 'stopped' ? false : null;
+}
+
+/**
+ * Query only W32Time status; no service start, stop or configuration access is requested.
+ *
+ * Every failure here is `unreadable`, and that is a state of its own rather than an
+ * unknown host: a standard Windows user cannot open the service at all (measured: error 5
+ * from both the SCM open and `sc query`), which says nothing about whether the service
+ * runs.
+ */
+export function readWindowsTimeServiceState(): WindowsServiceState {
 	const api = getAdvapi32();
-	if (!api) return null;
+	if (!api) return 'unreadable';
 	let manager = 0n;
 	let service = 0n;
 	try {
 		manager = api.OpenSCManagerW(null, null, 0x0001); // SC_MANAGER_CONNECT
-		if (manager === 0n) return null;
+		if (manager === 0n) return 'unreadable';
 		const name = toWideCString('W32Time');
 		service = api.OpenServiceW(manager, ptr(name), 0x0004); // SERVICE_QUERY_STATUS
-		if (service === 0n) return null;
+		if (service === 0n) return 'unreadable';
 		const bytes = new Uint8Array(36);
 		const needed = new Uint32Array(1);
-		if (!api.QueryServiceStatusEx(service, 0, ptr(bytes), bytes.length, ptr(needed))) return null;
-		return parseWindowsServiceRunning(bytes);
+		if (!api.QueryServiceStatusEx(service, 0, ptr(bytes), bytes.length, ptr(needed))) return 'unreadable';
+		return parseWindowsServiceState(bytes);
 	} catch {
-		return null;
+		return 'unreadable';
 	} finally {
 		if (service !== 0n) api.CloseServiceHandle(service);
 		if (manager !== 0n) api.CloseServiceHandle(manager);
 	}
+}
+
+/** {@link readWindowsTimeServiceState} as the boolean a settle wait compares against. */
+export function readWindowsTimeServiceRunning(): boolean | null {
+	return windowsServiceRunning(readWindowsTimeServiceState());
 }
 
 export interface WindowsTimeZoneState {
