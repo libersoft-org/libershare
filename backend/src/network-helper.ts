@@ -1,6 +1,7 @@
 import { open } from 'node:fs/promises';
 import { assertWindowsRequestOwner } from './network-helper-windows.ts';
 import { applyIPv4 } from './system-network.ts';
+import { applySystemTimeSettings } from './system-time.ts';
 import { decodeNetworkHelperRequest, executeNetworkHelperRequest, networkHelperExitCode, networkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
 
 const MAX_REQUEST_BYTES = 12 * 1024;
@@ -60,7 +61,14 @@ const args = process.argv.slice(2);
 const reportWithExitCode = reportsWithExitCode(args);
 let response: NetworkHelperResponse;
 try {
-	response = await executeNetworkHelperRequest(await readRequest(args), (interfaceID, config, expected) => applyIPv4(interfaceID, config, '', false, expected));
+	// The time save runs here exactly as it would unprivileged - same ordering, same
+	// staleness checks against a fresh read of this host - only with the rights the
+	// unelevated backend does not have.
+	response = await executeNetworkHelperRequest(
+		await readRequest(args),
+		(interfaceID, config, expected) => applyIPv4(interfaceID, config, '', false, expected),
+		changes => applySystemTimeSettings(changes)
+	);
 } catch (error) {
 	response = networkHelperFailure(error);
 }

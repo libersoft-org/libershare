@@ -3,7 +3,8 @@ import { existsSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { productIdentifier } from '@shared';
+import { productIdentifier, type SystemTimeChanges, type SystemTimeResult } from '@shared';
+import { parseSystemTimeExitCode, systemTimeHelperFailure } from './system-time-helper.ts';
 import { expectedNetworkHelperHash, sha256File } from './network-helper-integrity.ts';
 import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from './system-network-linux.ts';
 import { encodeNetworkHelperRequest, NETWORK_HELPER_EXIT, parseNetworkHelperResponse, type NetworkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
@@ -194,6 +195,70 @@ async function runLinuxHelper(helper: string, request: NetworkHelperRequest): Pr
 	}
 	if (code !== 0) throw new Error(stderr.trim() || `network helper exited with ${code}`);
 	return stdout;
+}
+
+/**
+ * Run one system-time save with the rights the desktop process does not have.
+ *
+ * Same binary, same launcher, same signature and hash checks as the network apply -
+ * a second privileged helper would have to re-earn all of that. The answer comes
+ * back as the host's own {@link SystemTimeResult}, so the screen renders "switch
+ * synchronisation off first" or "the host changed under your form" exactly as it
+ * does for an unprivileged write.
+ *
+ * On Windows the exit code is the only channel out of an elevated process, so the
+ * launcher's own codes have to be told apart from a packed outcome - and unlike the
+ * network path, a non-zero status is the NORMAL case here (`ok` is 32, not 0), which
+ * is why this does not reuse `runWindowsHelper`.
+ */
+export async function runElevatedSystemTime(changes: SystemTimeChanges, platform: NodeJS.Platform = process.platform): Promise<SystemTimeResult> {
+	const helper = networkHelperPath(platform);
+	if (!(await networkHelperAvailable(platform))) return systemTimeHelperFailure('permission-denied', 'the privileged helper is not available or not trusted, so the change needs an elevated application');
+	const request: NetworkHelperRequest = { version: 1, operation: 'applySystemTime', changes };
+	if (platform === 'win32') return runWindowsSystemTime(encodeNetworkHelperRequest(request));
+	let response: NetworkHelperResponse;
+	try {
+		response = parseNetworkHelperResponse(platform === 'darwin' ? await runMacHelper(helper, encodeNetworkHelperRequest(request)) : await runLinuxHelper(helper, request));
+	} catch (error) {
+		// Cancelling the authorization dialog lands here: osascript and pkexec both fail
+		// the call rather than answering, so there is no outcome to unpack.
+		return systemTimeHelperFailure(
+			'permission-denied',
+			(error instanceof Error ? error.message : String(error))
+				.replace(/\p{Cc}/gu, ' ')
+				.trim()
+				.slice(0, 500) || 'the privileged helper did not run'
+		);
+	}
+	if (!response.ok) return systemTimeHelperFailure('error', response.error);
+	if (!('time' in response)) return systemTimeHelperFailure('error', 'the privileged helper answered the wrong request');
+	return response.time;
+}
+
+/** What each launcher exit code means to someone who pressed Save on the time screen. */
+const WINDOWS_LAUNCHER_TIME_FAILURES: Readonly<Record<number, SystemTimeResult>> = {
+	[WINDOWS_LAUNCHER_EXIT.untrusted]: systemTimeHelperFailure('permission-denied', 'the privileged helper is missing or not trusted'),
+	[WINDOWS_LAUNCHER_EXIT.cancelled]: systemTimeHelperFailure('permission-denied', 'the administrator prompt was cancelled'),
+	[WINDOWS_LAUNCHER_EXIT.timeout]: systemTimeHelperFailure('error', 'the privileged helper timed out'),
+};
+
+export function windowsSystemTimeExit(exitCode: unknown, killed: boolean = false): SystemTimeResult {
+	if (killed) return WINDOWS_LAUNCHER_TIME_FAILURES[WINDOWS_LAUNCHER_EXIT.timeout]!;
+	const code = typeof exitCode === 'number' ? exitCode : -1;
+	return parseSystemTimeExitCode(code) ?? WINDOWS_LAUNCHER_TIME_FAILURES[code] ?? systemTimeHelperFailure('error', 'the privileged helper failed');
+}
+
+async function runWindowsSystemTime(encoded: string): Promise<SystemTimeResult> {
+	const launcher = windowsNetworkLauncherPath();
+	try {
+		await execFileAsync(launcher, ['--request', encoded], { timeout: HELPER_TIMEOUT_MS + 5000, maxBuffer: MAX_HELPER_OUTPUT_BYTES, windowsHide: true, cwd: dirname(launcher) });
+		// Exit 0 is the network path's "applied" and never a packed time outcome, so a
+		// helper that answered with it did not run the request this call made.
+		return systemTimeHelperFailure('error', 'the privileged helper answered the wrong request');
+	} catch (error) {
+		const failure = error as { code?: unknown; killed?: boolean } | null;
+		return windowsSystemTimeExit(failure?.code, failure?.killed === true);
+	}
 }
 
 export async function runElevatedNetworkHelper(request: NetworkHelperRequest, platform: NodeJS.Platform = process.platform): Promise<NetworkHelperResponse> {

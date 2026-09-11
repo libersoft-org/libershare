@@ -507,7 +507,9 @@ export interface SystemTimeChanges {
  *   read the host again.
  * - `error`: anything else; {@link SystemTimeResult.message} carries the underlying text.
  */
-export type SystemTimeOutcome = 'ok' | 'permission-denied' | 'unsupported' | 'auto-sync-enabled' | 'invalid-input' | 'stale' | 'error';
+/** Order is load-bearing: an outcome's index is what an elevated Windows helper reports it by (see `systemTimeExitCode`). Append, never reorder. */
+export const SYSTEM_TIME_OUTCOMES = ['ok', 'permission-denied', 'unsupported', 'auto-sync-enabled', 'invalid-input', 'stale', 'error'] as const;
+export type SystemTimeOutcome = (typeof SYSTEM_TIME_OUTCOMES)[number];
 
 /** One command of a multi-step system-time write, and how it went. */
 export interface SystemTimeStep {

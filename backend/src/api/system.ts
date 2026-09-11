@@ -5,7 +5,8 @@ import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type Sy
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
-import { applySystemTimeSettings, getSystemTimeStatus, listHostTimezones, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, withSystemTimeLock } from '../system-time.ts';
+import { getSystemTimeStatus, listHostTimezones, withSystemTimeLock } from '../system-time.ts';
+import { applySystemTimeSettingsWithElevation } from '../system-time-elevation.ts';
 import { applyIPv4Unlocked, connectWifiUnlocked, disconnectWifiUnlocked, readNetworkState, readNetworkStateUnlocked, runNetworkMutation, scanWifi } from '../system-network.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
@@ -222,28 +223,28 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		for (const key of ['hours', 'minutes', 'seconds'] as const) {
 			if (typeof p[key] !== 'number' || !Number.isFinite(p[key])) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `${key} must be a number`);
 		}
-		return applyTimeWrite(() => setSystemClock(p.hours, p.minutes, p.seconds));
+		return applyTimeWrite(() => applySystemTimeSettingsWithElevation({ clock: { hours: p.hours, minutes: p.minutes, seconds: p.seconds } }));
 	}
 
 	/** Set the system timezone from an IANA identifier. An unknown identifier comes back as an `invalid-input` outcome. */
 	function setTimezone(p: { timezone: string }): Promise<SystemTimeResult> {
 		assert(p, ['timezone']);
 		if (typeof p.timezone !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'timezone must be a string');
-		return applyTimeWrite(() => setSystemTimezone(p.timezone));
+		return applyTimeWrite(() => applySystemTimeSettingsWithElevation({ timezone: p.timezone }));
 	}
 
 	/** Point automatic time synchronisation at an NTP server (host name or IP address). */
 	function setNtpServer(p: { server: string }): Promise<SystemTimeResult> {
 		assert(p, ['server']);
 		if (typeof p.server !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'server must be a string');
-		return applyTimeWrite(() => setSystemNtpServer(p.server.trim()));
+		return applyTimeWrite(() => applySystemTimeSettingsWithElevation({ ntpServer: p.server.trim() }));
 	}
 
 	/** Switch automatic time synchronisation on or off. Setting the clock by hand requires it off. */
 	function setNtpEnabled(p: { enabled: boolean }): Promise<SystemTimeResult> {
 		assert(p, ['enabled']);
 		if (typeof p.enabled !== 'boolean') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'enabled must be a boolean');
-		return applyTimeWrite(() => setSystemNtpEnabled(p.enabled));
+		return applyTimeWrite(() => applySystemTimeSettingsWithElevation({ ntpEnabled: p.enabled }));
 	}
 
 	/** Validate and apply every changed time field as one serialized save. */
@@ -281,7 +282,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 			}
 			changes.clock = { hours: p.clock.hours, minutes: p.clock.minutes, seconds: p.clock.seconds };
 		}
-		return applyTimeWrite(() => applySystemTimeSettings(changes));
+		return applyTimeWrite(() => applySystemTimeSettingsWithElevation(changes));
 	}
 
 	// Detect OS-side volume changes (system tray, media keys, device plug/unplug)
