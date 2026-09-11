@@ -5,7 +5,7 @@ import { isSystemTimeChanges, isSystemTimeResult, parseSystemTimeExitCode, syste
 import { isValidNtpServer } from '../../src/system-time-common.ts';
 import { parseNtpConfServer, parseZoneinfoLink, readMacLocaltimeZone, readMacNtpConfServer, readMacStatus } from '../../src/system-time-macos.ts';
 import { ianaToWindowsTimezoneId, rememberWindowsZone, windowsToIanaTimezone } from '../../src/system-time-windows.ts';
-import { setSystemNtpEnabled } from '../../src/system-time.ts';
+import { applySystemTimeSettings, sameHostZone, setSystemNtpEnabled } from '../../src/system-time.ts';
 import type { SystemTimeStatus } from '@shared';
 import { applySystemTimeSettingsWithElevation, localAttemptIsPointless, needsElevation, requiresPrivilegesUpFront } from '../../src/system-time-elevation.ts';
 import { windowsSystemTimeExit } from '../../src/network-helper-client.ts';
@@ -657,3 +657,47 @@ describe('the macOS zone an unprivileged reader can still see', () => {
 		expect(readMacLocaltimeZone('/definitely/not/here/localtime')).toBeNull();
 	});
 });
+
+describe('the same host zone under two different names', () => {
+	/**
+	 * The bug this exists for: Windows stores one identifier for several IANA names -
+	 * `Europe/Prague` and `Europe/Budapest` are both `Central Europe Standard Time` - and
+	 * which name a process reports for it depends on a per-process memory. The privileged
+	 * helper is always a fresh process, so it resolved the identifier to its own zone while
+	 * the backend reported the city the user had picked. The staleness check compared the
+	 * NAMES and refused every clock save with `stale`, before writing anything - and a
+	 * reload did not help, because the backend kept reporting the remembered name.
+	 */
+	it('is the same zone on Windows, and not anywhere else', () => {
+		expect(sameHostZone('win32', 'Europe/Prague', 'Europe/Prague')).toBe(true);
+		expect(sameHostZone('linux', 'Europe/Prague', 'Europe/Prague')).toBe(true);
+		if (ianaToWindowsTimezoneId('Europe/Budapest') !== null) {
+			expect(sameHostZone('win32', 'Europe/Prague', 'Europe/Budapest')).toBe(true);
+			// A genuinely different zone is still a different zone.
+			expect(sameHostZone('win32', 'Europe/Prague', 'Europe/London')).toBe(false);
+		}
+		// Elsewhere the name IS the identifier, so two cities never collapse into one.
+		expect(sameHostZone('linux', 'Europe/Prague', 'Europe/Budapest')).toBe(false);
+		expect(sameHostZone('darwin', 'Europe/Prague', 'Europe/Budapest')).toBe(false);
+	});
+
+	/** No conversion available means no claim of equality: the names decide, which is the strict direction. */
+	it('falls back to the names when the conversion cannot answer', () => {
+		expect(sameHostZone('win32', 'Not/AZone', 'Other/AZone')).toBe(false);
+		expect(sameHostZone('win32', 'Not/AZone', 'Not/AZone')).toBe(true);
+	});
+
+	/**
+	 * The offset check the call site does alongside this one is deliberately untouched: it
+	 * is what still catches Windows switching automatic daylight saving off, which moves the
+	 * offset while the identifier stays put.
+	 */
+	it('still refuses a save composed against a different offset', async () => {
+		const at = Date.UTC(2026, 8, 11, 12, 0, 0);
+		const host = async (): Promise<SystemTimeStatus> => statusFixture({ nowMs: at, timezone: 'Europe/Prague', utcOffsetMinutes: 60 });
+		const outcome = await applySystemTimeSettings({ clock: { hours: 1, minutes: 2, seconds: 3 }, expectedTimezone: 'Europe/Prague', expectedOffsetMinutes: 120 }, undefined, host);
+		expect(outcome.outcome).toBe('stale');
+		expect(outcome.message).toContain('minutes from UTC');
+	});
+});
+

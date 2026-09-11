@@ -348,6 +348,37 @@ const defaultSystemTimeWriters: SystemTimeWriters = {
 	setClock: clock => setSystemClock(clock.hours, clock.minutes, clock.seconds),
 };
 
+/**
+ * Whether two IANA names describe the same zone AS THIS HOST CAN TELL.
+ *
+ * Everywhere but Windows that is string equality. Windows stores a zone the user picked as
+ * one identifier shared by several IANA names - `Europe/Prague` and `Europe/Budapest` are
+ * both `Central Europe Standard Time` - and which name a given process reports back for it
+ * depends on a per-process memory (see `rememberWindowsZone`). Two processes therefore
+ * disagree about the NAME while describing the same host setting, and the privileged helper
+ * is always a fresh process.
+ *
+ * That turned an ordinary clock save into `stale`: the backend remembered the Budapest the
+ * user had picked, the helper resolved the same identifier to its own process zone, the
+ * names differed and the write was refused before it started - every time, because the
+ * backend kept reporting the remembered name. Comparing the identifiers instead compares
+ * what the host actually stores.
+ *
+ * The offset check at the call site is deliberately NOT relaxed: it is what still catches a
+ * real change, including Windows switching automatic daylight saving off for a zone, which
+ * moves the offset while the identifier stays put.
+ *
+ * Falls back to comparing the names whenever a conversion is unavailable, which is the
+ * strict direction.
+ */
+export function sameHostZone(platform: NodeJS.Platform, current: string, expected: string): boolean {
+	if (current === expected) return true;
+	if (platform !== 'win32') return false;
+	const currentId = ianaToWindowsTimezoneId(current);
+	const expectedId = ianaToWindowsTimezoneId(expected);
+	return currentId !== null && currentId === expectedId;
+}
+
 /** Apply one settings snapshot without allowing another client's save to interleave. */
 export function applySystemTimeSettings(changes: SystemTimeChanges, writers: SystemTimeWriters = defaultSystemTimeWriters, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus): Promise<SystemTimeResult> {
 	// Validate the complete input before an earlier field can change the host.
@@ -372,7 +403,7 @@ export function applySystemTimeSettings(changes: SystemTimeChanges, writers: Sys
 		// serialising them cannot catch it; only the expectation can.
 		if (changes.expectedTimezone !== undefined) {
 			const current = await readStatus();
-			if (current.timezone !== changes.expectedTimezone) return result('stale', `the host timezone is now ${current.timezone}, not ${changes.expectedTimezone} as this request was composed against`);
+			if (!sameHostZone(process.platform, current.timezone, changes.expectedTimezone)) return result('stale', `the host timezone is now ${current.timezone}, not ${changes.expectedTimezone} as this request was composed against`);
 			// The offset too, and for the same reason: Windows can switch automatic daylight saving
 			// off for a zone, which moves the offset while the name stays put. Same name at +120 and
 			// at +60 turns the same digits into instants an hour apart.
@@ -777,4 +808,4 @@ export { syncDirectory, type RollbackResult, writeFileAtomically } from './syste
 
 export { parseSystemsetupValue, parseSystemsetupOnOff, MAC_NEEDS_ROOT_RE, macSystemsetup } from './system-time-macos.ts';
 
-export { W32TM_ERROR_RE, W32TM_SERVICE_INACTIVE_RE, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, scFailureOutput, probeLocalMachineKeyWritable, windowsProcessElevated, type RegistryWriteState, W32TIME_NTP_CLIENT_SUBKEY, w32tmNotifying, type WindowsServiceState, parseWindowsServiceState, readWindowsTimeServiceState, readWindowsMode, windowsServiceRunning, windowsClockRefusal, parseRegValue, parseWindowsNtpServer, type WindowsSyncMode, type WindowsStartMode, parseWindowsSyncMode, parseWindowsStartMode, windowsSyncIsOurs, windowsSyncEnabled, parseWindowsSyncStatus, rememberWindowsZone, windowsToIanaTimezone, parseTzutilZone, readWindowsPolicyManaged, type WindowsModeState, type WindowsModeReader } from './system-time-windows.ts';
+export { W32TM_ERROR_RE, W32TM_SERVICE_INACTIVE_RE, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, scFailureOutput, probeLocalMachineKeyWritable, windowsProcessElevated, ianaToWindowsTimezoneId, type RegistryWriteState, W32TIME_NTP_CLIENT_SUBKEY, w32tmNotifying, type WindowsServiceState, parseWindowsServiceState, readWindowsTimeServiceState, readWindowsMode, windowsServiceRunning, windowsClockRefusal, parseRegValue, parseWindowsNtpServer, type WindowsSyncMode, type WindowsStartMode, parseWindowsSyncMode, parseWindowsStartMode, windowsSyncIsOurs, windowsSyncEnabled, parseWindowsSyncStatus, rememberWindowsZone, windowsToIanaTimezone, parseTzutilZone, readWindowsPolicyManaged, type WindowsModeState, type WindowsModeReader } from './system-time-windows.ts';
