@@ -6,7 +6,7 @@ import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from '../../src/system-net
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
-import { assertWindowsRequestOwner, parseWindowsRequestFileName, windowsCurrentProcessIdentity, windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProcessImagePath, windowsProgramFilesPath, windowsRequestFileHeld, windowsRequestFileName, windowsSystemEnvironment, writeWindowsRequestFile } from '../../src/network-helper-windows.ts';
+import { assertWindowsRequestOwner, parseWindowsRequestFileName, windowsCurrentProcessIdentity, windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProcessImagePath, windowsProgramFilesPath, windowsRequestFileHeld, windowsRequestFileName, windowsSystemEnvironment, writeWindowsRequestFile, elevationClock } from '../../src/network-helper-windows.ts';
 
 /** A baseline of the exact shape the backend builds, which every request has to carry. */
 const baseline = { mode: 'dhcp' as const, address: null, prefixLength: null, gateway: null, dns: [] };
@@ -45,7 +45,7 @@ describe('network helper protocol', () => {
 		// re-check the baseline against its own fresh read, so it has to receive it.
 		const expected = { mode: 'static' as const, address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53'] };
 		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected }));
-		expect(request.expected).toEqual(expected);
+		expect(request.operation === 'applyIPv4' && request.expected).toEqual(expected);
 		const seen: unknown[] = [];
 		await executeNetworkHelperRequest(request, async (_interfaceID, _config, baseline) => {
 			seen.push(baseline);
@@ -292,5 +292,25 @@ describe('network helper launch commands', () => {
 		expect(macAppBundleRoot('/Applications/LiberShare.app/Contents/Resources/lish-network-helper')).toBe('/Applications/LiberShare.app');
 		expect(macAppBundleRoot('/Users/alice/Applications/LiberShare.app/Contents/Resources/lish-network-helper')).toBeNull();
 		expect(macAppBundleRoot('/tmp/LiberShare.app/Contents/Resources/lish-network-helper')).toBeNull();
+	});
+});
+
+describe('the clock the elevation wait measures against', () => {
+	/**
+	 * The bug this exists for: the deadline was `Date.now()`, and the helper being waited
+	 * on may be setting the WALL clock. Measured on Windows 11 - a hand-set clock 1 h 47 min
+	 * ahead made the very next poll look like a 180-second timeout, so a clock change that
+	 * HAD been applied came back as `the privileged helper timed out`, and the helper was
+	 * terminated on the way out. A wall-clock reading is orders of magnitude larger than a
+	 * monotonic one, which is what this tells apart.
+	 */
+	it('is monotonic, not the wall clock', () => {
+		expect(elevationClock()).toBeLessThan(Date.now() / 1000);
+	});
+
+	it('moves forward on its own', async () => {
+		const before = elevationClock();
+		await new Promise(resolve => setTimeout(resolve, 20));
+		expect(elevationClock()).toBeGreaterThan(before);
 	});
 });

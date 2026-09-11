@@ -348,10 +348,21 @@ export async function verifyWindowsInstalledHelper(path: string, executable: str
  */
 export const WINDOWS_LAUNCHER_EXIT = { untrusted: 11, cancelled: 12, timeout: 13 } as const;
 
+/**
+ * The clock the elevation wait measures its deadline against.
+ *
+ * Monotonic on purpose, and named so a test can assert that. `Date.now()` would follow
+ * the WALL clock, which the helper being waited on may itself be setting: measured on
+ * Windows 11, a hand-set clock 1 h 47 min ahead made the next poll look like a
+ * 180-second timeout, so a change that HAD been applied came back as a failure and the
+ * helper was terminated on the way out.
+ */
+export const elevationClock = (): number => performance.now();
+
 /** Outcome of one elevation attempt. Only genuine Win32 faults throw. */
 export type WindowsElevationOutcome = { kind: 'exited'; code: number } | { kind: 'cancelled' } | { kind: 'timeout' };
 
-export async function runElevatedWindowsProcess(file: string, parameters: string, timeoutMs: number): Promise<WindowsElevationOutcome> {
+export async function runElevatedWindowsProcess(file: string, parameters: string, timeoutMs: number, now: () => number = elevationClock): Promise<WindowsElevationOutcome> {
 	if (process.platform !== 'win32') throw new Error('Windows elevation is unavailable');
 	const shell = dlopen('shell32.dll', {
 		ShellExecuteExW: { args: [FFIType.ptr], returns: FFIType.i32 },
@@ -387,12 +398,12 @@ export async function runElevatedWindowsProcess(file: string, parameters: string
 		}
 		processHandle = Number(view.getBigUint64(PROCESS_HANDLE_OFFSET, true)) as Pointer;
 		if (!processHandle) throw new Error('ShellExecuteExW returned no process handle');
-		const started = Date.now();
+		const started = now();
 		while (true) {
 			const wait = kernel.symbols.WaitForSingleObject(processHandle, 0);
 			if (wait === WAIT_OBJECT_0) break;
 			if (wait !== WAIT_TIMEOUT) throw new Error(`WaitForSingleObject failed with ${wait}`);
-			if (Date.now() - started >= timeoutMs) {
+			if (now() - started >= timeoutMs) {
 				kernel.symbols.TerminateProcess(processHandle, 1);
 				return { kind: 'timeout' };
 			}
