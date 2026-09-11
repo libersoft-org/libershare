@@ -7,8 +7,21 @@ import { type SystemTimeOutcome, type SystemTimezoneSource, type SystemTimeResul
 
 const execFileAsync = promisify(execFile);
 
-/** Hard cap on how long any time-related child process may run before we give up. */
-const EXEC_TIMEOUT_MS = 5000;
+/** Hard cap on how long a time-related READ may run before we give up. */
+export const EXEC_TIMEOUT_MS = 5000;
+
+/**
+ * How long a WRITE may take, as opposed to a read.
+ *
+ * A privileged write can stop and wait for a person: `timedatectl` and `systemctl` ask
+ * polkit, which on a desktop session puts an authentication dialog on screen and blocks
+ * until it is answered. The five-second read budget killed that prompt while the user was
+ * still reading it, and the kill arrives as a `timeout` - a generic error, so the
+ * privileged-helper retry, which only follows a permission refusal, never happened
+ * either. Ninety seconds is a human budget that still fits inside the screen's own
+ * two-minute save limit.
+ */
+export const WRITE_TIMEOUT_MS = 90_000;
 
 const LINUX_EXECUTABLES: Readonly<Record<string, string>> = {
 	timedatectl: '/usr/bin/timedatectl',
@@ -413,7 +426,7 @@ export function timezoneOffsetMinutes(zone: string, at: Date = new Date()): numb
  * - `ok`: exit 0, with stdout.
  * - `missing`: the binary does not exist — a definitive "this facility is absent".
  * - `failed`: it ran and refused; `code` and `output` feed {@link classifyFailure}.
- * - `timeout`: the child was killed after {@link EXEC_TIMEOUT_MS}; the facility exists
+ * - `timeout`: the child was killed after its budget ran out; the facility exists
  *   but is wedged, which is a transient error and never an absence.
  */
 export type RunOutcome = { kind: 'ok'; output: string } | { kind: 'missing' } | { kind: 'failed'; code: number | null; output: string } | { kind: 'timeout' };
@@ -432,7 +445,7 @@ function decode(cmd: string, bytes: Uint8Array): string {
 	return cmd === 'powershell' ? Buffer.from(bytes).toString('utf8') : decodeCommandOutput(bytes);
 }
 
-export async function run(cmd: string, args: string[]): Promise<RunOutcome> {
+export async function run(cmd: string, args: string[], timeoutMs: number = EXEC_TIMEOUT_MS): Promise<RunOutcome> {
 	try {
 		const executable = resolveSystemExecutable(process.platform, cmd);
 		if (!executable) return { kind: 'missing' };
@@ -443,7 +456,7 @@ export async function run(cmd: string, args: string[]): Promise<RunOutcome> {
 		// wedged helper ignoring the default SIGTERM would hang the caller forever.
 		// `encoding: 'buffer'` because the bytes are not UTF-8 on a localized Windows
 		// console — see decodeCommandOutput.
-		const { stdout } = await execFileAsync(executable, args, { timeout: EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true, env: environment, encoding: 'buffer' });
+		const { stdout } = await execFileAsync(executable, args, { timeout: timeoutMs, killSignal: 'SIGKILL', windowsHide: true, env: environment, encoding: 'buffer' });
 		return { kind: 'ok', output: decode(cmd, stdout) };
 	} catch (err) {
 		const e = err as { code?: number | string; killed?: boolean; signal?: string | null; stdout?: Uint8Array; stderr?: Uint8Array; message?: string };
@@ -466,6 +479,12 @@ export function result(outcome: SystemTimeOutcome, message: string | null = null
 	return { success: outcome === 'ok', outcome, message };
 }
 
+/**
+ * Run one command as a WRITE: with the budget of something that may wait for an
+ * authorization prompt rather than the short one a status read gets.
+ */
+export const runWrite: CommandRunner = (cmd, args) => run(cmd, args, WRITE_TIMEOUT_MS);
+
 /** Runs a single command and reports how it went. */
 export type CommandRunner = (cmd: string, args: string[]) => Promise<RunOutcome>;
 
@@ -484,7 +503,7 @@ export type CommandRunner = (cmd: string, args: string[]) => Promise<RunOutcome>
  * `exec` is injectable so the sequencing and the outcome mapping can be exercised
  * without spawning anything.
  */
-export async function runAll(platform: SystemPlatform, commands: SystemCommand[], exec: CommandRunner = run): Promise<SystemTimeResult> {
+export async function runAll(platform: SystemPlatform, commands: SystemCommand[], exec: CommandRunner = runWrite): Promise<SystemTimeResult> {
 	if (commands.length === 0) return result('unsupported', 'no command available for this platform');
 	const steps: SystemTimeStep[] = [];
 	/** A stopped sequence: the failing step is recorded, and everything before it already ran. */

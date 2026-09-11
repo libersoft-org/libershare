@@ -1,4 +1,4 @@
-import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, run, validateClockParts, runAll, listSystemTimezones, isValidNtpServer } from './system-time-common.ts';
+import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, runWrite, validateClockParts, runAll, listSystemTimezones, isValidNtpServer } from './system-time-common.ts';
 import { macSystemsetup, readMacStatus } from './system-time-macos.ts';
 import { w32tm, w32tmNotifying, windowsClockRefusal, W32TIME_NTP_CLIENT_KEY, type WindowsSyncMode, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled, readWindowsTimeZone, readWindowsTimeServiceRunning, type WindowsTimeZoneState } from './system-time-windows.ts';
 import { readLinuxStatus, TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn, verifyTimesyncdServer } from './system-time-linux.ts';
@@ -480,7 +480,7 @@ export function hostDateParts(nowMs: number, utcOffsetMinutes: number): Pick<Loc
  * `readStatus` and `exec` are injectable so the ordering can be exercised without setting
  * the clock of the machine running the tests.
  */
-export async function setSystemClock(hours: number, minutes: number, seconds: number, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = run, readMode: WindowsModeReader = readWindowsMode): Promise<SystemTimeResult> {
+export async function setSystemClock(hours: number, minutes: number, seconds: number, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = runWrite, readMode: WindowsModeReader = readWindowsMode): Promise<SystemTimeResult> {
 	const invalid = validateClockParts(hours, minutes, seconds);
 	if (invalid) return result('invalid-input', invalid);
 	const platform = process.platform;
@@ -519,7 +519,7 @@ export async function setSystemClock(hours: number, minutes: number, seconds: nu
  *
  * `exec` is injectable so the ordering can be exercised without moving the host's zone.
  */
-export async function setSystemTimezone(timezone: string, exec: CommandRunner = run, readWindowsZone: () => WindowsTimeZoneState | null = readWindowsTimeZone): Promise<SystemTimeResult> {
+export async function setSystemTimezone(timezone: string, exec: CommandRunner = runWrite, readWindowsZone: () => WindowsTimeZoneState | null = readWindowsTimeZone): Promise<SystemTimeResult> {
 	const known = listHostTimezones();
 	if (known.length === 0) return result('unsupported', 'this runtime has no timezone database');
 	if (!known.includes(timezone)) return result('invalid-input', `unknown timezone: ${timezone}`);
@@ -554,7 +554,7 @@ export async function setSystemTimezone(timezone: string, exec: CommandRunner = 
  * Point the host's time synchronisation at `server`. A single server is configured;
  * that is all macOS supports through `systemsetup`, and it is what the UI offers.
  */
-export async function setSystemNtpServer(server: string, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, readMode: WindowsModeReader = readWindowsMode, exec: CommandRunner = run): Promise<SystemTimeResult> {
+export async function setSystemNtpServer(server: string, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, readMode: WindowsModeReader = readWindowsMode, exec: CommandRunner = runWrite): Promise<SystemTimeResult> {
 	if (!isValidNtpServer(server)) return result('invalid-input', 'the NTP server must be a host name or IP address without spaces or special characters');
 	const platform = process.platform;
 	if (!isSupportedPlatform(platform)) return result('unsupported', `configuring an NTP server is not implemented on ${platform}`);
@@ -603,7 +603,7 @@ export async function setSystemNtpServer(server: string, readStatus: () => Promi
  * server that is no longer on disk, and a rollback interleaved that way restores an old
  * configuration over a newer successful write.
  */
-export async function applyTimesyncdDropIn(server: string, syncRunning: boolean, path: string = TIMESYNCD_DROPIN_PATH, exec: CommandRunner = run, syncDir: (dir: string) => Promise<void> = syncDirectory): Promise<SystemTimeResult> {
+export async function applyTimesyncdDropIn(server: string, syncRunning: boolean, path: string = TIMESYNCD_DROPIN_PATH, exec: CommandRunner = runWrite, syncDir: (dir: string) => Promise<void> = syncDirectory): Promise<SystemTimeResult> {
 	return withSystemTimeLock(async () => {
 		let rollback: () => Promise<RollbackResult>;
 		try {
@@ -679,7 +679,7 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
  * `readStatus` and `exec` are injectable so the sequencing and the outcome mapping can
  * be exercised without touching the host's time service.
  */
-export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = run, readMode: WindowsModeReader = readWindowsMode, waitForService: (running: boolean) => Promise<boolean> = waitForWindowsTimeService): Promise<SystemTimeResult> {
+export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = runWrite, readMode: WindowsModeReader = readWindowsMode, waitForService: (running: boolean) => Promise<boolean> = waitForWindowsTimeService): Promise<SystemTimeResult> {
 	const platform = process.platform;
 	if (!isSupportedPlatform(platform)) return result('unsupported', `time synchronisation cannot be switched on ${platform}`);
 	return withSystemTimeLock(async () => {
@@ -738,7 +738,7 @@ export async function waitForWindowsTimeService(running: boolean, read: () => bo
 		await pause(Math.min(250, remaining));
 	}
 }
-export { resolveSystemExecutable, decodeCommandOutput, windowsSystemLibraryPath, type SystemPlatform, type SystemCommand, type LocalDateTime, isSupportedPlatform, isValidNtpServer, validateClockParts, parseTimedatectlShow, parseYesNo, classifyFailure, firstLine, listSystemTimezones, getTimezoneSource, timezoneOffsetMinutes, type RunOutcome, type CommandRunner, runAll, type PlatformStatus, type PlatformStatusReader } from './system-time-common.ts';
+export { resolveSystemExecutable, decodeCommandOutput, windowsSystemLibraryPath, run, runWrite, EXEC_TIMEOUT_MS, WRITE_TIMEOUT_MS, type SystemPlatform, type SystemCommand, type LocalDateTime, isSupportedPlatform, isValidNtpServer, validateClockParts, parseTimedatectlShow, parseYesNo, classifyFailure, firstLine, listSystemTimezones, getTimezoneSource, timezoneOffsetMinutes, type RunOutcome, type CommandRunner, runAll, type PlatformStatus, type PlatformStatusReader } from './system-time-common.ts';
 
 export { TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, parseTimesyncConfig, type UnitState, parseUnitLoadStates, canonicalUnitName, unitIsLoaded, COMPETING_NTP_UNITS, competingNtpUnits, parseAnyUnitActive, type ExtractedWords, extractWordsChecked, extractWords, readTimedatedEnvironment, readNtpUnitsList, firstUsableNtpUnit, canConfigureTimesyncdServer, buildTimesyncdDropIn } from './system-time-linux.ts';
 

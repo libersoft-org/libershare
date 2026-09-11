@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { applySystemTimeSettings, buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, clockWriteRefusal, getSystemTimeStatus, listHostTimezones, listSystemTimezones, resetHostTimezones, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type SystemCommand, type SystemTimeWriters, type WindowsModeState, W32TM_ERROR_RE, W32TM_SERVICE_INACTIVE_RE, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, MAC_NEEDS_ROOT_RE, withSystemTimeLock } from '../../src/system-time.ts';
+import { applySystemTimeSettings, buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, clockWriteRefusal, getSystemTimeStatus, listHostTimezones, listSystemTimezones, resetHostTimezones, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type SystemCommand, type SystemTimeWriters, type WindowsModeState, W32TM_ERROR_RE, W32TM_SERVICE_INACTIVE_RE, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, MAC_NEEDS_ROOT_RE, run, EXEC_TIMEOUT_MS, WRITE_TIMEOUT_MS, withSystemTimeLock } from '../../src/system-time.ts';
 import type { SystemTimeChanges, SystemTimeStatus } from '@shared';
 import { W32TM_STATUS, fakeRunner } from '../helpers/system-time-fixtures.ts';
 
@@ -124,6 +124,39 @@ describe('buildSetNtpServerCommands', () => {
 
 	it('sets the single supported server on macOS', () => {
 		expect(buildSetNtpServerCommands('darwin', 'ntp.example.org', true)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-setnetworktimeserver', 'ntp.example.org'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
+	});
+});
+
+describe('the budget a privileged write gets', () => {
+	/**
+	 * The bug this exists for: every command shared the five-second READ budget, the ones
+	 * that stop and wait for a person included. `timedatectl` and `systemctl` ask polkit,
+	 * which puts an authentication dialog on a desktop session and blocks until it is
+	 * answered - so the write was killed while the user was still reading the prompt. A
+	 * kill arrives as `timeout`, which is a generic error, and the privileged-helper retry
+	 * only follows a PERMISSION refusal, so that did not save it either.
+	 */
+	it('is a human budget, an order of magnitude past the read one', () => {
+		expect(WRITE_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
+		expect(WRITE_TIMEOUT_MS).toBeGreaterThan(EXEC_TIMEOUT_MS * 10);
+	});
+
+	/** A real child, so this tests the budget reaching `execFile` rather than a constant. */
+	const sleeper: [string, string[]] = process.platform === 'win32' ? ['powershell', ['-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 3']] : ['/bin/sleep', ['3']];
+
+	it('is honoured per call: a short budget kills a child the default would have allowed', async () => {
+		expect((await run(sleeper[0], sleeper[1], 300)).kind).toBe('timeout');
+	}, 20_000);
+
+	it('lets the same child finish on the default read budget', async () => {
+		expect((await run(sleeper[0], sleeper[1])).kind).toBe('ok');
+	}, 20_000);
+
+	it('reports a killed write as a timeout that may have changed the host', async () => {
+		const runner: CommandRunner = async () => ({ kind: 'timeout' });
+		const outcome = await runAll('linux', buildSetNtpEnabledCommands('linux', false), runner);
+		expect(outcome.outcome).toBe('error');
+		expect(outcome.stateMayHaveChanged).toBe(true);
 	});
 });
 
