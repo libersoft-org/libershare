@@ -118,7 +118,7 @@ const KEY_READ_64 = 0x20019 | 0x0100;
 const ERROR_FILE_NOT_FOUND = 2;
 
 interface Advapi32 {
-	OpenProcessToken: (process: number, access: number, out: number) => number;
+	OpenProcessToken: (process: bigint, access: number, out: number) => number;
 	GetTokenInformation: (token: bigint, klass: number, data: number, size: number, needed: number) => number;
 	RegOpenKeyExW: (hKey: bigint, subKey: number, options: number, sam: number, out: number) => number;
 	RegCloseKey: (hKey: bigint) => number;
@@ -136,7 +136,7 @@ function getAdvapi32(): Advapi32 | null {
 	if (advapi32 === undefined) {
 		try {
 			const lib = dlopen(windowsSystemLibraryPath('advapi32.dll'), {
-				OpenProcessToken: { args: [FFIType.i32, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
+				OpenProcessToken: { args: [FFIType.u64, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
 				GetTokenInformation: { args: [FFIType.u64, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
 				RegOpenKeyExW: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
 				RegCloseKey: { args: [FFIType.u64], returns: FFIType.i32 },
@@ -242,16 +242,22 @@ export function probeLocalMachineKeyWritable(subKey: string): RegistryWriteState
  * unprivileged (`Users` hold `SeTimeZonePrivilege`) and then could not elevate the clock,
  * because a change already made must not be re-run.
  *
- * `TokenElevation` is 20, and -1 is the current-process pseudo-handle. False on anything
- * unexpected, which routes through the helper - the safe direction, because the helper
- * re-reads the host and decides for itself.
+ * `TokenElevation` is 20. The process handle comes from `GetCurrentProcess()` rather than
+ * from a hardcoded -1: a `HANDLE` is pointer-wide on 64-bit Windows, so the pseudo-handle
+ * is `0xFFFFFFFFFFFFFFFF`, and passing -1 through a 32-bit argument only arrived as that
+ * because the call sign-extended it. Asking Windows for the value removes the reliance on
+ * that, which is also what Microsoft's own documentation recommends.
+ *
+ * False on anything unexpected, which routes through the helper - the safe direction,
+ * because the helper re-reads the host and decides for itself.
  */
 export function windowsProcessElevated(): boolean {
 	const lib = getAdvapi32();
-	if (!lib) return false;
+	const self = currentWindowsProcess();
+	if (!lib || self === null) return false;
 	const token = new BigUint64Array(1);
 	try {
-		if (!lib.OpenProcessToken(-1, 0x0008, ptr(token))) return false;
+		if (!lib.OpenProcessToken(self, 0x0008, ptr(token))) return false;
 		const elevated = new Uint32Array(1);
 		const returned = new Uint32Array(1);
 		if (!lib.GetTokenInformation(token[0]!, 20, ptr(elevated), 4, ptr(returned))) return false;
@@ -263,24 +269,39 @@ export function windowsProcessElevated(): boolean {
 	}
 }
 
-interface Kernel32Close {
+interface Kernel32Handles {
 	CloseHandle: (handle: bigint) => number;
+	GetCurrentProcess: () => bigint;
 }
-let kernel32Close: Kernel32Close | null | undefined;
+let kernel32Handles: Kernel32Handles | null | undefined;
 
-/** `CloseHandle` lives in kernel32, so it cannot ride along with the advapi32 bindings. */
-function closeWindowsHandle(handle: bigint): void {
-	if (kernel32Close === undefined) {
+/** `CloseHandle` and `GetCurrentProcess` live in kernel32, so they cannot ride along with the advapi32 bindings. */
+function getKernel32Handles(): Kernel32Handles | null {
+	if (kernel32Handles === undefined) {
 		try {
-			kernel32Close = dlopen(windowsSystemLibraryPath('kernel32.dll'), {
+			kernel32Handles = dlopen(windowsSystemLibraryPath('kernel32.dll'), {
 				CloseHandle: { args: [FFIType.u64], returns: FFIType.i32 },
-			}).symbols as unknown as Kernel32Close;
+				GetCurrentProcess: { args: [], returns: FFIType.u64 },
+			}).symbols as unknown as Kernel32Handles;
 		} catch {
-			kernel32Close = null;
+			kernel32Handles = null;
 		}
 	}
+	return kernel32Handles;
+}
+
+/** The current process's pseudo-handle, as Windows itself reports it. Null where it cannot be asked. */
+function currentWindowsProcess(): bigint | null {
 	try {
-		kernel32Close?.CloseHandle(handle);
+		return getKernel32Handles()?.GetCurrentProcess() ?? null;
+	} catch {
+		return null;
+	}
+}
+
+function closeWindowsHandle(handle: bigint): void {
+	try {
+		getKernel32Handles()?.CloseHandle(handle);
 	} catch {
 		// A handle we cannot close is a leak of one handle, never a reason to fail a read.
 	}
