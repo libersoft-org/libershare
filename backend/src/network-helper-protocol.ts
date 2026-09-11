@@ -136,13 +136,38 @@ export function networkHelperExitCode(response: NetworkHelperResponse): number {
 export async function executeNetworkHelperRequest(request: NetworkHelperRequest, applyIPv4: ApplyIPv4, applySystemTime?: ApplySystemTime): Promise<NetworkHelperResponse> {
 	try {
 		if (request.operation === 'applySystemTime') {
+			// Before running: a helper build without the operation has changed nothing, so the
+			// generic failure below is the right answer.
 			if (!applySystemTime) throw new Error('unsupported network helper operation');
-			return { ok: true, time: await applySystemTime(request.changes) };
+			return { ok: true, time: await applySystemTimeReporting(applySystemTime, request.changes) };
 		}
 		await applyIPv4(request.interfaceID, request.config, request.expected);
 		return { ok: true };
 	} catch (error) {
 		return networkHelperFailure(error);
+	}
+}
+
+/**
+ * Run the system-time save so that an EXCEPTION from it is still a time result.
+ *
+ * The save reports its own refusals and carries `changed` / `stateMayHaveChanged` with
+ * them, but it can also throw - a filesystem error escaping a rollback, an FFI call
+ * failing. Such a throw used to land in the generic catch above and leave as
+ * `{ ok: false, error }`, which the caller reads as "refused before anything ran": the
+ * partial-change flags were gone, so the API skipped the read-back and the broadcast, and
+ * nobody was told that a step which HAD completed - synchronisation switched off, say -
+ * was left in place.
+ *
+ * An exception is by definition a point where the sequence is no longer known, so the
+ * conservative flag is the honest one.
+ */
+async function applySystemTimeReporting(applySystemTime: ApplySystemTime, changes: SystemTimeChanges): Promise<SystemTimeResult> {
+	try {
+		return await applySystemTime(changes);
+	} catch (error) {
+		const failure = networkHelperFailure(error);
+		return { success: false, outcome: 'error', message: failure.error, stateMayHaveChanged: true };
 	}
 }
 

@@ -771,3 +771,70 @@ describe('a save that never reached the host', () => {
 		});
 	});
 });
+
+describe('an exception out of the privileged save', () => {
+	/**
+	 * The bug this exists for: the dispatcher's single `catch` also caught a throw from the
+	 * save ITSELF - a filesystem error escaping a rollback, an FFI call failing - and
+	 * answered `{ ok: false, error }`, which the caller reads as "refused before anything
+	 * ran". The change flags were gone with it, so the API skipped the read-back and the
+	 * broadcast, and nobody was told that a step which HAD completed, such as
+	 * synchronisation being switched off, was left in place.
+	 *
+	 * An exception is by definition the point where the sequence stops being known, so the
+	 * conservative flag is the honest one.
+	 */
+	it('is answered as a state that may have changed', async () => {
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes: CHANGES }));
+		const response = await executeNetworkHelperRequest(
+			request,
+			async () => null,
+			async () => {
+				throw new Error('EACCES: rollback could not restore the drop-in');
+			}
+		);
+		expect(response.ok).toBe(true);
+		expect('time' in response && response.time).toMatchObject({ success: false, outcome: 'error', stateMayHaveChanged: true });
+		expect('time' in response && response.time.message).toContain('EACCES');
+		// And it survives the Windows exit-code channel, which carries the flag too.
+		const decoded = parseSystemTimeExitCode(networkHelperExitCode(response));
+		expect(decoded?.outcome).toBe('error');
+		expect(decoded?.stateMayHaveChanged).toBe(true);
+	});
+
+	/**
+	 * A helper build that cannot run the operation changed nothing, and the structured
+	 * answer says so - that is the one case `!response.ok` still means "before any write".
+	 */
+	it('is not claimed when the operation was refused before running', async () => {
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes: CHANGES }));
+		const response = await executeNetworkHelperRequest(request, async () => null);
+		expect(response.ok).toBe(false);
+		expect(response.ok === false && response.error).toContain('unsupported');
+	});
+
+	/**
+	 * On Windows the same case is NOT distinguishable, and stays conservative on purpose.
+	 * The exit code for a structured refusal is the network path's `rejected`, which a
+	 * helper that ran something and then refused reports identically - so the only honest
+	 * reading of it is "the host may have been touched".
+	 */
+	it('stays conservative where the exit code cannot tell the two apart', async () => {
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes: CHANGES }));
+		const response = await executeNetworkHelperRequest(request, async () => null);
+		expect(networkHelperExitCode(response)).toBe(NETWORK_HELPER_EXIT.rejected);
+		expect(windowsSystemTimeExit(NETWORK_HELPER_EXIT.rejected).stateMayHaveChanged).toBe(true);
+	});
+
+	/** A save that merely REFUSED still reports its own flags, untouched. */
+	it('leaves an ordinary refusal exactly as the save reported it', async () => {
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes: CHANGES }));
+		const refusal: SystemTimeResult = { success: false, outcome: 'auto-sync-enabled', message: 'automatic time synchronisation is enabled' };
+		const response = await executeNetworkHelperRequest(
+			request,
+			async () => null,
+			async () => refusal
+		);
+		expect('time' in response && response.time).toEqual(refusal);
+	});
+});

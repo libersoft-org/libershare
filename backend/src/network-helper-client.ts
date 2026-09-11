@@ -228,8 +228,10 @@ export async function runElevatedSystemTime(changes: SystemTimeChanges, platform
 		// showing a state the host no longer has.
 		return helperTransportFailure(error);
 	}
-	// A structured failure is the helper's own answer, produced before it applied anything:
-	// the request decode and the operation dispatch are all that can fail this way.
+	// A structured failure is the helper's own answer from BEFORE it applied anything: the
+	// request decode and the operation dispatch are the only things that fail this way, now
+	// that an exception out of the save itself comes back as a time result carrying
+	// `stateMayHaveChanged` (see applySystemTimeReporting).
 	if (!response.ok) return systemTimeHelperFailure('error', response.error);
 	if (!('time' in response)) return { ...systemTimeHelperFailure('error', 'the privileged helper answered the wrong request'), stateMayHaveChanged: true };
 	return response.time;
