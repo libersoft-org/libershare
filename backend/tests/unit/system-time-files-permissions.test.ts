@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { chmod, chown, lstat, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, chown, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { unreadableByServiceAccount, writeFileAtomically } from '../../src/system-time-files.ts';
@@ -12,8 +12,48 @@ async function restrictiveUmask<T>(action: () => Promise<T>): Promise<T> {
 		process.umask(previous);
 	}
 }
+async function permissiveUmask<T>(action: () => Promise<T>): Promise<T> {
+	const previous = process.umask(0o000);
+	try {
+		return await action();
+	} finally {
+		process.umask(previous);
+	}
+}
 async function mode(path: string): Promise<number> {
 	return (await stat(path)).mode & 0o7777;
+}
+
+/**
+ * Every mode the staging file was seen with while `action` published, OR'd together.
+ *
+ * Sampled from this process rather than from a second one: the point is which bits the
+ * file was CREATED with, and a poller racing the same event loop observes that window
+ * without needing a helper process to win a race for it.
+ */
+async function stagingModesDuring(directory: string, action: () => Promise<unknown>): Promise<{ widest: number; samples: number }> {
+	let widest = 0;
+	let samples = 0;
+	let polling = true;
+	const poller = (async () => {
+		while (polling) {
+			for (const entry of await readdir(directory).catch(() => [])) {
+				if (!entry.endsWith('.tmp')) continue;
+				const observed = (await stat(join(directory, entry)).catch(() => null))?.mode;
+				if (observed === undefined) continue;
+				samples++;
+				widest |= observed & 0o7777;
+			}
+			await new Promise(resolve => setImmediate(resolve));
+		}
+	})();
+	try {
+		await action();
+	} finally {
+		polling = false;
+		await poller;
+	}
+	return { widest, samples };
 }
 
 /** No shell or service changes: read the file as the standard unprivileged Linux nobody UID/GID. */
@@ -56,6 +96,35 @@ describe.skipIf(process.platform === 'win32')('POSIX time configuration permissi
 		expect(await mode(parent)).toBe(0o755);
 		expect(await mode(file)).toBe(0o644);
 		expect(await mode(root)).toBe(0o700);
+	});
+
+	/**
+	 * The mode the staging file is CREATED with, which the final mode cannot show.
+	 *
+	 * `open()` without an explicit mode creates 0666 masked by the INHERITED umask, so under
+	 * a permissive umask the replacement was world-writable from its creation until the chmod
+	 * that follows the write. `wx` does not help: it refuses an existing NAME, not another
+	 * user opening the file this call just made — and a descriptor taken in that window stays
+	 * usable through the chmod and the rename, so the writer goes on editing what the service
+	 * now reads as its configuration. Measured on Linux under umask 000: 0666 before the fix,
+	 * 0600 after it, with the published file 0644 either way.
+	 */
+	it('never stages the replacement shared-writable, even under a permissive umask', async () => {
+		const file = join(root, '90-libershare.conf');
+		// Large enough that the write yields to the loop, so the staging window is observable
+		// at all: a payload that lands in one go leaves nothing to sample.
+		const content = ['[Time]', ...Array.from({ length: 400_000 }, () => 'NTP=tik.cesnet.cz'), ''].join('\n');
+		const observed = await permissiveUmask(() => stagingModesDuring(root, () => writeFileAtomically(file, content)));
+		expect(observed.samples).toBeGreaterThan(0);
+		expect(observed.widest & 0o022).toBe(0);
+		expect(await mode(file)).toBe(0o644);
+		expect(await readFile(file, 'utf8')).toBe(content);
+	});
+
+	it('publishes the documented mode under a permissive umask', async () => {
+		const file = join(root, 'systemd', 'timesyncd.conf.d', '90-libershare.conf');
+		await permissiveUmask(() => writeFileAtomically(file, '[Time]\nNTP=example.org\n'));
+		expect(await mode(file)).toBe(0o644);
 	});
 
 	it('does not widen a pre-existing private parent directory', async () => {

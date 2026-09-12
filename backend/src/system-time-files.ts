@@ -342,7 +342,14 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 	let published: FileMetadata | null = null;
 	try {
 		// `wx`, not `w`: an existing name is a collision to report, never one to overwrite.
-		const handle = await open(temp, 'wx');
+		// The mode is explicit and private, because without it `open` creates the file as
+		// 0666 masked by the INHERITED umask — so under a permissive umask (000) the staging
+		// file is world-writable from its creation until the `chmod` further down. `wx` only
+		// refuses an existing NAME; it does nothing about another user opening the file this
+		// call has just made. A descriptor obtained in that window survives both the chmod
+		// and the rename, so the writer keeps changing the configuration after it is
+		// published. 0600 here closes it, and the chmod below still sets the final mode.
+		const handle = await open(temp, 'wx', 0o600);
 		try {
 			await handle.writeFile(content, 'utf8');
 			if (process.platform !== 'win32' && permissions.uid !== undefined && permissions.gid !== undefined) {
