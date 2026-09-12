@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { win32, isAbsolute } from 'node:path';
@@ -36,6 +37,45 @@ export const WRITE_TIMEOUT_MS = 90_000;
  * signature check and the read-back; the arithmetic is asserted by a test so it cannot drift.
  */
 export const SEQUENCE_BUDGET_MS = 150_000;
+
+/**
+ * How long ONE save may take across every operation in it.
+ *
+ * A save is not one sequence: switching synchronisation off, writing the server, setting the
+ * zone and setting the clock are four separate calls, and each one starting its own
+ * {@link SEQUENCE_BUDGET_MS} bounded nothing about their total. Four times 150 s is ten
+ * minutes, so the screen's wait was still the shortest limit in the chain even after each
+ * sequence got a budget of its own.
+ *
+ * Sized so this plus the trust check and the read-back fit inside
+ * `SYSTEM_TIME_SAVE_TIMEOUT_MS`; a test asserts that arithmetic.
+ */
+export const SAVE_BUDGET_MS = 200_000;
+
+/**
+ * The deadline of the save currently in flight, so every operation inside it shares one.
+ *
+ * Carried in async context rather than threaded through a dozen signatures, the same way the
+ * write lock tracks re-entrance: the writers are exported and used directly as well, and a
+ * caller that never heard of budgets still gets a bounded one.
+ */
+const saveDeadline = new AsyncLocalStorage<number>();
+
+/**
+ * Run `fn` under one deadline for the whole save. A nested call joins the outer one, so the
+ * four operations of a combined save share a budget instead of each taking a fresh one.
+ */
+export function withSaveBudget<T>(fn: () => Promise<T>, now: () => number = elapsedClock): Promise<T> {
+	const existing = saveDeadline.getStore();
+	if (existing !== undefined) return fn();
+	return saveDeadline.run(now() + SAVE_BUDGET_MS, fn);
+}
+
+/** What is left of the current save's budget, or null when nothing set one. */
+export function remainingSaveBudget(now: () => number = elapsedClock): number | null {
+	const deadline = saveDeadline.getStore();
+	return deadline === undefined ? null : deadline - now();
+}
 
 const LINUX_EXECUTABLES: Readonly<Record<string, string>> = {
 	timedatectl: '/usr/bin/timedatectl',
@@ -532,7 +572,10 @@ export async function runAll(platform: SystemPlatform, commands: SystemCommand[]
 	const steps: SystemTimeStep[] = [];
 	// Monotonic on purpose: these commands are the ones that MOVE the wall clock, and a
 	// deadline measured against it would end a sequence early or never (see elevationClock).
-	const deadline = now() + SEQUENCE_BUDGET_MS;
+	// The SAVE's deadline wins when there is one: this sequence may be the third of four in it,
+	// and starting a fresh 150 s here is what let a combined save outlast the screen's wait.
+	const remainingSave = remainingSaveBudget(now);
+	const deadline = now() + Math.min(SEQUENCE_BUDGET_MS, remainingSave ?? SEQUENCE_BUDGET_MS);
 	/** A stopped sequence: the failing step is recorded, and everything before it already ran. */
 	const stopped = (command: SystemCommand, outcome: SystemTimeOutcome, message: string, ran = true): SystemTimeResult => {
 		steps.push({ command: [command.cmd, ...command.args].join(' '), ok: false });
