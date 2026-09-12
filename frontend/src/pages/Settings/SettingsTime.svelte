@@ -14,8 +14,7 @@
 	import Icon from '../../components/Icon/Icon.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import Input from '../../components/Input/Input.svelte';
-	import Select from '../../components/Input/Select.svelte';
-	import SelectOption from '../../components/Input/SelectOption.svelte';
+	import SelectSearch from '../../components/Input/SelectSearch.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
 	interface Props {
 		areaID: string;
@@ -678,9 +677,7 @@
 			</section>
 			<section class="section" aria-label={$t('settings.time.timezone')}>
 				<div role="group" data-mouse-activate-area={areaID}>
-					<Select bind:value={timezone} onchange={clearFeedback} label={$t('settings.time.timezone')} disabled={formDisabled || !status.capabilities.setTimezone || selectableTimezones.length === 0} position={[0, 3]} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.9vh 1.2vh" flex>
-						{#each selectableTimezones as zone (zone)}<SelectOption value={zone} label={zone} />{/each}
-					</Select>
+					<SelectSearch bind:value={timezone} options={selectableTimezones} onchange={clearFeedback} label={$t('settings.time.timezone')} placeholder={$t('settings.time.timezoneSearch')} disabled={formDisabled || !status.capabilities.setTimezone || selectableTimezones.length === 0} position={[0, 3]} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.9vh 1.2vh" flex />
 				</div>
 				{#if zonesUnavailable}<p class="hint">{$t('settings.time.zonesUnavailable')}</p>{/if}
 			</section>
