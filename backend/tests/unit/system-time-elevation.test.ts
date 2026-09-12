@@ -142,6 +142,22 @@ describe('the exit code an elevated Windows helper answers with', () => {
 		expect(windowsSystemTimeExit(undefined).outcome).toBe('error');
 	});
 
+	/**
+	 * A standard user on a host where the elevation prompt is set to "automatically deny"
+	 * never sees a prompt: `ShellExecuteExW` fails with ERROR_ACCESS_DISABLED_BY_POLICY
+	 * before anything starts. Measured on Windows 11 from the installed bundle, that used
+	 * to throw inside the launcher, come back as its generic exit 1, and reach the screen
+	 * as "some settings may already have been applied" - a read-back and a stale-state
+	 * lock in every other window, for a save that provably never ran.
+	 */
+	it('reads a refused elevation as a plain permission problem with nothing written', () => {
+		const denied = windowsSystemTimeExit(WINDOWS_LAUNCHER_EXIT.denied);
+		expect(denied.outcome).toBe('permission-denied');
+		expect(denied.message).toContain('administrator');
+		expect(denied.changed).toBeUndefined();
+		expect(denied.stateMayHaveChanged).toBeUndefined();
+	});
+
 	it('carries an ok through as a success', () => {
 		const applied = windowsSystemTimeExit(systemTimeExitCode({ success: true, outcome: 'ok', message: null }));
 		expect(applied.success).toBe(true);
@@ -300,9 +316,9 @@ describe('a helper answer that never arrived', () => {
 		expect(windowsSystemTimeExit(0, true).stateMayHaveChanged).toBe(true);
 	});
 
-	/** The two that PROVE the helper never started stay a plain permission refusal. */
+	/** The three that PROVE the helper never started stay a plain permission refusal. */
 	it('is not claimed for a helper that never started', () => {
-		for (const code of [WINDOWS_LAUNCHER_EXIT.untrusted, WINDOWS_LAUNCHER_EXIT.cancelled]) {
+		for (const code of [WINDOWS_LAUNCHER_EXIT.untrusted, WINDOWS_LAUNCHER_EXIT.cancelled, WINDOWS_LAUNCHER_EXIT.denied]) {
 			const outcome = windowsSystemTimeExit(code);
 			expect(outcome.outcome).toBe('permission-denied');
 			expect(outcome.stateMayHaveChanged).toBeUndefined();

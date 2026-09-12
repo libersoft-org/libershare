@@ -19,6 +19,7 @@ async function elevate(args: string[]): Promise<number> {
 	try {
 		const outcome = await runElevatedWindowsProcess(helper, windowsHelperParameters(request.path), 180_000);
 		if (outcome.kind === 'cancelled') return WINDOWS_LAUNCHER_EXIT.cancelled;
+		if (outcome.kind === 'denied') return WINDOWS_LAUNCHER_EXIT.denied;
 		if (outcome.kind === 'timeout') return WINDOWS_LAUNCHER_EXIT.timeout;
 		return outcome.code;
 	} finally {

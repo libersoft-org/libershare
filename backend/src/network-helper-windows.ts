@@ -23,6 +23,17 @@ const FILE_ATTRIBUTE_NORMAL = 0x80;
 const INVALID_HANDLE_VALUE = 0xffffffffffffffffn;
 const ERROR_SHARING_VIOLATION = 32;
 const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+/** UAC's answer for both "No" and a prompt that timed out. */
+const ERROR_CANCELLED = 1223;
+/**
+ * UAC's answer when the account may not elevate at all.
+ *
+ * Measured on Windows 11 with "User Account Control: Behavior of the elevation prompt
+ * for standard users" set to "Automatically deny elevation requests": a standard user's
+ * `ShellExecuteExW` with the `runas` verb fails immediately with 1260 and no prompt is
+ * ever drawn. Nothing was started, so this is an answer and not a fault.
+ */
+const ERROR_ACCESS_DISABLED_BY_POLICY = 1260;
 
 /** The installed launcher, the only process the elevated helper takes a request from. */
 export const WINDOWS_LAUNCHER_FILE = 'lish-network-launcher.exe';
@@ -346,7 +357,7 @@ export async function verifyWindowsInstalledHelper(path: string, executable: str
  * of codes is what survives that boundary, and it is enough to tell "you
  * cancelled the prompt" apart from "the change itself failed".
  */
-export const WINDOWS_LAUNCHER_EXIT = { untrusted: 11, cancelled: 12, timeout: 13 } as const;
+export const WINDOWS_LAUNCHER_EXIT = { untrusted: 11, cancelled: 12, timeout: 13, denied: 15 } as const;
 
 /**
  * The clock the elevation wait measures its deadline against.
@@ -360,7 +371,7 @@ export const WINDOWS_LAUNCHER_EXIT = { untrusted: 11, cancelled: 12, timeout: 13
 export const elevationClock = (): number => performance.now();
 
 /** Outcome of one elevation attempt. Only genuine Win32 faults throw. */
-export type WindowsElevationOutcome = { kind: 'exited'; code: number } | { kind: 'cancelled' } | { kind: 'timeout' };
+export type WindowsElevationOutcome = { kind: 'exited'; code: number } | { kind: 'cancelled' } | { kind: 'denied' } | { kind: 'timeout' };
 
 export async function runElevatedWindowsProcess(file: string, parameters: string, timeoutMs: number, now: () => number = elevationClock): Promise<WindowsElevationOutcome> {
 	if (process.platform !== 'win32') throw new Error('Windows elevation is unavailable');
@@ -391,9 +402,10 @@ export async function runElevatedWindowsProcess(file: string, parameters: string
 	try {
 		if (!shell.symbols.ShellExecuteExW(ptr(info))) {
 			const error = kernel.symbols.GetLastError();
-			// ERROR_CANCELLED is what UAC reports for both "No" and a prompt that
-			// timed out, and it is an ordinary answer rather than a fault.
-			if (error === 1223) return { kind: 'cancelled' };
+			// Both of these are UAC's own answer, not a fault: the request was refused
+			// before anything was started, so the host is known to be untouched.
+			if (error === ERROR_CANCELLED) return { kind: 'cancelled' };
+			if (error === ERROR_ACCESS_DISABLED_BY_POLICY) return { kind: 'denied' };
 			throw new Error(`ShellExecuteExW failed with ${error}`);
 		}
 		processHandle = Number(view.getBigUint64(PROCESS_HANDLE_OFFSET, true)) as Pointer;

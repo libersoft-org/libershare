@@ -127,6 +127,7 @@ describe('network helper protocol', () => {
 describe('windows launcher outcomes', () => {
 	it('tells a cancelled prompt apart from a failed change', () => {
 		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.cancelled).error).toContain('cancelled');
+		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.denied).error).toContain('may not elevate');
 		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.timeout).error).toContain('timed out');
 		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.untrusted).error).toContain('not trusted');
 		expect(windowsLauncherFailure(NETWORK_HELPER_EXIT.rejected).error).toContain('could not apply');
@@ -140,7 +141,7 @@ describe('windows launcher outcomes', () => {
 		// 0 = applied and 10 = helper rejected the change both come from the helper
 		// itself, so the launcher's own reasons must live outside that set.
 		for (const helperCode of Object.values(NETWORK_HELPER_EXIT)) expect(Object.values(WINDOWS_LAUNCHER_EXIT)).not.toContain(helperCode);
-		expect(new Set(Object.values(WINDOWS_LAUNCHER_EXIT)).size).toBe(3);
+		expect(new Set(Object.values(WINDOWS_LAUNCHER_EXIT)).size).toBe(4);
 	});
 });
 

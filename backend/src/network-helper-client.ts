@@ -132,6 +132,7 @@ export const WINDOWS_LAUNCHER_MESSAGES: Readonly<Record<number, string>> = {
 	[NETWORK_HELPER_EXIT.rejected]: 'the privileged network helper could not apply the change',
 	[WINDOWS_LAUNCHER_EXIT.untrusted]: 'the privileged network helper is missing or not trusted',
 	[WINDOWS_LAUNCHER_EXIT.cancelled]: 'the administrator prompt was cancelled',
+	[WINDOWS_LAUNCHER_EXIT.denied]: 'this account may not elevate, so the change needs an administrator',
 	[WINDOWS_LAUNCHER_EXIT.timeout]: 'the privileged network helper timed out',
 };
 
@@ -265,14 +266,16 @@ function helperTransportFailure(error: unknown): SystemTimeResult {
 /**
  * What each launcher exit code means to someone who pressed Save on the time screen.
  *
- * Only the two that prove the helper never started - it was not trusted, or the prompt
- * was declined - are a bare `permission-denied`. A timeout is the helper being KILLED
- * part-way, so it carries `stateMayHaveChanged`: the change may already be on the host,
- * and without the flag the caller skips the read-back that would show it.
+ * Only the three that prove the helper never started - it was not trusted, the prompt
+ * was declined, or the account may not elevate at all - are a bare `permission-denied`.
+ * A timeout is the helper being KILLED part-way, so it carries `stateMayHaveChanged`:
+ * the change may already be on the host, and without the flag the caller skips the
+ * read-back that would show it.
  */
 const WINDOWS_LAUNCHER_TIME_FAILURES: Readonly<Record<number, SystemTimeResult>> = {
 	[WINDOWS_LAUNCHER_EXIT.untrusted]: systemTimeHelperFailure('permission-denied', 'the privileged helper is missing or not trusted'),
 	[WINDOWS_LAUNCHER_EXIT.cancelled]: systemTimeHelperFailure('permission-denied', 'the administrator prompt was cancelled'),
+	[WINDOWS_LAUNCHER_EXIT.denied]: systemTimeHelperFailure('permission-denied', 'this account may not elevate, so the change needs an administrator'),
 	[WINDOWS_LAUNCHER_EXIT.timeout]: { ...systemTimeHelperFailure('error', 'the privileged helper timed out'), stateMayHaveChanged: true },
 };
 
