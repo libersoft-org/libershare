@@ -399,10 +399,16 @@ export interface SystemCPUInfo {
 // System time / clock configuration
 
 /**
- * Where the list of selectable timezone identifiers comes from.
- * - `intl`: the runtime's ICU database (`Intl.supportedValuesOf('timeZone')`) — the
- *   same IANA identifiers Linux and macOS use natively, so the list is identical on
- *   every platform.
+ * Whether the host can offer a list of selectable timezone identifiers at all.
+ * - `intl`: a list is available. The names are IANA identifiers, but WHICH names are
+ *   offered is per-platform on purpose. Linux and macOS list the zones the host's own
+ *   database has (`/usr/share/zoneinfo`), intersected with what this runtime can format
+ *   a clock for — ICU still calls legacy aliases canonical (`Europe/Kiev`,
+ *   `Asia/Calcutta`) while a current distribution ships only the modern name, so the
+ *   runtime's own list alone offered neither. Windows starts from the runtime's list and
+ *   drops every name it cannot convert to a system timezone identifier, since a zone
+ *   that does not convert cannot be applied there. Either falls back to the runtime's
+ *   unfiltered list when the host database cannot be read or conversion is unavailable.
  * - `unavailable`: the runtime exposes no timezone list, so nothing can be offered
  *   for selection and a timezone change cannot be validated.
  */
