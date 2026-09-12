@@ -55,8 +55,61 @@
 			assert(el, `Missing button: ${name}`);
 			return el;
 		}
-		const server = () => target.querySelector('input[type="text"]');
+		const server = () => target.querySelector('input[type="text"]:not([role="combobox"])');
 		const clock = () => [...target.querySelectorAll('input[type="number"]')];
+		/**
+		 * The timezone control is a searchable combobox, not a native `<select>`: there is no
+		 * `.options` to read and no `change` event to fake. While it is open its text is the
+		 * QUERY, so the chosen zone can only be read with the list closed, and picking one means
+		 * opening the list, narrowing it and confirming a row - which is also the only way a
+		 * test exercises what the user actually does.
+		 */
+		const zone = () => {
+			const el = target.querySelector('[role="combobox"]');
+			assert(el, 'Missing timezone combobox');
+			return el;
+		};
+		const zoneOpen = () => zone().getAttribute('aria-expanded') === 'true';
+		const zoneValue = () => {
+			assert(!zoneOpen(), 'The timezone value was read while the list was open, which returns the query');
+			return zone().value;
+		};
+		const zoneRows = () => [...target.querySelectorAll('[role="option"]')].map(el => el.textContent.trim());
+		const zoneActive = () => target.querySelector('[role="option"].active')?.textContent.trim();
+		const zoneKey = key => {
+			zone().dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+			return settle();
+		};
+		async function openZones() {
+			if (!zoneOpen()) {
+				zone().closest('.field').click();
+				await settle();
+			}
+			assert(zoneOpen(), 'The timezone list did not open');
+		}
+		async function closeZones() {
+			if (zoneOpen()) await zoneKey('Escape');
+			assert(!zoneOpen(), 'The timezone list stayed open');
+		}
+		/** Every zone the control offers, read from the open list and leaving it closed again. */
+		async function zoneCatalog() {
+			await openZones();
+			const rows = zoneRows();
+			await closeZones();
+			return rows;
+		}
+		/** Pick a zone the way a user does: open, type enough to find it, confirm the row. */
+		async function pickZone(name, { withMouse = false } = {}) {
+			await openZones();
+			await edit(zone(), name);
+			const row = [...target.querySelectorAll('[role="option"]')].find(el => el.textContent.trim() === name);
+			assert(row, 'Searching for ' + name + ' offered ' + zoneRows().length + ' rows without it');
+			if (withMouse) row.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+			else await zoneKey('Enter');
+			await settle();
+			assert(!zoneOpen(), 'Confirming ' + name + ' left the list open');
+			assert(zoneValue() === name, 'Confirming ' + name + ' selected ' + zoneValue());
+		}
 		const save = () => button(label('common.save'));
 		async function click(name) {
 			button(name).click();
@@ -185,7 +238,7 @@
 			await test('the form and all three clock fields fit the available viewport', async () => {
 				const width = document.documentElement.clientWidth;
 				assert(document.documentElement.scrollWidth <= width, 'The time screen overflows horizontally');
-				for (const el of target.querySelectorAll('.settings, .container, .snapshot, .alert, .row, .presets .button, input, select')) {
+				for (const el of target.querySelectorAll('.settings, .container, .snapshot, .alert, .row, .presets .button, input, select, [role="combobox"], [role="option"]')) {
 					const bounds = el.getBoundingClientRect();
 					assert(el.scrollWidth <= el.clientWidth, 'A time control hides its own horizontal overflow');
 					assert(bounds.left >= 0 && bounds.right <= width + 0.5, 'A time control exceeds the viewport');
@@ -246,8 +299,7 @@
 			await test(
 				'unknown managed NTP remains locked while the timezone can still be saved',
 				async () => {
-					const synchronization = target.querySelector('[role="switch"]'),
-						zone = target.querySelector('select');
+					const synchronization = target.querySelector('[role="switch"]');
 					assert(target.querySelector('[data-time-sync-enabled]').textContent === label('settings.time.unknown'), 'Managed synchronization was guessed as enabled or disabled');
 					assert(server().value === '' && server().disabled && synchronization.getAttribute('aria-disabled') === 'true', 'An unreported managed server became an editable local configuration');
 					assert(clock().every(input => input.disabled) && target.textContent.includes(label('settings.time.syncUnknownLocked')), 'Unknown managed synchronization did not lock manual time with an explanation');
@@ -255,10 +307,8 @@
 					synchronization.click();
 					await settle();
 					assert(server().value === '' && save().classList.contains('disabled') && writes.length === 0, 'Locked NTP controls changed the host or dirtied the form');
-					assert(!zone.disabled, 'Managed NTP unnecessarily disabled timezone editing');
-					zone.value = 'UTC';
-					zone.dispatchEvent(new Event('change', { bubbles: true }));
-					await settle();
+					assert(!zone().disabled, 'Managed NTP unnecessarily disabled timezone editing');
+					await pickZone('UTC');
 					await click(label('common.save'));
 					assert(JSON.stringify(writes) === JSON.stringify([{ timezone: 'UTC' }]) && server().value === '', 'Timezone save also wrote unknown NTP or clock values');
 				},
@@ -309,7 +359,8 @@
 			await test(
 				'unavailable timezone list preserves the host timezone',
 				async () => {
-					assert(target.querySelector('select').value === 'Europe/Prague', 'Timezone lookup failure erased the selected timezone');
+					assert(zoneValue() === 'Europe/Prague', 'Timezone lookup failure erased the selected timezone');
+					assert((await zoneCatalog()).includes('Europe/Prague'), 'Timezone lookup failure left the control with nothing to pick');
 					assert(target.textContent.includes(label('settings.time.zonesUnavailable')), 'Timezone lookup failure has no explanation');
 				},
 				{ zonesFail: true }
@@ -385,15 +436,13 @@
 			 * away the timezone change made alongside and left the user to redo untouched work.
 			 */
 			await test('an invalid value keeps the rest of the form', async () => {
-				const zone = target.querySelector('select');
-				zone.value = 'UTC';
-				zone.dispatchEvent(new Event('change', { bubbles: true }));
+				await pickZone('UTC');
 				await edit(server(), 'https://tik.cesnet.cz');
 				writeResult = { success: false, outcome: 'invalid-input', message: 'the NTP server must be a host name or IP address' };
 				await click(label('common.save'));
 				assert(target.querySelector('.error-message'), 'A refused value reported nothing');
 				assert(server().value === 'https://tik.cesnet.cz', 'A refused value discarded the typed server');
-				assert(zone.value === 'UTC', 'A refused value discarded the timezone edit made next to it');
+				assert(zoneValue() === 'UTC', 'A refused value discarded the timezone edit made next to it');
 				assert(!save().classList.contains('disabled'), 'The form could not be corrected and saved again');
 			});
 
@@ -469,11 +518,49 @@
 				}
 				assert(!server().disabled, 'Fresh reconnect snapshot remained locked');
 			});
+			/**
+			 * The searchable control's own behaviour, which no other scenario covers: the list has
+			 * to open on a click (every time, including right after a pick), filter as the user
+			 * types, and confirm by keyboard or by mouse. A picker that opens once and then refuses
+			 * is exactly what replaced the native select, so it is asserted rather than assumed.
+			 */
+			await test('the timezone list opens on every click and filters as the user types', async () => {
+				const catalog = await zoneCatalog();
+				assert(JSON.stringify(catalog) === JSON.stringify(['UTC', 'Europe/Prague', 'Europe/London']), 'The catalog did not reach the control unchanged');
+				await openZones();
+				assert(zoneRows().length === catalog.length, 'Opening the list filtered it without a query');
+				assert(zoneActive() === 'Europe/Prague', 'The list did not open on the zone the host reports');
+				await edit(zone(), 'lond');
+				assert(JSON.stringify(zoneRows()) === JSON.stringify(['Europe/London']), 'Typing did not narrow the list to the match');
+				await edit(zone(), 'nothing-matches-this');
+				assert(zoneRows().length === 0 && target.textContent.includes(label('common.noResults')), 'An empty result said nothing');
+				await closeZones();
+				assert(zoneValue() === 'Europe/Prague', 'A cancelled search changed the selected zone');
+				await pickZone('UTC');
+				// The reopen is the point: a native select that has just been used is the case the
+				// searchable one has to beat.
+				await openZones();
+				assert(zoneRows().length === catalog.length && zoneActive() === 'UTC', 'The list did not reopen on the newly picked zone');
+				await closeZones();
+				assert(writes.length === 0, 'Browsing the timezone list wrote to the host');
+			});
+			await test('a zone confirmed with the mouse saves exactly like a typed one', async () => {
+				await pickZone('UTC', { withMouse: true });
+				await click(label('common.save'));
+				assert(JSON.stringify(writes) === JSON.stringify([{ timezone: 'UTC' }]), 'A mouse-picked zone was saved as something else');
+			});
+			await test(
+				'a read-only host cannot open the timezone list at all',
+				async () => {
+					assert(zone().disabled, 'A read-only host left the timezone control editable');
+					zone().closest('.field').click();
+					await settle();
+					assert(!zoneOpen() && writes.length === 0, 'A read-only timezone control opened its list');
+				},
+				{ status: { capabilities: { setClock: false, setTimezone: false, setNtpServer: false, setNtpEnabled: false } } }
+			);
 			await test('a timezone-only save never sends the ticking clock', async () => {
-				const zone = target.querySelector('select');
-				zone.value = 'UTC';
-				zone.dispatchEvent(new Event('change', { bubbles: true }));
-				await settle();
+				await pickZone('UTC');
 				await click(label('common.save'));
 				assert(JSON.stringify(writes) === JSON.stringify([{ timezone: 'UTC' }]), 'Timezone change rewound the host clock');
 			});
@@ -484,10 +571,7 @@
 				await edit(clock()[0], '7');
 				await edit(clock()[1], '8');
 				await edit(clock()[2], '9');
-				const zone = target.querySelector('select');
-				zone.value = 'UTC';
-				zone.dispatchEvent(new Event('change', { bubbles: true }));
-				await settle();
+				await pickZone('UTC');
 				await click(label('common.save'));
 				assert(writes.length === 1 && JSON.stringify(writes[0]) === JSON.stringify({ ntpEnabled: false, ntpServer: 'tik.cesnet.cz', timezone: 'UTC', clock: { hours: 7, minutes: 8, seconds: 9 }, expectedTimezone: 'Europe/Prague', expectedOffsetMinutes: 120 }), 'The combined edit was split, changed or incompletely saved');
 			});
@@ -672,15 +756,12 @@
 			await test(
 				'runtime synchronization changes keep the configured NTP server during a timezone edit',
 				async () => {
-					const zone = target.querySelector('select');
-					zone.value = 'UTC';
-					zone.dispatchEvent(new Event('change', { bubbles: true }));
-					await settle();
+					await pickZone('UTC');
 					for (const synchronized of [true, false, true]) {
 						host.ntpSynchronized = synchronized;
 						changed(structuredClone(host));
 						await settle();
-						assert(server().value === 'configured.example.org' && zone.value === 'UTC', 'A runtime update replaced the configured server or timezone draft');
+						assert(server().value === 'configured.example.org' && zoneValue() === 'UTC', 'A runtime update replaced the configured server or timezone draft');
 						assert(!save().classList.contains('disabled') && !target.textContent.includes(label('settings.time.changedOutside')), 'Runtime synchronization locked the unrelated draft');
 						assert(target.querySelector('[data-time-sync-result]').textContent === label(synchronized ? 'settings.time.synchronized' : 'settings.time.notSynchronized'), 'Runtime synchronization status was not refreshed');
 					}
@@ -734,7 +815,7 @@
 					await settle();
 					assert(server().value === 'heartbeat.example.org' && save().classList.contains('disabled'), 'Initial heartbeat left an unseeded or dirty form');
 					assert(!target.textContent.includes(label('settings.time.changedOutside')) && writes.length === 0, 'First status was mistaken for an external conflict');
-					const zones = [...target.querySelector('select').options].map(option => option.value);
+					const zones = await zoneCatalog();
 					assert(zones.includes('UTC') && zones.includes('Europe/London'), 'Heartbeat discarded the initial timezone list');
 				},
 				{ readWait: initialRead }
@@ -747,12 +828,12 @@
 						changed(structuredClone(host));
 						await settle();
 						await click(label('settings.time.reload'));
-						const before = [...target.querySelector('select').options].map(option => option.value);
+						const before = await zoneCatalog();
 						assert(before.includes('Europe/London'), 'Newer catalog did not arrive');
 						if (failed) oldZones.reject(new Error('Old timezone request failed'));
 						else oldZones.resolve(['UTC']);
 						await settle();
-						assert(JSON.stringify([...target.querySelector('select').options].map(option => option.value)) === JSON.stringify(before), 'An old timezone result replaced the newer list');
+						assert(JSON.stringify(await zoneCatalog()) === JSON.stringify(before), 'An old timezone result replaced the newer list');
 						assert(!target.textContent.includes(label('settings.time.zonesUnavailable')), 'An old catalog failure replaced a newer successful result');
 					},
 					{ zonesWait: oldZones }
