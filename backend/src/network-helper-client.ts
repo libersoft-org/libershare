@@ -8,7 +8,7 @@ import { parseSystemTimeExitCode, systemTimeHelperFailure } from './system-time-
 import { expectedNetworkHelperHash, sha256File, trustIdentity } from './network-helper-integrity.ts';
 import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from './system-network-linux.ts';
 import { encodeNetworkHelperRequest, NETWORK_HELPER_EXIT, parseNetworkHelperResponse, type NetworkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
-import { verifyWindowsInstalledHelper, verifyWindowsInstalledSibling, WINDOWS_LAUNCHER_EXIT, WINDOWS_LAUNCHER_FILE, windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
+import { elevationClock, verifyWindowsInstalledHelper, verifyWindowsInstalledSibling, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_LAUNCHER_EXIT, WINDOWS_LAUNCHER_FILE, windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
 
 const execFileAsync = promisify(execFile);
 /**
@@ -30,7 +30,19 @@ const MAX_HELPER_OUTPUT_BYTES = 4096;
  * expired one is that the helper is "not trusted", which silently turns the
  * network screen read-only on a machine that is merely slow.
  */
-const SIGNATURE_TIMEOUT_MS = 30_000;
+export const SIGNATURE_TIMEOUT_MS = 30_000;
+
+/**
+ * How long the launcher may be left running for one system-time save.
+ *
+ * Its own wait for the elevated process is {@link WINDOWS_ELEVATION_WAIT_MS}, which covers an
+ * elevation prompt nobody has answered yet; this adds the margin the launcher needs to notice
+ * that, terminate the child and exit with a code. Deliberately NOT the network path's
+ * {@link HELPER_TIMEOUT_MS}: that is sized for a NetworkManager checkpoint window, 271 s, and
+ * nothing in a time save creates one - so a time save inherited a limit half again as long as
+ * anything it can actually do, and one that did not fit inside what the screen waits for.
+ */
+export const WINDOWS_TIME_HELPER_TIMEOUT_MS: number = WINDOWS_ELEVATION_WAIT_MS + 20_000;
 export const MAC_HELPER_SHELL = 'set -eu; d=$(/usr/bin/mktemp -d /private/var/tmp/lish-network-helper.XXXXXX); trap \'/bin/rm -f "$d/helper"; /bin/rmdir "$d"\' EXIT HUP INT TERM; /bin/cp "$1" "$d/helper"; /usr/bin/codesign --verify --strict "$d/helper"; t=$(/usr/bin/codesign -dv --verbose=4 "$d/helper" 2>&1 | /usr/bin/awk -F= \'/^TeamIdentifier=/{print $2}\'); i=$(/usr/bin/codesign -dv --verbose=4 "$d/helper" 2>&1 | /usr/bin/awk -F= \'/^Identifier=/{print $2}\'); h=$(/usr/bin/shasum -a 256 "$d/helper" | /usr/bin/awk \'{print $1}\'); [ -n "$t" ] && [ "$t" = "$3" ] && [ "$h" = "$4" ] && [ "$i" = "$5" ]; "$d/helper" --request "$2"';
 
 export function macNetworkHelperScript(): string {
@@ -83,6 +95,12 @@ async function verifyLinuxHelper(helper: string): Promise<boolean> {
  * would keep elevation broken until a restart. Short enough to recover on the next attempt,
  * long enough that a genuinely untrusted install does not re-read a third of a gigabyte on
  * every status poll.
+ *
+ * Measured against {@link elevationClock}, which is monotonic, and NOT against the wall
+ * clock: this code path exists to serve a screen whose whole purpose is moving that clock.
+ * With `Date.now()` a correction backwards makes the stored failure's age negative, so it
+ * never reaches the limit - measured at an hour back, the 30-second memory lasted an hour
+ * and 30 seconds and went on refusing an elevation whose cause was long gone.
  */
 const WINDOWS_TRUST_FAILURE_TTL_MS = 30_000;
 
@@ -105,7 +123,7 @@ function rememberedWindowsTrust(identity: string | null, now: number): boolean |
 /** One verification of the same files at a time; a second caller joins it instead of repeating it. */
 let windowsTrustInFlight: { identity: string; answer: Promise<boolean> } | null = null;
 
-async function verifyWindowsHelper(helper: string, now: () => number = Date.now): Promise<boolean> {
+export async function verifyWindowsHelper(helper: string, now: () => number = elevationClock): Promise<boolean> {
 	const expectedHash = expectedNetworkHelperHash();
 	const launcher = windowsNetworkLauncherPath();
 	// Before the expensive part: the same three files, unchanged, were already measured.
@@ -352,7 +370,7 @@ export function windowsSystemTimeExit(exitCode: unknown, killed: boolean = false
 async function runWindowsSystemTime(encoded: string): Promise<SystemTimeResult> {
 	const launcher = windowsNetworkLauncherPath();
 	try {
-		await execFileAsync(launcher, ['--request', encoded], { timeout: HELPER_TIMEOUT_MS + 5000, maxBuffer: MAX_HELPER_OUTPUT_BYTES, windowsHide: true, cwd: dirname(launcher) });
+		await execFileAsync(launcher, ['--request', encoded], { timeout: WINDOWS_TIME_HELPER_TIMEOUT_MS, maxBuffer: MAX_HELPER_OUTPUT_BYTES, windowsHide: true, cwd: dirname(launcher) });
 		// Exit 0 is the network path's "applied" and never a packed time outcome, so a
 		// helper that answered with it did not run the request this call made - but it DID
 		// run something, so the host is not known to be untouched.
