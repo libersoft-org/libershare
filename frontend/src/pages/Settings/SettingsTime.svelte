@@ -8,7 +8,7 @@
 	import { api } from '../../scripts/api.ts';
 	import { connected } from '../../scripts/ws-client.ts';
 	import { NTP_PRESETS, createStatusGate, effectiveOffsetMode, formatHostClock, formatHostDate, timeStatusChanged, loadFailureMessage, loadMayApply, planTimeChanges, syncSwitchIsDirty, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
-	import { type SystemTimeChanges, type SystemTimeOutcome, type SystemTimeResult, type SystemTimeStatus } from '@shared';
+	import { SYSTEM_TIME_SAVE_TIMEOUT_MS, type SystemTimeChanges, type SystemTimeOutcome, type SystemTimeResult, type SystemTimeStatus } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Icon from '../../components/Icon/Icon.svelte';
@@ -40,7 +40,10 @@
 	 * host's time a second time.
 	 */
 	const READ_TIMEOUT_MS = 30000;
-	const SAVE_TIMEOUT_MS = 120000;
+	// One number, shared with the backend's own budget: a screen that gives up first reports
+	// an interrupted save while the host is still being changed, and the read-back that would
+	// show what happened is queued behind that very write.
+	const SAVE_TIMEOUT_MS = SYSTEM_TIME_SAVE_TIMEOUT_MS;
 	let status = $state<SystemTimeStatus | null>(null);
 	let timezones = $state<string[]>([]);
 	let errorMessage = $state('');

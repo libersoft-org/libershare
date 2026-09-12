@@ -21,6 +21,7 @@
 		import { menuStructure } from '/src/scripts/menu.ts';
 		import { emit } from '/src/scripts/areas.ts';
 		import { startInput, stopInput } from '/src/scripts/input/input.ts';
+		import { SYSTEM_TIME_SAVE_TIMEOUT_MS } from '@shared';
 
 		const target = document.querySelector('#form');
 		const output = document.querySelector('#results');
@@ -429,6 +430,12 @@
 				await click(label('common.save'));
 				const save = limits.find(entry => entry.method === 'system.applyTimeSettings');
 				assert(save && typeof save.timeoutMs === 'number' && save.timeoutMs > 0, 'The save was sent without a time limit');
+				// Not merely "has a limit": it has to be the one the backend's own budget was sized
+				// against. A shorter wait reports an interrupted save while the host is still being
+				// changed - and on Windows the elevation prompt alone may sit for three minutes,
+				// which is past the two-minute wait this replaced.
+				assert(save.timeoutMs === SYSTEM_TIME_SAVE_TIMEOUT_MS, `The save waited ${save.timeoutMs} ms instead of the agreed ${SYSTEM_TIME_SAVE_TIMEOUT_MS} ms`);
+				assert(save.timeoutMs > reads[0].timeoutMs, 'A save was given no more time than a read');
 			});
 			/**
 			 * A value the host refused before running anything must not cost the edits next to it.

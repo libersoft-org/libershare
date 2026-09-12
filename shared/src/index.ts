@@ -514,6 +514,18 @@ export interface SystemTimeChanges {
  * - `error`: anything else; {@link SystemTimeResult.message} carries the underlying text.
  */
 /** Order is load-bearing: an outcome's index is what an elevated Windows helper reports it by (see `systemTimeExitCode`). Append, never reorder. */
+/**
+ * How long a client waits for one system-time save before giving up on the answer.
+ *
+ * It has to cover everything the backend may legitimately spend on that one request, or the
+ * screen reports "saving was interrupted" while the host is still being changed - and the
+ * read-back that would show what happened is queued behind the very write that is still
+ * running. Measured against the backend's own budget, which is asserted to fit inside this
+ * (see SYSTEM_TIME_BUDGET_MS in the backend): the elevation prompt alone may sit unanswered
+ * for three minutes, which on its own is past the two-minute wait this replaced.
+ */
+export const SYSTEM_TIME_SAVE_TIMEOUT_MS = 300_000;
+
 export const SYSTEM_TIME_OUTCOMES = ['ok', 'permission-denied', 'unsupported', 'auto-sync-enabled', 'invalid-input', 'stale', 'error'] as const;
 export type SystemTimeOutcome = (typeof SYSTEM_TIME_OUTCOMES)[number];
 

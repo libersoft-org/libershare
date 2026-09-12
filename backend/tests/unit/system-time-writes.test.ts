@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import { applySystemTimeSettings, buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, clockWriteRefusal, getSystemTimeStatus, listHostTimezones, listSystemTimezones, resetHostTimezones, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type SystemCommand, type SystemTimeWriters, type WindowsModeState, W32TM_ERROR_RE, W32TM_SERVICE_INACTIVE_RE, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, MAC_NEEDS_ROOT_RE, run, EXEC_TIMEOUT_MS, WRITE_TIMEOUT_MS, withSystemTimeLock } from '../../src/system-time.ts';
+import { SEQUENCE_BUDGET_MS } from '../../src/system-time-common.ts';
+import { SIGNATURE_TIMEOUT_MS, WINDOWS_TIME_HELPER_TIMEOUT_MS } from '../../src/network-helper-client.ts';
+import { WINDOWS_ELEVATION_WAIT_MS } from '../../src/network-helper-windows.ts';
+import { SYSTEM_TIME_SAVE_TIMEOUT_MS } from '@shared';
 import type { SystemTimeChanges, SystemTimeStatus } from '@shared';
 import { W32TM_STATUS, fakeRunner } from '../helpers/system-time-fixtures.ts';
 
@@ -59,6 +63,95 @@ describe('buildSetClockCommands', () => {
 	it('zero-pads single-digit parts', () => {
 		expect(buildSetClockCommands('linux', { year: 2026, month: 1, day: 2, hours: 3, minutes: 4, seconds: 5 })[0]?.args[1]).toBe('03:04:05');
 		expect(buildSetClockCommands('darwin', { ...AT, hours: 0, minutes: 0, seconds: 0 })[0]?.args[1]).toBe('00:00:00');
+	});
+});
+
+/**
+ * The limits of one save have to nest, innermost first.
+ *
+ * They did not: a single command was allowed 90 s and a save emits up to six of them, the
+ * elevated run inherited the network path's 271 s NetworkManager window, and the screen gave
+ * up after 120 s - the SHORTEST of the three. A save that was merely slow therefore reported
+ * itself interrupted while the host went on being changed, and the read-back that would have
+ * shown the result was queued behind that same write.
+ *
+ * Asserted rather than commented, because three numbers in three files drift apart silently.
+ */
+describe('the timeouts of one save', () => {
+	it('gives the screen longer than anything the backend may spend', () => {
+		// The two ends of the save, each plus what surrounds it: verifying the helper before the
+		// work, and reading the host back afterwards.
+		const readBackAllowance = 30_000;
+		const elevated = SIGNATURE_TIMEOUT_MS + WINDOWS_TIME_HELPER_TIMEOUT_MS + readBackAllowance;
+		const local = SIGNATURE_TIMEOUT_MS + SEQUENCE_BUDGET_MS + readBackAllowance;
+		expect(Math.max(elevated, local)).toBeLessThan(SYSTEM_TIME_SAVE_TIMEOUT_MS);
+	});
+
+	it('lets the launcher outlive its own wait for the prompt', () => {
+		expect(WINDOWS_TIME_HELPER_TIMEOUT_MS).toBeGreaterThan(WINDOWS_ELEVATION_WAIT_MS);
+	});
+
+	it('bounds a whole command sequence, not just each command in it', () => {
+		// Six commands is what a full save emits, and the per-command limit alone would allow
+		// nine minutes of them.
+		expect(SEQUENCE_BUDGET_MS).toBeLessThan(6 * WRITE_TIMEOUT_MS);
+		expect(SEQUENCE_BUDGET_MS).toBeGreaterThan(WRITE_TIMEOUT_MS);
+	});
+});
+
+describe('runAll sequence budget', () => {
+	const commands: SystemCommand[] = [
+		{ cmd: 'first', args: [] },
+		{ cmd: 'second', args: [] },
+	];
+
+	it('hands each command only what is left of the budget', async () => {
+		const limits: Array<number | undefined> = [];
+		let clock = 0;
+		const exec: CommandRunner = async (_cmd, _args, timeoutMs) => {
+			limits.push(timeoutMs);
+			clock += 80_000;
+			return { kind: 'ok', output: '' };
+		};
+		const answer = await runAll('linux', commands, exec, () => clock);
+		expect(answer.success).toBe(true);
+		expect(limits[0]).toBe(WRITE_TIMEOUT_MS);
+		// 80 s of the budget is gone, so the second command gets the remainder and not a fresh 90 s.
+		expect(limits[1]).toBe(SEQUENCE_BUDGET_MS - 80_000);
+	});
+
+	/**
+	 * A command starting with nothing left is refused, and `ran: false` is the honest report:
+	 * it was never started, so it cannot have changed anything - while the commands before it
+	 * did, which is what `changed` says.
+	 */
+	it('refuses a command that would start past the deadline', async () => {
+		let clock = 0;
+		const started: string[] = [];
+		const exec: CommandRunner = async cmd => {
+			started.push(cmd);
+			clock += SEQUENCE_BUDGET_MS;
+			return { kind: 'ok', output: '' };
+		};
+		const answer = await runAll('linux', commands, exec, () => clock);
+		expect(started).toEqual(['first']);
+		expect(answer.success).toBe(false);
+		expect(answer.outcome).toBe('error');
+		expect(answer.message).toContain('did not finish within');
+		expect(answer.changed).toBe(true);
+	});
+
+	/** Monotonic, because these are the commands that move the wall clock. */
+	it('is not measured against a clock the commands themselves can move', async () => {
+		const limits: Array<number | undefined> = [];
+		const exec: CommandRunner = async (_cmd, _args, timeoutMs) => {
+			limits.push(timeoutMs);
+			return { kind: 'ok', output: '' };
+		};
+		// A wall clock jumping an hour back mid-sequence would make the deadline unreachable; a
+		// monotonic reading cannot do that, so a fixed clock is the right stand-in here.
+		await runAll('linux', commands, exec, () => 0);
+		expect(limits).toEqual([WRITE_TIMEOUT_MS, WRITE_TIMEOUT_MS]);
 	});
 });
 

@@ -370,6 +370,16 @@ export const WINDOWS_LAUNCHER_EXIT = { untrusted: 11, cancelled: 12, timeout: 13
  */
 export const elevationClock = (): number => performance.now();
 
+/**
+ * How long the launcher waits for the elevated helper, prompt included.
+ *
+ * Most of it is a person: UAC leaves its prompt up until it is answered, and this is the
+ * point at which an unanswered one is given up on. Named and exported because the client's
+ * own limit has to be longer than this one, and the screen's longer than that - a chain that
+ * was previously three unrelated numbers, with the screen's the shortest of them.
+ */
+export const WINDOWS_ELEVATION_WAIT_MS = 180_000;
+
 /** Outcome of one elevation attempt. Only genuine Win32 faults throw. */
 export type WindowsElevationOutcome = { kind: 'exited'; code: number } | { kind: 'cancelled' } | { kind: 'denied' } | { kind: 'timeout' };
 

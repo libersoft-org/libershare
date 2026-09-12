@@ -23,6 +23,20 @@ export const EXEC_TIMEOUT_MS = 5000;
  */
 export const WRITE_TIMEOUT_MS = 90_000;
 
+/**
+ * How long one save's whole command sequence may take, across every command in it.
+ *
+ * The per-command limit alone bounded nothing useful: a save emits up to six commands, so
+ * six times 90 seconds is nine minutes during which the screen had already given up at two
+ * and told the user the save was interrupted - while the host went on being changed. This is
+ * the sequence's own deadline, so what the backend promises is a total and not a per-step
+ * figure, and each command gets whatever is left of it.
+ *
+ * Sized to nest inside `SYSTEM_TIME_SAVE_TIMEOUT_MS` together with the elevation wait, the
+ * signature check and the read-back; the arithmetic is asserted by a test so it cannot drift.
+ */
+export const SEQUENCE_BUDGET_MS = 150_000;
+
 const LINUX_EXECUTABLES: Readonly<Record<string, string>> = {
 	timedatectl: '/usr/bin/timedatectl',
 	systemctl: '/usr/bin/systemctl',
@@ -483,10 +497,20 @@ export function result(outcome: SystemTimeOutcome, message: string | null = null
  * Run one command as a WRITE: with the budget of something that may wait for an
  * authorization prompt rather than the short one a status read gets.
  */
-export const runWrite: CommandRunner = (cmd, args) => run(cmd, args, WRITE_TIMEOUT_MS);
+export const runWrite: CommandRunner = (cmd, args, timeoutMs = WRITE_TIMEOUT_MS) => run(cmd, args, timeoutMs);
 
 /** Runs a single command and reports how it went. */
-export type CommandRunner = (cmd: string, args: string[]) => Promise<RunOutcome>;
+export type CommandRunner = (cmd: string, args: string[], timeoutMs?: number) => Promise<RunOutcome>;
+
+/**
+ * The clock a sequence measures its own deadline against.
+ *
+ * Monotonic, because the commands being timed are the ones that SET the wall clock: with
+ * `Date.now()` a clock moved forward makes the sequence look expired on its next step, and
+ * one moved back makes the deadline unreachable. The same reasoning as `elevationClock`,
+ * where a hand-set clock 1 h 47 min ahead terminated a helper that had in fact succeeded.
+ */
+export const elapsedClock = (): number => performance.now();
 
 /**
  * Run commands in order, stopping at the first one that does not succeed. Returns
@@ -503,9 +527,12 @@ export type CommandRunner = (cmd: string, args: string[]) => Promise<RunOutcome>
  * `exec` is injectable so the sequencing and the outcome mapping can be exercised
  * without spawning anything.
  */
-export async function runAll(platform: SystemPlatform, commands: SystemCommand[], exec: CommandRunner = runWrite): Promise<SystemTimeResult> {
+export async function runAll(platform: SystemPlatform, commands: SystemCommand[], exec: CommandRunner = runWrite, now: () => number = elapsedClock): Promise<SystemTimeResult> {
 	if (commands.length === 0) return result('unsupported', 'no command available for this platform');
 	const steps: SystemTimeStep[] = [];
+	// Monotonic on purpose: these commands are the ones that MOVE the wall clock, and a
+	// deadline measured against it would end a sequence early or never (see elevationClock).
+	const deadline = now() + SEQUENCE_BUDGET_MS;
 	/** A stopped sequence: the failing step is recorded, and everything before it already ran. */
 	const stopped = (command: SystemCommand, outcome: SystemTimeOutcome, message: string, ran = true): SystemTimeResult => {
 		steps.push({ command: [command.cmd, ...command.args].join(' '), ok: false });
@@ -515,7 +542,11 @@ export async function runAll(platform: SystemPlatform, commands: SystemCommand[]
 		return { ...result(outcome, message), changed: steps.some(step => step.ok), stateMayHaveChanged: ran || steps.some(step => step.ok), steps };
 	};
 	for (const command of commands) {
-		const r = await exec(command.cmd, command.args);
+		// The budget is the sequence's, so a command starting with no time left is refused
+		// rather than given a fresh 90 seconds of its own.
+		const remaining = deadline - now();
+		if (remaining <= 0) return stopped(command, 'error', `the time configuration did not finish within ${Math.round(SEQUENCE_BUDGET_MS / 1000)} s`, false);
+		const r = await exec(command.cmd, command.args, Math.min(WRITE_TIMEOUT_MS, remaining));
 		const done = (): void => void steps.push({ command: [command.cmd, ...command.args].join(' '), ok: true });
 		// Before anything else, including the exit code: a step that reports having had
 		// nothing to do succeeded, and `w32tm` says so with a non-zero status (38 measured).
