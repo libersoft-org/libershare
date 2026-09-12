@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'bun:test';
-import { applySystemTimeSettings, setSystemNtpEnabled, setSystemNtpServer, waitForWindowsTimeService, withSystemTimeLock, withSaveBudget, remainingSaveBudget, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, WRITE_TIMEOUT_MS, type CommandRunner, type WindowsModeState } from '../../src/system-time.ts';
+import { applySystemTimeSettings, applyTimesyncdDropIn, setSystemNtpEnabled, setSystemNtpServer, waitForWindowsTimeService, withSystemTimeLock, withSaveBudget, remainingSaveBudget, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, WRITE_TIMEOUT_MS, type CommandRunner, type WindowsModeState } from '../../src/system-time.ts';
+import { SIGNATURE_TIMEOUT_MS, WINDOWS_TIME_HELPER_TIMEOUT_MS } from '../../src/network-helper-client.ts';
+import { WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS } from '../../src/network-helper-windows.ts';
+import { SYSTEM_TIME_SAVE_TIMEOUT_MS } from '@shared';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { SystemTimeStatus } from '@shared';
 
 /** The blank line `sc.exe` puts between its `[SC] ... FAILED <code>:` line and the localized reason. */
@@ -235,5 +241,122 @@ describe('the budget along the real save path', () => {
 		expect(remainingSaveBudget()).toBeNull();
 		expect(SEQUENCE_BUDGET_MS).toBeLessThanOrEqual(SAVE_BUDGET_MS);
 		expect(WRITE_TIMEOUT_MS).toBeLessThan(SEQUENCE_BUDGET_MS);
+	});
+});
+
+/**
+ * The end of the save, which is where the limits stop being arithmetic and start mattering.
+ *
+ * Two ways it did not hold. On Windows the launcher's wait starts only once
+ * `ShellExecuteExW` has returned - and that call does not return while the consent prompt is
+ * up - so the prompt's time was outside every figure, and the caller's 200 s could kill the
+ * launcher while the launcher still believed it had 180 s left. Killing it matters: the
+ * launcher is the only thing holding the elevated process's handle and terminating it.
+ *
+ * On Linux the drop-in write never consulted the budget at all. With synchronisation off there
+ * is no daemon to restart, so that write and its verification ARE the whole change and used to
+ * run however late the save already was.
+ */
+describe('finishing one save', () => {
+	it('lets the launcher outlive the prompt and the work it waits for', () => {
+		expect(WINDOWS_TIME_HELPER_TIMEOUT_MS).toBeGreaterThan(WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS + WINDOWS_ELEVATION_WAIT_MS);
+	});
+
+	/**
+	 * Not just the arithmetic of the formula - the numbers have to mean what they say, or the
+	 * previous version passes: with the prompt allowance at zero and the whole figure folded
+	 * into the launcher's wait, `helper > prompt + wait` still holds while the prompt's time is
+	 * once again unaccounted for. So the allowance is pinned to the bound the design actually
+	 * relies on: Windows dismisses an unanswered elevation prompt itself, ~120 s by default.
+	 */
+	it('budgets for the prompt Windows itself is timing', () => {
+		expect(WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS).toBeGreaterThanOrEqual(120_000);
+		// And the launcher's wait is for the WORK: measured at 9-12 s, so a figure near the
+		// prompt's own would mean the prompt had been folded back into it.
+		expect(WINDOWS_ELEVATION_WAIT_MS).toBeLessThan(WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS);
+	});
+
+	it('still leaves the screen waiting longer than the backend can spend', () => {
+		const readBackAllowance = 30_000;
+		const elevated = SIGNATURE_TIMEOUT_MS + WINDOWS_TIME_HELPER_TIMEOUT_MS + readBackAllowance;
+		const local = SIGNATURE_TIMEOUT_MS + SAVE_BUDGET_MS + readBackAllowance;
+		expect(Math.max(elevated, local)).toBeLessThan(SYSTEM_TIME_SAVE_TIMEOUT_MS);
+	});
+
+	it('refuses a linux drop-in write that starts past the deadline', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'lish-budget-'));
+		try {
+			const path = join(root, '90-libershare.conf');
+			let ran = 0;
+			const exec: CommandRunner = async () => {
+				ran++;
+				return { kind: 'ok', output: '' };
+			};
+			// A budget that is already spent: the clock is read once when the budget opens and
+			// again inside, so a clock that has advanced past it leaves nothing.
+			let clock = 0;
+			const answer = await withSaveBudget(
+				async () => {
+					clock = SAVE_BUDGET_MS + 1;
+					return applyTimesyncdDropIn('ntp.example.org', false, path, exec);
+				},
+				() => clock
+			);
+			expect(answer.success).toBe(false);
+			expect(answer.message).toContain('did not start within');
+			// Nothing was written and nothing was run: this refusal is decided before the write.
+			expect(ran).toBe(0);
+			expect(answer.changed).toBeUndefined();
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it('hands the linux verification the remainder instead of a fresh limit', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'lish-budget-'));
+		try {
+			const path = join(root, '90-libershare.conf');
+			const limits: Array<number | undefined> = [];
+			const exec: CommandRunner = async (cmd, _args, timeoutMs) => {
+				limits.push(timeoutMs);
+				// The verification reads the effective configuration; answer with the server it asked
+				// for so the save reaches its end rather than stopping on a mismatch.
+				if (cmd === 'systemd-analyze') return { kind: 'ok', output: '[Time]\nNTP=ntp.example.org\n' };
+				return { kind: 'ok', output: '' };
+			};
+			let clock = 0;
+			await withSaveBudget(
+				async () => {
+					clock = SAVE_BUDGET_MS - 5_000;
+					return applyTimesyncdDropIn('ntp.example.org', false, path, exec);
+				},
+				() => clock
+			);
+			expect(limits.length).toBeGreaterThan(0);
+			// 5 s left of the save, so the verification gets that and not the 90 s write limit.
+			expect(limits[0]).toBe(5_000);
+			expect(limits[0]).toBeLessThan(WRITE_TIMEOUT_MS);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	/** A writer used on its own still works: no budget means the ordinary write limit. */
+	it('leaves a writer used outside a save on its own limit', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'lish-budget-'));
+		try {
+			const path = join(root, '90-libershare.conf');
+			const limits: Array<number | undefined> = [];
+			const exec: CommandRunner = async (cmd, _args, timeoutMs) => {
+				limits.push(timeoutMs);
+				if (cmd === 'systemd-analyze') return { kind: 'ok', output: '[Time]\nNTP=ntp.example.org\n' };
+				return { kind: 'ok', output: '' };
+			};
+			expect(remainingSaveBudget()).toBeNull();
+			await applyTimesyncdDropIn('ntp.example.org', false, path, exec);
+			expect(limits[0]).toBe(WRITE_TIMEOUT_MS);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
 	});
 });

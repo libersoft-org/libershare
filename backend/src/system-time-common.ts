@@ -59,7 +59,7 @@ export const SAVE_BUDGET_MS = 200_000;
  * write lock tracks re-entrance: the writers are exported and used directly as well, and a
  * caller that never heard of budgets still gets a bounded one.
  */
-const saveDeadline = new AsyncLocalStorage<number>();
+const saveDeadline = new AsyncLocalStorage<{ deadline: number; now: () => number }>();
 
 /**
  * Run `fn` under one deadline for the whole save. A nested call joins the outer one, so the
@@ -68,13 +68,16 @@ const saveDeadline = new AsyncLocalStorage<number>();
 export function withSaveBudget<T>(fn: () => Promise<T>, now: () => number = elapsedClock): Promise<T> {
 	const existing = saveDeadline.getStore();
 	if (existing !== undefined) return fn();
-	return saveDeadline.run(now() + SAVE_BUDGET_MS, fn);
+	// The clock travels with the deadline. Every operation inside reads the budget without
+	// being handed one, so the two have to arrive together or an injected clock would set the
+	// deadline and then be ignored by every reader of it.
+	return saveDeadline.run({ deadline: now() + SAVE_BUDGET_MS, now }, fn);
 }
 
 /** What is left of the current save's budget, or null when nothing set one. */
-export function remainingSaveBudget(now: () => number = elapsedClock): number | null {
-	const deadline = saveDeadline.getStore();
-	return deadline === undefined ? null : deadline - now();
+export function remainingSaveBudget(): number | null {
+	const store = saveDeadline.getStore();
+	return store === undefined ? null : store.deadline - store.now();
 }
 
 const LINUX_EXECUTABLES: Readonly<Record<string, string>> = {
@@ -574,7 +577,7 @@ export async function runAll(platform: SystemPlatform, commands: SystemCommand[]
 	// deadline measured against it would end a sequence early or never (see elevationClock).
 	// The SAVE's deadline wins when there is one: this sequence may be the third of four in it,
 	// and starting a fresh 150 s here is what let a combined save outlast the screen's wait.
-	const remainingSave = remainingSaveBudget(now);
+	const remainingSave = remainingSaveBudget();
 	const deadline = now() + Math.min(SEQUENCE_BUDGET_MS, remainingSave ?? SEQUENCE_BUDGET_MS);
 	/** A stopped sequence: the failing step is recorded, and everything before it already ran. */
 	const stopped = (command: SystemCommand, outcome: SystemTimeOutcome, message: string, ran = true): SystemTimeResult => {

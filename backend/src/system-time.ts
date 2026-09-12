@@ -1,4 +1,4 @@
-import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, runWrite, validateClockParts, runAll, listSystemTimezones, isValidNtpServer, withSaveBudget } from './system-time-common.ts';
+import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, runWrite, validateClockParts, runAll, listSystemTimezones, isValidNtpServer, withSaveBudget, remainingSaveBudget, SAVE_BUDGET_MS, WRITE_TIMEOUT_MS } from './system-time-common.ts';
 import { macSystemsetup, readMacStatus } from './system-time-macos.ts';
 import { w32tm, w32tmNotifying, windowsClockRefusal, probeLocalMachineKeyWritable, type RegistryWriteState, W32TIME_NTP_CLIENT_SUBKEY, W32TIME_NTP_CLIENT_KEY, type WindowsSyncMode, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled, readWindowsTimeZone, readWindowsTimeServiceRunning, type WindowsTimeZoneState } from './system-time-windows.ts';
 import { readLinuxStatus, TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn, verifyTimesyncdServer } from './system-time-linux.ts';
@@ -485,6 +485,18 @@ export function applySystemTimeSettings(changes: SystemTimeChanges, writers: Sys
 	);
 }
 
+/**
+ * A per-command limit that fits in what the save has left.
+ *
+ * Null remaining means nobody set a budget - a writer used directly - and the ordinary write
+ * limit applies. Otherwise it is the smaller of the two, so a command started late cannot
+ * outlive the save that owns it.
+ */
+function budgetedTimeout(): number {
+	const remaining = remainingSaveBudget();
+	return remaining === null ? WRITE_TIMEOUT_MS : Math.max(0, Math.min(WRITE_TIMEOUT_MS, remaining));
+}
+
 /** Why a host whose time source somebody else owns is left alone. */
 const NOT_OURS_MESSAGE = 'time synchronisation here is not ours to switch: this host has no such service, it belongs to a domain, or its time source is managed by group policy';
 
@@ -680,6 +692,18 @@ export async function setSystemNtpServer(server: string, readStatus: () => Promi
  */
 export async function applyTimesyncdDropIn(server: string, syncRunning: boolean, path: string = TIMESYNCD_DROPIN_PATH, exec: CommandRunner = runWrite, syncDir: (dir: string) => Promise<void> = syncDirectory): Promise<SystemTimeResult> {
 	return withSystemTimeLock(async () => {
+		// Creating a budget does not enforce it - each operation has to ask, and this one is the
+		// path that never reached `runAll` at all: with synchronisation off there is no daemon to
+		// restart, so the file write and its verification ARE the whole change and used to run
+		// however late the save already was. Measured with a budget already at -1 ms: the write
+		// went ahead and the verification took a fresh 90 s of its own.
+		//
+		// Asked BEFORE the write, because afterwards the honest answer is no longer "nothing
+		// happened" - and the rollback that repairs a late write is deliberately NOT subject to
+		// the budget: refusing to undo a change because time ran out is the one outcome worse
+		// than being slow.
+		const remaining = remainingSaveBudget();
+		if (remaining !== null && remaining <= 0) return result('error', `the time configuration did not start within the ${Math.round(SAVE_BUDGET_MS / 1000)} s this save is allowed`);
 		let rollback: () => Promise<RollbackResult>;
 		try {
 			rollback = await writeFileAtomically(path, buildTimesyncdDropIn(server), undefined, syncDir);
@@ -695,7 +719,9 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
 		// Reachability before content: `systemd-analyze` reads as US, so a directory the daemon
 		// cannot enter passes every check below while the daemon never sees the file.
 		const unreachable = process.platform === 'win32' ? null : await unreadableByServiceAccount(path);
-		const verification = unreachable ?? (await verifyTimesyncdServer(server, exec));
+		// The remainder, not a fresh limit of its own: this runs after a write that has already
+		// spent part of the save's time.
+		const verification = unreachable ?? (await verifyTimesyncdServer(server, (cmd, args, timeoutMs) => exec(cmd, args, timeoutMs ?? budgetedTimeout())));
 		if (verification !== null) {
 			const restored = await rollback();
 			if (restored.state === 'not-restored') return { ...result('error', `${verification} (${path} could not be restored safely; its current configuration was left untouched)`), changed: true, stateMayHaveChanged: true };
