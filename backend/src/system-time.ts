@@ -17,12 +17,23 @@ import { join } from 'node:path';
 /**
  * Commands that set the wall clock to `when`. Every field is a validated integer,
  * so the formatted date string cannot carry anything but digits and separators.
- * macOS takes only the time — its `-settime` leaves the date alone.
+ *
+ * Only Windows is given the date. macOS `-settime` takes the time alone, and on Linux the
+ * host supplies today itself — see the note on each branch. So `when`'s date fields exist
+ * for the one platform whose command cannot do without them.
  */
 export function buildSetClockCommands(platform: SystemPlatform, when: LocalDateTime): SystemCommand[] {
 	const date = `${when.year}-${pad2(when.month)}-${pad2(when.day)}`;
 	const time = `${pad2(when.hours)}:${pad2(when.minutes)}:${pad2(when.seconds)}`;
-	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-time', `${date} ${time}`] }];
+	// Time only, and deliberately no date: systemd resolves a bare `HH:MM:SS` against the
+	// HOST's own idea of today (measured with `systemd-analyze timestamp '01:00:00'`, which
+	// normalises to the current local date). A date computed here would come from this
+	// process's offset instead, and on Linux that offset is not the host's - nothing in
+	// `timedatectl show` reports one, so it falls back to this runtime's ICU database. Two
+	// databases that disagree by an hour put the computed date on the wrong day for anything
+	// within an hour of midnight, so "set the clock to 01:00" would also move the calendar
+	// day. Letting systemd supply the date removes the disagreement instead of narrowing it.
+	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-time', time] }];
 	if (platform === 'darwin') return [macSystemsetup(['-settime', time])];
 	// powershell.exe otherwise collapses native errors to exit 1 and localized text.
 	// The encoding is pinned first: PowerShell writes through `[Console]::OutputEncoding`,

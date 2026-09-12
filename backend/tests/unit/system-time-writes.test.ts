@@ -25,8 +25,24 @@ function statusFixture(overrides: Partial<SystemTimeStatus> = {}): SystemTimeSta
 }
 
 describe('buildSetClockCommands', () => {
-	it('builds the linux argv with a full local timestamp', () => {
-		expect(buildSetClockCommands('linux', AT)).toEqual([{ cmd: 'timedatectl', args: ['set-time', '2026-08-14 23:46:28'] }]);
+	/**
+	 * No date on Linux, on purpose: systemd resolves a bare `HH:MM:SS` against the host's own
+	 * today. A date computed here would come from this process's offset, and on Linux that is
+	 * not the host's - `timedatectl show` reports no offset, so the status falls back to this
+	 * runtime's ICU. Databases an hour apart put the computed day on the wrong side of
+	 * midnight, and "set the clock to 01:00" then moved the calendar day as well.
+	 * Measured on a systemd host: `systemd-analyze timestamp '00:30:00'` normalises to the
+	 * current local date, and `timedatectl set-time "HH:MM:SS"` accepts the form.
+	 */
+	it('sends only the time on linux, leaving the date to the host', () => {
+		expect(buildSetClockCommands('linux', AT)).toEqual([{ cmd: 'timedatectl', args: ['set-time', '23:46:28'] }]);
+	});
+
+	it('keeps the linux argv free of a date whatever date it is handed', () => {
+		for (const when of [AT, { ...AT, year: 1999, month: 1, day: 1 }, { ...AT, year: 2027, month: 12, day: 31 }]) {
+			const [command] = buildSetClockCommands('linux', when);
+			expect(command?.args).toEqual(['set-time', '23:46:28']);
+		}
 	});
 
 	it('sends only the time on macOS, leaving the date alone', () => {
@@ -41,7 +57,7 @@ describe('buildSetClockCommands', () => {
 	});
 
 	it('zero-pads single-digit parts', () => {
-		expect(buildSetClockCommands('linux', { year: 2026, month: 1, day: 2, hours: 3, minutes: 4, seconds: 5 })[0]?.args[1]).toBe('2026-01-02 03:04:05');
+		expect(buildSetClockCommands('linux', { year: 2026, month: 1, day: 2, hours: 3, minutes: 4, seconds: 5 })[0]?.args[1]).toBe('03:04:05');
 		expect(buildSetClockCommands('darwin', { ...AT, hours: 0, minutes: 0, seconds: 0 })[0]?.args[1]).toBe('00:00:00');
 	});
 });
