@@ -1,0 +1,268 @@
+/**
+ * Unit tests for the ordering rules of the system-time settings form
+ * (`src/scripts/timeStatusSync.ts`).
+ *
+ * Both rules govern what happens when several answers about the host's time state are in
+ * flight at once — a re-read, a broadcast and the outcome of a write. The module is pure,
+ * so it runs under `bun test` without the Svelte runtime.
+ */
+import { describe, test, expect } from 'bun:test';
+import { createStatusGate, effectiveOffsetMode, formatHostClock, formatHostDate, timeStatusChanged, loadFailureMessage, loadMayApply, planTimeChanges, syncSwitchIsDirty, writeFailureMessage, type TimeSavePlan } from '../../src/scripts/timeStatusSync.ts';
+import type { SystemTimeStatus } from '@shared';
+
+test('a read that nothing overtook is applied', () => {
+	const gate = createStatusGate();
+	const current = gate.begin();
+	expect(current()).toBe(true);
+});
+
+/** The reconnect race: the broadcast carries the newer state, the read predates it. */
+test('a broadcast adopted mid-read makes that read stale', () => {
+	const gate = createStatusGate();
+	const current = gate.begin();
+	gate.supersede();
+	expect(current()).toBe(false);
+});
+
+/** Two reconnects in a row: the answers can come back in either order. */
+test('an older read stays stale once a newer one has been issued', () => {
+	const gate = createStatusGate();
+	const first = gate.begin();
+	const second = gate.begin();
+	expect(first()).toBe(false);
+	expect(second()).toBe(true);
+	// And the newer one still loses to a broadcast that lands before it is answered.
+	gate.supersede();
+	expect(second()).toBe(false);
+});
+
+/**
+ * The reconnect read is issued while the form is clean and idle and answered a round trip
+ * later. Checked only at the start, it overwrote whatever the user typed in between.
+ */
+test('a background read that came back to an edited form does not apply', () => {
+	expect(loadMayApply({ fresh: true, background: true, busy: false, dirty: true })).toBe(false);
+});
+
+/** Same read, same round trip, but the user pressed Save inside it. */
+test('a background read that came back mid-save does not apply', () => {
+	expect(loadMayApply({ fresh: true, background: true, busy: true, dirty: false })).toBe(false);
+});
+
+test('a background read applies to a form that is still clean and idle', () => {
+	expect(loadMayApply({ fresh: true, background: true, busy: false, dirty: false })).toBe(true);
+});
+
+/**
+ * The re-read after a refused or half-applied write. Resetting the form is the point of it:
+ * the values on screen are precisely the ones that must not be trusted, and the form is
+ * dirty and was busy by construction.
+ */
+test('a foreground read applies even to a dirty form', () => {
+	expect(loadMayApply({ fresh: false, background: false, busy: false, dirty: false })).toBe(false);
+	expect(loadMayApply({ fresh: true, background: false, busy: true, dirty: true })).toBe(true);
+});
+
+/**
+ * The timezone list is applied under this same answer, so a stale read can no longer
+ * replace a newer one's list — or blank it to an empty picker — while its own status is
+ * correctly thrown away.
+ */
+test('a superseded read applies nothing at all, background or not', () => {
+	const gate = createStatusGate();
+	const older = gate.begin();
+	gate.begin();
+	expect(loadMayApply({ fresh: older(), background: false, busy: false, dirty: false })).toBe(false);
+	expect(loadMayApply({ fresh: older(), background: true, busy: false, dirty: false })).toBe(false);
+});
+
+/** The plan a save is built from: everything changed, so every step runs. */
+const FULL_PLAN: TimeSavePlan = { autoSync: false, syncDirty: true, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 }, loaded: { ntpServer: 'old.example.org', timezone: 'UTC', utcOffsetMinutes: 0 } };
+
+/**
+ * Synchronisation off first — the OS refuses a manual clock set while a daemon owns the
+ * clock — and the clock after the values it depends on.
+ */
+test('the writes run in the order the OS requires', () => {
+	// `expectedTimezone` rides along with the clock: the digits only mean an instant
+	// together with the zone they were read in, which is the LOADED one even here, where
+	// this same save also moves the zone.
+	expect(planTimeChanges(FULL_PLAN)).toEqual({ ntpEnabled: false, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 }, expectedTimezone: 'UTC', expectedOffsetMinutes: 0 });
+});
+
+/** Switching synchronisation back on goes last, or it would step over the clock just set. */
+test('synchronisation is switched back on after everything else', () => {
+	expect(planTimeChanges({ ...FULL_PLAN, autoSync: true, clock: null })).toEqual({ ntpEnabled: true, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague' });
+});
+
+test('an unchanged value is not written', () => {
+	expect(planTimeChanges({ ...FULL_PLAN, syncDirty: false, ntpServer: 'old.example.org', timezone: 'UTC', clock: null })).toEqual({});
+});
+
+/**
+ * The whole reason the plan exists. Whatever a status answer landing mid-save does to the
+ * form, the requests were decided from the values the user pressed Save on — so mutating
+ * the form afterwards cannot change what is written or skip a step.
+ */
+test('the writes come from the plan, not from a form that moved underneath it', () => {
+	const plan = { ...FULL_PLAN };
+	const changes = planTimeChanges(plan);
+	plan.ntpServer = 'overwritten.example.org';
+	plan.timezone = 'UTC';
+	plan.syncDirty = false;
+	expect(planTimeChanges(FULL_PLAN)).toEqual(changes);
+	expect(changes.ntpServer).toBe('ntp.example.org');
+});
+
+test('host clock follows the spring DST jump in its own timezone', () => {
+	expect(formatHostClock(Date.UTC(2026, 2, 29, 0, 59, 59), 'Europe/Prague', 60)).toEqual({ hours: '01', minutes: '59', seconds: '59' });
+	expect(formatHostClock(Date.UTC(2026, 2, 29, 1, 0, 0), 'Europe/Prague', 60)).toEqual({ hours: '03', minutes: '00', seconds: '00' });
+});
+
+test('host clock follows the autumn DST overlap in its own timezone', () => {
+	expect(formatHostClock(Date.UTC(2026, 9, 25, 0, 59, 59), 'Europe/Prague', 120)).toEqual({ hours: '02', minutes: '59', seconds: '59' });
+	expect(formatHostClock(Date.UTC(2026, 9, 25, 1, 0, 0), 'Europe/Prague', 120)).toEqual({ hours: '02', minutes: '00', seconds: '00' });
+});
+
+test('host clock falls back to the reported offset when the browser does not know the zone', () => {
+	expect(formatHostClock(Date.UTC(2026, 0, 1, 10, 20, 30), 'Unknown/Host_Zone', 90)).toEqual({ hours: '11', minutes: '50', seconds: '30' });
+});
+
+test('fixed Windows offset overrides summer DST rules of a recognized timezone', () => {
+	expect(formatHostClock(Date.UTC(2026, 6, 1, 12), 'Europe/Prague', 60, 'fixed')).toEqual({ hours: '13', minutes: '00', seconds: '00' });
+});
+
+test('fixed offset keeps the local midnight independent of timezone DST', () => {
+	expect(formatHostClock(Date.UTC(2026, 6, 1, 22, 30), 'Europe/Prague', 60, 'fixed')).toEqual({ hours: '23', minutes: '30', seconds: '00' });
+	expect(formatHostDate(Date.UTC(2026, 6, 1, 22, 30), 'Europe/Prague', 60, 'fixed')).toBe('2026-07-01');
+	expect(formatHostDate(Date.UTC(2026, 6, 1, 22, 30), 'Europe/Prague', 60)).toBe('2026-07-02');
+	expect(formatHostDate(Date.UTC(2026, 6, 1, 23, 30), 'Europe/Prague', 60, 'fixed')).toBe('2026-07-02');
+});
+
+const heartbeatStatus: SystemTimeStatus = {
+	supported: true,
+	nowMs: Date.UTC(2026, 6, 1, 12),
+	timezone: 'Europe/Prague',
+	timezoneSource: 'intl',
+	utcOffsetMinutes: 120,
+	ntpEnabled: true,
+	ntpSynchronized: false,
+	ntpServer: 'example.org',
+	capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: true },
+};
+
+test('normal heartbeat progress and synchronization completion preserve drafts', () => {
+	expect(timeStatusChanged(heartbeatStatus, { ...heartbeatStatus, nowMs: heartbeatStatus.nowMs + 15000 }, 15000)).toBe(false);
+	expect(timeStatusChanged(heartbeatStatus, { ...heartbeatStatus, ntpSynchronized: true }, 0)).toBe(false);
+	expect(timeStatusChanged(heartbeatStatus, { ...heartbeatStatus, timezoneOffsetMode: 'zone' }, 0)).toBe(false);
+});
+
+test('clock corrections exclude elapsed monotonic time and allow two seconds of jitter', () => {
+	expect(timeStatusChanged(heartbeatStatus, { ...heartbeatStatus, nowMs: heartbeatStatus.nowMs + 17000 }, 15000)).toBe(false);
+	expect(timeStatusChanged(heartbeatStatus, { ...heartbeatStatus, nowMs: heartbeatStatus.nowMs + 17001 }, 15000)).toBe(true);
+	expect(timeStatusChanged(heartbeatStatus, { ...heartbeatStatus, nowMs: heartbeatStatus.nowMs - 300000 }, 15000)).toBe(true);
+});
+
+test('changing timezone offset mode invalidates the same-zone draft', () => {
+	expect(timeStatusChanged(heartbeatStatus, { ...heartbeatStatus, timezoneOffsetMode: 'fixed' }, 0)).toBe(true);
+	expect(timeStatusChanged(heartbeatStatus, { ...heartbeatStatus, utcOffsetMinutes: 60 }, 0)).toBe(true);
+});
+
+test('changed time settings and revoked capabilities invalidate drafts', () => {
+	for (const next of [
+		{ ...heartbeatStatus, timezone: 'UTC' },
+		{ ...heartbeatStatus, ntpServer: 'other.example.org' },
+		{ ...heartbeatStatus, ntpEnabled: false },
+		{ ...heartbeatStatus, capabilities: { ...heartbeatStatus.capabilities, setNtpServer: false } },
+	])
+		expect(timeStatusChanged(heartbeatStatus, next, 0)).toBe(true);
+});
+
+test('a write failure keeps its own reason when the reload also failed', () => {
+	expect(writeFailureMessage('some settings may already be applied', 'the time could not be read')).toBe('some settings may already be applied: the time could not be read');
+});
+
+test('a write failure reads unchanged when the reload succeeded', () => {
+	expect(writeFailureMessage('automatic synchronisation is enabled', '')).toBe('automatic synchronisation is enabled');
+});
+
+test('the sync switch is dirty exactly when it differs from what the host reported', () => {
+	expect(syncSwitchIsDirty(true, false, false)).toBe(true);
+	expect(syncSwitchIsDirty(false, true, false)).toBe(true);
+	expect(syncSwitchIsDirty(true, true, true)).toBe(false);
+	expect(syncSwitchIsDirty(false, false, true)).toBe(false);
+});
+
+/**
+ * The state with no baseline to differ from. The switch defaults to off there, so "off"
+ * matched the baseline and could never be saved — the user could assert that
+ * synchronisation is on, never that it is off, on the one screen telling them to resolve
+ * the state by switching it either way.
+ */
+test('an unreadable sync state can be asserted off, not only on', () => {
+	expect(syncSwitchIsDirty(false, null, true)).toBe(true);
+	expect(syncSwitchIsDirty(true, null, true)).toBe(true);
+	// Until the user actually touches it, though: opening the page writes nothing.
+	expect(syncSwitchIsDirty(false, null, false)).toBe(false);
+});
+
+/**
+ * The race the last patch left standing. A reconnect read is issued on a clean, idle form;
+ * during its round trip the user edits and saves, the save fails with a specific write
+ * error, and only then does the older read come back rejected. Its values are already
+ * correctly discarded — its FAILURE was not, and it replaced the one message the user
+ * needed with a generic "could not read the time".
+ */
+test('an older background read that failed does not overwrite a newer error', () => {
+	const gate = createStatusGate();
+	// The reconnect read goes out while the form is clean and idle.
+	const reconnect = gate.begin();
+	// The user edits and saves; the failed save re-reads the host, which supersedes it.
+	const afterSave = gate.begin();
+	expect(loadMayApply({ fresh: afterSave(), background: false, busy: true, dirty: true })).toBe(true);
+	// Now the reconnect answer lands, rejected.
+	const stale = loadMayApply({ fresh: reconnect(), background: true, busy: true, dirty: true });
+	expect(stale).toBe(false);
+	expect(loadFailureMessage('the time could not be read', stale)).toBe('');
+});
+
+test('a read that may still fill the form still reports why it could not', () => {
+	expect(loadFailureMessage('the time could not be read', true)).toBe('the time could not be read');
+});
+
+describe('effectiveOffsetMode', () => {
+	const snapshot = (over: Record<string, unknown> = {}) => ({ timezone: 'Europe/Prague', nowMs: Date.UTC(2026, 6, 1, 10, 0, 0), utcOffsetMinutes: 120, ...over }) as never;
+
+	test('trusts the zone rules while they answer what the host answered', () => {
+		expect(effectiveOffsetMode(snapshot())).toBe('zone');
+	});
+
+	/**
+	 * Knowing the NAME is not agreeing about it. The browser carries its own timezone
+	 * database, and where it disagrees the screen was labelling somebody else's time as the
+	 * host's — measured as an hour out, and a day out across midnight.
+	 */
+	test('falls back to the host number when the browser database disagrees', () => {
+		expect(effectiveOffsetMode(snapshot({ utcOffsetMinutes: 60 }))).toBe('fixed');
+	});
+
+	test('stays fixed where the host already said so', () => {
+		expect(effectiveOffsetMode(snapshot({ timezoneOffsetMode: 'fixed' }))).toBe('fixed');
+	});
+
+	test('falls back for a zone this runtime does not know at all', () => {
+		expect(effectiveOffsetMode(snapshot({ timezone: 'Not/AZone' }))).toBe('fixed');
+	});
+
+	/** The disagreement the fallback exists for: an hour and a calendar day. */
+	test('renders the host time rather than the browser interpretation', () => {
+		const nowMs = Date.UTC(2026, 0, 1, 18, 30, 0);
+		const status = { timezone: 'Asia/Karachi', nowMs, utcOffsetMinutes: 360 } as never;
+		const mode = effectiveOffsetMode(status);
+		expect(mode).toBe('fixed');
+		expect(formatHostDate(nowMs, 'Asia/Karachi', 360, mode)).toBe('2026-01-02');
+		expect(formatHostClock(nowMs, 'Asia/Karachi', 360, mode).hours).toBe('00');
+		// What it used to show, and the reason this is not a cosmetic difference.
+		expect(formatHostDate(nowMs, 'Asia/Karachi', 360, 'zone')).toBe('2026-01-01');
+	});
+});

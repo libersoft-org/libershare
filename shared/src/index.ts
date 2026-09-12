@@ -396,6 +396,169 @@ export interface SystemCPUInfo {
 	usage: number;
 }
 
+// System time / clock configuration
+
+/**
+ * Whether the host can offer a list of selectable timezone identifiers at all.
+ * - `intl`: a list is available. The names are IANA identifiers, but WHICH names are
+ *   offered is per-platform on purpose. Linux and macOS list the zones the host's own
+ *   database has (`/usr/share/zoneinfo`), intersected with what this runtime can format
+ *   a clock for — ICU still calls legacy aliases canonical (`Europe/Kiev`,
+ *   `Asia/Calcutta`) while a current distribution ships only the modern name, so the
+ *   runtime's own list alone offered neither. Windows starts from the runtime's list and
+ *   drops every name it cannot convert to a system timezone identifier, since a zone
+ *   that does not convert cannot be applied there. Either falls back to the runtime's
+ *   unfiltered list when the host database cannot be read or conversion is unavailable.
+ * - `unavailable`: the runtime exposes no timezone list, so nothing can be offered
+ *   for selection and a timezone change cannot be validated.
+ */
+export type SystemTimezoneSource = 'intl' | 'unavailable';
+
+/**
+ * Which system-time facilities the host actually provides, probed from the OS
+ * (presence of the managing tool / sync daemon) and NOT inferred from a write that
+ * failed. A denied write means "run with more privileges", not "this host cannot do
+ * it" — the two must stay distinguishable or an unprivileged dev session would
+ * permanently mark a capable kiosk as incapable.
+ */
+export interface SystemTimeCapabilities {
+	/** The wall clock can be set (some managing tool exists for it). */
+	setClock: boolean;
+	/** The system timezone can be changed. */
+	setTimezone: boolean;
+	/** The NTP server address can be configured. */
+	setNtpServer: boolean;
+	/** Automatic time synchronisation can be switched on and off. */
+	setNtpEnabled: boolean;
+}
+
+/**
+ * A snapshot of the host's time configuration. Read live from the OS on every
+ * request — the OS owns this state (RTC, `/etc/localtime`, the sync daemon's
+ * config), so nothing here is cached or persisted by the application.
+ */
+export interface SystemTimeStatus {
+	/** False on a platform with no implemented time backend — every setter then reports `unsupported`. */
+	supported: boolean;
+	/** Current wall-clock time as a Unix timestamp in milliseconds. */
+	nowMs: number;
+	/** Active timezone as an IANA identifier (e.g. `Europe/Prague`). */
+	timezone: string;
+	/** Minutes to ADD to UTC to get local time — positive east of Greenwich (e.g. 120 for CEST). */
+	utcOffsetMinutes: number;
+	/** Use the observed OS offset when named timezone rules cannot represent host policy. */
+	timezoneOffsetMode?: 'zone' | 'fixed';
+	/** Where {@link SystemTimeStatus.timezone} and the selectable list come from. */
+	timezoneSource: SystemTimezoneSource;
+	/**
+	 * Automatic time synchronisation (NTP) is switched on, or null when the host's
+	 * state could not be determined (the managing tool is missing, wedged, refused the
+	 * read, or printed something unparseable).
+	 *
+	 * Tri-state deliberately: collapsing an unreadable state to false would let the UI
+	 * offer a manual clock set while synchronisation is in fact running, and the daemon
+	 * would step the clock back seconds later. A hand-set clock requires a definite
+	 * false — never merely "not known to be true".
+	 */
+	ntpEnabled: boolean | null;
+	/** The last synchronisation actually succeeded; null where the OS does not report it. */
+	ntpSynchronized: boolean | null;
+	/** Configured NTP server address, or null when none is configured / it cannot be read. */
+	ntpServer: string | null;
+	/** Operations available to this client; the OS may still require elevated privileges. */
+	capabilities: SystemTimeCapabilities;
+}
+
+/** The changed fields of one serialized system-time settings save. */
+export interface SystemTimeChanges {
+	ntpEnabled?: boolean;
+	ntpServer?: string;
+	timezone?: string;
+	clock?: { hours: number; minutes: number; seconds: number };
+	/**
+	 * The timezone the clock in this request was READ IN, sent with `clock` and with nothing
+	 * else. A wall-clock time only means an instant together with a zone: the user looks at
+	 * their watch, sees 12:15 in Prague and types it, and the host is supposed to end up
+	 * correct. Another client switching the host to UTC in between makes 12:15 land two hours
+	 * off real time — the save meant to FIX the clock breaks it instead, and the serialized
+	 * lock cannot see it because both requests are individually valid.
+	 *
+	 * Compared against the host before anything is written. A save that also changes the zone
+	 * still carries the zone it was composed under, not the one it is about to set.
+	 */
+	expectedTimezone?: string;
+	/**
+	 * The offset that zone had when the clock was read, sent alongside it.
+	 *
+	 * The NAME alone is not the meaning. Windows lets automatic daylight saving be switched
+	 * off for a zone, which moves the offset while the identifier stays put — so `Europe/Prague`
+	 * at +120 and `Europe/Prague` at +60 name the same zone and turn the same digits into
+	 * instants an hour apart. Traced: an offset changed under a filled-in form passed the name
+	 * check and wrote the clock an hour off what the user had been looking at.
+	 */
+	expectedOffsetMinutes?: number;
+}
+
+/**
+ * How a system-time write ended.
+ * - `ok`: the OS applied the change.
+ * - `permission-denied`: the facility exists but the process lacks the privilege
+ *   (not root / not elevated) — actionable by the operator.
+ * - `unsupported`: this host has no such facility; retrying with privileges will not help.
+ * - `auto-sync-enabled`: the clock cannot be set by hand while NTP owns it — switch
+ *   automatic synchronisation off first.
+ * - `invalid-input`: the value failed validation and no command was ever run.
+ * - `stale`: the request was composed against host state that has since changed, so its
+ *   meaning is no longer the one the user saw — nothing was written and the screen has to
+ *   read the host again.
+ * - `error`: anything else; {@link SystemTimeResult.message} carries the underlying text.
+ */
+/** Order is load-bearing: an outcome's index is what an elevated Windows helper reports it by (see `systemTimeExitCode`). Append, never reorder. */
+/**
+ * How long a client waits for one system-time save before giving up on the answer.
+ *
+ * It has to cover everything the backend may legitimately spend on that one request, or the
+ * screen reports "saving was interrupted" while the host is still being changed - and the
+ * read-back that would show what happened is queued behind the very write that is still
+ * running. Measured against the backend's own budget, which is asserted to fit inside this
+ * (see SYSTEM_TIME_BUDGET_MS in the backend): the elevation prompt alone may sit unanswered
+ * for three minutes, which on its own is past the two-minute wait this replaced.
+ */
+export const SYSTEM_TIME_SAVE_TIMEOUT_MS = 300_000;
+
+export const SYSTEM_TIME_OUTCOMES = ['ok', 'permission-denied', 'unsupported', 'auto-sync-enabled', 'invalid-input', 'stale', 'error'] as const;
+export type SystemTimeOutcome = (typeof SYSTEM_TIME_OUTCOMES)[number];
+
+/** One command of a multi-step system-time write, and how it went. */
+export interface SystemTimeStep {
+	/** The command line as run, for a log or an error detail. Never contains user input beyond a validated value. */
+	command: string;
+	ok: boolean;
+}
+
+/**
+ * Result of a system-time write. `success` is exactly `outcome === 'ok'` — a failure is
+ * never reported as a success.
+ *
+ * A failure is not the same as "nothing happened". Several of these writes are sequences
+ * (`sc config` then `sc start`; `sc stop` then `sc config`), and the sequence stops at the
+ * first step that fails — with every step before it already applied. `changed` and
+ * `stateMayHaveChanged` say which of the two a caller is looking at, so a failed request
+ * still refreshes what it shows instead of leaving a stale screen.
+ */
+export interface SystemTimeResult {
+	success: boolean;
+	outcome: SystemTimeOutcome;
+	/** Underlying OS message or the validation reason; null when there is nothing to add. */
+	message: string | null;
+	/** At least one step completed, so the host is definitely not as it was. */
+	changed?: boolean;
+	/** At least one step was attempted. A step that failed may still have applied part of its change. */
+	stateMayHaveChanged?: boolean;
+	/** Per-step outcome, in order, for a sequence that stopped part-way. Absent when nothing ran. */
+	steps?: SystemTimeStep[];
+}
+
 // Relay (circuit-relay server) statistics — counts of reservations, active tunnels and bytes/sec going through us
 export interface RelayStats {
 	reservations: number;

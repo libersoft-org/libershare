@@ -6,7 +6,8 @@ import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from '../../src/system-net
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
-import { assertWindowsRequestOwner, parseWindowsRequestFileName, windowsCurrentProcessIdentity, windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProcessImagePath, windowsProgramFilesPath, windowsRequestFileHeld, windowsRequestFileName, windowsSystemEnvironment, writeWindowsRequestFile } from '../../src/network-helper-windows.ts';
+import { assertWindowsRequestOwner, parseWindowsRequestFileName, windowsCurrentProcessIdentity, windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProcessImagePath, windowsProgramFilesPath, windowsRequestFileHeld, windowsRequestFileName, windowsSystemEnvironment, writeWindowsRequestFile, elevationClock } from '../../src/network-helper-windows.ts';
+import { trustIdentity, type TrustedFileIdentity } from '../../src/network-helper-integrity.ts';
 
 /** A baseline of the exact shape the backend builds, which every request has to carry. */
 const baseline = { mode: 'dhcp' as const, address: null, prefixLength: null, gateway: null, dns: [] };
@@ -45,7 +46,7 @@ describe('network helper protocol', () => {
 		// re-check the baseline against its own fresh read, so it has to receive it.
 		const expected = { mode: 'static' as const, address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53'] };
 		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected }));
-		expect(request.expected).toEqual(expected);
+		expect(request.operation === 'applyIPv4' && request.expected).toEqual(expected);
 		const seen: unknown[] = [];
 		await executeNetworkHelperRequest(request, async (_interfaceID, _config, baseline) => {
 			seen.push(baseline);
@@ -127,6 +128,7 @@ describe('network helper protocol', () => {
 describe('windows launcher outcomes', () => {
 	it('tells a cancelled prompt apart from a failed change', () => {
 		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.cancelled).error).toContain('cancelled');
+		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.denied).error).toContain('may not elevate');
 		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.timeout).error).toContain('timed out');
 		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.untrusted).error).toContain('not trusted');
 		expect(windowsLauncherFailure(NETWORK_HELPER_EXIT.rejected).error).toContain('could not apply');
@@ -140,7 +142,48 @@ describe('windows launcher outcomes', () => {
 		// 0 = applied and 10 = helper rejected the change both come from the helper
 		// itself, so the launcher's own reasons must live outside that set.
 		for (const helperCode of Object.values(NETWORK_HELPER_EXIT)) expect(Object.values(WINDOWS_LAUNCHER_EXIT)).not.toContain(helperCode);
-		expect(new Set(Object.values(WINDOWS_LAUNCHER_EXIT)).size).toBe(3);
+		expect(new Set(Object.values(WINDOWS_LAUNCHER_EXIT)).size).toBe(4);
+	});
+});
+
+/**
+ * The Windows trust check is 9-14 seconds of reading three single-file runtime builds, and
+ * after the host clock was set the same read measured 167 seconds while the system-time lock
+ * was held - so a save has to be able to recognise a verification it already made. The
+ * identity is what decides that, which makes "it changes whenever the file does" the whole
+ * contract.
+ */
+describe('trusted binary identity', () => {
+	const file = (overrides: Partial<TrustedFileIdentity> = {}): TrustedFileIdentity => ({ path: 'C:\\Program Files\\LiberShare\\lish-network-helper.exe', size: 118_077_944, mtimeMs: 1_760_000_000_000, ctimeMs: 1_760_000_000_000, ino: 42, ...overrides });
+
+	it('is stable for the same files', () => {
+		expect(trustIdentity([file()])).toBe(trustIdentity([file()]));
+		expect(trustIdentity([file(), file({ path: 'b.exe' })])).toBe(trustIdentity([file(), file({ path: 'b.exe' })]));
+	});
+
+	it('changes when anything about a file changes', () => {
+		const base = trustIdentity([file()]);
+		for (const changed of [file({ size: 118_077_945 }), file({ mtimeMs: 1_760_000_000_001 }), file({ ctimeMs: 1_760_000_000_001 }), file({ ino: 43 }), file({ path: 'other.exe' })]) {
+			expect(trustIdentity([changed])).not.toBe(base);
+		}
+	});
+
+	/** Windows paths are case-insensitive, so the same file reached by a differently cased path is the same file. */
+	it('ignores path case', () => {
+		expect(trustIdentity([file({ path: 'C:\\PROGRAM FILES\\X.EXE' })])).toBe(trustIdentity([file({ path: 'c:\\program files\\x.exe' })]));
+	});
+
+	it('distinguishes a different set or order of files', () => {
+		const a = file({ path: 'a.exe' });
+		const b = file({ path: 'b.exe' });
+		expect(trustIdentity([a, b])).not.toBe(trustIdentity([b, a]));
+		expect(trustIdentity([a, b])).not.toBe(trustIdentity([a]));
+		expect(trustIdentity([])).toBe('');
+	});
+
+	/** A bigint inode (what `stat({ bigint: true })` answers) must not read as a different file. */
+	it('treats an equal inode as equal whether it arrives as a number or a bigint', () => {
+		expect(trustIdentity([file({ ino: 42n })])).toBe(trustIdentity([file({ ino: 42 })]));
 	});
 });
 
@@ -292,5 +335,25 @@ describe('network helper launch commands', () => {
 		expect(macAppBundleRoot('/Applications/LiberShare.app/Contents/Resources/lish-network-helper')).toBe('/Applications/LiberShare.app');
 		expect(macAppBundleRoot('/Users/alice/Applications/LiberShare.app/Contents/Resources/lish-network-helper')).toBeNull();
 		expect(macAppBundleRoot('/tmp/LiberShare.app/Contents/Resources/lish-network-helper')).toBeNull();
+	});
+});
+
+describe('the clock the elevation wait measures against', () => {
+	/**
+	 * The bug this exists for: the deadline was `Date.now()`, and the helper being waited
+	 * on may be setting the WALL clock. Measured on Windows 11 - a hand-set clock 1 h 47 min
+	 * ahead made the very next poll look like a 180-second timeout, so a clock change that
+	 * HAD been applied came back as `the privileged helper timed out`, and the helper was
+	 * terminated on the way out. A wall-clock reading is orders of magnitude larger than a
+	 * monotonic one, which is what this tells apart.
+	 */
+	it('is monotonic, not the wall clock', () => {
+		expect(elevationClock()).toBeLessThan(Date.now() / 1000);
+	});
+
+	it('moves forward on its own', async () => {
+		const before = elevationClock();
+		await new Promise(resolve => setTimeout(resolve, 20));
+		expect(elevationClock()).toBeGreaterThan(before);
 	});
 });

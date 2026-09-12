@@ -1,0 +1,930 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>System time browser regressions</title>
+	<style>
+		#results {
+			white-space: pre-wrap;
+			overflow-wrap: anywhere;
+		}
+	</style>
+	<pre id="results">Running...</pre>
+	<div id="form"></div>
+	<script type="module">
+		import '/src/app.css';
+		import { mount, unmount, tick } from 'svelte';
+		import { get } from 'svelte/store';
+		import SettingsTime from '/src/pages/Settings/SettingsTime.svelte';
+		import { api } from '/src/scripts/api.ts';
+		import { connected } from '/src/scripts/ws-client.ts';
+		import { translations, t } from '/src/scripts/language.ts';
+		import { menuStructure } from '/src/scripts/menu.ts';
+		import { emit } from '/src/scripts/areas.ts';
+		import { startInput, stopInput } from '/src/scripts/input/input.ts';
+		import { SYSTEM_TIME_SAVE_TIMEOUT_MS } from '@shared';
+
+		const target = document.querySelector('#form');
+		const output = document.querySelector('#results');
+		const results = [];
+		const originals = { call: api.call, on: api.on, subscribe: api.subscribe, unsubscribe: api.unsubscribe };
+		let component, host, changed, subscribeWait, readWait, saveWait, zonesWait;
+		let readFails, zonesFail, subscribeFails, writeResult, transportFails, saveTimesOut;
+		let limits = [];
+		let writes = [],
+			order = [],
+			backCalls = 0;
+		const initial = () => ({ supported: true, nowMs: Date.UTC(2026, 8, 8, 10, 20, 30), timezone: 'Europe/Prague', utcOffsetMinutes: 120, timezoneSource: 'intl', ntpEnabled: true, ntpSynchronized: true, ntpServer: 'custom.example.org', capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: true } });
+		const label = key => get(t)(key);
+		const assert = (value, message) => {
+			if (!value) throw new Error(message);
+		};
+		const deferred = () => {
+			let resolve, reject;
+			const promise = new Promise((yes, no) => {
+				resolve = yes;
+				reject = no;
+			});
+			return { promise, resolve, reject };
+		};
+		const settle = async () => {
+			await tick();
+			await new Promise(resolve => setTimeout(resolve, 0));
+			await tick();
+		};
+		function button(name) {
+			const el = [...target.querySelectorAll('[role="button"]')].find(el => (el.getAttribute('aria-label') ?? el.textContent.trim()) === name);
+			assert(el, `Missing button: ${name}`);
+			return el;
+		}
+		const server = () => target.querySelector('input[type="text"]:not([role="combobox"])');
+		const clock = () => [...target.querySelectorAll('input[type="number"]')];
+		/**
+		 * The timezone control is a searchable combobox, not a native `<select>`: there is no
+		 * `.options` to read and no `change` event to fake. While it is open its text is the
+		 * QUERY, so the chosen zone can only be read with the list closed, and picking one means
+		 * opening the list, narrowing it and confirming a row - which is also the only way a
+		 * test exercises what the user actually does.
+		 */
+		const zone = () => {
+			const el = target.querySelector('[role="combobox"]');
+			assert(el, 'Missing timezone combobox');
+			return el;
+		};
+		const zoneOpen = () => zone().getAttribute('aria-expanded') === 'true';
+		const zoneValue = () => {
+			assert(!zoneOpen(), 'The timezone value was read while the list was open, which returns the query');
+			return zone().value;
+		};
+		const zoneRows = () => [...target.querySelectorAll('[role="option"]')].map(el => el.textContent.trim());
+		const zoneActive = () => target.querySelector('[role="option"].active')?.textContent.trim();
+		const zoneKey = key => {
+			zone().dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+			return settle();
+		};
+		async function openZones() {
+			if (!zoneOpen()) {
+				zone().closest('.field').click();
+				await settle();
+			}
+			assert(zoneOpen(), 'The timezone list did not open');
+		}
+		async function closeZones() {
+			if (zoneOpen()) await zoneKey('Escape');
+			assert(!zoneOpen(), 'The timezone list stayed open');
+		}
+		/** Every zone the control offers, read from the open list and leaving it closed again. */
+		async function zoneCatalog() {
+			await openZones();
+			const rows = zoneRows();
+			await closeZones();
+			return rows;
+		}
+		/** Pick a zone the way a user does: open, type enough to find it, confirm the row. */
+		async function pickZone(name, { withMouse = false } = {}) {
+			await openZones();
+			await edit(zone(), name);
+			const row = [...target.querySelectorAll('[role="option"]')].find(el => el.textContent.trim() === name);
+			assert(row, 'Searching for ' + name + ' offered ' + zoneRows().length + ' rows without it');
+			if (withMouse) row.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+			else await zoneKey('Enter');
+			await settle();
+			assert(!zoneOpen(), 'Confirming ' + name + ' left the list open');
+			assert(zoneValue() === name, 'Confirming ' + name + ' selected ' + zoneValue());
+		}
+		const save = () => button(label('common.save'));
+		async function click(name) {
+			button(name).click();
+			await settle();
+		}
+		async function edit(el, value) {
+			el.value = value;
+			el.dispatchEvent(new Event('input', { bubbles: true }));
+			await settle();
+		}
+
+		api.on = (event, handler) => {
+			if (event === 'system:timeChanged') changed = handler;
+			return () => {
+				if (changed === handler) changed = undefined;
+			};
+		};
+		api.subscribe = async () => {
+			order.push('subscribe');
+			if (subscribeWait) await subscribeWait.promise;
+			if (subscribeFails) throw new Error('Subscription unavailable');
+			order.push('subscribed');
+		};
+		api.unsubscribe = async () => {};
+		// The real client only arms a timer when the caller asks for one, so the fixture
+		// records what was asked for and refuses to simulate a timeout that could not happen.
+		api.call = async (method, params, timeoutMs) => {
+			limits.push({ method, timeoutMs });
+			if (method === 'system.getTime') {
+				order.push('read');
+				if (readWait) {
+					const wait = readWait;
+					readWait = undefined;
+					return wait.promise;
+				}
+				if (readFails) throw new Error('Status read failed');
+				return structuredClone(host);
+			}
+			if (method === 'system.listTimezones') {
+				if (zonesWait) {
+					const wait = zonesWait;
+					zonesWait = undefined;
+					return wait.promise;
+				}
+				if (zonesFail) throw new Error('Timezone list unavailable');
+				return ['UTC', 'Europe/Prague', 'Europe/London'];
+			}
+			if (method !== 'system.applyTimeSettings') throw new Error(`Unexpected API method ${method}`);
+			writes.push(structuredClone(params));
+			if (saveTimesOut) {
+				assert(typeof timeoutMs === 'number' && timeoutMs > 0, 'Save was sent with no time limit, so it could never give up');
+				throw new Error('Request timed out');
+			}
+			if (saveWait) await saveWait.promise;
+			if (transportFails) throw new Error('Transport interrupted');
+			if (writeResult.success || writeResult.changed) {
+				if (params.ntpServer !== undefined) host.ntpServer = params.ntpServer;
+				if (params.ntpEnabled !== undefined) host.ntpEnabled = params.ntpEnabled;
+				if (params.timezone !== undefined) host.timezone = params.timezone;
+				changed?.(structuredClone(host));
+			}
+			return structuredClone(writeResult);
+		};
+
+		async function reset(options = {}) {
+			if (component) await unmount(component);
+			connected.set(true);
+			host = { ...initial(), ...options.status };
+			writes = [];
+			order = [];
+			backCalls = 0;
+			readFails = options.readFails ?? false;
+			zonesFail = options.zonesFail ?? false;
+			subscribeFails = options.subscribeFails ?? false;
+			subscribeWait = options.subscribeWait;
+			readWait = options.readWait;
+			zonesWait = options.zonesWait;
+			saveWait = undefined;
+			writeResult = { success: true, outcome: 'ok', message: null };
+			transportFails = false;
+			saveTimesOut = false;
+			limits = [];
+			component = mount(SettingsTime, { target, props: { areaID: 'time-browser-test', onBack: () => backCalls++ } });
+			await settle();
+		}
+		async function test(name, action, options) {
+			try {
+				await reset(options);
+				await action();
+				results.push({ name, passed: true });
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			}
+			output.textContent = JSON.stringify(results, null, 2);
+		}
+
+		try {
+			await new Promise(resolve => {
+				const off = translations.subscribe(value => {
+					if (value.settings?.time)
+						queueMicrotask(() => {
+							off();
+							resolve();
+						});
+				});
+			});
+			await test('system time and NTP remain inside the Time settings menu', async () => {
+				const find = (value, id) => {
+					if (!value || typeof value !== 'object') return null;
+					if (value.id === id) return value;
+					return Object.values(value)
+						.map(item => find(item, id))
+						.find(Boolean);
+				};
+				const timeMenu = find(get(menuStructure), 'time');
+				assert(
+					timeMenu?.submenu.some(item => item.id === 'time-system' && item.component === SettingsTime),
+					'Time settings moved outside the Time menu'
+				);
+				assert(timeMenu.submenu.some(item => item.id === 'time-format') && timeMenu.submenu.some(item => item.id === 'time-seconds'), 'Footer time preferences disappeared');
+			});
+			await test('opening preserves the OS server and sends no time mutation', async () => {
+				assert(server().value === 'custom.example.org' && writes.length === 0 && save().classList.contains('disabled'), 'Opening changed existing settings');
+				assert(order.indexOf('subscribed') < order.indexOf('read'), 'Read preceded subscription acknowledgement');
+			});
+			await test('the form and all three clock fields fit the available viewport', async () => {
+				const width = document.documentElement.clientWidth;
+				assert(document.documentElement.scrollWidth <= width, 'The time screen overflows horizontally');
+				for (const el of target.querySelectorAll('.settings, .container, .snapshot, .alert, .row, .presets .button, input, select, [role="combobox"], [role="option"]')) {
+					const bounds = el.getBoundingClientRect();
+					assert(el.scrollWidth <= el.clientWidth, 'A time control hides its own horizontal overflow');
+					assert(bounds.left >= 0 && bounds.right <= width + 0.5, 'A time control exceeds the viewport');
+				}
+				assert(clock().length === 3, 'A manual clock field is missing');
+				for (const input of clock()) {
+					const bounds = input.getBoundingClientRect();
+					assert(bounds.left >= 0 && bounds.right <= width + 0.5 && bounds.width > 0, 'A clock field is outside the viewport');
+				}
+			});
+			await test(
+				'an empty server offers tik without making the form dirty',
+				async () => {
+					assert(server().value === '' && server().placeholder === 'tik.cesnet.cz', 'Missing server was silently replaced');
+					assert(save().classList.contains('disabled') && writes.length === 0, 'Default offer wrote the host');
+					await click('tik.cesnet.cz');
+					await click(label('common.save'));
+					assert(JSON.stringify(writes) === JSON.stringify([{ ntpServer: 'tik.cesnet.cz' }]), 'Preset did not use one changed-fields write');
+				},
+				{ status: { ntpServer: null } }
+			);
+			await test('tak is an explicit alternative and custom servers remain editable', async () => {
+				await click('tak.cesnet.cz');
+				assert(server().value === 'tak.cesnet.cz' && writes.length === 0, 'Preset performed an eager write');
+				await edit(server(), 'another.example.org');
+				await click(label('common.save'));
+				assert(writes.length === 1 && writes[0].ntpServer === 'another.example.org', 'Custom server was replaced with a preset');
+			});
+			for (const value of [true, false, null])
+				await test(
+					`synchronization result ${value} remains distinct from enabled configuration`,
+					async () => {
+						const key = value === null ? 'syncUnreported' : value ? 'synchronized' : 'notSynchronized';
+						assert(target.querySelector('[data-time-sync-result]').textContent === label(`settings.time.${key}`), 'Synchronization result was guessed');
+						assert(target.querySelector('[data-time-sync-enabled]').textContent === label('settings.time.enabled'), 'Result changed enabled state');
+					},
+					{ status: { ntpEnabled: true, ntpSynchronized: value } }
+				);
+			await test(
+				'unknown synchronization offers the clock where the host can still resolve it',
+				async () => {
+					// macOS below root reads NOTHING of its own time state - every `systemsetup -get`
+					// needs root - so `ntpEnabled` is null on every read, including the one right after
+					// the user switches synchronisation off. Locking the fields on that made the screen
+					// a dead end: nothing the user did could ever unlock them. The save decides
+					// instead, against a state read with the privileges the write needs, and comes
+					// back `auto-sync-enabled` when synchronisation really does own the clock.
+					assert(target.querySelector('[data-time-sync-enabled]').textContent === label('settings.time.unknown'), 'Unknown state looks disabled');
+					assert(
+						clock().every(input => !input.disabled),
+						'Unknown synchronization left the clock locked with no way to resolve it'
+					);
+					assert(target.textContent.includes(label('settings.time.syncUnknown')), 'Unknown synchronization was offered without saying so');
+					assert(save().classList.contains('disabled') && writes.length === 0, 'Unknown state became an implicit setting');
+				},
+				{ status: { ntpEnabled: null, ntpSynchronized: null } }
+			);
+			await test(
+				'unknown managed NTP remains locked while the timezone can still be saved',
+				async () => {
+					const synchronization = target.querySelector('[role="switch"]');
+					assert(target.querySelector('[data-time-sync-enabled]').textContent === label('settings.time.unknown'), 'Managed synchronization was guessed as enabled or disabled');
+					assert(server().value === '' && server().disabled && synchronization.getAttribute('aria-disabled') === 'true', 'An unreported managed server became an editable local configuration');
+					assert(clock().every(input => input.disabled) && target.textContent.includes(label('settings.time.syncUnknownLocked')), 'Unknown managed synchronization did not lock manual time with an explanation');
+					await click('tik.cesnet.cz');
+					synchronization.click();
+					await settle();
+					assert(server().value === '' && save().classList.contains('disabled') && writes.length === 0, 'Locked NTP controls changed the host or dirtied the form');
+					assert(!zone().disabled, 'Managed NTP unnecessarily disabled timezone editing');
+					await pickZone('UTC');
+					await click(label('common.save'));
+					assert(JSON.stringify(writes) === JSON.stringify([{ timezone: 'UTC' }]) && server().value === '', 'Timezone save also wrote unknown NTP or clock values');
+				},
+				{ status: { ntpEnabled: null, ntpSynchronized: null, ntpServer: null, capabilities: { setClock: true, setTimezone: true, setNtpServer: false, setNtpEnabled: false } } }
+			);
+			const subscription = deferred();
+			await test(
+				'initial loading waits for subscribe before reading the host',
+				async () => {
+					assert(target.querySelector('[role="status"]')?.textContent.includes(label('settings.time.loading')), 'Loading has no explanation');
+					assert(!order.includes('read') && writes.length === 0, 'Host read raced subscription');
+					subscription.resolve();
+					await settle();
+					assert(server(), 'Status did not render after subscription');
+				},
+				{ subscribeWait: subscription }
+			);
+			await test(
+				'failed initial read stays visible and can be retried',
+				async () => {
+					assert(target.querySelector('.error-message')?.textContent.includes('Status read failed'), 'Read failure is hidden');
+					readFails = false;
+					await click(label('settings.time.reload'));
+					assert(server(), 'Reload did not recover');
+				},
+				{ readFails: true }
+			);
+			await test(
+				'failed subscription shows a read-only snapshot until retry succeeds',
+				async () => {
+					assert(server().disabled && target.textContent.includes(label('settings.time.updatesUnavailable')), 'Unsubscribed snapshot permits writes');
+					subscribeFails = false;
+					await click(label('settings.time.reload'));
+					assert(!server().disabled, 'Successful subscription retry stayed locked');
+				},
+				{ subscribeFails: true }
+			);
+			await test(
+				'read-only capability blocks preset clicks and manual changes',
+				async () => {
+					const previous = server().value;
+					await click('tik.cesnet.cz');
+					await click(label('common.save'));
+					assert(server().disabled && server().value === previous && clock().every(input => input.disabled) && writes.length === 0, 'Read-only controls reached a mutation');
+				},
+				{ status: { capabilities: { setClock: false, setTimezone: false, setNtpServer: false, setNtpEnabled: false } } }
+			);
+			await test(
+				'unavailable timezone list preserves the host timezone',
+				async () => {
+					assert(zoneValue() === 'Europe/Prague', 'Timezone lookup failure erased the selected timezone');
+					assert((await zoneCatalog()).includes('Europe/Prague'), 'Timezone lookup failure left the control with nothing to pick');
+					assert(target.textContent.includes(label('settings.time.zonesUnavailable')), 'Timezone lookup failure has no explanation');
+				},
+				{ zonesFail: true }
+			);
+			await test('one pending save locks controls and preserves its own broadcast', async () => {
+				await click('tak.cesnet.cz');
+				saveWait = deferred();
+				const submit = save();
+				submit.click();
+				await settle();
+				try {
+					assert(writes.length === 1 && submit.classList.contains('disabled') && server().disabled, 'Pending save is not locked');
+					assert(target.textContent.includes(label('settings.time.saving')), 'Pending save has no status');
+					submit.click();
+					await settle();
+					assert(writes.length === 1, 'Duplicate save reached the API');
+					saveWait.resolve();
+					await settle();
+					assert(target.querySelector('.success-message') && !target.textContent.includes(label('settings.time.changedOutside')) && backCalls === 0, 'Own save hid its result or became stale');
+					assert(server().value === 'tak.cesnet.cz' && save().classList.contains('disabled'), 'Save did not adopt the confirmed state');
+				} finally {
+					saveWait.resolve();
+					await settle();
+				}
+			});
+			await test('partial refusal keeps its reason and adopts the host readback', async () => {
+				await click('tak.cesnet.cz');
+				writeResult = { success: false, outcome: 'error', message: 'Second step failed', changed: true, stateMayHaveChanged: true };
+				await click(label('common.save'));
+				assert(target.querySelector('.error-message')?.textContent.includes('Second step failed') && target.textContent.includes(label('settings.time.errorPartial')), 'Partial failure lost its warning');
+				assert(server().value === 'tak.cesnet.cz' && !target.querySelector('.success-message'), 'Partial failure fabricated success or discarded host state');
+			});
+			await test('transport and reload failures preserve both explanations', async () => {
+				await click('tik.cesnet.cz');
+				transportFails = true;
+				readFails = true;
+				await click(label('common.save'));
+				const error = target.querySelector('.error-message')?.textContent ?? '';
+				assert(error.includes('Transport interrupted') && error.includes('Status read failed') && error.includes(label('settings.time.errorPartial')), 'Reload masked the save failure');
+				assert(save().classList.contains('disabled'), 'A failed readback left uncertain values writable');
+				readFails = false;
+				transportFails = false;
+				await click(label('settings.time.reload'));
+				assert(!server().disabled, 'A verified reload did not release the stale form');
+			});
+			await test('an unanswered save gives up instead of locking the screen forever', async () => {
+				await click('tik.cesnet.cz');
+				saveTimesOut = true;
+				await click(label('common.save'));
+				const sent = limits.find(entry => entry.method === 'system.applyTimeSettings');
+				assert(sent && typeof sent.timeoutMs === 'number' && sent.timeoutMs > 0, 'The save was sent with no time limit, so it could never give up');
+				assert(writes.length === 1, 'A save that timed out was sent again, which could step the clock twice');
+				assert(!target.textContent.includes(label('settings.time.saving')), 'The form stayed on its saving spinner');
+				assert(!button(label('settings.time.reload')).classList.contains('disabled'), 'Reload stayed disabled, so nothing could free the form');
+				const error = target.querySelector('.error-message')?.textContent ?? '';
+				assert(error.includes(label('settings.time.errorPartial')), 'A timed-out save did not warn that it may already have applied');
+			});
+			await test('every host request carries a limit of its own', async () => {
+				const reads = limits.filter(entry => entry.method !== 'system.applyTimeSettings');
+				assert(reads.length > 0, 'The form made no host reads to check');
+				assert(
+					reads.every(entry => typeof entry.timeoutMs === 'number' && entry.timeoutMs > 0),
+					'A host read was sent without a time limit'
+				);
+				await click('tik.cesnet.cz');
+				await click(label('common.save'));
+				const save = limits.find(entry => entry.method === 'system.applyTimeSettings');
+				assert(save && typeof save.timeoutMs === 'number' && save.timeoutMs > 0, 'The save was sent without a time limit');
+				// Not merely "has a limit": it has to be the one the backend's own budget was sized
+				// against. A shorter wait reports an interrupted save while the host is still being
+				// changed - and on Windows the elevation prompt alone may sit for three minutes,
+				// which is past the two-minute wait this replaced.
+				assert(save.timeoutMs === SYSTEM_TIME_SAVE_TIMEOUT_MS, `The save waited ${save.timeoutMs} ms instead of the agreed ${SYSTEM_TIME_SAVE_TIMEOUT_MS} ms`);
+				assert(save.timeoutMs > reads[0].timeoutMs, 'A save was given no more time than a read');
+			});
+			/**
+			 * A value the host refused before running anything must not cost the edits next to it.
+			 * Re-reading is for a save that may have half-applied; for a mistyped NTP address it threw
+			 * away the timezone change made alongside and left the user to redo untouched work.
+			 */
+			await test('an invalid value keeps the rest of the form', async () => {
+				await pickZone('UTC');
+				await edit(server(), 'https://tik.cesnet.cz');
+				writeResult = { success: false, outcome: 'invalid-input', message: 'the NTP server must be a host name or IP address' };
+				await click(label('common.save'));
+				assert(target.querySelector('.error-message'), 'A refused value reported nothing');
+				assert(server().value === 'https://tik.cesnet.cz', 'A refused value discarded the typed server');
+				assert(zoneValue() === 'UTC', 'A refused value discarded the timezone edit made next to it');
+				assert(!save().classList.contains('disabled'), 'The form could not be corrected and saved again');
+			});
+
+			await test('external writes block an edited form until explicit reload', async () => {
+				await edit(server(), 'typed.example.org');
+				host.ntpServer = 'external.example.org';
+				changed(structuredClone(host));
+				await settle();
+				assert(server().value === 'typed.example.org' && save().classList.contains('disabled'), 'External write overwrote or left a stale edit writable');
+				assert(target.textContent.includes(label('settings.time.changedOutside')), 'Stale form lacks an explanation');
+				await click(label('common.save'));
+				assert(writes.length === 0, 'Stale save reached the API');
+				await click(label('settings.time.reload'));
+				assert(server().value === 'external.example.org', 'Explicit reload did not adopt external state');
+			});
+			await test('a broadcast supersedes a pending reconnect read', async () => {
+				const older = structuredClone(host);
+				const reply = deferred();
+				readWait = reply;
+				connected.set(false);
+				connected.set(true);
+				await settle();
+				host.ntpServer = 'broadcast.example.org';
+				changed(structuredClone(host));
+				await settle();
+				reply.resolve(older);
+				await settle();
+				assert(server().value === 'broadcast.example.org', 'Old reconnect read overwrote a broadcast');
+			});
+			await test('an edit made during a reconnect read is not replaced', async () => {
+				const reply = deferred();
+				readWait = reply;
+				connected.set(false);
+				connected.set(true);
+				await settle();
+				await edit(server(), 'typed.example.org');
+				reply.resolve({ ...host, ntpServer: 'remote.example.org' });
+				await settle();
+				assert(server().value === 'typed.example.org', 'Background read replaced a typed value');
+			});
+			await test('reconnect during an own save does not report an external conflict', async () => {
+				await click('tak.cesnet.cz');
+				saveWait = deferred();
+				save().click();
+				await settle();
+				try {
+					connected.set(false);
+					connected.set(true);
+					await settle();
+					assert(!target.textContent.includes(label('settings.time.changedOutside')), 'Own in-flight save was marked as an external write');
+					saveWait.resolve();
+					await settle();
+					assert(server().value === 'tak.cesnet.cz' && target.querySelector('.success-message'), 'Own save did not finish after reconnect');
+				} finally {
+					saveWait.resolve();
+					await settle();
+				}
+			});
+			await test('reconnect catch-up blocks saving until a fresh host read settles', async () => {
+				const reply = deferred();
+				readWait = reply;
+				connected.set(false);
+				connected.set(true);
+				await settle();
+				try {
+					assert(server().disabled, 'Reconnect exposed an editable stale snapshot');
+					await click('tik.cesnet.cz');
+					await click(label('common.save'));
+					assert(writes.length === 0, 'Reconnect catch-up allowed a stale save');
+				} finally {
+					reply.resolve(structuredClone(host));
+					await settle();
+				}
+				assert(!server().disabled, 'Fresh reconnect snapshot remained locked');
+			});
+			/**
+			 * The searchable control's own behaviour, which no other scenario covers: the list has
+			 * to open on a click (every time, including right after a pick), filter as the user
+			 * types, and confirm by keyboard or by mouse. A picker that opens once and then refuses
+			 * is exactly what replaced the native select, so it is asserted rather than assumed.
+			 */
+			await test('the timezone list opens on every click and filters as the user types', async () => {
+				const catalog = await zoneCatalog();
+				assert(JSON.stringify(catalog) === JSON.stringify(['UTC', 'Europe/Prague', 'Europe/London']), 'The catalog did not reach the control unchanged');
+				await openZones();
+				assert(zoneRows().length === catalog.length, 'Opening the list filtered it without a query');
+				assert(zoneActive() === 'Europe/Prague', 'The list did not open on the zone the host reports');
+				await edit(zone(), 'lond');
+				assert(JSON.stringify(zoneRows()) === JSON.stringify(['Europe/London']), 'Typing did not narrow the list to the match');
+				await edit(zone(), 'nothing-matches-this');
+				assert(zoneRows().length === 0 && target.textContent.includes(label('common.noResults')), 'An empty result said nothing');
+				await closeZones();
+				assert(zoneValue() === 'Europe/Prague', 'A cancelled search changed the selected zone');
+				await pickZone('UTC');
+				// The reopen is the point: a native select that has just been used is the case the
+				// searchable one has to beat.
+				await openZones();
+				assert(zoneRows().length === catalog.length && zoneActive() === 'UTC', 'The list did not reopen on the newly picked zone');
+				await closeZones();
+				assert(writes.length === 0, 'Browsing the timezone list wrote to the host');
+			});
+			/**
+			 * The control must not be a place the keyboard cannot leave.
+			 *
+			 * Navigation on this screen ignores every key whose target is an input, so whether the
+			 * arrows still walk the form after using the picker comes down to where the focus is
+			 * left. Reported from a real desktop build: after choosing a zone the arrows went on
+			 * driving the list - Down reopened it instead of moving to the row below - and the
+			 * same happened after cancelling with Escape.
+			 */
+			await test('hands the keyboard back after picking and after cancelling', async () => {
+				const focused = () => target.contains(document.activeElement) && document.activeElement === zone();
+				await pickZone('UTC');
+				assert(!focused(), 'Picking a zone kept the keyboard inside the control');
+				await openZones();
+				assert(focused(), 'Opening the list did not put the caret in the search field');
+				await closeZones();
+				assert(!focused(), 'Cancelling with Escape kept the keyboard inside the control');
+				assert(zoneValue() === 'UTC', 'Cancelling changed the chosen zone');
+				// Closed, the arrows belong to the screen: the control must not swallow them to
+				// reopen its own list.
+				await zoneKey('ArrowDown');
+				assert(!zoneOpen(), 'A closed list reopened itself on an arrow key');
+				await zoneKey('ArrowUp');
+				assert(!zoneOpen(), 'A closed list reopened itself on an arrow key');
+				assert(writes.length === 0, 'Moving around the picker wrote to the host');
+			});
+
+			await test('a zone confirmed with the mouse saves exactly like a typed one', async () => {
+				await pickZone('UTC', { withMouse: true });
+				await click(label('common.save'));
+				assert(JSON.stringify(writes) === JSON.stringify([{ timezone: 'UTC' }]), 'A mouse-picked zone was saved as something else');
+			});
+			await test(
+				'a read-only host cannot open the timezone list at all',
+				async () => {
+					assert(zone().disabled, 'A read-only host left the timezone control editable');
+					zone().closest('.field').click();
+					await settle();
+					assert(!zoneOpen() && writes.length === 0, 'A read-only timezone control opened its list');
+				},
+				{ status: { capabilities: { setClock: false, setTimezone: false, setNtpServer: false, setNtpEnabled: false } } }
+			);
+			await test('a timezone-only save never sends the ticking clock', async () => {
+				await pickZone('UTC');
+				await click(label('common.save'));
+				assert(JSON.stringify(writes) === JSON.stringify([{ timezone: 'UTC' }]), 'Timezone change rewound the host clock');
+			});
+			await test('server, timezone, synchronization and manual clock use one atomic save', async () => {
+				target.querySelector('[role="switch"]').click();
+				await settle();
+				await click('tik.cesnet.cz');
+				await edit(clock()[0], '7');
+				await edit(clock()[1], '8');
+				await edit(clock()[2], '9');
+				await pickZone('UTC');
+				await click(label('common.save'));
+				assert(writes.length === 1 && JSON.stringify(writes[0]) === JSON.stringify({ ntpEnabled: false, ntpServer: 'tik.cesnet.cz', timezone: 'UTC', clock: { hours: 7, minutes: 8, seconds: 9 }, expectedTimezone: 'Europe/Prague', expectedOffsetMinutes: 120 }), 'The combined edit was split, changed or incompletely saved');
+			});
+			await test(
+				'an empty manual hour is invalid rather than midnight',
+				async () => {
+					await edit(clock()[0], '');
+					await click(label('common.save'));
+					assert(writes.length === 0 && target.querySelector('.error-message')?.textContent.includes(label('settings.time.errorInvalidInput')), 'Blank hour reached a clock mutation');
+				},
+				{ status: { ntpEnabled: false } }
+			);
+			await test(
+				'unknown synchronization can be explicitly saved off without choosing a server',
+				async () => {
+					const control = target.querySelector('[role="switch"]');
+					control.click();
+					await settle();
+					control.click();
+					await settle();
+					await click(label('common.save'));
+					assert(JSON.stringify(writes) === JSON.stringify([{ ntpEnabled: false }]), 'Explicit off silently chose a server or was discarded');
+					assert(
+						clock().every(input => !input.disabled),
+						'Confirmed disabled synchronization did not unlock manual time'
+					);
+				},
+				{ status: { ntpEnabled: null, ntpSynchronized: null, ntpServer: null } }
+			);
+			// The offset each case carries is the one the zone really has at that instant, because
+			// that is the only status a backend produces: `utcOffsetMinutes` is computed for the very
+			// `nowMs` it is sent with. A snapshot that disagrees with its own zone now MEANS something
+			// else — the browser's timezone database differs from the host's — and is covered below.
+			for (const [instant, offset, expected] of [
+				[Date.UTC(2026, 2, 29, 0, 59, 59), 60, '01:59:59'],
+				[Date.UTC(2026, 2, 29, 1), 120, '03:00:00'],
+				[Date.UTC(2026, 9, 25, 1), 60, '02:00:00'],
+			])
+				await test(
+					`host clock uses its timezone at ${new Date(instant).toISOString()}`,
+					async () => {
+						assert(target.querySelector('.host-clock').textContent === expected, 'Displayed host clock ignored the daylight-saving rules of the host zone');
+					},
+					{ status: { nowMs: instant, utcOffsetMinutes: offset } }
+				);
+			// The reviewer's case, at component level: the host names a zone this browser also knows,
+			// and reports an offset its own database disagrees with. Trusting the local rules showed
+			// somebody else's time under the host's label — an hour out, and a day out over midnight.
+			await test(
+				'host clock follows the host offset when the browser database disagrees',
+				async () => {
+					assert(target.querySelector('.host-clock').textContent === '00:30:00', 'Displayed host clock used the browser rules instead of the host offset');
+					assert(target.querySelector('.host-date').textContent === '2026-01-02', 'Displayed host date used the browser rules instead of the host offset');
+				},
+				{ status: { timezone: 'Asia/Karachi', nowMs: Date.UTC(2026, 0, 1, 18, 30, 0), utcOffsetMinutes: 360 } }
+			);
+			for (const device of ['keyboard', 'gamepad'])
+				await test(
+					`disabled synchronization ignores ${device} and enabled synchronization accepts it`,
+					async () => {
+						const originalGamepads = Object.getOwnPropertyDescriptor(navigator, 'getGamepads');
+						const pad = { axes: [0, 0], buttons: Array.from({ length: 17 }, () => ({ pressed: false })) };
+						Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [pad] });
+						const frames = async () => {
+							for (let i = 0; i < 3; i++) await new Promise(requestAnimationFrame);
+							await settle();
+						};
+						const confirm = async () => {
+							if (device === 'keyboard') {
+								window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+								window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter' }));
+								await settle();
+							} else {
+								pad.buttons[0].pressed = true;
+								await frames();
+								pad.buttons[0].pressed = false;
+								await frames();
+							}
+						};
+						try {
+							startInput();
+							const control = target.querySelector('[role="switch"]');
+							for (let step = 0; step < 6 && !control.closest('.row').classList.contains('selected'); step++) {
+								emit('up');
+								await settle();
+							}
+							assert(control.closest('.row').classList.contains('selected'), 'Synchronization row cannot be reached through navigation');
+							await confirm();
+							assert(control.getAttribute('aria-checked') === 'true' && writes.length === 0, 'Disabled switch changed');
+							host.capabilities.setNtpEnabled = true;
+							changed(structuredClone(host));
+							await settle();
+							await confirm();
+							assert(control.getAttribute('aria-checked') === 'false' && writes.length === 0, 'Enabled switch did not accept input or saved eagerly');
+						} finally {
+							stopInput();
+							if (originalGamepads) Object.defineProperty(navigator, 'getGamepads', originalGamepads);
+							else delete navigator.getGamepads;
+						}
+					},
+					{ status: { capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: false } } }
+				);
+			await test(
+				'fixed summer offset drives snapshot, editable fields and ticker',
+				async () => {
+					assert(target.querySelector('.host-clock').textContent === '13:00:00' && clock()[0].value === '13', 'Windows fixed offset was replaced with IANA summer time');
+					await new Promise(resolve => setTimeout(resolve, 1100));
+					await settle();
+					assert(target.querySelector('.host-clock').textContent.startsWith('13:00:') && clock()[0].value === '13', 'Clock ticker lost the fixed offset');
+					assert(writes.length === 0, 'Clock display performed a system write');
+				},
+				{ status: { nowMs: Date.UTC(2026, 6, 1, 12), utcOffsetMinutes: 60, timezoneOffsetMode: 'fixed' } }
+			);
+			await test(
+				'fixed offset rolls the host date over at its actual midnight',
+				async () => {
+					assert(target.querySelector('.host-date').textContent === '2026-07-01' && target.querySelector('.host-clock').textContent === '23:30:00', 'Host date followed automatic DST instead of its actual offset');
+					host.nowMs += 3600000;
+					changed(structuredClone(host));
+					await settle();
+					assert(target.querySelector('.host-date').textContent === '2026-07-02' && target.querySelector('.host-clock').textContent === '00:30:00', 'Host-local midnight did not update the date');
+					assert(writes.length === 0, 'Midnight display performed a write');
+				},
+				{ status: { nowMs: Date.UTC(2026, 6, 1, 22, 30), utcOffsetMinutes: 60, timezoneOffsetMode: 'fixed' } }
+			);
+			await test('an external five-minute correction refreshes the clean clock without a write', async () => {
+				host.nowMs += 300000;
+				changed(structuredClone(host));
+				await settle();
+				assert(target.querySelector('.host-clock').textContent === '12:25:30', 'External time correction was not displayed');
+				assert(clock()[1].value === '25' && writes.length === 0 && save().classList.contains('disabled'), 'External correction dirtied or wrote the clock');
+			});
+			await test(
+				'synchronization completion updates an untouched screen without saving',
+				async () => {
+					host.ntpSynchronized = true;
+					changed(structuredClone(host));
+					await settle();
+					assert(target.querySelector('[data-time-sync-result]').textContent === label('settings.time.synchronized') && writes.length === 0, 'Synchronization result waited for an app write');
+				},
+				{ status: { ntpSynchronized: false } }
+			);
+			await test(
+				'normal fifteen-second heartbeats preserve server and clock drafts',
+				async () => {
+					await edit(server(), 'typed.example.org');
+					await edit(clock()[0], '7');
+					const ownNow = Object.getOwnPropertyDescriptor(performance, 'now');
+					const realNow = performance.now.bind(performance);
+					let elapsed = 0;
+					Object.defineProperty(performance, 'now', { configurable: true, value: () => realNow() + elapsed });
+					try {
+						for (let heartbeat = 0; heartbeat < 3; heartbeat++) {
+							elapsed += 15000;
+							host.nowMs += 15000;
+							changed(structuredClone(host));
+							await settle();
+							assert(server().value === 'typed.example.org' && clock()[0].value === '7', 'A heartbeat overwrote unsaved values');
+							assert(!save().classList.contains('disabled') && !target.textContent.includes(label('settings.time.changedOutside')), 'Normal elapsed time made the form stale');
+						}
+						assert(target.querySelector('.host-clock').textContent === '12:21:15' && writes.length === 0, 'Readonly clock did not follow heartbeats independently of its draft');
+					} finally {
+						if (ownNow) Object.defineProperty(performance, 'now', ownNow);
+						else delete performance.now;
+					}
+				},
+				{ status: { ntpEnabled: false } }
+			);
+			await test(
+				'synchronization result changes preserve unrelated edits',
+				async () => {
+					await edit(server(), 'typed.example.org');
+					host.ntpSynchronized = true;
+					changed(structuredClone(host));
+					await settle();
+					assert(server().value === 'typed.example.org' && !save().classList.contains('disabled'), 'Synchronization completion invalidated an unrelated draft');
+					assert(target.querySelector('[data-time-sync-result]').textContent === label('settings.time.synchronized'), 'Draft blocked the current sync result');
+					assert(writes.length === 0, 'Sync completion submitted a mutation');
+				},
+				{ status: { ntpSynchronized: false } }
+			);
+			await test(
+				'runtime synchronization changes keep the configured NTP server during a timezone edit',
+				async () => {
+					await pickZone('UTC');
+					for (const synchronized of [true, false, true]) {
+						host.ntpSynchronized = synchronized;
+						changed(structuredClone(host));
+						await settle();
+						assert(server().value === 'configured.example.org' && zoneValue() === 'UTC', 'A runtime update replaced the configured server or timezone draft');
+						assert(!save().classList.contains('disabled') && !target.textContent.includes(label('settings.time.changedOutside')), 'Runtime synchronization locked the unrelated draft');
+						assert(target.querySelector('[data-time-sync-result]').textContent === label(synchronized ? 'settings.time.synchronized' : 'settings.time.notSynchronized'), 'Runtime synchronization status was not refreshed');
+					}
+					assert(writes.length === 0, 'A runtime update saved configuration');
+					await click(label('common.save'));
+					assert(JSON.stringify(writes) === JSON.stringify([{ timezone: 'UTC' }]) && server().value === 'configured.example.org', 'Saving the timezone also rewrote the configured NTP server');
+				},
+				{ status: { ntpServer: 'configured.example.org', ntpSynchronized: false } }
+			);
+			await test('a significant external correction blocks a draft but updates the readonly clock', async () => {
+				await edit(server(), 'typed.example.org');
+				host.nowMs += 300000;
+				changed(structuredClone(host));
+				await settle();
+				assert(save().classList.contains('disabled') && target.textContent.includes(label('settings.time.changedOutside')), 'A significant clock correction left the old draft writable');
+				assert(server().value === 'typed.example.org' && target.querySelector('.host-clock').textContent === '12:25:30', 'Correction erased the draft or hid the current clock');
+				changed(structuredClone(host));
+				await settle();
+				await click(label('common.save'));
+				assert(save().classList.contains('disabled') && writes.length === 0, 'A later heartbeat silently cleared an existing conflict');
+			});
+			await test(
+				'offset-mode changes invalidate same-zone drafts and update the clock',
+				async () => {
+					await edit(server(), 'typed.example.org');
+					host.timezoneOffsetMode = 'fixed';
+					changed(structuredClone(host));
+					await settle();
+					assert(save().classList.contains('disabled') && server().value === 'typed.example.org', 'Offset-mode change left a stale draft writable');
+					assert(target.querySelector('.host-clock').textContent === '13:00:00', 'Mode change did not update the readonly clock');
+				},
+				{ status: { nowMs: Date.UTC(2026, 6, 1, 12), utcOffsetMinutes: 60 } }
+			);
+			await test('revoked capabilities immediately lock an existing draft', async () => {
+				await edit(server(), 'typed.example.org');
+				host.capabilities.setNtpServer = false;
+				changed(structuredClone(host));
+				await settle();
+				assert(server().disabled && save().classList.contains('disabled'), 'Capability revocation left the draft editable');
+				await click('tik.cesnet.cz');
+				await click(label('common.save'));
+				assert(writes.length === 0 && server().value === 'typed.example.org', 'Revocation was bypassed by a preset');
+			});
+			const initialRead = deferred();
+			await test(
+				'a heartbeat before the initial read seeds the form and supersedes that read',
+				async () => {
+					changed({ ...host, ntpServer: 'heartbeat.example.org' });
+					await settle();
+					initialRead.resolve(structuredClone(host));
+					await settle();
+					assert(server().value === 'heartbeat.example.org' && save().classList.contains('disabled'), 'Initial heartbeat left an unseeded or dirty form');
+					assert(!target.textContent.includes(label('settings.time.changedOutside')) && writes.length === 0, 'First status was mistaken for an external conflict');
+					const zones = await zoneCatalog();
+					assert(zones.includes('UTC') && zones.includes('Europe/London'), 'Heartbeat discarded the initial timezone list');
+				},
+				{ readWait: initialRead }
+			);
+			for (const failed of [false, true]) {
+				const oldZones = deferred();
+				await test(
+					`a superseded timezone ${failed ? 'failure' : 'reply'} cannot replace a newer catalog`,
+					async () => {
+						changed(structuredClone(host));
+						await settle();
+						await click(label('settings.time.reload'));
+						const before = await zoneCatalog();
+						assert(before.includes('Europe/London'), 'Newer catalog did not arrive');
+						if (failed) oldZones.reject(new Error('Old timezone request failed'));
+						else oldZones.resolve(['UTC']);
+						await settle();
+						assert(JSON.stringify(await zoneCatalog()) === JSON.stringify(before), 'An old timezone result replaced the newer list');
+						assert(!target.textContent.includes(label('settings.time.zonesUnavailable')), 'An old catalog failure replaced a newer successful result');
+					},
+					{ zonesWait: oldZones }
+				);
+			}
+			for (const alreadyStale of [false, true])
+				await test(`explicit reload replaces a ${alreadyStale ? 'stale' : 'dirty'} draft when a heartbeat arrives first`, async () => {
+					await edit(server(), 'draft.example.org');
+					if (alreadyStale) {
+						host.ntpServer = 'external.example.org';
+						changed(structuredClone(host));
+						await settle();
+					}
+					const response = deferred();
+					readWait = response;
+					await click(label('settings.time.reload'));
+					try {
+						changed(structuredClone(host));
+						await settle();
+						response.resolve(structuredClone(host));
+						await settle();
+						assert(server().value === host.ntpServer, 'Explicit reload kept the old draft after a heartbeat');
+						assert(!server().disabled && save().classList.contains('disabled'), 'Explicit reload did not clear the stale state and rebase the form');
+						assert(!target.textContent.includes(label('settings.time.changedOutside')) && writes.length === 0, 'Reload retained a conflict or performed a write');
+					} finally {
+						response.resolve(structuredClone(host));
+						await settle();
+					}
+				});
+			await test('a heartbeat completes reload once and preserves a newer draft against the delayed read', async () => {
+				await edit(server(), 'first-draft.example.org');
+				const older = structuredClone(host),
+					response = deferred();
+				readWait = response;
+				await click(label('settings.time.reload'));
+				try {
+					host.ntpServer = 'newer.example.org';
+					changed(structuredClone(host));
+					await settle();
+					assert(server().value === 'newer.example.org' && !server().disabled, 'Fresh heartbeat did not fulfill the requested reload');
+					await edit(server(), 'second-draft.example.org');
+					changed(structuredClone(host));
+					await settle();
+					response.resolve(older);
+					await settle();
+					assert(server().value === 'second-draft.example.org' && !save().classList.contains('disabled'), 'Consumed reload intent or an old reply discarded the new draft');
+					assert(writes.length === 0, 'Status reload performed a mutation');
+				} finally {
+					response.resolve(older);
+					await settle();
+				}
+			});
+		} finally {
+			if (component) await unmount(component);
+			Object.assign(api, originals);
+			window.timeFormTestResults = results;
+			document.documentElement.dataset.testStatus = results.length && results.every(item => item.passed) ? 'passed' : 'failed';
+		}
+	</script>
+</html>
