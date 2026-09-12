@@ -371,14 +371,30 @@ export const WINDOWS_LAUNCHER_EXIT = { untrusted: 11, cancelled: 12, timeout: 13
 export const elevationClock = (): number => performance.now();
 
 /**
- * How long the launcher waits for the elevated helper, prompt included.
+ * How long the launcher waits for the elevated helper AFTER the prompt is answered.
  *
- * Most of it is a person: UAC leaves its prompt up until it is answered, and this is the
- * point at which an unanswered one is given up on. Named and exported because the client's
- * own limit has to be longer than this one, and the screen's longer than that - a chain that
- * was previously three unrelated numbers, with the screen's the shortest of them.
+ * Explicitly not "prompt included", which is what this said and got wrong: the wait starts
+ * once `ShellExecuteExW` has returned, and that call does not return while the consent prompt
+ * is on screen - measured in this session, the call stayed blocked for over a minute until the
+ * consent process was gone. So the prompt's time is spent before any of this is counted, and
+ * a caller that allowed 200 s for the whole thing could kill the launcher while the launcher
+ * still believed it had 180 s left.
+ *
+ * Sized for the WORK, which is what it actually bounds: the elevated save is a handful of
+ * commands, measured at 9-12 s end to end on the test machine.
  */
-export const WINDOWS_ELEVATION_WAIT_MS = 180_000;
+export const WINDOWS_ELEVATION_WAIT_MS = 60_000;
+
+/**
+ * How long the prompt itself may take before the caller's own limit is allowed to fire.
+ *
+ * Nobody can bound a person, but Windows does: an unanswered elevation prompt is dismissed by
+ * the system and `ShellExecuteExW` comes back with ERROR_CANCELLED. This is that dismissal plus
+ * slack, and it exists so the CALLER's limit can be longer than the prompt and the work
+ * together - the launcher is the only thing holding the elevated process's handle, so it has to
+ * be the one that outlives the wait and terminates it, not the one that gets killed first.
+ */
+export const WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS = 130_000;
 
 /** Outcome of one elevation attempt. Only genuine Win32 faults throw. */
 export type WindowsElevationOutcome = { kind: 'exited'; code: number } | { kind: 'cancelled' } | { kind: 'denied' } | { kind: 'timeout' };

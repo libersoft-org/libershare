@@ -8,7 +8,7 @@ import { parseSystemTimeExitCode, systemTimeHelperFailure } from './system-time-
 import { expectedNetworkHelperHash, sha256File, trustIdentity } from './network-helper-integrity.ts';
 import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from './system-network-linux.ts';
 import { encodeNetworkHelperRequest, NETWORK_HELPER_EXIT, parseNetworkHelperResponse, type NetworkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
-import { elevationClock, verifyWindowsInstalledHelper, verifyWindowsInstalledSibling, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_LAUNCHER_EXIT, WINDOWS_LAUNCHER_FILE, windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
+import { elevationClock, verifyWindowsInstalledHelper, verifyWindowsInstalledSibling, WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_LAUNCHER_EXIT, WINDOWS_LAUNCHER_FILE, windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
 
 const execFileAsync = promisify(execFile);
 /**
@@ -35,14 +35,17 @@ export const SIGNATURE_TIMEOUT_MS = 30_000;
 /**
  * How long the launcher may be left running for one system-time save.
  *
- * Its own wait for the elevated process is {@link WINDOWS_ELEVATION_WAIT_MS}, which covers an
- * elevation prompt nobody has answered yet; this adds the margin the launcher needs to notice
- * that, terminate the child and exit with a code. Deliberately NOT the network path's
- * {@link HELPER_TIMEOUT_MS}: that is sized for a NetworkManager checkpoint window, 271 s, and
- * nothing in a time save creates one - so a time save inherited a limit half again as long as
- * anything it can actually do, and one that did not fit inside what the screen waits for.
+ * It has to outlast the launcher, because the launcher is what holds the elevated process's
+ * handle and terminates it on its own timeout. Killed first, this call leaves an elevated
+ * helper running with nothing watching it - and the save then reports a finished operation and
+ * releases the lock while the host may still be being changed.
+ *
+ * So it covers BOTH parts, which the previous figure did not: the prompt, whose time is spent
+ * inside `ShellExecuteExW` before the launcher's wait starts counting at all, and the work the
+ * wait actually bounds. Deliberately NOT the network path's {@link HELPER_TIMEOUT_MS} either -
+ * that is a NetworkManager checkpoint window and nothing in a time save creates one.
  */
-export const WINDOWS_TIME_HELPER_TIMEOUT_MS: number = WINDOWS_ELEVATION_WAIT_MS + 20_000;
+export const WINDOWS_TIME_HELPER_TIMEOUT_MS: number = WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS + WINDOWS_ELEVATION_WAIT_MS + 20_000;
 export const MAC_HELPER_SHELL = 'set -eu; d=$(/usr/bin/mktemp -d /private/var/tmp/lish-network-helper.XXXXXX); trap \'/bin/rm -f "$d/helper"; /bin/rmdir "$d"\' EXIT HUP INT TERM; /bin/cp "$1" "$d/helper"; /usr/bin/codesign --verify --strict "$d/helper"; t=$(/usr/bin/codesign -dv --verbose=4 "$d/helper" 2>&1 | /usr/bin/awk -F= \'/^TeamIdentifier=/{print $2}\'); i=$(/usr/bin/codesign -dv --verbose=4 "$d/helper" 2>&1 | /usr/bin/awk -F= \'/^Identifier=/{print $2}\'); h=$(/usr/bin/shasum -a 256 "$d/helper" | /usr/bin/awk \'{print $1}\'); [ -n "$t" ] && [ "$t" = "$3" ] && [ "$h" = "$4" ] && [ "$i" = "$5" ]; "$d/helper" --request "$2"';
 
 export function macNetworkHelperScript(): string {
