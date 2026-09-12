@@ -191,16 +191,21 @@ async function readSnapshot(path: string, readOriginal: (path: string) => Promis
 /** `SYMLOOP_MAX` upstream: the hop budget a kernel gives one resolution before ELOOP. */
 const MAX_SYMLINK_HOPS = 40;
 
-/** Where a resolution stopped: the directory that blocked it, or the file and the directory holding it. */
+/** Where a resolution went: the directories it passed through, and the file it ended at. */
 interface Resolution {
-	blocked: string | null;
+	/**
+	 * Every directory the resolution passes through, outermost first, as the kernel would
+	 * reach them. Whether the service account may ENTER each one is decided by the caller -
+	 * the walk deliberately does not judge it, because the mode bits it can see here are the
+	 * weaker evidence (see {@link unreadableByServiceAccount}).
+	 */
+	traversed: string[];
 	target: string | null;
 	directory: string | null;
 }
 
 /**
- * Walk `path` the way the kernel resolves it, reporting the first directory an unprivileged
- * process could not enter.
+ * Walk `path` the way the kernel resolves it and report every directory on the way.
  *
  * Component by component, because that is where the permission is checked. A component that
  * is a symlink is replaced by its target and resolution restarts — which is the part three
@@ -220,7 +225,8 @@ interface Resolution {
  * not stat. Neither is evidence about the service account, and the write reports it anyway.
  */
 async function resolveForServiceAccount(path: string): Promise<Resolution> {
-	const nothing: Resolution = { blocked: null, target: null, directory: null };
+	const nothing: Resolution = { traversed: [], target: null, directory: null };
+	const traversed: string[] = [];
 	let parts = path.split(/[/\\]+/).filter(Boolean);
 	// Components of the directory reached so far. `..` pops it; nothing is ever normalised.
 	let walked: string[] = [];
@@ -256,15 +262,19 @@ async function resolveForServiceAccount(path: string): Promise<Resolution> {
 			continue;
 		}
 		if (entry.isDirectory()) {
-			if ((entry.mode & 0o001) === 0) return { blocked: next, target: null, directory: null };
+			// Recorded, not judged. Refusing here on the `other` execute bit was wrong in the
+			// dangerous-looking but harmless direction AND in the harmful one: a 0750 directory
+			// whose group IS the service's group is enterable, and rejecting it failed a save the
+			// daemon would have been perfectly happy with.
+			if (!traversed.includes(next)) traversed.push(next);
 			walked.push(part);
 			index += 1;
 			continue;
 		}
 		// Something that is not a directory: only the last component may be one.
-		return index === parts.length - 1 ? { blocked: null, target: next, directory: here() } : nothing;
+		return index === parts.length - 1 ? { traversed, target: next, directory: here() } : nothing;
 	}
-	return { blocked: null, target: null, directory: here() };
+	return { traversed, target: null, directory: here() };
 }
 
 /** The account `systemd-timesyncd` reads its configuration as, per its shipped unit. */
@@ -349,11 +359,22 @@ async function serviceAccountIds(): Promise<{ uid: number; gid: number } | null>
  * The bits remain the fallback for when the ids cannot be resolved or this process is not
  * root (it cannot then adopt another account, and on such a host it could not have written
  * the real configuration either). In that fallback the old caveat genuinely holds: it is an
- * approximation through the `other` bits, and it cannot see an ACL.
+ * approximation through the `other` bits, and it cannot see an ACL - and it can also refuse a
+ * directory that is in fact enterable. That direction was measured too: a 0750 directory whose
+ * group is the service's group is entered by the kernel, and the group class is consulted
+ * BEFORE the `other` class, so the bit test alone failed a save that would have worked.
  */
 export async function unreadableByServiceAccount(path: string, access: ServiceAccountAccess = serviceAccountAccess): Promise<string | null> {
-	const { blocked, target, directory } = await resolveForServiceAccount(path);
-	if (blocked !== null) return `${blocked} cannot be entered by the time service's own account`;
+	const { traversed, target, directory } = await resolveForServiceAccount(path);
+	// Outermost first, so the reported directory is the first one that actually stops the walk.
+	for (const step of traversed) {
+		const enterable = await access(step, 'x');
+		if (enterable === false) return `${step} cannot be entered by the time service's own account`;
+		if (enterable === null) {
+			const entry = await stat(step).catch(() => null);
+			if (entry && (entry.mode & 0o001) === 0) return `${step} cannot be entered by the time service's own account`;
+		}
+	}
 	if (directory !== null) {
 		const listable = await access(directory, 'r');
 		if (listable === false) return `${directory} cannot be listed by the time service's own account, so a drop-in in it would never be found`;
