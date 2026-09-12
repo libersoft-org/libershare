@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { chmod, chown, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { unreadableByServiceAccount, writeFileAtomically } from '../../src/system-time-files.ts';
+import { unreadableByServiceAccount, writeFileAtomically, type ServiceAccountAccess } from '../../src/system-time-files.ts';
 
 async function restrictiveUmask<T>(action: () => Promise<T>): Promise<T> {
 	const previous = process.umask(0o077);
@@ -125,6 +125,65 @@ describe.skipIf(process.platform === 'win32')('POSIX time configuration permissi
 		const file = join(root, 'systemd', 'timesyncd.conf.d', '90-libershare.conf');
 		await permissiveUmask(() => writeFileAtomically(file, '[Time]\nNTP=example.org\n'));
 		expect(await mode(file)).toBe(0o644);
+	});
+
+	/**
+	 * What the mode bits cannot see.
+	 *
+	 * An ACL entry naming the service account takes precedence over the `other` class, so a
+	 * file at 0644 with `user:systemd-timesync:---` looks world-readable and is refused to the
+	 * one reader that matters. Measured on Debian 12 against the real thing: the bit check
+	 * reported no problem while `test -r` as uid 997 and `cat` both failed. The answer now
+	 * comes from the kernel under those ids, and the bits are only the fallback for a host
+	 * that cannot be asked.
+	 */
+	describe('readability for the time service account', () => {
+		const answering =
+			(verdict: boolean | null): ServiceAccountAccess =>
+			async () =>
+				verdict;
+		// mkdtemp leaves the fixture root at 0700, which the traversal check reports before any
+		// of this is reached. These cases are about the file and its own directory.
+		beforeEach(() => chmod(root, 0o755));
+
+		it('reports a file the kernel refuses to that account, whatever the bits say', async () => {
+			const file = join(root, '90-libershare.conf');
+			await writeFile(file, 'x\n');
+			await chmod(file, 0o644);
+			// Refused for the file alone: the directory it lives in lists fine, so this is the ACL
+			// case and not the one the mode bits already catch.
+			const fileRefused: ServiceAccountAccess = async path => path !== file;
+			expect(await unreadableByServiceAccount(file, fileRefused)).toContain('cannot be read');
+		});
+
+		/** The kernel's yes also overrides the approximation: the bits are the weaker evidence. */
+		it('accepts what the kernel allows even when the other bits are clear', async () => {
+			const file = join(root, '90-libershare.conf');
+			await writeFile(file, 'x\n');
+			await chmod(file, 0o600);
+			expect(await unreadableByServiceAccount(file, answering(true))).toBeNull();
+		});
+
+		it('falls back to the other bits when the host cannot be asked', async () => {
+			const file = join(root, '90-libershare.conf');
+			await writeFile(file, 'x\n');
+			await chmod(file, 0o644);
+			expect(await unreadableByServiceAccount(file, answering(null))).toBeNull();
+			await chmod(file, 0o600);
+			expect(await unreadableByServiceAccount(file, answering(null))).toContain('cannot be read');
+		});
+
+		it('reports a directory that account cannot list, so a drop-in in it is never found', async () => {
+			const parent = join(root, 'timesyncd.conf.d');
+			await mkdir(parent, { mode: 0o755 });
+			const file = join(parent, '90-libershare.conf');
+			await writeFile(file, 'x\n');
+			await chmod(file, 0o644);
+			// Only the listing is refused; the file itself reads fine, which is exactly the shape
+			// that passes every other check while the daemon never sees the drop-in.
+			const listingRefused: ServiceAccountAccess = async path => (path === parent ? false : true);
+			expect(await unreadableByServiceAccount(file, listingRefused)).toContain('cannot be listed');
+		});
 	});
 
 	it('does not widen a pre-existing private parent directory', async () => {

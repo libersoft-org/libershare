@@ -267,6 +267,53 @@ async function resolveForServiceAccount(path: string): Promise<Resolution> {
 	return { blocked: null, target: null, directory: here() };
 }
 
+/** The account `systemd-timesyncd` reads its configuration as, per its shipped unit. */
+export const TIME_SERVICE_ACCOUNT = 'systemd-timesync';
+
+/**
+ * Can the time service's own account reach `path`? Null when this host cannot be asked.
+ *
+ * `setpriv` runs `test` with nothing but that account's ids, so the answer comes from the
+ * kernel's own permission check - ACLs included. Only root may adopt another account, and
+ * only Linux has this service, so everywhere else the caller falls back to the mode bits.
+ */
+export type ServiceAccountAccess = (path: string, mode: 'r' | 'x') => Promise<boolean | null>;
+
+export const serviceAccountAccess: ServiceAccountAccess = async (path, mode) => {
+	if (process.platform !== 'linux' || process.getuid?.() !== 0) return null;
+	const ids = await serviceAccountIds();
+	if (ids === null) return null;
+	try {
+		const probe = Bun.spawnSync(['/usr/bin/setpriv', `--reuid=${ids.uid}`, `--regid=${ids.gid}`, '--clear-groups', '/usr/bin/test', `-${mode}`, path], { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' });
+		// Only `test`'s own verdict counts. `setpriv` reports its own failures - a missing
+		// binary, an id it may not assume - with a different status, and reading those as
+		// "unreadable" would refuse a configuration nobody can prove is broken.
+		return probe.exitCode === 0 ? true : probe.exitCode === 1 ? false : null;
+	} catch {
+		return null;
+	}
+};
+
+let cachedServiceIds: { uid: number; gid: number } | null | undefined;
+
+/** The service account's numeric ids, read once from the host's own passwd database. */
+async function serviceAccountIds(): Promise<{ uid: number; gid: number } | null> {
+	if (cachedServiceIds !== undefined) return cachedServiceIds;
+	cachedServiceIds = null;
+	try {
+		const passwd = await readFile('/etc/passwd', 'utf8');
+		for (const line of passwd.split('\n')) {
+			const fields = line.split(':');
+			if (fields[0] !== TIME_SERVICE_ACCOUNT) continue;
+			const uid = Number(fields[2]);
+			const gid = Number(fields[3]);
+			if (Number.isInteger(uid) && Number.isInteger(gid)) cachedServiceIds = { uid, gid };
+			break;
+		}
+	} catch {}
+	return cachedServiceIds;
+}
+
 /**
  * Why an unprivileged service could not read `path`, or null when it can.
  *
@@ -290,21 +337,38 @@ async function resolveForServiceAccount(path: string): Promise<Resolution> {
  * deliberately does not widen. Reporting the problem is the fix, not loosening somebody
  * else's permissions behind their back.
  *
- * Approximated through the OTHER bits, because the service account is neither the owner nor,
- * on any ordinary host, in the owning group. That can only err towards refusing a
- * configuration that would in fact have worked, which is the harmless direction: the user is
- * told why rather than told a lie.
+ * Asked of the KERNEL as that account wherever this process can: `access(2)` under the
+ * service account's ids accounts for the mode bits, for POSIX ACLs and for anything else the
+ * filesystem enforces. The mode bits alone do not: an ACL entry naming the account takes
+ * precedence over the `other` class, so a file at 0644 with `user:systemd-timesync:---` reads
+ * as world-readable and is refused to the one reader that matters. Measured on Debian 12:
+ * the bit check reported no problem while `test -r` as uid 997 and `cat` both failed with
+ * `Permission denied` - the approximation erring in the DANGEROUS direction, which the note
+ * here previously ruled out.
+ *
+ * The bits remain the fallback for when the ids cannot be resolved or this process is not
+ * root (it cannot then adopt another account, and on such a host it could not have written
+ * the real configuration either). In that fallback the old caveat genuinely holds: it is an
+ * approximation through the `other` bits, and it cannot see an ACL.
  */
-export async function unreadableByServiceAccount(path: string): Promise<string | null> {
+export async function unreadableByServiceAccount(path: string, access: ServiceAccountAccess = serviceAccountAccess): Promise<string | null> {
 	const { blocked, target, directory } = await resolveForServiceAccount(path);
 	if (blocked !== null) return `${blocked} cannot be entered by the time service's own account`;
 	if (directory !== null) {
-		const holder = await stat(directory).catch(() => null);
-		if (holder && (holder.mode & 0o004) === 0) return `${directory} cannot be listed by the time service's own account, so a drop-in in it would never be found`;
+		const listable = await access(directory, 'r');
+		if (listable === false) return `${directory} cannot be listed by the time service's own account, so a drop-in in it would never be found`;
+		if (listable === null) {
+			const holder = await stat(directory).catch(() => null);
+			if (holder && (holder.mode & 0o004) === 0) return `${directory} cannot be listed by the time service's own account, so a drop-in in it would never be found`;
+		}
 	}
 	if (target === null) return null;
-	const file = await stat(target).catch(() => null);
-	if (file && (file.mode & 0o004) === 0) return `${target} cannot be read by the time service's own account`;
+	const readable = await access(target, 'r');
+	if (readable === false) return `${target} cannot be read by the time service's own account`;
+	if (readable === null) {
+		const file = await stat(target).catch(() => null);
+		if (file && (file.mode & 0o004) === 0) return `${target} cannot be read by the time service's own account`;
+	}
 	return null;
 }
 
