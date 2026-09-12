@@ -56,8 +56,15 @@
 	let dropUp = $state(false);
 	let matches = $derived(filterOptions(options, query));
 	let activeIndex = $derived(activeValue === null ? -1 : matches.indexOf(activeValue));
-	/** Worst case height of the open list, matching `max-height` in the style below. */
-	const LIST_MAX_HEIGHT_PX = 260;
+	/**
+	 * The list's own `max-height`, as a fraction of the window, matching the style below.
+	 *
+	 * A fixed pixel figure was wrong at anything but one window size: 260 px against a style
+	 * that says 34vh is 490 px on a 1440 px tall window, so a field with 400 px under it was
+	 * judged to have room and the list opened downwards into nothing. Kept as the same number
+	 * the CSS uses so the two cannot disagree.
+	 */
+	const LIST_MAX_HEIGHT_VH = 34;
 	// Unique per instance so the ARIA references still work with two of these on one screen.
 	const listID = `select-search-${Math.random().toString(36).slice(2, 10)}`;
 	let displayValue = $derived(open ? query : value);
@@ -80,7 +87,8 @@
 		// downwards is cut off by the window. Measured once per opening, which is when the
 		// only thing that can move the field - scrolling - has already happened.
 		const box = el?.getBoundingClientRect();
-		dropUp = box ? window.innerHeight - box.bottom < LIST_MAX_HEIGHT_PX && box.top > window.innerHeight - box.bottom : false;
+		const wanted = (window.innerHeight * LIST_MAX_HEIGHT_VH) / 100;
+		dropUp = box ? window.innerHeight - box.bottom < wanted && box.top > window.innerHeight - box.bottom : false;
 		open = true;
 		void tick().then(() => inputElement?.focus());
 	}
@@ -277,7 +285,7 @@
 		right: 0;
 		top: 100%;
 		margin-top: 0.3vh;
-		max-height: 34vh;
+		max-height: 34vh; /* LIST_MAX_HEIGHT_VH above */
 		overflow-y: auto;
 		border: 0.3vh solid var(--primary-foreground);
 		border-radius: 1vh;
