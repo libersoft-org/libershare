@@ -544,6 +544,33 @@
 				await closeZones();
 				assert(writes.length === 0, 'Browsing the timezone list wrote to the host');
 			});
+			/**
+			 * The control must not be a place the keyboard cannot leave.
+			 *
+			 * Navigation on this screen ignores every key whose target is an input, so whether the
+			 * arrows still walk the form after using the picker comes down to where the focus is
+			 * left. Reported from a real desktop build: after choosing a zone the arrows went on
+			 * driving the list - Down reopened it instead of moving to the row below - and the
+			 * same happened after cancelling with Escape.
+			 */
+			await test('hands the keyboard back after picking and after cancelling', async () => {
+				const focused = () => target.contains(document.activeElement) && document.activeElement === zone();
+				await pickZone('UTC');
+				assert(!focused(), 'Picking a zone kept the keyboard inside the control');
+				await openZones();
+				assert(focused(), 'Opening the list did not put the caret in the search field');
+				await closeZones();
+				assert(!focused(), 'Cancelling with Escape kept the keyboard inside the control');
+				assert(zoneValue() === 'UTC', 'Cancelling changed the chosen zone');
+				// Closed, the arrows belong to the screen: the control must not swallow them to
+				// reopen its own list.
+				await zoneKey('ArrowDown');
+				assert(!zoneOpen(), 'A closed list reopened itself on an arrow key');
+				await zoneKey('ArrowUp');
+				assert(!zoneOpen(), 'A closed list reopened itself on an arrow key');
+				assert(writes.length === 0, 'Moving around the picker wrote to the host');
+			});
+
 			await test('a zone confirmed with the mouse saves exactly like a typed one', async () => {
 				await pickZone('UTC', { withMouse: true });
 				await click(label('common.save'));

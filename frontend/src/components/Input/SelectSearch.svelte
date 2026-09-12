@@ -97,7 +97,11 @@
 			value = option;
 			onchange?.(value);
 		}
-		inputElement?.focus();
+		// Hand the keyboard back, the same way a text Input does on Enter. Keeping focus here
+		// trapped it: the global navigation ignores every key whose target is an input, so
+		// after choosing a zone the arrows no longer walked the form - they went on driving
+		// this control, and Down reopened the list instead of moving to the row below.
+		inputElement?.blur();
 	}
 
 	function handleFieldClick(): void {
@@ -139,9 +143,15 @@
 		switch (event.key) {
 			case 'ArrowDown':
 			case 'ArrowUp':
+				// Only while the list is open. With it closed the arrows belong to the screen's
+				// navigation, and this control must not be a place the selection cannot leave -
+				// so the focus goes back rather than the key being swallowed to reopen the list.
+				if (!open) {
+					inputElement?.blur();
+					return;
+				}
 				event.preventDefault();
-				if (!open) openList();
-				else step(event.key === 'ArrowDown' ? 1 : -1);
+				step(event.key === 'ArrowDown' ? 1 : -1);
 				return;
 			case 'Home':
 			case 'End':
@@ -151,6 +161,8 @@
 				return;
 			case 'Enter': {
 				event.preventDefault();
+				// Closed, Enter is the navigation's own confirm: it reopens the list, which is how
+				// a keyboard or remote reaches it once the row is selected.
 				if (!open) {
 					openList();
 					return;
@@ -164,10 +176,13 @@
 			case 'Escape':
 				if (!open) return;
 				// The list is what Escape closes here. Left to bubble it would reach the
-				// global back handler and leave the whole screen instead.
+				// global back handler and leave the whole screen instead. Focus goes back with
+				// it, so the arrow key after it navigates the form instead of being spent on
+				// getting out of this control.
 				event.preventDefault();
 				event.stopPropagation();
 				closeList();
+				inputElement?.blur();
 				return;
 			case 'Tab':
 				if (open) closeList();

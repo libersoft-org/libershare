@@ -415,7 +415,18 @@
 	let syncDirty = $derived(syncSwitchIsDirty(autoSync, loaded.syncReported, autoSyncTouched));
 	let hasChanges = $derived(syncDirty || ntpServer.trim() !== loaded.ntpServer || timezone !== loaded.timezone || (clockEdited && !autoSync));
 
-	createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	/**
+	 * Start at the top of the form, not wherever the first item happened to register.
+	 *
+	 * The area activates on mount, when the status is still being read: the form is not
+	 * rendered yet but the button bar below it is, so the SAVE button was the first item to
+	 * register and became the selection. Save sits on the bottom row, so the first press of
+	 * Down had nothing under it and the screen looked like it ignored the keyboard entirely
+	 * until a click moved the selection somewhere useful. Naming the position keeps it on the
+	 * synchronization row whatever renders first; it is a phantom for the moment the form is
+	 * missing, which highlights nothing and corrects itself as the rows appear.
+	 */
+	createNavArea(() => ({ areaID, position, onBack, activate: true, initialPosition: [0, 0] }));
 </script>
 
 <style>
