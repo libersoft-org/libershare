@@ -1,4 +1,4 @@
-import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, runWrite, validateClockParts, runAll, listSystemTimezones, isValidNtpServer } from './system-time-common.ts';
+import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, runWrite, validateClockParts, runAll, listSystemTimezones, isValidNtpServer, withSaveBudget } from './system-time-common.ts';
 import { macSystemsetup, readMacStatus } from './system-time-macos.ts';
 import { w32tm, w32tmNotifying, windowsClockRefusal, probeLocalMachineKeyWritable, type RegistryWriteState, W32TIME_NTP_CLIENT_SUBKEY, W32TIME_NTP_CLIENT_KEY, type WindowsSyncMode, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled, readWindowsTimeZone, readWindowsTimeServiceRunning, type WindowsTimeZoneState } from './system-time-windows.ts';
 import { readLinuxStatus, TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn, verifyTimesyncdServer } from './system-time-linux.ts';
@@ -431,51 +431,58 @@ export function applySystemTimeSettings(changes: SystemTimeChanges, writers: Sys
 	// Validate the complete input before an earlier field can change the host.
 	const invalidInput = validateSystemTimeChanges(changes);
 	if (invalidInput) return Promise.resolve(invalidInput);
-	return withSystemTimeLock(async () => {
-		// Inside the lock and before the first write: a clock is a wall-clock reading, and the
-		// zone it was read in is what turns it into an instant. Another client switching the
-		// host's zone between this form being filled and this request running makes the same
-		// digits mean a different moment — measured as a host left two hours off real time by a
-		// save whose whole purpose was to correct it. Both requests are individually valid, so
-		// serialising them cannot catch it; only the expectation can.
-		if (changes.expectedTimezone !== undefined) {
-			const current = await readStatus();
-			if (!sameHostZone(process.platform, current.timezone, changes.expectedTimezone)) return result('stale', `the host timezone is now ${current.timezone}, not ${changes.expectedTimezone} as this request was composed against`);
-			// The offset too, and for the same reason: Windows can switch automatic daylight saving
-			// off for a zone, which moves the offset while the name stays put. Same name at +120 and
-			// at +60 turns the same digits into instants an hour apart.
-			if (changes.expectedOffsetMinutes !== undefined && current.utcOffsetMinutes !== changes.expectedOffsetMinutes) return result('stale', `the host is now ${current.utcOffsetMinutes} minutes from UTC, not ${changes.expectedOffsetMinutes} as this request was composed against`);
-		}
-		const operations: Array<() => Promise<SystemTimeResult>> = [];
-		if (changes.ntpEnabled === false) operations.push(() => writers.setNtpEnabled(false));
-		const ntpServer = changes.ntpServer;
-		const timezone = changes.timezone;
-		const clock = changes.clock;
-		if (ntpServer !== undefined) operations.push(() => writers.setNtpServer(ntpServer));
-		if (timezone !== undefined) operations.push(() => writers.setTimezone(timezone));
-		if (clock !== undefined) operations.push(() => writers.setClock(clock));
-		if (changes.ntpEnabled === true) operations.push(() => writers.setNtpEnabled(true));
-		if (operations.length === 0) return result('invalid-input', 'no system-time setting was provided');
-
-		let completed = false;
-		const steps: SystemTimeStep[] = [];
-		for (const operation of operations) {
-			const operationResult = await operation();
-			if (operationResult.steps) steps.push(...operationResult.steps);
-			if (!operationResult.success) {
-				const partial = completed || operationResult.changed === true;
-				const attempted = completed || operationResult.stateMayHaveChanged === true;
-				return {
-					...operationResult,
-					...(partial ? { changed: true } : {}),
-					...(attempted ? { stateMayHaveChanged: true } : {}),
-					...(steps.length > 0 ? { steps } : {}),
-				};
+	// One deadline for every operation below, not one per operation: a combined save runs four
+	// of them, and each starting its own sequence budget added up to ten minutes - past the
+	// wait the screen is allowed, so it reported an interrupted save while the host was still
+	// being changed. Taken INSIDE the lock, so time spent queueing behind another save is not
+	// charged to this one's commands.
+	return withSystemTimeLock(() =>
+		withSaveBudget(async () => {
+			// Inside the lock and before the first write: a clock is a wall-clock reading, and the
+			// zone it was read in is what turns it into an instant. Another client switching the
+			// host's zone between this form being filled and this request running makes the same
+			// digits mean a different moment — measured as a host left two hours off real time by a
+			// save whose whole purpose was to correct it. Both requests are individually valid, so
+			// serialising them cannot catch it; only the expectation can.
+			if (changes.expectedTimezone !== undefined) {
+				const current = await readStatus();
+				if (!sameHostZone(process.platform, current.timezone, changes.expectedTimezone)) return result('stale', `the host timezone is now ${current.timezone}, not ${changes.expectedTimezone} as this request was composed against`);
+				// The offset too, and for the same reason: Windows can switch automatic daylight saving
+				// off for a zone, which moves the offset while the name stays put. Same name at +120 and
+				// at +60 turns the same digits into instants an hour apart.
+				if (changes.expectedOffsetMinutes !== undefined && current.utcOffsetMinutes !== changes.expectedOffsetMinutes) return result('stale', `the host is now ${current.utcOffsetMinutes} minutes from UTC, not ${changes.expectedOffsetMinutes} as this request was composed against`);
 			}
-			completed = true;
-		}
-		return result('ok');
-	});
+			const operations: Array<() => Promise<SystemTimeResult>> = [];
+			if (changes.ntpEnabled === false) operations.push(() => writers.setNtpEnabled(false));
+			const ntpServer = changes.ntpServer;
+			const timezone = changes.timezone;
+			const clock = changes.clock;
+			if (ntpServer !== undefined) operations.push(() => writers.setNtpServer(ntpServer));
+			if (timezone !== undefined) operations.push(() => writers.setTimezone(timezone));
+			if (clock !== undefined) operations.push(() => writers.setClock(clock));
+			if (changes.ntpEnabled === true) operations.push(() => writers.setNtpEnabled(true));
+			if (operations.length === 0) return result('invalid-input', 'no system-time setting was provided');
+
+			let completed = false;
+			const steps: SystemTimeStep[] = [];
+			for (const operation of operations) {
+				const operationResult = await operation();
+				if (operationResult.steps) steps.push(...operationResult.steps);
+				if (!operationResult.success) {
+					const partial = completed || operationResult.changed === true;
+					const attempted = completed || operationResult.stateMayHaveChanged === true;
+					return {
+						...operationResult,
+						...(partial ? { changed: true } : {}),
+						...(attempted ? { stateMayHaveChanged: true } : {}),
+						...(steps.length > 0 ? { steps } : {}),
+					};
+				}
+				completed = true;
+			}
+			return result('ok');
+		})
+	);
 }
 
 /** Why a host whose time source somebody else owns is left alone. */
@@ -797,8 +804,11 @@ export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Pr
 			if (await settlesToNtpEnabled(enabled, readStatus, pause, now)) return outcome;
 			return { ...result('error', `the host accepted the request but automatic time synchronisation is still ${enabled ? 'off' : 'on'}; its time service may be unable to run here`), changed: true, stateMayHaveChanged: true };
 		}
-		return runAll(platform, commands, async (cmd, args) => {
-			const outcome = await exec(cmd, args);
+		return runAll(platform, commands, async (cmd, args, timeoutMs) => {
+			// `timeoutMs` is what `runAll` has LEFT of the budget, so it has to be passed on:
+			// dropping it here handed every command a fresh 90 s of its own, which is exactly
+			// the accounting the budget exists to prevent.
+			const outcome = await exec(cmd, args, timeoutMs);
 			if (cmd !== 'sc' || args[0] !== (enabled ? 'start' : 'stop')) return outcome;
 			// The reason is read out of the output: `sc` keeps it there, not in its exit status.
 			const accepted = outcome.kind === 'ok' || (outcome.kind === 'failed' && (enabled ? SC_ALREADY_RUNNING_RE : SC_NOT_ACTIVE_RE).test(outcome.output));
@@ -837,7 +847,7 @@ export async function waitForWindowsTimeService(running: boolean, read: () => bo
 		await pause(Math.min(250, remaining));
 	}
 }
-export { resolveSystemExecutable, decodeCommandOutput, windowsSystemLibraryPath, run, runWrite, EXEC_TIMEOUT_MS, WRITE_TIMEOUT_MS, type SystemPlatform, type SystemCommand, type LocalDateTime, isSupportedPlatform, isValidNtpServer, validateClockParts, parseTimedatectlShow, parseYesNo, classifyFailure, firstLine, listSystemTimezones, getTimezoneSource, timezoneOffsetMinutes, type RunOutcome, type CommandRunner, runAll, type PlatformStatus, type PlatformStatusReader } from './system-time-common.ts';
+export { resolveSystemExecutable, decodeCommandOutput, windowsSystemLibraryPath, run, runWrite, EXEC_TIMEOUT_MS, WRITE_TIMEOUT_MS, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, withSaveBudget, remainingSaveBudget, elapsedClock, type SystemPlatform, type SystemCommand, type LocalDateTime, isSupportedPlatform, isValidNtpServer, validateClockParts, parseTimedatectlShow, parseYesNo, classifyFailure, firstLine, listSystemTimezones, getTimezoneSource, timezoneOffsetMinutes, type RunOutcome, type CommandRunner, runAll, type PlatformStatus, type PlatformStatusReader } from './system-time-common.ts';
 
 export { TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, parseTimesyncConfig, type UnitState, parseUnitLoadStates, canonicalUnitName, unitIsLoaded, COMPETING_NTP_UNITS, competingNtpUnits, parseAnyUnitActive, type ExtractedWords, extractWordsChecked, extractWords, readTimedatedEnvironment, readNtpUnitsList, firstUsableNtpUnit, canConfigureTimesyncdServer, buildTimesyncdDropIn } from './system-time-linux.ts';
 

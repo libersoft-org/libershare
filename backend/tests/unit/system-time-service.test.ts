@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { applySystemTimeSettings, setSystemNtpEnabled, setSystemNtpServer, waitForWindowsTimeService, withSystemTimeLock, type CommandRunner, type WindowsModeState } from '../../src/system-time.ts';
+import { applySystemTimeSettings, setSystemNtpEnabled, setSystemNtpServer, waitForWindowsTimeService, withSystemTimeLock, withSaveBudget, remainingSaveBudget, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, WRITE_TIMEOUT_MS, type CommandRunner, type WindowsModeState } from '../../src/system-time.ts';
 import type { SystemTimeStatus } from '@shared';
 
 /** The blank line `sc.exe` puts between its `[SC] ... FAILED <code>:` line and the localized reason. */
@@ -178,5 +178,62 @@ describe('Windows Time service transitions', () => {
 			}
 			expect(calls).toEqual(['sc stop w32time', 'sc config w32time start= disabled', 'w32tm /config /manualpeerlist:new.example.org,0x8 /update', 'next writer']);
 		});
+	});
+});
+
+/**
+ * The budget has to survive the path a real save takes, not just `runAll` in isolation.
+ *
+ * Two ways it did not. The Windows branch of `setSystemNtpEnabled` wraps the runner to watch
+ * the service transition, and that wrapper took only `(cmd, args)` - so the remaining budget
+ * `runAll` had just computed was dropped and every command got a fresh 90 s. And a combined
+ * save runs four operations, each of which used to start a sequence budget of its own, so
+ * four times 150 s could outlast the screen's wait even with each sequence "in budget".
+ *
+ * Neither is visible from a `runAll` test: the first is lost in a caller's wrapper, the second
+ * lives above the call. These go through the real entry points.
+ */
+describe('the budget along the real save path', () => {
+	it('passes the remaining limit through the Windows service wrapper', async () => {
+		await windows(async () => {
+			const limits: Array<number | undefined> = [];
+			const exec: CommandRunner = async (_cmd, _args, timeoutMs) => {
+				limits.push(timeoutMs);
+				return { kind: 'ok', output: '' };
+			};
+			await setSystemNtpEnabled(true, readStatus, exec, mode, async () => true);
+			expect(limits.length).toBeGreaterThan(1);
+			// Every command, including the `sc` one the wrapper intercepts, carries a limit.
+			expect(limits.every(limit => typeof limit === 'number' && limit > 0)).toBe(true);
+		});
+	});
+
+	it('shares one budget across every operation of a combined save', async () => {
+		const seen: Array<number | null> = [];
+		const operation = async () => {
+			seen.push(remainingSaveBudget());
+			return { success: true, outcome: 'ok' as const, message: null };
+		};
+		const answer = await applySystemTimeSettings({ ntpEnabled: false, ntpServer: 'ntp.example.org', timezone: 'UTC', clock: { hours: 1, minutes: 2, seconds: 3 } }, { setNtpEnabled: operation, setNtpServer: operation, setTimezone: operation, setClock: operation }, readStatus);
+		expect(answer.success).toBe(true);
+		// Four operations, each of which sees a budget, and all of them the SAME one: it only
+		// ever shrinks. Four independent budgets would each start at the full figure.
+		expect(seen.length).toBe(4);
+		expect(seen.every(entry => entry !== null && entry <= SAVE_BUDGET_MS)).toBe(true);
+		for (let index = 1; index < seen.length; index++) expect(seen[index]!).toBeLessThanOrEqual(seen[index - 1]!);
+	});
+
+	/** A save's budget is the ceiling for the sequences inside it, not the other way round. */
+	it('never lets one sequence claim more than the save has left', async () => {
+		await withSaveBudget(async () => {
+			const remaining = remainingSaveBudget();
+			expect(remaining).not.toBeNull();
+			expect(remaining!).toBeLessThanOrEqual(SAVE_BUDGET_MS);
+		});
+		// Outside a save there is no deadline to inherit, and a directly used writer still gets
+		// the sequence budget of its own.
+		expect(remainingSaveBudget()).toBeNull();
+		expect(SEQUENCE_BUDGET_MS).toBeLessThanOrEqual(SAVE_BUDGET_MS);
+		expect(WRITE_TIMEOUT_MS).toBeLessThan(SEQUENCE_BUDGET_MS);
 	});
 });
