@@ -72,13 +72,19 @@ export function buildSetTimezoneCommands(platform: SystemPlatform, timezone: str
  * user's back and let it step the clock they are about to set by hand. The drop-in
  * is on disk either way and is read the next time the daemon starts.
  *
- * Windows drops the resync AND the `/update` for the same reason. Both are requests to
- * the RUNNING Windows Time service — `/update` is documented as notifying it that the
- * configuration changed — so with the service stopped they can only fail, and the UI
- * reaches this path exactly that way: it switches synchronisation off before writing a
- * server. Sending them anyway is how a peer list that WAS written came back as an error.
- * Without them `w32tm /config` still writes the registry, and the service reads it when
- * it next starts (which is what switching synchronisation back on does).
+ * Windows drops only the `/resync`, and it goes by `syncEnabled` — whether
+ * synchronisation is CONFIGURED on, which comes from the registry and is always readable.
+ * Forcing a sync while the user has just switched synchronisation off would do the one
+ * thing they asked not to happen.
+ *
+ * `/update` is sent either way, and "the service is not running" is not treated as a
+ * failure of it (see {@link w32tmNotifying}). It used to be conditional on seeing the
+ * service run, which was wrong twice over: a state that could not be read - a standard
+ * user cannot open W32Time through the SCM at all - or a service still starting was taken
+ * for "stopped", so a RUNNING service was never told about the new peer and kept using the
+ * old one while the save reported success. Measured on Windows 11: against a stopped
+ * service `w32tm /config ... /update` writes the peer list into the registry anyway and
+ * prints only "The service has not been started. (0x80070426)", exiting 38.
  */
 export function buildSetNtpServerCommands(platform: SystemPlatform, server: string, daemonRunning: boolean, syncEnabled: boolean = daemonRunning): SystemCommand[] {
 	// `daemonRunning` is a LINUX fact: whether to restart timesyncd, which is the whole
