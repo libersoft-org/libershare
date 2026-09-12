@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { productIdentifier, type SystemTimeChanges, type SystemTimeResult } from '@shared';
 import { parseSystemTimeExitCode, systemTimeHelperFailure } from './system-time-helper.ts';
-import { expectedNetworkHelperHash, sha256File } from './network-helper-integrity.ts';
+import { expectedNetworkHelperHash, sha256File, trustIdentity } from './network-helper-integrity.ts';
 import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from './system-network-linux.ts';
 import { encodeNetworkHelperRequest, NETWORK_HELPER_EXIT, parseNetworkHelperResponse, type NetworkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
 import { verifyWindowsInstalledHelper, verifyWindowsInstalledSibling, WINDOWS_LAUNCHER_EXIT, WINDOWS_LAUNCHER_FILE, windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
@@ -74,9 +74,71 @@ async function verifyLinuxHelper(helper: string): Promise<boolean> {
 	}
 }
 
-async function verifyWindowsHelper(helper: string): Promise<boolean> {
+/**
+ * How long a FAILED Windows trust check is remembered for the same three files.
+ *
+ * Only failures expire. A pass is remembered for as long as the files are untouched, but a
+ * failure can be transient - the signature check is an external process with a timeout, and
+ * a machine under load can miss it - so caching that answer for the life of the process
+ * would keep elevation broken until a restart. Short enough to recover on the next attempt,
+ * long enough that a genuinely untrusted install does not re-read a third of a gigabyte on
+ * every status poll.
+ */
+const WINDOWS_TRUST_FAILURE_TTL_MS = 30_000;
+
+/** The last Windows trust answer, against the identity of the files it was measured on. */
+let windowsTrust: { identity: string; trusted: boolean; at: number } | null = null;
+
+/** The identity of the three binaries the check covers, or null when one cannot be read. */
+async function windowsTrustIdentity(paths: readonly string[]): Promise<string | null> {
+	const stats = await Promise.all(paths.map(path => stat(path).catch(() => null)));
+	if (stats.some(entry => entry === null)) return null;
+	return trustIdentity(stats.map((entry, index) => ({ path: paths[index]!, size: entry!.size, mtimeMs: entry!.mtimeMs, ctimeMs: entry!.ctimeMs, ino: entry!.ino })));
+}
+
+function rememberedWindowsTrust(identity: string | null, now: number): boolean | null {
+	if (identity === null || windowsTrust === null || windowsTrust.identity !== identity) return null;
+	if (!windowsTrust.trusted && now - windowsTrust.at >= WINDOWS_TRUST_FAILURE_TTL_MS) return null;
+	return windowsTrust.trusted;
+}
+
+/** One verification of the same files at a time; a second caller joins it instead of repeating it. */
+let windowsTrustInFlight: { identity: string; answer: Promise<boolean> } | null = null;
+
+async function verifyWindowsHelper(helper: string, now: () => number = Date.now): Promise<boolean> {
 	const expectedHash = expectedNetworkHelperHash();
 	const launcher = windowsNetworkLauncherPath();
+	// Before the expensive part: the same three files, unchanged, were already measured.
+	const identity = await windowsTrustIdentity([helper, launcher, process.execPath]);
+	const remembered = rememberedWindowsTrust(identity, now());
+	if (remembered !== null) return remembered;
+	if (identity !== null && windowsTrustInFlight?.identity === identity) return windowsTrustInFlight.answer;
+	const answer = measureWindowsHelperTrust(helper, launcher, expectedHash);
+	if (identity !== null) windowsTrustInFlight = { identity, answer };
+	try {
+		const trusted = await answer;
+		if (identity !== null) windowsTrust = { identity, trusted, at: now() };
+		return trusted;
+	} finally {
+		if (windowsTrustInFlight?.answer === answer) windowsTrustInFlight = null;
+	}
+}
+
+/**
+ * Measure the trust chain ahead of the save that needs it, off the request path.
+ *
+ * The verification is 9-14 seconds of reading three single-file runtime builds, and paying
+ * it inside the save is what the user sees as a screen that sits still before the elevation
+ * prompt appears. Running it when the time screen first reads the host means the answer is
+ * usually already cached by the time Save is pressed. Deliberately not awaited and never
+ * allowed to throw: it is a warm-up, and the save verifies for itself regardless.
+ */
+export function warmElevationTrust(platform: NodeJS.Platform = process.platform): void {
+	if (platform !== 'win32') return;
+	void networkHelperAvailable(platform).catch(() => undefined);
+}
+
+async function measureWindowsHelperTrust(helper: string, launcher: string, expectedHash: string | null): Promise<boolean> {
 	if (expectedHash === null || !(await verifyWindowsInstalledHelper(helper, process.execPath, expectedHash)) || !(await verifyWindowsInstalledSibling(launcher, process.execPath))) return false;
 	const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`;
 	const script = `$ErrorActionPreference='Stop'; $s=@(${[helper, launcher, process.execPath].map(quote).join(',')} | ForEach-Object { Get-AuthenticodeSignature -LiteralPath $_ }); if ($s.Count -ne 3 -or @($s | Where-Object { $_.Status -ne 'Valid' -or -not $_.SignerCertificate }).Count -ne 0 -or @($s.SignerCertificate.Thumbprint | Select-Object -Unique).Count -ne 1) { exit 3 }`;

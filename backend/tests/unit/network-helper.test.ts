@@ -7,6 +7,7 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
 import { assertWindowsRequestOwner, parseWindowsRequestFileName, windowsCurrentProcessIdentity, windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProcessImagePath, windowsProgramFilesPath, windowsRequestFileHeld, windowsRequestFileName, windowsSystemEnvironment, writeWindowsRequestFile, elevationClock } from '../../src/network-helper-windows.ts';
+import { trustIdentity, type TrustedFileIdentity } from '../../src/network-helper-integrity.ts';
 
 /** A baseline of the exact shape the backend builds, which every request has to carry. */
 const baseline = { mode: 'dhcp' as const, address: null, prefixLength: null, gateway: null, dns: [] };
@@ -142,6 +143,47 @@ describe('windows launcher outcomes', () => {
 		// itself, so the launcher's own reasons must live outside that set.
 		for (const helperCode of Object.values(NETWORK_HELPER_EXIT)) expect(Object.values(WINDOWS_LAUNCHER_EXIT)).not.toContain(helperCode);
 		expect(new Set(Object.values(WINDOWS_LAUNCHER_EXIT)).size).toBe(4);
+	});
+});
+
+/**
+ * The Windows trust check is 9-14 seconds of reading three single-file runtime builds, and
+ * after the host clock was set the same read measured 167 seconds while the system-time lock
+ * was held - so a save has to be able to recognise a verification it already made. The
+ * identity is what decides that, which makes "it changes whenever the file does" the whole
+ * contract.
+ */
+describe('trusted binary identity', () => {
+	const file = (overrides: Partial<TrustedFileIdentity> = {}): TrustedFileIdentity => ({ path: 'C:\\Program Files\\LiberShare\\lish-network-helper.exe', size: 118_077_944, mtimeMs: 1_760_000_000_000, ctimeMs: 1_760_000_000_000, ino: 42, ...overrides });
+
+	it('is stable for the same files', () => {
+		expect(trustIdentity([file()])).toBe(trustIdentity([file()]));
+		expect(trustIdentity([file(), file({ path: 'b.exe' })])).toBe(trustIdentity([file(), file({ path: 'b.exe' })]));
+	});
+
+	it('changes when anything about a file changes', () => {
+		const base = trustIdentity([file()]);
+		for (const changed of [file({ size: 118_077_945 }), file({ mtimeMs: 1_760_000_000_001 }), file({ ctimeMs: 1_760_000_000_001 }), file({ ino: 43 }), file({ path: 'other.exe' })]) {
+			expect(trustIdentity([changed])).not.toBe(base);
+		}
+	});
+
+	/** Windows paths are case-insensitive, so the same file reached by a differently cased path is the same file. */
+	it('ignores path case', () => {
+		expect(trustIdentity([file({ path: 'C:\\PROGRAM FILES\\X.EXE' })])).toBe(trustIdentity([file({ path: 'c:\\program files\\x.exe' })]));
+	});
+
+	it('distinguishes a different set or order of files', () => {
+		const a = file({ path: 'a.exe' });
+		const b = file({ path: 'b.exe' });
+		expect(trustIdentity([a, b])).not.toBe(trustIdentity([b, a]));
+		expect(trustIdentity([a, b])).not.toBe(trustIdentity([a]));
+		expect(trustIdentity([])).toBe('');
+	});
+
+	/** A bigint inode (what `stat({ bigint: true })` answers) must not read as a different file. */
+	it('treats an equal inode as equal whether it arrives as a number or a bigint', () => {
+		expect(trustIdentity([file({ ino: 42n })])).toBe(trustIdentity([file({ ino: 42 })]));
 	});
 });
 

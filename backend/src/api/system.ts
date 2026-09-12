@@ -7,6 +7,7 @@ import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
 import { getSystemTimeStatus, listHostTimezones, withSystemTimeLock } from '../system-time.ts';
 import { applySystemTimeSettingsWithElevation } from '../system-time-elevation.ts';
+import { warmElevationTrust } from '../network-helper-client.ts';
 import { applyIPv4Unlocked, connectWifiUnlocked, disconnectWifiUnlocked, readNetworkState, readNetworkStateUnlocked, runNetworkMutation, scanWifi } from '../system-network.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
@@ -200,6 +201,10 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	 * reported through `supported: false` and empty capabilities.
 	 */
 	function getTime(): Promise<SystemTimeStatus> {
+		// Start measuring the privileged helper's trust chain now, outside the lock and without
+		// waiting for it: on Windows that check is seconds of hashing, and paid inside the save
+		// it is a screen that sits still before the elevation prompt even appears.
+		warmElevationTrust();
 		return withSystemTimeLock(getSystemTimeStatus);
 	}
 
