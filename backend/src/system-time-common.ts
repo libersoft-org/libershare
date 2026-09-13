@@ -603,6 +603,23 @@ export const elapsedClock = (): number => performance.now();
  * `exec` is injectable so the sequencing and the outcome mapping can be exercised
  * without spawning anything.
  */
+/**
+ * The limit for ONE command, given what the sequence has left.
+ *
+ * Whole milliseconds, and at least one. `performance.now()` is fractional, so a remainder that
+ * came out below the write limit reached the spawn call as a float and Bun refused it outright:
+ * measured live as `The value of "timeout" is out of range. It must be an unsigned integer.
+ * Received 44817.258400000006`, which surfaced as a failed `w32tm` step and a save reporting
+ * that the host may have been half-changed. Invisible while the budget was large, because then
+ * `Math.min` returned the integer constant instead.
+ *
+ * Never zero: to a spawn call zero means NO limit, so flooring a sub-millisecond remainder to
+ * it would lift the bound at exactly the moment the sequence has run out of time.
+ */
+function commandTimeout(remaining: number): number {
+	return Math.max(1, Math.floor(Math.min(WRITE_TIMEOUT_MS, remaining)));
+}
+
 export async function runAll(platform: SystemPlatform, commands: SystemCommand[], exec: CommandRunner = runWrite, now: () => number = elapsedClock): Promise<SystemTimeResult> {
 	if (commands.length === 0) return result('unsupported', 'no command available for this platform');
 	const steps: SystemTimeStep[] = [];
@@ -625,7 +642,7 @@ export async function runAll(platform: SystemPlatform, commands: SystemCommand[]
 		// rather than given a fresh 90 seconds of its own.
 		const remaining = deadline - now();
 		if (remaining <= 0) return stopped(command, 'error', `the time configuration did not finish within ${Math.round(SEQUENCE_BUDGET_MS / 1000)} s`, false);
-		const r = await exec(command.cmd, command.args, Math.min(WRITE_TIMEOUT_MS, remaining));
+		const r = await exec(command.cmd, command.args, commandTimeout(remaining));
 		const done = (): void => void steps.push({ command: [command.cmd, ...command.args].join(' '), ok: true });
 		// Before anything else, including the exit code: a step that reports having had
 		// nothing to do succeeded, and `w32tm` says so with a non-zero status (38 measured).

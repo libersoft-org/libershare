@@ -491,10 +491,13 @@ export function applySystemTimeSettings(changes: SystemTimeChanges, writers: Sys
  * Null remaining means nobody set a budget - a writer used directly - and the ordinary write
  * limit applies. Otherwise it is the smaller of the two, so a command started late cannot
  * outlive the save that owns it.
+ *
+ * Whole milliseconds, and never zero, for the same two reasons as `commandTimeout`: a spawn
+ * call refuses a fractional timeout, and it reads zero as no limit at all.
  */
 function budgetedTimeout(): number {
 	const remaining = remainingSaveBudget();
-	return remaining === null ? WRITE_TIMEOUT_MS : Math.max(0, Math.min(WRITE_TIMEOUT_MS, remaining));
+	return remaining === null ? WRITE_TIMEOUT_MS : Math.max(1, Math.floor(Math.min(WRITE_TIMEOUT_MS, remaining)));
 }
 
 /** Why a host whose time source somebody else owns is left alone. */

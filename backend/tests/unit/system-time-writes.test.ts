@@ -121,6 +121,53 @@ describe('runAll sequence budget', () => {
 	});
 
 	/**
+	 * A spawn call takes whole milliseconds and refuses anything else, so the remainder of a
+	 * budget - which comes from `performance.now()` and is fractional - cannot be handed
+	 * straight to it. Measured live on Windows against an elevated save bounded to 45 s:
+	 * `The value of "timeout" is out of range. It must be an unsigned integer. Received
+	 * 44817.258400000006`, reported as a failed `w32tm` step and a host that might be
+	 * half-changed. It stayed hidden while budgets were large, because `Math.min` then returned
+	 * the integer write limit and the fraction never got through.
+	 */
+	it('hands a command a whole number of milliseconds even from a fractional remainder', async () => {
+		const limits: Array<number | undefined> = [];
+		let clock = 0.5;
+		const exec: CommandRunner = async (_cmd, _args, timeoutMs) => {
+			limits.push(timeoutMs);
+			clock += 80_000.2584;
+			return { kind: 'ok', output: '' };
+		};
+		expect((await runAll('linux', commands, exec, () => clock)).success).toBe(true);
+		expect(limits.length).toBe(2);
+		for (const limit of limits) {
+			expect(Number.isInteger(limit)).toBe(true);
+			// Still a real limit: zero would mean no limit at all to the process being spawned.
+			expect(limit!).toBeGreaterThan(0);
+			expect(limit!).toBeLessThanOrEqual(WRITE_TIMEOUT_MS);
+		}
+		// And it is the remainder, floored - not a fresh write limit.
+		expect(limits[1]).toBe(Math.floor(SEQUENCE_BUDGET_MS - 80_000.2584));
+	});
+
+	/**
+	 * Flooring alone is not enough at the very end of a budget. A fraction of a millisecond is
+	 * still time left, so the command is started - and floored to zero it would be started with
+	 * NO limit at all, which is the opposite of what a spent budget should do.
+	 */
+	it('never hands a command a zero limit at the end of the budget', async () => {
+		const limits: Array<number | undefined> = [];
+		let clock = 0;
+		const exec: CommandRunner = async (_cmd, _args, timeoutMs) => {
+			limits.push(timeoutMs);
+			clock = SEQUENCE_BUDGET_MS - 0.4;
+			return { kind: 'ok', output: '' };
+		};
+		expect((await runAll('linux', commands, exec, () => clock)).success).toBe(true);
+		expect(limits.length).toBe(2);
+		expect(limits[1]).toBe(1);
+	});
+
+	/**
 	 * A command starting with nothing left is refused, and `ran: false` is the honest report:
 	 * it was never started, so it cannot have changed anything - while the commands before it
 	 * did, which is what `changed` says.
