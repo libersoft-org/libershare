@@ -453,6 +453,21 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 		await unlink(backup).catch(() => undefined);
 		throw err;
 	}
+	// The link was taken BEFORE the read, which is what keeps the guard meaning "the file as
+	// this call first looked at it" - but it also means the two can be different files. An
+	// administrator replacing the path in between (a rename, so a NEW inode) leaves the backup
+	// naming the old one, and restoring it would put a configuration this call never read back
+	// over a newer one it did, while reporting a clean undo. Traced: server A is linked, the
+	// administrator swaps in B, this call reads B and publishes C, a later step fails, and the
+	// rollback renames A into place.
+	//
+	// The WRITE is still legitimate - replacing a file that was already different is the whole
+	// point, and the guard is B - so the stale link is dropped rather than the operation
+	// refused. The rollback then rebuilds from the snapshot, which is what was actually read.
+	if (backupLinked && !sameFile(await readMetadata(backup).catch(() => null), previous)) {
+		await unlink(backup).catch(() => undefined);
+		backupLinked = false;
+	}
 	// The first write guards the same window the rollback does. It was left open on the way
 	// IN: the original is read, the replacement is staged, and an edit landing between the two
 	// was overwritten without a word — and then the rollback, which does check, faithfully

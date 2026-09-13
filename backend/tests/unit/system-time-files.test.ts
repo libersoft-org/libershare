@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { applyTimesyncdDropIn, syncDirectory, type CommandRunner, type RunOutcome, SAVE_BUDGET_MS, withSaveBudget, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
@@ -373,6 +373,66 @@ describe('writeFileAtomically', () => {
 		const restored = await rollback();
 		expect(restored.state).toBe('not-restored');
 		expect(await readFile(path, 'utf8')).toBe('administrator\n');
+	});
+
+	/**
+	 * The link is taken BEFORE the read, which is what keeps the guard meaning "the file as
+	 * this call first looked at it" - and it means the two can be different files. An
+	 * administrator replacing the path in between leaves the backup naming the OLD inode, and
+	 * renaming that back puts a configuration this call never read over the newer one it did,
+	 * while reporting a clean undo.
+	 *
+	 * The write itself is legitimate here: replacing a file that was already different is the
+	 * point, and the guard is what was read. Only the backup is stale, so the rollback has to
+	 * restore the SNAPSHOT - which it does by rebuilding, the path taken when no usable link
+	 * is held.
+	 */
+	/**
+	 * The backup link is taken BEFORE the original is read - which is what keeps the guard
+	 * meaning "the file as this call first looked at it" - so the two can end up being
+	 * different files. An administrator replacing the path in that window leaves the backup
+	 * naming the OLD inode, and renaming it back puts a configuration this call never read
+	 * over the newer one it did, while reporting a clean undo.
+	 *
+	 * The window is one await between two syscalls, so it is raced rather than scheduled: the
+	 * replacement is started alongside the write and the assertion is the invariant, not the
+	 * timing. Whatever the interleaving, a rollback that reports the original back must leave
+	 * the content this call READ. Without the fix this fails within a few dozen attempts.
+	 */
+	it('never restores a configuration it did not read, whatever lands between the link and the read', async () => {
+		const path = join(dir, '90-libershare.conf');
+		let restores = 0;
+		for (let attempt = 0; attempt < 300; attempt++) {
+			await writeFile(path, 'first\n', 'utf8');
+			const replacement = join(dir, `administrator-${attempt}.tmp`);
+			await writeFile(replacement, 'second\n', 'utf8');
+			// Every call is recorded, because the rollback reads as well - the one that matters
+			// is the FIRST, which is the original this write is replacing.
+			const reads: string[] = [];
+			const swap = rename(replacement, path).catch(() => {});
+			let rollback;
+			try {
+				rollback = await writeFileAtomically(path, 'ours\n', async file => {
+					const seen = await readFile(file, 'utf8');
+					reads.push(seen);
+					return seen;
+				});
+			} catch {
+				// Refused because the replacement landed inside the read itself: the safe answer.
+				await swap;
+				continue;
+			}
+			await swap;
+			const restored = await rollback();
+			// A refused rollback leaves whatever is there and says so - it is the reported
+			// restores that must be truthful.
+			if (restored.state === 'not-restored') continue;
+			restores++;
+			expect(reads.length).toBeGreaterThan(0);
+			expect(await readFile(path, 'utf8')).toBe(reads[0]!);
+		}
+		// Not vacuous: the un-raced interleaving alone reaches a reported restore every time.
+		expect(restores).toBeGreaterThan(0);
 	});
 
 	it('preserves an external edit instead of restoring the previous file over it', async () => {
