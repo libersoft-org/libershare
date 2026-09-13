@@ -1,7 +1,8 @@
 import { open } from 'node:fs/promises';
-import { assertWindowsRequestOwner } from './network-helper-windows.ts';
+import { assertWindowsRequestOwner, WINDOWS_ELEVATION_HELPER_BUDGET_MS } from './network-helper-windows.ts';
 import { applyIPv4 } from './system-network.ts';
 import { applySystemTimeSettings } from './system-time.ts';
+import { elapsedClock, withSaveBudget } from './system-time-common.ts';
 import { decodeNetworkHelperRequest, executeNetworkHelperRequest, networkHelperExitCode, networkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
 
 const MAX_REQUEST_BYTES = 12 * 1024;
@@ -64,10 +65,16 @@ try {
 	// The time save runs here exactly as it would unprivileged - same ordering, same
 	// staleness checks against a fresh read of this host - only with the rights the
 	// unelevated backend does not have.
+	//
+	// One difference, and only under the Windows launcher: the save is bounded by what the
+	// launcher will wait for rather than by its own generous default. The launcher enforces
+	// its wait by terminating this process, so a save that took the full 200 s it normally
+	// may would be killed mid-sequence and its report lost. Bounded here instead, it runs
+	// out of time the way any other save does and says what it managed to change.
 	response = await executeNetworkHelperRequest(
 		await readRequest(args),
 		(interfaceID, config, expected) => applyIPv4(interfaceID, config, '', false, expected),
-		changes => applySystemTimeSettings(changes)
+		changes => (reportWithExitCode && process.platform === 'win32' ? withSaveBudget(() => applySystemTimeSettings(changes), elapsedClock, WINDOWS_ELEVATION_HELPER_BUDGET_MS) : applySystemTimeSettings(changes))
 	);
 } catch (error) {
 	response = networkHelperFailure(error);

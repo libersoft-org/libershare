@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { applySystemTimeSettings, applyTimesyncdDropIn, setSystemNtpEnabled, setSystemNtpServer, waitForWindowsTimeService, withSystemTimeLock, withSaveBudget, remainingSaveBudget, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, WRITE_TIMEOUT_MS, type CommandRunner, type WindowsModeState } from '../../src/system-time.ts';
 import { SIGNATURE_TIMEOUT_MS, WINDOWS_NETWORK_HELPER_TIMEOUT_MS, WINDOWS_TIME_HELPER_TIMEOUT_MS } from '../../src/network-helper-client.ts';
-import { WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_NETWORK_ELEVATION_WAIT_MS } from '../../src/network-helper-windows.ts';
+import { WINDOWS_ELEVATION_HELPER_BUDGET_MS, WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_NETWORK_ELEVATION_WAIT_MS } from '../../src/network-helper-windows.ts';
 import { SYSTEM_TIME_SAVE_TIMEOUT_MS } from '@shared';
 import { chmod, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -294,6 +294,25 @@ describe('finishing one save', () => {
 		const elevated = SIGNATURE_TIMEOUT_MS + WINDOWS_TIME_HELPER_TIMEOUT_MS + readBackAllowance;
 		const local = SIGNATURE_TIMEOUT_MS + SAVE_BUDGET_MS + readBackAllowance;
 		expect(Math.max(elevated, local)).toBeLessThan(SYSTEM_TIME_SAVE_TIMEOUT_MS);
+	});
+
+	/**
+	 * The launcher enforces its wait with `TerminateProcess`, so nothing the elevated helper
+	 * may legitimately spend can reach it. It did: the wait was 60 s while one write command
+	 * inside the helper was allowed 90 s and a whole save 200 s, so a slow but healthy step
+	 * could be killed while every limit it knew about said it still had time - and a sequence
+	 * that had already changed something came back with no account of what.
+	 */
+	it('holds the elevated helper inside the wait the launcher enforces', () => {
+		expect(WINDOWS_ELEVATION_HELPER_BUDGET_MS).toBeLessThan(WINDOWS_ELEVATION_WAIT_MS);
+		// The margin is real time, not a rounding: the helper has to notice, stop and report.
+		expect(WINDOWS_ELEVATION_WAIT_MS - WINDOWS_ELEVATION_HELPER_BUDGET_MS).toBeGreaterThanOrEqual(10_000);
+		// And nothing inside it can be handed more than it has: `runAll` gives a command the
+		// smaller of the write limit and what is left, so this is the worst case a step gets.
+		expect(Math.min(WRITE_TIMEOUT_MS, WINDOWS_ELEVATION_HELPER_BUDGET_MS)).toBeLessThan(WINDOWS_ELEVATION_WAIT_MS);
+		// Pinning why the override exists at all: the unelevated default is LONGER than the
+		// wait, so an elevated save left on it is the case that used to be terminated.
+		expect(SAVE_BUDGET_MS).toBeGreaterThan(WINDOWS_ELEVATION_WAIT_MS);
 	});
 
 	it('refuses a linux drop-in write that starts past the deadline', async () => {

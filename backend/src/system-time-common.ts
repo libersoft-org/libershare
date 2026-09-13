@@ -65,13 +65,13 @@ const saveDeadline = new AsyncLocalStorage<{ deadline: number; now: () => number
  * Run `fn` under one deadline for the whole save. A nested call joins the outer one, so the
  * four operations of a combined save share a budget instead of each taking a fresh one.
  */
-export function withSaveBudget<T>(fn: () => Promise<T>, now: () => number = elapsedClock): Promise<T> {
+export function withSaveBudget<T>(fn: () => Promise<T>, now: () => number = elapsedClock, budgetMs: number = SAVE_BUDGET_MS): Promise<T> {
 	const existing = saveDeadline.getStore();
 	if (existing !== undefined) return fn();
 	// The clock travels with the deadline. Every operation inside reads the budget without
 	// being handed one, so the two have to arrive together or an injected clock would set the
 	// deadline and then be ignored by every reader of it.
-	return saveDeadline.run({ deadline: now() + SAVE_BUDGET_MS, now }, fn);
+	return saveDeadline.run({ deadline: now() + budgetMs, now }, fn);
 }
 
 /** What is left of the current save's budget, or null when nothing set one. */

@@ -381,9 +381,36 @@ export const elevationClock = (): number => performance.now();
  * still believed it had 180 s left.
  *
  * Sized for the WORK, which is what it actually bounds: the elevated save is a handful of
- * commands, measured at 9-12 s end to end on the test machine.
+ * commands, measured at 9-12 s end to end on the test machine, and 1 s for a lone NTP server
+ * change measured live against the installed build.
+ *
+ * The launcher enforces it with `TerminateProcess`, so nothing the helper may legitimately
+ * spend is allowed to reach it. On its own this number did not achieve that: it is shorter
+ * than the 90 s one write command inside the helper is allowed and than the 200 s that helper
+ * gave a whole save, so a slow but healthy step could be killed while every limit it knew
+ * about said it still had time - and a sequence that had already changed something came back
+ * as an uncertain half-save rather than as a bounded failure. Raising this instead was the
+ * wrong half to move: the caller's limit is the prompt allowance plus this, and with the trust
+ * check and the read-back it has to stay under the screen's own wait. So the helper is held
+ * below it by {@link WINDOWS_ELEVATION_HELPER_BUDGET_MS}, and a test asserts that.
  */
 export const WINDOWS_ELEVATION_WAIT_MS = 60_000;
+
+/**
+ * The budget the ELEVATED helper gives its own work, so it answers before it is terminated.
+ *
+ * Shorter than {@link WINDOWS_ELEVATION_WAIT_MS} by the margin a terminated process cannot
+ * use: the helper has to notice it is out of time, stop starting steps and report what it
+ * already did. Being killed instead loses exactly that report, which is the difference
+ * between "nothing was changed" and "part of this may be applied".
+ *
+ * With this in force the helper's per-command limit is the smaller of `WRITE_TIMEOUT_MS` and
+ * what is left of this, so nothing inside it can outlive the launcher. The figure is four
+ * times the measured elevated save (9-12 s end to end, 1 s for a lone server change), and a
+ * step that does need longer is better refused with an account of what already ran than
+ * killed without one.
+ */
+export const WINDOWS_ELEVATION_HELPER_BUDGET_MS = WINDOWS_ELEVATION_WAIT_MS - 15_000;
 
 /**
  * The same wait for a NETWORK change, which is a longer piece of work.
