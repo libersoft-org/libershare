@@ -1,4 +1,5 @@
 import { SYSTEM_TIME_OUTCOMES, type SystemTimeChanges, type SystemTimeOutcome, type SystemTimeResult } from '@shared';
+import { elapsedClock, withSaveBudget } from './system-time-common.ts';
 
 /**
  * The privileged side of the system-time writes.
@@ -71,6 +72,42 @@ export function isSystemTimeChanges(value: unknown): value is SystemTimeChanges 
 		if (!CLOCK_KEYS.every(key => Number.isInteger((changes.clock as Record<string, unknown>)[key]))) return false;
 	}
 	return Object.keys(changes).length > 0;
+}
+
+/**
+ * What the elevated helper may spend, given the caller's deadline and its own bound.
+ *
+ * Null means "do not start": the caller's wait is already over, so the one thing left that
+ * would be wrong is changing the host now. Refusing is not merely stopping to listen - the
+ * screen stopped listening a while ago - it is making sure nothing happens after that.
+ *
+ * `deadlineUptime` is a host uptime, so the remainder is read on the same monotonic,
+ * process-independent clock the caller set it from, and the consent prompt's minutes are
+ * inside it rather than beside it. No deadline at all means the caller has none, and the
+ * helper's own bound stands alone.
+ */
+export function elevatedSaveBudget(deadlineUptime: number | undefined, cap: number, uptimeSeconds: number): number | null {
+	if (deadlineUptime === undefined) return cap;
+	const remaining = (deadlineUptime - uptimeSeconds) * 1000;
+	if (remaining <= 0) return null;
+	return Math.min(cap, remaining);
+}
+
+/**
+ * Run an elevated save under {@link elevatedSaveBudget}, or refuse it outright.
+ *
+ * Here rather than in the helper's entry script so the decision AND what follows from it are
+ * both reachable by a test: an expired request must leave `apply` uncalled, which is the
+ * whole point - the screen stopped waiting long ago, and the only thing still avoidable is
+ * the host being changed now.
+ *
+ * Neither flag is set on that refusal, and it is the one late answer that can honestly say
+ * so: nothing ran.
+ */
+export async function runElevatedSave(changes: SystemTimeChanges, deadlineUptime: number | undefined, cap: number, uptimeSeconds: number, apply: (changes: SystemTimeChanges) => Promise<SystemTimeResult>, now: () => number = elapsedClock): Promise<SystemTimeResult> {
+	const budget = elevatedSaveBudget(deadlineUptime, cap, uptimeSeconds);
+	if (budget === null) return { success: false, outcome: 'error', message: 'the request was still waiting when the time allowed for it ran out, so nothing was changed' };
+	return withSaveBudget(() => apply(changes), now, budget);
 }
 
 /**

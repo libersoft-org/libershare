@@ -30,6 +30,26 @@ export interface NetworkHelperTimeRequest {
 	version: 1;
 	operation: 'applySystemTime';
 	changes: SystemTimeChanges;
+	/**
+	 * Host uptime, in seconds, by which this save has to be finished - the caller's own
+	 * deadline, carried across the privilege boundary.
+	 *
+	 * Without it the elevated helper started a budget of its own, so a request that had
+	 * already spent most of the caller's wait queueing behind another save got a fresh
+	 * allowance the moment it crossed. The screen stops waiting at its own limit either way;
+	 * what this prevents is the HOST being changed afterwards.
+	 *
+	 * Uptime, not a wall-clock instant and not a remaining count. A remaining count would be
+	 * measured before the consent prompt and read after it, so the prompt's minutes would go
+	 * uncounted again - the same mistake one layer down. A wall-clock deadline cannot be used
+	 * either: this is the operation that MOVES the wall clock. Uptime is monotonic, shared by
+	 * every process on the host, and unaffected by the change being made. One-second
+	 * granularity is ample for a limit measured in minutes.
+	 *
+	 * Optional: a caller with no deadline of its own (a direct writer, a test) sends none and
+	 * the helper falls back to its own bound. It can only ever SHORTEN the helper's budget.
+	 */
+	deadlineUptime?: number;
 }
 
 export type NetworkHelperRequest = NetworkHelperIPv4Request | NetworkHelperTimeRequest;
@@ -58,10 +78,11 @@ type ApplyIPv4 = (interfaceID: string, config: NetIPv4Config, expected: NetIPv4B
 type ApplySystemTime = (changes: SystemTimeChanges) => Promise<SystemTimeResult>;
 
 const IPV4_REQUEST_KEYS = ['config', 'expected', 'interfaceID', 'operation', 'version'];
-const TIME_REQUEST_KEYS = ['changes', 'operation', 'version'];
+const TIME_REQUEST_KEYS = ['changes', 'deadlineUptime', 'operation', 'version'];
 const CONFIG_KEYS = ['address', 'dns', 'gateway', 'mode', 'prefixLength'];
 const BASELINE_KEYS = ['address', 'dns', 'gateway', 'mode', 'prefixLength'];
 const MAX_BASELINE_VALUE_LENGTH = 64;
+const MAX_DEADLINE_UPTIME_S = 1e14;
 
 function hasOnlyKeys(value: Record<string, unknown>, allowed: string[]): boolean {
 	return Object.keys(value).every(key => allowed.includes(key));
@@ -91,12 +112,17 @@ export function decodeNetworkHelperRequest(encoded: string): NetworkHelperReques
 		throw new Error('invalid network helper request');
 	}
 	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid network helper request');
-	const request = value as { version?: unknown; operation?: unknown; changes?: unknown; interfaceID?: unknown; config?: unknown; expected?: unknown };
+	const request = value as { version?: unknown; operation?: unknown; changes?: unknown; deadlineUptime?: unknown; interfaceID?: unknown; config?: unknown; expected?: unknown };
 	if (request.version !== 1) throw new Error('unsupported network helper operation');
 	if (request.operation === 'applySystemTime') {
 		if (!hasOnlyKeys(request as Record<string, unknown>, TIME_REQUEST_KEYS)) throw new Error('invalid network helper request');
 		if (!isSystemTimeChanges(request.changes)) throw new Error('invalid network helper time changes');
-		return { version: 1, operation: 'applySystemTime', changes: request.changes };
+		// A deadline is only ever allowed to shorten the work, so an absurd one is refused
+		// rather than clamped: a request this helper cannot make sense of is not one to run
+		// with a guessed limit. `MAX_DEADLINE_UPTIME_S` is a host uptime no real machine
+		// reaches (about 3 million years), which keeps this a shape check and not a policy.
+		if (request.deadlineUptime !== undefined && (typeof request.deadlineUptime !== 'number' || !Number.isFinite(request.deadlineUptime) || request.deadlineUptime < 0 || request.deadlineUptime > MAX_DEADLINE_UPTIME_S)) throw new Error('invalid network helper deadline');
+		return { version: 1, operation: 'applySystemTime', changes: request.changes, ...(request.deadlineUptime === undefined ? {} : { deadlineUptime: request.deadlineUptime }) };
 	}
 	if (!hasOnlyKeys(request as Record<string, unknown>, IPV4_REQUEST_KEYS)) throw new Error('invalid network helper request');
 	if (request.operation !== 'applyIPv4') throw new Error('unsupported network helper operation');

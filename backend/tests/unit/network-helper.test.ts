@@ -8,6 +8,9 @@ import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
 import { assertWindowsRequestOwner, parseWindowsRequestFileName, windowsCurrentProcessIdentity, windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProcessImagePath, windowsProgramFilesPath, windowsRequestFileHeld, windowsRequestFileName, windowsSystemEnvironment, writeWindowsRequestFile, elevationClock } from '../../src/network-helper-windows.ts';
 import { trustIdentity, type TrustedFileIdentity } from '../../src/network-helper-integrity.ts';
+import { elevatedSaveBudget, runElevatedSave } from '../../src/system-time-helper.ts';
+import { remainingSaveBudget, SAVE_BUDGET_MS } from '../../src/system-time-common.ts';
+import type { SystemTimeChanges } from '@shared';
 
 /** A baseline of the exact shape the backend builds, which every request has to carry. */
 const baseline = { mode: 'dhcp' as const, address: null, prefixLength: null, gateway: null, dns: [] };
@@ -355,5 +358,86 @@ describe('the clock the elevation wait measures against', () => {
 		const before = elevationClock();
 		await new Promise(resolve => setTimeout(resolve, 20));
 		expect(elevationClock()).toBeGreaterThan(before);
+	});
+});
+
+/**
+ * The caller's wait has to survive the privilege boundary.
+ *
+ * It did not: the elevated helper opened a budget of its own, so a request that had already
+ * spent most of the user's wait queueing behind another save got a fresh allowance the moment
+ * it crossed - and the host could be changed after the screen had stopped waiting. Modelled
+ * from the reported shape: 190 s in the queue leaves 10 s, the request passes the entry check
+ * with that to spare, and the elevated side then spent a 120 s prompt and 35 s of work.
+ *
+ * The deadline travels as a host UPTIME rather than as a remaining count, because a remaining
+ * count is measured before the consent prompt and read after it - the prompt's minutes would
+ * go uncounted exactly as they did one layer down - and a wall-clock deadline cannot be used
+ * at all here: this is the operation that moves the wall clock.
+ */
+describe('the deadline an elevated save is handed', () => {
+	it('follows the caller when there is one and its own bound when there is not', () => {
+		// No deadline at all: a direct writer or a test, so the helper's own bound stands.
+		expect(elevatedSaveBudget(undefined, 45_000, 1_000)).toBe(45_000);
+		// Plenty left, so the helper's bound is still the smaller of the two.
+		expect(elevatedSaveBudget(1_000 + 300, 45_000, 1_000)).toBe(45_000);
+		// Less left than the bound: the caller's remainder wins.
+		expect(elevatedSaveBudget(1_000 + 10, 45_000, 1_000)).toBe(10_000);
+	});
+
+	it('refuses a request whose wait was already over', () => {
+		expect(elevatedSaveBudget(1_000, 45_000, 1_000)).toBeNull();
+		expect(elevatedSaveBudget(1_000, 45_000, 1_030)).toBeNull();
+	});
+
+	/**
+	 * The consequence, which is the point: an expired request must not merely stop being
+	 * waited for, it must not change anything. The save is never reached.
+	 */
+	it('changes nothing when the request expired before the helper could start it', async () => {
+		const applied: SystemTimeChanges[] = [];
+		const answer = await runElevatedSave({ ntpServer: 'ntp.example.org' }, 1_000, 45_000, 1_155, async changes => {
+			applied.push(changes);
+			return { success: true, outcome: 'ok', message: null };
+		});
+		expect(applied).toEqual([]);
+		expect(answer.success).toBe(false);
+		expect(answer.message).toContain('ran out');
+		// Nothing ran, so this is the one late answer that can honestly say the host was left
+		// alone - neither flag may be set, or the caller reports a half-applied save.
+		expect(answer.changed).toBeUndefined();
+		expect(answer.stateMayHaveChanged).toBeUndefined();
+	});
+
+	/** With time left the save runs, and sees the caller's remainder - not a fresh allowance. */
+	it('runs the save under what the caller has left', async () => {
+		const seen: Array<number | null> = [];
+		// A held clock, so the remainder is the figure under test and not that figure minus
+		// however long the call itself took.
+		const answer = await runElevatedSave(
+			{ ntpServer: 'ntp.example.org' },
+			1_010,
+			45_000,
+			1_000,
+			async () => {
+				seen.push(remainingSaveBudget());
+				return { success: true, outcome: 'ok', message: null };
+			},
+			() => 0
+		);
+		expect(answer.success).toBe(true);
+		expect(seen).toEqual([10_000]);
+		expect(seen[0]!).toBeLessThan(SAVE_BUDGET_MS);
+	});
+
+	it('carries the deadline across the encoding and refuses a nonsense one', () => {
+		const changes: SystemTimeChanges = { ntpServer: 'ntp.example.org' };
+		expect(decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes, deadlineUptime: 12_345.5 }))).toEqual({ version: 1, operation: 'applySystemTime', changes, deadlineUptime: 12_345.5 });
+		// Absent stays absent, so a caller without a deadline does not acquire one.
+		expect(decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes }))).toEqual({ version: 1, operation: 'applySystemTime', changes });
+		for (const bad of ['soon', -1, Number.NaN, Number.POSITIVE_INFINITY, 1e20, null]) {
+			const encoded = Buffer.from(JSON.stringify({ version: 1, operation: 'applySystemTime', changes, deadlineUptime: bad })).toString('base64url');
+			expect(() => decodeNetworkHelperRequest(encoded)).toThrow();
+		}
 	});
 });

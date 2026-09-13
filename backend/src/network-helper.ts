@@ -1,9 +1,11 @@
 import { open } from 'node:fs/promises';
+import { uptime } from 'node:os';
 import { assertWindowsRequestOwner, WINDOWS_ELEVATION_HELPER_BUDGET_MS } from './network-helper-windows.ts';
 import { applyIPv4 } from './system-network.ts';
 import { applySystemTimeSettings } from './system-time.ts';
-import { elapsedClock, withSaveBudget } from './system-time-common.ts';
 import { decodeNetworkHelperRequest, executeNetworkHelperRequest, networkHelperExitCode, networkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
+import { runElevatedSave } from './system-time-helper.ts';
+import { SAVE_BUDGET_MS } from './system-time-common.ts';
 
 const MAX_REQUEST_BYTES = 12 * 1024;
 
@@ -60,21 +62,37 @@ async function readRequest(args: string[]): Promise<NetworkHelperRequest> {
 
 const args = process.argv.slice(2);
 const reportWithExitCode = reportsWithExitCode(args);
+
+/**
+ * The ceiling on this save, before the caller's deadline is taken into account.
+ *
+ * Under the Windows launcher it is what the launcher will wait for: the launcher enforces
+ * that wait by terminating this process, so a save on its ordinary allowance would be killed
+ * mid-sequence and its report lost. Elsewhere nothing terminates this process, so the
+ * ordinary allowance stands.
+ */
+function budgetCap(): number {
+	return reportWithExitCode && process.platform === 'win32' ? WINDOWS_ELEVATION_HELPER_BUDGET_MS : SAVE_BUDGET_MS;
+}
+
 let response: NetworkHelperResponse;
 try {
 	// The time save runs here exactly as it would unprivileged - same ordering, same
 	// staleness checks against a fresh read of this host - only with the rights the
 	// unelevated backend does not have.
 	//
-	// One difference, and only under the Windows launcher: the save is bounded by what the
-	// launcher will wait for rather than by its own generous default. The launcher enforces
-	// its wait by terminating this process, so a save that took the full 200 s it normally
-	// may would be killed mid-sequence and its report lost. Bounded here instead, it runs
-	// out of time the way any other save does and says what it managed to change.
+	// Two differences. Under the Windows launcher the save is bounded by what the launcher
+	// will wait for rather than by its own generous default: the launcher enforces its wait
+	// by terminating this process, so a save that took the full 200 s it normally may would
+	// be killed mid-sequence and its report lost. And on every platform it is bounded by the
+	// deadline the caller sent, so a request that spent the user's wait queueing does not get
+	// a fresh allowance here - and one whose wait is already over changes nothing at all.
+	const incoming = await readRequest(args);
+	const deadline = incoming.operation === 'applySystemTime' ? incoming.deadlineUptime : undefined;
 	response = await executeNetworkHelperRequest(
-		await readRequest(args),
+		incoming,
 		(interfaceID, config, expected) => applyIPv4(interfaceID, config, '', false, expected),
-		changes => (reportWithExitCode && process.platform === 'win32' ? withSaveBudget(() => applySystemTimeSettings(changes), elapsedClock, WINDOWS_ELEVATION_HELPER_BUDGET_MS) : applySystemTimeSettings(changes))
+		changes => runElevatedSave(changes, deadline, budgetCap(), uptime(), applySystemTimeSettings)
 	);
 } catch (error) {
 	response = networkHelperFailure(error);

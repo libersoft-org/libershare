@@ -1,10 +1,12 @@
 import { execFile, spawn } from 'node:child_process';
+import { uptime as osUptime } from 'node:os';
 import { existsSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { productIdentifier, type SystemTimeChanges, type SystemTimeResult } from '@shared';
 import { parseSystemTimeExitCode, systemTimeHelperFailure } from './system-time-helper.ts';
+import { remainingSaveBudget } from './system-time-common.ts';
 import { expectedNetworkHelperHash, sha256File, trustIdentity } from './network-helper-integrity.ts';
 import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from './system-network-linux.ts';
 import { encodeNetworkHelperRequest, NETWORK_HELPER_EXIT, parseNetworkHelperResponse, type NetworkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
@@ -305,10 +307,15 @@ async function runLinuxHelper(helper: string, request: NetworkHelperRequest): Pr
  * network path, a non-zero status is the NORMAL case here (`ok` is 32, not 0), which
  * is why this does not reuse `runWindowsHelper`.
  */
-export async function runElevatedSystemTime(changes: SystemTimeChanges, platform: NodeJS.Platform = process.platform): Promise<SystemTimeResult> {
+export async function runElevatedSystemTime(changes: SystemTimeChanges, platform: NodeJS.Platform = process.platform, uptime: () => number = osUptime): Promise<SystemTimeResult> {
 	const helper = networkHelperPath(platform);
 	if (!(await networkHelperAvailable(platform))) return systemTimeHelperFailure('permission-denied', 'the privileged helper is not available or not trusted, so the change needs an elevated application');
-	const request: NetworkHelperRequest = { version: 1, operation: 'applySystemTime', changes };
+	// The caller's deadline goes with the request. Expressed as the host uptime it expires
+	// at, because that is the one clock the elevated process can compare against: a remaining
+	// count would be measured before the consent prompt and read after it, and the wall clock
+	// is what this very operation changes.
+	const remaining = remainingSaveBudget();
+	const request: NetworkHelperRequest = { version: 1, operation: 'applySystemTime', changes, ...(remaining === null ? {} : { deadlineUptime: uptime() + remaining / 1000 }) };
 	if (platform === 'win32') return runWindowsSystemTime(encodeNetworkHelperRequest(request));
 	let response: NetworkHelperResponse;
 	try {
