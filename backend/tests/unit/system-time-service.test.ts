@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { applySystemTimeSettings, applyTimesyncdDropIn, setSystemNtpEnabled, setSystemNtpServer, waitForWindowsTimeService, withSystemTimeLock, withSaveBudget, remainingSaveBudget, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, WRITE_TIMEOUT_MS, type CommandRunner, type WindowsModeState } from '../../src/system-time.ts';
+import { applySystemTimeSettings, applyTimesyncdDropIn, setSystemNtpEnabled, setSystemNtpServer, waitForWindowsTimeService, withSystemTimeLock, withSaveBudget, remainingSaveBudget, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, RESTORE_BUDGET_MS, WRITE_TIMEOUT_MS, type CommandRunner, type WindowsModeState } from '../../src/system-time.ts';
 import { SIGNATURE_TIMEOUT_MS, WINDOWS_NETWORK_HELPER_TIMEOUT_MS, WINDOWS_TIME_HELPER_TIMEOUT_MS } from '../../src/network-helper-client.ts';
 import { WINDOWS_ELEVATION_HELPER_BUDGET_MS, WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_NETWORK_ELEVATION_WAIT_MS } from '../../src/network-helper-windows.ts';
 import { SYSTEM_TIME_SAVE_TIMEOUT_MS } from '@shared';
@@ -292,7 +292,9 @@ describe('finishing one save', () => {
 	it('still leaves the screen waiting longer than the backend can spend', () => {
 		const readBackAllowance = 30_000;
 		const elevated = SIGNATURE_TIMEOUT_MS + WINDOWS_TIME_HELPER_TIMEOUT_MS + readBackAllowance;
-		const local = SIGNATURE_TIMEOUT_MS + SAVE_BUDGET_MS + readBackAllowance;
+		// A save that fails late pays for its own restore on top of its budget, and that
+		// addition has to stay inside the screen's wait as well.
+		const local = SIGNATURE_TIMEOUT_MS + SAVE_BUDGET_MS + RESTORE_BUDGET_MS + readBackAllowance;
 		expect(Math.max(elevated, local)).toBeLessThan(SYSTEM_TIME_SAVE_TIMEOUT_MS);
 	});
 

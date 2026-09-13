@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { applyTimesyncdDropIn, syncDirectory, type CommandRunner, type RunOutcome, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, syncDirectory, type CommandRunner, type RunOutcome, SAVE_BUDGET_MS, withSaveBudget, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
 import { fakeRunner } from '../helpers/system-time-fixtures.ts';
 import { withTimesyncConfigRead } from '../helpers/system-time-timesyncd.ts';
 
@@ -542,6 +542,37 @@ describe('applyTimesyncdDropIn', () => {
 	 * undo that only half happened — the drop-in on disk is the old one, and the daemon is
 	 * either down or still running the withdrawn configuration.
 	 */
+	/**
+	 * The restore is needed BECAUSE the save ran out of time, so it cannot be given the time
+	 * that ran out. Putting the file back is only half of it; the daemon has to be put back
+	 * onto that file, and with the save's exhausted budget inherited, `runAll` refused that
+	 * restart before starting it - the file was back, the service was left on the withdrawn
+	 * configuration or down, and the answer said the host had been restored.
+	 */
+	it('still restarts the daemon onto the restored drop-in after the save ran out of time', async () => {
+		await writeFile(path, '[Time]\nNTP=\nNTP=old.example.org\n', 'utf8');
+		const calls: string[] = [];
+		let clock = 0;
+		const exec: CommandRunner = async (cmd, args) => {
+			calls.push([cmd, ...args].join(' '));
+			if (calls.length > 1) return { kind: 'ok', output: '' };
+			// The whole save's budget goes on this one failing restart.
+			clock = SAVE_BUDGET_MS + 1;
+			return { kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' };
+		};
+		const r = await withSaveBudget(
+			async () => applyTimesyncdDropIn('new.example.org', true, path, withTimesyncConfigRead(path, exec)),
+			() => clock
+		);
+		expect(r.success).toBe(false);
+		expect(await readFile(path, 'utf8')).toBe('[Time]\nNTP=\nNTP=old.example.org\n');
+		// Two restarts: the one that failed, and the one that puts the daemon back.
+		expect(calls).toEqual(['systemctl restart systemd-timesyncd', 'systemctl restart systemd-timesyncd']);
+		// A complete undo, so nothing of the save is still applied anywhere.
+		expect(r.changed).not.toBe(true);
+		expect(r.message).not.toContain('could not be restarted');
+	});
+
 	it('says so when the daemon could not be restarted onto the restored drop-in', async () => {
 		await writeFile(path, '[Time]\nNTP=\nNTP=old.example.org\n', 'utf8');
 		const failure: RunOutcome = { kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' };
