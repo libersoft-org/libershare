@@ -5,7 +5,7 @@ import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type Sy
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
-import { getSystemTimeStatus, listHostTimezones, withSystemTimeLock } from '../system-time.ts';
+import { elapsedClock, getSystemTimeStatus, listHostTimezones, remainingSaveBudget, SAVE_BUDGET_MS, withSaveBudget, withSystemTimeLock } from '../system-time.ts';
 import { applySystemTimeSettingsWithElevation } from '../system-time-elevation.ts';
 import { warmElevationTrust } from '../network-helper-client.ts';
 import { applyIPv4Unlocked, connectWifiUnlocked, disconnectWifiUnlocked, readNetworkState, readNetworkStateUnlocked, runNetworkMutation, scanWifi } from '../system-network.ts';
@@ -83,21 +83,36 @@ interface SystemHandlers {
  * whatever the LAST write left, and the earlier request claims an end state it did not
  * produce.
  */
-export function runTimeWrite(write: () => Promise<SystemTimeResult>, readStatus: () => Promise<SystemTimeStatus>, broadcast: BroadcastFn): Promise<SystemTimeResult> {
-	return withSystemTimeLock(async () => {
-		const res = await write();
+export function runTimeWrite(write: () => Promise<SystemTimeResult>, readStatus: () => Promise<SystemTimeStatus>, broadcast: BroadcastFn, now: () => number = elapsedClock): Promise<SystemTimeResult> {
+	// The budget opens HERE, before the lock, so the time spent waiting for another save
+	// counts against it. Opened after the lock - which is where the writers open theirs - the
+	// queue was free: each save measured only its own commands, while the screen measures from
+	// the moment it sent the request. Modelled with three saves of two 85 s steps each, all
+	// three inside their own 200 s: the third reaches the head of the queue at 340 s, and the
+	// screen gives up at 300 - so the user is told the wait is over and the host is changed
+	// afterwards. Raising a limit does not fix it either; nothing bounds the queue's length.
+	return withSaveBudget(() =>
+		withSystemTimeLock(async () => {
+			// Refused outright, not started: nothing has been touched yet, and the caller this
+			// answer belongs to has already stopped waiting for it. A save that starts here
+			// would change the host after its own screen reported an interrupted wait.
+			const waited = remainingSaveBudget();
+			if (waited !== null && waited <= 0) return { success: false, outcome: 'error', message: `this request waited longer than the ${Math.round(SAVE_BUDGET_MS / 1000)} s one save is allowed, so it was not started` };
+			const res = await write();
 		// A failure is not "nothing happened". A sequence that stopped part-way left the
 		// steps before it applied — the service already stopped, the start mode already
 		// changed — so the clients are told what the host looks like NOW. Skipping that
 		// leaves every open window showing a state the host no longer has.
-		if (!res.success && !res.stateMayHaveChanged) return res;
-		try {
-			broadcast('system:timeChanged', await readStatus());
-		} catch (err) {
-			console.warn('[system-time] Applied, but could not announce the new time status:', (err as Error).message);
-		}
-		return res;
-	});
+			if (!res.success && !res.stateMayHaveChanged) return res;
+			try {
+				broadcast('system:timeChanged', await readStatus());
+			} catch (err) {
+				console.warn('[system-time] Applied, but could not announce the new time status:', (err as Error).message);
+			}
+			return res;
+		}),
+		now
+	);
 }
 
 /**

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { runTimeWrite } from '../../../src/api/system.ts';
+import { remainingSaveBudget, SAVE_BUDGET_MS } from '../../../src/system-time.ts';
 import type { SystemTimeResult, SystemTimeStatus } from '@shared';
 
 /** A host with everything available and synchronisation off. */
@@ -21,6 +22,73 @@ const ok: SystemTimeResult = { success: true, outcome: 'ok', message: null };
 const denied: SystemTimeResult = { success: false, outcome: 'permission-denied', message: 'nope' };
 
 describe('runTimeWrite', () => {
+	/**
+	 * The wait has to run from the moment the request arrives, not from the moment it reaches
+	 * the head of the queue. Measured against the old behaviour: each save saw a full budget
+	 * of its own, so a third request could sit in the queue past the wait the screen allows
+	 * and then start changing the host after the user had been told the wait was over.
+	 *
+	 * Refused, not truncated: at this point nothing has been touched, and the answer belongs
+	 * to a caller that has stopped listening.
+	 */
+	it('does not start a save whose wait ran out while it queued', async () => {
+		let clock = 0;
+		const ran: string[] = [];
+		let release = (): void => {};
+		const gate = new Promise<void>(resolve => {
+			release = resolve;
+		});
+		const events: string[] = [];
+		const broadcast = (event: string): void => void events.push(event);
+		// Both requests are accepted at the same instant, so both deadlines are the same. The
+		// first holds the lock and spends the whole of it.
+		const first = runTimeWrite(
+			async () => {
+				await gate;
+				clock = SAVE_BUDGET_MS + 1;
+				ran.push('first');
+				return ok;
+			},
+			async () => statusFixture(),
+			broadcast,
+			() => clock
+		);
+		const second = runTimeWrite(
+			async () => {
+				ran.push('second');
+				return ok;
+			},
+			async () => statusFixture(),
+			broadcast,
+			() => clock
+		);
+		release();
+		const [a, b] = await Promise.all([first, second]);
+		expect(a).toEqual(ok);
+		// The queued one never ran, and says why.
+		expect(ran).toEqual(['first']);
+		expect(b.success).toBe(false);
+		expect(b.message).toContain('waited longer');
+		// And nothing was announced on its behalf: there is no new state to announce.
+		expect(events).toEqual(['system:timeChanged']);
+	});
+
+	/** The ordinary case still has its whole budget once it holds the lock. */
+	it('gives a save that did not queue its full allowance', async () => {
+		const seen: Array<number | null> = [];
+		const res = await runTimeWrite(
+			async () => {
+				seen.push(remainingSaveBudget());
+				return ok;
+			},
+			async () => statusFixture(),
+			() => {},
+			() => 0
+		);
+		expect(res).toEqual(ok);
+		expect(seen).toEqual([SAVE_BUDGET_MS]);
+	});
+
 	it('announces the freshly read host state after a successful write', async () => {
 		const events: Array<{ event: string; data: unknown }> = [];
 		const res = await runTimeWrite(
