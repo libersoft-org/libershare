@@ -14,7 +14,7 @@ describe.if(process.platform === 'win32')('PowerShell clock error transport', ()
 	])('preserves exception codes through powershell.exe: $code / $outcome', async ({ exception, code, outcome }) => {
 		// A function shadows the system cmdlet; these tests never call the real Set-Date.
 		const fixture = `function Set-Date { [CmdletBinding()] param([datetime]$Date) throw ${exception} }; `;
-		const commands = buildSetClockCommands('win32', { year: 2026, month: 9, day: 9, hours: 12, minutes: 34, seconds: 56 });
+		const commands = buildSetClockCommands('win32', { hours: 12, minutes: 34, seconds: 56 });
 		let observed: RunOutcome | undefined;
 		const result = await runAll('win32', commands, async (cmd, args) => {
 			observed = await run(cmd, [...args.slice(0, -1), fixture + args[args.length - 1]]);
@@ -24,9 +24,14 @@ describe.if(process.platform === 'win32')('PowerShell clock error transport', ()
 		if (observed?.kind === 'failed') expect(observed.output.split(/\r?\n/)).toContain(`LISH_TIME_WIN32_ERROR=${code}`);
 		expect(result).toMatchObject({ success: false, outcome });
 	});
-	it('keeps successful clock command completion successful', async () => {
-		const fixture = "function Set-Date { [CmdletBinding()] param([datetime]$Date) if ($Date.ToString('yyyy-MM-ddTHH:mm:ss') -ne '2026-09-09T12:34:56') { throw 'Wrong date' } }; ";
-		const result = await runAll('win32', buildSetClockCommands('win32', { year: 2026, month: 9, day: 9, hours: 12, minutes: 34, seconds: 56 }), (cmd, args) => run(cmd, [...args.slice(0, -1), fixture + args[args.length - 1]]));
+	/**
+	 * The requested time, on the day the COMMAND resolves - not on a day computed before it
+	 * ran. Asserted inside the shell, which is the only place that can tell the difference:
+	 * the fixture refuses anything but 12:34:56 and anything but today.
+	 */
+	it('sets the requested time on the day the command itself resolves', async () => {
+		const fixture = "function Set-Date { [CmdletBinding()] param([datetime]$Date) if ($Date.ToString('HH:mm:ss') -ne '12:34:56') { throw 'Wrong time' }; if ($Date.Date -ne (Get-Date).Date) { throw 'Wrong date' } }; ";
+		const result = await runAll('win32', buildSetClockCommands('win32', { hours: 12, minutes: 34, seconds: 56 }), (cmd, args) => run(cmd, [...args.slice(0, -1), fixture + args[args.length - 1]]));
 		expect(result.success).toBe(true);
 	});
 });

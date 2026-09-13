@@ -42,26 +42,28 @@ describe('buildSetClockCommands', () => {
 		expect(buildSetClockCommands('linux', AT)).toEqual([{ cmd: 'timedatectl', args: ['set-time', '23:46:28'] }]);
 	});
 
-	it('keeps the linux argv free of a date whatever date it is handed', () => {
-		for (const when of [AT, { ...AT, year: 1999, month: 1, day: 1 }, { ...AT, year: 2027, month: 12, day: 31 }]) {
-			const [command] = buildSetClockCommands('linux', when);
-			expect(command?.args).toEqual(['set-time', '23:46:28']);
-		}
-	});
-
 	it('sends only the time on macOS, leaving the date alone', () => {
 		expect(buildSetClockCommands('darwin', AT)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-settime', '23:46:28'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
 	});
 
-	it('builds the windows argv with an unambiguous ISO timestamp', () => {
+	/**
+	 * No date of ours on Windows either. `Set-Date -Date` writes the date as well as the time,
+	 * and between the status read a date would come from and this command there is another
+	 * read and a PowerShell start: read at 23:59:59 on the 13th, run at 00:00:01 on the 14th,
+	 * and a requested 00:05:00 moves the calendar back a day. `Get-Date` inside the command
+	 * resolves the day at the write itself.
+	 */
+	it('builds the windows argv so the command resolves the day itself', () => {
 		const [command] = buildSetClockCommands('win32', AT);
 		expect(command?.cmd).toBe('powershell');
 		expect(command?.args.slice(0, 3)).toEqual(['-NoProfile', '-NonInteractive', '-Command']);
-		expect(command?.args[3]).toContain("Set-Date -Date '2026-08-14T23:46:28' -ErrorAction Stop");
+		expect(command?.args[3]).toContain('Set-Date -Date (Get-Date -Hour 23 -Minute 46 -Second 28 -Millisecond 0) -ErrorAction Stop');
+		// And nothing that looks like a date this process worked out.
+		expect(command?.args[3]).not.toMatch(/\d{4}-\d{2}-\d{2}/);
 	});
 
 	it('zero-pads single-digit parts', () => {
-		expect(buildSetClockCommands('linux', { year: 2026, month: 1, day: 2, hours: 3, minutes: 4, seconds: 5 })[0]?.args[1]).toBe('03:04:05');
+		expect(buildSetClockCommands('linux', { hours: 3, minutes: 4, seconds: 5 })[0]?.args[1]).toBe('03:04:05');
 		expect(buildSetClockCommands('darwin', { ...AT, hours: 0, minutes: 0, seconds: 0 })[0]?.args[1]).toBe('00:00:00');
 	});
 });
@@ -1252,11 +1254,22 @@ describe.if(process.platform === 'win32')('Windows timezone preference preservat
 		expect(result.success).toBe(false);
 		expect(calls).toEqual([]);
 	});
-	it('uses the authoritative OS offset for the date of a manual clock write', async () => {
+	/**
+	 * The status no longer supplies a date at all, which is what this used to assert. It was
+	 * the right date for the moment it was READ and the wrong one for the moment the command
+	 * ran: `Set-Date -Date` writes the date too, and a read at 23:59:59 with a write at
+	 * 00:00:01 put the clock a day back. So the requirement is now the opposite - the argv
+	 * must carry the requested time and no date whatsoever, whatever the status says.
+	 */
+	it('sends a manual clock write without any date the status could have staled', async () => {
 		const { exec, calls } = fakeRunner([]);
 		const status = statusFixture({ nowMs: Date.UTC(2026, 6, 1, 22, 30), utcOffsetMinutes: 60, timezoneOffsetMode: 'fixed' });
-		const result = await setSystemClock(12, 0, 0, async () => status, exec);
+		// The write-time state is injected too. Left to the real host, this case now depends on
+		// whether the machine running the tests has synchronisation on - which the refusal
+		// below correctly objects to, and which has nothing to do with what is asserted here.
+		const result = await setSystemClock(12, 0, 0, async () => status, exec, async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped' }));
 		expect(result.success).toBe(true);
-		expect(calls[0]).toContain('2026-07-01T12:00:00');
+		expect(calls[0]).toContain('Get-Date -Hour 12 -Minute 0 -Second 0 -Millisecond 0');
+		expect(calls[0]).not.toMatch(/\d{4}-\d{2}-\d{2}/);
 	});
 });

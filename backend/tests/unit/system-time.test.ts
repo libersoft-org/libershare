@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
-import { classifyFailure, decodeCommandOutput, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listHostTimezones, listSystemTimezones, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, type PlatformStatusReader, resetHostTimezones, resolveSystemExecutable, timezoneOffsetMinutes, parseYesNo, validateClockParts } from '../../src/system-time.ts';
+import { classifyFailure, decodeCommandOutput, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listHostTimezones, listSystemTimezones, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, type PlatformStatusReader, resetHostTimezones, resolveSystemExecutable, timezoneOffsetMinutes, parseYesNo, validateClockParts } from '../../src/system-time.ts';
 import { ianaToWindowsTimezoneId, readWindowsTimeZone, windowsSystemLibraryPath } from '../../src/system-time-windows.ts';
 
 // ---------------------------------------------------------------------------
@@ -416,24 +416,6 @@ describe('getSystemTimeStatus (live, read-only)', () => {
 		// offset is checked against what the OS actually reports instead.
 		if ((status.timezoneOffsetMode ?? 'zone') === 'zone') expect(status.utcOffsetMinutes).toBe(byZoneRules ?? Number.NaN);
 		else expect(status.utcOffsetMinutes).toBe(readWindowsTimeZone()?.utcOffsetMinutes ?? Number.NaN);
-	});
-});
-
-describe('hostDateParts', () => {
-	/**
-	 * The bug this exists for: a host just past midnight, read from a process running two
-	 * hours behind it. The process still says yesterday, and writing the time onto that
-	 * date moves the host's clock back a full day.
-	 */
-	it('takes the date from the host zone, not from UTC or the process', () => {
-		const justPastMidnightInPrague = Date.UTC(2026, 7, 12, 22, 10, 0);
-		expect(hostDateParts(justPastMidnightInPrague, 120)).toEqual({ year: 2026, month: 8, day: 13 });
-		// The same instant, on a host west of Greenwich: still the previous day there.
-		expect(hostDateParts(justPastMidnightInPrague, -300)).toEqual({ year: 2026, month: 8, day: 12 });
-	});
-
-	it('rolls the month and the year over with the date', () => {
-		expect(hostDateParts(Date.UTC(2026, 11, 31, 23, 30, 0), 60)).toEqual({ year: 2027, month: 1, day: 1 });
 	});
 });
 

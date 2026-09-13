@@ -22,8 +22,7 @@ import { join } from 'node:path';
  * host supplies today itself — see the note on each branch. So `when`'s date fields exist
  * for the one platform whose command cannot do without them.
  */
-export function buildSetClockCommands(platform: SystemPlatform, when: LocalDateTime): SystemCommand[] {
-	const date = `${when.year}-${pad2(when.month)}-${pad2(when.day)}`;
+export function buildSetClockCommands(platform: SystemPlatform, when: Pick<LocalDateTime, 'hours' | 'minutes' | 'seconds'>): SystemCommand[] {
 	const time = `${pad2(when.hours)}:${pad2(when.minutes)}:${pad2(when.seconds)}`;
 	// Time only, and deliberately no date: systemd resolves a bare `HH:MM:SS` against the
 	// HOST's own idea of today (measured with `systemd-analyze timestamp '01:00:00'`, which
@@ -35,6 +34,14 @@ export function buildSetClockCommands(platform: SystemPlatform, when: LocalDateT
 	// day. Letting systemd supply the date removes the disagreement instead of narrowing it.
 	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-time', time] }];
 	if (platform === 'darwin') return [macSystemsetup(['-settime', time])];
+	// The DAY comes from `Get-Date` inside the command, not from a date computed here, and for
+	// the same reason the Linux branch leaves it to systemd. `Set-Date -Date` sets the date as
+	// well as the time, so a day carried in from the status read is written too - and between
+	// that read and this command there is another read and a PowerShell start. Traced: status
+	// read on the 13th at 23:59:59, command run on the 14th at 00:00:01, requested 00:05:00,
+	// and the calendar goes back to the 13th. Resolving it in the shell puts the decision at
+	// the moment of the write, which is the only moment that can be right.
+	//
 	// powershell.exe otherwise collapses native errors to exit 1 and localized text.
 	// The encoding is pinned first: PowerShell writes through `[Console]::OutputEncoding`,
 	// which follows whatever console it inherited, so the same script emits UTF-8 when
@@ -43,7 +50,7 @@ export function buildSetClockCommands(platform: SystemPlatform, when: LocalDateT
 	// rather than a guessed one, and `run` reads this command as UTF-8 on that promise.
 	// Explicitly BOM-less: a preamble would land in the middle of the captured output.
 	const script = `[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
-	try { Set-Date -Date '${date}T${time}' -ErrorAction Stop | Out-Null } catch {
+	try { Set-Date -Date (Get-Date -Hour ${when.hours} -Minute ${when.minutes} -Second ${when.seconds} -Millisecond 0) -ErrorAction Stop | Out-Null } catch {
 		[Console]::Error.WriteLine($_.Exception.Message)
 		$failure = $_.Exception
 		$nativeCode = 1
@@ -542,21 +549,6 @@ export function clockWriteRefusal(status: SystemTimeStatus): SystemTimeResult | 
 }
 
 /**
- * Today's date in the zone that is `utcOffsetMinutes` from UTC at `nowMs`.
- *
- * Not `new Date().getFullYear()` and friends: those answer in the PROCESS's zone, which
- * is fixed at startup and can be overridden by an inherited `TZ`, while the clock being
- * set belongs to the HOST's zone. The two disagree for part of every day, and near
- * midnight they disagree about the date — so a user in one zone setting 00:10 on a host
- * in another would have the time written onto yesterday's or tomorrow's date, moving the
- * clock by a whole day.
- */
-export function hostDateParts(nowMs: number, utcOffsetMinutes: number): Pick<LocalDateTime, 'year' | 'month' | 'day'> {
-	const local = new Date(nowMs + utcOffsetMinutes * 60000);
-	return { year: local.getUTCFullYear(), month: local.getUTCMonth() + 1, day: local.getUTCDate() };
-}
-
-/**
  * Set the wall clock to `hours:minutes:seconds`, keeping the host's current date.
  *
  * Under {@link withSystemTimeLock} from the status read onwards, not merely around the
@@ -587,9 +579,10 @@ export async function setSystemClock(hours: number, minutes: number, seconds: nu
 			const objection = windowsClockRefusal(await readMode());
 			if (objection) return result('auto-sync-enabled', objection);
 		}
-		// The same status the refusal was decided from carries the host's zone offset, so the
-		// date comes from the host rather than from this process.
-		return runAll(platform, buildSetClockCommands(platform, { ...hostDateParts(status.nowMs, status.utcOffsetMinutes), hours, minutes, seconds }), exec);
+		// Only the time of day is sent. Every platform resolves "today" at the moment of the
+		// write - systemd for a bare `HH:MM:SS`, `systemsetup -settime`, and `Get-Date` inside
+		// the PowerShell command - so no date computed here can be stale by the time it lands.
+		return runAll(platform, buildSetClockCommands(platform, { hours, minutes, seconds }), exec);
 	});
 }
 
