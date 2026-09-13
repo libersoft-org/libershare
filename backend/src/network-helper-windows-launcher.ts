@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path';
 import { productName } from '@shared';
 import { expectedNetworkHelperHash } from './network-helper-integrity.ts';
-import { runElevatedWindowsProcess, verifyWindowsInstalledHelper, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_LAUNCHER_EXIT, windowsCurrentProcessIdentity, windowsHelperParameters, windowsLocalAppDataPath, windowsRequestFileName, writeWindowsRequestFile } from './network-helper-windows.ts';
+import { runElevatedWindowsProcess, verifyWindowsInstalledHelper, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_NETWORK_ELEVATION_WAIT_MS, WINDOWS_LAUNCHER_EXIT, windowsCurrentProcessIdentity, windowsHelperParameters, windowsLocalAppDataPath, windowsRequestFileName, writeWindowsRequestFile } from './network-helper-windows.ts';
 
 /**
  * Resolve the outcome of one elevation request as an exit code.
@@ -10,14 +10,31 @@ import { runElevatedWindowsProcess, verifyWindowsInstalledHelper, WINDOWS_ELEVAT
  * console, and an escaping exception would only produce an unread stack trace.
  * The exit code is the whole channel back to the backend.
  */
+/**
+ * How long to wait for THIS request, read off the request itself.
+ *
+ * A time save is a handful of commands; a network change is a transaction with its own read,
+ * change and read-back. Anything unrecognised - including a request this launcher cannot parse
+ * - gets the longer wait: cutting an operation short is the failure that matters here, and the
+ * helper validates the request properly on its own side regardless of what is guessed here.
+ */
+function elevationWaitFor(request: string): number {
+	try {
+		return (JSON.parse(request) as { operation?: unknown }).operation === 'applySystemTime' ? WINDOWS_ELEVATION_WAIT_MS : WINDOWS_NETWORK_ELEVATION_WAIT_MS;
+	} catch {
+		return WINDOWS_NETWORK_ELEVATION_WAIT_MS;
+	}
+}
+
 async function elevate(args: string[]): Promise<number> {
 	if (args.length !== 2 || args[0] !== '--request' || !/^[A-Za-z0-9_-]{1,8192}$/.test(args[1]!)) return 1;
 	const helper = join(dirname(process.execPath), 'lish-network-helper.exe');
 	const expectedHash = expectedNetworkHelperHash();
 	if (!expectedHash || !(await verifyWindowsInstalledHelper(helper, process.execPath, expectedHash))) return WINDOWS_LAUNCHER_EXIT.untrusted;
-	const request = writeWindowsRequestFile(join(windowsLocalAppDataPath(), productName, windowsRequestFileName(windowsCurrentProcessIdentity())), Buffer.from(args[1]!, 'base64url').toString('utf8'));
+	const decoded = Buffer.from(args[1]!, 'base64url').toString('utf8');
+	const request = writeWindowsRequestFile(join(windowsLocalAppDataPath(), productName, windowsRequestFileName(windowsCurrentProcessIdentity())), decoded);
 	try {
-		const outcome = await runElevatedWindowsProcess(helper, windowsHelperParameters(request.path), WINDOWS_ELEVATION_WAIT_MS);
+		const outcome = await runElevatedWindowsProcess(helper, windowsHelperParameters(request.path), elevationWaitFor(decoded));
 		if (outcome.kind === 'cancelled') return WINDOWS_LAUNCHER_EXIT.cancelled;
 		if (outcome.kind === 'denied') return WINDOWS_LAUNCHER_EXIT.denied;
 		if (outcome.kind === 'timeout') return WINDOWS_LAUNCHER_EXIT.timeout;

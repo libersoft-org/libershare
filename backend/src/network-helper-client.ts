@@ -8,7 +8,7 @@ import { parseSystemTimeExitCode, systemTimeHelperFailure } from './system-time-
 import { expectedNetworkHelperHash, sha256File, trustIdentity } from './network-helper-integrity.ts';
 import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from './system-network-linux.ts';
 import { encodeNetworkHelperRequest, NETWORK_HELPER_EXIT, parseNetworkHelperResponse, type NetworkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
-import { elevationClock, verifyWindowsInstalledHelper, verifyWindowsInstalledSibling, WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_LAUNCHER_EXIT, WINDOWS_LAUNCHER_FILE, windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
+import { elevationClock, verifyWindowsInstalledHelper, verifyWindowsInstalledSibling, WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_NETWORK_ELEVATION_WAIT_MS, WINDOWS_LAUNCHER_EXIT, WINDOWS_LAUNCHER_FILE, windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
 
 const execFileAsync = promisify(execFile);
 /**
@@ -225,9 +225,19 @@ export function windowsLauncherFailure(exitCode: unknown): NetworkHelperFailure 
 	return { ok: false, error: message ?? 'the privileged network helper failed' };
 }
 
+/**
+ * The network path's own limit, on the same reasoning as the time one.
+ *
+ * The prompt's time is spent inside `ShellExecuteExW` before the launcher's wait starts, so a
+ * caller that allows only the wait can kill the launcher while it still believes it has time -
+ * and the launcher is what holds the elevated process's handle. This was the case here as
+ * well, from before the time work: 271 s against a prompt plus a 180 s wait.
+ */
+export const WINDOWS_NETWORK_HELPER_TIMEOUT_MS: number = WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS + WINDOWS_NETWORK_ELEVATION_WAIT_MS + 20_000;
+
 async function runWindowsHelper(encoded: string): Promise<NetworkHelperResponse> {
 	try {
-		await execFileAsync(windowsNetworkLauncherPath(), ['--request', encoded], { timeout: HELPER_TIMEOUT_MS + 5000, maxBuffer: MAX_HELPER_OUTPUT_BYTES, windowsHide: true, cwd: dirname(windowsNetworkLauncherPath()) });
+		await execFileAsync(windowsNetworkLauncherPath(), ['--request', encoded], { timeout: WINDOWS_NETWORK_HELPER_TIMEOUT_MS, maxBuffer: MAX_HELPER_OUTPUT_BYTES, windowsHide: true, cwd: dirname(windowsNetworkLauncherPath()) });
 		return { ok: true };
 	} catch (error) {
 		// A killed launcher is this timeout firing: the wait for the administrator

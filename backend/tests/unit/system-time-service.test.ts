@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import { applySystemTimeSettings, applyTimesyncdDropIn, setSystemNtpEnabled, setSystemNtpServer, waitForWindowsTimeService, withSystemTimeLock, withSaveBudget, remainingSaveBudget, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, WRITE_TIMEOUT_MS, type CommandRunner, type WindowsModeState } from '../../src/system-time.ts';
-import { SIGNATURE_TIMEOUT_MS, WINDOWS_TIME_HELPER_TIMEOUT_MS } from '../../src/network-helper-client.ts';
-import { WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS } from '../../src/network-helper-windows.ts';
+import { SIGNATURE_TIMEOUT_MS, WINDOWS_NETWORK_HELPER_TIMEOUT_MS, WINDOWS_TIME_HELPER_TIMEOUT_MS } from '../../src/network-helper-client.ts';
+import { WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_NETWORK_ELEVATION_WAIT_MS } from '../../src/network-helper-windows.ts';
 import { SYSTEM_TIME_SAVE_TIMEOUT_MS } from '@shared';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { SystemTimeStatus } from '@shared';
@@ -269,6 +269,19 @@ describe('finishing one save', () => {
 	 * once again unaccounted for. So the allowance is pinned to the bound the design actually
 	 * relies on: Windows dismisses an unanswered elevation prompt itself, ~120 s by default.
 	 */
+	/**
+	 * The network path is older than this work and must not be shortened by it. Its own steps
+	 * are a read, the change and a read back - 14 + 40 + 14 s is inside every one of their
+	 * limits and past a 60 s wait, so a single shared figure would terminate a change that was
+	 * merely working.
+	 */
+	it('does not shorten the network operation to suit a time save', () => {
+		expect(WINDOWS_NETWORK_ELEVATION_WAIT_MS).toBeGreaterThan(WINDOWS_ELEVATION_WAIT_MS);
+		expect(WINDOWS_NETWORK_ELEVATION_WAIT_MS).toBeGreaterThanOrEqual(180_000);
+		// And its caller outlives its launcher for the same reason the time one does.
+		expect(WINDOWS_NETWORK_HELPER_TIMEOUT_MS).toBeGreaterThan(WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS + WINDOWS_NETWORK_ELEVATION_WAIT_MS);
+	});
+
 	it('budgets for the prompt Windows itself is timing', () => {
 		expect(WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS).toBeGreaterThanOrEqual(120_000);
 		// And the launcher's wait is for the WORK: measured at 9-12 s, so a figure near the
@@ -315,6 +328,9 @@ describe('finishing one save', () => {
 	it('hands the linux verification the remainder instead of a fresh limit', async () => {
 		const root = await mkdtemp(join(tmpdir(), 'lish-budget-'));
 		try {
+			// mkdtemp leaves this at 0700, and on Linux the drop-in's reachability check reports
+			// that before the verification this test is about ever runs.
+			await chmod(root, 0o755);
 			const path = join(root, '90-libershare.conf');
 			const limits: Array<number | undefined> = [];
 			const exec: CommandRunner = async (cmd, _args, timeoutMs) => {
@@ -345,6 +361,7 @@ describe('finishing one save', () => {
 	it('leaves a writer used outside a save on its own limit', async () => {
 		const root = await mkdtemp(join(tmpdir(), 'lish-budget-'));
 		try {
+			await chmod(root, 0o755);
 			const path = join(root, '90-libershare.conf');
 			const limits: Array<number | undefined> = [];
 			const exec: CommandRunner = async (cmd, _args, timeoutMs) => {

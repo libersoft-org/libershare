@@ -386,6 +386,18 @@ export const elevationClock = (): number => performance.now();
 export const WINDOWS_ELEVATION_WAIT_MS = 60_000;
 
 /**
+ * The same wait for a NETWORK change, which is a longer piece of work.
+ *
+ * One number for both operations was wrong in the direction that breaks the older feature:
+ * shortening the wait to suit a time save also shortened it for an IPv4 or Wi-Fi change, whose
+ * own steps are a read (15 s), the change itself (45 s) and a read back (15 s). None of those
+ * has to exceed its limit for the total to pass 60 s - 14 + 40 + 14 is enough - and the
+ * launcher would then terminate a change that was merely working, in the middle of confirming
+ * its own result. Kept at what it was before the time work touched this file.
+ */
+export const WINDOWS_NETWORK_ELEVATION_WAIT_MS = 180_000;
+
+/**
  * How long the prompt itself may take before the caller's own limit is allowed to fire.
  *
  * Nobody can bound a person, but Windows does: an unanswered elevation prompt is dismissed by
