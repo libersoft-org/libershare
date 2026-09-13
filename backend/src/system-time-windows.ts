@@ -755,7 +755,19 @@ export async function readWindowsMode(): Promise<WindowsModeState> {
  */
 export function windowsClockRefusal(state: WindowsModeState): string | null {
 	if (state.service === 'changing') return 'the Windows Time service is starting or stopping, so the clock it may take over cannot be set right now';
-	if (state.service === 'running' && windowsSyncEnabled(state.mode, state.start, state.ntpClientEnabled) === false && state.mode !== 'none') return 'the Windows Time service is running even though synchronisation is configured off, so it would overwrite a hand-set clock';
+	const enabled = windowsSyncEnabled(state.mode, state.start, state.ntpClientEnabled);
+	// This state is read LATER than the status the caller's first refusal was decided from, so
+	// a synchronisation switched on in between shows up here and nowhere else - and it used to
+	// pass, because the only objection about synchronisation was the opposite case: a service
+	// running while it was configured OFF. Traced: the first read says off, somebody enables it
+	// in Windows, this read says on, and the clock was set anyway for the daemon to step back.
+	//
+	// Unknown is refused with it, on the rule the first refusal already states: only a definite
+	// `false` releases the clock, because treating "could not read" as off accepts a write that
+	// undoes itself minutes later.
+	if (enabled === true) return 'automatic time synchronisation is on as of this read, so it would step a hand-set clock back';
+	if (enabled === null) return 'whether automatic time synchronisation is on could not be determined, so the clock is left alone';
+	if (state.service === 'running' && state.mode !== 'none') return 'the Windows Time service is running even though synchronisation is configured off, so it would overwrite a hand-set clock';
 	return null;
 }
 

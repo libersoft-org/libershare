@@ -166,7 +166,31 @@ it('refuses a clock write while the service is starting or stopping', () => {
 /** An unreadable state says nothing about the host, so it must not refuse: the write reports the real reason. */
 it('does not refuse a clock write merely because the service state could not be read', () => {
 	expect(windowsClockRefusal({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'unreadable' })).toBeNull();
-	expect(windowsClockRefusal({ mode: 'manual', start: 'automatic', membership: 'standalone', service: 'stopped' })).toBeNull();
+	// A service that is merely down, with synchronisation configured off, is the ordinary case
+	// a hand-set clock is allowed in.
+	expect(windowsClockRefusal({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped' })).toBeNull();
+});
+
+/**
+ * This state is read AFTER the status the caller's first refusal came from, so a
+ * synchronisation switched on in between is visible here and nowhere else - and it used to
+ * pass, because the only objection about synchronisation was the opposite case: a service
+ * running while it was configured off. The daemon would then step the hand-set clock back.
+ *
+ * `start: automatic` with `mode: manual` IS synchronisation on, whatever the service happens
+ * to be doing at this instant - a stopped service with an automatic start type finishes
+ * starting a moment later.
+ */
+it('refuses a clock write when this read says synchronisation is on', () => {
+	for (const service of ['running', 'stopped', 'unreadable'] as const) {
+		expect(windowsClockRefusal({ mode: 'manual', start: 'automatic', membership: 'standalone', service })).toContain('synchronisation is on');
+	}
+	// And an answer that could not be determined is refused with it: only a definite "off"
+	// releases the clock, because treating unknown as off accepts a write that undoes itself.
+	expect(windowsClockRefusal({ mode: 'unknown', start: 'automatic', membership: 'standalone', service: 'stopped' })).toContain('could not be determined');
+	expect(windowsClockRefusal({ mode: 'managed', start: 'automatic', membership: 'domain', service: 'running' })).toContain('could not be determined');
+	// The provider's own switch still outranks the rest, so this one is genuinely off.
+	expect(windowsClockRefusal({ mode: 'manual', start: 'automatic', membership: 'standalone', service: 'stopped', ntpClientEnabled: false })).toBeNull();
 });
 
 it('reads each SCM state as itself, not as an unknown', () => {
