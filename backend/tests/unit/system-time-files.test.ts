@@ -343,6 +343,32 @@ describe('writeFileAtomically', () => {
 		expect((await rollback()).state).toBe('not-restored');
 	});
 
+	/**
+	 * The last look before the swap has to be an unchanged-since test, not an identity test.
+	 *
+	 * An edit written in place keeps the inode, the mode and the owner, so `sameFile` alone
+	 * said "still the file we published" and the rename put the backup over an
+	 * administrator's newer configuration - the one thing this restore promises to preserve.
+	 *
+	 * The content check upstream is deliberately defeated here: the rollback's read reports
+	 * what this call wrote while the file on disk already holds the edit. That is the only way
+	 * a test can reach the last look, because in production the edit lands in the gap between
+	 * the snapshot and this check, which no caller can schedule. The state the gap produces is
+	 * exactly the one built here.
+	 */
+	it('refuses to restore over content written in place after it published', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await writeFile(path, 'original\n', 'utf8');
+		let rollingBack = false;
+		const rollback = await writeFileAtomically(path, 'ours\n', async file => (rollingBack ? 'ours\n' : readFile(file, 'utf8')));
+		// Same inode, same mode, same owner. Only the content, the size and the timestamps move.
+		await writeFile(path, 'administrator\n', 'utf8');
+		rollingBack = true;
+		const restored = await rollback();
+		expect(restored.state).toBe('not-restored');
+		expect(await readFile(path, 'utf8')).toBe('administrator\n');
+	});
+
 	it('preserves an external edit instead of restoring the previous file over it', async () => {
 		const path = join(dir, '90-libershare.conf');
 		await writeFile(path, 'original\n');

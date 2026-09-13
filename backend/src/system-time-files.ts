@@ -550,7 +550,18 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 				// renamed over. A rebuilt restore had a whole staging window here; this has only
 				// the gap between these two lines, which is as narrow as POSIX allows - there is
 				// no compare-and-swap for a rename.
-				if (!sameFile(await readMetadata(path), written)) throw new Error('the time configuration changed before restoration; it was left untouched');
+				//
+				// `unchangedSince`, not `sameFile`: an edit written in place keeps the inode, the
+				// mode and the owner, so an identity test waved it through and the rename put the
+				// backup over an administrator's newer configuration. Size and the timestamps are
+				// what make this a not-touched-since test.
+				//
+				// Against `published` - what this call left behind after its own rename - and NOT
+				// against `written`, which is the staging file measured before it: the rename
+				// moves ctime, so a staged baseline compares unequal to the very file it
+				// published and would refuse every rollback. `current` is the fallback for the
+				// one case where the post-rename read failed and there is no better baseline.
+				if (!unchangedSince(await readMetadata(path), published ?? current)) throw new Error('the time configuration changed before restoration; it was left untouched');
 				// The original inode itself, back under its own name. Atomic, and it carries
 				// everything a rebuilt file would have dropped.
 				await rename(backup, path);
