@@ -98,28 +98,29 @@ describe('writeFileAtomically', () => {
 	});
 
 	/**
-	 * The window the earlier check does not cover. A rollback reads the file, decides it is
-	 * still its own, and only THEN stages the replacement - a create, a write, an fsync and a
-	 * close. An administrator editing the file inside that stretch had the edit overwritten,
+	 * The window between the rollback's own check and the swap that acts on it.
+	 *
+	 * A rollback reads the file, decides it is still its own, and only then puts the original
+	 * back. An administrator editing the file inside that stretch had the edit overwritten,
 	 * and the rollback still answered `restored-durable`: a clean undo reported over somebody
-	 * else's change. The directory flush is the hook, because it runs after the rollback's own
-	 * check has passed and before anything is renamed.
+	 * else's change. The stretch is now as short as POSIX allows - the restore is a rename of
+	 * the original inode rather than a rebuilt file - but it is not zero, so it is still
+	 * checked and still tested. The hook is the rollback's own read of the file, which is the
+	 * last thing to happen before that check.
 	 */
-	it('refuses to overwrite an edit made while the rollback was staging its replacement', async () => {
+	it('refuses to overwrite an edit made after the rollback read the file', async () => {
 		const path = join(dir, '90-libershare.conf');
 		await writeFile(path, 'original\n', 'utf8');
 		let rollingBack = false;
 		let edited = false;
-		const rollback = await writeFileAtomically(
-			path,
-			'ours\n',
-			p => readFile(p, 'utf8'),
-			async () => {
-				if (!rollingBack || edited) return;
+		const rollback = await writeFileAtomically(path, 'ours\n', async file => {
+			const seen = await readFile(file, 'utf8');
+			if (rollingBack && !edited) {
 				edited = true;
 				await writeFile(path, 'administrator\n', 'utf8');
 			}
-		);
+			return seen;
+		});
 		expect(await readFile(path, 'utf8')).toBe('ours\n');
 		rollingBack = true;
 		const restored = await rollback();
@@ -369,14 +370,16 @@ describe('writeFileAtomically', () => {
 		const path = join(dir, '90-libershare.conf');
 		await writeFile(path, 'original\n');
 		let reads = 0;
+		// Read 1 is the write's own snapshot; read 2 is the rollback's, and the edit lands
+		// inside it - so the content the rollback reads back is already somebody else's.
 		const readOriginal = async (file: string): Promise<string> => {
-			if (++reads === 3) await writeFile(file, 'external\n');
+			if (++reads === 2) await writeFile(file, 'external\n');
 			return readFile(file, 'utf8');
 		};
 		const rollback = await writeFileAtomically(path, 'ours\n', readOriginal);
 		expect((await rollback()).state).toBe('not-restored');
 		expect(await readFile(path, 'utf8')).toBe('external\n');
-		expect(reads).toBe(3);
+		expect(reads).toBe(2);
 	});
 
 	it('does not delete an external replacement of a file the operation created', async () => {

@@ -3,6 +3,20 @@ import { chmod, chown, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, sta
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { unreadableByServiceAccount, writeFileAtomically, type ServiceAccountAccess } from '../../src/system-time-files.ts';
+import { existsSync } from 'node:fs';
+
+/** Run a tool and fail loudly: a fixture that quietly did not apply would pass the test for the wrong reason. */
+async function run(command: string, args: string[]): Promise<void> {
+	const child = Bun.spawn([command, ...args], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+	const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+	expect({ command, code, stderr }).toEqual({ command, code: 0, stderr: '' });
+}
+
+/** Can the standard unprivileged nobody account read this file? Asked of the kernel, so ACLs count. */
+async function readableByNobody(path: string): Promise<boolean> {
+	const child = Bun.spawn(['/usr/bin/setpriv', '--reuid=65534', '--regid=65534', '--clear-groups', '/usr/bin/test', '-r', path], { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' });
+	return (await child.exited) === 0;
+}
 
 async function restrictiveUmask<T>(action: () => Promise<T>): Promise<T> {
 	const previous = process.umask(0o077);
@@ -181,9 +195,52 @@ describe.skipIf(process.platform === 'win32')('POSIX time configuration permissi
 			await chmod(file, 0o644);
 			// Only the listing is refused; the file itself reads fine, which is exactly the shape
 			// that passes every other check while the daemon never sees the drop-in.
-			const listingRefused: ServiceAccountAccess = async path => (path === parent ? false : true);
+			// Only the LISTING is refused. Entering it is allowed, or the traversal reports that
+			// instead and the case under test never runs.
+			const listingRefused: ServiceAccountAccess = async (path, mode) => !(path === parent && mode === 'r');
 			expect(await unreadableByServiceAccount(file, listingRefused)).toContain('cannot be listed');
 		});
+	});
+
+	/**
+	 * What a rollback has to bring back, beyond the text and the permission bits.
+	 *
+	 * The restore used to rebuild the original as a NEW file, so anything the filesystem
+	 * carried outside content, mode and owner was silently dropped - and an ACL is exactly
+	 * that: a new file inherits the directory's default ACL instead. Measured on Linux before
+	 * the fix: an original that the unprivileged account could read came back, after a
+	 * rollback reporting `restored-durable`, as a file it could not read at all. Textually
+	 * restored, functionally broken, and the caller was told it was clean.
+	 *
+	 * Skipped where the tools to build the case are missing, because a test that cannot set an
+	 * ACL would pass without ever exercising one.
+	 */
+	it.skipIf(process.platform !== 'linux' || !existsSync('/usr/bin/setfacl'))('restores an ACL the rollback cannot rebuild', async () => {
+		// mkdtemp leaves the fixture root at 0700, which no other account can walk through.
+		await chmod(root, 0o755);
+		const parent = join(root, 'timesyncd.conf.d');
+		await mkdir(parent, { mode: 0o755 });
+		const file = join(parent, '90-libershare.conf');
+		await writeFile(file, 'original\n');
+		await chmod(file, 0o640);
+		// The original lets nobody read it; new files in this directory inherit a denial. So a
+		// restore that rebuilds the file produces one nobody can read, and only a restore that
+		// brings the original inode back keeps it readable.
+		await run('/usr/bin/setfacl', ['-m', 'u:65534:r--', file]);
+		await run('/usr/bin/setfacl', ['-d', '-m', 'u:65534:---', parent]);
+		expect(await readableByNobody(file)).toBe(true);
+
+		const rollback = await writeFileAtomically(file, 'replacement\n');
+		expect(await readFile(file, 'utf8')).toBe('replacement\n');
+		expect(await readableByNobody(file)).toBe(false);
+
+		const restored = await rollback();
+		expect(restored.state).toBe('restored-durable');
+		expect(await readFile(file, 'utf8')).toBe('original\n');
+		// The whole point: the content came back AND so did the access it carried.
+		expect(await readableByNobody(file)).toBe(true);
+		// And nothing of ours was left next to it.
+		expect((await readdir(parent)).sort()).toEqual(['90-libershare.conf']);
 	});
 
 	it('does not widen a pre-existing private parent directory', async () => {

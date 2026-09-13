@@ -5,7 +5,7 @@ import { readLinuxStatus, TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn, verifyTim
 import { type SystemTimeStatus, type SystemTimeResult, type SystemTimeChanges, type SystemTimeStep } from '@shared';
 import { Mutex } from 'async-mutex';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { syncDirectory, unreadableByServiceAccount, type RollbackResult, writeFileAtomically } from './system-time-files.ts';
+import { syncDirectory, unreadableByServiceAccount, type RollbackHandle, writeFileAtomically } from './system-time-files.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -704,7 +704,7 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
 		// than being slow.
 		const remaining = remainingSaveBudget();
 		if (remaining !== null && remaining <= 0) return result('error', `the time configuration did not start within the ${Math.round(SAVE_BUDGET_MS / 1000)} s this save is allowed`);
-		let rollback: () => Promise<RollbackResult>;
+		let rollback: RollbackHandle;
 		try {
 			rollback = await writeFileAtomically(path, buildTimesyncdDropIn(server), undefined, syncDir);
 		} catch (err) {
@@ -730,8 +730,13 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
 		}
 		const commands = buildSetNtpServerCommands('linux', server, syncRunning);
 		// Synchronisation is off, so there is deliberately no restart — the drop-in on disk
-		// IS the whole change and is read when the daemon next starts. Nothing to roll back.
-		if (commands.length === 0) return result('ok');
+		// IS the whole change and is read when the daemon next starts. Nothing to roll back,
+		// so the spare name the restore was holding is released here rather than left next to
+		// the live configuration until some later write sweeps it.
+		if (commands.length === 0) {
+			await rollback.discard();
+			return result('ok');
+		}
 		const r = await runAll('linux', commands, exec);
 		if (!r.success) {
 			const restored = await rollback();
@@ -759,6 +764,7 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
 			// might still be applied — a caveat about a state that does not exist.
 			return { ...result('error', reason), ...(r.steps ? { steps: r.steps } : {}) };
 		}
+		await rollback.discard();
 		return r;
 	});
 }

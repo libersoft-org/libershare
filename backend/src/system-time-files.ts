@@ -1,4 +1,4 @@
-import { open, access, mkdir, readFile, readlink, rename, stat, unlink, lstat } from 'node:fs/promises';
+import { open, access, link, mkdir, readFile, readlink, rename, stat, unlink, lstat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { constants, type BigIntStats } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -404,12 +404,55 @@ export async function unreadableByServiceAccount(path: string, access: ServiceAc
  */
 export type RollbackResult = { state: 'restored-durable' } | { state: 'restored-not-durable'; error: unknown } | { state: 'not-restored'; error: unknown };
 
-export async function writeFileAtomically(path: string, content: string, readOriginal: (p: string) => Promise<string> = p => readFile(p, 'utf8'), syncDir: (dir: string) => Promise<void> = syncDirectory): Promise<() => Promise<RollbackResult>> {
+/**
+ * A rollback, plus the way to say it will not be needed.
+ *
+ * The restore keeps the original file alive under a second name, so something has to release
+ * it: a caller that succeeds and simply drops this handle would leave that name next to the
+ * live configuration until the next write swept it. `discard` is that release, and calling
+ * neither is safe - the next write cleans up after the last one either way.
+ */
+export type RollbackHandle = (() => Promise<RollbackResult>) & { discard: () => Promise<void> };
+
+export async function writeFileAtomically(path: string, content: string, readOriginal: (p: string) => Promise<string> = p => readFile(p, 'utf8'), syncDir: (dir: string) => Promise<void> = syncDirectory): Promise<RollbackHandle> {
 	return publishFile(path, content, { mode: 0o644 }, readOriginal, syncDir);
 }
 
-async function publishFile(path: string, content: string, permissions: { mode: number; uid?: number; gid?: number }, readOriginal: (path: string) => Promise<string>, syncDir: (dir: string) => Promise<void>, expected?: FileMetadata | null): Promise<() => Promise<RollbackResult>> {
-	const previous = await readSnapshot(path, readOriginal);
+async function publishFile(path: string, content: string, permissions: { mode: number; uid?: number; gid?: number }, readOriginal: (path: string) => Promise<string>, syncDir: (dir: string) => Promise<void>, expected?: FileMetadata | null): Promise<RollbackHandle> {
+	// A second NAME for the original file, not a copy of it - taken before anything is read.
+	//
+	// The rollback used to rebuild the original: same content, same mode, same owner, written
+	// as a NEW file. Everything the filesystem carries outside those three was lost, and an
+	// ACL is exactly that - a new file inherits the directory's default ACL instead. Measured
+	// on Linux: an original the service account could read came back, after a rollback
+	// reporting `restored-durable`, as a file it could not read at all. Textually restored,
+	// functionally broken, and the caller was told it was fine.
+	//
+	// A hard link avoids the whole problem: it is the SAME inode, so putting it back is a
+	// rename and everything the file carried - ACLs, xattrs, times - comes with it. Best
+	// effort: a filesystem without links, or one refusing them, falls back to rebuilding and
+	// the rollback then says what it could not guarantee.
+	//
+	// FIRST, because linking changes the inode's link count and therefore its ctime. Taken
+	// after the snapshot, this call's own spare name reads as somebody else's edit and every
+	// write refuses itself; re-reading the guard after linking would instead adopt a genuine
+	// edit that landed in between. Linking before the read leaves the existing meaning intact:
+	// the guard is whatever the file was when this call first looked at it.
+	const backup = `${path}.libershare-${process.pid}-${randomUUID()}.bak`;
+	let backupLinked = false;
+	try {
+		await link(path, backup);
+		backupLinked = true;
+	} catch {
+		backupLinked = false;
+	}
+	let previous: FileSnapshot | null;
+	try {
+		previous = await readSnapshot(path, readOriginal);
+	} catch (err) {
+		await unlink(backup).catch(() => undefined);
+		throw err;
+	}
 	// The first write guards the same window the rollback does. It was left open on the way
 	// IN: the original is read, the replacement is staged, and an edit landing between the two
 	// was overwritten without a word — and then the rollback, which does check, faithfully
@@ -420,6 +463,10 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 	await makeDirectoryDurably(dirname(path), syncDir);
 	// Same directory, or the rename would cross a filesystem boundary and stop being atomic.
 	const temp = `${path}.libershare-${process.pid}-${randomUUID()}.tmp`;
+	// Only when the exact restore is unavailable is it worth knowing what the original could
+	// do, and only then is the cost paid: on the linked path the inode comes back with
+	// everything it had, so there is nothing to compare.
+	const originalUsable = previous !== null && !backupLinked ? (await unreadableByServiceAccount(path)) === null : false;
 	let renamed = false;
 	let written: FileMetadata;
 	// Measured AFTER the swap, not on the staging file: the rename itself moves ctime, so a
@@ -475,6 +522,9 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 		// different things to tell a user.
 		if (!renamed) {
 			await unlink(temp).catch(() => {});
+			// The spare name goes with it: a write that never published has nothing to roll back
+			// to, and leaving the link behind keeps a name of ours next to the live file.
+			await unlink(backup).catch(() => {});
 			throw err;
 		}
 		throw Object.assign(err as object, { published: true });
@@ -482,7 +532,10 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 	// Reports whether the previous state is actually back. Swallowing that told the caller
 	// the host had been left as it was found while the new configuration was still on disk,
 	// to be adopted at the next boot — long after the user was told nothing had happened.
-	return async (): Promise<RollbackResult> => {
+	const discardBackup = async (): Promise<void> => {
+		await unlink(backup).catch(() => undefined);
+	};
+	const rollback = async (): Promise<RollbackResult> => {
 		// Set once the visible filesystem already holds the original state, so a directory
 		// flush failing after that point is a durability warning and not a failed restore.
 		let visible = false;
@@ -491,7 +544,19 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 			// Preserve observed content, inode, permission or ownership changes made outside our lock.
 			// This remains a checked update, not an atomic filesystem compare-and-swap.
 			if (current === null ? previous !== null : current.content !== content || !sameFile(current, written)) throw new Error('the time configuration changed after this operation wrote it; it was left untouched');
-			if (previous !== null) {
+			if (previous !== null && backupLinked) {
+				// Re-checked immediately before the swap, exactly as the publish does: the snapshot
+				// above is a moment old, and an edit landing in between must survive rather than be
+				// renamed over. A rebuilt restore had a whole staging window here; this has only
+				// the gap between these two lines, which is as narrow as POSIX allows - there is
+				// no compare-and-swap for a rename.
+				if (!sameFile(await readMetadata(path), written)) throw new Error('the time configuration changed before restoration; it was left untouched');
+				// The original inode itself, back under its own name. Atomic, and it carries
+				// everything a rebuilt file would have dropped.
+				await rename(backup, path);
+				visible = true;
+				await syncDir(dirname(path));
+			} else if (previous !== null) {
 				await publishFile(
 					path,
 					previous.content,
@@ -504,6 +569,16 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 					syncDir,
 					published
 				);
+				// Rebuilt, not returned: the content and the permission bits are back, but anything
+				// else the original carried is not, and this is the one path that cannot promise
+				// otherwise. Reported only when it MATTERS - the original was usable by the service
+				// and the rebuilt one is not. A file the service could never read is restored just
+				// as faithfully by being unreadable again, and calling that a failed restore would
+				// be a false alarm on every ordinary 0600 configuration.
+				if (originalUsable) {
+					const unusable = await unreadableByServiceAccount(path);
+					if (unusable !== null) return { state: 'restored-not-durable', error: new Error(`${path} was restored from its content, but ${unusable}`) };
+				}
 			} else {
 				// Already gone is the state being restored to, not a failure.
 				await unlink(path).catch((err: { code?: string }) => (err.code === 'ENOENT' ? undefined : Promise.reject(err)));
@@ -520,6 +595,11 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 			// its final name and only the flush behind it did not.
 			if (visible || (err as { published?: boolean }).published === true) return { state: 'restored-not-durable', error: err };
 			return { state: 'not-restored', error: err };
+		} finally {
+			// Either it was renamed back into place or it is a spare name nobody needs; a link
+			// left behind would keep the old inode alive until the next write swept it.
+			await discardBackup();
 		}
 	};
+	return Object.assign(rollback, { discard: discardBackup });
 }
