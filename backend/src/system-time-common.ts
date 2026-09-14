@@ -114,6 +114,7 @@ export function remainingSaveBudget(): number | null {
 }
 
 const LINUX_EXECUTABLES: Readonly<Record<string, string>> = {
+	date: '/usr/bin/date',
 	timedatectl: '/usr/bin/timedatectl',
 	systemctl: '/usr/bin/systemctl',
 	'systemd-analyze': '/usr/bin/systemd-analyze',

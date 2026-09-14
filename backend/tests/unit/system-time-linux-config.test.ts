@@ -3,6 +3,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { applyTimesyncdDropIn, type CommandRunner, buildTimesyncdDropIn, parseTimesyncConfig, resolveSystemExecutable } from '../../src/system-time.ts';
+import { parseUtcOffsetMinutes } from '../../src/system-time-linux.ts';
 import { verifyTimesyncdServer } from '../../src/system-time-linux.ts';
 import { timesyncConfigOutput } from '../helpers/system-time-timesyncd.ts';
 
@@ -61,6 +62,59 @@ describe('effective timesyncd configuration', () => {
 	it('resolves systemd-analyze through the trusted system path', () => {
 		expect(resolveSystemExecutable('linux', 'systemd-analyze')).toBe('/usr/bin/systemd-analyze');
 	});
+
+	it('resolves date through the trusted system path', () => {
+		expect(resolveSystemExecutable('linux', 'date')).toBe('/usr/bin/date');
+	});
+});
+
+/**
+ * The host's offset has to come from the HOST. `timedatectl show` carries the zone name and no
+ * offset, so the shared status derived one from this runtime's timezone database - and where
+ * the two disagree, which two tzdata versions on one machine are enough to produce, the screen
+ * labelled a time the host does not have as the host's own. Editing the minutes from that
+ * reading then moved the clock by the whole disagreement.
+ */
+describe('the offset the linux status reports', () => {
+	it('is the one the host answered', async () => {
+		// `-0400`, which is Asunción's standard offset and the reading the measured
+		// disagreement produced on one side.
+		const { status } = await readStatusScenario({ config: '[Time]\nNTP=a.example.org\n', offset: '-0400' });
+		expect(status.utcOffsetMinutes).toBe(-240);
+	});
+
+	it('asks the host for it rather than deriving it from the zone', async () => {
+		const { commands } = await readStatusScenario({ config: null });
+		expect(commands.some(entry => entry.command === 'date' && entry.args.join(' ') === '+%z')).toBe(true);
+	});
+
+	/**
+	 * No answer means no claim. Leaving the field out puts the shared status back on its
+	 * existing fallback, which is documented as a fallback - stating a made-up number as the
+	 * host's is the failure being fixed here.
+	 */
+	it('states nothing when the host could not answer', async () => {
+		for (const offset of [null, 'CEST']) {
+			const { status } = await readStatusScenario({ config: null, offset });
+			expect(status.utcOffsetMinutes).toBeUndefined();
+		}
+	});
+});
+
+describe('parseUtcOffsetMinutes', () => {
+	it('reads the sign, the hours and the minutes', () => {
+		expect(parseUtcOffsetMinutes('+0200')).toBe(120);
+		expect(parseUtcOffsetMinutes('-0330')).toBe(-210);
+		expect(parseUtcOffsetMinutes('+0000')).toBe(0);
+		expect(parseUtcOffsetMinutes('-1200')).toBe(-720);
+		expect(parseUtcOffsetMinutes('+0545')).toBe(345);
+		// `date` ends its output with a newline, and `run` hands the text over as it came.
+		expect(parseUtcOffsetMinutes('+0200\n')).toBe(120);
+	});
+
+	it('answers null for anything it was not given', () => {
+		for (const value of [null, '', 'CEST', '+2:00', '0200', '+020', '+02000', 'x0200']) expect(parseUtcOffsetMinutes(value)).toBeNull();
+	});
 });
 
 interface StatusScenario {
@@ -70,9 +124,10 @@ interface StatusScenario {
 	owner?: 'ours' | 'foreign' | 'unknown' | 'masked';
 	competing?: boolean;
 	canNtp?: boolean;
+	offset?: string | null;
 }
 interface StatusResult {
-	status: { ntpEnabled: boolean; ntpServer: string | null; capabilities: { setNtpServer: boolean } };
+	status: { ntpEnabled: boolean; ntpServer: string | null; utcOffsetMinutes?: number; capabilities: { setNtpServer: boolean } };
 	commands: Array<{ command: string; args: string[] }>;
 }
 
@@ -92,6 +147,7 @@ async function readStatusScenario(input: StatusScenario): Promise<StatusResult> 
 			if(command==='systemctl'&&args.includes('Environment'))return 'LoadState=loaded\\nEnvironment=SYSTEMD_TIMEDATED_NTP_SERVICES='+(owner==='foreign'?'chronyd.service:':'')+unit+'\\n';
 			if(command==='systemctl'&&args.includes('Id'))return (owner==='foreign'?'Id=chronyd.service\\nNames=chronyd.service\\nLoadState=loaded\\n\\n':'')+'Id='+unit+'\\nNames='+unit+'\\nLoadState='+(owner==='masked'?'masked':'loaded')+'\\n';
 			if(command==='systemctl'&&args.includes('ActiveState'))return input.competing?'active\\n':'inactive\\n';
+			if(command==='date')return input.offset===undefined?'+0200':input.offset;
 			if(command==='systemd-analyze')return input.config;
 			throw new Error('Unexpected command '+command+' '+args.join(' '));
 		}
