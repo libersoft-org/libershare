@@ -562,6 +562,11 @@ export function clockWriteRefusal(status: SystemTimeStatus): SystemTimeResult | 
 	if (!status.capabilities.setClock) return result('unsupported', 'this host has no facility for setting the clock');
 	if (status.ntpEnabled === null) return result('error', 'cannot determine whether automatic time synchronisation is enabled, so the clock is left alone');
 	if (status.ntpEnabled) return result('auto-sync-enabled', 'automatic time synchronisation is enabled');
+	// A definite `false` from the host's own time manager is not the whole answer: on Linux it
+	// speaks only for the providers it manages, and a daemon started outside that list steps
+	// the clock back all the same. The read already found it - refusing here is what makes
+	// that finding count, instead of writing a clock somebody else owns.
+	if (status.clockHeldByUnmanagedDaemon) return result('auto-sync-enabled', 'another time synchronisation daemon is running outside the one this host manages, so it would step a hand-set clock back; stop that service first');
 	return null;
 }
 

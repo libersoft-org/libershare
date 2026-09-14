@@ -283,6 +283,55 @@ describe('switching windows synchronisation on with the NTP client switched off'
 	});
 });
 
+/**
+ * `NTP=no` from `timedatectl` is not proof that nothing is steering the clock.
+ *
+ * It answers for the providers systemd-timedated MANAGES. A `chronyd` started outside that
+ * ordered list is not one of them, so the host reports synchronisation off - while the daemon
+ * goes on correcting the clock. The read already has to look for exactly such a daemon to
+ * decide whether a timesyncd drop-in would be read by anybody, and that finding used to stop
+ * there: the status still said `ntpEnabled: false` with `setClock: true`, so a hand-set clock
+ * was written and stepped back within the minute, with nothing on screen ever claiming
+ * synchronisation was on.
+ *
+ * Tested as the whole chain, because each half was already right on its own: the read finds
+ * the daemon, the refusal has to act on it, and no clock command may run.
+ */
+describe('a clock another daemon is steering', () => {
+	const held = (overrides: Partial<SystemTimeStatus> = {}): SystemTimeStatus => statusFixture({ ntpEnabled: false, clockHeldByUnmanagedDaemon: true, ...overrides });
+
+	it('is refused even though the host says synchronisation is off', () => {
+		const refusal = clockWriteRefusal(held());
+		expect(refusal?.outcome).toBe('auto-sync-enabled');
+		expect(refusal?.message).toContain('outside the one this host manages');
+		// And it names the way out, because switching "synchronisation" off here would stop
+		// timesyncd, which is not what holds the clock.
+		expect(refusal?.message).toContain('stop that service first');
+	});
+
+	it('runs no clock command at all', async () => {
+		const { exec, calls } = fakeRunner([]);
+		const answer = await setSystemClock(12, 34, 56, async () => held(), exec);
+		expect(answer.outcome).toBe('auto-sync-enabled');
+		expect(calls).toEqual([]);
+		// Nothing ran, so nothing may claim otherwise.
+		expect(answer.changed).toBeUndefined();
+		expect(answer.stateMayHaveChanged).toBeUndefined();
+	});
+
+	/** The ordinary case is untouched: no such daemon, synchronisation off, clock settable. */
+	it('leaves an ordinary host alone', () => {
+		expect(clockWriteRefusal(statusFixture({ ntpEnabled: false }))).toBeNull();
+	});
+
+	/** And a host that says synchronisation IS on keeps the message that fits it. */
+	it('does not replace the ordinary refusal', () => {
+		const refusal = clockWriteRefusal(statusFixture({ ntpEnabled: true, clockHeldByUnmanagedDaemon: true }));
+		expect(refusal?.outcome).toBe('auto-sync-enabled');
+		expect(refusal?.message).toBe('automatic time synchronisation is enabled');
+	});
+});
+
 describe('runAll sequence budget', () => {
 	const commands: SystemCommand[] = [
 		{ cmd: 'first', args: [] },

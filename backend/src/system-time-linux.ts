@@ -640,8 +640,26 @@ export async function readLinuxStatus(): Promise<PlatformStatus> {
 	// nobody hardcoded is still seen — with the aliases resolved, or timesyncd under another
 	// name would be counted as a daemon competing with itself.
 	const states = unit === null ? null : parseUnitLoadStates(unit);
-	const competing = canNtp ? await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', '--', ...competingNtpUnits(ordered, states)]) : null;
+	// NOT behind `canNtp`. "Is another NTP daemon running here" is a question about the host,
+	// not about whether timedated can manage one - and the two come apart exactly where it
+	// matters. Measured on Debian 12: installing chrony made `timedatectl show` answer
+	// `CanNTP=no` AND `NTP=no`, so this read was skipped, nothing noticed chrony, and a
+	// hand-set clock went through while `chronyc tracking` showed it synchronised to a stratum
+	// 3 peer. One extra `systemctl show` on such a host, inside the read's own budget.
+	const competing = await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', '--', ...competingNtpUnits(ordered, states)]);
 	const configurable = canConfigureTimesyncdServer(ordered, unit, competing);
+	// The same answer, for the other question it decides. `canConfigureTimesyncdServer` uses it
+	// to refuse writing a drop-in nobody would read; a daemon outside timedated's own list
+	// holds the CLOCK just as surely, and `timedatectl show` reports `NTP=no` for it because
+	// it is not a provider timedated manages. Without carrying it here, the status said
+	// "synchronisation off, clock settable" while chronyd was running, and a hand-set clock was
+	// stepped back within the minute - the one outcome a definite `false` is supposed to rule
+	// out.
+	//
+	// `!== true` rather than `=== false`: an UNREADABLE `NTP` field is not permission to ignore
+	// a daemon that is demonstrably running. `NTP=yes` is the one case skipped, because the
+	// existing refusal already covers it with a message that fits better.
+	const heldElsewhere = parseYesNo(map['NTP']) !== true && competing !== null && parseAnyUnitActive(competing);
 	// The editable field must reflect the effective saved NTP= list even while another peer is active.
 	const configuration = configurable ? await tryRead('systemd-analyze', ['--no-pager', 'cat-config', 'systemd/timesyncd.conf']) : null;
 	const ntpServer = configuration === null ? null : parseTimesyncConfig(configuration);
@@ -654,6 +672,7 @@ export async function readLinuxStatus(): Promise<PlatformStatus> {
 		timezone: map['Timezone'] ?? null,
 		...(offset === null ? {} : { utcOffsetMinutes: offset }),
 		ntpEnabled: parseYesNo(map['NTP']),
+		...(heldElsewhere ? { clockHeldByUnmanagedDaemon: true } : {}),
 		ntpSynchronized: parseYesNo(map['NTPSynchronized']),
 		ntpServer,
 		capabilities: { setClock: true, setTimezone: true, setNtpEnabled: canNtp, setNtpServer: configurable },

@@ -461,6 +461,23 @@ export interface SystemTimeStatus {
 	 * false — never merely "not known to be true".
 	 */
 	ntpEnabled: boolean | null;
+	/**
+	 * An NTP daemon is running that the host's own time manager does NOT account for, so
+	 * {@link SystemTimeStatus.ntpEnabled} being false says nothing about whether the clock is
+	 * being steered.
+	 *
+	 * Linux only, and it is the case `NTP=no` hides: `timedatectl` answers for the providers
+	 * systemd-timedated manages, and a `chronyd` started outside that list is not one of them.
+	 * The read already has to look for such a daemon to decide whether a timesyncd drop-in
+	 * would be read by anybody - that answer is reported here too, because a hand-set clock is
+	 * exactly as futile as an unread drop-in: the daemon steps it back and nothing on screen
+	 * ever said synchronisation was on.
+	 *
+	 * Deliberately NOT folded into `ntpEnabled`. That one drives the switch, and a switch
+	 * turned on here would offer to "switch synchronisation off" by stopping timesyncd - which
+	 * is not what is holding the clock.
+	 */
+	clockHeldByUnmanagedDaemon?: boolean;
 	/** The last synchronisation actually succeeded; null where the OS does not report it. */
 	ntpSynchronized: boolean | null;
 	/** Configured NTP server address, or null when none is configured / it cannot be read. */

@@ -75,6 +75,59 @@ describe('effective timesyncd configuration', () => {
  * labelled a time the host does not have as the host's own. Editing the minutes from that
  * reading then moved the clock by the whole disagreement.
  */
+/**
+ * The read has to SAY that it found a daemon outside timedated's list, not just use the
+ * finding for its own drop-in decision. That is the information the clock refusal needs.
+ */
+describe('an NTP daemon outside the managed list', () => {
+	it('is reported by the status even while the host says NTP=no', async () => {
+		const { status } = await readStatusScenario({ config: null, competing: true });
+		expect(status.ntpEnabled).toBe(false);
+		expect(status.clockHeldByUnmanagedDaemon).toBe(true);
+		// The drop-in decision it was already used for is unchanged.
+		expect(status.capabilities.setNtpServer).toBe(false);
+	});
+
+	it('is absent when nothing else is running', async () => {
+		const { status } = await readStatusScenario({ config: '[Time]\nNTP=a.example.org\n' });
+		expect(status.clockHeldByUnmanagedDaemon).toBeUndefined();
+		expect(status.capabilities.setNtpServer).toBe(true);
+	});
+
+	/**
+	 * `NTP=yes` is the ordinary case the existing refusal already covers, and the daemon
+	 * running there is one timedated manages - so this flag would add nothing but a worse
+	 * message.
+	 */
+	it('is not reported when the host already says synchronisation is on', async () => {
+		const { status } = await readStatusScenario({ config: null, competing: true, enabled: true });
+		expect(status.ntpEnabled).toBe(true);
+		expect(status.clockHeldByUnmanagedDaemon).toBeUndefined();
+	});
+
+	/**
+	 * The case that caught the first version of this fix, measured on Debian 12: installing
+	 * chrony made `timedatectl show` answer `CanNTP=no` as well as `NTP=no`. The competing-unit
+	 * read sat behind `canNtp`, so it was skipped entirely - nothing noticed chrony, and a
+	 * hand-set clock went through while `chronyc tracking` showed the host synchronised to a
+	 * stratum 3 peer. "Is another daemon running" is a question about the HOST, not about
+	 * whether timedated can manage one.
+	 */
+	it('is reported even on a host whose timedated says it cannot do NTP at all', async () => {
+		const { status, commands } = await readStatusScenario({ config: null, competing: true, canNtp: false });
+		expect(status.clockHeldByUnmanagedDaemon).toBe(true);
+		// Asked for, rather than inferred from a field that says nothing about it.
+		expect(commands.some(entry => entry.command === 'systemctl' && entry.args.includes('ActiveState'))).toBe(true);
+	});
+
+	/** And an unreadable NTP field is not permission to ignore a daemon that IS running. */
+	it('is reported when the host would not say whether synchronisation is on', async () => {
+		const { status } = await readStatusScenario({ config: null, competing: true, ntpField: 'maybe' });
+		expect(status.ntpEnabled).toBeNull();
+		expect(status.clockHeldByUnmanagedDaemon).toBe(true);
+	});
+});
+
 describe('the offset the linux status reports', () => {
 	it('is the one the host answered', async () => {
 		// `-0400`, which is Asunción's standard offset and the reading the measured
@@ -124,10 +177,11 @@ interface StatusScenario {
 	owner?: 'ours' | 'foreign' | 'unknown' | 'masked';
 	competing?: boolean;
 	canNtp?: boolean;
+	ntpField?: string;
 	offset?: string | null;
 }
 interface StatusResult {
-	status: { ntpEnabled: boolean; ntpServer: string | null; utcOffsetMinutes?: number; capabilities: { setNtpServer: boolean } };
+	status: { ntpEnabled: boolean; ntpServer: string | null; utcOffsetMinutes?: number; clockHeldByUnmanagedDaemon?: boolean; capabilities: { setNtpServer: boolean } };
 	commands: Array<{ command: string; args: string[] }>;
 }
 
@@ -141,7 +195,7 @@ async function readStatusScenario(input: StatusScenario): Promise<StatusResult> 
 		const owner=input.owner??'ours';
 		async function read(command,args){
 			commands.push({command,args});
-			if(command==='timedatectl'&&args[0]==='show')return 'Timezone=Europe/Prague\\nCanNTP='+(input.canNtp===false?'no':'yes')+'\\nNTP='+(input.enabled?'yes':'no')+'\\nNTPSynchronized=no\\n';
+			if(command==='timedatectl'&&args[0]==='show')return 'Timezone=Europe/Prague\\nCanNTP='+(input.canNtp===false?'no':'yes')+'\\nNTP='+(input.ntpField??(input.enabled?'yes':'no'))+'\\nNTPSynchronized=no\\n';
 			if(command==='timedatectl'&&args[0]==='show-timesync')return input.runtime??null;
 			if(command==='systemctl'&&args[0]==='show-environment')return owner==='unknown'?null:'';
 			if(command==='systemctl'&&args.includes('Environment'))return 'LoadState=loaded\\nEnvironment=SYSTEMD_TIMEDATED_NTP_SERVICES='+(owner==='foreign'?'chronyd.service:':'')+unit+'\\n';
