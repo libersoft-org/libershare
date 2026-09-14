@@ -87,6 +87,26 @@ describe('writeFileAtomically', () => {
 		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
 	});
 
+	/**
+	 * The same failure over an EXISTING configuration, which is the case that keeps a backup.
+	 *
+	 * The test above starts from nothing, so no spare name is ever taken and it cannot see
+	 * this: the content was published, the flush of its name failed, and the backup link was
+	 * left sitting next to the live configuration for good. No caller rolls a published write
+	 * back - they report the file as holding the new configuration - so nothing would ever
+	 * have used it, and the next write releases its OWN link under a fresh name.
+	 */
+	it('releases the backup when a published write could not be flushed', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await writeFile(path, 'original\n', 'utf8');
+		const err = await writeFileAtomically(path, 'new\n', p => readFile(p, 'utf8'), failFlushOf(dir)).catch((e: { published?: boolean; code?: string }) => e);
+		expect(err).toMatchObject({ published: true, code: 'EIO' });
+		// Published means published, and alone: the new content under its final name and
+		// nothing of ours beside it.
+		expect(await readFile(path, 'utf8')).toBe('new\n');
+		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
+	});
+
 	/** Before the rename nothing is published, so the temp file goes and the error is bare. */
 	it('cleans up and does not mark a pre-rename failure as published', async () => {
 		const path = join(dir, 'made-here', '90-libershare.conf');

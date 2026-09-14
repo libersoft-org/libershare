@@ -558,6 +558,12 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 			await unlink(backup).catch(() => {});
 			throw err;
 		}
+		// The spare name goes here too. The content is published and no caller rolls this
+		// back - they report the file as holding the new configuration - so nothing will ever
+		// use the backup, and the comment above promising a later write would sweep it was
+		// simply wrong: the next write releases ITS own link, whose name is a fresh UUID.
+		// Left behind, a `.bak` sat next to the live configuration for good.
+		await unlink(backup).catch(() => {});
 		throw Object.assign(err as object, { published: true });
 	}
 	// Reports whether the previous state is actually back. Swallowing that told the caller
