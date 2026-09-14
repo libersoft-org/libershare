@@ -1,4 +1,4 @@
-import { parseTimedatectlShow, type CommandRunner, run, type PlatformStatus, tryRead, UNREADABLE_STATUS, parseYesNo, isValidNtpServer } from './system-time-common.ts';
+import { parseTimedatectlShow, type CommandRunner, run, type PlatformStatus, tryRead, UNREADABLE_STATUS, parseYesNo, isValidNtpServer, HOST_OFFSET_COMMAND, parseUtcOffsetMinutes } from './system-time-common.ts';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -606,26 +606,6 @@ export function buildTimesyncdDropIn(server: string): string {
 }
 
 /** Read the Linux (systemd-timedated) part of the status. */
-/**
- * `date +%z` as minutes east of UTC, or null for anything unexpected.
- *
- * The host's own answer, which is the point: `timedatectl show` carries the zone NAME and no
- * offset, so the shared status used to derive one from THIS runtime's timezone database. Where
- * that database and the host's disagree - different tzdata versions on the same machine is
- * enough - the screen labelled a time the host does not have as the host's current time, and
- * an edit of the minutes then moved the clock by the whole disagreement. Measured with
- * `America/Asuncion` under 2024a and 2025b rules: one hour apart.
- *
- * `date` is read through {@link run}, which strips `TZ` from the child's environment, so the
- * answer is the host's setting and not a formatting override this process happens to carry.
- */
-export function parseUtcOffsetMinutes(value: string | null): number | null {
-	const match = /^([+-])(\d{2})(\d{2})$/.exec((value ?? '').trim());
-	if (!match) return null;
-	const minutes = Number(match[2]) * 60 + Number(match[3]);
-	return match[1] === '-' ? -minutes : minutes;
-}
-
 export async function readLinuxStatus(): Promise<PlatformStatus> {
 	const show = await tryRead('timedatectl', ['show']);
 	if (show === null) {
@@ -665,7 +645,7 @@ export async function readLinuxStatus(): Promise<PlatformStatus> {
 	// One extra read, and it is the host's own arithmetic rather than this process's: see
 	// parseUtcOffsetMinutes. Left out when `date` is unavailable or answers something
 	// unexpected, which puts the shared status back on its existing fallback.
-	const offset = parseUtcOffsetMinutes(await tryRead('date', ['+%z']));
+	const offset = parseUtcOffsetMinutes(await tryRead(HOST_OFFSET_COMMAND.linux, ['+%z']));
 	return {
 		// `timedatectl show` was read above and already carries it — no extra probe.
 		timezone: map['Timezone'] ?? null,

@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'bun:test';
 import { SYSTEM_TIME_OUTCOMES, type SystemTimeChanges, type SystemTimeResult } from '@shared';
 import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, networkHelperExitCode, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
@@ -671,6 +672,65 @@ describe('the macOS zone an unprivileged reader can still see', () => {
 
 	it('never throws on a missing link', () => {
 		expect(readMacLocaltimeZone('/definitely/not/here/localtime')).toBeNull();
+	});
+});
+
+/**
+ * The offset macOS reports has to be the HOST's.
+ *
+ * `systemsetup -gettimezone` names the zone and says nothing about the offset in force, so the
+ * shared status derived one from this runtime's timezone database - and where the two
+ * disagree, which two tzdata versions on one machine are enough to produce, the screen
+ * labelled a time the host does not have as the host's own. Editing the minutes from that
+ * reading then moved the clock by the whole disagreement. Linux was fixed first; this is the
+ * same defect one platform over.
+ *
+ * The reads are mocked in a child process, because `readMacStatus` asks the host directly and
+ * the machine running the tests is not a Mac.
+ */
+describe('the offset the macOS status reports', () => {
+	async function readMacScenario(offset: string | null): Promise<{ status: { timezone: string | null; utcOffsetMinutes?: number }; commands: string[] }> {
+		const script = `
+			import {mock} from 'bun:test';
+			const common = await import('./src/system-time-common.ts');
+			const commands=[];
+			const offset=${JSON.stringify(offset)};
+			async function read(command,args){
+				commands.push(command+' '+args.join(' '));
+				if(command==='/bin/date')return offset;
+				if(String(command).endsWith('systemsetup')){
+					if(args[0]==='-gettimezone')return 'Time Zone: America/Asuncion';
+					if(args[0]==='-getnetworktimeserver')return 'Network Time Server: time.euro.apple.com';
+					if(args[0]==='-getusingnetworktime')return 'Network Time: On';
+				}
+				return null;
+			}
+			mock.module('./src/system-time-common.ts',()=>({...common,tryRead:read}));
+			const {readMacStatus}=await import('./src/system-time-macos.ts');
+			console.log(JSON.stringify({status:await readMacStatus(()=>null,()=>null),commands}));
+		`;
+		const child = Bun.spawn([process.execPath, '--eval', script], { cwd: resolve(import.meta.dir, '../..'), stdout: 'pipe', stderr: 'pipe' });
+		const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+		expect(code, stderr).toBe(0);
+		const lines = stdout.trim().split('\n');
+		return JSON.parse(lines[lines.length - 1] ?? '{}') as { status: { timezone: string | null; utcOffsetMinutes?: number }; commands: string[] };
+	}
+
+	it('is the one the host answered', async () => {
+		const { status, commands } = await readMacScenario('-0400');
+		expect(status.timezone).toBe('America/Asuncion');
+		expect(status.utcOffsetMinutes).toBe(-240);
+		// Asked, not derived - and asked of the binary macOS actually has: there is no
+		// /usr/bin/date on a Mac.
+		expect(commands).toContain('/bin/date +%z');
+	});
+
+	/** No answer means no claim, so the shared status falls back to what it documents. */
+	it('states nothing when the host could not answer', async () => {
+		for (const answer of [null, 'CEST']) {
+			const { status } = await readMacScenario(answer);
+			expect(status.utcOffsetMinutes).toBeUndefined();
+		}
 	});
 });
 

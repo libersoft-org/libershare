@@ -120,6 +120,37 @@ export function remainingSaveBudget(): number | null {
 	return store === undefined ? null : store.deadline - store.now();
 }
 
+/**
+ * Where each platform's `date` lives, for the one question its own timezone rules have to
+ * answer: what offset from UTC is this host using right now.
+ *
+ * Neither `timedatectl show` nor `systemsetup -gettimezone` carries an offset - they name the
+ * zone and stop there - so the shared status used to derive one from THIS runtime's timezone
+ * database. Where that database and the host's disagree, which two tzdata versions on one
+ * machine are enough to produce, the screen labelled a time the host does not have as the
+ * host's own; an edit of the minutes then moved the clock by the whole disagreement. Measured
+ * on `America/Asuncion` under 2024a and 2025b rules: one hour apart.
+ *
+ * macOS has no `/usr/bin/date`, which is why this is a map rather than one name. Read through
+ * {@link run}, which strips `TZ` from the child's environment, so the answer is the host's
+ * setting and not a formatting override this process happens to carry.
+ */
+export const HOST_OFFSET_COMMAND = { linux: 'date', darwin: '/bin/date' } as const;
+
+/**
+ * `date +%z` as minutes east of UTC, or null for anything unexpected.
+ *
+ * No answer means no claim: the status then leaves the field out and falls back to its
+ * documented fallback, because stating a made-up number as the host's is the failure this
+ * exists to avoid.
+ */
+export function parseUtcOffsetMinutes(value: string | null): number | null {
+	const match = /^([+-])(\d{2})(\d{2})$/.exec((value ?? '').trim());
+	if (!match) return null;
+	const minutes = Number(match[2]) * 60 + Number(match[3]);
+	return match[1] === '-' ? -minutes : minutes;
+}
+
 const LINUX_EXECUTABLES: Readonly<Record<string, string>> = {
 	date: '/usr/bin/date',
 	timedatectl: '/usr/bin/timedatectl',

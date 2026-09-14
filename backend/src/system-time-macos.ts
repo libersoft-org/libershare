@@ -1,5 +1,5 @@
 import { readFileSync, readlinkSync } from 'node:fs';
-import { type PlatformStatus, type SystemCommand, tryRead } from './system-time-common.ts';
+import { type PlatformStatus, type SystemCommand, tryRead, HOST_OFFSET_COMMAND, parseUtcOffsetMinutes } from './system-time-common.ts';
 
 /** `systemsetup` is not on a default non-root PATH on macOS, so it is always addressed absolutely. */
 export const MAC_SYSTEMSETUP = '/usr/sbin/systemsetup';
@@ -115,6 +115,11 @@ export async function readMacStatus(readNtpConf: () => string | null = readMacNt
 	const zone = await tryRead(MAC_SYSTEMSETUP, ['-gettimezone']);
 	const server = await tryRead(MAC_SYSTEMSETUP, ['-getnetworktimeserver']);
 	const using = await tryRead(MAC_SYSTEMSETUP, ['-getusingnetworktime']);
+	// The host's own offset, for the same reason Linux reads it: `systemsetup -gettimezone`
+	// names the zone and says nothing about the offset in force, so deriving one here would be
+	// this runtime's answer dressed up as the host's. Unlike the rest of this reader it needs
+	// no privileges, so it answers even for an unprivileged process.
+	const offset = parseUtcOffsetMinutes(await tryRead(HOST_OFFSET_COMMAND.darwin, ['+%z']));
 	// An unreadable systemsetup is an unprivileged process, not a missing facility:
 	// the capabilities stay true so the UI keeps offering the controls and the write
 	// reports the permission problem.
@@ -122,6 +127,7 @@ export async function readMacStatus(readNtpConf: () => string | null = readMacNt
 		// `systemsetup` first, then the symlink every user may read. Falling through to the
 		// PROCESS zone is what made an elevated change invisible to this backend forever.
 		timezone: (zone === null ? null : parseSystemsetupValue(zone)) ?? readLocaltime(),
+		...(offset === null ? {} : { utcOffsetMinutes: offset }),
 		ntpEnabled: using === null ? null : parseSystemsetupOnOff(using),
 		// macOS exposes no "last sync succeeded" flag.
 		ntpSynchronized: null,

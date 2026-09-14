@@ -3,7 +3,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { applyTimesyncdDropIn, type CommandRunner, buildTimesyncdDropIn, parseTimesyncConfig, resolveSystemExecutable } from '../../src/system-time.ts';
-import { parseUtcOffsetMinutes } from '../../src/system-time-linux.ts';
+import { parseUtcOffsetMinutes } from '../../src/system-time-common.ts';
 import { verifyTimesyncdServer } from '../../src/system-time-linux.ts';
 import { timesyncConfigOutput } from '../helpers/system-time-timesyncd.ts';
 
