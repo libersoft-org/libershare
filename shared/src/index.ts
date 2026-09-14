@@ -476,8 +476,13 @@ export interface SystemTimeStatus {
 	 * Deliberately NOT folded into `ntpEnabled`. That one drives the switch, and a switch
 	 * turned on here would offer to "switch synchronisation off" by stopping timesyncd - which
 	 * is not what is holding the clock.
+	 *
+	 * Tri-state, for the same reason `ntpEnabled` is: `null` means the host could not be asked
+	 * whether such a daemon is running. Collapsing that to false turned "unknown" into
+	 * permission to overwrite a clock somebody may own - and a hand-set clock requires a
+	 * definite answer, never merely "not known to be a problem". Absent means definitely not.
 	 */
-	clockHeldByUnmanagedDaemon?: boolean;
+	clockHeldByUnmanagedDaemon?: boolean | null;
 	/** The last synchronisation actually succeeded; null where the OS does not report it. */
 	ntpSynchronized: boolean | null;
 	/** Configured NTP server address, or null when none is configured / it cannot be read. */

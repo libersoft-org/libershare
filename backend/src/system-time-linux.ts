@@ -1,5 +1,8 @@
 import { parseTimedatectlShow, type CommandRunner, run, type PlatformStatus, tryRead, UNREADABLE_STATUS, parseYesNo, isValidNtpServer, HOST_OFFSET_COMMAND, parseUtcOffsetMinutes } from './system-time-common.ts';
 import { readdir, readFile } from 'node:fs/promises';
+
+/** `systemctl show` separates its per-unit blocks with a blank line. */
+const NEWLINE = '\n';
 import { join } from 'node:path';
 
 /**
@@ -217,6 +220,52 @@ export function competingNtpUnits(ordered: string[] | null, states: Map<string, 
 		if (canonicalUnitName(states, unit) !== TIMESYNCD_UNIT) units.add(unit);
 	}
 	return [...units];
+}
+
+/**
+ * Every unit worth asking "is anything steering the clock here", which is NOT the same list
+ * as {@link competingNtpUnits}.
+ *
+ * That one exists to answer "would a timesyncd drop-in be read by anybody", so it leaves
+ * timesyncd out - a daemon must not count as competing with itself. For the CLOCK the
+ * question is only whether some daemon is running, and timesyncd running outside timedated's
+ * ordered list is exactly such a daemon: `timedatectl` answers `NTP=no` for it, because it
+ * speaks for the providers it manages. Using the drop-in answer for both let a hand-set clock
+ * through on such a host.
+ *
+ * Timesyncd is therefore added back here, unless the ordering already accounts for it - where
+ * it does, `NTP=yes`/`NTP=no` is timedated's own answer about it and the existing refusal
+ * covers that case with a better message.
+ */
+export function clockSteeringUnits(ordered: string[] | null, states: Map<string, UnitState> | null = null): string[] {
+	const units = new Set(competingNtpUnits(ordered, states));
+	const managed = (ordered ?? []).some(unit => canonicalUnitName(states, unit) === TIMESYNCD_UNIT);
+	if (!managed) units.add(TIMESYNCD_UNIT);
+	return [...units];
+}
+
+/**
+ * Which of the queried units are running, by canonical name.
+ *
+ * `systemctl show -p Id -p ActiveState` answers in blank-line-separated blocks, one per unit,
+ * so the state can be attributed to the unit it belongs to - which `--value` cannot do for two
+ * properties at once. Needed because ONE read now serves two decisions that care about
+ * different units.
+ *
+ * The state test is timedated's own and deliberately inverted: a unit counts as running unless
+ * its state is exactly `inactive` or `failed`. Listing the states that mean "running" left
+ * `deactivating` - a daemon on its way down that still holds the clock - and every state a
+ * future systemd may add reading as "nothing in the way".
+ */
+export function parseActiveUnits(output: string): Set<string> {
+	const active = new Set<string>();
+	for (const block of output.split(/(?:\r?\n){2,}/)) {
+		const properties = parseUnitProperties(block);
+		const id = properties.get('Id');
+		const state = (properties.get('ActiveState') ?? '').trim();
+		if (id && state.length > 0 && state !== 'inactive' && state !== 'failed') active.add(id);
+	}
+	return active;
 }
 
 /**
@@ -646,7 +695,18 @@ export async function readLinuxStatus(): Promise<PlatformStatus> {
 	// `CanNTP=no` AND `NTP=no`, so this read was skipped, nothing noticed chrony, and a
 	// hand-set clock went through while `chronyc tracking` showed it synchronised to a stratum
 	// 3 peer. One extra `systemctl show` on such a host, inside the read's own budget.
-	const competing = await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', '--', ...competingNtpUnits(ordered, states)]);
+	//
+	// One read for two decisions, hence `Id` alongside the state: the drop-in question asks
+	// about units OTHER than timesyncd, the clock question also asks about timesyncd itself
+	// when the ordering does not account for it. `--value` cannot attribute two properties to
+	// their unit, so the block form is read instead.
+	const steering = clockSteeringUnits(ordered, states);
+	const activity = await tryRead('systemctl', ['show', '-p', 'Id', '-p', 'ActiveState', '--', ...steering]);
+	const active = activity === null ? null : parseActiveUnits(activity);
+	// What `canConfigureTimesyncdServer` expects: a plain per-line state list of the competing
+	// units only, rebuilt from the one read rather than fetched again.
+	const competingUnits = new Set(competingNtpUnits(ordered, states).map(unit => canonicalUnitName(states, unit)));
+	const competing = active === null ? null : [...competingUnits].map(unit => (active.has(unit) ? 'active' : 'inactive')).join(NEWLINE);
 	const configurable = canConfigureTimesyncdServer(ordered, unit, competing);
 	// The same answer, for the other question it decides. `canConfigureTimesyncdServer` uses it
 	// to refuse writing a drop-in nobody would read; a daemon outside timedated's own list
@@ -659,7 +719,10 @@ export async function readLinuxStatus(): Promise<PlatformStatus> {
 	// `!== true` rather than `=== false`: an UNREADABLE `NTP` field is not permission to ignore
 	// a daemon that is demonstrably running. `NTP=yes` is the one case skipped, because the
 	// existing refusal already covers it with a message that fits better.
-	const heldElsewhere = parseYesNo(map['NTP']) !== true && competing !== null && parseAnyUnitActive(competing);
+	// Tri-state on purpose. A read that FAILED is not "nothing is running": collapsing it to
+	// false turned an unknown into permission to overwrite a clock, which is the same mistake
+	// as reading an unreadable `NTP` field as off. `null` here makes the refusal say so.
+	const heldElsewhere = parseYesNo(map['NTP']) === true ? false : active === null ? null : [...steering].some(unit => active.has(canonicalUnitName(states, unit)));
 	// The editable field must reflect the effective saved NTP= list even while another peer is active.
 	const configuration = configurable ? await tryRead('systemd-analyze', ['--no-pager', 'cat-config', 'systemd/timesyncd.conf']) : null;
 	const ntpServer = configuration === null ? null : parseTimesyncConfig(configuration);
@@ -672,7 +735,7 @@ export async function readLinuxStatus(): Promise<PlatformStatus> {
 		timezone: map['Timezone'] ?? null,
 		...(offset === null ? {} : { utcOffsetMinutes: offset }),
 		ntpEnabled: parseYesNo(map['NTP']),
-		...(heldElsewhere ? { clockHeldByUnmanagedDaemon: true } : {}),
+		...(heldElsewhere === false ? {} : { clockHeldByUnmanagedDaemon: heldElsewhere }),
 		ntpSynchronized: parseYesNo(map['NTPSynchronized']),
 		ntpServer,
 		capabilities: { setClock: true, setTimezone: true, setNtpEnabled: canNtp, setNtpServer: configurable },

@@ -566,7 +566,10 @@ export function clockWriteRefusal(status: SystemTimeStatus): SystemTimeResult | 
 	// speaks only for the providers it manages, and a daemon started outside that list steps
 	// the clock back all the same. The read already found it - refusing here is what makes
 	// that finding count, instead of writing a clock somebody else owns.
-	if (status.clockHeldByUnmanagedDaemon) return result('auto-sync-enabled', 'another time synchronisation daemon is running outside the one this host manages, so it would step a hand-set clock back; stop that service first');
+	if (status.clockHeldByUnmanagedDaemon === true) return result('auto-sync-enabled', 'another time synchronisation daemon is running outside the one this host manages, so it would step a hand-set clock back; stop that service first');
+	// And an unanswered question is not a yes. Same rule as the `ntpEnabled === null` refusal
+	// above: only a definite "nothing is steering this clock" releases it.
+	if (status.clockHeldByUnmanagedDaemon === null) return result('error', 'cannot determine whether another time synchronisation daemon is running, so the clock is left alone');
 	return null;
 }
 

@@ -120,6 +120,40 @@ describe('an NTP daemon outside the managed list', () => {
 		expect(commands.some(entry => entry.command === 'systemctl' && entry.args.includes('ActiveState'))).toBe(true);
 	});
 
+	/**
+	 * Projev A: timesyncd itself, running OUTSIDE timedated's ordered list.
+	 *
+	 * `competingNtpUnits` leaves timesyncd out on purpose - for the drop-in question, a daemon
+	 * must not count as competing with itself. That answer was used for the CLOCK question too,
+	 * so a timesyncd started outside the ordering was invisible: `timedatectl` says `NTP=no`
+	 * because it is not a provider it manages, and the hand-set clock went through.
+	 */
+	it('includes timesyncd itself when the managed ordering does not account for it', async () => {
+		const { status } = await readStatusScenario({ config: null, competing: 'timesyncd', ordered: ['chronyd.service'] });
+		expect(status.ntpEnabled).toBe(false);
+		expect(status.clockHeldByUnmanagedDaemon).toBe(true);
+	});
+
+	/** Where the ordering DOES account for it, `NTP=yes`/`no` is timedated's own answer. */
+	it('leaves timesyncd to timedated when it is a managed provider', async () => {
+		const { status } = await readStatusScenario({ config: null, competing: 'timesyncd' });
+		// Absent, not false: a definite "nothing unmanaged is steering this" is the default and
+		// costs nothing to send, so only true and null are stated.
+		expect(status.clockHeldByUnmanagedDaemon).toBeUndefined();
+	});
+
+	/**
+	 * Projev B: the activity read failing is not "nothing is running".
+	 *
+	 * The condition was `competing !== null`, so a failed or timed-out read produced no flag at
+	 * all - an unknown turned into permission to overwrite a clock somebody may own. Same
+	 * mistake as reading an unreadable `NTP` field as off.
+	 */
+	it('reports unknown rather than safe when the activity read fails', async () => {
+		const { status } = await readStatusScenario({ config: null, activityFails: true });
+		expect(status.clockHeldByUnmanagedDaemon).toBeNull();
+	});
+
 	/** And an unreadable NTP field is not permission to ignore a daemon that IS running. */
 	it('is reported when the host would not say whether synchronisation is on', async () => {
 		const { status } = await readStatusScenario({ config: null, competing: true, ntpField: 'maybe' });
@@ -175,7 +209,9 @@ interface StatusScenario {
 	runtime?: string | null;
 	enabled?: boolean;
 	owner?: 'ours' | 'foreign' | 'unknown' | 'masked';
-	competing?: boolean;
+	competing?: boolean | 'timesyncd';
+	activityFails?: boolean;
+	ordered?: string[];
 	canNtp?: boolean;
 	ntpField?: string;
 	offset?: string | null;
@@ -198,9 +234,17 @@ async function readStatusScenario(input: StatusScenario): Promise<StatusResult> 
 			if(command==='timedatectl'&&args[0]==='show')return 'Timezone=Europe/Prague\\nCanNTP='+(input.canNtp===false?'no':'yes')+'\\nNTP='+(input.ntpField??(input.enabled?'yes':'no'))+'\\nNTPSynchronized=no\\n';
 			if(command==='timedatectl'&&args[0]==='show-timesync')return input.runtime??null;
 			if(command==='systemctl'&&args[0]==='show-environment')return owner==='unknown'?null:'';
-			if(command==='systemctl'&&args.includes('Environment'))return 'LoadState=loaded\\nEnvironment=SYSTEMD_TIMEDATED_NTP_SERVICES='+(owner==='foreign'?'chronyd.service:':'')+unit+'\\n';
+			if(command==='systemctl'&&args.includes('Environment'))return 'LoadState=loaded\\nEnvironment=SYSTEMD_TIMEDATED_NTP_SERVICES='+(input.ordered?input.ordered.join(':'):(owner==='foreign'?'chronyd.service:':'')+unit)+'\\n';
+			if(command==='systemctl'&&args.includes('ActiveState')){
+				if(input.activityFails)return null;
+				// Real shape: an Id= / ActiveState= block per unit, blank line between them.
+				// input.competing says which are running: true = the chrony-style ones,
+				// 'timesyncd' = timesyncd itself is up outside the managed ordering.
+				const asked=args.filter(a=>a.endsWith('.service'));
+				const running=input.competing===true?asked.filter(u=>u!==unit):input.competing==='timesyncd'?[unit]:[];
+				return asked.map(u=>'Id='+u+'\\nActiveState='+(running.includes(u)?'active':'inactive')).join('\\n\\n')+'\\n';
+			}
 			if(command==='systemctl'&&args.includes('Id'))return (owner==='foreign'?'Id=chronyd.service\\nNames=chronyd.service\\nLoadState=loaded\\n\\n':'')+'Id='+unit+'\\nNames='+unit+'\\nLoadState='+(owner==='masked'?'masked':'loaded')+'\\n';
-			if(command==='systemctl'&&args.includes('ActiveState'))return input.competing?'active\\n':'inactive\\n';
 			if(command==='date')return input.offset===undefined?'+0200':input.offset;
 			if(command==='systemd-analyze')return input.config;
 			throw new Error('Unexpected command '+command+' '+args.join(' '));

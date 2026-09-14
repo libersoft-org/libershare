@@ -319,6 +319,22 @@ describe('a clock another daemon is steering', () => {
 		expect(answer.stateMayHaveChanged).toBeUndefined();
 	});
 
+	/**
+	 * An unanswered question is not a yes. The read says `null` when it could not ask the host
+	 * whether such a daemon is running, and only a definite "nothing is steering this clock"
+	 * may release it - the same rule the `ntpEnabled === null` refusal already follows.
+	 */
+	it('is refused while it is merely unknown whether one is running', async () => {
+		const unknown = statusFixture({ ntpEnabled: false, clockHeldByUnmanagedDaemon: null });
+		const refusal = clockWriteRefusal(unknown);
+		expect(refusal?.outcome).toBe('error');
+		expect(refusal?.message).toContain('cannot determine whether another time synchronisation daemon');
+		const { exec, calls } = fakeRunner([]);
+		const answer = await setSystemClock(12, 34, 56, async () => unknown, exec);
+		expect(answer.success).toBe(false);
+		expect(calls).toEqual([]);
+	});
+
 	/** The ordinary case is untouched: no such daemon, synchronisation off, clock settable. */
 	it('leaves an ordinary host alone', () => {
 		expect(clockWriteRefusal(statusFixture({ ntpEnabled: false }))).toBeNull();
