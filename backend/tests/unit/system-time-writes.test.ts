@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { applySystemTimeSettings, buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, clockWriteRefusal, getSystemTimeStatus, listHostTimezones, listSystemTimezones, resetHostTimezones, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type SystemCommand, type SystemTimeWriters, type WindowsModeState, W32TM_ERROR_RE, W32TM_SERVICE_INACTIVE_RE, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, MAC_NEEDS_ROOT_RE, run, EXEC_TIMEOUT_MS, WRITE_TIMEOUT_MS, withSystemTimeLock } from '../../src/system-time.ts';
-import { SEQUENCE_BUDGET_MS } from '../../src/system-time-common.ts';
+import { SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, withSaveBudget } from '../../src/system-time-common.ts';
 import { SIGNATURE_TIMEOUT_MS, WINDOWS_TIME_HELPER_TIMEOUT_MS } from '../../src/network-helper-client.ts';
 import { WINDOWS_ELEVATION_WAIT_MS } from '../../src/network-helper-windows.ts';
 import { SYSTEM_TIME_SAVE_TIMEOUT_MS } from '@shared';
@@ -98,6 +98,63 @@ describe('the timeouts of one save', () => {
 		// nine minutes of them.
 		expect(SEQUENCE_BUDGET_MS).toBeLessThan(6 * WRITE_TIMEOUT_MS);
 		expect(SEQUENCE_BUDGET_MS).toBeGreaterThan(WRITE_TIMEOUT_MS);
+	});
+});
+
+/**
+ * Reads have to answer to the save's budget as well.
+ *
+ * They did not: a write consulted the remainder and a READ took its own 5 s however late the
+ * save already was, so the reads before a write could spend the whole allowance. On Windows
+ * that is not merely slow - the elevated helper is deliberately held to less than the
+ * launcher's wait so it can report where it got to, and reads running past that had it
+ * terminated with a timezone already changed and nothing said about it.
+ *
+ * Measured with a real child rather than by comparing constants, because the failure was that
+ * a real child outlived a limit nobody applied to it.
+ */
+describe('a child process under a save budget', () => {
+	/** Something that sleeps, spelled the way each platform's own trusted executable does. */
+	const slowChild = (): { cmd: string; args: string[] } => (process.platform === 'win32' ? { cmd: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 10'] } : { cmd: '/bin/sleep', args: ['10'] });
+
+	it('is cut short by what the save has left, not by its own limit', async () => {
+		const { cmd, args } = slowChild();
+		const started = performance.now();
+		// Two seconds left of the save, and a read that would take ten.
+		const outcome = await withSaveBudget(async () => run(cmd, args, EXEC_TIMEOUT_MS), performance.now.bind(performance), 2_000);
+		const spent = performance.now() - started;
+		expect(outcome.kind).toBe('timeout');
+		// Inside the remainder, with room for process startup - and nowhere near the child's
+		// own ten seconds or the 5 s read limit that used to apply regardless.
+		expect(spent).toBeLessThan(5_000);
+	});
+
+	it('is not started at all once the save has nothing left', async () => {
+		const { cmd, args } = slowChild();
+		let clock = 0;
+		const started = performance.now();
+		const outcome = await withSaveBudget(
+			async () => {
+				clock = SAVE_BUDGET_MS + 1;
+				return run(cmd, args, EXEC_TIMEOUT_MS);
+			},
+			() => clock,
+			SAVE_BUDGET_MS
+		);
+		expect(outcome.kind).toBe('timeout');
+		// No process was spawned, so this is immediate rather than a millisecond-long kill.
+		expect(performance.now() - started).toBeLessThan(500);
+	});
+
+	/** Outside a save there is no remainder to consult, and the ordinary read limit stands. */
+	it('keeps its own limit when nothing set a budget', async () => {
+		const { cmd, args } = slowChild();
+		const started = performance.now();
+		const outcome = await run(cmd, args, 1_200);
+		const spent = performance.now() - started;
+		expect(outcome.kind).toBe('timeout');
+		expect(spent).toBeGreaterThan(900);
+		expect(spent).toBeLessThan(6_000);
 	});
 });
 

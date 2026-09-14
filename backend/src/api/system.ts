@@ -5,7 +5,7 @@ import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type Sy
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
-import { elapsedClock, getSystemTimeStatus, listHostTimezones, remainingSaveBudget, SAVE_BUDGET_MS, withSaveBudget, withSystemTimeLock } from '../system-time.ts';
+import { elapsedClock, getSystemTimeStatus, listHostTimezones, remainingSaveBudget, SAVE_BUDGET_MS, withFollowUpBudget, withSaveBudget, withSystemTimeLock } from '../system-time.ts';
 import { applySystemTimeSettingsWithElevation } from '../system-time-elevation.ts';
 import { warmElevationTrust } from '../network-helper-client.ts';
 import { applyIPv4Unlocked, connectWifiUnlocked, disconnectWifiUnlocked, readNetworkState, readNetworkStateUnlocked, runNetworkMutation, scanWifi } from '../system-network.ts';
@@ -105,7 +105,11 @@ export function runTimeWrite(write: () => Promise<SystemTimeResult>, readStatus:
 		// leaves every open window showing a state the host no longer has.
 			if (!res.success && !res.stateMayHaveChanged) return res;
 			try {
-				broadcast('system:timeChanged', await readStatus());
+				// Under its own allowance, not the save's. Telling every open window what the host
+				// looks like now is not the work the budget bounds - and with child limits held
+				// to the remainder, a save that spent all of it would have its own report refused
+				// and leave the screen showing a state the host no longer has.
+				broadcast('system:timeChanged', await withFollowUpBudget(readStatus));
 			} catch (err) {
 				console.warn('[system-time] Applied, but could not announce the new time status:', (err as Error).message);
 			}

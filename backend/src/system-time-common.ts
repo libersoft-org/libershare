@@ -547,6 +547,10 @@ export async function run(cmd: string, args: string[], timeoutMs: number = EXEC_
 	try {
 		const executable = resolveSystemExecutable(process.platform, cmd);
 		if (!executable) return { kind: 'missing' };
+		// Before anything is spawned: a child that cannot finish inside what the save has left
+		// must not be started, and one that can is held to the remainder.
+		const limit = childLimit(timeoutMs);
+		if (limit === null) return { kind: 'timeout' };
 		// System tools must use the host timezone, not a process-local formatting override.
 		const environment = { ...process.env, LC_ALL: 'C' };
 		delete environment['TZ'];
@@ -554,7 +558,7 @@ export async function run(cmd: string, args: string[], timeoutMs: number = EXEC_
 		// wedged helper ignoring the default SIGTERM would hang the caller forever.
 		// `encoding: 'buffer'` because the bytes are not UTF-8 on a localized Windows
 		// console — see decodeCommandOutput.
-		const { stdout } = await execFileAsync(executable, args, { timeout: timeoutMs, killSignal: 'SIGKILL', windowsHide: true, env: environment, encoding: 'buffer' });
+		const { stdout } = await execFileAsync(executable, args, { timeout: limit, killSignal: 'SIGKILL', windowsHide: true, env: environment, encoding: 'buffer' });
 		return { kind: 'ok', output: decode(cmd, stdout) };
 	} catch (err) {
 		const e = err as { code?: number | string; killed?: boolean; signal?: string | null; stdout?: Uint8Array; stderr?: Uint8Array; message?: string };
@@ -611,6 +615,28 @@ export const elapsedClock = (): number => performance.now();
  * `exec` is injectable so the sequencing and the outcome mapping can be exercised
  * without spawning anything.
  */
+/**
+ * The limit for ONE child process, never longer than what the save has left.
+ *
+ * Null means "do not spawn it at all": the save's time is gone, and starting a process only to
+ * kill it a millisecond later is not a limit, it is a waste.
+ *
+ * Every child goes through here, READS included, and that is the point. The writes consulted
+ * the budget and the reads did not - each read took its own 5 s however late the save already
+ * was - so a save could spend its whole allowance before reaching the write that checks it.
+ * On Windows that is not merely slow: the elevated helper is held to less than the launcher's
+ * wait precisely so it can report where it got to, and reads running past that had it
+ * terminated instead. Traced with reads answering in 4.8 s each, inside their own limit: the
+ * status read, the timezone change, the second status read and the service-state read reach
+ * 62.6 s against a 60 s wait, with the timezone already changed.
+ */
+function childLimit(limit: number): number | null {
+	const remaining = remainingSaveBudget();
+	if (remaining === null) return Math.max(1, Math.floor(limit));
+	if (remaining <= 0) return null;
+	return Math.max(1, Math.floor(Math.min(limit, remaining)));
+}
+
 /**
  * The limit for ONE command, given what the sequence has left.
  *
