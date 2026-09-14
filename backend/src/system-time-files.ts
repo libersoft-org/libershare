@@ -414,11 +414,11 @@ export type RollbackResult = { state: 'restored-durable' } | { state: 'restored-
  */
 export type RollbackHandle = (() => Promise<RollbackResult>) & { discard: () => Promise<void> };
 
-export async function writeFileAtomically(path: string, content: string, readOriginal: (p: string) => Promise<string> = p => readFile(p, 'utf8'), syncDir: (dir: string) => Promise<void> = syncDirectory): Promise<RollbackHandle> {
-	return publishFile(path, content, { mode: 0o644 }, readOriginal, syncDir);
+export async function writeFileAtomically(path: string, content: string, readOriginal: (p: string) => Promise<string> = p => readFile(p, 'utf8'), syncDir: (dir: string) => Promise<void> = syncDirectory, linkFile: (from: string, to: string) => Promise<void> = link): Promise<RollbackHandle> {
+	return publishFile(path, content, { mode: 0o644 }, readOriginal, syncDir, undefined, true, linkFile);
 }
 
-async function publishFile(path: string, content: string, permissions: { mode: number; uid?: number; gid?: number }, readOriginal: (path: string) => Promise<string>, syncDir: (dir: string) => Promise<void>, expected?: FileMetadata | null): Promise<RollbackHandle> {
+async function publishFile(path: string, content: string, permissions: { mode: number; uid?: number; gid?: number }, readOriginal: (path: string) => Promise<string>, syncDir: (dir: string) => Promise<void>, expected?: FileMetadata | null, keepBackup: boolean = true, linkFile: (from: string, to: string) => Promise<void> = link): Promise<RollbackHandle> {
 	// A second NAME for the original file, not a copy of it - taken before anything is read.
 	//
 	// The rollback used to rebuild the original: same content, same mode, same owner, written
@@ -438,13 +438,23 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 	// write refuses itself; re-reading the guard after linking would instead adopt a genuine
 	// edit that landed in between. Linking before the read leaves the existing meaning intact:
 	// the guard is whatever the file was when this call first looked at it.
+	//
+	// `keepBackup` is false for one caller: the rollback's own rebuild. A write that exists to
+	// UNDO another write has nothing to roll back, and taking a spare name anyway was not
+	// merely wasteful - the link moves the ctime of the file it names, and that file is the
+	// one this nested write is guarding against change. So it invalidated its own guard and
+	// refused the restore as somebody else's edit, leaving the rejected configuration on
+	// disk. Reproduced: original A, administrator swaps in B before the read, C published, a
+	// later step fails, and the restore of B is refused.
 	const backup = `${path}.libershare-${process.pid}-${randomUUID()}.bak`;
 	let backupLinked = false;
-	try {
-		await link(path, backup);
-		backupLinked = true;
-	} catch {
-		backupLinked = false;
+	if (keepBackup) {
+		try {
+			await linkFile(path, backup);
+			backupLinked = true;
+		} catch {
+			backupLinked = false;
+		}
 	}
 	let previous: FileSnapshot | null;
 	try {
@@ -481,7 +491,7 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 	// Only when the exact restore is unavailable is it worth knowing what the original could
 	// do, and only then is the cost paid: on the linked path the inode comes back with
 	// everything it had, so there is nothing to compare.
-	const originalUsable = previous !== null && !backupLinked ? (await unreadableByServiceAccount(path)) === null : false;
+	const originalUsable = keepBackup && previous !== null && !backupLinked ? (await unreadableByServiceAccount(path)) === null : false;
 	let renamed = false;
 	let written: FileMetadata;
 	// Measured AFTER the swap, not on the staging file: the rename itself moves ctime, so a
@@ -593,7 +603,11 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 						return latest;
 					},
 					syncDir,
-					published
+					published,
+					// No backup of its own: there is nothing to undo about an undo, and the link
+					// would move the ctime of the very file this call is guarding.
+					false,
+					linkFile
 				);
 				// Rebuilt, not returned: the content and the permission bits are back, but anything
 				// else the original carried is not, and this is the one path that cannot promise

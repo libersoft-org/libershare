@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { applyTimesyncdDropIn, syncDirectory, type CommandRunner, type RunOutcome, SAVE_BUDGET_MS, withSaveBudget, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
@@ -437,6 +437,35 @@ describe('writeFileAtomically', () => {
 		}
 		// Not vacuous: the un-raced interleaving alone reaches a reported restore every time.
 		expect(restores).toBeGreaterThan(0);
+	});
+
+	/**
+	 * The rollback's REBUILD path, taken when no usable spare name is held.
+	 *
+	 * It went through `publishFile` again, and that call took a spare name of its own - which
+	 * moves the ctime of the very file it is guarding against change. So it invalidated its
+	 * own guard and refused the restore as somebody else's edit, leaving the rejected
+	 * configuration on disk. A write that exists to UNDO another write has nothing to roll
+	 * back, so it now takes no backup at all.
+	 *
+	 * The first link is made to fail so the rebuild path is reached deterministically; every
+	 * later link is the real one, which is what used to spring the trap.
+	 */
+	it('rebuilds the original without invalidating its own guard', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await writeFile(path, 'original\n', 'utf8');
+		let links = 0;
+		const linkFile = async (from: string, to: string): Promise<void> => {
+			if (++links === 1) throw Object.assign(new Error('EPERM: link'), { code: 'EPERM' });
+			await link(from, to);
+		};
+		const rollback = await writeFileAtomically(path, 'ours\n', p => readFile(p, 'utf8'), syncDirectory, linkFile);
+		expect(await readFile(path, 'utf8')).toBe('ours\n');
+		const restored = await rollback();
+		expect(restored.state).toBe('restored-durable');
+		expect(await readFile(path, 'utf8')).toBe('original\n');
+		// And nothing of ours next to it - the rebuild kept no spare name to leave behind.
+		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
 	});
 
 	it('preserves an external edit instead of restoring the previous file over it', async () => {
