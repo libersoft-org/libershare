@@ -468,6 +468,21 @@ describe('writeFileAtomically', () => {
 		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
 	});
 
+	/**
+	 * A failure BEFORE anything is staged still has to release the spare name already held.
+	 * Preparing the directory ran outside the clean-up, so a refused flush of its parent
+	 * ended the call with a `.bak` sitting next to a configuration this write never touched.
+	 */
+	it('releases the backup when the directory could not be prepared', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await writeFile(path, 'original\n', 'utf8');
+		const err = await writeFileAtomically(path, 'ours\n', p => readFile(p, 'utf8'), failFlushOf(dirname(dir))).catch((e: { code?: string }) => e);
+		expect(err).toMatchObject({ code: 'EIO' });
+		// The original is untouched, which it always was - and now it is alone.
+		expect(await readFile(path, 'utf8')).toBe('original\n');
+		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
+	});
+
 	it('preserves an external edit instead of restoring the previous file over it', async () => {
 		const path = join(dir, '90-libershare.conf');
 		await writeFile(path, 'original\n');

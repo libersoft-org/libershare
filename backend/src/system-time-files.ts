@@ -485,19 +485,25 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 	// over. `expected` defaults to what was just read, which refuses only a change made DURING
 	// this call; replacing a file that was already different is still the whole point.
 	const guard = expected === undefined ? previous : expected;
-	await makeDirectoryDurably(dirname(path), syncDir);
 	// Same directory, or the rename would cross a filesystem boundary and stop being atomic.
 	const temp = `${path}.libershare-${process.pid}-${randomUUID()}.tmp`;
 	// Only when the exact restore is unavailable is it worth knowing what the original could
 	// do, and only then is the cost paid: on the linked path the inode comes back with
-	// everything it had, so there is nothing to compare.
-	const originalUsable = keepBackup && previous !== null && !backupLinked ? (await unreadableByServiceAccount(path)) === null : false;
+	// everything it had, so there is nothing to compare - and a write that keeps no backup has
+	// no restore to report about at all.
+	let originalUsable = false;
 	let renamed = false;
 	let written: FileMetadata;
 	// Measured AFTER the swap, not on the staging file: the rename itself moves ctime, so a
 	// staged measurement compares unequal to the very file it just published.
 	let published: FileMetadata | null = null;
 	try {
+		// Inside the try, so the spare name goes with everything else when this throws. Left
+		// outside it, a directory that could not be prepared - a flush of its parent refusing,
+		// a level that cannot be created - ended the call before the clean-up existed, and the
+		// backup link stayed next to a configuration this write never touched.
+		await makeDirectoryDurably(dirname(path), syncDir);
+		originalUsable = keepBackup && previous !== null && !backupLinked ? (await unreadableByServiceAccount(path)) === null : false;
 		// `wx`, not `w`: an existing name is a collision to report, never one to overwrite.
 		// The mode is explicit and private, because without it `open` creates the file as
 		// 0666 masked by the INHERITED umask — so under a permissive umask (000) the staging
