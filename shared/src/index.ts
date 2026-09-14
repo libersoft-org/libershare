@@ -526,6 +526,19 @@ export interface SystemTimeChanges {
  */
 export const SYSTEM_TIME_SAVE_TIMEOUT_MS = 300_000;
 
+/**
+ * How long a client waits for one system-time READ before giving up on the answer.
+ *
+ * Shared rather than local to the screen because the backend has to bound its own reads by
+ * it. A Linux status read is seven child processes in sequence - `timedatectl show`, two
+ * `systemctl show` calls for timedated's environment, the unit query, the competing-unit
+ * query, `systemd-analyze cat-config` and `date +%z` - and each was allowed its own 5 s. Every
+ * one of them could answer inside its limit while their total passed this wait, so the screen
+ * reported a failed read for a host that was merely slow. The backend now holds the whole read
+ * to a budget derived from this figure; a test asserts that arithmetic.
+ */
+export const SYSTEM_TIME_READ_TIMEOUT_MS = 30_000;
+
 export const SYSTEM_TIME_OUTCOMES = ['ok', 'permission-denied', 'unsupported', 'auto-sync-enabled', 'invalid-input', 'stale', 'error'] as const;
 export type SystemTimeOutcome = (typeof SYSTEM_TIME_OUTCOMES)[number];
 

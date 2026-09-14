@@ -607,7 +607,10 @@ export function buildTimesyncdDropIn(server: string): string {
 
 /** Read the Linux (systemd-timedated) part of the status. */
 export async function readLinuxStatus(): Promise<PlatformStatus> {
-	const show = await tryRead('timedatectl', ['show']);
+	// These two answer independently, so they are asked together: everything below depends on
+	// `timedatectl show`, and one fewer round of waiting is one fewer chance for a slow host to
+	// spend the read's budget before the interesting fields are reached.
+	const [show, rawOffset] = await Promise.all([tryRead('timedatectl', ['show']), tryRead(HOST_OFFSET_COMMAND.linux, ['+%z'])]);
 	if (show === null) {
 		// ponytail: no systemd-timedated means no supported backend here. The
 		// `date -s` / `/etc/localtime` symlink fallback is deliberately not
@@ -642,10 +645,10 @@ export async function readLinuxStatus(): Promise<PlatformStatus> {
 	// The editable field must reflect the effective saved NTP= list even while another peer is active.
 	const configuration = configurable ? await tryRead('systemd-analyze', ['--no-pager', 'cat-config', 'systemd/timesyncd.conf']) : null;
 	const ntpServer = configuration === null ? null : parseTimesyncConfig(configuration);
-	// One extra read, and it is the host's own arithmetic rather than this process's: see
-	// parseUtcOffsetMinutes. Left out when `date` is unavailable or answers something
-	// unexpected, which puts the shared status back on its existing fallback.
-	const offset = parseUtcOffsetMinutes(await tryRead(HOST_OFFSET_COMMAND.linux, ['+%z']));
+	// The host's own arithmetic rather than this process's: see parseUtcOffsetMinutes. Left
+	// out when `date` is unavailable or answers something unexpected, which puts the shared
+	// status back on its existing fallback.
+	const offset = parseUtcOffsetMinutes(rawOffset);
 	return {
 		// `timedatectl show` was read above and already carries it — no extra probe.
 		timezone: map['Timezone'] ?? null,

@@ -8,7 +8,7 @@
 	import { api } from '../../scripts/api.ts';
 	import { connected } from '../../scripts/ws-client.ts';
 	import { NTP_PRESETS, createStatusGate, effectiveOffsetMode, formatHostClock, formatHostDate, timeStatusChanged, loadFailureMessage, loadMayApply, planTimeChanges, syncSwitchIsDirty, writeFailureMessage } from '../../scripts/timeStatusSync.ts';
-	import { SYSTEM_TIME_SAVE_TIMEOUT_MS, type SystemTimeChanges, type SystemTimeOutcome, type SystemTimeResult, type SystemTimeStatus } from '@shared';
+	import { SYSTEM_TIME_READ_TIMEOUT_MS, SYSTEM_TIME_SAVE_TIMEOUT_MS, type SystemTimeChanges, type SystemTimeOutcome, type SystemTimeResult, type SystemTimeStatus } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Icon from '../../components/Icon/Icon.svelte';
@@ -39,7 +39,6 @@
 	 * warning plus a re-read — and never retried. Repeating a clock write would step the
 	 * host's time a second time.
 	 */
-	const READ_TIMEOUT_MS = 30000;
 	// One number, shared with the backend's own budget: a screen that gives up first reports
 	// an interrupted save while the host is still being changed, and the read-back that would
 	// show what happened is queued behind that very write.
@@ -138,7 +137,7 @@
 		if (!background) foregroundRead = current;
 		const currentTimezones = timezoneGate.begin();
 		loading = true;
-		const [statusResult, zonesResult] = await Promise.allSettled([api.call<SystemTimeStatus>('system.getTime', {}, READ_TIMEOUT_MS), api.call<string[]>('system.listTimezones', {}, READ_TIMEOUT_MS)]);
+		const [statusResult, zonesResult] = await Promise.allSettled([api.call<SystemTimeStatus>('system.getTime', {}, SYSTEM_TIME_READ_TIMEOUT_MS), api.call<string[]>('system.listTimezones', {}, SYSTEM_TIME_READ_TIMEOUT_MS)]);
 		if (foregroundRead === current) foregroundRead = null;
 		// A broadcast, or a later read, may have landed while this one was out. Its state is
 		// the fresher one and this answer predates it — applying it anyway would rewind the
@@ -176,7 +175,7 @@
 			// unanswered one held the screen on its spinner with no way out. Losing the race
 			// lands in the same place a refused subscription does — live updates off, which is
 			// a state the screen already shows and Reload can still retry from.
-			await Promise.race([api.subscribe('system:timeChanged'), new Promise((_, reject) => setTimeout(() => reject(new Error('subscription timed out')), READ_TIMEOUT_MS))]);
+			await Promise.race([api.subscribe('system:timeChanged'), new Promise((_, reject) => setTimeout(() => reject(new Error('subscription timed out')), SYSTEM_TIME_READ_TIMEOUT_MS))]);
 			if (!current() || destroyed) return;
 			liveUpdates = true;
 		} catch {

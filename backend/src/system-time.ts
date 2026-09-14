@@ -1,4 +1,4 @@
-import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, runWrite, validateClockParts, runAll, listSystemTimezones, isValidNtpServer, withSaveBudget, withFollowUpBudget, remainingSaveBudget, SAVE_BUDGET_MS, WRITE_TIMEOUT_MS } from './system-time-common.ts';
+import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, runWrite, validateClockParts, runAll, listSystemTimezones, isValidNtpServer, withSaveBudget, withFollowUpBudget, withReadBudget, remainingSaveBudget, SAVE_BUDGET_MS, WRITE_TIMEOUT_MS } from './system-time-common.ts';
 import { macSystemsetup, readMacStatus } from './system-time-macos.ts';
 import { w32tm, w32tmNotifying, windowsClockRefusal, probeLocalMachineKeyWritable, type RegistryWriteState, W32TIME_NTP_CLIENT_SUBKEY, W32TIME_NTP_CLIENT_KEY, type WindowsSyncMode, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled, readWindowsTimeZone, readWindowsTimeServiceRunning, type WindowsTimeZoneState } from './system-time-windows.ts';
 import { readLinuxStatus, TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn, verifyTimesyncdServer } from './system-time-linux.ts';
@@ -290,7 +290,11 @@ export async function getSystemTimeStatus(readPlatform: PlatformStatusReader = r
 	let specific: PlatformStatus = UNREADABLE_STATUS;
 	if (supported) {
 		try {
-			specific = await readPlatform(platform);
+			// Under one budget for the whole read. Each child had its own limit and their total
+			// had none, so seven commands that each answered in time added up to more than the
+			// screen was waiting for - and it reported a failed read for a host that was only
+			// slow. Inside a save this joins that save's remaining time instead.
+			specific = await withReadBudget(() => readPlatform(platform));
 		} catch (err) {
 			console.warn('[system-time] Failed to read time status:', (err as Error).message);
 		}
@@ -881,7 +885,7 @@ export async function waitForWindowsTimeService(running: boolean, read: () => bo
 		await pause(Math.min(250, remaining));
 	}
 }
-export { resolveSystemExecutable, decodeCommandOutput, windowsSystemLibraryPath, run, runWrite, EXEC_TIMEOUT_MS, WRITE_TIMEOUT_MS, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, FOLLOW_UP_BUDGET_MS, withSaveBudget, withFollowUpBudget, remainingSaveBudget, elapsedClock, type SystemPlatform, type SystemCommand, type LocalDateTime, isSupportedPlatform, isValidNtpServer, validateClockParts, parseTimedatectlShow, parseYesNo, classifyFailure, firstLine, listSystemTimezones, getTimezoneSource, timezoneOffsetMinutes, type RunOutcome, type CommandRunner, runAll, type PlatformStatus, type PlatformStatusReader } from './system-time-common.ts';
+export { resolveSystemExecutable, decodeCommandOutput, windowsSystemLibraryPath, run, runWrite, EXEC_TIMEOUT_MS, WRITE_TIMEOUT_MS, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, FOLLOW_UP_BUDGET_MS, READ_BUDGET_MS, withSaveBudget, withFollowUpBudget, withReadBudget, remainingSaveBudget, elapsedClock, type SystemPlatform, type SystemCommand, type LocalDateTime, isSupportedPlatform, isValidNtpServer, validateClockParts, parseTimedatectlShow, parseYesNo, classifyFailure, firstLine, listSystemTimezones, getTimezoneSource, timezoneOffsetMinutes, type RunOutcome, type CommandRunner, runAll, type PlatformStatus, type PlatformStatusReader } from './system-time-common.ts';
 
 export { TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, parseTimesyncConfig, type UnitState, parseUnitLoadStates, canonicalUnitName, unitIsLoaded, COMPETING_NTP_UNITS, competingNtpUnits, parseAnyUnitActive, type ExtractedWords, extractWordsChecked, extractWords, readTimedatedEnvironment, readNtpUnitsList, firstUsableNtpUnit, canConfigureTimesyncdServer, buildTimesyncdDropIn } from './system-time-linux.ts';
 

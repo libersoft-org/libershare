@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { win32, isAbsolute } from 'node:path';
 import { isIP } from 'node:net';
 import { dlopen, FFIType, ptr } from 'bun:ffi';
-import { type SystemTimeOutcome, type SystemTimezoneSource, type SystemTimeResult, type SystemTimeStep, type SystemTimeCapabilities, type SystemTimeStatus } from '@shared';
+import { SYSTEM_TIME_READ_TIMEOUT_MS, type SystemTimeOutcome, type SystemTimezoneSource, type SystemTimeResult, type SystemTimeStep, type SystemTimeCapabilities, type SystemTimeStatus } from '@shared';
 
 const execFileAsync = promisify(execFile);
 
@@ -72,6 +72,32 @@ export function withSaveBudget<T>(fn: () => Promise<T>, now: () => number = elap
 	// being handed one, so the two have to arrive together or an injected clock would set the
 	// deadline and then be ignored by every reader of it.
 	return saveDeadline.run({ deadline: now() + budgetMs, now }, fn);
+}
+
+/**
+ * How long ONE read of the host's time state may take, across every child process in it.
+ *
+ * Derived from the wait the screen gives that read, less the room the answer needs to travel
+ * back: a read that spends the whole wait is a read whose answer arrives too late to be of
+ * use. The individual limits stay where they are - what was missing is a ceiling on their
+ * total, because seven commands of 5 s each are 35 s against a 30 s wait even though not one
+ * of them is late.
+ *
+ * Nothing is aborted mid-flight: {@link childLimit} shortens each child to the remainder and
+ * refuses to start one that has nothing left, so a slow host answers with the fields it
+ * managed to read instead of the screen answering with an error.
+ */
+export const READ_BUDGET_MS = SYSTEM_TIME_READ_TIMEOUT_MS - 5_000;
+
+/**
+ * Run one host read under {@link READ_BUDGET_MS}, or inside whatever budget already applies.
+ *
+ * JOINS an existing one on purpose - a read taken in the middle of a save belongs to that
+ * save's time, not to a fresh allowance of its own. Only a read nobody else is timing gets
+ * this budget.
+ */
+export function withReadBudget<T>(fn: () => Promise<T>, now: () => number = elapsedClock): Promise<T> {
+	return withSaveBudget(fn, now, READ_BUDGET_MS);
 }
 
 /**

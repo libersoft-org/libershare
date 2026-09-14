@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import { applySystemTimeSettings, buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, clockWriteRefusal, getSystemTimeStatus, listHostTimezones, listSystemTimezones, resetHostTimezones, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type SystemCommand, type SystemTimeWriters, type WindowsModeState, W32TM_ERROR_RE, W32TM_SERVICE_INACTIVE_RE, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, MAC_NEEDS_ROOT_RE, run, EXEC_TIMEOUT_MS, WRITE_TIMEOUT_MS, withSystemTimeLock } from '../../src/system-time.ts';
-import { SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, withSaveBudget } from '../../src/system-time-common.ts';
+import { READ_BUDGET_MS, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, remainingSaveBudget, withSaveBudget } from '../../src/system-time-common.ts';
 import { SIGNATURE_TIMEOUT_MS, WINDOWS_TIME_HELPER_TIMEOUT_MS } from '../../src/network-helper-client.ts';
 import { WINDOWS_ELEVATION_WAIT_MS } from '../../src/network-helper-windows.ts';
-import { SYSTEM_TIME_SAVE_TIMEOUT_MS } from '@shared';
+import { SYSTEM_TIME_READ_TIMEOUT_MS, SYSTEM_TIME_SAVE_TIMEOUT_MS } from '@shared';
 import type { SystemTimeChanges, SystemTimeStatus } from '@shared';
 import { W32TM_STATUS, fakeRunner } from '../helpers/system-time-fixtures.ts';
 
@@ -155,6 +155,79 @@ describe('a child process under a save budget', () => {
 		expect(outcome.kind).toBe('timeout');
 		expect(spent).toBeGreaterThan(900);
 		expect(spent).toBeLessThan(6_000);
+	});
+});
+
+/**
+ * A read of the host has to fit inside the wait the screen gives it, and that is a ceiling on
+ * the TOTAL - not on each command.
+ *
+ * Seven child processes run in sequence for a Linux status read, each allowed its own 5 s, and
+ * nothing bounded their sum: every one of them could answer inside its limit while together
+ * they passed the 30 s the screen waits, so a merely slow host came back as a failed read.
+ *
+ * Measured with real children, because the failure was real children adding up - not a
+ * relation between two constants.
+ */
+describe('a whole host read under its budget', () => {
+	const slowChild = (): { cmd: string; args: string[] } => (process.platform === 'win32' ? { cmd: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 10'] } : { cmd: '/bin/sleep', args: ['10'] });
+
+	it('stops several individually-patient reads from outlasting it together', async () => {
+		const { cmd, args } = slowChild();
+		const started = performance.now();
+		// Four reads, each of which would happily take its own limit, and 3 s for all of them.
+		const kinds = await withSaveBudget(
+			async () => {
+				const seen: string[] = [];
+				for (let index = 0; index < 4; index++) seen.push((await run(cmd, args, EXEC_TIMEOUT_MS)).kind);
+				return seen;
+			},
+			performance.now.bind(performance),
+			3_000
+		);
+		const spent = performance.now() - started;
+		expect(kinds).toHaveLength(4);
+		// The budget held for all four together, with room for process startup - not four
+		// times the read limit.
+		expect(spent).toBeLessThan(6_000);
+		// And the later ones were not started at all once there was nothing left.
+		expect(kinds.every(kind => kind === 'timeout')).toBe(true);
+	});
+
+	/** The status read opens such a budget; without it the reads inside see no deadline. */
+	it('is what the status read runs its platform reader under', async () => {
+		const seen: Array<number | null> = [];
+		await getSystemTimeStatus(async () => {
+			seen.push(remainingSaveBudget());
+			return { timezone: 'Europe/Prague', ntpEnabled: false, ntpSynchronized: null, ntpServer: null, capabilities: { setClock: false, setTimezone: false, setNtpServer: false, setNtpEnabled: false } };
+		});
+		expect(seen).toHaveLength(1);
+		expect(seen[0]).not.toBeNull();
+		expect(seen[0]!).toBeLessThanOrEqual(READ_BUDGET_MS);
+	});
+
+	/** A read taken inside a save belongs to that save's time, not to a fresh allowance. */
+	it('joins the budget of a save already in flight', async () => {
+		const seen: Array<number | null> = [];
+		await withSaveBudget(
+			async () =>
+				getSystemTimeStatus(async () => {
+					seen.push(remainingSaveBudget());
+					return { timezone: 'Europe/Prague', ntpEnabled: false, ntpSynchronized: null, ntpServer: null, capabilities: { setClock: false, setTimezone: false, setNtpServer: false, setNtpEnabled: false } };
+				}),
+			() => 0,
+			2_000
+		);
+		expect(seen).toEqual([2_000]);
+	});
+
+	/** And it has to leave the answer room to travel back inside the screen's own wait. */
+	it('leaves the answer room inside the wait it is derived from', () => {
+		expect(READ_BUDGET_MS).toBeLessThan(SYSTEM_TIME_READ_TIMEOUT_MS);
+		expect(SYSTEM_TIME_READ_TIMEOUT_MS - READ_BUDGET_MS).toBeGreaterThanOrEqual(2_000);
+		// The ceiling exists because the parts do not add up on their own: seven commands of
+		// the ordinary read limit are already past the screen's wait.
+		expect(7 * EXEC_TIMEOUT_MS).toBeGreaterThan(SYSTEM_TIME_READ_TIMEOUT_MS);
 	});
 });
 
