@@ -357,24 +357,27 @@ function failureText(error: unknown): string {
  */
 const AUTHORIZATION_DECLINED_RE = /\bexited with 12[67]\b|-128|User canceled|not authorized/i;
 
-function helperTransportFailure(error: unknown): SystemTimeResult {
+export function helperTransportFailure(error: unknown): SystemTimeResult {
 	const message = failureText(error);
-	if (AUTHORIZATION_DECLINED_RE.test(message)) return systemTimeHelperFailure('permission-denied', message);
+	// The person said no, which is not the same as this process being unable to ask.
+	if (AUTHORIZATION_DECLINED_RE.test(message)) return systemTimeHelperFailure('elevation-declined', message);
 	return { ...systemTimeHelperFailure('error', message), stateMayHaveChanged: true };
 }
 
 /**
  * What each launcher exit code means to someone who pressed Save on the time screen.
  *
- * Only the three that prove the helper never started - it was not trusted, the prompt
- * was declined, or the account may not elevate at all - are a bare `permission-denied`.
+ * Only the three prove the helper never started: it was not trusted, the prompt was
+ * declined, or the account may not elevate at all. A DECLINED prompt gets its own outcome,
+ * because the advice differs - press Save and confirm, rather than restart the application
+ * with more rights; the other two are a bare `permission-denied`.
  * A timeout is the helper being KILLED part-way, so it carries `stateMayHaveChanged`:
  * the change may already be on the host, and without the flag the caller skips the
  * read-back that would show it.
  */
 const WINDOWS_LAUNCHER_TIME_FAILURES: Readonly<Record<number, SystemTimeResult>> = {
 	[WINDOWS_LAUNCHER_EXIT.untrusted]: systemTimeHelperFailure('permission-denied', 'the privileged helper is missing or not trusted'),
-	[WINDOWS_LAUNCHER_EXIT.cancelled]: systemTimeHelperFailure('permission-denied', 'the administrator prompt was cancelled'),
+	[WINDOWS_LAUNCHER_EXIT.cancelled]: systemTimeHelperFailure('elevation-declined', 'the administrator prompt was cancelled'),
 	[WINDOWS_LAUNCHER_EXIT.denied]: systemTimeHelperFailure('permission-denied', 'this account may not elevate, so the change needs an administrator'),
 	[WINDOWS_LAUNCHER_EXIT.timeout]: { ...systemTimeHelperFailure('error', 'the privileged helper timed out'), stateMayHaveChanged: true },
 };

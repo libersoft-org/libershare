@@ -9,7 +9,7 @@ import { ianaToWindowsTimezoneId, rememberWindowsZone, windowsToIanaTimezone } f
 import { applySystemTimeSettings, sameHostZone, setSystemNtpEnabled } from '../../src/system-time.ts';
 import type { SystemTimeStatus } from '@shared';
 import { applySystemTimeSettingsWithElevation, localAttemptIsPointless, needsElevation, requiresPrivilegesUpFront } from '../../src/system-time-elevation.ts';
-import { windowsSystemTimeExit } from '../../src/network-helper-client.ts';
+import { helperTransportFailure, windowsSystemTimeExit } from '../../src/network-helper-client.ts';
 import { NETWORK_HELPER_EXIT } from '../../src/network-helper-protocol.ts';
 import { WINDOWS_LAUNCHER_EXIT } from '../../src/network-helper-windows.ts';
 
@@ -136,7 +136,11 @@ describe('the exit code an elevated Windows helper answers with', () => {
 
 	it('maps the launcher codes to something the user can act on', () => {
 		expect(windowsSystemTimeExit(WINDOWS_LAUNCHER_EXIT.cancelled).message).toContain('cancelled');
-		expect(windowsSystemTimeExit(WINDOWS_LAUNCHER_EXIT.cancelled).outcome).toBe('permission-denied');
+		// A DECLINED prompt is its own outcome, not a permission refusal: the rights were
+		// there for the asking, so the answer is "press Save and confirm" rather than "run the
+		// whole application as an administrator". Flattened together, the screen told somebody
+		// who had merely clicked No to restart the application with more rights.
+		expect(windowsSystemTimeExit(WINDOWS_LAUNCHER_EXIT.cancelled).outcome).toBe('elevation-declined');
 		expect(windowsSystemTimeExit(WINDOWS_LAUNCHER_EXIT.untrusted).outcome).toBe('permission-denied');
 		expect(windowsSystemTimeExit(WINDOWS_LAUNCHER_EXIT.timeout).outcome).toBe('error');
 		expect(windowsSystemTimeExit(0, true).message).toContain('timed out');
@@ -317,12 +321,56 @@ describe('a helper answer that never arrived', () => {
 		expect(windowsSystemTimeExit(0, true).stateMayHaveChanged).toBe(true);
 	});
 
-	/** The three that PROVE the helper never started stay a plain permission refusal. */
+	/**
+	 * All three PROVE the helper never started, so none of them may claim a changed host.
+	 * They differ in what to tell the user, which is the outcome's job, not this flag's.
+	 */
 	it('is not claimed for a helper that never started', () => {
-		for (const code of [WINDOWS_LAUNCHER_EXIT.untrusted, WINDOWS_LAUNCHER_EXIT.cancelled, WINDOWS_LAUNCHER_EXIT.denied]) {
+		for (const [code, expected] of [
+			[WINDOWS_LAUNCHER_EXIT.untrusted, 'permission-denied'],
+			[WINDOWS_LAUNCHER_EXIT.cancelled, 'elevation-declined'],
+			[WINDOWS_LAUNCHER_EXIT.denied, 'permission-denied'],
+		] as const) {
 			const outcome = windowsSystemTimeExit(code);
-			expect(outcome.outcome).toBe('permission-denied');
+			expect(outcome.outcome).toBe(expected);
+			expect(outcome.changed).toBeUndefined();
 			expect(outcome.stateMayHaveChanged).toBeUndefined();
+		}
+	});
+
+	/**
+	 * And the same distinction on the other two platforms, which have always been able to see
+	 * it: `pkexec` exits 126 for a dismissed dialog and 127 for not authorised, `osascript`
+	 * reports a cancelled administrator dialog as -128. All of them used to arrive as
+	 * `permission-denied`, so the screen ended the sentence with "Run the application as an
+	 * administrator (root)" for somebody who had simply clicked Cancel.
+	 */
+	it('reads a dismissed pkexec or osascript dialog as declined, not as a refusal', () => {
+		for (const text of ['Command failed: pkexec ... exited with 126', 'Command failed: pkexec ... exited with 127', 'execution error: User canceled. (-128)']) {
+			expect(helperTransportFailure(new Error(text)).outcome).toBe('elevation-declined');
+			// Nothing ran, so neither flag may be set.
+			expect(helperTransportFailure(new Error(text)).stateMayHaveChanged).toBeUndefined();
+		}
+		// Anything else may have arrived after the host was changed and keeps its flag.
+		const lost = helperTransportFailure(new Error('Command failed: pkexec ... exited with 1'));
+		expect(lost.outcome).toBe('error');
+		expect(lost.stateMayHaveChanged).toBe(true);
+	});
+
+	/**
+	 * The declined outcome has to survive the Windows exit-code channel like every other one.
+	 * It was appended to the outcome list on purpose: inserting it would have renumbered the
+	 * codes the elevated helper already answers with.
+	 */
+	it('survives the exit code the elevated helper answers with', () => {
+		const declined: SystemTimeResult = { success: false, outcome: 'elevation-declined', message: null };
+		const code = systemTimeExitCode(declined);
+		expect(parseSystemTimeExitCode(code)?.outcome).toBe('elevation-declined');
+		// And it did not move any of the existing ones.
+		for (const outcome of ['ok', 'permission-denied', 'unsupported', 'auto-sync-enabled', 'invalid-input', 'stale', 'error'] as const) {
+			const existing = systemTimeExitCode({ success: outcome === 'ok', outcome, message: null });
+			expect(parseSystemTimeExitCode(existing)?.outcome).toBe(outcome);
+			expect(existing).toBeLessThan(code);
 		}
 	});
 

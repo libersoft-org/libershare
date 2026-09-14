@@ -320,6 +320,7 @@
 		const keys: Record<SystemTimeOutcome, string> = {
 			ok: 'settings.time.errorGeneric',
 			'permission-denied': 'settings.time.errorPermissionDenied',
+			'elevation-declined': 'settings.time.errorElevationDeclined',
 			unsupported: 'settings.time.errorUnsupported',
 			'auto-sync-enabled': 'settings.time.errorAutoSyncEnabled',
 			'invalid-input': 'settings.time.errorInvalidInput',
@@ -340,11 +341,17 @@
 		// never a replacement. Losing the refusal here left the user with a message about
 		// reading the time and no idea why their save had not gone through.
 		const reason = res.changed || res.stateMayHaveChanged ? withDetail(tt('settings.time.errorPartial'), outcomeMessage(res)) : outcomeMessage(res);
-		// A value the host refused before running anything leaves the form alone. Re-reading is
-		// there for a save that may have half-applied, where what is on screen is exactly what
-		// must not be trusted — but for a mistyped NTP address it threw away the timezone edit
-		// made next to it and left the user to redo work the host never touched.
-		if (res.outcome === 'invalid-input' && !res.changed && !res.stateMayHaveChanged) {
+		// A save that provably never ran leaves the form alone. Re-reading is there for a save
+		// that may have half-applied, where what is on screen is exactly what must not be
+		// trusted — but for a mistyped NTP address it threw away the timezone edit made next to
+		// it and left the user to redo work the host never touched.
+		//
+		// A DECLINED elevation prompt is the same situation and reached here as a re-read: the
+		// helper was never started, so nothing was written, and the one thing the user needs is
+		// their edits still on screen to press Save again and confirm. `changed` and
+		// `stateMayHaveChanged` are still consulted, so an outcome that arrives with either
+		// flag is re-read whatever it says.
+		if ((res.outcome === 'invalid-input' || res.outcome === 'elevation-declined') && !res.changed && !res.stateMayHaveChanged) {
 			errorMessage = reason;
 			return false;
 		}

@@ -590,6 +590,7 @@
 			"syncAssertOff": "Vypnout synchronizaci",
 			"syncAssertOffHint": "Přepínač je vypnutý jen proto, že stav není známý – tímto o vypnutí skutečně požádáte.",
 			"errorPermissionDenied": "Nedostatečná oprávnění pro změnu systémových hodin. Spusťte aplikaci jako správce (root)",
+			"errorElevationDeclined": "Změna nebyla potvrzena. Stiskněte Uložit znovu a potvrďte dotaz na oprávnění správce.",
 			"errorUnsupported": "Tento systém tuto možnost nepodporuje",
 			"errorAutoSyncEnabled": "Hodiny nelze nastavit ručně, dokud je zapnutá automatická synchronizace",
 			"errorInvalidInput": "Neplatná hodnota",

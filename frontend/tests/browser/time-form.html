@@ -453,6 +453,34 @@
 				assert(!save().classList.contains('disabled'), 'The form could not be corrected and saved again');
 			});
 
+			/**
+			 * Cancelling the administrator prompt is not the same as lacking the rights.
+			 * Both used to arrive as `permission-denied`, so the screen answered somebody who had
+			 * clicked No with "Run the application as an administrator (root)" - advice that is
+			 * wrong for a prompt they could simply have confirmed. The two now say different
+			 * things, and the form stays as it was so Save can be pressed again.
+			 */
+			await test('a cancelled administrator prompt says to confirm, not to restart as root', async () => {
+				await edit(server(), 'tak.cesnet.cz');
+				writeResult = { success: false, outcome: 'elevation-declined', message: 'the administrator prompt was cancelled' };
+				await click(label('common.save'));
+				const shown = target.querySelector('.error-message').textContent;
+				assert(shown.includes(label('settings.time.errorElevationDeclined')), 'A cancelled prompt did not say what to do about it');
+				assert(!shown.includes(label('settings.time.errorPermissionDenied')), 'A cancelled prompt still told the user to run the application as an administrator');
+				assert(server().value === 'tak.cesnet.cz', 'A cancelled prompt discarded the edit it never wrote');
+				assert(!save().classList.contains('disabled'), 'A cancelled prompt left no way to confirm on a second try');
+			});
+
+			/** A genuine refusal keeps the advice that fits it. */
+			await test('an actual permission refusal still advises elevated rights', async () => {
+				await edit(server(), 'tak.cesnet.cz');
+				writeResult = { success: false, outcome: 'permission-denied', message: 'cannot open the time service' };
+				await click(label('common.save'));
+				const shown = target.querySelector('.error-message').textContent;
+				assert(shown.includes(label('settings.time.errorPermissionDenied')), 'A real refusal lost its advice');
+				assert(!shown.includes(label('settings.time.errorElevationDeclined')), 'A real refusal was described as a cancelled prompt');
+			});
+
 			await test('external writes block an edited form until explicit reload', async () => {
 				await edit(server(), 'typed.example.org');
 				host.ntpServer = 'external.example.org';

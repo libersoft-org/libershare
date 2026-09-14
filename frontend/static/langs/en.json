@@ -590,6 +590,7 @@
 			"syncAssertOff": "Switch synchronization off",
 			"syncAssertOffHint": "The switch already shows off because the state is unknown, so use this to actually request it.",
 			"errorPermissionDenied": "Insufficient permissions to change the system clock. Run the application as an administrator (root)",
+			"errorElevationDeclined": "The change was not confirmed. Press Save again and confirm the administrator prompt.",
 			"errorUnsupported": "This system does not support this setting",
 			"errorAutoSyncEnabled": "The clock cannot be set by hand while automatic synchronization is on",
 			"errorInvalidInput": "Invalid value",

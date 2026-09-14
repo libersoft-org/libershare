@@ -539,7 +539,21 @@ export const SYSTEM_TIME_SAVE_TIMEOUT_MS = 300_000;
  */
 export const SYSTEM_TIME_READ_TIMEOUT_MS = 30_000;
 
-export const SYSTEM_TIME_OUTCOMES = ['ok', 'permission-denied', 'unsupported', 'auto-sync-enabled', 'invalid-input', 'stale', 'error'] as const;
+/**
+ * `elevation-declined` is deliberately separate from `permission-denied`.
+ *
+ * They call for opposite advice. `permission-denied` means this process cannot do it and the
+ * application has to run with more rights; a DECLINED prompt means the rights were there for
+ * the asking and the person said no, so telling them to restart the whole application as
+ * administrator is wrong - the fix is to press Save again and confirm. All three platforms
+ * already know the difference (a cancelled UAC prompt, `pkexec` exit 126, `osascript` -128)
+ * and it used to be flattened into one message ending in "Run the application as an
+ * administrator (root)".
+ *
+ * Appended rather than inserted: the elevated Windows helper reports its outcome as an exit
+ * code derived from this order, so inserting a value would renumber the existing ones.
+ */
+export const SYSTEM_TIME_OUTCOMES = ['ok', 'permission-denied', 'unsupported', 'auto-sync-enabled', 'invalid-input', 'stale', 'error', 'elevation-declined'] as const;
 export type SystemTimeOutcome = (typeof SYSTEM_TIME_OUTCOMES)[number];
 
 /** One command of a multi-step system-time write, and how it went. */
