@@ -587,6 +587,8 @@
 			"unsupported": "Tento systém neumožňuje měnit nastavení hodin.",
 			"syncUnknown": "Stav automatické synchronizace se na tomto počítači nepodařilo zjistit. Při ukládání jej ověříme s oprávněním správce; pokud synchronizace běží, ruční změnu času odmítneme.",
 			"syncUnknownLocked": "Stav automatické synchronizace se na tomto systému nepodařilo zjistit a tato aplikace jej zde nesmí měnit, takže hodiny nelze nastavit ručně. Změňte nastavení času přímo v operačním systému.",
+			"syncAssertOff": "Vypnout synchronizaci",
+			"syncAssertOffHint": "Přepínač je vypnutý jen proto, že stav není známý – tímto o vypnutí skutečně požádáte.",
 			"errorPermissionDenied": "Nedostatečná oprávnění pro změnu systémových hodin. Spusťte aplikaci jako správce (root)",
 			"errorUnsupported": "Tento systém tuto možnost nepodporuje",
 			"errorAutoSyncEnabled": "Hodiny nelze nastavit ručně, dokud je zapnutá automatická synchronizace",

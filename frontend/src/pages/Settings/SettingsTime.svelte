@@ -299,6 +299,22 @@
 		autoSyncTouched = true;
 	}
 
+	/**
+	 * Ask for synchronisation OFF on a host that would not say whether it is on.
+	 *
+	 * The switch cannot express that by itself: it renders off because off is what an
+	 * unreadable state defaults to, so the only way to assert off through it was to switch on
+	 * and back off again - two moves that each mean something else, and a screen that shows a
+	 * switch already in the position you want while telling you it does not know the state.
+	 * One button, one meaning, and `autoSyncTouched` is what turns the shown value into a
+	 * request (see syncSwitchIsDirty).
+	 */
+	function assertSyncOff(): void {
+		clearFeedback();
+		autoSync = false;
+		autoSyncTouched = true;
+	}
+
 	/** Localized reason a write was refused, with the OS text appended when there is one. */
 	function outcomeMessage(res: SystemTimeResult): string {
 		const keys: Record<SystemTimeOutcome, string> = {
@@ -674,6 +690,12 @@
 						<p class="hint">{$t('settings.time.ntpHint')}</p>
 					</SwitchRow>
 				</div>
+				{#if syncUnknown && !syncUnknownLocked && !autoSyncTouched}
+					<div role="group" data-mouse-activate-area={areaID}>
+						<Button label={$t('settings.time.syncAssertOff')} icon="/img/time.svg" position={[1, 0]} padding="1vh 1.4vh" disabled={formDisabled} onConfirm={assertSyncOff} />
+					</div>
+					<p class="hint">{$t('settings.time.syncAssertOffHint')}</p>
+				{/if}
 				<div role="group" data-mouse-activate-area={areaID}>
 					<Input bind:value={ntpServer} onchange={clearFeedback} label={$t('settings.time.ntpServer')} placeholder={NTP_PRESETS[0]} disabled={formDisabled || !status.capabilities.setNtpServer} position={[0, 1]} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.9vh 1.2vh" flex />
 				</div>

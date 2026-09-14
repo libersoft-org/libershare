@@ -619,6 +619,36 @@
 				{ status: { ntpEnabled: false } }
 			);
 			await test(
+				'unknown synchronization can be asked to switch off in one gesture',
+				async () => {
+					// The switch renders off because off is what an unreadable state defaults to,
+					// so asserting off through it took switching on and back off again - two moves
+					// that each mean something else. One button, one meaning.
+					await click(label('settings.time.syncAssertOff'));
+					await click(label('common.save'));
+					assert(JSON.stringify(writes) === JSON.stringify([{ ntpEnabled: false }]), 'The explicit off did not reach the save as a request to switch synchronization off');
+					assert(
+						clock().every(input => !input.disabled),
+						'Confirmed disabled synchronization did not unlock manual time'
+					);
+				},
+				{ status: { ntpEnabled: null, ntpSynchronized: null, ntpServer: null } }
+			);
+			await test(
+				'the explicit off is offered only while the state is unknown and resolvable',
+				async () => {
+					assert(!target.textContent.includes(label('settings.time.syncAssertOff')), 'A known synchronization state still offered the explicit off');
+				},
+				{ status: { ntpEnabled: false, ntpSynchronized: null } }
+			);
+			await test(
+				'the explicit off is not offered where this application may not change it',
+				async () => {
+					assert(!target.textContent.includes(label('settings.time.syncAssertOff')), 'The explicit off was offered on a host that refuses the change anyway');
+				},
+				{ status: { ntpEnabled: null, ntpSynchronized: null, ntpServer: null, capabilities: { setClock: true, setTimezone: true, setNtpServer: false, setNtpEnabled: false } } }
+			);
+			await test(
 				'unknown synchronization can be explicitly saved off without choosing a server',
 				async () => {
 					const control = target.querySelector('[role="switch"]');
