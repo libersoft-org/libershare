@@ -576,6 +576,8 @@
 			"title": "Systémový čas a NTP",
 			"autoSync": "Automatická synchronizace (NTP)",
 			"autoSyncHint": "Hodiny se nastavují automaticky. Pro ruční nastavení vypněte automatickou synchronizaci.",
+			"clockHeldElsewhere": "Hodiny synchronizuje jiná systémová služba a tato aplikace ji neumí vypnout. Pro ruční nastavení času ji zastavte na daném počítači.",
+			"clockHeldUnknown": "Nepodařilo se zjistit, zda hodiny synchronizuje jiná systémová služba, takže je tu ručně nenastavujeme.",
 			"ntpServer": "NTP server",
 			"hours": "Hodiny",
 			"minutes": "Minuty",

@@ -196,9 +196,24 @@ export function formatHostDate(nowMs: number, timezone: string, offsetMinutes: n
 	return ['year', 'month', 'day'].map(type => parts.find(part => part.type === type)?.value ?? '').join('-');
 }
 
-/** Configuration changes or corrections beyond 2 s of read/transport jitter invalidate an existing draft. */
+/** Absent means "nothing unmanaged is steering this clock"; `null` means nobody could say. */
+function clockSteeringAnswer(status: Pick<SystemTimeStatus, 'clockHeldByUnmanagedDaemon'>): boolean | null {
+	return status.clockHeldByUnmanagedDaemon === undefined ? false : status.clockHeldByUnmanagedDaemon;
+}
+
+/**
+ * Configuration changes or corrections beyond 2 s of read/transport jitter invalidate an
+ * existing draft.
+ *
+ * `clockHeldByUnmanagedDaemon` counts among them: a daemon starting or stopping outside the
+ * host's own time manager changes whether a hand-set clock can be written at all, and a draft
+ * composed while it was absent is one the save would now refuse. Absent and `false` are the
+ * same answer, so only `undefined` is normalised: `null` is an answer of its own - nobody
+ * could say - and moving to or from it is a change. `?? false` was wrong here for exactly
+ * that reason, because it folds `null` in with `false`.
+ */
 export function timeStatusChanged(previous: SystemTimeStatus, next: SystemTimeStatus, elapsedMs: number): boolean {
-	return previous.supported !== next.supported || previous.timezone !== next.timezone || previous.utcOffsetMinutes !== next.utcOffsetMinutes || (previous.timezoneOffsetMode ?? 'zone') !== (next.timezoneOffsetMode ?? 'zone') || previous.ntpEnabled !== next.ntpEnabled || (previous.ntpServer ?? '') !== (next.ntpServer ?? '') || previous.capabilities.setClock !== next.capabilities.setClock || previous.capabilities.setTimezone !== next.capabilities.setTimezone || previous.capabilities.setNtpServer !== next.capabilities.setNtpServer || previous.capabilities.setNtpEnabled !== next.capabilities.setNtpEnabled || Math.abs(next.nowMs - previous.nowMs - elapsedMs) > 2000;
+	return previous.supported !== next.supported || previous.timezone !== next.timezone || previous.utcOffsetMinutes !== next.utcOffsetMinutes || (previous.timezoneOffsetMode ?? 'zone') !== (next.timezoneOffsetMode ?? 'zone') || previous.ntpEnabled !== next.ntpEnabled || clockSteeringAnswer(previous) !== clockSteeringAnswer(next) || (previous.ntpServer ?? '') !== (next.ntpServer ?? '') || previous.capabilities.setClock !== next.capabilities.setClock || previous.capabilities.setTimezone !== next.capabilities.setTimezone || previous.capabilities.setNtpServer !== next.capabilities.setNtpServer || previous.capabilities.setNtpEnabled !== next.capabilities.setNtpEnabled || Math.abs(next.nowMs - previous.nowMs - elapsedMs) > 2000;
 }
 
 /**

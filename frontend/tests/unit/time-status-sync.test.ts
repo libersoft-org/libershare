@@ -266,3 +266,37 @@ describe('effectiveOffsetMode', () => {
 		expect(formatHostDate(nowMs, 'Asia/Karachi', 360, 'zone')).toBe('2026-01-01');
 	});
 });
+
+/**
+ * A daemon appearing or going away outside the host's own time manager decides whether a
+ * hand-set clock can be written at all, so a draft composed against the old answer is one the
+ * save would now refuse. Absent and false are the same answer - only `true` and `null` are
+ * ever stated - so they must not read as a change.
+ */
+describe('a change in who steers the clock', () => {
+	const at = Date.UTC(2026, 8, 14, 12, 0, 0);
+	const base = (overrides: Partial<SystemTimeStatus> = {}): SystemTimeStatus => ({
+		supported: true,
+		nowMs: at,
+		timezone: 'Europe/Prague',
+		utcOffsetMinutes: 120,
+		timezoneSource: 'intl',
+		ntpEnabled: false,
+		ntpSynchronized: null,
+		ntpServer: 'ntp.example.org',
+		capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: true },
+		...overrides,
+	});
+
+	test('invalidates a draft', () => {
+		expect(timeStatusChanged(base(), base({ clockHeldByUnmanagedDaemon: true }), 0)).toBe(true);
+		expect(timeStatusChanged(base({ clockHeldByUnmanagedDaemon: true }), base(), 0)).toBe(true);
+		// Unknown is its own answer, and moving to or from it changes what may be saved.
+		expect(timeStatusChanged(base(), base({ clockHeldByUnmanagedDaemon: null }), 0)).toBe(true);
+	});
+
+	test('does not read absent and false as a change', () => {
+		expect(timeStatusChanged(base(), base({ clockHeldByUnmanagedDaemon: false }), 0)).toBe(false);
+		expect(timeStatusChanged(base({ clockHeldByUnmanagedDaemon: false }), base(), 0)).toBe(false);
+	});
+});

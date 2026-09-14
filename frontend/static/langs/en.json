@@ -576,6 +576,8 @@
 			"title": "System time and NTP",
 			"autoSync": "Automatic synchronization (NTP)",
 			"autoSyncHint": "The clock is set automatically. Switch automatic synchronization off to set it by hand.",
+			"clockHeldElsewhere": "Another system service is keeping this clock synchronized, and this application cannot switch that service off. Stop it on the host to set the time by hand.",
+			"clockHeldUnknown": "Whether another system service is keeping this clock synchronized could not be determined, so the time is not set by hand here.",
 			"ntpServer": "NTP server",
 			"hours": "Hours",
 			"minutes": "Minutes",

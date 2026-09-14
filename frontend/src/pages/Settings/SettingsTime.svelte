@@ -434,7 +434,19 @@
 	// user no way out: they could switch synchronisation off and the confirming read still
 	// came back unknown. A save that should not happen comes back `auto-sync-enabled` from
 	// that privileged read, which is the refusal this lock was standing in for.
-	let clockDisabled = $derived(formDisabled || autoSync || syncUnknownLocked || !status?.capabilities.setClock);
+	// Another daemon is steering the clock, and it is not the one the switch above controls.
+	// The host reports it because `ntpEnabled: false` cannot: on Linux that field speaks only
+	// for the providers systemd-timedated manages. The save is refused for exactly this, so
+	// offering the fields anyway meant a round trip that could not succeed - and with a
+	// timezone edit alongside it, the zone is written BEFORE the clock, so the user got a
+	// partial save over an obstacle the screen already knew about.
+	//
+	// `null` locks it too: that is "could not ask the host", and the save refuses it on the
+	// same rule as an unreadable sync state - only a definite "nothing is steering this"
+	// releases the clock.
+	let clockHeldElsewhere = $derived(status?.clockHeldByUnmanagedDaemon === true);
+	let clockHeldUnknown = $derived(status?.clockHeldByUnmanagedDaemon === null);
+	let clockDisabled = $derived(formDisabled || autoSync || syncUnknownLocked || clockHeldElsewhere || clockHeldUnknown || !status?.capabilities.setClock);
 	// Nothing to write means nothing to report: without this the button runs no request
 	// at all and still announces the settings as saved.
 	let syncDirty = $derived(syncSwitchIsDirty(autoSync, loaded.syncReported, autoSyncTouched));
@@ -731,6 +743,8 @@
 					<Input bind:value={seconds} onchange={clearFeedback} label={$t('settings.time.seconds')} type="number" min={0} max={59} disabled={clockDisabled} position={[2, 4]} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.9vh 1.2vh" flex />
 				</div>
 				{#if autoSync}<p class="hint">{$t('settings.time.autoSyncHint')}</p>{/if}
+				{#if clockHeldElsewhere}<p class="hint">{$t('settings.time.clockHeldElsewhere')}</p>{/if}
+				{#if clockHeldUnknown}<p class="hint">{$t('settings.time.clockHeldUnknown')}</p>{/if}
 			</section>
 		{/if}
 	</div>

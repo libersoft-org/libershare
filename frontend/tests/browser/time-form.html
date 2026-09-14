@@ -481,6 +481,57 @@
 				assert(!shown.includes(label('settings.time.errorElevationDeclined')), 'A real refusal was described as a cancelled prompt');
 			});
 
+			/**
+			 * The host reports a daemon steering the clock that its own time manager does not
+			 * account for, so `ntpEnabled: false` cannot express it. The save refuses exactly
+			 * this - and with a timezone edit alongside, the zone is written BEFORE the clock,
+			 * so offering the fields anyway produced a partial save over an obstacle the screen
+			 * already knew about.
+			 */
+			await test(
+				'a clock another daemon steers is not offered for editing',
+				async () => {
+					assert(
+						clock().every(input => input.disabled),
+						'The clock was offered although the host said another daemon steers it'
+					);
+					assert(target.textContent.includes(label('settings.time.clockHeldElsewhere')), 'Locked clock fields came without a reason');
+					// The rest of the form still works: the server and the zone are unaffected.
+					assert(!server().disabled, 'An unmanaged daemon also locked the server');
+				},
+				{ status: { ntpEnabled: false, clockHeldByUnmanagedDaemon: true } }
+			);
+			/** `null` is "could not ask the host", which the save refuses on the same rule. */
+			await test(
+				'a clock whose steering could not be determined is not offered either',
+				async () => {
+					assert(
+						clock().every(input => input.disabled),
+						'An undetermined answer was treated as permission to set the clock'
+					);
+					assert(target.textContent.includes(label('settings.time.clockHeldUnknown')), 'The undetermined state came without a reason');
+				},
+				{ status: { ntpEnabled: false, clockHeldByUnmanagedDaemon: null } }
+			);
+			/**
+			 * And a daemon that starts while a clock edit is open. The draft was composed
+			 * against an answer that no longer holds, so it must not simply be saved.
+			 */
+			await test(
+				'a daemon appearing mid-draft blocks the clock edit it invalidates',
+				async () => {
+					await edit(clock()[0], '7');
+					assert(!save().classList.contains('disabled'), 'The clock edit was not saveable to begin with');
+					host.clockHeldByUnmanagedDaemon = true;
+					changed(structuredClone(host));
+					await settle();
+					assert(save().classList.contains('disabled'), 'A daemon taking the clock left the stale edit saveable');
+					assert(target.textContent.includes(label('settings.time.changedOutside')), 'The invalidated draft came without an explanation');
+					await click(label('common.save'));
+					assert(writes.length === 0, 'A clock write went out after the host took the clock away');
+				},
+				{ status: { ntpEnabled: false } }
+			);
 			await test('external writes block an edited form until explicit reload', async () => {
 				await edit(server(), 'typed.example.org');
 				host.ntpServer = 'external.example.org';
