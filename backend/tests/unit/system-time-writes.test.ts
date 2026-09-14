@@ -231,6 +231,58 @@ describe('a whole host read under its budget', () => {
 	});
 });
 
+/**
+ * Switching synchronisation on has to switch on the thing that does it - AND tell the running
+ * service about it.
+ *
+ * The registry write that puts the NTP client provider back was already there. What was
+ * missing is the notification: the service keeps working from what it read at startup, and
+ * `sc start` is correctly benign against a service that is already up, so nothing made it
+ * re-read. `/resync` does not - that asks for a synchronisation with the configuration the
+ * service already has, which is the one with the client switched off - and Microsoft
+ * documents `w32tm /config /update` as the alternative to restarting it.
+ *
+ * It happened to work on a host with no source at all, because inventing one there already
+ * ends in `/update`. Everywhere else the switch reported success and the client stayed off.
+ */
+describe('switching windows synchronisation on with the NTP client switched off', () => {
+	const argv = (commands: SystemCommand[]): string[] => commands.map(command => [command.cmd, ...command.args].join(' '));
+
+	it('tells the running service to re-read the provider it just got back', () => {
+		const commands = argv(buildSetNtpEnabledCommands('win32', true, 'manual', false));
+		expect(commands).toContain('reg add HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\TimeProviders\\NtpClient /v Enabled /t REG_DWORD /d 1 /f');
+		expect(commands).toContain('w32tm /config /update');
+		// In that order, and before the resync: notifying after asking for a synchronisation
+		// would have the sync run against the configuration being replaced.
+		expect(commands.indexOf('w32tm /config /update')).toBeGreaterThan(commands.findIndex(entry => entry.startsWith('reg add')));
+		expect(commands.indexOf('w32tm /config /update')).toBeLessThan(commands.indexOf('w32tm /resync'));
+		// And it must not move the host's time source while it is at it.
+		expect(commands.some(entry => entry.includes('/syncfromflags'))).toBe(false);
+	});
+
+	/** A service that is not running is nothing to report here, exactly as for a peer list. */
+	it('treats an inactive service as nothing to notify', () => {
+		const update = buildSetNtpEnabledCommands('win32', true, 'manual', false).find(command => command.args.join(' ') === '/config /update');
+		expect(update?.benignOutput).toBe(W32TM_SERVICE_INACTIVE_RE);
+	});
+
+	/** Nothing was written, so there is nothing to tell the service about. */
+	it('does not notify when the provider was already on', () => {
+		expect(argv(buildSetNtpEnabledCommands('win32', true, 'manual', true))).not.toContain('w32tm /config /update');
+	});
+
+	/**
+	 * A host with no source at all already ends in `/update` as part of inventing one, and
+	 * that one carries `/syncfromflags:manual` on purpose. A second bare `/update` would be
+	 * noise.
+	 */
+	it('does not add a second notification where inventing a source already updates', () => {
+		const commands = argv(buildSetNtpEnabledCommands('win32', true, 'none', false));
+		expect(commands).toContain('w32tm /config /syncfromflags:manual /update');
+		expect(commands).not.toContain('w32tm /config /update');
+	});
+});
+
 describe('runAll sequence budget', () => {
 	const commands: SystemCommand[] = [
 		{ cmd: 'first', args: [] },

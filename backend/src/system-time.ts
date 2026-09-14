@@ -163,6 +163,19 @@ export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: bo
 			// validity depends on. Enabling synchronisation must never mean "and also
 			// change where the time comes from".
 			...(mode === 'none' ? [w32tm('/config', '/syncfromflags:manual', '/update')] : []),
+			// The registry write above is on disk; the RUNNING service is still working from
+			// what it read at startup. `/config /update` is what makes it re-read - documented
+			// by Microsoft as the alternative to restarting it - and `/resync` is not a
+			// substitute: that asks for a synchronisation now, using the configuration the
+			// service already has, which is the one with the client switched off.
+			//
+			// It came for free on a `none` host, because inventing a source there already ends
+			// in `/update`. Everywhere else the service was left never told, `sc start` was
+			// correctly benign on a service that was already up, and switching synchronisation
+			// on reported success while the client stayed off. Skipped when nothing was written
+			// to tell it about, and `/syncfromflags` stays out of it: notifying the service must
+			// never also move the host's time source.
+			...(!ntpClientEnabled && mode !== 'none' ? [w32tmNotifying('/config', '/update')] : []),
 			w32tm('/resync'),
 		];
 	}
