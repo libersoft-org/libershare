@@ -75,36 +75,43 @@ export function withSaveBudget<T>(fn: () => Promise<T>, now: () => number = elap
 }
 
 /**
- * How long a restore may take, counted fresh even when the save that needed it is over time.
+ * How long the steps AFTER a save's own work may take, counted fresh even when that work is
+ * over time.
  *
- * A rollback is not part of the work the budget bounds; it is what happens when that work
- * fails, and it has its own steps: putting the original file back is only half of it, the
- * daemon has to be put back onto that file for the restore to mean anything. Inheriting the
- * exhausted budget gave the second half zero time, so `runAll` refused the restart before
- * starting it and a host was left with the original configuration on disk and the service
- * stopped - reported, but never even attempted.
+ * Two of them, and neither is the work the save's budget bounds:
+ *
+ * - the ROLLBACK, which is what happens when the work fails. Putting the original file back is
+ *   only half of it; the daemon has to be put back onto that file for the restore to mean
+ *   anything. Inheriting the exhausted budget gave the second half zero time, so `runAll`
+ *   refused the restart before starting it and a host was left with the original configuration
+ *   on disk and the service stopped - reported, but never even attempted.
+ * - the READ-BACK that tells every open window what the host looks like now. Once child limits
+ *   are held to what the save has left, a save that spent all of it would have its own
+ *   report refused - so the user would be left looking at a state the host no longer has,
+ *   which is the failure the read-back exists to prevent.
  *
  * Small on purpose. It is added to {@link SAVE_BUDGET_MS} in the worst case, and the total
- * still has to leave the screen's wait room for the trust check and the read-back; a test
- * asserts that arithmetic. A `systemctl restart` that needs longer than this is not going to
- * be rescued by waiting, and the caveat the caller returns says exactly that.
+ * still has to leave the screen's wait room for the trust check; a test asserts that
+ * arithmetic. A `systemctl restart` that needs longer than this is not going to be rescued by
+ * waiting, and the caveat the caller returns says exactly that.
  */
-export const RESTORE_BUDGET_MS = 30_000;
+export const FOLLOW_UP_BUDGET_MS = 30_000;
 
 /**
- * Run a restore under {@link RESTORE_BUDGET_MS}, REPLACING the surrounding save's deadline.
+ * Run a follow-up step under {@link FOLLOW_UP_BUDGET_MS}, REPLACING the surrounding save's
+ * deadline.
  *
  * Unlike {@link withSaveBudget} this does not join an existing budget - joining is the bug it
  * exists to fix. The lock is deliberately still held around it, so the next save waits for the
- * restore to finish rather than racing it; only the deadline is renewed, never the exclusion.
+ * follow-up to finish rather than racing it; only the deadline is renewed, never the exclusion.
  *
  * The outer store's clock is kept when there is one: the deadline and the clock that reads it
  * have to be the same, or an injected clock would set this budget and then be ignored.
  */
-export function withRestoreBudget<T>(fn: () => Promise<T>, now: () => number = elapsedClock): Promise<T> {
+export function withFollowUpBudget<T>(fn: () => Promise<T>, now: () => number = elapsedClock): Promise<T> {
 	const existing = saveDeadline.getStore();
 	const clock = existing?.now ?? now;
-	return saveDeadline.run({ deadline: clock() + RESTORE_BUDGET_MS, now: clock }, fn);
+	return saveDeadline.run({ deadline: clock() + FOLLOW_UP_BUDGET_MS, now: clock }, fn);
 }
 
 /** What is left of the current save's budget, or null when nothing set one. */
