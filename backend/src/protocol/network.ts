@@ -2843,9 +2843,16 @@ export class Network {
 	private noteSubscriptionChange(detail: SubscriptionChangeData | undefined): void {
 		const peerId = detail?.peerId?.toString();
 		if (!peerId) return;
+		// gossipsub reports every topic named in the RPC, bounding that only through
+		// `allowedTopics` — which we do not set. A lishnet we are not in is therefore a
+		// topic name the sender chose, and recording one would let a single peer grow the
+		// membership map with topics no reader ever consults: the listing gate and
+		// leave-network both look at our own joined topics, and the announce tick only
+		// prunes the foreign entries whenever it next runs.
+		const joinedTopics = new Set<string>(this.pubsub ? this.pubsub.getTopics() : []);
 		for (const sub of detail?.subscriptions ?? []) {
 			const topic = sub?.topic;
-			if (!topic?.startsWith(LISH_TOPIC_PREFIX)) continue;
+			if (!topic?.startsWith(LISH_TOPIC_PREFIX) || !joinedTopics.has(topic)) continue;
 			if (!sub.subscribe) {
 				this.peerAnnounce.forgetMember(topic, peerId);
 				continue;

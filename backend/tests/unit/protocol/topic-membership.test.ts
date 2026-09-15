@@ -49,6 +49,20 @@ function makeManager(subscribers: string[], peerStoreSize: number, topics: strin
 /** emit() is private; the tick is what a running node would perform. */
 const tick = (mgr: PeerAnnounceManager): Promise<void> => (mgr as any).emit();
 
+/**
+ * A Network wired up just enough to receive gossipsub subscription events. It carries the
+ * same pubsub the manager reads, because membership is only recorded for topics we are
+ * actually subscribed to and a stub without one would record nothing at all.
+ */
+function subscriptionSink(mgr: PeerAnnounceManager, pubsub: any): Network {
+	const net = Object.create(Network.prototype) as Network;
+	(net as any).peerAnnounce = mgr;
+	(net as any).peerSubscribeHandlers = new Set();
+	(net as any).bootstrapTracker = new BootstrapStatusTracker();
+	(net as any).pubsub = pubsub;
+	return net;
+}
+
 describe('PeerAnnounceManager topic membership', () => {
 	it('records a subscriber on a network too small to broadcast', async () => {
 		// The regression: membership used to be a side effect of the announce, which is
@@ -90,11 +104,8 @@ describe('PeerAnnounceManager topic membership', () => {
 	 * membership feed has to be driven with the real shape to be worth anything.
 	 */
 	it('records a member from a real gossipsub subscription-change payload', () => {
-		const { mgr } = makeManager([], 2);
-		const net = Object.create(Network.prototype) as Network;
-		(net as any).peerAnnounce = mgr;
-		(net as any).peerSubscribeHandlers = new Set();
-		(net as any).bootstrapTracker = new BootstrapStatusTracker();
+		const { mgr, pubsub } = makeManager([], 2);
+		const net = subscriptionSink(mgr, pubsub);
 
 		(net as any).noteSubscriptionChange({ peerId: { toString: () => 'peer-sub' }, subscriptions: [{ topic: TOPIC, subscribe: true }] });
 
@@ -104,10 +115,8 @@ describe('PeerAnnounceManager topic membership', () => {
 	it('revokes membership as soon as the peer unsubscribes', () => {
 		// gossipsub removes the peer from its subscriber map on subscribe:false. A recent
 		// union that outlived that would keep authorizing a withdrawn claim for a minute.
-		const { mgr } = makeManager([], 2);
-		const net = Object.create(Network.prototype) as Network;
-		(net as any).peerAnnounce = mgr;
-		(net as any).peerSubscribeHandlers = new Set();
+		const { mgr, pubsub } = makeManager([], 2);
+		const net = subscriptionSink(mgr, pubsub);
 		const peerId = { toString: () => 'peer-sub' };
 
 		(net as any).noteSubscriptionChange({ peerId, subscriptions: [{ topic: TOPIC, subscribe: true }] });
@@ -150,11 +159,8 @@ describe('PeerAnnounceManager topic membership', () => {
 		// The pinned gossipsub emits gossipsub:graft for REJECTED grafts too (backoff,
 		// negative score, full mesh) and never requires a prior SUBSCRIBE, so a GRAFT is
 		// not a claim of membership at all — let alone an accepted one.
-		const { mgr } = makeManager([], 2);
-		const net = Object.create(Network.prototype) as Network;
-		(net as any).peerAnnounce = mgr;
-		(net as any).peerSubscribeHandlers = new Set();
-		(net as any).bootstrapTracker = new BootstrapStatusTracker();
+		const { mgr, pubsub } = makeManager([], 2);
+		const net = subscriptionSink(mgr, pubsub);
 
 		// A GRAFT still feeds the bootstrap status tracker, which is not authorization.
 		(net as any).noteMeshGraft({ peerId: 'peer-graft', topic: TOPIC, direction: 'inbound' });
@@ -164,14 +170,26 @@ describe('PeerAnnounceManager topic membership', () => {
 	});
 
 	it('ignores a subscription to a topic that is not a lishnet', () => {
-		const { mgr } = makeManager([], 2);
-		const net = Object.create(Network.prototype) as Network;
-		(net as any).peerAnnounce = mgr;
-		(net as any).peerSubscribeHandlers = new Set();
+		const { mgr, pubsub } = makeManager([], 2);
+		const net = subscriptionSink(mgr, pubsub);
 
 		(net as any).noteSubscriptionChange({ peerId: { toString: () => 'peer-x' }, subscriptions: [{ topic: 'other/topic', subscribe: true }] });
 
 		expect(mgr.getRecentMembers('other/topic')).toEqual([]);
+	});
+
+	it('ignores a subscription to a lishnet we have not joined', () => {
+		// gossipsub reports every topic the RPC names and bounds that only through
+		// `allowedTopics`, which is not set — so the topic name is the sender's choice.
+		// Recording one we are not in would let a single peer grow the membership map
+		// with entries no reader ever consults, until the next announce tick prunes them.
+		const { mgr, pubsub } = makeManager([], 2);
+		const net = subscriptionSink(mgr, pubsub);
+		const foreign = lishTopic('net-we-never-joined');
+
+		(net as any).noteSubscriptionChange({ peerId: { toString: () => 'peer-x' }, subscriptions: [{ topic: foreign, subscribe: true }] });
+
+		expect(mgr.getRecentMembers(foreign)).toEqual([]);
 	});
 
 	it('drops membership for a topic we are no longer subscribed to', async () => {
