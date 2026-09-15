@@ -213,9 +213,12 @@ describe.skipIf(process.platform === 'win32')('POSIX time configuration permissi
 	 * restored, functionally broken, and the caller was told it was clean.
 	 *
 	 * Skipped where the tools to build the case are missing, because a test that cannot set an
-	 * ACL would pass without ever exercising one.
+	 * ACL would pass without ever exercising one. Root as well, like every neighbour that asks
+	 * the kernel as another account: `readableByNobody` adopts uid 65534, which an ordinary
+	 * user may not do, so without root the first expectation failed on `setpriv: setresuid
+	 * failed` rather than on anything about the rollback.
 	 */
-	it.skipIf(process.platform !== 'linux' || !existsSync('/usr/bin/setfacl'))('restores an ACL the rollback cannot rebuild', async () => {
+	it.skipIf(process.platform !== 'linux' || process.getuid?.() !== 0 || !existsSync('/usr/bin/setfacl'))('restores an ACL the rollback cannot rebuild', async () => {
 		// mkdtemp leaves the fixture root at 0700, which no other account can walk through.
 		await chmod(root, 0o755);
 		const parent = join(root, 'timesyncd.conf.d');
