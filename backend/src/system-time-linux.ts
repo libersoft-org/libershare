@@ -263,7 +263,16 @@ export function parseActiveUnits(output: string): Set<string> {
 		const properties = parseUnitProperties(block);
 		const id = properties.get('Id');
 		const state = (properties.get('ActiveState') ?? '').trim();
-		if (id && state.length > 0 && state !== 'inactive' && state !== 'failed') active.add(id);
+		if (!id || state.length === 0 || state === 'inactive' || state === 'failed') continue;
+		// Under every name the unit answers to, not only its `Id`. The units asked about come
+		// from a fixed list and the host's ordering, and the caller looks each of them up by
+		// the name it asked under - but systemd answers for an alias under the aliased unit's
+		// `Id`. Keyed on `Id` alone, `chronyd.service` aliasing some `custom-clock.service`
+		// reported active under a name nobody looked for, the lookup missed, and a running
+		// daemon read as "nothing holds the clock". Canonicalising through the load-state map
+		// could not close that: it only knows the units of the ordering, never the fixed list.
+		active.add(id);
+		for (const name of extractWords(properties.get('Names') ?? '', true)) active.add(name);
 	}
 	return active;
 }
@@ -701,7 +710,10 @@ export async function readLinuxStatus(): Promise<PlatformStatus> {
 	// when the ordering does not account for it. `--value` cannot attribute two properties to
 	// their unit, so the block form is read instead.
 	const steering = clockSteeringUnits(ordered, states);
-	const activity = await tryRead('systemctl', ['show', '-p', 'Id', '-p', 'ActiveState', '--', ...steering]);
+	// `Names` as well, for the same reason as in the load-state read above: the answer for an
+	// alias comes back under the aliased unit's `Id`, and the lookups below are by the names
+	// asked about.
+	const activity = await tryRead('systemctl', ['show', '-p', 'Id', '-p', 'Names', '-p', 'ActiveState', '--', ...steering]);
 	const active = activity === null ? null : parseActiveUnits(activity);
 	// What `canConfigureTimesyncdServer` expects: a plain per-line state list of the competing
 	// units only, rebuilt from the one read rather than fetched again.

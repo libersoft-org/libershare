@@ -134,6 +134,27 @@ describe('an NTP daemon outside the managed list', () => {
 		expect(status.clockHeldByUnmanagedDaemon).toBe(true);
 	});
 
+	/**
+	 * A daemon the fixed list knows only by an ALIAS. systemd answers for `chronyd.service`
+	 * under the real unit's `Id` - `custom-clock.service` - and listed the alias only in
+	 * `Names`. Keyed on `Id` alone, the activity read reported the daemon under a name the
+	 * lookup never asked for, so a running daemon read as "nothing holds the clock" - and
+	 * canonicalising through the load-state map could not help, because that map only knows
+	 * the units of the ordering, never the fixed list. Both shapes the review reproduced:
+	 * no managed provider at all, and timesyncd as the managed one.
+	 */
+	it.each([
+		['no managed provider', []],
+		['timesyncd managed', undefined],
+	] as const)('sees a daemon that answers under another name (%s)', async (_label, ordered) => {
+		const { status, commands } = await readStatusScenario({ config: null, alias: { name: 'chronyd.service', id: 'custom-clock.service' }, ...(ordered === undefined ? {} : { ordered: [...ordered] }) });
+		expect(status.ntpEnabled).toBe(false);
+		expect(status.clockHeldByUnmanagedDaemon).toBe(true);
+		expect(status.capabilities.setNtpServer).toBe(false);
+		// The names come with the states, so an alias is attributable without a second read.
+		expect(commands.some(entry => entry.command === 'systemctl' && entry.args.includes('ActiveState') && entry.args.includes('Names'))).toBe(true);
+	});
+
 	/** Where the ordering DOES account for it, `NTP=yes`/`no` is timedated's own answer. */
 	it('leaves timesyncd to timedated when it is a managed provider', async () => {
 		const { status } = await readStatusScenario({ config: null, competing: 'timesyncd' });
@@ -210,6 +231,8 @@ interface StatusScenario {
 	enabled?: boolean;
 	owner?: 'ours' | 'foreign' | 'unknown' | 'masked';
 	competing?: boolean | 'timesyncd';
+	/** One asked unit is an alias: systemd answers under `id`, with `name` only in `Names`. */
+	alias?: { name: string; id: string };
 	activityFails?: boolean;
 	ordered?: string[];
 	canNtp?: boolean;
@@ -242,7 +265,12 @@ async function readStatusScenario(input: StatusScenario): Promise<StatusResult> 
 				// 'timesyncd' = timesyncd itself is up outside the managed ordering.
 				const asked=args.filter(a=>a.endsWith('.service'));
 				const running=input.competing===true?asked.filter(u=>u!==unit):input.competing==='timesyncd'?[unit]:[];
-				return asked.map(u=>'Id='+u+'\\nActiveState='+(running.includes(u)?'active':'inactive')).join('\\n\\n')+'\\n';
+				// input.alias: the asked name is an alias, and systemd answers for it under the
+				// aliased unit's Id - with the alias listed only in Names, as measured on systemd 252.
+				return asked.map(u=>{
+					if(input.alias&&u===input.alias.name)return 'Id='+input.alias.id+'\\nNames='+input.alias.id+' '+u+'\\nActiveState=active';
+					return 'Id='+u+'\\nNames='+u+'\\nActiveState='+(running.includes(u)?'active':'inactive');
+				}).join('\\n\\n')+'\\n';
 			}
 			if(command==='systemctl'&&args.includes('Id'))return (owner==='foreign'?'Id=chronyd.service\\nNames=chronyd.service\\nLoadState=loaded\\n\\n':'')+'Id='+unit+'\\nNames='+unit+'\\nLoadState='+(owner==='masked'?'masked':'loaded')+'\\n';
 			if(command==='date')return input.offset===undefined?'+0200':input.offset;
