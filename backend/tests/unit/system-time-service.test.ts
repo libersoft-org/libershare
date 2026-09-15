@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { applySystemTimeSettings, applyTimesyncdDropIn, setSystemNtpEnabled, setSystemNtpServer, waitForWindowsTimeService, withSystemTimeLock, withSaveBudget, remainingSaveBudget, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, FOLLOW_UP_BUDGET_MS, WRITE_TIMEOUT_MS, type CommandRunner, type WindowsModeState } from '../../src/system-time.ts';
+import { applySystemTimeSettings, applyTimesyncdDropIn, setSystemNtpEnabled, setSystemNtpServer, settlesToNtpEnabled, waitForWindowsTimeService, withSystemTimeLock, withSaveBudget, remainingSaveBudget, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, FOLLOW_UP_BUDGET_MS, WRITE_TIMEOUT_MS, type CommandRunner, type WindowsModeState } from '../../src/system-time.ts';
 import { SIGNATURE_TIMEOUT_MS, WINDOWS_NETWORK_HELPER_TIMEOUT_MS, WINDOWS_TIME_HELPER_TIMEOUT_MS } from '../../src/network-helper-client.ts';
 import { WINDOWS_ELEVATION_HELPER_BUDGET_MS, WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_NETWORK_ELEVATION_WAIT_MS } from '../../src/network-helper-windows.ts';
 import { SYSTEM_TIME_SAVE_TIMEOUT_MS } from '@shared';
@@ -84,6 +84,113 @@ describe('Windows Time service transitions', () => {
 		).toBe(false);
 		expect(now).toBe(15000);
 		expect(reads).toBe(61);
+	});
+
+	/**
+	 * Inside a save the wait is held to what the save has left, not to a fresh 15 s of its own.
+	 *
+	 * The command before it and the command after it are both held to the save's remaining
+	 * time, but the wait sat between them on its own clock. In the privileged Windows helper
+	 * that gap was the whole reserve: a 45 s budget against a launcher that terminates the
+	 * helper at 60 s, so a start accepted at 44.9 s still waited until 59.9 s and the helper
+	 * could be killed with its "this may already be applied" answer unsent.
+	 */
+	it.each([true, false])('bounds an unconfirmed transition to what the save has left: enabled=%s', async enabled => {
+		let clock = 0,
+			reads = 0;
+		const reached = await withSaveBudget(
+			() =>
+				waitForWindowsTimeService(
+					enabled,
+					() => {
+						reads++;
+						return null;
+					},
+					async ms => {
+						clock += ms;
+					},
+					() => clock
+				),
+			() => clock,
+			100
+		);
+		expect(reached).toBe(false);
+		expect(clock).toBe(100);
+		expect(reads).toBe(2);
+	});
+
+	it('waits for nothing when the save is already out of time', async () => {
+		let reads = 0;
+		const reached = await withSaveBudget(
+			() =>
+				waitForWindowsTimeService(
+					true,
+					() => {
+						reads++;
+						return null;
+					},
+					async () => {
+						throw new Error('paused with no time left');
+					},
+					() => 0
+				),
+			() => 0,
+			0
+		);
+		expect(reached).toBe(false);
+		expect(reads).toBe(0);
+	});
+
+	/** The Linux settle after `set-ntp` is the same wait, and was held to the same fresh 15 s. */
+	it.each([true, false])('holds the linux settle to what the save has left too: enabled=%s', async enabled => {
+		let clock = 0;
+		const stillOpposite = async () => ({ ...(await readStatus()), ntpEnabled: !enabled });
+		const settled = await withSaveBudget(
+			() =>
+				settlesToNtpEnabled(
+					enabled,
+					stillOpposite,
+					async ms => {
+						clock += ms;
+					},
+					() => clock
+				),
+			() => clock,
+			100
+		);
+		expect(settled).toBe(false);
+		expect(clock).toBe(100);
+	});
+
+	/**
+	 * Through the real save path with the REAL wait, not a stub that answers at once: an
+	 * accepted start with 100 ms of the save left, the service never confirming. The wait
+	 * takes those 100 ms and no more, nothing runs after it, and the answer says the host
+	 * may already have changed.
+	 */
+	it('reports an unconfirmed transition without outliving the save', async () => {
+		await windows(async () => {
+			let clock = 0;
+			const calls: string[] = [];
+			const exec: CommandRunner = async (cmd, args) => {
+				calls.push([cmd, ...args].join(' '));
+				return { kind: 'ok', output: '' };
+			};
+			const wait = (running: boolean) =>
+				waitForWindowsTimeService(
+					running,
+					() => null,
+					async ms => {
+						clock += ms;
+					},
+					() => clock
+				);
+			const outcome = await withSaveBudget(() => setSystemNtpEnabled(true, readStatus, exec, mode, wait), () => clock, 100);
+			expect(outcome.success).toBe(false);
+			expect(outcome.stateMayHaveChanged).toBe(true);
+			expect(clock).toBe(100);
+			expect(calls).toEqual(['sc config w32time start= delayed-auto', 'sc start w32time']);
+		});
 	});
 	it.each([true, false])('still confirms the state after an already-running/stopped response: enabled=%s', async enabled => {
 		await windows(async () => {

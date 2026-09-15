@@ -878,13 +878,36 @@ export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Pr
 			// The reason is read out of the output: `sc` keeps it there, not in its exit status.
 			const accepted = outcome.kind === 'ok' || (outcome.kind === 'failed' && (enabled ? SC_ALREADY_RUNNING_RE : SC_NOT_ACTIVE_RE).test(outcome.output));
 			if (!accepted || (await waitForService(enabled))) return outcome;
-			return { kind: 'failed', code: null, output: `Windows Time did not reach the ${enabled ? 'running' : 'stopped'} state within 15 seconds; the service transition may still be in progress` };
+			return { kind: 'failed', code: null, output: `Windows Time did not reach the ${enabled ? 'running' : 'stopped'} state in the time this save had left; the service transition may still be in progress` };
 		});
 	});
 }
 
+/** How long a service is given to settle into the state it was just asked for. */
+const SERVICE_SETTLE_MS = 15_000;
+
 /**
- * Wait for the host's own `NTP=` flag to reach `enabled`, for at most 15 seconds.
+ * How long the settle wait below may actually take: the usual 15 s, or what the save has
+ * left, whichever is less.
+ *
+ * The two waits ran on a fresh 15 s of their own, and nothing above them could cut that
+ * short: the command they follow is held to the save's remaining time, the next command
+ * checks it again, but the wait sits between the two. Inside the privileged Windows helper
+ * that gap is the whole reserve: the helper's budget is 45 s against a launcher that
+ * terminates it at 60 s, and a start accepted at 44.9 s still waited until 59.9 s - so the
+ * helper could be killed with the structured "this may already be applied" answer unsent.
+ * Zero or less means the save is already out of time: nothing is waited for, and the caller
+ * reports the transition as unconfirmed, which is the honest answer.
+ *
+ * Null is a wait outside any save - a writer used directly - and keeps the plain 15 s.
+ */
+function settleAllowance(): number {
+	const remaining = remainingSaveBudget();
+	return remaining === null ? SERVICE_SETTLE_MS : Math.min(SERVICE_SETTLE_MS, remaining);
+}
+
+/**
+ * Wait for the host's own `NTP=` flag to reach `enabled`, for as long as {@link settleAllowance} gives.
  *
  * True when it got there, false when it is definitely the opposite the whole time. An
  * UNREADABLE state (null) also returns true: it is not evidence of failure, and inventing
@@ -893,18 +916,23 @@ export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Pr
  * Monotonic clock, because this runs around a change to the wall clock.
  */
 export async function settlesToNtpEnabled(enabled: boolean, readStatus: () => Promise<SystemTimeStatus>, pause: (ms: number) => Promise<void> = sleep, now: () => number = () => performance.now()): Promise<boolean> {
-	const deadline = now() + 15000;
+	const allowance = settleAllowance();
+	if (allowance <= 0) return false;
+	const deadline = now() + allowance;
 	while (true) {
 		const after = await readStatus();
 		if (after.ntpEnabled !== !enabled) return true;
-		if (now() >= deadline) return false;
-		await pause(250);
+		const remaining = deadline - now();
+		if (remaining <= 0) return false;
+		await pause(Math.min(250, remaining));
 	}
 }
 
-/** SCM accepts start/stop before completion. Poll for at most 15 s under the time-write lock. */
+/** SCM accepts start/stop before completion. Poll for as long as {@link settleAllowance} gives, under the time-write lock. */
 export async function waitForWindowsTimeService(running: boolean, read: () => boolean | null = readWindowsTimeServiceRunning, pause: (ms: number) => Promise<void> = sleep, now: () => number = () => performance.now()): Promise<boolean> {
-	const deadline = now() + 15000;
+	const allowance = settleAllowance();
+	if (allowance <= 0) return false;
+	const deadline = now() + allowance;
 	while (true) {
 		if (read() === running) return true;
 		const remaining = deadline - now();
