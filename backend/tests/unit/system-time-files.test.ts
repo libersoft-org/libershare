@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { applyTimesyncdDropIn, syncDirectory, type CommandRunner, type RunOutcome, SAVE_BUDGET_MS, withSaveBudget, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
 import { fakeRunner } from '../helpers/system-time-fixtures.ts';
 import { withTimesyncConfigRead } from '../helpers/system-time-timesyncd.ts';
-import { serviceAccountProbe } from '../../src/system-time-files.ts';
+import { serviceAccountGroups, serviceAccountProbe } from '../../src/system-time-files.ts';
 
 /**
  * The probe must ask as the account the service actually runs as. systemd gives it its
@@ -15,15 +15,42 @@ import { serviceAccountProbe } from '../../src/system-time-files.ts';
  * real group to observe.
  */
 describe('serviceAccountProbe', () => {
-	it('adopts the account with its supplementary groups, not without them', () => {
-		const argv = serviceAccountProbe({ uid: 997, gid: 997 }, 'x', '/etc/systemd/timesyncd.conf.d');
-		expect(argv).toEqual(['/usr/bin/setpriv', '--reuid=997', '--regid=997', '--init-groups', '/usr/bin/test', '-x', '/etc/systemd/timesyncd.conf.d']);
+	it('adopts the account with every group the running service holds', () => {
+		const argv = serviceAccountProbe({ uid: 997, gid: 997, groups: ['systemd-timesync', 'ntp-readers'] }, 'x', '/etc/systemd/timesyncd.conf.d');
+		expect(argv).toEqual(['/usr/bin/setpriv', '--reuid=997', '--regid=997', '--groups=systemd-timesync,ntp-readers', '/usr/bin/test', '-x', '/etc/systemd/timesyncd.conf.d']);
+		// Either of these would probe as a poorer account than the one that runs.
 		expect(argv).not.toContain('--clear-groups');
+		expect(argv).not.toContain('--init-groups');
 	});
 
 	it('asks for exactly the access the caller names', () => {
-		expect(serviceAccountProbe({ uid: 1, gid: 2 }, 'r', '/x')).toContain('-r');
-		expect(serviceAccountProbe({ uid: 1, gid: 2 }, 'x', '/x')).toContain('-x');
+		expect(serviceAccountProbe({ uid: 1, gid: 2, groups: ['g'] }, 'r', '/x')).toContain('-r');
+		expect(serviceAccountProbe({ uid: 1, gid: 2, groups: ['g'] }, 'x', '/x')).toContain('-x');
+	});
+});
+
+/**
+ * The group list is the union of two sources, because systemd starts the service with both:
+ * the account's own memberships, and whatever the unit adds through `SupplementaryGroups=`.
+ * Taking only the first - which `--init-groups` did - missed a directory opened to the service
+ * through a drop-in, and refused a configuration the running daemon reads.
+ */
+describe('serviceAccountGroups', () => {
+	it('joins the account memberships with the groups the unit adds', () => {
+		expect(serviceAccountGroups('systemd-timesync\n', 'ntp-readers\n', '997')).toEqual(['systemd-timesync', 'ntp-readers']);
+	});
+
+	it('lists a group once, whichever side named it', () => {
+		expect(serviceAccountGroups('systemd-timesync ntp-readers\n', 'ntp-readers extra\n', '997')).toEqual(['systemd-timesync', 'ntp-readers', 'extra']);
+	});
+
+	it('copes with a unit that adds nothing, and with a query that could not be run', () => {
+		expect(serviceAccountGroups('systemd-timesync\n', '\n', '997')).toEqual(['systemd-timesync']);
+		expect(serviceAccountGroups('systemd-timesync\n', null, '997')).toEqual(['systemd-timesync']);
+	});
+
+	it('never hands setpriv an empty list, which it rejects outright', () => {
+		expect(serviceAccountGroups(null, null, '997')).toEqual(['997']);
 	});
 });
 

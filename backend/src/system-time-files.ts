@@ -280,6 +280,9 @@ async function resolveForServiceAccount(path: string): Promise<Resolution> {
 /** The account `systemd-timesyncd` reads its configuration as, per its shipped unit. */
 export const TIME_SERVICE_ACCOUNT = 'systemd-timesync';
 
+/** The unit that account runs under, asked for the groups the unit itself adds. */
+export const TIME_SERVICE_UNIT = 'systemd-timesyncd.service';
+
 /**
  * Can the time service's own account reach `path`? Null when this host cannot be asked.
  *
@@ -289,27 +292,53 @@ export const TIME_SERVICE_ACCOUNT = 'systemd-timesync';
  */
 export type ServiceAccountAccess = (path: string, mode: 'r' | 'x') => Promise<boolean | null>;
 
+/** Who the time service runs as: its ids, and every group it holds while it runs. */
+export interface ServiceAccountIdentity {
+	uid: number;
+	gid: number;
+	/** Group names, as `setpriv --groups` takes them; never empty. */
+	groups: string[];
+}
+
+/**
+ * The groups the running service actually holds, from the two places they come from.
+ *
+ * `idOutput` is `id -Gn <account>` - the account's own memberships, resolved through NSS so a
+ * directory-backed group counts - and `unitOutput` is the unit's `SupplementaryGroups=`, which
+ * systemd ADDS on top of those at start. The first alone was the previous answer, and it missed
+ * exactly the second: an administrator who opens a directory to the service through
+ * `SupplementaryGroups=` in a drop-in gives the running daemon a group its account never had,
+ * so the probe - as the account - was refused where the service is not, and a working
+ * configuration was rolled back. Both are space-separated names; the union keeps the primary
+ * group, which `id -Gn` always lists first.
+ */
+export function serviceAccountGroups(idOutput: string | null, unitOutput: string | null, fallback: string): string[] {
+	const names = new Set<string>();
+	for (const output of [idOutput, unitOutput]) for (const name of (output ?? '').split(/\s+/)) if (name.length > 0) names.add(name);
+	return names.size > 0 ? [...names] : [fallback];
+}
+
 /**
  * The exact process that asks the kernel on the service account's behalf.
  *
- * `--init-groups`, not `--clear-groups`: systemd starts the service with the account's
- * supplementary groups from the group database, so a directory an administrator opened to it
- * through such a group is one the real service enters. Clearing the groups probed a poorer
- * account than the one that runs - measured: a 0750 directory owned by a group the account was
- * a supplementary member of failed `test -x` under `--clear-groups` and passed it under
- * `--init-groups` - so a working configuration was refused and rolled back. `setpriv` insists
- * on one of the group options whenever the uid changes, and this is the one that matches.
+ * `--groups=` with the full list rather than `--init-groups`: the latter takes the account's
+ * memberships from the group database and nothing else, so it could not carry the groups the
+ * unit adds. `setpriv` insists on exactly one group option whenever the uid changes, and the
+ * two cannot be combined - measured: "mutually exclusive arguments" - so the list is assembled
+ * here (see {@link serviceAccountGroups}) and handed over whole. Clearing the groups was the
+ * answer before that, and it was poorer still: a 0750 directory owned by a group the account
+ * belonged to failed `test -x` under it.
  */
-export function serviceAccountProbe(ids: { uid: number; gid: number }, mode: 'r' | 'x', path: string): string[] {
-	return ['/usr/bin/setpriv', `--reuid=${ids.uid}`, `--regid=${ids.gid}`, '--init-groups', '/usr/bin/test', `-${mode}`, path];
+export function serviceAccountProbe(identity: ServiceAccountIdentity, mode: 'r' | 'x', path: string): string[] {
+	return ['/usr/bin/setpriv', `--reuid=${identity.uid}`, `--regid=${identity.gid}`, `--groups=${identity.groups.join(',')}`, '/usr/bin/test', `-${mode}`, path];
 }
 
 export const serviceAccountAccess: ServiceAccountAccess = async (path, mode) => {
 	if (process.platform !== 'linux' || process.getuid?.() !== 0) return null;
-	const ids = await serviceAccountIds();
-	if (ids === null) return null;
+	const identity = await serviceAccountIdentity();
+	if (identity === null) return null;
 	try {
-		const probe = Bun.spawnSync(serviceAccountProbe(ids, mode, path), { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' });
+		const probe = Bun.spawnSync(serviceAccountProbe(identity, mode, path), { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' });
 		// Only `test`'s own verdict counts. `setpriv` reports its own failures - a missing
 		// binary, an id it may not assume - with a different status, and reading those as
 		// "unreadable" would refuse a configuration nobody can prove is broken.
@@ -319,12 +348,29 @@ export const serviceAccountAccess: ServiceAccountAccess = async (path, mode) => 
 	}
 };
 
-let cachedServiceIds: { uid: number; gid: number } | null | undefined;
+let cachedServiceIdentity: ServiceAccountIdentity | null | undefined;
 
-/** The service account's numeric ids, read once from the host's own passwd database. */
-async function serviceAccountIds(): Promise<{ uid: number; gid: number } | null> {
-	if (cachedServiceIds !== undefined) return cachedServiceIds;
-	cachedServiceIds = null;
+/** Stdout of a short host query, or null when it could not be run or did not succeed. */
+function queryHost(argv: string[]): string | null {
+	try {
+		const child = Bun.spawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'ignore', timeout: 5_000 });
+		return child.exitCode === 0 ? child.stdout.toString('utf8') : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * The service account's ids and groups, read once per process.
+ *
+ * The ids come from the host's own passwd database; the groups from `id -Gn` and from the
+ * unit systemd has loaded (`SupplementaryGroups=` is read through `systemctl show`, so a
+ * drop-in counts once `daemon-reload` has seen it). Cached like the ids were: a change to
+ * either while this process runs is not picked up until it restarts.
+ */
+async function serviceAccountIdentity(): Promise<ServiceAccountIdentity | null> {
+	if (cachedServiceIdentity !== undefined) return cachedServiceIdentity;
+	cachedServiceIdentity = null;
 	try {
 		const passwd = await readFile('/etc/passwd', 'utf8');
 		for (const line of passwd.split('\n')) {
@@ -332,11 +378,14 @@ async function serviceAccountIds(): Promise<{ uid: number; gid: number } | null>
 			if (fields[0] !== TIME_SERVICE_ACCOUNT) continue;
 			const uid = Number(fields[2]);
 			const gid = Number(fields[3]);
-			if (Number.isInteger(uid) && Number.isInteger(gid)) cachedServiceIds = { uid, gid };
+			if (!Number.isInteger(uid) || !Number.isInteger(gid)) break;
+			const memberships = queryHost(['/usr/bin/id', '-Gn', TIME_SERVICE_ACCOUNT]);
+			const unitGroups = queryHost(['/usr/bin/systemctl', 'show', '-p', 'SupplementaryGroups', '--value', TIME_SERVICE_UNIT]);
+			cachedServiceIdentity = { uid, gid, groups: serviceAccountGroups(memberships, unitGroups, String(gid)) };
 			break;
 		}
 	} catch {}
-	return cachedServiceIds;
+	return cachedServiceIdentity;
 }
 
 /**
