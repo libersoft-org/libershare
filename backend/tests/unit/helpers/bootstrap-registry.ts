@@ -76,6 +76,10 @@ export function installBootstrapRegistry(network: unknown, seeds: readonly IRegi
 	(network as any).recoveryCursors ??= { configured: null, discovered: null };
 	(network as any).inFlightBootstrapDials ??= new Map();
 	(network as any).quarantineProbeInFlight ??= new Set<string>();
+	// Read by the single dial gate, so every harness that can reach a dial path needs
+	// them present — an absent map throws instead of answering "nothing holds it back".
+	(network as any).configuredBootstrapPeerIDs ??= new Set<string>();
+	(network as any).unreachableQuarantine ??= new Map<string, number>();
 	return byAddress;
 }
 

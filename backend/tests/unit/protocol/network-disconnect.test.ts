@@ -14,6 +14,23 @@ import { installBootstrapRegistry } from '../helpers/bootstrap-registry.ts';
 const PEER_ID = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
 const NET = 'net-a';
 
+/**
+ * Populate the per-peer maps every dial path touches. Leave-network suppression
+ * and unreachable-eviction share the same call sites, so a fixture that stubs
+ * only one of them makes production code throw on the other's map instead of
+ * exercising the behaviour under test.
+ */
+export function stubSuppressionState(network: Network): void {
+	(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+	(network as any).unreachableQuarantine = new Map<string, number>();
+	(network as any).noReachableSince = new Map<string, number>();
+	(network as any).redialBackoff = new Map();
+	(network as any).configuredBootstrapPeerIDs = new Set<string>();
+	(network as any).bootstrapPeerIDs = new Set<string>();
+	(network as any).bootstrapMultiaddrs = [];
+	(network as any).runEpoch = 0;
+}
+
 function makeNetwork() {
 	const merges: Array<{ tags: Record<string, unknown> }> = [];
 	const hungUp: string[] = [];
@@ -79,6 +96,24 @@ describe('Network.disconnectPeer — keep-alive tag removal', () => {
 		const { network, suppressed } = makeNetwork();
 		await network.disconnectPeer(PEER_ID, NET);
 		expect(suppressed(PEER_ID)).toBe(true);
+	});
+
+	it('suppresses it before the first await, not after the hangUp', async () => {
+		// Every yield in disconnectPeer is a window in which peer:discovery / redial
+		// maintenance read the suppression set. If the claim is only filed at the end,
+		// they see an ordinary peer and re-tag it for the ReconnectQueue.
+		const { network, suppressed } = makeNetwork();
+		const suppressedDuring: boolean[] = [];
+		(network as any).node.peerStore.merge = async (): Promise<void> => {
+			suppressedDuring.push(suppressed(PEER_ID));
+		};
+		(network as any).node.hangUp = async (): Promise<void> => {
+			suppressedDuring.push(suppressed(PEER_ID));
+		};
+
+		await network.disconnectPeer(PEER_ID, NET);
+
+		expect(suppressedDuring).toEqual([true, true]);
 	});
 
 	it('forgets the peerStore entry so the disconnect survives a restart', async () => {
@@ -313,7 +348,7 @@ describe('Network.runRedialMaintenance — leave-peer suppression', () => {
 	function bareNetwork(suppressed: string[], sharedTopicPeers: string[] = []) {
 		const dialed: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
-		(network as any).redialBackoff = new Map();
+		stubSuppressionState(network);
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();

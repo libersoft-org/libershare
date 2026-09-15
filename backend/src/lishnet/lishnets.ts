@@ -1228,6 +1228,13 @@ export class Networks {
 	 * enable rejoin the topic between them and then watch the delete remove the row
 	 * underneath it: subscribed, in `joinedNetworks`, and nothing in the database to explain
 	 * either.
+	 *
+	 * The leave redial-suppresses this lishnet's exclusive peers, keyed by its ID, and a
+	 * rejoin is what normally lifts that. A deleted lishnet has no rejoin left to come, so
+	 * this is the last opportunity — otherwise those peer IDs stay undialable for the rest
+	 * of the process, including from lishnets that have nothing to do with this one.
+	 * Releasing is safe by then: the leave has already hung the peers up, stripped their
+	 * keep-alive tags and forgotten their peerStore entries.
 	 */
 	async delete(id: string): Promise<boolean> {
 		return await this.inMutation(async () => {
@@ -1238,6 +1245,7 @@ export class Networks {
 			});
 			if (!job) return false;
 			await job;
+			this.network.clearRedialSuppressionForNetwork(id);
 			return true;
 		});
 	}

@@ -875,7 +875,7 @@ export class Network {
 		// returned by push() at every call site — intercept via prototype override
 		// on the first OutboundStream instance we observe (all instances share one
 		// prototype).
-		applyGossipsubPatches(this.pubsub, { settings: this.settings, getBootstrapPeerIDs: (): Set<string> => this.bootstrapPeerIDs, pxIngressLogKeys: this.pxIngressLogKeys }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
+		applyGossipsubPatches(this.pubsub, { settings: this.settings, getConfiguredBootstrapPeerIDs: (): Set<string> => this.configuredBootstrapPeerIDs, pxIngressLogKeys: this.pxIngressLogKeys }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
 
 		// Register lish protocol handler
 		await this.node.handle(LISH_PROTOCOL, (data: any) => this.handleInboundLISHProtocol(data), { runOnLimitedConnection: true });
@@ -1011,7 +1011,10 @@ export class Network {
 		const multiaddrs = detail.multiaddrs?.map((ma: any) => ma.toString()) || [];
 		trace(`[NET] Discovered peer: ${peerID}, addrs: ${multiaddrs.join(', ') || '(empty)'}`);
 
-		if (peerID === node.peerId.toString() || this.isRedialSuppressed(peerID)) return;
+		// A peer we deliberately left, or one we just evicted as unreachable, must not be
+		// re-tagged or re-dialed by discovery (mDNS, identify, PX) — that beats the
+		// disconnect and re-creates the entry the eviction removed.
+		if (peerID === node.peerId.toString() || this.dialSuppressionReason(peerID) !== null) return;
 
 		const tagAsFleetPeer = async (): Promise<boolean> => {
 			try {
@@ -1330,15 +1333,58 @@ export class Network {
 
 	/**
 	 * Flat view over the per-network sets: whether a peer was deliberately hung up by
-	 * leave-network (via disconnectPeer) for ANY left lishnet, so no maintenance path
-	 * (redial loop, zero-connection recovery, promote, discovery) re-dials it.
+	 * leave-network (via disconnectPeer) for ANY left lishnet. Distinct from
+	 * {@link dialSuppressionReason} because leaving a lishnet also revokes what that
+	 * peer is allowed to ASK of us ({@link canListSharesTo}), which being merely
+	 * unreachable never does.
 	 */
 	private isRedialSuppressed(peerID: string): boolean {
 		for (const set of this.redialSuppressedByNet.values()) if (set.has(peerID)) return true;
 		return false;
 	}
 
-	/** Record a peer as left with a specific lishnet so maintenance won't re-dial it. */
+	/**
+	 * Why we must not dial a peer right now, or null when we may.
+	 *
+	 * Two mechanisms can answer, and they are deliberately NOT one map.
+	 * `redialSuppressedByNet` records a DECISION — we left lishnet X, so its peers
+	 * are unwanted until we rejoin X — keyed per lishnet, reversible, with no clock.
+	 * `unreachableQuarantine` records an OBSERVATION — this peer stopped answering,
+	 * so stop burning dials on it — global, with a wall-clock expiry. They are
+	 * created by different events, released by different events and scoped
+	 * differently; a single map would have to give one of them the other's
+	 * lifetime, which is how a per-network disconnect turns into a permanent
+	 * cross-network removal (or a dead peer comes back on rejoin of an unrelated
+	 * lishnet). What the two genuinely share is the one question every dial site
+	 * asks — so it is the QUESTION that is unified here, not the storage.
+	 *
+	 * Pure read: quarantine entries expire by time here and are deleted elsewhere
+	 * (peer:connect, the prune at the end of runRedialMaintenance).
+	 */
+	private dialSuppressionReason(peerID: string, now: number = Date.now()): 'left-network' | 'unreachable' | null {
+		if (this.isRedialSuppressed(peerID)) return 'left-network';
+		// A configured peer is user data and is never held back by an observation: the
+		// operator wrote the entry down, and a hub that was unreachable for half an hour
+		// is exactly the one they expect us to keep trying. The exemption lives in the
+		// question rather than at each call site, or the sites that forget it silently
+		// stop dialing the peer the user asked for.
+		if (this.configuredBootstrapPeerIDs.has(peerID)) return null;
+		const quarantinedAt = this.unreachableQuarantine.get(peerID);
+		if (quarantinedAt !== undefined && now - quarantinedAt < UNREACHABLE_QUARANTINE_MS) return 'unreachable';
+		return null;
+	}
+
+	/**
+	 * Record a peer as left with a specific lishnet so maintenance won't re-dial it.
+	 *
+	 * Lifetime of every entry this creates: released by
+	 * {@link clearRedialSuppressionForNetwork} (rejoin of that lishnet, or its
+	 * deletion — the lishnet ID is the only key that can release the entry, so a
+	 * lishnet that ceases to exist must release its peers on the way out), by
+	 * {@link clearRedialSuppressionForPeer} (the peer is observed back on a topic
+	 * we share), or by stop(). Every creation path — leaveNetwork, reached via
+	 * disable or delete — therefore has a matching release path.
+	 */
 	private addRedialSuppression(networkID: string, peerID: string): void {
 		let set = this.redialSuppressedByNet.get(networkID);
 		if (!set) {
@@ -1349,9 +1395,9 @@ export class Network {
 	}
 
 	/**
-	 * Lift suppression for one lishnet's peers — called on (re)join of that lishnet.
-	 * Scoped: rejoining A does not unblock still-left B's peers (nor lift the
-	 * canListSharesTo browse-privacy protecting B).
+	 * Lift suppression for one lishnet's peers — called on (re)join of that lishnet,
+	 * and on its deletion. Scoped: rejoining A does not unblock still-left B's peers
+	 * (nor lift the canListSharesTo browse-privacy protecting B).
 	 */
 	clearRedialSuppressionForNetwork(networkID: string): void {
 		this.redialSuppressedByNet.delete(networkID);
@@ -1418,9 +1464,13 @@ export class Network {
 				if (this.sharesJoinedTopicWith(pid)) this.clearRedialSuppressionForPeer(pid); // back on a shared topic → resume
 				continue;
 			}
-			// Skip peers we deliberately left (leave-network) so maintenance does not
-			// silently re-dial them; cleared above once they reconnect on their own.
-			if (this.isRedialSuppressed(pid)) {
+			// Ask the single dial gate BEFORE anything below can conclude the peer is
+			// gone. Order matters: the no-reachable-address branch and the dial branch
+			// both feed the eviction clocks, and a peer we are choosing not to dial has
+			// not earned a failure. Gating later would let a deliberate per-network
+			// leave accumulate a wall-clock unreachability window and end as a global
+			// eviction + quarantine — a per-network disconnect turned permanent.
+			if (this.dialSuppressionReason(pid, now) !== null) {
 				skippedSuppressed++;
 				continue;
 			}
@@ -1846,7 +1896,11 @@ export class Network {
 			const pid = peer.id.toString();
 			if (pid === myID) continue;
 			if (!connectedIDs.has(pid)) continue;
-			if (this.isRedialSuppressed(pid)) continue; // deliberately left — don't promote it back to bootstrap
+			// Connected is NOT enough. A peer we left can dial US back on its own keep-alive
+			// without rejoining any topic we share, and a quarantined one can be handed back
+			// by a neighbour; promoting either re-stamps the keep-alive tag the removal
+			// stripped and returns it to the ReconnectQueue.
+			if (this.dialSuppressionReason(pid) !== null) continue;
 			if (this.bootstrapPeerIDs.has(pid)) continue;
 			if (peer.addresses.length === 0) continue;
 			const addr = peer.addresses[0]!;
@@ -1888,13 +1942,14 @@ export class Network {
 	 * own fast cadence (directConnectTicks × heartbeatInterval). Removed again by
 	 * {@link purgeStalePeer}. Returns whether this call was the one that added it.
 	 *
-	 * A left-network peer that lingers or reappears in the peerStore is refused: the fast
-	 * reconnect cadence would undo the leave-network disconnect.
+	 * A peer we left, or one under the unreachable quarantine, is refused: the direct set
+	 * has its own fast reconnect cadence, so a suppressed peer placed in it is re-dialed
+	 * regardless of every other guard — undoing the very removal that put it there.
 	 */
 	private addGossipsubDirectPeer(peerID: string): boolean {
 		const gossipsub: any = this.pubsub;
 		if (!gossipsub?.direct || typeof gossipsub.direct.add !== 'function') return false;
-		if (this.isRedialSuppressed(peerID)) return false;
+		if (this.dialSuppressionReason(peerID) !== null) return false;
 		if (gossipsub.direct.has(peerID)) return false;
 		gossipsub.direct.add(peerID);
 		return true;
@@ -2119,11 +2174,17 @@ export class Network {
 				// decision to reverse, never gossip's.
 				if (peerID && origin === 'configured') {
 					this.configuredBootstrapPeerIDs.add(peerID);
-					// A re-configured bootstrap peer means its network was (re-)joined — it
-					// is no longer "left", so lift any redial suppression left by a prior
-					// leaveNetwork, otherwise maintenance would skip it forever if this one
-					// explicit dial fails or the connection drops before the next tick.
+					// Configuring a peer by hand means "try this one, from scratch". Every
+					// piece of accumulated evidence against it therefore goes: the leave
+					// decision, the unreachable quarantine and the failure history. Keeping
+					// any of them would let a single transient failure of this one explicit
+					// dial hide the peer from maintenance, discovery and zero-connection
+					// recovery for another half hour, with nothing in the UI explaining why
+					// the user's edit did nothing.
 					this.clearRedialSuppressionForPeer(peerID);
+					this.unreachableQuarantine.delete(peerID);
+					this.quarantineProbeInFlight.delete(peerID);
+					this.redialBackoff.delete(peerID);
 				}
 				// Also before the routability filter: a LAN or VPN bootstrap is unroutable only
 				// while its interface is down, and keeping it off the recovery list until then
@@ -2163,6 +2224,16 @@ export class Network {
 				// would re-create the status row and burn a dial. Configured entries are
 				// exempt: the user asked for them explicitly.
 				if (peerID && effectiveOrigin === 'discovered') {
+					// Gossip is the one dial path that can name a peer we never chose: it reaches
+					// peers we deliberately left as readily as any other, and dialing one undoes
+					// the decision that removed it. Refused before the dial rather than after it
+					// — a dial whose result is thrown away still spends the timeout and still
+					// re-creates the status row the leave removed. The configured branch above is
+					// the deliberate opposite: the user re-asked for that peer.
+					if (this.isRedialSuppressed(peerID)) {
+						trace(`[NET] addBootstrapPeers skip left-network: ${peerID.slice(0, 16)}`);
+						continue;
+					}
 					if (!isRecoveryDialDue(canonicalAddress, peerID, Date.now(), this.recoveryBackoff, this.unreachableQuarantine)) {
 						trace(`[NET] addBootstrapPeers skip discovered address in backoff or quarantine: ${canonicalAddress}`);
 						continue;
@@ -2895,7 +2966,11 @@ export class Network {
 	 */
 	private connectionAgeMs(peerID: string): number {
 		if (!this.node) return Infinity;
-		let age = Infinity;
+		// -1 means "no connection seen yet", which Infinity cannot express here:
+		// Infinity is also the age of an UNDATED connection, and treating the two the
+		// same let a later dated connection overwrite it with a finite (fresh-looking)
+		// age — handing the grace window to a peer we have no freshness evidence for.
+		let age = -1;
 		try {
 			const now = Date.now();
 			for (const c of this.node.getConnections()) {
@@ -2903,12 +2978,12 @@ export class Network {
 				const opened = c.timeline?.open;
 				// A connection with no open timestamp is not evidence of freshness.
 				const candidate = typeof opened === 'number' ? now - opened : Infinity;
-				if (age === Infinity || candidate > age) age = candidate;
+				if (candidate > age) age = candidate;
 			}
 		} catch {
 			return Infinity;
 		}
-		return age;
+		return age < 0 ? Infinity : age;
 	}
 
 	/**
@@ -3631,6 +3706,7 @@ export class Network {
 		// Fix C: clear accumulated per-peer/bootstrap state on stop
 		this.dcutrPeers.clear();
 		this.bootstrapPeerIDs.clear();
+		this.configuredBootstrapPeerIDs.clear();
 		this.bootstrapTracker.clear();
 		this.bootstrapByAddress.clear();
 		this.addressesByPeer.clear();

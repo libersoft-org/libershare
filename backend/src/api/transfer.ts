@@ -113,6 +113,8 @@ export function markDownloadEnabled(lishID: string): void {
 	persistDownloadEnabled?.(lishID, true);
 }
 let _activeDownloaders: Map<string, any> | null = null;
+// Same indirection for the suspended-by-leave map: it lives in the handler closure,
+// but LISH deletion happens outside it and must be able to forget the LISH.
 let _networkSuspended: Map<string, Set<string>> | null = null;
 export function setActiveDownloadersRef(ref: Map<string, any>): void {
 	_activeDownloaders = ref;
@@ -133,6 +135,22 @@ export async function destroyActiveDownloader(lishID: string): Promise<void> {
 	if (dl) {
 		await dl.destroy();
 		_activeDownloaders!.delete(lishID);
+	}
+}
+
+/**
+ * A fresh downloader was torn down before it ever started, because the state it was
+ * built from changed while the manifest was being read. Not a download error: nothing
+ * failed and nothing is broken, so the caller reports "not started" rather than
+ * stamping an error on the LISH the user would then have to clear by hand.
+ */
+export class DownloadStartAbandoned extends Error {
+	readonly lishID: string;
+
+	constructor(lishID: string, reason: string) {
+		super(`Download ${lishID.slice(0, 8)} not started: ${reason}`);
+		this.name = 'DownloadStartAbandoned';
+		this.lishID = lishID;
 	}
 }
 
@@ -198,6 +216,10 @@ export async function destroyAllDownloaders<T extends Pick<Downloader, 'destroy'
 /** Remove in-memory download state without DB persist (for LISH deletion). */
 export async function removeDownloadState(lishID: string): Promise<void> {
 	downloadEnabledLishs.delete(lishID);
+	// A LISH deleted while its download was suspended by a leave must drop its resume
+	// claim too. Left behind, the entry survives the LISH: every later lishnet join
+	// retries a LISH that no longer exists, and re-importing the same id would resume
+	// a download the user never asked for again.
 	_networkSuspended?.delete(lishID);
 	await destroyActiveDownloader(lishID);
 }
@@ -517,7 +539,14 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		return { success: true };
 	}
 
-	const pendingDownloads = new Set<string>();
+	/**
+	 * In-flight enable attempts, keyed by LISH. Holds the PROMISE, not just the id:
+	 * callers that arrive while one is running must receive its real outcome. A
+	 * synthetic `{ success: true }` is read by onNetworkJoined as a completed resume,
+	 * so it drops the suspension claim — and if the attempt it did not wait for then
+	 * fails, nothing is left to resume the download from.
+	 */
+	const pendingDownloads = new Map<string, Promise<{ success: boolean }>>();
 
 	async function startStoredDownloader(lishID: string, networkIDs: string[], originalNetworkIDs: string[], disabled: boolean, client?: any): Promise<Downloader> {
 		const lish = dataServer.get(lishID);
@@ -530,6 +559,28 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 		const downloader = new Downloader(downloadDir, networks.getRunningNetwork(), dataServer, networkIDs, originalNetworkIDs);
 		await downloader.initFromManifest(lish);
+		// `networkIDs` and the enabled flag were both read before the awaits above, and this
+		// downloader is not in `activeDownloaders` yet — onNetworkLeft, disableDownload and
+		// removeDownloadState all only walk that map, so a leave or a withdrawal landing in
+		// this window reaches neither. Unchecked, the download starts on a lishnet we have
+		// already left, or for a LISH the user just turned off or deleted. A downloader
+		// restored in the disabled state starts nothing and is exempt.
+		if (!disabled) {
+			if (!networkIDs.some(id => networks.isJoined(id))) {
+				// File the resume claim BEFORE tearing the downloader down: destroy() yields,
+				// and a re-join landing in that window walks networkSuspended to decide what to
+				// resume — an entry inserted afterwards misses the event entirely and the
+				// download stays suspended until the next manual toggle.
+				downloadEnabledLishs.delete(lishID);
+				networkSuspended.set(lishID, new Set(networkIDs));
+				await downloader.destroy();
+				throw new DownloadStartAbandoned(lishID, 'lishnet left while starting');
+			}
+			if (!downloadEnabledLishs.has(lishID)) {
+				await downloader.destroy();
+				throw new DownloadStartAbandoned(lishID, 'download withdrawn while starting');
+			}
+		}
 		const claim = await claimActiveDownloader(activeDownloaders, lishID, downloader);
 		if (!claim.claimed) return claim.downloader;
 		const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
@@ -581,8 +632,23 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	async function enableDownloadAdmitted(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
 		assert(p, ['lishID']);
+		const inFlight = pendingDownloads.get(p.lishID);
+		if (inFlight) return inFlight;
+		const attempt = startEnableDownload(p, client);
+		pendingDownloads.set(p.lishID, attempt);
+		try {
+			return await attempt;
+		} finally {
+			pendingDownloads.delete(p.lishID);
+		}
+	}
+
+	/**
+	 * The body of {@link enableDownload}: everything from the busy check to starting
+	 * the downloader. Split out so the caller can own the in-flight bookkeeping.
+	 */
+	async function startEnableDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
 		if (isBusy(p.lishID)) return { success: false };
-		if (pendingDownloads.has(p.lishID)) return { success: true };
 		dataServer.clearError(p.lishID);
 		downloadEnabledLishs.add(p.lishID);
 		persistDownloadEnabled?.(p.lishID, true);
@@ -660,7 +726,6 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				return { success: true };
 			}
 		}
-		pendingDownloads.add(p.lishID);
 		try {
 			let joinedNetworks = getJoinedEnabledNetworkIDs(networks);
 			let originalNetworkIDs = joinedNetworks;
@@ -721,6 +786,10 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };
 		} catch (err: any) {
+			if (err instanceof DownloadStartAbandoned) {
+				console.log(`[Transfer] ${err.message}`);
+				return { success: false };
+			}
 			const code = err instanceof CodedError ? err.code : ErrorCodes.DOWNLOAD_ERROR;
 			const detail = err instanceof CodedError ? err.detail : err.message;
 			console.error(`[Transfer] ${p.lishID.slice(0, 8)}: enableDownload failed (${code}): ${detail}`);
@@ -731,8 +800,6 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			send('transfer.download:error', { error: code, errorDetail: detail, lishID: p.lishID });
 			startRecoveryIfEnabled(p.lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(p.lishID) });
 			return { success: false };
-		} finally {
-			pendingDownloads.delete(p.lishID);
 		}
 	}
 

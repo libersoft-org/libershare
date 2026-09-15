@@ -28,6 +28,8 @@ describe('Network.disconnectPeer — bound to the node it started on', () => {
 		// this run's cancellation and needs a controller to read.
 		(network as any).dialAbort = new AbortController();
 		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+		(network as any).configuredBootstrapPeerIDs ??= new Set<string>();
+		(network as any).unreachableQuarantine ??= new Map<string, number>();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).pubsub = null;
 		(network as any).bootstrapPeerIDs = new Set<string>();
@@ -118,9 +120,10 @@ describe('Network.addBootstrapPeers — a dial that lands after a restart', () =
 	function harness() {
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).runEpoch = 1;
-		// The peer is suppressed, so a dial landing on THIS run would legitimately take
-		// the destructive "landed after leave" branch. After a restart it must not.
-		(network as any).redialSuppressedByNet = new Map([['net-a', new Set([PEER_ID])]]);
+		// The leave lands WHILE the dial is in flight, which is the only way this branch
+		// is reached in production: gossip naming an already-left peer is refused before
+		// it ever dials. Each test below calls `leave()` at the moment it needs.
+		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).configuredBootstrapAddressesByNet = new Map();
@@ -151,14 +154,18 @@ describe('Network.addBootstrapPeers — a dial that lands after a restart', () =
 		(network as any).disconnectPeer = async (pid: string): Promise<void> => {
 			disconnected.push(pid);
 		};
-		return { network, gate, disconnected };
+		const leave = (): void => {
+			(network as any).redialSuppressedByNet.set('net-a', new Set([PEER_ID]));
+		};
+		return { network, gate, disconnected, leave };
 	}
 
 	it('does not disconnect on the new node when the epoch moved on', async () => {
-		const { network, gate, disconnected } = harness();
+		const { network, gate, disconnected, leave } = harness();
 
 		const dialing = (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
 		await Promise.resolve();
+		leave();
 		(network as any).runEpoch = 2;
 		gate.resolve({ remoteAddr: ADDR });
 		await dialing;
@@ -207,13 +214,14 @@ describe('Network.addBootstrapPeers — a dial that lands after a restart', () =
 	});
 
 	it('still disconnects when the dial lands on the same run after a leave', async () => {
-		const { network, gate, disconnected } = harness();
+		const { network, gate, disconnected, leave } = harness();
 		// A leave bumps the generation; that must NOT short-circuit ahead of the
 		// disconnect — the connection this dial just opened is the thing to close.
 		(network as any).bootstrapGeneration = new Map([['net-a', 1]]);
 
 		const dialing = (network as any).addBootstrapPeers([ADDR], 'net-a', 'discovered');
 		await Promise.resolve();
+		leave();
 		(network as any).bootstrapGeneration.set('net-a', 2);
 		gate.resolve({ remoteAddr: ADDR });
 		await dialing;
@@ -234,6 +242,8 @@ describe('Network.addBootstrapPeers — configured bootstraps become direct peer
 		const outcomes: string[] = [];
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set(suppressed)]]);
+		(network as any).configuredBootstrapPeerIDs ??= new Set<string>();
+		(network as any).unreachableQuarantine ??= new Map<string, number>();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).configuredBootstrapAddressesByNet = new Map();
