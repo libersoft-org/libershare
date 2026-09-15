@@ -289,12 +289,27 @@ export const TIME_SERVICE_ACCOUNT = 'systemd-timesync';
  */
 export type ServiceAccountAccess = (path: string, mode: 'r' | 'x') => Promise<boolean | null>;
 
+/**
+ * The exact process that asks the kernel on the service account's behalf.
+ *
+ * `--init-groups`, not `--clear-groups`: systemd starts the service with the account's
+ * supplementary groups from the group database, so a directory an administrator opened to it
+ * through such a group is one the real service enters. Clearing the groups probed a poorer
+ * account than the one that runs - measured: a 0750 directory owned by a group the account was
+ * a supplementary member of failed `test -x` under `--clear-groups` and passed it under
+ * `--init-groups` - so a working configuration was refused and rolled back. `setpriv` insists
+ * on one of the group options whenever the uid changes, and this is the one that matches.
+ */
+export function serviceAccountProbe(ids: { uid: number; gid: number }, mode: 'r' | 'x', path: string): string[] {
+	return ['/usr/bin/setpriv', `--reuid=${ids.uid}`, `--regid=${ids.gid}`, '--init-groups', '/usr/bin/test', `-${mode}`, path];
+}
+
 export const serviceAccountAccess: ServiceAccountAccess = async (path, mode) => {
 	if (process.platform !== 'linux' || process.getuid?.() !== 0) return null;
 	const ids = await serviceAccountIds();
 	if (ids === null) return null;
 	try {
-		const probe = Bun.spawnSync(['/usr/bin/setpriv', `--reuid=${ids.uid}`, `--regid=${ids.gid}`, '--clear-groups', '/usr/bin/test', `-${mode}`, path], { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' });
+		const probe = Bun.spawnSync(serviceAccountProbe(ids, mode, path), { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' });
 		// Only `test`'s own verdict counts. `setpriv` reports its own failures - a missing
 		// binary, an id it may not assume - with a different status, and reading those as
 		// "unreadable" would refuse a configuration nobody can prove is broken.

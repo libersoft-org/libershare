@@ -5,6 +5,27 @@ import { dirname, join } from 'node:path';
 import { applyTimesyncdDropIn, syncDirectory, type CommandRunner, type RunOutcome, SAVE_BUDGET_MS, withSaveBudget, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
 import { fakeRunner } from '../helpers/system-time-fixtures.ts';
 import { withTimesyncConfigRead } from '../helpers/system-time-timesyncd.ts';
+import { serviceAccountProbe } from '../../src/system-time-files.ts';
+
+/**
+ * The probe must ask as the account the service actually runs as. systemd gives it its
+ * supplementary groups from the group database, so a directory opened to it through one of
+ * them is one the service enters - and `--clear-groups` asked as a poorer account, refusing
+ * a working configuration. Pinned on the argv, since the kernel's answer needs root and a
+ * real group to observe.
+ */
+describe('serviceAccountProbe', () => {
+	it('adopts the account with its supplementary groups, not without them', () => {
+		const argv = serviceAccountProbe({ uid: 997, gid: 997 }, 'x', '/etc/systemd/timesyncd.conf.d');
+		expect(argv).toEqual(['/usr/bin/setpriv', '--reuid=997', '--regid=997', '--init-groups', '/usr/bin/test', '-x', '/etc/systemd/timesyncd.conf.d']);
+		expect(argv).not.toContain('--clear-groups');
+	});
+
+	it('asks for exactly the access the caller names', () => {
+		expect(serviceAccountProbe({ uid: 1, gid: 2 }, 'r', '/x')).toContain('-r');
+		expect(serviceAccountProbe({ uid: 1, gid: 2 }, 'x', '/x')).toContain('-x');
+	});
+});
 
 /**
  * A directory-flush stub that fails on flushes of `target`, letting the first `after` of them
