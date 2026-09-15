@@ -41,9 +41,11 @@ export class API {
 		this.upload = new UploadAPI(client);
 	}
 
-	// Raw call access
-	call<T = any>(method: string, params?: Record<string, any>): Promise<T> {
-		return this.client.call<T>(method, params);
+	// Raw call access. `timeoutMs` is forwarded to the client, which arms a timer only
+	// when one is asked for — without it a request the server accepts and never answers
+	// leaves the caller waiting for as long as the socket stays open.
+	call<T = any>(method: string, params?: Record<string, any>, timeoutMs?: number): Promise<T> {
+		return this.client.call<T>(method, params, timeoutMs);
 	}
 
 	on(event: string, callback: EventCallback): (() => void) | void {

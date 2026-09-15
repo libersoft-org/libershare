@@ -1,6 +1,7 @@
-import { CodedError, MAX_DNS_SERVERS, validateIPv4Config, type NetIPv4Baseline, type NetIPv4Config } from '@shared';
+import { CodedError, MAX_DNS_SERVERS, validateIPv4Config, type NetIPv4Baseline, type NetIPv4Config, type SystemTimeChanges, type SystemTimeResult } from '@shared';
+import { isSystemTimeChanges, isSystemTimeResult, systemTimeExitCode } from './system-time-helper.ts';
 
-export interface NetworkHelperRequest {
+export interface NetworkHelperIPv4Request {
 	version: 1;
 	operation: 'applyIPv4';
 	interfaceID: string;
@@ -16,6 +17,43 @@ export interface NetworkHelperRequest {
 	expected: NetIPv4Baseline;
 }
 
+/**
+ * One system-time save, elevated as a whole.
+ *
+ * The complete change set rather than a request per field: the ordering between the
+ * fields is a correctness rule of its own (synchronisation goes off before a hand-set
+ * clock, back on after it), it is already implemented once in
+ * `applySystemTimeSettings`, and one request is also one authorization prompt for one
+ * press of Save instead of up to four.
+ */
+export interface NetworkHelperTimeRequest {
+	version: 1;
+	operation: 'applySystemTime';
+	changes: SystemTimeChanges;
+	/**
+	 * Host uptime, in seconds, by which this save has to be finished - the caller's own
+	 * deadline, carried across the privilege boundary.
+	 *
+	 * Without it the elevated helper started a budget of its own, so a request that had
+	 * already spent most of the caller's wait queueing behind another save got a fresh
+	 * allowance the moment it crossed. The screen stops waiting at its own limit either way;
+	 * what this prevents is the HOST being changed afterwards.
+	 *
+	 * Uptime, not a wall-clock instant and not a remaining count. A remaining count would be
+	 * measured before the consent prompt and read after it, so the prompt's minutes would go
+	 * uncounted again - the same mistake one layer down. A wall-clock deadline cannot be used
+	 * either: this is the operation that MOVES the wall clock. Uptime is monotonic, shared by
+	 * every process on the host, and unaffected by the change being made. One-second
+	 * granularity is ample for a limit measured in minutes.
+	 *
+	 * Optional: a caller with no deadline of its own (a direct writer, a test) sends none and
+	 * the helper falls back to its own bound. It can only ever SHORTEN the helper's budget.
+	 */
+	deadlineUptime?: number;
+}
+
+export type NetworkHelperRequest = NetworkHelperIPv4Request | NetworkHelperTimeRequest;
+
 /** Exit codes of the helper when it reports through the process status instead of stdout. */
 export const NETWORK_HELPER_EXIT = { applied: 0, rejected: 10, stale: 14 } as const;
 
@@ -29,13 +67,22 @@ export const NETWORK_HELPER_ERROR_CODES = ['NETCONFIG_INVALID', 'NETCONFIG_UNSUP
 export type NetworkHelperErrorCode = (typeof NETWORK_HELPER_ERROR_CODES)[number];
 
 export type NetworkHelperFailure = { ok: false; error: string; code?: NetworkHelperErrorCode };
-export type NetworkHelperResponse = { ok: true } | NetworkHelperFailure;
+/**
+ * `time` carries the whole {@link SystemTimeResult}, because a refused system-time write
+ * is an ORDINARY answer that the screen renders from its `outcome` - "switch
+ * synchronisation off first", "the host changed under your form" - not a helper failure.
+ * `ok: true` here means the helper ran the save to completion, whatever the host said.
+ */
+export type NetworkHelperResponse = { ok: true } | { ok: true; time: SystemTimeResult } | NetworkHelperFailure;
 type ApplyIPv4 = (interfaceID: string, config: NetIPv4Config, expected: NetIPv4Baseline) => Promise<unknown>;
+type ApplySystemTime = (changes: SystemTimeChanges) => Promise<SystemTimeResult>;
 
-const REQUEST_KEYS = ['config', 'expected', 'interfaceID', 'operation', 'version'];
+const IPV4_REQUEST_KEYS = ['config', 'expected', 'interfaceID', 'operation', 'version'];
+const TIME_REQUEST_KEYS = ['changes', 'deadlineUptime', 'operation', 'version'];
 const CONFIG_KEYS = ['address', 'dns', 'gateway', 'mode', 'prefixLength'];
 const BASELINE_KEYS = ['address', 'dns', 'gateway', 'mode', 'prefixLength'];
 const MAX_BASELINE_VALUE_LENGTH = 64;
+const MAX_DEADLINE_UPTIME_S = 1e14;
 
 function hasOnlyKeys(value: Record<string, unknown>, allowed: string[]): boolean {
 	return Object.keys(value).every(key => allowed.includes(key));
@@ -65,15 +112,26 @@ export function decodeNetworkHelperRequest(encoded: string): NetworkHelperReques
 		throw new Error('invalid network helper request');
 	}
 	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid network helper request');
-	const request = value as Partial<NetworkHelperRequest>;
-	if (!hasOnlyKeys(request as Record<string, unknown>, REQUEST_KEYS)) throw new Error('invalid network helper request');
-	if (request.version !== 1 || request.operation !== 'applyIPv4') throw new Error('unsupported network helper operation');
+	const request = value as { version?: unknown; operation?: unknown; changes?: unknown; deadlineUptime?: unknown; interfaceID?: unknown; config?: unknown; expected?: unknown };
+	if (request.version !== 1) throw new Error('unsupported network helper operation');
+	if (request.operation === 'applySystemTime') {
+		if (!hasOnlyKeys(request as Record<string, unknown>, TIME_REQUEST_KEYS)) throw new Error('invalid network helper request');
+		if (!isSystemTimeChanges(request.changes)) throw new Error('invalid network helper time changes');
+		// A deadline is only ever allowed to shorten the work, so an absurd one is refused
+		// rather than clamped: a request this helper cannot make sense of is not one to run
+		// with a guessed limit. `MAX_DEADLINE_UPTIME_S` is a host uptime no real machine
+		// reaches (about 3 million years), which keeps this a shape check and not a policy.
+		if (request.deadlineUptime !== undefined && (typeof request.deadlineUptime !== 'number' || !Number.isFinite(request.deadlineUptime) || request.deadlineUptime < 0 || request.deadlineUptime > MAX_DEADLINE_UPTIME_S)) throw new Error('invalid network helper deadline');
+		return { version: 1, operation: 'applySystemTime', changes: request.changes, ...(request.deadlineUptime === undefined ? {} : { deadlineUptime: request.deadlineUptime }) };
+	}
+	if (!hasOnlyKeys(request as Record<string, unknown>, IPV4_REQUEST_KEYS)) throw new Error('invalid network helper request');
+	if (request.operation !== 'applyIPv4') throw new Error('unsupported network helper operation');
 	if (typeof request.interfaceID !== 'string' || request.interfaceID.length === 0 || new TextEncoder().encode(request.interfaceID).byteLength > 256 || /\p{Cc}/u.test(request.interfaceID)) throw new Error('invalid network helper interface');
 	if (!request.config || typeof request.config !== 'object' || Array.isArray(request.config) || !hasOnlyKeys(request.config as unknown as Record<string, unknown>, CONFIG_KEYS)) throw new Error('invalid network helper config');
 	const invalid = validateIPv4Config(request.config);
 	if (invalid) throw new Error(`invalid network helper ${invalid}`);
 	if (!isNetworkHelperBaseline(request.expected)) throw new Error('invalid network helper baseline');
-	return request as NetworkHelperRequest;
+	return request as NetworkHelperIPv4Request;
 }
 
 /**
@@ -91,14 +149,24 @@ export function networkHelperFailure(error: unknown): NetworkHelperFailure {
 	return { ok: false, error: (message || 'network change failed').slice(0, 500), ...(code && { code }) };
 }
 
-/** The process status a helper reports the failure with when it has no stdout to answer on. */
+/** The process status a helper reports the outcome with when it has no stdout to answer on. */
 export function networkHelperExitCode(response: NetworkHelperResponse): number {
+	// A system-time save answers with its own outcome, not merely applied/rejected: the
+	// screen renders a different message for each one, and that has to survive a boundary
+	// where the exit code is the only channel.
+	if (response.ok && 'time' in response) return systemTimeExitCode(response.time);
 	if (response.ok) return NETWORK_HELPER_EXIT.applied;
 	return response.code === 'NETCONFIG_STALE' ? NETWORK_HELPER_EXIT.stale : NETWORK_HELPER_EXIT.rejected;
 }
 
-export async function executeNetworkHelperRequest(request: NetworkHelperRequest, applyIPv4: ApplyIPv4): Promise<NetworkHelperResponse> {
+export async function executeNetworkHelperRequest(request: NetworkHelperRequest, applyIPv4: ApplyIPv4, applySystemTime?: ApplySystemTime): Promise<NetworkHelperResponse> {
 	try {
+		if (request.operation === 'applySystemTime') {
+			// Before running: a helper build without the operation has changed nothing, so the
+			// generic failure below is the right answer.
+			if (!applySystemTime) throw new Error('unsupported network helper operation');
+			return { ok: true, time: await applySystemTimeReporting(applySystemTime, request.changes) };
+		}
 		await applyIPv4(request.interfaceID, request.config, request.expected);
 		return { ok: true };
 	} catch (error) {
@@ -106,8 +174,31 @@ export async function executeNetworkHelperRequest(request: NetworkHelperRequest,
 	}
 }
 
+/**
+ * Run the system-time save so that an EXCEPTION from it is still a time result.
+ *
+ * The save reports its own refusals and carries `changed` / `stateMayHaveChanged` with
+ * them, but it can also throw - a filesystem error escaping a rollback, an FFI call
+ * failing. Such a throw used to land in the generic catch above and leave as
+ * `{ ok: false, error }`, which the caller reads as "refused before anything ran": the
+ * partial-change flags were gone, so the API skipped the read-back and the broadcast, and
+ * nobody was told that a step which HAD completed - synchronisation switched off, say -
+ * was left in place.
+ *
+ * An exception is by definition a point where the sequence is no longer known, so the
+ * conservative flag is the honest one.
+ */
+async function applySystemTimeReporting(applySystemTime: ApplySystemTime, changes: SystemTimeChanges): Promise<SystemTimeResult> {
+	try {
+		return await applySystemTime(changes);
+	} catch (error) {
+		const failure = networkHelperFailure(error);
+		return { success: false, outcome: 'error', message: failure.error, stateMayHaveChanged: true };
+	}
+}
+
 export function parseNetworkHelperResponse(text: string): NetworkHelperResponse {
-	if (new TextEncoder().encode(text).byteLength > 4096) throw new Error('network helper returned an oversized response');
+	if (new TextEncoder().encode(text).byteLength > 16384) throw new Error('network helper returned an oversized response');
 	let value: unknown;
 	try {
 		value = JSON.parse(text.trim());
@@ -115,11 +206,12 @@ export function parseNetworkHelperResponse(text: string): NetworkHelperResponse 
 		throw new Error('network helper returned an invalid response');
 	}
 	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('network helper returned an invalid response');
-	const response = value as { ok?: unknown; error?: unknown; code?: unknown };
+	const response = value as { ok?: unknown; error?: unknown; code?: unknown; time?: unknown };
 	const keys = Object.keys(response).sort().join();
 	const error = typeof response.error === 'string' && response.error.length > 0 && response.error.length <= 500 && !/\p{Cc}/u.test(response.error) ? response.error : null;
 	if (response.ok === false && error !== null && keys === 'error,ok') return { ok: false, error };
 	if (response.ok === false && error !== null && keys === 'code,error,ok' && typeof response.code === 'string' && (NETWORK_HELPER_ERROR_CODES as readonly string[]).includes(response.code)) return { ok: false, error, code: response.code as NetworkHelperErrorCode };
 	if (response.ok === true && keys === 'ok') return { ok: true };
+	if (response.ok === true && keys === 'ok,time' && isSystemTimeResult(response.time)) return { ok: true, time: response.time };
 	throw new Error('network helper returned an invalid response');
 }

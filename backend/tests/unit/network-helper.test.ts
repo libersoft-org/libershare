@@ -6,7 +6,11 @@ import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from '../../src/system-net
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
-import { assertWindowsRequestOwner, parseWindowsRequestFileName, windowsCurrentProcessIdentity, windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProcessImagePath, windowsProgramFilesPath, windowsRequestFileHeld, windowsRequestFileName, windowsSystemEnvironment, writeWindowsRequestFile } from '../../src/network-helper-windows.ts';
+import { assertWindowsRequestOwner, parseWindowsRequestFileName, windowsCurrentProcessIdentity, windowsHelperParameters, WINDOWS_LAUNCHER_EXIT, windowsPowerShellPath, windowsProcessImagePath, windowsProgramFilesPath, windowsRequestFileHeld, windowsRequestFileName, windowsSystemEnvironment, writeWindowsRequestFile, elevationClock } from '../../src/network-helper-windows.ts';
+import { trustIdentity, type TrustedFileIdentity } from '../../src/network-helper-integrity.ts';
+import { elevatedSaveBudget, runElevatedSave } from '../../src/system-time-helper.ts';
+import { remainingSaveBudget, SAVE_BUDGET_MS } from '../../src/system-time-common.ts';
+import type { SystemTimeChanges } from '@shared';
 
 /** A baseline of the exact shape the backend builds, which every request has to carry. */
 const baseline = { mode: 'dhcp' as const, address: null, prefixLength: null, gateway: null, dns: [] };
@@ -45,7 +49,7 @@ describe('network helper protocol', () => {
 		// re-check the baseline against its own fresh read, so it has to receive it.
 		const expected = { mode: 'static' as const, address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53'] };
 		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected }));
-		expect(request.expected).toEqual(expected);
+		expect(request.operation === 'applyIPv4' && request.expected).toEqual(expected);
 		const seen: unknown[] = [];
 		await executeNetworkHelperRequest(request, async (_interfaceID, _config, baseline) => {
 			seen.push(baseline);
@@ -127,6 +131,7 @@ describe('network helper protocol', () => {
 describe('windows launcher outcomes', () => {
 	it('tells a cancelled prompt apart from a failed change', () => {
 		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.cancelled).error).toContain('cancelled');
+		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.denied).error).toContain('may not elevate');
 		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.timeout).error).toContain('timed out');
 		expect(windowsLauncherFailure(WINDOWS_LAUNCHER_EXIT.untrusted).error).toContain('not trusted');
 		expect(windowsLauncherFailure(NETWORK_HELPER_EXIT.rejected).error).toContain('could not apply');
@@ -140,7 +145,48 @@ describe('windows launcher outcomes', () => {
 		// 0 = applied and 10 = helper rejected the change both come from the helper
 		// itself, so the launcher's own reasons must live outside that set.
 		for (const helperCode of Object.values(NETWORK_HELPER_EXIT)) expect(Object.values(WINDOWS_LAUNCHER_EXIT)).not.toContain(helperCode);
-		expect(new Set(Object.values(WINDOWS_LAUNCHER_EXIT)).size).toBe(3);
+		expect(new Set(Object.values(WINDOWS_LAUNCHER_EXIT)).size).toBe(4);
+	});
+});
+
+/**
+ * The Windows trust check is 9-14 seconds of reading three single-file runtime builds, and
+ * after the host clock was set the same read measured 167 seconds while the system-time lock
+ * was held - so a save has to be able to recognise a verification it already made. The
+ * identity is what decides that, which makes "it changes whenever the file does" the whole
+ * contract.
+ */
+describe('trusted binary identity', () => {
+	const file = (overrides: Partial<TrustedFileIdentity> = {}): TrustedFileIdentity => ({ path: 'C:\\Program Files\\LiberShare\\lish-network-helper.exe', size: 118_077_944, mtimeMs: 1_760_000_000_000, ctimeMs: 1_760_000_000_000, ino: 42, ...overrides });
+
+	it('is stable for the same files', () => {
+		expect(trustIdentity([file()])).toBe(trustIdentity([file()]));
+		expect(trustIdentity([file(), file({ path: 'b.exe' })])).toBe(trustIdentity([file(), file({ path: 'b.exe' })]));
+	});
+
+	it('changes when anything about a file changes', () => {
+		const base = trustIdentity([file()]);
+		for (const changed of [file({ size: 118_077_945 }), file({ mtimeMs: 1_760_000_000_001 }), file({ ctimeMs: 1_760_000_000_001 }), file({ ino: 43 }), file({ path: 'other.exe' })]) {
+			expect(trustIdentity([changed])).not.toBe(base);
+		}
+	});
+
+	/** Windows paths are case-insensitive, so the same file reached by a differently cased path is the same file. */
+	it('ignores path case', () => {
+		expect(trustIdentity([file({ path: 'C:\\PROGRAM FILES\\X.EXE' })])).toBe(trustIdentity([file({ path: 'c:\\program files\\x.exe' })]));
+	});
+
+	it('distinguishes a different set or order of files', () => {
+		const a = file({ path: 'a.exe' });
+		const b = file({ path: 'b.exe' });
+		expect(trustIdentity([a, b])).not.toBe(trustIdentity([b, a]));
+		expect(trustIdentity([a, b])).not.toBe(trustIdentity([a]));
+		expect(trustIdentity([])).toBe('');
+	});
+
+	/** A bigint inode (what `stat({ bigint: true })` answers) must not read as a different file. */
+	it('treats an equal inode as equal whether it arrives as a number or a bigint', () => {
+		expect(trustIdentity([file({ ino: 42n })])).toBe(trustIdentity([file({ ino: 42 })]));
 	});
 });
 
@@ -292,5 +338,106 @@ describe('network helper launch commands', () => {
 		expect(macAppBundleRoot('/Applications/LiberShare.app/Contents/Resources/lish-network-helper')).toBe('/Applications/LiberShare.app');
 		expect(macAppBundleRoot('/Users/alice/Applications/LiberShare.app/Contents/Resources/lish-network-helper')).toBeNull();
 		expect(macAppBundleRoot('/tmp/LiberShare.app/Contents/Resources/lish-network-helper')).toBeNull();
+	});
+});
+
+describe('the clock the elevation wait measures against', () => {
+	/**
+	 * The bug this exists for: the deadline was `Date.now()`, and the helper being waited
+	 * on may be setting the WALL clock. Measured on Windows 11 - a hand-set clock 1 h 47 min
+	 * ahead made the very next poll look like a 180-second timeout, so a clock change that
+	 * HAD been applied came back as `the privileged helper timed out`, and the helper was
+	 * terminated on the way out. A wall-clock reading is orders of magnitude larger than a
+	 * monotonic one, which is what this tells apart.
+	 */
+	it('is monotonic, not the wall clock', () => {
+		expect(elevationClock()).toBeLessThan(Date.now() / 1000);
+	});
+
+	it('moves forward on its own', async () => {
+		const before = elevationClock();
+		await new Promise(resolve => setTimeout(resolve, 20));
+		expect(elevationClock()).toBeGreaterThan(before);
+	});
+});
+
+/**
+ * The caller's wait has to survive the privilege boundary.
+ *
+ * It did not: the elevated helper opened a budget of its own, so a request that had already
+ * spent most of the user's wait queueing behind another save got a fresh allowance the moment
+ * it crossed - and the host could be changed after the screen had stopped waiting. Modelled
+ * from the reported shape: 190 s in the queue leaves 10 s, the request passes the entry check
+ * with that to spare, and the elevated side then spent a 120 s prompt and 35 s of work.
+ *
+ * The deadline travels as a host UPTIME rather than as a remaining count, because a remaining
+ * count is measured before the consent prompt and read after it - the prompt's minutes would
+ * go uncounted exactly as they did one layer down - and a wall-clock deadline cannot be used
+ * at all here: this is the operation that moves the wall clock.
+ */
+describe('the deadline an elevated save is handed', () => {
+	it('follows the caller when there is one and its own bound when there is not', () => {
+		// No deadline at all: a direct writer or a test, so the helper's own bound stands.
+		expect(elevatedSaveBudget(undefined, 45_000, 1_000)).toBe(45_000);
+		// Plenty left, so the helper's bound is still the smaller of the two.
+		expect(elevatedSaveBudget(1_000 + 300, 45_000, 1_000)).toBe(45_000);
+		// Less left than the bound: the caller's remainder wins.
+		expect(elevatedSaveBudget(1_000 + 10, 45_000, 1_000)).toBe(10_000);
+	});
+
+	it('refuses a request whose wait was already over', () => {
+		expect(elevatedSaveBudget(1_000, 45_000, 1_000)).toBeNull();
+		expect(elevatedSaveBudget(1_000, 45_000, 1_030)).toBeNull();
+	});
+
+	/**
+	 * The consequence, which is the point: an expired request must not merely stop being
+	 * waited for, it must not change anything. The save is never reached.
+	 */
+	it('changes nothing when the request expired before the helper could start it', async () => {
+		const applied: SystemTimeChanges[] = [];
+		const answer = await runElevatedSave({ ntpServer: 'ntp.example.org' }, 1_000, 45_000, 1_155, async changes => {
+			applied.push(changes);
+			return { success: true, outcome: 'ok', message: null };
+		});
+		expect(applied).toEqual([]);
+		expect(answer.success).toBe(false);
+		expect(answer.message).toContain('ran out');
+		// Nothing ran, so this is the one late answer that can honestly say the host was left
+		// alone - neither flag may be set, or the caller reports a half-applied save.
+		expect(answer.changed).toBeUndefined();
+		expect(answer.stateMayHaveChanged).toBeUndefined();
+	});
+
+	/** With time left the save runs, and sees the caller's remainder - not a fresh allowance. */
+	it('runs the save under what the caller has left', async () => {
+		const seen: Array<number | null> = [];
+		// A held clock, so the remainder is the figure under test and not that figure minus
+		// however long the call itself took.
+		const answer = await runElevatedSave(
+			{ ntpServer: 'ntp.example.org' },
+			1_010,
+			45_000,
+			1_000,
+			async () => {
+				seen.push(remainingSaveBudget());
+				return { success: true, outcome: 'ok', message: null };
+			},
+			() => 0
+		);
+		expect(answer.success).toBe(true);
+		expect(seen).toEqual([10_000]);
+		expect(seen[0]!).toBeLessThan(SAVE_BUDGET_MS);
+	});
+
+	it('carries the deadline across the encoding and refuses a nonsense one', () => {
+		const changes: SystemTimeChanges = { ntpServer: 'ntp.example.org' };
+		expect(decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes, deadlineUptime: 12_345.5 }))).toEqual({ version: 1, operation: 'applySystemTime', changes, deadlineUptime: 12_345.5 });
+		// Absent stays absent, so a caller without a deadline does not acquire one.
+		expect(decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes }))).toEqual({ version: 1, operation: 'applySystemTime', changes });
+		for (const bad of ['soon', -1, Number.NaN, Number.POSITIVE_INFINITY, 1e20, null]) {
+			const encoded = Buffer.from(JSON.stringify({ version: 1, operation: 'applySystemTime', changes, deadlineUptime: bad })).toString('base64url');
+			expect(() => decodeNetworkHelperRequest(encoded)).toThrow();
+		}
 	});
 });

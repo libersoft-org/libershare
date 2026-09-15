@@ -23,6 +23,17 @@ const FILE_ATTRIBUTE_NORMAL = 0x80;
 const INVALID_HANDLE_VALUE = 0xffffffffffffffffn;
 const ERROR_SHARING_VIOLATION = 32;
 const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+/** UAC's answer for both "No" and a prompt that timed out. */
+const ERROR_CANCELLED = 1223;
+/**
+ * UAC's answer when the account may not elevate at all.
+ *
+ * Measured on Windows 11 with "User Account Control: Behavior of the elevation prompt
+ * for standard users" set to "Automatically deny elevation requests": a standard user's
+ * `ShellExecuteExW` with the `runas` verb fails immediately with 1260 and no prompt is
+ * ever drawn. Nothing was started, so this is an answer and not a fault.
+ */
+const ERROR_ACCESS_DISABLED_BY_POLICY = 1260;
 
 /** The installed launcher, the only process the elevated helper takes a request from. */
 export const WINDOWS_LAUNCHER_FILE = 'lish-network-launcher.exe';
@@ -346,12 +357,88 @@ export async function verifyWindowsInstalledHelper(path: string, executable: str
  * of codes is what survives that boundary, and it is enough to tell "you
  * cancelled the prompt" apart from "the change itself failed".
  */
-export const WINDOWS_LAUNCHER_EXIT = { untrusted: 11, cancelled: 12, timeout: 13 } as const;
+export const WINDOWS_LAUNCHER_EXIT = { untrusted: 11, cancelled: 12, timeout: 13, denied: 15 } as const;
+
+/**
+ * The clock the elevation wait measures its deadline against.
+ *
+ * Monotonic on purpose, and named so a test can assert that. `Date.now()` would follow
+ * the WALL clock, which the helper being waited on may itself be setting: measured on
+ * Windows 11, a hand-set clock 1 h 47 min ahead made the next poll look like a
+ * 180-second timeout, so a change that HAD been applied came back as a failure and the
+ * helper was terminated on the way out.
+ */
+export const elevationClock = (): number => performance.now();
+
+/**
+ * How long the launcher waits for the elevated helper AFTER the prompt is answered.
+ *
+ * Explicitly not "prompt included", which is what this said and got wrong: the wait starts
+ * once `ShellExecuteExW` has returned, and that call does not return while the consent prompt
+ * is on screen - measured in this session, the call stayed blocked for over a minute until the
+ * consent process was gone. So the prompt's time is spent before any of this is counted, and
+ * a caller that allowed 200 s for the whole thing could kill the launcher while the launcher
+ * still believed it had 180 s left.
+ *
+ * Sized for the WORK, which is what it actually bounds: the elevated save is a handful of
+ * commands, measured at 9-12 s end to end on the test machine, and 1 s for a lone NTP server
+ * change measured live against the installed build.
+ *
+ * The launcher enforces it with `TerminateProcess`, so nothing the helper may legitimately
+ * spend is allowed to reach it. On its own this number did not achieve that: it is shorter
+ * than the 90 s one write command inside the helper is allowed and than the 200 s that helper
+ * gave a whole save, so a slow but healthy step could be killed while every limit it knew
+ * about said it still had time - and a sequence that had already changed something came back
+ * as an uncertain half-save rather than as a bounded failure. Raising this instead was the
+ * wrong half to move: the caller's limit is the prompt allowance plus this, and with the trust
+ * check and the read-back it has to stay under the screen's own wait. So the helper is held
+ * below it by {@link WINDOWS_ELEVATION_HELPER_BUDGET_MS}, and a test asserts that.
+ */
+export const WINDOWS_ELEVATION_WAIT_MS = 60_000;
+
+/**
+ * The budget the ELEVATED helper gives its own work, so it answers before it is terminated.
+ *
+ * Shorter than {@link WINDOWS_ELEVATION_WAIT_MS} by the margin a terminated process cannot
+ * use: the helper has to notice it is out of time, stop starting steps and report what it
+ * already did. Being killed instead loses exactly that report, which is the difference
+ * between "nothing was changed" and "part of this may be applied".
+ *
+ * With this in force the helper's per-command limit is the smaller of `WRITE_TIMEOUT_MS` and
+ * what is left of this, so nothing inside it can outlive the launcher. The figure is four
+ * times the measured elevated save (9-12 s end to end, 1 s for a lone server change), and a
+ * step that does need longer is better refused with an account of what already ran than
+ * killed without one.
+ */
+export const WINDOWS_ELEVATION_HELPER_BUDGET_MS = WINDOWS_ELEVATION_WAIT_MS - 15_000;
+
+/**
+ * The same wait for a NETWORK change, which is a longer piece of work.
+ *
+ * One number for both operations was wrong in the direction that breaks the older feature:
+ * shortening the wait to suit a time save also shortened it for an IPv4 or Wi-Fi change, whose
+ * own steps are a read (15 s), the change itself (45 s) and a read back (15 s). None of those
+ * has to exceed its limit for the total to pass 60 s - 14 + 40 + 14 is enough - and the
+ * launcher would then terminate a change that was merely working, in the middle of confirming
+ * its own result. Kept at what it was before the time work touched this file.
+ */
+export const WINDOWS_NETWORK_ELEVATION_WAIT_MS = 180_000;
+
+/**
+ * How long the prompt itself may take before the caller's own limit is allowed to fire.
+ *
+ * Nobody can bound a person, but Windows does: an unanswered elevation prompt is dismissed by
+ * the system and `ShellExecuteExW` comes back with ERROR_CANCELLED. This is that dismissal plus
+ * slack, and it exists so the CALLER's limit can be longer than the prompt and the work
+ * together - the launcher is the only thing holding the elevated process's handle, so it has to
+ * be the one that outlives the wait and terminates it, not the one that gets killed first.
+ */
+export const WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS = 130_000;
 
 /** Outcome of one elevation attempt. Only genuine Win32 faults throw. */
-export type WindowsElevationOutcome = { kind: 'exited'; code: number } | { kind: 'cancelled' } | { kind: 'timeout' };
+export type WindowsElevationOutcome = { kind: 'exited'; code: number } | { kind: 'cancelled' } | { kind: 'denied' } | { kind: 'timeout' };
 
-export async function runElevatedWindowsProcess(file: string, parameters: string, timeoutMs: number): Promise<WindowsElevationOutcome> {
+export async function runElevatedWindowsProcess(file: string, parameters: string, timeoutMs: number, now: () => number = elevationClock): Promise<WindowsElevationOutcome> {
 	if (process.platform !== 'win32') throw new Error('Windows elevation is unavailable');
 	const shell = dlopen('shell32.dll', {
 		ShellExecuteExW: { args: [FFIType.ptr], returns: FFIType.i32 },
@@ -380,19 +467,20 @@ export async function runElevatedWindowsProcess(file: string, parameters: string
 	try {
 		if (!shell.symbols.ShellExecuteExW(ptr(info))) {
 			const error = kernel.symbols.GetLastError();
-			// ERROR_CANCELLED is what UAC reports for both "No" and a prompt that
-			// timed out, and it is an ordinary answer rather than a fault.
-			if (error === 1223) return { kind: 'cancelled' };
+			// Both of these are UAC's own answer, not a fault: the request was refused
+			// before anything was started, so the host is known to be untouched.
+			if (error === ERROR_CANCELLED) return { kind: 'cancelled' };
+			if (error === ERROR_ACCESS_DISABLED_BY_POLICY) return { kind: 'denied' };
 			throw new Error(`ShellExecuteExW failed with ${error}`);
 		}
 		processHandle = Number(view.getBigUint64(PROCESS_HANDLE_OFFSET, true)) as Pointer;
 		if (!processHandle) throw new Error('ShellExecuteExW returned no process handle');
-		const started = Date.now();
+		const started = now();
 		while (true) {
 			const wait = kernel.symbols.WaitForSingleObject(processHandle, 0);
 			if (wait === WAIT_OBJECT_0) break;
 			if (wait !== WAIT_TIMEOUT) throw new Error(`WaitForSingleObject failed with ${wait}`);
-			if (Date.now() - started >= timeoutMs) {
+			if (now() - started >= timeoutMs) {
 				kernel.symbols.TerminateProcess(processHandle, 1);
 				return { kind: 'timeout' };
 			}
