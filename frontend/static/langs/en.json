@@ -713,7 +713,7 @@
 			"storage": "Used and total space on the disk holding your download folder, with a bar showing how much is taken.",
 			"lishStatus": "Top: LISH networks with at least one peer / all joined networks. Bottom: total number of peers across them. The colour of the network icon shows the mesh state, hover it for the exact name.",
 			"gamepad": "A green dot means a gamepad is connected, a red one means none is.",
-			"connection": "Signal bars of the network connection with its strength below, or Connected / Disconnected for a cable.",
+			"connection": "Wi-Fi shows signal bars with the strength in percent below them, or the network name when the strength is not known. A cable shows Connected / Disconnected. Wi-Fi turned off and a connection that cannot be classified get their own icon and explain the state in the tooltip.",
 			"volume": "System volume in percent. A dash means the volume is not known yet or no audio device is available.",
 			"clock": "Current time, shown in the 12 or 24-hour format and with or without seconds according to the application settings."
 		}
