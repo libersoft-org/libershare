@@ -30,71 +30,70 @@ describe('serveGateBlocks', () => {
 });
 
 /**
- * canListSharesTo is the softer LISTING gate: a peer sharing a joined topic is always
- * served; a peer that is not may still be served, but only inside the SUBSCRIBE
- * propagation window measured from when its connection opened (so unicast search works
- * before SUBSCRIBE syncs). Excluded regardless: peers we deliberately left (still
- * redial-suppressed), infrastructure peers off our topics, and holding no lishnet.
- *
- * `connectionAgeSec` models how long ago the peer's connection opened; null means no
- * connection at all (not undefined — that would just re-select the default).
+ * canListSharesTo is the softer LISTING gate. Soft means it accepts wider evidence of
+ * lishnet membership than the strict data gate — the live gossipsub subscriber snapshot
+ * OR peer-announce's recently-seen member union — not that it drops the membership
+ * requirement. A peer with no membership evidence learns nothing about what we share,
+ * whether it is a stranger on a bare transport connection or one we deliberately left
+ * whose in-memory redial suppression a restart has since dropped.
  */
 describe('Network.canListSharesTo', () => {
-	function bareNetwork(suppressed: string[], topics: string[], infra: string[] = [], subscribers: string[] = [], connectionAgeSec: number | null = 0) {
+	function bareNetwork(opts: { suppressed?: string[]; topics?: string[]; infra?: string[]; subscribers?: string[]; recentMembers?: Record<string, string[]> }) {
 		const network = Object.create(Network.prototype) as Network;
-		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
+		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(opts.suppressed ?? [])]]);
 		(network as any).pubsub = {
-			getTopics: () => topics,
-			getSubscribers: () => subscribers.map(p => ({ toString: () => p })),
+			getTopics: () => opts.topics ?? [],
+			getSubscribers: () => (opts.subscribers ?? []).map(p => ({ toString: () => p })),
 		};
-		(network as any).isBootstrapOrRelayPeer = (pid: string) => infra.includes(pid);
-		(network as any).node = {
-			getConnections: () => (connectionAgeSec === null ? [] : [{ remotePeer: { toString: () => 'peer-a' }, timeline: { open: Date.now() - connectionAgeSec * 1000 } }]),
-		};
+		(network as any).isBootstrapOrRelayPeer = (pid: string) => (opts.infra ?? []).includes(pid);
+		(network as any).peerAnnounce = { getRecentMembers: (topic: string) => opts.recentMembers?.[topic] ?? [] };
 		return network;
 	}
 
-	it('allows a fresh peer while we hold a joined lishnet topic (subscribe may lag)', () => {
-		const net = bareNetwork([], [lishTopic('net-a')]);
+	it('allows a peer subscribed to a lishnet we are in', () => {
+		const net = bareNetwork({ topics: [lishTopic('net-a')], subscribers: ['peer-a'] });
 		expect((net as any).canListSharesTo('peer-a')).toBe(true);
 	});
 
-	it('refuses a long-connected peer that shares no joined topic', () => {
-		// The leave-network hole: we stay in another lishnet, the leave-time disconnect
-		// missed this peer, so nothing but the grace window stops it listing our shares.
-		const net = bareNetwork([], [lishTopic('net-a')], [], [], 600);
-		expect((net as any).canListSharesTo('peer-a')).toBe(false);
-	});
-
-	it('allows a long-connected peer that does share a joined topic', () => {
-		const net = bareNetwork([], [lishTopic('net-a')], [], ['peer-a'], 600);
+	it('allows a member whose subscription is missing from the live snapshot', () => {
+		// The exact window the unicast search fallback targets: peer-announce still
+		// remembers it as a subscriber of our topic, gossipsub does not list it yet.
+		const net = bareNetwork({ topics: [lishTopic('net-a')], subscribers: [], recentMembers: { [lishTopic('net-a')]: ['peer-a'] } });
 		expect((net as any).canListSharesTo('peer-a')).toBe(true);
 	});
 
-	it('refuses a peer with no open connection', () => {
-		const net = bareNetwork([], [lishTopic('net-a')], [], [], null);
-		expect((net as any).canListSharesTo('peer-a')).toBe(false);
+	it('refuses a connected peer with no membership in any lishnet we are in', () => {
+		const net = bareNetwork({ topics: [lishTopic('net-a')], subscribers: ['peer-member'] });
+		expect((net as any).canListSharesTo('peer-stranger')).toBe(false);
+	});
+
+	it('refuses a peer remembered only under a lishnet we are no longer in', () => {
+		// Recent membership is read per joined topic, so a left lishnet grants nothing
+		// even before peer-announce prunes its member map.
+		const net = bareNetwork({ topics: [lishTopic('net-a')], recentMembers: { [lishTopic('net-left')]: ['peer-left'] } });
+		expect((net as any).canListSharesTo('peer-left')).toBe(false);
 	});
 
 	it('refuses a peer we deliberately left (still suppressed)', () => {
-		const net = bareNetwork(['peer-left'], [lishTopic('net-a')]);
+		const net = bareNetwork({ suppressed: ['peer-left'], topics: [lishTopic('net-a')], subscribers: ['peer-left'] });
 		expect((net as any).canListSharesTo('peer-left')).toBe(false);
 	});
 
 	it('refuses when we hold no lishnet topic', () => {
-		const net = bareNetwork([], []);
+		const net = bareNetwork({});
 		expect((net as any).canListSharesTo('peer-a')).toBe(false);
 	});
 
 	it('refuses a kept infrastructure peer that no longer shares a joined topic', () => {
 		// A relay/bootstrap of a left network is kept connected but must not browse our
-		// shares unless it currently shares a joined topic.
-		const net = bareNetwork([], [lishTopic('net-a')], ['relay-x'], []);
+		// shares unless it currently shares a joined topic — recent membership alone
+		// does not lift it.
+		const net = bareNetwork({ topics: [lishTopic('net-a')], infra: ['relay-x'], recentMembers: { [lishTopic('net-a')]: ['relay-x'] } });
 		expect((net as any).canListSharesTo('relay-x')).toBe(false);
 	});
 
 	it('allows an infrastructure peer that still shares a joined topic', () => {
-		const net = bareNetwork([], [lishTopic('net-a')], ['relay-x'], ['relay-x']);
+		const net = bareNetwork({ topics: [lishTopic('net-a')], infra: ['relay-x'], subscribers: ['relay-x'] });
 		expect((net as any).canListSharesTo('relay-x')).toBe(true);
 	});
 });

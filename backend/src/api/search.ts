@@ -34,6 +34,12 @@ interface SearchSession {
 	queried: Queried;
 	/** Disposer for the `peer:connect` listener, called on timeout/cancel. */
 	disposePeerConnect: () => void;
+	/** Disposer for the topic-subscribe listener, called on timeout/cancel. */
+	disposePeerSubscribe: () => void;
+	/** Peers whose unicast answer was empty and that have not been retried yet. */
+	pendingRetry: Set<string>;
+	/** Peers already retried once — nothing asks them a third time. */
+	retried: Set<string>;
 }
 
 export interface SearchManager {
@@ -63,6 +69,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		if (!session) return;
 		clearTimeout(session.timeout);
 		session.disposePeerConnect();
+		session.disposePeerSubscribe();
 		unregisterSearchResultHandler(searchID);
 		sessions.delete(searchID);
 		broadcast('search:lishs:complete', { searchID, reason });
@@ -121,6 +128,8 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		const network = networks.getRunningNetwork();
 		const selfPeerID = network.getNodeInfo()?.peerID ?? '';
 		const queried: Queried = new Set();
+		const pendingRetry = new Set<string>();
+		const retried = new Set<string>();
 		// Live listener: every peer that completes a libp2p connection while
 		// this search is in flight gets a unicast `getLishs(query)`. Catches
 		// the case where a peer appears via mDNS / peer-announce / hole-punch
@@ -135,6 +144,22 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 				/* logged inside queryOnePeer */
 			});
 		});
+		// A first-contact peer is asked before it can possibly be served: on
+		// `peer:connect` it is not yet in any topic's subscriber list, so the responder's
+		// membership gate refuses and we record an empty answer — then never ask again,
+		// because it is already in `queried`. Its SUBSCRIBE lands a moment later and the
+		// results it does have never reach the user. This is the one retry that covers
+		// that window, bounded to peers that actually came back empty and to a single
+		// attempt each, so a churning fleet cannot turn it into a dial loop.
+		const disposePeerSubscribe = network.onPeerSubscribe(peerID => {
+			if (!sessions.has(searchID)) return;
+			if (!peerID || peerID === selfPeerID) return;
+			if (!pendingRetry.delete(peerID)) return;
+			retried.add(peerID);
+			void queryOnePeer(searchID, query, peerID).catch(() => {
+				/* logged inside queryOnePeer */
+			});
+		});
 		const session: SearchSession = {
 			searchID,
 			query,
@@ -143,6 +168,9 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			timeout: setTimeout(() => endSession(searchID, 'timeout'), timeoutMs),
 			queried,
 			disposePeerConnect,
+			disposePeerSubscribe,
+			pendingRetry,
+			retried,
 		};
 		sessions.set(searchID, session);
 		registerSearchResultHandler(searchID, handleResult);
@@ -209,7 +237,8 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 	}
 
 	async function queryOnePeer(searchID: string, query: string, peerID: string): Promise<void> {
-		if (!sessions.has(searchID)) return;
+		const session = sessions.get(searchID);
+		if (!session) return;
 		const network = networks.getRunningNetwork();
 		let client: LISHClient | undefined;
 		try {
@@ -235,6 +264,11 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 				// responses, so a peer reachable through both channels never
 				// produces a duplicate row in the FE result list.
 				handleResult({ searchID, peerID, lishs: matches });
+			} else if (!session.retried.has(peerID)) {
+				// An empty answer is ambiguous: nothing matched, or the responder's
+				// membership gate refused us because our SUBSCRIBE had not reached it
+				// yet. Queue the peer so its subscribe event can settle the question.
+				session.pendingRetry.add(peerID);
 			}
 		} catch (err: any) {
 			trace(`[Search] unicast getLishs to ${peerID.slice(0, 12)} failed: ${err?.message ?? err}`);
