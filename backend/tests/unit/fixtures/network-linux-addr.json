@@ -1,0 +1,49 @@
+[
+	{
+		"ifindex": 1,
+		"ifname": "lo",
+		"flags": ["LOOPBACK", "UP", "LOWER_UP"],
+		"operstate": "UNKNOWN",
+		"link_type": "loopback",
+		"address": "00:00:00:00:00:00",
+		"addr_info": [{ "family": "inet", "local": "127.0.0.1", "prefixlen": 8, "scope": "host", "valid_life_time": 4294967295, "preferred_life_time": 4294967295 }]
+	},
+	{
+		"ifindex": 2,
+		"link_index": 30,
+		"ifname": "eth0",
+		"flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+		"operstate": "UP",
+		"link_type": "ether",
+		"address": "02:00:5e:20:00:01",
+		"addr_info": [
+			{ "family": "inet", "local": "192.0.2.9", "prefixlen": 23, "broadcast": "192.0.2.255", "scope": "global", "dynamic": true, "label": "eth0", "valid_life_time": 1479, "preferred_life_time": 1479 },
+			{ "family": "inet6", "local": "fd00:1234:5678:0:be24:11ff:fe45:88d3", "prefixlen": 64, "scope": "global", "dynamic": true, "mngtmpaddr": true, "valid_life_time": 2591672, "preferred_life_time": 604472 },
+			{ "family": "inet6", "local": "fe80::be24:11ff:fe45:88d3", "prefixlen": 64, "scope": "link", "valid_life_time": 4294967295, "preferred_life_time": 4294967295 }
+		]
+	},
+	{
+		"ifindex": 13,
+		"ifname": "docker0",
+		"flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+		"operstate": "UP",
+		"link_type": "ether",
+		"address": "02:00:5e:20:00:02",
+		"addr_info": [
+			{ "family": "inet", "local": "172.17.0.1", "prefixlen": 16, "broadcast": "172.17.255.255", "scope": "global", "label": "docker0", "valid_life_time": 4294967295, "preferred_life_time": 4294967295 },
+			{ "family": "inet6", "local": "fe80::7c9f:84ff:fee9:855f", "prefixlen": 64, "scope": "link", "valid_life_time": 4294967295, "preferred_life_time": 4294967295 }
+		]
+	},
+	{
+		"ifindex": 27,
+		"ifname": "br-9487b97d884c",
+		"flags": ["NO-CARRIER", "BROADCAST", "MULTICAST", "UP"],
+		"operstate": "DOWN",
+		"link_type": "ether",
+		"address": "02:00:5e:20:00:03",
+		"addr_info": [
+			{ "family": "inet", "local": "172.23.0.1", "prefixlen": 16, "broadcast": "172.23.255.255", "scope": "global", "label": "br-9487b97d884c", "valid_life_time": 4294967295, "preferred_life_time": 4294967295 },
+			{ "family": "inet6", "local": "fe80::c0db:5fff:fe83:8738", "prefixlen": 64, "scope": "link", "valid_life_time": 4294967295, "preferred_life_time": 4294967295 }
+		]
+	}
+]

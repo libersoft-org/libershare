@@ -737,11 +737,37 @@ call :get_timestamp _be_start
 echo === Building backend ^(target: !BUN_TGT!^) ===
 cd /d "!ROOT_DIR!\backend"
 if exist build rmdir /s /q build
-bun i --frozen-lockfile
+call bun i --frozen-lockfile
 if errorlevel 1 ( endlocal & exit /b 1 )
 mkdir build
-bun build --compile --target !BUN_TGT! src/app.ts --outfile build\lish-backend.exe
+set "SIGN_POWERSHELL=powershell.exe"
+where pwsh.exe >nul 2>&1 && set "SIGN_POWERSHELL=pwsh.exe"
+call bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target !BUN_TGT! src/network-helper.ts --outfile build\lish-network-helper.exe
 if errorlevel 1 ( endlocal & exit /b 1 )
+call bun scripts\set-windows-gui-subsystem.ts build\lish-network-helper.exe
+if errorlevel 1 ( endlocal & exit /b 1 )
+if defined WINDOWS_CERTIFICATE_THUMBPRINT (
+    "!SIGN_POWERSHELL!" -NoProfile -NonInteractive -File scripts\sign-windows-binary.ps1 -Path build\lish-network-helper.exe -Thumbprint "!WINDOWS_CERTIFICATE_THUMBPRINT!"
+    if errorlevel 1 ( endlocal & exit /b 1 )
+) else echo WARNING: network helper is unsigned and will remain read-only
+for /f "tokens=*" %%h in ('bun -e "const fs=require('fs'),c=require('crypto');process.stdout.write(c.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'))" "!ROOT_DIR!\backend\build\lish-network-helper.exe"') do set "HELPER_HASH=%%h"
+if not defined HELPER_HASH ( endlocal & exit /b 1 )
+call bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target !BUN_TGT! src/network-helper-windows-launcher.ts --outfile build\lish-network-launcher.exe --define LISH_NETWORK_HELPER_SHA256=\"!HELPER_HASH!\"
+if errorlevel 1 ( endlocal & exit /b 1 )
+call bun scripts\set-windows-gui-subsystem.ts build\lish-network-launcher.exe
+if errorlevel 1 ( endlocal & exit /b 1 )
+if defined WINDOWS_CERTIFICATE_THUMBPRINT (
+    "!SIGN_POWERSHELL!" -NoProfile -NonInteractive -File scripts\sign-windows-binary.ps1 -Path build\lish-network-launcher.exe -Thumbprint "!WINDOWS_CERTIFICATE_THUMBPRINT!"
+    if errorlevel 1 ( endlocal & exit /b 1 )
+)
+call bun build --compile --target !BUN_TGT! src/app.ts --outfile build\lish-backend.exe --define LISH_NETWORK_HELPER_SHA256=\"!HELPER_HASH!\"
+if errorlevel 1 ( endlocal & exit /b 1 )
+call bun scripts\set-windows-gui-subsystem.ts build\lish-backend.exe
+if errorlevel 1 ( endlocal & exit /b 1 )
+if defined WINDOWS_CERTIFICATE_THUMBPRINT (
+    "!SIGN_POWERSHELL!" -NoProfile -NonInteractive -File scripts\sign-windows-binary.ps1 -Path build\lish-backend.exe -Thumbprint "!WINDOWS_CERTIFICATE_THUMBPRINT!"
+    if errorlevel 1 ( endlocal & exit /b 1 )
+)
 set "_be_elapsed=0"
 call :elapsed_since !_be_start! _be_elapsed
 echo === Backend done ^(!_be_elapsed!^) ===
@@ -758,13 +784,16 @@ for /f "tokens=*" %%d in ('bun -e "process.stdout.write(require(process.argv[1])
 echo Product: !PRODUCT_NAME! v!PRODUCT_VERSION! (!PRODUCT_IDENTIFIER!)
 
 rem Generate tauri.conf.json + tauri.linux.conf.json from their *.template files
-bun "!SCRIPT_DIR!sync-config.ts"
+call bun "!SCRIPT_DIR!sync-config.ts"
+if errorlevel 1 exit /b 1
 
 rem Sync Cargo.toml version
-bun -e "var f=require('fs'),v=process.argv[1],t=process.argv[2],s=f.readFileSync(t,'utf8').replace(/^version = \"[^\"]*\"/m,'version = \"'+v+'\"');f.writeFileSync(t,s)" "!PRODUCT_VERSION!" "!SCRIPT_DIR!Cargo.toml"
+call bun -e "var f=require('fs'),v=process.argv[1],t=process.argv[2],s=f.readFileSync(t,'utf8').replace(/^version = \"[^\"]*\"/m,'version = \"'+v+'\"');f.writeFileSync(t,s)" "!PRODUCT_VERSION!" "!SCRIPT_DIR!Cargo.toml"
+if errorlevel 1 exit /b 1
 
 rem Sync wix-fragment-debug.wxs
-bun -e "var f=require('fs'),n=process.argv[1],s=f.readFileSync(process.argv[2],'utf8').replace(/\{\{product_name\}\}/g,n);f.writeFileSync(process.argv[2],s)" "!PRODUCT_NAME!" "!SCRIPT_DIR!wix-fragment-debug.wxs"
+call bun -e "var f=require('fs'),n=process.argv[1],s=f.readFileSync(process.argv[2],'utf8').replace(/\{\{product_name\}\}/g,n);f.writeFileSync(process.argv[2],s)" "!PRODUCT_NAME!" "!SCRIPT_DIR!wix-fragment-debug.wxs"
+if errorlevel 1 exit /b 1
 exit /b 0
 
 rem ─── build_zip ────────────────────────────────────────────────────────────
@@ -776,6 +805,9 @@ if exist "!ZIP_STAGING!" rmdir /s /q "!ZIP_STAGING!"
 mkdir "!ZIP_STAGING!"
 copy /y "!BUILD_RELEASE_DIR!\!PRODUCT_NAME!.exe" "!ZIP_STAGING!\!PRODUCT_NAME!.exe" >nul
 copy /y "!ROOT_DIR!\backend\build\lish-backend.exe" "!ZIP_STAGING!\lish-backend.exe" >nul
+rem No network helper here on purpose: it may only elevate from an administrator-
+rem owned directory (Program Files), and a portable ZIP runs from wherever it was
+rem extracted. Host network settings are read-only in this bundle.
 rem Create Debug.bat from template
 powershell -Command "(Get-Content '!SCRIPT_DIR!bundle-scripts\Debug.bat' -Raw) -replace '\{\{product_name\}\}','!PRODUCT_NAME!' | Set-Content '!ZIP_STAGING!\Debug.bat' -NoNewline"
 powershell -Command "Compress-Archive -Path '!ZIP_STAGING!\*' -DestinationPath '!FINAL_DIR!\!PRODUCT_NAME!_!PRODUCT_VERSION!_windows_!_arch!.zip' -CompressionLevel !ZIP_PS_LEVEL! -Force"

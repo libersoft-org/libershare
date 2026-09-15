@@ -15,6 +15,13 @@ getrandom = "0.3"
 tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-window-state = "2"
 
+# macOS withholds every Wi-Fi network name from a process that has not been
+# granted Location Services access, so the network settings screen needs the app
+# to ask for it. Both crates already arrive with tauri on this platform.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-core-location = { version = "0.3", features = ["CLLocationManager"] }
+
 [profile.release]
 lto = "thin"
 strip = true
