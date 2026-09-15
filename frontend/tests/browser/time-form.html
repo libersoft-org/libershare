@@ -662,6 +662,32 @@
 				await click(label('common.save'));
 				assert(JSON.stringify(writes) === JSON.stringify([{ timezone: 'UTC' }]), 'A mouse-picked zone was saved as something else');
 			});
+			/**
+			 * `mousedown` fires for every button, so a right-click aimed at the context menu used
+			 * to pick whichever row was under the cursor - and the handler's `preventDefault` then
+			 * also swallowed what that button was for. Only the primary button selects.
+			 */
+			await test('only the primary mouse button picks a zone', async () => {
+				// Read while the list is closed: with it open the field holds the query instead.
+				const before = zoneValue();
+				for (const button of [2, 1]) {
+					await openZones();
+					await edit(zone(), 'UTC');
+					const row = [...target.querySelectorAll('[role="option"]')].find(el => el.textContent.trim() === 'UTC');
+					assert(row, 'Searching for UTC offered no such row');
+					const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button });
+					row.dispatchEvent(event);
+					await settle();
+					assert(zoneOpen(), 'Mouse button ' + button + ' closed the list as if it had picked');
+					assert(!event.defaultPrevented, 'Mouse button ' + button + ' had its own behaviour cancelled');
+					// Leaving the picker is what makes the answer readable: nothing was committed.
+					await closeZones();
+					assert(zoneValue() === before, 'Mouse button ' + button + ' changed the zone to ' + zoneValue());
+				}
+				// And the primary button still picks.
+				await pickZone('UTC', { withMouse: true });
+				assert(writes.length === 0, 'Aiming the mouse at the picker wrote to the host');
+			});
 			await test(
 				'a read-only host cannot open the timezone list at all',
 				async () => {

@@ -373,6 +373,11 @@
 					tabindex="-1"
 					aria-selected={option === value}
 					onmousedown={event => {
+						// Primary button only. `mousedown` fires for every button, so without this a
+						// right-click aimed at the context menu - or a middle-click - picked whichever
+						// option happened to be under the cursor, and the returned `preventDefault`
+						// below also swallowed what that button was actually for.
+						if (event.button !== 0) return;
 						// Before the click, so the field never loses focus to the option.
 						event.preventDefault();
 						pick(option);
