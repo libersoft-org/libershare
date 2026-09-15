@@ -86,13 +86,33 @@ describe('serviceAccountGroups', () => {
 		expect(serviceAccountGroups('systemd-timesync ntp-readers\n', 'ntp-readers extra\n', '997')).toEqual(['systemd-timesync', 'ntp-readers', 'extra']);
 	});
 
-	it('copes with a unit that adds nothing, and with a query that could not be run', () => {
+	it('reads a unit that adds nothing as exactly that', () => {
 		expect(serviceAccountGroups('systemd-timesync\n', '\n', '997')).toEqual(['systemd-timesync']);
-		expect(serviceAccountGroups('systemd-timesync\n', null, '997')).toEqual(['systemd-timesync']);
 	});
 
 	it('never hands setpriv an empty list, which it rejects outright', () => {
-		expect(serviceAccountGroups(null, null, '997')).toEqual(['997']);
+		expect(serviceAccountGroups('', '', '997')).toEqual(['997']);
+	});
+});
+
+/**
+ * A query that failed is not an empty answer. A list missing one side belongs to some other
+ * account, and probing under it errs both ways: a 0750 directory entered through the missing
+ * group is refused, a 0705 directory refused THROUGH that group - group class first, and it
+ * grants nothing - is allowed, because without the group the probe lands in the `other` class.
+ * So the operation says "could not be verified" and probes nothing at all.
+ */
+describe('serviceAccountAccessForOperation with an identity that could not be read', () => {
+	it('answers unknown and never runs a probe', async () => {
+		const unknown = { unknown: "the time service's group memberships could not be read" };
+		let probes = 0;
+		const access = serviceAccountAccessForOperation(
+			async () => unknown,
+			() => (probes++, 0)
+		);
+		expect(await access('/etc/systemd/timesyncd.conf.d', 'x')).toBe(unknown);
+		expect(await access('/etc/systemd/timesyncd.conf.d/90-libershare.conf', 'r')).toBe(unknown);
+		expect(probes).toBe(0);
 	});
 });
 

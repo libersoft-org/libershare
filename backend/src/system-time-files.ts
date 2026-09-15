@@ -290,7 +290,24 @@ export const TIME_SERVICE_UNIT = 'systemd-timesyncd.service';
  * kernel's own permission check - ACLs included. Only root may adopt another account, and
  * only Linux has this service, so everywhere else the caller falls back to the mode bits.
  */
-export type ServiceAccountAccess = (path: string, mode: 'r' | 'x') => Promise<boolean | null>;
+export type ServiceAccountAccess = (path: string, mode: 'r' | 'x') => Promise<boolean | null | ServiceAccountUnknown>;
+
+/**
+ * The host CAN be asked, and asking failed: the service's identity could not be put together.
+ *
+ * Not the same answer as `null`. Null is "this host cannot be asked at all" - no root, no
+ * Linux - and the mode bits stand in because on such a host nothing real was written either.
+ * This is a root Linux host whose `id` or `systemctl` query failed, and there NO stand-in is
+ * honest: a probe under a partial group list answers for a different account than the one
+ * that runs, and it errs in BOTH directions. A 0750 directory the service enters through a
+ * group is refused without that group; a 0705 directory it is refused from - group class
+ * first, and the group grants nothing - is allowed without it, because the missing group
+ * drops the probe into the `other` class that the bits fallback consults too. So the only
+ * answer that does not invent one is "could not be verified".
+ */
+export interface ServiceAccountUnknown {
+	unknown: string;
+}
 
 /** Who the time service runs as: its ids, and every group it holds while it runs. */
 export interface ServiceAccountIdentity {
@@ -311,10 +328,15 @@ export interface ServiceAccountIdentity {
  * so the probe - as the account - was refused where the service is not, and a working
  * configuration was rolled back. Both are space-separated names; the union keeps the primary
  * group, which `id -Gn` always lists first.
+ *
+ * Both inputs are the ANSWERS of successful queries. A query that failed has no place here:
+ * an empty answer means "adds nothing", a failed one means "could not tell", and folding the
+ * second into the first built a list the running service does not have. That case is settled
+ * before this is reached - see {@link ServiceAccountUnknown}.
  */
-export function serviceAccountGroups(idOutput: string | null, unitOutput: string | null, fallback: string): string[] {
+export function serviceAccountGroups(idOutput: string, unitOutput: string, fallback: string): string[] {
 	const names = new Set<string>();
-	for (const output of [idOutput, unitOutput]) for (const name of (output ?? '').split(/\s+/)) if (name.length > 0) names.add(name);
+	for (const output of [idOutput, unitOutput]) for (const name of output.split(/\s+/)) if (name.length > 0) names.add(name);
 	return names.size > 0 ? [...names] : [fallback];
 }
 
@@ -358,12 +380,15 @@ const spawnProbe: ProbeRunner = argv => {
  * the operation needs - every directory on the path and the file itself are asked under the
  * same snapshot - and the next save reads again.
  */
-export function serviceAccountAccessForOperation(readIdentity: () => Promise<ServiceAccountIdentity | null> = serviceAccountIdentity, runProbe: ProbeRunner = spawnProbe): ServiceAccountAccess {
-	let identity: Promise<ServiceAccountIdentity | null> | undefined;
+export function serviceAccountAccessForOperation(readIdentity: () => Promise<ServiceAccountIdentity | null | ServiceAccountUnknown> = serviceAccountIdentity, runProbe: ProbeRunner = spawnProbe): ServiceAccountAccess {
+	let identity: Promise<ServiceAccountIdentity | null | ServiceAccountUnknown> | undefined;
 	return async (path, mode) => {
 		identity ??= readIdentity();
 		const resolved = await identity;
 		if (resolved === null) return null;
+		// Nothing is probed under an identity that could not be established: the answer would
+		// be about some other account. Reported as it is, and the caller refuses on it.
+		if ('unknown' in resolved) return resolved;
 		// Only `test`'s own verdict counts. `setpriv` reports its own failures - a missing
 		// binary, an id it may not assume - with a different status, and reading those as
 		// "unreadable" would refuse a configuration nobody can prove is broken.
@@ -392,7 +417,7 @@ function queryHost(argv: string[]): string | null {
  * drop-in counts once `daemon-reload` has seen it). Nothing is remembered between calls -
  * see {@link serviceAccountAccessForOperation} for why.
  */
-async function serviceAccountIdentity(): Promise<ServiceAccountIdentity | null> {
+async function serviceAccountIdentity(): Promise<ServiceAccountIdentity | null | ServiceAccountUnknown> {
 	if (process.platform !== 'linux' || process.getuid?.() !== 0) return null;
 	try {
 		const passwd = await readFile('/etc/passwd', 'utf8');
@@ -402,8 +427,12 @@ async function serviceAccountIdentity(): Promise<ServiceAccountIdentity | null> 
 			const uid = Number(fields[2]);
 			const gid = Number(fields[3]);
 			if (!Number.isInteger(uid) || !Number.isInteger(gid)) return null;
+			// Either query failing is the whole identity failing: a list missing one side is
+			// not a smaller list, it is another account's (see ServiceAccountUnknown).
 			const memberships = queryHost(['/usr/bin/id', '-Gn', TIME_SERVICE_ACCOUNT]);
+			if (memberships === null) return { unknown: `the time service's group memberships could not be read (id -Gn ${TIME_SERVICE_ACCOUNT} failed)` };
 			const unitGroups = queryHost(['/usr/bin/systemctl', 'show', '-p', 'SupplementaryGroups', '--value', TIME_SERVICE_UNIT]);
+			if (unitGroups === null) return { unknown: `the groups ${TIME_SERVICE_UNIT} adds could not be read (systemctl show failed)` };
 			return { uid, gid, groups: serviceAccountGroups(memberships, unitGroups, String(gid)) };
 		}
 	} catch {}
@@ -452,9 +481,13 @@ async function serviceAccountIdentity(): Promise<ServiceAccountIdentity | null> 
  */
 export async function unreadableByServiceAccount(path: string, access: ServiceAccountAccess = serviceAccountAccessForOperation()): Promise<string | null> {
 	const { traversed, target, directory } = await resolveForServiceAccount(path);
+	// An identity that could not be established stops the check outright: neither a probe
+	// under some other list of groups nor the mode bits may answer for the service then.
+	const unverifiable = (answer: ServiceAccountUnknown): string => `${answer.unknown}, so whether it can read ${path} could not be verified`;
 	// Outermost first, so the reported directory is the first one that actually stops the walk.
 	for (const step of traversed) {
 		const enterable = await access(step, 'x');
+		if (typeof enterable === 'object' && enterable !== null) return unverifiable(enterable);
 		if (enterable === false) return `${step} cannot be entered by the time service's own account`;
 		if (enterable === null) {
 			const entry = await stat(step).catch(() => null);
@@ -463,6 +496,7 @@ export async function unreadableByServiceAccount(path: string, access: ServiceAc
 	}
 	if (directory !== null) {
 		const listable = await access(directory, 'r');
+		if (typeof listable === 'object' && listable !== null) return unverifiable(listable);
 		if (listable === false) return `${directory} cannot be listed by the time service's own account, so a drop-in in it would never be found`;
 		if (listable === null) {
 			const holder = await stat(directory).catch(() => null);
@@ -471,6 +505,7 @@ export async function unreadableByServiceAccount(path: string, access: ServiceAc
 	}
 	if (target === null) return null;
 	const readable = await access(target, 'r');
+	if (typeof readable === 'object' && readable !== null) return unverifiable(readable);
 	if (readable === false) return `${target} cannot be read by the time service's own account`;
 	if (readable === null) {
 		const file = await stat(target).catch(() => null);

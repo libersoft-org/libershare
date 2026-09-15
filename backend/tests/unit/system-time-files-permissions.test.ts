@@ -187,6 +187,22 @@ describe.skipIf(process.platform === 'win32')('POSIX time configuration permissi
 			expect(await unreadableByServiceAccount(file, answering(null))).toContain('cannot be read');
 		});
 
+		/**
+		 * The host CAN be asked and asking failed: nothing stands in. Not the bits - which here
+		 * say readable - and not a probe under a partial group list, which errs both ways (a
+		 * 0705 directory refused through a group the list lacks reads as allowed). The save has
+		 * to fail with the reason, and roll back.
+		 */
+		it('refuses to verify at all when the service identity could not be read', async () => {
+			const file = join(root, '90-libershare.conf');
+			await writeFile(file, 'x\n');
+			await chmod(file, 0o644);
+			const identityUnknown: ServiceAccountAccess = async () => ({ unknown: "the time service's group memberships could not be read" });
+			const verdict = await unreadableByServiceAccount(file, identityUnknown);
+			expect(verdict).toContain('could not be verified');
+			expect(verdict).toContain('group memberships could not be read');
+		});
+
 		it('reports a directory that account cannot list, so a drop-in in it is never found', async () => {
 			const parent = join(root, 'timesyncd.conf.d');
 			await mkdir(parent, { mode: 0o755 });
