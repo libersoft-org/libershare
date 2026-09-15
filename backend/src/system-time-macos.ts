@@ -12,7 +12,7 @@ export const MAC_SYSTEMSETUP = '/usr/sbin/systemsetup';
  * changing nothing. Without matching that text every unprivileged write would be
  * reported as a success, so the message is what decides, not the exit code.
  */
-export const MAC_NEEDS_ROOT_RE = /administrator access/i;
+export const MAC_NEEDS_ROOT_RE: RegExp = /administrator access/i;
 
 /** A `systemsetup` write, failing on the refusal it exits zero for. */
 export function macSystemsetup(args: string[]): SystemCommand {
