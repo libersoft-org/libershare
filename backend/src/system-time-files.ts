@@ -333,22 +333,44 @@ export function serviceAccountProbe(identity: ServiceAccountIdentity, mode: 'r' 
 	return ['/usr/bin/setpriv', `--reuid=${identity.uid}`, `--regid=${identity.gid}`, `--groups=${identity.groups.join(',')}`, '/usr/bin/test', `-${mode}`, path];
 }
 
-export const serviceAccountAccess: ServiceAccountAccess = async (path, mode) => {
-	if (process.platform !== 'linux' || process.getuid?.() !== 0) return null;
-	const identity = await serviceAccountIdentity();
-	if (identity === null) return null;
+/** The exit status of one probe process, or null when it could not be run at all. */
+export type ProbeRunner = (argv: string[]) => number | null;
+
+const spawnProbe: ProbeRunner = argv => {
 	try {
-		const probe = Bun.spawnSync(serviceAccountProbe(identity, mode, path), { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' });
-		// Only `test`'s own verdict counts. `setpriv` reports its own failures - a missing
-		// binary, an id it may not assume - with a different status, and reading those as
-		// "unreadable" would refuse a configuration nobody can prove is broken.
-		return probe.exitCode === 0 ? true : probe.exitCode === 1 ? false : null;
+		return Bun.spawnSync(argv, { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' }).exitCode;
 	} catch {
 		return null;
 	}
 };
 
-let cachedServiceIdentity: ServiceAccountIdentity | null | undefined;
+/**
+ * An access check for ONE operation: the identity is read on the first probe and shared by
+ * the rest of that operation's probes, then let go.
+ *
+ * Per operation, not per process. The service's groups change at administration time - a
+ * drop-in's `SupplementaryGroups=` after `daemon-reload`, a membership in the group database
+ * - and systemd builds the running service's groups from those sources at each start. A list
+ * kept for the life of this process answered for an identity the service no longer had, in
+ * both directions: a group taken away still let a save through, so a configuration was
+ * reported usable that the daemon could not read at its next start; a group granted was still
+ * refused. And a query that failed the first time stayed failed. One read per save is what
+ * the operation needs - every directory on the path and the file itself are asked under the
+ * same snapshot - and the next save reads again.
+ */
+export function serviceAccountAccessForOperation(readIdentity: () => Promise<ServiceAccountIdentity | null> = serviceAccountIdentity, runProbe: ProbeRunner = spawnProbe): ServiceAccountAccess {
+	let identity: Promise<ServiceAccountIdentity | null> | undefined;
+	return async (path, mode) => {
+		identity ??= readIdentity();
+		const resolved = await identity;
+		if (resolved === null) return null;
+		// Only `test`'s own verdict counts. `setpriv` reports its own failures - a missing
+		// binary, an id it may not assume - with a different status, and reading those as
+		// "unreadable" would refuse a configuration nobody can prove is broken.
+		const status = runProbe(serviceAccountProbe(resolved, mode, path));
+		return status === 0 ? true : status === 1 ? false : null;
+	};
+}
 
 /** Stdout of a short host query, or null when it could not be run or did not succeed. */
 function queryHost(argv: string[]): string | null {
@@ -361,16 +383,17 @@ function queryHost(argv: string[]): string | null {
 }
 
 /**
- * The service account's ids and groups, read once per process.
+ * The service account's ids and groups as the host has them NOW, or null when this host
+ * cannot be asked: only root may adopt another account, and only Linux has this service, so
+ * everywhere else the caller falls back to the mode bits.
  *
  * The ids come from the host's own passwd database; the groups from `id -Gn` and from the
  * unit systemd has loaded (`SupplementaryGroups=` is read through `systemctl show`, so a
- * drop-in counts once `daemon-reload` has seen it). Cached like the ids were: a change to
- * either while this process runs is not picked up until it restarts.
+ * drop-in counts once `daemon-reload` has seen it). Nothing is remembered between calls -
+ * see {@link serviceAccountAccessForOperation} for why.
  */
 async function serviceAccountIdentity(): Promise<ServiceAccountIdentity | null> {
-	if (cachedServiceIdentity !== undefined) return cachedServiceIdentity;
-	cachedServiceIdentity = null;
+	if (process.platform !== 'linux' || process.getuid?.() !== 0) return null;
 	try {
 		const passwd = await readFile('/etc/passwd', 'utf8');
 		for (const line of passwd.split('\n')) {
@@ -378,14 +401,13 @@ async function serviceAccountIdentity(): Promise<ServiceAccountIdentity | null> 
 			if (fields[0] !== TIME_SERVICE_ACCOUNT) continue;
 			const uid = Number(fields[2]);
 			const gid = Number(fields[3]);
-			if (!Number.isInteger(uid) || !Number.isInteger(gid)) break;
+			if (!Number.isInteger(uid) || !Number.isInteger(gid)) return null;
 			const memberships = queryHost(['/usr/bin/id', '-Gn', TIME_SERVICE_ACCOUNT]);
 			const unitGroups = queryHost(['/usr/bin/systemctl', 'show', '-p', 'SupplementaryGroups', '--value', TIME_SERVICE_UNIT]);
-			cachedServiceIdentity = { uid, gid, groups: serviceAccountGroups(memberships, unitGroups, String(gid)) };
-			break;
+			return { uid, gid, groups: serviceAccountGroups(memberships, unitGroups, String(gid)) };
 		}
 	} catch {}
-	return cachedServiceIdentity;
+	return null;
 }
 
 /**
@@ -428,7 +450,7 @@ async function serviceAccountIdentity(): Promise<ServiceAccountIdentity | null> 
  * group is the service's group is entered by the kernel, and the group class is consulted
  * BEFORE the `other` class, so the bit test alone failed a save that would have worked.
  */
-export async function unreadableByServiceAccount(path: string, access: ServiceAccountAccess = serviceAccountAccess): Promise<string | null> {
+export async function unreadableByServiceAccount(path: string, access: ServiceAccountAccess = serviceAccountAccessForOperation()): Promise<string | null> {
 	const { traversed, target, directory } = await resolveForServiceAccount(path);
 	// Outermost first, so the reported directory is the first one that actually stops the walk.
 	for (const step of traversed) {

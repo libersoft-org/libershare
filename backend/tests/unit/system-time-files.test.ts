@@ -5,7 +5,49 @@ import { dirname, join } from 'node:path';
 import { applyTimesyncdDropIn, syncDirectory, type CommandRunner, type RunOutcome, SAVE_BUDGET_MS, withSaveBudget, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
 import { fakeRunner } from '../helpers/system-time-fixtures.ts';
 import { withTimesyncConfigRead } from '../helpers/system-time-timesyncd.ts';
-import { serviceAccountGroups, serviceAccountProbe } from '../../src/system-time-files.ts';
+import { serviceAccountAccessForOperation, serviceAccountGroups, serviceAccountProbe, type ServiceAccountIdentity } from '../../src/system-time-files.ts';
+
+/**
+ * The identity is read once per operation and afresh for the next one. A list kept for the
+ * life of the process answered for an identity the service no longer had: a group taken away
+ * still let a save through, a group granted was still refused, and a query that had failed
+ * once stayed failed. Probed with a stand-in for `setpriv`: it grants exactly the paths whose
+ * `--groups=` carry the group the directory is owned by.
+ */
+describe('serviceAccountAccessForOperation', () => {
+	const identity = (groups: string[]): ServiceAccountIdentity => ({ uid: 997, gid: 997, groups });
+	const grantsThroughGroup = (argv: string[]) => (argv.some(arg => arg.startsWith('--groups=') && arg.split('=')[1]!.split(',').includes('ntp-readers')) ? 0 : 1);
+
+	it('reads the identity once for every probe of one operation', async () => {
+		let reads = 0;
+		const access = serviceAccountAccessForOperation(async () => (reads++, identity(['systemd-timesync', 'ntp-readers'])), grantsThroughGroup);
+		expect(await access('/etc', 'x')).toBe(true);
+		expect(await access('/etc/systemd', 'x')).toBe(true);
+		expect(await access('/etc/systemd/timesyncd.conf.d/90-libershare.conf', 'r')).toBe(true);
+		expect(reads).toBe(1);
+	});
+
+	it('follows a group taken away between two operations', async () => {
+		const sources = [['systemd-timesync', 'ntp-readers'], ['systemd-timesync']];
+		const read = async () => identity(sources.shift()!);
+		expect(await serviceAccountAccessForOperation(read, grantsThroughGroup)('/x', 'r')).toBe(true);
+		expect(await serviceAccountAccessForOperation(read, grantsThroughGroup)('/x', 'r')).toBe(false);
+	});
+
+	it('follows a group granted between two operations', async () => {
+		const sources = [['systemd-timesync'], ['systemd-timesync', 'ntp-readers']];
+		const read = async () => identity(sources.shift()!);
+		expect(await serviceAccountAccessForOperation(read, grantsThroughGroup)('/x', 'r')).toBe(false);
+		expect(await serviceAccountAccessForOperation(read, grantsThroughGroup)('/x', 'r')).toBe(true);
+	});
+
+	it('asks again after an operation whose identity could not be read', async () => {
+		const sources: Array<ServiceAccountIdentity | null> = [null, identity(['systemd-timesync', 'ntp-readers'])];
+		const read = async () => sources.shift() ?? null;
+		expect(await serviceAccountAccessForOperation(read, grantsThroughGroup)('/x', 'r')).toBeNull();
+		expect(await serviceAccountAccessForOperation(read, grantsThroughGroup)('/x', 'r')).toBe(true);
+	});
+});
 
 /**
  * The probe must ask as the account the service actually runs as. systemd gives it its
