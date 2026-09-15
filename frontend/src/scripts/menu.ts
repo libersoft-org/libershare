@@ -18,6 +18,7 @@ import DownloadDetail from '../pages/Download/DownloadDetail.svelte';
 import SettingsFooter from '../pages/Settings/SettingsFooter.svelte';
 import SettingsDownload from '../pages/Settings/SettingsDownload.svelte';
 import SettingsSystem from '../pages/Settings/SettingsSystem.svelte';
+import SettingsNetwork from '../pages/Settings/SettingsNetwork.svelte';
 import LISHNetworkList from '../pages/Settings/SettingsLISHNetworkList.svelte';
 import LISHNetworkImportFile from '../pages/Settings/SettingsLISHNetworkImportFile.svelte';
 import LISHNetworkImportWeb from '../pages/Settings/SettingsLISHNetworkImportWeb.svelte';
@@ -190,6 +191,13 @@ export const menuStructure = derived(
 						label: tt('settings.system.title'),
 						icon: '/img/system.svg',
 						component: SettingsSystem,
+					},
+					{
+						// Not `network` — a top-level `network` item (LISH network browsing) already exists.
+						id: 'network-interfaces',
+						label: tt('settings.network.title'),
+						icon: '/img/ethernet.svg',
+						component: SettingsNetwork,
 					},
 					{
 						id: 'download',

@@ -80,18 +80,23 @@ interface FsHandlers {
 	writeCompressed: (p: { path: string; content: string; algorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 }
 
-export function initFsHandlers(): FsHandlers {
+/** Every path a browse can start from. On Windows that means probing drive letters, which touches the disk. */
+async function listRootPaths(): Promise<string[]> {
+	return isWindows ? (await getWindowsDrives()).map(d => d.path) : ['/'];
+}
+
+export function initFsHandlers(containerCheck: () => Promise<boolean> = isContainer, listRoots: () => Promise<string[]> = listRootPaths): FsHandlers {
 	async function info(_p: any, client?: any): Promise<FsInfo> {
 		const plat = platform();
-		const roots = isWindows ? (await getWindowsDrives()).map(d => d.path) : ['/'];
+		const roots = await listRoots();
 		const isLocal = client?.data?.isLocalClient ?? false;
-		const inContainer = await isContainer();
+		const inContainer = await containerCheck();
 		return {
 			platform: plat === 'win32' ? 'windows' : plat === 'darwin' ? 'darwin' : 'linux',
 			separator: sep,
 			home: homedir(),
 			roots,
-			localFilesystem: isLocal && !inContainer,
+			localFilesystem: localFilesystemAvailable(isLocal, inContainer),
 		};
 	}
 
@@ -223,4 +228,9 @@ export function initFsHandlers(): FsHandlers {
 	}
 
 	return { info, list, readText, readCompressed, delete: del, mkdir: mkdirFn, open, rename: renameFn, exists, writeText, writeCompressed };
+}
+
+/** Host paths are meaningful only to a same-host client outside a container. */
+function localFilesystemAvailable(isLocalClient: boolean, inContainer: boolean): boolean {
+	return isLocalClient && !inContainer;
 }

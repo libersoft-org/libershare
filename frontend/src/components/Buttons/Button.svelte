@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { getContext, onMount, untrack } from 'svelte';
+	import { getContext, onMount, untrack, type Snippet } from 'svelte';
 	import { type MenuButtonsContext } from '../Menu/MenuButtons.svelte';
 	import { type ButtonBarContext } from './ButtonBar.svelte';
 	import { type NavAreaController, type NavPos, navItem } from '../../scripts/navArea.svelte.ts';
 	import { play as playSound } from '../../scripts/audio.ts';
 	import Icon from '../Icon/Icon.svelte';
 	interface Props {
+		children?: Snippet;
 		label?: string | undefined;
 		icon?: string | undefined;
 		iconPosition?: 'left' | 'top' | undefined;
@@ -27,7 +28,7 @@
 		position?: NavPos | undefined;
 		el?: HTMLElement | undefined;
 	}
-	let { label, icon, iconPosition = 'left', iconSize, noColorFilter = false, badgeIcon, alt = '', selected = false, pressed = false, active = false, disabled = false, padding = '2vh', fontSize = '2vh', borderRadius = '2vh', width, height, onConfirm, position, el = $bindable() }: Props = $props();
+	let { children, label, icon, iconPosition = 'left', iconSize, noColorFilter = false, badgeIcon, alt = '', selected = false, pressed = false, active = false, disabled = false, padding = '2vh', fontSize = '2vh', borderRadius = '2vh', width, height, onConfirm, position, el = $bindable() }: Props = $props();
 	const menuButtons = getContext<MenuButtonsContext | undefined>('menuButtons');
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 	const buttonBar = getContext<ButtonBarContext | undefined>('buttonBar');
@@ -36,6 +37,18 @@
 	let index = $state(-1);
 	let isSelected = $derived(navArea && effectivePosition ? navArea.isSelected(effectivePosition) : menuButtons ? menuButtons.isSelected(index) : selected);
 	let isPressed = $derived(navArea && effectivePosition ? navArea.isPressed(effectivePosition) : menuButtons ? menuButtons.isPressed(index) : pressed);
+
+	// Both ways in have to honour `disabled`, not just the mouse. The registered
+	// confirm is what Enter on a selected item calls, and it used to be `onConfirm`
+	// straight through — so a button greyed out on screen still fired from the
+	// keyboard. Anywhere `disabled` means "an operation is already in flight", that
+	// was a second one started on top of the first.
+	// Passed unconditionally, and reading both props at call time: the two consumers
+	// only ever invoke it as `onConfirm?.()`, so an item that has one but does
+	// nothing is the same to them as one that has none.
+	function confirm(): void {
+		if (!disabled) onConfirm?.();
+	}
 
 	function handleClick(): void {
 		if (disabled) return;
@@ -56,12 +69,12 @@
 				navItem(
 					() => effectivePosition,
 					() => el,
-					onConfirm,
+					confirm,
 					{ noDelegateMouse: true }
 				)
 			);
 		if (menuButtons) {
-			const { index: idx, unregister } = menuButtons.register({ onConfirm });
+			const { index: idx, unregister } = menuButtons.register({ onConfirm: confirm });
 			index = idx;
 			return unregister;
 		}
@@ -137,11 +150,13 @@
 </style>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -- keyboard activation is handled centrally by the input system (keyboard.ts → areas.ts confirmUp → navArea.onConfirm), not via an element-level onkeydown which would double-fire on focused fullscreen items. -->
-<div bind:this={el} class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:active class:disabled class:icon-only={icon && !label} class:icon-top={iconPosition === 'top'} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius}; min-width: {width ?? '16vh'};{height ? ` height: ${height};` : ''}" onclick={handleClick} role="button" tabindex="-1">
+<div bind:this={el} class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:active class:disabled class:icon-only={icon && !label && !children} class:icon-top={iconPosition === 'top'} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius}; min-width: {width ?? '16vh'};{height ? ` height: ${height};` : ''}" onclick={handleClick} role="button" aria-label={children ? label : undefined} tabindex="-1">
 	{#if icon}
 		<Icon img={icon} {alt} size={iconSize ?? fontSize} padding="0" colorVariable={isSelected ? '--primary-foreground' : '--disabled-foreground'} {noColorFilter} {badgeIcon} badgeColorVariable={isSelected ? '--primary-foreground' : '--disabled-foreground'} />
 	{/if}
-	{#if label}
+	{#if children}
+		{@render children()}
+	{:else if label}
 		{label}
 	{/if}
 </div>

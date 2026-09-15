@@ -45,8 +45,6 @@ export function getWidgetLabel(widget: FooterWidget, t: (key: string) => string)
 // Connection Widget Logic
 // ============================================================================
 
-export type ConnectionType = 'ethernet' | 'wifi';
-
 /**
  * Calculate how many signal bars should be active (0-4)
  */
