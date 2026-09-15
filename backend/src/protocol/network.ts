@@ -3004,6 +3004,11 @@ export class Network {
 	 */
 	canServePubsubRequestTo(peerID: string): boolean {
 		if (!this.node) return false;
+		// A peer we deliberately hung up on is refused however its request reached us.
+		// Everything below only judges a direct neighbour, so without this a left peer
+		// gets its catalog rows back by publishing through one more hop — the exact
+		// "it still finds me" half of the leave bug the unicast gate already closes.
+		if (this.isRedialSuppressed(peerID)) return false;
 		let direct: boolean;
 		try {
 			direct = this.node.getPeers().some(p => p.toString() === peerID);

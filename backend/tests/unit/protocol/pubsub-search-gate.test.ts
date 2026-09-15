@@ -103,6 +103,20 @@ describe('pubsub searchLishs membership gate', () => {
 		expect(dialed).toEqual(['peer-far']);
 	});
 
+	it('refuses a peer we deliberately left, even with no direct connection', async () => {
+		// A left peer is hung up on and redial-suppressed, so it is no longer a direct
+		// neighbour — the very state that made the multi-hop allowance apply to it. One
+		// extra hop must not hand back the catalog rows the leave took away.
+		initUploadState(new Set([SHARED_LISH_ID]), () => {});
+		const network = gateNetwork({ connected: [], subscribers: [] });
+		(network as any).redialSuppressedByNet.set(NETWORK_ID, new Set(['peer-left']));
+		const { handlers, dialed } = handlersFor(network);
+
+		await handlers.handleSearchLishs(search, NETWORK_ID, 'peer-left');
+
+		expect(dialed).toEqual([]);
+	});
+
 	it('drops a query whose searchID is longer than the bound', async () => {
 		// A pubsub payload may be a quarter of a megabyte; every byte of the searchID
 		// would be retained as a dedup key for the whole dedup window, and a fresh ID per
