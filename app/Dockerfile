@@ -36,6 +36,7 @@ RUN --mount=type=cache,target=/var/cache/apt \
 		librsvg2-bin \
 		jq \
 		nsis \
+		osslsigncode \
 		zip \
 		unzip \
 		squashfs-tools \

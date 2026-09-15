@@ -1,5 +1,5 @@
 import { get, writable } from 'svelte/store';
-import { WsClient } from '@shared';
+import { WsClient, CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, formatBytes } from '@shared';
 import { addNotification } from './notifications.ts';
 import { tt } from './language.ts';
 import { getAPIURL } from './api-url.ts';
@@ -115,3 +115,82 @@ wsClient.onError = () => {
 	else void checkBackendStatus();
 };
 void checkBackendStatus();
+
+/**
+ * Bytes per chunk. Shared with the backend, which enforces it: this is the
+ * protocol's chunk size, not a local preference.
+ */
+const UPLOAD_CHUNK_SIZE = MAX_UPLOAD_CHUNK_SIZE;
+
+/**
+ * How long one upload step may wait for its acknowledgement. Every step here is
+ * a single small round trip against a local-ish backend — a chunk write and a
+ * flush — so a minute is generous. It exists because a reply can be lost
+ * without this socket ever closing (a proxy losing its backend session, say),
+ * and the upload dialog is modal: without a bound it simply never goes away.
+ */
+const UPLOAD_STEP_TIMEOUT_MS = 60_000;
+
+/**
+ * Send a locally picked file to the backend in chunks over the API WebSocket and
+ * return the id it is held under. The file is never read into memory whole and
+ * never travels as one message — that is what used to take the socket down once
+ * an import grew past the frame limit. Each chunk is a binary frame, so the
+ * bytes cost their own size rather than a third more as base64, and the next one
+ * is only sent once the backend has acknowledged the last, which keeps the send
+ * buffer from growing without bound.
+ *
+ * The id, not a path: the file stays the server's to read and delete, so nothing
+ * here can point the generic filesystem methods at it.
+ *
+ * `onStart` is handed the id as soon as it exists, before a single byte has gone
+ * out. Returning it only on success left the caller with nothing to clean up
+ * when the transfer failed in the middle — the id stayed in here, and the only
+ * attempt to discard the partial file was the fire-and-forget one below.
+ */
+export async function uploadImportFile(file: File, onStart?: (uploadID: string) => void): Promise<string> {
+	// Checked up front so a file that could never be accepted fails immediately
+	// instead of after uploading its way to the ceiling.
+	if (file.size > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.UPLOAD_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
+	// Named here rather than by the server, and the begin is inside the try. A
+	// reply can be lost without this socket noticing, and with a server-chosen id
+	// a lost `begin` reply left a transfer on the backend's disk that this side had
+	// no id for — so it could neither finish nor abort it, and only the sweep ever
+	// cleared it. The backend treats a repeat of the same id as the same transfer.
+	const uploadID = crypto.randomUUID();
+	onStart?.(uploadID);
+	try {
+		await wsClient.call('upload.begin', { uploadID, name: file.name }, UPLOAD_STEP_TIMEOUT_MS);
+		for (let offset = 0; offset < file.size; offset += UPLOAD_CHUNK_SIZE) {
+			const slice = await file.slice(offset, offset + UPLOAD_CHUNK_SIZE).arrayBuffer();
+			await wsClient.callBinary('upload.chunk', { uploadID }, new Uint8Array(slice), UPLOAD_STEP_TIMEOUT_MS);
+		}
+		await finishUpload(uploadID);
+		return uploadID;
+	} catch (err) {
+		// Nothing half-written is left behind. If the socket is what failed, the
+		// backend has already dropped the transfer on its own, so a failed abort
+		// is not worth reporting over the error that caused it. A caller that took
+		// the id through `onStart` can wait for a real cleanup itself; this is only
+		// the backstop for one that did not, and it is bounded so a lost reply does
+		// not leave a pending request behind for the life of the socket.
+		void wsClient.call('upload.abort', { uploadID }, UPLOAD_STEP_TIMEOUT_MS).catch(() => {});
+		throw err;
+	}
+}
+
+/**
+ * Close the transfer, retrying once if the acknowledgement does not arrive. The
+ * backend answers a repeated `upload.end` with the same id, precisely so a lost
+ * reply here costs a round trip instead of the whole upload. A chunk carries no
+ * such guarantee — there is no offset to resume from — so chunks are never
+ * retried and the upload restarts from the beginning instead.
+ */
+async function finishUpload(uploadID: string): Promise<void> {
+	try {
+		await wsClient.call('upload.end', { uploadID }, UPLOAD_STEP_TIMEOUT_MS);
+	} catch (err) {
+		if ((err as { code?: string })?.code !== ErrorCodes.REQUEST_TIMEOUT) throw err;
+		await wsClient.call('upload.end', { uploadID }, UPLOAD_STEP_TIMEOUT_MS);
+	}
+}

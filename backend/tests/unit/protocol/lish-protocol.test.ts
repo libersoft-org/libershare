@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, LISHClient, toManifest, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
+import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, registerHaveAnnouncementHandler, LISHClient, toManifest, handleLISHProtocol, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
 import { encode as codecEncode, decode as codecDecode } from '../../../src/protocol/codec.ts';
 import { encode as lpEncode } from 'it-length-prefixed';
 import { DEFAULT_MAX_CHUNK_SIZE, DEFAULT_MAX_MESSAGE_SIZE, useNetworkSettings, type SettingsData } from '../../../src/settings.ts';
@@ -19,7 +19,7 @@ useNetworkSettings(
 			maxChunkSize: chunkLimit,
 		}) as SettingsData['network']
 );
-import { ErrorCodes, type IStoredLISH } from '@shared';
+import { CodedError, ErrorCodes, type IStoredLISH } from '@shared';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -40,6 +40,52 @@ function seedActiveUpload(lishID: string, chunks: number, bytes: number): void {
 		speedSamples: [],
 	});
 }
+
+describe('lish-protocol – reset cancellation', () => {
+	it('stops an idle handler even when the stream source never wakes after abort', async () => {
+		let releaseRead!: () => void;
+		const source = {
+			[Symbol.asyncIterator]() {
+				return {
+					next: () =>
+						new Promise<IteratorResult<Uint8Array>>(resolve => {
+							releaseRead = () => resolve({ done: true, value: undefined as never });
+						}),
+					return: async () => ({ done: true, value: undefined as never }),
+				};
+			},
+		};
+		const stream = {
+			[Symbol.asyncIterator]: source[Symbol.asyncIterator],
+			status: 'open',
+			abort() {
+				this.status = 'aborted';
+			},
+			close: async () => {},
+			send: () => {},
+		} as any;
+		const abort = new AbortController();
+		const handler = handleLISHProtocol(stream, {} as any, 'peer-id', 'DIRECT', undefined, undefined, abort.signal);
+
+		await Promise.resolve();
+		abort.abort();
+		const outcome = await Promise.race([handler.then(() => 'stopped'), Bun.sleep(250).then(() => 'timeout')]);
+		releaseRead?.();
+		await handler;
+
+		expect(outcome).toBe('stopped');
+	});
+});
+
+describe('lish-protocol – HAVE handler ownership', () => {
+	it('does not let an older downloader unregister the newer owner', () => {
+		const releaseOlder = registerHaveAnnouncementHandler('same-lish', () => {});
+		const releaseNewer = registerHaveAnnouncementHandler('same-lish', () => {});
+
+		expect(releaseOlder()).toBe(false);
+		expect(releaseNewer()).toBe(true);
+	});
+});
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -444,12 +490,16 @@ describe('LISHClient.requestManifest – manifest validation', () => {
 	 * `send()` is a no-op (requestManifest only writes the request); iteration yields the
 	 * length-prefixed response the decoder reads back.
 	 */
-	function fakeStream(manifest: unknown): any {
-		const frame = lpEncode.single(codecEncode({ manifest })).subarray();
+	function fakeResponse(response: unknown): any {
+		const frame = lpEncode.single(codecEncode(response)).subarray();
 		async function* source() {
 			yield frame;
 		}
 		return { status: 'open', send() {}, close: async () => {}, [Symbol.asyncIterator]: source };
+	}
+
+	function fakeStream(manifest: unknown): any {
+		return fakeResponse({ manifest });
 	}
 
 	function makeManifest(chunkSize: number): IStoredLISH {
@@ -460,6 +510,21 @@ describe('LISHClient.requestManifest – manifest validation', () => {
 			checksumAlgo: 'sha256',
 			files: [{ path: 'a.bin', size: chunkSize, checksums: ['h1'] }],
 		};
+	}
+
+	async function getResponseError(response: unknown, requestedID = 'lish-manifest-test'): Promise<CodedError> {
+		const client = new LISHClient(fakeResponse(response));
+		try {
+			await client.requestManifest(requestedID);
+		} catch (error) {
+			if (error instanceof CodedError) return error;
+			throw error;
+		}
+		throw new Error('Expected requestManifest to reject');
+	}
+
+	function getManifestError(manifest: unknown, requestedID = 'lish-manifest-test'): Promise<CodedError> {
+		return getResponseError({ manifest }, requestedID);
 	}
 
 	afterEach(() => {
@@ -489,5 +554,66 @@ describe('LISHClient.requestManifest – manifest validation', () => {
 		// A spoofing peer answering with a different LISH must not win the fallback.
 		const client = new LISHClient(fakeStream({ ...makeManifest(1024), id: 'some-other-lish' }));
 		await expect(client.requestManifest('lish-manifest-test')).rejects.toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+	});
+
+	it('rejects a manifest with no id', async () => {
+		const { id: _id, ...manifest } = makeManifest(1024);
+		const client = new LISHClient(fakeStream(manifest));
+		await expect(client.requestManifest('lish-manifest-test')).rejects.toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+	});
+
+	it('does not stringify a large non-string id', async () => {
+		const error = await getManifestError({ ...makeManifest(1024), id: new Uint8Array(100_000) });
+
+		expect(error).toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+		expect(error.message).toContain('manifest id mismatch (object)');
+		expect(error.message.length).toBeLessThan(200);
+	});
+
+	it('bounds and escapes a peer-supplied string id', async () => {
+		const hostileID = `forged\r\n\u0085\u2028\u2029log-line-${'A'.repeat(100_000)}`;
+		const error = await getManifestError({ ...makeManifest(1024), id: hostileID });
+
+		expect(error).toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+		expect(error.message.length).toBeLessThan(200);
+		expect(error.message).not.toContain('\r');
+		expect(error.message).not.toContain('\n');
+		expect(error.message).not.toContain('\u0085');
+		expect(error.message).not.toContain('\u2028');
+		expect(error.message).not.toContain('\u2029');
+		expect(error.message).toContain('forged\\r\\n\\u0085\\u2028\\u2029log-line-');
+	});
+
+	it('bounds and escapes the requested peer-advertised id in errors', async () => {
+		const hostileID = `requested\r\n\u0085\u2028\u2029fake-line-${'A'.repeat(100_000)}`;
+		const error = await getManifestError(makeManifest(1024), hostileID);
+
+		expect(error).toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+		expect(error.message.length).toBeLessThan(200);
+		expect(error.message).not.toContain('\r');
+		expect(error.message).not.toContain('\n');
+		expect(error.message).not.toContain('\u0085');
+		expect(error.message).not.toContain('\u2028');
+		expect(error.message).not.toContain('\u2029');
+		expect(error.message).toContain('requested\\r\\n\\u0085\\u2028\\u2029fake-line-');
+	});
+
+	it('escapes Unicode bidirectional controls in peer-supplied ids', async () => {
+		const bidiControls = '\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069';
+		const error = await getManifestError({ ...makeManifest(1024), id: `left${bidiControls}right` });
+
+		for (const control of bidiControls) expect(error.message).not.toContain(control);
+		expect(error.message).toContain('left\\u061c\\u200e\\u200f\\u202a\\u202b\\u202c\\u202d\\u202e\\u2066\\u2067\\u2068\\u2069right');
+	});
+
+	it('escapes a hostile requested id when the response has no manifest', async () => {
+		const hostileID = 'requested\r\n\u202efake-line';
+		const error = await getResponseError({}, hostileID);
+
+		expect(error).toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+		expect(error.message).toContain('getLish "requested\\r\\n\\u202efake-line": missing manifest');
+		expect(error.message).not.toContain('\r');
+		expect(error.message).not.toContain('\n');
+		expect(error.message).not.toContain('\u202e');
 	});
 });

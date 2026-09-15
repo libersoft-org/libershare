@@ -1,0 +1,120 @@
+import { normalizeDnsServers, sameIPv4Baseline, validateIPv4Config, type NetAddressMode, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Baseline, type NetIPv4Config, type NetworkStateInfo } from '@shared';
+
+export type DnsUpdateMode = 'unchanged' | 'automatic' | 'custom';
+
+export interface NetworkConfigForm {
+	mode: NetAddressMode;
+	address: string;
+	prefix: string;
+	gateway: string;
+	dnsMode: DnsUpdateMode;
+	dns: string;
+}
+
+/** The detail screen may offer IPv4, Wi-Fi, or both independently. */
+export function canOpenNetworkConfig(source: NetInterfaceInfo, capabilities: NetCapabilities, detail: NetworkStateInfo['detail'], known: boolean): boolean {
+	if (!known || detail !== 'full') return false;
+	return (capabilities.ipv4 && source.ipv4Configurable) || (capabilities.wifi && source.wifiConfigurable);
+}
+
+/** What a fresh reading of the interface means for a form that is already open. */
+export type NetworkFormUpdate = 'seed' | 'reseed' | 'stale' | 'keep';
+
+/**
+ * What an open form has to do when the host reports the interface again.
+ *
+ * The form is seeded from one snapshot and saves against that baseline. While
+ * the two still agree there is nothing to do. Once they diverge — the host was
+ * changed by a system tool, by another client, or by a save of this form that
+ * failed part-way — an untouched form is simply re-seeded, but one the user has
+ * typed into cannot be: re-seeding would throw their work away, and saving would
+ * throw the host's change away. That form is stale, and Save stays blocked until
+ * the user reloads it.
+ */
+export function networkFormUpdate(current: NetIPv4Baseline, baseline: NetIPv4Baseline | null, dirty: boolean): NetworkFormUpdate {
+	if (!baseline) return 'seed';
+	if (sameIPv4Baseline(current, baseline)) return 'keep';
+	return dirty ? 'stale' : 'reseed';
+}
+
+/** What a fresh reading of the interface means for the message the form is showing. */
+export type NetworkFormMessage = 'keep' | 'stale' | 'staleSilent' | 'reseedSilent' | 'reseedAnnounce';
+
+/**
+ * Whether a re-seed may replace what the form is currently saying.
+ *
+ * A re-seed normally announces itself, because the fields changed under the user
+ * and they deserve to know why. It must NOT announce while the form is still
+ * showing the result of an operation the user started: a failed join or save
+ * settles over SEVERAL readings — the address disappears and comes back — and
+ * every one of them arrives as a re-seed. Announcing on any of them replaces
+ * "check the password" with "the form was reloaded" and clears the failure with
+ * it, telling the user nothing went wrong.
+ *
+ * `reported` survives automatic updates. User input or a new operation clears
+ * it, so later host changes can explain why a newly edited form cannot save.
+ */
+export function networkFormMessage(update: NetworkFormUpdate, reported: boolean): NetworkFormMessage {
+	if (update === 'keep') return 'keep';
+	// Going stale is a STATE, and it shows as one: Save greys out and a reload
+	// button appears. The wording is what has to give way, because the change under
+	// a half-typed form is very often this form's own failed attempt — a wrong
+	// password drops the association and takes the address with it. Saying
+	// "changed outside" there hides the reason the user actually needs and blames
+	// somebody else for it. The form still goes stale either way.
+	if (update === 'stale') return reported ? 'staleSilent' : 'stale';
+	// The FIRST fill is not a reload. Announcing it tells someone who merely opened
+	// the screen that their form was reloaded, which never happened.
+	if (update === 'seed') return 'reseedSilent';
+	return reported ? 'reseedSilent' : 'reseedAnnounce';
+}
+
+/** A missing saved adapter is rendered as Automatic, matching backend fallback. */
+export function visiblePrimaryInterface(preferredID: string, interfaces: NetInterfaceInfo[]): string {
+	return preferredID && interfaces.some(iface => iface.id === preferredID) ? preferredID : '';
+}
+
+/** Seed the editable fields without discarding any resolver family. */
+export function networkConfigFormFrom(source: NetInterfaceInfo): NetworkConfigForm {
+	const ipv4 = source.addresses.find(address => address.family === 'ipv4');
+	return {
+		mode: source.ipv4Mode,
+		address: ipv4?.address ?? '',
+		prefix: String(ipv4?.prefixLength ?? 24),
+		gateway: source.gateway ?? '',
+		dnsMode: 'unchanged',
+		dns: source.dns.join(', '),
+	};
+}
+
+/** Build the RPC value. Omitted DNS is the explicit preserve-current contract. */
+export function networkConfigFromForm(form: NetworkConfigForm): NetIPv4Config | null {
+	if (form.mode === 'unknown') return null;
+	const config: NetIPv4Config =
+		form.mode === 'dhcp'
+			? { mode: 'dhcp' }
+			: {
+					mode: 'static',
+					address: form.address.trim(),
+					prefixLength: Number(form.prefix.trim()),
+					gateway: form.gateway.trim(),
+				};
+	if (form.dnsMode === 'automatic') config.dns = [];
+	if (form.dnsMode === 'custom') {
+		const servers = form.dns
+			.split(',')
+			.map(server => server.trim())
+			.filter(Boolean);
+		if (servers.length === 0) return null;
+		config.dns = normalizeDnsServers(servers);
+	}
+	return config;
+}
+
+/** Name the field that prevents this UI form from producing a valid RPC value. */
+export function validateNetworkConfigForm(form: NetworkConfigForm, capabilities?: Pick<NetCapabilities, 'staticGatewayRequired'>): string | null {
+	if (form.mode === 'unknown') return 'mode';
+	if (form.dnsMode === 'custom' && !form.dns.split(',').some(server => server.trim().length > 0)) return 'dns';
+	const config = networkConfigFromForm(form);
+	return config ? validateIPv4Config(config, capabilities) : 'mode';
+}

@@ -8,18 +8,21 @@
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
 	import { api } from '../../scripts/api.ts';
-	import { defaultMinifyJSON, defaultCompress } from '../../scripts/settings.ts';
+	import { defaultMinifyJSON, defaultCompress, defaultCompressionAlgorithm } from '../../scripts/settings.ts';
+	import { compressionExtension, stripCompressionExtension, type CompressionAlgorithm } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
+	import CompressionAlgorithmRow from './CompressionAlgorithmRow.svelte';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	import FileBrowser from '../../pages/FileBrowser/FileBrowser.svelte';
 
 	export interface ExportOptions {
 		minifyJSON: boolean;
 		compress: boolean;
+		compressionAlgorithm: CompressionAlgorithm;
 	}
 
 	interface Props {
@@ -40,22 +43,36 @@
 	let browseDirectory = $state('');
 	let minifyJSONState = $state($defaultMinifyJSON);
 	let compress = $state($defaultCompress);
+	let compressionAlgorithm = $state<CompressionAlgorithm>($defaultCompressionAlgorithm);
 	let errorMessage = $state('');
 	let showOverwriteConfirm = $state(false);
 
+	// Keep the compression suffix in sync with the switch and the chosen algorithm,
+	// but only for paths that still end with the form's own extension — a name the
+	// user rewrote by hand is left alone.
 	function updateFileExtension(): void {
-		const ext = '.' + extension;
-		const extGz = ext + '.gz';
-		if (filePath.endsWith(ext) || filePath.endsWith(extGz)) {
-			if (compress && filePath.endsWith(ext)) filePath = filePath + '.gz';
-			else if (!compress && filePath.endsWith(extGz)) filePath = filePath.slice(0, -3);
-		}
+		const ext = '.' + extension.toLowerCase();
+		// The export writes the trimmed path, so match on the trimmed one — otherwise a
+		// stray trailing space hides the extension and the file is compressed without a suffix.
+		const base = stripCompressionExtension(filePath.trim());
+		// Case-insensitive, like stripCompressionExtension — otherwise "REPORT.LISH.GZ" keeps
+		// its .GZ suffix while brotli bytes are written under it and no import can read it back.
+		if (!base.toLowerCase().endsWith(ext)) return;
+		filePath = compress ? base + compressionExtension(compressionAlgorithm) : base;
 	}
 
 	function handleCompressToggle(): void {
 		compress = !compress;
 		updateFileExtension();
 	}
+
+	function handleAlgorithmSelect(algorithm: CompressionAlgorithm): void {
+		compressionAlgorithm = algorithm;
+		updateFileExtension();
+	}
+
+	// The algorithm row only exists while compression is on — keep the buttons right below it.
+	const buttonsY = $derived(compress ? 4 : 3);
 
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
 	const browseSubPage = createSubPage(navHandle, () => areaID);
@@ -78,6 +95,9 @@
 
 	async function handleSave(): Promise<void> {
 		errorMessage = '';
+		// Imports detect the algorithm from the extension, so a hand-edited path must not
+		// keep a suffix that contradicts the selected algorithm.
+		updateFileExtension();
 		if (!filePath.trim()) {
 			errorMessage = $t('common.errorFilePathRequired');
 			return;
@@ -101,7 +121,7 @@
 		saving = true;
 		errorMessage = '';
 		try {
-			const result = await doExport(filePath.trim(), { minifyJSON: minifyJSONState, compress });
+			const result = await doExport(filePath.trim(), { minifyJSON: minifyJSONState, compress, compressionAlgorithm });
 			if (result.success) {
 				onSuccess();
 				return;
@@ -161,11 +181,14 @@
 			</div>
 			<SwitchRow label={$t('settings.lishNetwork.minifyJSON')} checked={minifyJSONState} position={[0, 1]} onToggle={() => (minifyJSONState = !minifyJSONState)} />
 			<SwitchRow label={$t('settings.lishNetwork.compress')} checked={compress} position={[0, 2]} onToggle={handleCompressToggle} />
+			{#if compress}
+				<CompressionAlgorithmRow label={$t('settings.lishNetwork.compressionAlgorithm')} value={compressionAlgorithm} row={3} onSelect={handleAlgorithmSelect} />
+			{/if}
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
-		<ButtonBar justify="center" basePosition={[0, 3]}>
+		<ButtonBar justify="center" basePosition={[0, buttonsY]}>
 			<Button icon="/img/save.svg" label={$t('common.save')} disabled={saving} onConfirm={handleSave} />
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>

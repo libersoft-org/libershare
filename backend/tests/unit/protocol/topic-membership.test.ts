@@ -3,6 +3,7 @@ import { multiaddr } from '@multiformats/multiaddr';
 import { PeerAnnounceManager } from '../../../src/protocol/peer-announce.ts';
 import { Network } from '../../../src/protocol/network.ts';
 import { lishTopic } from '../../../src/protocol/constants.ts';
+import { BootstrapStatusTracker } from '../../../src/protocol/bootstrap-status.ts';
 
 /**
  * Topic membership is what leave-network reads to decide which peers to hang up.
@@ -13,6 +14,7 @@ import { lishTopic } from '../../../src/protocol/constants.ts';
  */
 
 const TOPIC = lishTopic('net-a');
+const MEMBER_ADDRESS = '/ip4/203.0.113.7/tcp/9090';
 
 /** peerStore size below PEER_ANNOUNCE_MIN_PEER_STORE (5) — a two/three-node network. */
 function tinyPeerStore(n: number) {
@@ -89,16 +91,36 @@ describe('PeerAnnounceManager topic membership', () => {
 		const { mgr } = makeManager([], 2);
 		const net = Object.create(Network.prototype) as Network;
 		(net as any).peerAnnounce = mgr;
+		(net as any).bootstrapTracker = new BootstrapStatusTracker();
 
 		(net as any).noteMeshGraft({ peerId: 'peer-grafted', topic: TOPIC, direction: 'inbound' });
 
 		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-grafted']);
 	});
 
+	it('restarts the quiet window immediately when a verified peer GRAFTs', () => {
+		const { mgr } = makeManager([], 2);
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome('net-a', MEMBER_ADDRESS, 'peer-grafted', 'connected', null, 'peer-grafted', 'discovered');
+		tracker.sweepStale(30 * 60_000, () => false, Date.now() + 31 * 60_000);
+		expect(tracker.getStatus('net-a')).toBe(null);
+
+		const net = Object.create(Network.prototype) as Network;
+		(net as any).peerAnnounce = mgr;
+		(net as any).bootstrapTracker = tracker;
+		const returnedAt = Date.now();
+		(net as any).noteMeshGraft({ peerId: 'peer-grafted', topic: TOPIC, direction: 'inbound' });
+
+		expect(tracker.getStatus('net-a')?.peers.map(p => p.multiaddr)).toEqual([MEMBER_ADDRESS]);
+		tracker.sweepStale(30 * 60_000, () => false, returnedAt + 29 * 60_000);
+		expect(tracker.getStatus('net-a')?.peers.map(p => p.multiaddr)).toEqual([MEMBER_ADDRESS]);
+	});
+
 	it('ignores a GRAFT for a topic that is not a lishnet', () => {
 		const { mgr } = makeManager([], 2);
 		const net = Object.create(Network.prototype) as Network;
 		(net as any).peerAnnounce = mgr;
+		(net as any).bootstrapTracker = new BootstrapStatusTracker();
 
 		(net as any).noteMeshGraft({ peerId: 'peer-x', topic: 'other/topic', direction: 'inbound' });
 

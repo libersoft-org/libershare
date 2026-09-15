@@ -5,8 +5,9 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { joinPath } from '../../scripts/fileBrowser.ts';
 	import { api } from '../../scripts/api.ts';
-	import { storageBackupPath, defaultCompress } from '../../scripts/settings.ts';
-	import ExportFileForm from '../../components/Export/ExportFileForm.svelte';
+	import { storageBackupPath, defaultCompress, defaultCompressionAlgorithm } from '../../scripts/settings.ts';
+	import { compressionExtension } from '@shared';
+	import ExportFileForm, { type ExportOptions } from '../../components/Export/ExportFileForm.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -17,7 +18,7 @@
 
 	function generateFileName(id: string): string {
 		const base = id ? `identity_${id}.lishid` : 'identity.lishid';
-		return $defaultCompress ? base + '.gz' : base;
+		return $defaultCompress ? base + compressionExtension($defaultCompressionAlgorithm) : base;
 	}
 
 	let filePath = $state(joinPath($storageBackupPath, generateFileName('')));
@@ -34,8 +35,8 @@
 
 	void loadPeerID();
 
-	async function doExport(path: string, opts: { minifyJSON: boolean; compress: boolean }): Promise<{ success: boolean }> {
-		return await api.identity.exportToFile(path, opts.minifyJSON, opts.compress);
+	async function doExport(path: string, opts: ExportOptions): Promise<{ success: boolean }> {
+		return await api.identity.exportToFile(path, opts.minifyJSON, opts.compress, opts.compressionAlgorithm);
 	}
 
 	function onSuccess(): void {

@@ -13,6 +13,7 @@
 	import { connected, apiURL, backendConnectionStatus, setBackendToken } from '../scripts/ws-client.ts';
 	import { initDownloads } from '../scripts/downloads.ts';
 	import { initSystemStats } from '../scripts/systemStats.ts';
+	import { initNetworkState } from '../scripts/networkState.ts';
 	import { initRelayStats } from '../scripts/relayStats.ts';
 	import { initNetworkEvents, subscribePeerCounts, refreshNodeInfo } from '../scripts/networks.ts';
 	import { detectLocalFilesystem } from '../scripts/localFilesystem.ts';
@@ -84,6 +85,7 @@
 				await subscribePeerCounts(); // Global peer-count subscription for Footer LISH widget (only once; reconnects handled internally)
 			}
 			initSystemStats(); // Subscribe to system stats (RAM, etc.)
+			initNetworkState(); // Subscribe to host network state for the Footer connection widget + Settings
 			initRelayStats(); // Subscribe to relay server stats
 			refreshNodeInfo(); // Load own peerID for the Footer peer-ID widget
 			detectLocalFilesystem(); // Detect if browser and backend share filesystem

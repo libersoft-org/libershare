@@ -167,6 +167,27 @@ describe('SpeedLimiter', () => {
 		expect(await waiting).toBeUndefined();
 	});
 
+	it('does not queue work for an already aborted transfer', async () => {
+		limiter.setLimit(1);
+		const controller = new AbortController();
+		controller.abort();
+
+		expect(await limiter.throttle(1024, controller.signal)).toBeUndefined();
+		limiter.setLimit(0);
+	});
+
+	it('releases a queued transfer immediately when it is aborted', async () => {
+		limiter.setLimit(1);
+		await limiter.throttle(1024); // reserve the next one-second slot
+		const controller = new AbortController();
+		const waiting = limiter.throttle(1024, controller.signal);
+
+		controller.abort();
+
+		expect(await waiting).toBeUndefined();
+		limiter.setLimit(0);
+	});
+
 	// --- Pause/resume scenario ---
 
 	it('does not drift after pause — window expires naturally', async () => {

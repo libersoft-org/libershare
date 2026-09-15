@@ -24,6 +24,7 @@ RUN apk add --no-cache openssl
 WORKDIR /app
 COPY --from=build /src/frontend/build ./build
 COPY shared/src/product.json ./product.json
+COPY shared/src/product.ts ./product.ts
 COPY docker/frontend-server.ts ./frontend-server.ts
 COPY docker/frontend-entrypoint.sh ./frontend-entrypoint.sh
 RUN chmod 0755 ./frontend-entrypoint.sh

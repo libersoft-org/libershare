@@ -18,7 +18,7 @@
  * go through the API handlers a user actually reaches.
  */
 import { describe, it, expect, afterAll, beforeAll } from 'bun:test';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDatabase } from '../../../src/db/database.ts';
@@ -30,6 +30,7 @@ import type { IStoredLISH } from '@shared';
 const IMPORT_ID = 'import-strip-test';
 const CHUNK_IMPORT_ID = 'import-chunk-strip-test';
 const EXPORT_ID = 'export-strip-test';
+const FINALIZE_ID = 'finalize-admitted-test';
 const LOCAL_MARKER = 'somebody';
 
 let dataDir: string;
@@ -157,5 +158,39 @@ describe('lishs export handlers', () => {
 		expect(entry!['directory']).toBeUndefined();
 		expect(entry!['finalDirectory']).toBeUndefined();
 		expect(entry!['chunks']).toBeUndefined();
+	});
+});
+
+describe('download finalization admission', () => {
+	it('rejects a new finalization while paused but completes one already admitted by transfer', async () => {
+		const tempDir = join(downloadDir, 'finalize-temp');
+		const finalDir = join(outDir, 'finalize-complete');
+		await mkdir(tempDir, { recursive: true });
+		await writeFile(join(tempDir, 'payload.bin'), 'complete payload');
+		dataServer.add({
+			id: FINALIZE_ID,
+			created: '2026-01-01T00:00:00.000Z',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			name: 'Finalize admitted test',
+			files: [{ path: 'payload.bin', size: 16, checksums: ['deadbeef'] }],
+			directory: tempDir,
+			finalDirectory: finalDir,
+			chunks: ['deadbeef'],
+		});
+
+		await handlers.pauseMutations();
+		try {
+			await expect(handlers.finalizeDownload(FINALIZE_ID)).rejects.toThrow('LISH changes are paused during factory reset');
+			expect(dataServer.get(FINALIZE_ID)?.finalDirectory).toBe(finalDir);
+
+			expect(await handlers.finalizeDownloadAdmitted(FINALIZE_ID)).toEqual({ success: true });
+		} finally {
+			handlers.resumeMutations();
+		}
+
+		expect(await readFile(join(finalDir, 'payload.bin'), 'utf8')).toBe('complete payload');
+		expect(dataServer.get(FINALIZE_ID)?.directory).toBe(finalDir);
+		expect(dataServer.get(FINALIZE_ID)?.finalDirectory).toBeUndefined();
 	});
 });

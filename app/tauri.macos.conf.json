@@ -1,7 +1,11 @@
 {
 	"bundle": {
-		"resources": {
-			"../backend/build/lish-backend": "./lish-backend"
+		"macOS": {
+			"entitlements": "Entitlements.plist",
+			"files": {
+				"MacOS/lish-backend": "../backend/build/lish-backend",
+				"MacOS/lish-network-helper": "../backend/build/lish-network-helper"
+			}
 		}
 	}
 }

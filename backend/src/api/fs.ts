@@ -43,6 +43,15 @@ function wrapFsError(err: any, path?: string): CodedError {
 	return new CodedError(code, detail);
 }
 
+/** Re-indent a JSON document with tabs; non-JSON content is returned untouched. */
+function prettyPrintJSON(content: string): string {
+	try {
+		return JSON.stringify(JSON.parse(content), null, '\t');
+	} catch {
+		return content;
+	}
+}
+
 async function fsCall<T>(path: string | undefined, fn: () => Promise<T>): Promise<T> {
 	try {
 		return await fn();
@@ -61,7 +70,7 @@ interface FsHandlers {
 	info: (p: any, client?: any) => Promise<FsInfo>;
 	list: (p: { path?: string }) => Promise<FsListResult>;
 	readText: (p: { path: string }) => Promise<{ content: string }>;
-	readCompressed: (p: { path: string; algorithm?: CompressionAlgorithm }) => Promise<{ content: string }>;
+	readCompressed: (p: { path: string; algorithm?: CompressionAlgorithm; prettyJSON?: boolean }) => Promise<{ content: string }>;
 	delete: (p: { path: string }) => Promise<void>;
 	mkdir: (p: { path: string }) => Promise<void>;
 	open: (p: { path: string }) => Promise<void>;
@@ -71,18 +80,23 @@ interface FsHandlers {
 	writeCompressed: (p: { path: string; content: string; algorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 }
 
-export function initFsHandlers(): FsHandlers {
+/** Every path a browse can start from. On Windows that means probing drive letters, which touches the disk. */
+async function listRootPaths(): Promise<string[]> {
+	return isWindows ? (await getWindowsDrives()).map(d => d.path) : ['/'];
+}
+
+export function initFsHandlers(containerCheck: () => Promise<boolean> = isContainer, listRoots: () => Promise<string[]> = listRootPaths): FsHandlers {
 	async function info(_p: any, client?: any): Promise<FsInfo> {
 		const plat = platform();
-		const roots = isWindows ? (await getWindowsDrives()).map(d => d.path) : ['/'];
+		const roots = await listRoots();
 		const isLocal = client?.data?.isLocalClient ?? false;
-		const inContainer = await isContainer();
+		const inContainer = await containerCheck();
 		return {
 			platform: plat === 'win32' ? 'windows' : plat === 'darwin' ? 'darwin' : 'linux',
 			separator: sep,
 			home: homedir(),
 			roots,
-			localFilesystem: isLocal && !inContainer,
+			localFilesystem: localFilesystemAvailable(isLocal, inContainer),
 		};
 	}
 
@@ -134,12 +148,16 @@ export function initFsHandlers(): FsHandlers {
 		});
 	}
 
-	async function readCompressed(p: { path: string; algorithm?: CompressionAlgorithm }): Promise<{ content: string }> {
+	/**
+	 * Read a file, decompressing it when the path (or the explicit `algorithm`)
+	 * says it is compressed. With `prettyJSON` the JSON body is re-indented,
+	 * so the frontend never has to parse or re-serialise it for display.
+	 */
+	async function readCompressed(p: { path: string; algorithm?: CompressionAlgorithm; prettyJSON?: boolean }): Promise<{ content: string }> {
 		assert(p, ['path']);
 		return fsCall(p.path, async () => {
-			const compressed = await Bun.file(p.path).arrayBuffer();
-			const decompressed = Utils.decompress(new Uint8Array(compressed), p.algorithm);
-			return { content: new TextDecoder().decode(decompressed) };
+			const content = await Utils.readFileCompressed(p.path, p.algorithm);
+			return { content: p.prettyJSON ? prettyPrintJSON(content) : content };
 		});
 	}
 
@@ -210,4 +228,9 @@ export function initFsHandlers(): FsHandlers {
 	}
 
 	return { info, list, readText, readCompressed, delete: del, mkdir: mkdirFn, open, rename: renameFn, exists, writeText, writeCompressed };
+}
+
+/** Host paths are meaningful only to a same-host client outside a container. */
+function localFilesystemAvailable(isLocalClient: boolean, inContainer: boolean): boolean {
+	return isLocalClient && !inContainer;
 }

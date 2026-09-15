@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { nextEvictionWindowStart, shouldEvictUnreachablePeer } from '../../../src/protocol/network.ts';
+import { nextEvictionWindowStart, nextEvictionFailCount, shouldEvictUnreachablePeer } from '../../../src/protocol/network.ts';
 
 /** The thresholds the production constants use, restated so a change to either is visible here. */
 const EVICT_FAILS = 6;
@@ -97,5 +97,46 @@ describe('negative control', () => {
 
 		expect(evictBeforeFix(EVICT_FAILS + 1, NOW - start, false)).toBe(true);
 		expect(shouldEvictUnreachablePeer({ reachable: true, failCount: EVICT_FAILS + 1, unreachableForMs: NOW - nextEvictionWindowStart(false, start, NOW), configured: false })).toBe(false);
+	});
+});
+
+/**
+ * The backoff counter and the eviction counter answer different questions. The backoff
+ * must keep growing through a local outage so we stop hammering the dialer; eviction
+ * asks whether the PEER failed us, and a dial attempted with no connectivity of our own
+ * answers nothing.
+ */
+describe('nextEvictionFailCount', () => {
+	it('counts a failure that happened while we were online', () => {
+		expect(nextEvictionFailCount(true, 2)).toBe(3);
+	});
+
+	it('starts the count at one for a first online failure', () => {
+		expect(nextEvictionFailCount(true, undefined)).toBe(1);
+	});
+
+	it('resets the run when the failure happened during our own outage', () => {
+		expect(nextEvictionFailCount(false, 5)).toBe(0);
+	});
+});
+
+describe('an outage must not bank failures towards eviction', () => {
+	/** Backoff caps at 10 min, so a 30 min window holds roughly three attempts. */
+	const ONLINE_ATTEMPTS_IN_WINDOW = 3;
+
+	it('does not evict on three online failures after a long offline run', () => {
+		let evictionFails: number | undefined;
+		for (let i = 0; i < 20; i++) evictionFails = nextEvictionFailCount(false, evictionFails); // hours offline
+		for (let i = 0; i < ONLINE_ATTEMPTS_IN_WINDOW; i++) evictionFails = nextEvictionFailCount(true, evictionFails);
+
+		expect(shouldEvictUnreachablePeer({ reachable: true, failCount: evictionFails!, unreachableForMs: 45 * 60_000, configured: false })).toBe(false);
+	});
+
+	it('still evicts once the peer really has failed enough times while we were online', () => {
+		let evictionFails: number | undefined;
+		for (let i = 0; i < 20; i++) evictionFails = nextEvictionFailCount(false, evictionFails);
+		for (let i = 0; i < 6; i++) evictionFails = nextEvictionFailCount(true, evictionFails);
+
+		expect(shouldEvictUnreachablePeer({ reachable: true, failCount: evictionFails!, unreachableForMs: 45 * 60_000, configured: false })).toBe(true);
 	});
 });

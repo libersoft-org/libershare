@@ -168,23 +168,3 @@ export function shouldDenyDial(ma: any, localCidrs: string[]): boolean {
 	return !localCidrs.some(cidr => ipInCIDR(ip, cidr));
 }
 
-/**
- * Extract the DESTINATION peer ID from a multiaddr. A circuit-relay address has
- * the shape `/.../p2p/<relay>/p2p-circuit/p2p/<destination>` — taking the FIRST
- * /p2p/ component would return the relay's identity, so eviction, configured
- * protection and direct-peer seeding would target the wrong peer. The last /p2p/
- * component is always the dial target. Returns null when the multiaddr carries no
- * peer ID at all.
- */
-export function extractDestinationPeerID(ma: any): string | null {
-	try {
-		const components: Array<{ code: number; value?: string }> = ma?.getComponents?.() ?? [];
-		for (let i = components.length - 1; i >= 0; i--) {
-			const c = components[i]!;
-			if (c.code === 421 && typeof c.value === 'string') return c.value;
-		}
-	} catch {
-		/* unparseable multiaddr — no ID */
-	}
-	return null;
-}

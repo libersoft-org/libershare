@@ -5,7 +5,6 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
-	import { isCompressed } from '@shared';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import Alert from '../Alert/Alert.svelte';
@@ -82,17 +81,9 @@
 	async function loadInitialFile(): Promise<void> {
 		if (!initialFilePath) return;
 		try {
-			const compressed = isCompressed(initialFilePath);
-			const content = compressed ? await api.fs.readCompressed(initialFilePath, 'gzip') : await api.fs.readText(initialFilePath);
-			if (content) {
-				// Pretty-print minified JSON for readability
-				try {
-					const parsed = JSON.parse(content);
-					jsonText = JSON.stringify(parsed, null, '\t');
-				} catch {
-					jsonText = content;
-				}
-			}
+			// The backend detects the compression and pretty-prints the JSON for the textarea.
+			const content = await api.fs.readCompressed(initialFilePath, undefined, true);
+			if (content) jsonText = content;
 		} catch {
 			// Ignore error, user can still paste JSON manually
 		}

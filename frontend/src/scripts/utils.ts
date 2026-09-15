@@ -94,12 +94,3 @@ export function scrollToElement(elements: (HTMLElement | undefined)[], index: nu
 export function openExternalURL(url: string): void {
 	window.open(url, '_blank');
 }
-
-// Minify JSON string by removing whitespace
-export function minifyJSON(json: string): string {
-	try {
-		return JSON.stringify(JSON.parse(json));
-	} catch {
-		return json;
-	}
-}

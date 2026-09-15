@@ -66,7 +66,7 @@ export async function clearIdentityKey(dataDir: string): Promise<void> {
 /**
  * Wipe the entire datastore — peerstore (discovered peers, addresses) and the
  * identity private key. The network must be stopped. Next start regenerates a
- * fresh identity and an empty peerstore. Used by the factory reset.
+ * fresh identity and an empty peerstore.
  */
 export async function clearDatastore(dataDir: string): Promise<void> {
 	const datastorePath = join(dataDir, 'datastore');

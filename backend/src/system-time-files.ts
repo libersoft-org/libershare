@@ -1,0 +1,778 @@
+import { open, access, link, mkdir, readFile, readlink, rename, stat, unlink, lstat } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { constants, type BigIntStats } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+
+/**
+ * Errors from a directory flush that mean "there is no such operation here", as opposed
+ * to "it was attempted and failed".
+ *
+ * `EPERM` is Windows, where the directory handle opens and `fsync` on it is then refused;
+ * `EISDIR` is the platforms that refuse the open itself; `EINVAL` and the two "not
+ * supported" spellings are filesystems whose `fsync` rejects a directory descriptor.
+ * Anything outside this set propagates.
+ */
+const DIRECTORY_SYNC_UNSUPPORTED: ReadonlySet<string> = new Set(['EPERM', 'EISDIR', 'EINVAL', 'ENOTSUP', 'EOPNOTSUPP']);
+
+/**
+ * Flush a directory's own contents so a name created in it survives a power loss.
+ *
+ * `fsync` on the FILE only commits its data; the entry that gives it its name lives in the
+ * directory and is buffered just like everything else. Without this a crash moments after
+ * the rename can come back to the old file, or to no file at all — the one outcome the
+ * atomic swap exists to rule out.
+ *
+ * A platform that has no such operation refuses here, and that is not a failure: Windows
+ * journals the metadata itself, which is the same guarantee by other means. Every OTHER
+ * error is a flush that was attempted and did not happen — `EIO` and `ENOSPC` say the
+ * metadata is not reliably stored — and swallowing those reported a durability the
+ * filesystem had just declined to provide.
+ */
+export async function syncDirectory(dir: string): Promise<void> {
+	try {
+		const handle = await open(dir, 'r');
+		try {
+			await handle.sync();
+		} finally {
+			await handle.close();
+		}
+	} catch (err) {
+		if (!DIRECTORY_SYNC_UNSUPPORTED.has((err as { code?: string }).code ?? '')) throw err;
+	}
+}
+
+/**
+ * Replace `path` with `content` so a reader never observes a partial file, and return
+ * a rollback that restores whatever was there before (deleting the file when there was
+ * nothing).
+ *
+ * A plain `writeFile` to the final path truncates it first, so a crash or a full disk
+ * mid-write leaves the live configuration truncated. Writing a sibling temporary file,
+ * flushing it and renaming makes the swap atomic — and BOTH `fsync`s are needed: the one
+ * on the file, or a power loss leaves the new name pointing at an empty file, and the one
+ * on the directory afterwards ({@link syncDirectory}), or the name itself may never have
+ * been written.
+ *
+ * `readOriginal` is injectable so the unreadable-original case can be exercised: a real
+ * EACCES on the live file is not something a test can arrange on every platform.
+ *
+ * The temporary name is unique per call and created with `wx` (fail if it exists). A
+ * name shared by every call — a bare pid suffix is shared by every call in one process —
+ * lets a second write truncate the first one's staging file and then rename it away, so
+ * the first write publishes the second's content and the second fails with ENOENT.
+ */
+/**
+ * Create `dir` and every missing level above it, flushing the parent of each one.
+ *
+ * A directory entry lives in its PARENT, so that is where its durability comes from — and
+ * the rule has to be applied to every level, not just the first. `mkdir(…, {recursive})`
+ * answers with the first path it had to create, so flushing that path's parent alone left
+ * `/root/a/b/c` with the entries for `b` and `c` unflushed: a crash comes back to a
+ * drop-in directory that is not there and a configuration nothing ever read.
+ *
+ * Every level in the walk has its parent flushed, whether this call created it or found it
+ * there. Flushing only what we created was right for a clean first pass and wrong for the
+ * second: an attempt that created `b` and then failed to flush `a` leaves `b` visible but
+ * not committed, and the retry sees `EEXIST`, flushes nothing and reports a durability the
+ * filesystem never gave. A level that has always been there and one a dead attempt left
+ * behind look exactly alike from here, so both are flushed.
+ *
+ * The walk stops at the first level that already exists, INCLUDING it — that one is flushed,
+ * everything above it is not. It has to be included, because it is the level a previous
+ * attempt may have created and failed to commit. Above it nothing is owed by any attempt of
+ * OURS: this function stops at the first flush that fails, so a level we created always has
+ * an unflushed parent no higher than the one just below the first existing level. What it
+ * does not repair is a whole chain some other process created without flushing its own
+ * parents — walking to `/` for that would fsync directories we never touch and let an error
+ * from one of them fail a write that is otherwise fine, which is the worse trade.
+ *
+ * `dir` itself is deliberately not flushed here — it has no entry in it yet. The rename
+ * that follows puts one there and flushes it.
+ */
+async function makeDirectoryDurably(dir: string, syncDir: (d: string) => Promise<void>): Promise<void> {
+	const levels: string[] = [];
+	for (let current = dir; ; current = dirname(current)) {
+		levels.unshift(current);
+		// A level we cannot even ask about counts as missing: the walk goes one higher and
+		// `mkdir` below reports the real reason.
+		const exists = await access(current).then(
+			() => true,
+			() => false
+		);
+		if (exists || dirname(current) === current) break;
+	}
+	for (const level of levels) {
+		// One level at a time instead of `{recursive: true}`, because the recursive call
+		// reports only the first path it created — and on Windows it reports it in
+		// extended-length form, so the rest of the chain cannot be derived from its answer.
+		// An `EEXIST` here means the level was already there; anything else (a file in the
+		// way, no permission) is a real failure.
+		let created = false;
+		try {
+			await mkdir(level, { mode: 0o755 });
+			created = true;
+		} catch (err) {
+			if ((err as { code?: string }).code !== 'EEXIST') throw err;
+		}
+		if (created && process.platform !== 'win32') await prepareCreatedDirectory(level);
+		await syncDir(dirname(level));
+	}
+}
+
+/** Correct restrictive umasks only on directories this operation created, using the opened inode. */
+async function prepareCreatedDirectory(path: string): Promise<void> {
+	const created = await lstat(path, { bigint: true });
+	const handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+	try {
+		const opened = await handle.stat({ bigint: true });
+		if (!created.isDirectory() || created.dev !== opened.dev || created.ino !== opened.ino) throw new Error('the new time configuration directory changed before its permissions were set');
+		await handle.chmod(0o755);
+		await handle.sync().catch((error: { code?: string }) => {
+			if (!DIRECTORY_SYNC_UNSUPPORTED.has(error.code ?? '')) throw error;
+		});
+	} finally {
+		await handle.close();
+	}
+}
+
+interface FileMetadata {
+	dev: bigint;
+	ino: bigint;
+	mode: number;
+	uid: number;
+	gid: number;
+	size: bigint;
+	mtimeNs: bigint;
+	ctimeNs: bigint;
+}
+interface FileSnapshot extends FileMetadata {
+	content: string;
+}
+function metadata(stats: BigIntStats): FileMetadata {
+	return { dev: stats.dev, ino: stats.ino, mode: Number(stats.mode & 0o7777n), uid: Number(stats.uid), gid: Number(stats.gid), size: stats.size, mtimeNs: stats.mtimeNs, ctimeNs: stats.ctimeNs };
+}
+async function readMetadata(path: string): Promise<FileMetadata | null> {
+	try {
+		const stats = await lstat(path, { bigint: true });
+		if (!stats.isFile()) throw new Error('the time configuration is not a regular file');
+		return metadata(stats);
+	} catch (error) {
+		if ((error as { code?: string }).code === 'ENOENT') return null;
+		throw error;
+	}
+}
+function sameFile(left: FileMetadata | null, right: FileMetadata | null): boolean {
+	return left === null || right === null ? left === right : left.dev === right.dev && left.ino === right.ino && left.mode === right.mode && left.uid === right.uid && left.gid === right.gid;
+}
+/**
+ * The same file AND untouched since it was measured.
+ *
+ * {@link sameFile} answers identity only — device, inode, mode, ownership — which an edit
+ * made in place does not change: `writeFile` truncates the existing inode, so a check built
+ * on identity alone waved an administrator's rewrite straight through. Size and the two
+ * timestamps are what make it an unchanged-since test rather than a same-name test.
+ */
+function unchangedSince(current: FileMetadata | null, expected: FileMetadata | null): boolean {
+	if (!sameFile(current, expected)) return false;
+	return current?.size === expected?.size && current?.mtimeNs === expected?.mtimeNs && current?.ctimeNs === expected?.ctimeNs;
+}
+
+async function readSnapshot(path: string, readOriginal: (path: string) => Promise<string>): Promise<FileSnapshot | null> {
+	const before = await readMetadata(path);
+	const content = await readOriginal(path).catch((error: { code?: string }) => {
+		if (error.code === 'ENOENT') return null;
+		throw error;
+	});
+	const after = await readMetadata(path);
+	if (!sameFile(before, after) || before?.size !== after?.size || before?.mtimeNs !== after?.mtimeNs || before?.ctimeNs !== after?.ctimeNs || (content === null) !== (after === null)) throw new Error('the time configuration changed while it was being read');
+	return after === null || content === null ? null : { ...after, content };
+}
+
+/** `SYMLOOP_MAX` upstream: the hop budget a kernel gives one resolution before ELOOP. */
+const MAX_SYMLINK_HOPS = 40;
+
+/** Where a resolution went: the directories it passed through, and the file it ended at. */
+interface Resolution {
+	/**
+	 * Every directory the resolution passes through, outermost first, as the kernel would
+	 * reach them. Whether the service account may ENTER each one is decided by the caller -
+	 * the walk deliberately does not judge it, because the mode bits it can see here are the
+	 * weaker evidence (see {@link unreadableByServiceAccount}).
+	 */
+	traversed: string[];
+	target: string | null;
+	directory: string | null;
+}
+
+/**
+ * Walk `path` the way the kernel resolves it and report every directory on the way.
+ *
+ * Component by component, because that is where the permission is checked. A component that
+ * is a symlink is replaced by its target and resolution restarts — which is the part three
+ * earlier attempts each got wrong from a different side: `lstat` answered about the link,
+ * `stat` answered about the target but the climb continued up the WRITTEN parent, and
+ * `realpath` gave the final chain but dropped the directories the link itself sits behind.
+ * Only walking it hop by hop covers a chain: `conf.d` to `middle/hop` to `public`, with the
+ * 0700 on `middle`, is invisible to every shortcut.
+ *
+ * `..` is carried as a component and applied by popping, never by normalising the string.
+ * `path.join` collapses it, and the collapse is exactly what hid a directory the kernel does
+ * traverse: a link to `locked/../public` became `public`, so a 0700 `locked` was never asked
+ * about while a real read through the link got EACCES. Node documents that removing `..`
+ * can change how the path resolves, and here it did.
+ *
+ * `null` for a path that cannot be walked at all — an absence, or something this process may
+ * not stat. Neither is evidence about the service account, and the write reports it anyway.
+ */
+async function resolveForServiceAccount(path: string): Promise<Resolution> {
+	const nothing: Resolution = { traversed: [], target: null, directory: null };
+	const traversed: string[] = [];
+	let parts = path.split(/[/\\]+/).filter(Boolean);
+	// Components of the directory reached so far. `..` pops it; nothing is ever normalised.
+	let walked: string[] = [];
+	const here = (): string => '/' + walked.join('/');
+	let index = 0;
+	let hops = 0;
+	while (index < parts.length) {
+		const part = parts[index]!;
+		if (part === '.') {
+			index += 1;
+			continue;
+		}
+		if (part === '..') {
+			walked.pop();
+			index += 1;
+			continue;
+		}
+		const next = walked.length === 0 ? '/' + part : here() + '/' + part;
+		const entry = await lstat(next).catch(() => null);
+		if (!entry) return nothing;
+		if (entry.isSymbolicLink()) {
+			if (++hops > MAX_SYMLINK_HOPS) return nothing;
+			const link = await readlink(next).catch(() => null);
+			if (link === null) return nothing;
+			// An absolute target restarts from the root; a relative one hangs off the directory
+			// the link lives in. Everything after the link comes along unchanged, and every
+			// `..` in the target stays a component for the walk above to apply.
+			const rest = parts.slice(index + 1);
+			const linkParts = link.split('/').filter(Boolean);
+			parts = link.startsWith('/') ? [...linkParts, ...rest] : [...walked, ...linkParts, ...rest];
+			walked = [];
+			index = 0;
+			continue;
+		}
+		if (entry.isDirectory()) {
+			// Recorded, not judged. Refusing here on the `other` execute bit was wrong in the
+			// dangerous-looking but harmless direction AND in the harmful one: a 0750 directory
+			// whose group IS the service's group is enterable, and rejecting it failed a save the
+			// daemon would have been perfectly happy with.
+			if (!traversed.includes(next)) traversed.push(next);
+			walked.push(part);
+			index += 1;
+			continue;
+		}
+		// Something that is not a directory: only the last component may be one.
+		return index === parts.length - 1 ? { traversed, target: next, directory: here() } : nothing;
+	}
+	return { traversed, target: null, directory: here() };
+}
+
+/** The account `systemd-timesyncd` reads its configuration as, per its shipped unit. */
+export const TIME_SERVICE_ACCOUNT = 'systemd-timesync';
+
+/** The unit that account runs under, asked for the groups the unit itself adds. */
+export const TIME_SERVICE_UNIT = 'systemd-timesyncd.service';
+
+/**
+ * Can the time service's own account reach `path`? Null when this host cannot be asked.
+ *
+ * `setpriv` runs `test` with nothing but that account's ids, so the answer comes from the
+ * kernel's own permission check - ACLs included. Only root may adopt another account, and
+ * only Linux has this service, so everywhere else the caller falls back to the mode bits.
+ */
+export type ServiceAccountAccess = (path: string, mode: 'r' | 'x') => Promise<boolean | null | ServiceAccountUnknown>;
+
+/**
+ * The host CAN be asked, and asking failed: the service's identity could not be put together.
+ *
+ * Not the same answer as `null`. Null is "this host cannot be asked at all" - no root, no
+ * Linux - and the mode bits stand in because on such a host nothing real was written either.
+ * This is a root Linux host whose `id` or `systemctl` query failed, and there NO stand-in is
+ * honest: a probe under a partial group list answers for a different account than the one
+ * that runs, and it errs in BOTH directions. A 0750 directory the service enters through a
+ * group is refused without that group; a 0705 directory it is refused from - group class
+ * first, and the group grants nothing - is allowed without it, because the missing group
+ * drops the probe into the `other` class that the bits fallback consults too. So the only
+ * answer that does not invent one is "could not be verified".
+ */
+export interface ServiceAccountUnknown {
+	unknown: string;
+}
+
+/** Who the time service runs as: its ids, and every group it holds while it runs. */
+export interface ServiceAccountIdentity {
+	uid: number;
+	gid: number;
+	/** Group names, as `setpriv --groups` takes them; never empty. */
+	groups: string[];
+}
+
+/**
+ * The groups the running service actually holds, from the two places they come from.
+ *
+ * `idOutput` is `id -Gn <account>` - the account's own memberships, resolved through NSS so a
+ * directory-backed group counts - and `unitOutput` is the unit's `SupplementaryGroups=`, which
+ * systemd ADDS on top of those at start. The first alone was the previous answer, and it missed
+ * exactly the second: an administrator who opens a directory to the service through
+ * `SupplementaryGroups=` in a drop-in gives the running daemon a group its account never had,
+ * so the probe - as the account - was refused where the service is not, and a working
+ * configuration was rolled back. Both are space-separated names; the union keeps the primary
+ * group, which `id -Gn` always lists first.
+ *
+ * Both inputs are the ANSWERS of successful queries. A query that failed has no place here:
+ * an empty answer means "adds nothing", a failed one means "could not tell", and folding the
+ * second into the first built a list the running service does not have. That case is settled
+ * before this is reached - see {@link ServiceAccountUnknown}.
+ */
+export function serviceAccountGroups(idOutput: string, unitOutput: string, fallback: string): string[] {
+	const names = new Set<string>();
+	for (const output of [idOutput, unitOutput]) for (const name of output.split(/\s+/)) if (name.length > 0) names.add(name);
+	return names.size > 0 ? [...names] : [fallback];
+}
+
+/**
+ * The exact process that asks the kernel on the service account's behalf.
+ *
+ * `--groups=` with the full list rather than `--init-groups`: the latter takes the account's
+ * memberships from the group database and nothing else, so it could not carry the groups the
+ * unit adds. `setpriv` insists on exactly one group option whenever the uid changes, and the
+ * two cannot be combined - measured: "mutually exclusive arguments" - so the list is assembled
+ * here (see {@link serviceAccountGroups}) and handed over whole. Clearing the groups was the
+ * answer before that, and it was poorer still: a 0750 directory owned by a group the account
+ * belonged to failed `test -x` under it.
+ */
+export function serviceAccountProbe(identity: ServiceAccountIdentity, mode: 'r' | 'x', path: string): string[] {
+	return ['/usr/bin/setpriv', `--reuid=${identity.uid}`, `--regid=${identity.gid}`, `--groups=${identity.groups.join(',')}`, '/usr/bin/test', `-${mode}`, path];
+}
+
+/** The exit status of one probe process, or null when it could not be run at all. */
+export type ProbeRunner = (argv: string[]) => number | null;
+
+const spawnProbe: ProbeRunner = argv => {
+	try {
+		return Bun.spawnSync(argv, { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' }).exitCode;
+	} catch {
+		return null;
+	}
+};
+
+/**
+ * An access check for ONE operation: the identity is read on the first probe and shared by
+ * the rest of that operation's probes, then let go.
+ *
+ * Per operation, not per process. The service's groups change at administration time - a
+ * drop-in's `SupplementaryGroups=` after `daemon-reload`, a membership in the group database
+ * - and systemd builds the running service's groups from those sources at each start. A list
+ * kept for the life of this process answered for an identity the service no longer had, in
+ * both directions: a group taken away still let a save through, so a configuration was
+ * reported usable that the daemon could not read at its next start; a group granted was still
+ * refused. And a query that failed the first time stayed failed. One read per save is what
+ * the operation needs - every directory on the path and the file itself are asked under the
+ * same snapshot - and the next save reads again.
+ */
+export function serviceAccountAccessForOperation(readIdentity: () => Promise<ServiceAccountIdentity | null | ServiceAccountUnknown> = serviceAccountIdentity, runProbe: ProbeRunner = spawnProbe): ServiceAccountAccess {
+	let identity: Promise<ServiceAccountIdentity | null | ServiceAccountUnknown> | undefined;
+	return async (path, mode) => {
+		identity ??= readIdentity();
+		const resolved = await identity;
+		if (resolved === null) return null;
+		// Nothing is probed under an identity that could not be established: the answer would
+		// be about some other account. Reported as it is, and the caller refuses on it.
+		if ('unknown' in resolved) return resolved;
+		// Only `test`'s own verdict counts. `setpriv` reports its own failures - a missing
+		// binary, an id it may not assume - with a different status, and reading those as
+		// "unreadable" would refuse a configuration nobody can prove is broken.
+		const status = runProbe(serviceAccountProbe(resolved, mode, path));
+		return status === 0 ? true : status === 1 ? false : null;
+	};
+}
+
+/** Stdout of a short host query, or null when it could not be run or did not succeed. */
+function queryHost(argv: string[]): string | null {
+	try {
+		const child = Bun.spawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'ignore', timeout: 5_000 });
+		return child.exitCode === 0 ? child.stdout.toString('utf8') : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * The service account's ids and groups as the host has them NOW, or null when this host
+ * cannot be asked: only root may adopt another account, and only Linux has this service, so
+ * everywhere else the caller falls back to the mode bits.
+ *
+ * The ids come from the host's own passwd database; the groups from `id -Gn` and from the
+ * unit systemd has loaded (`SupplementaryGroups=` is read through `systemctl show`, so a
+ * drop-in counts once `daemon-reload` has seen it). Nothing is remembered between calls -
+ * see {@link serviceAccountAccessForOperation} for why.
+ */
+async function serviceAccountIdentity(): Promise<ServiceAccountIdentity | null | ServiceAccountUnknown> {
+	if (process.platform !== 'linux' || process.getuid?.() !== 0) return null;
+	try {
+		const passwd = await readFile('/etc/passwd', 'utf8');
+		for (const line of passwd.split('\n')) {
+			const fields = line.split(':');
+			if (fields[0] !== TIME_SERVICE_ACCOUNT) continue;
+			const uid = Number(fields[2]);
+			const gid = Number(fields[3]);
+			if (!Number.isInteger(uid) || !Number.isInteger(gid)) return null;
+			// Either query failing is the whole identity failing: a list missing one side is
+			// not a smaller list, it is another account's (see ServiceAccountUnknown).
+			const memberships = queryHost(['/usr/bin/id', '-Gn', TIME_SERVICE_ACCOUNT]);
+			if (memberships === null) return { unknown: `the time service's group memberships could not be read (id -Gn ${TIME_SERVICE_ACCOUNT} failed)` };
+			const unitGroups = queryHost(['/usr/bin/systemctl', 'show', '-p', 'SupplementaryGroups', '--value', TIME_SERVICE_UNIT]);
+			if (unitGroups === null) return { unknown: `the groups ${TIME_SERVICE_UNIT} adds could not be read (systemctl show failed)` };
+			return { uid, gid, groups: serviceAccountGroups(memberships, unitGroups, String(gid)) };
+		}
+	} catch {}
+	return null;
+}
+
+/**
+ * Why an unprivileged service could not read `path`, or null when it can.
+ *
+ * The file is written by this process, which is root on the hosts that can set the clock at
+ * all — and the daemon that has to READ it is not. `systemd-timesyncd` ships with
+ * `User=systemd-timesync` (checked on a running systemd 255), so a drop-in directory an
+ * administrator left at 0700 is invisible to it while every check made from here succeeds:
+ * the file is there, its content is right, and `systemd-analyze cat-config` reads it back
+ * happily. The save is then reported as applied and the daemon goes on using the old server
+ * — the exact class of silent failure the effective-configuration check exists to prevent,
+ * arriving through the one door that check does not cover.
+ *
+ * Three permissions, not one. Entering every directory on the way (`x`) is what the walk
+ * above answers. Reading the file (`r`) is the obvious one. And LISTING the drop-in
+ * directory (`r` on the directory itself) is the one that was missing: drop-ins are found by
+ * scanning that directory, so at 0711 the file is perfectly readable by name and never named
+ * at all. Measured: `cat` on the known path succeeded as another user while `ls` on the
+ * directory was refused.
+ *
+ * Directories this operation creates are 0755 already; this is about the ones it finds and
+ * deliberately does not widen. Reporting the problem is the fix, not loosening somebody
+ * else's permissions behind their back.
+ *
+ * Asked of the KERNEL as that account wherever this process can: `access(2)` under the
+ * service account's ids accounts for the mode bits, for POSIX ACLs and for anything else the
+ * filesystem enforces. The mode bits alone do not: an ACL entry naming the account takes
+ * precedence over the `other` class, so a file at 0644 with `user:systemd-timesync:---` reads
+ * as world-readable and is refused to the one reader that matters. Measured on Debian 12:
+ * the bit check reported no problem while `test -r` as uid 997 and `cat` both failed with
+ * `Permission denied` - the approximation erring in the DANGEROUS direction, which the note
+ * here previously ruled out.
+ *
+ * The bits remain the fallback for when the ids cannot be resolved or this process is not
+ * root (it cannot then adopt another account, and on such a host it could not have written
+ * the real configuration either). In that fallback the old caveat genuinely holds: it is an
+ * approximation through the `other` bits, and it cannot see an ACL - and it can also refuse a
+ * directory that is in fact enterable. That direction was measured too: a 0750 directory whose
+ * group is the service's group is entered by the kernel, and the group class is consulted
+ * BEFORE the `other` class, so the bit test alone failed a save that would have worked.
+ */
+export async function unreadableByServiceAccount(path: string, access: ServiceAccountAccess = serviceAccountAccessForOperation()): Promise<string | null> {
+	const { traversed, target, directory } = await resolveForServiceAccount(path);
+	// An identity that could not be established stops the check outright: neither a probe
+	// under some other list of groups nor the mode bits may answer for the service then.
+	const unverifiable = (answer: ServiceAccountUnknown): string => `${answer.unknown}, so whether it can read ${path} could not be verified`;
+	// Outermost first, so the reported directory is the first one that actually stops the walk.
+	for (const step of traversed) {
+		const enterable = await access(step, 'x');
+		if (typeof enterable === 'object' && enterable !== null) return unverifiable(enterable);
+		if (enterable === false) return `${step} cannot be entered by the time service's own account`;
+		if (enterable === null) {
+			const entry = await stat(step).catch(() => null);
+			if (entry && (entry.mode & 0o001) === 0) return `${step} cannot be entered by the time service's own account`;
+		}
+	}
+	if (directory !== null) {
+		const listable = await access(directory, 'r');
+		if (typeof listable === 'object' && listable !== null) return unverifiable(listable);
+		if (listable === false) return `${directory} cannot be listed by the time service's own account, so a drop-in in it would never be found`;
+		if (listable === null) {
+			const holder = await stat(directory).catch(() => null);
+			if (holder && (holder.mode & 0o004) === 0) return `${directory} cannot be listed by the time service's own account, so a drop-in in it would never be found`;
+		}
+	}
+	if (target === null) return null;
+	const readable = await access(target, 'r');
+	if (typeof readable === 'object' && readable !== null) return unverifiable(readable);
+	if (readable === false) return `${target} cannot be read by the time service's own account`;
+	if (readable === null) {
+		const file = await stat(target).catch(() => null);
+		if (file && (file.mode & 0o004) === 0) return `${target} cannot be read by the time service's own account`;
+	}
+	return null;
+}
+
+/**
+ * What a rollback actually achieved.
+ *
+ * A boolean could not say this. Restoring is a rename (or an unlink) followed by a directory
+ * flush, and when only the flush fails the original file IS back on the visible filesystem —
+ * just not guaranteed to survive a power loss. Folded into `false`, that told the caller
+ * nothing had been restored, which was untrue, and cost the second restart that puts the
+ * daemon back onto the configuration it was running with.
+ */
+export type RollbackResult = { state: 'restored-durable' } | { state: 'restored-not-durable'; error: unknown } | { state: 'not-restored'; error: unknown };
+
+/**
+ * A rollback, plus the way to say it will not be needed.
+ *
+ * The restore keeps the original file alive under a second name, so something has to release
+ * it: a caller that succeeds and simply drops this handle would leave that name next to the
+ * live configuration until the next write swept it. `discard` is that release, and calling
+ * neither is safe - the next write cleans up after the last one either way.
+ */
+export type RollbackHandle = (() => Promise<RollbackResult>) & { discard: () => Promise<void> };
+
+export async function writeFileAtomically(path: string, content: string, readOriginal: (p: string) => Promise<string> = p => readFile(p, 'utf8'), syncDir: (dir: string) => Promise<void> = syncDirectory, linkFile: (from: string, to: string) => Promise<void> = link): Promise<RollbackHandle> {
+	return publishFile(path, content, { mode: 0o644 }, readOriginal, syncDir, undefined, true, linkFile);
+}
+
+async function publishFile(path: string, content: string, permissions: { mode: number; uid?: number; gid?: number }, readOriginal: (path: string) => Promise<string>, syncDir: (dir: string) => Promise<void>, expected?: FileMetadata | null, keepBackup: boolean = true, linkFile: (from: string, to: string) => Promise<void> = link): Promise<RollbackHandle> {
+	// A second NAME for the original file, not a copy of it - taken before anything is read.
+	//
+	// The rollback used to rebuild the original: same content, same mode, same owner, written
+	// as a NEW file. Everything the filesystem carries outside those three was lost, and an
+	// ACL is exactly that - a new file inherits the directory's default ACL instead. Measured
+	// on Linux: an original the service account could read came back, after a rollback
+	// reporting `restored-durable`, as a file it could not read at all. Textually restored,
+	// functionally broken, and the caller was told it was fine.
+	//
+	// A hard link avoids the whole problem: it is the SAME inode, so putting it back is a
+	// rename and everything the file carried - ACLs, xattrs, times - comes with it. Best
+	// effort: a filesystem without links, or one refusing them, falls back to rebuilding and
+	// the rollback then says what it could not guarantee.
+	//
+	// FIRST, because linking changes the inode's link count and therefore its ctime. Taken
+	// after the snapshot, this call's own spare name reads as somebody else's edit and every
+	// write refuses itself; re-reading the guard after linking would instead adopt a genuine
+	// edit that landed in between. Linking before the read leaves the existing meaning intact:
+	// the guard is whatever the file was when this call first looked at it.
+	//
+	// `keepBackup` is false for one caller: the rollback's own rebuild. A write that exists to
+	// UNDO another write has nothing to roll back, and taking a spare name anyway was not
+	// merely wasteful - the link moves the ctime of the file it names, and that file is the
+	// one this nested write is guarding against change. So it invalidated its own guard and
+	// refused the restore as somebody else's edit, leaving the rejected configuration on
+	// disk. Reproduced: original A, administrator swaps in B before the read, C published, a
+	// later step fails, and the restore of B is refused.
+	const backup = `${path}.libershare-${process.pid}-${randomUUID()}.bak`;
+	let backupLinked = false;
+	if (keepBackup) {
+		try {
+			await linkFile(path, backup);
+			backupLinked = true;
+		} catch {
+			backupLinked = false;
+		}
+	}
+	let previous: FileSnapshot | null;
+	try {
+		previous = await readSnapshot(path, readOriginal);
+	} catch (err) {
+		await unlink(backup).catch(() => undefined);
+		throw err;
+	}
+	// The link was taken BEFORE the read, which is what keeps the guard meaning "the file as
+	// this call first looked at it" - but it also means the two can be different files. An
+	// administrator replacing the path in between (a rename, so a NEW inode) leaves the backup
+	// naming the old one, and restoring it would put a configuration this call never read back
+	// over a newer one it did, while reporting a clean undo. Traced: server A is linked, the
+	// administrator swaps in B, this call reads B and publishes C, a later step fails, and the
+	// rollback renames A into place.
+	//
+	// The WRITE is still legitimate - replacing a file that was already different is the whole
+	// point, and the guard is B - so the stale link is dropped rather than the operation
+	// refused. The rollback then rebuilds from the snapshot, which is what was actually read.
+	if (backupLinked && !sameFile(await readMetadata(backup).catch(() => null), previous)) {
+		await unlink(backup).catch(() => undefined);
+		backupLinked = false;
+	}
+	// The first write guards the same window the rollback does. It was left open on the way
+	// IN: the original is read, the replacement is staged, and an edit landing between the two
+	// was overwritten without a word — and then the rollback, which does check, faithfully
+	// restored the content from before that edit, so the administrator's change was gone twice
+	// over. `expected` defaults to what was just read, which refuses only a change made DURING
+	// this call; replacing a file that was already different is still the whole point.
+	const guard = expected === undefined ? previous : expected;
+	// Same directory, or the rename would cross a filesystem boundary and stop being atomic.
+	const temp = `${path}.libershare-${process.pid}-${randomUUID()}.tmp`;
+	// Only when the exact restore is unavailable is it worth knowing what the original could
+	// do, and only then is the cost paid: on the linked path the inode comes back with
+	// everything it had, so there is nothing to compare - and a write that keeps no backup has
+	// no restore to report about at all.
+	let originalUsable = false;
+	let renamed = false;
+	let written: FileMetadata;
+	// Measured AFTER the swap, not on the staging file: the rename itself moves ctime, so a
+	// staged measurement compares unequal to the very file it just published.
+	let published: FileMetadata | null = null;
+	try {
+		// Inside the try, so the spare name goes with everything else when this throws. Left
+		// outside it, a directory that could not be prepared - a flush of its parent refusing,
+		// a level that cannot be created - ended the call before the clean-up existed, and the
+		// backup link stayed next to a configuration this write never touched.
+		await makeDirectoryDurably(dirname(path), syncDir);
+		originalUsable = keepBackup && previous !== null && !backupLinked ? (await unreadableByServiceAccount(path)) === null : false;
+		// `wx`, not `w`: an existing name is a collision to report, never one to overwrite.
+		// The mode is explicit and private, because without it `open` creates the file as
+		// 0666 masked by the INHERITED umask — so under a permissive umask (000) the staging
+		// file is world-writable from its creation until the `chmod` further down. `wx` only
+		// refuses an existing NAME; it does nothing about another user opening the file this
+		// call has just made. A descriptor obtained in that window survives both the chmod
+		// and the rename, so the writer keeps changing the configuration after it is
+		// published. 0600 here closes it, and the chmod below still sets the final mode.
+		const handle = await open(temp, 'wx', 0o600);
+		try {
+			await handle.writeFile(content, 'utf8');
+			if (process.platform !== 'win32' && permissions.uid !== undefined && permissions.gid !== undefined) {
+				const owner = await handle.stat();
+				if (owner.uid !== permissions.uid || owner.gid !== permissions.gid) await handle.chown(permissions.uid, permissions.gid);
+			}
+			// chown can clear permission bits, so restore/set the mode after ownership and before fsync.
+			await handle.chmod(permissions.mode);
+			await handle.sync();
+			written = metadata(await handle.stat({ bigint: true }));
+		} finally {
+			await handle.close();
+		}
+		// Re-checked HERE, immediately before the swap, and not only when the operation began.
+		// Staging the replacement takes a create, a write, an fsync and a close, and an edit
+		// landing anywhere in that stretch was overwritten by a rollback that then reported a
+		// clean restore. This narrows the window to the gap between the check and the rename;
+		// it does not close it. There is no compare-and-swap for a rename on POSIX, so the
+		// honest claim is "an observed change is preserved", never "no concurrent writer can
+		// lose an edit".
+		// NOT `.catch(() => null)`. `readMetadata` answers null for a genuine absence and throws
+		// for everything else — including a path that is no longer a regular file. Swallowing
+		// that turned "an administrator just put a symlink here" into "nothing is here", which
+		// matched the absence this write started from, so the rename went ahead and replaced the
+		// link with our file. Reproduced: a regular file created at the same instant was
+		// correctly refused while a symlink was not.
+		if (!unchangedSince(await readMetadata(path), guard)) throw new Error('the time configuration changed while this operation was staging its replacement; it was left untouched');
+		await rename(temp, path);
+		renamed = true;
+		published = await readMetadata(path).catch(() => null);
+		await syncDir(dirname(path));
+	} catch (err) {
+		// Only up to the rename is the temporary file the thing to remove. Afterwards it IS
+		// the live file under its final name, so unlinking it would delete the configuration —
+		// and there is nothing to undo anyway: the content is published, and only the
+		// durability of its NAME is in doubt. The flag says which of the two the caller has,
+		// because "nothing happened" and "it happened and may not survive a power loss" are
+		// different things to tell a user.
+		if (!renamed) {
+			await unlink(temp).catch(() => {});
+			// The spare name goes with it: a write that never published has nothing to roll back
+			// to, and leaving the link behind keeps a name of ours next to the live file.
+			await unlink(backup).catch(() => {});
+			throw err;
+		}
+		// The spare name goes here too. The content is published and no caller rolls this
+		// back - they report the file as holding the new configuration - so nothing will ever
+		// use the backup, and the comment above promising a later write would sweep it was
+		// simply wrong: the next write releases ITS own link, whose name is a fresh UUID.
+		// Left behind, a `.bak` sat next to the live configuration for good.
+		await unlink(backup).catch(() => {});
+		throw Object.assign(err as object, { published: true });
+	}
+	// Reports whether the previous state is actually back. Swallowing that told the caller
+	// the host had been left as it was found while the new configuration was still on disk,
+	// to be adopted at the next boot — long after the user was told nothing had happened.
+	const discardBackup = async (): Promise<void> => {
+		await unlink(backup).catch(() => undefined);
+	};
+	const rollback = async (): Promise<RollbackResult> => {
+		// Set once the visible filesystem already holds the original state, so a directory
+		// flush failing after that point is a durability warning and not a failed restore.
+		let visible = false;
+		try {
+			const current = await readSnapshot(path, readOriginal);
+			// Preserve observed content, inode, permission or ownership changes made outside our lock.
+			// This remains a checked update, not an atomic filesystem compare-and-swap.
+			if (current === null ? previous !== null : current.content !== content || !sameFile(current, written)) throw new Error('the time configuration changed after this operation wrote it; it was left untouched');
+			if (previous !== null && backupLinked) {
+				// Re-checked immediately before the swap, exactly as the publish does: the snapshot
+				// above is a moment old, and an edit landing in between must survive rather than be
+				// renamed over. A rebuilt restore had a whole staging window here; this has only
+				// the gap between these two lines, which is as narrow as POSIX allows - there is
+				// no compare-and-swap for a rename.
+				//
+				// `unchangedSince`, not `sameFile`: an edit written in place keeps the inode, the
+				// mode and the owner, so an identity test waved it through and the rename put the
+				// backup over an administrator's newer configuration. Size and the timestamps are
+				// what make this a not-touched-since test.
+				//
+				// Against `published` - what this call left behind after its own rename - and NOT
+				// against `written`, which is the staging file measured before it: the rename
+				// moves ctime, so a staged baseline compares unequal to the very file it
+				// published and would refuse every rollback. `current` is the fallback for the
+				// one case where the post-rename read failed and there is no better baseline.
+				if (!unchangedSince(await readMetadata(path), published ?? current)) throw new Error('the time configuration changed before restoration; it was left untouched');
+				// The original inode itself, back under its own name. Atomic, and it carries
+				// everything a rebuilt file would have dropped.
+				await rename(backup, path);
+				visible = true;
+				await syncDir(dirname(path));
+			} else if (previous !== null) {
+				await publishFile(
+					path,
+					previous.content,
+					previous,
+					async target => {
+						const latest = await readOriginal(target);
+						if (latest !== content || !sameFile(await readMetadata(target), written)) throw new Error('the time configuration changed before restoration; it was left untouched');
+						return latest;
+					},
+					syncDir,
+					published,
+					// No backup of its own: there is nothing to undo about an undo, and the link
+					// would move the ctime of the very file this call is guarding.
+					false,
+					linkFile
+				);
+				// Rebuilt, not returned: the content and the permission bits are back, but anything
+				// else the original carried is not, and this is the one path that cannot promise
+				// otherwise. Reported only when it MATTERS - the original was usable by the service
+				// and the rebuilt one is not. A file the service could never read is restored just
+				// as faithfully by being unreadable again, and calling that a failed restore would
+				// be a false alarm on every ordinary 0600 configuration.
+				if (originalUsable) {
+					const unusable = await unreadableByServiceAccount(path);
+					if (unusable !== null) return { state: 'restored-not-durable', error: new Error(`${path} was restored from its content, but ${unusable}`) };
+				}
+			} else {
+				// Already gone is the state being restored to, not a failure.
+				await unlink(path).catch((err: { code?: string }) => (err.code === 'ENOENT' ? undefined : Promise.reject(err)));
+				visible = true;
+				// The removal is a directory change like the rename was, and buffered the same
+				// way: without this a crash can bring the entry back and with it the drop-in
+				// this rollback exists to withdraw.
+				await syncDir(dirname(path));
+			}
+			return { state: 'restored-durable' };
+		} catch (err) {
+			// The nested write marks its own published-but-unflushed failure the same way the
+			// outer one does, and it means the same thing here: the original content reached
+			// its final name and only the flush behind it did not.
+			if (visible || (err as { published?: boolean }).published === true) return { state: 'restored-not-durable', error: err };
+			return { state: 'not-restored', error: err };
+		} finally {
+			// Either it was renamed back into place or it is a spare name nobody needs; a link
+			// left behind would keep the old inode alive until the next write swept it.
+			await discardBackup();
+		}
+	};
+	return Object.assign(rollback, { discard: discardBackup });
+}

@@ -1,5 +1,36 @@
 import { type Database } from 'bun:sqlite';
 import { type LISHNetworkConfig, type LISHNetworkDefinition } from '@shared';
+import { canonicalMultiaddr } from '../protocol/multiaddr-utils.ts';
+
+/**
+ * Normalise a bootstrap list: drop non-strings and blanks, trim, and keep one entry per
+ * canonical address.
+ *
+ * Trimming matters because the list usually came from a text field — a value with stray
+ * whitespace passed the old blank check and then failed to parse at dial time.
+ * Deduplicating matters because two spellings of one address (DNS case, trailing dot,
+ * expanded vs compressed IPv6) would otherwise each get their own forced probe and their
+ * own status row for the same endpoint.
+ *
+ * It lives HERE, at the write boundary, and is applied by every writer below. As a helper
+ * the callers were free to skip, only the two edit paths used it, so import, add and
+ * wholesale replace could all store values that the rest of the system then had to cope
+ * with.
+ */
+export function cleanBootstrapList(peers: string[]): string[] {
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const raw of peers) {
+		if (typeof raw !== 'string') continue;
+		const trimmed = raw.trim();
+		if (trimmed.length === 0) continue;
+		const key = canonicalMultiaddr(trimmed);
+		if (seen.has(key)) continue;
+		seen.add(key);
+		out.push(trimmed);
+	}
+	return out;
+}
 
 export function initLISHnetsTables(db: Database): void {
 	db.run(`
@@ -30,6 +61,11 @@ export function initLISHnetsTables(db: Database): void {
 function getInternalID(db: Database, networkID: string): number | null {
 	const row = db.query<{ id: number }, [string]>('SELECT id FROM lishnets WHERE lishnet_id = ?').get(networkID);
 	return row?.id ?? null;
+}
+
+/** The one place a bootstrap list is written — so the one place it is normalised. */
+function writeBootstrapPeers(db: Database, internalID: number, peers: string[]): void {
+	for (const peer of cleanBootstrapList(peers)) db.run('INSERT INTO lishnets_peers (id_lishnets, address) VALUES (?, ?)', [internalID, peer]);
 }
 
 function getBootstrapPeers(db: Database, internalID: number): string[] {
@@ -95,7 +131,7 @@ export function addLISHnet(db: Database, network: LISHNetworkConfig): boolean {
 		);
 		const internalID = Number(result.lastInsertRowid);
 
-		for (const peer of network.bootstrapPeers) db.run('INSERT INTO lishnets_peers (id_lishnets, address) VALUES (?, ?)', [internalID, peer]);
+		writeBootstrapPeers(db, internalID, network.bootstrapPeers);
 	});
 	tx();
 	return true;
@@ -114,7 +150,7 @@ export function updateLISHnet(db: Database, network: LISHNetworkConfig): boolean
 
 		// Replace peers
 		db.run('DELETE FROM lishnets_peers WHERE id_lishnets = ?', [internalID]);
-		for (const peer of network.bootstrapPeers) db.run('INSERT INTO lishnets_peers (id_lishnets, address) VALUES (?, ?)', [internalID, peer]);
+		writeBootstrapPeers(db, internalID, network.bootstrapPeers);
 	});
 	tx();
 	return true;
@@ -163,7 +199,7 @@ export function replaceLISHnets(db: Database, networks: LISHNetworkConfig[]): vo
 				[network.networkID, network.name, network.description || null, network.enabled ? 1 : 0, network.created || null]
 			);
 			const internalID = Number(result.lastInsertRowid);
-			for (const peer of network.bootstrapPeers) db.run('INSERT INTO lishnets_peers (id_lishnets, address) VALUES (?, ?)', [internalID, peer]);
+			writeBootstrapPeers(db, internalID, network.bootstrapPeers);
 		}
 	});
 	tx();

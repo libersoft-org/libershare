@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { type Snippet } from 'svelte';
 	interface Props {
+		padding?: string | undefined;
 		selected?: boolean;
 		disabled?: boolean;
 		children?: Snippet;
 		el?: HTMLElement | undefined;
 	}
-	let { selected = false, disabled = false, children, el = $bindable() }: Props = $props();
+	let { selected = false, disabled = false, padding = '2vh', children, el = $bindable() }: Props = $props();
 	void el; // used in template bind:this
 </script>
 
@@ -42,6 +43,6 @@
 	}
 </style>
 
-<div class="row" class:selected class:disabled bind:this={el}>
+<div class="row" class:selected class:disabled style:padding bind:this={el}>
 	{#if children}{@render children()}{/if}
 </div>

@@ -1,19 +1,76 @@
 // Product info
-export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL } from './product.ts';
+export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE } from './product.ts';
 
 // Utils
-export { formatBytes, parseBytes, sanitizeFilename } from './utils.ts';
+export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End, deriveConnectionStatus, isSelectableInterface, ipv4BaselineOf, sameIPv4Baseline, isIPv4, isIPv6, isValidSSID, isUnambiguousWifiTarget, isValidWifiKey, isWifiHexKey, MAX_DNS_LIST_BYTES, MAX_DNS_SERVERS, canonicalDnsServer, normalizeDnsServers, validateIPv4Config } from './utils.ts';
 
 // Compression
-export type CompressionAlgorithm = 'gzip';
+
+/**
+ * Compression algorithms the backend can really compress and decompress with.
+ * Order matters — the UI renders the selector in this order.
+ */
+export const COMPRESSION_ALGORITHMS = ['gzip', 'brotli', 'zstd'] as const;
+
+/** One of the algorithms listed in {@link COMPRESSION_ALGORITHMS}. */
+export type CompressionAlgorithm = (typeof COMPRESSION_ALGORITHMS)[number];
+
+/** Canonical file extension appended when exporting with a given algorithm. */
+export const COMPRESSION_EXTENSIONS: Record<CompressionAlgorithm, string> = {
+	gzip: '.gz',
+	brotli: '.br',
+	zstd: '.zst',
+};
+
+/**
+ * Every extension recognised on import, mapped to its algorithm. Includes the
+ * long aliases (.gzip, .zstd) so files produced elsewhere still open.
+ */
+const EXTENSION_ALGORITHMS: Record<string, CompressionAlgorithm> = {
+	'.gz': 'gzip',
+	'.gzip': 'gzip',
+	'.br': 'brotli',
+	'.zst': 'zstd',
+	'.zstd': 'zstd',
+};
+
+/** File extension (with leading dot) written for the given algorithm. */
+export function compressionExtension(algorithm: CompressionAlgorithm): string {
+	return COMPRESSION_EXTENSIONS[algorithm] ?? COMPRESSION_EXTENSIONS.gzip;
+}
+
+/**
+ * Detect the compression algorithm of a file path or URL from its extension.
+ * Returns null when the path carries no known compression extension.
+ */
+export function detectCompression(filePath: string): CompressionAlgorithm | null {
+	const lower = filePath.toLowerCase();
+	for (const [ext, algorithm] of Object.entries(EXTENSION_ALGORITHMS)) if (lower.endsWith(ext)) return algorithm;
+	return null;
+}
+
+/** Remove a trailing compression extension, if any. Leaves other paths untouched. */
+export function stripCompressionExtension(filePath: string): string {
+	const lower = filePath.toLowerCase();
+	for (const ext of Object.keys(EXTENSION_ALGORITHMS)) if (lower.endsWith(ext)) return filePath.slice(0, -ext.length);
+	return filePath;
+}
+
+/**
+ * Expand file patterns/suffixes with every recognised compression extension,
+ * so a picker offering `*.lish` also offers `*.lish.gz`, `*.lish.br`, …
+ */
+export function withCompressionExtensions(patterns: string[]): string[] {
+	const extensions = Object.keys(EXTENSION_ALGORITHMS);
+	return patterns.flatMap(pattern => [pattern, ...extensions.map(ext => pattern + ext)]);
+}
 
 /**
  * Check if a file path has a compressed file extension.
- * Returns true for known compression extensions (.gz, .gzip, etc.).
+ * Returns true for known compression extensions (.gz, .br, .zst, …).
  */
 export function isCompressed(filePath: string): boolean {
-	const lower = filePath.toLowerCase();
-	return lower.endsWith('.gz') || lower.endsWith('.gzip');
+	return detectCompression(filePath) !== null;
 }
 
 // LISH types
@@ -214,11 +271,29 @@ export interface FactoryResetResult {
 	detail?: string;
 }
 
+/** The infrastructure steps run around the wipes. `prepare` stops the transfers and the
+ * node, `restart` brings them back — neither is a wipe, but both can fail in ways the
+ * user has to know about: a failed `prepare` means the destructive categories were not
+ * safe to run, a failed `restart` means the node is still down. */
+export type FactoryResetPhase = 'prepare' | 'restart';
+
+/** Outcome of one factory-reset phase. */
+export interface FactoryResetPhaseResult {
+	phase: FactoryResetPhase;
+	ok: boolean;
+	/** Failure (or skip) reason when `ok` is false. */
+	detail?: string;
+}
+
 /** Aggregate factory-reset response: `success` is true only when every selected
- * category succeeded; `results` carries the per-category outcome. */
+ * category AND every phase succeeded; `results` carries the per-category outcome and
+ * `phases` the prepare/restart outcome. */
 export interface FactoryResetResponse {
 	success: boolean;
+	/** True when the request selected no categories and intentionally changed nothing. */
+	noop: boolean;
 	results: FactoryResetResult[];
+	phases: FactoryResetPhaseResult[];
 }
 
 // Dataset types (derived from ILISH entries that have a directory)
@@ -270,6 +345,13 @@ export interface SuccessResponse {
 	success: boolean;
 }
 
+/** Outcome of changing one lishnet's enabled state in storage and at runtime. */
+export interface SetLISHNetworkEnabledResponse extends SuccessResponse {
+	applied: boolean;
+	transitioned: boolean;
+	joined: boolean;
+}
+
 // Result of `settings.applyImported`: how many keys were applied vs. skipped.
 export interface ISettingsImportResult {
 	applied: number;
@@ -314,10 +396,385 @@ export interface SystemCPUInfo {
 	usage: number;
 }
 
+// System time / clock configuration
+
+/**
+ * Whether the host can offer a list of selectable timezone identifiers at all.
+ * - `intl`: a list is available. The names are IANA identifiers, but WHICH names are
+ *   offered is per-platform on purpose. Linux and macOS list the zones the host's own
+ *   database has (`/usr/share/zoneinfo`), intersected with what this runtime can format
+ *   a clock for — ICU still calls legacy aliases canonical (`Europe/Kiev`,
+ *   `Asia/Calcutta`) while a current distribution ships only the modern name, so the
+ *   runtime's own list alone offered neither. Windows starts from the runtime's list and
+ *   drops every name it cannot convert to a system timezone identifier, since a zone
+ *   that does not convert cannot be applied there. Either falls back to the runtime's
+ *   unfiltered list when the host database cannot be read or conversion is unavailable.
+ * - `unavailable`: the runtime exposes no timezone list, so nothing can be offered
+ *   for selection and a timezone change cannot be validated.
+ */
+export type SystemTimezoneSource = 'intl' | 'unavailable';
+
+/**
+ * Which system-time facilities the host actually provides, probed from the OS
+ * (presence of the managing tool / sync daemon) and NOT inferred from a write that
+ * failed. A denied write means "run with more privileges", not "this host cannot do
+ * it" — the two must stay distinguishable or an unprivileged dev session would
+ * permanently mark a capable kiosk as incapable.
+ */
+export interface SystemTimeCapabilities {
+	/** The wall clock can be set (some managing tool exists for it). */
+	setClock: boolean;
+	/** The system timezone can be changed. */
+	setTimezone: boolean;
+	/** The NTP server address can be configured. */
+	setNtpServer: boolean;
+	/** Automatic time synchronisation can be switched on and off. */
+	setNtpEnabled: boolean;
+}
+
+/**
+ * A snapshot of the host's time configuration. Read live from the OS on every
+ * request — the OS owns this state (RTC, `/etc/localtime`, the sync daemon's
+ * config), so nothing here is cached or persisted by the application.
+ */
+export interface SystemTimeStatus {
+	/** False on a platform with no implemented time backend — every setter then reports `unsupported`. */
+	supported: boolean;
+	/** Current wall-clock time as a Unix timestamp in milliseconds. */
+	nowMs: number;
+	/** Active timezone as an IANA identifier (e.g. `Europe/Prague`). */
+	timezone: string;
+	/** Minutes to ADD to UTC to get local time — positive east of Greenwich (e.g. 120 for CEST). */
+	utcOffsetMinutes: number;
+	/** Use the observed OS offset when named timezone rules cannot represent host policy. */
+	timezoneOffsetMode?: 'zone' | 'fixed';
+	/** Where {@link SystemTimeStatus.timezone} and the selectable list come from. */
+	timezoneSource: SystemTimezoneSource;
+	/**
+	 * Automatic time synchronisation (NTP) is switched on, or null when the host's
+	 * state could not be determined (the managing tool is missing, wedged, refused the
+	 * read, or printed something unparseable).
+	 *
+	 * Tri-state deliberately: collapsing an unreadable state to false would let the UI
+	 * offer a manual clock set while synchronisation is in fact running, and the daemon
+	 * would step the clock back seconds later. A hand-set clock requires a definite
+	 * false — never merely "not known to be true".
+	 */
+	ntpEnabled: boolean | null;
+	/**
+	 * An NTP daemon is running that the host's own time manager does NOT account for, so
+	 * {@link SystemTimeStatus.ntpEnabled} being false says nothing about whether the clock is
+	 * being steered.
+	 *
+	 * Linux only, and it is the case `NTP=no` hides: `timedatectl` answers for the providers
+	 * systemd-timedated manages, and a `chronyd` started outside that list is not one of them.
+	 * The read already has to look for such a daemon to decide whether a timesyncd drop-in
+	 * would be read by anybody - that answer is reported here too, because a hand-set clock is
+	 * exactly as futile as an unread drop-in: the daemon steps it back and nothing on screen
+	 * ever said synchronisation was on.
+	 *
+	 * Deliberately NOT folded into `ntpEnabled`. That one drives the switch, and a switch
+	 * turned on here would offer to "switch synchronisation off" by stopping timesyncd - which
+	 * is not what is holding the clock.
+	 *
+	 * Tri-state, for the same reason `ntpEnabled` is: `null` means the host could not be asked
+	 * whether such a daemon is running. Collapsing that to false turned "unknown" into
+	 * permission to overwrite a clock somebody may own - and a hand-set clock requires a
+	 * definite answer, never merely "not known to be a problem". Absent means definitely not.
+	 */
+	clockHeldByUnmanagedDaemon?: boolean | null;
+	/** The last synchronisation actually succeeded; null where the OS does not report it. */
+	ntpSynchronized: boolean | null;
+	/** Configured NTP server address, or null when none is configured / it cannot be read. */
+	ntpServer: string | null;
+	/** Operations available to this client; the OS may still require elevated privileges. */
+	capabilities: SystemTimeCapabilities;
+}
+
+/** The changed fields of one serialized system-time settings save. */
+export interface SystemTimeChanges {
+	ntpEnabled?: boolean;
+	ntpServer?: string;
+	timezone?: string;
+	clock?: { hours: number; minutes: number; seconds: number };
+	/**
+	 * The timezone the clock in this request was READ IN, sent with `clock` and with nothing
+	 * else. A wall-clock time only means an instant together with a zone: the user looks at
+	 * their watch, sees 12:15 in Prague and types it, and the host is supposed to end up
+	 * correct. Another client switching the host to UTC in between makes 12:15 land two hours
+	 * off real time — the save meant to FIX the clock breaks it instead, and the serialized
+	 * lock cannot see it because both requests are individually valid.
+	 *
+	 * Compared against the host before anything is written. A save that also changes the zone
+	 * still carries the zone it was composed under, not the one it is about to set.
+	 */
+	expectedTimezone?: string;
+	/**
+	 * The offset that zone had when the clock was read, sent alongside it.
+	 *
+	 * The NAME alone is not the meaning. Windows lets automatic daylight saving be switched
+	 * off for a zone, which moves the offset while the identifier stays put — so `Europe/Prague`
+	 * at +120 and `Europe/Prague` at +60 name the same zone and turn the same digits into
+	 * instants an hour apart. Traced: an offset changed under a filled-in form passed the name
+	 * check and wrote the clock an hour off what the user had been looking at.
+	 */
+	expectedOffsetMinutes?: number;
+}
+
+/**
+ * How a system-time write ended.
+ * - `ok`: the OS applied the change.
+ * - `permission-denied`: the facility exists but the process lacks the privilege
+ *   (not root / not elevated) — actionable by the operator.
+ * - `unsupported`: this host has no such facility; retrying with privileges will not help.
+ * - `auto-sync-enabled`: the clock cannot be set by hand while NTP owns it — switch
+ *   automatic synchronisation off first.
+ * - `invalid-input`: the value failed validation and no command was ever run.
+ * - `stale`: the request was composed against host state that has since changed, so its
+ *   meaning is no longer the one the user saw — nothing was written and the screen has to
+ *   read the host again.
+ * - `error`: anything else; {@link SystemTimeResult.message} carries the underlying text.
+ */
+/** Order is load-bearing: an outcome's index is what an elevated Windows helper reports it by (see `systemTimeExitCode`). Append, never reorder. */
+/**
+ * How long a client waits for one system-time save before giving up on the answer.
+ *
+ * It has to cover everything the backend may legitimately spend on that one request, or the
+ * screen reports "saving was interrupted" while the host is still being changed - and the
+ * read-back that would show what happened is queued behind the very write that is still
+ * running. Measured against the backend's own budget, which is asserted to fit inside this
+ * (see SYSTEM_TIME_BUDGET_MS in the backend): the elevation prompt alone may sit unanswered
+ * for three minutes, which on its own is past the two-minute wait this replaced.
+ */
+export const SYSTEM_TIME_SAVE_TIMEOUT_MS = 300_000;
+
+/**
+ * How long a client waits for one system-time READ before giving up on the answer.
+ *
+ * Shared rather than local to the screen because the backend has to bound its own reads by
+ * it. A Linux status read is seven child processes in sequence - `timedatectl show`, two
+ * `systemctl show` calls for timedated's environment, the unit query, the competing-unit
+ * query, `systemd-analyze cat-config` and `date +%z` - and each was allowed its own 5 s. Every
+ * one of them could answer inside its limit while their total passed this wait, so the screen
+ * reported a failed read for a host that was merely slow. The backend now holds the whole read
+ * to a budget derived from this figure; a test asserts that arithmetic.
+ */
+export const SYSTEM_TIME_READ_TIMEOUT_MS = 30_000;
+
+/**
+ * `elevation-declined` is deliberately separate from `permission-denied`.
+ *
+ * They call for opposite advice. `permission-denied` means this process cannot do it and the
+ * application has to run with more rights; a DECLINED prompt means the rights were there for
+ * the asking and the person said no, so telling them to restart the whole application as
+ * administrator is wrong - the fix is to press Save again and confirm. All three platforms
+ * already know the difference (a cancelled UAC prompt, `pkexec` exit 126, `osascript` -128)
+ * and it used to be flattened into one message ending in "Run the application as an
+ * administrator (root)".
+ *
+ * Appended rather than inserted: the elevated Windows helper reports its outcome as an exit
+ * code derived from this order, so inserting a value would renumber the existing ones.
+ */
+export const SYSTEM_TIME_OUTCOMES = ['ok', 'permission-denied', 'unsupported', 'auto-sync-enabled', 'invalid-input', 'stale', 'error', 'elevation-declined'] as const;
+export type SystemTimeOutcome = (typeof SYSTEM_TIME_OUTCOMES)[number];
+
+/** One command of a multi-step system-time write, and how it went. */
+export interface SystemTimeStep {
+	/** The command line as run, for a log or an error detail. Never contains user input beyond a validated value. */
+	command: string;
+	ok: boolean;
+}
+
+/**
+ * Result of a system-time write. `success` is exactly `outcome === 'ok'` — a failure is
+ * never reported as a success.
+ *
+ * A failure is not the same as "nothing happened". Several of these writes are sequences
+ * (`sc config` then `sc start`; `sc stop` then `sc config`), and the sequence stops at the
+ * first step that fails — with every step before it already applied. `changed` and
+ * `stateMayHaveChanged` say which of the two a caller is looking at, so a failed request
+ * still refreshes what it shows instead of leaving a stale screen.
+ */
+export interface SystemTimeResult {
+	success: boolean;
+	outcome: SystemTimeOutcome;
+	/** Underlying OS message or the validation reason; null when there is nothing to add. */
+	message: string | null;
+	/** At least one step completed, so the host is definitely not as it was. */
+	changed?: boolean;
+	/** At least one step was attempted. A step that failed may still have applied part of its change. */
+	stateMayHaveChanged?: boolean;
+	/** Per-step outcome, in order, for a sequence that stopped part-way. Absent when nothing ran. */
+	steps?: SystemTimeStep[];
+}
+
 // Relay (circuit-relay server) statistics — counts of reservations, active tunnels and bytes/sec going through us
 export interface RelayStats {
 	reservations: number;
 	activeTunnels: number;
 	downloadSpeed: number;
 	uploadSpeed: number;
+}
+
+// Host network state
+//
+// Deliberately platform-agnostic: every OS-specific enum (Windows
+// NdisPhysicalMedium, Linux `info_kind`, macOS hardware port) is collapsed by
+// the backend reader before the document crosses the wire, so neither the
+// frontend nor the shared projection ever has to know which host produced it.
+
+/** How an interface is physically attached. 'other' = tunnel/virtual/bridge/unknown. */
+export type NetMedium = 'wired' | 'wireless' | 'other';
+
+/** Carrier state of a link. 'unknown' = the platform reader could not tell. */
+export type NetLink = 'up' | 'down' | 'unknown';
+
+/** How an address family is configured. 'unknown' = not determinable on this host. */
+export type NetAddressMode = 'dhcp' | 'static' | 'unknown';
+
+/** A single address bound to an interface. */
+export interface NetAddress {
+	family: 'ipv4' | 'ipv6';
+	address: string;
+	prefixLength: number;
+}
+
+/** Wireless association state of an interface. */
+export interface NetWifiInfo {
+	/** Null when not associated, or when the OS withholds it. */
+	ssid: string | null;
+	/** 0-100 signal QUALITY, never dBm, never a driver-scaled bar count. Null = unknown. */
+	signal: number | null;
+	radio: 'on' | 'off' | 'unknown';
+}
+
+/** One network interface of the host, as reported by the OS. */
+export interface NetInterfaceInfo {
+	/** Stable key used by settings + the widget. Windows: adapter GUID. Linux/macOS: device name. */
+	id: string;
+	/** OS friendly name, already localized by the OS — display only, never matched against. */
+	name: string;
+	/** Present only when the OS explicitly classifies the adapter as virtual or physical. */
+	virtual?: boolean;
+	/** Present only when the OS explicitly marks whether an adapter is hidden. */
+	hidden?: boolean;
+	/** OS adapter description, for distinguishing hardware from virtual interfaces. */
+	description?: string;
+	medium: NetMedium;
+	link: NetLink;
+	/** True for the interface carrying the IPv4 default route. */
+	defaultRoute: boolean;
+	mac: string | null;
+	addresses: NetAddress[];
+	ipv4Mode: NetAddressMode;
+	/** True only when the platform apply path can resolve this exact interface. */
+	ipv4Configurable: boolean;
+	/** True only when the platform Wi-Fi path manages this exact wireless device. */
+	wifiConfigurable: boolean;
+	gateway: string | null;
+	dns: string[];
+	/** Present only when medium === 'wireless'. */
+	wifi?: NetWifiInfo;
+}
+
+/** Read-only snapshot of the host's network configuration. */
+export interface NetworkStateInfo {
+	interfaces: NetInterfaceInfo[];
+	/** id of the interface the app treats as primary: the user's pick, else the default-route one, else null. */
+	primaryID: string | null;
+	/** 'full' = medium/link/DHCP known. 'addressesOnly' = addresses + MAC only. */
+	detail: 'full' | 'addressesOnly';
+	/** False until the first successful read settles — mirrors the volume `known` pattern. */
+	known: boolean;
+	/** What this host actually lets the app change. Both false on a read-only platform. */
+	capabilities: NetCapabilities;
+}
+
+/**
+ * What the host's configuration backend supports.
+ *
+ * Reported per host rather than assumed per platform: the same Linux build is
+ * writable on a NetworkManager desktop and read-only on a systemd-networkd
+ * server, and the UI must not offer an edit that would silently not stick.
+ */
+export interface NetCapabilities {
+	/** Address, gateway and DNS of an interface can be changed. */
+	ipv4: boolean;
+	/** The next IPv4 mutation must run through the trusted privileged helper. */
+	ipv4Elevation?: boolean;
+	/** Wi-Fi networks can be scanned and joined. */
+	wifi: boolean;
+	/** Static IPv4 requires a gateway because the platform tool has no no-router form. */
+	staticGatewayRequired: boolean;
+}
+
+/**
+ * Desired IPv4 configuration for one interface.
+ *
+ * IPv4 only: IPv6 is left to the OS. Every supported host autoconfigures it, and
+ * a half-configured IPv6 stack breaks connectivity in ways that are far harder to
+ * back out of than a wrong IPv4 address.
+ */
+export interface NetIPv4Config {
+	mode: 'dhcp' | 'static';
+	/** Required when mode is 'static', ignored otherwise. */
+	address?: string;
+	/** Required when mode is 'static'. 1-32. */
+	prefixLength?: number;
+	/** Optional even for 'static' — an interface on an isolated segment has no gateway. */
+	gateway?: string;
+	/**
+	 * Resolver update requested by the user. Undefined preserves the current
+	 * resolver policy, an empty array selects automatic DNS, and a non-empty
+	 * array replaces it with the listed IPv4/IPv6 resolvers.
+	 */
+	dns?: string[];
+}
+
+/**
+ * The IPv4 facts an edit form was seeded from.
+ *
+ * Sent back with the change so that a form opened on one configuration cannot
+ * quietly overwrite a different one that arrived in the meantime — DHCP switched
+ * on by a system tool, another client's edit. The backend compares it with a
+ * fresh read and refuses a stale form instead of applying it.
+ */
+export interface NetIPv4Baseline {
+	mode: NetAddressMode;
+	address: string | null;
+	prefixLength: number | null;
+	gateway: string | null;
+	dns: string[];
+}
+
+/** One network seen by a Wi-Fi scan. */
+export interface NetWifiNetwork {
+	ssid: string;
+	/** Original SSID bytes as hex when available; the display name may be a lossy decode. */
+	ssidHex?: string;
+	/** Access-point identity used to disambiguate equal SSIDs. */
+	bssid: string | null;
+	/** 0-100 signal quality, never dBm. Null = the scanner did not report one. */
+	signal: number | null;
+	/** False for a genuinely open network — the UI must not ask for a password. */
+	secured: boolean;
+	/** Scanner security label, for display and capability decisions. */
+	security: string;
+	/** True only for open and personal WPA networks the one-password form supports. */
+	supported: boolean;
+	/** False when the host reports that association is unavailable, independently of security support. */
+	connectable?: boolean;
+	/** Host-provided explanation when connectable is false. */
+	unavailableReason?: string;
+	/** True when the interface is currently associated with this network. */
+	active: boolean;
+}
+
+/** What the footer connection widget renders. Derived from NetworkStateInfo, never fabricated. */
+export interface ConnectionStatus {
+	kind: 'wired' | 'wifi' | 'wifiOff' | 'none' | 'unknown';
+	connected: boolean;
+	signal: number | null;
+	ssid: string | null;
+	interfaceName: string | null;
 }

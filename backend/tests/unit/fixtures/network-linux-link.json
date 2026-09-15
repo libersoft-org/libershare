@@ -1,0 +1,32 @@
+[
+	{ "ifindex": 1, "ifname": "lo", "flags": ["LOOPBACK", "UP", "LOWER_UP"], "operstate": "UNKNOWN", "link_type": "loopback", "address": "00:00:00:00:00:00" },
+	{
+		"ifindex": 2,
+		"link_index": 30,
+		"ifname": "eth0",
+		"flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+		"operstate": "UP",
+		"link_type": "ether",
+		"address": "02:00:5e:20:00:01",
+		"linkinfo": { "info_kind": "veth" },
+		"inet6_addr_gen_mode": "eui64"
+	},
+	{
+		"ifindex": 13,
+		"ifname": "docker0",
+		"flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+		"operstate": "UP",
+		"link_type": "ether",
+		"address": "02:00:5e:20:00:02",
+		"linkinfo": { "info_kind": "bridge", "info_data": { "stp_state": 0, "priority": 32768 } }
+	},
+	{
+		"ifindex": 27,
+		"ifname": "br-9487b97d884c",
+		"flags": ["NO-CARRIER", "BROADCAST", "MULTICAST", "UP"],
+		"operstate": "DOWN",
+		"link_type": "ether",
+		"address": "02:00:5e:20:00:03",
+		"linkinfo": { "info_kind": "bridge", "info_data": { "stp_state": 0, "priority": 32768 } }
+	}
+]

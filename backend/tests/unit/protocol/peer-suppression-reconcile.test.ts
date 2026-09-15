@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { Mutex } from 'async-mutex';
 import { KEEP_ALIVE } from '@libp2p/interface';
 import { multiaddr } from '@multiformats/multiaddr';
-import { Network } from '../../../src/protocol/network.ts';
+import { Network, shouldEvictUnreachablePeer } from '../../../src/protocol/network.ts';
 import { Networks } from '../../../src/lishnet/lishnets.ts';
 import { initLISHnetsTables, addLISHnet, lishnetExists } from '../../../src/db/lishnets.ts';
+import { installBootstrapRegistry } from '../helpers/bootstrap-registry.ts';
 
 /**
  * Reconciliation of the two independent "do not dial this peer" mechanisms that
@@ -26,9 +28,8 @@ const LEFT_PEER = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
 const DEAD_PEER = '12D3KooWSHj3RRbBueoTHUJnWNfMTLJyRSyxsDcQ9NqPRTBGWZBP';
 const NET = 'net-a';
 const EVICT_MIN_MS = 30 * 60_000;
+const EVICT_FAILS = 6;
 const QUARANTINE_MS = 30 * 60_000;
-/** An address the dial gater always refuses, so the peer takes the "no reachable addrs" branch. */
-const UNREACHABLE_ADDR = '/ip4/127.0.0.1/tcp/9090';
 /** A routable documentation address (RFC 5737), so the peer becomes a dial candidate. */
 const ROUTABLE_ADDR = '/ip4/203.0.113.7/tcp/9090';
 
@@ -56,11 +57,15 @@ function makeHarness(): Harness {
 	(network as any).runEpoch = 0;
 	(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
 	(network as any).unreachableQuarantine = new Map<string, number>();
-	(network as any).noReachableSince = new Map<string, number>();
 	(network as any).redialBackoff = new Map();
 	(network as any).configuredBootstrapPeerIDs = new Set<string>();
 	(network as any).bootstrapPeerIDs = new Set<string>();
-	(network as any).bootstrapMultiaddrs = [];
+	(network as any).bootstrapGeneration = new Map<string, number>();
+	(network as any).unreachableQuarantineProbes = new Map<string, number>();
+	(network as any).joinedNetworkBootstrapPeers = new Map<string, Set<string>>();
+	// The address registry and the walk state the dial loops read. Object.create never
+	// runs field initializers, so every map a production path touches has to be seeded.
+	installBootstrapRegistry(network, []);
 	(network as any).pubsub = { getTopics: () => [], getSubscribers: () => [] };
 	(network as any).bootstrapTracker = {
 		markPending() {},
@@ -127,17 +132,25 @@ describe('dialSuppressionReason — one question, two answers', () => {
 });
 
 describe('runRedialMaintenance — a left peer is not an unreachable peer', () => {
-	/** A peer left with a lishnet, with no dialable address, disconnected past the eviction window. */
-	function leftAndUndialable(): Harness {
+	/** Failure history that already satisfies both halves of the eviction predicate. */
+	const evictable = (): { nextAttempt: number; failCount: number; evictionFails: number; firstFailure: number } => ({
+		nextAttempt: 0,
+		failCount: EVICT_FAILS,
+		evictionFails: EVICT_FAILS,
+		firstFailure: Date.now() - EVICT_MIN_MS - 1,
+	});
+
+	/** A peer left with a lishnet that is otherwise one dial away from being evicted. */
+	function leftAndUnreachable(): Harness {
 		const h = makeHarness();
 		suppress(h.network, NET, LEFT_PEER);
-		(h.network as any).noReachableSince.set(LEFT_PEER, Date.now() - EVICT_MIN_MS - 1);
+		(h.network as any).redialBackoff.set(LEFT_PEER, evictable());
 		return h;
 	}
 
 	it('does not evict or quarantine a peer we deliberately left', async () => {
-		const h = leftAndUndialable();
-		await runRedial(h.network, [], [peerEntry(LEFT_PEER, UNREACHABLE_ADDR)]);
+		const h = leftAndUnreachable();
+		await runRedial(h.network, [], [peerEntry(LEFT_PEER, ROUTABLE_ADDR)]);
 		expect(h.dialed).toEqual([]);
 		expect(h.purged).toEqual([]);
 		expect(h.statusRowsDropped).toEqual([]);
@@ -146,12 +159,12 @@ describe('runRedialMaintenance — a left peer is not an unreachable peer', () =
 		expect((h.network as any).isRedialSuppressed(LEFT_PEER)).toBe(true);
 	});
 
-	it('still evicts and quarantines an ordinary peer with no reachable address', async () => {
-		// Card: long-dead peers must stop appearing in the participants list. The
-		// leave guard must not switch that off for everybody else.
+	it('still evicts and quarantines an ordinary unreachable peer', async () => {
+		// Long-dead peers must stop appearing in the participants list. The leave guard
+		// must not switch that off for everybody else.
 		const h = makeHarness();
-		(h.network as any).noReachableSince.set(DEAD_PEER, Date.now() - EVICT_MIN_MS - 1);
-		await runRedial(h.network, [], [peerEntry(DEAD_PEER, UNREACHABLE_ADDR)]);
+		(h.network as any).redialBackoff.set(DEAD_PEER, evictable());
+		await runRedial(h.network, [], [peerEntry(DEAD_PEER, ROUTABLE_ADDR)]);
 		expect(h.purged).toEqual([DEAD_PEER]);
 		expect(h.statusRowsDropped).toEqual([DEAD_PEER]);
 		expect((h.network as any).unreachableQuarantine.has(DEAD_PEER)).toBe(true);
@@ -162,38 +175,28 @@ describe('runRedialMaintenance — a left peer is not an unreachable peer', () =
 		// removed must become evictable again without waiting for a restart.
 		const h = makeHarness();
 		(h.network as any).configuredBootstrapPeerIDs.add(DEAD_PEER);
-		(h.network as any).noReachableSince.set(DEAD_PEER, Date.now() - EVICT_MIN_MS - 1);
-		await runRedial(h.network, [], [peerEntry(DEAD_PEER, UNREACHABLE_ADDR)]);
+		(h.network as any).redialBackoff.set(DEAD_PEER, evictable());
+		await runRedial(h.network, [], [peerEntry(DEAD_PEER, ROUTABLE_ADDR)]);
 		expect(h.purged).toEqual([]);
 
 		h.network.pruneConfiguredBootstrapPeer(DEAD_PEER);
-		(h.network as any).noReachableSince.set(DEAD_PEER, Date.now() - EVICT_MIN_MS - 1);
-		await runRedial(h.network, [], [peerEntry(DEAD_PEER, UNREACHABLE_ADDR)]);
+		(h.network as any).redialBackoff.set(DEAD_PEER, evictable());
+		await runRedial(h.network, [], [peerEntry(DEAD_PEER, ROUTABLE_ADDR)]);
 		expect(h.purged).toEqual([DEAD_PEER]);
 	});
 
-	it('negative control: gating after the eviction branch evicts the left peer', async () => {
-		// The pre-reconciliation ordering — 442's no-reachable eviction ran first and
-		// 428's suppression skip came after it. Reimplemented here over the same
-		// state as the first test, to show the assertion above discriminates.
-		const h = leftAndUndialable();
-		const evictedByOldOrder = evictLikeOldOrdering(h.network, peerEntry(LEFT_PEER, UNREACHABLE_ADDR));
-		expect(evictedByOldOrder).toBe(true);
+	it('negative control: judging the eviction on the clock alone evicts the left peer', async () => {
+		// The pre-reconciliation ordering — the eviction predicate ran on the failure
+		// history and the configured set, never on whether the peer was one we had
+		// deliberately walked away from. Reimplemented over the same state as the first
+		// test, to show the assertion above discriminates.
+		const h = leftAndUnreachable();
+		const bo = (h.network as any).redialBackoff.get(LEFT_PEER);
+		expect(shouldEvictUnreachablePeer({ reachable: true, failCount: bo.evictionFails, unreachableForMs: Date.now() - bo.firstFailure, configured: false })).toBe(true);
 
-		await runRedial(h.network, [], [peerEntry(LEFT_PEER, UNREACHABLE_ADDR)]);
+		await runRedial(h.network, [], [peerEntry(LEFT_PEER, ROUTABLE_ADDR)]);
 		expect(h.purged).toEqual([]);
 	});
-
-	/**
-	 * The eviction decision as it stood before the gate was hoisted above it: the
-	 * no-reachable-address branch consulted only the clock and the configured set,
-	 * never whether the peer was one we had deliberately walked away from.
-	 */
-	function evictLikeOldOrdering(network: Network, peer: { id: { toString(): string }; addresses: unknown[] }): boolean {
-		const pid = peer.id.toString();
-		const since = (network as any).noReachableSince.get(pid) ?? Date.now();
-		return Date.now() - since >= EVICT_MIN_MS && !(network as any).configuredBootstrapPeerIDs.has(pid);
-	}
 });
 
 describe('purgeStalePeer — a purge does not outlive its node', () => {
@@ -227,7 +230,7 @@ describe('purgeStalePeer — a purge does not outlive its node', () => {
 });
 
 describe('addBootstrapPeers — configuring a peer by hand is a clean slate', () => {
-	it('clears the quarantine, the failure history and the no-address clock', async () => {
+	it('clears the quarantine and the failure history', async () => {
 		// The user just re-added a peer we had evicted. If the explicit dial below
 		// fails and any of that evidence survives, maintenance, discovery and
 		// zero-connection recovery all keep skipping the peer for another half hour.
@@ -236,13 +239,11 @@ describe('addBootstrapPeers — configuring a peer by hand is a clean slate', ()
 		suppress(h.network, NET, DEAD_PEER);
 		(h.network as any).unreachableQuarantine.set(DEAD_PEER, now);
 		(h.network as any).redialBackoff.set(DEAD_PEER, { nextAttempt: now + 600_000, failCount: 9, firstFailure: now - EVICT_MIN_MS });
-		(h.network as any).noReachableSince.set(DEAD_PEER, now - EVICT_MIN_MS);
 
 		await h.network.addBootstrapPeers([`${ROUTABLE_ADDR}/p2p/${DEAD_PEER}`], NET, 'configured');
 
 		expect((h.network as any).dialSuppressionReason(DEAD_PEER)).toBe(null);
 		expect((h.network as any).redialBackoff.has(DEAD_PEER)).toBe(false);
-		expect((h.network as any).noReachableSince.has(DEAD_PEER)).toBe(false);
 	});
 
 	it('leaves a discovered mention of the same peer quarantined', () => {
@@ -318,7 +319,7 @@ describe('purgeStalePeer — the race healing must not undo a leave', () => {
 		return h;
 	}
 
-	const purge = (network: Network, pid: string): Promise<void> => network.purgeStalePeer(pid, 'test');
+	const purge = (network: Network, pid: string): Promise<'purged' | 'kept' | 'failed'> => network.purgeStalePeer(pid, 'test');
 
 	it('leaves a deliberately hung-up peer untagged when it reconnects mid-purge', async () => {
 		const h = leaveRacingReconnect();
@@ -348,32 +349,18 @@ describe('purgeStalePeer — the race healing must not undo a leave', () => {
 		expect(h.merged.filter(m => m.tags[KEEP_ALIVE] !== undefined)).toEqual([]);
 	});
 
-	it('clears both eviction clocks, not just the backoff one', async () => {
+	it('clears the failure history so a returning peer starts a fresh window', async () => {
+		// Left behind, the eviction evidence is measured in wall-clock: a peer purged now
+		// and back in the peerStore later would be judged against a window that started
+		// before it ever went away, and evicted on the first tick that sees it.
 		const h = makeHarness();
-		(h.network as any).noReachableSince.set(DEAD_PEER, Date.now() - EVICT_MIN_MS - 1);
-		(h.network as any).redialBackoff.set(DEAD_PEER, { nextAttempt: 0, failCount: 3, firstFailure: 0 });
+		(h.network as any).redialBackoff.set(DEAD_PEER, { nextAttempt: 0, failCount: EVICT_FAILS, evictionFails: EVICT_FAILS, firstFailure: Date.now() - EVICT_MIN_MS - 1 });
 		await purge(h.network, DEAD_PEER);
-		expect((h.network as any).noReachableSince.has(DEAD_PEER)).toBe(false);
 		expect((h.network as any).redialBackoff.has(DEAD_PEER)).toBe(false);
-	});
 
-	it('negative control: a kept no-address clock evicts the peer the tick it returns', async () => {
-		// Old purge cleared redialBackoff only. The wall-clock no-address timer then
-		// survived the purge, so a peer back in the peerStore was judged against a
-		// window that started before it ever left.
-		const h = makeHarness();
-		(h.network as any).noReachableSince.set(DEAD_PEER, Date.now() - EVICT_MIN_MS - 1);
-		(h.network as any).redialBackoff.delete(DEAD_PEER); // the old purge, verbatim
-		await runRedial(h.network, [], [peerEntry(DEAD_PEER, UNREACHABLE_ADDR)]);
-		expect(h.purged).toEqual([DEAD_PEER]);
-
-		// With the purge clearing the clock too, the same return starts a fresh window.
-		const fixed = makeHarness();
-		(fixed.network as any).noReachableSince.set(DEAD_PEER, Date.now() - EVICT_MIN_MS - 1);
-		await purge(fixed.network, DEAD_PEER);
-		fixed.purged.length = 0;
-		await runRedial(fixed.network, [], [peerEntry(DEAD_PEER, UNREACHABLE_ADDR)]);
-		expect(fixed.purged).toEqual([]);
+		h.purged.length = 0;
+		await runRedial(h.network, [], [peerEntry(DEAD_PEER, ROUTABLE_ADDR)]);
+		expect(h.purged).toEqual([]);
 	});
 });
 
@@ -424,6 +411,13 @@ describe('Networks.delete — suppression entries outlive the lishnet that keyed
 		const networks = Object.create(Networks.prototype) as Networks;
 		(networks as any).db = db;
 		(networks as any).joinedNetworks = new Set([NET]);
+		// Object.create skips the field initializers, so the write path's locks and its
+		// reconcile bookkeeping have to be seeded — delete() runs through both.
+		(networks as any).catalogMutex = new Mutex();
+		(networks as any).networkOperations = new Map();
+		(networks as any).activeReconciles = new Set();
+		(networks as any).announcedJoined = new Map([[NET, true]]);
+		(networks as any).appliedBootstrap = new Map([[NET, { addresses: [], complete: true }]]);
 		(networks as any)._onNetworkLeft = null;
 		(networks as any)._onNetworkJoined = null;
 		(networks as any).network = {
@@ -434,6 +428,13 @@ describe('Networks.delete — suppression entries outlive the lishnet that keyed
 			isBootstrapOrRelayPeer: () => false,
 			async disconnectPeer(): Promise<void> {},
 			pruneConfiguredBootstrapPeer() {},
+			getRunEpoch: () => 0,
+			resetBootstrapStatus() {},
+			pruneBootstrapAddresses() {},
+			getTopicPeersInfo: () => [],
+			forgetBootstrapForNetwork() {},
+			isRunning: () => true,
+			async addBootstrapPeers(): Promise<void> {},
 			clearRedialSuppressionForNetwork(id: string) {
 				clearedFor.push(id);
 			},

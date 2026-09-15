@@ -31,6 +31,8 @@ export interface SpeedLimiterReservation {
 interface PendingThrottle {
 	bytes: number;
 	resolve: (reservation: SpeedLimiterReservation | undefined) => void;
+	signal?: AbortSignal;
+	onAbort?: () => void;
 }
 
 export class SpeedLimiter {
@@ -70,10 +72,22 @@ export class SpeedLimiter {
 		return this.maxBytesPerSec;
 	}
 
-	async throttle(bytes: number): Promise<SpeedLimiterReservation | undefined> {
-		if (this.maxBytesPerSec <= 0 || bytes <= 0) return undefined;
+	async throttle(bytes: number, signal?: AbortSignal): Promise<SpeedLimiterReservation | undefined> {
+		if (this.maxBytesPerSec <= 0 || bytes <= 0 || signal?.aborted) return undefined;
 		return new Promise(resolve => {
-			this.pending.push({ bytes, resolve });
+			const request: PendingThrottle = { bytes, resolve, ...(signal ? { signal } : {}) };
+			if (signal) {
+				request.onAbort = () => {
+					const index = this.pending.indexOf(request);
+					if (index < 0) return;
+					this.pending.splice(index, 1);
+					this.finish(request, undefined);
+					this.clearTimer();
+					this.scheduleNext();
+				};
+				signal.addEventListener('abort', request.onAbort, { once: true });
+			}
+			this.pending.push(request);
 			this.scheduleNext();
 		});
 	}
@@ -109,7 +123,7 @@ export class SpeedLimiter {
 		if (this.timer || this.pending.length === 0) return;
 		if (this.maxBytesPerSec <= 0) {
 			const pending = this.pending.splice(0);
-			for (const request of pending) request.resolve(undefined);
+			for (const request of pending) this.finish(request, undefined);
 			return;
 		}
 
@@ -131,7 +145,7 @@ export class SpeedLimiter {
 		const request = this.pending.shift();
 		if (!request) return;
 		if (this.maxBytesPerSec <= 0) {
-			request.resolve(undefined);
+			this.finish(request, undefined);
 			this.scheduleNext();
 			return;
 		}
@@ -144,8 +158,13 @@ export class SpeedLimiter {
 		};
 		this.nextAllowedTime = startedAt + reservation.durationMs;
 		this.lastStarted = { reservation, refunded: false };
-		request.resolve(reservation);
+		this.finish(request, reservation);
 		this.scheduleNext();
+	}
+
+	private finish(request: PendingThrottle, reservation: SpeedLimiterReservation | undefined): void {
+		if (request.signal && request.onAbort) request.signal.removeEventListener('abort', request.onAbort);
+		request.resolve(reservation);
 	}
 
 	private clearTimer(): void {

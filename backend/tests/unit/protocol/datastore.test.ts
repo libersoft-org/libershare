@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { Key } from 'interface-datastore';
 import { SqliteDatastore } from '../../../src/protocol/datastore.ts';
+import { clearIdentityKey } from '../../../src/protocol/identity-store.ts';
 
 // SqliteDatastore is tested by directly exercising its SQL statements against
 // an in-memory database so no filesystem cleanup is needed.
@@ -177,5 +178,23 @@ describe('SqliteDatastore.clearPeerstore (real class, on-disk DB)', () => {
 
 		expect(ds.has(identity)).toBe(false);
 		cleanup(ds, dir);
+	});
+
+	it('clearIdentityKey removes only the private key and preserves peer records', async () => {
+		const { ds, dir } = tmpDatastore();
+		const identity = new Key(IDENTITY_KEY) as any;
+		const peer = new Key(PEER_KEY_A) as any;
+		ds.put(identity, new Uint8Array([1, 2, 3]));
+		ds.put(peer, new Uint8Array([4, 5, 6]));
+		ds.close();
+
+		await clearIdentityKey(dir);
+
+		const reopened = new SqliteDatastore(join(dir, 'datastore'));
+		reopened.open();
+		expect(reopened.has(identity)).toBe(false);
+		expect(reopened.has(peer)).toBe(true);
+		expect(Array.from(reopened.get(peer))).toEqual([4, 5, 6]);
+		cleanup(reopened, dir);
 	});
 });

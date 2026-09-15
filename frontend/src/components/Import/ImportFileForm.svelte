@@ -1,5 +1,5 @@
 <script lang="ts" generics="TData">
-	import { type Snippet } from 'svelte';
+	import { onDestroy, type Snippet } from 'svelte';
 	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
@@ -7,6 +7,9 @@
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { localFilesystem } from '../../scripts/localFilesystem.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
+	import { api } from '../../scripts/api.ts';
+	import { uploadImportFile } from '../../scripts/ws-client.ts';
+	import { createImportOperationController, createImportUploader } from '../../scripts/importUpload.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import ButtonBar from '../Buttons/ButtonBar.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -29,8 +32,10 @@
 		fileFilter: string[];
 		fileFilterName: string;
 		filePathLabel?: string | undefined;
+		/** Parse a file the user pointed at by path, on a machine with a local filesystem. */
 		parseFile: (path: string) => Promise<TData>;
-		parseJSON: (content: string) => Promise<TData>;
+		/** Parse a file the user uploaded. The backend reads and deletes it by id. */
+		parseUpload: (uploadID: string) => Promise<TData>;
 		downloadPath?: string | undefined;
 		downloadPathLabel?: string | undefined;
 		validate?: (() => string | null) | undefined;
@@ -38,16 +43,34 @@
 		onConfirmDone: () => void;
 	}
 
-	let { areaID, position = LAYOUT.content, onBack, defaultDirectory, fileFilter, fileFilterName, filePathLabel, parseFile, parseJSON, downloadPath = $bindable(), downloadPathLabel, validate, confirm, onConfirmDone }: Props = $props();
+	let { areaID, position = LAYOUT.content, onBack, defaultDirectory, fileFilter, fileFilterName, filePathLabel, parseFile, parseUpload, downloadPath = $bindable(), downloadPathLabel, validate, confirm, onConfirmDone }: Props = $props();
 
 	let filePath = $state('');
 	let uploadMode = $state(false);
 	let uploadFileName = $state('');
-	let uploadContent = $state('');
+	/** Id the backend holds the uploaded file under, empty until one is picked. */
+	let uploadID = $state('');
 	let fileInput = $state<HTMLInputElement>();
 	let errorMessage = $state('');
 	let parsedData = $state<TData | null>(null);
-	let importing = $state(false);
+	/** Label shown in the blocking dialog, empty while nothing is running. */
+	let busyLabel = $state('');
+	const operations = createImportOperationController(label => (busyLabel = label));
+
+	const uploader = createImportUploader(
+		{
+			setUploadID: id => (uploadID = id),
+			setFileName: name => (uploadFileName = name),
+			setError: message => (errorMessage = message),
+		},
+		{
+			upload: uploadImportFile,
+			discard: id => api.upload.abort(id),
+			uploadingLabel: () => $t('import.uploading'),
+			formatError: translateError,
+		},
+		operations
+	);
 
 	const showDownloadPath = $derived(downloadPath !== undefined);
 	const effectiveFilePathLabel = $derived(filePathLabel ?? $t('common.file'));
@@ -60,31 +83,33 @@
 	async function handleFileSelected(e: Event): Promise<void> {
 		const input = e.target as HTMLInputElement;
 		const file = input.files?.[0];
+		// Cleared immediately: the picker fires no change event when the same file
+		// is chosen twice in a row, so after a failed upload or a failed parse the
+		// user could not retry with that file at all.
+		input.value = '';
 		if (!file) return;
-		uploadFileName = file.name;
-		errorMessage = '';
-		try {
-			if (file.name.endsWith('.gz') || file.name.endsWith('.gzip')) {
-				const buffer = await file.arrayBuffer();
-				const decompressed = new Response(new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip')));
-				uploadContent = await decompressed.text();
-			} else {
-				uploadContent = await file.text();
-			}
-		} catch (err) {
-			errorMessage = translateError(err);
-			uploadContent = '';
-		}
+		await uploader.pick(file);
 	}
 
 	function toggleUploadMode(): void {
 		uploadMode = !uploadMode;
+		operations.invalidate();
+		uploader.discardSelection();
+		errorMessage = '';
 	}
 
+	// Leaving the form after picking a file but before importing it — Back, a
+	// mode switch followed by a path import, any navigation away — would strand
+	// the uploaded copy on the backend's disk until it ages out.
+	onDestroy(() => {
+		uploader.unmount();
+	});
+
 	async function handleImport(): Promise<void> {
+		if (operations.isActive()) return;
 		errorMessage = '';
 		if (uploadMode) {
-			if (!uploadContent.trim()) {
+			if (!uploadID) {
 				errorMessage = $t('import.uploadRequired');
 				return;
 			}
@@ -105,13 +130,24 @@
 				return;
 			}
 		}
+		// Capture what we are about to parse: the picker stays reachable during the
+		// await, so reading the state again afterwards would act on a file the user
+		// picked meanwhile instead of the one this import consumed.
+		const parsingUpload = uploadMode;
+		const parsing = parsingUpload ? uploadID : filePath;
+		const operation = operations.start($t('import.importing'));
+		const ownsForm = (): boolean => operations.owns(operation);
+		if (parsingUpload) uploader.consume(parsing);
 		try {
-			importing = true;
-			parsedData = uploadMode ? await parseJSON(uploadContent) : await parseFile(filePath);
+			const parsed = parsingUpload ? await parseUpload(parsing) : await parseFile(parsing);
+			if (ownsForm()) parsedData = parsed;
 		} catch (e) {
-			errorMessage = translateError(e);
+			if (ownsForm()) errorMessage = translateError(e);
 		} finally {
-			importing = false;
+			operations.finish(operation);
+			// A transport failure can happen before the backend consumes the upload.
+			// Abort is harmless when parsing already removed it.
+			if (parsingUpload) uploader.finishConsume(parsing);
 		}
 	}
 
@@ -134,6 +170,7 @@
 
 	function handleFilePathSelect(path: string): void {
 		filePath = path;
+		operations.invalidate();
 		void filePathSubPage.exit();
 	}
 
@@ -214,7 +251,7 @@
 				</div>
 			{:else}
 				<div class="row" role="group" data-mouse-activate-area={areaID}>
-					<Input bind:value={filePath} label={effectiveFilePathLabel} position={[0, 1]} flex />
+					<Input bind:value={filePath} label={effectiveFilePathLabel} position={[0, 1]} onchange={() => operations.invalidate()} flex />
 					<Button icon="/img/directory.svg" position={[1, 1]} onConfirm={openFilePathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				</div>
 			{/if}
@@ -233,11 +270,11 @@
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
-	{#if importing}
+	{#if busyLabel}
 		<Dialog title={$t('common.import')}>
 			<div class="loading">
 				<Spinner size="8vh" />
-				<div class="loading-label">{$t('import.importing')}</div>
+				<div class="loading-label">{busyLabel}</div>
 			</div>
 		</Dialog>
 	{/if}

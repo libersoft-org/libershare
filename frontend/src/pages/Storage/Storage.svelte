@@ -2,6 +2,7 @@
 	import { tick } from 'svelte';
 	import { type Component } from 'svelte';
 	import { storagePath } from '../../scripts/settings.ts';
+	import { withCompressionExtensions } from '@shared';
 	import { tt } from '../../scripts/language.ts';
 	import { pushBreadcrumb, popBreadcrumb, navigateToAbsolutePath } from '../../scripts/navigation.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
@@ -25,25 +26,25 @@
 		{
 			mode: 'lish',
 			label: 'LISH',
-			extensions: ['.lish', '.lishs', '.lish.gz', '.lishs.gz', '.lish.gzip', '.lishs.gzip'],
+			extensions: withCompressionExtensions(['.lish', '.lishs']),
 			component: DownloadLISHImportJSON,
 		},
 		{
 			mode: 'lishnet',
 			label: 'LISHNET',
-			extensions: ['.lishnet', '.lishnets', '.lishnet.gz', '.lishnets.gz', '.lishnet.gzip', '.lishnets.gzip'],
+			extensions: withCompressionExtensions(['.lishnet', '.lishnets']),
 			component: SettingsLISHNetworkImportJSON,
 		},
 		{
 			mode: 'lishset',
 			label: 'LISHSET',
-			extensions: ['.lishset', '.lishset.gz', '.lishset.gzip'],
+			extensions: withCompressionExtensions(['.lishset']),
 			component: SettingsBackupImportJSON,
 		},
 		{
 			mode: 'lishid',
 			label: 'LISHID',
-			extensions: ['.lishid', '.lishid.gz', '.lishid.gzip'],
+			extensions: withCompressionExtensions(['.lishid']),
 			component: SettingsIdentityImportJSON,
 		},
 	] as const;

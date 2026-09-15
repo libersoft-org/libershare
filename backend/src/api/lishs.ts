@@ -1,5 +1,5 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type ILISH, type IStoredLISH, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, sanitizeFilename, validateLISHStructure, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
+import { type ILISH, type IStoredLISH, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, sanitizeFilename, validateLISHStructure, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
 import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, runVerification } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
@@ -89,7 +89,48 @@ interface LISHsHandlers {
 	move: (p: MoveParams) => Promise<SuccessResponse>;
 	startVerification: (lishID: string) => void;
 	finalizeDownload: (lishID: string) => Promise<SuccessResponse>; // Move from temp to final directory after download completes
+	/** Continue finalization for a transfer lifecycle admitted before mutation shutdown. */
+	finalizeDownloadAdmitted: (lishID: string) => Promise<SuccessResponse>;
 	importManifest: (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>; // Shared import entrypoint (used by peer add-to-downloads)
+	pauseMutations: () => Promise<void>;
+	resumeMutations: () => void;
+	runMutation: <T>(operation: () => Promise<T>) => Promise<T>;
+}
+
+/** Synchronous admission gate plus drain barrier for LISH state mutations. */
+export class LISHMutationGate {
+	private closed = false;
+	private active = 0;
+	private readonly drainWaiters = new Set<() => void>();
+
+	tryEnter(): (() => void) | null {
+		if (this.closed) return null;
+		this.active++;
+		let left = false;
+		return () => {
+			if (left) return;
+			left = true;
+			this.active--;
+			if (this.active !== 0) return;
+			for (const resolve of this.drainWaiters) resolve();
+			this.drainWaiters.clear();
+		};
+	}
+
+	async closeAndDrain(): Promise<void> {
+		this.closed = true;
+		if (this.active === 0) return;
+		await new Promise<void>(resolve => this.drainWaiters.add(resolve));
+	}
+
+	open(): void {
+		if (this.active !== 0) throw new Error('Cannot open LISH mutation admission before active operations drain');
+		this.closed = false;
+	}
+
+	get isClosed(): boolean {
+		return this.closed;
+	}
 }
 
 /**
@@ -150,6 +191,17 @@ async function deleteLISHData(lish: IStoredLISH): Promise<void> {
 export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcast: BroadcastFn, settings: Settings): LISHsHandlers {
 	// Track current creation so it can be aborted
 	let currentCreation: AbortController | null = null;
+	const mutationAdmission = new LISHMutationGate();
+
+	async function runMutation<T>(operation: () => Promise<T>): Promise<T> {
+		const leave = mutationAdmission.tryEnter();
+		if (!leave) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'LISH changes are paused during factory reset');
+		try {
+			return await operation();
+		} finally {
+			leave();
+		}
+	}
 
 	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): ILISHListResult {
 		return {
@@ -197,6 +249,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function create(p: CreateLISHParams, client: any): Promise<CreateLISHResponse> {
+		return runMutation(() => createAdmitted(p, client));
+	}
+
+	async function createAdmitted(p: CreateLISHParams, client: any): Promise<CreateLISHResponse> {
 		assert(p, ['dataPath']);
 		const addToSharing = p.addToSharing ?? false;
 		const addToDownloading = p.addToDownloading ?? false;
@@ -239,7 +295,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			try {
 				const fileStat = await stat(lishFilePath);
 				if (fileStat.isDirectory()) {
-					const ext = compress ? '.lish.gz' : '.lish';
+					const ext = compress ? '.lish' + compressionExtension(compressionAlgorithm) : '.lish';
 					let candidate = join(lishFilePath, lish.id + ext);
 					// Handle unlikely collision: append numeric suffix
 					let suffix = 1;
@@ -269,6 +325,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function del(p: { lishID: string; deleteLISH: boolean; deleteData: boolean }): Promise<boolean> {
+		return runMutation(() => deleteAdmitted(p));
+	}
+
+	async function deleteAdmitted(p: { lishID: string; deleteLISH: boolean; deleteData: boolean }): Promise<boolean> {
 		assert(p, ['lishID']);
 		const lish = dataServer.get(p.lishID);
 		if (!lish) return false;
@@ -298,7 +358,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			dataServer.resetVerification(p.lishID);
 			// Transition directly from 'deleting' to 'verifying' — no busy gap
 			setBusy(p.lishID, 'verifying');
-			startVerification(p.lishID);
+			enqueueVerification(p.lishID);
 		}
 		return true;
 	}
@@ -319,7 +379,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		// After verify completes, restartDownloadIfEnabled picks up the enabled flag automatically.
 		if (opts.enableSharing) enableUpload(lish.id);
 		if (opts.enableDownloading) markDownloadEnabled(lish.id);
-		startVerification(lish.id);
+		enqueueVerification(lish.id);
 	}
 
 	async function importCommon(lish: ILISH, downloadPath: string, overwrite: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
@@ -365,6 +425,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function importFromFile(p: ImportFromFileParams): Promise<ImportLISHResponse> {
+		return runMutation(() => importFromFileAdmitted(p));
+	}
+
+	async function importFromFileAdmitted(p: ImportFromFileParams): Promise<ImportLISHResponse> {
 		assert(p, ['filePath', 'downloadPath']);
 		const lishs = await importLISHFromFile(Utils.expandHome(p.filePath));
 		let lastResponse!: ImportLISHResponse;
@@ -373,6 +437,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function importFromJSON(p: ImportFromJSONParams): Promise<ImportLISHResponse> {
+		return runMutation(() => importFromJSONAdmitted(p));
+	}
+
+	async function importFromJSONAdmitted(p: ImportFromJSONParams): Promise<ImportLISHResponse> {
 		assert(p, ['json', 'downloadPath']);
 		const lishs = parseLISHFromJSON(p.json);
 		let lastResponse!: ImportLISHResponse;
@@ -381,6 +449,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function importFromURL(p: ImportFromURLParams): Promise<ImportLISHResponse> {
+		return runMutation(() => importFromURLAdmitted(p));
+	}
+
+	async function importFromURLAdmitted(p: ImportFromURLParams): Promise<ImportLISHResponse> {
 		assert(p, ['url', 'downloadPath']);
 		const content = await Utils.fetchURL(p.url);
 		const lishs = parseLISHFromJSON(content);
@@ -405,9 +477,17 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		return parseLISHFromJSON(content);
 	}
 
-	// Verification queue — only one verification runs at a time
-	let currentVerification: { lishID: string; ac: AbortController } | null = null;
+	// Verification queue — only one verification runs at a time during normal use.
+	// Superseded runs remain tracked until their Promise settles so reset can drain them.
+	interface VerificationRun {
+		lishID: string;
+		ac: AbortController;
+		promise: Promise<void>;
+	}
+	let currentVerification: VerificationRun | null = null;
+	const activeVerificationRuns = new Set<VerificationRun>();
 	const verificationQueue: string[] = [];
+	let stoppingAllVerifications = false;
 
 	// Track LISHs currently being moved
 	const movingLISHs = new Set<string>();
@@ -422,30 +502,45 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	function processVerificationQueue(): void {
-		if (currentVerification || verificationQueue.length === 0) return;
+		if (stoppingAllVerifications || currentVerification || verificationQueue.length === 0) return;
 		const lishID = verificationQueue.shift()!;
 		const ac = new AbortController();
-		currentVerification = { lishID, ac };
+		const run: VerificationRun = { lishID, ac, promise: Promise.resolve() };
+		currentVerification = run;
 		setBusy(lishID, 'verifying');
 		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, started: true });
-		runVerification(dataServer, lishID, progress => broadcast('lishs:verify', progress), ac.signal).finally(() => {
-			const isOwner = currentVerification?.ac === ac;
-			if (isOwner) {
-				clearBusy(lishID);
-				if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
-				currentVerification = null;
-			}
-			// Resume download if enabled — no-op if download not enabled or LISH deleted
-			if (isOwner && !ac.signal.aborted) restartDownloadIfEnabled(lishID);
-			processVerificationQueue();
-		});
+		run.promise = runVerification(dataServer, lishID, progress => broadcast('lishs:verify', progress), ac.signal)
+			.catch(error => console.error(`[Verify] ${lishID.slice(0, 8)} failed:`, error))
+			.finally(() => {
+				activeVerificationRuns.delete(run);
+				const isOwner = currentVerification === run;
+				if (isOwner) {
+					clearBusy(lishID);
+					if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
+					currentVerification = null;
+				}
+				// Resume download if enabled — no-op if download not enabled or LISH deleted.
+				if (isOwner && !ac.signal.aborted && !mutationAdmission.isClosed) restartDownloadIfEnabled(lishID);
+				if (!mutationAdmission.isClosed) processVerificationQueue();
+			});
+		activeVerificationRuns.add(run);
 	}
 
 	function startVerification(lishID: string): void {
-		enqueueVerification(lishID);
+		const leave = mutationAdmission.tryEnter();
+		if (!leave) return;
+		try {
+			enqueueVerification(lishID);
+		} finally {
+			leave();
+		}
 	}
 
 	async function verify(p: { lishID: string }): Promise<SuccessResponse> {
+		return runMutation(() => verifyAdmitted(p));
+	}
+
+	async function verifyAdmitted(p: { lishID: string }): Promise<SuccessResponse> {
 		assert(p, ['lishID']);
 		// Cancel if currently running for this LISH
 		if (currentVerification?.lishID === p.lishID) {
@@ -461,6 +556,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function verifyAll(): Promise<SuccessResponse> {
+		return runMutation(verifyAllAdmitted);
+	}
+
+	async function verifyAllAdmitted(): Promise<SuccessResponse> {
 		const allLISHs = dataServer.listSummaries(undefined, 'desc');
 		for (const lish of allLISHs) {
 			// Skip if already verifying or already in queue
@@ -473,6 +572,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function stopVerify(p: { lishID: string }): Promise<SuccessResponse> {
+		return runMutation(() => stopVerifyAdmitted(p));
+	}
+
+	async function stopVerifyAdmitted(p: { lishID: string }): Promise<SuccessResponse> {
 		assert(p, ['lishID']);
 		clearBusy(p.lishID);
 		// Stop if currently running
@@ -487,15 +590,20 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function stopVerifyAll(): Promise<SuccessResponse> {
-		if (currentVerification) {
-			clearBusy(currentVerification.lishID);
-			currentVerification.ac.abort();
-		}
+		stoppingAllVerifications = true;
 		while (verificationQueue.length > 0) {
 			const lishID = verificationQueue.shift()!;
 			clearBusy(lishID);
 			broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
 		}
+		for (const run of activeVerificationRuns) {
+			clearBusy(run.lishID);
+			run.ac.abort();
+		}
+		while (activeVerificationRuns.size > 0) await Promise.allSettled([...activeVerificationRuns].map(run => run.promise));
+		currentVerification = null;
+		stoppingAllVerifications = false;
+		if (!mutationAdmission.isClosed) processVerificationQueue();
 		return { success: true };
 	}
 
@@ -508,6 +616,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function move(p: MoveParams): Promise<SuccessResponse> {
+		return runMutation(() => moveAdmitted(p));
+	}
+
+	async function moveAdmitted(p: MoveParams): Promise<SuccessResponse> {
 		assert(p, ['lishID', 'newDirectory']);
 		const lish = dataServer.get(p.lishID);
 		if (!lish) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, p.lishID);
@@ -624,6 +736,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function finalizeDownload(lishID: string): Promise<SuccessResponse> {
+		return runMutation(() => finalizeDownloadAdmitted(lishID));
+	}
+
+	async function finalizeDownloadAdmitted(lishID: string): Promise<SuccessResponse> {
 		const lish = dataServer.get(lishID);
 		if (!lish) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, lishID);
 		const finalDir = lish.finalDirectory;
@@ -763,7 +879,16 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function importManifest(lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }): Promise<ImportLISHResponse> {
-		return importCommon(lish, downloadPath, opts?.overwrite ?? false, opts?.enableSharing, opts?.enableDownloading);
+		return runMutation(() => importCommon(lish, downloadPath, opts?.overwrite ?? false, opts?.enableSharing, opts?.enableDownloading));
 	}
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, move, startVerification, finalizeDownload, importManifest };
+
+	async function pauseMutations(): Promise<void> {
+		await mutationAdmission.closeAndDrain();
+	}
+
+	function resumeMutations(): void {
+		mutationAdmission.open();
+	}
+
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, move, startVerification, finalizeDownload, finalizeDownloadAdmitted, importManifest, pauseMutations, resumeMutations, runMutation };
 }
