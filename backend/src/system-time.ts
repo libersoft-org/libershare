@@ -153,7 +153,13 @@ export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: bo
 			// switch on the thing that does it: the service can be running and the source can be
 			// a peer list while this separate flag keeps the client from ever asking anyone.
 			...(ntpClientEnabled ? [] : [{ cmd: 'reg', args: ['add', W32TIME_NTP_CLIENT_KEY, '/v', 'Enabled', '/t', 'REG_DWORD', '/d', '1', '/f'] }]),
-			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'auto'] },
+			// `delayed-auto`, not `auto`: Windows ships W32Time as auto-start DELAYED, and the
+			// flag saying so lives in its own registry value that `sc config start= disabled`
+			// above wipes. Measured on Windows 11 - shipped DelayedAutostart=1, after the OFF
+			// step 0, and plain `auto` leaves it 0 - so switching synchronisation off and back
+			// on permanently moved the service earlier in the boot sequence. Enabling
+			// synchronisation must not also change WHEN the service starts.
+			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'delayed-auto'] },
 			{ cmd: 'sc', args: ['start', 'w32time'], benignOutput: SC_ALREADY_RUNNING_RE },
 			// ONLY for a host with no time source at all (Type=NoSync), which is the one
 			// case where "switch synchronisation on" has to invent one. On every other

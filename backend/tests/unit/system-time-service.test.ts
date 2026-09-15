@@ -63,7 +63,7 @@ describe('Windows Time service transitions', () => {
 				return reached;
 			};
 			expect((await setSystemNtpEnabled(enabled, readStatus, exec, mode, wait)).success).toBe(true);
-			expect(calls).toEqual(enabled ? ['sc config w32time start= auto', 'sc start w32time', 'confirmed', 'w32tm /config /syncfromflags:manual /update', 'w32tm /resync'] : ['sc stop w32time', 'confirmed', 'sc config w32time start= disabled']);
+			expect(calls).toEqual(enabled ? ['sc config w32time start= delayed-auto', 'sc start w32time', 'confirmed', 'w32tm /config /syncfromflags:manual /update', 'w32tm /resync'] : ['sc stop w32time', 'confirmed', 'sc config w32time start= disabled']);
 		});
 	});
 	it.each([true, false])('bounds an unconfirmed transition to 15 seconds: enabled=%s', async enabled => {
@@ -135,7 +135,7 @@ describe('Windows Time service transitions', () => {
 			const result = await setSystemNtpEnabled(enabled, readStatus, exec, mode, async () => false);
 			expect(result).toMatchObject({ success: false, outcome: 'error', stateMayHaveChanged: true });
 			expect(result.message).toContain('Windows Time');
-			expect(calls).toEqual(enabled ? ['sc config w32time start= auto', 'sc start w32time'] : ['sc stop w32time']);
+			expect(calls).toEqual(enabled ? ['sc config w32time start= delayed-auto', 'sc start w32time'] : ['sc stop w32time']);
 		});
 	});
 	it('holds the write lock through stopping and the subsequent server edit', async () => {

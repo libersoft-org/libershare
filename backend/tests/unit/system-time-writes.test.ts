@@ -611,7 +611,7 @@ describe('buildSetNtpEnabledCommands', () => {
 	 */
 	it('gives a host with no time source one, on windows', () => {
 		expect(buildSetNtpEnabledCommands('win32', true, 'none')).toEqual([
-			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'auto'] },
+			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'delayed-auto'] },
 			{ cmd: 'sc', args: ['start', 'w32time'], benignOutput: SC_ALREADY_RUNNING_RE },
 			{ cmd: 'w32tm', args: ['/config', '/syncfromflags:manual', '/update'], failOnOutput: W32TM_ERROR_RE },
 			{ cmd: 'w32tm', args: ['/resync'], failOnOutput: W32TM_ERROR_RE },
@@ -627,8 +627,25 @@ describe('buildSetNtpEnabledCommands', () => {
 	it('never rewrites a time source it did not create, on windows', () => {
 		for (const mode of ['domain-hierarchy', 'manual', 'all', 'managed', 'unknown'] as const) {
 			const commands = buildSetNtpEnabledCommands('win32', true, mode);
-			expect(commands.map(c => [c.cmd, ...c.args].join(' '))).toEqual(['sc config w32time start= auto', 'sc start w32time', 'w32tm /resync']);
+			expect(commands.map(c => [c.cmd, ...c.args].join(' '))).toEqual(['sc config w32time start= delayed-auto', 'sc start w32time', 'w32tm /resync']);
 			expect(commands.some(c => c.args.some(a => a.startsWith('/syncfromflags')))).toBe(false);
+		}
+	});
+
+	/**
+	 * Switching synchronisation on must not also change WHEN the Windows Time service starts.
+	 *
+	 * Windows ships W32Time as auto-start DELAYED, recorded in its own `DelayedAutostart`
+	 * registry value. Measured on Windows 11: that value is 1 as shipped, `sc config
+	 * w32time start= disabled` - which the OFF branch below runs - leaves it 0, and plain
+	 * `sc config w32time start= auto` leaves it 0 too. So one off-and-on round trip moved the
+	 * service permanently earlier in the boot sequence. `delayed-auto` restores it to 1.
+	 */
+	it('keeps the delayed auto-start windows ships, on windows', () => {
+		for (const mode of ['none', 'domain-hierarchy', 'manual', 'all', 'managed', 'unknown'] as const) {
+			const commands = buildSetNtpEnabledCommands('win32', true, mode);
+			const config = commands.filter(c => c.cmd === 'sc' && c.args[0] === 'config');
+			expect(config.map(c => c.args.join(' '))).toEqual(['config w32time start= delayed-auto']);
 		}
 	});
 
@@ -831,7 +848,7 @@ describe('setSystemNtpEnabled', () => {
 			expect(r.success).toBe(false);
 			expect(r.outcome).toBe('error');
 			expect(calls).toContain('w32tm /resync');
-			expect(calls[0]).toBe('sc config w32time start= auto');
+			expect(calls[0]).toBe('sc config w32time start= delayed-auto');
 		});
 	});
 
@@ -1039,7 +1056,7 @@ describe('runAll', () => {
 			{ kind: 'failed', code: 1056, output: '[SC] StartService FAILED 1056:\r\n\r\nAn instance of the service is already running.\r\n' },
 		]);
 		expect(await runAll('win32', buildSetNtpEnabledCommands('win32', true, 'none'), exec)).toEqual({ success: true, outcome: 'ok', message: null });
-		expect(calls).toEqual(['sc config w32time start= auto', 'sc start w32time', 'w32tm /config /syncfromflags:manual /update', 'w32tm /resync']);
+		expect(calls).toEqual(['sc config w32time start= delayed-auto', 'sc start w32time', 'w32tm /config /syncfromflags:manual /update', 'w32tm /resync']);
 	});
 
 	/**
