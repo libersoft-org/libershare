@@ -80,6 +80,7 @@ export function installBootstrapRegistry(network: unknown, seeds: readonly IRegi
 	// them present — an absent map throws instead of answering "nothing holds it back".
 	(network as any).configuredBootstrapPeerIDs ??= new Set<string>();
 	(network as any).unreachableQuarantine ??= new Map<string, number>();
+	(network as any).listingRevoked ??= new Set<string>();
 	return byAddress;
 }
 

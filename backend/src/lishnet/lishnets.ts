@@ -1245,7 +1245,7 @@ export class Networks {
 			});
 			if (!job) return false;
 			await job;
-			this.network.clearRedialSuppressionForNetwork(id);
+			this.network.clearRedialSuppressionForNetwork(id, 'deleted');
 			return true;
 		});
 	}

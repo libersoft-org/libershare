@@ -43,6 +43,7 @@ describe('Network.canListSharesTo', () => {
 	function bareNetwork(suppressed: string[], topics: string[], infra: string[] = [], subscribers: string[] = [], connectionAgeSec: number | null = 0) {
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
+		(network as any).listingRevoked = new Set<string>();
 		(network as any).pubsub = {
 			getTopics: () => topics,
 			getSubscribers: () => subscribers.map(p => ({ toString: () => p })),
@@ -82,6 +83,7 @@ describe('Network.canListSharesTo', () => {
 		// is bought by the OLDEST connection, so a second dial cannot renew it.
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+		(network as any).listingRevoked = new Set<string>();
 		(network as any).pubsub = { getTopics: () => [lishTopic('net-a')], getSubscribers: () => [] };
 		(network as any).isBootstrapOrRelayPeer = (): boolean => false;
 		(network as any).node = {

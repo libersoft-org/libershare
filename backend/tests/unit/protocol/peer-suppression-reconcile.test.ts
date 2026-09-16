@@ -6,6 +6,7 @@ import { multiaddr } from '@multiformats/multiaddr';
 import { Network, shouldEvictUnreachablePeer } from '../../../src/protocol/network.ts';
 import { Networks } from '../../../src/lishnet/lishnets.ts';
 import { initLISHnetsTables, addLISHnet, lishnetExists } from '../../../src/db/lishnets.ts';
+import { lishTopic } from '../../../src/protocol/constants.ts';
 import { installBootstrapRegistry } from '../helpers/bootstrap-registry.ts';
 
 /**
@@ -462,6 +463,65 @@ describe('Networks.delete — suppression entries outlive the lishnet that keyed
 		expect(clearedFor).toEqual([]);
 	});
 
+	it('does not hand the share listing back when the lishnet is deleted', async () => {
+		// The suppression set answers two questions at once. Deleting A has to stop its peers
+		// being undialable forever, but it says nothing about them being allowed to read what
+		// we share — and while we stay in B the listing gate's soft path would otherwise let
+		// a reconnecting ex-peer of A browse it for the length of the grace window.
+		const clearedFor: string[] = [];
+		const { networks } = makeNetworksWithDB(clearedFor);
+		const net = Object.create(Network.prototype) as Network;
+		(net as any).redialSuppressedByNet = new Map([[NET, new Set([LEFT_PEER])]]);
+		(net as any).listingRevoked = new Set<string>();
+		(net as any).isBootstrapOrRelayPeer = () => false;
+		// We are still in another lishnet, and the peer shares none of it.
+		(net as any).pubsub = { getTopics: () => [lishTopic('net-b')], getSubscribers: () => [] };
+		(net as any).node = { getConnections: () => [{ remotePeer: { toString: () => LEFT_PEER }, timeline: { open: Date.now() } }] };
+		(networks as any).network.clearRedialSuppressionForNetwork = (id: string, reason?: 'rejoined' | 'deleted') => {
+			clearedFor.push(id);
+			net.clearRedialSuppressionForNetwork(id, reason);
+		};
+
+		expect(net.canListSharesTo(LEFT_PEER)).toBe(false);
+		expect(await networks.delete(NET)).toBe(true);
+
+		// Dialable again — that is what the delete was for — but still not entitled to browse.
+		expect((net as any).isRedialSuppressed(LEFT_PEER)).toBe(false);
+		expect(net.canListSharesTo(LEFT_PEER)).toBe(false);
+	});
+
+	it('gives the listing back the moment the peer shares a joined topic again', () => {
+		// The revocation is not a ban: real membership is evidence, and it outranks
+		// everything the deletion left behind.
+		const net = Object.create(Network.prototype) as Network;
+		(net as any).redialSuppressedByNet = new Map([[NET, new Set([LEFT_PEER])]]);
+		(net as any).listingRevoked = new Set<string>();
+		(net as any).isBootstrapOrRelayPeer = () => false;
+		(net as any).node = { getConnections: () => [] };
+		(net as any).pubsub = { getTopics: () => [lishTopic('net-b')], getSubscribers: () => [] };
+		net.clearRedialSuppressionForNetwork(NET, 'deleted');
+		expect(net.canListSharesTo(LEFT_PEER)).toBe(false);
+
+		// Now it is a subscriber of a lishnet we are in.
+		(net as any).pubsub = { getTopics: () => [lishTopic('net-b')], getSubscribers: () => [{ toString: () => LEFT_PEER }] };
+
+		expect(net.canListSharesTo(LEFT_PEER)).toBe(true);
+	});
+
+	it('a rejoin restores both halves, unlike a delete', () => {
+		const net = Object.create(Network.prototype) as Network;
+		(net as any).redialSuppressedByNet = new Map([[NET, new Set([LEFT_PEER])]]);
+		(net as any).listingRevoked = new Set<string>();
+		(net as any).isBootstrapOrRelayPeer = () => false;
+		(net as any).pubsub = { getTopics: () => [lishTopic('net-b')], getSubscribers: () => [] };
+		(net as any).node = { getConnections: () => [{ remotePeer: { toString: () => LEFT_PEER }, timeline: { open: Date.now() } }] };
+
+		net.clearRedialSuppressionForNetwork(NET, 'rejoined');
+
+		expect((net as any).isRedialSuppressed(LEFT_PEER)).toBe(false);
+		expect(net.canListSharesTo(LEFT_PEER)).toBe(true);
+	});
+
 	it('negative control: rejoin-only release strands the peers forever', () => {
 		// Suppression is keyed by lishnet ID and only a join of THAT lishnet cleared
 		// it. Deleting the lishnet destroys the only key that could ever be presented,
@@ -470,6 +530,7 @@ describe('Networks.delete — suppression entries outlive the lishnet that keyed
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
 		(network as any).unreachableQuarantine = new Map<string, number>();
+		(network as any).listingRevoked = new Set<string>();
 		suppress(network, NET, LEFT_PEER);
 
 		const releasedByRejoinOnly = (existingLishnetIDs: string[]): boolean => {

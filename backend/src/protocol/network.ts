@@ -592,6 +592,20 @@ export class Network {
 	 */
 	private readonly redialSuppressedByNet = new Map<string, Set<string>>();
 
+	/**
+	 * Peers whose redial suppression was released WITHOUT them proving membership again —
+	 * today only by deleting the lishnet that keyed it.
+	 *
+	 * The suppression set answers two different questions at once: may we dial this peer,
+	 * and may it read our share listing. A deleted lishnet has no rejoin left to release
+	 * the first, so the release has to happen at deletion — but that must not hand back the
+	 * second. {@link canListSharesTo} therefore refuses these peers its soft path; the only
+	 * way back is {@link sharesJoinedTopicWith}, which is real evidence and never a guess.
+	 *
+	 * Entries leave when the peer proves membership, and with the whole map in stop().
+	 */
+	private readonly listingRevoked = new Set<string>();
+
 	// Tracked libp2p/pubsub event listeners for clean removal in stop().
 	// Each entry captures the exact handler reference so removeEventListener can unhook it.
 	private listeners: Array<{ target: EventTarget; event: string; handler: (evt: any) => void }> = [];
@@ -1405,13 +1419,22 @@ export class Network {
 	 * Lift suppression for one lishnet's peers — called on (re)join of that lishnet,
 	 * and on its deletion. Scoped: rejoining A does not unblock still-left B's peers
 	 * (nor lift the canListSharesTo browse-privacy protecting B).
+	 *
+	 * A REJOIN is the user asking for those peers back, so it restores both halves. A
+	 * DELETE only has to stop the peers being undialable forever; it is not a statement
+	 * that they may read our listing again, so they keep that half revoked until they
+	 * share a joined topic with us — see {@link listingRevoked}.
 	 */
-	clearRedialSuppressionForNetwork(networkID: string): void {
+	clearRedialSuppressionForNetwork(networkID: string, reason: 'rejoined' | 'deleted' = 'rejoined'): void {
+		const set = this.redialSuppressedByNet.get(networkID);
+		if (set && reason === 'deleted') for (const peerID of set) this.listingRevoked.add(peerID);
+		if (set && reason === 'rejoined') for (const peerID of set) this.listingRevoked.delete(peerID);
 		this.redialSuppressedByNet.delete(networkID);
 	}
 
 	/** Lift suppression for one peer across ALL left lishnets — a legitimate reconnect. */
 	private clearRedialSuppressionForPeer(peerID: string): void {
+		this.listingRevoked.delete(peerID);
 		for (const set of this.redialSuppressedByNet.values()) set.delete(peerID);
 	}
 
@@ -2962,6 +2985,11 @@ export class Network {
 		// leave without being redial-suppressed, so they never get the soft path — a
 		// relay of a network we just left would otherwise browse our shares.
 		if (this.isBootstrapOrRelayPeer(peerID)) return false;
+		// A peer of a lishnet we deleted is past the redial suppression by construction —
+		// the delete released it so the peer could be dialed again — but nothing about that
+		// release says it may browse what we share. The soft path is for a member whose
+		// SUBSCRIBE has not landed yet, and this peer is not one.
+		if (this.listingRevoked.has(peerID)) return false;
 		return this.connectionAgeMs(peerID) <= SUBSCRIBE_PROPAGATION_GRACE_MS;
 	}
 
@@ -3743,6 +3771,7 @@ export class Network {
 		for (const timer of this.delayedPeerCountTimers) clearTimeout(timer);
 		this.delayedPeerCountTimers.clear();
 		this.redialSuppressedByNet.clear();
+		this.listingRevoked.clear();
 		this.pxIngressLogKeys.clear();
 		try {
 			if (this.node) {

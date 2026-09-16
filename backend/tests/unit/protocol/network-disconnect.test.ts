@@ -22,6 +22,7 @@ const NET = 'net-a';
  */
 export function stubSuppressionState(network: Network): void {
 	(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+	(network as any).listingRevoked = new Set<string>();
 	(network as any).unreachableQuarantine = new Map<string, number>();
 	(network as any).noReachableSince = new Map<string, number>();
 	(network as any).redialBackoff = new Map();
@@ -38,6 +39,7 @@ function makeNetwork() {
 	const network = Object.create(Network.prototype) as Network;
 	installBootstrapRegistry(network, []);
 	(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+	(network as any).listingRevoked = new Set<string>();
 	(network as any).configuredBootstrapPeerIDs = new Set<string>();
 	(network as any).pubsub = null;
 	(network as any).bootstrapGeneration = new Map();
@@ -183,6 +185,7 @@ describe('Network.disconnectPeer — a peer claimed while it is being let go', (
 		// this run's cancellation and needs a controller to read.
 		(network as any).dialAbort = new AbortController();
 		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+		(network as any).listingRevoked = new Set<string>();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).redialBackoff = new Map();
@@ -315,6 +318,7 @@ describe('Network per-network redial suppression', () => {
 	function bareNetwork() {
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+		(network as any).listingRevoked = new Set<string>();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).pubsub = null;
 		return network;
@@ -350,6 +354,7 @@ describe('Network.runRedialMaintenance — leave-peer suppression', () => {
 		const network = Object.create(Network.prototype) as Network;
 		stubSuppressionState(network);
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
+		(network as any).listingRevoked = new Set<string>();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
@@ -412,6 +417,7 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 			bootstrapMaStrs.map(address => ({ address }))
 		);
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
+		(network as any).listingRevoked = new Set<string>();
 		(network as any).redialBackoff = new Map();
 		(network as any).unreachableQuarantine = new Map();
 		(network as any).redialBackoff = new Map();
@@ -498,6 +504,7 @@ describe('Network.addBootstrapPeers — rejoin clears suppression', () => {
 		const network = Object.create(Network.prototype) as Network;
 		installBootstrapRegistry(network, []);
 		(network as any).redialSuppressedByNet = new Map([['net-a', new Set<string>(suppressed)]]);
+		(network as any).listingRevoked = new Set<string>();
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).configuredBootstrapAddresses = new Set<string>();
 		(network as any).configuredBootstrapAddressesByNet = new Map();
