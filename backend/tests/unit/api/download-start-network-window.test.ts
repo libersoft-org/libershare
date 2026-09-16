@@ -189,21 +189,43 @@ describe('download start — the lishnet window', () => {
 		}
 	});
 
-	it('re-asks when a shared in-flight attempt failed on a lishnet that has since returned', async () => {
-		// The rejoin arrives while the previous attempt is still tearing down for the very
-		// lishnet that just came back. Taking that attempt's `false` would leave the
-		// download suspended with nothing scheduled to start it.
+	it('keeps the last manual switch when it lands during a start', async () => {
+		// enable → disable → enable, all inside one start window. The middle disable aborts
+		// the running attempt; the second enable only waits for that attempt, so without a
+		// record of what the user asked for LAST it reads a switched-off download and agrees
+		// with it. The user's last word was "on".
 		const net = makeNetworks([NET_A]);
-		const dataServer = makeDataServer(() => net.leave(NET_A));
-		const handlers = initTransferHandlers(net.networks, dataServer, tmpdir(), () => {}, undefined, settings);
+		let handlers!: ReturnType<typeof initTransferHandlers>;
+		let second: Promise<{ success: boolean }> | null = null;
+		const dataServer = makeDataServer(() => {
+			handlers.disableDownload({ lishID: LISH_ID });
+			second = handlers.enableDownload({ lishID: LISH_ID });
+		});
+		handlers = initTransferHandlers(net.networks, dataServer, tmpdir(), () => {}, undefined, settings);
 
-		const first = handlers.enableDownload({ lishID: LISH_ID });
-		await Promise.resolve();
-		net.join(NET_A);
-		const second = handlers.enableDownload({ lishID: LISH_ID });
+		const first = await handlers.enableDownload({ lishID: LISH_ID });
+		expect(first).toEqual({ success: false });
 
-		expect(await first).toEqual({ success: false });
-		expect(await second).toEqual({ success: true });
+		expect(await second!).toEqual({ success: true });
 		expect(handlers.getActiveTransfers().map(t => t.lishID)).toEqual([LISH_ID]);
 	});
+
+	it('lets a manual switch off win over a resume that is still settling', async () => {
+		// The mirror image, and the reason the record is written only by the manual path: a
+		// disable arriving last must not be undone by the re-ask.
+		const net = makeNetworks([NET_A]);
+		let handlers!: ReturnType<typeof initTransferHandlers>;
+		let second: Promise<{ success: boolean }> | null = null;
+		const dataServer = makeDataServer(() => {
+			second = handlers.enableDownload({ lishID: LISH_ID });
+			handlers.disableDownload({ lishID: LISH_ID });
+		});
+		handlers = initTransferHandlers(net.networks, dataServer, tmpdir(), () => {}, undefined, settings);
+
+		await handlers.enableDownload({ lishID: LISH_ID });
+
+		expect(await second!).toEqual({ success: false });
+		expect(handlers.getActiveTransfers()).toEqual([]);
+	});
+
 });

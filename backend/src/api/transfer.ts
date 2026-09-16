@@ -435,7 +435,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		for (const [lishID, bound] of [...networkSuspended]) {
 			if (bound.size > 0 && !bound.has(networkID)) continue;
 			try {
-				enableDownload({ lishID })
+				enableDownload({ lishID }, undefined, false)
 					.then(r => {
 						if (r.success) {
 							networkSuspended.delete(lishID);
@@ -454,7 +454,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		attemptRecover: async (lishID, downloadWasEnabled, uploadWasEnabled): Promise<boolean> => {
 			let ok = true;
 			if (downloadWasEnabled) {
-				const result = await enableDownload({ lishID });
+				const result = await enableDownload({ lishID }, undefined, false);
 				if (!result.success) ok = false;
 			}
 			if (uploadWasEnabled && ok) ok = enableUploadHandler({ lishID }).success;
@@ -528,6 +528,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	function disableDownload(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
 		if (transferAdmission.isClosed) return { success: false };
+		lastManualIntent.set(p.lishID, false);
 		networkSuspended.delete(p.lishID);
 		recovery.stop(p.lishID);
 		downloadEnabledLishs.delete(p.lishID);
@@ -547,6 +548,17 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * fails, nothing is left to resume the download from.
 	 */
 	const pendingDownloads = new Map<string, Promise<{ success: boolean }>>();
+	/**
+	 * The last state the USER asked for, kept apart from whatever attempt is in flight.
+	 *
+	 * An enable arriving while an earlier attempt is still running only waits for it, so
+	 * without this the sequence enable → disable → enable ends with the middle answer:
+	 * the first attempt aborts on the disable, the second reads a switched-off download
+	 * and agrees, and the user's last word is lost. Only the manual API path writes here —
+	 * a resume-on-rejoin is the app's decision, not the user's, and must never look like
+	 * one for a download that was deliberately switched off.
+	 */
+	const lastManualIntent = new Map<string, boolean>();
 
 	/**
 	 * `requireEnabled` is the caller stating that it entered with the download switched ON,
@@ -641,9 +653,12 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		return downloader;
 	}
 
-	async function enableDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
+	async function enableDownload(p: { lishID: string }, client?: any, manual = true): Promise<{ success: boolean }> {
 		const leave = transferAdmission.tryEnter();
 		if (!leave) return { success: false };
+		// Recorded BEFORE the gate below can park this call behind an in-flight attempt,
+		// which is exactly the window where the request would otherwise leave no trace.
+		if (manual) lastManualIntent.set(p.lishID, true);
 		try {
 			return await enableDownloadAdmitted(p, client);
 		} finally {
@@ -669,11 +684,19 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			if (shared.success) return shared;
 			if (pendingDownloads.has(p.lishID)) return shared;
 			const bound = networkSuspended.get(p.lishID);
-			if (!downloadEnabledLishs.has(p.lishID) && bound === undefined) return shared;
+			// A manual "off" is the last word and ends it here, whatever else still says on.
+			if (lastManualIntent.get(p.lishID) === false) return shared;
+			const wantedByUser = lastManualIntent.get(p.lishID) === true;
+			if (!wantedByUser && !downloadEnabledLishs.has(p.lishID) && bound === undefined) return shared;
 			const joinable = bound !== undefined && bound.size > 0 ? [...bound].some(id => networks.isJoined(id)) : getJoinedEnabledNetworkIDs(networks).length > 0;
 			if (!joinable) return shared;
 		}
-		const attempt = startEnableDownload(p, client);
+		// Registered BEFORE the body can run. An async function still executes synchronously
+		// up to its first await, and this one reaches the downloader's manifest read in that
+		// stretch — so a second request arriving from inside it found no in-flight attempt
+		// and started its own, which is precisely what the single-flight map exists to stop.
+		// Deferring the body by one microtask makes the registration unmissable.
+		const attempt = Promise.resolve().then(() => startEnableDownload(p, client));
 		pendingDownloads.set(p.lishID, attempt);
 		try {
 			return await attempt;
@@ -936,7 +959,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		for (const lishID of downloadEnabledLishs) {
 			if (!activeDownloaders.has(lishID) && !isBusy(lishID)) {
 				console.log(`[Auto-resume] Resuming download for ${lishID.slice(0, 8)}...`);
-				enableDownload({ lishID }).catch(err => {
+				enableDownload({ lishID }, undefined, false).catch(err => {
 					console.error(`[Auto-resume] Failed for ${lishID.slice(0, 8)}:`, err.message);
 				});
 			}
