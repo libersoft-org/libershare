@@ -820,6 +820,7 @@ export class Network {
 			config,
 			port,
 			bootstrapPeerIDs: bootstrapPeerIDs,
+			configuredBootstrapPeerIDs,
 			bootstrapMultiaddrs,
 		} = buildLibp2pConfig({
 			privateKey,
@@ -829,8 +830,14 @@ export class Network {
 			myPeerID: privateKey.publicKey.toString(),
 		});
 		this.bootstrapPeerIDs = bootstrapPeerIDs;
-		// Config-time bootstrap entries are by definition 'configured'.
-		this.configuredBootstrapPeerIDs = new Set(bootstrapPeerIDs);
+		// Aliased, not copied. The dial-gater bypass and the PX appSpecificScore close over
+		// the very set `buildLibp2pConfig` built, so a copy here means a peer added or
+		// removed at runtime changes our trust boundary and leaves theirs at the startup
+		// snapshot — a removed operator entry keeps its gater bypass, a newly added one
+		// never gets it. Seeding from `bootstrapPeerIDs` was also too wide: that set
+		// collects gossip-discovered and auto-promoted peers, which must never be able to
+		// enter the trust boundary by their own claim.
+		this.configuredBootstrapPeerIDs = configuredBootstrapPeerIDs;
 		for (const ma of bootstrapMultiaddrs) this.rememberBootstrapAddress(ma, STARTUP_BOOTSTRAP_OWNER);
 
 		console.log('Creating libp2p node...');
