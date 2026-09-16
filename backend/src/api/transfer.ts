@@ -548,7 +548,13 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 */
 	const pendingDownloads = new Map<string, Promise<{ success: boolean }>>();
 
-	async function startStoredDownloader(lishID: string, networkIDs: string[], originalNetworkIDs: string[], disabled: boolean, client?: any): Promise<Downloader> {
+	/**
+	 * `requireEnabled` is the caller stating that it entered with the download switched ON,
+	 * so a flag that has gone by the time the downloader is ready means the user withdrew
+	 * it mid-start. A restore never sets that flag — it starts downloaders on behalf of the
+	 * stored intent — so it must not be judged by it.
+	 */
+	async function startStoredDownloader(lishID: string, networkIDs: string[], originalNetworkIDs: string[], disabled: boolean, client?: any, requireEnabled = false): Promise<Downloader> {
 		const lish = dataServer.get(lishID);
 		if (!lish) throw new Error(`Cannot restore download ${lishID}: LISH is missing`);
 		const downloadDir = lish.directory ?? join(dataDir, 'downloads', Date.now().toString());
@@ -566,20 +572,35 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		// already left, or for a LISH the user just turned off or deleted. A downloader
 		// restored in the disabled state starts nothing and is exempt.
 		if (!disabled) {
+			// The user's own withdrawal is asked FIRST. A disable or a delete clears the
+			// resume claim on its way out, so filing a new one for a lishnet that was left
+			// in the same window would resurrect a download the user just switched off:
+			// the next rejoin reads networkSuspended and turns it back on.
+			if (requireEnabled && !downloadEnabledLishs.has(lishID)) {
+				await downloader.destroy();
+				throw new DownloadStartAbandoned(lishID, 'download withdrawn while starting');
+			}
 			if (!networkIDs.some(id => networks.isJoined(id))) {
 				// File the resume claim BEFORE tearing the downloader down: destroy() yields,
 				// and a re-join landing in that window walks networkSuspended to decide what to
 				// resume — an entry inserted afterwards misses the event entirely and the
 				// download stays suspended until the next manual toggle.
+				//
+				// Claimed against the ORIGINAL binding, never the subset this attempt was
+				// started with. A download bound to A and B that resumed through A alone would
+				// otherwise record only A, and a later join of B — a lishnet it is entitled to
+				// download from — would no longer look like a reason to resume it.
 				downloadEnabledLishs.delete(lishID);
-				networkSuspended.set(lishID, new Set(networkIDs));
+				networkSuspended.set(lishID, new Set(originalNetworkIDs.length > 0 ? originalNetworkIDs : networkIDs));
 				await downloader.destroy();
 				throw new DownloadStartAbandoned(lishID, 'lishnet left while starting');
 			}
-			if (!downloadEnabledLishs.has(lishID)) {
-				await downloader.destroy();
-				throw new DownloadStartAbandoned(lishID, 'download withdrawn while starting');
-			}
+			// Some of the lishnets survived, so the download goes ahead — but only on those.
+			// The ones left during startup have to leave the ACTIVE set, or the download keeps
+			// publishing WANTs on a topic we are no longer in: `broadcast()` and `publishOn()`
+			// take the network they are handed and do not re-check membership. The original
+			// binding is immutable and keeps them, so a legitimate rejoin still resumes there.
+			for (const id of networkIDs) if (!networks.isJoined(id)) downloader.removeNetwork(id);
 		}
 		const claim = await claimActiveDownloader(activeDownloaders, lishID, downloader);
 		if (!claim.claimed) return claim.downloader;
@@ -633,7 +654,25 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	async function enableDownloadAdmitted(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
 		assert(p, ['lishID']);
 		const inFlight = pendingDownloads.get(p.lishID);
-		if (inFlight) return inFlight;
+		if (inFlight) {
+			const shared = await inFlight;
+			// A shared FAILURE is only an answer about the state that attempt saw. The
+			// commonest way to land here is a rejoin arriving while the previous attempt is
+			// tearing itself down for the very lishnet that just came back: taking its
+			// `false` would leave the download suspended with nothing scheduled to start it,
+			// until the next join or a manual toggle. Re-ask once, and only when the state
+			// now actually permits it, so a genuine failure is not retried in a loop.
+			//
+			// "Still wanted" is read from the suspension claim as much as from the runtime
+			// flag: the suspending branch drops the flag on purpose and leaves the claim as
+			// the record that the user wants this download as soon as a bound lishnet is back.
+			if (shared.success) return shared;
+			if (pendingDownloads.has(p.lishID)) return shared;
+			const bound = networkSuspended.get(p.lishID);
+			if (!downloadEnabledLishs.has(p.lishID) && bound === undefined) return shared;
+			const joinable = bound !== undefined && bound.size > 0 ? [...bound].some(id => networks.isJoined(id)) : getJoinedEnabledNetworkIDs(networks).length > 0;
+			if (!joinable) return shared;
+		}
 		const attempt = startEnableDownload(p, client);
 		pendingDownloads.set(p.lishID, attempt);
 		try {
@@ -779,7 +818,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 					return { success: false };
 				}
 			}
-			await startStoredDownloader(p.lishID, joinedNetworks, originalNetworkIDs, false, client);
+			await startStoredDownloader(p.lishID, joinedNetworks, originalNetworkIDs, false, client, true);
 			networkSuspended.delete(p.lishID);
 			recovery.stop(p.lishID);
 			const send = broadcast ?? (() => {});
@@ -1015,7 +1054,13 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				await startStoredDownloader(lishID, plan.networkIDs, originalNetworkIDs, false);
 				recovery.stop(lishID);
 				broadcast?.('transfer.download:enabled', { lishID });
-			} catch {
+			} catch (err) {
+				// A download the start window abandoned is not a failed restore: the lishnet
+				// went away or the user withdrew it between the snapshot and now, and the
+				// start already recorded whichever of those it was. Reporting it as a failure
+				// would fail the whole reset restore over a download that is exactly where it
+				// should be.
+				if (err instanceof DownloadStartAbandoned) continue;
 				failures.push(lishID);
 			}
 		}
