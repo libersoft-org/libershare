@@ -502,6 +502,20 @@ describe('Networks.delete — suppression entries outlive the lishnet that keyed
 		expect(lishnetExists(db, NET)).toBe(false);
 	});
 
+	it('releases the suppression of a lishnet dropped by a bulk replace', async () => {
+		// A network removed by replacing the whole list is deleted every bit as much as one
+		// removed through delete(): its suppression is keyed by an ID that no longer exists,
+		// so no rejoin can ever present the key that would release it.
+		const clearedFor: string[] = [];
+		const { networks, db } = makeNetworksWithDB(clearedFor);
+		addLISHnet(db, { networkID: 'net-keep', name: 'Keep', description: '', enabled: true, bootstrapPeers: [] } as any);
+
+		await networks.replace([{ networkID: 'net-keep', name: 'Keep', description: '', enabled: true, bootstrapPeers: [] } as any]);
+
+		expect(lishnetExists(db, NET)).toBe(false);
+		expect(clearedFor).toEqual([NET]);
+	});
+
 	it('keeps the suppression when the row was not deleted', async () => {
 		// A delete that finds nothing to remove has changed nothing, so the peers stay
 		// left: their suppression is still the only thing refusing them a share listing

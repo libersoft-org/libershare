@@ -1290,12 +1290,22 @@ export class Networks {
 		// single-network write issued after this one cannot converge ahead of it on any of
 		// them — see {@link reconcileLater}.
 		await this.inMutation(async () => {
+			let removed: string[] = [];
 			const jobs = await this.inCatalog(() => {
 				const rows = new Map(this.list().map(n => [n.networkID, n]));
 				replaceLISHnets(this.db, networks);
-				return [...new Set([...rows.keys(), ...networks.map(n => n.networkID)])].map(id => this.reconcileLater(id));
+				const kept = new Set(networks.map(n => n.networkID));
+				// A network this call drops is deleted every bit as much as one removed through
+				// delete(), so the suppression its leave installs needs the same release: its key
+				// is an ID that no longer exists, and no rejoin can ever present it again.
+				removed = [...rows.keys()].filter(id => !kept.has(id));
+				return [...new Set([...rows.keys(), ...kept])].map(id => this.reconcileLater(id));
 			});
 			const outcomes = await Promise.allSettled(jobs);
+			// After the leaves, like delete() does — the suppression only exists once they ran.
+			// 'deleted' keeps the share listing revoked: the peers become dialable again, not
+			// entitled to browse what we share.
+			for (const id of removed) this.network.clearRedialSuppressionForNetwork(id, 'deleted');
 			const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
 			if (failures.length > 0)
 				throw new AggregateError(
