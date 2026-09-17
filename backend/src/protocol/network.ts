@@ -1557,6 +1557,14 @@ export class Network {
 			while (idx < candidates.length) {
 				if (epoch !== this.runEpoch) return; // stop() hit — abandon remaining dials
 				const c = candidates[idx++]!;
+				// Asked again here, not only when the list was built. Ten dials run at a time and
+				// the rest wait; a leave landing while they wait must stop the ones still queued,
+				// or the run keeps opening connections to peers the user has already walked away
+				// from. The post-dial check closes such a connection, but only after it exists.
+				if (this.dialSuppressionReason(c.pid) !== null) {
+					skippedSuppressed++;
+					continue;
+				}
 				console.debug(`   ↻ Re-dial attempt peer=${c.pid} addrs=${c.addrSummary} fails=${c.failCount}`);
 				try {
 					const connection = await this.node!.dial(c.peer.id, { signal: AbortSignal.timeout(5000) });

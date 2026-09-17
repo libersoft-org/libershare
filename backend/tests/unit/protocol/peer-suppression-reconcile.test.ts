@@ -186,6 +186,25 @@ describe('runRedialMaintenance — a left peer is not an unreachable peer', () =
 		expect(h.purged).toEqual([DEAD_PEER]);
 	});
 
+	it('re-asks before each queued dial, not only when the list was built', async () => {
+		// Ten dials run at a time and the rest wait. A leave landing while they wait has to
+		// stop the ones still queued: the post-dial check only closes a connection that has
+		// already been opened, which is not the same as never dialing a peer we walked away
+		// from. The first dial suppresses the second peer from inside the worker, so the
+		// interleaving is the test's rather than the scheduler's.
+		const h = makeHarness();
+		const OTHER = '12D3KooWQ9Jz7nTZPNL8N1mQ4bqgGVzhgy1oCkBtbfcCPWKGcAfW';
+		(h.network as any).node.dial = async (target: { toString(): string }): Promise<void> => {
+			h.dialed.push(target.toString());
+			if (h.dialed.length === 1) suppress(h.network, NET, OTHER);
+			throw new Error('dial refused');
+		};
+
+		await runRedial(h.network, [], [peerEntry(DEAD_PEER, ROUTABLE_ADDR), peerEntry(OTHER, ROUTABLE_ADDR)]);
+
+		expect(h.dialed).toEqual([DEAD_PEER]);
+	});
+
 	it('negative control: judging the eviction on the clock alone evicts the left peer', async () => {
 		// The pre-reconciliation ordering — the eviction predicate ran on the failure
 		// history and the configured set, never on whether the peer was one we had

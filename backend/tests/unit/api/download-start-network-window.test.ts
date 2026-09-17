@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { tmpdir } from 'os';
-import { initTransferHandlers, initDownloadState, getDownloadEnabledLishs } from '../../../src/api/transfer.ts';
+import { initTransferHandlers, initDownloadState, getDownloadEnabledLishs, removeDownloadState } from '../../../src/api/transfer.ts';
 import { type Networks } from '../../../src/lishnet/lishnets.ts';
 import { type DataServer } from '../../../src/lish/data-server.ts';
 import { type Settings } from '../../../src/settings.ts';
@@ -233,6 +233,72 @@ describe('download start — the lishnet window', () => {
 			const writes = persisted.filter(e => e.lishID === LISH_ID);
 			expect(writes[writes.length - 1]).toEqual({ lishID: LISH_ID, enabled: false });
 			expect(handlers.getActiveTransfers()).toEqual([]);
+		} finally {
+			Downloader.prototype.enable = originalEnable;
+		}
+	});
+
+	it('does not restart a download whose LISH was deleted while an enable waited', async () => {
+		// Two enables, the second parked on the first. The LISH is deleted in between. The
+		// delete clears the flags, but a stale "the user wants this on" would send the waiting
+		// caller off to start a fresh download — into a directory that is being removed.
+		let release!: () => void;
+		const held = new Promise<void>(resolve => (release = resolve));
+		const originalEnable = Downloader.prototype.enable;
+		Downloader.prototype.enable = async function (): Promise<void> {
+			await held;
+			return originalEnable.call(this);
+		};
+		try {
+			const net = makeNetworks([NET_A]);
+			const handlers = initTransferHandlers(net.networks, makeDataServer(() => {}, tmpdir()), tmpdir(), () => {}, undefined, settings);
+			expect(await handlers.enableDownload({ lishID: LISH_ID })).toEqual({ success: true });
+			handlers.disableDownload({ lishID: LISH_ID });
+
+			const first = handlers.enableDownload({ lishID: LISH_ID });
+			await new Promise(resolve => setTimeout(resolve, 0));
+			const second = handlers.enableDownload({ lishID: LISH_ID });
+			await removeDownloadState(LISH_ID);
+			release();
+
+			await first;
+			expect(await second).toEqual({ success: false });
+			expect(getDownloadEnabledLishs().has(LISH_ID)).toBe(false);
+			expect(handlers.getActiveTransfers()).toEqual([]);
+		} finally {
+			Downloader.prototype.enable = originalEnable;
+		}
+	});
+
+	it('stays suspended when the last lishnet leaves while an existing download is enabling', async () => {
+		// The retained downloader's own enable awaits, and the leave lands inside it. Reporting
+		// success and clearing the suspension claim there would lose the record that this
+		// download is waiting for a lishnet to come back.
+		let release!: () => void;
+		const held = new Promise<void>(resolve => (release = resolve));
+		const originalEnable = Downloader.prototype.enable;
+		Downloader.prototype.enable = async function (): Promise<void> {
+			await held;
+			return originalEnable.call(this);
+		};
+		try {
+			const net = makeNetworks([NET_A]);
+			const handlers = initTransferHandlers(net.networks, makeDataServer(() => {}, tmpdir()), tmpdir(), () => {}, undefined, settings);
+			expect(await handlers.enableDownload({ lishID: LISH_ID })).toEqual({ success: true });
+			handlers.disableDownload({ lishID: LISH_ID });
+
+			const enabling = handlers.enableDownload({ lishID: LISH_ID });
+			await new Promise(resolve => setTimeout(resolve, 0));
+			net.announceLeave(NET_A);
+			release();
+
+			expect(await enabling).toEqual({ success: false });
+			expect(handlers.getActiveTransfers()).toEqual([]);
+
+			// The claim survived, so coming back resumes it.
+			net.announceJoin(NET_A);
+			await new Promise(resolve => setTimeout(resolve, 30));
+			expect(handlers.getActiveTransfers().map(t => t.lishID)).toEqual([LISH_ID]);
 		} finally {
 			Downloader.prototype.enable = originalEnable;
 		}
