@@ -597,6 +597,19 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	setLastManualIntentRef(lastManualIntent);
 	const requestEpoch = new Map<string, number>();
 	setRequestEpochRef(requestEpoch);
+	/**
+	 * File a resume claim, but only while the request that is filing it still stands.
+	 *
+	 * Every one of these writes happens after an await, and a delete landing in that await
+	 * has already cleared the claim it is about to recreate — leaving a deleted LISH in the
+	 * resume set, where the next lishnet join finds it and, for a re-import that was never
+	 * switched on, turns its download back on.
+	 */
+	function claimSuspension(lishID: string, networkIDs: Iterable<string>, scheduledAt: number): boolean {
+		if ((requestEpoch.get(lishID) ?? 0) !== scheduledAt) return false;
+		networkSuspended.set(lishID, new Set(networkIDs));
+		return true;
+	}
 
 	/**
 	 * `requireEnabled` is the caller stating that it entered with the download switched ON,
@@ -604,7 +617,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * it mid-start. A restore never sets that flag — it starts downloaders on behalf of the
 	 * stored intent — so it must not be judged by it.
 	 */
-	async function startStoredDownloader(lishID: string, networkIDs: string[], originalNetworkIDs: string[], disabled: boolean, client?: any, requireEnabled = false): Promise<Downloader> {
+	async function startStoredDownloader(lishID: string, networkIDs: string[], originalNetworkIDs: string[], disabled: boolean, client?: any, requireEnabled = false, scheduledAt = requestEpoch.get(lishID) ?? 0): Promise<Downloader> {
 		const lish = dataServer.get(lishID);
 		if (!lish) throw new Error(`Cannot restore download ${lishID}: LISH is missing`);
 		const downloadDir = lish.directory ?? join(dataDir, 'downloads', Date.now().toString());
@@ -641,7 +654,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				// otherwise record only A, and a later join of B — a lishnet it is entitled to
 				// download from — would no longer look like a reason to resume it.
 				downloadEnabledLishs.delete(lishID);
-				networkSuspended.set(lishID, new Set(originalNetworkIDs.length > 0 ? originalNetworkIDs : networkIDs));
+				claimSuspension(lishID, originalNetworkIDs.length > 0 ? originalNetworkIDs : networkIDs, scheduledAt);
 				await downloader.destroy();
 				throw new DownloadStartAbandoned(lishID, 'lishnet left while starting');
 			}
@@ -738,7 +751,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		// LISH — a switch-off, a delete — bumps the counter, and the scheduled body then knows
 		// it belongs to a request nobody is waiting for any more.
 		const scheduledAt = requestEpoch.get(p.lishID) ?? 0;
-		const attempt = Promise.resolve().then(() => ((requestEpoch.get(p.lishID) ?? 0) !== scheduledAt ? { success: false } : startEnableDownload(p, client)));
+		const attempt = Promise.resolve().then(() => ((requestEpoch.get(p.lishID) ?? 0) !== scheduledAt ? { success: false } : startEnableDownload(p, client, scheduledAt)));
 		pendingDownloads.set(p.lishID, attempt);
 		try {
 			return settleManualIntent(p.lishID, await attempt);
@@ -794,7 +807,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * The body of {@link enableDownload}: everything from the busy check to starting
 	 * the downloader. Split out so the caller can own the in-flight bookkeeping.
 	 */
-	async function startEnableDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
+	async function startEnableDownload(p: { lishID: string }, client?: any, scheduledAt = requestEpoch.get(p.lishID) ?? 0): Promise<{ success: boolean }> {
 		// The body is deferred by a microtask (see the registration in enableDownloadAdmitted),
 		// and a switch-off can land in that window — from the user, or as the manual half of a
 		// resume that was scheduled before it. Re-read the last word here rather than trusting
@@ -846,7 +859,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 					console.log(`[Transfer] ${p.lishID.slice(0, 8)}: last lishnet left while enabling, staying suspended`);
 					dl.disable();
 					downloadEnabledLishs.delete(p.lishID);
-					networkSuspended.set(p.lishID, new Set(boundNow));
+					claimSuspension(p.lishID, boundNow, scheduledAt);
 					return { success: false };
 				}
 				const send = broadcast ?? (() => {});
@@ -923,7 +936,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				// (the fresh downloader would bind to getEnabled(), empty here). Store the
 				// empty bound set so onNetworkJoined resumes on any join, since the DB has
 				// no per-download network to restrict to.
-				networkSuspended.set(p.lishID, new Set(joinedNetworks));
+				claimSuspension(p.lishID, joinedNetworks, scheduledAt);
 				return { success: false };
 			}
 			const downloadDir = lish.directory ?? join(dataDir, 'downloads', Date.now().toString());
@@ -945,7 +958,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 					return { success: false };
 				}
 			}
-			await startStoredDownloader(p.lishID, joinedNetworks, originalNetworkIDs, false, client, true);
+			await startStoredDownloader(p.lishID, joinedNetworks, originalNetworkIDs, false, client, true, scheduledAt);
 			// The start registers the downloader and then keeps awaiting, so a leave landing
 			// after the registration reaches it through onNetworkLeft: the downloader is
 			// disabled and a FRESH suspension claim is filed. Clearing that claim here — it was
@@ -957,7 +970,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			if (started?.isDisabled?.() === true || (boundAfterStart.length > 0 && !boundAfterStart.some((id: string) => networks.isJoined(id)))) {
 				console.log(`[Transfer] ${p.lishID.slice(0, 8)}: lishnet left while the start finished, staying suspended`);
 				downloadEnabledLishs.delete(p.lishID);
-				if (!networkSuspended.has(p.lishID)) networkSuspended.set(p.lishID, new Set(boundAfterStart));
+				if (!networkSuspended.has(p.lishID)) claimSuspension(p.lishID, boundAfterStart, scheduledAt);
 				return { success: false };
 			}
 			networkSuspended.delete(p.lishID);

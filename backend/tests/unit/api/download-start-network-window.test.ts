@@ -380,6 +380,45 @@ describe('download start — the lishnet window', () => {
 		expect(getDownloadEnabledLishs().has(LISH_ID)).toBe(false);
 	});
 
+	it('does not re-file a resume claim for a LISH deleted while the start was finishing', async () => {
+		// The start is inside `Downloader.enable()` when the lishnet goes and the LISH is
+		// deleted. The delete already cleared the resume claim; re-filing one here would leave
+		// a deleted LISH in the resume set, where the next join finds it — and a later
+		// re-import that was never switched on gets its download turned back on.
+		let release!: () => void;
+		const held = new Promise<void>(resolve => (release = resolve));
+		const originalEnable = Downloader.prototype.enable;
+		Downloader.prototype.enable = async function (): Promise<void> {
+			await held;
+			return originalEnable.call(this);
+		};
+		try {
+			const net = makeNetworks([NET_A]);
+			const events: Array<{ event: string; data: any }> = [];
+			const handlers = initTransferHandlers(net.networks, makeDataServer(() => {}, tmpdir()), tmpdir(), () => {}, (event: string, data: any) => events.push({ event, data }), settings);
+			expect(await handlers.enableDownload({ lishID: LISH_ID })).toEqual({ success: true });
+			handlers.disableDownload({ lishID: LISH_ID });
+
+			const enabling = handlers.enableDownload({ lishID: LISH_ID });
+			await new Promise(resolve => setTimeout(resolve, 0));
+			net.leave(NET_A);
+			await removeDownloadState(LISH_ID);
+			release();
+			expect(await enabling).toEqual({ success: false });
+
+			// The lishnet comes back. Nothing may resume for a LISH that no longer exists.
+			events.length = 0;
+			net.announceJoin(NET_A);
+			await new Promise(resolve => setTimeout(resolve, 30));
+
+			expect(events.filter(e => e.event === 'transfer.download:enabled')).toEqual([]);
+			expect(getDownloadEnabledLishs().has(LISH_ID)).toBe(false);
+			expect(handlers.getActiveTransfers()).toEqual([]);
+		} finally {
+			Downloader.prototype.enable = originalEnable;
+		}
+	});
+
 	it('lets a switch off land between scheduling a start and running it', async () => {
 		// The start body is deferred by one microtask so its single-flight registration cannot
 		// be missed. A disable arriving in that window is SYNCHRONOUS and therefore lands
