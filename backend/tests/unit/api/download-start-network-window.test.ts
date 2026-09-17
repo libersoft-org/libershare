@@ -342,6 +342,44 @@ describe('download start — the lishnet window', () => {
 		}
 	});
 
+	it('does not start a download whose LISH was deleted before the start ran', async () => {
+		// The delete lands in the microtask window between scheduling the start and running
+		// it. Clearing the intent is not enough for the start to notice: absence is not
+		// refusal, and it would read "nobody objects" and re-enable a download whose files
+		// are being removed. The revocation has to be something the start can see.
+		const net = makeNetworks([NET_A]);
+		const handlers = initTransferHandlers(net.networks, makeDataServer(), tmpdir(), () => {}, undefined, settings);
+
+		const enabling = handlers.enableDownload({ lishID: LISH_ID });
+		await removeDownloadState(LISH_ID);
+
+		expect(await enabling).toEqual({ success: false });
+		expect(getDownloadEnabledLishs().has(LISH_ID)).toBe(false);
+		expect(handlers.getActiveTransfers()).toEqual([]);
+	});
+
+	it('does not re-enable a download a leave suspended while the result was settling', async () => {
+		// The start has already passed every check of its own and is announcing success; the
+		// leave lands in that last step, clears the flag deliberately and files a suspension
+		// claim. Restoring the flag from the older manual "on" would leave the claim
+		// describing a download the flag calls active, and restartDownloadIfEnabled acts on
+		// the flag. Driven from the broadcast so the leave lands exactly there.
+		const net = makeNetworks([NET_A]);
+		let leftOnAnnounce = false;
+		const broadcast = (event: string, _data: any): void => {
+			if (event !== 'transfer.download:enabled' || leftOnAnnounce) return;
+			leftOnAnnounce = true;
+			net.announceLeave(NET_A);
+		};
+		const handlers = initTransferHandlers(net.networks, makeDataServer(() => {}, tmpdir()), tmpdir(), () => {}, broadcast, settings);
+
+		const result = await handlers.enableDownload({ lishID: LISH_ID });
+
+		expect(leftOnAnnounce).toBe(true);
+		expect(result).toEqual({ success: false });
+		expect(getDownloadEnabledLishs().has(LISH_ID)).toBe(false);
+	});
+
 	it('lets a switch off land between scheduling a start and running it', async () => {
 		// The start body is deferred by one microtask so its single-flight registration cannot
 		// be missed. A disable arriving in that window is SYNCHRONOUS and therefore lands

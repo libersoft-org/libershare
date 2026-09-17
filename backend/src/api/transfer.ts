@@ -123,6 +123,14 @@ let _networkSuspended: Map<string, Set<string>> | null = null;
  * LISH whose files are being removed right now.
  */
 let _lastManualIntent: Map<string, boolean> | null = null;
+/**
+ * Per-LISH request counter. Anything that cancels outstanding work for a LISH bumps it, and
+ * a start captures it before it is scheduled — so a start whose reason to exist was revoked
+ * while it sat in the queue recognises the revocation instead of only looking for an
+ * explicit "off". Removing the intent alone is not enough: absence is not refusal, and the
+ * start would read it as "nobody objects" and re-enable the download it was told to forget.
+ */
+let _requestEpoch: Map<string, number> | null = null;
 export function setActiveDownloadersRef(ref: Map<string, any>): void {
 	_activeDownloaders = ref;
 }
@@ -132,12 +140,20 @@ export function setNetworkSuspendedRef(ref: Map<string, Set<string>>): void {
 export function setLastManualIntentRef(ref: Map<string, boolean>): void {
 	_lastManualIntent = ref;
 }
+export function setRequestEpochRef(ref: Map<string, number>): void {
+	_requestEpoch = ref;
+}
+/** Void every start for this LISH that has already been scheduled but has not run yet. */
+function revokeScheduledStarts(lishID: string): void {
+	_requestEpoch?.set(lishID, (_requestEpoch.get(lishID) ?? 0) + 1);
+}
 export async function forceDisableDownload(lishID: string): Promise<void> {
 	downloadEnabledLishs.delete(lishID);
 	_networkSuspended?.delete(lishID);
 	// The download is off now; an enable still waiting on an in-flight attempt must read
 	// that and not restart it.
 	_lastManualIntent?.set(lishID, false);
+	revokeScheduledStarts(lishID);
 	persistDownloadEnabled?.(lishID, false);
 	await destroyActiveDownloader(lishID);
 }
@@ -238,6 +254,7 @@ export async function removeDownloadState(lishID: string): Promise<void> {
 	// on an in-flight attempt, which would otherwise wake up, read "the user wants this
 	// on", and start a fresh download into a directory that is being deleted.
 	_lastManualIntent?.delete(lishID);
+	revokeScheduledStarts(lishID);
 	await destroyActiveDownloader(lishID);
 }
 
@@ -546,6 +563,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['lishID']);
 		if (transferAdmission.isClosed) return { success: false };
 		lastManualIntent.set(p.lishID, false);
+		revokeScheduledStarts(p.lishID);
 		networkSuspended.delete(p.lishID);
 		recovery.stop(p.lishID);
 		downloadEnabledLishs.delete(p.lishID);
@@ -577,6 +595,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 */
 	const lastManualIntent = new Map<string, boolean>();
 	setLastManualIntentRef(lastManualIntent);
+	const requestEpoch = new Map<string, number>();
+	setRequestEpochRef(requestEpoch);
 
 	/**
 	 * `requireEnabled` is the caller stating that it entered with the download switched ON,
@@ -714,7 +734,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		// stretch — so a second request arriving from inside it found no in-flight attempt
 		// and started its own, which is precisely what the single-flight map exists to stop.
 		// Deferring the body by one microtask makes the registration unmissable.
-		const attempt = Promise.resolve().then(() => startEnableDownload(p, client));
+		// Captured before the start is scheduled. Whatever revokes outstanding work for this
+		// LISH — a switch-off, a delete — bumps the counter, and the scheduled body then knows
+		// it belongs to a request nobody is waiting for any more.
+		const scheduledAt = requestEpoch.get(p.lishID) ?? 0;
+		const attempt = Promise.resolve().then(() => ((requestEpoch.get(p.lishID) ?? 0) !== scheduledAt ? { success: false } : startEnableDownload(p, client)));
 		pendingDownloads.set(p.lishID, attempt);
 		try {
 			return settleManualIntent(p.lishID, await attempt);
@@ -749,6 +773,12 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			// The start won, but an interleaved switch-off cleared the flags on its way past.
 			// The download is running and the user wants it, so the flags have to say so.
 			if (intent === true) {
+				// ...unless a leave got there first. It cleared the flag ON PURPOSE and left a
+				// suspension claim behind, and re-enabling on the strength of an older manual
+				// "on" would leave the claim describing a download the flag calls active —
+				// restartDownloadIfEnabled then acts on the flag and starts it with no lishnet.
+				const dl = activeDownloaders.get(lishID);
+				if (networkSuspended.has(lishID) || dl?.isDisabled?.() === true) return { success: false };
 				markDownloadEnabled(lishID);
 				return result;
 			}
