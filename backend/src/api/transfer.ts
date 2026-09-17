@@ -681,7 +681,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			// "Still wanted" is read from the suspension claim as much as from the runtime
 			// flag: the suspending branch drops the flag on purpose and leaves the claim as
 			// the record that the user wants this download as soon as a bound lishnet is back.
-			if (shared.success) return shared;
+			if (shared.success) return settleManualIntent(p.lishID, shared);
 			if (pendingDownloads.has(p.lishID)) return shared;
 			const bound = networkSuspended.get(p.lishID);
 			// A manual "off" is the last word and ends it here, whatever else still says on.
@@ -699,10 +699,38 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		const attempt = Promise.resolve().then(() => startEnableDownload(p, client));
 		pendingDownloads.set(p.lishID, attempt);
 		try {
-			return await attempt;
+			return settleManualIntent(p.lishID, await attempt);
 		} finally {
 			pendingDownloads.delete(p.lishID);
 		}
+	}
+
+	/**
+	 * Make a successful start agree with the user's last word.
+	 *
+	 * A start that reports success says only that it got the download running — it says
+	 * nothing about what the user asked for while it was running. `dl.enable()` awaits, and
+	 * a switch-off landing in that await writes its `false` first; the success then returns
+	 * over it, leaving the download live while both the runtime flag and the stored one say
+	 * off. The next startup reads the stored flag, so that download silently never comes back.
+	 *
+	 * Only a success is reconciled here: a failure is the re-ask branch's business, and that
+	 * one already refuses to act against a manual switch-off.
+	 */
+	function settleManualIntent(lishID: string, result: { success: boolean }): { success: boolean } {
+		if (!result.success) return result;
+		const intent = lastManualIntent.get(lishID);
+		// The switch-off is the later word. Apply it for real rather than reporting a success
+		// the user has already taken back — disableDownload stops the downloader the start
+		// just brought up and broadcasts the state the UI should be showing.
+		if (intent === false) {
+			disableDownload({ lishID });
+			return { success: false };
+		}
+		// The start won, but an interleaved switch-off cleared the flags on its way past.
+		// The download is running and the user wants it, so the flags have to say so.
+		if (intent === true && !downloadEnabledLishs.has(lishID)) markDownloadEnabled(lishID);
+		return result;
 	}
 
 	/**
@@ -710,6 +738,12 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * the downloader. Split out so the caller can own the in-flight bookkeeping.
 	 */
 	async function startEnableDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
+		// The body is deferred by a microtask (see the registration in enableDownloadAdmitted),
+		// and a switch-off can land in that window — from the user, or as the manual half of a
+		// resume that was scheduled before it. Re-read the last word here rather than trusting
+		// the one that scheduled this run: the lines below re-add the runtime flag and persist
+		// `true`, so an unchecked start writes the older request over the newer one.
+		if (lastManualIntent.get(p.lishID) === false) return { success: false };
 		if (isBusy(p.lishID)) return { success: false };
 		dataServer.clearError(p.lishID);
 		downloadEnabledLishs.add(p.lishID);

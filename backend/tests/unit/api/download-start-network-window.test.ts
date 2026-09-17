@@ -38,7 +38,14 @@ function makeNetworks(enabled: string[], joined: string[] = enabled): NetworksSt
 	let joinedHandler: (id: string) => void = () => {};
 	let leftHandler: (id: string) => void = () => {};
 	const networks = {
-		getRunningNetwork: (): any => ({ onPeerDisconnect: (): (() => void) => () => {} }),
+		getRunningNetwork: (): any => ({
+			onPeerDisconnect: (): (() => void) => () => {},
+			// A download that actually starts calls for peers; without these the run dies on
+			// the first WANT and the test would be watching a crash instead of the race.
+			broadcast: async (): Promise<void> => {},
+			getTopicPeers: (): string[] => [],
+			isRunning: (): boolean => true,
+		}),
 		getEnabled: (): any[] => enabled.map(networkID => ({ networkID })),
 		isJoined: (id: string): boolean => joinedSet.has(id),
 		set onNetworkLeft(cb: unknown) {
@@ -77,7 +84,7 @@ function makeNetworks(enabled: string[], joined: string[] = enabled): NetworksSt
  * instead of the start window. The second is the downloader's own init, which is the one
  * place inside that window a test can act from.
  */
-function makeDataServer(duringInit: () => void = () => {}): DataServer & { arm(fn: () => void): void } {
+function makeDataServer(duringInit: () => void = () => {}, directory: string | null = null): DataServer & { arm(fn: () => void): void } {
 	let reads = 0;
 	let pending: (() => void) | null = duringInit;
 	// The enable path reads the chunk list once for its own completeness check before the
@@ -91,8 +98,11 @@ function makeDataServer(duringInit: () => void = () => {}): DataServer & { arm(f
 		},
 		clearError: (): void => {},
 		setError: (): void => {},
-		// `directory: null` keeps the start on the no-pre-flight path.
-		get: (): any => ({ id: LISH_ID, name: 'x', directory: null, files: [] }),
+		getTransferStats: (): { downloadedBytes: number; uploadedBytes: number } => ({ downloadedBytes: 0, uploadedBytes: 0 }),
+		// A null directory keeps the start on the no-pre-flight path; a real one makes both
+		// the pre-flight and `Downloader.enable()` do their access check, which is the await
+		// a switch-off has to be able to land inside.
+		get: (): any => ({ id: LISH_ID, name: 'x', directory, files: [] }),
 		getAllChunkCount: (): number => 4,
 		isCompleteLISH: (): boolean => false,
 		getMissingChunks: (): string[] => {
@@ -108,8 +118,11 @@ function makeDataServer(duringInit: () => void = () => {}): DataServer & { arm(f
 }
 
 describe('download start — the lishnet window', () => {
+	let persisted: Array<{ lishID: string; enabled: boolean }> = [];
+
 	beforeEach(() => {
-		initDownloadState(new Set<string>(), () => {});
+		persisted = [];
+		initDownloadState(new Set<string>(), (lishID, enabled) => persisted.push({ lishID, enabled }));
 	});
 
 	it('does not resurrect a download the user turned off while its lishnet was left', async () => {
@@ -187,6 +200,77 @@ describe('download start — the lishnet window', () => {
 		} finally {
 			Downloader.prototype.removeNetwork = original;
 		}
+	});
+
+	it('reconciles the stored flag with a switch off that landed inside the enable', async () => {
+		// An existing downloader is re-enabled and `Downloader.enable()` awaits. A switch-off
+		// landing in that await writes its `false` first, and the enable then reports success
+		// over it — leaving the download running while the runtime flag and the stored one
+		// both say off. The next startup reads the stored one, so such a download silently
+		// never comes back. The enable is held open here rather than raced against a timer,
+		// so the interleaving is the test's, not the scheduler's.
+		let release!: () => void;
+		const held = new Promise<void>(resolve => (release = resolve));
+		const originalEnable = Downloader.prototype.enable;
+		Downloader.prototype.enable = async function (): Promise<void> {
+			await held;
+			return originalEnable.call(this);
+		};
+		try {
+			const net = makeNetworks([NET_A]);
+			const handlers = initTransferHandlers(net.networks, makeDataServer(() => {}, tmpdir()), tmpdir(), () => {}, undefined, settings);
+			expect(await handlers.enableDownload({ lishID: LISH_ID })).toEqual({ success: true });
+
+			handlers.disableDownload({ lishID: LISH_ID });
+			const enabling = handlers.enableDownload({ lishID: LISH_ID });
+			await new Promise(resolve => setTimeout(resolve, 0));
+			// The user takes it back while the enable is parked inside its own await.
+			handlers.disableDownload({ lishID: LISH_ID });
+			release();
+
+			expect(await enabling).toEqual({ success: false });
+			expect(getDownloadEnabledLishs().has(LISH_ID)).toBe(false);
+			const writes = persisted.filter(e => e.lishID === LISH_ID);
+			expect(writes[writes.length - 1]).toEqual({ lishID: LISH_ID, enabled: false });
+			expect(handlers.getActiveTransfers()).toEqual([]);
+		} finally {
+			Downloader.prototype.enable = originalEnable;
+		}
+	});
+
+	it('lets a switch off land between scheduling a start and running it', async () => {
+		// The start body is deferred by one microtask so its single-flight registration cannot
+		// be missed. A disable arriving in that window is SYNCHRONOUS and therefore lands
+		// first — the deferred body must not then re-enable the download and persist `true`
+		// over it. Asserted on what was stored, not only on what the calls answered: the
+		// stored flag is what the next startup reads.
+		const net = makeNetworks([NET_A]);
+		const handlers = initTransferHandlers(net.networks, makeDataServer(), tmpdir(), () => {}, undefined, settings);
+
+		const enabling = handlers.enableDownload({ lishID: LISH_ID });
+		expect(handlers.disableDownload({ lishID: LISH_ID })).toEqual({ success: true });
+
+		expect(await enabling).toEqual({ success: false });
+		expect(getDownloadEnabledLishs().has(LISH_ID)).toBe(false);
+		const writes = persisted.filter(e => e.lishID === LISH_ID);
+		expect(writes[writes.length - 1]).toEqual({ lishID: LISH_ID, enabled: false });
+		expect(handlers.getActiveTransfers()).toEqual([]);
+	});
+
+	it('lets a switch off win over a resume scheduled before it', async () => {
+		// Same window, but the scheduled start is the app's own resume rather than the user's
+		// request. The user's switch-off is still the later word and still has to hold.
+		const net = makeNetworks([NET_A]);
+		const handlers = initTransferHandlers(net.networks, makeDataServer(), tmpdir(), () => {}, undefined, settings);
+
+		const resuming = (handlers.enableDownload as (p: { lishID: string }, client?: any, manual?: boolean) => Promise<{ success: boolean }>)({ lishID: LISH_ID }, undefined, false);
+		handlers.disableDownload({ lishID: LISH_ID });
+
+		expect(await resuming).toEqual({ success: false });
+		expect(getDownloadEnabledLishs().has(LISH_ID)).toBe(false);
+		const writes = persisted.filter(e => e.lishID === LISH_ID);
+		expect(writes[writes.length - 1]).toEqual({ lishID: LISH_ID, enabled: false });
+		expect(handlers.getActiveTransfers()).toEqual([]);
 	});
 
 	it('keeps the last manual switch when it lands during a start', async () => {
