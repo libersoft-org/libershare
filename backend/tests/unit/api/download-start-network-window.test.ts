@@ -304,6 +304,44 @@ describe('download start — the lishnet window', () => {
 		}
 	});
 
+	it('keeps the suspension a leave filed after the downloader was registered', async () => {
+		// The start registers the downloader and keeps awaiting. A leave landing after the
+		// registration reaches it through onNetworkLeft, which disables it and files a FRESH
+		// suspension claim. Clearing that claim on the way out would leave the flag on, the
+		// downloader off and nothing for a later rejoin to resume from — the download would
+		// look enabled and never move again.
+		const net = makeNetworks([NET_A]);
+		let handlers!: ReturnType<typeof initTransferHandlers>;
+		const events: Array<{ event: string; data: any }> = [];
+		let leftDuringStart = false;
+		const originalDownload = Downloader.prototype.download;
+		Downloader.prototype.download = async function (): Promise<void> {
+			// Runs once the downloader is in activeDownloaders, which is what makes the leave
+			// reach it at all.
+			if (!leftDuringStart) {
+				leftDuringStart = true;
+				net.announceLeave(NET_A);
+			}
+			return originalDownload.call(this);
+		};
+		try {
+			handlers = initTransferHandlers(net.networks, makeDataServer(() => {}, tmpdir()), tmpdir(), () => {}, (event: string, data: any) => events.push({ event, data }), settings);
+
+			const result = await handlers.enableDownload({ lishID: LISH_ID });
+
+			expect(result).toEqual({ success: false });
+			expect(events.filter(e => e.event === 'transfer.download:enabled')).toEqual([]);
+
+			// The claim survived, so coming back actually resumes the download.
+			events.length = 0;
+			net.announceJoin(NET_A);
+			await new Promise(resolve => setTimeout(resolve, 40));
+			expect(events.filter(e => e.event === 'transfer.download:enabled').map(e => e.data.lishID)).toEqual([LISH_ID]);
+		} finally {
+			Downloader.prototype.download = originalDownload;
+		}
+	});
+
 	it('lets a switch off land between scheduling a start and running it', async () => {
 		// The start body is deferred by one microtask so its single-flight registration cannot
 		// be missed. A disable arriving in that window is SYNCHRONOUS and therefore lands

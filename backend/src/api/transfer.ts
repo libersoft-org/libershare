@@ -916,6 +916,20 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				}
 			}
 			await startStoredDownloader(p.lishID, joinedNetworks, originalNetworkIDs, false, client, true);
+			// The start registers the downloader and then keeps awaiting, so a leave landing
+			// after the registration reaches it through onNetworkLeft: the downloader is
+			// disabled and a FRESH suspension claim is filed. Clearing that claim here — it was
+			// written after this start began — would throw away the only record that says this
+			// download is waiting for a lishnet, leaving the flag on, the downloader off, and
+			// a later rejoin with nothing to resume from.
+			const started = activeDownloaders.get(p.lishID);
+			const boundAfterStart = started?.getOriginalNetworkIDs?.() ?? started?.getNetworkIDs?.() ?? joinedNetworks;
+			if (started?.isDisabled?.() === true || (boundAfterStart.length > 0 && !boundAfterStart.some((id: string) => networks.isJoined(id)))) {
+				console.log(`[Transfer] ${p.lishID.slice(0, 8)}: lishnet left while the start finished, staying suspended`);
+				downloadEnabledLishs.delete(p.lishID);
+				if (!networkSuspended.has(p.lishID)) networkSuspended.set(p.lishID, new Set(boundAfterStart));
+				return { success: false };
+			}
 			networkSuspended.delete(p.lishID);
 			recovery.stop(p.lishID);
 			const send = broadcast ?? (() => {});

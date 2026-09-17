@@ -1606,6 +1606,16 @@ export class Network {
 					// it repopulate maps that stop() just cleared, or evict against the
 					// NEXT node instance.
 					if (epoch !== this.runEpoch) return;
+					// A dial that was in flight when the user left the peer's lishnet fails for
+					// reasons that say nothing about the peer: leaveNetwork hangs it up. Recording
+					// that failure would let a deliberate leave accumulate the evidence for an
+					// unreachable-eviction and end as a GLOBAL quarantine — which a rejoin of that
+					// lishnet does not clear, because a rejoin only lifts the leave. The leave's
+					// own cleanup owns this peer now.
+					if (this.isRedialSuppressed(c.pid)) {
+						trace(`[NET] re-dial failure ignored, peer was left mid-dial: ${c.pid.slice(0, 16)}`);
+						continue;
+					}
 					// Exponential backoff: 30s × 2^failCount, capped at 10 min.
 					const nextFailCount = c.failCount + 1;
 					const delayMs = Math.min(30_000 * 2 ** c.failCount, 600_000);

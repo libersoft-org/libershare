@@ -132,8 +132,15 @@ describe('dialSuppressionReason — one question, two answers', () => {
 	});
 });
 
+/** Failure history that already satisfies both halves of the eviction predicate. */
+const evictableHistory = (): { nextAttempt: number; failCount: number; evictionFails: number; firstFailure: number } => ({
+	nextAttempt: 0,
+	failCount: EVICT_FAILS,
+	evictionFails: EVICT_FAILS,
+	firstFailure: Date.now() - EVICT_MIN_MS - 1,
+});
+
 describe('runRedialMaintenance — a left peer is not an unreachable peer', () => {
-	/** Failure history that already satisfies both halves of the eviction predicate. */
 	const evictable = (): { nextAttempt: number; failCount: number; evictionFails: number; firstFailure: number } => ({
 		nextAttempt: 0,
 		failCount: EVICT_FAILS,
@@ -203,6 +210,31 @@ describe('runRedialMaintenance — a left peer is not an unreachable peer', () =
 		await runRedial(h.network, [], [peerEntry(DEAD_PEER, ROUTABLE_ADDR), peerEntry(OTHER, ROUTABLE_ADDR)]);
 
 		expect(h.dialed).toEqual([DEAD_PEER]);
+	});
+
+	it('does not turn a leave that landed mid-dial into an unreachable quarantine', async () => {
+		// The dial is already in flight when the user leaves the peer's lishnet, and
+		// leaveNetwork hangs it up — so it fails for a reason that says nothing about the
+		// peer. Counting that failure lets a deliberate leave accumulate the evidence for an
+		// eviction and end as a GLOBAL quarantine, which a rejoin of that lishnet does not
+		// clear: a rejoin only lifts the leave.
+		const h = makeHarness();
+		(h.network as any).redialBackoff.set(DEAD_PEER, evictableHistory());
+		(h.network as any).node.dial = async (target: { toString(): string }): Promise<void> => {
+			h.dialed.push(target.toString());
+			// The leave lands while this dial is still outstanding.
+			suppress(h.network, NET, DEAD_PEER);
+			throw new Error('hung up by leaveNetwork');
+		};
+
+		await runRedial(h.network, [], [peerEntry(DEAD_PEER, ROUTABLE_ADDR)]);
+
+		expect(h.dialed).toEqual([DEAD_PEER]);
+		expect(h.purged).toEqual([]);
+		expect((h.network as any).unreachableQuarantine.has(DEAD_PEER)).toBe(false);
+		// Rejoining lifts the leave, and nothing else is holding the peer back.
+		h.network.clearRedialSuppressionForNetwork(NET);
+		expect((h.network as any).dialSuppressionReason(DEAD_PEER)).toBe(null);
 	});
 
 	it('negative control: judging the eviction on the clock alone evicts the left peer', async () => {
