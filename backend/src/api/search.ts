@@ -1,10 +1,10 @@
 import { randomUUID } from 'crypto';
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type Settings } from '../settings.ts';
-import { lishTopic } from '../protocol/constants.ts';
+import { lishTopic, MAX_SEARCH_QUERY_LENGTH } from '../protocol/constants.ts';
 import { trace } from '../logger.ts';
 import { LISH_PROTOCOL, LISHClient, registerSearchResultHandler, unregisterSearchResultHandler, type SearchResultAnnouncement } from '../protocol/lish-protocol.ts';
-import { ErrorCodes, type LishSearchResult } from '@shared';
+import { CodedError, ErrorCodes, type LishSearchResult } from '@shared';
 
 /**
  * Concurrency cap for the unicast `getLishs` fallback. Each fan-out opens a
@@ -46,6 +46,14 @@ interface SearchSession {
 	disposePeerConnect: () => void;
 	/** Retry bookkeeping for peers that refused us; see {@link RefusalState}. */
 	refusals: Map<string, RefusalState>;
+	/**
+	 * Peers that have served us, over any channel.
+	 *
+	 * A peer can answer over pubsub while our direct query to it is still out. That direct
+	 * query then fails with a refusal, which without this would open a fresh retry cycle for
+	 * a peer whose answer is already on screen — a late error overwriting a settled result.
+	 */
+	answered: Set<string>;
 	/**
 	 * Clients with a request on the wire for this search.
 	 *
@@ -107,13 +115,22 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 	const dialWaiters: Array<() => void> = [];
 
 	async function acquireDial(): Promise<void> {
-		if (dialsInFlight >= UNICAST_FALLBACK_PARALLEL) await new Promise<void>(resolve => dialWaiters.push(resolve));
-		dialsInFlight++;
+		if (dialsInFlight < UNICAST_FALLBACK_PARALLEL) {
+			dialsInFlight++;
+			return;
+		}
+		// Woken by releaseDial, which hands its permit straight over — the count already
+		// includes ours, so nothing is added here.
+		await new Promise<void>(resolve => dialWaiters.push(resolve));
 	}
 
 	function releaseDial(): void {
-		dialsInFlight--;
-		dialWaiters.shift()?.();
+		// Hand the permit directly to whoever is waiting rather than freeing it and waking
+		// them: between those two steps the slot looked free, so a newly arriving dial could
+		// take it and the woken waiter would then take it as well — eleven at once.
+		const next = dialWaiters.shift();
+		if (next) next();
+		else dialsInFlight--;
 	}
 
 	function endSession(searchID: string, reason: 'timeout' | 'cancel'): void {
@@ -139,6 +156,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		if (!session) return;
 		// This peer has served us, so a re-ask armed by an earlier refusal is moot however the
 		// answer reached us — the pubsub path lands here too, not only the unicast one.
+		session.answered.add(ann.peerID);
 		clearRefusal(session, ann.peerID);
 		// Map peerID → networkID is non-trivial without checking pubsub subscribers across topics;
 		// for the UI we only need the peerID + a representative networkID. Pick the first joined network
@@ -184,6 +202,10 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 	async function startSearch(p: { query: string }): Promise<{ searchID: string }> {
 		const query = (p.query ?? '').trim();
 		if (query.length === 0) throw new Error('search query is empty');
+		// Refuse here what every responder refuses anyway. Without this the search is sent,
+		// each peer drops it on the same bound and answers with an empty list, and the user is
+		// told nothing was found — which is not what happened.
+		if (query.length > MAX_SEARCH_QUERY_LENGTH) throw new CodedError(ErrorCodes.SEARCH_QUERY_TOO_LONG, String(query.length));
 		const searchID = randomUUID();
 		const timeoutMs = settings.get('network.searchTimeout') ?? 30_000;
 		const network = networks.getRunningNetwork();
@@ -221,6 +243,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			queried,
 			disposePeerConnect,
 			refusals,
+			answered: new Set<string>(),
 			inFlightClients: new Set<LISHClient>(),
 		};
 		sessions.set(searchID, session);
@@ -353,6 +376,13 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		try {
 			const { stream } = await network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
 			client = new LISHClient(stream);
+			// The dial itself is not cancellable and there was no client to tear down while it
+			// ran, so the search may have ended underneath it. Ask again before spending the
+			// stream on a question nobody is waiting for the answer to.
+			if (!sessions.has(searchID)) {
+				client.abort(new Error('search ended'));
+				return;
+			}
 			// Registered before the request, so ending the session can tear it down mid-read.
 			session.inFlightClients.add(client);
 			const lishs = await client.requestList(query);
@@ -383,8 +413,12 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			clearRefusal(session, peerID);
 		} catch (err: any) {
 			if (err?.code === ErrorCodes.PEER_LISTING_NOT_AUTHORIZED) {
-				if (!session.refusals.has(peerID)) session.refusals.set(peerID, { attempts: 0, timer: null });
-				scheduleRefusalRetry(session, peerID);
+				// Not for a peer that has already served us: its answer settled the question, and
+				// this refusal is only the other channel arriving late.
+				if (!session.answered.has(peerID)) {
+					if (!session.refusals.has(peerID)) session.refusals.set(peerID, { attempts: 0, timer: null });
+					scheduleRefusalRetry(session, peerID);
+				}
 				return;
 			}
 			trace(`[Search] unicast getLishs to ${peerID.slice(0, 12)} failed: ${err?.message ?? err}`);
