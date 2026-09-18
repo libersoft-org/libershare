@@ -20,7 +20,7 @@ const UNICAST_FALLBACK_PARALLEL = 10;
  * outliving the default 30 s search.
  */
 const LISTING_REFUSAL_RETRY_MS = 1_500;
-const MAX_LISTING_REFUSAL_RETRIES = 3;
+export const MAX_LISTING_REFUSAL_RETRIES = 3;
 /**
  * Already-queried peer set lives on the session so the initial snapshot
  * dispatch and the live `peer:connect` listener can deduplicate against
@@ -44,10 +44,26 @@ interface SearchSession {
 	disposePeerConnect: () => void;
 	/** Disposer for the topic-subscribe listener, called on timeout/cancel. */
 	disposePeerSubscribe: () => void;
-	/** Per peer, how many times it has refused us for want of visible membership. */
-	refusals: Map<string, number>;
-	/** Pending re-ask timers, cleared with the session so none outlives it. */
-	retryTimers: Set<ReturnType<typeof setTimeout>>;
+	/** Retry bookkeeping for peers that refused us; see {@link RefusalState}. */
+	refusals: Map<string, RefusalState>;
+}
+
+/**
+ * What a peer that refused the listing is owed, as ONE record per peer.
+ *
+ * Both the timer and the subscribe event want to re-ask the same peer, and counting only
+ * the refusals that came back let several of them pass the budget check before the first
+ * answer landed. So the budget is spent when a query is DISPATCHED, and the record also
+ * holds whether one is already in flight and which timer is pending — an immediate re-ask
+ * cancels that timer rather than racing it.
+ */
+interface RefusalState {
+	/** Queries dispatched to this peer because of a refusal, counted at dispatch. */
+	attempts: number;
+	/** A query is on the wire right now — nothing may start a second one. */
+	inFlight: boolean;
+	/** The pending timed re-ask, cancelled when anything else asks first. */
+	timer: ReturnType<typeof setTimeout> | null;
 }
 
 export interface SearchManager {
@@ -76,8 +92,9 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		const session = sessions.get(searchID);
 		if (!session) return;
 		clearTimeout(session.timeout);
-		for (const timer of session.retryTimers) clearTimeout(timer);
-		session.retryTimers.clear();
+		// No armed re-ask may outlive the session it belongs to.
+		for (const state of session.refusals.values()) if (state.timer) clearTimeout(state.timer);
+		session.refusals.clear();
 		session.disposePeerConnect();
 		session.disposePeerSubscribe();
 		unregisterSearchResultHandler(searchID);
@@ -138,8 +155,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		const network = networks.getRunningNetwork();
 		const selfPeerID = network.getNodeInfo()?.peerID ?? '';
 		const queried: Queried = new Set();
-		const refusals = new Map<string, number>();
-		const retryTimers = new Set<ReturnType<typeof setTimeout>>();
+		const refusals = new Map<string, RefusalState>();
 		// Live listener: every peer that completes a libp2p connection while
 		// this search is in flight gets a unicast `getLishs(query)`. Catches
 		// the case where a peer appears via mDNS / peer-announce / hole-punch
@@ -160,15 +176,14 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		// sooner than its timer would: a peer that refused us is worth re-asking as soon as
 		// anything about the membership picture changes.
 		const disposePeerSubscribe = network.onPeerSubscribe(peerID => {
-			if (!sessions.has(searchID)) return;
+			const session = sessions.get(searchID);
+			if (!session) return;
 			if (!peerID || peerID === selfPeerID) return;
-			// Same budget as the timed path, or a peer flapping its subscription would buy a
-			// dial per flap however many times it has already refused us.
-			const attempts = refusals.get(peerID);
-			if (attempts === undefined || attempts > MAX_LISTING_REFUSAL_RETRIES) return;
-			void queryOnePeer(searchID, query, peerID).catch(() => {
-				/* logged inside queryOnePeer */
-			});
+			// Only a peer that owes us a retry, and only through the one dispatcher that
+			// enforces the budget — a peer flapping its subscription must not buy a dial per
+			// flap, and must not overtake a query it already has on the wire.
+			if (!session.refusals.has(peerID)) return;
+			dispatchRefusalRetry(session, peerID);
 		});
 		const session: SearchSession = {
 			searchID,
@@ -180,7 +195,6 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			disposePeerConnect,
 			disposePeerSubscribe,
 			refusals,
-			retryTimers,
 		};
 		sessions.set(searchID, session);
 		registerSearchResultHandler(searchID, handleResult);
@@ -246,31 +260,64 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		await Promise.allSettled(workers);
 	}
 
+	/** Forget a peer's retry state and cancel whatever it still had pending. */
+	function clearRefusal(session: SearchSession, peerID: string): void {
+		const state = session.refusals.get(peerID);
+		if (!state) return;
+		if (state.timer) clearTimeout(state.timer);
+		session.refusals.delete(peerID);
+	}
+
 	/**
-	 * Ask a peer that refused us again, a little later.
+	 * Arm the delayed re-ask of a peer that just refused us.
 	 *
 	 * The refusal means the peer has not yet processed our own subscription — a state the
 	 * two sides converge out of on their own, but on no schedule we control or can observe.
-	 * Waiting for an event is what made this order-dependent, so the retry is simply timed;
-	 * it is bounded twice over, by {@link MAX_LISTING_REFUSAL_RETRIES} and by the session
-	 * timeout that clears every pending timer, so a peer that keeps refusing cannot turn
-	 * the search into a dial loop.
+	 * Waiting for an event is what made this order-dependent, so the retry is timed, and a
+	 * subscribe event can only bring the same retry forward (see
+	 * {@link dispatchRefusalRetry}).
 	 */
 	function scheduleRefusalRetry(session: SearchSession, peerID: string): void {
-		const attempts = (session.refusals.get(peerID) ?? 0) + 1;
-		session.refusals.set(peerID, attempts);
-		if (attempts > MAX_LISTING_REFUSAL_RETRIES) {
+		const state = session.refusals.get(peerID);
+		if (!state || state.timer) return;
+		if (state.attempts >= MAX_LISTING_REFUSAL_RETRIES) {
 			trace(`[Search] ${session.searchID.slice(0, 8)}: ${peerID.slice(0, 12)} still refuses the listing, giving up`);
+			session.refusals.delete(peerID);
 			return;
 		}
-		const timer = setTimeout(() => {
-			session.retryTimers.delete(timer);
-			if (!sessions.has(session.searchID)) return;
-			void queryOnePeer(session.searchID, session.query, peerID).catch(() => {
-				/* logged inside queryOnePeer */
-			});
+		state.timer = setTimeout(() => {
+			state.timer = null;
+			dispatchRefusalRetry(session, peerID);
 		}, LISTING_REFUSAL_RETRY_MS);
-		session.retryTimers.add(timer);
+	}
+
+	/**
+	 * The single door every refusal-driven re-ask goes through, so the budget is real.
+	 *
+	 * Spends an attempt when the query is DISPATCHED, not when its refusal comes back:
+	 * counting the answers let any number of events pass the check while the first query
+	 * was still on the wire. `inFlight` closes the same hole for concurrent events, and
+	 * arming here cancels a pending timer so an immediate re-ask replaces it instead of
+	 * both firing.
+	 */
+	function dispatchRefusalRetry(session: SearchSession, peerID: string): void {
+		if (!sessions.has(session.searchID)) return;
+		const state = session.refusals.get(peerID);
+		if (!state || state.inFlight) return;
+		if (state.attempts >= MAX_LISTING_REFUSAL_RETRIES) {
+			trace(`[Search] ${session.searchID.slice(0, 8)}: ${peerID.slice(0, 12)} still refuses the listing, giving up`);
+			clearRefusal(session, peerID);
+			return;
+		}
+		if (state.timer) {
+			clearTimeout(state.timer);
+			state.timer = null;
+		}
+		state.attempts++;
+		state.inFlight = true;
+		void queryOnePeer(session.searchID, session.query, peerID).catch(() => {
+			/* logged inside queryOnePeer */
+		});
 	}
 
 	async function queryOnePeer(searchID: string, query: string, peerID: string): Promise<void> {
@@ -304,14 +351,19 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 				// produces a duplicate row in the FE result list.
 				handleResult({ searchID, peerID, lishs: matches });
 			}
-			session.refusals.delete(peerID);
+			// The peer answered, so nothing is owed — including a timer armed by an earlier
+			// refusal, which would otherwise fire after the question was already settled.
+			clearRefusal(session, peerID);
 		} catch (err: any) {
 			if (err?.code === ErrorCodes.PEER_LISTING_NOT_AUTHORIZED) {
+				if (!session.refusals.has(peerID)) session.refusals.set(peerID, { attempts: 0, inFlight: false, timer: null });
 				scheduleRefusalRetry(session, peerID);
 				return;
 			}
 			trace(`[Search] unicast getLishs to ${peerID.slice(0, 12)} failed: ${err?.message ?? err}`);
 		} finally {
+			const state = session.refusals.get(peerID);
+			if (state) state.inFlight = false;
 			await client?.close().catch(() => {});
 		}
 	}

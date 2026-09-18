@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { Uint8ArrayList } from 'uint8arraylist';
 import { encode as lpEncode } from 'it-length-prefixed';
-import { initSearchManager } from '../../../src/api/search.ts';
+import { initSearchManager, MAX_LISTING_REFUSAL_RETRIES } from '../../../src/api/search.ts';
 import { encode as codecEncode } from '../../../src/protocol/codec.ts';
 import { lishTopic } from '../../../src/protocol/constants.ts';
 import { ErrorCodes } from '@shared';
@@ -159,10 +159,67 @@ describe('search unicast retry after a listing refusal', () => {
 			fireSubscribe();
 			await settle();
 		}
+		// Wait past the retry delay too: an armed timer that survived the budget check would
+		// fire here, which is how the bound was exceeded before.
+		await afterRetryDelay();
 
-		// First query plus at most MAX_LISTING_REFUSAL_RETRIES re-asks.
-		expect(dials).toEqual([NEW_PEER, NEW_PEER, NEW_PEER, NEW_PEER]);
+		// First query plus at most MAX_LISTING_REFUSAL_RETRIES re-asks. Ten events spread out
+		// far enough to each get an answer used to buy seven dials.
+		expect(dials.length).toBeLessThanOrEqual(1 + MAX_LISTING_REFUSAL_RETRIES);
+		expect(dials.every(p => p === NEW_PEER)).toBe(true);
 		manager.stopAll();
+	});
+
+	// Events arriving back to back, with no chance for an answer in between: each one used
+	// to pass a budget check that only counted the refusals that had come back, so all of
+	// them dispatched and the bound meant nothing.
+	it('a burst of subscriptions cannot outrun the budget', async () => {
+		const { manager, dials, fireSubscribe } = buildManager([[refused]]);
+
+		await manager.startSearch({ query: LISH_ID.slice(0, 8) });
+		await settle();
+		for (let i = 0; i < 10; i++) fireSubscribe(); // no await: nothing can answer in between
+		await settle();
+		await afterRetryDelay();
+
+		// The bound, not an exact count: how many timed retries fit in the window is a matter
+		// of timing, but exceeding the budget never is. Ten events used to buy ten dials.
+		expect(dials.length).toBeLessThanOrEqual(1 + MAX_LISTING_REFUSAL_RETRIES);
+		expect(dials.every(p => p === NEW_PEER)).toBe(true);
+		manager.stopAll();
+	});
+
+	// The timer armed by the refusal has to be cancelled by whatever settles the question
+	// first, or it fires into a peer that has already answered.
+	it('a successful early retry cancels the timer it overtook', async () => {
+		const { manager, dials, events, fireSubscribe } = buildManager([[refused], [oneResult]]);
+
+		await manager.startSearch({ query: LISH_ID.slice(0, 8) });
+		await settle();
+		fireSubscribe(); // answers immediately, well inside the armed delay
+		await settle();
+		expect(dials).toEqual([NEW_PEER, NEW_PEER]);
+
+		await afterRetryDelay(); // the original timer's moment comes and goes
+
+		expect(dials).toEqual([NEW_PEER, NEW_PEER]);
+		expect(events.filter(e => e.event === 'search:lishs:update')).toHaveLength(1);
+		manager.stopAll();
+	});
+
+	// Nothing armed by a session may outlive it: the timer holds the session and would dial
+	// a peer for a search the user has already cancelled.
+	it('ending the search cancels a pending retry', async () => {
+		const { manager, dials } = buildManager([[refused], [oneResult]]);
+
+		await manager.startSearch({ query: LISH_ID.slice(0, 8) });
+		await settle();
+		expect(dials).toEqual([NEW_PEER]);
+
+		manager.stopAll();
+		await afterRetryDelay();
+
+		expect(dials).toEqual([NEW_PEER]);
 	});
 
 	it('treats an empty list as a final answer', async () => {
