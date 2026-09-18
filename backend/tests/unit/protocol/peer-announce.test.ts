@@ -740,3 +740,63 @@ describe('PeerAnnounceManager.emit — what one peer may contribute', () => {
 		expect(mine).not.toContain('p2p-circuit');
 	});
 });
+
+/**
+ * The grace a disconnect starts is bought by MEMBERSHIP, not by the connection.
+ *
+ * `topicMembers` deliberately outlives a connection — discovery re-advertises a peer
+ * precisely while it is away — so "still in the map" cannot decide whether a disconnect
+ * earns a fresh authorization window. Re-stamping on that alone let a peer hold an
+ * expired listing right open forever by connecting and disconnecting on a loop, never
+ * subscribing to anything.
+ */
+describe('PeerAnnounceManager.touchKnownMember — the claim is earned and spent', () => {
+	const TOPIC = `${LISH_TOPIC_PREFIX}netAAAA`;
+	const NARROW = 15; // ms: wide enough for a just-written stamp, too narrow for an aged one
+	const age = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 40));
+
+	it('grants the grace once per membership and refuses the reconnects after it', async () => {
+		const { mgr } = intakeManager();
+		mgr.noteMember(TOPIC, PA_ID);
+		await age();
+		// The stamp has aged out of the narrow window: nothing has refreshed it yet.
+		expect(mgr.getRecentMembers(TOPIC, NARROW)).toEqual([]);
+
+		// The disconnect that ends the SUBSCRIBED connection — the grace is due.
+		mgr.touchKnownMember(PA_ID);
+		expect(mgr.getRecentMembers(TOPIC, NARROW)).toEqual([PA_ID]);
+
+		// Every later transport connect/disconnect brings no new SUBSCRIBE, so the stamp
+		// must stay where it is and age out again. This is the loop that used to hold an
+		// expired authorization open indefinitely.
+		await age();
+		mgr.touchKnownMember(PA_ID);
+		mgr.touchKnownMember(PA_ID);
+		expect(mgr.getRecentMembers(TOPIC, NARROW)).toEqual([]);
+	});
+
+	it('a new subscription earns a new claim', async () => {
+		const { mgr } = intakeManager();
+		mgr.noteMember(TOPIC, PA_ID);
+		mgr.touchKnownMember(PA_ID); // spends the first claim
+		await age();
+
+		mgr.noteMember(TOPIC, PA_ID); // the peer subscribed again
+		await age();
+		expect(mgr.getRecentMembers(TOPIC, NARROW)).toEqual([]);
+
+		mgr.touchKnownMember(PA_ID);
+
+		expect(mgr.getRecentMembers(TOPIC, NARROW)).toEqual([PA_ID]);
+	});
+
+	it('an explicit unsubscribe withdraws the pending claim too', () => {
+		const { mgr } = intakeManager();
+		mgr.noteMember(TOPIC, PA_ID);
+		mgr.forgetMember(TOPIC, PA_ID);
+
+		mgr.touchKnownMember(PA_ID);
+
+		expect(mgr.getRecentMembers(TOPIC, 60_000)).toEqual([]);
+	});
+});

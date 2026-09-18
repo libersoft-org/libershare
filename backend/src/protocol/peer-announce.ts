@@ -221,6 +221,17 @@ export class PeerAnnounceManager {
 	 * it), so the cross-network leak stays closed. Pruned each emit().
 	 */
 	private readonly topicMembers = new Map<string, Map<string, number>>();
+	/**
+	 * Peers whose membership was confirmed by live evidence since their last grace stamp.
+	 *
+	 * {@link topicMembers} outlives a connection on purpose — discovery wants the history —
+	 * so "is it in the map" cannot decide whether a disconnect earns a fresh grace window.
+	 * Without this set, connecting and disconnecting without ever subscribing re-stamped
+	 * the old entry, and repeating that held an expired authorization open indefinitely.
+	 * Filled where real evidence lands (a SUBSCRIBE, or the live subscriber snapshot) and
+	 * SPENT by the disconnect that uses it: the next one has to be earned again.
+	 */
+	private readonly confirmedMembers = new Set<string>();
 	/** Per-announcing-peer intake budget — see {@link AnnounceRateLimiter}. */
 	private readonly rateLimiter = new AnnounceRateLimiter();
 	/** Raw parsing-work budget, spent before any attacker-controlled address is parsed. */
@@ -259,6 +270,7 @@ export class PeerAnnounceManager {
 			this.topicMembers.set(topic, members);
 		}
 		members.set(peerID, monotonicNow());
+		this.confirmedMembers.add(peerID);
 	}
 
 	/**
@@ -270,6 +282,9 @@ export class PeerAnnounceManager {
 	 */
 	forgetMember(topic: string, peerID: string): void {
 		this.topicMembers.get(topic)?.delete(peerID);
+		// The peer has stated it left: whatever grace its next disconnect could have
+		// claimed is withdrawn with the membership itself.
+		if (![...this.topicMembers.values()].some(m => m.has(peerID))) this.confirmedMembers.delete(peerID);
 	}
 
 	/**
@@ -283,6 +298,10 @@ export class PeerAnnounceManager {
 	 * this to peers a topic already lists keeps the grace to subscriptions we saw.
 	 */
 	touchKnownMember(peerID: string): void {
+		// Only a membership confirmed during the connection that is ending earns the grace.
+		// A transport connect/disconnect with no SUBSCRIBE in between proves nothing, and
+		// re-stamping on it let a peer keep an expired authorization alive by reconnecting.
+		if (!this.confirmedMembers.delete(peerID)) return;
 		const now = monotonicNow();
 		for (const members of this.topicMembers.values()) {
 			if (members.has(peerID)) members.set(peerID, now);
@@ -305,7 +324,12 @@ export class PeerAnnounceManager {
 				this.topicMembers.set(topic, members);
 			}
 			try {
-				for (const p of pubsub.getSubscribers(topic)) members.set(p.toString(), now);
+				for (const p of pubsub.getSubscribers(topic)) {
+					const pid = p.toString();
+					members.set(pid, now);
+					// Seen subscribed right now — the same standing a SUBSCRIBE event grants.
+					this.confirmedMembers.add(pid);
+				}
 			} catch {
 				// topic may be tearing down — keep what we already have
 			}
