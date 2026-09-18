@@ -113,16 +113,47 @@ export function markDownloadEnabled(lishID: string): void {
 	persistDownloadEnabled?.(lishID, true);
 }
 let _activeDownloaders: Map<string, any> | null = null;
+// Same indirection for the suspended-by-leave map: it lives in the handler closure,
+// but LISH deletion happens outside it and must be able to forget the LISH.
 let _networkSuspended: Map<string, Set<string>> | null = null;
+/**
+ * Same indirection for the last-manual-intent record. Deleting a LISH happens outside the
+ * handler closure, and an enable already waiting on an in-flight attempt re-reads this to
+ * decide whether to try again — an intent left behind would start a fresh download for a
+ * LISH whose files are being removed right now.
+ */
+let _lastManualIntent: Map<string, boolean> | null = null;
+/**
+ * Per-LISH request counter. Anything that cancels outstanding work for a LISH bumps it, and
+ * a start captures it before it is scheduled — so a start whose reason to exist was revoked
+ * while it sat in the queue recognises the revocation instead of only looking for an
+ * explicit "off". Removing the intent alone is not enough: absence is not refusal, and the
+ * start would read it as "nobody objects" and re-enable the download it was told to forget.
+ */
+let _requestEpoch: Map<string, number> | null = null;
 export function setActiveDownloadersRef(ref: Map<string, any>): void {
 	_activeDownloaders = ref;
 }
 export function setNetworkSuspendedRef(ref: Map<string, Set<string>>): void {
 	_networkSuspended = ref;
 }
+export function setLastManualIntentRef(ref: Map<string, boolean>): void {
+	_lastManualIntent = ref;
+}
+export function setRequestEpochRef(ref: Map<string, number>): void {
+	_requestEpoch = ref;
+}
+/** Void every start for this LISH that has already been scheduled but has not run yet. */
+function revokeScheduledStarts(lishID: string): void {
+	_requestEpoch?.set(lishID, (_requestEpoch.get(lishID) ?? 0) + 1);
+}
 export async function forceDisableDownload(lishID: string): Promise<void> {
 	downloadEnabledLishs.delete(lishID);
 	_networkSuspended?.delete(lishID);
+	// The download is off now; an enable still waiting on an in-flight attempt must read
+	// that and not restart it.
+	_lastManualIntent?.set(lishID, false);
+	revokeScheduledStarts(lishID);
 	persistDownloadEnabled?.(lishID, false);
 	await destroyActiveDownloader(lishID);
 }
@@ -133,6 +164,22 @@ export async function destroyActiveDownloader(lishID: string): Promise<void> {
 	if (dl) {
 		await dl.destroy();
 		_activeDownloaders!.delete(lishID);
+	}
+}
+
+/**
+ * A fresh downloader was torn down before it ever started, because the state it was
+ * built from changed while the manifest was being read. Not a download error: nothing
+ * failed and nothing is broken, so the caller reports "not started" rather than
+ * stamping an error on the LISH the user would then have to clear by hand.
+ */
+export class DownloadStartAbandoned extends Error {
+	readonly lishID: string;
+
+	constructor(lishID: string, reason: string) {
+		super(`Download ${lishID.slice(0, 8)} not started: ${reason}`);
+		this.name = 'DownloadStartAbandoned';
+		this.lishID = lishID;
 	}
 }
 
@@ -198,7 +245,16 @@ export async function destroyAllDownloaders<T extends Pick<Downloader, 'destroy'
 /** Remove in-memory download state without DB persist (for LISH deletion). */
 export async function removeDownloadState(lishID: string): Promise<void> {
 	downloadEnabledLishs.delete(lishID);
+	// A LISH deleted while its download was suspended by a leave must drop its resume
+	// claim too. Left behind, the entry survives the LISH: every later lishnet join
+	// retries a LISH that no longer exists, and re-importing the same id would resume
+	// a download the user never asked for again.
 	_networkSuspended?.delete(lishID);
+	// The LISH is going away, so every older request for it is void — including one parked
+	// on an in-flight attempt, which would otherwise wake up, read "the user wants this
+	// on", and start a fresh download into a directory that is being deleted.
+	_lastManualIntent?.delete(lishID);
+	revokeScheduledStarts(lishID);
 	await destroyActiveDownloader(lishID);
 }
 
@@ -413,9 +469,14 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		for (const [lishID, bound] of [...networkSuspended]) {
 			if (bound.size > 0 && !bound.has(networkID)) continue;
 			try {
-				enableDownload({ lishID })
+				enableDownload({ lishID }, undefined, false)
 					.then(r => {
-						if (r.success) {
+						// Drop the claim this resume was started for, never whatever is in the map
+						// by the time it answers. A leave landing while the resume ran files a NEW
+						// claim under the same LISH, and deleting that one would throw away the
+						// newer decision — the download then waits for a rejoin that has nothing
+						// left to find.
+						if (r.success && networkSuspended.get(lishID) === bound) {
 							networkSuspended.delete(lishID);
 							console.log(`[Transfer] ${lishID.slice(0, 8)}: lishnet re-joined, download resumed`);
 						}
@@ -432,7 +493,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		attemptRecover: async (lishID, downloadWasEnabled, uploadWasEnabled): Promise<boolean> => {
 			let ok = true;
 			if (downloadWasEnabled) {
-				const result = await enableDownload({ lishID });
+				const result = await enableDownload({ lishID }, undefined, false);
 				if (!result.success) ok = false;
 			}
 			if (uploadWasEnabled && ok) ok = enableUploadHandler({ lishID }).success;
@@ -506,6 +567,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	function disableDownload(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
 		if (transferAdmission.isClosed) return { success: false };
+		lastManualIntent.set(p.lishID, false);
+		revokeScheduledStarts(p.lishID);
 		networkSuspended.delete(p.lishID);
 		recovery.stop(p.lishID);
 		downloadEnabledLishs.delete(p.lishID);
@@ -517,9 +580,49 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		return { success: true };
 	}
 
-	const pendingDownloads = new Set<string>();
+	/**
+	 * In-flight enable attempts, keyed by LISH. Holds the PROMISE, not just the id:
+	 * callers that arrive while one is running must receive its real outcome. A
+	 * synthetic `{ success: true }` is read by onNetworkJoined as a completed resume,
+	 * so it drops the suspension claim — and if the attempt it did not wait for then
+	 * fails, nothing is left to resume the download from.
+	 */
+	const pendingDownloads = new Map<string, Promise<{ success: boolean }>>();
+	/**
+	 * The last state the USER asked for, kept apart from whatever attempt is in flight.
+	 *
+	 * An enable arriving while an earlier attempt is still running only waits for it, so
+	 * without this the sequence enable → disable → enable ends with the middle answer:
+	 * the first attempt aborts on the disable, the second reads a switched-off download
+	 * and agrees, and the user's last word is lost. Only the manual API path writes here —
+	 * a resume-on-rejoin is the app's decision, not the user's, and must never look like
+	 * one for a download that was deliberately switched off.
+	 */
+	const lastManualIntent = new Map<string, boolean>();
+	setLastManualIntentRef(lastManualIntent);
+	const requestEpoch = new Map<string, number>();
+	setRequestEpochRef(requestEpoch);
+	/**
+	 * File a resume claim, but only while the request that is filing it still stands.
+	 *
+	 * Every one of these writes happens after an await, and a delete landing in that await
+	 * has already cleared the claim it is about to recreate — leaving a deleted LISH in the
+	 * resume set, where the next lishnet join finds it and, for a re-import that was never
+	 * switched on, turns its download back on.
+	 */
+	function claimSuspension(lishID: string, networkIDs: Iterable<string>, scheduledAt: number): boolean {
+		if ((requestEpoch.get(lishID) ?? 0) !== scheduledAt) return false;
+		networkSuspended.set(lishID, new Set(networkIDs));
+		return true;
+	}
 
-	async function startStoredDownloader(lishID: string, networkIDs: string[], originalNetworkIDs: string[], disabled: boolean, client?: any): Promise<Downloader> {
+	/**
+	 * `requireEnabled` is the caller stating that it entered with the download switched ON,
+	 * so a flag that has gone by the time the downloader is ready means the user withdrew
+	 * it mid-start. A restore never sets that flag — it starts downloaders on behalf of the
+	 * stored intent — so it must not be judged by it.
+	 */
+	async function startStoredDownloader(lishID: string, networkIDs: string[], originalNetworkIDs: string[], disabled: boolean, client?: any, requireEnabled = false, scheduledAt = requestEpoch.get(lishID) ?? 0): Promise<Downloader> {
 		const lish = dataServer.get(lishID);
 		if (!lish) throw new Error(`Cannot restore download ${lishID}: LISH is missing`);
 		const downloadDir = lish.directory ?? join(dataDir, 'downloads', Date.now().toString());
@@ -530,6 +633,43 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 		const downloader = new Downloader(downloadDir, networks.getRunningNetwork(), dataServer, networkIDs, originalNetworkIDs);
 		await downloader.initFromManifest(lish);
+		// `networkIDs` and the enabled flag were both read before the awaits above, and this
+		// downloader is not in `activeDownloaders` yet — onNetworkLeft, disableDownload and
+		// removeDownloadState all only walk that map, so a leave or a withdrawal landing in
+		// this window reaches neither. Unchecked, the download starts on a lishnet we have
+		// already left, or for a LISH the user just turned off or deleted. A downloader
+		// restored in the disabled state starts nothing and is exempt.
+		if (!disabled) {
+			// The user's own withdrawal is asked FIRST. A disable or a delete clears the
+			// resume claim on its way out, so filing a new one for a lishnet that was left
+			// in the same window would resurrect a download the user just switched off:
+			// the next rejoin reads networkSuspended and turns it back on.
+			if (requireEnabled && !downloadEnabledLishs.has(lishID)) {
+				await downloader.destroy();
+				throw new DownloadStartAbandoned(lishID, 'download withdrawn while starting');
+			}
+			if (!networkIDs.some(id => networks.isJoined(id))) {
+				// File the resume claim BEFORE tearing the downloader down: destroy() yields,
+				// and a re-join landing in that window walks networkSuspended to decide what to
+				// resume — an entry inserted afterwards misses the event entirely and the
+				// download stays suspended until the next manual toggle.
+				//
+				// Claimed against the ORIGINAL binding, never the subset this attempt was
+				// started with. A download bound to A and B that resumed through A alone would
+				// otherwise record only A, and a later join of B — a lishnet it is entitled to
+				// download from — would no longer look like a reason to resume it.
+				downloadEnabledLishs.delete(lishID);
+				claimSuspension(lishID, originalNetworkIDs.length > 0 ? originalNetworkIDs : networkIDs, scheduledAt);
+				await downloader.destroy();
+				throw new DownloadStartAbandoned(lishID, 'lishnet left while starting');
+			}
+			// Some of the lishnets survived, so the download goes ahead — but only on those.
+			// The ones left during startup have to leave the ACTIVE set, or the download keeps
+			// publishing WANTs on a topic we are no longer in: `broadcast()` and `publishOn()`
+			// take the network they are handed and do not re-check membership. The original
+			// binding is immutable and keeps them, so a legitimate rejoin still resumes there.
+			for (const id of networkIDs) if (!networks.isJoined(id)) downloader.removeNetwork(id);
+		}
 		const claim = await claimActiveDownloader(activeDownloaders, lishID, downloader);
 		if (!claim.claimed) return claim.downloader;
 		const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
@@ -569,9 +709,12 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		return downloader;
 	}
 
-	async function enableDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
+	async function enableDownload(p: { lishID: string }, client?: any, manual = true): Promise<{ success: boolean }> {
 		const leave = transferAdmission.tryEnter();
 		if (!leave) return { success: false };
+		// Recorded BEFORE the gate below can park this call behind an in-flight attempt,
+		// which is exactly the window where the request would otherwise leave no trace.
+		if (manual) lastManualIntent.set(p.lishID, true);
 		try {
 			return await enableDownloadAdmitted(p, client);
 		} finally {
@@ -581,8 +724,131 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	async function enableDownloadAdmitted(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
 		assert(p, ['lishID']);
+		const inFlight = pendingDownloads.get(p.lishID);
+		if (inFlight) {
+			const shared = await inFlight;
+			// A shared FAILURE is only an answer about the state that attempt saw. The
+			// commonest way to land here is a rejoin arriving while the previous attempt is
+			// tearing itself down for the very lishnet that just came back: taking its
+			// `false` would leave the download suspended with nothing scheduled to start it,
+			// until the next join or a manual toggle. Re-ask once, and only when the state
+			// now actually permits it, so a genuine failure is not retried in a loop.
+			//
+			// "Still wanted" is read from the suspension claim as much as from the runtime
+			// flag: the suspending branch drops the flag on purpose and leaves the claim as
+			// the record that the user wants this download as soon as a bound lishnet is back.
+			if (shared.success) return settleManualIntent(p.lishID, shared);
+			if (pendingDownloads.has(p.lishID)) return shared;
+			const bound = networkSuspended.get(p.lishID);
+			// A manual "off" is the last word and ends it here, whatever else still says on.
+			if (lastManualIntent.get(p.lishID) === false) return shared;
+			const wantedByUser = lastManualIntent.get(p.lishID) === true;
+			if (!wantedByUser && !downloadEnabledLishs.has(p.lishID) && bound === undefined) return shared;
+			// A manual "on" goes through even with nothing to download from. Asked directly,
+			// that request stores the intent and files the resume claim, so a later rejoin
+			// picks it up; ending here instead would leave the user's last word recorded
+			// nowhere — neither as the stored flag nor as a claim — and the rejoin would find
+			// nothing to resume. The attempt it falls through to does not loop: with no joined
+			// lishnet it takes that same branch and returns.
+			if (!wantedByUser) {
+				const joinable = bound !== undefined && bound.size > 0 ? [...bound].some(id => networks.isJoined(id)) : getJoinedEnabledNetworkIDs(networks).length > 0;
+				if (!joinable) return shared;
+			}
+		}
+		// Registered BEFORE the body can run. An async function still executes synchronously
+		// up to its first await, and this one reaches the downloader's manifest read in that
+		// stretch — so a second request arriving from inside it found no in-flight attempt
+		// and started its own, which is precisely what the single-flight map exists to stop.
+		// Deferring the body by one microtask makes the registration unmissable.
+		// Captured before the start is scheduled. Whatever revokes outstanding work for this
+		// LISH — a switch-off, a delete — bumps the counter, and the scheduled body then knows
+		// it belongs to a request nobody is waiting for any more.
+		const scheduledAt = requestEpoch.get(p.lishID) ?? 0;
+		const attempt = Promise.resolve().then(() => ((requestEpoch.get(p.lishID) ?? 0) !== scheduledAt ? { success: false } : startEnableDownload(p, client, scheduledAt)));
+		pendingDownloads.set(p.lishID, attempt);
+		try {
+			return settleManualIntent(p.lishID, await attempt);
+		} finally {
+			pendingDownloads.delete(p.lishID);
+		}
+	}
+
+	/**
+	 * Make a successful start agree with the user's last word.
+	 *
+	 * A start that reports success says only that it got the download running — it says
+	 * nothing about what the user asked for while it was running. `dl.enable()` awaits, and
+	 * a switch-off landing in that await writes its `false` first; the success then returns
+	 * over it, leaving the download live while both the runtime flag and the stored one say
+	 * off. The next startup reads the stored flag, so that download silently never comes back.
+	 *
+	 * Only a success is reconciled here: a failure is the re-ask branch's business, and that
+	 * one already refuses to act against a manual switch-off.
+	 */
+	/**
+	 * Is this LISH the "already downloaded" case — complete on record and still present?
+	 *
+	 * The same two questions the enable path asks before it reports success without starting
+	 * a downloader. A LISH deleted or reset while that start ran answers no, so a late
+	 * reconciliation cannot re-enable something there is nothing left to enable.
+	 */
+	function isStoredComplete(lishID: string): boolean {
+		if (!dataServer.get(lishID)) return false;
+		return dataServer.getAllChunkCount(lishID) > 0 && dataServer.getMissingChunks(lishID).length === 0;
+	}
+
+	function settleManualIntent(lishID: string, result: { success: boolean }): { success: boolean } {
+		if (!result.success) return result;
+		const intent = lastManualIntent.get(lishID);
+		// The switch-off is the later word. Apply it for real rather than reporting a success
+		// the user has already taken back — disableDownload stops the downloader the start
+		// just brought up and broadcasts the state the UI should be showing.
+		if (intent === false) {
+			disableDownload({ lishID });
+			return { success: false };
+		}
+		if (!downloadEnabledLishs.has(lishID)) {
+			// The start won, but an interleaved switch-off cleared the flags on its way past.
+			// The download is running and the user wants it, so the flags have to say so.
+			if (intent === true) {
+				// ...only while there is a download to say it about. Asking what cleared the flag
+				// is the wrong question — a leave clears it and leaves a claim, an immediate
+				// error clears it and removes the downloader entirely — so ask instead whether a
+				// download is actually running. Restoring the flag over an error would store
+				// "downloading" for a transfer that no longer exists, and every later path that
+				// reads the flag acts on that.
+				const dl = activeDownloaders.get(lishID);
+				// A finished download has no Downloader BY DESIGN — there is nothing left to run,
+				// and the start returns success without creating one. Demanding one here threw
+				// away the user's last enable for exactly the transfers that had already
+				// completed: the flag stayed off and the next startup read it as "not wanted".
+				// The completed LISH still has to be there and still has to hold every chunk;
+				// a leave that filed a suspension claim is handled by the shared check below.
+				const running = (dl !== undefined ? dl.isDisabled?.() !== true : isStoredComplete(lishID)) && !networkSuspended.has(lishID);
+				if (!running) return { success: false };
+				markDownloadEnabled(lishID);
+				return result;
+			}
+			// Nothing claims this download any more — its LISH was deleted, or a reset cleared
+			// it while the start was running. "Success" would report a download that is on, and
+			// it is not: the teardown has already removed everything behind it.
+			return { success: false };
+		}
+		return result;
+	}
+
+	/**
+	 * The body of {@link enableDownload}: everything from the busy check to starting
+	 * the downloader. Split out so the caller can own the in-flight bookkeeping.
+	 */
+	async function startEnableDownload(p: { lishID: string }, client?: any, scheduledAt = requestEpoch.get(p.lishID) ?? 0): Promise<{ success: boolean }> {
+		// The body is deferred by a microtask (see the registration in enableDownloadAdmitted),
+		// and a switch-off can land in that window — from the user, or as the manual half of a
+		// resume that was scheduled before it. Re-read the last word here rather than trusting
+		// the one that scheduled this run: the lines below re-add the runtime flag and persist
+		// `true`, so an unchecked start writes the older request over the newer one.
+		if (lastManualIntent.get(p.lishID) === false) return { success: false };
 		if (isBusy(p.lishID)) return { success: false };
-		if (pendingDownloads.has(p.lishID)) return { success: true };
 		dataServer.clearError(p.lishID);
 		downloadEnabledLishs.add(p.lishID);
 		persistDownloadEnabled?.(p.lishID, true);
@@ -615,6 +881,19 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 					if (activeDownloaders.get(p.lishID) === dl) activeDownloaders.delete(p.lishID);
 					send('transfer.download:error', { error: err.code, errorDetail: err.detail, lishID: p.lishID });
 					startRecoveryIfEnabled(p.lishID, err.code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(p.lishID) });
+					return { success: false };
+				}
+				// `dl.enable()` awaits its access check, and a leave landing in that await takes
+				// this download's last lishnet away. The membership that entered this branch is
+				// therefore only a snapshot: clearing the suspension claim on the strength of it
+				// would drop the record that this download is waiting for a lishnet to return,
+				// and report an enable for one that has nothing left to download from.
+				const boundNow = dl.getOriginalNetworkIDs?.() ?? dl.getNetworkIDs?.() ?? [];
+				if (boundNow.length > 0 && !boundNow.some((id: string) => networks.isJoined(id))) {
+					console.log(`[Transfer] ${p.lishID.slice(0, 8)}: last lishnet left while enabling, staying suspended`);
+					dl.disable();
+					downloadEnabledLishs.delete(p.lishID);
+					claimSuspension(p.lishID, boundNow, scheduledAt);
 					return { success: false };
 				}
 				const send = broadcast ?? (() => {});
@@ -660,7 +939,6 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				return { success: true };
 			}
 		}
-		pendingDownloads.add(p.lishID);
 		try {
 			let joinedNetworks = getJoinedEnabledNetworkIDs(networks);
 			let originalNetworkIDs = joinedNetworks;
@@ -692,7 +970,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				// (the fresh downloader would bind to getEnabled(), empty here). Store the
 				// empty bound set so onNetworkJoined resumes on any join, since the DB has
 				// no per-download network to restrict to.
-				networkSuspended.set(p.lishID, new Set(joinedNetworks));
+				claimSuspension(p.lishID, joinedNetworks, scheduledAt);
 				return { success: false };
 			}
 			const downloadDir = lish.directory ?? join(dataDir, 'downloads', Date.now().toString());
@@ -714,13 +992,31 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 					return { success: false };
 				}
 			}
-			await startStoredDownloader(p.lishID, joinedNetworks, originalNetworkIDs, false, client);
+			await startStoredDownloader(p.lishID, joinedNetworks, originalNetworkIDs, false, client, true, scheduledAt);
+			// The start registers the downloader and then keeps awaiting, so a leave landing
+			// after the registration reaches it through onNetworkLeft: the downloader is
+			// disabled and a FRESH suspension claim is filed. Clearing that claim here — it was
+			// written after this start began — would throw away the only record that says this
+			// download is waiting for a lishnet, leaving the flag on, the downloader off, and
+			// a later rejoin with nothing to resume from.
+			const started = activeDownloaders.get(p.lishID);
+			const boundAfterStart = started?.getOriginalNetworkIDs?.() ?? started?.getNetworkIDs?.() ?? joinedNetworks;
+			if (started?.isDisabled?.() === true || (boundAfterStart.length > 0 && !boundAfterStart.some((id: string) => networks.isJoined(id)))) {
+				console.log(`[Transfer] ${p.lishID.slice(0, 8)}: lishnet left while the start finished, staying suspended`);
+				downloadEnabledLishs.delete(p.lishID);
+				if (!networkSuspended.has(p.lishID)) claimSuspension(p.lishID, boundAfterStart, scheduledAt);
+				return { success: false };
+			}
 			networkSuspended.delete(p.lishID);
 			recovery.stop(p.lishID);
 			const send = broadcast ?? (() => {});
 			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };
 		} catch (err: any) {
+			if (err instanceof DownloadStartAbandoned) {
+				console.log(`[Transfer] ${err.message}`);
+				return { success: false };
+			}
 			const code = err instanceof CodedError ? err.code : ErrorCodes.DOWNLOAD_ERROR;
 			const detail = err instanceof CodedError ? err.detail : err.message;
 			console.error(`[Transfer] ${p.lishID.slice(0, 8)}: enableDownload failed (${code}): ${detail}`);
@@ -731,8 +1027,6 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			send('transfer.download:error', { error: code, errorDetail: detail, lishID: p.lishID });
 			startRecoveryIfEnabled(p.lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(p.lishID) });
 			return { success: false };
-		} finally {
-			pendingDownloads.delete(p.lishID);
 		}
 	}
 
@@ -830,7 +1124,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		for (const lishID of downloadEnabledLishs) {
 			if (!activeDownloaders.has(lishID) && !isBusy(lishID)) {
 				console.log(`[Auto-resume] Resuming download for ${lishID.slice(0, 8)}...`);
-				enableDownload({ lishID }).catch(err => {
+				enableDownload({ lishID }, undefined, false).catch(err => {
 					console.error(`[Auto-resume] Failed for ${lishID.slice(0, 8)}:`, err.message);
 				});
 			}
@@ -948,7 +1242,13 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				await startStoredDownloader(lishID, plan.networkIDs, originalNetworkIDs, false);
 				recovery.stop(lishID);
 				broadcast?.('transfer.download:enabled', { lishID });
-			} catch {
+			} catch (err) {
+				// A download the start window abandoned is not a failed restore: the lishnet
+				// went away or the user withdrew it between the snapshot and now, and the
+				// start already recorded whichever of those it was. Reporting it as a failure
+				// would fail the whole reset restore over a download that is exactly where it
+				// should be.
+				if (err instanceof DownloadStartAbandoned) continue;
 				failures.push(lishID);
 			}
 		}

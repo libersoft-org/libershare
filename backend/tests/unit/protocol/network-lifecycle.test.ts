@@ -494,6 +494,8 @@ describe('Network periodic bootstrap promotion validates stored destinations', (
 		const promoted: string[][] = [];
 		(network as any).runEpoch = 1;
 		(network as any).redialSuppressedByNet = new Map();
+		(network as any).configuredBootstrapPeerIDs ??= new Set<string>();
+		(network as any).unreachableQuarantine ??= new Map<string, number>();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).pubsub = { direct: new Set<string>() };
 		(network as any).node = {

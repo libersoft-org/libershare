@@ -1228,6 +1228,13 @@ export class Networks {
 	 * enable rejoin the topic between them and then watch the delete remove the row
 	 * underneath it: subscribed, in `joinedNetworks`, and nothing in the database to explain
 	 * either.
+	 *
+	 * The leave redial-suppresses this lishnet's exclusive peers, keyed by its ID, and a
+	 * rejoin is what normally lifts that. A deleted lishnet has no rejoin left to come, so
+	 * this is the last opportunity — otherwise those peer IDs stay undialable for the rest
+	 * of the process, including from lishnets that have nothing to do with this one.
+	 * Releasing is safe by then: the leave has already hung the peers up, stripped their
+	 * keep-alive tags and forgotten their peerStore entries.
 	 */
 	async delete(id: string): Promise<boolean> {
 		return await this.inMutation(async () => {
@@ -1238,6 +1245,16 @@ export class Networks {
 			});
 			if (!job) return false;
 			await job;
+			// Only while the lishnet is still gone. `NetworkMutationGate` counts writers rather
+			// than serialising them, so an add of this same ID can land while the leave drains —
+			// and the suppression then belongs to that newer life, not to the delete that is
+			// finishing here. Releasing it regardless would leave a re-added (and deliberately
+			// disabled) lishnet's peers dialable again on the next mention of them. The catalog
+			// lock covers the check and the release together, so no add can slip between them.
+			// `replace()` has asked the same question since it learned this the hard way.
+			await this.inCatalog(() => {
+				if (!lishnetExists(this.db, id)) this.network.clearRedialSuppressionForNetwork(id, 'deleted');
+			});
 			return true;
 		});
 	}
@@ -1282,12 +1299,35 @@ export class Networks {
 		// single-network write issued after this one cannot converge ahead of it on any of
 		// them — see {@link reconcileLater}.
 		await this.inMutation(async () => {
+			let removed: string[] = [];
 			const jobs = await this.inCatalog(() => {
 				const rows = new Map(this.list().map(n => [n.networkID, n]));
 				replaceLISHnets(this.db, networks);
-				return [...new Set([...rows.keys(), ...networks.map(n => n.networkID)])].map(id => this.reconcileLater(id));
+				const kept = new Set(networks.map(n => n.networkID));
+				// A network this call drops is deleted every bit as much as one removed through
+				// delete(), so the suppression its leave installs needs the same release: its key
+				// is an ID that no longer exists, and no rejoin can ever present it again.
+				removed = [...rows.keys()].filter(id => !kept.has(id));
+				return [...new Set([...rows.keys(), ...kept])].map(id => this.reconcileLater(id));
 			});
 			const outcomes = await Promise.allSettled(jobs);
+			// After the leaves, like delete() does — the suppression only exists once they ran.
+			// 'deleted' keeps the share listing revoked: the peers become dialable again, not
+			// entitled to browse what we share.
+			//
+			// Re-read under the catalog before releasing anything, and release inside the SAME
+			// critical section. The wait above is not exclusive — {@link NetworkMutationGate}
+			// counts writers rather than serialising them — so another request can have
+			// re-created one of these lishnets and left it again while this one was still
+			// draining. That suppression belongs to the newer life and is the newer decision;
+			// releasing it would undo a leave that happened after this delete was decided.
+			// Asking under the lock and releasing after it was the same gap one step later: an
+			// add landing in the handoff made the answer stale before it was used.
+			if (removed.length > 0) {
+				await this.inCatalog(() => {
+					for (const id of removed) if (!lishnetExists(this.db, id)) this.network.clearRedialSuppressionForNetwork(id, 'deleted');
+				});
+			}
 			const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
 			if (failures.length > 0)
 				throw new AggregateError(
