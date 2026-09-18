@@ -168,3 +168,31 @@ describe('pubsub searchLishs membership gate', () => {
 		expect(seenSearchIDs.size).toBe(0);
 	});
 });
+
+/**
+ * A lishnet DELETE releases the redial suppression on purpose — the peer has to stay
+ * dialable, its lishnet is gone — and records the listing revocation separately, because
+ * being dialable again says nothing about being allowed to read what we share.
+ *
+ * The indirect branch answers before anything consults that record, so the rows the direct
+ * gate refuses used to come straight back through one more hop. The revocation has to be
+ * asked about first, on both paths.
+ */
+describe('pubsub searchLishs gate — a revoked listing is revoked through every hop', () => {
+	const REVOKED = 'peer-revoked';
+
+	it('refuses an indirect request from a peer whose listing right was revoked', () => {
+		const net = gateNetwork({ connected: [] }); // not a direct neighbour: the indirect path
+		(net as any).listingRevoked = new Set([REVOKED]);
+
+		expect(net.canServePubsubRequestTo(REVOKED)).toBe(false);
+	});
+
+	it('still serves an indirect request from a peer with nothing against it', () => {
+		// The guard must not close the multi-hop path in general — remote members carry no
+		// local membership evidence and refusing them would break honest search.
+		const net = gateNetwork({ connected: [] });
+
+		expect(net.canServePubsubRequestTo('peer-stranger')).toBe(true);
+	});
+});

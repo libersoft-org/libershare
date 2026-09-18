@@ -3151,6 +3151,13 @@ export class Network {
 		// gets its catalog rows back by publishing through one more hop — the exact
 		// "it still finds me" half of the leave bug the unicast gate already closes.
 		if (this.isRedialSuppressed(peerID)) return false;
+		// Same for a peer whose listing right a lishnet DELETE revoked. The suppression above
+		// no longer catches it — the delete released that on purpose so the peer stays
+		// dialable — and the indirect branch below answers before anything else looks at the
+		// revocation, so without this the rows refused on the direct path come back through
+		// one more hop. Re-earning it by joining a lishnet we are in still works: that clears
+		// the revocation at the source.
+		if (this.listingRevoked.has(peerID)) return false;
 		let direct: boolean;
 		try {
 			direct = this.node.getPeers().some(p => p.toString() === peerID);
