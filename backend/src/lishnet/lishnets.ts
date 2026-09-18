@@ -1315,15 +1315,18 @@ export class Networks {
 			// 'deleted' keeps the share listing revoked: the peers become dialable again, not
 			// entitled to browse what we share.
 			//
-			// Re-read under the catalog before releasing anything. The wait above is not
-			// exclusive — {@link NetworkMutationGate} counts writers rather than serialising
-			// them — so another request can have re-created one of these lishnets and left it
-			// again while this one was still draining. That suppression belongs to the newer
-			// life and is the newer decision; releasing it here would undo a leave that
-			// happened after this delete was decided.
+			// Re-read under the catalog before releasing anything, and release inside the SAME
+			// critical section. The wait above is not exclusive — {@link NetworkMutationGate}
+			// counts writers rather than serialising them — so another request can have
+			// re-created one of these lishnets and left it again while this one was still
+			// draining. That suppression belongs to the newer life and is the newer decision;
+			// releasing it would undo a leave that happened after this delete was decided.
+			// Asking under the lock and releasing after it was the same gap one step later: an
+			// add landing in the handoff made the answer stale before it was used.
 			if (removed.length > 0) {
-				const stillGone = await this.inCatalog(() => removed.filter(id => !lishnetExists(this.db, id)));
-				for (const id of stillGone) this.network.clearRedialSuppressionForNetwork(id, 'deleted');
+				await this.inCatalog(() => {
+					for (const id of removed) if (!lishnetExists(this.db, id)) this.network.clearRedialSuppressionForNetwork(id, 'deleted');
+				});
 			}
 			const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
 			if (failures.length > 0)

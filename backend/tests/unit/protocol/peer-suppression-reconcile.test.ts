@@ -550,7 +550,7 @@ describe('addBootstrapPeers — a dial that waited must re-ask before it dials',
 });
 
 describe('Networks.delete — suppression entries outlive the lishnet that keyed them', () => {
-	function makeNetworksWithDB(clearedFor: string[]) {
+	function makeNetworksWithDB(clearedFor: string[], heldLock: boolean[] = []) {
 		const db = new Database(':memory:');
 		initLISHnetsTables(db);
 		addLISHnet(db, { networkID: NET, name: 'Test', description: '', enabled: true, bootstrapPeers: [] } as any);
@@ -583,6 +583,11 @@ describe('Networks.delete — suppression entries outlive the lishnet that keyed
 			async addBootstrapPeers(): Promise<void> {},
 			clearRedialSuppressionForNetwork(id: string) {
 				clearedFor.push(id);
+				// Whether the catalog was still held at this moment. "Still gone?" and the
+				// release have to be ONE critical section: answered under the lock and acted on
+				// after it, the answer is only as good as the handoff, and an add landing in
+				// that handoff makes it wrong.
+				heldLock.push((networks as any).catalogMutex.isLocked());
 			},
 		};
 		return { networks, db };
@@ -648,6 +653,31 @@ describe('Networks.delete — suppression entries outlive the lishnet that keyed
 
 		expect(clearedFor).toEqual([SLOW]);
 		expect(lishnetExists(db, NET)).toBe(true);
+	});
+
+	it('releases under the same lock that answered "still gone" — both paths', async () => {
+		// The check and the release are one decision. Split across the lock handoff they stop
+		// being one: an add arriving in the gap re-creates the lishnet after the answer was
+		// given and before it is used, and the release then hands the new lishnet's peers
+		// back to the dialer. Asserted on the lock rather than by racing an add into a
+		// microtask, so the test pins the invariant instead of one interleaving that happens
+		// to reproduce it.
+		const clearedFor: string[] = [];
+		const heldLock: boolean[] = [];
+		const { networks, db } = makeNetworksWithDB(clearedFor, heldLock);
+		addLISHnet(db, { networkID: 'net-keep', name: 'Keep', description: '', enabled: true, bootstrapPeers: [] } as any);
+
+		await networks.delete(NET);
+		expect(clearedFor).toEqual([NET]);
+
+		addLISHnet(db, { networkID: NET, name: 'Test', description: '', enabled: true, bootstrapPeers: [] } as any);
+		(networks as any).joinedNetworks = new Set([NET]);
+		(networks as any).announcedJoined = new Map([[NET, true]]);
+		(networks as any).appliedBootstrap = new Map([[NET, { addresses: [], complete: true }]]);
+		await networks.replace([{ networkID: 'net-keep', name: 'Keep', description: '', enabled: true, bootstrapPeers: [] } as any]);
+
+		expect(clearedFor).toEqual([NET, NET]);
+		expect(heldLock).toEqual([true, true]);
 	});
 
 	it('does not release a suppression that belongs to a lishnet re-added mid-delete', async () => {
