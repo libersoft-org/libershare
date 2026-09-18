@@ -273,6 +273,10 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		}
 		trace(`[Search] unicast fallback ${searchID.slice(0, 8)}: snapshot dispatching to ${peerList.length} peer(s)`);
 		let cursor = 0;
+		// The dial permit inside queryOnePeer is what now enforces the ceiling — the retry path
+		// shares it, so this pool alone could not. It stays because it also bounds how many
+		// pending queries exist at once: without it a large fleet would build one promise per
+		// peer up front, all of them queued on the same permit.
 		const workerCount = Math.min(UNICAST_FALLBACK_PARALLEL, peerList.length);
 		const workers = Array.from({ length: workerCount }, async () => {
 			for (;;) {
