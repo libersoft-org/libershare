@@ -382,6 +382,31 @@ describe('pubsub searchLishs — access withdrawn while the reply connects', () 
 		expect(sent()).toEqual(['peer-far']);
 	});
 
+	// Our own reply dial turns an indirect publisher into a direct neighbour. A later copy of
+	// the SAME query, judged fresh, would then be held to the direct branch — refused for a
+	// membership its branch never required, and refused before its lishnet was recorded. That
+	// lost the one still-valid route to the sender.
+	it('records a second lishnet even after our reply dial made the sender direct', async () => {
+		const OTHER_ID = 'net-b';
+		const OTHER = lishTopic(OTHER_ID);
+		initUploadState(new Set([SHARED_LISH_ID]), () => {});
+		const network = gateNetwork({ connected: [], subscribers: [] });
+		(network as any).pubsub.getTopics = () => [TOPIC, OTHER];
+		const { handlers, openDial, sent } = slowReplyHandlers(network);
+
+		const answering = handlers.handleSearchLishs(search, NETWORK_ID, 'peer-far');
+		// The reply connection is up, so the sender now looks direct — but it is still not a
+		// visible member, exactly the state the indirect branch exists for.
+		(network as any).node.getPeers = () => [{ toString: () => 'peer-far' }];
+		await handlers.handleSearchLishs(search, OTHER_ID, 'peer-far');
+
+		(network as any).pubsub.getTopics = () => [OTHER]; // left A, still in B
+		openDial();
+		await answering;
+
+		expect(sent()).toEqual(['peer-far']);
+	});
+
 	it('still answers a peer that only became a direct neighbour meanwhile', async () => {
 		// The reply stream itself turns an indirect publisher into a direct one. Re-judging it
 		// as direct would demand the membership its branch never asked for and drop an answer

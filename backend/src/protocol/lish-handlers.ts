@@ -30,6 +30,8 @@ export function isSearchAdvertisableLish(lish: import('@shared').IStoredLISH): b
 export interface SeenSearch {
 	at: number;
 	networks: Set<string>;
+	/** How the FIRST copy was judged — see the branch note in handleSearchLishs. */
+	wasDirect: boolean;
 }
 
 export interface LISHHandlersDeps {
@@ -165,14 +167,6 @@ export class LISHServingHandlers {
 		// Don't reply to our own broadcast (we're a subscriber to the topic too).
 		const node = this.deps.getNode();
 		if (node && fromPeerID === node.peerId.toString()) return;
-		// Remembered because opening the reply stream below makes an indirect publisher a
-		// direct neighbour, and re-judging it as one would refuse it for a membership its
-		// branch never required. The re-check has to look for access being TAKEN AWAY.
-		const wasDirect = this.deps.isDirectPeer(fromPeerID);
-		if (!this.deps.canServePubsubRequestTo(fromPeerID, wasDirect)) {
-			trace(`[NET] searchLishs from ${fromPeerID.slice(0, 12)} refused: no shared joined lishnet`);
-			return;
-		}
 		// Dedup: the same query arriving multiple times from the gossipsub mesh — answer at most
 		// once. Keyed by SENDER as well as searchID: the id is the sender's own choice, so a
 		// shared key would let any peer reach into someone else's entry — burning the id before
@@ -185,12 +179,23 @@ export class LISHServingHandlers {
 		// that also arrived over a lishnet we are still in.
 		const dedupKey = `${fromPeerID} ${data.searchID}`;
 		const seen = this.deps.seenSearchIDs.get(dedupKey);
+		// Which branch to judge on. Opening the reply stream makes an indirect publisher a
+		// direct neighbour, so a LATER copy of a query already in flight would be judged as
+		// direct and refused for a membership its branch never required — and refused before
+		// its lishnet was recorded, losing the one still-valid route to it. The sender's
+		// standing has not changed; only our own dial has. So a copy is judged the way the
+		// first copy was, and only a first copy consults the live connection.
+		const wasDirect = seen?.wasDirect ?? this.deps.isDirectPeer(fromPeerID);
+		if (!this.deps.canServePubsubRequestTo(fromPeerID, wasDirect)) {
+			trace(`[NET] searchLishs from ${fromPeerID.slice(0, 12)} refused: no shared joined lishnet`);
+			return;
+		}
 		if (seen !== undefined) {
 			seen.networks.add(networkID);
 			return;
 		}
 		const arrivedOver = new Set<string>([networkID]);
-		this.deps.seenSearchIDs.set(dedupKey, { at: Date.now(), networks: arrivedOver });
+		this.deps.seenSearchIDs.set(dedupKey, { at: Date.now(), networks: arrivedOver, wasDirect });
 		const q = data.query.toLowerCase();
 		const matches: Array<{ id: string; name?: string; totalSize?: number }> = [];
 		for (const lish of this.deps.dataServer.list()) {
