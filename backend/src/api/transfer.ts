@@ -785,6 +785,18 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * Only a success is reconciled here: a failure is the re-ask branch's business, and that
 	 * one already refuses to act against a manual switch-off.
 	 */
+	/**
+	 * Is this LISH the "already downloaded" case — complete on record and still present?
+	 *
+	 * The same two questions the enable path asks before it reports success without starting
+	 * a downloader. A LISH deleted or reset while that start ran answers no, so a late
+	 * reconciliation cannot re-enable something there is nothing left to enable.
+	 */
+	function isStoredComplete(lishID: string): boolean {
+		if (!dataServer.get(lishID)) return false;
+		return dataServer.getAllChunkCount(lishID) > 0 && dataServer.getMissingChunks(lishID).length === 0;
+	}
+
 	function settleManualIntent(lishID: string, result: { success: boolean }): { success: boolean } {
 		if (!result.success) return result;
 		const intent = lastManualIntent.get(lishID);
@@ -806,7 +818,13 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				// "downloading" for a transfer that no longer exists, and every later path that
 				// reads the flag acts on that.
 				const dl = activeDownloaders.get(lishID);
-				const running = dl !== undefined && dl.isDisabled?.() !== true && !networkSuspended.has(lishID);
+				// A finished download has no Downloader BY DESIGN — there is nothing left to run,
+				// and the start returns success without creating one. Demanding one here threw
+				// away the user's last enable for exactly the transfers that had already
+				// completed: the flag stayed off and the next startup read it as "not wanted".
+				// The completed LISH still has to be there and still has to hold every chunk;
+				// a leave that filed a suspension claim is handled by the shared check below.
+				const running = (dl !== undefined ? dl.isDisabled?.() !== true : isStoredComplete(lishID)) && !networkSuspended.has(lishID);
 				if (!running) return { success: false };
 				markDownloadEnabled(lishID);
 				return result;

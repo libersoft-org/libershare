@@ -117,6 +117,38 @@ function makeDataServer(duringInit: () => void = () => {}, directory: string | n
 	} as unknown as DataServer & { arm(fn: () => void): void };
 }
 
+/**
+ * A LISH store for a download that is already FINISHED: every chunk present, so the enable
+ * path takes its "nothing left to do" branch and reports success without ever creating a
+ * downloader. `duringCheck` runs on the first chunk read, which is inside that branch —
+ * the window where a switch-off and a second switch-on can interleave.
+ */
+function makeCompleteDataServer(duringCheck: () => void): DataServer & { forget(): void } {
+	let pending: (() => void) | null = duringCheck;
+	let present = true;
+	return {
+		forget(): void {
+			present = false;
+		},
+		clearError: (): void => {},
+		setError: (): void => {},
+		getTransferStats: (): { downloadedBytes: number; uploadedBytes: number } => ({ downloadedBytes: 0, uploadedBytes: 0 }),
+		// An empty file list keeps the on-disk check trivially satisfied: the branch under
+		// test is the one that answers "complete", not the one that re-verifies bytes.
+		get: (): any => (present ? { id: LISH_ID, name: 'x', directory: tmpdir(), files: [] } : null),
+		getAllChunkCount: (): number => 4,
+		isCompleteLISH: (): boolean => true,
+		getMissingChunks: (): string[] => {
+			if (pending) {
+				const fire = pending;
+				pending = null;
+				fire();
+			}
+			return [];
+		},
+	} as unknown as DataServer & { forget(): void };
+}
+
 describe('download start — the lishnet window', () => {
 	let persisted: Array<{ lishID: string; enabled: boolean }> = [];
 
@@ -158,7 +190,14 @@ describe('download start — the lishnet window', () => {
 		const net = makeNetworks([NET_A, NET_B], [NET_A]);
 		const dataServer = makeDataServer();
 		const events: Array<{ event: string; data: any }> = [];
-		const handlers = initTransferHandlers(net.networks, dataServer, tmpdir(), () => {}, (event: string, data: any) => events.push({ event, data }), settings);
+		const handlers = initTransferHandlers(
+			net.networks,
+			dataServer,
+			tmpdir(),
+			() => {},
+			(event: string, data: any) => events.push({ event, data }),
+			settings
+		);
 
 		dataServer.arm(() => net.leave(NET_A));
 		await handlers.restoreAll(new Set([LISH_ID]), new Map([[LISH_ID, { networkIDs: [NET_A], originalNetworkIDs: [NET_A, NET_B], disabled: false, suspended: true }]]));
@@ -218,7 +257,14 @@ describe('download start — the lishnet window', () => {
 		};
 		try {
 			const net = makeNetworks([NET_A]);
-			const handlers = initTransferHandlers(net.networks, makeDataServer(() => {}, tmpdir()), tmpdir(), () => {}, undefined, settings);
+			const handlers = initTransferHandlers(
+				net.networks,
+				makeDataServer(() => {}, tmpdir()),
+				tmpdir(),
+				() => {},
+				undefined,
+				settings
+			);
 			expect(await handlers.enableDownload({ lishID: LISH_ID })).toEqual({ success: true });
 
 			handlers.disableDownload({ lishID: LISH_ID });
@@ -251,7 +297,14 @@ describe('download start — the lishnet window', () => {
 		};
 		try {
 			const net = makeNetworks([NET_A]);
-			const handlers = initTransferHandlers(net.networks, makeDataServer(() => {}, tmpdir()), tmpdir(), () => {}, undefined, settings);
+			const handlers = initTransferHandlers(
+				net.networks,
+				makeDataServer(() => {}, tmpdir()),
+				tmpdir(),
+				() => {},
+				undefined,
+				settings
+			);
 			expect(await handlers.enableDownload({ lishID: LISH_ID })).toEqual({ success: true });
 			handlers.disableDownload({ lishID: LISH_ID });
 
@@ -283,7 +336,14 @@ describe('download start — the lishnet window', () => {
 		};
 		try {
 			const net = makeNetworks([NET_A]);
-			const handlers = initTransferHandlers(net.networks, makeDataServer(() => {}, tmpdir()), tmpdir(), () => {}, undefined, settings);
+			const handlers = initTransferHandlers(
+				net.networks,
+				makeDataServer(() => {}, tmpdir()),
+				tmpdir(),
+				() => {},
+				undefined,
+				settings
+			);
 			expect(await handlers.enableDownload({ lishID: LISH_ID })).toEqual({ success: true });
 			handlers.disableDownload({ lishID: LISH_ID });
 
@@ -325,7 +385,14 @@ describe('download start — the lishnet window', () => {
 			return originalDownload.call(this);
 		};
 		try {
-			handlers = initTransferHandlers(net.networks, makeDataServer(() => {}, tmpdir()), tmpdir(), () => {}, (event: string, data: any) => events.push({ event, data }), settings);
+			handlers = initTransferHandlers(
+				net.networks,
+				makeDataServer(() => {}, tmpdir()),
+				tmpdir(),
+				() => {},
+				(event: string, data: any) => events.push({ event, data }),
+				settings
+			);
 
 			const result = await handlers.enableDownload({ lishID: LISH_ID });
 
@@ -371,7 +438,14 @@ describe('download start — the lishnet window', () => {
 			leftOnAnnounce = true;
 			net.announceLeave(NET_A);
 		};
-		const handlers = initTransferHandlers(net.networks, makeDataServer(() => {}, tmpdir()), tmpdir(), () => {}, broadcast, settings);
+		const handlers = initTransferHandlers(
+			net.networks,
+			makeDataServer(() => {}, tmpdir()),
+			tmpdir(),
+			() => {},
+			broadcast,
+			settings
+		);
 
 		const result = await handlers.enableDownload({ lishID: LISH_ID });
 
@@ -395,7 +469,14 @@ describe('download start — the lishnet window', () => {
 		try {
 			const net = makeNetworks([NET_A]);
 			const events: Array<{ event: string; data: any }> = [];
-			const handlers = initTransferHandlers(net.networks, makeDataServer(() => {}, tmpdir()), tmpdir(), () => {}, (event: string, data: any) => events.push({ event, data }), settings);
+			const handlers = initTransferHandlers(
+				net.networks,
+				makeDataServer(() => {}, tmpdir()),
+				tmpdir(),
+				() => {},
+				(event: string, data: any) => events.push({ event, data }),
+				settings
+			);
 			expect(await handlers.enableDownload({ lishID: LISH_ID })).toEqual({ success: true });
 			handlers.disableDownload({ lishID: LISH_ID });
 
@@ -427,7 +508,14 @@ describe('download start — the lishnet window', () => {
 		// the rejoin finds nothing to resume.
 		const net = makeNetworks([NET_A]);
 		const events: Array<{ event: string; data: any }> = [];
-		const handlers = initTransferHandlers(net.networks, makeDataServer(), tmpdir(), () => {}, (event: string, data: any) => events.push({ event, data }), settings);
+		const handlers = initTransferHandlers(
+			net.networks,
+			makeDataServer(),
+			tmpdir(),
+			() => {},
+			(event: string, data: any) => events.push({ event, data }),
+			settings
+		);
 
 		const first = handlers.enableDownload({ lishID: LISH_ID });
 		handlers.disableDownload({ lishID: LISH_ID });
@@ -547,4 +635,46 @@ describe('download start — the lishnet window', () => {
 		expect(handlers.getActiveTransfers()).toEqual([]);
 	});
 
+	it('keeps a finished download on when off/on lands inside its completeness check', async () => {
+		// A finished LISH is enabled WITHOUT a downloader — there is nothing left to run. The
+		// reconciliation that guards against resurrecting a dead download asked for one
+		// anyway, so for exactly the transfers that had already completed the user's last
+		// "on" was discarded and the stored flag stayed off: after a restart the download
+		// looked like one nobody wanted.
+		const net = makeNetworks([NET_A]);
+		let handlers!: ReturnType<typeof initTransferHandlers>;
+		let second: Promise<{ success: boolean }> | null = null;
+		const dataServer = makeCompleteDataServer(() => {
+			handlers.disableDownload({ lishID: LISH_ID });
+			second = handlers.enableDownload({ lishID: LISH_ID });
+		});
+		handlers = initTransferHandlers(net.networks, dataServer, tmpdir(), () => {}, undefined, settings);
+
+		const first = await handlers.enableDownload({ lishID: LISH_ID });
+
+		expect(first).toEqual({ success: true });
+		expect(await second!).toEqual({ success: true });
+		expect(getDownloadEnabledLishs().has(LISH_ID)).toBe(true);
+		expect(persisted[persisted.length - 1]).toEqual({ lishID: LISH_ID, enabled: true });
+	});
+
+	it('does not re-enable a finished download whose LISH was deleted in the same window', async () => {
+		// The other half of the same question: no downloader is fine, but only while the LISH
+		// is still there. A delete inside the window leaves nothing to enable, and reporting
+		// success would store "downloading" for a record that no longer exists.
+		const net = makeNetworks([NET_A]);
+		let handlers!: ReturnType<typeof initTransferHandlers>;
+		let second: Promise<{ success: boolean }> | null = null;
+		const dataServer = makeCompleteDataServer(() => {
+			handlers.disableDownload({ lishID: LISH_ID });
+			second = handlers.enableDownload({ lishID: LISH_ID });
+			dataServer.forget();
+		});
+		handlers = initTransferHandlers(net.networks, dataServer, tmpdir(), () => {}, undefined, settings);
+
+		await handlers.enableDownload({ lishID: LISH_ID });
+
+		expect(await second!).toEqual({ success: false });
+		expect(getDownloadEnabledLishs().has(LISH_ID)).toBe(false);
+	});
 });
