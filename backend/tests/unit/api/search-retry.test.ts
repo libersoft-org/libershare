@@ -287,6 +287,21 @@ describe('search unicast retry after a listing refusal', () => {
 		expect(done[0]!.data.unsearchablePeers).toBe(1);
 	}, 20_000);
 
+	// The search can end while a peer still has tries left — it refused in the last second and
+	// its next attempt was never due. Counting only the ones that ran out of tries reported
+	// zero there, hiding exactly the case the notice exists for.
+	it('counts a peer still waiting for its retry when the search ends', async () => {
+		const { manager, events } = buildManager([[refused]]);
+
+		await manager.startSearch({ query: LISH_ID.slice(0, 8) });
+		await settle(); // refused once, a retry armed but nowhere near due
+		manager.stopAll();
+
+		const done = events.filter(e => e.event === 'search:lishs:complete');
+		expect(done).toHaveLength(1);
+		expect(done[0]!.data.unsearchablePeers).toBe(1);
+	});
+
 	it('reports none when every peer answered', async () => {
 		const { manager, events } = buildManager([[oneResult]]);
 

@@ -157,6 +157,11 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		clearTimeout(session.timeout);
 		// No armed re-ask may outlive the session it belongs to.
 		for (const state of session.refusals.values()) if (state.timer) clearTimeout(state.timer);
+		// A peer still inside its retry budget is one we never got to look at either — the
+		// search simply ended before its next attempt. Counting only the ones that ran out of
+		// tries hid exactly the case the notice is for: a peer that refused in the last second
+		// of the search reported as nothing at all.
+		for (const peerID of session.refusals.keys()) session.unsearchable.add(peerID);
 		session.refusals.clear();
 		// Nor may a request: it holds a shared dial permit until it finishes, so abandoning it
 		// silently would make a cancelled search slow down the next one. The signal covers the
@@ -339,8 +344,14 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		await Promise.allSettled(workers);
 	}
 
-	/** Forget a peer's retry state and cancel whatever it still had pending. */
+	/**
+	 * Forget a peer's retry state and cancel whatever it still had pending.
+	 *
+	 * Called when the peer has served us — over either channel, and an empty list is an
+	 * answer too — so it also stops counting as one we could not search.
+	 */
 	function clearRefusal(session: SearchSession, peerID: string): void {
+		session.unsearchable.delete(peerID);
 		const state = session.refusals.get(peerID);
 		if (!state) return;
 		if (state.timer) clearTimeout(state.timer);
