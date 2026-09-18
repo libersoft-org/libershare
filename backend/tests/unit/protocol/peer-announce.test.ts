@@ -799,4 +799,44 @@ describe('PeerAnnounceManager.touchKnownMember — the claim is earned and spent
 
 		expect(mgr.getRecentMembers(TOPIC, 60_000)).toEqual([]);
 	});
+
+	// The exact sequence a shared claim allowed: expire in A, join and leave B, disconnect —
+	// and the disconnect spends B's confirmation on A's stale entry. Leaving B withdrew the
+	// only confirmation there was, so nothing should have been left to spend.
+	it('joining and leaving a second network does not revive the first', async () => {
+		const OTHER = `${LISH_TOPIC_PREFIX}netBBBB`;
+		const { mgr } = intakeManager();
+		mgr.noteMember(TOPIC, PA_ID);
+		mgr.touchKnownMember(PA_ID); // the grace A was owed, spent
+		await age(); // and expired
+
+		mgr.noteMember(OTHER, PA_ID); // subscribes to B only
+		mgr.forgetMember(OTHER, PA_ID); // and says it is leaving B
+		mgr.touchKnownMember(PA_ID);
+
+		expect(mgr.getRecentMembers(TOPIC, NARROW)).toEqual([]);
+		expect(mgr.getRecentMembers(OTHER, NARROW)).toEqual([]);
+	});
+
+	// A claim is earned in one topic and must be spendable only there. The two networks
+	// are separate authorizations: a peer that keeps one subscription live would otherwise
+	// carry every network it ever joined along with it, for as long as the discovery
+	// history of those topics survives.
+	it('a claim earned in one network does not refresh another', async () => {
+		const OTHER = `${LISH_TOPIC_PREFIX}netBBBB`;
+		const { mgr } = intakeManager();
+		mgr.noteMember(TOPIC, PA_ID);
+		mgr.noteMember(OTHER, PA_ID);
+		// The peer stops subscribing to OTHER without saying so — the discovery entry stays.
+		mgr.touchKnownMember(PA_ID); // spends both claims
+		await age();
+		// Only the first network sees it subscribed again.
+		mgr.noteMember(TOPIC, PA_ID);
+		await age();
+
+		mgr.touchKnownMember(PA_ID);
+
+		expect(mgr.getRecentMembers(TOPIC, NARROW)).toEqual([PA_ID]);
+		expect(mgr.getRecentMembers(OTHER, NARROW)).toEqual([]);
+	});
 });

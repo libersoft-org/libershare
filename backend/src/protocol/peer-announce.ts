@@ -222,16 +222,19 @@ export class PeerAnnounceManager {
 	 */
 	private readonly topicMembers = new Map<string, Map<string, number>>();
 	/**
-	 * Peers whose membership was confirmed by live evidence since their last grace stamp.
+	 * Per topic, the peers whose membership of THAT topic was confirmed by live evidence
+	 * since their last grace stamp.
 	 *
 	 * {@link topicMembers} outlives a connection on purpose — discovery wants the history —
 	 * so "is it in the map" cannot decide whether a disconnect earns a fresh grace window.
-	 * Without this set, connecting and disconnecting without ever subscribing re-stamped
-	 * the old entry, and repeating that held an expired authorization open indefinitely.
-	 * Filled where real evidence lands (a SUBSCRIBE, or the live subscriber snapshot) and
-	 * SPENT by the disconnect that uses it: the next one has to be earned again.
+	 * Without this, connecting and disconnecting without ever subscribing re-stamped the
+	 * old entry, and repeating that held an expired authorization open indefinitely. Kept
+	 * per topic for the same reason {@link topicMembers} is: one confirmed subscription
+	 * must not refresh a stale membership of a different network. Filled where real
+	 * evidence lands (a SUBSCRIBE, or the live subscriber snapshot) and SPENT by the
+	 * disconnect that uses it: the next one has to be earned again.
 	 */
-	private readonly confirmedMembers = new Set<string>();
+	private readonly confirmedMembers = new Map<string, Set<string>>();
 	/** Per-announcing-peer intake budget — see {@link AnnounceRateLimiter}. */
 	private readonly rateLimiter = new AnnounceRateLimiter();
 	/** Raw parsing-work budget, spent before any attacker-controlled address is parsed. */
@@ -270,7 +273,7 @@ export class PeerAnnounceManager {
 			this.topicMembers.set(topic, members);
 		}
 		members.set(peerID, monotonicNow());
-		this.confirmedMembers.add(peerID);
+		this.confirmTopicMember(topic, peerID);
 	}
 
 	/**
@@ -282,9 +285,20 @@ export class PeerAnnounceManager {
 	 */
 	forgetMember(topic: string, peerID: string): void {
 		this.topicMembers.get(topic)?.delete(peerID);
-		// The peer has stated it left: whatever grace its next disconnect could have
-		// claimed is withdrawn with the membership itself.
-		if (![...this.topicMembers.values()].some(m => m.has(peerID))) this.confirmedMembers.delete(peerID);
+		// The peer has stated it left THIS topic: whatever grace its next disconnect could
+		// have claimed here is withdrawn with the membership itself. Its standing in other
+		// topics is its own and survives.
+		this.confirmedMembers.get(topic)?.delete(peerID);
+	}
+
+	/** Record live evidence that `peerID` is subscribed to `topic` right now. */
+	private confirmTopicMember(topic: string, peerID: string): void {
+		let confirmed = this.confirmedMembers.get(topic);
+		if (!confirmed) {
+			confirmed = new Set<string>();
+			this.confirmedMembers.set(topic, confirmed);
+		}
+		confirmed.add(peerID);
 	}
 
 	/**
@@ -298,13 +312,16 @@ export class PeerAnnounceManager {
 	 * this to peers a topic already lists keeps the grace to subscriptions we saw.
 	 */
 	touchKnownMember(peerID: string): void {
-		// Only a membership confirmed during the connection that is ending earns the grace.
-		// A transport connect/disconnect with no SUBSCRIBE in between proves nothing, and
-		// re-stamping on it let a peer keep an expired authorization alive by reconnecting.
-		if (!this.confirmedMembers.delete(peerID)) return;
+		// Only a membership confirmed during the connection that is ending earns the grace,
+		// and only in the topic that confirmed it. A transport connect/disconnect with no
+		// SUBSCRIBE in between proves nothing, and re-stamping on it let a peer keep an
+		// expired authorization alive by reconnecting — across networks too, when one live
+		// subscription refreshed the stale entries of every other network it was ever in.
 		const now = monotonicNow();
-		for (const members of this.topicMembers.values()) {
-			if (members.has(peerID)) members.set(peerID, now);
+		for (const [topic, confirmed] of this.confirmedMembers) {
+			if (!confirmed.delete(peerID)) continue;
+			const members = this.topicMembers.get(topic);
+			if (members?.has(peerID)) members.set(peerID, now);
 		}
 	}
 
@@ -317,6 +334,7 @@ export class PeerAnnounceManager {
 	private refreshTopicMembers(pubsub: any, lishTopics: string[]): void {
 		const now = monotonicNow();
 		for (const t of this.topicMembers.keys()) if (!lishTopics.includes(t)) this.topicMembers.delete(t);
+		for (const t of this.confirmedMembers.keys()) if (!lishTopics.includes(t)) this.confirmedMembers.delete(t);
 		for (const topic of lishTopics) {
 			let members = this.topicMembers.get(topic);
 			if (!members) {
@@ -328,7 +346,7 @@ export class PeerAnnounceManager {
 					const pid = p.toString();
 					members.set(pid, now);
 					// Seen subscribed right now — the same standing a SUBSCRIBE event grants.
-					this.confirmedMembers.add(pid);
+					this.confirmTopicMember(topic, pid);
 				}
 			} catch {
 				// topic may be tearing down — keep what we already have
@@ -369,6 +387,7 @@ export class PeerAnnounceManager {
 			this.timer = null;
 		}
 		this.topicMembers.clear();
+		this.confirmedMembers.clear();
 		this.rateLimiter.clear();
 		this.workLimiter.clear();
 	}
