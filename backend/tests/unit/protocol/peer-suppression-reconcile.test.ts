@@ -650,6 +650,31 @@ describe('Networks.delete — suppression entries outlive the lishnet that keyed
 		expect(lishnetExists(db, NET)).toBe(true);
 	});
 
+	it('does not release a suppression that belongs to a lishnet re-added mid-delete', async () => {
+		// The same race as the replace case above, on the single-lishnet path. The delete
+		// decides to release on the strength of an ID it captured before the leave drained;
+		// an add of that ID landing inside the leave gives the ID a new life, and the
+		// release would hand the new (deliberately disabled) lishnet's peers back to the
+		// dialer. Nothing outside serialises the two — the gate counts writers.
+		const clearedFor: string[] = [];
+		const { networks, db } = makeNetworksWithDB(clearedFor);
+		let readd!: () => void;
+		const leaving = new Promise<void>(resolve => (readd = resolve));
+		(networks as any).network.disconnectPeer = async (): Promise<void> => {
+			readd();
+			await new Promise(resolve => setTimeout(resolve, 30));
+		};
+
+		const deleting = networks.delete(NET);
+		await leaving;
+		// The concurrent writer: the user re-adds the same lishnet, disabled.
+		addLISHnet(db, { networkID: NET, name: 'Test', description: '', enabled: false, bootstrapPeers: [] } as any);
+		expect(await deleting).toBe(true);
+
+		expect(clearedFor).toEqual([]);
+		expect(lishnetExists(db, NET)).toBe(true);
+	});
+
 	it('keeps the suppression when the row was not deleted', async () => {
 		// A delete that finds nothing to remove has changed nothing, so the peers stay
 		// left: their suppression is still the only thing refusing them a share listing

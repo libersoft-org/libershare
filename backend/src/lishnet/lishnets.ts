@@ -1245,7 +1245,16 @@ export class Networks {
 			});
 			if (!job) return false;
 			await job;
-			this.network.clearRedialSuppressionForNetwork(id, 'deleted');
+			// Only while the lishnet is still gone. `NetworkMutationGate` counts writers rather
+			// than serialising them, so an add of this same ID can land while the leave drains —
+			// and the suppression then belongs to that newer life, not to the delete that is
+			// finishing here. Releasing it regardless would leave a re-added (and deliberately
+			// disabled) lishnet's peers dialable again on the next mention of them. The catalog
+			// lock covers the check and the release together, so no add can slip between them.
+			// `replace()` has asked the same question since it learned this the hard way.
+			await this.inCatalog(() => {
+				if (!lishnetExists(this.db, id)) this.network.clearRedialSuppressionForNetwork(id, 'deleted');
+			});
 			return true;
 		});
 	}
