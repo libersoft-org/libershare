@@ -141,6 +141,7 @@
 		"errorBusy": "Peer is busy, try again later",
 		"errorIO": "Peer encountered an I/O error",
 		"errorInvalidRequest": "Peer rejected the request as invalid",
+		"errorSearchQueryTooLong": "The search text is too long",
 		"errorListingNotAuthorized": "Listing unavailable: membership of a shared network was not confirmed"
 	},
 	"localStorage": {

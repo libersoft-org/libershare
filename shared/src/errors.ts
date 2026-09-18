@@ -25,6 +25,9 @@ const errorCodes = [
 	'LISH_CREATE_CANCELLED',
 	'PATH_ACCESS_DENIED',
 	'INVALID_FILE_INDEX',
+	// Longer than every responder will accept, so it is refused where the user can be told
+	// why rather than coming back as an empty result from each peer in turn.
+	'SEARCH_QUERY_TOO_LONG',
 
 	// Network
 	'NETWORK_NOT_FOUND',

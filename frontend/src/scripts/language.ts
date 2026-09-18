@@ -149,6 +149,7 @@ const errorCodeKeys: Record<string, string> = {
 	PEER_BUSY: 'network.errorBusy',
 	PEER_IO_ERROR: 'network.errorIO',
 	PEER_INVALID_REQUEST: 'network.errorInvalidRequest',
+	SEARCH_QUERY_TOO_LONG: 'network.errorSearchQueryTooLong',
 	PEER_LISTING_NOT_AUTHORIZED: 'network.errorListingNotAuthorized',
 	// Server → common
 	PARSE_ERROR: 'common.errorParseError',
