@@ -175,7 +175,10 @@ describe('search unicast retry after a listing refusal', () => {
 		manager.stopAll();
 	});
 
-	it('gives up after a bounded number of refusals however often the peer resubscribes', async () => {
+	// Runs the budget all the way down and then waits past one more interval. Stopping at the
+	// first delay, as this once did, proved only "not more than four yet" — a leak that kept
+	// arming further timers would have passed it.
+	it('spends exactly its budget and then stops asking', async () => {
 		const { manager, dials, fireSubscribe } = buildManager([[refused]]);
 
 		await manager.startSearch({ query: LISH_ID.slice(0, 8) });
@@ -184,16 +187,20 @@ describe('search unicast retry after a listing refusal', () => {
 			fireSubscribe();
 			await settle();
 		}
-		// Wait past the retry delay too: an armed timer that survived the budget check would
-		// fire here, which is how the bound was exceeded before.
+		// One interval per retry, so every one of them comes due.
+		for (let i = 0; i < MAX_LISTING_REFUSAL_RETRIES; i++) await afterRetryDelay();
+
+		// The first query plus exactly MAX_LISTING_REFUSAL_RETRIES re-asks.
+		expect(dials).toHaveLength(1 + MAX_LISTING_REFUSAL_RETRIES);
+		expect(dials.every(p => p === NEW_PEER)).toBe(true);
+
+		// And nothing more: a further interval passes with the peer still refusing.
 		await afterRetryDelay();
 
-		// First query plus at most MAX_LISTING_REFUSAL_RETRIES re-asks. Ten events spread out
-		// far enough to each get an answer used to buy seven dials.
-		expect(dials.length).toBeLessThanOrEqual(1 + MAX_LISTING_REFUSAL_RETRIES);
-		expect(dials.every(p => p === NEW_PEER)).toBe(true);
+		expect(dials).toHaveLength(1 + MAX_LISTING_REFUSAL_RETRIES);
 		manager.stopAll();
-	});
+		// Four full retry intervals of real time; the default 5 s cap is not enough.
+	}, 20_000);
 
 	// Events arriving back to back, with no chance for an answer in between: each one used
 	// to pass a budget check that only counted the refusals that had come back, so all of
