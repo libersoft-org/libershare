@@ -26,12 +26,18 @@ export function isSearchAdvertisableLish(lish: import('@shared').IStoredLISH): b
 }
 
 /** Dependencies for LISHServingHandlers. Maps owned by Network are passed by reference. */
+/** A search we have already answered, and every lishnet the same query reached us over. */
+export interface SeenSearch {
+	at: number;
+	networks: Set<string>;
+}
+
 export interface LISHHandlersDeps {
 	readonly dataServer: DataServer;
 	/** Reference to Network's lastWantResponseTime Map — mutated in-place, owned by Network. */
 	readonly lastWantResponseTime: Map<string, number>;
 	/** Reference to Network's seenSearchIDs Map — mutated in-place, owned by Network. */
-	readonly seenSearchIDs: Map<string, number>;
+	readonly seenSearchIDs: Map<string, SeenSearch>;
 	/** Minimum interval between two `have` responses sent to the same peer for the same LISH. */
 	readonly wantResponseCooldownMs: number;
 	/** Returns the current libp2p node (may be null if not started). */
@@ -168,9 +174,17 @@ export class LISHServingHandlers {
 			return;
 		}
 		// Dedup: same searchID arriving multiple times from gossipsub mesh — answer at most once.
-		const lastSeen = this.deps.seenSearchIDs.get(data.searchID);
-		if (lastSeen !== undefined) return;
-		this.deps.seenSearchIDs.set(data.searchID, Date.now());
+		// The lishnets it arrived over are all recorded, though: one search is broadcast on
+		// every joined topic, so the same searchID legitimately reaches us once per shared
+		// lishnet. Keeping only the first would let leaving THAT one lishnet bury a request
+		// that also arrived over a lishnet we are still in.
+		const seen = this.deps.seenSearchIDs.get(data.searchID);
+		if (seen !== undefined) {
+			seen.networks.add(networkID);
+			return;
+		}
+		const arrivedOver = new Set<string>([networkID]);
+		this.deps.seenSearchIDs.set(data.searchID, { at: Date.now(), networks: arrivedOver });
 		const q = data.query.toLowerCase();
 		const matches: Array<{ id: string; name?: string; totalSize?: number }> = [];
 		for (const lish of this.deps.dataServer.list()) {
@@ -192,10 +206,12 @@ export class LISHServingHandlers {
 			// Opening the stream takes time, and the peer can leave inside it. The rows were
 			// gathered under a permission it no longer has, so ask again before they go out —
 			// judged on the same branch it was admitted on.
-			// Leaving the lishnet the request came in over ends that request, whatever other
+			// Leaving the lishnets the request came in over ends that request, whatever OTHER
 			// lishnets we are in: an indirect publisher proved membership of none of them, and
-			// a direct one's standing elsewhere is a different conversation than this one.
-			if (!this.deps.isJoinedToLishnet(networkID) || !this.deps.canServePubsubRequestTo(fromPeerID, wasDirect)) {
+			// a direct one's standing elsewhere is a different conversation than this one. Any
+			// one of the lishnets it did arrive over still carries it, including copies that
+			// landed while this reply was connecting.
+			if (![...arrivedOver].some(n => this.deps.isJoinedToLishnet(n)) || !this.deps.canServePubsubRequestTo(fromPeerID, wasDirect)) {
 				trace(`[NET] searchLishs to ${fromPeerID.slice(0, 12)} dropped: access withdrawn while connecting`);
 				client.abort(new Error('listing access withdrawn'));
 				return;

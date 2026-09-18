@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { LISHServingHandlers } from '../../../src/protocol/lish-handlers.ts';
+import { LISHServingHandlers, type SeenSearch } from '../../../src/protocol/lish-handlers.ts';
 import { Network } from '../../../src/protocol/network.ts';
 import { initUploadState, resetUploadState } from '../../../src/protocol/lish-protocol.ts';
 import { lishTopic } from '../../../src/protocol/constants.ts';
@@ -125,7 +125,7 @@ describe('pubsub searchLishs membership gate', () => {
 		// would be retained as a dedup key for the whole dedup window, and a fresh ID per
 		// request is exactly what makes deduplication no defence at all.
 		initUploadState(new Set([SHARED_LISH_ID]), () => {});
-		const seenSearchIDs = new Map<string, number>();
+		const seenSearchIDs = new Map<string, SeenSearch>();
 		const network = gateNetwork({ connected: ['peer-member'], subscribers: ['peer-member'] });
 		const dialed: string[] = [];
 		const handlers = new LISHServingHandlers({
@@ -153,7 +153,7 @@ describe('pubsub searchLishs membership gate', () => {
 		// Recording a refused searchID would let a bare peer poison the dedup map so the
 		// same query from a legitimate member is silently dropped.
 		initUploadState(new Set([SHARED_LISH_ID]), () => {});
-		const seenSearchIDs = new Map<string, number>();
+		const seenSearchIDs = new Map<string, SeenSearch>();
 		const network = gateNetwork({ connected: ['peer-bare'], subscribers: [] });
 		const handlers = new LISHServingHandlers({
 			dataServer: { list: () => [] } as any,
@@ -311,6 +311,28 @@ describe('pubsub searchLishs — access withdrawn while the reply connects', () 
 
 		expect(sent()).toEqual([]);
 		expect(aborted()).toBe(1);
+	});
+
+	// One search is broadcast on every joined topic, so the same searchID legitimately reaches
+	// us once per shared lishnet. Recording only the first meant leaving THAT lishnet buried a
+	// request that had also arrived over one we are still in — the copy was dropped as a
+	// duplicate and never got an answer of its own.
+	it('answers from a second lishnet the same query also arrived over', async () => {
+		const OTHER_ID = 'net-b';
+		const OTHER = lishTopic(OTHER_ID);
+		initUploadState(new Set([SHARED_LISH_ID]), () => {});
+		const network = gateNetwork({ connected: [], subscribers: [] });
+		(network as any).pubsub.getTopics = () => [TOPIC, OTHER];
+		const { handlers, openDial, sent } = slowReplyHandlers(network);
+
+		// Arrives over A first, then over B while the reply to A is still connecting.
+		const answering = handlers.handleSearchLishs(search, NETWORK_ID, 'peer-far');
+		await handlers.handleSearchLishs(search, OTHER_ID, 'peer-far');
+		(network as any).pubsub.getTopics = () => [OTHER]; // left A, still in B
+		openDial();
+		await answering;
+
+		expect(sent()).toEqual(['peer-far']);
 	});
 
 	it('still answers a peer that only became a direct neighbour meanwhile', async () => {

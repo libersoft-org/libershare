@@ -26,7 +26,7 @@ import { applyGossipsubPatches } from './gossipsub-patches.ts';
 import { BootstrapStatusTracker } from './bootstrap-status.ts';
 import { logStatusDebug, dumpGossipsubScores } from './status-logger.ts';
 import { classifyConnection as classifyConnectionFn, dialProtocol as dialProtocolFn, dialProtocolByPeerId as dialProtocolByPeerIdFn, connectToPeer as connectToPeerFn } from './dial-helpers.ts';
-import { LISHServingHandlers, type SearchLishsMessage } from './lish-handlers.ts';
+import { LISHServingHandlers, type SearchLishsMessage, type SeenSearch } from './lish-handlers.ts';
 export type { SearchLishsMessage } from './lish-handlers.ts';
 export { isSearchAdvertisableLish } from './lish-handlers.ts';
 import { PeerAnnounceManager, type PeerAnnounceMessage } from './peer-announce.ts';
@@ -405,7 +405,7 @@ export class Network {
 	 * Recently-seen search IDs, used to dedupe `searchLishs` queries arriving multiple times via
 	 * the gossipsub mesh. Pruned periodically with the same cleanup interval as `lastWantResponseTime`.
 	 */
-	private readonly seenSearchIDs = new Map<string, number>();
+	private readonly seenSearchIDs = new Map<string, SeenSearch>();
 	private bootstrapPeerIDs: Set<string> = new Set();
 	/**
 	 * Peer IDs whose bootstrap entries came from explicit network config
@@ -1288,8 +1288,8 @@ export class Network {
 			if (removed > 0) trace(`[NET] want-response cooldown cleanup: pruned ${removed}, kept ${this.lastWantResponseTime.size}`);
 			const searchCutoff = Date.now() - SEARCH_DEDUP_TTL_MS;
 			let searchRemoved = 0;
-			for (const [key, ts] of this.seenSearchIDs) {
-				if (ts < searchCutoff) {
+			for (const [key, seen] of this.seenSearchIDs) {
+				if (seen.at < searchCutoff) {
 					this.seenSearchIDs.delete(key);
 					searchRemoved++;
 				}
