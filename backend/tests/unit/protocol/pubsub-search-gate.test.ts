@@ -335,6 +335,53 @@ describe('pubsub searchLishs — access withdrawn while the reply connects', () 
 		expect(sent()).toEqual(['peer-far']);
 	});
 
+	// The search id is whatever the sender put in the message, so it cannot be the whole key
+	// to state we act on. Sharing one entry across senders let any peer widen the set of
+	// lishnets another peer's request counts as having arrived over — reopening the very
+	// window the leave-check exists to close.
+	it('does not let one peer widen the request of another', async () => {
+		const OTHER_ID = 'net-b';
+		const OTHER = lishTopic(OTHER_ID);
+		initUploadState(new Set([SHARED_LISH_ID]), () => {});
+		const network = gateNetwork({ connected: [], subscribers: [] });
+		(network as any).pubsub.getTopics = () => [TOPIC, OTHER];
+		const { handlers, openDial, sent } = slowReplyHandlers(network);
+
+		// The real request comes over A; a different peer sends the same id over B.
+		const answering = handlers.handleSearchLishs(search, NETWORK_ID, 'peer-far');
+		// Not awaited: with the fix this is a request of its own and blocks on the same gate.
+		const other = handlers.handleSearchLishs(search, OTHER_ID, 'peer-other');
+		(network as any).pubsub.getTopics = () => [OTHER]; // left A, still in B
+		openDial();
+		await Promise.all([answering, other]);
+
+		// The A request is dead with A; the other peer's message cannot keep it alive.
+		expect(sent()).not.toContain('peer-far');
+	});
+
+	// The dedup entry means "already answered". A query whose answer was cancelled was not,
+	// so a later copy arriving over a lishnet we are still in must be able to earn one — the
+	// opposite order from the test above, where the copy lands while the first is still alive.
+	it('answers a copy that arrives after the first attempt was cancelled', async () => {
+		const OTHER_ID = 'net-b';
+		const OTHER = lishTopic(OTHER_ID);
+		initUploadState(new Set([SHARED_LISH_ID]), () => {});
+		const network = gateNetwork({ connected: [], subscribers: [] });
+		(network as any).pubsub.getTopics = () => [TOPIC, OTHER];
+		const { handlers, openDial, sent } = slowReplyHandlers(network);
+
+		const answering = handlers.handleSearchLishs(search, NETWORK_ID, 'peer-far');
+		(network as any).pubsub.getTopics = () => [OTHER]; // left A, still in B
+		openDial();
+		await answering;
+		expect(sent()).toEqual([]); // the A attempt was cancelled, as it should be
+
+		// The same peer's copy over B now arrives. B is still ours, so it deserves an answer.
+		await handlers.handleSearchLishs(search, OTHER_ID, 'peer-far');
+
+		expect(sent()).toEqual(['peer-far']);
+	});
+
 	it('still answers a peer that only became a direct neighbour meanwhile', async () => {
 		// The reply stream itself turns an indirect publisher into a direct one. Re-judging it
 		// as direct would demand the membership its branch never asked for and drop an answer

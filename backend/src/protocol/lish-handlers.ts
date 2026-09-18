@@ -173,18 +173,24 @@ export class LISHServingHandlers {
 			trace(`[NET] searchLishs from ${fromPeerID.slice(0, 12)} refused: no shared joined lishnet`);
 			return;
 		}
-		// Dedup: same searchID arriving multiple times from gossipsub mesh — answer at most once.
-		// The lishnets it arrived over are all recorded, though: one search is broadcast on
-		// every joined topic, so the same searchID legitimately reaches us once per shared
+		// Dedup: the same query arriving multiple times from the gossipsub mesh — answer at most
+		// once. Keyed by SENDER as well as searchID: the id is the sender's own choice, so a
+		// shared key would let any peer reach into someone else's entry — burning the id before
+		// the real search arrives, or adding a lishnet to it and so widening the window the
+		// leave-check below is there to close.
+		//
+		// The lishnets it arrived over are all recorded, because one search is broadcast on
+		// every joined topic and the same query legitimately reaches us once per shared
 		// lishnet. Keeping only the first would let leaving THAT one lishnet bury a request
 		// that also arrived over a lishnet we are still in.
-		const seen = this.deps.seenSearchIDs.get(data.searchID);
+		const dedupKey = `${fromPeerID} ${data.searchID}`;
+		const seen = this.deps.seenSearchIDs.get(dedupKey);
 		if (seen !== undefined) {
 			seen.networks.add(networkID);
 			return;
 		}
 		const arrivedOver = new Set<string>([networkID]);
-		this.deps.seenSearchIDs.set(data.searchID, { at: Date.now(), networks: arrivedOver });
+		this.deps.seenSearchIDs.set(dedupKey, { at: Date.now(), networks: arrivedOver });
 		const q = data.query.toLowerCase();
 		const matches: Array<{ id: string; name?: string; totalSize?: number }> = [];
 		for (const lish of this.deps.dataServer.list()) {
@@ -213,6 +219,10 @@ export class LISHServingHandlers {
 			// landed while this reply was connecting.
 			if (![...arrivedOver].some(n => this.deps.isJoinedToLishnet(n)) || !this.deps.canServePubsubRequestTo(fromPeerID, wasDirect)) {
 				trace(`[NET] searchLishs to ${fromPeerID.slice(0, 12)} dropped: access withdrawn while connecting`);
+				// Forgotten, not just dropped: the dedup entry means "already answered", and this
+				// query was not. A later copy of the same search — over a lishnet we are still in,
+				// arriving after this one died — has to be able to earn its own answer.
+				this.deps.seenSearchIDs.delete(dedupKey);
 				client.abort(new Error('listing access withdrawn'));
 				return;
 			}
