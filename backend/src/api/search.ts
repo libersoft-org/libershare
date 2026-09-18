@@ -4,7 +4,7 @@ import { type Settings } from '../settings.ts';
 import { lishTopic } from '../protocol/constants.ts';
 import { trace } from '../logger.ts';
 import { LISH_PROTOCOL, LISHClient, registerSearchResultHandler, unregisterSearchResultHandler, type SearchResultAnnouncement } from '../protocol/lish-protocol.ts';
-import type { LishSearchResult } from '@shared';
+import { ErrorCodes, type LishSearchResult } from '@shared';
 
 /**
  * Concurrency cap for the unicast `getLishs` fallback. Each fan-out opens a
@@ -13,6 +13,14 @@ import type { LishSearchResult } from '@shared';
  * (sub-second for typical 5-30 peer fleets) and load on the libp2p dialer.
  */
 const UNICAST_FALLBACK_PARALLEL = 10;
+/**
+ * How long to wait before re-asking a peer that refused the listing for want of a
+ * membership it cannot see yet, and how many times. Both sides converge in well under a
+ * second on a healthy mesh; three tries spread over that cover a slow one without ever
+ * outliving the default 30 s search.
+ */
+const LISTING_REFUSAL_RETRY_MS = 1_500;
+const MAX_LISTING_REFUSAL_RETRIES = 3;
 /**
  * Already-queried peer set lives on the session so the initial snapshot
  * dispatch and the live `peer:connect` listener can deduplicate against
@@ -36,12 +44,10 @@ interface SearchSession {
 	disposePeerConnect: () => void;
 	/** Disposer for the topic-subscribe listener, called on timeout/cancel. */
 	disposePeerSubscribe: () => void;
-	/** Peers whose unicast answer was empty and that have not been retried yet. */
-	pendingRetry: Set<string>;
-	/** Peers already retried once — nothing asks them a third time. */
-	retried: Set<string>;
-	/** Peers whose SUBSCRIBE arrived while their first answer was still in flight. */
-	sawSubscribe: Set<string>;
+	/** Per peer, how many times it has refused us for want of visible membership. */
+	refusals: Map<string, number>;
+	/** Pending re-ask timers, cleared with the session so none outlives it. */
+	retryTimers: Set<ReturnType<typeof setTimeout>>;
 }
 
 export interface SearchManager {
@@ -70,6 +76,8 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		const session = sessions.get(searchID);
 		if (!session) return;
 		clearTimeout(session.timeout);
+		for (const timer of session.retryTimers) clearTimeout(timer);
+		session.retryTimers.clear();
 		session.disposePeerConnect();
 		session.disposePeerSubscribe();
 		unregisterSearchResultHandler(searchID);
@@ -130,14 +138,8 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		const network = networks.getRunningNetwork();
 		const selfPeerID = network.getNodeInfo()?.peerID ?? '';
 		const queried: Queried = new Set();
-		const pendingRetry = new Set<string>();
-		const retried = new Set<string>();
-		// Subscriptions seen while a first query was still in flight. The two events that
-		// decide a retry — an empty answer and the peer's SUBSCRIBE — have no fixed order,
-		// and remembering only one of them dropped the retry whenever the SUBSCRIBE won the
-		// race: it arrived before the peer was queued, found nothing to trigger, and no
-		// second SUBSCRIBE was owed.
-		const sawSubscribe = new Set<string>();
+		const refusals = new Map<string, number>();
+		const retryTimers = new Set<ReturnType<typeof setTimeout>>();
 		// Live listener: every peer that completes a libp2p connection while
 		// this search is in flight gets a unicast `getLishs(query)`. Catches
 		// the case where a peer appears via mDNS / peer-announce / hole-punch
@@ -152,24 +154,18 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 				/* logged inside queryOnePeer */
 			});
 		});
-		// A first-contact peer is asked before it can possibly be served: on
-		// `peer:connect` it is not yet in any topic's subscriber list, so the responder's
-		// membership gate refuses and we record an empty answer — then never ask again,
-		// because it is already in `queried`. Its SUBSCRIBE lands a moment later and the
-		// results it does have never reach the user. This is the one retry that covers
-		// that window, bounded to peers that actually came back empty and to a single
-		// attempt each, so a churning fleet cannot turn it into a dial loop.
+		// Seeing a peer's SUBSCRIBE only says WE now know it is a member; the refusal we are
+		// recovering from is the other direction — it has not processed OUR subscription yet.
+		// So this event cannot decide the retry, it can only make one we already owe happen
+		// sooner than its timer would: a peer that refused us is worth re-asking as soon as
+		// anything about the membership picture changes.
 		const disposePeerSubscribe = network.onPeerSubscribe(peerID => {
 			if (!sessions.has(searchID)) return;
 			if (!peerID || peerID === selfPeerID) return;
-			if (!pendingRetry.delete(peerID)) {
-				// The answer has not landed yet: record the subscription so the empty-answer
-				// branch can fire the retry itself. Bounded by `retried`, so the peer is still
-				// asked at most once more however the two events interleave.
-				if (!retried.has(peerID)) sawSubscribe.add(peerID);
-				return;
-			}
-			retried.add(peerID);
+			// Same budget as the timed path, or a peer flapping its subscription would buy a
+			// dial per flap however many times it has already refused us.
+			const attempts = refusals.get(peerID);
+			if (attempts === undefined || attempts > MAX_LISTING_REFUSAL_RETRIES) return;
 			void queryOnePeer(searchID, query, peerID).catch(() => {
 				/* logged inside queryOnePeer */
 			});
@@ -183,9 +179,8 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			queried,
 			disposePeerConnect,
 			disposePeerSubscribe,
-			pendingRetry,
-			retried,
-			sawSubscribe,
+			refusals,
+			retryTimers,
 		};
 		sessions.set(searchID, session);
 		registerSearchResultHandler(searchID, handleResult);
@@ -251,6 +246,33 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		await Promise.allSettled(workers);
 	}
 
+	/**
+	 * Ask a peer that refused us again, a little later.
+	 *
+	 * The refusal means the peer has not yet processed our own subscription — a state the
+	 * two sides converge out of on their own, but on no schedule we control or can observe.
+	 * Waiting for an event is what made this order-dependent, so the retry is simply timed;
+	 * it is bounded twice over, by {@link MAX_LISTING_REFUSAL_RETRIES} and by the session
+	 * timeout that clears every pending timer, so a peer that keeps refusing cannot turn
+	 * the search into a dial loop.
+	 */
+	function scheduleRefusalRetry(session: SearchSession, peerID: string): void {
+		const attempts = (session.refusals.get(peerID) ?? 0) + 1;
+		session.refusals.set(peerID, attempts);
+		if (attempts > MAX_LISTING_REFUSAL_RETRIES) {
+			trace(`[Search] ${session.searchID.slice(0, 8)}: ${peerID.slice(0, 12)} still refuses the listing, giving up`);
+			return;
+		}
+		const timer = setTimeout(() => {
+			session.retryTimers.delete(timer);
+			if (!sessions.has(session.searchID)) return;
+			void queryOnePeer(session.searchID, session.query, peerID).catch(() => {
+				/* logged inside queryOnePeer */
+			});
+		}, LISTING_REFUSAL_RETRY_MS);
+		session.retryTimers.add(timer);
+	}
+
 	async function queryOnePeer(searchID: string, query: string, peerID: string): Promise<void> {
 		const session = sessions.get(searchID);
 		if (!session) return;
@@ -274,25 +296,20 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 				if (l.id.toLowerCase().includes(q)) return true;
 				return (l.name?.toLowerCase() ?? '').includes(q);
 			});
+			// An empty list is now a final answer — a peer that cannot serve us says so with
+			// PEER_LISTING_NOT_AUTHORIZED instead, handled below.
 			if (matches.length > 0) {
 				// Re-use the same aggregation/dedup path as the pubsub-driven
 				// responses, so a peer reachable through both channels never
 				// produces a duplicate row in the FE result list.
 				handleResult({ searchID, peerID, lishs: matches });
-			} else if (session.sawSubscribe.delete(peerID) && !session.retried.has(peerID)) {
-				// Its SUBSCRIBE already landed while we waited for this answer, so the question
-				// the queue exists to settle is answered: ask again now.
-				session.retried.add(peerID);
-				void queryOnePeer(searchID, query, peerID).catch(() => {
-					/* logged inside queryOnePeer */
-				});
-			} else if (!session.retried.has(peerID)) {
-				// An empty answer is ambiguous: nothing matched, or the responder's
-				// membership gate refused us because our SUBSCRIBE had not reached it
-				// yet. Queue the peer so its subscribe event can settle the question.
-				session.pendingRetry.add(peerID);
 			}
+			session.refusals.delete(peerID);
 		} catch (err: any) {
+			if (err?.code === ErrorCodes.PEER_LISTING_NOT_AUTHORIZED) {
+				scheduleRefusalRetry(session, peerID);
+				return;
+			}
 			trace(`[Search] unicast getLishs to ${peerID.slice(0, 12)} failed: ${err?.message ?? err}`);
 		} finally {
 			await client?.close().catch(() => {});
