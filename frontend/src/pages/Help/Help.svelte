@@ -162,7 +162,11 @@
 		</div>
 		<div class="heading">{$t('help.footerWidgets.title')}</div>
 		<div class="bindings">
-			<Table columns="30vh 1fr">
+			<!-- Capped against the row width, not only the viewport height: `30vh` alone is a
+			     label column that grows with a TALL screen, and on a portrait monitor it eats
+			     the row the descriptions live in. The other tables here hold short actions and
+			     never noticed; these sentences do. -->
+			<Table columns="min(30vh, 30%) 1fr">
 				{#each footerWidgets as widget, i}
 					<TableRow position={[0, footerWidgetStartY + i]}>
 						<TableCell>{getWidgetLabel(widget, $t)}</TableCell>
