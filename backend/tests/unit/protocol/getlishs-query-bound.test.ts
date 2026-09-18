@@ -41,14 +41,19 @@ describe('getLishs query bound', () => {
 	it('scans the catalog for a query at the bound', async () => {
 		initUploadState(new Set([SHARED_LISH_ID]), () => {});
 		const { dataServer, scans } = countingDataServer();
-		const atBound = SHARED_LISH_ID.slice(0, 8).padEnd(MAX_SEARCH_QUERY_LENGTH, SHARED_LISH_ID.slice(0, 8)).slice(0, 8);
+		// Actually AT the bound. The old value was trimmed back to 8 characters, so the test
+		// that claimed to cover the limit never sent one. A query this long cannot match a
+		// short LISH id, which is the point: the bound decides whether the catalog is scanned
+		// at all, and a scan that finds nothing is still a scan.
+		const atBound = 'x'.repeat(MAX_SEARCH_QUERY_LENGTH);
 		const { stream, sent } = fakeStream([{ type: 'getLishs', query: atBound }]);
 
 		await handleLISHProtocol(stream as any, dataServer, PEER, 'DIRECT', allowAll, allowAll);
 
 		const [res] = (await responses(sent)) as Array<Extract<LISHGetLishsResponse, { lishs: unknown }>>;
+		expect(atBound.length).toBe(MAX_SEARCH_QUERY_LENGTH);
 		expect(scans.count).toBe(1);
-		expect(res!.lishs.map(l => l.id)).toEqual([SHARED_LISH_ID]);
+		expect(res!.lishs).toEqual([]);
 	});
 
 	it('refuses a query longer than the bound without scanning the catalog', async () => {
