@@ -618,21 +618,58 @@ describe('search dial concurrency', () => {
 		expect(aborted).toBe(1);
 	});
 
-	it('a cancelled search stops holding dial permits', async () => {
-		// The permits are shared with every other search, so a cancelled one whose peers never
-		// answer would otherwise keep the next search queued behind it for the full read timeout.
-		const { manager, release, peakDials, liveDials } = fleetManager(true);
+	// The claim is that the permits come free, not merely that abort() was called. Measuring a
+	// counter the stub decrements itself proves the second and not the first — so this starts a
+	// second search with no help at all and checks that its dials actually begin.
+	it('a cancelled search frees the permits its open requests were holding', async () => {
+		const dialed: string[] = [];
+		const network = {
+			isRunning: () => true,
+			getNodeInfo: () => ({ peerID: SELF_ID }),
+			getPeers: () => peers,
+			getTopicPeers: () => peers,
+			onPeerConnect: () => () => {},
+			onPeerSubscribe: () => () => {},
+			broadcast: async (): Promise<void> => {},
+			dialProtocolByPeerId: async (peerID: string) => {
+				dialed.push(peerID);
+				// Answers never arrive; only a real abort ends the read, as a torn-down stream does.
+				let fail: (err: Error) => void = () => {};
+				const dead = new Promise<never>((_resolve, reject) => (fail = reject));
+				return {
+					stream: {
+						id: 'stuck',
+						status: 'open',
+						send(): void {},
+						async close(): Promise<void> {},
+						abort(): void {
+							fail(new Error('stream aborted'));
+						},
+						async *[Symbol.asyncIterator]() {
+							await dead;
+						},
+					} as any,
+					connectionType: 'DIRECT' as const,
+				};
+			},
+		};
+		const networks = { getNetwork: () => network, getRunningNetwork: () => network, list: () => [{ networkID: NETWORK_ID, enabled: true }], isJoined: () => true };
+		const manager = initSearchManager(networks as any, { get: () => 30_000 } as any, () => {});
 
-		await manager.startSearch({ query: 'anything' });
+		const { searchID } = await manager.startSearch({ query: 'first' });
 		await settle();
-		expect(liveDials()).toBe(UNICAST_FALLBACK_PARALLEL); // ten peers hold the permits, none answering
+		expect(dialed).toHaveLength(UNICAST_FALLBACK_PARALLEL); // every permit held by an open, silent request
 
+		manager.cancelSearch({ searchID });
+		await settle();
+
+		// Nothing was released by hand: if the permits are genuinely free, the next search dials.
+		const before = dialed.length;
+		await manager.startSearch({ query: 'second' });
+		await settle();
+
+		expect(dialed.length).toBeGreaterThan(before);
 		manager.stopAll();
-		await settle();
-
-		expect(liveDials()).toBe(0);
-		expect(peakDials()).toBeLessThanOrEqual(UNICAST_FALLBACK_PARALLEL);
-		release();
 	});
 
 	it('holds retries to the same cap as the opening fan-out', async () => {
