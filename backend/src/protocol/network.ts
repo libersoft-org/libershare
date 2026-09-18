@@ -713,10 +713,14 @@ export class Network {
 	 * Subscribe to "a peer joined one of our lishnet topics" for the duration of the
 	 * returned disposer. The handler receives the peer ID and the topic it subscribed to.
 	 *
-	 * A peer becomes servable at this moment and not before: until its SUBSCRIBE lands,
-	 * the membership gates have nothing to go on and refuse it. Anything that asked the
-	 * peer for something on `peer:connect` alone therefore asked too early, and this is
-	 * the event that says when asking again is worth it.
+	 * WE become able to serve the peer at this moment and not before: until its SUBSCRIBE
+	 * lands, our membership gates have nothing to go on and refuse it.
+	 *
+	 * The reverse does not follow, and nothing should read it that way: this says nothing
+	 * about whether the PEER has processed OUR subscription, so it is no signal that asking
+	 * it for something would now succeed. Search deliberately does not retry on it — see the
+	 * note on scheduleRefusalRetry in api/search.ts — because a handful of these events
+	 * could otherwise spend a whole retry budget before the other side was ready.
 	 */
 	onPeerSubscribe(handler: (peerID: string, topic: string) => void): () => void {
 		this.peerSubscribeHandlers.add(handler);

@@ -18,12 +18,13 @@ export interface LishSearchSession {
 	/** `performance.now()` timestamp of the last `start()`, or null if never started. Drives the search progress bar. */
 	readonly startedAt: number | null;
 	/**
-	 * Peers that refused to show us their listing for the whole search.
+	 * Connected peers that refused to show us their listing.
 	 *
-	 * Not the same as finding nothing: these are peers we never got to look at, so the
-	 * results are incomplete rather than empty, and the screen should say so.
+	 * Counts refusals, not missing results: the search asks every connected peer, so a relay
+	 * or a peer of an unrelated lishnet refusing is expected and counted here too. The notice
+	 * therefore states the refusal rather than claiming the results are incomplete.
 	 */
-	readonly unsearchablePeers: number;
+	readonly refusedPeers: number;
 	start(): Promise<void>;
 	cancel(): Promise<void>;
 	clear(): void;
@@ -37,7 +38,7 @@ export function createLishSearch(): LishSearchSession {
 	let error = $state('');
 	let results = $state<LishSearchResult[]>([]);
 	let startedAt = $state<number | null>(null);
-	let unsearchablePeers = $state(0);
+	let refusedPeers = $state(0);
 
 	function handleUpdate(data: unknown): void {
 		const d = data as { searchID: string; lishs: LishSearchResult[] };
@@ -69,9 +70,9 @@ export function createLishSearch(): LishSearchSession {
 		if (inserted) results = [...byID.values()];
 	}
 	function handleComplete(data: unknown): void {
-		const d = data as { searchID: string; unsearchablePeers?: number };
+		const d = data as { searchID: string; refusedPeers?: number };
 		if (d.searchID !== searchID) return;
-		unsearchablePeers = d.unsearchablePeers ?? 0;
+		refusedPeers = d.refusedPeers ?? 0;
 		searching = false;
 	}
 
@@ -89,7 +90,7 @@ export function createLishSearch(): LishSearchSession {
 			} catch {}
 		}
 		searching = true;
-		unsearchablePeers = 0;
+		refusedPeers = 0;
 		error = '';
 		results = [];
 		startedAt = performance.now();
@@ -116,7 +117,7 @@ export function createLishSearch(): LishSearchSession {
 		results = [];
 		error = '';
 		searchID = null;
-		unsearchablePeers = 0;
+		refusedPeers = 0;
 	}
 
 	function dispose(): void {
@@ -140,8 +141,8 @@ export function createLishSearch(): LishSearchSession {
 		get results(): LishSearchResult[] {
 			return results;
 		},
-		get unsearchablePeers(): number {
-			return unsearchablePeers;
+		get refusedPeers(): number {
+			return refusedPeers;
 		},
 		get error(): string {
 			return error;

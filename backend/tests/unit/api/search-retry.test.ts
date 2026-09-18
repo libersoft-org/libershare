@@ -272,9 +272,9 @@ describe('search unicast retry after a listing refusal', () => {
 	});
 
 	// Telling a refusal from an empty catalog is what the error code is for, and that
-	// distinction used to die at the API boundary: the search just ended, and a result set
-	// missing a peer we could not look at looked exactly like one where it had nothing.
-	it('reports how many peers it never got to search', async () => {
+	// distinction used to die at the API boundary: the search just ended and said nothing
+	// about the peer that would not show us anything.
+	it('reports how many peers refused the listing', async () => {
 		const { manager, events } = buildManager([[refused]]);
 
 		await manager.startSearch({ query: LISH_ID.slice(0, 8) });
@@ -284,12 +284,12 @@ describe('search unicast retry after a listing refusal', () => {
 
 		const done = events.filter(e => e.event === 'search:lishs:complete');
 		expect(done).toHaveLength(1);
-		expect(done[0]!.data.unsearchablePeers).toBe(1);
+		expect(done[0]!.data.refusedPeers).toBe(1);
 	}, 20_000);
 
 	// The search can end while a peer still has tries left — it refused in the last second and
 	// its next attempt was never due. Counting only the ones that ran out of tries reported
-	// zero there, hiding exactly the case the notice exists for.
+	// zero for a peer that had plainly refused.
 	it('counts a peer still waiting for its retry when the search ends', async () => {
 		const { manager, events } = buildManager([[refused]]);
 
@@ -299,7 +299,38 @@ describe('search unicast retry after a listing refusal', () => {
 
 		const done = events.filter(e => e.event === 'search:lishs:complete');
 		expect(done).toHaveLength(1);
-		expect(done[0]!.data.unsearchablePeers).toBe(1);
+		expect(done[0]!.data.refusedPeers).toBe(1);
+	});
+
+	// Names what the count actually measures. The fan-out asks EVERY connected peer, so this
+	// is not a completeness figure: a peer that never answers at all is not counted, and a
+	// relay or unrelated peer refusing us — the expected answer from such a peer — is. The
+	// wording shown to the user therefore states the refusal rather than claiming results are
+	// missing.
+	it('counts a refusal but not a peer that simply never answered', async () => {
+		const silent = { manager: null as any, events: [] as Array<{ event: string; data: any }> };
+		const network = {
+			isRunning: () => true,
+			getNodeInfo: () => ({ peerID: SELF_ID }),
+			getPeers: () => [NEW_PEER],
+			getTopicPeers: () => [NEW_PEER],
+			onPeerConnect: () => () => {},
+			onPeerSubscribe: () => () => {},
+			broadcast: async (): Promise<void> => {},
+			// Fails to connect at all — no refusal was ever sent, so nothing to count.
+			dialProtocolByPeerId: async () => {
+				throw new Error('unreachable');
+			},
+		};
+		const networks = { getNetwork: () => network, getRunningNetwork: () => network, list: () => [{ networkID: NETWORK_ID, enabled: true }], isJoined: () => true };
+		silent.manager = initSearchManager(networks as any, { get: () => 30_000 } as any, (event, data) => silent.events.push({ event, data }));
+
+		await silent.manager.startSearch({ query: LISH_ID.slice(0, 8) });
+		await settle();
+		silent.manager.stopAll();
+
+		const done = silent.events.filter(e => e.event === 'search:lishs:complete');
+		expect(done[0]!.data.refusedPeers).toBe(0);
 	});
 
 	it('reports none when every peer answered', async () => {
@@ -310,7 +341,7 @@ describe('search unicast retry after a listing refusal', () => {
 		manager.stopAll();
 
 		const done = events.filter(e => e.event === 'search:lishs:complete');
-		expect(done[0]!.data.unsearchablePeers).toBe(0);
+		expect(done[0]!.data.refusedPeers).toBe(0);
 	});
 
 	it('treats an empty list as a final answer', async () => {

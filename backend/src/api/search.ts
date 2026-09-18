@@ -47,15 +47,16 @@ interface SearchSession {
 	/** Retry bookkeeping for peers that refused us; see {@link RefusalState}. */
 	refusals: Map<string, RefusalState>;
 	/**
-	 * Peers that refused the listing until their budget ran out.
+	 * Peers that refused to show us their listing and never relented.
 	 *
-	 * Telling a refusal apart from an empty catalog is the whole point of the gate's error
-	 * code, and that distinction died at the API boundary: the search simply ended, and a
-	 * result set missing a peer we could not look at was indistinguishable from one where
-	 * that peer had nothing. The count goes out with the completion event so the screen can
-	 * say results may be incomplete.
+	 * Reported rather than swallowed, because telling a refusal from an empty catalog is the
+	 * whole point of the gate's error code and that distinction otherwise dies at the API
+	 * boundary. Note what this is NOT: the fan-out asks every connected peer, so a relay or a
+	 * peer of an unrelated lishnet refusing us is expected and lands here too — while a real
+	 * member that simply failed to answer does not. It counts refusals, and the wording shown
+	 * to the user says exactly that rather than claiming the results are incomplete.
 	 */
-	unsearchable: Set<string>;
+	refusedListing: Set<string>;
 	/**
 	 * Peers that have served us, over any channel.
 	 *
@@ -157,11 +158,10 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		clearTimeout(session.timeout);
 		// No armed re-ask may outlive the session it belongs to.
 		for (const state of session.refusals.values()) if (state.timer) clearTimeout(state.timer);
-		// A peer still inside its retry budget is one we never got to look at either — the
-		// search simply ended before its next attempt. Counting only the ones that ran out of
-		// tries hid exactly the case the notice is for: a peer that refused in the last second
-		// of the search reported as nothing at all.
-		for (const peerID of session.refusals.keys()) session.unsearchable.add(peerID);
+		// A peer still inside its retry budget refused us just as much — the search simply ended
+		// before its next attempt. Counting only the ones that ran out of tries reported zero
+		// for a peer that refused in the last second of the search.
+		for (const peerID of session.refusals.keys()) session.refusedListing.add(peerID);
 		session.refusals.clear();
 		// Nor may a request: it holds a shared dial permit until it finishes, so abandoning it
 		// silently would make a cancelled search slow down the next one. The signal covers the
@@ -172,9 +172,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		session.disposePeerConnect();
 		unregisterSearchResultHandler(searchID);
 		sessions.delete(searchID);
-		// `unsearchable` is what the peers we never got to look at amount to — an empty result
-		// from such a peer was never an answer, and the screen should not present it as one.
-		broadcast('search:lishs:complete', { searchID, reason, unsearchablePeers: session.unsearchable.size });
+		broadcast('search:lishs:complete', { searchID, reason, refusedPeers: session.refusedListing.size });
 	}
 
 	function handleResult(ann: SearchResultAnnouncement): void {
@@ -184,7 +182,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		// This peer has served us, so a re-ask armed by an earlier refusal is moot however the
 		// answer reached us — the pubsub path lands here too, not only the unicast one.
 		session.answered.add(ann.peerID);
-		session.unsearchable.delete(ann.peerID);
+		session.refusedListing.delete(ann.peerID);
 		clearRefusal(session, ann.peerID);
 		// Map peerID → networkID is non-trivial without checking pubsub subscribers across topics;
 		// for the UI we only need the peerID + a representative networkID. Pick the first joined network
@@ -271,7 +269,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			queried,
 			disposePeerConnect,
 			refusals,
-			unsearchable: new Set<string>(),
+			refusedListing: new Set<string>(),
 			answered: new Set<string>(),
 			inFlightClients: new Set<LISHClient>(),
 			abort: new AbortController(),
@@ -351,7 +349,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 	 * answer too — so it also stops counting as one we could not search.
 	 */
 	function clearRefusal(session: SearchSession, peerID: string): void {
-		session.unsearchable.delete(peerID);
+		session.refusedListing.delete(peerID);
 		const state = session.refusals.get(peerID);
 		if (!state) return;
 		if (state.timer) clearTimeout(state.timer);
@@ -372,7 +370,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		if (!state || state.timer) return;
 		if (state.attempts >= MAX_LISTING_REFUSAL_RETRIES) {
 			trace(`[Search] ${session.searchID.slice(0, 8)}: ${peerID.slice(0, 12)} still refuses the listing, giving up`);
-			session.unsearchable.add(peerID);
+			session.refusedListing.add(peerID);
 			session.refusals.delete(peerID);
 			return;
 		}

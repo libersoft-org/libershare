@@ -153,7 +153,7 @@
 	{/if}
 	<!-- Not an error: the search worked, it just could not look everywhere. Saying nothing
 	     would present an incomplete result as a complete one. -->
-	{#if !search.searching && search.unsearchablePeers > 0}
+	{#if !search.searching && search.refusedPeers > 0}
 		<Alert type="info" message={$t('network.somePeersUnsearchable')} />
 	{/if}
 	{#if search.results.length > 0}

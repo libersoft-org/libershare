@@ -104,7 +104,7 @@
 		"tabLishs": "LISHe",
 		"searchPlaceholder": "Hledat podle ID účastníka ...",
 		"searchLishsPlaceholder": "Hledat LISH podle názvu nebo ID ...",
-		"somePeersUnsearchable": "Některé účastníky se nepodařilo prohledat, výsledky mohou být neúplné",
+		"somePeersRefusedListing": "Někteří připojení účastníci odmítli zobrazit seznam sdílených položek",
 		"searching": "Prohledávám síť ...",
 		"searchComplete": "Hledání dokončeno",
 		"noResults": "Žádný LISH neodpovídá dotazu.",
