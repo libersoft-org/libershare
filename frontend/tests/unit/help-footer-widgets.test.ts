@@ -18,8 +18,10 @@ async function loadHelpFooterWidgets(langID: string): Promise<Record<string, str
 for (const { id: langID } of languages) {
 	test(`${langID}.json describes every footer widget`, async () => {
 		const section = await loadHelpFooterWidgets(langID);
-		expect(section['title']).toBeString();
-		for (const widget of footerWidgets) expect(section[widget]).toBeString();
+		// Non-empty, not merely present: an entry emptied by a bad edit is a row that
+		// renders as nothing, which the page cannot distinguish from a documented widget.
+		expect(section['title']?.trim()).toBeTruthy();
+		for (const widget of footerWidgets) expect(section[widget]?.trim()).toBeTruthy();
 	});
 
 	test(`${langID}.json has no description for an unknown widget`, async () => {
