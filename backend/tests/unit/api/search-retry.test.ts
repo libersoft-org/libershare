@@ -147,3 +147,102 @@ describe('search unicast retry after a peer subscribes', () => {
 		manager.stopAll();
 	});
 });
+
+/**
+ * The two events that decide the retry — an empty answer and the peer's SUBSCRIBE — have
+ * no fixed order. The tests above always let the answer land first, which is the ordering
+ * that happened to work: the subscribe found the peer already queued and fired.
+ *
+ * Arriving first, the same subscribe used to be dropped — nothing was queued yet — and no
+ * second one was owed, so the results of a peer that had just become servable never came.
+ */
+function heldManager() {
+	const dials: string[] = [];
+	const events: Array<{ event: string; data: any }> = [];
+	let onSubscribe: ((peerID: string, topic: string) => void) | undefined;
+	let release: () => void = () => {};
+	const held = new Promise<void>(resolve => (release = resolve));
+
+	/** Answers only once the test lets go, so a subscribe can overtake the first reply. */
+	function gatedStream(script: unknown[], gate: Promise<void> | null) {
+		const queue: Uint8ArrayList[] = [];
+		let notify: (() => void) | null = null;
+		let closed = false;
+		const wake = (): void => {
+			notify?.();
+			notify = null;
+		};
+		return {
+			id: 'gated',
+			status: 'open',
+			send(): void {
+				const next = script.shift();
+				if (next === undefined) closed = true;
+				else queue.push(lpEncode.single(codecEncode(next)));
+				wake();
+			},
+			async close(): Promise<void> {
+				closed = true;
+				wake();
+			},
+			abort(): void {
+				closed = true;
+				wake();
+			},
+			async *[Symbol.asyncIterator]() {
+				if (gate) await gate;
+				for (;;) {
+					while (queue.length > 0) yield queue.shift()!;
+					if (closed) return;
+					await new Promise<void>(resolve => (notify = resolve));
+				}
+			},
+		};
+	}
+
+	const network = {
+		isRunning: () => true,
+		getNodeInfo: () => ({ peerID: SELF_ID }),
+		getPeers: () => [NEW_PEER],
+		getTopicPeers: () => [NEW_PEER],
+		onPeerConnect: () => () => {},
+		onPeerSubscribe: (h: (peerID: string, topic: string) => void) => {
+			onSubscribe = h;
+			return () => {
+				onSubscribe = undefined;
+			};
+		},
+		broadcast: async (): Promise<void> => {},
+		dialProtocolByPeerId: async (peerID: string) => {
+			dials.push(peerID);
+			const first = dials.length === 1;
+			const script = first ? [emptyResult] : [oneResult];
+			return { stream: gatedStream([...script], first ? held : null) as any, connectionType: 'DIRECT' as const };
+		},
+	};
+	const networks = { getNetwork: () => network, getRunningNetwork: () => network, list: () => [{ networkID: NETWORK_ID, enabled: true }], isJoined: () => true };
+	const manager = initSearchManager(networks as any, { get: () => 30_000 } as any, (event, data) => events.push({ event, data }));
+	return { manager, dials, events, release, fireSubscribe: (): void => onSubscribe?.(NEW_PEER, lishTopic(NETWORK_ID)) };
+}
+
+describe('search unicast retry — the order of the two events must not matter', () => {
+	it('retries when the subscription arrives before the empty answer', async () => {
+		const { manager, dials, events, release, fireSubscribe } = heldManager();
+
+		await manager.startSearch({ query: LISH_ID.slice(0, 8) });
+		await settle();
+		expect(dials).toEqual([NEW_PEER]); // first query still waiting for its answer
+
+		fireSubscribe(); // lands while the answer is in flight
+		await settle();
+		release(); // now the empty answer arrives
+		await settle();
+		await settle();
+
+		expect(dials).toEqual([NEW_PEER, NEW_PEER]);
+		const updates = events.filter(e => e.event === 'search:lishs:update');
+		expect(updates).toHaveLength(1);
+		expect(updates[0]!.data.lishs[0].id).toBe(LISH_ID);
+		manager.stopAll();
+	});
+});

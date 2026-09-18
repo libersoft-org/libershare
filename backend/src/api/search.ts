@@ -40,6 +40,8 @@ interface SearchSession {
 	pendingRetry: Set<string>;
 	/** Peers already retried once — nothing asks them a third time. */
 	retried: Set<string>;
+	/** Peers whose SUBSCRIBE arrived while their first answer was still in flight. */
+	sawSubscribe: Set<string>;
 }
 
 export interface SearchManager {
@@ -130,6 +132,12 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		const queried: Queried = new Set();
 		const pendingRetry = new Set<string>();
 		const retried = new Set<string>();
+		// Subscriptions seen while a first query was still in flight. The two events that
+		// decide a retry — an empty answer and the peer's SUBSCRIBE — have no fixed order,
+		// and remembering only one of them dropped the retry whenever the SUBSCRIBE won the
+		// race: it arrived before the peer was queued, found nothing to trigger, and no
+		// second SUBSCRIBE was owed.
+		const sawSubscribe = new Set<string>();
 		// Live listener: every peer that completes a libp2p connection while
 		// this search is in flight gets a unicast `getLishs(query)`. Catches
 		// the case where a peer appears via mDNS / peer-announce / hole-punch
@@ -154,7 +162,13 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		const disposePeerSubscribe = network.onPeerSubscribe(peerID => {
 			if (!sessions.has(searchID)) return;
 			if (!peerID || peerID === selfPeerID) return;
-			if (!pendingRetry.delete(peerID)) return;
+			if (!pendingRetry.delete(peerID)) {
+				// The answer has not landed yet: record the subscription so the empty-answer
+				// branch can fire the retry itself. Bounded by `retried`, so the peer is still
+				// asked at most once more however the two events interleave.
+				if (!retried.has(peerID)) sawSubscribe.add(peerID);
+				return;
+			}
 			retried.add(peerID);
 			void queryOnePeer(searchID, query, peerID).catch(() => {
 				/* logged inside queryOnePeer */
@@ -171,6 +185,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			disposePeerSubscribe,
 			pendingRetry,
 			retried,
+			sawSubscribe,
 		};
 		sessions.set(searchID, session);
 		registerSearchResultHandler(searchID, handleResult);
@@ -264,6 +279,13 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 				// responses, so a peer reachable through both channels never
 				// produces a duplicate row in the FE result list.
 				handleResult({ searchID, peerID, lishs: matches });
+			} else if (session.sawSubscribe.delete(peerID) && !session.retried.has(peerID)) {
+				// Its SUBSCRIBE already landed while we waited for this answer, so the question
+				// the queue exists to settle is answered: ask again now.
+				session.retried.add(peerID);
+				void queryOnePeer(searchID, query, peerID).catch(() => {
+					/* logged inside queryOnePeer */
+				});
 			} else if (!session.retried.has(peerID)) {
 				// An empty answer is ambiguous: nothing matched, or the responder's
 				// membership gate refused us because our SUBSCRIBE had not reached it
