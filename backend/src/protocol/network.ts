@@ -3711,9 +3711,9 @@ export class Network {
 		return dialProtocolFn(this.node, this.dcutrPeers, multiaddrs, protocol);
 	}
 
-	async dialProtocolByPeerId(peerID: string, protocol: string): Promise<IDialResult> {
+	async dialProtocolByPeerId(peerID: string, protocol: string, signal?: AbortSignal): Promise<IDialResult> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
-		return dialProtocolByPeerIdFn(this.node, this.dcutrPeers, peerID, protocol);
+		return dialProtocolByPeerIdFn(this.node, this.dcutrPeers, peerID, protocol, signal);
 	}
 
 	/**
