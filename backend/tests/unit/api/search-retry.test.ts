@@ -271,6 +271,33 @@ describe('search unicast retry after a listing refusal', () => {
 		manager.stopAll();
 	});
 
+	// Telling a refusal from an empty catalog is what the error code is for, and that
+	// distinction used to die at the API boundary: the search just ended, and a result set
+	// missing a peer we could not look at looked exactly like one where it had nothing.
+	it('reports how many peers it never got to search', async () => {
+		const { manager, events } = buildManager([[refused]]);
+
+		await manager.startSearch({ query: LISH_ID.slice(0, 8) });
+		await settle();
+		for (let i = 0; i < MAX_LISTING_REFUSAL_RETRIES; i++) await afterRetryDelay();
+		manager.stopAll();
+
+		const done = events.filter(e => e.event === 'search:lishs:complete');
+		expect(done).toHaveLength(1);
+		expect(done[0]!.data.unsearchablePeers).toBe(1);
+	}, 20_000);
+
+	it('reports none when every peer answered', async () => {
+		const { manager, events } = buildManager([[oneResult]]);
+
+		await manager.startSearch({ query: LISH_ID.slice(0, 8) });
+		await settle();
+		manager.stopAll();
+
+		const done = events.filter(e => e.event === 'search:lishs:complete');
+		expect(done[0]!.data.unsearchablePeers).toBe(0);
+	});
+
 	it('treats an empty list as a final answer', async () => {
 		const { manager, dials, fireSubscribe } = buildManager([[emptyResult], [oneResult]]);
 

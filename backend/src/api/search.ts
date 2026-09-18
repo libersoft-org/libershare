@@ -47,6 +47,16 @@ interface SearchSession {
 	/** Retry bookkeeping for peers that refused us; see {@link RefusalState}. */
 	refusals: Map<string, RefusalState>;
 	/**
+	 * Peers that refused the listing until their budget ran out.
+	 *
+	 * Telling a refusal apart from an empty catalog is the whole point of the gate's error
+	 * code, and that distinction died at the API boundary: the search simply ended, and a
+	 * result set missing a peer we could not look at was indistinguishable from one where
+	 * that peer had nothing. The count goes out with the completion event so the screen can
+	 * say results may be incomplete.
+	 */
+	unsearchable: Set<string>;
+	/**
 	 * Peers that have served us, over any channel.
 	 *
 	 * A peer can answer over pubsub while our direct query to it is still out. That direct
@@ -157,7 +167,9 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		session.disposePeerConnect();
 		unregisterSearchResultHandler(searchID);
 		sessions.delete(searchID);
-		broadcast('search:lishs:complete', { searchID, reason });
+		// `unsearchable` is what the peers we never got to look at amount to — an empty result
+		// from such a peer was never an answer, and the screen should not present it as one.
+		broadcast('search:lishs:complete', { searchID, reason, unsearchablePeers: session.unsearchable.size });
 	}
 
 	function handleResult(ann: SearchResultAnnouncement): void {
@@ -167,6 +179,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		// This peer has served us, so a re-ask armed by an earlier refusal is moot however the
 		// answer reached us — the pubsub path lands here too, not only the unicast one.
 		session.answered.add(ann.peerID);
+		session.unsearchable.delete(ann.peerID);
 		clearRefusal(session, ann.peerID);
 		// Map peerID → networkID is non-trivial without checking pubsub subscribers across topics;
 		// for the UI we only need the peerID + a representative networkID. Pick the first joined network
@@ -253,6 +266,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			queried,
 			disposePeerConnect,
 			refusals,
+			unsearchable: new Set<string>(),
 			answered: new Set<string>(),
 			inFlightClients: new Set<LISHClient>(),
 			abort: new AbortController(),
@@ -347,6 +361,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		if (!state || state.timer) return;
 		if (state.attempts >= MAX_LISTING_REFUSAL_RETRIES) {
 			trace(`[Search] ${session.searchID.slice(0, 8)}: ${peerID.slice(0, 12)} still refuses the listing, giving up`);
+			session.unsearchable.add(peerID);
 			session.refusals.delete(peerID);
 			return;
 		}
