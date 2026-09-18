@@ -104,6 +104,7 @@
 		"tabLishs": "LISHe",
 		"searchPlaceholder": "Hledat podle ID účastníka ...",
 		"searchLishsPlaceholder": "Hledat LISH podle názvu nebo ID ...",
+		"somePeersUnsearchable": "Některé účastníky se nepodařilo prohledat, výsledky mohou být neúplné",
 		"searching": "Prohledávám síť ...",
 		"searchComplete": "Hledání dokončeno",
 		"noResults": "Žádný LISH neodpovídá dotazu.",

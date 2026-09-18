@@ -104,6 +104,7 @@
 		"tabLishs": "LISHs",
 		"searchPlaceholder": "Search by peer ID ...",
 		"searchLishsPlaceholder": "Search LISHs by name or ID ...",
+		"somePeersUnsearchable": "Some peers could not be searched, so the results may be incomplete",
 		"searching": "Searching network ...",
 		"searchComplete": "Search complete",
 		"noResults": "No LISHs matched your query.",

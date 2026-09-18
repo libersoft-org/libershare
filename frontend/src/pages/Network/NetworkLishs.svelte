@@ -151,6 +151,11 @@
 			<span>{$t('network.lishCount', { count: String(search.results.length) })}</span>
 		</div>
 	{/if}
+	<!-- Not an error: the search worked, it just could not look everywhere. Saying nothing
+	     would present an incomplete result as a complete one. -->
+	{#if !search.searching && search.unsearchablePeers > 0}
+		<Alert type="info" message={$t('network.somePeersUnsearchable')} />
+	{/if}
 	{#if search.results.length > 0}
 		<Table columns="auto 2fr 1fr 12vh 10vh" columnsMobile="1fr auto">
 			<TableHeader>
