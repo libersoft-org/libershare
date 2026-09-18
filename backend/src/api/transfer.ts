@@ -739,8 +739,16 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			if (lastManualIntent.get(p.lishID) === false) return shared;
 			const wantedByUser = lastManualIntent.get(p.lishID) === true;
 			if (!wantedByUser && !downloadEnabledLishs.has(p.lishID) && bound === undefined) return shared;
-			const joinable = bound !== undefined && bound.size > 0 ? [...bound].some(id => networks.isJoined(id)) : getJoinedEnabledNetworkIDs(networks).length > 0;
-			if (!joinable) return shared;
+			// A manual "on" goes through even with nothing to download from. Asked directly,
+			// that request stores the intent and files the resume claim, so a later rejoin
+			// picks it up; ending here instead would leave the user's last word recorded
+			// nowhere — neither as the stored flag nor as a claim — and the rejoin would find
+			// nothing to resume. The attempt it falls through to does not loop: with no joined
+			// lishnet it takes that same branch and returns.
+			if (!wantedByUser) {
+				const joinable = bound !== undefined && bound.size > 0 ? [...bound].some(id => networks.isJoined(id)) : getJoinedEnabledNetworkIDs(networks).length > 0;
+				if (!joinable) return shared;
+			}
 		}
 		// Registered BEFORE the body can run. An async function still executes synchronously
 		// up to its first await, and this one reaches the downloader's manifest read in that

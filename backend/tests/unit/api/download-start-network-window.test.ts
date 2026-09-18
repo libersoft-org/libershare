@@ -419,6 +419,34 @@ describe('download start — the lishnet window', () => {
 		}
 	});
 
+	it('records a manual enable that lands with no lishnet left to serve it', async () => {
+		// enable → disable → enable, and the lishnet goes before the queued enable gets its
+		// turn. Asked directly, an enable with nothing to download from still stores the
+		// intent and files the resume claim; a request that merely waited on another attempt
+		// must not end with less than that, or the user's last word is recorded nowhere and
+		// the rejoin finds nothing to resume.
+		const net = makeNetworks([NET_A]);
+		const events: Array<{ event: string; data: any }> = [];
+		const handlers = initTransferHandlers(net.networks, makeDataServer(), tmpdir(), () => {}, (event: string, data: any) => events.push({ event, data }), settings);
+
+		const first = handlers.enableDownload({ lishID: LISH_ID });
+		handlers.disableDownload({ lishID: LISH_ID });
+		const second = handlers.enableDownload({ lishID: LISH_ID });
+		net.leave(NET_A);
+
+		await first;
+		await second;
+
+		// The download cannot run — but the intent is stored, which is what a rejoin reads.
+		const writes = persisted.filter(e => e.lishID === LISH_ID);
+		expect(writes[writes.length - 1]).toEqual({ lishID: LISH_ID, enabled: true });
+
+		events.length = 0;
+		net.announceJoin(NET_A);
+		await new Promise(resolve => setTimeout(resolve, 40));
+		expect(events.filter(e => e.event === 'transfer.download:enabled').map(e => e.data.lishID)).toEqual([LISH_ID]);
+	});
+
 	it('lets a switch off land between scheduling a start and running it', async () => {
 		// The start body is deferred by one microtask so its single-flight registration cannot
 		// be missed. A disable arriving in that window is SYNCHRONOUS and therefore lands
