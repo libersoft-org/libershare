@@ -3136,13 +3136,23 @@ export class Network {
 	 * them. Without this, the pubsub `searchLishs` path returns the very catalog rows
 	 * {@link canListSharesTo} withholds over unicast.
 	 *
-	 * Only a publisher we are DIRECTLY connected to can be judged. gossipsub builds its
-	 * subscriber view purely from the subscription lists of direct neighbours and never
-	 * relays them, so a legitimate member two hops away carries no local membership
-	 * evidence and refusing it would break multi-hop search for honest peers. This
-	 * therefore closes the bare-neighbour bypass and nothing more: an ACL that also
-	 * covers the multi-hop case needs a verifiable membership proof carried in the
-	 * request, not a local view of who is subscribed.
+	 * KNOWN CEILING — read this before describing the gate as "members only". Only a
+	 * publisher we are DIRECTLY connected to can be judged. gossipsub builds its subscriber
+	 * view purely from the subscription lists of direct neighbours and never relays them,
+	 * so a legitimate member two hops away carries no local membership evidence, and
+	 * refusing every indirect publisher would break multi-hop search for honest peers.
+	 *
+	 * An indirect publisher is therefore served unless we hold a record against it
+	 * (a leave, or a revoked listing right). Its membership is NOT proven, so a stranger
+	 * whose request reaches us through another peer can still obtain the names, ids and
+	 * sizes of what we share. What this closes is the bare-neighbour bypass: a peer that
+	 * merely opened a transport connection, learned our topic ids from the subscription
+	 * list gossipsub pushes down every new stream, and published on them.
+	 *
+	 * Lifting the ceiling means a verifiable membership proof carried IN the request
+	 * (peerID + networkID + timestamp, signed), checked before results are sent. That is a
+	 * protocol change, not a tightening of this function — a local view of who is
+	 * subscribed cannot answer for a peer we have never spoken to.
 	 */
 	canServePubsubRequestTo(peerID: string): boolean {
 		if (!this.node) return false;
