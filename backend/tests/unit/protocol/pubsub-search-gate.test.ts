@@ -195,4 +195,16 @@ describe('pubsub searchLishs gate — a revoked listing is revoked through every
 
 		expect(net.canServePubsubRequestTo('peer-stranger')).toBe(true);
 	});
+
+	// The two paths have to agree on when a rejoin gives the right back. The unicast gate
+	// accepts a live shared subscription before it looks at the revocation, so a pubsub gate
+	// that refused on the record first left the same peer served on one path and refused on
+	// the other — for as long as the record sat there, which a rejoin does not clear.
+	it('serves a revoked peer again once it shares a joined lishnet with us', () => {
+		const net = gateNetwork({ connected: [REVOKED], subscribers: [REVOKED] });
+		(net as any).listingRevoked = new Set([REVOKED]);
+
+		expect(net.canServePubsubRequestTo(REVOKED)).toBe(true);
+		expect(net.canListSharesTo(REVOKED)).toBe(true);
+	});
 });
