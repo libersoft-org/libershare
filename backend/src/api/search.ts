@@ -441,8 +441,15 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			// Dropping it here left the peer holding spent state that nothing would ever arm.
 			if (session.refusals.has(peerID)) scheduleRefusalRetry(session, peerID);
 		} finally {
-			if (client) session.inFlightClients.delete(client);
-			await client?.close().catch(() => {});
+			// Deregistered only once it is actually closed. `close()` can wait — on a write
+			// draining, on the remote — and until it returns this request still holds its dial
+			// permit, so dropping it from the set any earlier left a cancelled search with a
+			// slot nothing was allowed to tear down.
+			try {
+				await client?.close().catch(() => {});
+			} finally {
+				if (client) session.inFlightClients.delete(client);
+			}
 		}
 	}
 

@@ -672,6 +672,65 @@ describe('search dial concurrency', () => {
 		manager.stopAll();
 	});
 
+	// Closing is not instant — it can wait on a write draining or on the remote — and the dial
+	// permit is held until it returns. A request deregistered before that window is one a
+	// cancelled search is no longer allowed to tear down, yet it still occupies a slot.
+	it('keeps holding a request that is still closing, so cancelling can tear it down', async () => {
+		const dialed: string[] = [];
+		let finishClose: () => void = () => {};
+		const closing = new Promise<void>(resolve => (finishClose = resolve));
+		let aborted = 0;
+		const network = {
+			isRunning: () => true,
+			getNodeInfo: () => ({ peerID: SELF_ID }),
+			getPeers: () => peers,
+			getTopicPeers: () => peers,
+			onPeerConnect: () => () => {},
+			onPeerSubscribe: () => () => {},
+			broadcast: async (): Promise<void> => {},
+			dialProtocolByPeerId: async (peerID: string) => {
+				dialed.push(peerID);
+				return {
+					stream: {
+						id: 'slow-close',
+						status: 'open',
+						send(): void {},
+						// Answers at once, then hangs in close — the window under test.
+						close: async (): Promise<void> => {
+							await closing;
+						},
+						abort(): void {
+							aborted++;
+							finishClose();
+						},
+						async *[Symbol.asyncIterator]() {
+							yield lpEncode.single(codecEncode(emptyResult));
+						},
+					} as any,
+					connectionType: 'DIRECT' as const,
+				};
+			},
+		};
+		const networks = { getNetwork: () => network, getRunningNetwork: () => network, list: () => [{ networkID: NETWORK_ID, enabled: true }], isJoined: () => true };
+		const manager = initSearchManager(networks as any, { get: () => 30_000 } as any, () => {});
+
+		const { searchID } = await manager.startSearch({ query: 'first' });
+		await settle();
+		expect(dialed).toHaveLength(UNICAST_FALLBACK_PARALLEL); // all ten stuck inside close()
+
+		// Cancelling must reach them: they are still holding permits.
+		manager.cancelSearch({ searchID });
+		await settle();
+		expect(aborted).toBe(UNICAST_FALLBACK_PARALLEL);
+
+		const before = dialed.length;
+		await manager.startSearch({ query: 'second' });
+		await settle();
+
+		expect(dialed.length).toBeGreaterThan(before);
+		manager.stopAll();
+	});
+
 	it('holds retries to the same cap as the opening fan-out', async () => {
 		const { manager, release, peakDials, retryDials } = fleetManager();
 
