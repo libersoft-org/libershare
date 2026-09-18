@@ -57,7 +57,8 @@ function handlersFor(network: Network) {
 			// free of a fake stream while still proving the handler tried to answer.
 			throw new Error('dial not available in test');
 		},
-		canServePubsubRequestTo: (peerID: string) => network.canServePubsubRequestTo(peerID),
+		canServePubsubRequestTo: (peerID: string, treatAsDirect?: boolean) => network.canServePubsubRequestTo(peerID, treatAsDirect),
+		isDirectPeer: (peerID: string) => network.isDirectPeer(peerID),
 	});
 	return { handlers, dialed };
 }
@@ -136,7 +137,8 @@ describe('pubsub searchLishs membership gate', () => {
 				dialed.push(peerID);
 				throw new Error('dial not available in test');
 			},
-			canServePubsubRequestTo: (peerID: string) => network.canServePubsubRequestTo(peerID),
+			canServePubsubRequestTo: (peerID: string, treatAsDirect?: boolean) => network.canServePubsubRequestTo(peerID, treatAsDirect),
+			isDirectPeer: (peerID: string) => network.isDirectPeer(peerID),
 		});
 
 		await handlers.handleSearchLishs({ ...search, searchID: 'x'.repeat(4096) }, NETWORK_ID, 'peer-member');
@@ -160,7 +162,8 @@ describe('pubsub searchLishs membership gate', () => {
 			dialByPeerId: async () => {
 				throw new Error('dial not available in test');
 			},
-			canServePubsubRequestTo: (peerID: string) => network.canServePubsubRequestTo(peerID),
+			canServePubsubRequestTo: (peerID: string, treatAsDirect?: boolean) => network.canServePubsubRequestTo(peerID, treatAsDirect),
+			isDirectPeer: (peerID: string) => network.isDirectPeer(peerID),
 		});
 
 		await handlers.handleSearchLishs(search, NETWORK_ID, 'peer-bare');
@@ -206,5 +209,83 @@ describe('pubsub searchLishs gate — a revoked listing is revoked through every
 
 		expect(net.canServePubsubRequestTo(REVOKED)).toBe(true);
 		expect(net.canListSharesTo(REVOKED)).toBe(true);
+	});
+});
+
+/**
+ * The gate runs, the rows are gathered, and only then is a stream opened to send them. That
+ * opening takes time, and the peer can leave inside it — so the permission the rows were
+ * gathered under is not necessarily the permission they go out under.
+ */
+describe('pubsub searchLishs — access withdrawn while the reply connects', () => {
+	afterEach(() => {
+		resetUploadState();
+	});
+
+	/** Handlers whose reply dial hangs until the test lets go. */
+	function slowReplyHandlers(network: Network) {
+		let openDial: () => void = () => {};
+		const dialing = new Promise<void>(resolve => (openDial = resolve));
+		const sent: string[] = [];
+		let aborted = 0;
+		const handlers = new LISHServingHandlers({
+			dataServer: { list: () => [{ id: SHARED_LISH_ID, name: 'Shared', files: [{ size: 10 }] }] } as any,
+			lastWantResponseTime: new Map(),
+			seenSearchIDs: new Map(),
+			wantResponseCooldownMs: 60_000,
+			getNode: () => (network as any).node,
+			dialByPeerId: async (peerID: string) => {
+				await dialing;
+				return {
+					stream: {
+						id: 'reply',
+						status: 'open',
+						send(): void {
+							sent.push(peerID);
+						},
+						async close(): Promise<void> {},
+						abort(): void {
+							aborted++;
+						},
+						async *[Symbol.asyncIterator]() {},
+					} as any,
+					connectionType: 'DIRECT' as const,
+				};
+			},
+			canServePubsubRequestTo: (peerID: string, treatAsDirect?: boolean) => network.canServePubsubRequestTo(peerID, treatAsDirect),
+			isDirectPeer: (peerID: string) => network.isDirectPeer(peerID),
+		});
+		return { handlers, openDial, sent: (): string[] => sent, aborted: (): number => aborted };
+	}
+
+	it('does not send rows to a peer that left while the reply was connecting', async () => {
+		initUploadState(new Set([SHARED_LISH_ID]), () => {});
+		const network = gateNetwork({ connected: ['peer-member'], subscribers: ['peer-member'] });
+		const { handlers, openDial, sent, aborted } = slowReplyHandlers(network);
+
+		const answering = handlers.handleSearchLishs(search, NETWORK_ID, 'peer-member');
+		// Admitted, rows gathered — then the peer is hung up on, exactly as leaving does.
+		(network as any).redialSuppressedByNet.set(NETWORK_ID, new Set(['peer-member']));
+		openDial();
+		await answering;
+
+		expect(sent()).toEqual([]);
+		expect(aborted()).toBe(1);
+	});
+
+	it('still answers a peer that only became a direct neighbour meanwhile', async () => {
+		// The reply stream itself turns an indirect publisher into a direct one. Re-judging it
+		// as direct would demand the membership its branch never asked for and drop an answer
+		// nothing had been withdrawn from.
+		initUploadState(new Set([SHARED_LISH_ID]), () => {});
+		const network = gateNetwork({ connected: [], subscribers: [] });
+		const { handlers, openDial, sent } = slowReplyHandlers(network);
+
+		const answering = handlers.handleSearchLishs(search, NETWORK_ID, 'peer-far');
+		(network as any).node.getPeers = () => [{ toString: () => 'peer-far' }]; // now connected
+		openDial();
+		await answering;
+
+		expect(sent()).toEqual(['peer-far']);
 	});
 });

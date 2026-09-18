@@ -631,7 +631,8 @@ export class Network {
 			wantResponseCooldownMs: WANT_RESPONSE_COOLDOWN_MS,
 			getNode: (): Libp2p | null => this.node,
 			dialByPeerId: (peerID, protocol): Promise<IDialResult> => this.dialProtocolByPeerId(peerID, protocol),
-			canServePubsubRequestTo: (peerID): boolean => this.canServePubsubRequestTo(peerID),
+			canServePubsubRequestTo: (peerID, treatAsDirect): boolean => this.canServePubsubRequestTo(peerID, treatAsDirect),
+			isDirectPeer: (peerID): boolean => this.isDirectPeer(peerID),
 		});
 		// Lets the discovered-row cap keep live participants and drop dead addresses first.
 		this.bootstrapTracker.setMembersProvider((networkID): Set<string> => new Set(this.getTopicPeers(networkID)));
@@ -3114,6 +3115,16 @@ export class Network {
 	 * the in-memory redial suppression — carries no such evidence and learns nothing
 	 * about what we share.
 	 */
+	/** Whether we hold a direct connection to this peer right now. */
+	isDirectPeer(peerID: string): boolean {
+		if (!this.node) return false;
+		try {
+			return this.node.getPeers().some(p => p.toString() === peerID);
+		} catch {
+			return false;
+		}
+	}
+
 	canListSharesTo(peerID: string): boolean {
 		if (this.isRedialSuppressed(peerID)) return false;
 		if (!this.pubsub) return false;
@@ -3161,18 +3172,25 @@ export class Network {
 	 * protocol change, not a tightening of this function — a local view of who is
 	 * subscribed cannot answer for a peer we have never spoken to.
 	 */
-	canServePubsubRequestTo(peerID: string): boolean {
+	canServePubsubRequestTo(peerID: string, treatAsDirect?: boolean): boolean {
 		if (!this.node) return false;
 		// A peer we deliberately hung up on is refused however its request reached us.
 		// Everything below only judges a direct neighbour, so without this a left peer
 		// gets its catalog rows back by publishing through one more hop — the exact
 		// "it still finds me" half of the leave bug the unicast gate already closes.
 		if (this.isRedialSuppressed(peerID)) return false;
+		// `treatAsDirect` re-runs an earlier decision on the branch it was made on. A caller
+		// that admitted an indirect publisher and then opened a stream to it would otherwise
+		// find it direct on the second look and demand a membership that branch never asked
+		// for — refusing a peer nothing had been taken away from.
 		let direct: boolean;
-		try {
-			direct = this.node.getPeers().some(p => p.toString() === peerID);
-		} catch {
-			return false;
+		if (treatAsDirect !== undefined) direct = treatAsDirect;
+		else {
+			try {
+				direct = this.node.getPeers().some(p => p.toString() === peerID);
+			} catch {
+				return false;
+			}
 		}
 		// An indirect publisher carries no local membership evidence either way, but a
 		// listing right a lishnet DELETE revoked is evidence we already hold. The delete

@@ -43,7 +43,9 @@ export interface LISHHandlersDeps {
 	 * topic message because WE are subscribed, never because the publisher is, so the
 	 * pubsub path needs the same lishnet-membership check the unicast path applies.
 	 */
-	canServePubsubRequestTo(peerID: string): boolean;
+	canServePubsubRequestTo(peerID: string, treatAsDirect?: boolean): boolean;
+	/** Whether we hold a direct connection to this peer right now. */
+	isDirectPeer(peerID: string): boolean;
 }
 
 /**
@@ -156,7 +158,11 @@ export class LISHServingHandlers {
 		// Don't reply to our own broadcast (we're a subscriber to the topic too).
 		const node = this.deps.getNode();
 		if (node && fromPeerID === node.peerId.toString()) return;
-		if (!this.deps.canServePubsubRequestTo(fromPeerID)) {
+		// Remembered because opening the reply stream below makes an indirect publisher a
+		// direct neighbour, and re-judging it as one would refuse it for a membership its
+		// branch never required. The re-check has to look for access being TAKEN AWAY.
+		const wasDirect = this.deps.isDirectPeer(fromPeerID);
+		if (!this.deps.canServePubsubRequestTo(fromPeerID, wasDirect)) {
 			trace(`[NET] searchLishs from ${fromPeerID.slice(0, 12)} refused: no shared joined lishnet`);
 			return;
 		}
@@ -182,6 +188,14 @@ export class LISHServingHandlers {
 		try {
 			const { stream } = await this.deps.dialByPeerId(fromPeerID, LISH_PROTOCOL);
 			client = new LISHClient(stream);
+			// Opening the stream takes time, and the peer can leave inside it. The rows were
+			// gathered under a permission it no longer has, so ask again before they go out —
+			// judged on the same branch it was admitted on.
+			if (!this.deps.canServePubsubRequestTo(fromPeerID, wasDirect)) {
+				trace(`[NET] searchLishs to ${fromPeerID.slice(0, 12)} dropped: access withdrawn while connecting`);
+				client.abort(new Error('listing access withdrawn'));
+				return;
+			}
 			await client.sendSearchResult(data.searchID, matches);
 		} catch (err: any) {
 			trace(`[NET] sendSearchResult to ${fromPeerID.slice(0, 12)} failed: ${err?.message ?? err}`);
