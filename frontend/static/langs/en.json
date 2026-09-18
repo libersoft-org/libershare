@@ -756,7 +756,7 @@
 			"download": "Top: the per-download peer counts added up, so the same peer can be counted more than once. Bottom: total download speed of all downloads.",
 			"upload": "Top: the per-share peer counts added up, so the same peer can be counted more than once. Bottom: total upload speed of all uploads.",
 			"relay": "Traffic of other peers passing through your node. Top: open tunnels / reserved slots. Bottom: relayed speed in both directions together.",
-			"cpu": "Processor load of this computer. A full bar means 100%.",
+			"cpu": "Total processor load of the computer running the LiberShare backend. A full bar means 100%.",
 			"ram": "Used and total memory, with a bar showing how much is taken. When the app runs in a container with a memory limit, this is the container usage and limit, not the memory of the whole computer.",
 			"storage": "Used and total space on the disk holding your download folder, with a bar showing how much is taken.",
 			"lishStatus": "Top: LISH networks with at least one peer / all joined networks. Bottom: the per-network peer counts added up, so a peer in several networks is counted in each of them. The colour of the network icon shows the mesh state, hover it for the exact name.",

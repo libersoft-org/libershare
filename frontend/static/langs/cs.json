@@ -756,7 +756,7 @@
 			"download": "Nahoře: součet protistran přes jednotlivá stahování, takže stejný účastník může být započítaný vícekrát. Dole: celková rychlost stahování všech souborů.",
 			"upload": "Nahoře: součet protistran přes jednotlivá sdílení, takže stejný účastník může být započítaný vícekrát. Dole: celková rychlost odesílání všech souborů.",
 			"relay": "Provoz cizích účastníků procházející přes váš uzel. Nahoře: otevřené tunely / rezervovaná místa. Dole: rychlost předávaných dat v obou směrech dohromady.",
-			"cpu": "Zatížení procesoru tohoto počítače. Plný pruh znamená 100 %.",
+			"cpu": "Celkové zatížení procesoru počítače, na kterém běží serverová část LiberShare. Plný pruh znamená 100 %.",
 			"ram": "Využitá a celková paměť, pruh ukazuje, kolik je zabráno. Běží-li aplikace v kontejneru s omezenou pamětí, jde o využití a limit kontejneru, ne o paměť celého počítače.",
 			"storage": "Zaplněné a celkové místo na disku, na kterém máte složku pro stahování, pruh ukazuje, kolik je zabráno.",
 			"lishStatus": "Nahoře: LISH sítě s alespoň jedním účastníkem / všechny připojené sítě. Dole: součet účastníků jednotlivých sítí, takže kdo je ve více sítích, počítá se za každou z nich. Barva ikony sítě ukazuje stav mesh sítě, po najetí myší se zobrazí jeho název.",
