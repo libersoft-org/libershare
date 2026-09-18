@@ -46,6 +46,8 @@ export interface LISHHandlersDeps {
 	canServePubsubRequestTo(peerID: string, treatAsDirect?: boolean): boolean;
 	/** Whether we hold a direct connection to this peer right now. */
 	isDirectPeer(peerID: string): boolean;
+	/** Whether we are still joined to this specific lishnet. */
+	isJoinedToLishnet(networkID: string): boolean;
 }
 
 /**
@@ -140,11 +142,10 @@ export class LISHServingHandlers {
 	 * decorative for anyone willing to publish on the topic instead of dialing us.
 	 */
 	async handleSearchLishs(data: SearchLishsMessage, networkID: string, fromPeerID?: string): Promise<void> {
-		// TODO(out of scope): scope search results to LISHs actually shared
-		// into `networkID` (hence the explicit `void networkID` below — the param
-		// is received but not yet used for filtering). Blocked on the same missing
-		// LISH↔networkIDs DB mapping as handleWant's ACL TODO.
-		void networkID;
+		// TODO(out of scope): scope search RESULTS to LISHs actually shared into `networkID`.
+		// Blocked on the same missing LISH↔networkIDs DB mapping as handleWant's ACL TODO.
+		// `networkID` IS used below for something narrower and unblocked: the request arrived
+		// over this lishnet, so leaving that lishnet ends it.
 		if (!fromPeerID) {
 			trace(`[NET] searchLishs ignored: no verified sender peerID`);
 			return;
@@ -191,7 +192,10 @@ export class LISHServingHandlers {
 			// Opening the stream takes time, and the peer can leave inside it. The rows were
 			// gathered under a permission it no longer has, so ask again before they go out —
 			// judged on the same branch it was admitted on.
-			if (!this.deps.canServePubsubRequestTo(fromPeerID, wasDirect)) {
+			// Leaving the lishnet the request came in over ends that request, whatever other
+			// lishnets we are in: an indirect publisher proved membership of none of them, and
+			// a direct one's standing elsewhere is a different conversation than this one.
+			if (!this.deps.isJoinedToLishnet(networkID) || !this.deps.canServePubsubRequestTo(fromPeerID, wasDirect)) {
 				trace(`[NET] searchLishs to ${fromPeerID.slice(0, 12)} dropped: access withdrawn while connecting`);
 				client.abort(new Error('listing access withdrawn'));
 				return;

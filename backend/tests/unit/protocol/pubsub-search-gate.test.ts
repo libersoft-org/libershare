@@ -59,6 +59,7 @@ function handlersFor(network: Network) {
 		},
 		canServePubsubRequestTo: (peerID: string, treatAsDirect?: boolean) => network.canServePubsubRequestTo(peerID, treatAsDirect),
 		isDirectPeer: (peerID: string) => network.isDirectPeer(peerID),
+		isJoinedToLishnet: (networkID: string) => network.isJoinedToLishnet(networkID),
 	});
 	return { handlers, dialed };
 }
@@ -139,6 +140,7 @@ describe('pubsub searchLishs membership gate', () => {
 			},
 			canServePubsubRequestTo: (peerID: string, treatAsDirect?: boolean) => network.canServePubsubRequestTo(peerID, treatAsDirect),
 			isDirectPeer: (peerID: string) => network.isDirectPeer(peerID),
+			isJoinedToLishnet: (networkID: string) => network.isJoinedToLishnet(networkID),
 		});
 
 		await handlers.handleSearchLishs({ ...search, searchID: 'x'.repeat(4096) }, NETWORK_ID, 'peer-member');
@@ -164,6 +166,7 @@ describe('pubsub searchLishs membership gate', () => {
 			},
 			canServePubsubRequestTo: (peerID: string, treatAsDirect?: boolean) => network.canServePubsubRequestTo(peerID, treatAsDirect),
 			isDirectPeer: (peerID: string) => network.isDirectPeer(peerID),
+			isJoinedToLishnet: (networkID: string) => network.isJoinedToLishnet(networkID),
 		});
 
 		await handlers.handleSearchLishs(search, NETWORK_ID, 'peer-bare');
@@ -254,6 +257,7 @@ describe('pubsub searchLishs — access withdrawn while the reply connects', () 
 			},
 			canServePubsubRequestTo: (peerID: string, treatAsDirect?: boolean) => network.canServePubsubRequestTo(peerID, treatAsDirect),
 			isDirectPeer: (peerID: string) => network.isDirectPeer(peerID),
+			isJoinedToLishnet: (networkID: string) => network.isJoinedToLishnet(networkID),
 		});
 		return { handlers, openDial, sent: (): string[] => sent, aborted: (): number => aborted };
 	}
@@ -283,6 +287,25 @@ describe('pubsub searchLishs — access withdrawn while the reply connects', () 
 
 		const answering = handlers.handleSearchLishs(search, NETWORK_ID, 'peer-far');
 		(network as any).pubsub.getTopics = () => []; // the user left the last lishnet
+		openDial();
+		await answering;
+
+		expect(sent()).toEqual([]);
+		expect(aborted()).toBe(1);
+	});
+
+	// Being in SOME lishnet is not enough: the request arrived over one particular lishnet, and
+	// leaving that one ends it. An indirect publisher proved membership of none of the others,
+	// so our standing in them says nothing about this conversation.
+	it('does not answer once we leave the lishnet the request came in over', async () => {
+		const OTHER = lishTopic('net-b');
+		initUploadState(new Set([SHARED_LISH_ID]), () => {});
+		const network = gateNetwork({ connected: [], subscribers: [] });
+		(network as any).pubsub.getTopics = () => [TOPIC, OTHER]; // in both A and B
+		const { handlers, openDial, sent, aborted } = slowReplyHandlers(network);
+
+		const answering = handlers.handleSearchLishs(search, NETWORK_ID, 'peer-far');
+		(network as any).pubsub.getTopics = () => [OTHER]; // left A, still in B
 		openDial();
 		await answering;
 

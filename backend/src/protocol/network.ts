@@ -633,6 +633,7 @@ export class Network {
 			dialByPeerId: (peerID, protocol): Promise<IDialResult> => this.dialProtocolByPeerId(peerID, protocol),
 			canServePubsubRequestTo: (peerID, treatAsDirect): boolean => this.canServePubsubRequestTo(peerID, treatAsDirect),
 			isDirectPeer: (peerID): boolean => this.isDirectPeer(peerID),
+			isJoinedToLishnet: (networkID): boolean => this.isJoinedToLishnet(networkID),
 		});
 		// Lets the discovered-row cap keep live participants and drop dead addresses first.
 		this.bootstrapTracker.setMembersProvider((networkID): Set<string> => new Set(this.getTopicPeers(networkID)));
@@ -3120,6 +3121,16 @@ export class Network {
 		if (!this.pubsub) return false;
 		try {
 			return this.pubsub.getTopics().some((t: string) => t.startsWith(LISH_TOPIC_PREFIX));
+		} catch {
+			return false;
+		}
+	}
+
+	/** Whether we are still joined to this specific lishnet. */
+	isJoinedToLishnet(networkID: string): boolean {
+		if (!this.pubsub) return false;
+		try {
+			return this.pubsub.getTopics().includes(lishTopic(networkID));
 		} catch {
 			return false;
 		}
