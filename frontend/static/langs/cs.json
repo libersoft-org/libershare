@@ -761,7 +761,7 @@
 			"storage": "Zaplněné a celkové místo na disku, na kterém máte složku pro stahování, pruh ukazuje, kolik je zabráno.",
 			"lishStatus": "Nahoře: LISH sítě s alespoň jedním účastníkem / všechny připojené sítě. Dole: celkový počet účastníků ve všech těchto sítích. Barva ikony sítě ukazuje stav mesh sítě, po najetí myší se zobrazí jeho název.",
 			"gamepad": "Zelená tečka znamená připojený ovladač, červená žádný.",
-			"connection": "U Wi-Fi sloupce signálu a pod nimi síla v procentech, nebo název sítě, když síla není známá. U kabelu Připojeno / Odpojeno. Vypnutá Wi-Fi a připojení, které nelze určit, mají vlastní ikonu a stav vypíšou v popisku po najetí myší.",
+			"connection": "U Wi-Fi sloupce signálu a pod nimi síla v procentech, nebo název sítě, když síla není známá. U kabelu Připojeno / Odpojeno. Vypnutá Wi-Fi ukazuje vlastní ikonu a stav textem pod ní. Připojení, které nelze určit, má obecnou síťovou ikonu, název rozhraní nebo pomlčku a vysvětlení v popisku po najetí myší.",
 			"volume": "Hlasitost systému v procentech. Pomlčka znamená, že hlasitost ještě není známá nebo že není k dispozici žádné zvukové zařízení.",
 			"clock": "Aktuální čas ve 12 nebo 24hodinovém formátu, se sekundami nebo bez nich podle nastavení aplikace."
 		}
