@@ -44,10 +44,18 @@ interface SearchSession {
 	queried: Queried;
 	/** Disposer for the `peer:connect` listener, called on timeout/cancel. */
 	disposePeerConnect: () => void;
-	/** Disposer for the topic-subscribe listener, called on timeout/cancel. */
-	disposePeerSubscribe: () => void;
 	/** Retry bookkeeping for peers that refused us; see {@link RefusalState}. */
 	refusals: Map<string, RefusalState>;
+	/**
+	 * Clients with a request on the wire for this search.
+	 *
+	 * Ending the session has to tear these down, not merely forget them. The dial permits
+	 * they hold are shared with every other search, so a cancelled search whose peers never
+	 * answer would otherwise keep the next one queued behind it for the full 15 s read
+	 * timeout — and `close()` is not enough, since it ends only our write side and leaves
+	 * the read waiting on a peer we no longer care about.
+	 */
+	inFlightClients: Set<LISHClient>;
 }
 
 /**
@@ -119,8 +127,11 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		// No armed re-ask may outlive the session it belongs to.
 		for (const state of session.refusals.values()) if (state.timer) clearTimeout(state.timer);
 		session.refusals.clear();
+		// Nor may a request: it holds a shared dial permit until it finishes, so abandoning it
+		// silently would make a cancelled search slow down the next one.
+		for (const client of session.inFlightClients) client.abort(new Error('search ended'));
+		session.inFlightClients.clear();
 		session.disposePeerConnect();
-		session.disposePeerSubscribe();
 		unregisterSearchResultHandler(searchID);
 		sessions.delete(searchID);
 		broadcast('search:lishs:complete', { searchID, reason });
@@ -197,21 +208,14 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 				/* logged inside queryOnePeer */
 			});
 		});
-		// Seeing a peer's SUBSCRIBE only says WE now know it is a member; the refusal we are
-		// recovering from is the other direction — it has not processed OUR subscription yet.
-		// So this event cannot decide the retry, it can only make one we already owe happen
-		// sooner than its timer would: a peer that refused us is worth re-asking as soon as
-		// anything about the membership picture changes.
-		const disposePeerSubscribe = network.onPeerSubscribe(peerID => {
-			const session = sessions.get(searchID);
-			if (!session) return;
-			if (!peerID || peerID === selfPeerID) return;
-			// Only a peer that owes us a retry, and only through the one dispatcher that
-			// enforces the budget — a peer flapping its subscription must not buy a dial per
-			// flap, and must not overtake a query it already has on the wire.
-			if (!session.refusals.has(peerID)) return;
-			dispatchRefusalRetry(session, peerID);
-		});
+		// NOT driven by the peer's SUBSCRIBE, deliberately. That event says only that WE now
+		// know the peer is a member; the refusal we are recovering from is the other
+		// direction — it has not processed OUR subscription yet — so the event carries no
+		// news about whether asking again would work. Using it to bring a retry forward meant
+		// a handful of subscription events could spend the whole budget inside a second,
+		// before the peer was ready, after which nothing asked again for the rest of the
+		// search. The timer is the only honest signal here: neither side can observe the
+		// other's readiness, so the retry simply waits and tries.
 		const session: SearchSession = {
 			searchID,
 			query,
@@ -220,8 +224,8 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			timeout: setTimeout(() => endSession(searchID, 'timeout'), timeoutMs),
 			queried,
 			disposePeerConnect,
-			disposePeerSubscribe,
 			refusals,
+			inFlightClients: new Set<LISHClient>(),
 		};
 		sessions.set(searchID, session);
 		registerSearchResultHandler(searchID, handleResult);
@@ -378,6 +382,8 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		try {
 			const { stream } = await network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
 			client = new LISHClient(stream);
+			// Registered before the request, so ending the session can tear it down mid-read.
+			session.inFlightClients.add(client);
 			const lishs = await client.requestList(query);
 			if (!sessions.has(searchID)) return;
 			// Defense-in-depth: peers running an older version silently ignore
@@ -418,6 +424,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		} finally {
 			const state = session.refusals.get(peerID);
 			if (state) state.inFlight = false;
+			if (client) session.inFlightClients.delete(client);
 			await client?.close().catch(() => {});
 		}
 	}

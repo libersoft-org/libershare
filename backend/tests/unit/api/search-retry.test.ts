@@ -148,18 +148,29 @@ describe('search unicast retry after a listing refusal', () => {
 		manager.stopAll();
 	});
 
-	it('a subscription brings the pending retry forward', async () => {
-		const { manager, dials, events, fireSubscribe } = buildManager([[refused], [oneResult]]);
+	// A peer's SUBSCRIBE says only that WE now know it is a member — never that it has
+	// processed OUR subscription, which is what the refusal was about. Letting it bring the
+	// retry forward meant a burst of these events spent the whole budget within a second,
+	// before the peer could possibly have been ready, and nothing asked again afterwards.
+	it('a subscription does not spend the retry budget', async () => {
+		const { manager, dials, events, fireSubscribe } = buildManager([[refused], [refused], [oneResult]]);
 
 		await manager.startSearch({ query: LISH_ID.slice(0, 8) });
 		await settle();
 		expect(dials).toEqual([NEW_PEER]);
 
+		// Three events in quick succession used to burn all three attempts here.
+		fireSubscribe();
+		fireSubscribe();
 		fireSubscribe();
 		await settle();
+		expect(dials).toEqual([NEW_PEER]);
 
-		// Answered well inside the retry delay — the event only accelerates what was owed.
-		expect(dials).toEqual([NEW_PEER, NEW_PEER]);
+		// The timed retries still run, and the peer is still asked when it becomes ready.
+		await afterRetryDelay();
+		await afterRetryDelay();
+
+		expect(dials.length).toBeGreaterThanOrEqual(3);
 		expect(events.filter(e => e.event === 'search:lishs:update')).toHaveLength(1);
 		manager.stopAll();
 	});
@@ -200,24 +211,6 @@ describe('search unicast retry after a listing refusal', () => {
 		// of timing, but exceeding the budget never is. Ten events used to buy ten dials.
 		expect(dials.length).toBeLessThanOrEqual(1 + MAX_LISTING_REFUSAL_RETRIES);
 		expect(dials.every(p => p === NEW_PEER)).toBe(true);
-		manager.stopAll();
-	});
-
-	// The timer armed by the refusal has to be cancelled by whatever settles the question
-	// first, or it fires into a peer that has already answered.
-	it('a successful early retry cancels the timer it overtook', async () => {
-		const { manager, dials, events, fireSubscribe } = buildManager([[refused], [oneResult]]);
-
-		await manager.startSearch({ query: LISH_ID.slice(0, 8) });
-		await settle();
-		fireSubscribe(); // answers immediately, well inside the armed delay
-		await settle();
-		expect(dials).toEqual([NEW_PEER, NEW_PEER]);
-
-		await afterRetryDelay(); // the original timer's moment comes and goes
-
-		expect(dials).toEqual([NEW_PEER, NEW_PEER]);
-		expect(events.filter(e => e.event === 'search:lishs:update')).toHaveLength(1);
 		manager.stopAll();
 	});
 
@@ -340,7 +333,7 @@ describe('search dial concurrency', () => {
 	 * fan-out drains through its pool and all forty retries end up armed together; the RETRY
 	 * answers are the ones held, so the re-asks pile up and the peak is actually observable.
 	 */
-	function fleetManager() {
+	function fleetManager(holdFirst = false) {
 		const events: Array<{ event: string; data: any }> = [];
 		const dialsPerPeer = new Map<string, number>();
 		let live = 0;
@@ -374,7 +367,7 @@ describe('search dial concurrency', () => {
 						close: async (): Promise<void> => done(),
 						abort: (): void => done(),
 						async *[Symbol.asyncIterator]() {
-							if (nth > 1) await held; // hold only the re-asks
+							if (nth > 1 || holdFirst) await held; // hold the re-asks, or everything
 							yield lpEncode.single(codecEncode(refused));
 						},
 					} as any,
@@ -385,8 +378,25 @@ describe('search dial concurrency', () => {
 		const networks = { getNetwork: () => network, getRunningNetwork: () => network, list: () => [{ networkID: NETWORK_ID, enabled: true }], isJoined: () => true };
 		const manager = initSearchManager(networks as any, { get: () => 30_000 } as any, (event, data) => events.push({ event, data }));
 		const retryDials = (): number => [...dialsPerPeer.values()].filter(n => n > 1).length;
-		return { manager, release, peakDials: (): number => peak, retryDials };
+		return { manager, release, peakDials: (): number => peak, liveDials: (): number => live, retryDials };
 	}
+
+	it('a cancelled search stops holding dial permits', async () => {
+		// The permits are shared with every other search, so a cancelled one whose peers never
+		// answer would otherwise keep the next search queued behind it for the full read timeout.
+		const { manager, release, peakDials, liveDials } = fleetManager(true);
+
+		await manager.startSearch({ query: 'anything' });
+		await settle();
+		expect(liveDials()).toBe(UNICAST_FALLBACK_PARALLEL); // ten peers hold the permits, none answering
+
+		manager.stopAll();
+		await settle();
+
+		expect(liveDials()).toBe(0);
+		expect(peakDials()).toBeLessThanOrEqual(UNICAST_FALLBACK_PARALLEL);
+		release();
+	});
 
 	it('holds retries to the same cap as the opening fan-out', async () => {
 		const { manager, release, peakDials, retryDials } = fleetManager();
