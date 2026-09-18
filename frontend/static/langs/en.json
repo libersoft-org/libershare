@@ -141,7 +141,7 @@
 		"errorBusy": "Peer is busy, try again later",
 		"errorIO": "Peer encountered an I/O error",
 		"errorInvalidRequest": "Peer rejected the request as invalid",
-		"errorListingNotAuthorized": "Peer does not see you as a member of a shared network yet — try again shortly"
+		"errorListingNotAuthorized": "Listing unavailable: membership of a shared network was not confirmed"
 	},
 	"localStorage": {
 		"title": "Local storage",

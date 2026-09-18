@@ -141,7 +141,7 @@
 		"errorBusy": "Účastník je zaneprázdněný, zkus to později",
 		"errorIO": "U účastníka došlo k I/O chybě",
 		"errorInvalidRequest": "Účastník odmítl požadavek jako neplatný",
-		"errorListingNotAuthorized": "Účastník zatím neví, že jste ve stejné síti — zkuste to za chvíli"
+		"errorListingNotAuthorized": "Seznam nelze zobrazit: nebylo potvrzeno členství ve společné síti"
 	},
 	"localStorage": {
 		"title": "Místní úložiště",
