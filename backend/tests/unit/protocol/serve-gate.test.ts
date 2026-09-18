@@ -41,6 +41,7 @@ describe('Network.canListSharesTo', () => {
 	function bareNetwork(opts: { suppressed?: string[]; topics?: string[]; infra?: string[]; subscribers?: string[]; recentMembers?: Record<string, string[]> }) {
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(opts.suppressed ?? [])]]);
+		(network as any).listingRevoked = new Set<string>();
 		(network as any).pubsub = {
 			getTopics: () => opts.topics ?? [],
 			getSubscribers: () => (opts.subscribers ?? []).map(p => ({ toString: () => p })),

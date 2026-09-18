@@ -25,6 +25,7 @@ const SHARED_LISH_ID = 'aaaaaaaa-1111-4222-8333-444444444444';
 function gateNetwork(opts: { connected: string[]; subscribers?: string[] }): Network {
 	const network = Object.create(Network.prototype) as Network;
 	(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+	(network as any).listingRevoked = new Set<string>();
 	(network as any).pubsub = {
 		getTopics: () => [TOPIC],
 		getSubscribers: () => (opts.subscribers ?? []).map(p => ({ toString: () => p })),
