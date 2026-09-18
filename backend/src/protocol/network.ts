@@ -2989,11 +2989,18 @@ export class Network {
 		const joinedTopics = new Set<string>(this.pubsub ? this.pubsub.getTopics() : []);
 		for (const sub of detail?.subscriptions ?? []) {
 			const topic = sub?.topic;
-			if (!topic?.startsWith(LISH_TOPIC_PREFIX) || !joinedTopics.has(topic)) continue;
+			if (!topic?.startsWith(LISH_TOPIC_PREFIX)) continue;
+			// An UNSUBSCRIBE only ever REMOVES, so the "our topics only" rule above does not
+			// apply to it: it creates no entry to grow the map with. Skipping it for a topic we
+			// are not in right now dropped a real departure — our own leave does not clear the
+			// cache immediately, so rejoining before the next prune brought that stale entry
+			// back into use and the peer kept reading our listing on the strength of a
+			// membership it had already given up.
 			if (!sub.subscribe) {
 				this.peerAnnounce.forgetMember(topic, peerId);
 				continue;
 			}
+			if (!joinedTopics.has(topic)) continue;
 			this.peerAnnounce.noteMember(topic, peerId);
 			for (const h of this.peerSubscribeHandlers) {
 				try {

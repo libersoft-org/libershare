@@ -304,3 +304,36 @@ describe('PeerAnnounceManager topic membership', () => {
 		expect(mgr.getRecentMembers(lishTopic('never-joined'))).toEqual([]);
 	});
 });
+
+/**
+ * An UNSUBSCRIBE is a departure the peer stated out loud. It has to be honoured even for a
+ * topic we are not in at that moment: our own leave does not clear this cache immediately,
+ * so an ignored departure sat there until the next prune — and rejoining before that
+ * brought the stale entry back into use, handing the listing to a peer that had already
+ * given its membership up.
+ */
+describe('PeerAnnounceManager unsubscribe handling', () => {
+	it('honours an unsubscribe for a lishnet we have already left', () => {
+		const { mgr, pubsub, topics } = makeManager([], 2);
+		const net = subscriptionSink(mgr, pubsub);
+		mgr.noteMember(TOPIC, 'peer-leaver');
+		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-leaver']);
+
+		topics.length = 0; // we left the lishnet; the cache still holds the entry
+		(net as any).noteSubscriptionChange({ peerId: { toString: () => 'peer-leaver' }, subscriptions: [{ topic: TOPIC, subscribe: false }] });
+
+		expect(mgr.getRecentMembers(TOPIC)).toEqual([]);
+	});
+
+	it('still refuses to record a subscription to a lishnet we have left', () => {
+		// Removal is unconditional; admission is not. Otherwise a peer could grow the map
+		// with any topic name it chooses, which is the reason for the restriction.
+		const { mgr, pubsub, topics } = makeManager([], 2);
+		const net = subscriptionSink(mgr, pubsub);
+		topics.length = 0;
+
+		(net as any).noteSubscriptionChange({ peerId: { toString: () => 'peer-x' }, subscriptions: [{ topic: TOPIC, subscribe: true }] });
+
+		expect(mgr.getRecentMembers(TOPIC)).toEqual([]);
+	});
+});
