@@ -748,6 +748,22 @@
 			"volumeDown": "Snížit hlasitost",
 			"reload": "Obnovit stránku",
 			"typeAhead": "Rychlé vyhledávání v seznamu"
+		},
+		"footerWidgets": {
+			"title": "Widgety v patičce",
+			"version": "Verze spuštěné aplikace.",
+			"peerId": "Vaše ID účastníka. Horní řádek je jeho prvních 11 znaků, spodní řádek posledních 11.",
+			"download": "Nahoře: součet protistran přes jednotlivá stahování, takže stejný účastník může být započítaný vícekrát. Dole: celková rychlost stahování všech souborů.",
+			"upload": "Nahoře: součet protistran přes jednotlivá sdílení, takže stejný účastník může být započítaný vícekrát. Dole: celková rychlost odesílání všech souborů.",
+			"relay": "Provoz cizích účastníků procházející přes váš uzel. Nahoře: otevřené tunely / rezervovaná místa. Dole: rychlost předávaných dat v obou směrech dohromady.",
+			"cpu": "Celkové zatížení procesoru počítače, na kterém běží serverová část LiberShare. Plný pruh znamená 100 %.",
+			"ram": "Využitá a celková paměť, pruh ukazuje, kolik je zabráno. Běží-li aplikace v kontejneru s omezenou pamětí, jde o využití a limit kontejneru, ne o paměť celého počítače.",
+			"storage": "Zaplněné a celkové místo na disku, na kterém máte složku pro stahování, pruh ukazuje, kolik je zabráno.",
+			"lishStatus": "Nahoře: LISH sítě s alespoň jedním účastníkem / všechny připojené sítě. Dole: součet účastníků jednotlivých sítí, takže kdo je ve více sítích, počítá se za každou z nich. Barva ikony sítě ukazuje stav mesh sítě, po najetí myší se zobrazí jeho název.",
+			"gamepad": "Zelená tečka znamená připojený ovladač, červená žádný.",
+			"connection": "Připojená Wi-Fi se známou silou signálu ukazuje sloupce a pod nimi sílu v procentech. Při neznámé síle sloupce chybí a je vidět ikona Wi-Fi a pod ní název sítě, případně pomlčka. U kabelu Připojeno / Odpojeno. Zapnutá Wi-Fi bez připojení k síti ukazuje prázdné sloupce a stav Odpojeno. Vypnutá Wi-Fi ukazuje vlastní ikonu a stav textem pod ní. Připojení, které nelze určit, má obecnou síťovou ikonu, název rozhraní nebo pomlčku a vysvětlení v popisku po najetí myší.",
+			"volume": "Hlasitost systému v procentech. Pomlčka znamená, že hlasitost ještě není známá nebo že není k dispozici žádné zvukové zařízení.",
+			"clock": "Aktuální čas ve 12 nebo 24hodinovém formátu, se sekundami nebo bez nich podle nastavení aplikace."
 		}
 	},
 	"about": {
