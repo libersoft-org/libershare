@@ -61,18 +61,14 @@ interface SearchSession {
 /**
  * What a peer that refused the listing is owed, as ONE record per peer.
  *
- * Both the timer and the subscribe event want to re-ask the same peer, and counting only
- * the refusals that came back let several of them pass the budget check before the first
- * answer landed. So the budget is spent when a query is DISPATCHED, and the record also
- * holds whether one is already in flight and which timer is pending — an immediate re-ask
- * cancels that timer rather than racing it.
+ * The budget is spent when a query is DISPATCHED, not when its refusal comes back: counting
+ * the answers let several re-asks pass the check while the first query was still on the
+ * wire, so the bound meant nothing.
  */
 interface RefusalState {
-	/** Queries dispatched to this peer because of a refusal, counted at dispatch. */
+	/** Queries sent to this peer because of a refusal, counted as each goes out. */
 	attempts: number;
-	/** A query is on the wire right now — nothing may start a second one. */
-	inFlight: boolean;
-	/** The pending timed re-ask, cancelled when anything else asks first. */
+	/** The pending timed re-ask, cancelled once the peer answers or the search ends. */
 	timer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -306,11 +302,11 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 	/**
 	 * Arm the delayed re-ask of a peer that just refused us.
 	 *
-	 * The refusal means the peer has not yet processed our own subscription — a state the
-	 * two sides converge out of on their own, but on no schedule we control or can observe.
-	 * Waiting for an event is what made this order-dependent, so the retry is timed, and a
-	 * subscribe event can only bring the same retry forward (see
-	 * {@link dispatchRefusalRetry}).
+	 * The refusal means the peer has not yet processed our own subscription. Both sides
+	 * converge out of that on their own, but on no schedule we control or can observe: the
+	 * peer's own SUBSCRIBE tells us only that WE now know it is a member, never that it knows
+	 * about us. There is therefore no event worth waiting for, so the retry is simply timed,
+	 * and the attempt is spent when the query goes out rather than when its answer comes back.
 	 */
 	function scheduleRefusalRetry(session: SearchSession, peerID: string): void {
 		const state = session.refusals.get(peerID);
@@ -325,39 +321,14 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		const delay = LISTING_REFUSAL_RETRY_MS + Math.floor(Math.random() * LISTING_REFUSAL_RETRY_JITTER_MS);
 		state.timer = setTimeout(() => {
 			state.timer = null;
-			dispatchRefusalRetry(session, peerID);
+			if (!sessions.has(session.searchID)) return;
+			state.attempts++;
+			// queryOnePeer waits for a dial permit, so a fleet-wide burst of re-asks queues up
+			// behind the same cap the opening fan-out obeys instead of going out at once.
+			void queryOnePeer(session.searchID, session.query, peerID).catch(() => {
+				/* logged inside queryOnePeer */
+			});
 		}, delay);
-	}
-
-	/**
-	 * The single door every refusal-driven re-ask goes through, so the budget is real.
-	 *
-	 * Spends an attempt when the query is DISPATCHED, not when its refusal comes back:
-	 * counting the answers let any number of events pass the check while the first query
-	 * was still on the wire. `inFlight` closes the same hole for concurrent events, and
-	 * arming here cancels a pending timer so an immediate re-ask replaces it instead of
-	 * both firing.
-	 */
-	function dispatchRefusalRetry(session: SearchSession, peerID: string): void {
-		if (!sessions.has(session.searchID)) return;
-		const state = session.refusals.get(peerID);
-		if (!state || state.inFlight) return;
-		if (state.attempts >= MAX_LISTING_REFUSAL_RETRIES) {
-			trace(`[Search] ${session.searchID.slice(0, 8)}: ${peerID.slice(0, 12)} still refuses the listing, giving up`);
-			clearRefusal(session, peerID);
-			return;
-		}
-		if (state.timer) {
-			clearTimeout(state.timer);
-			state.timer = null;
-		}
-		state.attempts++;
-		state.inFlight = true;
-		// queryOnePeer waits for a dial permit, so a fleet-wide burst of re-asks queues up
-		// behind the same cap the opening fan-out obeys instead of going out at once.
-		void queryOnePeer(session.searchID, session.query, peerID).catch(() => {
-			/* logged inside queryOnePeer */
-		});
 	}
 
 	async function queryOnePeer(searchID: string, query: string, peerID: string): Promise<void> {
@@ -412,7 +383,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			clearRefusal(session, peerID);
 		} catch (err: any) {
 			if (err?.code === ErrorCodes.PEER_LISTING_NOT_AUTHORIZED) {
-				if (!session.refusals.has(peerID)) session.refusals.set(peerID, { attempts: 0, inFlight: false, timer: null });
+				if (!session.refusals.has(peerID)) session.refusals.set(peerID, { attempts: 0, timer: null });
 				scheduleRefusalRetry(session, peerID);
 				return;
 			}
@@ -422,8 +393,6 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			// Dropping it here left the peer holding spent state that nothing would ever arm.
 			if (session.refusals.has(peerID)) scheduleRefusalRetry(session, peerID);
 		} finally {
-			const state = session.refusals.get(peerID);
-			if (state) state.inFlight = false;
 			if (client) session.inFlightClients.delete(client);
 			await client?.close().catch(() => {});
 		}
