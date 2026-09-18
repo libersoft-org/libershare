@@ -2178,6 +2178,16 @@ export class Network {
 		peerLoop: for (const peer of peers) {
 			if (superseded()) return 'incomplete';
 			let consumedQuarantineAt: number | null = null;
+			// Give back the one probe an expired quarantine bought when this candidate turns
+			// out not to be dialed after all. Written once because every bail-out between the
+			// claim and the dial has to do it — a probe kept in flight is a peer no later
+			// gossip mention can ever re-probe.
+			const returnQuarantineProbe = (id: string | null | undefined): void => {
+				if (!id || consumedQuarantineAt === null) return;
+				this.unreachableQuarantine.set(id, consumedQuarantineAt);
+				this.quarantineProbeInFlight.delete(id);
+				consumedQuarantineAt = null;
+			};
 			try {
 				const ma = Multiaddr(peer);
 				// Claim the configured status BEFORE the routability filter. Whether an address
@@ -2315,22 +2325,26 @@ export class Network {
 					if (!existingClaim) break;
 					if (existingClaim.networkID === networkID && existingClaim.generation === generation) {
 						trace(`[NET] addBootstrapPeers share in-flight result: ${peer}`);
-						if (peerID && consumedQuarantineAt !== null) {
-							this.unreachableQuarantine.set(peerID, consumedQuarantineAt);
-							this.quarantineProbeInFlight.delete(peerID);
-							consumedQuarantineAt = null;
-						}
+						returnQuarantineProbe(peerID);
 						continue peerLoop;
 					}
 					trace(`[NET] addBootstrapPeers wait for superseded in-flight dial: ${peer}`);
 					await existingClaim.settled;
 					if (superseded()) {
-						if (peerID && consumedQuarantineAt !== null) {
-							this.unreachableQuarantine.set(peerID, consumedQuarantineAt);
-							this.quarantineProbeInFlight.delete(peerID);
-							consumedQuarantineAt = null;
-						}
+						returnQuarantineProbe(peerID);
 						return 'incomplete';
+					}
+					// The suppression check above ran BEFORE this wait, and the wait is exactly long
+					// enough for its answer to go stale: a leave landing in it puts this peer among
+					// the ones we decided not to dial again, while `superseded()` stays false —
+					// the leave belongs to a different lishnet than the one this run walks, so
+					// neither the run epoch nor this network's generation moves. Without re-asking,
+					// a gossip mention that merely queued behind another dial revives a peer the
+					// user has just left, which is the one thing this path exists to prevent.
+					if (peerID && effectiveOrigin === 'discovered' && this.isRedialSuppressed(peerID)) {
+						trace(`[NET] addBootstrapPeers skip left-network after wait: ${peerID.slice(0, 16)}`);
+						returnQuarantineProbe(peerID);
+						continue peerLoop;
 					}
 				}
 				let releaseClaim!: () => void;

@@ -455,6 +455,82 @@ describe('addBootstrapPeers — gossip must not resurrect either kind of removal
 	});
 });
 
+describe('addBootstrapPeers — a dial that waited must re-ask before it dials', () => {
+	const NET_B = 'net-b';
+	const ADDR = `${ROUTABLE_ADDR}/p2p/${LEFT_PEER}`;
+	const add = (network: Network, networkID: string): Promise<void> => (network as any).addBootstrapPeers([ADDR], networkID, 'discovered');
+	/** Let the pending run get through its awaits and reach the dial / the wait. */
+	const settle = async (): Promise<void> => {
+		for (let i = 0; i < 20; i++) await new Promise(resolve => setTimeout(resolve, 0));
+	};
+
+	/**
+	 * Two lishnets can name the SAME address, and the second run then queues behind the
+	 * first rather than duplicating its timeout. The suppression check happens before that
+	 * wait — which is exactly long enough for the answer to expire. Leaving lishnet A while
+	 * the second run waits does not touch lishnet B's generation, so `superseded()` stays
+	 * false and the queued dial used to go through, reconnecting the peer the leave removed.
+	 */
+	function hangingDial(h: Harness): { release: () => void } {
+		let release!: () => void;
+		const held = new Promise<void>(resolve => {
+			release = resolve;
+		});
+		(h.network as any).node.dial = async (target: { toString(): string }): Promise<void> => {
+			h.dialed.push(target.toString());
+			await held;
+			throw new Error('dial refused');
+		};
+		return { release };
+	}
+
+	it('drops the queued dial when the peer is left while it waits', async () => {
+		const h = makeHarness();
+		const { release } = hangingDial(h);
+
+		const first = add(h.network, NET);
+		await settle();
+		expect(h.dialed.length).toBe(1);
+
+		const second = add(h.network, NET_B);
+		await settle();
+		// The leave lands while the second run is parked on the first one's claim.
+		suppress(h.network, NET, LEFT_PEER);
+		release();
+		await Promise.all([first, second]);
+
+		expect(h.dialed).toEqual([ADDR]);
+	});
+
+	it('still dials the queued candidate when nothing suppressed it', async () => {
+		// The guard must not swallow the ordinary case: two lishnets naming one address
+		// with no leave in between is why the wait exists at all.
+		const h = makeHarness();
+		const { release } = hangingDial(h);
+
+		const first = add(h.network, NET);
+		await settle();
+		const second = add(h.network, NET_B);
+		await settle();
+		release();
+		await Promise.all([first, second]);
+
+		expect(h.dialed).toEqual([ADDR, ADDR]);
+	});
+
+	it('negative control: checking only the run generation lets the left peer through', async () => {
+		// What the queued branch asked before: whether ITS OWN network's list was replaced.
+		// A leave of the other lishnet changes neither the run epoch nor B's generation.
+		const h = makeHarness();
+		const epochBefore = (h.network as any).runEpoch;
+		suppress(h.network, NET, LEFT_PEER);
+
+		expect((h.network as any).runEpoch).toBe(epochBefore);
+		expect((h.network as any).bootstrapGenerationOf(NET_B)).toBe(0);
+		expect((h.network as any).isRedialSuppressed(LEFT_PEER)).toBe(true);
+	});
+});
+
 describe('Networks.delete — suppression entries outlive the lishnet that keyed them', () => {
 	function makeNetworksWithDB(clearedFor: string[]) {
 		const db = new Database(':memory:');
