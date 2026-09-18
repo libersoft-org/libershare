@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { handleLISHProtocol, initUploadState, resetUploadState, type LISHGetLishsResponse } from '../../../src/protocol/lish-protocol.ts';
 import { MAX_SEARCH_QUERY_LENGTH } from '../../../src/protocol/constants.ts';
+import { ErrorCodes } from '@shared';
 import { decodeLISHResponses as responses, fakeLISHStream as fakeStream } from '../helpers/lish-stream.ts';
 
 /**
@@ -68,5 +69,43 @@ describe('getLishs query bound', () => {
 		expect(scans.count).toBe(0);
 		expect(res!.type).toBe('getLishs-result');
 		expect(res!.lishs).toEqual([]);
+	});
+});
+
+/**
+ * A refusal for want of membership and an empty catalog are different events, and the
+ * caller acts on the difference: the first is a race both sides are still converging out
+ * of and is worth asking again about, the second is final. Answering both with an empty
+ * list forced the caller to guess from the order of unrelated events instead.
+ */
+describe('getLishs membership refusal', () => {
+	afterEach(() => {
+		resetUploadState();
+	});
+
+	const refuseListing = (): boolean => false;
+
+	it('names the refusal instead of answering with an empty list', async () => {
+		initUploadState(new Set([SHARED_LISH_ID]), () => {});
+		const { dataServer, scans } = countingDataServer();
+		const { stream, sent } = fakeStream([{ type: 'getLishs' }]);
+
+		await handleLISHProtocol(stream as any, dataServer, PEER, 'DIRECT', allowAll, refuseListing);
+
+		const [res] = (await responses(sent)) as LISHGetLishsResponse[];
+		expect(scans.count).toBe(0);
+		expect(res).toEqual({ type: 'getLishs-result', error: ErrorCodes.PEER_LISTING_NOT_AUTHORIZED });
+	});
+
+	it('an authorized peer with nothing to show still gets an empty list', async () => {
+		// The distinction only means something if the final answer stays final.
+		initUploadState(new Set(), () => {});
+		const { dataServer } = countingDataServer();
+		const { stream, sent } = fakeStream([{ type: 'getLishs' }]);
+
+		await handleLISHProtocol(stream as any, dataServer, PEER, 'DIRECT', allowAll, allowAll);
+
+		const [res] = (await responses(sent)) as LISHGetLishsResponse[];
+		expect(res).toEqual({ type: 'getLishs-result', lishs: [] });
 	});
 });

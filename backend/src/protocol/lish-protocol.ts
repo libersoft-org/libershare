@@ -549,7 +549,14 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				// we left. Falls back to the strict gate when no list-gate was supplied.
 				if (serveGateBlocks(canListShares ?? sharesNetworkWith, remotePeerID)) {
 					trace(`[PROTO] getLishs from ${remotePeer} refused: no shared joined lishnet`);
-					const gated: LISHGetLishsResponse = { type: 'getLishs-result', lishs: [] };
+					// Say WHY, rather than answering with an empty list. The two are not the
+					// same event: an empty list is a final answer, while this refusal is very
+					// often a race — our subscriber view has not caught up with a member that
+					// just joined. Returning the same bytes for both left the caller unable to
+					// tell "nothing matched" from "not yet", so it had to guess from the order
+					// of unrelated events. It leaks nothing the caller does not already know:
+					// it just asked us and it knows whether it shares a lishnet with us.
+					const gated: LISHGetLishsResponse = { type: 'getLishs-result', error: ErrorCodes.PEER_LISTING_NOT_AUTHORIZED };
 					sendLengthPrefixed(stream, codecEncode(gated));
 					continue;
 				}

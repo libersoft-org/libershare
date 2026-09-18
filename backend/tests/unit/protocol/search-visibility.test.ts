@@ -66,7 +66,10 @@ describe('LISH search visibility', () => {
 		await handleLISHProtocol(stream as any, dataServer, 'peer-stranger', 'DIRECT', refuseAll, refuseAll);
 
 		const [res] = await decodeLISHResponses(sent);
-		expect(res.lishs).toEqual([]);
+		// No rows, and said as a refusal rather than as an empty catalog: the caller acts on
+		// the difference (see getlishs-query-bound.test.ts).
+		expect(res.lishs).toBeUndefined();
+		expect(res.error).toBe(ErrorCodes.PEER_LISTING_NOT_AUTHORIZED);
 	});
 
 	it('lists only advertisable LISHs to a peer the gate allows', async () => {

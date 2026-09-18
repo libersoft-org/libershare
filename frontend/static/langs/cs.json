@@ -140,7 +140,8 @@
 		"errorChunkNotFound": "Účastník tuto část nemá",
 		"errorBusy": "Účastník je zaneprázdněný, zkus to později",
 		"errorIO": "U účastníka došlo k I/O chybě",
-		"errorInvalidRequest": "Účastník odmítl požadavek jako neplatný"
+		"errorInvalidRequest": "Účastník odmítl požadavek jako neplatný",
+		"errorListingNotAuthorized": "Účastník zatím neví, že jste ve stejné síti — zkuste to za chvíli"
 	},
 	"localStorage": {
 		"title": "Místní úložiště",
