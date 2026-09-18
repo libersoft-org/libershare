@@ -1,15 +1,9 @@
 import { writable, derived, get } from 'svelte/store';
 import { api } from './api.ts';
-export interface Language {
-	id: string;
-	label: string;
-	nativeLabel: string;
-	flag: string; // ISO 3166-1 alpha-2 country code for flag
-}
-export const languages: Language[] = [
-	{ id: 'en', label: 'English', nativeLabel: 'English', flag: 'gb' },
-	{ id: 'cs', label: 'Czech', nativeLabel: 'Čeština', flag: 'cz' },
-];
+// Imported as well as re-exported: `export … from` forwards the names without binding them
+// here, and this module uses both below.
+import { type Language, languages } from './languages.ts';
+export { type Language, languages };
 export const currentLanguage = writable<string>('en');
 const langCache: Record<string, any> = {}; // Cache for loaded language files
 export const translations = writable<any>({}); // Store for current translations
