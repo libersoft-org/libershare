@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import { Uint8ArrayList } from 'uint8arraylist';
 import { encode as lpEncode } from 'it-length-prefixed';
-import { initSearchManager, MAX_LISTING_REFUSAL_RETRIES } from '../../../src/api/search.ts';
+import { initSearchManager, LISTING_REFUSAL_RETRY_JITTER_MS, UNICAST_FALLBACK_PARALLEL, LISTING_REFUSAL_RETRY_MS, MAX_LISTING_REFUSAL_RETRIES } from '../../../src/api/search.ts';
+import { getSearchResultHandler } from '../../../src/protocol/lish-protocol.ts';
 import { encode as codecEncode } from '../../../src/protocol/codec.ts';
 import { lishTopic } from '../../../src/protocol/constants.ts';
 import { ErrorCodes } from '@shared';
@@ -103,7 +104,20 @@ function buildManager(answers: unknown[][], holdFirst = false) {
 	};
 	const settings = { get: () => 30_000 };
 	const manager = initSearchManager(networks as any, settings as any, (event, data) => events.push({ event, data }));
-	return { manager, dials, events, release, fireSubscribe: (): void => onSubscribe?.(NEW_PEER, lishTopic(NETWORK_ID)) };
+	const startSearch = async (query: string): Promise<string> => (await manager.startSearch({ query })).searchID;
+	let searchID = '';
+	return {
+		manager,
+		dials,
+		events,
+		release,
+		start: async (query: string): Promise<void> => {
+			searchID = await startSearch(query);
+		},
+		fireSubscribe: (): void => onSubscribe?.(NEW_PEER, lishTopic(NETWORK_ID)),
+		/** Feed a result in through the pubsub reply path, the way a real `searchResult` lands. */
+		deliverPubsubResult: (): void => getSearchResultHandler(searchID)?.({ searchID, peerID: NEW_PEER, lishs: [{ id: LISH_ID, name: 'Shared', totalSize: 10 }] }),
+	};
 }
 
 const refused = { type: 'getLishs-result', error: ErrorCodes.PEER_LISTING_NOT_AUTHORIZED };
@@ -113,7 +127,7 @@ const oneResult = { type: 'getLishs-result', lishs: [{ id: LISH_ID, name: 'Share
 /** The unicast fan-out runs detached from startSearch; let its microtasks drain. */
 const settle = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 20));
 /** Longer than the refusal retry delay, so a timed re-ask has fired. */
-const afterRetryDelay = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 1_700));
+const afterRetryDelay = (): Promise<void> => new Promise(resolve => setTimeout(resolve, LISTING_REFUSAL_RETRY_MS + LISTING_REFUSAL_RETRY_JITTER_MS + 200));
 
 describe('search unicast retry after a listing refusal', () => {
 	it('asks again on its own once the peer has refused', async () => {
@@ -207,6 +221,23 @@ describe('search unicast retry after a listing refusal', () => {
 		manager.stopAll();
 	});
 
+	// The same peer can answer over pubsub instead, which lands in the shared aggregation
+	// path rather than in queryOnePeer. A re-ask armed by its earlier refusal is moot either
+	// way — the peer has served us.
+	it('an answer arriving over pubsub also cancels the pending retry', async () => {
+		const { manager, dials, start, deliverPubsubResult } = buildManager([[refused], [oneResult]]);
+
+		await start(LISH_ID.slice(0, 8));
+		await settle();
+		expect(dials).toEqual([NEW_PEER]);
+
+		deliverPubsubResult();
+		await afterRetryDelay();
+
+		expect(dials).toEqual([NEW_PEER]);
+		manager.stopAll();
+	});
+
 	// Nothing armed by a session may outlive it: the timer holds the session and would dial
 	// a peer for a search the user has already cancelled.
 	it('ending the search cancels a pending retry', async () => {
@@ -220,6 +251,24 @@ describe('search unicast retry after a listing refusal', () => {
 		await afterRetryDelay();
 
 		expect(dials).toEqual([NEW_PEER]);
+	});
+
+	// A re-ask that cannot reach the peer at all leaves it in exactly the unsettled state the
+	// cycle exists for. Dropping it there left the peer holding spent state nothing would arm.
+	it('keeps going when a retry fails to reach the peer', async () => {
+		const { manager, dials, events } = buildManager([[refused], [], [oneResult]]);
+
+		await manager.startSearch({ query: LISH_ID.slice(0, 8) });
+		await settle();
+		await afterRetryDelay(); // second dial: the stream closes without answering
+		expect(dials).toEqual([NEW_PEER, NEW_PEER]);
+		expect(events.filter(e => e.event === 'search:lishs:update')).toEqual([]);
+
+		await afterRetryDelay(); // third dial, on the remaining budget
+
+		expect(dials).toEqual([NEW_PEER, NEW_PEER, NEW_PEER]);
+		expect(events.filter(e => e.event === 'search:lishs:update')).toHaveLength(1);
+		manager.stopAll();
 	});
 
 	it('treats an empty list as a final answer', async () => {
@@ -271,6 +320,92 @@ describe('search unicast retry — the order of events must not matter', () => {
 		const updates = events.filter(e => e.event === 'search:lishs:update');
 		expect(updates).toHaveLength(1);
 		expect(updates[0]!.data.lishs[0].id).toBe(LISH_ID);
+		manager.stopAll();
+	});
+});
+
+/**
+ * The opening fan-out queues its dials behind a cap so a large fleet is not hit with dozens
+ * of streams at once. A retry is the same kind of dial, and retries are the case most likely
+ * to come due together — every peer refuses a freshly joined node, so their re-asks land in
+ * the same tick. Dispatching them outside the queue made the cap meaningless exactly when
+ * connections were still settling.
+ */
+describe('search dial concurrency', () => {
+	const PEER_COUNT = 40;
+	const peers = Array.from({ length: PEER_COUNT }, (_, i) => `peer-${i}`);
+
+	/**
+	 * Every peer refuses at once. The FIRST answer to each peer is immediate, so the opening
+	 * fan-out drains through its pool and all forty retries end up armed together; the RETRY
+	 * answers are the ones held, so the re-asks pile up and the peak is actually observable.
+	 */
+	function fleetManager() {
+		const events: Array<{ event: string; data: any }> = [];
+		const dialsPerPeer = new Map<string, number>();
+		let live = 0;
+		let peak = 0;
+		let release: () => void = () => {};
+		const held = new Promise<void>(resolve => (release = resolve));
+
+		const network = {
+			isRunning: () => true,
+			getNodeInfo: () => ({ peerID: SELF_ID }),
+			getPeers: () => peers,
+			getTopicPeers: () => peers,
+			onPeerConnect: () => () => {},
+			onPeerSubscribe: () => () => {},
+			broadcast: async (): Promise<void> => {},
+			dialProtocolByPeerId: async (peerID: string) => {
+				const nth = (dialsPerPeer.get(peerID) ?? 0) + 1;
+				dialsPerPeer.set(peerID, nth);
+				live++;
+				peak = Math.max(peak, live);
+				let counted = true;
+				const done = (): void => {
+					if (counted) live--;
+					counted = false;
+				};
+				return {
+					stream: {
+						id: 'fleet',
+						status: 'open',
+						send(): void {},
+						close: async (): Promise<void> => done(),
+						abort: (): void => done(),
+						async *[Symbol.asyncIterator]() {
+							if (nth > 1) await held; // hold only the re-asks
+							yield lpEncode.single(codecEncode(refused));
+						},
+					} as any,
+					connectionType: 'DIRECT' as const,
+				};
+			},
+		};
+		const networks = { getNetwork: () => network, getRunningNetwork: () => network, list: () => [{ networkID: NETWORK_ID, enabled: true }], isJoined: () => true };
+		const manager = initSearchManager(networks as any, { get: () => 30_000 } as any, (event, data) => events.push({ event, data }));
+		const retryDials = (): number => [...dialsPerPeer.values()].filter(n => n > 1).length;
+		return { manager, release, peakDials: (): number => peak, retryDials };
+	}
+
+	it('holds retries to the same cap as the opening fan-out', async () => {
+		const { manager, release, peakDials, retryDials } = fleetManager();
+
+		await manager.startSearch({ query: 'anything' });
+		await settle();
+		expect(peakDials()).toBeLessThanOrEqual(UNICAST_FALLBACK_PARALLEL);
+
+		// Every peer has now refused, so forty re-asks come due within the jitter window. Their
+		// answers are held, so any that the cap did not queue would still be on the wire here.
+		await afterRetryDelay();
+		await settle();
+		expect(peakDials()).toBeLessThanOrEqual(UNICAST_FALLBACK_PARALLEL);
+
+		// Queued, not dropped: once the held answers land, the rest take their turn.
+		release();
+		await new Promise<void>(resolve => setTimeout(resolve, 500));
+		expect(retryDials()).toBeGreaterThan(UNICAST_FALLBACK_PARALLEL);
+		expect(peakDials()).toBeLessThanOrEqual(UNICAST_FALLBACK_PARALLEL);
 		manager.stopAll();
 	});
 });

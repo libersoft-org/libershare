@@ -147,6 +147,11 @@ export function unregisterSearchResultHandler(searchID: string): void {
 	searchResultHandlers.delete(searchID);
 }
 
+/** The handler a `searchResult` message would be delivered to, or undefined if the search is over. */
+export function getSearchResultHandler(searchID: string): SearchResultHandler | undefined {
+	return searchResultHandlers.get(searchID);
+}
+
 function summarizeManifestID(value: unknown): string {
 	if (typeof value !== 'string') return value === null ? 'null' : typeof value;
 	return JSON.stringify(value.slice(0, 64)).replace(/[\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);

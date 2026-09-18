@@ -12,14 +12,16 @@ import { ErrorCodes, type LishSearchResult } from '@shared';
  * burst dozens of dials at once. 10 is a balance between LAN search latency
  * (sub-second for typical 5-30 peer fleets) and load on the libp2p dialer.
  */
-const UNICAST_FALLBACK_PARALLEL = 10;
+export const UNICAST_FALLBACK_PARALLEL = 10;
 /**
  * How long to wait before re-asking a peer that refused the listing for want of a
  * membership it cannot see yet, and how many times. Both sides converge in well under a
  * second on a healthy mesh; three tries spread over that cover a slow one without ever
  * outliving the default 30 s search.
  */
-const LISTING_REFUSAL_RETRY_MS = 1_500;
+export const LISTING_REFUSAL_RETRY_MS = 1_500;
+/** Spread added to each retry delay so peers refused in the same moment do not retry in lockstep. */
+export const LISTING_REFUSAL_RETRY_JITTER_MS = 500;
 export const MAX_LISTING_REFUSAL_RETRIES = 3;
 /**
  * Already-queried peer set lives on the session so the initial snapshot
@@ -87,6 +89,28 @@ export interface SearchManager {
  */
 export function initSearchManager(networks: Networks, settings: Settings, broadcast: BroadcastFn): SearchManager {
 	const sessions = new Map<string, SearchSession>();
+	/**
+	 * One dial budget for every unicast getLishs, opening fan-out and retry alike.
+	 *
+	 * {@link UNICAST_FALLBACK_PARALLEL} exists to keep the libp2p dialer from being hit with
+	 * dozens of streams at once, and a retry is the same kind of dial — so it cannot have a
+	 * budget of its own beside the fan-out's, or the real ceiling is the sum of the two.
+	 * Retries are also the case most likely to arrive together: a node that has just joined
+	 * is refused by EVERY peer, so their re-asks come due in the same tick and would dial the
+	 * whole fleet at once, precisely when connections are still settling.
+	 */
+	let dialsInFlight = 0;
+	const dialWaiters: Array<() => void> = [];
+
+	async function acquireDial(): Promise<void> {
+		if (dialsInFlight >= UNICAST_FALLBACK_PARALLEL) await new Promise<void>(resolve => dialWaiters.push(resolve));
+		dialsInFlight++;
+	}
+
+	function releaseDial(): void {
+		dialsInFlight--;
+		dialWaiters.shift()?.();
+	}
 
 	function endSession(searchID: string, reason: 'timeout' | 'cancel'): void {
 		const session = sessions.get(searchID);
@@ -106,6 +130,9 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		trace(`[Search] result in: searchID=${ann.searchID.slice(0, 8)} from=${ann.peerID.slice(0, 12)} lishs=${ann.lishs.length} sessionExists=${sessions.has(ann.searchID)}`);
 		const session = sessions.get(ann.searchID);
 		if (!session) return;
+		// This peer has served us, so a re-ask armed by an earlier refusal is moot however the
+		// answer reached us — the pubsub path lands here too, not only the unicast one.
+		clearRefusal(session, ann.peerID);
 		// Map peerID → networkID is non-trivial without checking pubsub subscribers across topics;
 		// for the UI we only need the peerID + a representative networkID. Pick the first joined network
 		// the peer is a member of (so the FE can later open PeerDetail with that networkID).
@@ -285,10 +312,13 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			session.refusals.delete(peerID);
 			return;
 		}
+		// Jittered, because the peers that refuse us usually refuse us together — a fixed
+		// delay would line their retries up into one burst on every tick.
+		const delay = LISTING_REFUSAL_RETRY_MS + Math.floor(Math.random() * LISTING_REFUSAL_RETRY_JITTER_MS);
 		state.timer = setTimeout(() => {
 			state.timer = null;
 			dispatchRefusalRetry(session, peerID);
-		}, LISTING_REFUSAL_RETRY_MS);
+		}, delay);
 	}
 
 	/**
@@ -315,12 +345,28 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		}
 		state.attempts++;
 		state.inFlight = true;
+		// queryOnePeer waits for a dial permit, so a fleet-wide burst of re-asks queues up
+		// behind the same cap the opening fan-out obeys instead of going out at once.
 		void queryOnePeer(session.searchID, session.query, peerID).catch(() => {
 			/* logged inside queryOnePeer */
 		});
 	}
 
 	async function queryOnePeer(searchID: string, query: string, peerID: string): Promise<void> {
+		if (!sessions.has(searchID)) return;
+		// Every caller funnels through here, so holding the dial permit around the whole
+		// exchange is what makes UNICAST_FALLBACK_PARALLEL a real ceiling rather than one the
+		// retry path can step around.
+		await acquireDial();
+		try {
+			await queryOnePeerAdmitted(searchID, query, peerID);
+		} finally {
+			releaseDial();
+		}
+	}
+
+	async function queryOnePeerAdmitted(searchID: string, query: string, peerID: string): Promise<void> {
+		// Re-read after the wait: the session may have ended while we queued for a permit.
 		const session = sessions.get(searchID);
 		if (!session) return;
 		const network = networks.getRunningNetwork();
@@ -361,6 +407,10 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 				return;
 			}
 			trace(`[Search] unicast getLishs to ${peerID.slice(0, 12)} failed: ${err?.message ?? err}`);
+			// A peer already in the retry cycle that now fails to answer at all is in the same
+			// unsettled state the cycle exists for, so keep it going on its remaining budget.
+			// Dropping it here left the peer holding spent state that nothing would ever arm.
+			if (session.refusals.has(peerID)) scheduleRefusalRetry(session, peerID);
 		} finally {
 			const state = session.refusals.get(peerID);
 			if (state) state.inFlight = false;
