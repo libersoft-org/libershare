@@ -273,6 +273,23 @@ describe('pubsub searchLishs — access withdrawn while the reply connects', () 
 		expect(aborted()).toBe(1);
 	});
 
+	// Leaving marks the peers we knew about, and an indirect publisher need not be among
+	// them — so "no record against it" is not the same as "we may still answer it". Out of
+	// every lishnet there is nothing to list to anyone, whatever route the request took.
+	it('does not answer an indirect peer once we have left every lishnet', async () => {
+		initUploadState(new Set([SHARED_LISH_ID]), () => {});
+		const network = gateNetwork({ connected: [], subscribers: [] });
+		const { handlers, openDial, sent, aborted } = slowReplyHandlers(network);
+
+		const answering = handlers.handleSearchLishs(search, NETWORK_ID, 'peer-far');
+		(network as any).pubsub.getTopics = () => []; // the user left the last lishnet
+		openDial();
+		await answering;
+
+		expect(sent()).toEqual([]);
+		expect(aborted()).toBe(1);
+	});
+
 	it('still answers a peer that only became a direct neighbour meanwhile', async () => {
 		// The reply stream itself turns an indirect publisher into a direct one. Re-judging it
 		// as direct would demand the membership its branch never asked for and drop an answer

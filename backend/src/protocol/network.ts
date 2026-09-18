@@ -3115,6 +3115,16 @@ export class Network {
 	 * the in-memory redial suppression — carries no such evidence and learns nothing
 	 * about what we share.
 	 */
+	/** Whether we are currently joined to at least one lishnet — i.e. have anything to list. */
+	private isInAnyLishnet(): boolean {
+		if (!this.pubsub) return false;
+		try {
+			return this.pubsub.getTopics().some((t: string) => t.startsWith(LISH_TOPIC_PREFIX));
+		} catch {
+			return false;
+		}
+	}
+
 	/** Whether we hold a direct connection to this peer right now. */
 	isDirectPeer(peerID: string): boolean {
 		if (!this.node) return false;
@@ -3129,7 +3139,7 @@ export class Network {
 		if (this.isRedialSuppressed(peerID)) return false;
 		if (!this.pubsub) return false;
 		// Not in any lishnet → nothing to list, regardless of who is asking.
-		if (!this.pubsub.getTopics().some((t: string) => t.startsWith(LISH_TOPIC_PREFIX))) return false;
+		if (!this.isInAnyLishnet()) return false;
 		// A shared joined topic is the real authorization — no time limit on it.
 		if (this.sharesJoinedTopicWith(peerID)) return true;
 		// Infrastructure peers (active relay / bootstrap) are kept connected across a
@@ -3197,7 +3207,12 @@ export class Network {
 		// released the redial suppression on purpose — the peer stays dialable — so without
 		// this the rows refused on the direct path come back through one more hop. Rejoining
 		// a lishnet we are in still lifts it: that clears the revocation at the source.
-		if (!direct) return !this.listingRevoked.has(peerID);
+		//
+		// Our OWN membership is checked here too, which the revocation record cannot stand in
+		// for: leaving a lishnet only marks the peers we knew about, and an indirect publisher
+		// need not be among them. Out of every lishnet there is nothing to list to anyone, by
+		// any route — the same first question the unicast gate asks.
+		if (!direct) return this.isInAnyLishnet() && !this.listingRevoked.has(peerID);
 		// A direct neighbour is judged by the unicast gate itself, revocation included, so
 		// the two paths agree on when a rejoin restores the right rather than one of them
 		// refusing on a record the other has already looked past.
