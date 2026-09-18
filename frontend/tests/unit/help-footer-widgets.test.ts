@@ -9,21 +9,12 @@
 import { test, expect } from 'bun:test';
 import { footerWidgets } from '../../src/scripts/footerWidgets.ts';
 
-// The language list lives next to the API client, whose constructor opens a socket the
-// moment the module is loaded. This file only reads local JSON, so it lends the import a
-// socket that does nothing and hands the real one straight back: a translation check has
-// no business dialling a server, and the attempt would fail on whatever port happens to
-// answer. Narrower than replacing the api module, whose mock registry is shared by every
-// test file in the run.
-const realWebSocket = globalThis.WebSocket;
-(globalThis as any).WebSocket = class {
-	close(): void {}
-	send(): void {}
-	addEventListener(): void {}
-	removeEventListener(): void {}
-};
-const { languages } = await import('../../src/scripts/language.ts');
-globalThis.WebSocket = realWebSocket;
+// From the bare list, not from `language.ts`: that one reaches the API client, which opens
+// a socket AND polls `/status` on import. Silencing it from here needed a stub per
+// transport and still left the client holding the stub for every later test file, since
+// Bun shares loaded modules across them. A module that only declares the languages has
+// nothing to silence.
+import { languages } from '../../src/scripts/languages.ts';
 
 async function loadHelpFooterWidgets(langID: string): Promise<Record<string, string>> {
 	const data = await Bun.file(new URL(`../../static/langs/${langID}.json`, import.meta.url)).json();
