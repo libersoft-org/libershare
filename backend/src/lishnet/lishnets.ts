@@ -1305,7 +1305,17 @@ export class Networks {
 			// After the leaves, like delete() does — the suppression only exists once they ran.
 			// 'deleted' keeps the share listing revoked: the peers become dialable again, not
 			// entitled to browse what we share.
-			for (const id of removed) this.network.clearRedialSuppressionForNetwork(id, 'deleted');
+			//
+			// Re-read under the catalog before releasing anything. The wait above is not
+			// exclusive — {@link NetworkMutationGate} counts writers rather than serialising
+			// them — so another request can have re-created one of these lishnets and left it
+			// again while this one was still draining. That suppression belongs to the newer
+			// life and is the newer decision; releasing it here would undo a leave that
+			// happened after this delete was decided.
+			if (removed.length > 0) {
+				const stillGone = await this.inCatalog(() => removed.filter(id => !lishnetExists(this.db, id)));
+				for (const id of stillGone) this.network.clearRedialSuppressionForNetwork(id, 'deleted');
+			}
 			const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
 			if (failures.length > 0)
 				throw new AggregateError(

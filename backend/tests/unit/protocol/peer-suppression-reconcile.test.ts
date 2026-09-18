@@ -516,6 +516,46 @@ describe('Networks.delete — suppression entries outlive the lishnet that keyed
 		expect(clearedFor).toEqual([NET]);
 	});
 
+	it('does not release a suppression that belongs to a lishnet recreated mid-replace', async () => {
+		// The mutation gate counts writers instead of serialising them, so another request can
+		// re-create and re-leave one of these lishnets while the replace is still draining the
+		// others. That suppression is the NEWER decision; releasing it on the strength of an
+		// ID captured before the wait would undo a leave that happened after this delete was
+		// decided.
+		const clearedFor: string[] = [];
+		const { networks, db } = makeNetworksWithDB(clearedFor);
+		const SLOW = 'net-slow';
+		addLISHnet(db, { networkID: SLOW, name: 'Slow', description: '', enabled: true, bootstrapPeers: [] } as any);
+		(networks as any).joinedNetworks = new Set([NET, SLOW]);
+		(networks as any).announcedJoined = new Map([
+			[NET, true],
+			[SLOW, true],
+		]);
+		(networks as any).appliedBootstrap = new Map([
+			[NET, { addresses: [], complete: true }],
+			[SLOW, { addresses: [], complete: true }],
+		]);
+		let recreate!: () => void;
+		const recreated = new Promise<void>(resolve => (recreate = resolve));
+		(networks as any).network.disconnectPeer = async (_peerID: string, networkID: string): Promise<void> => {
+			// Hold the slow lishnet's leave open, and let the other request run inside it.
+			if (networkID !== SLOW) return;
+			recreate();
+			await new Promise(resolve => setTimeout(resolve, 30));
+		};
+
+		const replacing = networks.replace([]);
+		await recreated;
+		// The concurrent writer: NET comes back and is left again, installing a fresh
+		// suppression under the same ID.
+		addLISHnet(db, { networkID: NET, name: 'Test', description: '', enabled: false, bootstrapPeers: [] } as any);
+		clearedFor.length = 0;
+		await replacing;
+
+		expect(clearedFor).toEqual([SLOW]);
+		expect(lishnetExists(db, NET)).toBe(true);
+	});
+
 	it('keeps the suppression when the row was not deleted', async () => {
 		// A delete that finds nothing to remove has changed nothing, so the peers stay
 		// left: their suppression is still the only thing refusing them a share listing
