@@ -502,6 +502,24 @@ describe('addBootstrapPeers — a dial that waited must re-ask before it dials',
 		expect(h.dialed).toEqual([ADDR]);
 	});
 
+	it('drops the queued dial when the peer is quarantined while it waits', async () => {
+		// The other reason a dial is refused. Both live behind one gate for exactly this
+		// case: re-asking only about the leave let a quarantine raised during the wait
+		// through, and the queued dial then spent the timeout the quarantine exists to save.
+		const h = makeHarness();
+		const { release } = hangingDial(h);
+
+		const first = add(h.network, NET);
+		await settle();
+		const second = add(h.network, NET_B);
+		await settle();
+		(h.network as any).unreachableQuarantine.set(LEFT_PEER, Date.now());
+		release();
+		await Promise.all([first, second]);
+
+		expect(h.dialed).toEqual([ADDR]);
+	});
+
 	it('still dials the queued candidate when nothing suppressed it', async () => {
 		// The guard must not swallow the ordinary case: two lishnets naming one address
 		// with no leave in between is why the wait exists at all.

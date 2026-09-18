@@ -2184,7 +2184,10 @@ export class Network {
 			// gossip mention can ever re-probe.
 			const returnQuarantineProbe = (id: string | null | undefined): void => {
 				if (!id || consumedQuarantineAt === null) return;
-				this.unreachableQuarantine.set(id, consumedQuarantineAt);
+				// Only when nothing newer took its place. Maintenance can quarantine the peer
+				// while this run waits, and that entry is the current observation — writing the
+				// stamp we consumed over it would date the window back and expire it early.
+				if (!this.unreachableQuarantine.has(id)) this.unreachableQuarantine.set(id, consumedQuarantineAt);
 				this.quarantineProbeInFlight.delete(id);
 				consumedQuarantineAt = null;
 			};
@@ -2334,15 +2337,16 @@ export class Network {
 						returnQuarantineProbe(peerID);
 						return 'incomplete';
 					}
-					// The suppression check above ran BEFORE this wait, and the wait is exactly long
-					// enough for its answer to go stale: a leave landing in it puts this peer among
-					// the ones we decided not to dial again, while `superseded()` stays false —
-					// the leave belongs to a different lishnet than the one this run walks, so
-					// neither the run epoch nor this network's generation moves. Without re-asking,
-					// a gossip mention that merely queued behind another dial revives a peer the
-					// user has just left, which is the one thing this path exists to prevent.
-					if (peerID && effectiveOrigin === 'discovered' && this.isRedialSuppressed(peerID)) {
-						trace(`[NET] addBootstrapPeers skip left-network after wait: ${peerID.slice(0, 16)}`);
+					// The checks above ran BEFORE this wait, and the wait is exactly long enough for
+					// their answer to go stale: a leave lands in it and puts this peer among the
+					// ones we decided not to dial again, or maintenance quarantines it as
+					// unreachable — while `superseded()` stays false, because neither event moves
+					// the run epoch or THIS network's generation. Asked through the single gate so
+					// both reasons are re-read: the earlier version re-asked only about the leave
+					// and let a fresh quarantine through.
+					const suppressedNow = peerID && effectiveOrigin === 'discovered' ? this.dialSuppressionReason(peerID) : null;
+					if (suppressedNow !== null) {
+						trace(`[NET] addBootstrapPeers skip ${suppressedNow} after wait: ${peerID!.slice(0, 16)}`);
 						returnQuarantineProbe(peerID);
 						continue peerLoop;
 					}
