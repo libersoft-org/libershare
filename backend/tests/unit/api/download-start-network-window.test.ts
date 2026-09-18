@@ -447,6 +447,32 @@ describe('download start — the lishnet window', () => {
 		expect(events.filter(e => e.event === 'transfer.download:enabled').map(e => e.data.lishID)).toEqual([LISH_ID]);
 	});
 
+	it('does not store "downloading" for a transfer that failed on the spot', async () => {
+		// The download errors immediately: its handler stores the failure and removes the
+		// downloader. The start then settles with an older manual "on" and would restore the
+		// flag — storing "downloading" for a transfer that no longer exists, which every
+		// later path that reads the flag then acts on.
+		const net = makeNetworks([NET_A]);
+		const originalDownload = Downloader.prototype.download;
+		Downloader.prototype.download = async function (): Promise<void> {
+			throw new Error('no peers, failing immediately');
+		};
+		try {
+			const handlers = initTransferHandlers(net.networks, makeDataServer(), tmpdir(), () => {}, undefined, settings);
+			// The manual "on" the settle step would otherwise act on.
+			handlers.disableDownload({ lishID: LISH_ID });
+			await handlers.enableDownload({ lishID: LISH_ID });
+			await new Promise(resolve => setTimeout(resolve, 40));
+
+			expect(getDownloadEnabledLishs().has(LISH_ID)).toBe(false);
+			const writes = persisted.filter(e => e.lishID === LISH_ID);
+			expect(writes[writes.length - 1]).toEqual({ lishID: LISH_ID, enabled: false });
+			expect(handlers.getActiveTransfers()).toEqual([]);
+		} finally {
+			Downloader.prototype.download = originalDownload;
+		}
+	});
+
 	it('lets a switch off land between scheduling a start and running it', async () => {
 		// The start body is deferred by one microtask so its single-flight registration cannot
 		// be missed. A disable arriving in that window is SYNCHRONOUS and therefore lands

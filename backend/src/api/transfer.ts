@@ -471,7 +471,12 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			try {
 				enableDownload({ lishID }, undefined, false)
 					.then(r => {
-						if (r.success) {
+						// Drop the claim this resume was started for, never whatever is in the map
+						// by the time it answers. A leave landing while the resume ran files a NEW
+						// claim under the same LISH, and deleting that one would throw away the
+						// newer decision — the download then waits for a rejoin that has nothing
+						// left to find.
+						if (r.success && networkSuspended.get(lishID) === bound) {
 							networkSuspended.delete(lishID);
 							console.log(`[Transfer] ${lishID.slice(0, 8)}: lishnet re-joined, download resumed`);
 						}
@@ -794,12 +799,15 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			// The start won, but an interleaved switch-off cleared the flags on its way past.
 			// The download is running and the user wants it, so the flags have to say so.
 			if (intent === true) {
-				// ...unless a leave got there first. It cleared the flag ON PURPOSE and left a
-				// suspension claim behind, and re-enabling on the strength of an older manual
-				// "on" would leave the claim describing a download the flag calls active —
-				// restartDownloadIfEnabled then acts on the flag and starts it with no lishnet.
+				// ...only while there is a download to say it about. Asking what cleared the flag
+				// is the wrong question — a leave clears it and leaves a claim, an immediate
+				// error clears it and removes the downloader entirely — so ask instead whether a
+				// download is actually running. Restoring the flag over an error would store
+				// "downloading" for a transfer that no longer exists, and every later path that
+				// reads the flag acts on that.
 				const dl = activeDownloaders.get(lishID);
-				if (networkSuspended.has(lishID) || dl?.isDisabled?.() === true) return { success: false };
+				const running = dl !== undefined && dl.isDisabled?.() !== true && !networkSuspended.has(lishID);
+				if (!running) return { success: false };
 				markDownloadEnabled(lishID);
 				return result;
 			}
