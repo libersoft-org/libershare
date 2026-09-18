@@ -279,6 +279,69 @@ describe('search unicast retry after a listing refusal', () => {
 	// The peer can answer over pubsub while our direct query to it is still out; that query
 	// then comes back refused. Opening a retry cycle on it would re-ask a peer whose results
 	// are already on screen.
+	// A re-ask can sit in the permit queue behind other peers. If its peer answers over the
+	// other channel while it waits, sending it once a slot frees is pure waste — and the slot
+	// is exactly what the peers we are still waiting on need. The cap has to be saturated for
+	// the retry to queue at all, which is why this builds a fleet rather than one peer.
+	it('a queued retry is dropped when its peer answers while it waits', async () => {
+		const TARGET = 'peer-target';
+		const blockers = Array.from({ length: UNICAST_FALLBACK_PARALLEL }, (_, i) => `blocker-${i}`);
+		const dials: string[] = [];
+		let releaseBlockers: () => void = () => {};
+		const blocked = new Promise<void>(resolve => (releaseBlockers = resolve));
+		let searchID = '';
+		let handler: ((ann: { searchID: string; peerID: string; lishs: any[] }) => void) | undefined;
+
+		const network = {
+			isRunning: () => true,
+			getNodeInfo: () => ({ peerID: SELF_ID }),
+			// Target first, so it is queried and refused before the blockers take every permit.
+			getPeers: () => [TARGET, ...blockers],
+			getTopicPeers: () => [TARGET],
+			onPeerConnect: () => () => {},
+			broadcast: async (): Promise<void> => {},
+			dialProtocolByPeerId: async (peerID: string) => {
+				dials.push(peerID);
+				const answerOnce = peerID === TARGET && dials.filter(p => p === TARGET).length === 1;
+				return {
+					stream: {
+						id: 'queue',
+						status: 'open',
+						send(): void {},
+						async close(): Promise<void> {},
+						abort(): void {},
+						async *[Symbol.asyncIterator]() {
+							// The target refuses at once; the blockers hold their permits until released.
+							if (!answerOnce) await blocked;
+							yield lpEncode.single(codecEncode(refused));
+						},
+					} as any,
+					connectionType: 'DIRECT' as const,
+				};
+			},
+		};
+		const networks = { getNetwork: () => network, getRunningNetwork: () => network, list: () => [{ networkID: NETWORK_ID, enabled: true }], isJoined: () => true };
+		const manager = initSearchManager(networks as any, { get: () => 30_000 } as any, () => {});
+
+		searchID = (await manager.startSearch({ query: LISH_ID.slice(0, 8) })).searchID;
+		handler = getSearchResultHandler(searchID);
+		await settle();
+		expect(dials.filter(p => p === TARGET)).toHaveLength(1); // refused once
+
+		// The re-ask comes due while every permit is held, so it goes into the queue.
+		await afterRetryDelay();
+		expect(dials.filter(p => p === TARGET)).toHaveLength(1);
+
+		// Answer over pubsub, then free the permits so the queued re-ask gets its turn.
+		handler?.({ searchID, peerID: TARGET, lishs: [{ id: LISH_ID, name: 'Shared', totalSize: 10 }] });
+		releaseBlockers();
+		await settle();
+		await settle();
+
+		expect(dials.filter(p => p === TARGET)).toHaveLength(1);
+		manager.stopAll();
+	});
+
 	it('a refusal arriving after the peer answered starts nothing', async () => {
 		const { manager, dials, start, deliverPubsubResult, release } = buildManager([[refused], [oneResult]], true);
 
@@ -456,6 +519,44 @@ describe('search dial concurrency', () => {
 
 		expect(peakDials()).toBeLessThanOrEqual(UNICAST_FALLBACK_PARALLEL);
 		release();
+		manager.stopAll();
+	});
+
+	// The permits are what a cancelled search must stop occupying. Tearing down its clients
+	// cannot reach a dial that is still being established — it has no stream yet — so the
+	// cancellation has to reach the dial itself, or the next search waits for work nobody wants.
+	it('a cancelled search frees the slots its unfinished dials were holding', async () => {
+		let dialsStarted = 0;
+		const network = {
+			isRunning: () => true,
+			getNodeInfo: () => ({ peerID: SELF_ID }),
+			getPeers: () => Array.from({ length: 40 }, (_, i) => `peer-${i}`),
+			getTopicPeers: () => [],
+			onPeerConnect: () => () => {},
+			broadcast: async (): Promise<void> => {},
+			// Never completes on its own; only the caller's signal ends it, as a real dial would.
+			dialProtocolByPeerId: async (_peerID: string, _protocol: string, signal?: AbortSignal) => {
+				dialsStarted++;
+				return new Promise((_resolve, reject) => {
+					signal?.addEventListener('abort', () => reject(new Error('dial aborted')), { once: true });
+				});
+			},
+		};
+		const networks = { getNetwork: () => network, getRunningNetwork: () => network, list: () => [{ networkID: NETWORK_ID, enabled: true }], isJoined: () => true };
+		const manager = initSearchManager(networks as any, { get: () => 30_000 } as any, () => {});
+
+		const { searchID } = await manager.startSearch({ query: 'first' });
+		await settle();
+		expect(dialsStarted).toBe(UNICAST_FALLBACK_PARALLEL); // every permit held by a stuck dial
+
+		manager.cancelSearch({ searchID });
+		await settle();
+
+		// The second search gets its dials straight away rather than queueing behind the first.
+		const before = dialsStarted;
+		await manager.startSearch({ query: 'second' });
+		await settle();
+		expect(dialsStarted).toBeGreaterThan(before);
 		manager.stopAll();
 	});
 

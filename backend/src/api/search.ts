@@ -64,6 +64,14 @@ interface SearchSession {
 	 * the read waiting on a peer we no longer care about.
 	 */
 	inFlightClients: Set<LISHClient>;
+	/**
+	 * Cancellation for everything this search started.
+	 *
+	 * The client set can only reach a request that already has a stream; a dial still being
+	 * established has none, and it holds a shared permit the whole time. Threading this into
+	 * the dial is what lets a cancelled search stop occupying the slots the next one needs.
+	 */
+	abort: AbortController;
 }
 
 /**
@@ -141,7 +149,9 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		for (const state of session.refusals.values()) if (state.timer) clearTimeout(state.timer);
 		session.refusals.clear();
 		// Nor may a request: it holds a shared dial permit until it finishes, so abandoning it
-		// silently would make a cancelled search slow down the next one.
+		// silently would make a cancelled search slow down the next one. The signal covers the
+		// dials still being established, the client teardown the streams already reading.
+		session.abort.abort(new Error('search ended'));
 		for (const client of session.inFlightClients) client.abort(new Error('search ended'));
 		session.inFlightClients.clear();
 		session.disposePeerConnect();
@@ -245,6 +255,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			refusals,
 			answered: new Set<string>(),
 			inFlightClients: new Set<LISHClient>(),
+			abort: new AbortController(),
 		};
 		sessions.set(searchID, session);
 		registerSearchResultHandler(searchID, handleResult);
@@ -371,10 +382,13 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		// Re-read after the wait: the session may have ended while we queued for a permit.
 		const session = sessions.get(searchID);
 		if (!session) return;
+		// And the peer may have answered over the other channel while we queued. Asking it
+		// again would spend a slot the peers we are still waiting on need.
+		if (session.answered.has(peerID)) return;
 		const network = networks.getRunningNetwork();
 		let client: LISHClient | undefined;
 		try {
-			const { stream } = await network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
+			const { stream } = await network.dialProtocolByPeerId(peerID, LISH_PROTOCOL, session.abort.signal);
 			client = new LISHClient(stream);
 			// The dial itself is not cancellable and there was no client to tear down while it
 			// ran, so the search may have ended underneath it. Ask again before spending the
