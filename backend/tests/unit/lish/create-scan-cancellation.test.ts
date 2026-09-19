@@ -66,13 +66,43 @@ describe('cancelling a creation during its directory scan', () => {
 		const events: string[] = [];
 		const controller = new AbortController();
 
-		// Cancelled after the scan has started, not before it: 2000 entries take far longer
-		// than this timer, so the abort lands inside the walk rather than ahead of it.
-		const creating = createLISH(root, undefined, 1024, 'sha256', 1, undefined, info => events.push(info.type), undefined, controller.signal);
-		setTimeout(() => controller.abort(), 1);
+		// Cancelled after the walk has really started: the abort fires once the listing has
+		// handed out its first entry, not on a timer that might still catch the path checks
+		// before it. Everything after that entry is work the creation was told to drop.
+		const RealGlob = Bun.Glob;
+		let firstEntrySeen = false;
+		let yielded = 0;
+		const globSpy = spyOn(Bun, 'Glob');
+		globSpy.mockImplementation(((pattern: string) => {
+			const real = new RealGlob(pattern);
+			return {
+				scan: (opts: unknown) => {
+					const inner = (real as any).scan(opts);
+					return (async function* () {
+						for await (const entry of inner) {
+							yielded++;
+							yield entry;
+							if (!firstEntrySeen) {
+								firstEntrySeen = true;
+								controller.abort();
+							}
+						}
+					})();
+				},
+			};
+		}) as never);
 
-		await expect(creating).rejects.toThrow('LISH_CREATE_CANCELLED');
-		expect(events).toEqual([]);
+		try {
+			await expect(createLISH(root, undefined, 1024, 'sha256', 1, undefined, info => events.push(info.type), undefined, controller.signal)).rejects.toThrow('LISH_CREATE_CANCELLED');
+			expect(firstEntrySeen).toBe(true);
+			// One more entry at most after the abort. The root holds 40 of them, so collecting
+			// the rest of the listing would show up here — that is the work being dropped.
+			expect(yielded).toBeLessThanOrEqual(2);
+			// And a walk that carried on to the end would have announced the file list.
+			expect(events).toEqual([]);
+		} finally {
+			globSpy.mockRestore();
+		}
 	});
 
 	it('does not start a new directory listing once cancelled', async () => {
