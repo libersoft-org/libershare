@@ -1,4 +1,5 @@
 import { mkdir } from 'fs/promises';
+import { Mutex } from 'async-mutex';
 import { JSONStorage } from './storage.ts';
 import { Utils } from './utils.ts';
 import { productName, productEnvPrefix, type CompressionAlgorithm } from '@shared';
@@ -239,6 +240,18 @@ const DEFAULT_SETTINGS: SettingsData = {
  */
 export class Settings {
 	private storage!: JSONStorage<SettingsData>;
+	/**
+	 * One writer at a time, across every path that writes settings.
+	 *
+	 * An import writes key by key and awaits between them, while the factory reset restores
+	 * the defaults through the same storage. Interleaved, the stored file ended up part
+	 * imported and part default and both operations reported success — and the node reads
+	 * some of these values only when it is built, so the mixture outlived the request.
+	 *
+	 * The lock belongs here rather than in the handlers because this class is the one place
+	 * every writer goes through: the API, the import and the reset.
+	 */
+	private readonly writeLock = new Mutex();
 
 	private constructor() {}
 
@@ -253,7 +266,30 @@ export class Settings {
 	}
 
 	async set(path: string, value: any): Promise<void> {
-		await this.storage.set(path, value);
+		await this.writeLock.runExclusive(() => this.storage.set(path, value));
+	}
+
+	/**
+	 * Write many keys as one operation, keeping the ones the storage rejects out of the way.
+	 *
+	 * An import is a single user action and has to land as one: applied key by key without
+	 * the lock, a reset arriving mid-loop split the result between the two.
+	 */
+	async setMany(entries: ReadonlyArray<{ path: string; value: any }>): Promise<{ applied: number; skipped: string[] }> {
+		return await this.writeLock.runExclusive(async () => {
+			const skipped: string[] = [];
+			let applied = 0;
+			for (const entry of entries) {
+				try {
+					await this.storage.set(entry.path, entry.value);
+					applied++;
+				} catch (err) {
+					console.warn(`Skipped settings key '${entry.path}':`, (err as Error).message);
+					skipped.push(entry.path);
+				}
+			}
+			return { applied, skipped };
+		});
 	}
 
 	list(): SettingsData {
@@ -265,7 +301,7 @@ export class Settings {
 	}
 
 	async reset(): Promise<SettingsData> {
-		return await this.storage.reset();
+		return await this.writeLock.runExclusive(() => this.storage.reset());
 	}
 
 	/** Create all storage directories from current settings (expanding ~ to home). */

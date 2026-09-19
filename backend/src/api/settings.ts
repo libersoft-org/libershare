@@ -151,18 +151,9 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		for (const key of Object.keys(p.data)) {
 			if (ALLOWED_ROOT_KEYS.has(key)) filtered[key] = p.data[key];
 		}
-		const flat = flattenSettings(filtered);
-		const skipped: string[] = [];
-		let applied = 0;
-		for (const entry of flat) {
-			try {
-				await settings.set(entry.path, entry.value);
-				applied++;
-			} catch (err) {
-				console.warn(`Skipped settings key '${entry.path}':`, (err as Error).message);
-				skipped.push(entry.path);
-			}
-		}
+		// One write, not one per key: a reset arriving mid-loop used to split the stored
+		// settings between the import and the defaults, with both reporting success.
+		const { applied, skipped } = await settings.setMany(flattenSettings(filtered));
 		// An imported file can carry a message limit below the chunk limit — repair it here
 		// too, not just on interactive writes.
 		await persistAndApplyNetworkLimits();
