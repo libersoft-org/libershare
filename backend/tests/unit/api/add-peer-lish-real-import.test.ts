@@ -15,9 +15,12 @@ import { initLISHnetsHandlers } from '../../../src/api/lishnets.ts';
  * factory reset closing the mutation gate while the manifest is still on its way.
  *
  * The narrower test beside this one stubs the import step, so it shows the gate is not asked
- * twice but not that the accepted operation really lands. This one uses the real import
- * pipeline: if the wiring in APIServer ever went back to the gated entry point, the reset
- * below would refuse this operation's second half and nothing would be stored.
+ * twice but not that the accepted operation really lands. This one runs the real import
+ * pipeline over a real store: with the gated entry point in its place, the reset below
+ * refuses the operation's second half and nothing is stored.
+ *
+ * It builds that wiring itself, so it does NOT guard the wiring in APIServer — a mistake made
+ * there alone would leave this test green.
  */
 
 const LISH_ID = 'add-peer-real-import-test';
@@ -84,6 +87,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+	// The import queues a verification pass of its own, which the test does not wait for.
+	// Closing the database under it makes that pass write into a closed handle after the test
+	// has already reported success. The factory reset waits for the same thing, in this order.
+	await lishs.stopVerifyAll();
 	db.close();
 	for (const dir of [dataDir, downloadDir, tempDir]) await rm(dir, { recursive: true, force: true });
 });
