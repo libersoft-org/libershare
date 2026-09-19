@@ -414,9 +414,10 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		try {
 			const { stream } = await network.dialProtocolByPeerId(peerID, LISH_PROTOCOL, session.abort.signal);
 			client = new LISHClient(stream);
-			// The dial itself is not cancellable and there was no client to tear down while it
-			// ran, so the search may have ended underneath it. Ask again before spending the
-			// stream on a question nobody is waiting for the answer to.
+			// The abort signal above ends the dial when the session does, but a dial that had
+			// already produced a stream can still land after that — and there was no client to
+			// tear down while it ran. Ask again before spending the stream on a question
+			// nobody is waiting for the answer to.
 			if (!sessions.has(searchID)) {
 				client.abort(new Error('search ended'));
 				return;
