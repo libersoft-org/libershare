@@ -107,30 +107,53 @@ export function initIdentityHandlers(networks: Networks): IdentityHandlers {
 		return toBackup(parsed);
 	}
 
+	/**
+	 * Run a stop → write → start sequence with lishnet writes blocked and older ones drained.
+	 *
+	 * Each of these sequences restarts every network around a write the restart then reads
+	 * back, and neither of them is atomic on its own. Two of them, or one of them and a
+	 * factory reset, interleaved their stops and starts: the reply reported the key this
+	 * call wrote while the node came back up on the key the other one did, and a network
+	 * stopped twice was subscribed by both starts. The factory reset already takes this
+	 * lease, so taking it here puts every node-restarting operation in one queue.
+	 */
+	async function underMaintenance<T>(operation: () => Promise<T>): Promise<T> {
+		const release = await networks.beginMaintenance();
+		try {
+			return await operation();
+		} finally {
+			release();
+		}
+	}
+
 	async function applyImported(p: { privateKey: string }): Promise<SuccessResponse> {
 		assert(p, ['privateKey']);
 		const bytes = decodePrivateKey(p.privateKey);
-		await networks.stopAllNetworks();
-		try {
-			await network.writeIdentityKey(bytes);
-		} catch (err) {
-			// Try to restart with old identity even on failure
+		return underMaintenance(async () => {
+			await networks.stopAllNetworks();
 			try {
-				await networks.startEnabledNetworks();
-			} catch {}
-			throw err;
-		}
-		await networks.startEnabledNetworks();
-		console.log('✓ Identity imported and network restarted');
-		return { success: true };
+				await network.writeIdentityKey(bytes);
+			} catch (err) {
+				// Try to restart with old identity even on failure
+				try {
+					await networks.startEnabledNetworks();
+				} catch {}
+				throw err;
+			}
+			await networks.startEnabledNetworks();
+			console.log('✓ Identity imported and network restarted');
+			return { success: true };
+		});
 	}
 
 	async function regenerate(): Promise<SuccessResponse> {
-		await networks.stopAllNetworks();
-		await network.clearIdentityKey();
-		await networks.startEnabledNetworks();
-		console.log('✓ Identity regenerated and network restarted');
-		return { success: true };
+		return underMaintenance(async () => {
+			await networks.stopAllNetworks();
+			await network.clearIdentityKey();
+			await networks.startEnabledNetworks();
+			console.log('✓ Identity regenerated and network restarted');
+			return { success: true };
+		});
 	}
 
 	return { get, exportToFile, parseFromFile, parseFromJSON, parseFromURL, applyImported, regenerate };
