@@ -179,7 +179,44 @@ describe('stopping a creation that has not reached its hashing pass', () => {
 		}
 	});
 
-	it('cancels every creation under way, not just the last one', async () => {
+	it('leaves the other window creation alone when the user cancels their own', async () => {
+		const handlers = initLISHsHandlers(
+			{} as never,
+			() => {},
+			() => {},
+			settingsStub
+		);
+		const first = await mkdtemp(join(tmpdir(), 'lish-cancel-other-'));
+		const second = await mkdtemp(join(tmpdir(), 'lish-cancel-own-'));
+		try {
+			await writeFile(join(first, 'payload.bin'), Buffer.alloc(64 * 1024, 1));
+			await writeFile(join(second, 'payload.bin'), Buffer.alloc(64 * 1024, 2));
+
+			// Two windows of the same node. The public cancel button belongs to the screen that
+			// pressed it — taking the other one down with it would throw away work nobody
+			// stopped. Only the maintenance path cancels everything.
+			const other = handlers.create({ dataPath: first }, null);
+			const own = handlers.create({ dataPath: second }, null);
+			await handlers.stopCreate();
+
+			const outcomes = await Promise.all([
+				other.then(
+					() => 'finished',
+					(err: unknown) => String((err as Error).message)
+				),
+				own.then(
+					() => 'finished',
+					(err: unknown) => String((err as Error).message)
+				),
+			]);
+			expect(outcomes).toEqual(['finished', 'LISH_CREATE_CANCELLED']);
+		} finally {
+			await rm(first, { recursive: true, force: true });
+			await rm(second, { recursive: true, force: true });
+		}
+	});
+
+	it('cancels every creation under way for maintenance, not just the last one', async () => {
 		const handlers = initLISHsHandlers(
 			{} as never,
 			() => {},
@@ -196,7 +233,7 @@ describe('stopping a creation that has not reached its hashing pass', () => {
 			// on hashing after the stop and held its permit against the drain.
 			const creatingFirst = handlers.create({ dataPath: first }, null);
 			const creatingSecond = handlers.create({ dataPath: second }, null);
-			await handlers.stopCreate();
+			await handlers.stopAllCreates();
 
 			const outcomes = await Promise.all([
 				creatingFirst.then(

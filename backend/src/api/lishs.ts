@@ -86,6 +86,8 @@ interface LISHsHandlers {
 	stopVerify: (p: { lishID: string }) => Promise<SuccessResponse>;
 	stopVerifyAll: () => Promise<SuccessResponse>;
 	stopCreate: () => Promise<SuccessResponse>;
+	/** As {@link LISHsHandlers.stopCreate}, but for every creation at once — maintenance only. */
+	stopAllCreates: () => Promise<SuccessResponse>;
 	move: (p: MoveParams) => Promise<SuccessResponse>;
 	startVerification: (lishID: string) => void;
 	finalizeDownload: (lishID: string) => Promise<SuccessResponse>; // Move from temp to final directory after download completes
@@ -627,6 +629,17 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function stopCreate(): Promise<SuccessResponse> {
+		// The public cancel button, and it stays as narrow as it was: the latest creation, the
+		// one whose screen the user is looking at. Cancelling every creation from here would
+		// throw away a hashing pass another window started and never asked to stop.
+		const all = [...activeCreations];
+		all[all.length - 1]?.abort();
+		return { success: true };
+	}
+
+	async function stopAllCreates(): Promise<SuccessResponse> {
+		// The maintenance hook: a factory reset is about to wipe or restart everything, so it
+		// cancels every creation rather than waiting out their hashing passes.
 		for (const creation of activeCreations) creation.abort();
 		return { success: true };
 	}
@@ -910,5 +923,5 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		mutationAdmission.open();
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, move, startVerification, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, resumeMutations, runMutation };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, stopAllCreates, move, startVerification, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, resumeMutations, runMutation };
 }
