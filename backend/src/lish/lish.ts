@@ -227,10 +227,18 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 			created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
 		});
 	}
-	// Read directory contents
+	// Read directory contents. Checked before the listing and while it is collected, the same
+	// two places as in {@link scanFiles}: `getStats()` above is an await, so a cancel can land
+	// between the caller's decision to recurse and this listing. Without these, an already
+	// cancelled creation still opened this directory and read it to the end, and the factory
+	// reset waiting for the mutation gate to drain waited for exactly that.
+	if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 	const glob = new Bun.Glob('*');
 	const scannedPaths: string[] = [];
-	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) scannedPaths.push(entry);
+	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) {
+		if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
+		scannedPaths.push(entry);
+	}
 	// Sort paths alphabetically
 	scannedPaths.sort();
 	for (const entry of scannedPaths) {

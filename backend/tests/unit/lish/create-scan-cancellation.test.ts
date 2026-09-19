@@ -113,6 +113,47 @@ describe('cancelling a creation during its directory scan', () => {
 		}
 	});
 
+	it('does not open another directory in the checksum pass either', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'lish-scan-pass2-'));
+		dirs.push(root);
+		const sub = join(root, 'sub');
+		await mkdir(sub);
+		await Promise.all(Array.from({ length: 30 }, (_, f) => writeFile(join(sub, `file-${f}.bin`), 'x')));
+
+		// Building a directory LISH walks the tree twice: once to announce the file list, once
+		// to hash it. The second walk has the same window — it reads metadata about a
+		// subdirectory and then opens it — so it needs the same two checks.
+		const controller = new AbortController();
+		const RealGlob = Bun.Glob;
+		let listings = 0;
+		const globSpy = spyOn(Bun, 'Glob');
+		globSpy.mockImplementation(((pattern: string) => {
+			listings++;
+			return new RealGlob(pattern);
+		}) as never);
+		// The subdirectory is lstat'ed once per pass. Cancelling on the SECOND one lands inside
+		// the hashing pass, right after it decided to recurse and before it opens the directory.
+		let subStats = 0;
+		const lstatSpy = spyOn(fsPromises, 'lstat');
+		lstatSpy.mockImplementation(((path: string): any => {
+			if (String(path).endsWith('sub')) {
+				subStats++;
+				if (subStats === 2) controller.abort();
+			}
+			return Promise.resolve({ isSymbolicLink: () => false });
+		}) as never);
+
+		try {
+			await expect(createLISH(root, undefined, 1024, 'sha256', 1, undefined, undefined, undefined, controller.signal)).rejects.toThrow('LISH_CREATE_CANCELLED');
+			// Three listings: both directories in the announcing pass, then the root in the
+			// hashing pass. A fourth means the cancelled walk opened the subdirectory anyway.
+			expect(listings).toBe(3);
+		} finally {
+			lstatSpy.mockRestore();
+			globSpy.mockRestore();
+		}
+	});
+
 	it('still scans the whole tree when nothing cancelled it', async () => {
 		const root = await makeTree();
 		const announced: string[] = [];
