@@ -62,6 +62,7 @@ function makeDeps(
 		networkOverride?: Record<string, () => any>;
 		dataServerOverride?: Record<string, () => any>;
 		stopVerifyAll?: () => Promise<any>;
+		stopCreate?: () => Promise<any>;
 		pauseAllLISHMutations?: () => Promise<void>;
 		resumeAllLISHMutations?: () => void;
 		pauseAllTransfers?: () => Promise<void>;
@@ -78,6 +79,7 @@ function makeDeps(
 		dataServer: makeDataServer(overrides.dataServerOverride ?? {}),
 		settings: makeSettings(overrides.settingsOverride ?? {}),
 		stopVerifyAll: overrides.stopVerifyAll ?? (() => Promise.resolve()),
+		stopCreate: overrides.stopCreate ?? (() => Promise.resolve()),
 		pauseAllLISHMutations: overrides.pauseAllLISHMutations ?? (() => Promise.resolve()),
 		resumeAllLISHMutations: overrides.resumeAllLISHMutations ?? (() => {}),
 		pauseAllTransfers: overrides.pauseAllTransfers ?? (() => Promise.resolve()),
@@ -774,5 +776,47 @@ describe('buildFactoryResetHandler — who hears about the reset', () => {
 		expect(response.success).toBe(true);
 		expect(response.results).toEqual([]);
 		expect(sent).toEqual([]);
+	});
+});
+
+describe('factory reset cancels work the drain would otherwise wait for', () => {
+	it('aborts a running create while the mutation gate is draining', async () => {
+		let cancelled = false;
+		let releaseDrain: (() => void) | null = null;
+		const deps = makeDeps({
+			// Stands in for a create holding its permit: the drain only finishes once the
+			// creation has been cancelled. Waiting for the drain first would hang here, which
+			// is what a long hash or copy pass did to the reset.
+			pauseAllLISHMutations: () =>
+				new Promise<void>(resolve => {
+					releaseDrain = resolve;
+				}),
+			stopCreate: async () => {
+				cancelled = true;
+				releaseDrain?.();
+			},
+		});
+
+		const outcome = await Promise.race([buildFactoryResetHandler(deps)({ identity: true }).then(() => 'settled'), Bun.sleep(250).then(() => 'timeout')]);
+		expect(outcome).toBe('settled');
+		expect(cancelled).toBe(true);
+	});
+
+	it('closes admission before it cancels, so nothing new is let in', async () => {
+		const order: string[] = [];
+		const deps = makeDeps({
+			pauseAllTransfers: async () => {
+				order.push('transfers closed');
+			},
+			pauseAllLISHMutations: async () => {
+				order.push('mutations closed');
+			},
+			stopCreate: async () => {
+				order.push('create cancelled');
+			},
+		});
+
+		await buildFactoryResetHandler(deps)({ identity: true });
+		expect(order).toEqual(['transfers closed', 'mutations closed', 'create cancelled']);
 	});
 });

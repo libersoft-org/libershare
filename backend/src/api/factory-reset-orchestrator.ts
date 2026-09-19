@@ -21,6 +21,12 @@ export interface FactoryResetOrchestratorDeps {
 	 * by the lishs handler module. Return value is ignored.
 	 */
 	readonly stopVerifyAll: () => Promise<any>;
+	/**
+	 * Aborts a LISH creation in progress. Taken while the mutation gate is closing: a create
+	 * holds its permit for a whole hash or copy pass, so the drain would wait for work over
+	 * data this reset is about to wipe. Return value is ignored.
+	 */
+	readonly stopCreate: () => Promise<any>;
 	/** Close LISH mutation admission and drain operations already past the gate. */
 	readonly pauseAllLISHMutations: () => Promise<void>;
 	/** Re-open LISH mutation admission after reset orchestration finishes. */
@@ -55,7 +61,7 @@ export interface FactoryResetOrchestratorDeps {
  * wiring and makes the reset logic independently testable.
  */
 export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean; peers?: boolean }, client?: unknown) => Promise<FactoryResetResponse> {
-	const { dataServer, networks, settings, stopVerifyAll, pauseAllLISHMutations, resumeAllLISHMutations, pauseAllTransfers, clearAllTransfers, clearUploadRuntime, restoreAllTransfers, resumeAllTransfers, broadcastFn } = deps;
+	const { dataServer, networks, settings, stopVerifyAll, stopCreate, pauseAllLISHMutations, resumeAllLISHMutations, pauseAllTransfers, clearAllTransfers, clearUploadRuntime, restoreAllTransfers, resumeAllTransfers, broadcastFn } = deps;
 	const resetMutex = new Mutex();
 
 	return (p?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean; peers?: boolean }, client?: unknown): Promise<FactoryResetResponse> =>
@@ -131,7 +137,15 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 							// transfer initialisation all await I/O before their final state writes.
 							transferAdmissionClosed = true;
 							lishMutationAdmissionClosed = true;
-							await Promise.all([pauseAllTransfers(), pauseAllLISHMutations()]);
+							// Both pauses close their gate synchronously, so evaluating them ahead of
+							// stopCreate in the same argument list means no new operation is admitted
+							// while the running one is cancelled. A create holds its permit for the
+							// whole hash or copy pass, and without the cancel the drain below waited
+							// for it — minutes of work over data the next step wipes anyway.
+							//
+							// A move is deliberately NOT cancelled here: aborting one would leave a
+							// partially written target with no rollback, so the drain still waits.
+							await Promise.all([pauseAllTransfers(), pauseAllLISHMutations(), stopCreate()]);
 							await stopVerifyAll();
 							transferRuntimeSafe = false;
 							try {

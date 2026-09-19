@@ -344,6 +344,7 @@ export class APIServer {
 			networks: this.networks,
 			settings: this.settings,
 			stopVerifyAll: _lishs.stopVerifyAll,
+			stopCreate: _lishs.stopCreate,
 			pauseAllLISHMutations: _lishs.pauseMutations,
 			resumeAllLISHMutations: _lishs.resumeMutations,
 			pauseAllTransfers: _transfer.pauseAll,
