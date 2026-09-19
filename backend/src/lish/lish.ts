@@ -163,7 +163,12 @@ async function scanFiles(dirPath: string, basePath: string, chunkSize: number, i
 	const result: ScannedFile[] = [];
 	const glob = new Bun.Glob('*');
 	const scannedPaths: string[] = [];
-	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) scannedPaths.push(entry);
+	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) {
+		// Checked here as well as in the loop below: this one collects a single directory's
+		// entries, and a directory with very many of them is a long pass of its own.
+		if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
+		scannedPaths.push(entry);
+	}
 	scannedPaths.sort();
 	for (const entry of scannedPaths) {
 		// The scan is the first long pass over a large tree, before a single checksum is
