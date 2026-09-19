@@ -177,7 +177,7 @@ export class LISHServingHandlers {
 		// every joined topic and the same query legitimately reaches us once per shared
 		// lishnet. Keeping only the first would let leaving THAT one lishnet bury a request
 		// that also arrived over a lishnet we are still in.
-		const dedupKey = `${fromPeerID} ${data.searchID}`;
+		const dedupKey = `${fromPeerID}\u0000${data.searchID}`;
 		const seen = this.deps.seenSearchIDs.get(dedupKey);
 		// Which branch to judge on. Opening the reply stream makes an indirect publisher a
 		// direct neighbour, so a LATER copy of a query already in flight would be judged as
