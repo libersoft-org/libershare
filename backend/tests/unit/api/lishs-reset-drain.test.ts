@@ -153,4 +153,43 @@ describe('stopping a creation that has not reached its hashing pass', () => {
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
+
+	it('cancels every creation under way, not just the last one', async () => {
+		const handlers = initLISHsHandlers(
+			{} as never,
+			() => {},
+			() => {},
+			settingsStub
+		);
+		const first = await mkdtemp(join(tmpdir(), 'lish-create-a-'));
+		const second = await mkdtemp(join(tmpdir(), 'lish-create-b-'));
+		try {
+			await writeFile(join(first, 'payload.bin'), Buffer.alloc(64 * 1024, 1));
+			await writeFile(join(second, 'payload.bin'), Buffer.alloc(64 * 1024, 2));
+
+			// Both are admitted; a single-slot register kept only the second, so the first went
+			// on hashing after the stop and held its permit against the drain.
+			const creatingFirst = handlers.create({ dataPath: first }, null);
+			const creatingSecond = handlers.create({ dataPath: second }, null);
+			await handlers.stopCreate();
+
+			const outcomes = await Promise.all([
+				creatingFirst.then(
+					() => 'finished',
+					(err: unknown) => String((err as Error).message)
+				),
+				creatingSecond.then(
+					() => 'finished',
+					(err: unknown) => String((err as Error).message)
+				),
+			]);
+			expect(outcomes).toEqual(['LISH_CREATE_CANCELLED', 'LISH_CREATE_CANCELLED']);
+
+			await handlers.pauseMutations();
+			handlers.resumeMutations();
+		} finally {
+			await rm(first, { recursive: true, force: true });
+			await rm(second, { recursive: true, force: true });
+		}
+	});
 });

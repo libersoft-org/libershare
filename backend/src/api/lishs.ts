@@ -191,8 +191,14 @@ async function deleteLISHData(lish: IStoredLISH): Promise<void> {
 }
 
 export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcast: BroadcastFn, settings: Settings): LISHsHandlers {
-	// Track current creation so it can be aborted
-	let currentCreation: AbortController | null = null;
+	/**
+	 * Every creation admitted and not yet finished, so all of them can be aborted.
+	 *
+	 * A single slot held the last one only: two creations admitted together left the earlier
+	 * one running after a stop, and whoever was waiting for the mutation gate to drain — a
+	 * factory reset — waited for its whole hashing pass.
+	 */
+	const activeCreations = new Set<AbortController>();
 	const mutationAdmission = new LISHMutationGate();
 
 	async function runMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -260,11 +266,11 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		// cancel — so the operation kept its mutation permit and whoever was waiting for the
 		// gate to drain (a factory reset) waited for the whole pass anyway.
 		const ac = new AbortController();
-		currentCreation = ac;
+		activeCreations.add(ac);
 		try {
 			return await createWithController(p, client, ac);
 		} finally {
-			if (currentCreation === ac) currentCreation = null;
+			activeCreations.delete(ac);
 		}
 	}
 
@@ -617,10 +623,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function stopCreate(): Promise<SuccessResponse> {
-		if (currentCreation) {
-			currentCreation.abort();
-			currentCreation = null;
-		}
+		for (const creation of activeCreations) creation.abort();
 		return { success: true };
 	}
 
