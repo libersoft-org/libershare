@@ -151,10 +151,10 @@
 			<span>{$t('network.lishCount', { count: String(search.results.length) })}</span>
 		</div>
 	{/if}
-	<!-- Not an error: the search worked, it just could not look everywhere. Saying nothing
-	     would present an incomplete result as a complete one. -->
+	<!-- Not an error: some peers simply would not show their listing, which for a relay or an
+	     unrelated peer is the expected answer. Says what was measured, nothing more. -->
 	{#if !search.searching && search.refusedPeers > 0}
-		<Alert type="info" message={$t('network.somePeersUnsearchable')} />
+		<Alert type="info" message={$t('network.somePeersRefusedListing')} />
 	{/if}
 	{#if search.results.length > 0}
 		<Table columns="auto 2fr 1fr 12vh 10vh" columnsMobile="1fr auto">
