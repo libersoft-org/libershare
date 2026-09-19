@@ -154,6 +154,31 @@ describe('stopping a creation that has not reached its hashing pass', () => {
 		}
 	});
 
+	it('does not read the directory it was told to stop scanning', async () => {
+		const handlers = initLISHsHandlers(
+			{} as never,
+			() => {},
+			() => {},
+			settingsStub
+		);
+		// Empty on purpose: reading it is what the create would do next, and an empty directory
+		// has its own error. Which error comes back says whether the read happened at all.
+		const dir = await mkdtemp(join(tmpdir(), 'lish-create-stat-'));
+		try {
+			const creating = handlers.create({ dataPath: dir }, null);
+			await handlers.stopCreate();
+
+			const outcome = await creating.then(
+				() => 'finished',
+				(err: unknown) => String((err as Error).message)
+			);
+			// DIRECTORY_EMPTY would mean the cancelled creation went and listed the directory.
+			expect(outcome).toBe('LISH_CREATE_CANCELLED');
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
 	it('cancels every creation under way, not just the last one', async () => {
 		const handlers = initLISHsHandlers(
 			{} as never,

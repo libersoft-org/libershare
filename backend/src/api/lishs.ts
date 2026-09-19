@@ -295,6 +295,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const dataPath = Utils.expandHome(p.dataPath);
 		// Check that the path exists and is not an empty directory
 		const dataPathStat = await stat(dataPath);
+		// A stop arriving during that stat used to be noticed only further down, after this
+		// function had read the directory anyway — a pointless pass over a large or slow one
+		// that the factory reset, waiting for the mutation gate to drain, waited for.
+		if (ac.signal.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 		if (dataPathStat.isDirectory()) {
 			const entries = await readdir(dataPath);
 			if (entries.length === 0) throw new CodedError(ErrorCodes.DIRECTORY_EMPTY);
