@@ -36,6 +36,7 @@ interface LISHnetsHandlers {
 	getAllBootstrapStatuses: () => BootstrapStatus[];
 	updateBootstrapPeers: (p: { networkID: string; bootstrapPeers: string[] }) => Promise<LISHNetworkConfig>;
 }
+/** The import pipeline WITHOUT its admission gate — the caller here already holds it. */
 type ImportManifestFn = (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
 type RunLISHMutationFn = <T>(operation: () => Promise<T>) => Promise<T>;
 
@@ -43,7 +44,7 @@ export function toSetEnabledResponse(result: SetEnabledResult): SetLISHNetworkEn
 	return { success: result.found && result.applied, applied: result.applied, transitioned: result.transitioned, joined: result.joined };
 }
 
-export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void, settings: Settings, importManifest: ImportManifestFn, runLISHMutation: RunLISHMutationFn): LISHnetsHandlers {
+export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void, settings: Settings, importManifestAdmitted: ImportManifestFn, runLISHMutation: RunLISHMutationFn): LISHnetsHandlers {
 	function list(): LISHNetworkConfig[] {
 		return networks.list();
 	}
@@ -273,10 +274,15 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		}
 		// Delegate to the shared import pipeline — handles temp allocation, finalDirectory wiring,
 		// DB persist, broadcast, verification kick-off and markDownloadEnabled.
+		//
+		// The admitted variant, because this function already runs inside the mutation gate its
+		// public entry point took. The gated one entered it a second time, so a reset closing
+		// admission while the manifest was still downloading made an already-accepted operation
+		// refuse its own second half.
 		const downloadPath = settings.get('storage.downloadPath') ?? `~/${productName}/finished/`;
 		const enableSharing = settings.get('network.autoStartSharing') ?? true;
 		const enableDownloading = settings.get('network.autoStartDownloading') ?? true;
-		const result = await importManifest(manifest, downloadPath, { enableSharing, enableDownloading });
+		const result = await importManifestAdmitted(manifest, downloadPath, { enableSharing, enableDownloading });
 		return { lishID: result.lishID };
 	}
 	function getNodeInfo(): NetworkNodeInfo | null {

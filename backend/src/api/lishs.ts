@@ -91,7 +91,9 @@ interface LISHsHandlers {
 	finalizeDownload: (lishID: string) => Promise<SuccessResponse>; // Move from temp to final directory after download completes
 	/** Continue finalization for a transfer lifecycle admitted before mutation shutdown. */
 	finalizeDownloadAdmitted: (lishID: string) => Promise<SuccessResponse>;
-	importManifest: (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>; // Shared import entrypoint (used by peer add-to-downloads)
+	importManifest: (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>; // Shared import entrypoint
+	/** As {@link LISHsHandlers.importManifest}, for a caller that already holds mutation admission. */
+	importManifestAdmitted: (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
 	pauseMutations: () => Promise<void>;
 	resumeMutations: () => void;
 	runMutation: <T>(operation: () => Promise<T>) => Promise<T>;
@@ -879,7 +881,11 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function importManifest(lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }): Promise<ImportLISHResponse> {
-		return runMutation(() => importCommon(lish, downloadPath, opts?.overwrite ?? false, opts?.enableSharing, opts?.enableDownloading));
+		return runMutation(() => importManifestAdmitted(lish, downloadPath, opts));
+	}
+
+	async function importManifestAdmitted(lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }): Promise<ImportLISHResponse> {
+		return importCommon(lish, downloadPath, opts?.overwrite ?? false, opts?.enableSharing, opts?.enableDownloading);
 	}
 
 	async function pauseMutations(): Promise<void> {
@@ -890,5 +896,5 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		mutationAdmission.open();
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, move, startVerification, finalizeDownload, finalizeDownloadAdmitted, importManifest, pauseMutations, resumeMutations, runMutation };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, move, startVerification, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, resumeMutations, runMutation };
 }
