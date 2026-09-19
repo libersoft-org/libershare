@@ -160,6 +160,12 @@ export interface ScannedFile {
 // Scan directory recursively to collect all regular files (without computing checksums)
 // Used to send the complete file list to the frontend before starting checksum computation
 async function scanFiles(dirPath: string, basePath: string, chunkSize: number, inodeMap: { [key: string]: boolean } = {}, signal?: AbortSignal): Promise<ScannedFile[]> {
+	// Before the listing starts, not only inside the loops below: `Glob.scan()` reads a whole
+	// directory before it yields its first entry, so a check placed after it cannot stop that
+	// read. The caller awaits file metadata between directories, and a cancel arriving in that
+	// window used to reach this call anyway — starting a fresh listing of a possibly large or
+	// slow directory for work that was already called off, with the mutation permit still held.
+	if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 	const result: ScannedFile[] = [];
 	const glob = new Bun.Glob('*');
 	const scannedPaths: string[] = [];

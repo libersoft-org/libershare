@@ -1,5 +1,6 @@
-import { describe, expect, it, afterAll } from 'bun:test';
-import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises';
+import { describe, expect, it, afterAll, spyOn } from 'bun:test';
+import * as fsPromises from 'node:fs/promises';
+const { mkdtemp, mkdir, rm, writeFile } = fsPromises;
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createLISH } from '../../../src/lish/lish.ts';
@@ -72,6 +73,44 @@ describe('cancelling a creation during its directory scan', () => {
 
 		await expect(creating).rejects.toThrow('LISH_CREATE_CANCELLED');
 		expect(events).toEqual([]);
+	});
+
+	it('does not start a new directory listing once cancelled', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'lish-scan-entry-'));
+		dirs.push(root);
+		const sub = join(root, 'sub');
+		await mkdir(sub);
+		await Promise.all(Array.from({ length: 30 }, (_, f) => writeFile(join(sub, `file-${f}.bin`), 'x')));
+
+		const controller = new AbortController();
+		// One glob per directory listed. `Glob.scan()` reads the whole directory before it
+		// yields anything, so counting the listings is what tells a cancel that stopped the
+		// walk from one that merely stopped reading its results.
+		const RealGlob = Bun.Glob;
+		let listings = 0;
+		const globSpy = spyOn(Bun, 'Glob');
+		globSpy.mockImplementation(((pattern: string) => {
+			listings++;
+			return new RealGlob(pattern);
+		}) as never);
+		// Cancelled inside the metadata read for the subdirectory: the moment right before the
+		// recursion that would list it.
+		let lstats = 0;
+		const lstatSpy = spyOn(fsPromises, 'lstat').mockImplementation(((): any => {
+			lstats++;
+			if (lstats === 1) controller.abort();
+			return Promise.resolve({ isSymbolicLink: () => false });
+		}) as any);
+
+		try {
+			await expect(createLISH(root, undefined, 1024, 'sha256', 1, undefined, undefined, undefined, controller.signal)).rejects.toThrow('LISH_CREATE_CANCELLED');
+			// Only the root was listed. A second listing means the walk opened a directory it
+			// had already been told to abandon.
+			expect(listings).toBe(1);
+		} finally {
+			lstatSpy.mockRestore();
+			globSpy.mockRestore();
+		}
 	});
 
 	it('still scans the whole tree when nothing cancelled it', async () => {
