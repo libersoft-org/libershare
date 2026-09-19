@@ -118,11 +118,18 @@ export function initIdentityHandlers(networks: Networks): IdentityHandlers {
 	 * lease, so taking it here puts every node-restarting operation in one queue.
 	 */
 	async function underMaintenance<T>(operation: () => Promise<T>): Promise<T> {
-		const release = await networks.beginMaintenance();
+		const lease = await networks.prepareMaintenance();
 		try {
+			// Cancel BEFORE draining, the order the factory reset already uses. Waiting first
+			// deadlocks against a runtime operation that only `cancelRunOperations()` can end —
+			// a leave disconnecting an unresponsive peer, say — because that call lives inside
+			// `stopAllNetworks()`, which is on the far side of the wait. The lease would then be
+			// held forever, taking every later identity write and factory reset down with it.
+			networks.getNetwork().cancelRunOperations();
+			await lease.drain();
 			return await operation();
 		} finally {
-			release();
+			lease.release();
 		}
 	}
 

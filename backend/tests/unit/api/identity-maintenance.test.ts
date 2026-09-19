@@ -19,14 +19,24 @@ interface Harness {
 	log: string[];
 	/** Releases the key write that is currently parked, if any. */
 	release: () => void;
+	/** Occupies the mutation gate with an operation only a cancel can end. */
+	hold: () => void;
 }
 
 function makeHarness(): Harness {
 	const log: string[] = [];
 	const gate = new NetworkMutationGate();
 	let parked: (() => void) | null = null;
+	/** Ends the runtime operation held open below; only `cancelRunOperations` may call it. */
+	let stuckOperation: (() => void) | null = null;
 
 	const network = {
+		cancelRunOperations: (): void => {
+			log.push('cancel');
+			const stuck = stuckOperation;
+			stuckOperation = null;
+			stuck?.();
+		},
 		// Park mid-sequence: the interleaving this guards against can only form while one
 		// call sits between its stop and its start.
 		writeIdentityKey: async (): Promise<void> => {
@@ -64,6 +74,11 @@ function makeHarness(): Harness {
 			parked = null;
 			resume?.();
 		},
+		hold: () => {
+			const leave = gate.enter();
+			if (typeof leave !== 'function') throw new Error('the gate was already under maintenance');
+			stuckOperation = leave;
+		},
 	};
 }
 
@@ -78,23 +93,23 @@ describe('identity writes take the network maintenance lease', () => {
 
 		const first = h.handlers.applyImported({ privateKey: KEY });
 		await settle();
-		expect(h.log).toEqual(['stop', 'write']);
+		expect(h.log).toEqual(['cancel', 'stop', 'write']);
 
 		// Arrives while the first one is parked between its stop and its start.
 		const second = h.handlers.applyImported({ privateKey: KEY });
 		await settle();
 		// Without the lease the second call stops the networks again here, on a node the
 		// first one is about to start, and both starts then run against one stop.
-		expect(h.log).toEqual(['stop', 'write']);
+		expect(h.log).toEqual(['cancel', 'stop', 'write']);
 
 		h.release();
 		await first;
 		await settle();
-		expect(h.log).toEqual(['stop', 'write', 'start', 'stop', 'write']);
+		expect(h.log).toEqual(['cancel', 'stop', 'write', 'start', 'cancel', 'stop', 'write']);
 
 		h.release();
 		await second;
-		expect(h.log).toEqual(['stop', 'write', 'start', 'stop', 'write', 'start']);
+		expect(h.log).toEqual(['cancel', 'stop', 'write', 'start', 'cancel', 'stop', 'write', 'start']);
 	});
 
 	it('makes a regenerate wait for an import already under way', async () => {
@@ -104,22 +119,42 @@ describe('identity writes take the network maintenance lease', () => {
 		await settle();
 		const regenerated = h.handlers.regenerate();
 		await settle();
-		expect(h.log).toEqual(['stop', 'write']);
+		expect(h.log).toEqual(['cancel', 'stop', 'write']);
 
 		h.release();
 		await imported;
 		await settle();
-		expect(h.log).toEqual(['stop', 'write', 'start', 'stop', 'clear']);
+		expect(h.log).toEqual(['cancel', 'stop', 'write', 'start', 'cancel', 'stop', 'clear']);
 
 		h.release();
 		await regenerated;
-		expect(h.log).toEqual(['stop', 'write', 'start', 'stop', 'clear', 'start']);
+		expect(h.log).toEqual(['cancel', 'stop', 'write', 'start', 'cancel', 'stop', 'clear', 'start']);
+	});
+
+	it('cancels a stuck runtime operation before it waits for one', async () => {
+		const h = makeHarness();
+		// A lishnet operation that will not end on its own — a leave disconnecting a peer that
+		// never answers. Only `cancelRunOperations()` ends this one.
+		h.hold();
+
+		const imported = h.handlers.applyImported({ privateKey: KEY });
+		await settle();
+		// Draining first would wait here forever, holding the lease against every later
+		// identity write and factory reset.
+		expect(h.log).toEqual(['cancel', 'stop', 'write']);
+
+		h.release();
+		await imported;
+		expect(h.log).toEqual(['cancel', 'stop', 'write', 'start']);
 	});
 
 	it('releases the lease when the key write fails, so the next one still runs', async () => {
 		const log: string[] = [];
 		const gate = new NetworkMutationGate();
 		const network = {
+			cancelRunOperations: (): void => {
+				log.push('cancel');
+			},
 			writeIdentityKey: async (): Promise<void> => {
 				log.push('write');
 				throw new Error('disk full');
@@ -145,6 +180,6 @@ describe('identity writes take the network maintenance lease', () => {
 		await expect(handlers.applyImported({ privateKey: KEY })).rejects.toThrow('disk full');
 		// The failed import restarts on the old key; a lease left held would hang this.
 		await handlers.regenerate();
-		expect(log).toEqual(['stop', 'write', 'start', 'stop', 'clear', 'start']);
+		expect(log).toEqual(['cancel', 'stop', 'write', 'start', 'cancel', 'stop', 'clear', 'start']);
 	});
 });
