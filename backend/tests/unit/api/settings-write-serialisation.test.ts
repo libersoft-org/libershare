@@ -121,3 +121,13 @@ describe('the chunk/message floor repair rides with its own write', () => {
 		expect(settings.get('network.maxMessageSize')).toBeGreaterThanOrEqual(32 * MIB);
 	});
 });
+
+describe('a reader never sees a half-applied import', () => {
+	it('leaves the stored document untouched when every key is rejected', async () => {
+		const settings = await makeSettings();
+		await settings.setMany([{ path: 'network.incomingPort', value: 9091 }]);
+		const result = await settings.setMany([{ path: '__proto__.x', value: 1 }]);
+		expect(result).toEqual({ applied: 0, skipped: ['__proto__.x'] });
+		expect(settings.get('network.incomingPort')).toBe(9091);
+	});
+});

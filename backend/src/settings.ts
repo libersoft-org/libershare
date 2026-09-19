@@ -282,21 +282,7 @@ export class Settings {
 	 * What the lock buys is that no other writer sees or extends the half-written document.
 	 */
 	async setMany(entries: ReadonlyArray<{ path: string; value: any }>): Promise<{ applied: number; skipped: string[] }> {
-		return await this.writeLock.runExclusive(async () => {
-			const skipped: string[] = [];
-			let applied = 0;
-			for (const entry of entries) {
-				try {
-					await this.storage.set(entry.path, entry.value);
-					applied++;
-				} catch (err) {
-					console.warn(`Skipped settings key '${entry.path}':`, (err as Error).message);
-					skipped.push(entry.path);
-				}
-			}
-			await this.repair();
-			return { applied, skipped };
-		});
+		return await this.writeLock.runExclusive(() => this.storage.setMany(entries, draft => Settings.repairDraft(draft)));
 	}
 
 	/**
@@ -314,6 +300,12 @@ export class Settings {
 	private async repair(): Promise<void> {
 		const floor = minMessageSizeFor(this.storage.get('network.maxChunkSize'));
 		if (this.storage.get('network.maxMessageSize') < floor) await this.storage.set('network.maxMessageSize', floor);
+	}
+
+	/** As {@link Settings.repair}, on a batch that has not been published yet. */
+	private static repairDraft(draft: SettingsData): void {
+		const floor = minMessageSizeFor(draft.network.maxChunkSize);
+		if (draft.network.maxMessageSize < floor) draft.network.maxMessageSize = floor;
 	}
 
 	list(): SettingsData {
