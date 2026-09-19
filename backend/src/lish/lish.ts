@@ -159,13 +159,18 @@ export interface ScannedFile {
 
 // Scan directory recursively to collect all regular files (without computing checksums)
 // Used to send the complete file list to the frontend before starting checksum computation
-async function scanFiles(dirPath: string, basePath: string, chunkSize: number, inodeMap: { [key: string]: boolean } = {}): Promise<ScannedFile[]> {
+async function scanFiles(dirPath: string, basePath: string, chunkSize: number, inodeMap: { [key: string]: boolean } = {}, signal?: AbortSignal): Promise<ScannedFile[]> {
 	const result: ScannedFile[] = [];
 	const glob = new Bun.Glob('*');
 	const scannedPaths: string[] = [];
 	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) scannedPaths.push(entry);
 	scannedPaths.sort();
 	for (const entry of scannedPaths) {
+		// The scan is the first long pass over a large tree, before a single checksum is
+		// computed. Without this check a cancelled creation walked the rest of the tree
+		// anyway, and whoever asked it to stop — a factory reset waiting for the mutation
+		// gate to drain — waited for exactly the work it had cancelled.
+		if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 		const fullPath = `${dirPath}/${entry}`;
 		let stat: Stats;
 		try {
@@ -181,7 +186,7 @@ async function scanFiles(dirPath: string, basePath: string, chunkSize: number, i
 		} catch {}
 		if (isSymlink) continue;
 		else if (stat.isDirectory()) {
-			const subFiles = await scanFiles(fullPath, basePath, chunkSize, inodeMap);
+			const subFiles = await scanFiles(fullPath, basePath, chunkSize, inodeMap, signal);
 			result.push(...subFiles);
 		} else if (stat.isFile()) {
 			const inodeKey = `${stat.dev}:${stat.ino}`;
@@ -360,7 +365,7 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 		const links: ILinkEntry[] = [];
 		const inodeMap: InodeMap = {};
 		// Scan all files first and emit the complete file list
-		const scannedFiles = await scanFiles(inputPath, inputPath, chunkSize);
+		const scannedFiles = await scanFiles(inputPath, inputPath, chunkSize, {}, signal);
 		if (onProgress) onProgress({ type: 'file-list', files: scannedFiles });
 		// Now process directory (computes checksums with per-file progress)
 		await processDirectory(inputPath, inputPath, chunkSize, algo, maxWorkers, directories, files, links, inodeMap, onProgress, signal);
