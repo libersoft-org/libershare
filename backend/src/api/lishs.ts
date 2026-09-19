@@ -255,6 +255,20 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function createAdmitted(p: CreateLISHParams, client: any): Promise<CreateLISHResponse> {
+		// Registered before the first await, not next to the hashing call that consumes it.
+		// The path checks below await, and a stop arriving in that window found nothing to
+		// cancel — so the operation kept its mutation permit and whoever was waiting for the
+		// gate to drain (a factory reset) waited for the whole pass anyway.
+		const ac = new AbortController();
+		currentCreation = ac;
+		try {
+			return await createWithController(p, client, ac);
+		} finally {
+			if (currentCreation === ac) currentCreation = null;
+		}
+	}
+
+	async function createWithController(p: CreateLISHParams, client: any, ac: AbortController): Promise<CreateLISHResponse> {
 		assert(p, ['dataPath']);
 		const addToSharing = p.addToSharing ?? false;
 		const addToDownloading = p.addToDownloading ?? false;
@@ -281,14 +295,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		}
 		console.log(`Creating LISH from: ${dataPath}, lishFile=${p.lishFile}, addToSharing=${addToSharing}, name=${p.name}, description=${p.description}`);
 		// 1. Create the LISH structure
-		const ac = new AbortController();
-		currentCreation = ac;
-		let lish: IStoredLISH;
-		try {
-			lish = await createLISH(dataPath, p.name, chunkSize, algorithm as any, threads, p.description, info => emit(client, 'lishs.create:progress', info), undefined, ac.signal);
-		} finally {
-			if (currentCreation === ac) currentCreation = null;
-		}
+		const lish: IStoredLISH = await createLISH(dataPath, p.name, chunkSize, algorithm as any, threads, p.description, info => emit(client, 'lishs.create:progress', info), undefined, ac.signal);
 		// 2. Export to .lish(.gz) file if requested
 		let resultLISHFile: string | undefined;
 		if (p.lishFile) {
