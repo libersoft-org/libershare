@@ -179,40 +179,45 @@ describe('stopping a creation that has not reached its hashing pass', () => {
 		}
 	});
 
-	it('leaves the other window creation alone when the user cancels their own', async () => {
+	it('cancels only what the asking window started', async () => {
 		const handlers = initLISHsHandlers(
 			{} as never,
 			() => {},
 			() => {},
 			settingsStub
 		);
-		const first = await mkdtemp(join(tmpdir(), 'lish-cancel-other-'));
-		const second = await mkdtemp(join(tmpdir(), 'lish-cancel-own-'));
+		const dirA = await mkdtemp(join(tmpdir(), 'lish-cancel-a-'));
+		const dirB = await mkdtemp(join(tmpdir(), 'lish-cancel-b-'));
+		// Two windows of the same node, each its own client on the socket.
+		const windowA = { id: 'window-a' };
+		const windowB = { id: 'window-b' };
 		try {
-			await writeFile(join(first, 'payload.bin'), Buffer.alloc(64 * 1024, 1));
-			await writeFile(join(second, 'payload.bin'), Buffer.alloc(64 * 1024, 2));
+			await writeFile(join(dirA, 'payload.bin'), Buffer.alloc(64 * 1024, 1));
+			await writeFile(join(dirB, 'payload.bin'), Buffer.alloc(64 * 1024, 2));
 
-			// Two windows of the same node. The public cancel button belongs to the screen that
-			// pressed it — taking the other one down with it would throw away work nobody
-			// stopped. Only the maintenance path cancels everything.
-			const other = handlers.create({ dataPath: first }, null);
-			const own = handlers.create({ dataPath: second }, null);
-			await handlers.stopCreate();
+			const creatingA = handlers.create({ dataPath: dirA }, windowA);
+			const creatingB = handlers.create({ dataPath: dirB }, windowB);
+			// A presses cancel while B is the newest creation: picking "the newest" would take
+			// down the other window's work instead.
+			await handlers.stopCreate(undefined, windowA);
 
-			const outcomes = await Promise.all([
-				other.then(
-					() => 'finished',
-					(err: unknown) => String((err as Error).message)
-				),
-				own.then(
-					() => 'finished',
-					(err: unknown) => String((err as Error).message)
-				),
-			]);
-			expect(outcomes).toEqual(['finished', 'LISH_CREATE_CANCELLED']);
+			const outcomeA = await creatingA.then(
+				() => 'finished',
+				(err: unknown) => String((err as Error).message)
+			);
+			expect(outcomeA).toBe('LISH_CREATE_CANCELLED');
+
+			// And a second cancel from A — the frontend sends one on the button and one when the
+			// progress view unmounts — must not reach into B now that A's entry is gone.
+			await handlers.stopCreate(undefined, windowA);
+			const outcomeB = await creatingB.then(
+				() => 'finished',
+				(err: unknown) => String((err as Error).message)
+			);
+			expect(outcomeB).toBe('finished');
 		} finally {
-			await rm(first, { recursive: true, force: true });
-			await rm(second, { recursive: true, force: true });
+			await rm(dirA, { recursive: true, force: true });
+			await rm(dirB, { recursive: true, force: true });
 		}
 	});
 
