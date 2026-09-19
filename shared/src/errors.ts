@@ -25,6 +25,9 @@ const errorCodes = [
 	'LISH_CREATE_CANCELLED',
 	'PATH_ACCESS_DENIED',
 	'INVALID_FILE_INDEX',
+	// Longer than every responder will accept, so it is refused where the user can be told
+	// why rather than coming back as an empty result from each peer in turn.
+	'SEARCH_QUERY_TOO_LONG',
 
 	// Network
 	'NETWORK_NOT_FOUND',
@@ -51,6 +54,10 @@ const errorCodes = [
 	'PEER_BUSY',
 	'PEER_IO_ERROR',
 	'PEER_INVALID_REQUEST',
+	// The peer requires a shared lishnet membership it cannot see yet. Distinct from an
+	// empty listing on purpose: "I have nothing for you" is final, this one is a state
+	// both sides are still converging on, so the caller may ask again.
+	'PEER_LISTING_NOT_AUTHORIZED',
 
 	// Downloader
 	'DOWNLOADER_NOT_INITIALIZED',

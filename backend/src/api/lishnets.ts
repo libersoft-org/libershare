@@ -5,6 +5,13 @@ import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessRespons
 import { LISHClient, LISH_PROTOCOL } from '../protocol/lish-protocol.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
+/**
+ * How a peer detail rides out the moment before the other side has processed our own
+ * subscription. Short and few: the screen is waiting on this call, so it must fail visibly
+ * if the peer really will not serve us rather than hang on hope.
+ */
+const PEER_LISTING_RETRY_MS = 700;
+const PEER_LISTING_RETRIES = 2;
 interface LISHnetsHandlers {
 	list: () => LISHNetworkConfig[];
 	get: (p: { networkID: string }) => LISHNetworkConfig | undefined;
@@ -188,6 +195,22 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 	}
 	async function getPeerLishs(p: { peerID: string; networkID: string }): Promise<{ lishs: PeerLishEntry[] }> {
 		assert(p, ['peerID', 'networkID']);
+		// A peer that has not yet processed our own subscription refuses the listing, and both
+		// sides converge out of that on their own within a moment. Search retries for exactly
+		// this reason; without the same here, opening a peer's detail right after connecting
+		// shows an error that no longer reflects reality and only a manual refresh clears.
+		// Bounded and confined to that one code: every other failure is reported at once.
+		for (let attempt = 0; ; attempt++) {
+			try {
+				return await getPeerLishsOnce(p);
+			} catch (error: any) {
+				if (error?.code !== ErrorCodes.PEER_LISTING_NOT_AUTHORIZED || attempt >= PEER_LISTING_RETRIES) throw error;
+				await new Promise<void>(resolve => setTimeout(resolve, PEER_LISTING_RETRY_MS));
+			}
+		}
+	}
+
+	async function getPeerLishsOnce(p: { peerID: string; networkID: string }): Promise<{ lishs: PeerLishEntry[] }> {
 		const network = networks.getRunningNetwork();
 		try {
 			const { stream } = await network.dialProtocolByPeerId(p.peerID, LISH_PROTOCOL);

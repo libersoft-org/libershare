@@ -203,10 +203,11 @@ describe('PeerAnnounceManager.emit recently-seen membership', () => {
 	});
 
 	it('prunes a member whose last-seen exceeds the TTL', async () => {
-		const realNow = Date.now;
+		const realNow = performance.now.bind(performance);
 		try {
 			let clock = 1_000_000;
-			Date.now = () => clock;
+			// Membership timestamps run off the monotonic clock, not the wall clock.
+			performance.now = () => clock;
 			const allPeers = peersWithFillers(fakePeer(PA_ID, PA_ADDR), fakePeer(PC_ID, PC_ADDR));
 			let aSubs = [PA_ID, PC_ID];
 			const node = { peerId: { toString: () => SELF_ID }, getMultiaddrs: () => [Multiaddr(SELF_ADDR)], peerStore: { all: async () => allPeers } };
@@ -225,7 +226,45 @@ describe('PeerAnnounceManager.emit recently-seen membership', () => {
 			expect(addrs).not.toContain('192.0.2.10/'); // P_A pruned (last-seen > TTL)
 			expect(addrs).toContain('192.0.2.30/'); // P_C refreshed this cycle
 		} finally {
-			Date.now = realNow;
+			performance.now = realNow;
+		}
+	});
+
+	it('records membership on a node too small to advertise itself', async () => {
+		// The peerStore threshold decides whether we BROADCAST, not whether we remember
+		// who we saw. Gating both together left getRecentMembers permanently empty on
+		// small nodes — where the readers of it (the listing gate) need it most.
+		const allPeers = [fakePeer(PA_ID, PA_ADDR)]; // 1 peer — below PEER_ANNOUNCE_MIN_PEER_STORE
+		const node = { peerId: { toString: () => SELF_ID }, getMultiaddrs: () => [Multiaddr(SELF_ADDR)], peerStore: { all: async () => allPeers } };
+		const pubsub = { getTopics: () => [TOPIC_A], getSubscribers: (t: string) => (t === TOPIC_A ? [fakeSubscriber(PA_ID)] : []) };
+		const { mgr, broadcasts } = buildManager(node, pubsub);
+
+		await (mgr as any).emit();
+
+		expect(broadcasts).toHaveLength(0); // still too small to announce
+		expect(mgr.getRecentMembers(TOPIC_A)).toEqual([PA_ID]); // but membership was recorded
+	});
+
+	it('honours a shorter max age than the advertising TTL', async () => {
+		// The listing gate reads this union with a much shorter window, so a peer last
+		// seen minutes ago is still re-advertised but no longer counts as present.
+		const realNow = performance.now.bind(performance);
+		try {
+			let clock = 1_000_000;
+			// Membership timestamps run off the monotonic clock, not the wall clock.
+			performance.now = () => clock;
+			const allPeers = peersWithFillers(fakePeer(PA_ID, PA_ADDR));
+			const node = { peerId: { toString: () => SELF_ID }, getMultiaddrs: () => [Multiaddr(SELF_ADDR)], peerStore: { all: async () => allPeers } };
+			const pubsub = { getTopics: () => [TOPIC_A], getSubscribers: (t: string) => (t === TOPIC_A ? [fakeSubscriber(PA_ID)] : []) };
+			const { mgr } = buildManager(node, pubsub);
+
+			await (mgr as any).emit();
+			clock += 120_000; // 2 min: inside the advertising TTL, outside a 60s auth window
+
+			expect(mgr.getRecentMembers(TOPIC_A)).toEqual([PA_ID]);
+			expect(mgr.getRecentMembers(TOPIC_A, 60_000)).toEqual([]);
+		} finally {
+			performance.now = realNow;
 		}
 	});
 });
@@ -699,5 +738,105 @@ describe('PeerAnnounceManager.emit — what one peer may contribute', () => {
 
 		const mine = broadcasts.find(b => b.topic === TOPIC_A)!.msg.multiaddrs.join(' ');
 		expect(mine).not.toContain('p2p-circuit');
+	});
+});
+
+/**
+ * The grace a disconnect starts is bought by MEMBERSHIP, not by the connection.
+ *
+ * `topicMembers` deliberately outlives a connection — discovery re-advertises a peer
+ * precisely while it is away — so "still in the map" cannot decide whether a disconnect
+ * earns a fresh authorization window. Re-stamping on that alone let a peer hold an
+ * expired listing right open forever by connecting and disconnecting on a loop, never
+ * subscribing to anything.
+ */
+describe('PeerAnnounceManager.touchKnownMember — the claim is earned and spent', () => {
+	const TOPIC = `${LISH_TOPIC_PREFIX}netAAAA`;
+	const NARROW = 15; // ms: wide enough for a just-written stamp, too narrow for an aged one
+	const age = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 40));
+
+	it('grants the grace once per membership and refuses the reconnects after it', async () => {
+		const { mgr } = intakeManager();
+		mgr.noteMember(TOPIC, PA_ID);
+		await age();
+		// The stamp has aged out of the narrow window: nothing has refreshed it yet.
+		expect(mgr.getRecentMembers(TOPIC, NARROW)).toEqual([]);
+
+		// The disconnect that ends the SUBSCRIBED connection — the grace is due.
+		mgr.touchKnownMember(PA_ID);
+		expect(mgr.getRecentMembers(TOPIC, NARROW)).toEqual([PA_ID]);
+
+		// Every later transport connect/disconnect brings no new SUBSCRIBE, so the stamp
+		// must stay where it is and age out again. This is the loop that used to hold an
+		// expired authorization open indefinitely.
+		await age();
+		mgr.touchKnownMember(PA_ID);
+		mgr.touchKnownMember(PA_ID);
+		expect(mgr.getRecentMembers(TOPIC, NARROW)).toEqual([]);
+	});
+
+	it('a new subscription earns a new claim', async () => {
+		const { mgr } = intakeManager();
+		mgr.noteMember(TOPIC, PA_ID);
+		mgr.touchKnownMember(PA_ID); // spends the first claim
+		await age();
+
+		mgr.noteMember(TOPIC, PA_ID); // the peer subscribed again
+		await age();
+		expect(mgr.getRecentMembers(TOPIC, NARROW)).toEqual([]);
+
+		mgr.touchKnownMember(PA_ID);
+
+		expect(mgr.getRecentMembers(TOPIC, NARROW)).toEqual([PA_ID]);
+	});
+
+	it('an explicit unsubscribe withdraws the pending claim too', () => {
+		const { mgr } = intakeManager();
+		mgr.noteMember(TOPIC, PA_ID);
+		mgr.forgetMember(TOPIC, PA_ID);
+
+		mgr.touchKnownMember(PA_ID);
+
+		expect(mgr.getRecentMembers(TOPIC, 60_000)).toEqual([]);
+	});
+
+	// The exact sequence a shared claim allowed: expire in A, join and leave B, disconnect —
+	// and the disconnect spends B's confirmation on A's stale entry. Leaving B withdrew the
+	// only confirmation there was, so nothing should have been left to spend.
+	it('joining and leaving a second network does not revive the first', async () => {
+		const OTHER = `${LISH_TOPIC_PREFIX}netBBBB`;
+		const { mgr } = intakeManager();
+		mgr.noteMember(TOPIC, PA_ID);
+		mgr.touchKnownMember(PA_ID); // the grace A was owed, spent
+		await age(); // and expired
+
+		mgr.noteMember(OTHER, PA_ID); // subscribes to B only
+		mgr.forgetMember(OTHER, PA_ID); // and says it is leaving B
+		mgr.touchKnownMember(PA_ID);
+
+		expect(mgr.getRecentMembers(TOPIC, NARROW)).toEqual([]);
+		expect(mgr.getRecentMembers(OTHER, NARROW)).toEqual([]);
+	});
+
+	// A claim is earned in one topic and must be spendable only there. The two networks
+	// are separate authorizations: a peer that keeps one subscription live would otherwise
+	// carry every network it ever joined along with it, for as long as the discovery
+	// history of those topics survives.
+	it('a claim earned in one network does not refresh another', async () => {
+		const OTHER = `${LISH_TOPIC_PREFIX}netBBBB`;
+		const { mgr } = intakeManager();
+		mgr.noteMember(TOPIC, PA_ID);
+		mgr.noteMember(OTHER, PA_ID);
+		// The peer stops subscribing to OTHER without saying so — the discovery entry stays.
+		mgr.touchKnownMember(PA_ID); // spends both claims
+		await age();
+		// Only the first network sees it subscribed again.
+		mgr.noteMember(TOPIC, PA_ID);
+		await age();
+
+		mgr.touchKnownMember(PA_ID);
+
+		expect(mgr.getRecentMembers(TOPIC, NARROW)).toEqual([PA_ID]);
+		expect(mgr.getRecentMembers(OTHER, NARROW)).toEqual([]);
 	});
 });

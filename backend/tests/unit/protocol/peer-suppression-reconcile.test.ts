@@ -731,6 +731,8 @@ describe('Networks.delete — suppression entries outlive the lishnet that keyed
 		// We are still in another lishnet, and the peer shares none of it.
 		(net as any).pubsub = { getTopics: () => [lishTopic('net-b')], getSubscribers: () => [] };
 		(net as any).node = { getConnections: () => [{ remotePeer: { toString: () => LEFT_PEER }, timeline: { open: Date.now() } }] };
+		// The listing gate now asks peer-announce for recent membership, so the stub needs it.
+		(net as any).peerAnnounce = { getRecentMembers: () => [] };
 		(networks as any).network.clearRedialSuppressionForNetwork = (id: string, reason?: 'rejoined' | 'deleted') => {
 			clearedFor.push(id);
 			net.clearRedialSuppressionForNetwork(id, reason);
@@ -752,6 +754,8 @@ describe('Networks.delete — suppression entries outlive the lishnet that keyed
 		(net as any).listingRevoked = new Set<string>();
 		(net as any).isBootstrapOrRelayPeer = () => false;
 		(net as any).node = { getConnections: () => [] };
+		// The listing gate now asks peer-announce for recent membership, so the stub needs it.
+		(net as any).peerAnnounce = { getRecentMembers: () => [] };
 		(net as any).pubsub = { getTopics: () => [lishTopic('net-b')], getSubscribers: () => [] };
 		net.clearRedialSuppressionForNetwork(NET, 'deleted');
 		expect(net.canListSharesTo(LEFT_PEER)).toBe(false);
@@ -769,6 +773,13 @@ describe('Networks.delete — suppression entries outlive the lishnet that keyed
 		(net as any).isBootstrapOrRelayPeer = () => false;
 		(net as any).pubsub = { getTopics: () => [lishTopic('net-b')], getSubscribers: () => [] };
 		(net as any).node = { getConnections: () => [{ remotePeer: { toString: () => LEFT_PEER }, timeline: { open: Date.now() } }] };
+		// Remembered as a member of the lishnet we are still in, but absent from the live
+		// subscriber snapshot: exactly the soft path a DELETE closes through
+		// `listingRevoked` and a rejoin has to open again. Under the membership gate that
+		// is what "both halves" means — dialable again AND allowed to read the listing.
+		// Before, the second half was granted by the age of the connection instead, which
+		// is why this stub used to need no membership at all.
+		(net as any).peerAnnounce = { getRecentMembers: () => [LEFT_PEER] };
 
 		net.clearRedialSuppressionForNetwork(NET, 'rejoined');
 

@@ -806,6 +806,9 @@ describe('bootstrap registry — disconnect activity', () => {
 		(network as any).dcutrPeers = new Set<string>();
 		(network as any).peerDisconnectHandlers = new Set();
 		(network as any).lastMeshChange = new Map();
+		// The disconnect path starts a membership reconnect grace, so the fake network
+		// needs the manager that holds it.
+		(network as any).peerAnnounce = { touchKnownMember: () => {} };
 		(network as any).pubsub = null;
 		(network as any).setupEventListeners();
 
