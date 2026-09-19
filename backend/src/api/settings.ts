@@ -1,7 +1,7 @@
 import { type Settings, type SettingsData } from '../settings.ts';
 import { applyNetworkLimits } from '../protocol/network-limits.ts';
 import { Utils } from '../utils.ts';
-import { type CompressionAlgorithm, type SuccessResponse, type ISettingsImportResult, CodedError, ErrorCodes, minMessageSizeFor } from '@shared';
+import { type CompressionAlgorithm, type SuccessResponse, type ISettingsImportResult, CodedError, ErrorCodes } from '@shared';
 const assert = Utils.assertParams;
 
 const ALLOWED_ROOT_KEYS = new Set(['language', 'ui', 'audio', 'storage', 'network', 'system', 'export', 'input']);
@@ -55,18 +55,15 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 	}
 
 	/**
-	 * Push network limits into the protocol layer, first repairing a stored message-size
-	 * limit that could not carry one chunk. applyNetworkLimits() enforces the same floor at
-	 * runtime; persisting it here as well keeps the settings screen from showing a value the
-	 * protocol layer silently overrides.
+	 * Push the stored network limits into the protocol layer.
 	 *
-	 * Used by the paths that write arbitrary values — the WS `settings.set` call and the
-	 * settings import. Reset and factory reset write the defaults, which satisfy the floor
-	 * by construction, so they call applyNetworkLimits() directly.
+	 * The repair of a message-size limit too small to carry one chunk is NOT done here: it is
+	 * a read followed by a write, and between the two another import could land, after which
+	 * this one wrote a floor derived from its own chunk size over the other one's message
+	 * size. It belongs to the same locked write as the values it corrects, so the settings
+	 * store does it — see {@link Settings.set} and {@link Settings.setMany}.
 	 */
-	async function persistAndApplyNetworkLimits(): Promise<void> {
-		const floor = minMessageSizeFor(settings.get().network.maxChunkSize);
-		if (settings.get().network.maxMessageSize < floor) await settings.set('network.maxMessageSize', floor);
+	function applyStoredNetworkLimits(): void {
 		applyNetworkLimits(settings.get().network);
 	}
 
@@ -80,7 +77,7 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		await settings.set(p.path, p.value);
 		// Re-push all runtime limits on any network write (idempotent). Path-by-path
 		// matching used to miss whole-object writes such as path === 'network'.
-		if (rootKey === 'network') await persistAndApplyNetworkLimits();
+		if (rootKey === 'network') applyStoredNetworkLimits();
 		return true;
 	}
 
@@ -151,21 +148,10 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		for (const key of Object.keys(p.data)) {
 			if (ALLOWED_ROOT_KEYS.has(key)) filtered[key] = p.data[key];
 		}
-		const flat = flattenSettings(filtered);
-		const skipped: string[] = [];
-		let applied = 0;
-		for (const entry of flat) {
-			try {
-				await settings.set(entry.path, entry.value);
-				applied++;
-			} catch (err) {
-				console.warn(`Skipped settings key '${entry.path}':`, (err as Error).message);
-				skipped.push(entry.path);
-			}
-		}
-		// An imported file can carry a message limit below the chunk limit — repair it here
-		// too, not just on interactive writes.
-		await persistAndApplyNetworkLimits();
+		// One write, not one per key: a reset arriving mid-loop used to split the stored
+		// settings between the import and the defaults, with both reporting success.
+		const { applied, skipped } = await settings.setMany(flattenSettings(filtered));
+		applyStoredNetworkLimits();
 		console.log(`✓ Settings restored: ${applied} applied, ${skipped.length} skipped`);
 		return { applied, skipped };
 	}

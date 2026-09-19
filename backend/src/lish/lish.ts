@@ -159,13 +159,29 @@ export interface ScannedFile {
 
 // Scan directory recursively to collect all regular files (without computing checksums)
 // Used to send the complete file list to the frontend before starting checksum computation
-async function scanFiles(dirPath: string, basePath: string, chunkSize: number, inodeMap: { [key: string]: boolean } = {}): Promise<ScannedFile[]> {
+async function scanFiles(dirPath: string, basePath: string, chunkSize: number, inodeMap: { [key: string]: boolean } = {}, signal?: AbortSignal): Promise<ScannedFile[]> {
+	// Before the listing starts, not only inside the loops below: `Glob.scan()` reads a whole
+	// directory before it yields its first entry, so a check placed after it cannot stop that
+	// read. The caller awaits file metadata between directories, and a cancel arriving in that
+	// window used to reach this call anyway — starting a fresh listing of a possibly large or
+	// slow directory for work that was already called off, with the mutation permit still held.
+	if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 	const result: ScannedFile[] = [];
 	const glob = new Bun.Glob('*');
 	const scannedPaths: string[] = [];
-	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) scannedPaths.push(entry);
+	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) {
+		// Checked here as well as in the loop below: this one collects a single directory's
+		// entries, and a directory with very many of them is a long pass of its own.
+		if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
+		scannedPaths.push(entry);
+	}
 	scannedPaths.sort();
 	for (const entry of scannedPaths) {
+		// The scan is the first long pass over a large tree, before a single checksum is
+		// computed. Without this check a cancelled creation walked the rest of the tree
+		// anyway, and whoever asked it to stop — a factory reset waiting for the mutation
+		// gate to drain — waited for exactly the work it had cancelled.
+		if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 		const fullPath = `${dirPath}/${entry}`;
 		let stat: Stats;
 		try {
@@ -181,7 +197,7 @@ async function scanFiles(dirPath: string, basePath: string, chunkSize: number, i
 		} catch {}
 		if (isSymlink) continue;
 		else if (stat.isDirectory()) {
-			const subFiles = await scanFiles(fullPath, basePath, chunkSize, inodeMap);
+			const subFiles = await scanFiles(fullPath, basePath, chunkSize, inodeMap, signal);
 			result.push(...subFiles);
 		} else if (stat.isFile()) {
 			const inodeKey = `${stat.dev}:${stat.ino}`;
@@ -211,10 +227,18 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 			created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
 		});
 	}
-	// Read directory contents
+	// Read directory contents. Checked before the listing and while it is collected, the same
+	// two places as in {@link scanFiles}: `getStats()` above is an await, so a cancel can land
+	// between the caller's decision to recurse and this listing. Without these, an already
+	// cancelled creation still opened this directory and read it to the end, and the factory
+	// reset waiting for the mutation gate to drain waited for exactly that.
+	if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 	const glob = new Bun.Glob('*');
 	const scannedPaths: string[] = [];
-	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) scannedPaths.push(entry);
+	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) {
+		if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
+		scannedPaths.push(entry);
+	}
 	// Sort paths alphabetically
 	scannedPaths.sort();
 	for (const entry of scannedPaths) {
@@ -360,7 +384,7 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 		const links: ILinkEntry[] = [];
 		const inodeMap: InodeMap = {};
 		// Scan all files first and emit the complete file list
-		const scannedFiles = await scanFiles(inputPath, inputPath, chunkSize);
+		const scannedFiles = await scanFiles(inputPath, inputPath, chunkSize, {}, signal);
 		if (onProgress) onProgress({ type: 'file-list', files: scannedFiles });
 		// Now process directory (computes checksums with per-file progress)
 		await processDirectory(inputPath, inputPath, chunkSize, algo, maxWorkers, directories, files, links, inodeMap, onProgress, signal);

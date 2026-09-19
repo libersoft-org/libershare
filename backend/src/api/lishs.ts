@@ -86,12 +86,16 @@ interface LISHsHandlers {
 	stopVerify: (p: { lishID: string }) => Promise<SuccessResponse>;
 	stopVerifyAll: () => Promise<SuccessResponse>;
 	stopCreate: () => Promise<SuccessResponse>;
+	/** As {@link LISHsHandlers.stopCreate}, but for every creation at once — maintenance only. */
+	stopAllCreates: () => Promise<SuccessResponse>;
 	move: (p: MoveParams) => Promise<SuccessResponse>;
 	startVerification: (lishID: string) => void;
 	finalizeDownload: (lishID: string) => Promise<SuccessResponse>; // Move from temp to final directory after download completes
 	/** Continue finalization for a transfer lifecycle admitted before mutation shutdown. */
 	finalizeDownloadAdmitted: (lishID: string) => Promise<SuccessResponse>;
-	importManifest: (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>; // Shared import entrypoint (used by peer add-to-downloads)
+	importManifest: (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>; // Shared import entrypoint
+	/** As {@link LISHsHandlers.importManifest}, for a caller that already holds mutation admission. */
+	importManifestAdmitted: (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
 	pauseMutations: () => Promise<void>;
 	resumeMutations: () => void;
 	runMutation: <T>(operation: () => Promise<T>) => Promise<T>;
@@ -189,8 +193,14 @@ async function deleteLISHData(lish: IStoredLISH): Promise<void> {
 }
 
 export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcast: BroadcastFn, settings: Settings): LISHsHandlers {
-	// Track current creation so it can be aborted
-	let currentCreation: AbortController | null = null;
+	/**
+	 * Every creation admitted and not yet finished, so all of them can be aborted.
+	 *
+	 * A single slot held the last one only: two creations admitted together left the earlier
+	 * one running after a stop, and whoever was waiting for the mutation gate to drain — a
+	 * factory reset — waited for its whole hashing pass.
+	 */
+	const activeCreations = new Set<AbortController>();
 	const mutationAdmission = new LISHMutationGate();
 
 	async function runMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -253,6 +263,20 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function createAdmitted(p: CreateLISHParams, client: any): Promise<CreateLISHResponse> {
+		// Registered before the first await, not next to the hashing call that consumes it.
+		// The path checks below await, and a stop arriving in that window found nothing to
+		// cancel — so the operation kept its mutation permit and whoever was waiting for the
+		// gate to drain (a factory reset) waited for the whole pass anyway.
+		const ac = new AbortController();
+		activeCreations.add(ac);
+		try {
+			return await createWithController(p, client, ac);
+		} finally {
+			activeCreations.delete(ac);
+		}
+	}
+
+	async function createWithController(p: CreateLISHParams, client: any, ac: AbortController): Promise<CreateLISHResponse> {
 		assert(p, ['dataPath']);
 		const addToSharing = p.addToSharing ?? false;
 		const addToDownloading = p.addToDownloading ?? false;
@@ -273,20 +297,17 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const dataPath = Utils.expandHome(p.dataPath);
 		// Check that the path exists and is not an empty directory
 		const dataPathStat = await stat(dataPath);
+		// A stop arriving during that stat used to be noticed only further down, after this
+		// function had read the directory anyway — a pointless pass over a large or slow one
+		// that the factory reset, waiting for the mutation gate to drain, waited for.
+		if (ac.signal.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 		if (dataPathStat.isDirectory()) {
 			const entries = await readdir(dataPath);
 			if (entries.length === 0) throw new CodedError(ErrorCodes.DIRECTORY_EMPTY);
 		}
 		console.log(`Creating LISH from: ${dataPath}, lishFile=${p.lishFile}, addToSharing=${addToSharing}, name=${p.name}, description=${p.description}`);
 		// 1. Create the LISH structure
-		const ac = new AbortController();
-		currentCreation = ac;
-		let lish: IStoredLISH;
-		try {
-			lish = await createLISH(dataPath, p.name, chunkSize, algorithm as any, threads, p.description, info => emit(client, 'lishs.create:progress', info), undefined, ac.signal);
-		} finally {
-			if (currentCreation === ac) currentCreation = null;
-		}
+		const lish: IStoredLISH = await createLISH(dataPath, p.name, chunkSize, algorithm as any, threads, p.description, info => emit(client, 'lishs.create:progress', info), undefined, ac.signal);
 		// 2. Export to .lish(.gz) file if requested
 		let resultLISHFile: string | undefined;
 		if (p.lishFile) {
@@ -608,10 +629,18 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function stopCreate(): Promise<SuccessResponse> {
-		if (currentCreation) {
-			currentCreation.abort();
-			currentCreation = null;
-		}
+		// The public cancel button, and it stays as narrow as it was: the latest creation, the
+		// one whose screen the user is looking at. Cancelling every creation from here would
+		// throw away a hashing pass another window started and never asked to stop.
+		const all = [...activeCreations];
+		all[all.length - 1]?.abort();
+		return { success: true };
+	}
+
+	async function stopAllCreates(): Promise<SuccessResponse> {
+		// The maintenance hook: a factory reset is about to wipe or restart everything, so it
+		// cancels every creation rather than waiting out their hashing passes.
+		for (const creation of activeCreations) creation.abort();
 		return { success: true };
 	}
 
@@ -879,7 +908,11 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function importManifest(lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }): Promise<ImportLISHResponse> {
-		return runMutation(() => importCommon(lish, downloadPath, opts?.overwrite ?? false, opts?.enableSharing, opts?.enableDownloading));
+		return runMutation(() => importManifestAdmitted(lish, downloadPath, opts));
+	}
+
+	async function importManifestAdmitted(lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }): Promise<ImportLISHResponse> {
+		return importCommon(lish, downloadPath, opts?.overwrite ?? false, opts?.enableSharing, opts?.enableDownloading);
 	}
 
 	async function pauseMutations(): Promise<void> {
@@ -890,5 +923,5 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		mutationAdmission.open();
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, move, startVerification, finalizeDownload, finalizeDownloadAdmitted, importManifest, pauseMutations, resumeMutations, runMutation };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, stopAllCreates, move, startVerification, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, resumeMutations, runMutation };
 }
