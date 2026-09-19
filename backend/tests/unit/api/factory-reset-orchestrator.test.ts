@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'bun:test';
 import { buildFactoryResetHandler } from '../../../src/api/factory-reset-orchestrator.ts';
 import type { FactoryResetOrchestratorDeps } from '../../../src/api/factory-reset-orchestrator.ts';
+import { initIdentityHandlers } from '../../../src/api/identity.ts';
+import { NetworkMutationGate } from '../../../src/lishnet/lishnets.ts';
+
+/** A real Ed25519 private key protobuf, base64 — the identity handler decodes it. */
+const KEY = 'CAESQNs1s0lYRIvIzKjEJ3T0XEZ1TaL1U0bVuaGfDJtzFfnXV7mfNBLSK0bBsJ1uZE3BhmVBXwS5OW1L4gAzxdPKAAA=';
 
 // ---------------------------------------------------------------------------
 // Minimal stub helpers
@@ -818,5 +823,80 @@ describe('factory reset cancels work the drain would otherwise wait for', () => 
 
 		await buildFactoryResetHandler(deps)({ identity: true });
 		expect(order).toEqual(['transfers closed', 'mutations closed', 'create cancelled']);
+	});
+});
+
+describe('a factory reset and an identity write against each other', () => {
+	it('runs one after the other on the same maintenance gate', async () => {
+		const order: string[] = [];
+		const gate = new NetworkMutationGate();
+		let parkedWrite: (() => void) | null = null;
+
+		const network = {
+			cancelRunOperations: () => order.push('cancel'),
+			clearIdentityKey: async () => {
+				order.push('reset clears identity');
+			},
+			clearPeerstore: async () => {},
+			clearDatastore: async () => {},
+			writeIdentityKey: async () => {
+				order.push('identity write');
+				await new Promise<void>(resolve => {
+					parkedWrite = resolve;
+				});
+			},
+			exportIdentity: () => null,
+		};
+		const networks = {
+			getNetwork: () => network,
+			beginMaintenance: () => gate.beginMaintenance(),
+			prepareMaintenance: () => gate.prepareMaintenance(),
+			stopAllNetworks: async () => {
+				order.push('stop');
+			},
+			startEnabledNetworks: async () => {
+				order.push('start');
+			},
+		} as any;
+
+		// Both real handlers, one gate — the pairing the unit tests for each side on its own
+		// cannot show.
+		const identity = initIdentityHandlers(networks);
+		const resetHandler = buildFactoryResetHandler({ ...makeDeps(), networks });
+
+		const importing = identity.applyImported({ privateKey: KEY });
+		await Promise.resolve();
+		const resetting = resetHandler({ identity: true, settings: false, downloads: false, networks: false, peers: false });
+		for (let i = 0; i < 20; i++) await Promise.resolve();
+
+		// The reset has not touched the node while the identity write is still parked.
+		expect(order).toEqual(['cancel', 'stop', 'identity write']);
+
+		parkedWrite!();
+		await importing;
+		await resetting;
+		expect(order).toEqual(['cancel', 'stop', 'identity write', 'start', 'cancel', 'stop', 'reset clears identity', 'start']);
+	});
+
+	it('cancels a running creation even when the shares are kept', async () => {
+		const calls: string[] = [];
+		const deps = makeDeps({
+			stopCreate: async () => {
+				calls.push('stopCreate');
+			},
+			dataServerOverride: {
+				clearLishs: () => {
+					calls.push('clearLishs');
+				},
+			},
+		});
+
+		// downloads:false keeps the stored shares. Every other category defaults to true, so
+		// spelling them out is what makes this the "keep the shares" case rather than a reset
+		// of everything.
+		const response = await buildFactoryResetHandler(deps)({ downloads: false, identity: true, settings: false, networks: false, peers: false });
+
+		expect(response.success).toBe(true);
+		expect(calls).toEqual(['stopCreate']);
 	});
 });

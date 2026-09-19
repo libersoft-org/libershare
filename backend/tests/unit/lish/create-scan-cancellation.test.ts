@@ -35,6 +35,18 @@ async function makeTree(): Promise<string> {
 	return root;
 }
 
+/** A tree large enough that scanning it cannot finish inside a millisecond. */
+async function makeBigTree(): Promise<string> {
+	const root = await mkdtemp(join(tmpdir(), 'lish-scan-big-'));
+	dirs.push(root);
+	for (let i = 0; i < 40; i++) {
+		const sub = join(root, `dir-${i}`);
+		await mkdir(sub);
+		await Promise.all(Array.from({ length: 50 }, (_, f) => writeFile(join(sub, `file-${f}.bin`), 'x')));
+	}
+	return root;
+}
+
 describe('cancelling a creation during its directory scan', () => {
 	it('stops the scan instead of walking the rest of the tree', async () => {
 		const root = await makeTree();
@@ -45,6 +57,20 @@ describe('cancelling a creation during its directory scan', () => {
 		await expect(createLISH(root, undefined, 1024, 'sha256', 1, undefined, info => events.push(info.type), undefined, controller.signal)).rejects.toThrow('LISH_CREATE_CANCELLED');
 		// A scan that finished would have announced the file list before the checksum pass
 		// noticed the cancellation.
+		expect(events).toEqual([]);
+	});
+
+	it('stops a scan that is already under way', async () => {
+		const root = await makeBigTree();
+		const events: string[] = [];
+		const controller = new AbortController();
+
+		// Cancelled after the scan has started, not before it: 2000 entries take far longer
+		// than this timer, so the abort lands inside the walk rather than ahead of it.
+		const creating = createLISH(root, undefined, 1024, 'sha256', 1, undefined, info => events.push(info.type), undefined, controller.signal);
+		setTimeout(() => controller.abort(), 1);
+
+		await expect(creating).rejects.toThrow('LISH_CREATE_CANCELLED');
 		expect(events).toEqual([]);
 	});
 
