@@ -221,6 +221,43 @@ describe('stopping a creation that has not reached its hashing pass', () => {
 		}
 	});
 
+	it('cancels the newest of its own creations, not an older one', async () => {
+		const handlers = initLISHsHandlers(
+			{} as never,
+			() => {},
+			() => {},
+			settingsStub
+		);
+		const older = await mkdtemp(join(tmpdir(), 'lish-cancel-older-'));
+		const newer = await mkdtemp(join(tmpdir(), 'lish-cancel-newer-'));
+		const window = { id: 'one-window' };
+		try {
+			await writeFile(join(older, 'payload.bin'), Buffer.alloc(64 * 1024, 1));
+			await writeFile(join(newer, 'payload.bin'), Buffer.alloc(64 * 1024, 2));
+
+			// One client, two creations: cancel means the one it is looking at, which is the last
+			// it started — the same reach the single slot had before.
+			const creatingOlder = handlers.create({ dataPath: older }, window);
+			const creatingNewer = handlers.create({ dataPath: newer }, window);
+			await handlers.stopCreate(undefined, window);
+
+			const outcomes = await Promise.all([
+				creatingOlder.then(
+					() => 'finished',
+					(err: unknown) => String((err as Error).message)
+				),
+				creatingNewer.then(
+					() => 'finished',
+					(err: unknown) => String((err as Error).message)
+				),
+			]);
+			expect(outcomes).toEqual(['finished', 'LISH_CREATE_CANCELLED']);
+		} finally {
+			await rm(older, { recursive: true, force: true });
+			await rm(newer, { recursive: true, force: true });
+		}
+	});
+
 	it('cancels every creation under way for maintenance, not just the last one', async () => {
 		const handlers = initLISHsHandlers(
 			{} as never,

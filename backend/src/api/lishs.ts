@@ -637,12 +637,15 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		// The public cancel button: only what this client started. Anything else belongs to
 		// another window, which never asked to stop — and a client that sends the cancel twice
 		// finds nothing of its own left the second time instead of reaching for someone else's.
-		// `null` and `undefined` are the same "no client": a call that arrives without one — the
-		// CLI, a local caller — then cancels the creations started the same way, not everyone's.
+		// The latest creation OF THIS CLIENT, which is as narrow as the old single slot was while
+		// no longer reaching across windows. `null` and `undefined` are the same "no client": a
+		// call without one — the CLI, a local caller — matches the creations started the same way.
 		const asking = client ?? null;
+		let latest: AbortController | undefined;
 		for (const [creation, owner] of activeCreations) {
-			if ((owner ?? null) === asking) creation.abort();
+			if ((owner ?? null) === asking) latest = creation;
 		}
+		latest?.abort();
 		return { success: true };
 	}
 
