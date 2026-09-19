@@ -82,3 +82,42 @@ describe('settings writes are serialised', () => {
 		expect(value === 99 || value === undefined).toBe(true);
 	});
 });
+
+describe('the chunk/message floor repair rides with its own write', () => {
+	/** The pair the protocol needs: a message limit at least as large as one chunk. */
+	const MIB = 1024 * 1024;
+
+	it('does not let one import put its floor on another import values', async () => {
+		const settings = await makeSettings();
+
+		// Two imports of the same two linked values. Repaired after the lock instead of inside
+		// it, the first one read its own chunk size, waited, and then wrote the floor derived
+		// from it over the second one's message size — leaving a pair neither import asked for.
+		const first = settings.setMany([
+			{ path: 'network.maxChunkSize', value: 64 * MIB },
+			{ path: 'network.maxMessageSize', value: 65 * MIB },
+		]);
+		const second = settings.setMany([
+			{ path: 'network.maxMessageSize', value: 9 * MIB },
+			{ path: 'network.maxChunkSize', value: 8 * MIB },
+		]);
+		await Promise.all([first, second]);
+
+		const chunk = settings.get('network.maxChunkSize');
+		const message = settings.get('network.maxMessageSize');
+		// Whichever import landed last, the two values have to be its own — and the message
+		// limit must still carry one chunk.
+		expect([64 * MIB, 8 * MIB]).toContain(chunk);
+		expect(message).toBe(chunk === 64 * MIB ? 65 * MIB : 9 * MIB);
+		expect(message).toBeGreaterThanOrEqual(chunk);
+	});
+
+	it('raises a message limit that cannot carry one chunk', async () => {
+		const settings = await makeSettings();
+		await settings.setMany([
+			{ path: 'network.maxChunkSize', value: 32 * MIB },
+			{ path: 'network.maxMessageSize', value: 1 },
+		]);
+		expect(settings.get('network.maxMessageSize')).toBeGreaterThanOrEqual(32 * MIB);
+	});
+});

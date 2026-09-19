@@ -2,7 +2,7 @@ import { mkdir } from 'fs/promises';
 import { Mutex } from 'async-mutex';
 import { JSONStorage } from './storage.ts';
 import { Utils } from './utils.ts';
-import { productName, productEnvPrefix, type CompressionAlgorithm } from '@shared';
+import { productName, productEnvPrefix, minMessageSizeFor, type CompressionAlgorithm } from '@shared';
 // Default upper bound for chunk size accepted by the app (configurable via settings).
 export const DEFAULT_MAX_CHUNK_SIZE: number = 100 * 1024 * 1024;
 // Default upper bound for a single P2P message on the wire (configurable via settings).
@@ -266,7 +266,10 @@ export class Settings {
 	}
 
 	async set(path: string, value: any): Promise<void> {
-		await this.writeLock.runExclusive(() => this.storage.set(path, value));
+		await this.writeLock.runExclusive(async () => {
+			await this.storage.set(path, value);
+			await this.repair();
+		});
 	}
 
 	/**
@@ -274,6 +277,9 @@ export class Settings {
 	 *
 	 * An import is a single user action and has to land as one: applied key by key without
 	 * the lock, a reset arriving mid-loop split the result between the two.
+	 *
+	 * Not all-or-nothing — a key the storage rejects is reported and the rest still lands.
+	 * What the lock buys is that no other writer sees or extends the half-written document.
 	 */
 	async setMany(entries: ReadonlyArray<{ path: string; value: any }>): Promise<{ applied: number; skipped: string[] }> {
 		return await this.writeLock.runExclusive(async () => {
@@ -288,8 +294,26 @@ export class Settings {
 					skipped.push(entry.path);
 				}
 			}
+			await this.repair();
 			return { applied, skipped };
 		});
+	}
+
+	/**
+	 * Bring a stored message-size limit that cannot carry one chunk back up to the floor.
+	 *
+	 * Runs inside the write lock, on the document the caller just wrote. Done afterwards from
+	 * the handler instead, it was a read and a write with a gap in the middle: a second import
+	 * could land between them, and the repair then wrote a floor derived from the FIRST
+	 * import's chunk size over the second one's message size — leaving a pair neither import
+	 * asked for, with both reporting success.
+	 *
+	 * The protocol layer enforces the same floor at runtime; persisting it keeps the settings
+	 * screen from showing a value the protocol silently overrides.
+	 */
+	private async repair(): Promise<void> {
+		const floor = minMessageSizeFor(this.storage.get('network.maxChunkSize'));
+		if (this.storage.get('network.maxMessageSize') < floor) await this.storage.set('network.maxMessageSize', floor);
 	}
 
 	list(): SettingsData {
