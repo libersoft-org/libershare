@@ -104,6 +104,7 @@
 		"tabLishs": "LISHs",
 		"searchPlaceholder": "Search by peer ID ...",
 		"searchLishsPlaceholder": "Search LISHs by name or ID ...",
+		"somePeersRefusedListing": "Some connected peers refused to show their shared items",
 		"searching": "Searching network ...",
 		"searchComplete": "Search complete",
 		"noResults": "No LISHs matched your query.",
@@ -140,7 +141,9 @@
 		"errorChunkNotFound": "Peer does not have this chunk",
 		"errorBusy": "Peer is busy, try again later",
 		"errorIO": "Peer encountered an I/O error",
-		"errorInvalidRequest": "Peer rejected the request as invalid"
+		"errorInvalidRequest": "Peer rejected the request as invalid",
+		"errorSearchQueryTooLong": "The search text is too long",
+		"errorListingNotAuthorized": "Listing unavailable: membership of a shared network was not confirmed"
 	},
 	"localStorage": {
 		"title": "Local storage",

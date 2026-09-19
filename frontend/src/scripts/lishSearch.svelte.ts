@@ -17,6 +17,14 @@ export interface LishSearchSession {
 	readonly searchID: string | null;
 	/** `performance.now()` timestamp of the last `start()`, or null if never started. Drives the search progress bar. */
 	readonly startedAt: number | null;
+	/**
+	 * Connected peers that refused to show us their listing.
+	 *
+	 * Counts refusals, not missing results: the search asks every connected peer, so a relay
+	 * or a peer of an unrelated lishnet refusing is expected and counted here too. The notice
+	 * therefore states the refusal rather than claiming the results are incomplete.
+	 */
+	readonly refusedPeers: number;
 	start(): Promise<void>;
 	cancel(): Promise<void>;
 	clear(): void;
@@ -30,6 +38,7 @@ export function createLishSearch(): LishSearchSession {
 	let error = $state('');
 	let results = $state<LishSearchResult[]>([]);
 	let startedAt = $state<number | null>(null);
+	let refusedPeers = $state(0);
 
 	function handleUpdate(data: unknown): void {
 		const d = data as { searchID: string; lishs: LishSearchResult[] };
@@ -61,8 +70,9 @@ export function createLishSearch(): LishSearchSession {
 		if (inserted) results = [...byID.values()];
 	}
 	function handleComplete(data: unknown): void {
-		const d = data as { searchID: string };
+		const d = data as { searchID: string; refusedPeers?: number };
 		if (d.searchID !== searchID) return;
+		refusedPeers = d.refusedPeers ?? 0;
 		searching = false;
 	}
 
@@ -80,6 +90,7 @@ export function createLishSearch(): LishSearchSession {
 			} catch {}
 		}
 		searching = true;
+		refusedPeers = 0;
 		error = '';
 		results = [];
 		startedAt = performance.now();
@@ -106,6 +117,7 @@ export function createLishSearch(): LishSearchSession {
 		results = [];
 		error = '';
 		searchID = null;
+		refusedPeers = 0;
 	}
 
 	function dispose(): void {
@@ -128,6 +140,9 @@ export function createLishSearch(): LishSearchSession {
 		},
 		get results(): LishSearchResult[] {
 			return results;
+		},
+		get refusedPeers(): number {
+			return refusedPeers;
 		},
 		get error(): string {
 			return error;

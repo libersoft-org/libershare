@@ -35,16 +35,19 @@ export async function dialProtocol(node: any, dcutrPeers: Set<string>, multiaddr
  * Dial a peer by its string peer ID, open a protocol stream, and return the
  * stream together with the resolved connection type.
  */
-export async function dialProtocolByPeerId(node: any, dcutrPeers: Set<string>, peerID: string, protocol: string): Promise<IDialResult> {
+export async function dialProtocolByPeerId(node: any, dcutrPeers: Set<string>, peerID: string, protocol: string, signal?: AbortSignal): Promise<IDialResult> {
 	trace(`[NET] dial ${protocol} to ${peerID.slice(0, 16)}`);
 	const { peerIdFromString } = await import('@libp2p/peer-id');
 	const pid = peerIdFromString(peerID);
-	const connection = await node.dial(pid);
+	// Threaded into both steps: a caller that has given up needs the dial itself to stop, not
+	// just its own waiting. An unstoppable dial goes on holding whatever the caller was
+	// rationing — a concurrency slot, a retry budget — long after the answer stopped mattering.
+	const connection = await node.dial(pid, signal ? { signal } : {});
 	const isRelay = Circuit.matches(connection.remoteAddr);
 	const connectionType = classifyConnection(peerID, isRelay, dcutrPeers);
 	const limited = (connection as any).limits != null;
 	console.debug(`[NET] dial connected: ${peerID.slice(0, 16)} [${connectionType}${limited ? ',LIMITED' : ''}] addr=${connection.remoteAddr.toString().slice(0, 60)}`);
-	const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
+	const stream = await connection.newStream(protocol, { runOnLimitedConnection: true, ...(signal ? { signal } : {}) });
 	trace(`[NET] stream opened: id=${stream.id}, status=${stream.status}`);
 	return { stream, connectionType };
 }

@@ -10,6 +10,7 @@ import { isBusy } from '../api/busy.ts';
 import { trace } from '../logger.ts';
 import { registerUploadPeer, unregisterUploadPeer, recordUploadBytes, type ConnectionType } from './peer-tracker.ts';
 import { encode as codecEncode, decode as codecDecode } from './codec.ts';
+import { MAX_SEARCH_QUERY_LENGTH } from './constants.ts';
 export const LISH_PROTOCOL = '/lish/0.0.1';
 
 /**
@@ -144,6 +145,11 @@ export function registerSearchResultHandler(searchID: string, handler: SearchRes
 
 export function unregisterSearchResultHandler(searchID: string): void {
 	searchResultHandlers.delete(searchID);
+}
+
+/** The handler a `searchResult` message would be delivered to, or undefined if the search is over. */
+export function getSearchResultHandler(searchID: string): SearchResultHandler | undefined {
+	return searchResultHandlers.get(searchID);
 }
 
 function summarizeManifestID(value: unknown): string {
@@ -539,15 +545,33 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			}
 
 			if (request.type === 'getLishs') {
-				// Serve the shared-LISH LISTING under the softer list-gate (canListShares):
-				// unlike the strict data gate it does not require a synced gossipsub
-				// SUBSCRIBE, so the unicast search fallback reaches freshly-connected peers.
-				// Still fail-closed on an unknown peer id and still refuses peers we left.
-				// Falls back to the strict gate when no list-gate was supplied.
+				// Serve the shared-LISH LISTING under the softer list-gate (canListShares).
+				// Soft means it accepts wider EVIDENCE of lishnet membership than the strict
+				// data gate — a peer that subscribed shortly before still counts while the
+				// live snapshot is missing it across a reconnect, which is what keeps the
+				// unicast search fallback working — not that membership stops being
+				// required. Still fail-closed on an unknown peer id and still refuses peers
+				// we left. Falls back to the strict gate when no list-gate was supplied.
 				if (serveGateBlocks(canListShares ?? sharesNetworkWith, remotePeerID)) {
 					trace(`[PROTO] getLishs from ${remotePeer} refused: no shared joined lishnet`);
-					const gated: LISHGetLishsResponse = { type: 'getLishs-result', lishs: [] };
+					// Say WHY, rather than answering with an empty list. The two are not the
+					// same event: an empty list is a final answer, while this refusal is very
+					// often a race — our subscriber view has not caught up with a member that
+					// just joined. Returning the same bytes for both left the caller unable to
+					// tell "nothing matched" from "not yet", so it had to guess from the order
+					// of unrelated events. It leaks nothing the caller does not already know:
+					// it just asked us and it knows whether it shares a lishnet with us.
+					const gated: LISHGetLishsResponse = { type: 'getLishs-result', error: ErrorCodes.PEER_LISTING_NOT_AUTHORIZED };
 					sendLengthPrefixed(stream, codecEncode(gated));
+					continue;
+				}
+				// Same bound as the pubsub search path: both lowercase the query and then
+				// substring-match it against the id and name of every advertised LISH, so
+				// a query the pubsub path refuses must not buy that work over unicast.
+				if (typeof request.query === 'string' && request.query.length > MAX_SEARCH_QUERY_LENGTH) {
+					trace(`[PROTO] getLishs from ${remotePeer} refused: query too long (${request.query.length})`);
+					const rejected: LISHGetLishsResponse = { type: 'getLishs-result', lishs: [] };
+					sendLengthPrefixed(stream, codecEncode(rejected));
 					continue;
 				}
 				// Return list of all shared (upload_enabled) LISHs — id and name only.
