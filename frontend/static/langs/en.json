@@ -265,6 +265,7 @@
 				"title": "Creating",
 				"creating": "Creating LISH ...",
 				"done": "LISH created successfully",
+				"cancelled": "LISH creation was cancelled",
 				"filesProcessed": "Files processed"
 			}
 		},

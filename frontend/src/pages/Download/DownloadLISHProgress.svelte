@@ -42,7 +42,7 @@
 	let { areaID, position = CONTENT_POSITIONS.main, params, onBack, onComplete }: Props = $props();
 
 	// Progress state
-	type Status = 'creating' | 'done' | 'error';
+	type Status = 'creating' | 'done' | 'cancelled' | 'error';
 	let status = $state<Status>('creating');
 	let resultLISHID = $state('');
 	let resultLISHFile = $state('');
@@ -104,7 +104,15 @@
 			onComplete?.();
 		} catch (err: any) {
 			const code = err?.code || err?.message || '';
-			if (code === 'LISH_CREATE_CANCELLED') return;
+			// A cancel is not always this screen's own: a factory reset stops every creation
+			// before it starts, and if the reset then fails there is no reload to close this
+			// view. Leaving the status on 'creating' would keep showing work that has stopped.
+			// When the user pressed the button, the view is already navigating away and nobody
+			// sees this state.
+			if (code === 'LISH_CREATE_CANCELLED') {
+				status = 'cancelled';
+				return;
+			}
 			errorText = translateError(err);
 			status = 'error';
 		} finally {
@@ -188,6 +196,8 @@
 				{/if}
 				<div>{$t('lish.create.progress.filesProcessed')}: {allFiles.length}</div>
 			</div>
+		{:else if status === 'cancelled'}
+			<Alert type="info" message={$t('lish.create.progress.cancelled')} />
 		{:else if status === 'error'}
 			<Alert type="error" message={errorText} />
 		{/if}
