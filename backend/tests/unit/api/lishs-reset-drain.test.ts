@@ -258,6 +258,46 @@ describe('stopping a creation that has not reached its hashing pass', () => {
 		}
 	});
 
+	it('does not fall back to an older creation once the cancelled one is gone', async () => {
+		const handlers = initLISHsHandlers(
+			{} as never,
+			() => {},
+			() => {},
+			settingsStub
+		);
+		const older = await mkdtemp(join(tmpdir(), 'lish-repeat-older-'));
+		const newer = await mkdtemp(join(tmpdir(), 'lish-repeat-newer-'));
+		const window = { id: 'one-window' };
+		try {
+			await writeFile(join(older, 'payload.bin'), Buffer.alloc(64 * 1024, 1));
+			await writeFile(join(newer, 'payload.bin'), Buffer.alloc(64 * 1024, 2));
+
+			const creatingOlder = handlers.create({ dataPath: older }, window);
+			const creatingNewer = handlers.create({ dataPath: newer }, window);
+			await handlers.stopCreate(undefined, window);
+			// The cancelled creation has unwound and left the bookkeeping. The second cancel the
+			// progress view sends when it unmounts arrives now — with nothing of its own left to
+			// stop, it must do nothing rather than take down the creation still under way.
+			await creatingNewer.catch(() => {});
+			await handlers.stopCreate(undefined, window);
+
+			const outcomes = await Promise.all([
+				creatingOlder.then(
+					() => 'finished',
+					(err: unknown) => String((err as Error).message)
+				),
+				creatingNewer.then(
+					() => 'finished',
+					(err: unknown) => String((err as Error).message)
+				),
+			]);
+			expect(outcomes).toEqual(['finished', 'LISH_CREATE_CANCELLED']);
+		} finally {
+			await rm(older, { recursive: true, force: true });
+			await rm(newer, { recursive: true, force: true });
+		}
+	});
+
 	it('cancels every creation under way for maintenance, not just the last one', async () => {
 		const handlers = initLISHsHandlers(
 			{} as never,

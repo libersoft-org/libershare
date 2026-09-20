@@ -194,18 +194,26 @@ async function deleteLISHData(lish: IStoredLISH): Promise<void> {
 
 export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcast: BroadcastFn, settings: Settings): LISHsHandlers {
 	/**
-	 * Every creation admitted and not yet finished, against the client that started it.
+	 * Every creation admitted and not yet finished.
 	 *
 	 * A single slot held the last one only: two creations admitted together left the earlier
 	 * one running after a stop, and whoever was waiting for the mutation gate to drain — a
-	 * factory reset — waited for its whole hashing pass.
-	 *
-	 * The client is part of the entry because the cancel button belongs to the screen that
-	 * pressed it. Picking "the newest creation" instead cancelled whatever another window had
-	 * started last, and a second cancel — the frontend sends one on the button and another when
-	 * the progress view unmounts — then moved on to that window's work.
+	 * factory reset — waited for its whole hashing pass. This set is what maintenance stops.
 	 */
-	const activeCreations = new Map<AbortController, unknown>();
+	const activeCreations = new Set<AbortController>();
+
+	/**
+	 * The one creation each client's cancel button refers to — its newest.
+	 *
+	 * The client is part of the bookkeeping because the cancel button belongs to the screen
+	 * that pressed it: picking "the newest creation" across the whole set cancelled whatever
+	 * another window had started last. Searching this client's remaining creations is no good
+	 * either — the progress view sends a cancel on the button and another when it unmounts, so
+	 * once the cancelled one is gone the second call would land on an older creation of the
+	 * same client that nobody asked to stop. An entry is therefore dropped when its creation
+	 * ends, and never replaced by an older one.
+	 */
+	const currentCreation = new Map<unknown, AbortController>();
 	const mutationAdmission = new LISHMutationGate();
 
 	async function runMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -273,11 +281,14 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		// cancel — so the operation kept its mutation permit and whoever was waiting for the
 		// gate to drain (a factory reset) waited for the whole pass anyway.
 		const ac = new AbortController();
-		activeCreations.set(ac, client);
+		const owner = client ?? null;
+		activeCreations.add(ac);
+		currentCreation.set(owner, ac);
 		try {
 			return await createWithController(p, client, ac);
 		} finally {
 			activeCreations.delete(ac);
+			if (currentCreation.get(owner) === ac) currentCreation.delete(owner);
 		}
 	}
 
@@ -634,25 +645,20 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function stopCreate(_p?: unknown, client?: unknown): Promise<SuccessResponse> {
-		// The public cancel button: only what this client started. Anything else belongs to
-		// another window, which never asked to stop — and a client that sends the cancel twice
-		// finds nothing of its own left the second time instead of reaching for someone else's.
-		// The latest creation OF THIS CLIENT, which is as narrow as the old single slot was while
-		// no longer reaching across windows. `null` and `undefined` are the same "no client": a
-		// call without one — the CLI, a local caller — matches the creations started the same way.
-		const asking = client ?? null;
-		let latest: AbortController | undefined;
-		for (const [creation, owner] of activeCreations) {
-			if ((owner ?? null) === asking) latest = creation;
-		}
-		latest?.abort();
+		// The public cancel button: the creation this client is on, and nothing else. Another
+		// window's work is not this button's to stop, and a repeated cancel — the progress view
+		// sends one on the button and another when it unmounts — finds the entry already gone
+		// rather than falling back to an older creation of the same client. `null` and
+		// `undefined` are the same "no client": a call without one — the CLI, a local caller —
+		// matches the creations started the same way.
+		currentCreation.get(client ?? null)?.abort();
 		return { success: true };
 	}
 
 	async function stopAllCreates(): Promise<SuccessResponse> {
 		// The maintenance hook: a factory reset is about to wipe or restart everything, so it
 		// cancels every creation rather than waiting out their hashing passes.
-		for (const creation of activeCreations.keys()) creation.abort();
+		for (const creation of activeCreations) creation.abort();
 		return { success: true };
 	}
 
