@@ -265,6 +265,7 @@
 				"title": "Vytváření",
 				"creating": "Vytváření LISHe ...",
 				"done": "LISH byl úspěšně vytvořen",
+				"cancelled": "Vytváření LISHe bylo zrušeno",
 				"filesProcessed": "Zpracovaných souborů"
 			}
 		},

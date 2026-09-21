@@ -76,3 +76,39 @@ describe('JSONStorage concurrent writes', () => {
 		}
 	});
 });
+
+describe('JSONStorage.setMany publishes a batch in one step', () => {
+	function makeStorage(): Promise<JSONStorage<{ network: { port: number; discovery: boolean } }>> {
+		const dir = join(tmpdir(), `lish-batch-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(dir, { recursive: true });
+		return JSONStorage.create(dir, 'settings.json', { network: { port: 9090, discovery: true } });
+	}
+
+	it('never exposes a document with only part of the batch applied', async () => {
+		const storage = await makeStorage();
+
+		// Deliberately not awaited: this is the reader that takes no lock — the node is built
+		// straight off `list()`. Applied key by key, the document at this instant carries the
+		// new port beside the old discovery flag, a pair no caller ever asked for.
+		const writing = storage.setMany([
+			{ path: 'network.port', value: 19090 },
+			{ path: 'network.discovery', value: false },
+		]);
+		const live = storage.list().network;
+		expect(`${live.port}/${live.discovery}`).toBe('19090/false');
+
+		await writing;
+		expect(storage.get('network.discovery')).toBe(false);
+	});
+
+	it('reports a rejected key and keeps the rest of the batch', async () => {
+		const storage = await makeStorage();
+		const result = await storage.setMany([
+			{ path: 'network.port', value: 19091 },
+			{ path: '__proto__.polluted', value: true },
+		]);
+		expect(result).toEqual({ applied: 1, skipped: ['__proto__.polluted'] });
+		expect(storage.get('network.port')).toBe(19091);
+		expect(({} as any).polluted).toBeUndefined();
+	});
+});

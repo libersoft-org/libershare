@@ -136,22 +136,62 @@ export class JSONStorage<T extends Record<string, any>> extends BaseStorage<T> {
 		return value;
 	}
 
-	async set(path: string, value: any): Promise<void> {
+	/**
+	 * Write one value into `target` at a dotted path.
+	 *
+	 * Rejects prototype-polluting keys at every depth. Without that, a path like
+	 * "__proto__.polluted" or "constructor.prototype.polluted" would walk into
+	 * Object.prototype and assign to it, affecting every object in the process.
+	 */
+	private static assign(target: Record<string, any>, path: string, value: any): void {
 		const keys = path.split('.');
-		// Reject prototype-polluting keys at every depth. Without this, a path like
-		// "__proto__.polluted" or "constructor.prototype.polluted" would walk into
-		// Object.prototype and assign to it, affecting every object in the process.
 		for (const key of keys) {
 			if (key === '__proto__' || key === 'prototype' || key === 'constructor') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `Illegal settings key: ${key}`);
 		}
-		let obj: any = this.data;
+		let obj: any = target;
 		for (let i = 0; i < keys.length - 1; i++) {
 			const key = keys[i]!;
 			if (obj[key] === undefined) obj[key] = {};
 			obj = obj[key];
 		}
 		obj[keys[keys.length - 1]!] = value;
+	}
+
+	async set(path: string, value: any): Promise<void> {
+		JSONStorage.assign(this.data, path, value);
 		await this.saveFile(this.data);
+	}
+
+	/**
+	 * Apply many writes to a COPY and publish it in one assignment.
+	 *
+	 * Readers do not take the caller's write lock — `Network.startLocked()` builds the node
+	 * straight off {@link list} — so applying an import key by key to the live document let a
+	 * restart read a half-applied one: the new port with the old discovery flag, a pair no
+	 * import ever asked for. Staging the whole batch means a reader sees either the document
+	 * as it was or the finished import, never a mixture.
+	 *
+	 * Not all-or-nothing about validity: a key the storage rejects is reported in `skipped`
+	 * and the rest of the batch still lands. `finalize` runs on the draft, so a correction
+	 * derived from the batch is published together with it.
+	 */
+	async setMany(entries: ReadonlyArray<{ path: string; value: any }>, finalize?: (draft: T) => void): Promise<{ applied: number; skipped: string[] }> {
+		const draft = structuredClone(this.data);
+		const skipped: string[] = [];
+		let applied = 0;
+		for (const entry of entries) {
+			try {
+				JSONStorage.assign(draft, entry.path, entry.value);
+				applied++;
+			} catch (err) {
+				console.warn(`Skipped settings key '${entry.path}':`, (err as Error).message);
+				skipped.push(entry.path);
+			}
+		}
+		finalize?.(draft);
+		this.data = draft;
+		await this.saveFile(this.data);
+		return { applied, skipped };
 	}
 
 	list(): T {
