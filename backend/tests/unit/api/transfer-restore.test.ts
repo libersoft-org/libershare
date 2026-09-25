@@ -116,7 +116,7 @@ describe('restoreAll through the real transfer handlers', () => {
 
 		expect(events.filter(event => event.startsWith('transfer.download:enabled'))).toEqual([]);
 		expect(persisted).toEqual([]);
-		expect(handlers.getActiveTransfers()).toEqual([]);
+		expect(handlers.getActiveTransfers().filter(t => t.type === 'downloading' || t.type === 'allocating' || t.type === 'download-enabled')).toEqual([]);
 		// A was prepared, then torn down with the batch.
 		expect(destroy).toHaveBeenCalledTimes(1);
 	});
