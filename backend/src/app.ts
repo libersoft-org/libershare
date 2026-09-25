@@ -140,12 +140,12 @@ if (process.env['MEMTRACE'] !== '0') {
 // Heap snapshot on-demand: touch <dataDir>/trigger-heap OR kill -USR2 <pid>
 if (process.env['HEAP_TRIGGER'] !== '0') startHeapSnapshotTrigger(dataDir);
 
-const shutdown = createProcessShutdown({
+const { shutdown, isShuttingDown } = createProcessShutdown({
 	stopConnectivityCheck,
 	stopApi: () => apiServer.stop(),
+	flushSettings: () => settings.flush(),
 	closeDatabase: () => db.close(),
 	exit: code => process.exit(code),
-	sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
 });
 
 process.on('SIGINT', shutdown);
@@ -154,4 +154,5 @@ process.on('SIGTERM', shutdown);
 installRuntimeErrorHandlers();
 
 await networks.startEnabledNetworks();
-apiServer.start();
+// A signal during the network start has already begun the shutdown: never open the API after it.
+if (!isShuttingDown()) apiServer.start();
