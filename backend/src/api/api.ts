@@ -21,6 +21,8 @@ import { createTimeApiHandlers, timeStatusForClient } from './system-time.ts';
 import { initRelayHandlers } from './relay.ts';
 import { initSearchManager } from './search.ts';
 import { buildFactoryResetHandler } from './factory-reset-orchestrator.ts';
+import { NetworkRestartManager } from './network-restart.ts';
+import { applyNetworkLimits } from '../protocol/network-limits.ts';
 import { getLocalAddresses } from '../container.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
@@ -345,6 +347,26 @@ export class APIServer {
 		const _relay = initRelayHandlers(this.networks, broadcastFn, hasSubscribers);
 		_relay.startPolling();
 		const _search = initSearchManager(this.networks, this.settings, broadcastFn);
+
+		// One restart manager for every settings write: a change of a P2P setting goes live on the
+		// running node, or through one controlled restart that keeps the transfers it tore down
+		// until they are restored — also across a failed attempt.
+		const networkRestart = new NetworkRestartManager({
+			beginMaintenance: () => this.networks.beginMaintenance(),
+			stopAllNetworks: () => this.networks.stopAllNetworks(),
+			startEnabledNetworks: () => this.networks.startEnabledNetworks(),
+			isRunning: () => this.networks.getNetwork().isRunning(),
+			appliedNetworkConfig: () => this.networks.getNetwork().getAppliedNetworkConfig(),
+			pauseTransfers: _transfer.pauseAll,
+			pauseLISHMutations: _lishs.pauseMutations,
+			resumeLISHMutations: _lishs.resumeMutations,
+			clearTransfers: _transfer.clearAll,
+			restoreTransfers: _transfer.restoreAll,
+			resumeTransfers: _transfer.resumeAll,
+			downloadIntent: () => this.dataServer.getDownloadEnabledLishs(),
+			applyLimits: network => applyNetworkLimits(network),
+		});
+		this.settings.setChangeApplier(change => networkRestart.apply(change));
 
 		// Factory reset with per-category selection (each defaults to ON, so a
 		// plain call wipes everything). Wipes happen at table level — never

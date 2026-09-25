@@ -56,14 +56,17 @@ function makeDataServer(overrides: Record<string, () => any> = {}): FactoryReset
  */
 function makeSettings(overrides: Record<string, () => any> = {}): FactoryResetOrchestratorDeps['settings'] {
 	let live: any = { network: { maxDownloadSpeed: 0, maxUploadSpeed: 0, maxDownloadPeersPerLISH: 30, maxUploadPeersPerLISH: 30, maxMessageSize: 128 * 1024 * 1024 } };
+	const reset =
+		overrides['reset'] ??
+		(() => {
+			live = structuredClone(live);
+			return Promise.resolve(live);
+		});
 	return {
 		get: overrides['get'] ?? (() => live),
-		reset:
-			overrides['reset'] ??
-			(() => {
-				live = structuredClone(live);
-				return Promise.resolve(live);
-			}),
+		reset,
+		// The reset takes the settings session before the network lease; its reset is the same one.
+		holdWrites: async () => ({ reset, release: () => {} }),
 	} as any;
 }
 

@@ -91,7 +91,16 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 			// runtime operation is cancelled only after the fallible transfer preparation has
 			// succeeded, so a failed prepare can safely release admission without poisoning the
 			// still-running node's dial controller.
-			const networkMaintenance = restartNode ? await networks.prepareMaintenance() : undefined;
+			// The settings session comes first, as it does for a settings change that restarts the
+			// node: taken after the maintenance lease, the two could each wait for the other.
+			const settingsHold = wipeSettings ? await settings.holdWrites() : undefined;
+			let networkMaintenance: Awaited<ReturnType<typeof networks.prepareMaintenance>> | undefined;
+			try {
+				networkMaintenance = restartNode ? await networks.prepareMaintenance() : undefined;
+			} catch (error) {
+				settingsHold?.release();
+				throw error;
+			}
 			let transferAdmissionClosed = false;
 			let lishMutationAdmissionClosed = false;
 			let transferRuntimeSafe = true;
@@ -180,7 +189,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 						? async () => {
 								// Re-apply runtime knobs from the restored defaults (limits are module state),
 								// also when the save failed: the defaults are live in memory either way.
-								await persistAndApplyNetworkLimits(settings, () => settings.reset());
+								await persistAndApplyNetworkLimits(settings, () => settingsHold!.reset());
 							}
 						: undefined,
 					restart: restartNode ? restartNodeAndTransfers : undefined,
@@ -188,6 +197,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 			} finally {
 				resumeTransfers();
 				networkMaintenance?.release();
+				settingsHold?.release();
 			}
 
 			// Everyone else is told to reload, because identity, networks and state moved under

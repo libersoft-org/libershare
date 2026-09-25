@@ -47,6 +47,27 @@ export function effectiveNetworkConfig(network: Partial<SettingsData['network']>
 	};
 }
 
+/**
+ * `network.*` settings that touch the P2P node: live transfer limits, values read at their next
+ * use, and everything the node is built from. The rest of the group (auto-start switches,
+ * search timeout, primary interface) is read by the next action or the UI and needs nothing
+ * from the node.
+ */
+const P2P_SETTING_KEYS = new Set(['maxDownloadSpeed', 'maxUploadSpeed', 'maxDownloadPeersPerLISH', 'maxUploadPeersPerLISH', 'maxChunkSize', 'maxMessageSize', 'incomingPort', 'announceAddresses', 'mdnsEnabled', 'mdnsInterval', 'upnpEnabled', 'allowRelay', 'maxRelayReservations', 'useRelayClients', 'maxRelayClients', 'peerExchange']);
+
+/**
+ * Whether a write asked for P2P settings to be applied: one of its accepted paths is the
+ * `network` group itself, or reaches one of {@link P2P_SETTING_KEYS} — even when the value did
+ * not change, since writing the same port again is still an attempt to use it.
+ */
+export function requestsP2PApply(paths: readonly string[]): boolean {
+	return paths.some(path => {
+		const segments = path.split('.');
+		if (segments[0] !== 'network') return false;
+		return segments.length === 1 || P2P_SETTING_KEYS.has(segments[1]!);
+	});
+}
+
 /** Whether two projections build the same node. */
 export function sameEffectiveNetworkConfig(a: EffectiveNetworkConfig, b: EffectiveNetworkConfig): boolean {
 	return JSON.stringify(a) === JSON.stringify(b);

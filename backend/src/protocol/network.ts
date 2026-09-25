@@ -13,6 +13,7 @@ import { DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { LISH_PROTOCOL, handleLISHProtocol } from './lish-protocol.ts';
 import { buildLibp2pConfig, PEERSTORE_MAX_PEER_AGE_MS } from './network-config.ts';
+import { effectiveNetworkConfig, type EffectiveNetworkConfig } from './network-settings.ts';
 import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
@@ -334,6 +335,10 @@ interface BootstrapDialClaim {
  */
 export class Network {
 	private lifecycle: NetworkLifecycle = 'stopped';
+	/** The projection of the node that is running now; see {@link getAppliedNetworkConfig}. */
+	private appliedNetworkConfig: EffectiveNetworkConfig | null = null;
+	/** The projection the start in progress is building from. */
+	private startingNetworkConfig: EffectiveNetworkConfig | null = null;
 	/**
 	 * Serialises start() against stop(). Both mutate the same fields across several
 	 * awaits, and without this two concurrent start() calls could both pass the
@@ -825,6 +830,7 @@ export class Network {
 			try {
 				await this.startLocked(bootstrapPeers);
 				this.lifecycle = 'running';
+				this.appliedNetworkConfig = this.startingNetworkConfig;
 			} catch (err) {
 				// A half-built start owns a datastore handle and possibly a libp2p node.
 				// Leaving either behind is what made a failed start unrecoverable without
@@ -846,10 +852,20 @@ export class Network {
 		});
 	}
 
+	/**
+	 * The settings projection the running node was built from — published only once a start
+	 * succeeded and withdrawn as soon as a stop begins. A settings change is compared with it
+	 * to tell whether the node already runs with those values.
+	 */
+	getAppliedNetworkConfig(): EffectiveNetworkConfig | null {
+		return this.lifecycle === 'running' ? this.appliedNetworkConfig : null;
+	}
+
 	/** The body of {@link start}, run under the lifecycle mutex. */
 	private async startLocked(bootstrapPeers: string[]): Promise<void> {
 		// Read settings
 		const allSettings = this.settings.list();
+		this.startingNetworkConfig = effectiveNetworkConfig(allSettings.network);
 
 		// Initialize datastore (single shared datastore)
 		const datastorePath = join(this.dataDir, 'datastore');
@@ -3892,6 +3908,7 @@ export class Network {
 			// down. Refusing is the honest answer; the process has to be restarted.
 			if (this.nodeStopUnrecoverable) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network is in a terminal failed state: its libp2p node could not be stopped and cannot be stopped again — restart the process');
 			this.lifecycle = 'stopping';
+			this.appliedNetworkConfig = null;
 			try {
 				await this.teardown();
 				this.lifecycle = 'stopped';
