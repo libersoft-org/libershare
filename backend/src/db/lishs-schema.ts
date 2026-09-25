@@ -1,12 +1,28 @@
 import { type Database } from 'bun:sqlite';
 import { type LISHid } from '@shared';
 
+/** Columns added after the first release, in the order they were introduced. Fixed SQL. */
+const LISHS_ADDED_COLUMNS: ReadonlyArray<readonly [string, string]> = [
+	['upload_enabled', 'BOOL NOT NULL DEFAULT FALSE'],
+	['download_enabled', 'BOOL NOT NULL DEFAULT FALSE'],
+	['total_uploaded_bytes', 'INTEGER NOT NULL DEFAULT 0'],
+	['total_downloaded_bytes', 'INTEGER NOT NULL DEFAULT 0'],
+	['error_code', 'TEXT DEFAULT NULL'],
+	['error_detail', 'TEXT DEFAULT NULL'],
+	['final_directory', 'TEXT DEFAULT NULL'],
+];
+
 /**
  * Creates the LISH-related tables (lishs, lishs_files, lishs_chunks,
  * lishs_directories, lishs_links), applies idempotent column migrations to
- * pre-existing databases, and ensures the supporting indexes exist.
+ * pre-existing databases, and ensures the supporting indexes exist. Every error propagates.
  */
 export function initLISHsTables(db: Database): void {
+	// One transaction: a failure leaves the schema exactly as it was, never half migrated.
+	db.transaction(() => createLISHsSchema(db)).immediate();
+}
+
+function createLISHsSchema(db: Database): void {
 	db.run(`
 		CREATE TABLE IF NOT EXISTS lishs (
 			id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -23,41 +39,18 @@ export function initLISHsTables(db: Database): void {
 		)
 	`);
 
-	// Migration: add columns to existing databases
-	try {
-		db.run('ALTER TABLE lishs ADD COLUMN upload_enabled BOOL NOT NULL DEFAULT FALSE');
-	} catch {
-		/* already exists */
-	}
-	try {
-		db.run('ALTER TABLE lishs ADD COLUMN download_enabled BOOL NOT NULL DEFAULT FALSE');
-	} catch {
-		/* already exists */
-	}
-	try {
-		db.run('ALTER TABLE lishs ADD COLUMN total_uploaded_bytes INTEGER NOT NULL DEFAULT 0');
-	} catch {
-		/* already exists */
-	}
-	try {
-		db.run('ALTER TABLE lishs ADD COLUMN total_downloaded_bytes INTEGER NOT NULL DEFAULT 0');
-	} catch {
-		/* already exists */
-	}
-	try {
-		db.run('ALTER TABLE lishs ADD COLUMN error_code TEXT DEFAULT NULL');
-	} catch {
-		/* already exists */
-	}
-	try {
-		db.run('ALTER TABLE lishs ADD COLUMN error_detail TEXT DEFAULT NULL');
-	} catch {
-		/* already exists */
-	}
-	try {
-		db.run('ALTER TABLE lishs ADD COLUMN final_directory TEXT DEFAULT NULL');
-	} catch {
-		/* already exists */
+	// Migration: add the columns an older database lacks. Decided from the actual schema, not
+	// by trying every ALTER and swallowing the error: a locked, read-only or corrupt database
+	// fails the same way as "column already exists", and treating that as success started the
+	// node on a schema it never checked.
+	const present = new Set(db.query<{ name: string }, []>('PRAGMA table_info(lishs)').all().map(c => c.name));
+	for (const [column, definition] of LISHS_ADDED_COLUMNS) {
+		if (present.has(column)) continue;
+		try {
+			db.run(`ALTER TABLE lishs ADD COLUMN ${column} ${definition}`);
+		} catch (error) {
+			throw new Error(`Cannot add column lishs.${column}: ${(error as Error).message}`, { cause: error });
+		}
 	}
 
 	db.run(`
