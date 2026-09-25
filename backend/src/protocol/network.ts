@@ -384,6 +384,8 @@ export class Network {
 	 * the run it was raised for and must not refuse the next run's first dial.
 	 */
 	private dialAbort = new AbortController();
+	/** Set by a permanent {@link cancelRunOperations}; every later run starts already cancelled. */
+	private runOperationsCancelledForGood = false;
 	/**
 	 * Admission and drain state for inbound LISH protocol handlers. libp2p closes
 	 * streams during stop(), but it does not await the application Promise that is
@@ -816,6 +818,7 @@ export class Network {
 			// A fresh one per run — an abort raised for the previous shutdown would otherwise
 			// refuse this run's dials before it made any. See {@link dialAbort}.
 			this.dialAbort = new AbortController();
+			if (this.runOperationsCancelledForGood) this.dialAbort.abort();
 			// Kept separate from admission: a factory-reset restart builds the node while
 			// the external gate is still closed, then opens it only after runtime restore.
 			this.lishProtocolAbort = new AbortController();
@@ -2163,9 +2166,14 @@ export class Network {
 	 * awaits a `hangUp` and peerStore writes that have no deadline at all — so a single
 	 * unresponsive peer used to hold the shutdown, and the catalog behind it, indefinitely.
 	 *
-	 * Idempotent, and only ever the current run: {@link start} installs a fresh controller.
+	 * Idempotent. Without `permanent` it is only the current run: {@link start} installs a
+	 * fresh controller. A process shutdown passes `permanent`, which also aborts every
+	 * controller a later start creates — a factory reset accepted before the shutdown may
+	 * still restart the node, and that run must not open new bootstrap dials or hangUps the
+	 * shutdown would then have to wait for. The flag lives as long as this instance.
 	 */
-	cancelRunOperations(): void {
+	cancelRunOperations(permanent: boolean = false): void {
+		if (permanent) this.runOperationsCancelledForGood = true;
 		this.dialAbort.abort();
 	}
 

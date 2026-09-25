@@ -603,4 +603,33 @@ describe('Network.subscribeTopic — one handler per topic', () => {
 		expect(scoreTopics[topic]).toEqual({ old: true });
 		expect((network as any).delayedPeerCountTimers.size).toBe(0);
 	});
+
+	it('a permanent cancel also cancels the run a later start creates, before its first dial', async () => {
+		const net = bareNetwork();
+		const signals: AbortSignal[] = [];
+		(net as any).startLocked = async (): Promise<void> => {
+			signals.push((net as any).dialAbort.signal);
+		};
+		await net.start([]);
+		net.cancelRunOperations(true);
+		expect(signals[0]!.aborted).toBe(true);
+		await net.stop();
+		// A reset accepted before the shutdown restarts the node: that run is born cancelled.
+		net.cancelRunOperations();
+		await net.start([]);
+		expect(signals[1]!.aborted).toBe(true);
+	});
+
+	it('an ordinary cancel only affects the current run', async () => {
+		const net = bareNetwork();
+		const signals: AbortSignal[] = [];
+		(net as any).startLocked = async (): Promise<void> => {
+			signals.push((net as any).dialAbort.signal);
+		};
+		await net.start([]);
+		net.cancelRunOperations();
+		await net.stop();
+		await net.start([]);
+		expect(signals[1]!.aborted).toBe(false);
+	});
 });
