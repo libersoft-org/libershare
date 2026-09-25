@@ -18,7 +18,6 @@
 			const result = await api.settings.applyImported(data);
 			await loadSettings();
 			addNotification(tt('settings.backup.restored', { count: String(result.applied) }), 'success');
-			addNotification(tt('settings.backup.restartHint'), 'warning');
 		} catch (e) {
 			addNotification(translateError(e), 'error');
 		}

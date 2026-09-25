@@ -534,6 +534,7 @@
 			"filePath": "LISHNET file",
 			"url": "URL address of LISHNET file"
 		},
+		"applyFailed": "Setting was not applied: {detail}",
 		"backup": {
 			"title": "Settings backup",
 			"exportTitle": "Export settings",

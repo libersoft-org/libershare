@@ -534,6 +534,7 @@
 			"filePath": "LISHNET soubor",
 			"url": "URL adresa LISHNET souboru"
 		},
+		"applyFailed": "Nastavení se nepodařilo použít: {detail}",
 		"backup": {
 			"title": "Záloha nastavení",
 			"exportTitle": "Export nastavení",
