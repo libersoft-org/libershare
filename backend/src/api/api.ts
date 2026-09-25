@@ -11,6 +11,7 @@ import { initLISHnetsHandlers } from './lishnets.ts';
 import { initIdentityHandlers } from './identity.ts';
 import { initDatasetsHandlers } from './datasets.ts';
 import { initFsHandlers } from './fs.ts';
+import { drainForShutdown, type ShutdownDeps } from './shutdown.ts';
 import { initUploadHandlers } from './upload.ts';
 import { initLISHsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
@@ -96,6 +97,9 @@ const SENSITIVE_PARAM_NAME = /(?:password|passphrase|token|secret|authorization|
  * always a plain `Uint8Array` (see {@link decodeBinaryRequest}), never a
  * `Buffer`, whose `toJSON` would run before this replacer ever sees it.
  */
+/** Reply to a request that reached a closing API. */
+const SHUTTING_DOWN = 'Backend is shutting down';
+
 export function formatParamsForLog(params: unknown): string {
 	const json =
 		JSON.stringify(params, (key, value) => {
@@ -299,8 +303,12 @@ export class APIServer {
 	 * controller it is never replaced by a reset or an identity restart.
 	 */
 	private readonly peerReadAbort = new AbortController();
-	private _search: ReturnType<typeof import('./search.ts').initSearchManager> | null = null;
-	private _system: ReturnType<typeof import('./system.ts').initSystemHandlers> | null = null;
+	/** Closed synchronously when the shutdown begins; no new request or upgrade gets past it. */
+	private accepting = true;
+	/** Every request accepted before the gate closed, until its handler (and reply) finished. */
+	private readonly acceptedRequests = new Set<Promise<void>>();
+	private stopping: Promise<void> | null = null;
+	private shutdownDeps!: ShutdownDeps;
 
 	constructor(dataDir: string, dataServer: DataServer, networks: Networks, settings: Settings, options: APIServerOptions) {
 		this.dataDir = dataDir;
@@ -333,12 +341,10 @@ export class APIServer {
 		};
 		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers, !!this.apiToken);
 		const networkAdmin = <P, R>(handler: (params: P) => R) => hostNetworkAdminHandler(!!this.apiToken, handler);
-		this._system = _system;
 		_system.startPolling();
 		const _relay = initRelayHandlers(this.networks, broadcastFn, hasSubscribers);
 		_relay.startPolling();
 		const _search = initSearchManager(this.networks, this.settings, broadcastFn);
-		this._search = _search;
 
 		// Factory reset with per-category selection (each defaults to ON, so a
 		// plain call wipes everything). Wipes happen at table level — never
@@ -360,6 +366,25 @@ export class APIServer {
 			resumeAllTransfers: _transfer.resumeAll,
 			broadcastFn: broadcastExceptFn,
 		});
+
+		this.shutdownDeps = {
+			stopBackgroundWork: () => {
+				_search.stopAll();
+				_system.stopPolling();
+			},
+			stopAllCreates: _lishs.stopAllCreates,
+			drainAcceptedRequests: () => this.drainAcceptedRequests(),
+			prepareMaintenance: () => this.networks.prepareMaintenance(),
+			pauseAllTransfers: _transfer.pauseAll,
+			pauseAllLISHMutations: _lishs.pauseMutations,
+			stopVerifyAll: _lishs.stopVerifyAll,
+			clearAllTransfers: _transfer.clearAll,
+			cancelRunOperations: () => this.networks.getNetwork().cancelRunOperations(),
+			stopAllNetworks: () => this.networks.stopAllNetworks(),
+			clearUploadRuntime: _transfer.clearUploads,
+			drainUploads: () => this._upload.stopAndDrain(),
+			closeServer: () => this.closeServer(),
+		};
 
 		this.handlers = {
 			// Events
@@ -510,6 +535,7 @@ export class APIServer {
 				if (req.method === 'OPTIONS' && url.pathname === '/status') return self.statusOptionsResponse();
 				if (url.pathname === '/status') return self.statusResponse(url);
 				if (!self.isAuthorized(url)) return self.unauthorizedResponse();
+				if (!self.accepting) return new Response('Backend is shutting down', { status: 503 });
 				const clientIP = server.requestIP(req)?.address ?? '';
 				const upgraded = server.upgrade(req, {
 					data: { subscribedEvents: new Set<string>(), isLocalClient: isLocalClientAddress(clientIP, getLocalAddresses()) },
@@ -573,15 +599,32 @@ export class APIServer {
 		console.log(`[API] WebSocket server listening on ${protocol}://${this.host}:${actualPort}`);
 	}
 
-	stop(): void {
-		this._search?.stopAll();
-		// The upload sweep is a long-lived interval and must not outlive the server.
-		this._upload.stop();
-		// Stop the volume poll interval and the push monitor (a long-lived pactl
-		// subscribe child on Linux) — they must not outlive the API server.
-		this._system?.stopPolling();
+	/**
+	 * Shut the API down and drain everything it started. The gate closes, outgoing peer reads
+	 * and network waits are cancelled — also for a network run a reset accepted earlier still
+	 * starts — all synchronously, before the first await. Resolves when nothing the API
+	 * admitted can touch the database any more; rejects when something did not stop, in which
+	 * case the caller must not close the database. Repeated calls share one result.
+	 */
+	stop(): Promise<void> {
+		if (!this.stopping) {
+			this.accepting = false;
+			this.peerReadAbort.abort(new Error(SHUTTING_DOWN));
+			this.networks.getNetwork().cancelRunOperations(true);
+			this.stopping = drainForShutdown(this.shutdownDeps);
+		}
+		return this.stopping;
+	}
+
+	/** Close client sockets and the listener; nothing is left to answer them. */
+	private closeServer(): void {
+		for (const client of this.clients) {
+			try {
+				client.close();
+			} catch {}
+		}
 		if (this.server) {
-			this.server.stop();
+			this.server.stop(true);
 			this.server = null;
 		}
 	}
@@ -650,6 +693,22 @@ export class APIServer {
 			return;
 		}
 
+		if (!this.accepting) {
+			client.send(JSON.stringify({ id: req.id, error: ErrorCodes.INTERNAL_ERROR, errorDetail: SHUTTING_DOWN }));
+			return;
+		}
+		// Registered before the handler's first await, so a shutdown that closes the gate right
+		// after this frame still waits for it; removed only once the reply has been sent.
+		const running = this.respond(client, req);
+		this.acceptedRequests.add(running);
+		try {
+			await running;
+		} finally {
+			this.acceptedRequests.delete(running);
+		}
+	}
+
+	private async respond(client: ClientSocket, req: Request): Promise<void> {
 		try {
 			const result = await this.execute(client, req.method, req.params || {});
 			client.send(JSON.stringify({ id: req.id, result }));
@@ -658,6 +717,11 @@ export class APIServer {
 			if (err instanceof CodedError) client.send(JSON.stringify({ id: req.id, error: err.code, ...(err.detail !== undefined && { errorDetail: err.detail }) }));
 			else client.send(JSON.stringify({ id: req.id, error: ErrorCodes.INTERNAL_ERROR, errorDetail: err.message }));
 		}
+	}
+
+	/** Resolve once every request accepted before the gate closed has finished. */
+	private async drainAcceptedRequests(): Promise<void> {
+		while (this.acceptedRequests.size > 0) await Promise.all(this.acceptedRequests);
 	}
 
 	// --- API dispatch table and core handlers ---
