@@ -83,26 +83,20 @@ export function fanOutEvent<T extends BroadcastTarget>(clients: Iterable<T>, eve
 	return sent;
 }
 
-/** Longest params blob written to the log; enough to identify a call, short of dumping a file upload. */
-const MAX_LOGGED_PARAMS = 1000;
-/** Request fields whose values must never reach logs, regardless of nesting. */
-const SENSITIVE_PARAM_NAME = /(?:password|passphrase|token|secret|authorization|api[-_]?key)/i;
+/**
+ * The method name to put in a log line: only a name the dispatch table actually has, so a
+ * client cannot make the server print arbitrary text through this field.
+ */
+export function methodForLog(handlers: Record<string, unknown>, method: unknown): string {
+	return typeof method === 'string' && Object.prototype.hasOwnProperty.call(handlers, method) ? method : 'unknown';
+}
 
 /**
- * Serialise request params for the log, truncated. Some methods carry a whole
- * file chunk, and a multi-megabyte log line per call is both unreadable and a
- * measurable write cost — the truncation alone would not help, because the
- * megabytes are spent building the string before it is cut. A binary payload is
- * always a plain `Uint8Array` (see {@link decodeBinaryRequest}), never a
- * `Buffer`, whose `toJSON` would run before this replacer ever sees it.
+ * The error to put in a log line: a known error code, never the message. Messages can carry
+ * request content — a JSON parse error quotes the input, a failed identity import its key.
  */
-export function formatParamsForLog(params: unknown): string {
-	const json =
-		JSON.stringify(params, (key, value) => {
-			if (key && SENSITIVE_PARAM_NAME.test(key)) return '[REDACTED]';
-			return value instanceof Uint8Array ? `<${value.byteLength} bytes>` : value;
-		}) ?? String(params);
-	return json.length <= MAX_LOGGED_PARAMS ? json : json.slice(0, MAX_LOGGED_PARAMS) + `…(${json.length} chars)`;
+export function errorCodeForLog(err: unknown): string {
+	return err instanceof CodedError ? err.code : ErrorCodes.INTERNAL_ERROR;
 }
 
 /** Host network administration requires authenticated API mode on the same machine. */
@@ -648,7 +642,9 @@ export class APIServer {
 			const result = await this.execute(client, req.method, req.params || {});
 			client.send(JSON.stringify({ id: req.id, result }));
 		} catch (err: any) {
-			console.error(`[API] Error executing ${req.method}, params=${formatParamsForLog(req.params)}: ${err.message}`);
+			// Request parameters and error text are never logged: either can carry a private key,
+			// a password or file content.
+			console.error(`[API] Error executing ${methodForLog(this.handlers, req.method)}: ${errorCodeForLog(err)}`);
 			if (err instanceof CodedError) client.send(JSON.stringify({ id: req.id, error: err.code, ...(err.detail !== undefined && { errorDetail: err.detail }) }));
 			else client.send(JSON.stringify({ id: req.id, error: ErrorCodes.INTERNAL_ERROR, errorDetail: err.message }));
 		}
@@ -658,7 +654,7 @@ export class APIServer {
 	private handlers!: Record<string, (params: any, client: ClientSocket) => any>;
 
 	private async execute(client: ClientSocket, method: string, params: Record<string, any>): Promise<any> {
-		console.log(`[API] Executing method: ${method}, params: ${formatParamsForLog(params)}`);
+		console.log(`[API] Executing method: ${methodForLog(this.handlers, method)}`);
 		const handler = this.handlers[method];
 		if (!handler) throw new CodedError(ErrorCodes.UNKNOWN_METHOD, method);
 		return handler.call(this, params, client);
