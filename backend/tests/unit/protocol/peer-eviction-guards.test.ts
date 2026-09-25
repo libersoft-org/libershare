@@ -1528,6 +1528,7 @@ describe('Network.stop — per-run state really is per run', () => {
 		(network as any).lishProtocolAbort = new AbortController();
 		(network as any).activeLISHProtocolHandlers = new Set();
 		(network as any).activeLISHProtocolStreams = new Set();
+		(network as any).lishHandlers = { drain: async () => {} };
 		(network as any).delayedPeerCountTimers = new Set();
 		(network as any).recentDisconnects = [];
 		(network as any).peerAnnounce = { stop() {} };

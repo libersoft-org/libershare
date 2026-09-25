@@ -630,7 +630,7 @@ export class Network {
 			seenSearchIDs: this.seenSearchIDs,
 			wantResponseCooldownMs: WANT_RESPONSE_COOLDOWN_MS,
 			getNode: (): Libp2p | null => this.node,
-			dialByPeerId: (peerID, protocol): Promise<IDialResult> => this.dialProtocolByPeerId(peerID, protocol),
+			dialByPeerId: (peerID, protocol, signal): Promise<IDialResult> => this.dialProtocolByPeerId(peerID, protocol, signal),
 			canServePubsubRequestTo: (peerID, treatAsDirect): boolean => this.canServePubsubRequestTo(peerID, treatAsDirect),
 			isDirectPeer: (peerID): boolean => this.isDirectPeer(peerID),
 			isJoinedToLishnet: (networkID): boolean => this.isJoinedToLishnet(networkID),
@@ -819,6 +819,7 @@ export class Network {
 			// Kept separate from admission: a factory-reset restart builds the node while
 			// the external gate is still closed, then opens it only after runtime restore.
 			this.lishProtocolAbort = new AbortController();
+			this.lishHandlers.newRun();
 			try {
 				await this.startLocked(bootstrapPeers);
 				this.lifecycle = 'running';
@@ -974,6 +975,7 @@ export class Network {
 	resumeLISHProtocolHandlers(): void {
 		if (this.activeLISHProtocolHandlers.size > 0 || this.activeLISHProtocolStreams.size > 0) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Cannot resume LISH protocol admission while handlers from the previous run are still active');
 		if (this.lishProtocolAbort.signal.aborted) this.lishProtocolAbort = new AbortController();
+		this.lishHandlers.newRun();
 		this.lishProtocolAdmissionClosed = false;
 	}
 
@@ -1051,6 +1053,8 @@ export class Network {
 			}
 		}
 		while (this.activeLISHProtocolHandlers.size > 0) await Promise.allSettled([...this.activeLISHProtocolHandlers]);
+		// Pubsub WANT and search replies write the cooldown and dedup maps a teardown clears.
+		await this.lishHandlers.drain();
 	}
 
 	// =========================================================================
@@ -3521,17 +3525,13 @@ export class Network {
 			const handler: TopicHandler = (data, from): void => {
 				trace(`[NET] pubsub ${topic}: ${data['type']}`);
 				if (data['type'] === 'want') {
-					this.lishHandlers.handleWant(data as WantMessage, networkID, from).catch(err => {
-						trace(`[NET] handleWant failed: ${err?.message ?? err}`);
-					});
+					if (!this.lishProtocolAdmissionClosed) this.lishHandlers.dispatchWant(data as WantMessage, networkID, from);
 				} else if (data['type'] === 'peer-announce') {
 					this.peerAnnounce.handle(data as unknown as PeerAnnounceMessage, networkID, from).catch(err => {
 						trace(`[NET] handlePeerAnnounce failed: ${err?.message ?? err}`);
 					});
 				} else if (data['type'] === 'searchLishs') {
-					this.lishHandlers.handleSearchLishs(data as SearchLishsMessage, networkID, from).catch(err => {
-						trace(`[NET] handleSearchLishs failed: ${err?.message ?? err}`);
-					});
+					if (!this.lishProtocolAdmissionClosed) this.lishHandlers.dispatchSearch(data as SearchLishsMessage, networkID, from);
 				}
 			};
 			// One handler per topic, replacing rather than joining any earlier one. The set is

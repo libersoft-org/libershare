@@ -44,8 +44,8 @@ export interface LISHHandlersDeps {
 	readonly wantResponseCooldownMs: number;
 	/** Returns the current libp2p node (may be null if not started). */
 	getNode(): Libp2p | null;
-	/** Dial a peer by peerID and open the given protocol stream. */
-	dialByPeerId(peerID: string, protocol: string): Promise<IDialResult>;
+	/** Dial a peer by peerID and open the given protocol stream; `signal` cancels the dial. */
+	dialByPeerId(peerID: string, protocol: string, signal?: AbortSignal): Promise<IDialResult>;
 	/**
 	 * Membership gate for a request that reached us over pubsub. gossipsub delivers a
 	 * topic message because WE are subscribed, never because the publisher is, so the
@@ -64,19 +64,53 @@ export interface LISHHandlersDeps {
  */
 export class LISHServingHandlers {
 	private readonly deps: LISHHandlersDeps;
+	/**
+	 * The current run's replies: one signal that ends them all, and every reply still under
+	 * way. Stop and reset abort the run and wait for its replies before the maps they write
+	 * are cleared; a new run starts with its own, so a late reply of the old one can neither
+	 * send nor write anything.
+	 */
+	private run = { abort: new AbortController(), replies: new Set<Promise<void>>() };
 
 	constructor(deps: LISHHandlersDeps) {
 		this.deps = deps;
 	}
 
+	/** Answer a `want` as part of the current run; nothing is admitted once the run is aborted. */
+	dispatchWant(data: WantMessage, networkID: string, fromPeerID?: string): void {
+		this.track('handleWant', signal => this.handleWant(data, networkID, fromPeerID, signal));
+	}
+
+	/** Answer a `searchLishs` as part of the current run. */
+	dispatchSearch(data: SearchLishsMessage, networkID: string, fromPeerID?: string): void {
+		this.track('handleSearchLishs', signal => this.handleSearchLishs(data, networkID, fromPeerID, signal));
+	}
+
+	private track(label: string, reply: (signal: AbortSignal) => Promise<void>): void {
+		const run = this.run;
+		if (run.abort.signal.aborted) return;
+		const tracked: Promise<void> = reply(run.abort.signal)
+			.catch(err => trace(`[NET] ${label} failed: ${err?.message ?? err}`))
+			.finally(() => run.replies.delete(tracked));
+		run.replies.add(tracked);
+	}
+
+	/** Abort the current run and wait until every reply it admitted has finished. */
+	async drain(): Promise<void> {
+		const run = this.run;
+		run.abort.abort();
+		while (run.replies.size > 0) await Promise.allSettled([...run.replies]);
+	}
+
+	/** Start admitting replies again, under a run of their own. */
+	newRun(): void {
+		if (this.run.abort.signal.aborted) this.run = { abort: new AbortController(), replies: new Set() };
+	}
+
 	/** Handle a `want` pubsub message from a remote peer requesting chunk metadata. */
-	async handleWant(data: WantMessage, networkID: string, fromPeerID?: string): Promise<void> {
-		// TODO(out of scope): enforce per-network ACL here — only answer a
-		// WANT if `data.lishID` is actually shared into `networkID`. Today we
-		// answer based solely on global upload-enabled state, so a peer on ANY
-		// joined lishnet can pull any LISH we upload. Implementing this needs a
-		// LISH↔networkIDs mapping in the DB which does not yet exist; until then
-		// the topic membership is the only (coarse) access boundary.
+	async handleWant(data: WantMessage, networkID: string, fromPeerID?: string, signal?: AbortSignal): Promise<void> {
+		// Every LISH with upload on is offered in every lishnet we are joined to; who may ask is
+		// decided by lishnet membership, not by the LISH.
 		if (!fromPeerID) {
 			trace(`[NET] want ignored: no verified sender peerID`);
 			return;
@@ -97,8 +131,6 @@ export class LISHServingHandlers {
 			trace(`[NET] want rate-limited: ${fromPeerID.slice(0, 12)} for ${data.lishID.slice(0, 8)} (cooldown)`);
 			return;
 		}
-		// Networks, by referenced networkID, are also checked: the seeder must belong to the same LISH net.
-		// (networkID currently unused beyond routing; future: verify lish.networkIDs.includes(networkID).)
 		void networkID;
 		const lish = this.deps.dataServer.get(data.lishID);
 		if (!lish) return;
@@ -121,18 +153,30 @@ export class LISHServingHandlers {
 		// Open a fresh LISH protocol stream to the requester and send the HAVE announcement.
 		// Errors are traced (not thrown) — a single unreachable requester mustn't break our own subscription.
 		let client: LISHClient | undefined;
+		const onAbort = (): void => client?.abort(new Error('pubsub replies stopped'));
+		signal?.addEventListener('abort', onAbort, { once: true });
 		try {
-			const { stream } = await this.deps.dialByPeerId(fromPeerID, LISH_PROTOCOL);
-			client = new LISHClient(stream);
-			await client.announceHave(data.lishID, chunksPayload, myAddrs);
-		} catch (err: any) {
-			trace(`[NET] announceHave to ${fromPeerID.slice(0, 12)} failed: ${err?.message ?? err}`);
-			await client?.close().catch(() => {});
-			return;
+			try {
+				const { stream } = await this.deps.dialByPeerId(fromPeerID, LISH_PROTOCOL, signal);
+				client = new LISHClient(stream);
+				if (signal?.aborted) {
+					client.abort(new Error('pubsub replies stopped'));
+					return;
+				}
+				await client.announceHave(data.lishID, chunksPayload, myAddrs);
+			} catch (err: any) {
+				trace(`[NET] announceHave to ${fromPeerID.slice(0, 12)} failed: ${err?.message ?? err}`);
+				await client?.close().catch(() => {});
+				return;
+			}
+			await client.close().catch(() => {});
+			// The run that sent it has ended: its maps belong to the next run now.
+			if (signal?.aborted) return;
+			// Record send time only after the announcement was sent; cleanup interval drains stale entries.
+			this.deps.lastWantResponseTime.set(key, Date.now());
+		} finally {
+			signal?.removeEventListener('abort', onAbort);
 		}
-		await client.close().catch(() => {});
-		// Record send time only after the announcement was sent; cleanup interval drains stale entries.
-		this.deps.lastWantResponseTime.set(key, Date.now());
 	}
 
 	/**
@@ -149,11 +193,10 @@ export class LISHServingHandlers {
 	 * this returns the very same catalog rows, so leaving it ungated would make that gate
 	 * decorative for anyone willing to publish on the topic instead of dialing us.
 	 */
-	async handleSearchLishs(data: SearchLishsMessage, networkID: string, fromPeerID?: string): Promise<void> {
-		// TODO(out of scope): scope search RESULTS to LISHs actually shared into `networkID`.
-		// Blocked on the same missing LISH↔networkIDs DB mapping as handleWant's ACL TODO.
-		// `networkID` IS used below for something narrower and unblocked: the request arrived
-		// over this lishnet, so leaving that lishnet ends it.
+	async handleSearchLishs(data: SearchLishsMessage, networkID: string, fromPeerID?: string, signal?: AbortSignal): Promise<void> {
+		// Results are every LISH we share, the same in every lishnet we are joined to.
+		// `networkID` matters for something narrower: the request arrived over this lishnet,
+		// so leaving that lishnet ends it.
 		if (!fromPeerID) {
 			trace(`[NET] searchLishs ignored: no verified sender peerID`);
 			return;
@@ -195,7 +238,8 @@ export class LISHServingHandlers {
 			return;
 		}
 		const arrivedOver = new Set<string>([networkID]);
-		this.deps.seenSearchIDs.set(dedupKey, { at: Date.now(), networks: arrivedOver, wasDirect });
+		const entry: SeenSearch = { at: Date.now(), networks: arrivedOver, wasDirect };
+		this.deps.seenSearchIDs.set(dedupKey, entry);
 		const q = data.query.toLowerCase();
 		const matches: Array<{ id: string; name?: string; totalSize?: number }> = [];
 		for (const lish of this.deps.dataServer.list()) {
@@ -211,9 +255,15 @@ export class LISHServingHandlers {
 		if (matches.length === 0) return;
 		trace(`[NET] searchLishs ${data.searchID.slice(0, 8)} from ${fromPeerID.slice(0, 12)}: ${matches.length} match(es)`);
 		let client: LISHClient | undefined;
+		const onAbort = (): void => client?.abort(new Error('pubsub replies stopped'));
+		signal?.addEventListener('abort', onAbort, { once: true });
 		try {
-			const { stream } = await this.deps.dialByPeerId(fromPeerID, LISH_PROTOCOL);
+			const { stream } = await this.deps.dialByPeerId(fromPeerID, LISH_PROTOCOL, signal);
 			client = new LISHClient(stream);
+			if (signal?.aborted) {
+				client.abort(new Error('pubsub replies stopped'));
+				return;
+			}
 			// Opening the stream takes time, and the peer can leave inside it. The rows were
 			// gathered under a permission it no longer has, so ask again before they go out —
 			// judged on the same branch it was admitted on.
@@ -227,13 +277,16 @@ export class LISHServingHandlers {
 				// Forgotten, not just dropped: the dedup entry means "already answered", and this
 				// query was not. A later copy of the same search — over a lishnet we are still in,
 				// arriving after this one died — has to be able to earn its own answer.
-				this.deps.seenSearchIDs.delete(dedupKey);
+				// Only our own entry: a newer copy may own the slot by now.
+				if (this.deps.seenSearchIDs.get(dedupKey) === entry) this.deps.seenSearchIDs.delete(dedupKey);
 				client.abort(new Error('listing access withdrawn'));
 				return;
 			}
 			await client.sendSearchResult(data.searchID, matches);
 		} catch (err: any) {
 			trace(`[NET] sendSearchResult to ${fromPeerID.slice(0, 12)} failed: ${err?.message ?? err}`);
+		} finally {
+			signal?.removeEventListener('abort', onAbort);
 		}
 		await client?.close().catch(() => {});
 	}
