@@ -10,6 +10,19 @@ function getBackendProxyTarget(): string {
 	return process.env['VITE_BACKEND_URL'] || 'ws://localhost:1158';
 }
 
+/**
+ * The backend's HTTP origin for `/status`. Vite appends the request path to the target's path,
+ * so the target is the bare origin — a path here would turn `/status` into `/status/status`.
+ */
+function getBackendStatusTarget(): string {
+	const target = new URL(getBackendProxyTarget());
+	target.protocol = target.protocol === 'wss:' ? 'https:' : 'http:';
+	target.pathname = '/';
+	target.search = '';
+	target.hash = '';
+	return target.toString();
+}
+
 function getCommitHash(): string {
 	try {
 		return execSync('git rev-parse --short HEAD').toString().trim();
@@ -71,10 +84,18 @@ export default defineConfig({
 		allowedHosts: true,
 		host: true,
 		port: 6003,
+		// The backend owns CORS for /status; Vite's own middleware would answer the preflight itself.
+		cors: false,
 		proxy: {
 			'/ws': {
 				target: getBackendProxyTarget(),
 				ws: true,
+			},
+			// The query (with the token and any duplicate of it) goes through untouched, so the
+			// backend decides; a redirect is returned to the client, never followed.
+			'^/status($|[?])': {
+				target: getBackendStatusTarget(),
+				followRedirects: false,
 			},
 		},
 		fs: {
