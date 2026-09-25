@@ -13,6 +13,8 @@ export interface TestNode {
 	readonly dataDir: string;
 	readonly url: string;
 	readonly process: ReturnType<typeof Bun.spawn>;
+	/** Everything the node wrote to stdout so far. */
+	readonly log: string[];
 }
 
 const REPO = resolve(import.meta.dir, '../../../..');
@@ -63,11 +65,13 @@ async function waitForApiPort(proc: ReturnType<typeof Bun.spawn>, log: string[])
 			log.push(line);
 			const match = /WebSocket server listening on wss?:\/\/[^\s]*:(\d+)/.exec(line);
 			if (match) {
-				// Keep draining stdout so a full pipe can never stall the node.
+				// Keep draining stdout so a full pipe can never stall the node, and keep it for tests
+				// that check what the node logged.
 				void (async () => {
 					for (;;) {
 						const rest = await reader.read().catch(() => ({ done: true, value: undefined }));
 						if (rest.done) return;
+						log.push(decoder.decode(rest.value, { stream: true }));
 					}
 				})();
 				return Number(match[1]);
@@ -77,8 +81,11 @@ async function waitForApiPort(proc: ReturnType<typeof Bun.spawn>, log: string[])
 	throw new Error(`backend was not ready within ${READY_TIMEOUT_MS} ms:\n${log.slice(-20).join('\n')}`);
 }
 
-/** Start `count` isolated backends; on any failure the ones already started are stopped. */
-export async function startNodes(count: number = 3): Promise<void> {
+/**
+ * Start `count` isolated backends; on any failure the ones already started are stopped.
+ * Node `i` uses `tokens[i]` as its API token, or {@link TEST_API_TOKEN} when none is given.
+ */
+export async function startNodes(count: number = 3, tokens: readonly string[] = []): Promise<void> {
 	root = mkdtempSync(join(tmpdir(), 'lish-e2e-'));
 	try {
 		for (let i = 0; i < count; i++) {
@@ -86,14 +93,15 @@ export async function startNodes(count: number = 3): Promise<void> {
 			mkdirSync(dataDir, { recursive: true });
 			writeFileSync(join(dataDir, 'settings.json'), JSON.stringify(isolatedSettings(dataDir)));
 			const env: Record<string, string> = { ...(process.env as Record<string, string>), MEMTRACE: '0', HEAP_TRIGGER: '0' };
-			env['LISH_TOKEN'] = TEST_API_TOKEN;
+			const token = tokens[i] ?? TEST_API_TOKEN;
+			env['LISH_TOKEN'] = token;
 			const proc = Bun.spawn([process.execPath, 'run', 'backend/src/app.ts', '--datadir', dataDir, '--port', '0', '--host', '127.0.0.1'], { cwd: REPO, env, stdout: 'pipe', stderr: 'inherit' });
 			const log: string[] = [];
 			const port = await waitForApiPort(proc, log).catch(error => {
 				proc.kill();
 				throw error;
 			});
-			nodes.push({ dataDir, url: `ws://127.0.0.1:${port}?token=${TEST_API_TOKEN}`, process: proc });
+			nodes.push({ dataDir, url: `ws://127.0.0.1:${port}?token=${token}`, process: proc, log });
 		}
 	} catch (error) {
 		await stopNodes();
@@ -133,6 +141,12 @@ export function getNodeURL(index: number): string {
 	const node = nodes[index];
 	if (!node) throw new Error(`no test node ${index}`);
 	return node.url;
+}
+
+export function getNodeLog(index: number): string {
+	const node = nodes[index];
+	if (!node) throw new Error(`no test node ${index}`);
+	return node.log.join('\n');
 }
 
 export function getNodeDataDir(index: number): string {
