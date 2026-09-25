@@ -418,7 +418,8 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	console.log('✓ AutoNAT v2 + DCUtR enabled');
 	// UPnP-NAT asks the local router (via IGD) to open the incoming port and
 	// maps it back to this host, easing inbound reachability behind a NAT.
-	// Gated behind an opt-in flag because it mutates router state — default OFF.
+	// It changes router state, so it has its own switch; it is on by default so
+	// that nodes behind a home router are reachable without manual forwarding.
 	if (allSettings.network?.upnpEnabled) {
 		config.services.upnpNAT = uPnPNAT();
 		console.log('✓ UPnP-NAT port forwarding enabled');
