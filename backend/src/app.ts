@@ -85,7 +85,15 @@ console.log('='.repeat(header.length));
 console.log(header);
 console.log('='.repeat(header.length));
 console.log(`Data directory: ${dataDir}`);
-const settings = await Settings.create(dataDir);
+// Before anything touches the storage directories, the database or the network: a settings
+// file that exists but cannot be read must stop the node, not be replaced with defaults.
+let settings: Settings;
+try {
+	settings = await Settings.create(dataDir);
+} catch (error) {
+	console.error(`[Settings] ${(error as Error).message}`);
+	process.exit(74); // sysexits.h EX_IOERR
+}
 await settings.ensureStorageDirs();
 const db = openDatabase(dataDir);
 const dataServer = new DataServer(db);

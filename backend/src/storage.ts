@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { syncDirectory } from './file-durability.ts';
 import { CodedError, ErrorCodes } from '@shared';
@@ -57,6 +57,22 @@ export class StorageWriteError extends Error {
 }
 
 /**
+ * A settings file that exists but cannot be used. Carries the I/O code when there is one and
+ * an operator-facing recovery hint; never the file content.
+ */
+export class StorageLoadError extends Error {
+	readonly code: string | undefined;
+
+	constructor(filePath: string, cause: unknown) {
+		const code = (cause as NodeJS.ErrnoException | null)?.code;
+		const kind = code ?? (cause instanceof SyntaxError ? 'invalid JSON' : 'invalid document');
+		super(`Cannot load ${filePath} (${kind}). The file was left untouched: stop the node, restore a verified settings export to this path or fix the file, then start again.`, { cause });
+		this.name = 'StorageLoadError';
+		this.code = code;
+	}
+}
+
+/**
  * Create `dir` (private mode) and flush the parent of every level that did not exist, so the
  * new entries survive a power loss together with the file written into them.
  */
@@ -90,18 +106,25 @@ abstract class BaseStorage<T> {
 		console.log(`[Storage] ${this.filePath}`);
 	}
 
+	/**
+	 * Read the stored document. Only a file that does not exist starts from the defaults;
+	 * anything else — unreadable, a directory, truncated or invalid JSON — is thrown, because
+	 * treating it as "no settings" would overwrite the user's file with defaults on the next
+	 * save. The broken file is left in place for the operator to restore.
+	 */
 	protected async loadFile(defaultValue: T): Promise<T> {
-		const file = Bun.file(this.filePath);
-		if (!(await file.exists())) {
-			// Write default to disk
+		let text: string;
+		try {
+			text = await readFile(this.filePath, 'utf8');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new StorageLoadError(this.filePath, error);
 			await this.saveFile(defaultValue);
 			return defaultValue;
 		}
 		try {
-			return JSON.parse(await file.text());
+			return JSON.parse(text);
 		} catch (error) {
-			console.error(`[Storage] Error loading ${this.filePath}:`, error);
-			return defaultValue;
+			throw new StorageLoadError(this.filePath, error);
 		}
 	}
 
@@ -178,6 +201,9 @@ export class JSONStorage<T extends Record<string, any>> extends BaseStorage<T> {
 	static async create<T extends Record<string, any>>(dataDir: string, fileName: string, defaults: T): Promise<JSONStorage<T>> {
 		const storage = new JSONStorage(dataDir, fileName, defaults);
 		const loaded = await storage.loadFile(structuredClone(defaults));
+		// A partial object from an older version is fine — the defaults fill it in. A root that
+		// is not an object at all is not a settings document.
+		if (loaded === null || typeof loaded !== 'object' || Array.isArray(loaded)) throw new StorageLoadError(storage.filePath, new Error('root is not an object'));
 		storage.data = storage.deepMerge(defaults, loaded);
 		return storage;
 	}

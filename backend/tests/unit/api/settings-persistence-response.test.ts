@@ -7,7 +7,6 @@ import { Settings } from '../../../src/settings.ts';
 import { JSONStorage, StorageWriteError } from '../../../src/storage.ts';
 import { initSettingsHandlers } from '../../../src/api/settings.ts';
 import { downloadLimiter, uploadLimiter } from '../../../src/protocol/speed-limiter.ts';
-import { buildFactoryResetHandler } from '../../../src/api/factory-reset-orchestrator.ts';
 
 const dirs: string[] = [];
 
