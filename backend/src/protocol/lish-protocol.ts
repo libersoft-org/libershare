@@ -1,7 +1,7 @@
 import { decode as lpDecode } from 'it-length-prefixed';
 import { encode as lpEncode } from 'it-length-prefixed';
 import { type Stream } from '@libp2p/interface';
-import { type LISHid, type ChunkID, type ErrorCode, ErrorCodes, CodedError, validateLISHStructure, minMessageSizeFor } from '@shared';
+import { type LISHid, type ChunkID, type ErrorCode, ErrorCodes, CodedError, validateLISHStructure, minMessageSizeFor, formatUntrustedValue } from '@shared';
 import { DEFAULT_MAX_MESSAGE_SIZE, DEFAULT_MAX_CHUNK_SIZE, networkSetting } from '../settings.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { Uint8ArrayList } from 'uint8arraylist';
@@ -152,10 +152,6 @@ export function getSearchResultHandler(searchID: string): SearchResultHandler | 
 	return searchResultHandlers.get(searchID);
 }
 
-function summarizeManifestID(value: unknown): string {
-	if (typeof value !== 'string') return value === null ? 'null' : typeof value;
-	return JSON.stringify(value.slice(0, 64)).replace(/[\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
-}
 
 // Client-side stream wrapper that can send multiple requests
 export class LISHClient {
@@ -204,7 +200,7 @@ export class LISHClient {
 	// callback never breaks the transfer or poisons the shared decoder.
 	async requestManifest(lishID: LISHid, onProgress?: (received: number, total: number) => void): Promise<import('@shared').IStoredLISH> {
 		const request: LISHGetLishRequest = { type: 'getLish', lishID };
-		const safeLishID = summarizeManifestID(lishID);
+		const safeLishID = formatUntrustedValue(lishID);
 		if (!sendLengthPrefixed(this.stream, codecEncode(request))) {
 			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `getLish ${safeLishID}: stream ${this.stream.status}`);
 		}
@@ -248,7 +244,7 @@ export class LISHClient {
 			// unusable either way: treat it as a peer fault so fallback moves to the next one.
 			// Summarize peer-controlled input without coercing a large binary value or
 			// allowing control characters to forge additional log lines.
-			if (response.manifest?.id !== lishID) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: manifest id mismatch (${summarizeManifestID(response.manifest?.id)})`);
+			if (response.manifest?.id !== lishID) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: manifest id mismatch (${formatUntrustedValue(response.manifest?.id)})`);
 			// A manifest from the network is untrusted input — validate chunk-size bounds and
 			// manifest consistency before it can reach any caller (DB persist / import / probe).
 			try {

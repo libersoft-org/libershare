@@ -566,7 +566,7 @@ describe('LISHClient.requestManifest – manifest validation', () => {
 		const error = await getManifestError({ ...makeManifest(1024), id: new Uint8Array(100_000) });
 
 		expect(error).toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
-		expect(error.message).toContain('manifest id mismatch (object)');
+		expect(error.message).toContain('manifest id mismatch (typed array)');
 		expect(error.message.length).toBeLessThan(200);
 	});
 

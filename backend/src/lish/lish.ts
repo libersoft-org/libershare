@@ -1,7 +1,7 @@
 import * as fsPromises from 'node:fs/promises';
 import { type Stats } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes } from '@shared';
+import { type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue } from '@shared';
 import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
@@ -422,7 +422,7 @@ export function validateImportedLISH(data: unknown): ILISH {
 	if (typeof obj['id'] !== 'string' || !obj['id']) throw new CodedError(ErrorCodes.LISH_MISSING_ID);
 	if (typeof obj['created'] !== 'string' || !obj['created']) throw new CodedError(ErrorCodes.LISH_MISSING_CREATED);
 	if (typeof obj['chunkSize'] !== 'number' || obj['chunkSize'] <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE);
-	if (typeof obj['checksumAlgo'] !== 'string' || !(SUPPORTED_ALGOS as readonly string[]).includes(obj['checksumAlgo'])) throw new CodedError(ErrorCodes.LISH_UNSUPPORTED_CHECKSUM, String(obj['checksumAlgo']));
+	if (typeof obj['checksumAlgo'] !== 'string' || !(SUPPORTED_ALGOS as readonly string[]).includes(obj['checksumAlgo'])) throw new CodedError(ErrorCodes.LISH_UNSUPPORTED_CHECKSUM, formatUntrustedValue(obj['checksumAlgo']));
 	return data as ILISH;
 }
 
