@@ -6,6 +6,8 @@ import { minMessageSizeFor } from '@shared';
 import { Settings } from '../../../src/settings.ts';
 import { JSONStorage, StorageWriteError } from '../../../src/storage.ts';
 import { initSettingsHandlers } from '../../../src/api/settings.ts';
+import { downloadLimiter, uploadLimiter } from '../../../src/protocol/speed-limiter.ts';
+import { buildFactoryResetHandler } from '../../../src/api/factory-reset-orchestrator.ts';
 
 const dirs: string[] = [];
 
@@ -97,4 +99,39 @@ describe('settings API reports a failed save instead of success', () => {
 			expect(await readFile(setup.outside, 'utf8')).toBe('{}');
 		});
 	}
+});
+
+describe('transfer limits follow the live settings even when the save fails', () => {
+	async function brokenSettings(): Promise<Settings | null> {
+		const dir = await tempDir();
+		const outside = join(await tempDir(), 'real.json');
+		await writeFile(outside, '{}');
+		try {
+			await symlink(outside, join(dir, 'settings.json'));
+		} catch {
+			return null;
+		}
+		return await Settings.create(dir);
+	}
+
+	it('set of a rate updates both real limiters before the error is returned', async () => {
+		const settings = await brokenSettings();
+		if (!settings) return;
+		const handlers = initSettingsHandlers(settings);
+		await expect(handlers.set({ path: 'network.maxDownloadSpeed', value: 321 })).rejects.toBeInstanceOf(StorageWriteError);
+		await expect(handlers.set({ path: 'network', value: { ...settings.get('network'), maxUploadSpeed: 654 } })).rejects.toBeInstanceOf(StorageWriteError);
+		expect(downloadLimiter.getLimit()).toBe(321 * 1024);
+		expect(uploadLimiter.getLimit()).toBe(654 * 1024);
+	});
+
+	it('import and reset re-apply the live rates on failure', async () => {
+		const settings = await brokenSettings();
+		if (!settings) return;
+		const handlers = initSettingsHandlers(settings);
+		await expect(handlers.applyImported({ data: { network: { maxDownloadSpeed: 111, maxUploadSpeed: 222 } } })).rejects.toBeInstanceOf(StorageWriteError);
+		expect([downloadLimiter.getLimit(), uploadLimiter.getLimit()]).toEqual([111 * 1024, 222 * 1024]);
+		await expect(handlers.reset()).rejects.toBeInstanceOf(StorageWriteError);
+		const defaults = settings.getDefaults().network;
+		expect([downloadLimiter.getLimit(), uploadLimiter.getLimit()]).toEqual([defaults.maxDownloadSpeed * 1024, defaults.maxUploadSpeed * 1024]);
+	});
 });

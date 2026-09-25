@@ -1,5 +1,5 @@
 import { type Settings, type SettingsData } from '../settings.ts';
-import { applyNetworkLimits } from '../protocol/network-limits.ts';
+import { persistAndApplyNetworkLimits } from '../protocol/network-limits.ts';
 import { Utils } from '../utils.ts';
 import { type CompressionAlgorithm, type SuccessResponse, type ISettingsImportResult, CodedError, ErrorCodes } from '@shared';
 const assert = Utils.assertParams;
@@ -54,19 +54,6 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		return settings.get(p.path);
 	}
 
-	/**
-	 * Push the stored network limits into the protocol layer.
-	 *
-	 * The repair of a message-size limit too small to carry one chunk is NOT done here: it is
-	 * a read followed by a write, and between the two another import could land, after which
-	 * this one wrote a floor derived from its own chunk size over the other one's message
-	 * size. It belongs to the same locked write as the values it corrects, so the settings
-	 * store does it — see {@link Settings.set} and {@link Settings.setMany}.
-	 */
-	function applyStoredNetworkLimits(): void {
-		applyNetworkLimits(settings.get().network);
-	}
-
 	async function set(p: { path: string; value: any }): Promise<boolean> {
 		assert(p, ['path', 'value']);
 		// Confine writes to known top-level settings groups. This rejects unknown
@@ -74,10 +61,10 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		// prototype-pollution paths such as "__proto__.x" or "constructor.x".
 		const rootKey = p.path.split('.')[0];
 		if (!rootKey || !ALLOWED_ROOT_KEYS.has(rootKey)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `Unknown settings key: ${p.path}`);
-		await settings.set(p.path, p.value);
-		// Re-push all runtime limits on any network write (idempotent). Path-by-path
-		// matching used to miss whole-object writes such as path === 'network'.
-		if (rootKey === 'network') applyStoredNetworkLimits();
+		// Re-push the runtime rates on any network write (idempotent), also when the save
+		// failed. Path-by-path matching used to miss whole-object writes such as 'network'.
+		if (rootKey === 'network') await persistAndApplyNetworkLimits(settings, () => settings.set(p.path, p.value));
+		else await settings.set(p.path, p.value);
 		return true;
 	}
 
@@ -88,10 +75,8 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		return settings.getDefaults();
 	}
 	async function reset(): Promise<SettingsData> {
-		const data = await settings.reset();
 		// Without this the module-level limits keep the pre-reset values.
-		applyNetworkLimits(data.network);
-		return data;
+		return await persistAndApplyNetworkLimits(settings, () => settings.reset());
 	}
 
 	async function exportToFile(p: { filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }): Promise<SuccessResponse> {
@@ -150,8 +135,7 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		}
 		// One write, not one per key: a reset arriving mid-loop used to split the stored
 		// settings between the import and the defaults, with both reporting success.
-		const { applied, skipped } = await settings.setMany(flattenSettings(filtered));
-		applyStoredNetworkLimits();
+		const { applied, skipped } = await persistAndApplyNetworkLimits(settings, () => settings.setMany(flattenSettings(filtered)));
 		console.log(`✓ Settings restored: ${applied} applied, ${skipped.length} skipped`);
 		return { applied, skipped };
 	}

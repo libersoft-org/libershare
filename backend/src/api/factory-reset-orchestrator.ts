@@ -3,7 +3,7 @@ import { type Networks } from '../lishnet/lishnets.ts';
 import { type Settings } from '../settings.ts';
 import { type FactoryResetResponse } from '@shared';
 import { initUploadState } from '../protocol/lish-protocol.ts';
-import { applyNetworkLimits } from '../protocol/network-limits.ts';
+import { persistAndApplyNetworkLimits } from '../protocol/network-limits.ts';
 import { runFactoryReset } from './factory-reset.ts';
 import { initDownloadState, type TransferRestoreSnapshot } from './transfer.ts';
 import { Mutex } from 'async-mutex';
@@ -178,9 +178,9 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 					identity: wipeIdentity ? () => networks.getNetwork().clearIdentityKey() : undefined,
 					settings: wipeSettings
 						? async () => {
-								const defaults = await settings.reset();
-								// Re-apply runtime knobs from the restored defaults (limits are module state).
-								applyNetworkLimits(defaults.network);
+								// Re-apply runtime knobs from the restored defaults (limits are module state),
+								// also when the save failed: the defaults are live in memory either way.
+								await persistAndApplyNetworkLimits(settings, () => settings.reset());
 							}
 						: undefined,
 					restart: restartNode ? restartNodeAndTransfers : undefined,
