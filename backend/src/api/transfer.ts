@@ -490,13 +490,16 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	// Error recovery: auto-retry when IO conditions clear
 	const recovery = new ErrorRecovery({
-		attemptRecover: async (lishID, downloadWasEnabled, uploadWasEnabled): Promise<boolean> => {
+		attemptRecover: async (lishID, downloadWasEnabled, uploadWasEnabled, isCurrentAttempt): Promise<boolean> => {
+			if (!isCurrentAttempt()) return false;
 			let ok = true;
 			if (downloadWasEnabled) {
-				const result = await enableDownload({ lishID }, undefined, false);
+				const result = await enableDownload({ lishID }, undefined, false, isCurrentAttempt);
 				if (!result.success) ok = false;
 			}
-			if (uploadWasEnabled && ok) ok = enableUploadHandler({ lishID }).success;
+			// A switch-off that landed while the download was restarting is the user's last word.
+			if (!isCurrentAttempt()) return false;
+			if (uploadWasEnabled && ok) ok = resumeUpload(lishID, isCurrentAttempt);
 			return ok;
 		},
 		broadcast: (event, data): void => {
@@ -709,20 +712,24 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		return downloader;
 	}
 
-	async function enableDownload(p: { lishID: string }, client?: any, manual = true): Promise<{ success: boolean }> {
+	/**
+	 * `recoveryAttempt` is set only by the error recovery restarting this download: its success
+	 * must not stop recovery, which would supersede the very attempt that is running.
+	 */
+	async function enableDownload(p: { lishID: string }, client?: any, manual = true, recoveryAttempt?: () => boolean): Promise<{ success: boolean }> {
 		const leave = transferAdmission.tryEnter();
 		if (!leave) return { success: false };
 		// Recorded BEFORE the gate below can park this call behind an in-flight attempt,
 		// which is exactly the window where the request would otherwise leave no trace.
 		if (manual) lastManualIntent.set(p.lishID, true);
 		try {
-			return await enableDownloadAdmitted(p, client);
+			return await enableDownloadAdmitted(p, client, recoveryAttempt);
 		} finally {
 			leave();
 		}
 	}
 
-	async function enableDownloadAdmitted(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
+	async function enableDownloadAdmitted(p: { lishID: string }, client?: any, recoveryAttempt?: () => boolean): Promise<{ success: boolean }> {
 		assert(p, ['lishID']);
 		const inFlight = pendingDownloads.get(p.lishID);
 		if (inFlight) {
@@ -764,7 +771,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		// LISH — a switch-off, a delete — bumps the counter, and the scheduled body then knows
 		// it belongs to a request nobody is waiting for any more.
 		const scheduledAt = requestEpoch.get(p.lishID) ?? 0;
-		const attempt = Promise.resolve().then(() => ((requestEpoch.get(p.lishID) ?? 0) !== scheduledAt ? { success: false } : startEnableDownload(p, client, scheduledAt)));
+		const attempt = Promise.resolve().then(() => ((requestEpoch.get(p.lishID) ?? 0) !== scheduledAt ? { success: false } : startEnableDownload(p, client, scheduledAt, recoveryAttempt)));
 		pendingDownloads.set(p.lishID, attempt);
 		try {
 			return settleManualIntent(p.lishID, await attempt);
@@ -841,7 +848,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * The body of {@link enableDownload}: everything from the busy check to starting
 	 * the downloader. Split out so the caller can own the in-flight bookkeeping.
 	 */
-	async function startEnableDownload(p: { lishID: string }, client?: any, scheduledAt = requestEpoch.get(p.lishID) ?? 0): Promise<{ success: boolean }> {
+	async function startEnableDownload(p: { lishID: string }, client?: any, scheduledAt = requestEpoch.get(p.lishID) ?? 0, recoveryAttempt?: () => boolean): Promise<{ success: boolean }> {
 		// The body is deferred by a microtask (see the registration in enableDownloadAdmitted),
 		// and a switch-off can land in that window — from the user, or as the manual half of a
 		// resume that was scheduled before it. Re-read the last word here rather than trusting
@@ -898,7 +905,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				}
 				const send = broadcast ?? (() => {});
 				networkSuspended.delete(p.lishID);
-				recovery.stop(p.lishID);
+				if (!recoveryAttempt) recovery.stop(p.lishID);
 				send('transfer.download:enabled', { lishID: p.lishID });
 				return { success: true };
 			}
@@ -1008,7 +1015,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				return { success: false };
 			}
 			networkSuspended.delete(p.lishID);
-			recovery.stop(p.lishID);
+			if (!recoveryAttempt) recovery.stop(p.lishID);
 			const send = broadcast ?? (() => {});
 			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };
@@ -1096,13 +1103,23 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	function enableUploadHandler(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
-		if (transferAdmission.isClosed) return { success: false };
-		if (!dataServer.get(p.lishID)) return { success: false };
-		if (isBusy(p.lishID)) return { success: false };
-		recovery.stop(p.lishID);
-		dataServer.clearError(p.lishID);
-		enableUpload(p.lishID);
-		return { success: true };
+		return { success: resumeUpload(p.lishID) };
+	}
+
+	/**
+	 * Turn sharing on. A manual call stops recovery; the recovery's own call instead checks that
+	 * its attempt is still current right before the write, with no await in between.
+	 */
+	function resumeUpload(lishID: string, recoveryAttempt?: () => boolean): boolean {
+		if (transferAdmission.isClosed) return false;
+		if (!dataServer.get(lishID)) return false;
+		if (isBusy(lishID)) return false;
+		if (recoveryAttempt) {
+			if (!recoveryAttempt()) return false;
+		} else recovery.stop(lishID);
+		dataServer.clearError(lishID);
+		enableUpload(lishID);
+		return true;
 	}
 
 	// Intercept upload error broadcasts to start recovery

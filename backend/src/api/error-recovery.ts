@@ -17,7 +17,12 @@ interface RecoveryLISHRef {
 }
 
 interface RecoveryDeps {
-	attemptRecover: (lishID: string, downloadWasEnabled: boolean, uploadWasEnabled: boolean) => Promise<boolean>;
+	/**
+	 * Re-enable what was on before the error. `isCurrentAttempt` turns false as soon as the user
+	 * or a reset supersedes this attempt; the callback must check it right before each side
+	 * effect, since the attempt spends most of its time awaiting.
+	 */
+	attemptRecover: (lishID: string, downloadWasEnabled: boolean, uploadWasEnabled: boolean, isCurrentAttempt: () => boolean) => Promise<boolean>;
 	broadcast: (event: string, data: any) => void;
 	getLISH: (lishID: string) => RecoveryLISHRef | null;
 	checkAccess: (path: string) => Promise<void>;
@@ -187,7 +192,7 @@ export class ErrorRecovery {
 		// Stop recovery BEFORE calling enableDownload to prevent re-entrancy
 		this.removeEntry(lishID);
 
-		const success = await this.deps.attemptRecover(lishID, downloadWasEnabled, uploadWasEnabled);
+		const success = await this.deps.attemptRecover(lishID, downloadWasEnabled, uploadWasEnabled, () => this.isCurrent(lishID, generation, lishGeneration));
 		if (!this.isCurrent(lishID, generation, lishGeneration)) return;
 		if (success) {
 			this.cumulativeRetries.delete(lishID);
