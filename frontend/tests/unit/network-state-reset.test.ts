@@ -22,6 +22,7 @@ const live: NetworkStateInfo = {
 	primaryID: 'eth0',
 	detail: 'full',
 	known: true,
+	ipv4ProfilesUnavailable: false,
 	capabilities: { ipv4: true, ipv4Elevation: true, wifi: true, staticGatewayRequired: false },
 };
 

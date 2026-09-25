@@ -7,6 +7,7 @@ const freshState = {
 	primaryID: null,
 	detail: 'full' as const,
 	known: true,
+	ipv4ProfilesUnavailable: false,
 	capabilities: { ipv4: true, wifi: true, staticGatewayRequired: false },
 };
 

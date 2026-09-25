@@ -380,8 +380,15 @@ function readResolvers(): string[] {
 	}
 }
 
+/** A Linux read: the interfaces, and whether NetworkManager's profiles could not be read. */
+export interface LinuxNetworkRead {
+	interfaces: NetInterfaceInfo[];
+	/** NetworkManager manages at least one device, but reading the profiles failed or was incomplete. */
+	ipv4ProfilesUnavailable: boolean;
+}
+
 /** Read the live Linux network state. Throws when `ip` is absent or fails — the caller degrades to the address-only reader. */
-export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
+export async function readLinuxNetworkState(): Promise<LinuxNetworkRead> {
 	const [addr, link, route, route6] = await Promise.all([runFirst(IP_CANDIDATES, ['-j', 'addr']), runFirst(IP_CANDIDATES, ['-j', '-d', 'link']), runFirst(IP_CANDIDATES, ['-j', 'route', 'show', 'default']), runFirst(IP_CANDIDATES, ['-j', '-6', 'route', 'show', 'default']).catch(() => '[]')]);
 	const names = (JSON.parse(addr) as IpAddrEntry[]).map(e => e.ifname);
 	const wireless = new Set(names.filter(isWireless));
@@ -395,7 +402,8 @@ export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
 		}
 	}
 	const [nmDevices, profiles] = await Promise.all([readNetworkManagerDevices(), readNetworkManagerProfiles()]);
-	return parseLinuxNetworkState({ addr, link, route, route6, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: nmDevices?.dns, activeConnections: profiles?.connections, ipv4Profiles: profiles?.ipv4Profiles, managedDevices: nmDevices?.managedDevices });
+	const interfaces = parseLinuxNetworkState({ addr, link, route, route6, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: nmDevices?.dns, activeConnections: profiles?.connections, ipv4Profiles: profiles?.ipv4Profiles, managedDevices: nmDevices?.managedDevices });
+	return { interfaces, ipv4ProfilesUnavailable: profiles === undefined && (nmDevices?.managedDevices.size ?? 0) > 0 };
 }
 
 /**
@@ -637,7 +645,11 @@ async function readNetworkManagerProfiles(): Promise<{ connections: Map<string, 
 		const ipv4Profiles = new Map<string, NmcliIPv4Profile>();
 		for (const [device, uuid] of connections) ipv4Profiles.set(device, parseNmcliIPv4Profile(blocks.get(uuid) ?? '', device, activeCounts.get(uuid) ?? 0));
 		return { connections, ipv4Profiles };
-	} catch {
+	} catch (err) {
+		// Said once per read, and only the cause: a timeout, an exit code or which check an
+		// incomplete batch failed — never the profiles themselves.
+		const failure = err as NodeJS.ErrnoException & { killed?: boolean; code?: string | number };
+		console.warn(`[system-network] NetworkManager profiles unavailable, IPv4 editing disabled: ${failure.killed ? 'timed out' : failure.name === 'IncompleteProfileReadError' ? failure.message : `nmcli failed (${failure.code ?? failure.name})`}`);
 		return undefined;
 	}
 }

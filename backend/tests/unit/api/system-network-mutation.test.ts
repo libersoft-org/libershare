@@ -6,6 +6,7 @@ import type { NetworkStateInfo } from '@shared';
 function state(): NetworkStateInfo {
 	return {
 		known: true,
+		ipv4ProfilesUnavailable: false,
 		detail: 'full',
 		primaryID: null,
 		capabilities: { ipv4: true, wifi: true, staticGatewayRequired: false },

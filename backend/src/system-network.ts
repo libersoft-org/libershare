@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
 import { CodedError, ErrorCodes, ipv4BaselineOf, isSelectableInterface, isValidSSID, isValidWifiKey, normalizeDnsServers, sameIPv4Baseline, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
 import { assertWindowsWifiMutationIdle, connectWindowsWifi, disconnectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND, windowsApplyIPv4Command } from './system-network-windows.ts';
-import { applyLinuxIPv4, connectLinuxWifi, disconnectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
+import { applyLinuxIPv4, connectLinuxWifi, disconnectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi, type LinuxNetworkRead } from './system-network-linux.ts';
 import { applyMacIPv4, connectMacWifi, disconnectMacWifi, isMacWifiConfigurable, isMacWritable, readMacNetworkState, scanMacWifi } from './system-network-macos.ts';
 import { assertMacWifiMutationIdle } from './system-network-corewlan.ts';
 import { networkHelperAvailable, runElevatedNetworkHelper } from './network-helper-client.ts';
@@ -67,6 +67,7 @@ export const MAX_WIFI_PASSWORD_BYTES = 1024;
 export interface NetworkSnapshot {
 	interfaces: NetInterfaceInfo[];
 	detail: NetworkStateInfo['detail'];
+	ipv4ProfilesUnavailable: boolean;
 }
 
 /**
@@ -124,10 +125,11 @@ export class NetworkStateCache {
 const stateCache = new NetworkStateCache(async () => {
 	const detail: NetworkStateInfo['detail'] = process.platform === 'win32' || process.platform === 'linux' || process.platform === 'darwin' ? 'full' : 'addressesOnly';
 	try {
-		return { interfaces: assertReadProducedSomething(await readPlatform()), detail };
+		const read = await readPlatform();
+		return { interfaces: assertReadProducedSomething(read.interfaces), detail, ipv4ProfilesUnavailable: read.ipv4ProfilesUnavailable };
 	} catch (err) {
 		console.warn('[system-network] Platform read failed, falling back to addresses only:', (err as Error).message);
-		return { interfaces: readGenericInterfaces(), detail: 'addressesOnly' };
+		return { interfaces: readGenericInterfaces(), detail: 'addressesOnly', ipv4ProfilesUnavailable: false };
 	}
 });
 
@@ -206,14 +208,13 @@ export function readNetworkState(primaryInterface: string = ''): Promise<Network
 /** {@link readNetworkState} for a caller that already holds the network mutation lock. */
 export async function readNetworkStateUnlocked(primaryInterface: string = ''): Promise<NetworkStateInfo> {
 	const snapshot = await stateCache.read();
-	return { interfaces: snapshot.interfaces, primaryID: resolvePrimaryID(snapshot.interfaces, primaryInterface), detail: snapshot.detail, known: true, capabilities: await readCapabilities() };
+	return { interfaces: snapshot.interfaces, primaryID: resolvePrimaryID(snapshot.interfaces, primaryInterface), detail: snapshot.detail, known: true, capabilities: await readCapabilities(), ipv4ProfilesUnavailable: snapshot.ipv4ProfilesUnavailable };
 }
 
-function readPlatform(): Promise<NetInterfaceInfo[]> {
-	if (process.platform === 'win32') return readWindows();
+async function readPlatform(): Promise<LinuxNetworkRead> {
 	if (process.platform === 'linux') return readLinuxNetworkState();
-	if (process.platform === 'darwin') return readMacNetworkState();
-	return Promise.resolve(readGenericInterfaces());
+	const interfaces = process.platform === 'win32' ? await readWindows() : process.platform === 'darwin' ? await readMacNetworkState() : readGenericInterfaces();
+	return { interfaces, ipv4ProfilesUnavailable: false };
 }
 
 /**

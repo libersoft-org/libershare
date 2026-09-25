@@ -716,7 +716,7 @@ describe('assertReadProducedSomething', () => {
 
 describe('NetworkStateCache invalidation', () => {
 	it('retries after a reader failure instead of caching the rejection', async () => {
-		const snapshot = { interfaces: [], detail: 'addressesOnly' } as NetworkSnapshot;
+		const snapshot = { interfaces: [], detail: 'addressesOnly', ipv4ProfilesUnavailable: false } as NetworkSnapshot;
 		let reads = 0;
 		const cache = new NetworkStateCache(async () => {
 			if (++reads === 1) throw new Error('temporary read failure');
@@ -735,8 +735,8 @@ describe('NetworkStateCache invalidation', () => {
 		const freshRead = new Promise<NetworkSnapshot>(resolve => (resolveFresh = resolve));
 		let reads = 0;
 		const cache = new NetworkStateCache(() => (++reads === 1 ? oldRead : freshRead), 60_000);
-		const oldSnapshot = { interfaces: [{ id: 'old', name: 'old', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'dhcp', ipv4Configurable: true, wifiConfigurable: false, gateway: null, dns: [] }], detail: 'full' } as NetworkSnapshot;
-		const freshSnapshot = { interfaces: [{ id: 'fresh', name: 'fresh', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'static', ipv4Configurable: true, wifiConfigurable: false, gateway: null, dns: [] }], detail: 'full' } as NetworkSnapshot;
+		const oldSnapshot = { interfaces: [{ id: 'old', name: 'old', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'dhcp', ipv4Configurable: true, wifiConfigurable: false, gateway: null, dns: [] }], detail: 'full', ipv4ProfilesUnavailable: false } as NetworkSnapshot;
+		const freshSnapshot = { interfaces: [{ id: 'fresh', name: 'fresh', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'static', ipv4Configurable: true, wifiConfigurable: false, gateway: null, dns: [] }], detail: 'full', ipv4ProfilesUnavailable: false } as NetworkSnapshot;
 
 		const staleCaller = cache.read();
 		cache.reset();

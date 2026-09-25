@@ -103,7 +103,7 @@ it('serializes the RPC disconnect through its readback and publishes the resulti
 		let active = true; const order = [];
 		mock.module('./src/system-network-linux.ts', () => ({ ...platform,
 			readLinuxCapabilities: async () => ({ipv4:true,wifi:true,staticGatewayRequired:false}),
-			readLinuxNetworkState: async () => { order.push(active ? 'read-before' : 'read-after'); return [{...iface,link:active?'up':'down',wifi:{...iface.wifi,ssid:active?'Example':null}}]; },
+			readLinuxNetworkState: async () => { order.push(active ? 'read-before' : 'read-after'); return { interfaces: [{...iface,link:active?'up':'down',wifi:{...iface.wifi,ssid:active?'Example':null}}], ipv4ProfilesUnavailable: false }; },
 			disconnectLinuxWifi: async () => { order.push('disconnect'); active = false; },
 		}));
 		mock.module('./src/system-volume.ts', () => ({...volume,getSystemVolumeStatus:async()=>null}));

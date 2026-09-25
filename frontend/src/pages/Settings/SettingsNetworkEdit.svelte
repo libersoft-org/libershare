@@ -461,6 +461,9 @@
 			</section>
 		{/if}
 
+		{#if !canEditIPv4 && $networkState.ipv4ProfilesUnavailable}
+			<p class="note warning" role="status">{$t('settings.network.ipv4ProfilesUnavailable')}</p>
+		{/if}
 		{#if canEditIPv4}
 			<section class="section" aria-label="IPv4">
 				<div class="toolbar"><h3>IPv4</h3></div>
