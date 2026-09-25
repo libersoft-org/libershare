@@ -314,6 +314,49 @@ export class JSONStorage<T extends Record<string, any>> extends BaseStorage<T> {
 		return { applied, skipped };
 	}
 
+	/**
+	 * The document `entries` would produce, without saving or publishing it — the same
+	 * validation and `finalize` as {@link setMany}. Paired with {@link commit}, which is how a
+	 * caller decides what else has to happen before the change goes live.
+	 */
+	prepare(entries: ReadonlyArray<{ path: string; value: any }>, finalize?: (draft: T) => void, onInvalid: 'skip' | 'throw' = 'skip'): { draft: T; applied: string[]; skipped: string[] } {
+		const draft = structuredClone(this.data);
+		const applied: string[] = [];
+		const skipped: string[] = [];
+		for (const entry of entries) {
+			try {
+				JSONStorage.assign(draft, entry.path, entry.value);
+				applied.push(entry.path);
+			} catch (err) {
+				if (onInvalid === 'throw') throw err;
+				console.warn(`Skipped settings key '${entry.path}':`, (err as Error).message);
+				skipped.push(entry.path);
+			}
+		}
+		finalize?.(draft);
+		return { draft, applied, skipped };
+	}
+
+	/** A fresh copy of the defaults, for a reset that has not been committed yet. */
+	prepareReset(): T {
+		return structuredClone(this.defaults);
+	}
+
+	/**
+	 * Save a prepared document and publish it — once the file holds it. A save that failed before
+	 * replacing the file publishes nothing; one that replaced it but could not confirm durability
+	 * publishes, since the file already carries the new settings.
+	 */
+	async commit(draft: T): Promise<void> {
+		try {
+			await this.saveFile(draft);
+		} catch (error) {
+			if (error instanceof StorageWriteError && error.published) this.data = draft;
+			throw error;
+		}
+		this.data = draft;
+	}
+
 	list(): T {
 		return this.data;
 	}
