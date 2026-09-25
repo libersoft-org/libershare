@@ -175,12 +175,13 @@ cd backend
 start.bat
 ```
 
-By default backend starts on a random network port (ws://localhost:XXXXX) and accepts connections from localhost only. If you'd like to start it publicly, you can use parameter **--host** (0.0.0.0 means to make it public on all networks). You can also change port by **--port** and if you need secure connection (wss://), add **--secure** parameter following with **--privkey** and **--pubkey** paths for private and public key of your domain certificate. Use **--token** to protect the WebSocket API against misuse. When starting the frontend manually, pass the same token there.
+By default backend starts on a random network port (ws://localhost:XXXXX) and accepts connections from localhost only. If you'd like to start it publicly, you can use parameter **--host** (0.0.0.0 means to make it public on all networks). You can also change port by **--port** and if you need secure connection (wss://), add **--secure** parameter following with **--privkey** and **--pubkey** paths for private and public key of your domain certificate. The API token is **required**: the backend refuses to start without **--token** or `LISH_TOKEN` (exit code 78) and never logs it. Use a random value, for example 32 random bytes in hex. The token travels in the URL, so any access from another machine must go over `wss://`/`https://` (**--secure**, a TLS reverse proxy or another encrypted channel).
 
 **For example:**
 
 ```sh
-./start.sh --datadir ./data --host 0.0.0.0 --port 1158 --token devtoken --secure --privkey /etc/letsencrypt/live/example.com/privkey.pem --pubkey /etc/letsencrypt/live/example.com/fullchain.pem
+export LISH_TOKEN=$(openssl rand -hex 32)
+./start.sh --datadir ./data --host 0.0.0.0 --port 1158 --secure --privkey /etc/letsencrypt/live/example.com/privkey.pem --pubkey /etc/letsencrypt/live/example.com/fullchain.pem
 ```
 
 ##### Token environment variables
@@ -189,27 +190,43 @@ You can also provide the API token through environment variables instead of comm
 
 | Variable          | Used by              | Description                                                       |
 | ----------------- | -------------------- | ----------------------------------------------------------------- |
-| `LISH_TOKEN`      | Backend              | Protects the backend WebSocket API with the given token.          |
-| `VITE_LISH_TOKEN` | Frontend development | Passes the backend token to the Vite frontend development server. |
+| `LISH_TOKEN`      | Backend, CLI         | The API token. Required by the backend; the CLI adds it to its connection URL. |
+| `VITE_LISH_TOKEN` | Frontend development | Optional, local development only: pre-fills the token in a dev build. Never set it for a build that others can load. |
+
+##### Running from source with the login form
+
+The frontend asks for the token in its login form, so it does not need to be put in any variable or URL.
 
 **On Linux / macOS:**
 
 ```sh
-cd backend
-LISH_TOKEN=devtoken ./start.sh --port 1158
+export LISH_TOKEN=$(openssl rand -hex 32)
+echo "$LISH_TOKEN"            # copy it for the login form
+bun run backend/src/app.ts --port 1158   # from the repository root
 
-cd ../frontend
-VITE_LISH_TOKEN=devtoken ./start-dev.sh wss://localhost:1158/
+# second terminal, without VITE_LISH_TOKEN / VITE_BACKEND_URL in the environment or a local .env
+cd frontend
+bun --bun run dev --host 127.0.0.1 --port 6003
 ```
 
 **On Windows (PowerShell):**
 
 ```powershell
-cd backend
-$env:LISH_TOKEN='devtoken'; .\start.bat --port 1158
+$env:LISH_TOKEN = bun -e 'console.log(require("node:crypto").randomBytes(32).toString("hex"))'
+Set-Clipboard -Value $env:LISH_TOKEN
+bun run backend/src/app.ts --port 1158   # from the repository root
 
-cd ..\frontend
-$env:VITE_LISH_TOKEN='devtoken'; .\start-dev.bat wss://localhost:1158/
+# second terminal, without VITE_LISH_TOKEN / VITE_BACKEND_URL
+cd frontend
+bun --bun run dev --host 127.0.0.1 --port 6003
+```
+
+Open `http://localhost:6003`, paste the token into the login form and clear the clipboard. The development server forwards `/ws` and `/status` to the backend on port 1158. After a backend restart with a new token, enter the new value in the same form; no page reload is needed.
+
+The CLI reads the token from `LISH_TOKEN` and never prints it:
+
+```sh
+LISH_TOKEN=... bun run cli/cli.ts --url ws://localhost:1158
 ```
 
 ##### Debug logging (environment variables)
@@ -280,14 +297,14 @@ With self-signed certificates in the frontend directory:
 
 ```sh
 cd ../frontend
-./start-dev.sh wss://localhost:1158/ --token devtoken
+./start-dev.sh wss://localhost:1158/
 ```
 
 With custom certificate paths:
 
 ```sh
 cd ../frontend
-./start-dev.sh wss://localhost:1158/ --token devtoken --privkey /etc/letsencrypt/live/example.com/privkey.pem --pubkey /etc/letsencrypt/live/example.com/fullchain.pem
+./start-dev.sh wss://localhost:1158/ --privkey /etc/letsencrypt/live/example.com/privkey.pem --pubkey /etc/letsencrypt/live/example.com/fullchain.pem
 ```
 
 **On Windows:**
@@ -296,14 +313,14 @@ With self-signed certificates in the frontend directory:
 
 ```bat
 cd ..\frontend
-start-dev.bat wss://localhost:1158/ --token devtoken
+start-dev.bat wss://localhost:1158/
 ```
 
 With custom certificate paths:
 
 ```bat
 cd ..\frontend
-start-dev.bat wss://localhost:1158/ --token devtoken --privkey C:\certs\privkey.pem --pubkey C:\certs\fullchain.pem
+start-dev.bat wss://localhost:1158/ --privkey C:\certs\privkey.pem --pubkey C:\certs\fullchain.pem
 ```
 
 ##### Frontend development environment variables
