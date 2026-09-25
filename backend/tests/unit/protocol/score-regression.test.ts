@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { createTopicScoreParams, createPeerScoreParams } from '@chainsafe/libp2p-gossipsub/score';
+import { createTopicScoreParams, createPeerScoreParams } from '@libp2p/gossipsub/score';
 
 const NETWORK_TS = readFileSync(join(__dirname, '../../../src/protocol/network.ts'), 'utf-8');
 const CONFIG_TS = readFileSync(join(__dirname, '../../../src/protocol/network-config.ts'), 'utf-8');
@@ -29,7 +29,7 @@ describe('Per-topic scoreParams — NaN regression guard', () => {
 		// Source-grep guard: prevents anyone reverting commit c322cff6 back to
 		// a manual object literal that skips fields and resurrects the bug.
 		expect(NETWORK_TS).toContain('createTopicScoreParams(');
-		expect(NETWORK_TS).toContain("from '@chainsafe/libp2p-gossipsub/score'");
+		expect(NETWORK_TS).toContain("from '@libp2p/gossipsub/score'");
 	});
 
 	it('subscribeTopic disables P3 (mesh deliveries) and P3b (mesh failure penalty) via weight=0', () => {

@@ -9,7 +9,6 @@
 		"typescript": "^6.0.3"
 	},
 	"dependencies": {
-		"@chainsafe/libp2p-gossipsub": "github:ChainSafe/js-libp2p-gossipsub#feat/upgrade-to-libp2p-v3-api",
 		"@chainsafe/libp2p-noise": "^17.0.0",
 		"@chainsafe/libp2p-yamux": "^8.0.1",
 		"@libp2p/autonat-v2": "^2.1.4",
@@ -17,6 +16,7 @@
 		"@libp2p/circuit-relay-v2": "^4.2.13",
 		"@libp2p/crypto": "^5.1.23",
 		"@libp2p/dcutr": "^3.0.28",
+		"@libp2p/gossipsub": "^17.1.2",
 		"@libp2p/identify": "^4.1.14",
 		"@libp2p/interface": "^3.3.0",
 		"@libp2p/keychain": "^6.1.7",
@@ -44,8 +44,7 @@
 		"typecheck": "tsc --noEmit",
 		"test": "bun test tests/unit/",
 		"test:e2e": "bun test tests/e2e/ --timeout 300000",
-		"test:all": "bun test tests/unit/ && bun test tests/e2e/ --timeout 300000",
-		"postinstall": "cd node_modules/@chainsafe/libp2p-gossipsub && bun install && bun run build"
+		"test:all": "bun test tests/unit/ && bun test tests/e2e/ --timeout 300000"
 	},
 	"patchedDependencies": {
 		"@achingbrain/ssdp@4.2.4": "patches/@achingbrain%2Fssdp@4.2.4.patch"
