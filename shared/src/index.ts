@@ -1,6 +1,9 @@
 // Product info
 export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE } from './product.ts';
 
+// Network mutations
+export { type NetworkMutationOutcome, type LegacyNetworkMutation, type NetworkMutationResponse, combineNetworkMutations, toNetworkMutationResponse } from './network-mutation.ts';
+
 // Utils
 export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End, deriveConnectionStatus, isSelectableInterface, ipv4BaselineOf, sameIPv4Baseline, isIPv4, isIPv6, isValidSSID, isUnambiguousWifiTarget, isValidWifiKey, isWifiHexKey, MAX_DNS_LIST_BYTES, MAX_DNS_SERVERS, canonicalDnsServer, normalizeDnsServers, validateIPv4Config } from './utils.ts';
 
@@ -347,6 +350,8 @@ export interface SuccessResponse {
 
 /** Outcome of changing one lishnet's enabled state in storage and at runtime. */
 export interface SetLISHNetworkEnabledResponse extends SuccessResponse {
+	/** Whether the request was saved; absent from servers that predate it. */
+	stored?: boolean;
 	applied: boolean;
 	transitioned: boolean;
 	joined: boolean;

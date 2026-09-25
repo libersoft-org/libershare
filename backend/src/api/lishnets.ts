@@ -1,7 +1,7 @@
 import { type Networks, type SetEnabledResult } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type SetLISHNetworkEnabledResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ManifestProgressEvent, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, type BootstrapStatus, CodedError, ErrorCodes, productName } from '@shared';
+import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type SetLISHNetworkEnabledResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ManifestProgressEvent, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, type BootstrapStatus, type NetworkMutationOutcome, CodedError, ErrorCodes, productName } from '@shared';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { LISHClient, LISH_PROTOCOL } from '../protocol/lish-protocol.ts';
 import { Utils } from '../utils.ts';
@@ -17,12 +17,12 @@ interface LISHnetsHandlers {
 	list: () => LISHNetworkConfig[];
 	get: (p: { networkID: string }) => LISHNetworkConfig | undefined;
 	exists: (p: { networkID: string }) => boolean;
-	add: (p: { network: LISHNetworkConfig }) => Promise<boolean>;
-	update: (p: { network: LISHNetworkConfig }) => Promise<boolean>;
-	delete: (p: { networkID: string }) => Promise<boolean>;
-	addIfNotExists: (p: { network: LISHNetworkDefinition }) => Promise<boolean>;
-	import: (p: { networks: LISHNetworkDefinition[] }) => Promise<number>;
-	replace: (p: { networks: LISHNetworkConfig[] }) => Promise<boolean>;
+	add: (p: { network: LISHNetworkConfig; detailed?: boolean }) => Promise<boolean | NetworkMutationOutcome<boolean>>;
+	update: (p: { network: LISHNetworkConfig; detailed?: boolean }) => Promise<boolean | NetworkMutationOutcome<boolean>>;
+	delete: (p: { networkID: string; detailed?: boolean }) => Promise<boolean | NetworkMutationOutcome<boolean>>;
+	addIfNotExists: (p: { network: LISHNetworkDefinition; detailed?: boolean }) => Promise<boolean | NetworkMutationOutcome<boolean>>;
+	import: (p: { networks: LISHNetworkDefinition[]; detailed?: boolean }) => Promise<number | NetworkMutationOutcome<number>>;
+	replace: (p: { networks: LISHNetworkConfig[]; detailed?: boolean }) => Promise<boolean | NetworkMutationOutcome<boolean>>;
 	exportToFile: (p: { networkID: string; filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 	exportAllToFile: (p: { filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 	importFromFile: (p: { path: string; enabled?: boolean }) => Promise<LISHNetworkConfig[]>;
@@ -42,14 +42,23 @@ interface LISHnetsHandlers {
 	infoAll: () => NetworkInfo[];
 	getBootstrapStatus: (p: { networkID: string }) => BootstrapStatus | null;
 	getAllBootstrapStatuses: () => BootstrapStatus[];
-	updateBootstrapPeers: (p: { networkID: string; bootstrapPeers: string[] }) => Promise<LISHNetworkConfig>;
+	updateBootstrapPeers: (p: { networkID: string; bootstrapPeers: string[]; detailed?: boolean }) => Promise<LISHNetworkConfig | NetworkMutationOutcome<LISHNetworkConfig>>;
 }
 /** The import pipeline WITHOUT its admission gate — the caller here already holds it. */
 type ImportManifestFn = (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
 type RunLISHMutationFn = <T>(operation: () => Promise<T>) => Promise<T>;
 
+/**
+ * The plain value for a client that did not ask, the whole outcome for one that sent
+ * `detailed: true`. Old clients keep the answer they were built for; a boolean from them must
+ * never be read as "applied".
+ */
+function mutationResponse<T>(p: { detailed?: boolean }, outcome: NetworkMutationOutcome<T>): T | NetworkMutationOutcome<T> {
+	return p.detailed === true ? outcome : outcome.value;
+}
+
 export function toSetEnabledResponse(result: SetEnabledResult): SetLISHNetworkEnabledResponse {
-	return { success: result.found && result.applied, applied: result.applied, transitioned: result.transitioned, joined: result.joined };
+	return { success: result.found && result.applied, stored: result.stored, applied: result.applied, transitioned: result.transitioned, joined: result.joined };
 }
 
 /**
@@ -106,30 +115,32 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['networkID']);
 		return networks.exists(p.networkID);
 	}
-	async function add(p: { network: LISHNetworkConfig }): Promise<boolean> {
+	async function add(p: { network: LISHNetworkConfig; detailed?: boolean }): Promise<boolean | NetworkMutationOutcome<boolean>> {
 		assert(p, ['network']);
-		return networks.add(p.network);
+		return mutationResponse(p, await networks.addDetailed(p.network));
 	}
-	async function update(p: { network: LISHNetworkConfig }): Promise<boolean> {
+	async function update(p: { network: LISHNetworkConfig; detailed?: boolean }): Promise<boolean | NetworkMutationOutcome<boolean>> {
 		assert(p, ['network']);
-		return networks.update(p.network);
+		return mutationResponse(p, await networks.updateDetailed(p.network));
 	}
-	async function del(p: { networkID: string }): Promise<boolean> {
+	async function del(p: { networkID: string; detailed?: boolean }): Promise<boolean | NetworkMutationOutcome<boolean>> {
 		assert(p, ['networkID']);
-		return networks.delete(p.networkID);
+		return mutationResponse(p, await networks.deleteDetailed(p.networkID));
 	}
-	async function addIfNotExists(p: { network: LISHNetworkDefinition }): Promise<boolean> {
+	// Inserted disabled, so there is nothing for the node to apply: stored means applied.
+	async function addIfNotExists(p: { network: LISHNetworkDefinition; detailed?: boolean }): Promise<boolean | NetworkMutationOutcome<boolean>> {
 		assert(p, ['network']);
-		return networks.addIfNotExists(p.network);
+		const added = await networks.addIfNotExists(p.network);
+		return mutationResponse(p, { stored: added, applied: added, transitioned: false, value: added });
 	}
-	async function importNetworks(p: { networks: LISHNetworkDefinition[] }): Promise<number> {
+	async function importNetworks(p: { networks: LISHNetworkDefinition[]; detailed?: boolean }): Promise<number | NetworkMutationOutcome<number>> {
 		assert(p, ['networks']);
-		return networks.importNetworks(p.networks);
+		const count = await networks.importNetworks(p.networks);
+		return mutationResponse(p, { stored: true, applied: true, transitioned: false, value: count });
 	}
-	async function replace(p: { networks: LISHNetworkConfig[] }): Promise<boolean> {
+	async function replace(p: { networks: LISHNetworkConfig[]; detailed?: boolean }): Promise<boolean | NetworkMutationOutcome<boolean>> {
 		assert(p, ['networks']);
-		await networks.replace(p.networks);
-		return true;
+		return mutationResponse(p, await networks.replaceDetailed(p.networks));
 	}
 	async function exportToFile(p: { networkID: string; filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }): Promise<SuccessResponse> {
 		assert(p, ['networkID', 'filePath']);
@@ -358,13 +369,14 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 	function getAllBootstrapStatuses(): BootstrapStatus[] {
 		return networks.getAllBootstrapStatuses();
 	}
-	async function updateBootstrapPeers(p: { networkID: string; bootstrapPeers: string[] }): Promise<LISHNetworkConfig> {
+	async function updateBootstrapPeers(p: { networkID: string; bootstrapPeers: string[]; detailed?: boolean }): Promise<LISHNetworkConfig | NetworkMutationOutcome<LISHNetworkConfig>> {
 		assert(p, ['networkID', 'bootstrapPeers']);
 		if (!Array.isArray(p.bootstrapPeers)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'bootstrapPeers must be an array');
-		const updated = await networks.updateBootstrapPeers(p.networkID, p.bootstrapPeers);
+		const outcome = await networks.updateBootstrapPeersDetailed(p.networkID, p.bootstrapPeers);
+		const updated = outcome.value;
 		if (!updated) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, p.networkID);
 		broadcast('lishnets:updated', { networkID: updated.networkID });
-		return updated;
+		return mutationResponse(p, { ...outcome, value: updated });
 	}
 	function infoAll(): NetworkInfo[] {
 		const configs = networks.list();

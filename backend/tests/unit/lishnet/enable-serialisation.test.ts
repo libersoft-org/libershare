@@ -137,8 +137,8 @@ describe('Networks.setEnabled — serialised per lishnet', () => {
 		// previous holder resumes, so the disable had already unsubscribed and dropped the
 		// membership by the time the enable looked — and the enable reported the leave as its
 		// own outcome, making the API broadcast `left` for a call that had joined.
-		expect(enabled).toEqual({ found: true, transitioned: true, joined: true, applied: true, network: NAMED });
-		expect(disabled).toEqual({ found: true, transitioned: true, joined: false, applied: true, network: NAMED });
+		expect(enabled).toEqual({ found: true, stored: true, transitioned: true, joined: true, applied: true, network: NAMED });
+		expect(disabled).toEqual({ found: true, stored: true, transitioned: true, joined: false, applied: true, network: NAMED });
 		// The join really did happen — it subscribed the topic before it parked — so saying
 		// so and then saying it was undone is the honest report. Cancelling it half-way is
 		// what left the subscription and the dials behind with nobody to clean them up.
@@ -229,7 +229,7 @@ describe('Networks.setEnabled — serialised per lishnet', () => {
 
 		const result = await networks.setEnabled(NET, true);
 
-		expect(result).toEqual({ found: true, transitioned: true, joined: true, applied: true, network: NAMED });
+		expect(result).toEqual({ found: true, stored: true, transitioned: true, joined: true, applied: true, network: NAMED });
 		expect(net.subscribed).toEqual([NET]);
 		expect(getLISHnet(db, NET)!.enabled).toBe(true);
 	});
@@ -291,7 +291,7 @@ describe('Networks.delete — terminal against a concurrent enable', () => {
 		const [deleted, enabled] = await Promise.all([deleting, enabling]);
 
 		expect(deleted).toBe(true);
-		expect(enabled).toEqual({ found: false, transitioned: false, joined: false, applied: false });
+		expect(enabled).toEqual({ found: false, stored: false, transitioned: false, joined: false, applied: false });
 		expect(getLISHnet(db, NET)).toBeUndefined();
 		// The three things that must agree: no row, not joined, not subscribed.
 		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
@@ -369,16 +369,18 @@ describe('Networks.setEnabled — what the result claims', () => {
 		// before either reconcile ran, so by the enable's turn the desired state was already
 		// "disabled" and it had nothing to apply. `transitioned: false` with `joined: false`
 		// is what the API needs to hear — it must not broadcast a join that did not happen.
-		expect(holdingResult).toEqual({ found: true, transitioned: true, joined: false, applied: true, network: NAMED });
-		expect(olderResult).toEqual({ found: true, transitioned: false, joined: false, applied: true, network: NAMED });
-		expect(newerResult).toEqual({ found: true, transitioned: false, joined: false, applied: true, network: NAMED });
+		expect(holdingResult).toEqual({ found: true, stored: true, transitioned: true, joined: false, applied: true, network: NAMED });
+		// Its own state — enabled — was overruled before it could be applied, so it is not applied
+		// either, even though the node did reach the state the newer request asked for.
+		expect(olderResult).toEqual({ found: true, stored: true, transitioned: false, joined: false, applied: false, network: NAMED });
+		expect(newerResult).toEqual({ found: true, stored: true, transitioned: false, joined: false, applied: true, network: NAMED });
 		expect(getLISHnet(db, NET)!.enabled).toBe(false);
 	});
 
 	it('an enable of an already-joined network reports no transition', async () => {
 		const { networks } = makeNetworks(net, db, [NET]);
 
-		expect(await networks.setEnabled(NET, true)).toEqual({ found: true, transitioned: false, joined: true, applied: true, network: NAMED });
+		expect(await networks.setEnabled(NET, true)).toEqual({ found: true, stored: true, transitioned: false, joined: true, applied: true, network: NAMED });
 	});
 
 	/**
@@ -439,14 +441,14 @@ describe('Networks.setEnabled — what the result claims', () => {
 		release();
 		const [, result] = await Promise.all([adding, enabling]);
 
-		expect(result).toEqual({ found: true, transitioned: true, joined: true, applied: true, network: { networkID: 'net-new', name: 'New' } });
+		expect(result).toEqual({ found: true, stored: true, transitioned: true, joined: true, applied: true, network: { networkID: 'net-new', name: 'New' } });
 	});
 
 	it('a real enable reports the transition it settled', async () => {
 		setLISHnetEnabled(db, NET, false);
 		const { networks } = makeNetworks(net, db, []);
 
-		expect(await networks.setEnabled(NET, true)).toEqual({ found: true, transitioned: true, joined: true, applied: true, network: NAMED });
+		expect(await networks.setEnabled(NET, true)).toEqual({ found: true, stored: true, transitioned: true, joined: true, applied: true, network: NAMED });
 	});
 });
 
@@ -712,7 +714,7 @@ describe('Networks — operations that change the set of lishnets', () => {
 		// net-b shares nothing with net-a — no bootstrap peers of its own, so it has no dial
 		// to wait on — and neither of these may wait on net-a's.
 		expect(await networks.add({ ...rowOf(NET_B), name: 'B', bootstrapPeers: [] })).toBe(true);
-		expect(await networks.setEnabled(NET_B, true)).toEqual({ found: true, transitioned: true, joined: true, applied: true, network: { networkID: NET_B, name: 'B' } });
+		expect(await networks.setEnabled(NET_B, true)).toEqual({ found: true, stored: true, transitioned: true, joined: true, applied: true, network: { networkID: NET_B, name: 'B' } });
 		expect(getLISHnet(db, NET)!.enabled).toBe(true);
 
 		gate.resolve();
@@ -779,5 +781,71 @@ describe('Networks — operations that change the set of lishnets', () => {
 		// the add was still joining it: subscribed, in joinedNetworks, and no row at all.
 		expect(getLISHnet(db, NET_B)).toBeDefined();
 		expect((networks as any).joinedNetworks.has(NET_B)).toBe(true);
+	});
+});
+
+/**
+ * Detailed outcomes of every lishnet write: `stored` says the request's state was saved,
+ * `applied` that the running node was in THAT state when the request finished, `transitioned`
+ * that this request changed membership. A plain boolean used to report all three at once.
+ */
+describe('Networks detailed mutation outcomes', () => {
+	let db: Database;
+	let net: ReturnType<typeof makeMockNet>;
+	const row = (id: string, enabled: boolean, peers: string[] = [BOOTSTRAP]) => ({ networkID: id, name: id, description: '', bootstrapPeers: peers, enabled, created: new Date().toISOString() });
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		initLISHnetsTables(db);
+		net = makeMockNet();
+	});
+
+	it('reports nothing stored for a duplicate add or a write to a missing network', async () => {
+		addLISHnet(db, row(NET, false));
+		const { networks } = makeNetworks(net, db, []);
+		expect(await networks.addDetailed(row(NET, true))).toEqual({ stored: false, applied: false, transitioned: false, value: false });
+		expect(await networks.updateDetailed(row('missing', true))).toEqual({ stored: false, applied: false, transitioned: false, value: false });
+		expect(await networks.deleteDetailed('missing')).toEqual({ stored: false, applied: false, transitioned: false, value: false });
+		expect((await networks.updateBootstrapPeersDetailed('missing', [])).stored).toBe(false);
+	});
+
+	it('reports an enabled add as stored, applied and transitioned', async () => {
+		const { networks } = makeNetworks(net, db, []);
+		expect(await networks.addDetailed(row('new', true))).toMatchObject({ stored: true, applied: true, transitioned: true, joined: true, value: true });
+	});
+
+	it('reports a bootstrap-only edit as applied without a transition', async () => {
+		addLISHnet(db, row(NET, true));
+		const { networks } = makeNetworks(net, db, [NET]);
+		const next = '/ip4/192.0.2.2/tcp/9090/p2p/12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+		expect(await networks.updateBootstrapPeersDetailed(NET, [next])).toMatchObject({ stored: true, applied: true, transitioned: false, joined: true });
+	});
+
+	it('does not report an update applied when a newer one overwrote it', async () => {
+		addLISHnet(db, row(NET, true));
+		net.topicPeers.set(NET, ['p-only-a']);
+		const gate = deferred();
+		net.disconnectGate = gate.promise;
+		const { networks } = makeNetworks(net, db, [NET]);
+		const holding = networks.setEnabled(NET, false);
+		for (let i = 0; i < 10; i++) await Promise.resolve();
+		const older = networks.updateDetailed(row(NET, true));
+		const newer = networks.updateDetailed(row(NET, false));
+		gate.resolve();
+		const [, olderResult, newerResult] = await Promise.all([holding, older, newer]);
+		expect(olderResult).toMatchObject({ stored: true, applied: false, transitioned: false });
+		expect(newerResult).toMatchObject({ stored: true, applied: true });
+	});
+
+	it('combines a replace: applied when every network was, transitioned when any was', async () => {
+		addLISHnet(db, row(NET, true));
+		addLISHnet(db, row('other', false));
+		const { networks } = makeNetworks(net, db, [NET]);
+		const result = await networks.replaceDetailed([]);
+		expect(result).toMatchObject({ stored: true, applied: true, transitioned: true, value: true });
+		expect(result.items?.map(item => [item.networkID, item.transitioned])).toEqual([
+			[NET, true],
+			['other', false],
+		]);
 	});
 });
