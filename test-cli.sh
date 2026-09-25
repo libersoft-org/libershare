@@ -2,3 +2,4 @@
 set -e
 cd "$(dirname "$0")/cli"
 bun run typecheck
+bun test
