@@ -34,8 +34,8 @@
       "devDependencies": {
         "@types/bun": "^1.4.2",
         "@types/node": "^25.9.5",
-        "prettier": "^3.9.6",
-        "prettier-plugin-svelte": "^4.1.1",
+        "prettier": "3.9.6",
+        "prettier-plugin-svelte": "4.1.1",
         "typescript": "^6.0.3",
       },
     },
