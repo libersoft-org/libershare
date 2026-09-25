@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.13
+      - name: Install
+        run: |
+          bun install --frozen-lockfile
+          (cd backend && bun install --frozen-lockfile)
+          (cd frontend && bun install --frozen-lockfile)
+          (cd shared && bun install --frozen-lockfile)
+          (cd cli && bun install --frozen-lockfile)
+      - name: Formatting
+        run: ./prettier-all.sh --check
+      - name: Backend (typecheck, unit, e2e)
+        run: ./test-be.sh
+      - name: Frontend (svelte-check, unit)
+        run: ./test-fe.sh
+      - name: Shared and CLI typecheck
+        run: |
+          ./test-shared.sh
+          ./test-cli.sh
+
+  docker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Clean backend image build
+        run: docker build --no-cache -f docker/Dockerfile -t lish-backend-ci .
