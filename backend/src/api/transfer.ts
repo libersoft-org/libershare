@@ -6,6 +6,7 @@ import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads, setUp
 import { join, dirname } from 'path';
 import { access, constants } from 'fs/promises';
 import { isBusy } from './busy.ts';
+import { restoreTransferBatch } from './transfer-restore.ts';
 import { ErrorRecovery } from './error-recovery.ts';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
@@ -1234,44 +1235,69 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		clearAllUploads();
 	}
 
+	/**
+	 * Bring back the downloads a network restart tore down, all or none: see
+	 * {@link restoreTransferBatch}. Never writes the stored "download enabled" intent; a
+	 * download with no snapshot binds to the lishnets joined now, as a first enable would.
+	 */
 	async function restoreAllTransfers(lishIDs: Set<string>, snapshot: TransferRestoreSnapshot = new Map()): Promise<void> {
-		const failures: string[] = [];
-		for (const lishID of [...lishIDs]) {
-			const state = snapshot.get(lishID);
-			if (!state) {
-				const result = await enableDownloadAdmitted({ lishID });
-				if (!result.success && !networkSuspended.has(lishID)) failures.push(lishID);
-				continue;
-			}
-
-			const plan = planDownloadRestore(state, networkID => networks.isJoined(networkID));
-			if (plan.kind === 'suspend') {
-				downloadEnabledLishs.delete(lishID);
-				networkSuspended.set(lishID, new Set(plan.networkIDs));
-				continue;
-			}
-
-			try {
+		const isJoined = (networkID: string): boolean => networks.isJoined(networkID);
+		await restoreTransferBatch<Downloader>([...lishIDs], {
+			activeCount: () => activeDownloaders.size,
+			plan: async lishID => {
+				const state = snapshot.get(lishID);
+				if (state) {
+					const restore = planDownloadRestore(state, isJoined);
+					if (restore.kind === 'suspend') return { kind: 'suspend', networkIDs: restore.networkIDs };
+					return { kind: 'resume', networkIDs: restore.networkIDs, originalNetworkIDs: state.originalNetworkIDs.length > 0 ? state.originalNetworkIDs : state.networkIDs };
+				}
+				const lish = dataServer.get(lishID);
+				if (!lish) throw new Error(`Cannot restore download ${lishID}: LISH is missing`);
+				if (isStoredComplete(lishID)) {
+					// Complete on record: only a copy that is really on disk needs nothing more.
+					let onDisk = true;
+					if (lish.files && lish.directory) {
+						for (const file of lish.files) {
+							const f = Bun.file(join(lish.directory, file.path));
+							if (!(await f.exists()) || f.size !== file.size) {
+								onDisk = false;
+								break;
+							}
+						}
+					}
+					if (onDisk) return { kind: 'complete' };
+					dataServer.resetVerification(lishID);
+				}
+				const joined = getJoinedEnabledNetworkIDs(networks);
+				if (joined.length === 0) return { kind: 'suspend', networkIDs: [] };
+				return { kind: 'resume', networkIDs: joined, originalNetworkIDs: joined };
+			},
+			prepare: async (lishID, plan) => {
+				try {
+					return await prepareStoredDownloader(lishID, plan.networkIDs, plan.originalNetworkIDs, false);
+				} catch (err) {
+					// The start window abandoned it — the lishnet went away and it recorded its own
+					// suspension. That is where it should be, not a failed restore.
+					if (err instanceof DownloadStartAbandoned) return null;
+					throw err;
+				}
+			},
+			accept: async (lishID, downloader) => {
 				networkSuspended.delete(lishID);
-				const originalNetworkIDs = state.originalNetworkIDs.length > 0 ? state.originalNetworkIDs : state.networkIDs;
-				await startStoredDownloader(lishID, plan.networkIDs, originalNetworkIDs, false);
+				downloadEnabledLishs.add(lishID);
 				recovery.stop(lishID);
+				await launchPreparedDownloader(lishID, downloader, false);
 				broadcast?.('transfer.download:enabled', { lishID });
-			} catch (err) {
-				// A download the start window abandoned is not a failed restore: the lishnet
-				// went away or the user withdrew it between the snapshot and now, and the
-				// start already recorded whichever of those it was. Reporting it as a failure
-				// would fail the whole reset restore over a download that is exactly where it
-				// should be.
-				if (err instanceof DownloadStartAbandoned) continue;
-				failures.push(lishID);
-			}
-		}
-		if (failures.length > 0)
-			throw new AggregateError(
-				failures.map(lishID => new Error(`Failed to restore download ${lishID}`)),
-				`Failed to restore ${failures.length} persisted download(s)`
-			);
+			},
+			suspend: (lishID, networkIDs) => {
+				downloadEnabledLishs.delete(lishID);
+				networkSuspended.set(lishID, new Set(networkIDs));
+			},
+			complete: lishID => {
+				downloadEnabledLishs.add(lishID);
+				broadcast?.('transfer.download:enabled', { lishID });
+			},
+		});
 	}
 
 	function resumeAllTransfers(): void {
