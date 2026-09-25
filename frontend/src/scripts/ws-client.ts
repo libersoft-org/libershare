@@ -6,13 +6,6 @@ import { getAPIURL } from './api-url.ts';
 
 export type BackendConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'auth-required' | 'auth-failed';
 
-interface BackendStatusResponse {
-	ok: boolean;
-	authRequired: boolean;
-	authenticated: boolean;
-	error?: string;
-}
-
 function getInitialBackendToken(): string {
 	const envToken = import.meta.env['VITE_LISH_TOKEN'];
 	if (typeof envToken === 'string' && envToken) return envToken;
@@ -43,42 +36,69 @@ export const backendConnectionStatus = writable<BackendConnectionStatus>('connec
 
 let backendToken = getInitialBackendToken();
 let authenticatedAPIURL = withBackendToken(apiURL);
-let statusCheck: Promise<void> | null = null;
+/**
+ * Login attempt counter. Every `setBackendToken` starts a new attempt — also for the same
+ * token — so a status answer for an earlier token can never change the state of a later one.
+ */
+let attempt = 0;
+let statusCheck: { attempt: number; controller: AbortController; promise: Promise<void> } | null = null;
 
-async function checkBackendStatus(): Promise<void> {
-	if (statusCheck) return statusCheck;
-	statusCheck = (async () => {
+function isAuthState(status: BackendConnectionStatus): boolean {
+	return status === 'auth-required' || status === 'auth-failed';
+}
+
+/** Abort the running status request; its late result, catch and finally then change nothing. */
+function cancelStatusCheck(): void {
+	statusCheck?.controller.abort();
+	statusCheck = null;
+}
+
+/**
+ * Ask `/status` whether the current token is accepted. Only a 401 means a wrong or missing
+ * token: it stops reconnecting and shows the login form. A network error, 5xx or any other
+ * status is an unreachable backend, and reconnecting goes on. A running request is shared only
+ * within the same attempt.
+ */
+function checkBackendStatus(): Promise<void> {
+	if (statusCheck?.attempt === attempt) return statusCheck.promise;
+	cancelStatusCheck();
+	const controller = new AbortController();
+	const own = { attempt, controller, promise: Promise.resolve() };
+	const isCurrent = (): boolean => statusCheck === own && own.attempt === attempt;
+	const statusURL = getStatusURL();
+	own.promise = (async () => {
 		try {
-			const response = await fetch(getStatusURL());
-			let data: BackendStatusResponse | undefined;
-			try {
-				data = (await response.json()) as BackendStatusResponse;
-			} catch {}
-			if (response.status === 401 || (data?.authRequired && !data.authenticated)) {
-				wsClient.stopReconnect();
+			const response = await fetch(statusURL, { signal: controller.signal, cache: 'no-store' });
+			await response.body?.cancel().catch(() => {});
+			if (!isCurrent()) return;
+			if (response.status === 401) {
 				backendConnectionStatus.set(backendToken ? 'auth-failed' : 'auth-required');
+				wsClient.stopReconnect();
 				return;
 			}
 			if (!response.ok) {
-				backendConnectionStatus.set('disconnected');
+				if (!get(connected)) backendConnectionStatus.set('disconnected');
 				return;
 			}
 			if (!get(connected)) backendConnectionStatus.set('connecting');
 		} catch {
-			if (!get(connected)) backendConnectionStatus.set('disconnected');
+			if (isCurrent() && !get(connected)) backendConnectionStatus.set('disconnected');
+		} finally {
+			if (statusCheck === own) statusCheck = null;
 		}
-	})().finally(() => {
-		statusCheck = null;
-	});
-	return statusCheck;
+	})();
+	statusCheck = own;
+	return own.promise;
 }
 
 export function setBackendToken(token: string): void {
+	attempt++;
+	cancelStatusCheck();
 	backendToken = token.trim();
 	backendConnectionStatus.set('connecting');
-	const nextAPIURL = withBackendToken(apiURL);
 	void checkBackendStatus();
 	wsClient.setAutoReconnect(true);
+	const nextAPIURL = withBackendToken(apiURL);
 	if (nextAPIURL === authenticatedAPIURL) wsClient.reconnect();
 	else {
 		authenticatedAPIURL = nextAPIURL;
@@ -91,6 +111,8 @@ let disconnectTimer: ReturnType<typeof setTimeout> | undefined;
 export const wsClient = new WsClient(authenticatedAPIURL, (state: { connected: boolean }) => {
 	connected.set(state.connected);
 	if (state.connected) {
+		// An open socket answers the question the running status request was asking.
+		cancelStatusCheck();
 		backendConnectionStatus.set('connected');
 		if (disconnectTimer) {
 			clearTimeout(disconnectTimer);
@@ -98,7 +120,11 @@ export const wsClient = new WsClient(authenticatedAPIURL, (state: { connected: b
 		}
 		if (hasConnectedOnce) addNotification(tt('common.reconnected'), 'success');
 		hasConnectedOnce = true;
-	} else if (hasConnectedOnce) {
+		return;
+	}
+	// The close that follows a refused token must keep the login form, not replace it.
+	if (isAuthState(get(backendConnectionStatus))) return;
+	if (hasConnectedOnce) {
 		backendConnectionStatus.set('disconnected');
 		if (!disconnectTimer) {
 			disconnectTimer = setTimeout(() => {
@@ -106,13 +132,14 @@ export const wsClient = new WsClient(authenticatedAPIURL, (state: { connected: b
 				addNotification(tt('common.backendDisconnected'), 'warning');
 			}, 3000);
 		}
-	} else {
-		void checkBackendStatus();
 	}
+	// The token may have changed while the socket was up (a restarted backend), so every
+	// disconnect asks again.
+	void checkBackendStatus();
 });
 wsClient.onError = () => {
 	if (hasConnectedOnce) addNotification(tt('common.websocketError'), 'error');
-	else void checkBackendStatus();
+	if (!isAuthState(get(backendConnectionStatus))) void checkBackendStatus();
 };
 void checkBackendStatus();
 
