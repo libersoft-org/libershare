@@ -457,7 +457,7 @@ export function validateSystemTimeChanges(changes: SystemTimeChanges): SystemTim
 	return null;
 }
 
-export function applySystemTimeSettings(changes: SystemTimeChanges, writers: SystemTimeWriters = defaultSystemTimeWriters, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus): Promise<SystemTimeResult> {
+export function applySystemTimeSettings(changes: SystemTimeChanges, writers: SystemTimeWriters = defaultSystemTimeWriters, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, readMode: WindowsModeReader = readWindowsMode): Promise<SystemTimeResult> {
 	// Validate the complete input before an earlier field can change the host.
 	const invalidInput = validateSystemTimeChanges(changes);
 	if (invalidInput) return Promise.resolve(invalidInput);
@@ -474,13 +474,22 @@ export function applySystemTimeSettings(changes: SystemTimeChanges, writers: Sys
 			// digits mean a different moment — measured as a host left two hours off real time by a
 			// save whose whole purpose was to correct it. Both requests are individually valid, so
 			// serialising them cannot catch it; only the expectation can.
-			if (changes.expectedTimezone !== undefined) {
-				const current = await readStatus();
+			// A clock that will be refused must be refused before the zone or NTP server in the same
+			// request is written: otherwise the save fails halfway, with the host already changed.
+			// Skipped when this save switches synchronisation off first — the clock writer checks
+			// again after that step.
+			const checkClock = changes.clock !== undefined && changes.ntpEnabled !== false;
+			const current = changes.expectedTimezone !== undefined || checkClock ? await readStatus() : null;
+			if (current && changes.expectedTimezone !== undefined) {
 				if (!sameHostZone(process.platform, current.timezone, changes.expectedTimezone)) return result('stale', `the host timezone is now ${current.timezone}, not ${changes.expectedTimezone} as this request was composed against`);
 				// The offset too, and for the same reason: Windows can switch automatic daylight saving
 				// off for a zone, which moves the offset while the name stays put. Same name at +120 and
 				// at +60 turns the same digits into instants an hour apart.
 				if (changes.expectedOffsetMinutes !== undefined && current.utcOffsetMinutes !== changes.expectedOffsetMinutes) return result('stale', `the host is now ${current.utcOffsetMinutes} minutes from UTC, not ${changes.expectedOffsetMinutes} as this request was composed against`);
+			}
+			if (current && checkClock) {
+				const refusal = await clockRefusal(current, process.platform, readMode);
+				if (refusal) return refusal;
 			}
 			const operations: Array<() => Promise<SystemTimeResult>> = [];
 			if (changes.ntpEnabled === false) operations.push(() => writers.setNtpEnabled(false));
@@ -580,6 +589,23 @@ export function clockWriteRefusal(status: SystemTimeStatus): SystemTimeResult | 
 }
 
 /**
+ * Reason the clock cannot be set right now, or null: {@link clockWriteRefusal} on `status`,
+ * then, on Windows, what the sync SERVICE is doing. That is not in the shared status, which
+ * carries the registry's view of synchronisation — a service that is up despite it, or still
+ * starting or stopping, owns the clock. Called inside the time lock by both the combined save
+ * (before its first write) and the clock writer itself.
+ */
+async function clockRefusal(status: SystemTimeStatus, platform: NodeJS.Platform, readMode: WindowsModeReader): Promise<SystemTimeResult | null> {
+	const refusal = clockWriteRefusal(status);
+	if (refusal) return refusal;
+	if (platform === 'win32') {
+		const objection = windowsClockRefusal(await readMode());
+		if (objection) return result('auto-sync-enabled', objection);
+	}
+	return null;
+}
+
+/**
  * Set the wall clock to `hours:minutes:seconds`, keeping the host's current date.
  *
  * Under {@link withSystemTimeLock} from the status read onwards, not merely around the
@@ -599,17 +625,8 @@ export async function setSystemClock(hours: number, minutes: number, seconds: nu
 	const platform = process.platform;
 	if (!isSupportedPlatform(platform)) return result('unsupported', `setting the clock is not implemented on ${platform}`);
 	return withSystemTimeLock(async () => {
-		const status = await readStatus();
-		const refusal = clockWriteRefusal(status);
+		const refusal = await clockRefusal(await readStatus(), platform, readMode);
 		if (refusal) return refusal;
-		// Read inside the lock and immediately before the write: what the sync SERVICE is
-		// doing is not in the shared status, which carries the registry's view of
-		// synchronisation. A service that is up despite that, or still starting or stopping,
-		// owns the clock this is about to set.
-		if (platform === 'win32') {
-			const objection = windowsClockRefusal(await readMode());
-			if (objection) return result('auto-sync-enabled', objection);
-		}
 		// Only the time of day is sent. Every platform resolves "today" at the moment of the
 		// write - systemd for a bare `HH:MM:SS`, `systemsetup -settime`, and `Get-Date` inside
 		// the PowerShell command - so no date computed here can be stale by the time it lands.

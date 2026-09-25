@@ -1207,6 +1207,8 @@ describe('the write lock covers every writer', () => {
 });
 
 describe('applySystemTimeSettings', () => {
+	/** A Windows time service that is not touching the clock, so a clock write is not refused off the host running the tests. */
+	const stoppedTimeService = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped', ntpClientEnabled: true });
 	const okResult = { success: true, outcome: 'ok' as const, message: null };
 
 	function writers(calls: string[], overrides: Partial<SystemTimeWriters> = {}): SystemTimeWriters {
@@ -1343,7 +1345,7 @@ describe('applySystemTimeSettings', () => {
 
 	it('applies the clock when the expectation still holds', async () => {
 		const calls: string[] = [];
-		const result = await applySystemTimeSettings({ clock: { hours: 12, minutes: 15, seconds: 0 }, expectedTimezone: 'Europe/Prague', expectedOffsetMinutes: 120 }, writers(calls), async () => statusFixture({ timezone: 'Europe/Prague', utcOffsetMinutes: 120 }));
+		const result = await applySystemTimeSettings({ clock: { hours: 12, minutes: 15, seconds: 0 }, expectedTimezone: 'Europe/Prague', expectedOffsetMinutes: 120 }, writers(calls), async () => statusFixture({ timezone: 'Europe/Prague', utcOffsetMinutes: 120 }), stoppedTimeService);
 		expect(result).toEqual(okResult);
 		expect(calls).toEqual(['clock:12:15:0']);
 	});
@@ -1351,7 +1353,7 @@ describe('applySystemTimeSettings', () => {
 	/** A save that also moves the zone carries the zone it was composed under, not the new one. */
 	it('checks the expectation before applying a timezone change in the same save', async () => {
 		const calls: string[] = [];
-		const result = await applySystemTimeSettings({ timezone: 'UTC', clock: { hours: 12, minutes: 15, seconds: 0 }, expectedTimezone: 'Europe/Prague' }, writers(calls), async () => statusFixture({ timezone: 'Europe/Prague' }));
+		const result = await applySystemTimeSettings({ timezone: 'UTC', clock: { hours: 12, minutes: 15, seconds: 0 }, expectedTimezone: 'Europe/Prague' }, writers(calls), async () => statusFixture({ timezone: 'Europe/Prague' }), stoppedTimeService);
 		expect(result).toEqual(okResult);
 		expect(calls).toEqual(['zone:UTC', 'clock:12:15:0']);
 	});
@@ -1531,7 +1533,14 @@ describe.if(process.platform === 'win32')('Windows timezone preference preservat
 		// The write-time state is injected too. Left to the real host, this case now depends on
 		// whether the machine running the tests has synchronisation on - which the refusal
 		// below correctly objects to, and which has nothing to do with what is asserted here.
-		const result = await setSystemClock(12, 0, 0, async () => status, exec, async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped' }));
+		const result = await setSystemClock(
+			12,
+			0,
+			0,
+			async () => status,
+			exec,
+			async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped' })
+		);
 		expect(result.success).toBe(true);
 		expect(calls[0]).toContain('Get-Date -Hour 12 -Minute 0 -Second 0 -Millisecond 0');
 		expect(calls[0]).not.toMatch(/\d{4}-\d{2}-\d{2}/);
