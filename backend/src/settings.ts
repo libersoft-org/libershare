@@ -299,6 +299,15 @@ export class Settings {
 		if (draft.network.maxMessageSize < floor) draft.network.maxMessageSize = floor;
 	}
 
+	/**
+	 * Wait for every settings write already accepted — including one still waiting for the
+	 * lock — and fail if the last one did not reach the disk. Called at shutdown after the
+	 * producers have stopped; it is a barrier, not a lock against later writes.
+	 */
+	async flush(): Promise<void> {
+		await this.writeLock.runExclusive(() => this.storage.flush());
+	}
+
 	list(): SettingsData {
 		return this.storage.list();
 	}

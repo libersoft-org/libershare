@@ -139,8 +139,30 @@ abstract class BaseStorage<T> {
 	 */
 	protected saveFile(data: T): Promise<void> {
 		const queued = this.saveChain.then(() => this.writeFile(data));
-		this.saveChain = queued.catch(() => {});
+		// The chain itself never rejects, so one failed write does not block the next; the
+		// outcome is kept for flush() until a later write of the whole document succeeds.
+		this.saveChain = queued.then(
+			() => {
+				this.lastWriteError = null;
+			},
+			error => {
+				this.lastWriteError = error;
+			}
+		);
 		return queued;
+	}
+
+	/** The last failed write, cleared by the next successful one. */
+	private lastWriteError: unknown = null;
+
+	/**
+	 * Wait for every write already queued and report whether the document on disk is current.
+	 * Rejects with the last write error if no successful save has replaced it since — applying
+	 * runtime limits after a failed save does not count as saving it.
+	 */
+	async flush(): Promise<void> {
+		await this.saveChain;
+		if (this.lastWriteError) throw this.lastWriteError;
 	}
 
 	/**

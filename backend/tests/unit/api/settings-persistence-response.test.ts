@@ -134,3 +134,34 @@ describe('transfer limits follow the live settings even when the save fails', ()
 		expect([downloadLimiter.getLimit(), uploadLimiter.getLimit()]).toEqual([defaults.maxDownloadSpeed * 1024, defaults.maxUploadSpeed * 1024]);
 	});
 });
+
+describe('Settings.flush reports whether the last accepted write reached the disk', () => {
+	it('waits for a queued write and rejects while the last one failed, until a full save succeeds', async () => {
+		const dir = await tempDir();
+		const outside = join(await tempDir(), 'real.json');
+		await writeFile(outside, '{}');
+		try {
+			await symlink(outside, join(dir, 'settings.json'));
+		} catch {
+			return;
+		}
+		const settings = await Settings.create(dir);
+		const failed = settings.set('audio.volume', 5).catch(() => {});
+		await expect(settings.flush()).rejects.toBeInstanceOf(StorageWriteError);
+		await failed;
+		// Replace the symlink with a regular file: the next whole-document save succeeds.
+		await rm(join(dir, 'settings.json'));
+		await settings.set('audio.volume', 6);
+		await settings.flush();
+		expect(JSON.parse(await readFile(join(dir, 'settings.json'), 'utf8')).audio.volume).toBe(6);
+	});
+
+	it('resolves once a write that was still waiting for the lock has been saved', async () => {
+		const dir = await tempDir();
+		const settings = await Settings.create(dir);
+		const pending = settings.set('audio.volume', 11);
+		await settings.flush();
+		expect(JSON.parse(await readFile(join(dir, 'settings.json'), 'utf8')).audio.volume).toBe(11);
+		await pending;
+	});
+});
