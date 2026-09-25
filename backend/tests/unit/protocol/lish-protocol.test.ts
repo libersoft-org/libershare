@@ -617,3 +617,72 @@ describe('LISHClient.requestManifest – manifest validation', () => {
 		expect(error.message).not.toContain('\u202e');
 	});
 });
+
+describe('LISHClient – remote error envelopes', () => {
+	function replay(response: unknown): any {
+		const frame = lpEncode.single(codecEncode(response)).subarray();
+		async function* source() {
+			yield frame;
+		}
+		return { status: 'open', send() {}, close: async () => {}, [Symbol.asyncIterator]: source };
+	}
+
+	const operations: Record<string, (client: LISHClient) => Promise<unknown>> = {
+		getLish: client => client.requestManifest('lish-a' as any),
+		getLishs: client => client.requestList(),
+		getChunk: client => client.requestChunk('lish-a' as any, 'c1' as any),
+		announceHave: client => client.announceHave('lish-a' as any, 'all', []),
+		searchResult: client => client.sendSearchResult('search-a', []),
+	};
+
+	async function errorOf(operation: string, response: unknown): Promise<CodedError> {
+		try {
+			await operations[operation]!(new LISHClient(replay(response)));
+		} catch (error) {
+			if (error instanceof CodedError) return error;
+			throw error;
+		}
+		throw new Error(`expected ${operation} to reject`);
+	}
+
+	const hostile: unknown[] = [ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, ErrorCodes.PEER_UNREACHABLE, 'PEER_MADE_UP', `PEER_BUSY${'X'.repeat(1_000)}\r\nfake`, 42, { code: 'PEER_BUSY' }];
+
+	for (const operation of Object.keys(operations)) {
+		it(`${operation}: a code the peer may not send becomes PEER_INVALID_REQUEST`, async () => {
+			for (const code of hostile) {
+				const error = await errorOf(operation, { error: code });
+				expect(error.code).toBe(ErrorCodes.PEER_INVALID_REQUEST);
+				expect(error.message.length).toBeLessThan(200);
+				expect(error.message).not.toContain('\n');
+				expect(error.message).not.toContain('XXXX');
+			}
+		});
+
+		it(`${operation}: PEER_INVALID_REQUEST from the peer still arrives as itself`, async () => {
+			expect((await errorOf(operation, { error: ErrorCodes.PEER_INVALID_REQUEST })).code).toBe(ErrorCodes.PEER_INVALID_REQUEST);
+		});
+
+		it(`${operation}: a reply that is not a plain object is refused`, async () => {
+			for (const response of [[{ error: ErrorCodes.PEER_BUSY }], new Uint8Array(4), 'PEER_BUSY']) expect((await errorOf(operation, response)).message).toContain('response is not an object');
+		});
+	}
+
+	it('keeps the codes each operation really answers with', async () => {
+		expect((await errorOf('getChunk', { error: ErrorCodes.PEER_BUSY })).code).toBe(ErrorCodes.PEER_BUSY);
+		expect((await errorOf('getChunk', { error: ErrorCodes.PEER_CHUNK_NOT_FOUND })).code).toBe(ErrorCodes.PEER_CHUNK_NOT_FOUND);
+		expect((await errorOf('getLish', { error: ErrorCodes.PEER_LISH_NOT_SHARED })).code).toBe(ErrorCodes.PEER_LISH_NOT_SHARED);
+		expect((await errorOf('getLishs', { type: 'getLishs-result', error: ErrorCodes.PEER_LISTING_NOT_AUTHORIZED })).code).toBe(ErrorCodes.PEER_LISTING_NOT_AUTHORIZED);
+	});
+
+	it('refuses a code that belongs to another operation', async () => {
+		expect((await errorOf('getLish', { error: ErrorCodes.PEER_BUSY })).code).toBe(ErrorCodes.PEER_INVALID_REQUEST);
+		expect((await errorOf('getLishs', { error: ErrorCodes.PEER_CHUNK_NOT_FOUND })).code).toBe(ErrorCodes.PEER_INVALID_REQUEST);
+	});
+
+	it('refuses an error that also carries a result', async () => {
+		const error = await errorOf('getChunk', { error: ErrorCodes.PEER_BUSY, data: new Uint8Array(1) });
+		expect(error.code).toBe(ErrorCodes.PEER_INVALID_REQUEST);
+		expect(error.message).toContain('also carries a result');
+		expect((await errorOf('getLishs', { type: 'getLishs-result', error: ErrorCodes.PEER_LISTING_NOT_AUTHORIZED, lishs: [] })).code).toBe(ErrorCodes.PEER_INVALID_REQUEST);
+	});
+});

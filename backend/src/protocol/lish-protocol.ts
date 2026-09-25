@@ -11,6 +11,7 @@ import { trace } from '../logger.ts';
 import { registerUploadPeer, unregisterUploadPeer, recordUploadBytes, type ConnectionType } from './peer-tracker.ts';
 import { encode as codecEncode, decode as codecDecode } from './codec.ts';
 import { MAX_SEARCH_QUERY_LENGTH } from './constants.ts';
+import { readRemoteError, type LISHOperation } from './lish-response.ts';
 export const LISH_PROTOCOL = '/lish/0.0.1';
 
 /**
@@ -152,7 +153,6 @@ export function getSearchResultHandler(searchID: string): SearchResultHandler | 
 	return searchResultHandlers.get(searchID);
 }
 
-
 // Client-side stream wrapper that can send multiple requests
 export class LISHClient {
 	private stream: Stream;
@@ -180,15 +180,17 @@ export class LISHClient {
 	}
 
 	// Safely parse a peer response. Maps malformed wire bytes / incompatible-protocol responses
-	// onto PEER_INVALID_REQUEST so callers can rely purely on CodedError.
-	private parseResponse<T>(raw: Uint8Array, detail: string): T {
+	// onto PEER_INVALID_REQUEST so callers can rely purely on CodedError; a well-formed remote
+	// error is thrown as its own code with `remoteDetail`.
+	private parseResponse<T>(raw: Uint8Array, operation: LISHOperation, detail: string, remoteDetail?: string): T {
 		let parsed: unknown;
 		try {
 			parsed = codecDecode(raw);
 		} catch {
 			throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `${detail}: malformed response`);
 		}
-		if (parsed === null || typeof parsed !== 'object') throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `${detail}: response is not an object`);
+		const remote = readRemoteError(parsed, operation, detail);
+		if (remote) throw new CodedError(remote, remoteDetail);
 		return parsed as T;
 	}
 
@@ -233,8 +235,7 @@ export class LISHClient {
 			const responseMsg = (await Promise.race([this.decoder.next(), rejectAfterTimeout(30000, 'manifest-receive')])) as IteratorResult<Uint8Array | Uint8ArrayList>;
 			if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, safeLishID);
 			const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
-			const response = this.parseResponse<LISHGetLishResponse>(responseData, `getLish ${safeLishID}`);
-			if ('error' in response) throw new CodedError(response.error, safeLishID);
+			const response = this.parseResponse<LISHGetLishResponse>(responseData, 'getLish', `getLish ${safeLishID}`, safeLishID);
 			if (!('manifest' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: missing manifest`);
 			// The manifest must be for the LISH we asked for. Callers key their local state on the
 			// requested id but persist the manifest under the id it carries, so a foreign id lands
@@ -281,8 +282,7 @@ export class LISHClient {
 		const responseMsg = (await Promise.race([this.decoder.next(), rejectAfterTimeout(15000, 'list-receive')])) as IteratorResult<Uint8Array | Uint8ArrayList>;
 		if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE);
 		const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
-		const response = this.parseResponse<LISHGetLishsResponse>(responseData, 'getLishs');
-		if ('error' in response) throw new CodedError(response.error);
+		const response = this.parseResponse<LISHGetLishsResponse>(responseData, 'getLishs', 'getLishs');
 		if (!('lishs' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, 'getLishs: missing lishs');
 		return response.lishs;
 	}
@@ -309,8 +309,7 @@ export class LISHClient {
 		const responseMsg = (await Promise.race([this.decoder.next(), rejectAfterTimeout(30000, 'receive')])) as IteratorResult<Uint8Array | Uint8ArrayList>;
 		if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, lishID);
 		const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
-		const response = this.parseResponse<LISHGetChunkResponse>(responseData, `getChunk ${lishID}/${chunkID}`);
-		if ('error' in response) throw new CodedError(response.error, `${lishID}/${chunkID}`);
+		const response = this.parseResponse<LISHGetChunkResponse>(responseData, 'getChunk', `getChunk ${lishID}/${chunkID}`, `${lishID}/${chunkID}`);
 		if (!('data' in response) || !(response.data instanceof Uint8Array)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getChunk ${lishID}/${chunkID}: missing data`);
 		return response.data;
 	}
@@ -351,8 +350,7 @@ export class LISHClient {
 		const responseMsg = (await Promise.race([this.decoder.next(), rejectAfterTimeout(15000, 'announceHave-receive')])) as IteratorResult<Uint8Array | Uint8ArrayList>;
 		if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, lishID);
 		const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
-		const response = this.parseResponse<LISHAnnounceHaveResponse>(responseData, `announceHave ${lishID}`);
-		if ('error' in response) throw new CodedError(response.error, lishID);
+		this.parseResponse<LISHAnnounceHaveResponse>(responseData, 'announceHave', `announceHave ${lishID}`, lishID);
 	}
 
 	/**
@@ -365,8 +363,7 @@ export class LISHClient {
 		const responseMsg = (await Promise.race([this.decoder.next(), rejectAfterTimeout(15000, 'searchResult-receive')])) as IteratorResult<Uint8Array | Uint8ArrayList>;
 		if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, searchID);
 		const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
-		const response = this.parseResponse<LISHSearchResultResponse>(responseData, `searchResult ${searchID}`);
-		if ('error' in response) throw new CodedError(response.error, searchID);
+		this.parseResponse<LISHSearchResultResponse>(responseData, 'searchResult', `searchResult ${searchID}`, searchID);
 	}
 }
 
