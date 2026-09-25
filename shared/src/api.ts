@@ -1,4 +1,5 @@
 import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type IPathExistsResult, type IWriteResult, type ILISHListResult, type ISettingsImportResult, type SuccessResponse, type SetLISHNetworkEnabledResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type FactoryResetResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm, type BootstrapStatus } from './index.ts';
+import { toNetworkMutationResponse, type NetworkMutationResponse } from './network-mutation.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -408,6 +409,33 @@ class LISHnetsAPI {
 
 	updateBootstrapPeers(networkID: string, bootstrapPeers: string[]): Promise<LISHNetworkConfig> {
 		return this.client.call<LISHNetworkConfig>('lishnets.updateBootstrapPeers', { networkID, bootstrapPeers });
+	}
+	// Detailed variants: what the request stored and whether the running node applied it. An
+	// older server answers with the plain value, which comes back marked `legacy` — never as
+	// applied. See NetworkMutationOutcome.
+
+	async addDetailed(network: LISHNetworkConfig): Promise<NetworkMutationResponse<boolean>> {
+		return toNetworkMutationResponse<boolean>(await this.client.call<unknown>('lishnets.add', { network, detailed: true }));
+	}
+
+	async updateDetailed(network: LISHNetworkConfig): Promise<NetworkMutationResponse<boolean>> {
+		return toNetworkMutationResponse<boolean>(await this.client.call<unknown>('lishnets.update', { network, detailed: true }));
+	}
+
+	async deleteDetailed(networkID: string): Promise<NetworkMutationResponse<boolean>> {
+		return toNetworkMutationResponse<boolean>(await this.client.call<unknown>('lishnets.delete', { networkID, detailed: true }));
+	}
+
+	async addIfNotExistsDetailed(network: LISHNetworkDefinition): Promise<NetworkMutationResponse<boolean>> {
+		return toNetworkMutationResponse<boolean>(await this.client.call<unknown>('lishnets.addIfNotExists', { network, detailed: true }));
+	}
+
+	async replaceDetailed(networks: LISHNetworkConfig[]): Promise<NetworkMutationResponse<boolean>> {
+		return toNetworkMutationResponse<boolean>(await this.client.call<unknown>('lishnets.replace', { networks, detailed: true }));
+	}
+
+	async updateBootstrapPeersDetailed(networkID: string, bootstrapPeers: string[]): Promise<NetworkMutationResponse<LISHNetworkConfig>> {
+		return toNetworkMutationResponse<LISHNetworkConfig>(await this.client.call<unknown>('lishnets.updateBootstrapPeers', { networkID, bootstrapPeers, detailed: true }));
 	}
 }
 
