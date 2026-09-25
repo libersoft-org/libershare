@@ -11,6 +11,7 @@ import { initLISHnetsHandlers } from './lishnets.ts';
 import { initIdentityHandlers } from './identity.ts';
 import { initDatasetsHandlers } from './datasets.ts';
 import { initFsHandlers } from './fs.ts';
+import { assertUsableToken, requestHasToken } from './access-policy.ts';
 import { initUploadHandlers } from './upload.ts';
 import { initLISHsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
@@ -262,7 +263,7 @@ export class APIServer {
 	private readonly secure: boolean;
 	private readonly keyFile?: string | undefined;
 	private readonly certFile?: string | undefined;
-	private readonly apiToken?: string | undefined;
+	private readonly apiToken: string;
 	private readonly dataDir: string;
 	private readonly dataServer: DataServer;
 	private readonly networks: Networks;
@@ -300,7 +301,9 @@ export class APIServer {
 		this.secure = options.secure;
 		this.keyFile = options.keyFile;
 		this.certFile = options.certFile;
-		this.apiToken = options.apiToken || undefined;
+		// Before anything else is built: an API without a usable token must not come up at all.
+		assertUsableToken(options.apiToken);
+		this.apiToken = options.apiToken;
 		const emitTo = (client: ClientSocket, event: string, data: any): void => this.emit(client, event, data);
 		const broadcastFn = (event: string, data: any): void => this.broadcast(event, data);
 		const broadcastExceptFn = (event: string, data: any, except?: unknown): void => this.broadcast(event, data, except as ClientSocket | undefined);
@@ -557,7 +560,7 @@ export class APIServer {
 		};
 
 		const protocol = this.secure ? 'wss' : 'ws';
-		console.log(`[API] Token authentication ${this.apiToken ? 'enabled' : 'disabled'}`);
+		console.log('[API] Token authentication required');
 		console.log(`[API] WebSocket server listening on ${protocol}://${this.host}:${actualPort}`);
 	}
 
@@ -575,8 +578,7 @@ export class APIServer {
 	}
 
 	private isAuthorized(url: URL): boolean {
-		if (!this.apiToken) return true;
-		return url.searchParams.get('token') === this.apiToken;
+		return requestHasToken(url, this.apiToken);
 	}
 
 	private jsonResponse(data: unknown, status: number = 200): Response {
@@ -585,6 +587,7 @@ export class APIServer {
 			headers: {
 				'content-type': 'application/json; charset=utf-8',
 				'access-control-allow-origin': '*',
+				'cache-control': 'no-store',
 			},
 		});
 	}
@@ -596,6 +599,7 @@ export class APIServer {
 				'access-control-allow-origin': '*',
 				'access-control-allow-methods': 'GET, OPTIONS',
 				'access-control-allow-headers': 'content-type',
+				'cache-control': 'no-store',
 			},
 		});
 	}

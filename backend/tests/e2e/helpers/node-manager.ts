@@ -1,5 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { randomBytes } from 'node:crypto';
 import { join, resolve } from 'node:path';
 
 /**
@@ -17,6 +18,8 @@ export interface TestNode {
 const REPO = resolve(import.meta.dir, '../../../..');
 const READY_TIMEOUT_MS = 60_000;
 const nodes: TestNode[] = [];
+/** One random API token per run; the API refuses to start without one. */
+export const TEST_API_TOKEN: string = randomBytes(32).toString('hex');
 let root: string | null = null;
 
 /** Settings written before the first start — nothing may fall back to the defaults. */
@@ -83,14 +86,14 @@ export async function startNodes(count: number = 3): Promise<void> {
 			mkdirSync(dataDir, { recursive: true });
 			writeFileSync(join(dataDir, 'settings.json'), JSON.stringify(isolatedSettings(dataDir)));
 			const env: Record<string, string> = { ...(process.env as Record<string, string>), MEMTRACE: '0', HEAP_TRIGGER: '0' };
-			delete env['LISH_TOKEN'];
+			env['LISH_TOKEN'] = TEST_API_TOKEN;
 			const proc = Bun.spawn([process.execPath, 'run', 'backend/src/app.ts', '--datadir', dataDir, '--port', '0', '--host', '127.0.0.1'], { cwd: REPO, env, stdout: 'pipe', stderr: 'inherit' });
 			const log: string[] = [];
 			const port = await waitForApiPort(proc, log).catch(error => {
 				proc.kill();
 				throw error;
 			});
-			nodes.push({ dataDir, url: `ws://127.0.0.1:${port}`, process: proc });
+			nodes.push({ dataDir, url: `ws://127.0.0.1:${port}?token=${TEST_API_TOKEN}`, process: proc });
 		}
 	} catch (error) {
 		await stopNodes();

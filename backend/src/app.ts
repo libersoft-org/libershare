@@ -7,6 +7,7 @@ import { Networks } from './lishnet/lishnets.ts';
 import { DataServer } from './lish/data-server.ts';
 import { openDatabase } from './db/database.ts';
 import { APIServer } from './api/api.ts';
+import { assertUsableToken } from './api/access-policy.ts';
 import { Settings } from './settings.ts';
 import { startMemoryTrace } from './monitoring/memory-trace.ts';
 import { startHeapSnapshotTrigger } from './monitoring/heap-snapshot.ts';
@@ -77,6 +78,15 @@ if (args.includes('--healthcheck')) {
 		}
 	}
 	process.exit(1);
+}
+
+// The API refuses to run without a usable token; checked before the logger, the settings, the
+// database or the network are touched, so a misconfigured start leaves nothing behind.
+try {
+	assertUsableToken(apiToken);
+} catch (error) {
+	console.error(`[API] ${(error as Error).message}`);
+	process.exit(78); // sysexits.h EX_CONFIG
 }
 
 setupLogger(logLevel, logFile ?? join(dataDir, `${productName.toLowerCase()}.log`));
