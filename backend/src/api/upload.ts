@@ -157,6 +157,12 @@ interface UploadHandlers {
 	wipe: () => void;
 	/** Stop the periodic sweep. Must be called when the API server shuts down. */
 	stop: () => void;
+	/**
+	 * Stop the sweep, wait for every accepted upload operation, pending sweep and cleanup to
+	 * finish, then remove what is left. Rejects when an upload could not be removed, so a
+	 * shutdown never reports a clean drain over a file it left behind.
+	 */
+	stopAndDrain: () => Promise<void>;
 	/** Run one cleanup pass now, rather than waiting for the timer. */
 	sweep: () => Promise<void>;
 }
@@ -311,6 +317,19 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 	 * disappear with the socket rather than accumulating.
 	 */
 	const inFlight = new WeakMap<object, Set<Promise<void>>>();
+	/** Every accepted operation and disconnect cleanup, whichever socket (or none) owns it. */
+	const pending = new Set<Promise<void>>();
+
+	/** Note `work` as pending until it settles; never inherits its rejection. */
+	function remember(work: Promise<unknown>): Promise<void> {
+		const settled = work.then(
+			() => {},
+			() => {}
+		);
+		pending.add(settled);
+		void settled.then(() => pending.delete(settled));
+		return settled;
+	}
 	const disconnected = new WeakSet<object>();
 
 	/** The socket as a weak-collection key, or null for a non-object caller (tests). */
@@ -332,7 +351,11 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 	 */
 	function track<T>(client: unknown, run: () => Promise<T>): Promise<T> {
 		const key = clientKey(client);
-		if (!key) return run();
+		if (!key) {
+			const result = run();
+			remember(result);
+			return result;
+		}
 		let running = inFlight.get(key);
 		if (!running) {
 			running = new Set();
@@ -341,10 +364,7 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 		const result = run();
 		// Held as a promise that always resolves, so disconnect cleanup can wait for
 		// the operation to finish without inheriting its rejection.
-		const settled = result.then(
-			() => {},
-			() => {}
-		);
+		const settled = remember(result);
 		running.add(settled);
 		void settled.then(() => running.delete(settled));
 		return result;
@@ -705,13 +725,15 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 		for (const upload of uploads.values()) if (upload.client === client) upload.cancelled = true;
 		// Snapshotted, since each entry removes itself as it settles.
 		const running = key ? [...(inFlight.get(key) ?? [])] : [];
-		void (async () => {
-			// An operation can still be mid-await when the socket closes. Discarding
-			// underneath it would end the writer while that operation is writing to
-			// it, so wait for all of them to finish first.
-			await Promise.all(running);
-			for (const [uploadID, upload] of uploads) if (upload.client === client) await discard(uploadID);
-		})();
+		remember(
+			(async () => {
+				// An operation can still be mid-await when the socket closes. Discarding
+				// underneath it would end the writer while that operation is writing to
+				// it, so wait for all of them to finish first.
+				await Promise.all(running);
+				for (const [uploadID, upload] of uploads) if (upload.client === client) await discard(uploadID);
+			})()
+		);
 	}
 
 	function wipe(): void {
@@ -729,5 +751,15 @@ export function initUploadHandlers(dataDir: string, limits: UploadLimits = {}, i
 		if (sweepTimer) clearInterval(sweepTimer);
 	}
 
-	return { begin, chunk, end, abort, withFile, closeClient, wipe, stop, sweep };
+	async function stopAndDrain(): Promise<void> {
+		stop();
+		// Loop: a settling operation may start a cleanup that registers after the snapshot.
+		while (pending.size > 0 || sweeping) {
+			await Promise.all([...pending, sweeping]);
+		}
+		for (const uploadID of [...uploads.keys()]) await discard(uploadID);
+		if (uploads.size > 0) throw new Error(`${uploads.size} upload file(s) could not be removed during shutdown`);
+	}
+
+	return { begin, chunk, end, abort, withFile, closeClient, wipe, stop, stopAndDrain, sweep };
 }
