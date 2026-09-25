@@ -2,7 +2,7 @@
 import * as readline from 'readline';
 import { join } from 'path';
 import { APIClient } from './api-client';
-import { API, DEFAULT_API_URL } from '@shared';
+import { API, DEFAULT_API_URL, type NetworkMutationResponse, type SetLISHNetworkEnabledResponse } from '@shared';
 
 const HELP = `
 Commands:
@@ -68,6 +68,18 @@ function resolvePath(x: string): string {
 	x = expandHome(x);
 	if (!x.startsWith('/')) x = join(process.cwd(), x);
 	return x;
+}
+
+/** One line about a network write: done, saved but not applied, or nothing saved. */
+function describeMutation(response: NetworkMutationResponse<unknown>, done: string): string {
+	if ('legacy' in response) return response.value ? `✓ Network ${done} (the server did not report whether it was applied)` : '✗ Network not found';
+	if (!response.stored) return '✗ Network not found';
+	return response.applied ? `✓ Network ${done}` : `! Network saved as ${done}, but the running node has not applied it yet`;
+}
+
+function describeEnabled(response: SetLISHNetworkEnabledResponse, done: string): string {
+	if (response.stored === false) return '✗ Network not found';
+	return response.applied ? `✓ Network ${done}` : `! Network saved as ${done}, but the running node has not applied it yet`;
 }
 
 async function main(): Promise<void> {
@@ -147,8 +159,7 @@ async function main(): Promise<void> {
 						console.log('Usage: lishnets.enable <id>');
 						break;
 					}
-					await api.lishnets.setEnabled(arg, true);
-					console.log(`✓ Network enabled`);
+					console.log(describeEnabled(await api.lishnets.setEnabled(arg, true), 'enabled'));
 					break;
 				}
 
@@ -157,8 +168,7 @@ async function main(): Promise<void> {
 						console.log('Usage: lishnets.disable <id>');
 						break;
 					}
-					await api.lishnets.setEnabled(arg, false);
-					console.log(`✓ Network disabled`);
+					console.log(describeEnabled(await api.lishnets.setEnabled(arg, false), 'disabled'));
 					break;
 				}
 
@@ -167,8 +177,7 @@ async function main(): Promise<void> {
 						console.log('Usage: lishnets.delete <id>');
 						break;
 					}
-					await api.lishnets.delete(arg);
-					console.log(`✓ Network deleted`);
+					console.log(describeMutation(await api.lishnets.deleteDetailed(arg), 'deleted'));
 					break;
 				}
 
