@@ -1,6 +1,6 @@
 import { CodedError, ErrorCodes } from './errors.ts';
 import { formatUntrustedValue } from './untrusted-value.ts';
-import { MAX_MANIFEST_DESCRIPTION_BYTES, MAX_MANIFEST_ID_BYTES, MAX_MANIFEST_NAME_BYTES, checkChecksum, checkEntryPath, checkTextField } from './manifest-limits.ts';
+import { MAX_MANIFEST_DESCRIPTION_BYTES, MAX_MANIFEST_ID_BYTES, MAX_MANIFEST_NAME_BYTES, checkChecksum, checkEntryPath, checkEntryTree, checkTextField } from './manifest-limits.ts';
 import { formatBytes } from './utils.ts';
 export type LISHid = string;
 export type ChunkID = string;
@@ -119,6 +119,7 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 			}
 		}
 	}
+	checkEntryTree(lish.directories ?? [], [...(lish.files ?? []), ...(lish.links ?? [])]);
 }
 
 /**
