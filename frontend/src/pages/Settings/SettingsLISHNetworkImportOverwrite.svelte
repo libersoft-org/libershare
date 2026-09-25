@@ -3,8 +3,7 @@
 	import { t } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { type LISHNetworkDefinition } from '@shared';
-	import { networkExists, addNetworkIfNotExists, getNetworkByID as getNetworkByID, updateNetwork } from '../../scripts/lishNetwork.ts';
-	import { api } from '../../scripts/api.ts';
+	import { networkExists, addNetworkIfNotExists, getNetworkByID as getNetworkByID, updateNetwork, setNetworkEnabled } from '../../scripts/lishNetwork.ts';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	interface Props {
 		networks: LISHNetworkDefinition[];
@@ -61,7 +60,7 @@
 	}
 
 	async function confirmConnect(): Promise<void> {
-		if (currentConnectNetwork) await api.lishnets.setEnabled(currentConnectNetwork.networkID, true);
+		if (currentConnectNetwork) await setNetworkEnabled(currentConnectNetwork.networkID, true);
 		connectQueue = connectQueue.slice(1);
 		if (connectQueue.length === 0) onDone();
 	}

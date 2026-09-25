@@ -5,7 +5,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
 	import { type BootstrapPeerStatus, type LISHNetworkConfig } from '@shared';
-	import { api } from '../../scripts/api.ts';
+	import { updateNetworkBootstrapPeers } from '../../scripts/lishNetwork.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Icon from '../../components/Icon/Icon.svelte';
@@ -59,7 +59,8 @@
 		busy = true;
 		try {
 			const updated = network.bootstrapPeers.map(addr => (addr === peer.multiaddr ? addr.replace(peer.expectedPeerID!, peer.actualPeerID!) : addr));
-			const next = await api.lishnets.updateBootstrapPeers(network.networkID, updated);
+			const next = await updateNetworkBootstrapPeers(network.networkID, updated);
+			if (!next) return;
 			onUpdated?.(next);
 			onBack?.();
 		} catch (e) {
@@ -73,7 +74,8 @@
 		busy = true;
 		try {
 			const updated = network.bootstrapPeers.filter(addr => addr !== peer.multiaddr);
-			const next = await api.lishnets.updateBootstrapPeers(network.networkID, updated);
+			const next = await updateNetworkBootstrapPeers(network.networkID, updated);
+			if (!next) return;
 			onUpdated?.(next);
 			onBack?.();
 		} catch (e) {

@@ -7,9 +7,8 @@
 	import { addNotification } from '../../scripts/notifications.ts';
 	import { type BootstrapStatus, type BootstrapPeerStatus, type LISHNetworkConfig } from '@shared';
 	import { productNetworkList } from '@shared';
-	import { api } from '../../scripts/api.ts';
 	import { shortenPeerID } from '../../scripts/utils.ts';
-	import { fetchPublicNetworks } from '../../scripts/lishNetwork.ts';
+	import { fetchPublicNetworks, updateNetworkBootstrapPeers } from '../../scripts/lishNetwork.ts';
 	import { bootstrapGroupKey, summarizeBootstrapGroup, type BootstrapGroupSummary } from '../../scripts/bootstrapPeerGroup.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -159,7 +158,8 @@
 				addNotification($t('settings.lishNetwork.bootstrap.refreshNoMatch'), 'warning');
 				return;
 			}
-			const next = await api.lishnets.updateBootstrapPeers(network.networkID, match.bootstrapPeers);
+			const next = await updateNetworkBootstrapPeers(network.networkID, match.bootstrapPeers);
+			if (!next) return;
 			onUpdated?.(next);
 			network = next;
 			addNotification($t('settings.lishNetwork.bootstrap.refreshSuccess'), 'success');

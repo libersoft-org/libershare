@@ -457,6 +457,8 @@
 			"errorNotStarted": "Síť LISH nebyla spuštěna",
 			"errorPortInUse": "Nepodařilo se spustit síť LISH: port {detail} je pravděpodobně již obsazen",
 			"networkAdded": "Síť LISH \"{name}\" byla přidána",
+			"savedNotApplied": "Uloženo; změna se v běžícím uzlu zatím neprojevila.",
+			"savedUnconfirmed": "Uloženo; server nepotvrdil, že se změna použila.",
 			"networkUpdated": "Síť LISH \"{name}\" byla upravena",
 			"networkConnected": "Síť LISH \"{name}\" připojena",
 			"networkDisconnected": "Síť LISH \"{name}\" odpojena",

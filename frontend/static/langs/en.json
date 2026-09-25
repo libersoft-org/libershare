@@ -457,6 +457,8 @@
 			"errorNotStarted": "LISH network not started",
 			"errorPortInUse": "Failed to start LISH network: port {detail} is likely already in use",
 			"networkAdded": "LISH network \"{name}\" was added",
+			"savedNotApplied": "Saved, but the running node has not applied the change yet.",
+			"savedUnconfirmed": "Saved; the server did not confirm that the change was applied.",
 			"networkUpdated": "LISH network \"{name}\" was updated",
 			"networkConnected": "LISH network \"{name}\" connected",
 			"networkDisconnected": "LISH network \"{name}\" disconnected",
