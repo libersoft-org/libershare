@@ -76,3 +76,17 @@ export function parseAcceptPXThreshold(raw: unknown): IAcceptPXThreshold {
 	const unsafe = !isValid || candidate <= 1;
 	return { value: unsafe ? DEFAULT_ACCEPT_PX_THRESHOLD : candidate, unsafe, raw };
 }
+
+/**
+ * Longest frame a peer may send us unasked — requests and the unicast `announceHave` /
+ * `searchResult` notifications all arrive through one decoder, and the kind of a message is
+ * known only after it is read, so one cap covers them. Sized for a HAVE snapshot of about
+ * 500 000 chunk checksums; a larger announcement is refused by its sender instead of cut.
+ */
+export const MAX_INBOUND_MESSAGE_SIZE = 32 * 1024 * 1024;
+
+/** Longest reply to a `getLishs` list request. */
+export const MAX_LIST_RESPONSE_SIZE = 4 * 1024 * 1024;
+
+/** Longest acknowledgement of a notification (or error reply to one). */
+export const MAX_ACK_RESPONSE_SIZE = 4 * 1024;
