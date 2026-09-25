@@ -87,7 +87,7 @@ export function withSaveBudget<T>(fn: () => Promise<T>, now: () => number = elap
  * refuses to start one that has nothing left, so a slow host answers with the fields it
  * managed to read instead of the screen answering with an error.
  */
-export const READ_BUDGET_MS = SYSTEM_TIME_READ_TIMEOUT_MS - 5_000;
+export const READ_BUDGET_MS: number = SYSTEM_TIME_READ_TIMEOUT_MS - 5_000;
 
 /**
  * Run one host read under {@link READ_BUDGET_MS}, or inside whatever budget already applies.
