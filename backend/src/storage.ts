@@ -1,4 +1,7 @@
-import { join } from 'path';
+import { randomUUID } from 'node:crypto';
+import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { syncDirectory } from './file-durability.ts';
 import { CodedError, ErrorCodes } from '@shared';
 
 /**
@@ -31,6 +34,49 @@ export function fatalStorageMessage(filePath: string, code: FatalStorageCode): s
 		lines.push(`[Storage] Fix on the host: chown 0:0 <mounted-dir> && chmod 0700 <mounted-dir>, then restart.`);
 	}
 	return lines;
+}
+
+/**
+ * A settings write that did not complete. `published` says whether the new file had already
+ * been renamed into place: before it the old file is intact, after it the new content is on
+ * disk but its durability was not confirmed. The message is the public contract — it reaches
+ * API clients verbatim — so it names the outcome and never carries setting values.
+ */
+export class StorageWriteError extends Error {
+	readonly code: string | undefined;
+	readonly published: boolean;
+
+	constructor(cause: unknown, published: boolean) {
+		const code = (cause as NodeJS.ErrnoException | null)?.code;
+		const suffix = code ? ` (${code})` : '';
+		super(published ? `Settings file now contains the new settings, but durability could not be confirmed${suffix}.` : `Settings file was not replaced; in-memory settings may differ from disk${suffix}.`, { cause });
+		this.name = 'StorageWriteError';
+		this.code = code;
+		this.published = published;
+	}
+}
+
+/**
+ * Create `dir` (private mode) and flush the parent of every level that did not exist, so the
+ * new entries survive a power loss together with the file written into them.
+ */
+async function ensureDirectory(dir: string): Promise<void> {
+	const created = await mkdir(dir, { recursive: true, mode: 0o700 });
+	if (created === undefined) return;
+	for (let level = dir; ; level = dirname(level)) {
+		await syncDirectory(dirname(level));
+		if (level === created || dirname(level) === level) break;
+	}
+}
+
+/** Refuse to replace anything but a regular file; a missing target is a first write. */
+async function assertReplaceableTarget(path: string): Promise<void> {
+	try {
+		const info = await lstat(path);
+		if (!info.isFile()) throw Object.assign(new Error(`${path} is not a regular file`), { code: info.isDirectory() ? 'EISDIR' : 'EINVAL' });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+	}
 }
 
 /**
@@ -74,23 +120,45 @@ abstract class BaseStorage<T> {
 		return queued;
 	}
 
+	/**
+	 * Replace the file atomically: write a unique sibling, flush it, rename it over the target
+	 * and flush the directory. A crash or a full disk mid-write therefore leaves either the old
+	 * or the new document, never a truncated one that the next start would read as a fresh
+	 * install. Never deletes the target first and never falls back to writing it in place.
+	 */
 	private async writeFile(data: T): Promise<void> {
+		const text = JSON.stringify(data, null, '	');
+		const dir = dirname(this.filePath);
+		const staging = `${this.filePath}.${randomUUID()}.tmp`;
+		let published = false;
 		try {
-			await Bun.write(this.filePath, JSON.stringify(data, null, '\t'));
+			await ensureDirectory(dir);
+			await assertReplaceableTarget(this.filePath);
+			const handle = await open(staging, 'wx', 0o600);
+			try {
+				await handle.writeFile(text);
+				await handle.sync();
+			} finally {
+				await handle.close();
+			}
+			await assertReplaceableTarget(this.filePath);
+			await rename(staging, this.filePath);
+			published = true;
+			await syncDirectory(dir);
 		} catch (error) {
-			// Permission / read-only filesystem errors at this layer mean every
-			// subsequent write to settings.json (peer identity, joined networks,
-			// user preferences) would silently disappear and the next restart
-			// would regenerate state from defaults. That is much worse than
-			// crashing — fail fast with an operator-actionable hint instead of
-			// limping along. The most common trigger in container deployments is
-			// `cap_drop: ALL` stripping CAP_DAC_OVERRIDE while the bind-mount on
-			// the host is owned by a non-root user.
+			if (!published) await unlink(staging).catch(() => {});
+			const failure = new StorageWriteError(error, published);
+			console.error(`[Storage] Error saving ${this.filePath}: ${failure.message}`);
+			// Permission / read-only / full-disk errors mean every later write would disappear as
+			// well, and the next restart would come back to stale state. That is worse than
+			// crashing: fail fast with an operator-actionable hint. The most common trigger in
+			// container deployments is `cap_drop: ALL` stripping CAP_DAC_OVERRIDE while the
+			// bind-mount on the host is owned by a non-root user.
 			if (isFatalStorageError(error)) {
 				for (const line of fatalStorageMessage(this.filePath, error.code!)) console.error(line);
 				process.exit(74); // sysexits.h EX_IOERR
 			}
-			console.error(`[Storage] Error saving ${this.filePath}:`, error);
+			throw failure;
 		}
 	}
 }
