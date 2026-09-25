@@ -3,6 +3,7 @@ export { productName, productVersion, productIdentifier, productWebsite, product
 
 // Untrusted values in error details
 export { formatUntrustedValue, boundDetail, MAX_VALIDATION_DETAIL } from './untrusted-value.ts';
+export { MAX_MANIFEST_PATH_BYTES, MAX_MANIFEST_ID_BYTES, MAX_MANIFEST_NAME_BYTES, MAX_MANIFEST_DESCRIPTION_BYTES, MAX_CHECKSUM_LENGTH } from './manifest-limits.ts';
 
 // Utils
 export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End, deriveConnectionStatus, isSelectableInterface, ipv4BaselineOf, sameIPv4Baseline, isIPv4, isIPv6, isValidSSID, isUnambiguousWifiTarget, isValidWifiKey, isWifiHexKey, MAX_DNS_LIST_BYTES, MAX_DNS_SERVERS, canonicalDnsServer, normalizeDnsServers, validateIPv4Config } from './utils.ts';
