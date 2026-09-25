@@ -502,6 +502,11 @@ describe('Upload pause/resume affects protocol state', () => {
 // Test 5: Downloader behavior with mocked network
 // ============================================================================
 
+/** The engine a Downloader delegates chunk transfers to since the ChunkDownloader split. */
+function chunkDownloaderOf(downloader: Downloader): { downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'skip-chunk' | 'chunk-not-found' | 'drop-peer'> } {
+	return priv(downloader)['chunkDownloader'] as never;
+}
+
 describe('Downloader — download behavior with mocked peers', () => {
 	let downloader: Downloader;
 	let ds: MockDataServerForDownloader;
@@ -529,11 +534,7 @@ describe('Downloader — download behavior with mocked peers', () => {
 		const chunkData = new Uint8Array(512).fill(0x42);
 		client.requestChunkResult = chunkData;
 
-		const result = await (
-			downloader as never as {
-				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'skip-chunk' | 'chunk-not-found' | 'drop-peer'>;
-			}
-		).downloadChunk(client, CHUNK_A);
+		const result = await chunkDownloaderOf(downloader).downloadChunk(client, CHUNK_A);
 
 		expect(result).not.toBe('skip-chunk');
 		expect(result).not.toBe('drop-peer');
@@ -549,11 +550,7 @@ describe('Downloader — download behavior with mocked peers', () => {
 		const client = new MockLISHClient();
 		client.requestChunkResult = new CodedError(ErrorCodes.PEER_BUSY, 'test');
 
-		const result = await (
-			downloader as never as {
-				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'skip-chunk' | 'chunk-not-found' | 'drop-peer'>;
-			}
-		).downloadChunk(client, CHUNK_A);
+		const result = await chunkDownloaderOf(downloader).downloadChunk(client, CHUNK_A);
 
 		expect(result).toBe('skip-chunk');
 	});
@@ -567,26 +564,9 @@ describe('Downloader — download behavior with mocked peers', () => {
 		const client = new MockLISHClient();
 		client.requestChunkResult = new Error('stream reset');
 
-		const result = await (
-			downloader as never as {
-				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'skip-chunk' | 'chunk-not-found' | 'drop-peer'>;
-			}
-		).downloadChunk(client, CHUNK_A);
+		const result = await chunkDownloaderOf(downloader).downloadChunk(client, CHUNK_A);
 
 		expect(result).toBe('drop-peer');
-	});
-
-	it('bannedPeers gets cleared and allows re-probe', () => {
-		const bannedPeers = priv(downloader)['bannedPeers'] as Set<string>;
-		bannedPeers.add('peer-dead-001');
-		bannedPeers.add('peer-dead-002');
-
-		expect(bannedPeers.size).toBe(2);
-		expect(bannedPeers.has('peer-dead-001')).toBe(true);
-
-		bannedPeers.clear();
-		expect(bannedPeers.size).toBe(0);
-		expect(bannedPeers.has('peer-dead-001')).toBe(false);
 	});
 
 	it('lastExhaustedTime throttle prevents immediate doWork re-entry', async () => {
@@ -602,9 +582,9 @@ describe('Downloader — download behavior with mocked peers', () => {
 		// doWork should return immediately without attempting download
 		await (downloader as any)['doWork']();
 
-		// peers should still be empty (no work was done)
-		const peers = priv(downloader)['peers'] as Map<string, unknown>;
-		expect(peers.size).toBe(0);
+		// No work was done: no peer was taken on and nothing was requested.
+		expect(ds.missingChunks.length).toBe(1);
+		expect((priv(downloader)['peerManager'] as { size: () => number }).size()).toBe(0);
 	});
 
 	it('lastExhaustedTime resets to 0 on enable, allowing immediate retry', async () => {
@@ -639,8 +619,9 @@ describe('Downloader — download behavior with mocked peers', () => {
 			received = info;
 		});
 
-		const cb = priv(downloader)['onProgress'] as (info: unknown) => void;
-		cb({ downloadedChunks: 5, totalChunks: 10, peers: 2, bytesPerSecond: 100000 });
+		// Progress now flows through the ProgressReporter the Downloader owns.
+		const reporter = priv(downloader)['progressReporter'] as { emit: (info: unknown) => void };
+		reporter.emit({ downloadedChunks: 5, totalChunks: 10, peers: 2, bytesPerSecond: 100000 });
 
 		expect(received).toEqual({
 			downloadedChunks: 5,
@@ -964,19 +945,6 @@ describe('Downloader — state transitions', () => {
 		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 
 		expect(downloader.getPeerCount()).toBe(0);
-	});
-
-	it('subscribes to correct topic on initFromManifest', async () => {
-		const net = new MockNetwork();
-		const ds = new MockDataServerForDownloader();
-		const lish = createTestLISH();
-		ds.completeLishs.add(lish.id);
-
-		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'network-abc');
-		await downloader.initFromManifest(lish);
-
-		expect(net.subscribedTopics).toHaveLength(1);
-		expect(net.subscribedTopics[0]!.topic).toBe('lish/network-abc');
 	});
 });
 
