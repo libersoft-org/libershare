@@ -32,12 +32,26 @@ function silentStream(): { stream: any; sent: () => number; aborted: () => boole
 }
 
 function handlersOver(network: any, shutdown: AbortController) {
-	return initLISHnetsHandlers({ getRunningNetwork: () => network } as never, {} as never, () => {}, {} as never, async () => ({ lishID: 'unused' }) as never, async op => op(), shutdown.signal);
+	return initLISHnetsHandlers(
+		{ getRunningNetwork: () => network } as never,
+		{} as never,
+		() => {},
+		{} as never,
+		async () => ({ lishID: 'unused' }) as never,
+		async op => op(),
+		shutdown.signal
+	);
 }
 
 /** Settles within `ms`, or reports that it did not. */
 function within<T>(promise: Promise<T>, ms: number): Promise<'settled' | 'pending'> {
-	return Promise.race([promise.then(() => 'settled' as const, () => 'settled' as const), Bun.sleep(ms).then(() => 'pending' as const)]);
+	return Promise.race([
+		promise.then(
+			() => 'settled' as const,
+			() => 'settled' as const
+		),
+		Bun.sleep(ms).then(() => 'pending' as const),
+	]);
 }
 
 describe('a shutdown cancels the outgoing peer reads the API started', () => {

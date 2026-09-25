@@ -43,7 +43,12 @@ function createLISHsSchema(db: Database): void {
 	// by trying every ALTER and swallowing the error: a locked, read-only or corrupt database
 	// fails the same way as "column already exists", and treating that as success started the
 	// node on a schema it never checked.
-	const present = new Set(db.query<{ name: string }, []>('PRAGMA table_info(lishs)').all().map(c => c.name));
+	const present = new Set(
+		db
+			.query<{ name: string }, []>('PRAGMA table_info(lishs)')
+			.all()
+			.map(c => c.name)
+	);
 	for (const [column, definition] of LISHS_ADDED_COLUMNS) {
 		if (present.has(column)) continue;
 		try {

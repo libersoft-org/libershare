@@ -24,7 +24,10 @@ async function olderDatabase(): Promise<string> {
 }
 
 function columns(db: Database): string[] {
-	return db.query<{ name: string }, []>('PRAGMA table_info(lishs)').all().map(c => c.name);
+	return db
+		.query<{ name: string }, []>('PRAGMA table_info(lishs)')
+		.all()
+		.map(c => c.name);
 }
 
 describe('initLISHsTables migrates from the actual schema', () => {

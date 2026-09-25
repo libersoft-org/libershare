@@ -3,11 +3,9 @@ import { drainForShutdown, type ShutdownDeps } from '../../../src/api/shutdown.t
 import { APIServer } from '../../../src/api/api.ts';
 
 function recordingDeps(log: string[], overrides: Partial<ShutdownDeps> = {}): ShutdownDeps {
-	const step =
-		(name: string) =>
-		async (): Promise<void> => {
-			log.push(name);
-		};
+	const step = (name: string) => async (): Promise<void> => {
+		log.push(name);
+	};
 	return {
 		stopBackgroundWork: () => log.push('background'),
 		stopAllCreates: step('creates'),
