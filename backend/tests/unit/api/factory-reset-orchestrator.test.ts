@@ -2,7 +2,11 @@ import { describe, it, expect } from 'bun:test';
 import { buildFactoryResetHandler } from '../../../src/api/factory-reset-orchestrator.ts';
 import type { FactoryResetOrchestratorDeps } from '../../../src/api/factory-reset-orchestrator.ts';
 import { initIdentityHandlers } from '../../../src/api/identity.ts';
-import { NetworkMutationGate } from '../../../src/lishnet/lishnets.ts';
+import { NetworkMutationGate, type Networks } from '../../../src/lishnet/lishnets.ts';
+import { initDownloadState, initTransferHandlers } from '../../../src/api/transfer.ts';
+import type { DataServer } from '../../../src/lish/data-server.ts';
+import type { Settings } from '../../../src/settings.ts';
+import { tmpdir } from 'os';
 
 /** A real Ed25519 private key protobuf, base64 — the identity handler decodes it. */
 const KEY = 'CAESQNs1s0lYRIvIzKjEJ3T0XEZ1TaL1U0bVuaGfDJtzFfnXV7mfNBLSK0bBsJ1uZE3BhmVBXwS5OW1L4gAzxdPKAAA=';
@@ -922,5 +926,60 @@ describe('buildFactoryResetHandler — settings persistence failure', () => {
 		expect(settingsResult).toEqual({ category: 'settings', ok: false, detail: 'Settings file now contains the new settings, but durability could not be confirmed (EIO).' });
 		expect(res.success).toBe(false);
 		expect(downloadLimiter.getLimit()).toBe(77 * 1024);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// A failed transfer restore, through the real transfer handlers
+// ---------------------------------------------------------------------------
+
+describe('buildFactoryResetHandler — failed restore through the real transfer handlers', () => {
+	it('reports the reset as failed, keeps transfers closed and leaves every stored intent alone', async () => {
+		const persisted: Array<{ lishID: string; enabled: boolean }> = [];
+		initDownloadState(new Set<string>(), (lishID, enabled) => persisted.push({ lishID, enabled }));
+		const transferNetworks = {
+			getRunningNetwork: (): any => ({ onPeerDisconnect: () => () => {}, broadcast: async () => {}, getTopicPeers: () => [], isRunning: () => true }),
+			getEnabled: (): any[] => [{ networkID: 'net-a' }],
+			isJoined: (id: string): boolean => id === 'net-a',
+			set onNetworkLeft(_cb: unknown) {},
+			set onNetworkJoined(_cb: unknown) {},
+		} as unknown as Networks;
+		// A is an ordinary unfinished download; B's LISH has gone.
+		const transferData = {
+			clearError: () => {},
+			setError: () => {},
+			getTransferStats: () => ({ downloadedBytes: 0, uploadedBytes: 0 }),
+			get: (lishID: string): any => (lishID === 'lish-a' ? { id: 'lish-a', name: 'a', directory: null, files: [] } : null),
+			getAllChunkCount: () => 4,
+			isCompleteLISH: () => false,
+			getMissingChunks: () => ['chunk-0'],
+			resetVerification: () => {},
+		} as unknown as DataServer;
+		const events: string[] = [];
+		const handlers = initTransferHandlers(
+			transferNetworks,
+			transferData,
+			tmpdir(),
+			() => {},
+			(event: string, data: any) => events.push(`${event}:${data.lishID}`),
+			{ get: () => false } as unknown as Settings
+		);
+		const resumed: string[] = [];
+		const deps = makeDeps({
+			dataServerOverride: { getDownloadEnabledLishs: () => new Set(['lish-a', 'lish-b']), setDownloadEnabled: () => {} },
+			restoreAllTransfers: (ids, snapshot) => handlers.restoreAll(ids, snapshot as never),
+			resumeAllTransfers: () => resumed.push('resume'),
+		});
+
+		const response = await buildFactoryResetHandler(deps)({ downloads: false, settings: true, identity: false, networks: false, peers: false });
+
+		expect(response.success).toBe(false);
+		expect(resumed).toEqual([]);
+		expect(events.filter(event => event.startsWith('transfer.download:enabled'))).toEqual([]);
+		expect(persisted).toEqual([]);
+		// Nothing is running; both downloads are still wanted, as the stored intent says.
+		const transfers = handlers.getActiveTransfers();
+		expect(transfers.filter(t => t.type === 'downloading' || t.type === 'allocating')).toEqual([]);
+		expect(transfers.filter(t => t.type === 'download-enabled').map(t => t.lishID)).toEqual(['lish-a', 'lish-b']);
 	});
 });
