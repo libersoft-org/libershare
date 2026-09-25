@@ -74,10 +74,18 @@ beforeAll(async () => {
 	const network = (bootstrapPeers: string[]) => ({ network: { networkID: NETWORK_ID, name: 'e2e', description: '', bootstrapPeers, created: new Date().toISOString(), enabled: true } });
 	await nodes[0]!.call('lishnets.add', network([]));
 	const isLan = (a: string): boolean => a.startsWith('/ip4/') && !a.startsWith('/ip4/127.') && !a.includes('/p2p-circuit');
-	const info = await waitFor('node0 addresses', () => nodes[0]!.call('lishnets.getNodeInfo'), (i: any) => i?.addresses?.some(isLan));
+	const info = await waitFor(
+		'node0 addresses',
+		() => nodes[0]!.call('lishnets.getNodeInfo'),
+		(i: any) => i?.addresses?.some(isLan)
+	);
 	seederPeerID = info.peerID;
 	const dialable = async (i: number): Promise<string> => {
-		const nodeInfo = await waitFor(`node${i} addresses`, () => nodes[i]!.call('lishnets.getNodeInfo'), (n: any) => n?.addresses?.some(isLan));
+		const nodeInfo = await waitFor(
+			`node${i} addresses`,
+			() => nodes[i]!.call('lishnets.getNodeInfo'),
+			(n: any) => n?.addresses?.some(isLan)
+		);
 		const address: string = nodeInfo.addresses.find(isLan);
 		return address.includes('/p2p/') ? address : `${address}/p2p/${nodeInfo.peerID}`;
 	};
@@ -87,7 +95,12 @@ beforeAll(async () => {
 	for (const [index, node] of [nodes[1]!, nodes[2]!].entries()) {
 		if (index === 1) bootstraps[1] = [bootstraps[0]![0]!, await dialable(1)];
 		await node.call('lishnets.add', network(bootstraps[index]!));
-		await waitFor('network membership', () => node.call('lishnets.getStatus', { networkID: NETWORK_ID }), (s: any) => s.connected >= 1, EVENT_TIMEOUT);
+		await waitFor(
+			'network membership',
+			() => node.call('lishnets.getStatus', { networkID: NETWORK_ID }),
+			(s: any) => s.connected >= 1,
+			EVENT_TIMEOUT
+		);
 		// The manifest travels over P2P from the seeder; autoStartDownloading is off, so the
 		// tests decide when each download starts.
 		await node.call('lishnets.addPeerLish', { lishID, peerID: seederPeerID, networkID: NETWORK_ID }, 60_000);
