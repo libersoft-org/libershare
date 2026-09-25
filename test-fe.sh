@@ -11,7 +11,6 @@
 # `document.documentElement.dataset.testStatus` to passed or failed and leaves its per-case
 # results in `window.<name>TestResults`.
 set -e
-cd frontend
+cd "$(dirname "$0")/frontend"
 bun run check
 bun run test
-cd ..

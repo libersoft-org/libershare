@@ -1,5 +1,4 @@
 #!/bin/sh
-
-cd cli
+set -e
+cd "$(dirname "$0")/cli"
 bun run typecheck
-cd ..
