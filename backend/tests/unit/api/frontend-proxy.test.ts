@@ -141,7 +141,7 @@ describe('frontend proxy /status', () => {
 			const ok = await fetch(`${proxy.http}/status?token=${TOKEN}`);
 			expect(ok.status).toBe(200);
 			expect(ok.headers.get('cache-control')).toBe('no-store');
-			expect((await ok.json()).authenticated).toBe(true);
+			expect(((await ok.json()) as { authenticated: boolean }).authenticated).toBe(true);
 
 			const wrong = await fetch(`${proxy.http}/status?token=nope`);
 			expect(wrong.status).toBe(401);
