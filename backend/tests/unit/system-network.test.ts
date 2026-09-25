@@ -146,7 +146,14 @@ describe('parseWindowsNetworkState', () => {
 	it.each([
 		{ rows: [{ Family: 2, InterfaceAlias: 'Example VPN', ConnectionState: 1 }], name: 'Example VPN', link: 'up' },
 		{ rows: [{ Family: 23, InterfaceAlias: 'Example VPN', ConnectionState: 1 }], name: 'Example VPN', link: 'up' },
-		{ rows: [{ Family: 2, InterfaceAlias: '', ConnectionState: 0 }, { Family: 23, InterfaceAlias: 'Example VPN', ConnectionState: 1 }], name: 'Example VPN', link: 'up' },
+		{
+			rows: [
+				{ Family: 2, InterfaceAlias: '', ConnectionState: 0 },
+				{ Family: 23, InterfaceAlias: 'Example VPN', ConnectionState: 1 },
+			],
+			name: 'Example VPN',
+			link: 'up',
+		},
 		{ rows: [{ Family: 2, InterfaceAlias: 'Example VPN', ConnectionState: 0 }], name: 'Example VPN', link: 'down' },
 		{ rows: [{ Family: 2, InterfaceAlias: 'Example VPN' }], name: 'Example VPN', link: 'unknown' },
 		{ rows: [{ Family: 2 }], name: '#5', link: 'unknown' },
@@ -191,7 +198,10 @@ describe('parseWindowsNetworkState', () => {
 		expect(adapter).not.toHaveProperty('description');
 	});
 
-	it.each([{ value: 0, hidden: false }, { value: 1, hidden: true }])('retains the explicit OS hidden flag $value', ({ value, hidden }) => {
+	it.each([
+		{ value: 0, hidden: false },
+		{ value: 1, hidden: true },
+	])('retains the explicit OS hidden flag $value', ({ value, hidden }) => {
 		const doc = simpleWindowsStaticDoc();
 		doc['adapters'] = { ...(doc['adapters'] as object), Hidden: value };
 		expect(parseWindowsNetworkState(JSON.stringify(doc))[0]).toMatchObject({ hidden });

@@ -1531,7 +1531,14 @@ describe.if(process.platform === 'win32')('Windows timezone preference preservat
 		// The write-time state is injected too. Left to the real host, this case now depends on
 		// whether the machine running the tests has synchronisation on - which the refusal
 		// below correctly objects to, and which has nothing to do with what is asserted here.
-		const result = await setSystemClock(12, 0, 0, async () => status, exec, async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped' }));
+		const result = await setSystemClock(
+			12,
+			0,
+			0,
+			async () => status,
+			exec,
+			async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped' })
+		);
 		expect(result.success).toBe(true);
 		expect(calls[0]).toContain('Get-Date -Hour 12 -Minute 0 -Second 0 -Millisecond 0');
 		expect(calls[0]).not.toMatch(/\d{4}-\d{2}-\d{2}/);

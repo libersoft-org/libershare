@@ -53,9 +53,17 @@
 		gap: 1.5vh;
 	}
 
-	.summary { flex: 1; min-width: 0; }
-	.label { display: block; overflow-wrap: anywhere; }
-	.details { margin-top: 0.4vh; }
+	.summary {
+		flex: 1;
+		min-width: 0;
+	}
+	.label {
+		display: block;
+		overflow-wrap: anywhere;
+	}
+	.details {
+		margin-top: 0.4vh;
+	}
 
 	.label {
 		font-size: 2vh;

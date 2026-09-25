@@ -33,13 +33,7 @@ describe('transient process errors', () => {
 		expect(isTransientError(new Error('outer error', { cause: new StreamStateError('closed') }))).toBe(false);
 	});
 
-	it.each([
-		new Error('ordinary failure'),
-		new TypeError('invalid input'),
-		new DOMException('access refused', 'NotAllowedError'),
-		new Error('AbortError mentioned in an ordinary message'),
-		new Error('wrapped bug', { cause: new TypeError('invalid input') }),
-	])('keeps unrelated errors fatal: %s', error => {
+	it.each([new Error('ordinary failure'), new TypeError('invalid input'), new DOMException('access refused', 'NotAllowedError'), new Error('AbortError mentioned in an ordinary message'), new Error('wrapped bug', { cause: new TypeError('invalid input') })])('keeps unrelated errors fatal: %s', error => {
 		expect(isTransientError(error)).toBe(false);
 	});
 

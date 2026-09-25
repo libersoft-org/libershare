@@ -27,7 +27,6 @@ export function splitNmcliFields(line: string): string[] {
 	return fields;
 }
 
-
 export function assertLinuxWifiConnected(networks: NetWifiNetwork[], ssid: string, bssid: string | null): void {
 	const active = networks.find(network => network.active && network.ssid === ssid && (bssid === null || network.bssid?.toLowerCase() === bssid.toLowerCase()));
 	if (!active) throw new Error('NetworkManager did not connect to the requested Wi-Fi access point');
@@ -72,9 +71,7 @@ export function parseNmcliWifiList(text: string): NetWifiNetwork[] {
 	return [...networks.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
 }
 
-
 /** Build the public part of a Wi-Fi connect command; the secret is never an argument. */
 export function nmcliWifiConnectArgs(device: string, ssid: string, askForPassword: boolean, bssid: string | null = null): string[] {
 	return [...(askForPassword ? ['--ask'] : []), 'device', 'wifi', 'connect', ssid, ...(bssid ? ['bssid', bssid] : []), 'ifname', device];
 }
-

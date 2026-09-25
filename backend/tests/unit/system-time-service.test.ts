@@ -185,7 +185,11 @@ describe('Windows Time service transitions', () => {
 					},
 					() => clock
 				);
-			const outcome = await withSaveBudget(() => setSystemNtpEnabled(true, readStatus, exec, mode, wait), () => clock, 100);
+			const outcome = await withSaveBudget(
+				() => setSystemNtpEnabled(true, readStatus, exec, mode, wait),
+				() => clock,
+				100
+			);
 			expect(outcome.success).toBe(false);
 			expect(outcome.stateMayHaveChanged).toBe(true);
 			expect(clock).toBe(100);

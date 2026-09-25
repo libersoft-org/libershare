@@ -348,57 +348,265 @@
 		box-sizing: border-box;
 	}
 
-	.container { width: min(100%, 850px); min-width: 0; }
-	.settings :global(.button.selected), .settings :global(.button:hover), .settings :global(.button:active) { transform: none; box-shadow: none; }
-	.settings :global(.button.selected) { border-color: var(--primary-foreground); }
-	.header, .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1.5vh; }
-	.header { justify-content: flex-start; padding-bottom: 1.8vh; }
-	h2, h3, h4, p { margin: 0; }
-	h2 { font-size: clamp(20px, 2.7vh, 28px); color: var(--primary-foreground); }
-	h3 { font-size: clamp(16px, 2vh, 21px); color: var(--primary-foreground); }
-	.connection { padding: 1.4vh; margin-bottom: 1.4vh; background: var(--secondary-background); border-radius: 1vh; }
-	.connection-main { display: flex; align-items: center; justify-content: space-between; gap: 1.4vh; flex-wrap: wrap; }
-	.connection h4 { font-size: clamp(17px, 2.2vh, 23px); margin: 0.6vh 0; overflow-wrap: anywhere; }
-	.connection-details { display: flex; gap: 0.5vh 2vh; flex-wrap: wrap; font-size: clamp(13px, 1.65vh, 17px); }
-	.section { padding: 1.8vh 0; border-top: 1px solid var(--secondary-softer-background); }
-	.toolbar { margin-bottom: 1.2vh; flex-wrap: wrap; }
-	.note { font-size: clamp(13px, 1.65vh, 17px); line-height: 1.45; color: var(--secondary-foreground); opacity: 0.85; }
-	.warning { margin-bottom: 1.4vh; }
-	.fields { display: flex; flex-direction: column; gap: 1vh; margin-bottom: 1.2vh; }
-	.static-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(85px, 1fr) minmax(0, 2fr); gap: 1vh; }
-	.fields :global(.input-field), .fields :global(.select-field) { min-width: 0; }
-	.fields :global(.label), .join-panel :global(.label) { color: var(--secondary-foreground); font-size: clamp(13px, 1.65vh, 17px); }
-	.fields :global(input), .fields :global(select), .join-panel :global(input) { color: var(--secondary-foreground); background-color: var(--secondary-background); }
-	.fields :global(.input-field.disabled input), .fields :global(.select-field.disabled select), .join-panel :global(.input-field.disabled input) { color: var(--disabled-foreground); background-color: var(--secondary-hard-background); }
-	.wifi-list { display: flex; flex-direction: column; gap: 0.6vh; }
-	.wifi-row { min-width: 0; }
-	.wifi-row :global(.button) { justify-content: flex-start; text-align: left; white-space: normal; min-width: 0; transform: none; opacity: 1; border-width: 2px; }
-	.wifi-row :global(.button.disabled) { opacity: 0.65; }
-	.wifi-row.chosen :global(.button) { border-color: var(--primary-foreground); }
-	.network { display: flex; align-items: center; justify-content: space-between; gap: 1.5vh; flex: 1; min-width: 0; }
-	.network-copy { display: flex; flex-direction: column; gap: 0.3vh; min-width: 0; }
-	.network-name { font-size: clamp(15px, 1.9vh, 20px); font-weight: 600; overflow-wrap: anywhere; }
-	.network-status { font-size: clamp(12px, 1.55vh, 16px); font-weight: 400; line-height: 1.35; }
-	.security { opacity: 0.8; }
-	.signal { display: flex; flex-direction: column; align-items: flex-end; gap: 0.2vh; flex-shrink: 0; font-size: clamp(15px, 1.9vh, 20px); font-variant-numeric: tabular-nums; }
-	.signal-label { font-size: clamp(11px, 1.4vh, 14px); font-weight: 400; opacity: 0.8; }
-	.join-panel { padding: 1.2vh 1.4vh; margin: 0.4vh 0 1vh; border-left: 2px solid var(--primary-foreground); background: var(--secondary-background); display: flex; flex-direction: column; gap: 1vh; }
-	.loading, .empty { display: flex; align-items: center; gap: 1.2vh; padding: 1.4vh; background: var(--secondary-background); border-radius: 1vh; }
-	.loading { margin-bottom: 0.8vh; }
-	.loading strong { display: block; font-size: clamp(14px, 1.8vh, 18px); margin-bottom: 0.2vh; }
-	.message { margin-top: 1vh; padding: 1.2vh 1.4vh; font-size: clamp(13px, 1.75vh, 18px); line-height: 1.45; color: var(--secondary-foreground); background: var(--secondary-background); border-left: 3px solid var(--primary-foreground); border-radius: 0 0.8vh 0.8vh 0; }
-	.message.failed { color: var(--error-foreground, #d33); border-left-color: var(--error-foreground, #d33); }
-	.reload-note { margin-top: 0.8vh; }
-	.joining { display: flex; align-items: center; gap: 1vh; padding: 1vh 0; }
-	.joining strong { display: block; margin-bottom: 0.25vh; }
-	.spinner { width: 1.7vh; height: 1.7vh; min-width: 14px; min-height: 14px; border: 2px solid var(--secondary-softer-background); border-top-color: var(--primary-foreground); border-radius: 50%; animation: spin 0.8s linear infinite; }
-	@keyframes spin { to { transform: rotate(360deg); } }
-	@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+	.container {
+		width: min(100%, 850px);
+		min-width: 0;
+	}
+	.settings :global(.button.selected),
+	.settings :global(.button:hover),
+	.settings :global(.button:active) {
+		transform: none;
+		box-shadow: none;
+	}
+	.settings :global(.button.selected) {
+		border-color: var(--primary-foreground);
+	}
+	.header,
+	.toolbar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1.5vh;
+	}
+	.header {
+		justify-content: flex-start;
+		padding-bottom: 1.8vh;
+	}
+	h2,
+	h3,
+	h4,
+	p {
+		margin: 0;
+	}
+	h2 {
+		font-size: clamp(20px, 2.7vh, 28px);
+		color: var(--primary-foreground);
+	}
+	h3 {
+		font-size: clamp(16px, 2vh, 21px);
+		color: var(--primary-foreground);
+	}
+	.connection {
+		padding: 1.4vh;
+		margin-bottom: 1.4vh;
+		background: var(--secondary-background);
+		border-radius: 1vh;
+	}
+	.connection-main {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1.4vh;
+		flex-wrap: wrap;
+	}
+	.connection h4 {
+		font-size: clamp(17px, 2.2vh, 23px);
+		margin: 0.6vh 0;
+		overflow-wrap: anywhere;
+	}
+	.connection-details {
+		display: flex;
+		gap: 0.5vh 2vh;
+		flex-wrap: wrap;
+		font-size: clamp(13px, 1.65vh, 17px);
+	}
+	.section {
+		padding: 1.8vh 0;
+		border-top: 1px solid var(--secondary-softer-background);
+	}
+	.toolbar {
+		margin-bottom: 1.2vh;
+		flex-wrap: wrap;
+	}
+	.note {
+		font-size: clamp(13px, 1.65vh, 17px);
+		line-height: 1.45;
+		color: var(--secondary-foreground);
+		opacity: 0.85;
+	}
+	.warning {
+		margin-bottom: 1.4vh;
+	}
+	.fields {
+		display: flex;
+		flex-direction: column;
+		gap: 1vh;
+		margin-bottom: 1.2vh;
+	}
+	.static-fields {
+		display: grid;
+		grid-template-columns: minmax(0, 2fr) minmax(85px, 1fr) minmax(0, 2fr);
+		gap: 1vh;
+	}
+	.fields :global(.input-field),
+	.fields :global(.select-field) {
+		min-width: 0;
+	}
+	.fields :global(.label),
+	.join-panel :global(.label) {
+		color: var(--secondary-foreground);
+		font-size: clamp(13px, 1.65vh, 17px);
+	}
+	.fields :global(input),
+	.fields :global(select),
+	.join-panel :global(input) {
+		color: var(--secondary-foreground);
+		background-color: var(--secondary-background);
+	}
+	.fields :global(.input-field.disabled input),
+	.fields :global(.select-field.disabled select),
+	.join-panel :global(.input-field.disabled input) {
+		color: var(--disabled-foreground);
+		background-color: var(--secondary-hard-background);
+	}
+	.wifi-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.6vh;
+	}
+	.wifi-row {
+		min-width: 0;
+	}
+	.wifi-row :global(.button) {
+		justify-content: flex-start;
+		text-align: left;
+		white-space: normal;
+		min-width: 0;
+		transform: none;
+		opacity: 1;
+		border-width: 2px;
+	}
+	.wifi-row :global(.button.disabled) {
+		opacity: 0.65;
+	}
+	.wifi-row.chosen :global(.button) {
+		border-color: var(--primary-foreground);
+	}
+	.network {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1.5vh;
+		flex: 1;
+		min-width: 0;
+	}
+	.network-copy {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3vh;
+		min-width: 0;
+	}
+	.network-name {
+		font-size: clamp(15px, 1.9vh, 20px);
+		font-weight: 600;
+		overflow-wrap: anywhere;
+	}
+	.network-status {
+		font-size: clamp(12px, 1.55vh, 16px);
+		font-weight: 400;
+		line-height: 1.35;
+	}
+	.security {
+		opacity: 0.8;
+	}
+	.signal {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 0.2vh;
+		flex-shrink: 0;
+		font-size: clamp(15px, 1.9vh, 20px);
+		font-variant-numeric: tabular-nums;
+	}
+	.signal-label {
+		font-size: clamp(11px, 1.4vh, 14px);
+		font-weight: 400;
+		opacity: 0.8;
+	}
+	.join-panel {
+		padding: 1.2vh 1.4vh;
+		margin: 0.4vh 0 1vh;
+		border-left: 2px solid var(--primary-foreground);
+		background: var(--secondary-background);
+		display: flex;
+		flex-direction: column;
+		gap: 1vh;
+	}
+	.loading,
+	.empty {
+		display: flex;
+		align-items: center;
+		gap: 1.2vh;
+		padding: 1.4vh;
+		background: var(--secondary-background);
+		border-radius: 1vh;
+	}
+	.loading {
+		margin-bottom: 0.8vh;
+	}
+	.loading strong {
+		display: block;
+		font-size: clamp(14px, 1.8vh, 18px);
+		margin-bottom: 0.2vh;
+	}
+	.message {
+		margin-top: 1vh;
+		padding: 1.2vh 1.4vh;
+		font-size: clamp(13px, 1.75vh, 18px);
+		line-height: 1.45;
+		color: var(--secondary-foreground);
+		background: var(--secondary-background);
+		border-left: 3px solid var(--primary-foreground);
+		border-radius: 0 0.8vh 0.8vh 0;
+	}
+	.message.failed {
+		color: var(--error-foreground, #d33);
+		border-left-color: var(--error-foreground, #d33);
+	}
+	.reload-note {
+		margin-top: 0.8vh;
+	}
+	.joining {
+		display: flex;
+		align-items: center;
+		gap: 1vh;
+		padding: 1vh 0;
+	}
+	.joining strong {
+		display: block;
+		margin-bottom: 0.25vh;
+	}
+	.spinner {
+		width: 1.7vh;
+		height: 1.7vh;
+		min-width: 14px;
+		min-height: 14px;
+		border: 2px solid var(--secondary-softer-background);
+		border-top-color: var(--primary-foreground);
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+	}
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.spinner {
+			animation: none;
+		}
+	}
 
 	@media (max-width: 600px) {
-		.settings { padding: 1.5vh 3vw; }
-		.static-fields { grid-template-columns: minmax(0, 1fr); }
-		.toolbar { align-items: flex-start; }
+		.settings {
+			padding: 1.5vh 3vw;
+		}
+		.static-fields {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.toolbar {
+			align-items: flex-start;
+		}
 	}
 </style>
 
@@ -406,7 +614,10 @@
 	{#if joiningSSID !== null}
 		<div class="joining" role="status" aria-live="polite">
 			<span class="spinner" aria-hidden="true"></span>
-			<div><strong>{$t('settings.network.joining')}</strong><p class="note">{$t('settings.network.joiningHint', { ssid: joiningSSID })}</p></div>
+			<div>
+				<strong>{$t('settings.network.joining')}</strong>
+				<p class="note">{$t('settings.network.joiningHint', { ssid: joiningSSID })}</p>
+			</div>
 		</div>
 	{:else if message}
 		<div class="message" class:failed role="status" aria-live="polite">{message}</div>
@@ -510,7 +721,10 @@
 				{#if scanning}
 					<div class="loading" role="status">
 						<Icon img="/img/wifi.svg" size="2.5vh" colorVariable="--secondary-foreground" />
-						<div><strong>{$t('settings.network.scanning')}</strong><p class="note">{$t('settings.network.scanningHint')}</p></div>
+						<div>
+							<strong>{$t('settings.network.scanning')}</strong>
+							<p class="note">{$t('settings.network.scanningHint')}</p>
+						</div>
 					</div>
 				{:else if networks.length === 0 && !message}
 					<div class="empty"><p class="note">{$t('settings.network.scanHint')}</p></div>
@@ -523,7 +737,9 @@
 								<div class="network">
 									<div class="network-copy">
 										<span class="network-name">{networkLabel(network)}{network.active ? ' ✓' : ''}</span>
-										<span class="network-status">{#if joiningSSID !== null && wifiFeedback && sameNetwork(wifiFeedback, network)}{$t('settings.network.joining')}{:else}{networkStatus(network)}{#if network.security}<span class="security"> · {network.security}</span>{/if}{/if}</span>
+										<span class="network-status"
+											>{#if joiningSSID !== null && wifiFeedback && sameNetwork(wifiFeedback, network)}{$t('settings.network.joining')}{:else}{networkStatus(network)}{#if network.security}<span class="security"> · {network.security}</span>{/if}{/if}</span
+										>
 									</div>
 									<div class="signal"><span>{network.signal !== null ? `${network.signal}%` : '—'}</span><span class="signal-label">{$t('settings.network.signal')}</span></div>
 								</div>

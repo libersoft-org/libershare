@@ -91,30 +91,31 @@ export function runTimeWrite(write: () => Promise<SystemTimeResult>, readStatus:
 	// three inside their own 200 s: the third reaches the head of the queue at 340 s, and the
 	// screen gives up at 300 - so the user is told the wait is over and the host is changed
 	// afterwards. Raising a limit does not fix it either; nothing bounds the queue's length.
-	return withSaveBudget(() =>
-		withSystemTimeLock(async () => {
-			// Refused outright, not started: nothing has been touched yet, and the caller this
-			// answer belongs to has already stopped waiting for it. A save that starts here
-			// would change the host after its own screen reported an interrupted wait.
-			const waited = remainingSaveBudget();
-			if (waited !== null && waited <= 0) return { success: false, outcome: 'error', message: `this request waited longer than the ${Math.round(SAVE_BUDGET_MS / 1000)} s one save is allowed, so it was not started` };
-			const res = await write();
-		// A failure is not "nothing happened". A sequence that stopped part-way left the
-		// steps before it applied — the service already stopped, the start mode already
-		// changed — so the clients are told what the host looks like NOW. Skipping that
-		// leaves every open window showing a state the host no longer has.
-			if (!res.success && !res.stateMayHaveChanged) return res;
-			try {
-				// Under its own allowance, not the save's. Telling every open window what the host
-				// looks like now is not the work the budget bounds - and with child limits held
-				// to the remainder, a save that spent all of it would have its own report refused
-				// and leave the screen showing a state the host no longer has.
-				broadcast('system:timeChanged', await withFollowUpBudget(readStatus));
-			} catch (err) {
-				console.warn('[system-time] Applied, but could not announce the new time status:', (err as Error).message);
-			}
-			return res;
-		}),
+	return withSaveBudget(
+		() =>
+			withSystemTimeLock(async () => {
+				// Refused outright, not started: nothing has been touched yet, and the caller this
+				// answer belongs to has already stopped waiting for it. A save that starts here
+				// would change the host after its own screen reported an interrupted wait.
+				const waited = remainingSaveBudget();
+				if (waited !== null && waited <= 0) return { success: false, outcome: 'error', message: `this request waited longer than the ${Math.round(SAVE_BUDGET_MS / 1000)} s one save is allowed, so it was not started` };
+				const res = await write();
+				// A failure is not "nothing happened". A sequence that stopped part-way left the
+				// steps before it applied — the service already stopped, the start mode already
+				// changed — so the clients are told what the host looks like NOW. Skipping that
+				// leaves every open window showing a state the host no longer has.
+				if (!res.success && !res.stateMayHaveChanged) return res;
+				try {
+					// Under its own allowance, not the save's. Telling every open window what the host
+					// looks like now is not the work the budget bounds - and with child limits held
+					// to the remainder, a save that spent all of it would have its own report refused
+					// and leave the screen showing a state the host no longer has.
+					broadcast('system:timeChanged', await withFollowUpBudget(readStatus));
+				} catch (err) {
+					console.warn('[system-time] Applied, but could not announce the new time status:', (err as Error).message);
+				}
+				return res;
+			}),
 		now
 	);
 }

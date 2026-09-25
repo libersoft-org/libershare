@@ -3,7 +3,6 @@ import type { NetWifiNetwork } from '@shared';
 import { type WlanApi, type WlanHandle, MAX_SSID_LENGTH, ERROR_ALREADY_EXISTS, WLAN_PROFILE_USER, withWlanHandle, guidToBytes, utf16z, encodeConnectionParameters, readFixedUtf16, wlanErrorMessage, wlanReasonText, readAssociation, isWindowsWifiDisconnected, readWindowsWifiOperationState } from './system-network-windows-wlan.ts';
 import { assertProfileNameWritable, assertWindowsWifiKey, type JoinTarget, type ProfileChange, ssidHex, windowsWifiProfileXml, writeJoinProfile, openJoinDecision, readStoredProfile, writeProfile, readWrittenProfile, undoWifiProfileChange } from './system-network-windows-profiles.ts';
 
-
 // ---------------------------------------------------------------------------
 // wlanapi.dll (scanning and joining)
 // ---------------------------------------------------------------------------
@@ -174,14 +173,16 @@ export function parseAvailableNetworks(list: Pointer, reasonText?: (reason: numb
 		if (group) group.push(found);
 		else groups.set(key, [found]);
 	}
-	return [...groups.values()].map(group => {
-		const selection = selectScannedNetwork(group);
-		const ambiguous = selection === 'ambiguous';
-		const found = selection && !ambiguous ? selection : group.reduce((a, b) => (a.signal ?? -1) >= (b.signal ?? -1) ? a : b);
-		const unavailableReason = ambiguous ? AMBIGUOUS_NETWORK : found.connectable ? null : reasonText?.(found.notConnectableReason);
-		// Profile names remain native-only; the UI gets the same eligibility as the final join lookup.
-		return { ssid: found.ssid, ssidHex: ssidHex(found.ssidBytes), bssid: found.bssid, signal: found.signal, secured: found.secured, security: found.security, supported: found.supported, active: group.some(entry => entry.active), connectable: !ambiguous && found.connectable, ...(unavailableReason ? { unavailableReason } : {}) };
-	}).sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
+	return [...groups.values()]
+		.map(group => {
+			const selection = selectScannedNetwork(group);
+			const ambiguous = selection === 'ambiguous';
+			const found = selection && !ambiguous ? selection : group.reduce((a, b) => ((a.signal ?? -1) >= (b.signal ?? -1) ? a : b));
+			const unavailableReason = ambiguous ? AMBIGUOUS_NETWORK : found.connectable ? null : reasonText?.(found.notConnectableReason);
+			// Profile names remain native-only; the UI gets the same eligibility as the final join lookup.
+			return { ssid: found.ssid, ssidHex: ssidHex(found.ssidBytes), bssid: found.bssid, signal: found.signal, secured: found.secured, security: found.security, supported: found.supported, active: group.some(entry => entry.active), connectable: !ambiguous && found.connectable, ...(unavailableReason ? { unavailableReason } : {}) };
+		})
+		.sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
 }
 
 const AMBIGUOUS_NETWORK = 'more than one network or saved profile matches this name, so it cannot be selected by name alone';
@@ -443,9 +444,7 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 		});
 		await waitForAssociation(guid, scanned);
 	} catch (err) {
-		const rollback = joinAccepted
-			? await stopFailedJoin({ kind: 'join', guid, profileName, ssidHex: target.ssidHex, change, cancelAccepted: false })
-			: undoWifiProfileChange(guidBytes, profileName, change);
+		const rollback = joinAccepted ? await stopFailedJoin({ kind: 'join', guid, profileName, ssidHex: target.ssidHex, change, cancelAccepted: false }) : undoWifiProfileChange(guidBytes, profileName, change);
 		// Both errors, not just the first. A rollback that failed leaves the machine
 		// in a state neither error describes on its own, and reporting only the
 		// original one would claim the attempt had been undone.

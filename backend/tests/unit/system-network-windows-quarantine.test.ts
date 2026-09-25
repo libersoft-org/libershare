@@ -53,7 +53,10 @@ function attempt(operation: 'apply' | 'scan' | 'join' | 'disconnect', busy: bool
 	const child = Bun.spawnSync([process.execPath, '--eval', script], { cwd: resolve(import.meta.dir, '../..'), timeout: 10_000 });
 	if (child.exitCode !== 0) throw new Error(child.stderr.toString());
 	expect(child.stderr.toString()).toBe('');
-	const result = child.stdout.toString().split(/\r?\n/).find(line => line.startsWith('RESULT:'));
+	const result = child.stdout
+		.toString()
+		.split(/\r?\n/)
+		.find(line => line.startsWith('RESULT:'));
 	expect(result).toBeDefined();
 	return JSON.parse(result!.slice(7));
 }

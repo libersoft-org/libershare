@@ -188,7 +188,7 @@ describe('parseAvailableNetworks', () => {
 
 describe('Windows scan connectability', () => {
 	const policyReason = 0x2800b;
-	const reasonText = (reason: number) => reason === policyReason ? 'Připojení zakazuje zásada systému.' : null;
+	const reasonText = (reason: number) => (reason === policyReason ? 'Připojení zakazuje zásada systému.' : null);
 	const blocked: NetworkFields = { ssid: 'Example', signal: 80, auth: 7, cipher: 4, connectable: false, notConnectableReason: policyReason };
 	const allowed: NetworkFields = { ...blocked, signal: 40, connectable: true };
 
@@ -209,7 +209,10 @@ describe('Windows scan connectability', () => {
 	});
 
 	it('does not offer a weaker connectable row when the join selects a stronger refused row', () => {
-		for (const rows of [[blocked, allowed], [allowed, blocked]]) {
+		for (const rows of [
+			[blocked, allowed],
+			[allowed, blocked],
+		]) {
 			const list = buildList(rows);
 			expect(parseAvailableNetworks(list, reasonText)).toHaveLength(1);
 			expect(parseAvailableNetworks(list, reasonText)[0]).toMatchObject({ signal: 80, connectable: false, unavailableReason: reasonText(policyReason) });
@@ -219,7 +222,10 @@ describe('Windows scan connectability', () => {
 
 	it('does not carry a weaker refusal into a connectable selection', () => {
 		const stronger = { ...allowed, signal: 90 };
-		for (const rows of [[blocked, stronger], [stronger, blocked]]) {
+		for (const rows of [
+			[blocked, stronger],
+			[stronger, blocked],
+		]) {
 			const list = buildList(rows);
 			const [selected] = parseAvailableNetworks(list, reasonText);
 			expect(selected).toMatchObject({ signal: 90, connectable: true });
@@ -230,19 +236,25 @@ describe('Windows scan connectability', () => {
 
 	it('uses the same first-row tie break as the join for equal signals', () => {
 		const equal = { ...allowed, signal: blocked.signal };
-		for (const rows of [[blocked, equal], [equal, blocked]]) {
+		for (const rows of [
+			[blocked, equal],
+			[equal, blocked],
+		]) {
 			const list = buildList(rows);
 			const [selected] = parseAvailableNetworks(list, reasonText);
 			const target = onlyMatch(findScannedNetwork(list, 'Example'));
 			expect(selected?.connectable).toBe(target?.connectable);
-			expect(selected?.unavailableReason).toBe(target?.connectable ? undefined : reasonText(policyReason) ?? undefined);
+			expect(selected?.unavailableReason).toBe(target?.connectable ? undefined : (reasonText(policyReason) ?? undefined));
 		}
 	});
 
 	it('shows the saved profile refusal even when an unnamed reading is stronger', () => {
 		const saved = { ...blocked, profileName: 'Saved connection' };
 		const unnamed = { ...allowed, profileName: '', signal: 95 };
-		for (const rows of [[saved, unnamed], [unnamed, saved]]) {
+		for (const rows of [
+			[saved, unnamed],
+			[unnamed, saved],
+		]) {
 			const list = buildList(rows);
 			expect(parseAvailableNetworks(list, reasonText)[0]).toMatchObject({ signal: 95, supported: true, connectable: false, unavailableReason: reasonText(policyReason) });
 		}
@@ -251,7 +263,10 @@ describe('Windows scan connectability', () => {
 	it('disables equivalent networks with multiple saved profiles', () => {
 		const first = { ...allowed, profileName: 'Saved connection' };
 		const second = { ...allowed, profileName: 'Other connection', signal: 95 };
-		for (const rows of [[first, second], [second, first]]) {
+		for (const rows of [
+			[first, second],
+			[second, first],
+		]) {
 			const list = buildList(rows);
 			expect(parseAvailableNetworks(list)[0]).toMatchObject({ supported: true, connectable: false });
 			expect(parseAvailableNetworks(list)[0]?.unavailableReason).toContain('saved profile');

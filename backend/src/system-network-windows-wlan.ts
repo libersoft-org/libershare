@@ -1,7 +1,6 @@
 import { dlopen, FFIType, ptr, read, toArrayBuffer, type Pointer } from 'bun:ffi';
 import type { NetWifiInfo } from '@shared';
 
-
 // ---------------------------------------------------------------------------
 // wlanapi.dll (SSID / signal quality / radio state)
 // ---------------------------------------------------------------------------
