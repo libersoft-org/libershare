@@ -623,6 +623,15 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * stored intent — so it must not be judged by it.
 	 */
 	async function startStoredDownloader(lishID: string, networkIDs: string[], originalNetworkIDs: string[], disabled: boolean, client?: any, requireEnabled = false, scheduledAt = requestEpoch.get(lishID) ?? 0): Promise<Downloader> {
+		return launchPreparedDownloader(lishID, await prepareStoredDownloader(lishID, networkIDs, originalNetworkIDs, disabled, requireEnabled, scheduledAt), disabled, client);
+	}
+
+	/**
+	 * Build and initialise a downloader for a stored LISH without starting it: no map entry, no
+	 * callbacks, no `download()`. A failure after `initFromManifest` destroys the instance, whose
+	 * init already registered a disconnect listener; the caller owns it on success.
+	 */
+	async function prepareStoredDownloader(lishID: string, networkIDs: string[], originalNetworkIDs: string[], disabled: boolean, requireEnabled = false, scheduledAt = requestEpoch.get(lishID) ?? 0): Promise<Downloader> {
 		const lish = dataServer.get(lishID);
 		if (!lish) throw new Error(`Cannot restore download ${lishID}: LISH is missing`);
 		const downloadDir = lish.directory ?? join(dataDir, 'downloads', Date.now().toString());
@@ -670,6 +679,12 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			// binding is immutable and keeps them, so a legitimate rejoin still resumes there.
 			for (const id of networkIDs) if (!networks.isJoined(id)) downloader.removeNetwork(id);
 		}
+		return downloader;
+	}
+
+	/** Register a prepared downloader, wire its callbacks and start it. */
+	async function launchPreparedDownloader(lishID: string, downloader: Downloader, disabled: boolean, client?: any): Promise<Downloader> {
+		const downloadDir = downloader.getDownloadDirectory();
 		const claim = await claimActiveDownloader(activeDownloaders, lishID, downloader);
 		if (!claim.claimed) return claim.downloader;
 		const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
