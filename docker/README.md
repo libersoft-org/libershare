@@ -12,8 +12,9 @@ Run commands from this `docker/` directory.
 - Compose project name: `libershare`
 - Backend API/WebSocket: `127.0.0.1:${BACKEND_PORT:-1158}` (host-bound to loopback by default)
 - libp2p TCP: `9091:9090` (LAN-bound — peers must reach it externally)
-- Frontend HTTPS: `6003:6003`
-- Browser URL: `https://<docker-host>:6003/`
+- Frontend HTTPS: `127.0.0.1:6003` (host-bound to loopback by default, see `FRONTEND_BIND`)
+- Browser URL: `https://localhost:6003/`
+- API token: required, `LISH_TOKEN` in `.env`
 - Docker network: `libershare-net`, created automatically by compose
 
 The frontend container reaches the backend over the internal Docker network
@@ -131,32 +132,41 @@ below) so the exposed port still requires a shared secret.
 
 ## Authentication
 
-The backend reads `LISH_TOKEN` from the environment. Set it in `.env` next
-to `docker-compose.yml`:
+The API token is required: `docker compose up` refuses to start without it.
+Create `.env` next to `docker-compose.yml` once:
 
 ```sh
-LISH_TOKEN=$(openssl rand -hex 32)
+echo "LISH_TOKEN=$(openssl rand -hex 32)" > .env
+chmod 600 .env
 ```
 
-When `LISH_TOKEN` is non-empty, every WebSocket and REST request must carry
-the same value as `?token=<value>` in the URL — the only exceptions are the
-liveness probe `/health` and the auth-state endpoint `/status`, which stay
-public so orchestrators and the frontend can detect the auth state without
-already knowing the token.
+Every WebSocket and `/status` request must carry the token as `?token=<value>`.
+Only the liveness probe `/health` is public. `/status` without the token
+answers `401` with `authRequired: true`, which is how the web UI knows to show
+its login form.
 
-Browser side: the SvelteKit frontend stores the token (set on the auth
-prompt or injected as `__BACKEND_TOKEN__` by the Tauri shell) and passes it
-on every WebSocket reconnect. The Docker frontend proxy forwards URLs as-is,
-so the same `?token=` query string is preserved when the browser connects to
-same-origin `/ws`.
+Open `https://localhost:6003/`, paste the value of `LISH_TOKEN` into the login
+form and clear the clipboard afterwards. After changing the token, restart the
+backend (`docker compose up -d backend`) and enter the new value in the same
+form — no page reload is needed. The frontend proxy checks the token with the
+backend before it opens the WebSocket, forwards the query unchanged and never
+logs it.
 
-CLI / curl:
+CLI / curl on the Docker host:
 
 ```sh
 curl -fsS "http://localhost:${BACKEND_PORT:-1158}/status?token=$LISH_TOKEN"
 ```
 
-Leave `LISH_TOKEN` unset (the default) to disable authentication entirely.
+### Access from other machines
+
+The token travels in the URL, so anything beyond loopback must be encrypted:
+
+- UI: set `FRONTEND_BIND=0.0.0.0` only together with a certificate the browser
+  trusts (see *TLS*), and open `https://<host>:6003/`.
+- API: set `BACKEND_BIND=0.0.0.0` only behind a TLS-terminating reverse proxy
+  or another encrypted channel (VPN, SSH tunnel); the backend itself speaks
+  plain `ws://`.
 
 ## TLS
 
@@ -251,19 +261,20 @@ the endpoint manually with:
 curl -fsS http://localhost:${BACKEND_PORT:-1158}/health
 ```
 
-## WebSocket proxy resilience
+## WebSocket proxy behaviour
 
 The frontend container terminates the browser WebSocket and forwards it to
-`ws://backend:$BACKEND_PORT`. If the backend goes away (rolling restart,
-crash) the proxy keeps the browser-side socket alive while it reconnects the
-upstream with exponential backoff (250 ms → 5 s, capped). It buffers up to
-1 MiB of in-flight messages during the outage; if that ceiling is exceeded
-the client is closed with code 1011 to force a fresh handshake instead of
-silently dropping subscribe messages.
+`ws://backend:$BACKEND_PORT`. Before the upgrade it asks the backend's
+`/status` with the client's query; a wrong token is answered `401` and no
+socket is opened. `/status` answers `503` when the backend is unreachable and
+`504` when it does not answer within 2.5 s.
 
-A single warning is logged after 10 consecutive reconnect attempts; further
-retries continue silently to avoid filling the proxy log when a tab is left
-open across a long backend outage.
+Each browser socket gets exactly one upstream connection. If that connection
+cannot be opened within 2.5 s, is refused (for example because the backend
+restarted with a new token), or drops later, the browser socket is closed with
+code 1011. The web UI then checks `/status` again and either reconnects or
+shows the login form. Messages sent before the upstream opens are buffered up
+to 1 MiB; beyond that the client is closed with 1011 as well.
 
 ## Verification
 

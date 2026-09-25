@@ -32,11 +32,10 @@ services:
       # Read by `--healthcheck` self-flag so the probe targets the same port as
       # the live API server when BACKEND_PORT is overridden via .env.
       BACKEND_PORT: ${BACKEND_PORT:-1158}
-      # Optional shared secret. If set, every WebSocket and REST request must
-      # carry `?token=<value>` (the frontend proxy forwards the URL untouched,
-      # so the browser-side WsClient handles it). Empty default preserves the
-      # current "no auth" behaviour for upgraders.
-      LISH_TOKEN: ${LISH_TOKEN:-}
+      # Required shared secret: every WebSocket and `/status` request must carry
+      # `?token=<value>`. There is no unauthenticated mode, so compose refuses
+      # to start without it. Put it in `docker/.env`, e.g. `openssl rand -hex 32`.
+      LISH_TOKEN: ${LISH_TOKEN:?Set LISH_TOKEN in docker/.env, for example the output of openssl rand -hex 32}
     healthcheck:
       test: ["CMD", "/app/lish-backend", "--healthcheck"]
       interval: 10s
@@ -95,8 +94,11 @@ services:
       options:
         max-size: ${LOG_MAX_SIZE:-10m}
         max-file: ${LOG_MAX_FILE:-3}
+    # The web UI is published on loopback only. Set `FRONTEND_BIND=0.0.0.0` to
+    # reach it from other machines — only over HTTPS with a certificate the
+    # browser trusts, because the token travels in the URL.
     ports:
-      - "6003:6003"
+      - "${FRONTEND_BIND:-127.0.0.1}:6003:6003"
     depends_on:
       backend:
         condition: service_healthy
