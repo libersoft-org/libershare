@@ -5,6 +5,9 @@ FROM oven/bun:1.3.13-debian AS build
 WORKDIR /src
 
 COPY backend/package.json backend/bun.lock ./backend/
+# patchedDependencies in package.json are applied by the install below, so the patch files
+# must be in place before it runs — copying them with the rest of the sources is too late.
+COPY backend/patches ./backend/patches
 COPY shared/package.json ./shared/
 
 WORKDIR /src/backend
