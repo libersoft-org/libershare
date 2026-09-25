@@ -52,7 +52,7 @@ CLI - Connect to a running server
 Usage: bun cli.ts [options]
 
 Options:
-  -u, --url <url>   Server WebSocket URL (default: ${DEFAULT_API_URL})
+  -u, --url <url>   Server WebSocket URL (default: ${DEFAULT_API_URL}); the API token is read from LISH_TOKEN
   -h, --help        Show this help message
 ${HELP}`);
 		process.exit(0);
@@ -70,9 +70,37 @@ function resolvePath(x: string): string {
 	return x;
 }
 
+/**
+ * The URL to connect to: a token given in `--url` wins, otherwise `LISH_TOKEN` is added as the
+ * single `token` parameter. Two tokens in the URL are refused rather than guessed between.
+ */
+export function withToken(url: string, envToken: string | undefined): string {
+	const parsed = new URL(url);
+	const given = parsed.searchParams.getAll('token');
+	if (given.length > 1) throw new Error('the URL carries more than one token');
+	if (given.length === 0 && envToken) parsed.searchParams.set('token', envToken);
+	return parsed.toString();
+}
+
+/** The URL as shown to the user: no query (it holds the token) and no credentials. */
+export function displayURL(url: string): string {
+	const parsed = new URL(url);
+	parsed.search = '';
+	parsed.username = '';
+	parsed.password = '';
+	return parsed.toString();
+}
+
 async function main(): Promise<void> {
-	console.log(`Connecting to ${serverURL}...`);
-	const client = new APIClient(serverURL);
+	let connectURL: string;
+	try {
+		connectURL = withToken(serverURL, process.env['LISH_TOKEN']);
+	} catch (error: any) {
+		console.error(`Invalid --url: ${error.message}`);
+		process.exit(1);
+	}
+	console.log(`Connecting to ${displayURL(serverURL)}...`);
+	const client = new APIClient(connectURL);
 	try {
 		await client.connect();
 	} catch (error: any) {
