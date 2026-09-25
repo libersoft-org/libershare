@@ -265,11 +265,13 @@ export class Settings {
 		return this.storage.get(path);
 	}
 
+	/**
+	 * Write one key as a single normalized document: the value and the message-size floor it
+	 * may require land in one save, so a failed write reports exactly one attempt and no reader
+	 * ever sees the pair below the floor. A rejected key throws before anything is published.
+	 */
 	async set(path: string, value: any): Promise<void> {
-		await this.writeLock.runExclusive(async () => {
-			await this.storage.set(path, value);
-			await this.repair();
-		});
+		await this.writeLock.runExclusive(() => this.storage.setMany([{ path, value }], draft => Settings.repairDraft(draft), 'throw'));
 	}
 
 	/**
@@ -286,23 +288,12 @@ export class Settings {
 	}
 
 	/**
-	 * Bring a stored message-size limit that cannot carry one chunk back up to the floor.
-	 *
-	 * Runs inside the write lock, on the document the caller just wrote. Done afterwards from
-	 * the handler instead, it was a read and a write with a gap in the middle: a second import
-	 * could land between them, and the repair then wrote a floor derived from the FIRST
-	 * import's chunk size over the second one's message size — leaving a pair neither import
-	 * asked for, with both reporting success.
-	 *
-	 * The protocol layer enforces the same floor at runtime; persisting it keeps the settings
-	 * screen from showing a value the protocol silently overrides.
+	 * Bring a message-size limit that cannot carry one chunk back up to the floor, on a draft
+	 * that has not been published yet. Done on the draft rather than as a second write, a
+	 * concurrent import could land between the two and the repair would derive the floor from
+	 * the wrong chunk size. The protocol layer enforces the same floor at runtime; persisting
+	 * it keeps the settings screen from showing a value the protocol silently overrides.
 	 */
-	private async repair(): Promise<void> {
-		const floor = minMessageSizeFor(this.storage.get('network.maxChunkSize'));
-		if (this.storage.get('network.maxMessageSize') < floor) await this.storage.set('network.maxMessageSize', floor);
-	}
-
-	/** As {@link Settings.repair}, on a batch that has not been published yet. */
 	private static repairDraft(draft: SettingsData): void {
 		const floor = minMessageSizeFor(draft.network.maxChunkSize);
 		if (draft.network.maxMessageSize < floor) draft.network.maxMessageSize = floor;

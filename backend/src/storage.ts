@@ -242,10 +242,11 @@ export class JSONStorage<T extends Record<string, any>> extends BaseStorage<T> {
 	 * as it was or the finished import, never a mixture.
 	 *
 	 * Not all-or-nothing about validity: a key the storage rejects is reported in `skipped`
-	 * and the rest of the batch still lands. `finalize` runs on the draft, so a correction
-	 * derived from the batch is published together with it.
+	 * and the rest of the batch still lands — unless `onInvalid` is `'throw'`, which rejects
+	 * the whole call before anything is published. `finalize` runs on the draft, so a
+	 * correction derived from the batch is published together with it.
 	 */
-	async setMany(entries: ReadonlyArray<{ path: string; value: any }>, finalize?: (draft: T) => void): Promise<{ applied: number; skipped: string[] }> {
+	async setMany(entries: ReadonlyArray<{ path: string; value: any }>, finalize?: (draft: T) => void, onInvalid: 'skip' | 'throw' = 'skip'): Promise<{ applied: number; skipped: string[] }> {
 		const draft = structuredClone(this.data);
 		const skipped: string[] = [];
 		let applied = 0;
@@ -254,6 +255,7 @@ export class JSONStorage<T extends Record<string, any>> extends BaseStorage<T> {
 				JSONStorage.assign(draft, entry.path, entry.value);
 				applied++;
 			} catch (err) {
+				if (onInvalid === 'throw') throw err;
 				console.warn(`Skipped settings key '${entry.path}':`, (err as Error).message);
 				skipped.push(entry.path);
 			}
