@@ -26,9 +26,9 @@ export function fatalStorageMessage(filePath: string, code: FatalStorageCode): s
 	} else if (code === 'EISDIR') {
 		lines.push(`[Storage] A directory exists where a file is expected — remove it before restart.`);
 	} else {
-		lines.push(`[Storage] If running in Docker with cap_drop:ALL, the container loses CAP_DAC_OVERRIDE and`);
-		lines.push(`[Storage] cannot write to a host bind-mount unless its owner matches the container UID.`);
-		lines.push(`[Storage] Fix on the host: chown 0:0 <mounted-dir> && chmod 0700 <mounted-dir>, then restart.`);
+		lines.push(`[Storage] The service user cannot write here. In Docker the service runs as LISH_UID/LISH_GID`);
+		lines.push(`[Storage] (default 1000:1000): run it as the owner of the mounted directory, or give that`);
+		lines.push(`[Storage] user access to it on the host, then restart.`);
 	}
 	return lines;
 }

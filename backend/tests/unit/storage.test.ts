@@ -37,11 +37,11 @@ describe('storage fatal-error message', () => {
 		expect(lines.length).toBeGreaterThan(1);
 	});
 
-	it('includes the chown remediation hint for permission codes', () => {
+	it('points permission codes at the service UID/GID, never at re-owning to root', () => {
 		for (const code of ['EACCES', 'EROFS', 'EPERM'] as const) {
 			const joined = fatalStorageMessage(fixture, code).join('\n');
-			expect(joined).toContain('chown 0:0');
-			expect(joined).toContain('cap_drop');
+			expect(joined).toContain('LISH_UID/LISH_GID');
+			expect(joined).not.toContain('chown 0:0');
 		}
 	});
 

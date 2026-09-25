@@ -36,28 +36,47 @@ finished downloads, temp files, LISH files, LISH network files, and backups.
 
 ## First-run permissions
 
-Both services run with `cap_drop: ALL` and `read_only: true` rootfs, but each
-keeps `cap_add: CHOWN` so its entrypoint can re-own the bind-mounted state
-directories (`/app/config`, `/app/storage`, `/app/certs`) to UID 0 at startup.
-The deploy is therefore independent of who runs `mkdir` on the host:
+Both services run unprivileged, as `LISH_UID:LISH_GID` (default `1000:1000`),
+with `cap_drop: ALL`, a read-only root filesystem and no extra capabilities.
+Nothing inside the containers changes the owner of mounted data, and Docker
+does not create a missing bind-mount directory. Create the directories first,
+owned by the user the services run as:
 
 ```sh
 mkdir -p config storage certs
+chmod 0700 config storage certs
+echo "LISH_UID=$(id -u)" >> .env
+echo "LISH_GID=$(id -g)" >> .env
 docker compose up -d --build
 ```
 
-If the entrypoints are bypassed (e.g. somebody removes `cap_add: CHOWN`) the
-backend still fails fast with an actionable message instead of silently
-losing writes:
+A service started as root refuses to run. When the directories are not
+writable for the service user, the backend stops with a message such as:
 
 ```
 [Storage] FATAL: cannot persist /app/config/settings.json (EACCES).
-[Storage] Fix on the host: chown 0:0 <mounted-dir> && chmod 0700 <mounted-dir>, then restart.
+[Storage] The service user cannot write here. In Docker the service runs as LISH_UID/LISH_GID
 ```
 
-Docker named volumes (`CONFIG_SOURCE=my-libershare-config`) work
-out of the box without any host-side `mkdir` — the daemon creates the volume
-root-owned.
+Fix the owner or `LISH_UID`/`LISH_GID` on the host and start again.
+
+### Upgrading from a root-run version
+
+Older images ran as root and re-owned the mounted directories to `0:0`.
+
+1. Stop the services: `docker compose down`.
+2. Back up `config/` completely (settings, `libershare.db` with its `-wal` and
+   `-shm` files, and the datastore). A new, empty config means a new peer
+   identity.
+3. Choose the UID/GID the services will run as and give exactly the three
+   mounted directories to it, for example
+   `sudo chown -R 1000:1000 config storage certs`.
+4. Set `LISH_UID`/`LISH_GID` in `.env` if they differ from `1000:1000`, then
+   start again.
+
+On Docker Desktop for Windows or macOS, ownership of mounted folders is also
+governed by the host's file sharing; check that the containers can write and
+that the host keeps its access.
 
 ## Start
 
@@ -85,16 +104,9 @@ To put config and storage on specific host disks:
 
 ```sh
 mkdir -p /mnt/ssd/libershare-config /mnt/big/libershare-storage
+chown 1000:1000 /mnt/ssd/libershare-config /mnt/big/libershare-storage   # LISH_UID:LISH_GID
 CONFIG_SOURCE=/mnt/ssd/libershare-config \
 STORAGE_SOURCE=/mnt/big/libershare-storage \
-docker compose up -d
-```
-
-To use Docker named volumes instead of local directories:
-
-```sh
-CONFIG_SOURCE=my-libershare-config \
-STORAGE_SOURCE=my-libershare-storage \
 docker compose up -d
 ```
 

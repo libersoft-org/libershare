@@ -33,10 +33,21 @@ RUN apt-get update \
 	&& apt-get install -y --no-install-recommends ca-certificates \
 	&& rm -rf /var/lib/apt/lists/*
 
+# An unprivileged account; compose may run the service under another UID/GID to match the
+# owner of the mounted directories. Only the image's own empty mount points are owned here —
+# mounted host data is never re-owned at runtime.
+RUN groupadd --gid 1000 lish \
+	&& useradd --uid 1000 --gid 1000 --create-home --home-dir /home/lish --shell /usr/sbin/nologin lish \
+	&& mkdir -p /app/data /app/config /app/storage \
+	&& chown 1000:1000 /app/data /app/config /app/storage \
+	&& chmod 0700 /app/data /app/config /app/storage
+
 WORKDIR /app
 COPY --from=build /src/backend/build/lish-backend /app/lish-backend
 COPY docker/backend-entrypoint.sh /app/backend-entrypoint.sh
 RUN chmod 0755 /app/lish-backend /app/backend-entrypoint.sh
+
+USER 1000:1000
 
 EXPOSE 1158/tcp 9090/tcp
 ENTRYPOINT ["/app/backend-entrypoint.sh"]
