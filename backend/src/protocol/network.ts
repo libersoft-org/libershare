@@ -804,7 +804,12 @@ export class Network {
 	 * Start the single libp2p node.
 	 * @param bootstrapPeers - merged list of bootstrap peers from all enabled lishnets
 	 */
-	async start(bootstrapPeers: string[] = []): Promise<void> {
+	/**
+	 * `beforeStart` runs on the created, not yet started node — nothing dialled, no discovery —
+	 * so work that must finish before any peer can be reached (the peer cleanup of left
+	 * lishnets) happens there. Its failure fails the start.
+	 */
+	async start(bootstrapPeers: string[] = [], options: { beforeStart?: (node: Libp2p) => Promise<void> } = {}): Promise<void> {
 		// Serialised against stop() and against another start(): every field below is
 		// touched across awaits by both, so overlapping runs would interleave into two
 		// nodes over one datastore, or into a start whose node a concurrent stop tears
@@ -828,7 +833,7 @@ export class Network {
 			// the external gate is still closed, then opens it only after runtime restore.
 			this.lishProtocolAbort = new AbortController();
 			try {
-				await this.startLocked(bootstrapPeers);
+				await this.startLocked(bootstrapPeers, options.beforeStart);
 				this.lifecycle = 'running';
 				this.appliedNetworkConfig = this.startingNetworkConfig;
 			} catch (err) {
@@ -862,7 +867,7 @@ export class Network {
 	}
 
 	/** The body of {@link start}, run under the lifecycle mutex. */
-	private async startLocked(bootstrapPeers: string[]): Promise<void> {
+	private async startLocked(bootstrapPeers: string[], beforeStart?: (node: Libp2p) => Promise<void>): Promise<void> {
 		// Read settings
 		const allSettings = this.settings.list();
 		this.startingNetworkConfig = effectiveNetworkConfig(allSettings.network);
@@ -903,7 +908,9 @@ export class Network {
 
 		console.log('Creating libp2p node...');
 		try {
-			this.node = await createLibp2p(config);
+			// Created stopped: `createLibp2p` starts the node itself unless told not to, and the
+			// cleanup below has to finish before anything can be dialled.
+			this.node = await createLibp2p({ ...config, start: false });
 		} catch (err: any) {
 			if (err?.name === 'UnsupportedListenAddressesError' || err?.code === 'ERR_NO_VALID_ADDRESSES') {
 				console.error(`✗ Failed to start network: port ${port} is likely already in use or the listen address is invalid.`);
@@ -915,6 +922,7 @@ export class Network {
 		console.log('Port:', port);
 		console.log('Node ID:', this.node.peerId.toString());
 
+		if (beforeStart) await beforeStart(this.node);
 		try {
 			await this.node.start();
 		} catch (err: any) {
