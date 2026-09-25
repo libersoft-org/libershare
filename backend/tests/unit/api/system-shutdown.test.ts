@@ -21,7 +21,7 @@ it('a startup volume read that finishes after stopPolling does not save the volu
 	try {
 		const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
 		if (exitCode !== 0) throw new Error(`fixture exited ${exitCode}: ${stderr}`);
-		const line = stdout.trim().split('\n').at(-1)!;
+		const line = stdout.trim().split('\n').pop()!;
 		expect(JSON.parse(line)).toEqual({ saves: [] });
 	} finally {
 		clearTimeout(deadline);
