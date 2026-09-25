@@ -3,6 +3,7 @@ import { Database } from 'bun:sqlite';
 import { Mutex } from 'async-mutex';
 import { initLISHnetsTables, addLISHnet, getLISHnet, setLISHnetEnabled } from '../../../src/db/lishnets.ts';
 import { Networks } from '../../../src/lishnet/lishnets.ts';
+import { listPeerCleanup } from '../../../src/db/peer-cleanup.ts';
 
 /**
  * Enable and disable of one lishnet must produce the state the LAST request asked
@@ -847,5 +848,79 @@ describe('Networks detailed mutation outcomes', () => {
 			[NET, true],
 			['other', false],
 		]);
+	});
+});
+
+/**
+ * A leave that is interrupted — the app closed while it hung up peers — used to leave those
+ * peers in the peer store, and the next start redialled them. The peers to clean up are now
+ * recorded in the same transaction as the catalog write and removed before the next start,
+ * except where a lishnet that stays enabled still uses them.
+ */
+describe('persistent peer cleanup of left lishnets', () => {
+	let db: Database;
+	let net: ReturnType<typeof makeMockNet>;
+	const OTHER = 'net-b';
+	const BOOTSTRAP_ID = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+	const P1 = '12D3KooWQyNzs3o2PqCdxmSAxmn8AG5FDnbmTiSx3QRwsKTXaT3E';
+	const P2 = '12D3KooWEY6ZDNCzJHyfVDQ1VbnvCH3DXcuW1YdB3EkF3kqr8Kw5';
+	const row = (id: string, enabled: boolean, peers: string[] = []) => ({ networkID: id, name: id, description: '', bootstrapPeers: peers, enabled, created: new Date().toISOString() });
+	const pending = (): string[] => listPeerCleanup(db).map(r => `${r.networkID}/${r.peerID}`);
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		initLISHnetsTables(db);
+		addLISHnet(db, row(NET, true, [BOOTSTRAP]));
+		addLISHnet(db, row(OTHER, true));
+		net = makeMockNet();
+		net.topicPeers.set(NET, [P1, P2]);
+		net.topicPeers.set(OTHER, [P2]);
+	});
+
+	it('records the leaving peers and the lishnet that still uses one of them', async () => {
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await networks.setEnabled(NET, false);
+		expect(pending().sort()).toEqual([`${NET}/${BOOTSTRAP_ID}`, `${NET}/${P1}`, `${NET}/${P2}`, `${OTHER}/${P2}`].sort());
+	});
+
+	it('writes nothing when recording fails: the catalog and the queue go together', async () => {
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		db.run('DROP TABLE pending_peer_cleanup');
+		await expect(networks.setEnabled(NET, false)).rejects.toThrow();
+		expect(getLISHnet(db, NET)!.enabled).toBe(true);
+	});
+
+	it('removes only unprotected peers before the next start, and a later leave frees the rest', async () => {
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await networks.setEnabled(NET, false);
+		const deleted: string[] = [];
+		const node = { peerStore: { delete: async (peerID: { toString(): string }) => void deleted.push(peerID.toString()) } };
+
+		await (networks as any).replayPeerCleanup(node);
+		expect(deleted.sort()).toEqual([BOOTSTRAP_ID, P1].sort());
+		// P2 is still used by the enabled OTHER lishnet: kept, rows and all.
+		expect(pending().sort()).toEqual([`${NET}/${P2}`, `${OTHER}/${P2}`].sort());
+
+		// OTHER is switched off too (while the node is down, nothing is joined): P2 goes next time.
+		const { networks: restarted } = makeNetworks(makeMockNet(), db, []);
+		await restarted.setEnabled(OTHER, false);
+		deleted.length = 0;
+		await (restarted as any).replayPeerCleanup(node);
+		expect(deleted).toEqual([P2]);
+		expect(pending()).toEqual([]);
+	});
+
+	it('keeps the queue when a removal fails', async () => {
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await networks.setEnabled(NET, false);
+		const node = {
+			peerStore: {
+				delete: async () => {
+					throw new Error('disk full');
+				},
+			},
+		};
+		await expect((networks as any).replayPeerCleanup(node)).rejects.toThrow('disk full');
+		expect(pending().length).toBe(4);
 	});
 });

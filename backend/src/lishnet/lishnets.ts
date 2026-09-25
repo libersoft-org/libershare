@@ -6,6 +6,9 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type NetworkMutationOutcome, combineNetworkMutations, CodedError, ErrorCodes } from '@shared';
 import { cleanBootstrapList, lishnetExists, getLISHnet, listLISHnets, listEnabledLISHnets, addLISHnet, updateLISHnet, deleteLISHnet, setLISHnetEnabled, addLISHnetIfNotExists, importLISHnets, upsertLISHnet, replaceLISHnets } from '../db/lishnets.ts';
+import { confirmPeerCleanup, listPeerCleanup, recordPeerCleanup, type PendingPeerCleanup } from '../db/peer-cleanup.ts';
+import { peerIdFromString } from '@libp2p/peer-id';
+import { type PeerId } from '@libp2p/interface';
 
 /**
  * Outcome of {@link Networks.setEnabled}.
@@ -334,7 +337,7 @@ export class Networks {
 		// can record which specific peers connected / mismatched / timed out.
 		// (Previous behaviour used a flat preset list that bypassed our tracking.)
 		try {
-			await this.network.start([]);
+			await this.network.start([], { beforeStart: node => this.replayPeerCleanup(node) });
 
 			// The enabled list is read AFTER the start, not before it. Reading it first meant
 			// startup worked from a snapshot taken before a long await: an API disable or
@@ -466,7 +469,10 @@ export class Networks {
 		return await this.inMutation(async () => {
 			const staged = await this.inCatalog(() => {
 				if (!lishnetExists(this.db, id)) return undefined;
-				setLISHnetEnabled(this.db, id, enabled);
+				this.db.transaction(() => {
+					if (!enabled) this.recordLeavingPeers([id], this.enabledIDsWithout([id]), crypto.randomUUID());
+					setLISHnetEnabled(this.db, id, enabled);
+				})();
 				// Named from the row this write landed on, not from a read the caller took outside
 				// the lock — see {@link SetEnabledResult.network}.
 				return { row: this.get(id), job: this.reconcileLater(id) };
@@ -1226,7 +1232,11 @@ export class Networks {
 				// otherwise be persisted while the runtime worked from the filtered copy, and
 				// the two would disagree about what this network's bootstrap list even is.
 				const cleaned = Networks.cleanBootstrapList(network.bootstrapPeers ?? []);
-				return updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned }) ? { row: this.get(network.networkID), job: this.reconcileLater(network.networkID) } : undefined;
+				const updated = this.db.transaction(() => {
+					if (this.get(network.networkID)?.enabled && !network.enabled) this.recordLeavingPeers([network.networkID], this.enabledIDsWithout([network.networkID]), crypto.randomUUID());
+					return updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned });
+				})();
+				return updated ? { row: this.get(network.networkID), job: this.reconcileLater(network.networkID) } : undefined;
 			});
 			if (!job) return Networks.notStored(false);
 			return Networks.outcomeOf(true, job.row, await job.job);
@@ -1260,7 +1270,10 @@ export class Networks {
 		return await this.inMutation(async () => {
 			const job = await this.inCatalog(() => {
 				if (!lishnetExists(this.db, id)) return undefined;
-				deleteLISHnet(this.db, id);
+				this.db.transaction(() => {
+					this.recordLeavingPeers([id], this.enabledIDsWithout([id]), crypto.randomUUID());
+					deleteLISHnet(this.db, id);
+				})();
 				return this.reconcileLater(id);
 			});
 			if (!job) return Networks.notStored(false);
@@ -1331,7 +1344,12 @@ export class Networks {
 			let affected: Array<{ networkID: string; desired: LISHNetworkConfig | undefined }> = [];
 			const jobs = await this.inCatalog(() => {
 				const rows = new Map(this.list().map(n => [n.networkID, n]));
-				replaceLISHnets(this.db, networks);
+				const enabledAfter = new Set(networks.filter(n => n.enabled).map(n => n.networkID));
+				const leaving = [...rows.values()].filter(n => n.enabled && !enabledAfter.has(n.networkID)).map(n => n.networkID);
+				this.db.transaction(() => {
+					this.recordLeavingPeers(leaving, enabledAfter, crypto.randomUUID());
+					replaceLISHnets(this.db, networks);
+				})();
 				const kept = new Set(networks.map(n => n.networkID));
 				// A network this call drops is deleted every bit as much as one removed through
 				// delete(), so the suppression its leave installs needs the same release: its key
@@ -1409,6 +1427,66 @@ export class Networks {
 			if (!staged) return Networks.notStored<LISHNetworkConfig | null>(null);
 			return Networks.outcomeOf<LISHNetworkConfig | null>(staged.next, staged.next, await staged.job);
 		});
+	}
+
+	/**
+	 * Record, for every lishnet in `leaving`, the peers its leave has to clean out of the peer
+	 * store — its configured bootstrap peers, current topic members and recent ones — together with
+	 * every lishnet in `remaining` that already uses one of them, which protects that peer.
+	 *
+	 * Synchronous and called inside the same transaction as the catalog write, so a process that
+	 * dies right after the write still finds the whole batch at its next start. Must run before
+	 * the write replaces a leaving row: its bootstrap list is read from it.
+	 */
+	/** Enabled lishnets other than `excluded`, as they stand before the write in progress. */
+	private enabledIDsWithout(excluded: readonly string[]): Set<string> {
+		return new Set(
+			this.getEnabled()
+				.map(n => n.networkID)
+				.filter(id => !excluded.includes(id))
+		);
+	}
+
+	private recordLeavingPeers(leaving: readonly string[], remaining: ReadonlySet<string>, operationID: string): void {
+		const members = (id: string): Set<string> => new Set([...this.network.getTopicPeers(id), ...this.network.getRecentTopicMembers(id)]);
+		const bootstrapIDs = (id: string): Set<string> => new Set([...Networks.bootstrapPeerIDsOf(this.get(id)?.bootstrapPeers ?? []), ...Networks.bootstrapPeerIDsOf(this.appliedBootstrap.get(id)?.addresses ?? [])]);
+		const owners = [...remaining].filter(id => !leaving.includes(id)).map(id => ({ id, peers: new Set([...members(id), ...bootstrapIDs(id)]) }));
+		for (const id of leaving) {
+			const candidates = new Set([...bootstrapIDs(id), ...members(id)]);
+			if (candidates.size === 0) continue;
+			recordPeerCleanup(this.db, id, candidates, operationID);
+			for (const owner of owners)
+				recordPeerCleanup(
+					this.db,
+					owner.id,
+					[...candidates].filter(pid => owner.peers.has(pid)),
+					operationID
+				);
+		}
+	}
+
+	/**
+	 * Before the node starts, finish the peer cleanup a previous run left behind: remove from the
+	 * peer store every recorded peer that no enabled lishnet still protects, then drop its rows.
+	 * A peer an enabled lishnet protects — by a recorded row or as its configured bootstrap — is
+	 * kept, rows and all. A failed removal fails the start and keeps the queue.
+	 */
+	private async replayPeerCleanup(node: { peerStore: { delete(peerID: PeerId): Promise<void> } }): Promise<void> {
+		const rows = listPeerCleanup(this.db);
+		if (rows.length === 0) return;
+		const enabled = this.getEnabled();
+		const enabledIDs = new Set(enabled.map(network => network.networkID));
+		const configured = new Set(enabled.flatMap(network => Networks.bootstrapPeerIDsOf(network.bootstrapPeers)));
+		const byPeer = new Map<string, PendingPeerCleanup[]>();
+		for (const row of rows) byPeer.set(row.peerID, [...(byPeer.get(row.peerID) ?? []), row]);
+		let removed = 0;
+		for (const [peerID, peerRows] of byPeer) {
+			if (configured.has(peerID) || peerRows.some(row => enabledIDs.has(row.networkID))) continue;
+			await node.peerStore.delete(peerIdFromString(peerID));
+			confirmPeerCleanup(this.db, peerRows);
+			removed++;
+		}
+		if (removed > 0) console.log(`[Networks] Finished the peer cleanup of left lishnets: ${removed} peer(s) removed before start`);
 	}
 
 	/**
