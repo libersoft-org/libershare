@@ -1,6 +1,6 @@
-import { mkdir, open } from 'fs/promises';
+import { mkdir, open, statfs } from 'fs/promises';
 import { dirname, resolve, sep } from 'path';
-import type { IStoredLISH } from '@shared';
+import { type IStoredLISH, CodedError, ErrorCodes, formatBytes } from '@shared';
 import { trace } from '../logger.ts';
 
 /**
@@ -138,6 +138,32 @@ export class FileAllocator {
 
 	// ======== internals ========
 
+	/**
+	 * Refuse with DISK_FULL before writing anything when the declared sizes of the files still to
+	 * allocate do not fit in the space free under the download directory — zero-filling first
+	 * would run the disk full and leave a half-allocated dataset. A file that already exists
+	 * counts only by what it still has to grow. Free space that cannot be read does not block.
+	 */
+	private async ensureSpaceFor(lish: IStoredLISH, fileIndexes: readonly number[]): Promise<void> {
+		let needed = 0;
+		for (const fi of fileIndexes) {
+			const file = lish.files?.[fi];
+			if (!file) continue;
+			const existing = Bun.file(this.safePath(file.path));
+			const current = (await existing.exists()) ? existing.size : 0;
+			if (current !== file.size) needed += Math.max(0, file.size - current);
+		}
+		if (needed === 0) return;
+		let free: number;
+		try {
+			const stats = await statfs(this.downloadDir);
+			free = stats.bavail * stats.bsize;
+		} catch {
+			return;
+		}
+		if (needed > free) throw new CodedError(ErrorCodes.DISK_FULL, `${formatBytes(needed)} needed, ${formatBytes(free)} free in ${this.downloadDir}`);
+	}
+
 	private async allocateFilesInternal(lish: IStoredLISH, fileIndexes: readonly number[], onProgress: ((p: AllocationProgress) => void) | undefined, signal: AbortSignal | undefined): Promise<IAllocationResult> {
 		let created = 0;
 		let skipped = 0;
@@ -146,6 +172,7 @@ export class FileAllocator {
 		// percentage irrespective of how many files the caller picked.
 		let totalBytes = 0;
 		for (const fi of fileIndexes) totalBytes += lish.files[fi]?.size ?? 0;
+		await this.ensureSpaceFor(lish, fileIndexes);
 		let totalBytesWritten = 0;
 		let nextProgressAt = PROGRESS_EMIT_INTERVAL;
 		for (const fi of fileIndexes) {

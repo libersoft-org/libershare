@@ -617,7 +617,8 @@ export class ChunkDownloader {
 								console.log(`[DL] Recovery complete: ${downloadedCount}/${allTotal} verified, ${allMissing.length} to download`);
 							} catch (allocErr: any) {
 								console.error(`[DL] File recovery failed: ${allocErr.message}`);
-								this.deps.onSetError(ErrorCodes.IO_NOT_FOUND, downloadDir);
+								if (allocErr?.code === ErrorCodes.DISK_FULL) this.deps.onSetError(ErrorCodes.DISK_FULL, allocErr.detail);
+								else this.deps.onSetError(ErrorCodes.IO_NOT_FOUND, downloadDir);
 								aborted = true;
 								break;
 							} finally {
