@@ -44,7 +44,8 @@ describe('lishnets.addPeerLish reset admission', () => {
 			() => {},
 			{} as never,
 			async () => ({ lishID: 'unused' }) as never,
-			runMutation
+			runMutation,
+			new AbortController().signal
 		);
 
 		const result = await handlers.addPeerLish({ lishID: 'lish-a', peerID: 'peer-a', networkID: 'net-a' });
@@ -90,7 +91,8 @@ describe('lishnets.getPeerLishs listing refusal', () => {
 			() => {},
 			{} as never,
 			async () => ({ lishID: 'unused' }) as never,
-			async op => op()
+			async op => op(),
+			new AbortController().signal
 		);
 		return { handlers, attempts };
 	}

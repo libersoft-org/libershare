@@ -293,6 +293,12 @@ export class APIServer {
 	 * response write.
 	 */
 	private readonly importLock = new Mutex();
+	/**
+	 * Aborted once, when the backend shuts down. Cancels the outgoing peer reads the API started
+	 * (peer listing, manifest preview, add-from-peer). Unlike the network's own per-run dial
+	 * controller it is never replaced by a reset or an identity restart.
+	 */
+	private readonly peerReadAbort = new AbortController();
 	private _search: ReturnType<typeof import('./search.ts').initSearchManager> | null = null;
 	private _system: ReturnType<typeof import('./system.ts').initSystemHandlers> | null = null;
 
@@ -316,7 +322,7 @@ export class APIServer {
 		const _fs = initFsHandlers();
 		this._upload = initUploadHandlers(dataDir, {}, this.importLock);
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn, this.settings);
-		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifestAdmitted, _lishs.runMutation);
+		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifestAdmitted, _lishs.runMutation, this.peerReadAbort.signal);
 		const _identity = initIdentityHandlers(this.networks);
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification, _lishs.finalizeDownloadAdmitted);
 		const hasSubscribers = (event: string): boolean => {

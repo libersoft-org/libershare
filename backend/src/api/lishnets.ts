@@ -2,6 +2,7 @@ import { type Networks, type SetEnabledResult } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type SetLISHNetworkEnabledResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ManifestProgressEvent, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, type BootstrapStatus, CodedError, ErrorCodes, productName } from '@shared';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { LISHClient, LISH_PROTOCOL } from '../protocol/lish-protocol.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
@@ -51,7 +52,49 @@ export function toSetEnabledResponse(result: SetEnabledResult): SetLISHNetworkEn
 	return { success: result.found && result.applied, applied: result.applied, transitioned: result.transitioned, joined: result.joined };
 }
 
-export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void, settings: Settings, importManifestAdmitted: ImportManifestFn, runLISHMutation: RunLISHMutationFn): LISHnetsHandlers {
+/**
+ * `shutdownSignal` belongs to the API server and aborts only when the backend shuts down. It
+ * cancels the three outgoing peer reads below — the dial, the stream and the request — so a
+ * shutdown does not wait out a peer that answered the dial and then never sent the manifest.
+ */
+export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void, settings: Settings, importManifestAdmitted: ImportManifestFn, runLISHMutation: RunLISHMutationFn, shutdownSignal: AbortSignal): LISHnetsHandlers {
+	/**
+	 * Dial the peer, open a LISH client and run one request, all cancellable by the shutdown
+	 * signal. The stream is aborted when the signal fires at any point — including between the
+	 * dial returning and the listener being attached — and the close is still awaited in
+	 * cleanup, so the caller's finally really is the end of the work.
+	 */
+	async function withPeerClient<T>(peerID: string, request: (client: LISHClient) => Promise<T>): Promise<T> {
+		shutdownSignal.throwIfAborted();
+		const network = networks.getRunningNetwork();
+		const { stream } = await network.dialProtocolByPeerId(peerID, LISH_PROTOCOL, shutdownSignal);
+		let client: LISHClient;
+		try {
+			client = new LISHClient(stream);
+		} catch (error) {
+			try {
+				stream.abort(error instanceof Error ? error : new Error(String(error)));
+			} catch {}
+			throw error;
+		}
+		const onAbort = (): void => client.abort(shutdownSignal.reason instanceof Error ? shutdownSignal.reason : new Error('Backend is shutting down'));
+		shutdownSignal.addEventListener('abort', onAbort, { once: true });
+		try {
+			// Aborted before the listener was attached: nothing sent, stream torn down now.
+			if (shutdownSignal.aborted) onAbort();
+			shutdownSignal.throwIfAborted();
+			try {
+				return await request(client);
+			} finally {
+				// Close in finally so a throwing request (peer error, validation) cannot leak
+				// the stream; swallow close errors so they never mask the request error.
+				await client.close().catch(() => {});
+			}
+		} finally {
+			shutdownSignal.removeEventListener('abort', onAbort);
+		}
+	}
+
 	function list(): LISHNetworkConfig[] {
 		return networks.list();
 	}
@@ -202,28 +245,25 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		// Bounded and confined to that one code: every other failure is reported at once.
 		for (let attempt = 0; ; attempt++) {
 			try {
+				shutdownSignal.throwIfAborted();
 				return await getPeerLishsOnce(p);
 			} catch (error: any) {
+				shutdownSignal.throwIfAborted();
 				if (error?.code !== ErrorCodes.PEER_LISTING_NOT_AUTHORIZED || attempt >= PEER_LISTING_RETRIES) throw error;
-				await new Promise<void>(resolve => setTimeout(resolve, PEER_LISTING_RETRY_MS));
+				await sleep(PEER_LISTING_RETRY_MS, undefined, { signal: shutdownSignal }).catch(timerError => {
+					throw shutdownSignal.aborted ? shutdownSignal.reason : timerError;
+				});
 			}
 		}
 	}
 
 	async function getPeerLishsOnce(p: { peerID: string; networkID: string }): Promise<{ lishs: PeerLishEntry[] }> {
-		const network = networks.getRunningNetwork();
 		try {
-			const { stream } = await network.dialProtocolByPeerId(p.peerID, LISH_PROTOCOL);
-			const client = new LISHClient(stream);
-			try {
-				const lishs = await client.requestList();
-				return { lishs };
-			} finally {
-				// Close in finally so a throwing request (peer error, validation) cannot leak
-				// the stream; swallow close errors so they never mask the request error.
-				await client.close().catch(() => {});
-			}
+			const lishs = await withPeerClient(p.peerID, client => client.requestList());
+			shutdownSignal.throwIfAborted();
+			return { lishs };
 		} catch (error: any) {
+			shutdownSignal.throwIfAborted();
 			if (error instanceof CodedError) throw error;
 			console.error(`[Peers] Failed to get LISH list from ${p.peerID.slice(0, 12)}:`, error.message?.slice(0, 120) ?? error);
 			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, p.peerID);
@@ -231,18 +271,10 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 	}
 	async function getPeerLish(p: { lishID: string; peerID: string; networkID: string }): Promise<IPeerLishDetail> {
 		assert(p, ['lishID', 'peerID', 'networkID']);
-		const network = networks.getRunningNetwork();
 		try {
-			const { stream } = await network.dialProtocolByPeerId(p.peerID, LISH_PROTOCOL);
-			const client = new LISHClient(stream);
 			const onProgress = (received: number, total: number): void => broadcast('lishnets:manifestProgress', { lishID: p.lishID, peerID: p.peerID, received, total } satisfies ManifestProgressEvent);
-			let manifest;
-			try {
-				manifest = await client.requestManifest(p.lishID, onProgress);
-			} finally {
-				// Close in finally — a rejected manifest (validation, peer error) must not leak the stream.
-				await client.close().catch(() => {});
-			}
+			const manifest = await withPeerClient(p.peerID, client => client.requestManifest(p.lishID, onProgress));
+			shutdownSignal.throwIfAborted();
 			// Strip checksums from files and compute summary
 			const files = (manifest.files ?? []).map(f => {
 				const entry: { path: string; size: number; permissions?: string; modified?: string; created?: string } = { path: f.path, size: f.size };
@@ -267,6 +299,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 				links: manifest.links ?? [],
 			};
 		} catch (error: any) {
+			shutdownSignal.throwIfAborted();
 			if (error instanceof CodedError) throw error;
 			console.error(`[Peers] Failed to get LISH ${p.lishID.slice(0, 8)} from ${p.peerID.slice(0, 12)}:`, error.message?.slice(0, 120) ?? error);
 			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, p.peerID);
@@ -278,19 +311,12 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 
 	async function addPeerLishAdmitted(p: { lishID: string; peerID: string; networkID: string }): Promise<{ lishID: string }> {
 		assert(p, ['lishID', 'peerID', 'networkID']);
-		const network = networks.getRunningNetwork();
 		let manifest;
 		try {
-			const { stream } = await network.dialProtocolByPeerId(p.peerID, LISH_PROTOCOL);
-			const client = new LISHClient(stream);
 			const onProgress = (received: number, total: number): void => broadcast('lishnets:manifestProgress', { lishID: p.lishID, peerID: p.peerID, received, total } satisfies ManifestProgressEvent);
-			try {
-				manifest = await client.requestManifest(p.lishID, onProgress);
-			} finally {
-				// Close in finally — a rejected manifest (validation, peer error) must not leak the stream.
-				await client.close().catch(() => {});
-			}
+			manifest = await withPeerClient(p.peerID, client => client.requestManifest(p.lishID, onProgress));
 		} catch (error: any) {
+			shutdownSignal.throwIfAborted();
 			if (error instanceof CodedError) throw error;
 			console.error(`[Peers] Failed to add LISH ${p.lishID.slice(0, 8)} from ${p.peerID.slice(0, 12)}:`, error.message?.slice(0, 120) ?? error);
 			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, p.peerID);
@@ -302,6 +328,8 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		// public entry point took. The gated one entered it a second time, so a reset closing
 		// admission while the manifest was still downloading made an already-accepted operation
 		// refuse its own second half.
+		// A manifest that arrived after the shutdown began is not imported.
+		shutdownSignal.throwIfAborted();
 		const downloadPath = settings.get('storage.downloadPath') ?? `~/${productName}/finished/`;
 		const enableSharing = settings.get('network.autoStartSharing') ?? true;
 		const enableDownloading = settings.get('network.autoStartDownloading') ?? true;

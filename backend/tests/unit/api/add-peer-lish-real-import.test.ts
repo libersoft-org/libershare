@@ -83,7 +83,7 @@ beforeAll(async () => {
 		getRunningNetwork: () => ({ dialProtocolByPeerId: async () => ({ stream: heldStream() }) }),
 	} as never;
 	// The same wiring APIServer uses: the admitted import, and the gate the public entry takes.
-	lishnets = initLISHnetsHandlers(networks, dataServer, () => {}, settings, lishs.importManifestAdmitted, lishs.runMutation);
+	lishnets = initLISHnetsHandlers(networks, dataServer, () => {}, settings, lishs.importManifestAdmitted, lishs.runMutation, new AbortController().signal);
 });
 
 afterAll(async () => {

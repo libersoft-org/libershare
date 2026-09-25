@@ -56,7 +56,7 @@ function makeHandlers(gate: LISHMutationGate, importManifest: (...args: any[]) =
 			leave();
 		}
 	};
-	return initLISHnetsHandlers(networks, {} as never, () => {}, settings, importManifest as never, runLISHMutation);
+	return initLISHnetsHandlers(networks, {} as never, () => {}, settings, importManifest as never, runLISHMutation, new AbortController().signal);
 }
 
 describe('adding a peer LISH while a factory reset closes the gate', () => {
