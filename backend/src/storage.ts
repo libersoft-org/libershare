@@ -115,7 +115,9 @@ export class JSONStorage<T extends Record<string, any>> extends BaseStorage<T> {
 	}
 
 	private deepMerge<U extends Record<string, any>>(defaults: U, override: Partial<U>): U {
-		const result = { ...defaults };
+		// Deep copy, not a spread: a group missing from the file would otherwise be the defaults'
+		// own object, and the first set() into it would rewrite the value reset() restores.
+		const result = structuredClone(defaults);
 		for (const key in override) {
 			if (override[key] !== undefined) {
 				if (typeof defaults[key] === 'object' && defaults[key] !== null && !Array.isArray(defaults[key])) result[key] = this.deepMerge(defaults[key], override[key] as any);

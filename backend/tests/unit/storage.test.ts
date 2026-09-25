@@ -112,3 +112,24 @@ describe('JSONStorage.setMany publishes a batch in one step', () => {
 		expect(({} as any).polluted).toBeUndefined();
 	});
 });
+
+describe('JSONStorage keeps defaults apart from the merged document', () => {
+	it('a write into a group missing from the file leaves defaults and reset intact', async () => {
+		const dir = join(tmpdir(), `lish-defaults-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(dir, { recursive: true });
+		try {
+			const defaults = { network: { port: 9090 }, ui: { cursor: { size: 1 }, tags: ['a'] } };
+			const pristine = structuredClone(defaults);
+			// Only `network` on disk: `ui` comes entirely from the defaults.
+			await Bun.write(join(dir, 'settings.json'), JSON.stringify({ network: { port: 29099 } }));
+			const storage = await JSONStorage.create(dir, 'settings.json', defaults);
+			await storage.set('ui.cursor.size', 5);
+			(storage.get('ui.tags') as string[]).push('b');
+			expect(defaults).toEqual(pristine);
+			const reset = await storage.reset();
+			expect(reset.ui).toEqual(pristine.ui);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
