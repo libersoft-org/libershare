@@ -36,49 +36,43 @@ type ClientData = {
 	upstream?: WebSocket;
 	pending: Array<string | ArrayBuffer | Uint8Array>;
 	closed: boolean;
-	reconnectAttempt: number;
-	reconnectTimer?: ReturnType<typeof setTimeout>;
+	/** Fires when the single upstream dial has not opened in time. */
+	openTimer?: ReturnType<typeof setTimeout>;
 	/**
-	 * Set once an upstream connection has been established for this client. From
-	 * that point a drop is no longer transparently recoverable — see
-	 * {@link connectUpstream} — so the browser socket is closed instead.
-	 */
-	upstreamOpened: boolean;
-	/**
-	 * Incremented on every dial. Callbacks captured by an earlier dial compare
-	 * against it and do nothing when they no longer match, so a socket that was
-	 * superseded cannot forward traffic or schedule further reconnects.
-	 */
-	upstreamGeneration: number;
-	/**
-	 * Upstream URL with the client's original query string preserved so the
-	 * backend sees `?token=…` (and any future query params) when
-	 * authentication is enabled. Computed at upgrade time and reused on
-	 * every reconnect attempt.
+	 * Upstream URL carrying the client's original query string, so the backend sees the same
+	 * `?token=…` the proxy authorised. Computed at upgrade time.
 	 */
 	upstreamUrl: string;
 };
 
+/** Ceiling for a status request to the backend and for the upstream WebSocket to open. */
+const UPSTREAM_TIMEOUT_MS = 2500;
+/** A status reply is a few fields; anything larger is not a status reply. */
+const MAX_STATUS_BODY_BYTES = 4096;
+const MAX_PENDING_BYTES = 1 * 1024 * 1024; // 1 MiB cap so a slow upstream open does not exhaust container memory
+const NO_STORE = { 'cache-control': 'no-store' };
+
 /**
- * Build the upstream WebSocket URL for one client connection by copying any
- * query params from the incoming `/ws` URL onto the configured
- * `BACKEND_WS_URL`. The backend's `isAuthorized` middleware reads `?token=…`
- * from the URL it receives, so without this the token a client carries on
- * `wss://frontend/ws?token=…` would be lost at the proxy boundary.
+ * Put the client's raw query string on a backend URL unchanged — duplicated parameters
+ * included — so the backend, not the proxy, decides whether it is acceptable.
  */
-function buildUpstreamUrl(clientUrl: URL): string {
-	const upstream = new URL(backendWsUrl!);
-	for (const [k, v] of clientUrl.searchParams) upstream.searchParams.set(k, v);
-	return upstream.toString();
+function withClientQuery(target: URL, clientUrl: URL): URL {
+	target.search = clientUrl.search;
+	return target;
 }
 
-const MAX_PENDING_BYTES = 1 * 1024 * 1024; // 1 MiB cap so a long backend outage does not exhaust container memory
-const MAX_RECONNECT_DELAY_MS = 5000;
-const BASE_RECONNECT_DELAY_MS = 250;
-// Log a single warning after this many consecutive upstream-reconnect attempts
-// fail; reconnects continue silently afterwards so a tab left open over a
-// weekend doesn't fill the proxy log with retries.
-const RECONNECT_WARN_AFTER_ATTEMPTS = 10;
+function buildUpstreamUrl(clientUrl: URL): string {
+	return withClientQuery(new URL(backendWsUrl!), clientUrl).toString();
+}
+
+/** The backend's `/status` URL: the http(s) counterpart of BACKEND_WS_URL. */
+function statusUrl(clientUrl: URL): URL {
+	const target = new URL(backendWsUrl!);
+	target.protocol = target.protocol === 'wss:' ? 'https:' : 'http:';
+	target.pathname = '/status';
+	target.hash = '';
+	return withClientQuery(target, clientUrl);
+}
 
 function pendingByteSize(pending: ClientData['pending']): number {
 	let total = 0;
@@ -86,68 +80,112 @@ function pendingByteSize(pending: ClientData['pending']): number {
 	return total;
 }
 
+/** 503 when the backend cannot be reached, 504 when it did not answer in time. */
+function unavailableStatus(error: unknown): 503 | 504 {
+	return (error as Error)?.name === 'TimeoutError' ? 504 : 503;
+}
+
+function upstreamSignal(request: Request): AbortSignal {
+	return AbortSignal.any([request.signal, AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)]);
+}
+
+type StatusOutcome = { kind: 'answer'; status: 200 | 401; body: string } | { kind: 'unavailable'; status: 502 | 503 | 504 };
+
+/**
+ * Ask the backend's `/status` whether the client's query authorises it. Only a 200 or 401 with
+ * a consistent JSON body counts as an answer; a redirect, another status or a malformed or
+ * oversized body is 502. The query carries the token, so it is never logged.
+ */
+async function checkStatus(request: Request, clientUrl: URL): Promise<StatusOutcome> {
+	let response: Response;
+	try {
+		response = await fetch(statusUrl(clientUrl), { redirect: 'manual', signal: upstreamSignal(request) });
+	} catch (error) {
+		return { kind: 'unavailable', status: unavailableStatus(error) };
+	}
+	if (response.status !== 200 && response.status !== 401) {
+		await response.body?.cancel().catch(() => {});
+		return { kind: 'unavailable', status: 502 };
+	}
+	let body: string;
+	try {
+		const bytes = new Uint8Array(await response.arrayBuffer());
+		if (bytes.byteLength > MAX_STATUS_BODY_BYTES) return { kind: 'unavailable', status: 502 };
+		body = new TextDecoder().decode(bytes);
+	} catch (error) {
+		return { kind: 'unavailable', status: unavailableStatus(error) };
+	}
+	let parsed: { ok?: unknown; authRequired?: unknown; authenticated?: unknown };
+	try {
+		parsed = JSON.parse(body);
+	} catch {
+		return { kind: 'unavailable', status: 502 };
+	}
+	const authenticated = parsed?.ok === true && parsed.authenticated === true;
+	if (typeof parsed?.authRequired !== 'boolean' || authenticated !== (response.status === 200)) return { kind: 'unavailable', status: 502 };
+	return { kind: 'answer', status: response.status, body };
+}
+
+function statusReply(outcome: StatusOutcome): Response {
+	const headers = { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', ...NO_STORE };
+	if (outcome.kind === 'unavailable') return new Response(JSON.stringify({ ok: false, error: 'BACKEND_UNAVAILABLE' }), { status: outcome.status, headers });
+	return new Response(outcome.body, { status: outcome.status, headers });
+}
+
+/** Forward a CORS preflight. Only a 204 from the backend is passed on, with its CORS headers alone. */
+async function forwardPreflight(request: Request, clientUrl: URL): Promise<Response> {
+	const headers = new Headers();
+	for (const name of ['origin', 'access-control-request-method', 'access-control-request-headers']) {
+		const value = request.headers.get(name);
+		if (value !== null) headers.set(name, value);
+	}
+	let response: Response;
+	try {
+		response = await fetch(statusUrl(clientUrl), { method: 'OPTIONS', headers, redirect: 'manual', signal: upstreamSignal(request) });
+	} catch (error) {
+		return new Response(null, { status: unavailableStatus(error), headers: NO_STORE });
+	}
+	await response.body?.cancel().catch(() => {});
+	if (response.status !== 204) return new Response(null, { status: 502, headers: NO_STORE });
+	const reply = new Headers(NO_STORE);
+	for (const [name, value] of response.headers) if (name.toLowerCase().startsWith('access-control-')) reply.set(name, value);
+	return new Response(null, { status: 204, headers: reply });
+}
+
+/**
+ * Dial the backend once for this client. Any failure — a refused handshake, a network error, a
+ * close before or after opening, or no open within the timeout — closes the client with 1011.
+ * The backend drops everything keyed to a socket when it goes, so a silent reconnect would hand
+ * the browser a session without its subscriptions; closing makes the browser re-run its status
+ * check and handshake instead.
+ */
 function connectUpstream(ws: import('bun').ServerWebSocket<ClientData>): void {
 	if (ws.data.closed) return;
-	// Any socket from an earlier dial is abandoned here rather than left to linger:
-	// one that opened after being superseded would otherwise stay connected,
-	// holding a backend session nothing routes to.
-	ws.data.upstream?.close();
-	const generation = ++ws.data.upstreamGeneration;
-	/** True once a newer dial has replaced this one, whose callbacks must then go quiet. */
-	const superseded = (): boolean => ws.data.upstreamGeneration !== generation;
 	const upstream = new WebSocket(ws.data.upstreamUrl);
 	ws.data.upstream = upstream;
+	let failed = false;
+	const fail = (reason: string): void => {
+		if (failed) return;
+		failed = true;
+		clearTimeout(ws.data.openTimer);
+		ws.data.pending.length = 0;
+		upstream.close();
+		if (!ws.data.closed) ws.close(1011, reason);
+	};
+	ws.data.openTimer = setTimeout(() => fail('upstream handshake timeout'), UPSTREAM_TIMEOUT_MS);
 	upstream.onopen = () => {
-		// A dial that lost the race must not become the live socket: `ws.data.upstream`
-		// already points at a newer one, so anything sent here would go out on a
-		// connection no later message will ever use.
-		if (superseded()) {
+		clearTimeout(ws.data.openTimer);
+		if (failed || ws.data.closed) {
 			upstream.close();
 			return;
 		}
-		ws.data.upstreamOpened = true;
-		ws.data.reconnectAttempt = 0;
 		for (const message of ws.data.pending.splice(0)) upstream.send(message);
 	};
 	upstream.onmessage = event => {
-		if (superseded()) return;
-		if (ws.readyState === WebSocket.OPEN) ws.send(event.data);
+		if (!failed && ws.readyState === WebSocket.OPEN) ws.send(event.data);
 	};
-	// An ordinary failure fires both `onerror` and `onclose`, so without this each
-	// drop would be handled twice: two attempts counted, two timers scheduled, and
-	// only the later one kept in `reconnectTimer` — leaving the earlier to fire
-	// unchecked and produce a second live upstream.
-	let handled = false;
-	const handleDrop = (): void => {
-		if (handled || superseded()) return;
-		handled = true;
-		if (ws.data.closed) return;
-		// Once a session has been established, a silent reconnect is a lie: the
-		// backend has already torn down everything keyed to the old socket —
-		// event subscriptions, and in-progress uploads, which are owned by socket
-		// identity and can never be continued over a replacement. Meanwhile the
-		// browser is still waiting on a request whose reply died with that socket,
-		// and its WsClient only rejects pending requests when its own socket
-		// closes. Closing here is what lets it fail fast, reconnect and redo its
-		// handshake from scratch.
-		if (ws.data.upstreamOpened) {
-			console.warn('[proxy] established upstream session lost; closing client to force re-handshake');
-			ws.close(1011, 'upstream session lost');
-			return;
-		}
-		// Before the first successful open there is no session to lose, so
-		// retrying is transparent. Exponential backoff capped at
-		// MAX_RECONNECT_DELAY_MS — a backend that is still starting up does not
-		// force every open page to reload.
-		const attempt = ws.data.reconnectAttempt++;
-		if (attempt === RECONNECT_WARN_AFTER_ATTEMPTS) {
-			console.warn(`[proxy] upstream still unreachable after ${attempt} attempts; will keep retrying every ${MAX_RECONNECT_DELAY_MS}ms`);
-		}
-		const delay = Math.min(MAX_RECONNECT_DELAY_MS, BASE_RECONNECT_DELAY_MS * 2 ** attempt);
-		ws.data.reconnectTimer = setTimeout(() => connectUpstream(ws), delay);
-	};
-	upstream.onclose = handleDrop;
-	upstream.onerror = handleDrop;
+	upstream.onclose = () => fail('upstream session lost');
+	upstream.onerror = () => fail('upstream session lost');
 }
 
 Bun.serve({
@@ -160,9 +198,18 @@ Bun.serve({
 		: undefined,
 	async fetch(request, server) {
 		const url = new URL(request.url);
+		if (url.pathname === '/status') {
+			if (request.method === 'GET') return statusReply(await checkStatus(request, url));
+			if (request.method === 'OPTIONS') return forwardPreflight(request, url);
+			return new Response(null, { status: 405, headers: { allow: 'GET, OPTIONS', ...NO_STORE } });
+		}
 		if (url.pathname === '/ws') {
+			// Authorised before the upgrade: a wrong token is a 401 the browser can read, not a
+			// socket that opens and then dies.
+			const outcome = await checkStatus(request, url);
+			if (outcome.kind !== 'answer' || outcome.status !== 200) return statusReply(outcome);
 			const upgraded = server.upgrade<ClientData>(request, {
-				data: { pending: [], closed: false, reconnectAttempt: 0, upstreamOpened: false, upstreamGeneration: 0, upstreamUrl: buildUpstreamUrl(url) },
+				data: { pending: [], closed: false, upstreamUrl: buildUpstreamUrl(url) },
 			});
 			if (upgraded) return undefined;
 			return new Response('Expected WebSocket', { status: 400 });
@@ -192,26 +239,21 @@ Bun.serve({
 				upstream.send(message);
 				return;
 			}
-			// Buffer messages while upstream is reconnecting. The LISH protocol
-			// is stateful (subscribe → receive events) — silently dropping the
-			// oldest queued message would let the subscribe handshake disappear
-			// while later events survive, leaving the FE wired to a topic the
-			// backend never registered. Closing the client with a non-normal
-			// code instead forces the browser-side WsClient to reconnect and
-			// re-run its full handshake from scratch.
+			// Buffer messages until the upstream opens. The LISH protocol is stateful
+			// (subscribe → receive events): dropping the oldest queued message could lose the
+			// subscribe while later calls survive, so an overflow closes the client instead and
+			// the browser re-runs its full handshake.
 			ws.data.pending.push(message);
 			if (pendingByteSize(ws.data.pending) > MAX_PENDING_BYTES) {
-				console.warn(`[proxy] pending queue exceeded ${MAX_PENDING_BYTES} bytes during upstream outage; closing client to force re-handshake`);
+				console.warn(`[proxy] pending queue exceeded ${MAX_PENDING_BYTES} bytes before upstream opened; closing client to force re-handshake`);
 				ws.data.pending.length = 0;
 				ws.close(1011, 'upstream backlog overflow');
 			}
 		},
 		close(ws) {
 			ws.data.closed = true;
-			if (ws.data.reconnectTimer) {
-				clearTimeout(ws.data.reconnectTimer);
-				ws.data.reconnectTimer = undefined;
-			}
+			clearTimeout(ws.data.openTimer);
+			ws.data.pending.length = 0;
 			ws.data.upstream?.close();
 		},
 	},
