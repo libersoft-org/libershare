@@ -6,6 +6,11 @@ import { join } from 'path';
 import { Key } from 'interface-datastore';
 import { SqliteDatastore } from '../../../src/protocol/datastore.ts';
 import { clearIdentityKey } from '../../../src/protocol/identity-store.ts';
+import { generateKeyPair } from '@libp2p/crypto/keys';
+import { peerIdFromPrivateKey } from '@libp2p/peer-id';
+import { persistentPeerStore } from '@libp2p/peer-store';
+import { defaultLogger } from '@libp2p/logger';
+import { TypedEventEmitter } from 'main-event';
 
 // SqliteDatastore is tested by directly exercising its SQL statements against
 // an in-memory database so no filesystem cleanup is needed.
@@ -196,5 +201,35 @@ describe('SqliteDatastore.clearPeerstore (real class, on-disk DB)', () => {
 		expect(reopened.has(peer)).toBe(true);
 		expect(Array.from(reopened.get(peer))).toEqual([4, 5, 6]);
 		cleanup(reopened, dir);
+	});
+});
+
+/**
+ * The libp2p peer store tells "no such record" from a failure by the error name: `has()` and
+ * `get()` rethrow anything that is not a `NotFoundError`. Exercised through the real
+ * persistent peer store over the real SQLite datastore.
+ */
+describe('SqliteDatastore under the libp2p peer store', () => {
+	it('lets the peer store tell a missing peer from a failure', async () => {
+		const dir = mkdtempSync(join(tmpdir(), 'lish-ds-ps-'));
+		const ds = new SqliteDatastore(join(dir, 'datastore'));
+		ds.open();
+		try {
+			const self = peerIdFromPrivateKey(await generateKeyPair('Ed25519'));
+			const stranger = peerIdFromPrivateKey(await generateKeyPair('Ed25519'));
+			const store = persistentPeerStore({ peerId: self, datastore: ds as any, events: new TypedEventEmitter() as any, logger: defaultLogger() });
+			expect(await store.has(stranger)).toBe(false);
+			const missing = await store.get(stranger).catch(error => error);
+			expect(missing.name).toBe('NotFoundError');
+			expect(ds.has(new Key('/absent') as any)).toBe(false);
+			expect(() => ds.get(new Key('/absent') as any)).toThrow(expect.objectContaining({ name: 'NotFoundError', code: 'ERR_NOT_FOUND' }));
+		} finally {
+			ds.close();
+			try {
+				rmSync(dir, { recursive: true, force: true });
+			} catch {
+				/* Windows may still hold the WAL briefly */
+			}
+		}
 	});
 });
