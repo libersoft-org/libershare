@@ -46,15 +46,20 @@ function makeDataServer(overrides: Record<string, () => any> = {}): FactoryReset
 	} as any;
 }
 
-/** Build a stub Settings object whose reset returns an object with the required network knob fields. */
+/**
+ * Build a stub Settings object: reset publishes defaults with the required network knob
+ * fields, and get() reads the live document the way the orchestrator applies limits from it.
+ */
 function makeSettings(overrides: Record<string, () => any> = {}): FactoryResetOrchestratorDeps['settings'] {
+	let live: any = { network: { maxDownloadSpeed: 0, maxUploadSpeed: 0, maxDownloadPeersPerLISH: 30, maxUploadPeersPerLISH: 30, maxMessageSize: 128 * 1024 * 1024 } };
 	return {
+		get: overrides['get'] ?? (() => live),
 		reset:
 			overrides['reset'] ??
-			(() =>
-				Promise.resolve({
-					network: { maxDownloadSpeed: 0, maxUploadSpeed: 0, maxDownloadPeersPerLISH: 30, maxUploadPeersPerLISH: 30, maxMessageSize: 128 * 1024 * 1024 },
-				})),
+			(() => {
+				live = structuredClone(live);
+				return Promise.resolve(live);
+			}),
 	} as any;
 }
 
@@ -898,5 +903,24 @@ describe('a factory reset and an identity write against each other', () => {
 
 		expect(response.success).toBe(true);
 		expect(calls).toEqual(['stopCreate']);
+	});
+});
+
+describe('buildFactoryResetHandler — settings persistence failure', () => {
+	it('reports the storage message in the settings result and still applies the live limits', async () => {
+		const { StorageWriteError } = await import('../../../src/storage.ts');
+		const { downloadLimiter } = await import('../../../src/protocol/speed-limiter.ts');
+		const live = { network: { maxDownloadSpeed: 77, maxUploadSpeed: 0 } };
+		const deps = makeDeps({
+			settingsOverride: {
+				get: () => live,
+				reset: () => Promise.reject(new StorageWriteError(Object.assign(new Error('io'), { code: 'EIO' }), true)),
+			},
+		});
+		const res = await buildFactoryResetHandler(deps)({ settings: true, identity: false, downloads: false, networks: false, peers: false });
+		const settingsResult = res.results.find(r => r.category === 'settings');
+		expect(settingsResult).toEqual({ category: 'settings', ok: false, detail: 'Settings file now contains the new settings, but durability could not be confirmed (EIO).' });
+		expect(res.success).toBe(false);
+		expect(downloadLimiter.getLimit()).toBe(77 * 1024);
 	});
 });
