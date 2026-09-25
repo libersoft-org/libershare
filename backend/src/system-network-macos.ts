@@ -45,7 +45,7 @@ export interface MacNetworkSources {
 	/** `netstat -rn -f inet`, used to detect every IPv4 default route. */
 	routes?: string;
 	/** `netstat -rn -f inet6`, read only when neither `route get` names a default interface. */
-	routes6?: string;
+	routes6?: string | undefined;
 	/** Per-service `networksetup -getinfo <service>`, keyed by DEVICE. */
 	serviceInfo?: Map<string, string>;
 	/** Per-service `networksetup -getdnsservers <service>`, keyed by DEVICE. */
