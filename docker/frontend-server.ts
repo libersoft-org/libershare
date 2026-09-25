@@ -9,6 +9,11 @@ const certFile = process.env['TLS_CERT_FILE'];
 const tlsEnabled = Boolean(keyFile && certFile);
 
 if (!backendWsUrl) throw new Error('BACKEND_WS_URL is required');
+{
+	// The proxy must never hand its own credentials to a client that sent none.
+	const configured = new URL(backendWsUrl);
+	if (configured.username || configured.password || configured.searchParams.has('token')) throw new Error('BACKEND_WS_URL must not carry credentials; clients send their own token');
+}
 
 const contentTypes: Record<string, string> = {
 	'.css': 'text/css; charset=utf-8',

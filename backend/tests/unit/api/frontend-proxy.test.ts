@@ -193,6 +193,14 @@ describe('frontend proxy /status', () => {
 });
 
 describe('frontend websocket proxy', () => {
+	it('refuses to start with credentials in BACKEND_WS_URL', async () => {
+		const script = await stageProxy();
+		for (const backend of ['ws://user:pass@127.0.0.1:1', 'ws://127.0.0.1:1/?token=x']) {
+			const proc = Bun.spawn([process.execPath, script], { env: { ...process.env, PORT: '0', BACKEND_WS_URL: backend }, stdout: 'pipe', stderr: 'pipe' });
+			expect(await proc.exited).not.toBe(0);
+		}
+	}, 30000);
+
 	it('refuses a wrong token before the upgrade, without dialing the backend', async () => {
 		const upstream = startUpstream();
 		await withProxy(upstream, upstream.url, async proxy => {
