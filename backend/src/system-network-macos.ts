@@ -44,6 +44,8 @@ export interface MacNetworkSources {
 	route6?: string;
 	/** `netstat -rn -f inet`, used to detect every IPv4 default route. */
 	routes?: string;
+	/** `netstat -rn -f inet6`, read only when neither `route get` names a default interface. */
+	routes6?: string;
 	/** Per-service `networksetup -getinfo <service>`, keyed by DEVICE. */
 	serviceInfo?: Map<string, string>;
 	/** Per-service `networksetup -getdnsservers <service>`, keyed by DEVICE. */
@@ -182,6 +184,58 @@ export function parseDefaultRoutes(text: string): Array<{ device: string; gatewa
 		result.push({ gateway: fields[1], device: fields[3] });
 	}
 	return result;
+}
+
+/** An IPv6 default route from `netstat -rn -f inet6`; `scoped` is the interface-scope flag `I`. */
+export interface IPv6DefaultRoute {
+	device: string;
+	scoped: boolean;
+}
+
+/**
+ * Usable IPv6 default routes from `netstat -rn -f inet6`. Columns are located by the header
+ * (`Destination`, `Gateway`, `Flags`, `Netif`); without one nothing is returned rather than a
+ * column guessed. Only `default`/`::/0`, marked up (`U`) and neither reject (`R`) nor blackhole
+ * (`B`). A VPN typically installs one scoped route per tunnel (`UGcIg`, gateway `fe80::%utun0`),
+ * which `route get -inet6 default` does not report when there is no global default.
+ */
+export function parseIPv6DefaultRoutes(text: string): IPv6DefaultRoute[] {
+	const result: IPv6DefaultRoute[] = [];
+	let columns: { destination: number; flags: number; netif: number } | null = null;
+	for (const line of text.split('\n')) {
+		const fields = line.trim().split(/\s+/);
+		if (fields[0] === 'Destination') {
+			const flags = fields.indexOf('Flags');
+			const netif = fields.indexOf('Netif');
+			columns = fields.includes('Gateway') && flags > 0 && netif > 0 ? { destination: 0, flags, netif } : null;
+			continue;
+		}
+		if (!columns || (fields[columns.destination] !== 'default' && fields[columns.destination] !== '::/0')) continue;
+		const flags = fields[columns.flags] ?? '';
+		const device = fields[columns.netif] ?? '';
+		if (!device || !flags.includes('U') || flags.includes('R') || flags.includes('B')) continue;
+		result.push({ device, scoped: flags.includes('I') });
+	}
+	return result;
+}
+
+/**
+ * The interface to report as the default route when only the IPv6 table names one: a global
+ * route before a scoped one, never a missing, loopback or inactive interface, and among equals
+ * the first name in lexicographic order. With several scoped routes the kernel picks per
+ * socket; this is a stable representative for the one `primaryID` the model has, not a claim
+ * about which route any given connection uses.
+ */
+function tableDefaultDevice(routes: IPv6DefaultRoute[], interfaces: Map<string, IfconfigEntry>): string | null {
+	const usable = routes.filter(route => {
+		const entry = interfaces.get(route.device);
+		return entry !== undefined && !entry.loopback && entry.status !== 'inactive';
+	});
+	for (const scoped of [false, true]) {
+		const devices = [...new Set(usable.filter(route => route.scoped === scoped).map(route => route.device))].sort();
+		if (devices[0]) return devices[0];
+	}
+	return null;
 }
 
 /**
@@ -366,6 +420,10 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 	// working connection "disconnected". The IPv4 route stays first, and the
 	// gateway shown on the screen is still the IPv4 one.
 	const route6Device = sources.route6 ? parseDefaultRoute(sources.route6).device : null;
+	// Third and last: the IPv6 table, for a host whose only default routes are interface-scoped
+	// (a VPN without a global route). It only marks which interface carries the default; the
+	// gateway on the IPv4 form never comes from here.
+	const defaultDevice = route.device ?? route6Device ?? (sources.routes6 ? tableDefaultDevice(parseIPv6DefaultRoutes(sources.routes6), interfaces) : null);
 	const routeDetailKnown = sources.routes === undefined || sources.routes.trim() !== '';
 	const routes = sources.routes === undefined ? (route.device && route.gateway ? [{ device: route.device, gateway: route.gateway }] : []) : parseDefaultRoutes(sources.routes);
 	const airport = sources.airport ? parseAirport(sources.airport) : null;
@@ -377,7 +435,7 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 		const port = ports.get(device);
 		const medium = mapMedium(port);
 		const nativeWifi = sources.nativeWifi?.find(wifi => wifi.device === device);
-		const defaultRoute = device === (route.device ?? route6Device);
+		const defaultRoute = device === defaultDevice;
 		const deviceRoutes = routes.filter(entry => entry.device === device);
 		const serviceInfo = sources.serviceInfo?.get(device) ?? '';
 		const ipv4Mode = serviceInfo ? parseServiceInfo(serviceInfo) : 'unknown';
@@ -462,7 +520,9 @@ export async function readMacNetworkState(): Promise<NetInterfaceInfo[]> {
 	const hasWifi = [...parseHardwarePorts(hardwarePorts).values()].some(port => /^Wi-Fi$/i.test(port));
 	// A native read failure leaves Wi-Fi unknown without discarding valid IPv4 state.
 	const nativeWifi = hasWifi ? await readCoreWlanWifi().catch(() => []) : [];
-	return parseMacNetworkState({ hardwarePorts, serviceOrder, ifconfig, route, route6, routes, serviceInfo, serviceDns, dhcpPacket, resolvers, nativeWifi });
+	// The routing table only when both `route get` queries came back without an interface.
+	const routes6 = parseDefaultRoute(route).device || parseDefaultRoute(route6).device ? undefined : await runOptional('/usr/sbin/netstat', ['-rn', '-f', 'inet6']);
+	return parseMacNetworkState({ hardwarePorts, serviceOrder, ifconfig, route, route6, routes, routes6, serviceInfo, serviceDns, dhcpPacket, resolvers, nativeWifi });
 }
 
 /**
