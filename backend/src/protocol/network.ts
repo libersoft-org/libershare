@@ -914,16 +914,10 @@ export class Network {
 
 		this.pubsub = this.node.services['pubsub'] as PubSub;
 
-		// Runtime patch for @chainsafe/libp2p-gossipsub OutboundStream.push():
-		// Upstream declares `async push(data)` but the body is synchronous. Any throw
-		// from rawStream.send() (e.g. StreamStateError when peer disconnect closes the
-		// yamux stream between gossipsub's map lookup and the actual write) becomes
-		// a rejected Promise that sendRpc's try/catch cannot catch (catch handles sync
-		// throws only). Those rejections are exactly the ~180/h StreamStateError noise
-		// we see in unhandledRejection. Fix by attaching a .catch() to the Promise
-		// returned by push() at every call site — intercept via prototype override
-		// on the first OutboundStream instance we observe (all instances share one
-		// prototype).
+		// Only the PX ingress filter is patched in. @libp2p/gossipsub's OutboundStream.push()
+		// is synchronous, so sendRpc's own try/catch already handles a write to a closed
+		// stream (and re-attaches the control and gossip it piggybacked); the old wrapper
+		// for the async push of @chainsafe/libp2p-gossipsub would now swallow that error.
 		applyGossipsubPatches(this.pubsub, { settings: this.settings, getConfiguredBootstrapPeerIDs: (): Set<string> => this.configuredBootstrapPeerIDs, pxIngressLogKeys: this.pxIngressLogKeys }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
 
 		// Register lish protocol handler
@@ -1191,7 +1185,7 @@ export class Network {
 			this.peerAnnounce.touchKnownMember(peerID);
 			// Fix C: clear per-peer state on disconnect to prevent unbounded growth
 			this.dcutrPeers.delete(peerID);
-			// `@chainsafe/libp2p-gossipsub` v14 removes the peer from `this.mesh`
+			// gossipsub removes the peer from `this.mesh`
 			// directly inside `removePeer()` on disconnect — without emitting a
 			// `gossipsub:prune` event (verified in node_modules/.../gossipsub.js:
 			// `removePeer` block deletes from `this.mesh` then `this.fanout`,
