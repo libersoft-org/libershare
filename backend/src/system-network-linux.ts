@@ -1,5 +1,6 @@
 import { splitNmcliFields, parseNmcliWifiList, assertLinuxWifiConnected, nmcliWifiConnectArgs } from './system-network-linux-wifi.ts';
 export { splitNmcliFields, parseNmcliWifiList, assertLinuxWifiConnected, nmcliWifiConnectArgs } from './system-network-linux-wifi.ts';
+import { readNmcliProfileBlocks } from './system-network-linux-profiles.ts';
 import { execFile, spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
@@ -296,11 +297,11 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 }
 
 /** Run the first candidate binary that exists, returning stdout. Throws when every candidate is missing or exits non-zero. */
-async function runFirst(candidates: string[], args: string[], timeoutMs: number = EXEC_TIMEOUT_MS): Promise<string> {
+async function runFirst(candidates: string[], args: string[], timeoutMs: number = EXEC_TIMEOUT_MS, signal?: AbortSignal): Promise<string> {
 	let lastError: unknown = new Error(`no candidate found for ${args.join(' ')}`);
 	for (const bin of candidates) {
 		try {
-			const { stdout } = await execFileAsync(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: C_LOCALE_ENV });
+			const { stdout } = await execFileAsync(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: C_LOCALE_ENV, ...(signal ? { signal } : {}) });
 			return stdout;
 		} catch (err) {
 			lastError = err;
@@ -615,25 +616,26 @@ export function nmcliProfileMatchesLive(profile: NmcliIPv4Profile, live: LiveIPv
 	return live === null || live.leased || live.address.startsWith('169.254.');
 }
 
-const NMCLI_IPV4_PROFILE_FIELDS = 'connection.interface-name,connection.multi-connect,ipv4.method,ipv4.never-default,ipv4.gateway,ipv4.addresses,ipv4.routes,ipv4.route-table,ipv4.routing-rules';
+/** Detail blocks of `uuids` through the shared runner, bounded as one operation. */
+function readProfileBlocks(uuids: readonly string[]): Promise<Map<string, string>> {
+	return readNmcliProfileBlocks(uuids, { run: (args, signal) => runFirst(NMCLI_CANDIDATES, args, EXEC_TIMEOUT_MS, signal), signal: AbortSignal.timeout(EXEC_TIMEOUT_MS) });
+}
 
 async function readNmcliIPv4Profile(uuid: string, device: string, activeInstances: number): Promise<NmcliIPv4Profile> {
-	const profile = await runFirst(NMCLI_CANDIDATES, ['-t', '-f', NMCLI_IPV4_PROFILE_FIELDS, 'connection', 'show', 'uuid', uuid]);
-	return parseNmcliIPv4Profile(profile, device, activeInstances);
+	const block = (await readProfileBlocks([uuid])).get(uuid);
+	if (block === undefined) throw new Error(`NetworkManager profile ${uuid} could not be read`);
+	return parseNmcliIPv4Profile(block, device, activeInstances);
 }
 
 /** Active profiles and their exact IPv4 method. Any incomplete read stays read-only. */
 async function readNetworkManagerProfiles(): Promise<{ connections: Map<string, string>; ipv4Profiles: Map<string, NmcliIPv4Profile> } | undefined> {
 	try {
 		const connections = await activeConnections();
-		const ipv4Profiles = new Map<string, NmcliIPv4Profile>();
 		const activeCounts = new Map<string, number>();
 		for (const uuid of connections.values()) activeCounts.set(uuid, (activeCounts.get(uuid) ?? 0) + 1);
-		await Promise.all(
-			[...connections].map(async ([device, uuid]) => {
-				ipv4Profiles.set(device, await readNmcliIPv4Profile(uuid, device, activeCounts.get(uuid) ?? 0));
-			})
-		);
+		const blocks = await readProfileBlocks([...activeCounts.keys()]);
+		const ipv4Profiles = new Map<string, NmcliIPv4Profile>();
+		for (const [device, uuid] of connections) ipv4Profiles.set(device, parseNmcliIPv4Profile(blocks.get(uuid) ?? '', device, activeCounts.get(uuid) ?? 0));
 		return { connections, ipv4Profiles };
 	} catch {
 		return undefined;
