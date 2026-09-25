@@ -380,13 +380,22 @@ export async function readCachedCapabilities(probe: () => Promise<NetCapabilitie
 	}
 }
 
+/**
+ * Whether the elevation helper can be offered. A check that ran out of time offers no
+ * elevation this round — the addresses and native capabilities are still reported — and the
+ * next probe checks again.
+ */
+function helperAvailableForCapabilities(platform: NodeJS.Platform): Promise<boolean> {
+	return networkHelperAvailable(platform).catch(() => false);
+}
+
 async function probeCapabilities(): Promise<NetCapabilities> {
 	if (process.platform === 'win32') {
 		// The Get/Set-Net* cmdlets refuse outright without an elevated token, so the
 		// capability is that token — probed before the user reaches Save rather than
 		// user when Save fails.
 		const native = await isWindowsElevated();
-		const elevated = !native && (await networkHelperAvailable('win32'));
+		const elevated = !native && (await helperAvailableForCapabilities('win32'));
 		// Wi-Fi is the exception to that token: the WLAN service takes scan and join
 		// from an ordinary user, so the capability is whether the service lists an
 		// adapter at all. A host with no radio, or a stripped image with no WLAN
@@ -394,14 +403,14 @@ async function probeCapabilities(): Promise<NetCapabilities> {
 		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi: isWindowsWifiConfigurable(), staticGatewayRequired: false };
 	} else if (process.platform === 'linux') {
 		const capability = await readLinuxCapabilities();
-		if (capability.ipv4Elevation && !(await networkHelperAvailable('linux'))) return { ...capability, ipv4: false, ipv4Elevation: false };
+		if (capability.ipv4Elevation && !(await helperAvailableForCapabilities('linux'))) return { ...capability, ipv4: false, ipv4Elevation: false };
 		return capability;
 	} else if (process.platform === 'darwin') {
 		// networksetup persists a change and is present on every macOS install, so
 		// addressing is editable. Wi-Fi is editable only while macOS is willing to
 		// tell us the network names: see isMacWifiConfigurable.
 		const [native, wifi] = await Promise.all([isMacWritable(), isMacWifiConfigurable()]);
-		const elevated = !native && (await networkHelperAvailable('darwin'));
+		const elevated = !native && (await helperAvailableForCapabilities('darwin'));
 		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi, staticGatewayRequired: true };
 	} else {
 		// Everything else reads through os.networkInterfaces(), which cannot even

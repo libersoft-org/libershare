@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { dirname, join, win32 } from 'node:path';
-import { sha256File } from './network-helper-integrity.ts';
+import { HelperVerificationTimeoutError, sha256File } from './network-helper-integrity.ts';
 
 const SHELLEXECUTEINFO_SIZE = 112;
 const PROCESS_HANDLE_OFFSET = 104;
@@ -340,11 +340,19 @@ export async function verifyWindowsInstalledSibling(path: string, executable: st
 	}
 }
 
-export async function verifyWindowsInstalledHelper(path: string, executable: string, expectedHash: string): Promise<boolean> {
+/**
+ * True when the helper beside `executable` is installed and hashes to `expectedHash`. Running
+ * out of time is not a verdict: {@link HelperVerificationTimeoutError} propagates so the caller
+ * can say "not verified in time" instead of "untrusted".
+ */
+export async function verifyWindowsInstalledHelper(path: string, executable: string, expectedHash: string, options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<boolean> {
 	try {
 		const sibling = await windowsInstalledSibling(path, executable);
-		return sibling !== null && (await sha256File(sibling.path)) === expectedHash;
-	} catch {
+		options.signal?.throwIfAborted();
+		return sibling !== null && (await sha256File(sibling.path, options)) === expectedHash;
+	} catch (error) {
+		if (error instanceof HelperVerificationTimeoutError) throw error;
+		if (options.signal?.aborted) throw new HelperVerificationTimeoutError();
 		return false;
 	}
 }

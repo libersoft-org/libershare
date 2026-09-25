@@ -39,12 +39,50 @@ export function trustIdentity(files: readonly TrustedFileIdentity[]): string {
 	return files.map(file => `${file.path.toLowerCase()}|${file.size}|${file.mtimeMs}|${file.ctimeMs}|${file.ino}`).join(';');
 }
 
-export async function sha256File(path: string): Promise<string> {
+/** Upper bound on one helper hash read; a shorter remaining budget takes precedence. */
+export const HASH_READ_LIMIT_MS = 10_000;
+
+/**
+ * The helper could not be verified in time — the read ran out of time or was cancelled. Not a
+ * verdict about the helper: a hash that does not match stays a plain "untrusted".
+ */
+export class HelperVerificationTimeoutError extends Error {
+	constructor(message: string = 'verifying the privileged helper took too long') {
+		super(message);
+		this.name = 'HelperVerificationTimeoutError';
+	}
+}
+
+/**
+ * SHA-256 of a file, read within `timeoutMs` (at most {@link HASH_READ_LIMIT_MS}) and
+ * cancellable through `signal`. On timeout or cancellation the read is stopped, not merely
+ * abandoned, and the promise rejects with {@link HelperVerificationTimeoutError}; a late end
+ * or error of the stream is ignored.
+ */
+export function sha256File(path: string, options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<string> {
 	return new Promise((resolve, reject) => {
+		const limit = Math.max(0, Math.min(options.timeoutMs ?? HASH_READ_LIMIT_MS, HASH_READ_LIMIT_MS));
 		const hash = createHash('sha256');
 		const stream = createReadStream(path);
-		stream.on('error', reject);
+		let settled = false;
+		const finish = (outcome: () => void): void => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			options.signal?.removeEventListener('abort', onAbort);
+			outcome();
+		};
+		const stop = (): void =>
+			finish(() => {
+				stream.destroy();
+				reject(new HelperVerificationTimeoutError());
+			});
+		const onAbort = (): void => stop();
+		const timer = setTimeout(stop, limit);
+		if (options.signal?.aborted) return stop();
+		options.signal?.addEventListener('abort', onAbort, { once: true });
+		stream.on('error', error => finish(() => reject(error)));
 		stream.on('data', chunk => hash.update(chunk));
-		stream.on('end', () => resolve(hash.digest('hex')));
+		stream.on('end', () => finish(() => resolve(hash.digest('hex'))));
 	});
 }

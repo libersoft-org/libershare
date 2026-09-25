@@ -1,6 +1,8 @@
 import { dirname, join } from 'node:path';
 import { productName } from '@shared';
-import { expectedNetworkHelperHash } from './network-helper-integrity.ts';
+import { expectedNetworkHelperHash, HelperVerificationTimeoutError } from './network-helper-integrity.ts';
+import { decodeNetworkHelperRequest } from './network-helper-protocol.ts';
+import { systemTimeExitCode } from './system-time-helper.ts';
 import { runElevatedWindowsProcess, verifyWindowsInstalledHelper, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_NETWORK_ELEVATION_WAIT_MS, WINDOWS_LAUNCHER_EXIT, windowsCurrentProcessIdentity, windowsHelperParameters, windowsLocalAppDataPath, windowsRequestFileName, writeWindowsRequestFile } from './network-helper-windows.ts';
 
 /**
@@ -26,12 +28,30 @@ function elevationWaitFor(request: string): number {
 	}
 }
 
+/** True for a well-formed system-time request; decided without writing a request file. */
+function isSystemTimeRequest(encoded: string): boolean {
+	try {
+		return decodeNetworkHelperRequest(encoded).operation === 'applySystemTime';
+	} catch {
+		return false;
+	}
+}
+
 async function elevate(args: string[]): Promise<number> {
 	if (args.length !== 2 || args[0] !== '--request' || !/^[A-Za-z0-9_-]{1,8192}$/.test(args[1]!)) return 1;
 	const helper = join(dirname(process.execPath), 'lish-network-helper.exe');
 	const expectedHash = expectedNetworkHelperHash();
-	if (!expectedHash || !(await verifyWindowsInstalledHelper(helper, process.execPath, expectedHash))) return WINDOWS_LAUNCHER_EXIT.untrusted;
 	const decoded = Buffer.from(args[1]!, 'base64url').toString('utf8');
+	let trusted: boolean;
+	try {
+		trusted = !!expectedHash && (await verifyWindowsInstalledHelper(helper, process.execPath, expectedHash));
+	} catch (error) {
+		if (!(error instanceof HelperVerificationTimeoutError)) throw error;
+		// Not verified in time, and nothing elevated: a time save gets its own "error" outcome,
+		// which carries no change flag; anything else keeps the plain failure.
+		return isSystemTimeRequest(args[1]!) ? systemTimeExitCode({ success: false, outcome: 'error', message: null }) : 1;
+	}
+	if (!trusted) return WINDOWS_LAUNCHER_EXIT.untrusted;
 	const request = writeWindowsRequestFile(join(windowsLocalAppDataPath(), productName, windowsRequestFileName(windowsCurrentProcessIdentity())), decoded);
 	try {
 		const outcome = await runElevatedWindowsProcess(helper, windowsHelperParameters(request.path), elevationWaitFor(decoded));
