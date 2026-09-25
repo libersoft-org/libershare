@@ -22,7 +22,8 @@ import { isLinkLocalIp } from '@libp2p/utils';
 import { type PrivateKey } from '@libp2p/interface';
 import { type SettingsData } from '../settings.ts';
 import { trace } from '../logger.ts';
-import { normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
+import { parseAcceptPXThreshold } from './constants.ts';
+import { effectiveNetworkConfig } from './network-settings.ts';
 import { getLocalCidrs, shouldDenyDial, extractFirstIPv4 } from './address-filter.ts';
 import { peerIdFromString } from '@libp2p/peer-id';
 import { extractDestinationPeerID, destinationPeerIDOf } from './multiaddr-utils.ts';
@@ -94,12 +95,14 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	// relayed entry `/…/p2p/<us>/p2p-circuit/p2p/<remote>` names us as the RELAY hop while
 	// targeting somebody else, and the substring test threw it away as our own address.
 	const uniqueBootstrapPeers = [...new Set(bootstrapPeers)].filter(p => destinationPeerIDOf(p) !== myPeerID);
-	const peerExchange = allSettings.network?.peerExchange;
-	const pxEnabled = peerExchange?.enabled === true;
-	const parsedThreshold = parseAcceptPXThreshold(peerExchange?.acceptPXThreshold);
-	const acceptPXThreshold = parsedThreshold.value;
+	// Every value the node is built from comes from this one projection, which is also what a
+	// settings change is compared by to decide whether the node has to restart.
+	const effective = effectiveNetworkConfig(allSettings.network);
+	const pxEnabled = effective.peerExchange.enabled;
+	const acceptPXThreshold = effective.peerExchange.acceptPXThreshold;
+	const parsedThreshold = parseAcceptPXThreshold(allSettings.network?.peerExchange?.acceptPXThreshold);
 	if (parsedThreshold.unsafe) console.warn(`[NET] PX acceptPXThreshold=${String(parsedThreshold.raw)} is unsafe; using ${acceptPXThreshold}`);
-	const trustedPXPeerIDs = normalizeTrustedPeerIds(peerExchange?.trustedPeerIds);
+	const trustedPXPeerIDs = new Set(effective.peerExchange.trustedPeerIds);
 	if (pxEnabled) console.log(`[NET] PX enabled by local policy (trustedPeers=${trustedPXPeerIDs.size}, acceptPXThreshold=${acceptPXThreshold})`);
 	else console.debug('[NET] PX disabled by local policy');
 	// Build transports array
@@ -119,14 +122,12 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	// useRelayClients=false fully disables the circuit-relay client role: zero discoverRelays
 	// reservations and zero /p2p-circuit listen slots so we never announce relayed multiaddrs.
 	// Defaults to true for backward compatibility when the field is absent in older settings files.
-	const useRelayClients = allSettings.network?.useRelayClients !== false;
-	const rawMaxRelayClients = allSettings.network?.maxRelayClients;
-	const maxRelays = useRelayClients ? (typeof rawMaxRelayClients === 'number' && rawMaxRelayClients > 0 ? Math.min(rawMaxRelayClients, 20) : 5) : 0;
+	const maxRelays = effective.relayClientSlots;
 	transports.push(circuitRelayTransport({ discoverRelays: maxRelays } as any));
 	if (maxRelays > 0) console.log(`✓ Circuit relay client enabled (discoverRelays: ${maxRelays})`);
 	else console.log('✓ Circuit relay client disabled by useRelayClients=false');
 	// Build listen addresses
-	const port = allSettings.network?.incomingPort || 0;
+	const port = effective.incomingPort;
 	const listenAddresses = [`/ip4/0.0.0.0/tcp/${port}`];
 	for (let i = 0; i < maxRelays; i++) listenAddresses.push('/p2p-circuit');
 	if (maxRelays > 0) console.log(`✓ Configured to reserve ${maxRelays} relay slots`);
@@ -164,8 +165,8 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		}
 	}
 	// Add user-configured announce addresses
-	if (allSettings.network?.announceAddresses?.length) {
-		for (const addr of allSettings.network.announceAddresses) {
+	if (effective.announceAddresses.length > 0) {
+		for (const addr of effective.announceAddresses) {
 			appendAnnounceAddresses.push(addr);
 			console.log(`✓ Announce address (configured): ${addr}`);
 		}
@@ -399,8 +400,8 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		},
 	};
 	// Add relay server service if enabled
-	if (allSettings.network?.allowRelay) {
-		const maxReservationsRaw = allSettings.network?.maxRelayReservations ?? 0;
+	if (effective.relayReservations !== null) {
+		const maxReservationsRaw = effective.relayReservations;
 		const maxReservations = maxReservationsRaw === 0 ? Infinity : maxReservationsRaw;
 		config.services.relay = circuitRelayServer({
 			reservations: {
@@ -419,7 +420,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	// UPnP-NAT asks the local router (via IGD) to open the incoming port and
 	// maps it back to this host, easing inbound reachability behind a NAT.
 	// Gated behind an opt-in flag because it mutates router state — default OFF.
-	if (allSettings.network?.upnpEnabled) {
+	if (effective.upnp) {
 		config.services.upnpNAT = uPnPNAT();
 		console.log('✓ UPnP-NAT port forwarding enabled');
 	}
@@ -463,9 +464,8 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	// via mDNS — bootstrap + gossipsub mesh handles WAN.
 	// Default ON since cost is negligible (~1 packet / interval) and gain
 	// (zero-config LAN peer discovery) is high.
-	const mdnsEnabled = allSettings.network?.mdnsEnabled ?? true;
-	if (mdnsEnabled) {
-		const mdnsInterval = allSettings.network?.mdnsInterval ?? 30000;
+	if (effective.mdnsInterval !== null) {
+		const mdnsInterval = effective.mdnsInterval;
 		peerDiscovery.push(
 			mdns({
 				interval: mdnsInterval,
