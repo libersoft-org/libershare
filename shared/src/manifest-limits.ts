@@ -63,7 +63,8 @@ export function checkEntryTree(directories: readonly { path: string }[], leaves:
 	const entries: { key: string; path: string; leaf: boolean }[] = [];
 	const add = (path: string, leaf: boolean): void => {
 		if (path.includes(NUL)) throw invalid(`NUL in path: ${formatUntrustedValue(path)}`);
-		if (path.split('/').some(part => part === '' || part === '.')) throw invalid(`empty or '.' path component: ${formatUntrustedValue(path)}`);
+		// '..' too: `a/../b.bin` names the same file as `b.bin` and would slip past the duplicate check.
+		if (path.split('/').some(part => part === '' || part === '.' || part === '..')) throw invalid(`empty, '.' or '..' path component: ${formatUntrustedValue(path)}`);
 		entries.push({ key: path.replaceAll('/', NUL), path, leaf });
 	};
 	for (const { path } of directories) add(path, false);

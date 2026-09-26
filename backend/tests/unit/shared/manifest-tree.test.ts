@@ -37,8 +37,10 @@ describe('manifest entry tree', () => {
 		expect(detail(lish([file('x/y.bin')], [], [{ path: 'x', target: '/elsewhere' }]))).toBe('entry path is also a directory: "x"');
 	});
 
-	it('refuses empty, dot and NUL components instead of rewriting them', () => {
-		for (const path of ['a//b', '/a', 'a/', './a', 'a/./b', `a${String.fromCharCode(0)}b`]) expect(detail(lish([file(path)]))).toMatch(/^(empty or '\.' path component|NUL in path): /);
+	it('refuses empty, dot, dot-dot and NUL components instead of rewriting them', () => {
+		for (const path of ['a//b', '/a', 'a/', './a', 'a/./b', '../a', 'a/../b', `a${String.fromCharCode(0)}b`]) expect(detail(lish([file(path)]))).toMatch(/^(empty, '\.' or '\.\.' path component|NUL in path): /);
+		// Two spellings of one file: without the '..' rule they passed as distinct entries.
+		expect(detail(lish([file('b.bin'), file('a/../b.bin')]))).toMatch(/path component/);
 	});
 
 	it('checks the tree of a manifest without files', () => {
