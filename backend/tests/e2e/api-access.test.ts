@@ -9,17 +9,26 @@ const REPO = resolve(import.meta.dir, '../../..');
 
 describe('a backend without a token', () => {
 	it('refuses to start and creates no data', async () => {
-		const dataDir = join(mkdtempSync(join(tmpdir(), 'lish-notoken-')), 'data');
+		const root = mkdtempSync(join(tmpdir(), 'lish-notoken-'));
+		const dataDir = join(root, 'data');
+		// The default storage paths live under the home directory: pointed into the test root,
+		// a regression of the token check writes there instead of into the user's own.
+		const home = join(root, 'home');
 		try {
-			const env: Record<string, string> = { ...(process.env as Record<string, string>), MEMTRACE: '0', HEAP_TRIGGER: '0' };
+			const env: Record<string, string> = { ...(process.env as Record<string, string>), MEMTRACE: '0', HEAP_TRIGGER: '0', HOME: home, USERPROFILE: home };
 			delete env['LISH_TOKEN'];
 			const proc = Bun.spawn([process.execPath, 'run', 'backend/src/app.ts', '--datadir', dataDir, '--port', '0'], { cwd: REPO, env, stdout: 'pipe', stderr: 'pipe' });
 			const code = await Promise.race([proc.exited, Bun.sleep(30_000).then(() => 'timeout' as const)]);
-			if (code === 'timeout') proc.kill(9);
+			if (code === 'timeout') {
+				proc.kill(9);
+				await proc.exited;
+			}
 			expect(code).toBe(78);
 			expect(existsSync(dataDir) ? readdirSync(dataDir) : []).toEqual([]);
+			// `.bun` is the runtime's own cache, created before any backend code runs.
+			expect((existsSync(home) ? readdirSync(home) : []).filter(entry => entry !== '.bun')).toEqual([]);
 		} finally {
-			rmSync(join(dataDir, '..'), { recursive: true, force: true });
+			rmSync(root, { recursive: true, force: true });
 		}
 	}, 40_000);
 });
