@@ -64,7 +64,7 @@ function makeMockNet() {
 			this.unsubscribed.push(id);
 			this.topicPeers.delete(id);
 		},
-		isBootstrapOrRelayPeer(): boolean {
+		isBootstrapOrRelayPeer(_peerID?: string): boolean {
 			return false;
 		},
 		async disconnectPeer(pid: string): Promise<void> {
