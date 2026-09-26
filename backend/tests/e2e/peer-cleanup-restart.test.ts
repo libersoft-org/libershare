@@ -23,14 +23,15 @@ const free = (): number => {
 	return port;
 };
 
-function node(tag: string, apiPort: number, p2pPort: number) {
-	const root = mkdtempSync(join(tmpdir(), `lish-291-${tag}-`));
+/** A backend process; given `existingRoot` it starts over that node's data as it was left. */
+function node(tag: string, apiPort: number, p2pPort: number, existingRoot?: string) {
+	const root = existingRoot ?? mkdtempSync(join(tmpdir(), `lish-291-${tag}-`));
 	const storage = (name: string): string => {
 		const dir = join(root, 'storage', name);
 		mkdirSync(dir, { recursive: true });
 		return dir;
 	};
-	writeFileSync(join(root, 'settings.json'), JSON.stringify({ storage: { downloadPath: storage('finished'), tempPath: storage('temp'), lishPath: storage('lish'), lishnetPath: storage('lishnet'), backupPath: storage('backup') }, network: { incomingPort: p2pPort, mdnsEnabled: false, upnpEnabled: false, allowRelay: false, useRelayClients: false, autoConnectNewNetworks: false, peerExchange: { enabled: false } } }));
+	if (!existingRoot) writeFileSync(join(root, 'settings.json'), JSON.stringify({ storage: { downloadPath: storage('finished'), tempPath: storage('temp'), lishPath: storage('lish'), lishnetPath: storage('lishnet'), backupPath: storage('backup') }, network: { incomingPort: p2pPort, mdnsEnabled: false, upnpEnabled: false, allowRelay: false, useRelayClients: false, autoConnectNewNetworks: false, peerExchange: { enabled: false } } }));
 	const proc = Bun.spawn([process.execPath, 'run', 'backend/src/app.ts', '--datadir', root, '--port', String(apiPort), '--host', '127.0.0.1', '--token', TOKEN], { cwd: repo, env: { ...process.env, MEMTRACE: '0', HEAP_TRIGGER: '0' } as Record<string, string>, stdout: 'pipe', stderr: 'pipe' });
 	let log = '';
 	(async () => {
@@ -109,12 +110,17 @@ describe('peer cleanup across a process restart', () => {
 		reply = await ac.call('lishnets.setEnabled', { networkID: NET, enabled: false });
 		expect(reply.result).toMatchObject({ stored: true, joined: false });
 		blocker.stop(true);
-		reply = await ac.call('settings.set', { path: 'network.incomingPort', value: taken });
-		expect(reply.error).toBeUndefined();
-		await Bun.sleep(2000);
+		// The process ends with the leave still undone; only what reached the disk survives.
 		ac.close();
 		a.proc.kill();
 		await a.proc.exited;
+
+		// A new process over the same data: the queue is the one thing that remembers B.
+		const restarted = node('a', free(), free(), a.root);
+		await ready(restarted);
+		expect(restarted.log()).toContain('removed before start');
+		restarted.proc.kill();
+		await restarted.proc.exited;
 
 		const { peerIdFromString } = await import(join(repo, 'backend/node_modules/@libp2p/peer-id/dist/src/index.js'));
 		const bKey = `/peers/${peerIdFromString(info.peerID).toCID().toString()}`;
