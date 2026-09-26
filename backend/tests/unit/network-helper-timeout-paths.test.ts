@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { join } from 'node:path';
 import { HelperVerificationTimeoutError } from '../../src/network-helper-integrity.ts';
 import { runElevatedSystemTime } from '../../src/network-helper-client.ts';
 import { withSaveBudget } from '../../src/system-time-common.ts';
@@ -76,4 +77,40 @@ describe('windows trust budget', () => {
 		const clock = (): number => (calls++ === 0 ? 0 : 31_000);
 		await expect(verifyWindowsHelper('C:/no-such-dir/lish-network-helper.exe', clock)).rejects.toBeInstanceOf(HelperVerificationTimeoutError);
 	});
+});
+
+describe('macOS save whose helper preparation outlives the budget', () => {
+	it('never opens the authorization prompt', async () => {
+		// In a child process: the module mock replaces child_process for everything it loads.
+		const script = `
+			import { mock } from 'bun:test';
+			const cp = { ...(await import('node:child_process')) };
+			const calls = [];
+			const execFile = (file, args, options, callback) => {
+				const done = typeof options === 'function' ? options : callback;
+				calls.push(file);
+				// codesign answers slowly, past the save budget; osascript would be the prompt.
+				setTimeout(() => done(null, { stdout: '', stderr: 'TeamIdentifier=TEAMID' + String.fromCharCode(10) + 'Identifier=app.example' }), file.endsWith('codesign') ? 400 : 0);
+			};
+			mock.module('node:child_process', () => ({ ...cp, execFile }));
+			const { writeFileSync, mkdtempSync } = await import('node:fs');
+			const { join } = await import('node:path');
+			const { tmpdir } = await import('node:os');
+			// The helper sits next to the running binary; point that binary into a scratch folder.
+			const dir = mkdtempSync(join(tmpdir(), 'lish-mac-helper-'));
+			process.execPath = join(dir, 'lish-backend');
+			writeFileSync(join(dir, 'lish-network-helper'), 'helper');
+			const { runElevatedSystemTime } = await import('./src/network-helper-client.ts');
+			const { withSaveBudget } = await import('./src/system-time-common.ts');
+			const result = await withSaveBudget(() => runElevatedSystemTime({ ntpEnabled: false }, 'darwin', () => 1000, async () => true), () => Date.now(), 150);
+			await new Promise(resolve => setTimeout(resolve, 700));
+			console.log(JSON.stringify({ outcome: result.outcome, prompted: calls.some(file => file.endsWith('osascript')) }));
+		`;
+		const child = Bun.spawn([process.execPath, '--eval', script], { cwd: join(import.meta.dir, '../..'), stdout: 'pipe', stderr: 'pipe' });
+		const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+		if (code !== 0) throw new Error(`fixture exited ${code}: ${err}`);
+		const result = JSON.parse(out.trim().split(String.fromCharCode(10)).at(-1)!);
+		expect(result.outcome).toBe('error');
+		expect(result.prompted).toBe(false);
+	}, 30_000);
 });
