@@ -2215,6 +2215,28 @@ export class Network {
 		return networkID !== null && this.configuredBootstrapAddressesByNet.get(networkID)?.has(canonicalAddress) ? 'configured' : 'discovered';
 	}
 
+	/**
+	 * Register one address the user configured: its peer is exempt from eviction and every piece
+	 * of evidence against it is dropped, and the address goes on the recovery list.
+	 *
+	 * Both happen before the routability filter. Whether an address is dialable is a property of
+	 * THIS HOST right now — a LAN or VPN bootstrap stops passing the filter the moment its
+	 * interface drops — while "the user configured this peer" is a fact about the saved config.
+	 * Configuring a peer by hand means "try this one, from scratch": the leave decision, the
+	 * unreachable quarantine and the failure history go, or a single transient failure would
+	 * hide the peer from maintenance, discovery and recovery for another half hour.
+	 */
+	private installConfiguredBootstrap(ma: ReturnType<typeof Multiaddr>, peerID: string | null, networkID: string | null): void {
+		if (peerID) {
+			this.configuredBootstrapPeerIDs.add(peerID);
+			this.clearRedialSuppressionForPeer(peerID);
+			this.unreachableQuarantine.delete(peerID);
+			this.quarantineProbeInFlight.delete(peerID);
+			this.redialBackoff.delete(peerID);
+		}
+		this.rememberBootstrapAddress(ma, networkID ?? STARTUP_BOOTSTRAP_OWNER);
+	}
+
 	/** The dial loop behind {@link addBootstrapPeers}; see there for the batching wrapper. */
 	private async dialBootstrapEntries(peers: string[], networkID: string | null, origin: BootstrapPeerOrigin): Promise<BootstrapDialResult> {
 		if (!this.node) {
@@ -2244,6 +2266,21 @@ export class Network {
 		// on, and a controller replaced by a later start is not the one that can stop it.
 		const abort = this.dialAbort;
 		const superseded = (): boolean => epoch !== this.runEpoch || abort.signal.aborted || generation !== this.bootstrapGenerationOf(networkID);
+		// A configured list is installed whole before the first dial, synchronously: the dials
+		// are sequential and one can take seconds, and an address still waiting its turn must
+		// already be on the recovery list and exempt from eviction — or "the list is applied"
+		// would be true of the first address only. The loop repeats it per address, harmlessly.
+		if (origin === 'configured') {
+			for (const peer of peers) {
+				try {
+					const ma = Multiaddr(peer);
+					const peerID = extractDestinationPeerID(ma);
+					if (peerID !== myPeerID) this.installConfiguredBootstrap(ma, peerID, networkID);
+				} catch {
+					// An unparsable entry is reported by the loop below.
+				}
+			}
+		}
 		peerLoop: for (const peer of peers) {
 			if (superseded()) return 'incomplete';
 			let consumedQuarantineAt: number | null = null;
@@ -2302,34 +2339,12 @@ export class Network {
 				// Claiming the peer as configured stays keyed on what the CALLER declared:
 				// this branch also lifts leave-network suppression, which is the user's
 				// decision to reverse, never gossip's.
-				if (peerID && origin === 'configured') {
-					this.configuredBootstrapPeerIDs.add(peerID);
-					// Configuring a peer by hand means "try this one, from scratch". Every
-					// piece of accumulated evidence against it therefore goes: the leave
-					// decision, the unreachable quarantine and the failure history. Keeping
-					// any of them would let a single transient failure of this one explicit
-					// dial hide the peer from maintenance, discovery and zero-connection
-					// recovery for another half hour, with nothing in the UI explaining why
-					// the user's edit did nothing.
-					this.clearRedialSuppressionForPeer(peerID);
-					this.unreachableQuarantine.delete(peerID);
-					this.quarantineProbeInFlight.delete(peerID);
-					this.redialBackoff.delete(peerID);
-				}
-				// Also before the routability filter: a LAN or VPN bootstrap is unroutable only
-				// while its interface is down, and keeping it off the recovery list until then
-				// means nothing retries it when the tunnel returns. Recovery re-checks
-				// routability itself before dialing.
-				// The autodial list is a different promise: zero-connection recovery walks
-				// it and dials everything on it. A CONFIGURED address belongs there at once
-				// — it is user data and recovery must keep trying it precisely while it is
-				// down. A DISCOVERED address is only a claim some peer made, so it earns
-				// its place by answering; it is added after a verified dial, below. Adding
-				// it here left every unreachable address a gossip flood could invent on the
-				// list for good, since an ordinary timeout has nothing that takes it off.
-				if (origin === 'configured') {
-					this.rememberBootstrapAddress(ma, networkID ?? STARTUP_BOOTSTRAP_OWNER);
-				}
+				if (origin === 'configured') this.installConfiguredBootstrap(ma, peerID, networkID);
+				// A CONFIGURED address is on the recovery list already (installConfiguredBootstrap);
+				// recovery re-checks routability itself before dialing. A DISCOVERED address is only
+				// a claim some peer made, so it earns its place by answering: it is added after a
+				// verified dial, below — adding it here left every unreachable address a gossip
+				// flood could invent on the list for good.
 				// Safety net: refuse to dial loopback / unreachable-private bootstrap entries
 				// even if the upstream (catalog or peer-announce intake) failed to filter them.
 				// A discovered address is dropped silently — the call site iterates many

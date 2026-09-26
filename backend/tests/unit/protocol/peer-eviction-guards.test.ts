@@ -725,10 +725,16 @@ describe('addBootstrapPeers — superseded bootstrap configuration', () => {
 		expect(dialled).toEqual([ADDR_A]);
 	});
 
-	it('does not re-mark the abandoned entry as configured', async () => {
-		const { network } = bareNetwork(n => n.bumpBootstrapGeneration('net-a'));
+	// The whole configured list is installed before the first dial, so "applied" holds for every
+	// address, not only the one being dialled. An entry of a list superseded mid-walk is removed
+	// by the prune the superseding write runs over the whole previous list (syncBootstrapRuntime).
+	it('installs every configured address before the first dial finishes', async () => {
+		let installedAtFirstDial: boolean | undefined;
+		const { network } = bareNetwork(n => {
+			installedAtFirstDial = (n as any).configuredBootstrapPeerIDs.has(PEER_B);
+		});
 		await (network as any).addBootstrapPeers([ADDR_A, ADDR_B], 'net-a', 'configured');
-		expect((network as any).configuredBootstrapPeerIDs.has(PEER_B)).toBe(false);
+		expect(installedAtFirstDial).toBe(true);
 	});
 
 	it('walks the whole list when nothing supersedes it', async () => {
