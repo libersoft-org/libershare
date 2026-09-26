@@ -1,5 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { randomBytes } from 'node:crypto';
 import { join, resolve } from 'node:path';
 
 /**
@@ -10,13 +11,19 @@ import { join, resolve } from 'node:path';
  */
 export interface TestNode {
 	readonly dataDir: string;
-	readonly url: string;
+	/** Set once the node reports its API port; empty while it is still starting. */
+	url: string;
 	readonly process: ReturnType<typeof Bun.spawn>;
 }
 
 const REPO = resolve(import.meta.dir, '../../../..');
 const READY_TIMEOUT_MS = 60_000;
 const nodes: TestNode[] = [];
+/**
+ * One random API token per run. Without it the nodes' API — file access included — would be
+ * open to every other process on the machine for as long as the suite runs.
+ */
+export const TEST_API_TOKEN: string = randomBytes(32).toString('hex');
 let root: string | null = null;
 
 /** Settings written before the first start — nothing may fall back to the defaults. */
@@ -83,14 +90,14 @@ export async function startNodes(count: number = 3): Promise<void> {
 			mkdirSync(dataDir, { recursive: true });
 			writeFileSync(join(dataDir, 'settings.json'), JSON.stringify(isolatedSettings(dataDir)));
 			const env: Record<string, string> = { ...(process.env as Record<string, string>), MEMTRACE: '0', HEAP_TRIGGER: '0' };
-			delete env['LISH_TOKEN'];
+			env['LISH_TOKEN'] = TEST_API_TOKEN;
 			const proc = Bun.spawn([process.execPath, 'run', 'backend/src/app.ts', '--datadir', dataDir, '--port', '0', '--host', '127.0.0.1'], { cwd: REPO, env, stdout: 'pipe', stderr: 'inherit' });
-			const log: string[] = [];
-			const port = await waitForApiPort(proc, log).catch(error => {
-				proc.kill();
-				throw error;
-			});
-			nodes.push({ dataDir, url: `ws://127.0.0.1:${port}`, process: proc });
+			// Tracked from the spawn, so a node that never gets ready is stopped — and waited
+			// for — like every other one before its directory is removed.
+			const node: TestNode = { dataDir, url: '', process: proc };
+			nodes.push(node);
+			const port = await waitForApiPort(proc, []);
+			node.url = `ws://127.0.0.1:${port}?token=${TEST_API_TOKEN}`;
 		}
 	} catch (error) {
 		await stopNodes();
