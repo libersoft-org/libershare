@@ -151,6 +151,8 @@
 			{#if !$networkState.known && interfaces.length > 0}<div class="note">{$t('settings.network.staleState')}</div>{/if}
 			{#if !$networkSubscriptionActive}<div class="note">{$t('settings.network.liveUpdatesUnavailable')}</div>{/if}
 			{#if primaryFailed}<div class="note">{$t('settings.network.primarySaveFailed')}</div>{/if}
+			<!-- Also here: with every edit refused, the form holding the same note cannot be opened. -->
+			{#if $networkState.ipv4ProfilesUnavailable}<div class="note" role="status">{$t('settings.network.ipv4ProfilesUnavailable')}</div>{/if}
 			{#if $networkState.detail === 'addressesOnly'}
 				<div class="note">{$t('settings.network.detailLimited')}</div>
 			{/if}
