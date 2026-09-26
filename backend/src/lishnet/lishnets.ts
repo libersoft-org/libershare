@@ -898,6 +898,15 @@ export class Networks {
 		// could redial it back after we left.
 		const leftPeers = new Set<string>(this.network.getTopicPeers(id));
 		for (const pid of this.network.getRecentTopicMembers(id)) leftPeers.add(pid);
+		// The queue was written with the catalog change, from the membership seen then; a join
+		// still finishing may have brought more peers since. Recorded now, while the topic
+		// still shows them and before the first hang-up, so a crash mid-leave leaves the next
+		// start their cleanup too. A failed write must not stop the leave itself.
+		try {
+			this.recordLeavingPeers([id], this.enabledIDsWithout([id]), crypto.randomUUID());
+		} catch (err: any) {
+			console.error(`[Networks] recording the peers of the leave of ${id} failed:`, err?.message ?? err);
+		}
 
 		this.network.unsubscribeTopic(id);
 		this.joinedNetworks.delete(id);

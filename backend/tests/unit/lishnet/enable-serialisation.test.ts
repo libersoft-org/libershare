@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { initLISHnetsTables, addLISHnet, getLISHnet, setLISHnetEnabled, updateLISHnet } from '../../../src/db/lishnets.ts';
 import { Networks } from '../../../src/lishnet/lishnets.ts';
+import { generateKeyPair } from '@libp2p/crypto/keys';
+import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { listPeerCleanup, recordPeerCleanup } from '../../../src/db/peer-cleanup.ts';
 
 /**
@@ -911,6 +913,17 @@ describe('persistent peer cleanup of left lishnets', () => {
 		await (restarted as any).replayPeerCleanup(node);
 		expect(deleted).toEqual([P2]);
 		expect(pending()).toEqual([]);
+	});
+
+	it('also queues a peer that joined between the catalog write and the leave', async () => {
+		const late = peerIdFromPrivateKey(await generateKeyPair('Ed25519')).toString();
+		// The write sees the membership of that moment; the leave that follows sees one more peer.
+		let reads = 0;
+		const seen = net.getTopicPeers.bind(net);
+		net.getTopicPeers = (id: string): string[] => (id === NET && reads++ > 0 ? [...seen(id), late] : seen(id));
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await networks.setEnabled(NET, false);
+		expect(pending()).toContain(`${NET}/${late}`);
 	});
 
 	it('never queues a bootstrap address whose peer part is not a peer ID', async () => {
