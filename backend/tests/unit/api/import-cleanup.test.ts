@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -62,5 +62,40 @@ describe('failed import cleanup', () => {
 		await expect(handlers.importManifest(manifest('leaf'), join(base, 'parent'), { enableSharing: false, enableDownloading: false })).rejects.toThrow('disk refused the write');
 		expect(existsSync(join(base, 'parent', 'leaf'))).toBe(false);
 		expect(existsSync(join(base, 'parent'))).toBe(true);
+	});
+});
+
+describe('failed overwrite import', () => {
+	let dataDir: string;
+	let base: string;
+	let db: ReturnType<typeof openDatabase>;
+	let dataServer: DataServer;
+	let handlers: ReturnType<typeof initLISHsHandlers>;
+
+	beforeAll(async () => {
+		dataDir = await mkdtemp(join(tmpdir(), 'lish-overwrite-data-'));
+		base = await mkdtemp(join(tmpdir(), 'lish-overwrite-dl-'));
+		db = openDatabase(dataDir);
+		dataServer = new DataServer(db);
+		handlers = initLISHsHandlers(
+			dataServer,
+			() => {},
+			() => {},
+			await Settings.create(dataDir)
+		);
+	});
+
+	afterAll(async () => {
+		db.close();
+		for (const dir of [dataDir, base]) await rm(dir, { recursive: true, force: true });
+	});
+
+	it('keeps the record it would replace when the new directory cannot be made', async () => {
+		const original = { id: 'kept-record', name: 'kept-record', created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', files: [{ path: 'a.bin', size: 1024, checksums: ['c0'] }], directory: join(base, 'original') } as const;
+		dataServer.add(original as never);
+		// A regular file where the download directory's parent should be: mkdir must fail.
+		writeFileSync(join(base, 'blocker'), 'not a directory');
+		await expect(handlers.importManifest({ ...original, name: 'replacement' } as never, join(base, 'blocker'), { overwrite: true, enableSharing: false, enableDownloading: false })).rejects.toThrow();
+		expect(dataServer.get('kept-record' as never)?.name).toBe('kept-record');
 	});
 });

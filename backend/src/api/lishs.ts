@@ -425,7 +425,6 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		validateLISHStructure(lish, maxChunkSize);
 		const existing = dataServer.get(lish.id);
 		if (existing && !overwrite) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
-		if (existing) dataServer.delete(lish.id);
 		const dirName = sanitizeFilename(lish.name || lish.id) || lish.id;
 		const finalBaseDir = join(Utils.expandHome(downloadPath), dirName);
 		let directory: string;
@@ -437,59 +436,62 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			directory = await Utils.findUniqueDirectory(tempBaseDir);
 			finalDirectory = finalBaseDir;
 		} else directory = finalBaseDir; // Share-only / metadata-only import → files already live at the target location.
-		// The topmost directory this call creates, if any: everything from it down to `directory`
-		// is ours to remove again should the import fail before its record is stored. Worked out
-		// before creating, not read from mkdir's result, whose spelling differs by platform.
-		const created = await topmostMissing(directory);
-		await mkdir(directory, { recursive: true });
+		// Only directories this call really created are removed again should the import fail
+		// before its record is stored; one that appeared meanwhile, or already stood, is left.
+		const created: string[] = [];
 		try {
-			return await storeImported(lish, directory, finalDirectory, enableSharing, enableDownloading);
+			await makeOwnDirectories(directory, created);
+			return await storeImported(lish, directory, finalDirectory, enableSharing, enableDownloading, !!existing);
 		} catch (error) {
-			if (created !== undefined && !dataServer.get(lish.id)) await removeOwnEmptyDirectories(directory, created);
+			if (!dataServer.get(lish.id)) await removeOwnEmptyDirectories(created);
 			throw error;
 		}
 	}
 
-	/** The highest of `dir` and its ancestors that does not exist yet, or undefined if `dir` exists. */
-	async function topmostMissing(dir: string): Promise<string | undefined> {
-		let missing: string | undefined;
-		let current = resolve(dir);
-		for (;;) {
+	/**
+	 * Create `dir` and its missing parents one level at a time, without `recursive`, recording in
+	 * `created` each level this call made. A level that exists already (`EEXIST`) is not ours.
+	 */
+	async function makeOwnDirectories(dir: string, created: string[]): Promise<void> {
+		const missing: string[] = [];
+		for (let current = resolve(dir); ;) {
 			try {
 				await access(current);
-				return missing;
+				break;
 			} catch (error: any) {
-				// Only a directory that is really absent is one this call creates.
-				if (error?.code !== 'ENOENT') return missing;
-				missing = current;
+				if (error?.code !== 'ENOENT') throw error;
+				missing.unshift(current);
 			}
 			const parent = dirname(current);
-			if (parent === current) return missing;
+			if (parent === current) break;
 			current = parent;
+		}
+		for (const level of missing) {
+			try {
+				await mkdir(level);
+				created.push(level);
+			} catch (error: any) {
+				if (error?.code !== 'EEXIST') throw error;
+			}
 		}
 	}
 
 	/**
-	 * Remove `leaf` and its parents up to and including `top`, one empty directory at a time.
+	 * Remove the directories an import created, deepest first, each only while empty.
 	 * Non-recursive: a directory something else has put content in, or a link, stops the walk.
 	 */
-	async function removeOwnEmptyDirectories(leaf: string, top: string): Promise<void> {
-		let current = resolve(leaf);
-		for (;;) {
+	async function removeOwnEmptyDirectories(created: readonly string[]): Promise<void> {
+		for (const dir of [...created].reverse()) {
 			try {
-				await rmdir(current);
+				await rmdir(dir);
 			} catch (error: any) {
-				console.warn(`[Import] Kept ${current} after a failed import: ${error?.code ?? error?.message ?? error}`);
+				console.warn(`[Import] Kept ${dir} after a failed import: ${error?.code ?? error?.message ?? error}`);
 				return;
 			}
-			if (current === top) return;
-			const parent = dirname(current);
-			if (parent === current) return;
-			current = parent;
 		}
 	}
 
-	async function storeImported(lish: ILISH, directory: string, finalDirectory: string | undefined, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
+	async function storeImported(lish: ILISH, directory: string, finalDirectory: string | undefined, enableSharing: boolean | undefined, enableDownloading: boolean | undefined, replacing: boolean): Promise<ImportLISHResponse> {
 		// Drop the node-local fields that rode in with the imported data before merging: we own
 		// them, and `validateImportedLISH` is a cast, so a hostile .lish / JSON / URL / peer
 		// manifest can carry them. The cast spells out the hazard: `ILISH` has neither field,
@@ -509,6 +511,9 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			directory,
 			...(finalDirectory !== undefined ? { finalDirectory } : {}),
 		};
+		// The record being overwritten goes only now, once its replacement is ready to be stored,
+		// so a failure while preparing the directory leaves it in place.
+		if (replacing) dataServer.delete(lish.id);
 		await addLISH(storedLISH, { enableSharing, enableDownloading });
 		return { lishID: lish.id, directory };
 	}
