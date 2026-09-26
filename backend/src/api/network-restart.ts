@@ -4,8 +4,10 @@ import { type TransferRestoreSnapshot } from './transfer.ts';
 
 /** What the restart manager drives; the handlers and `Networks` keep owning their state. */
 export interface NetworkRestartDeps {
-	/** Block new lishnet writes and wait for the running ones; the result releases the lease. */
-	readonly beginMaintenance: () => Promise<() => void>;
+	/** Block new lishnet writes; the lease drains the running ones and releases the block. */
+	readonly prepareMaintenance: () => Promise<{ drain: () => Promise<void>; release: () => void }>;
+	/** End the node's in-flight dials and hang-ups, which a lishnet write may be waiting on. */
+	readonly cancelRunOperations: () => void;
 	readonly stopAllNetworks: () => Promise<void>;
 	readonly startEnabledNetworks: () => Promise<void>;
 	readonly isRunning: () => boolean;
@@ -72,8 +74,13 @@ export class NetworkRestartManager {
 	 * and transfers stay closed; the error reaches the caller.
 	 */
 	private async restart(change: SettingsChange): Promise<void> {
-		const release = await this.deps.beginMaintenance();
+		const lease = await this.deps.prepareMaintenance();
 		try {
+			// Cancel BEFORE draining, as the factory reset and the identity change do: a leave
+			// stuck hanging up an unresponsive peer ends only through this, and the drain would
+			// otherwise wait for it forever with the settings write and every later one behind.
+			this.deps.cancelRunOperations();
+			await lease.drain();
 			await Promise.all([this.deps.pauseTransfers(), this.deps.pauseLISHMutations()]);
 			// A retry keeps the first snapshot: the runtime it would take now is already empty.
 			if (this.pendingSnapshot === null) this.pendingSnapshot = await this.deps.clearTransfers();
@@ -86,7 +93,7 @@ export class NetworkRestartManager {
 			this.deps.resumeTransfers();
 		} finally {
 			this.deps.resumeLISHMutations();
-			release();
+			lease.release();
 		}
 	}
 }

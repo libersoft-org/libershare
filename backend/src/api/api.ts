@@ -352,7 +352,8 @@ export class APIServer {
 		// running node, or through one controlled restart that keeps the transfers it tore down
 		// until they are restored — also across a failed attempt.
 		const networkRestart = new NetworkRestartManager({
-			beginMaintenance: () => this.networks.beginMaintenance(),
+			prepareMaintenance: () => this.networks.prepareMaintenance(),
+			cancelRunOperations: () => this.networks.getNetwork().cancelRunOperations(),
 			stopAllNetworks: () => this.networks.stopAllNetworks(),
 			startEnabledNetworks: () => this.networks.startEnabledNetworks(),
 			isRunning: () => this.networks.getNetwork().isRunning(),

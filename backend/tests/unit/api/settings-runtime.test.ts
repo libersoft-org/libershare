@@ -31,10 +31,20 @@ async function setup() {
 	let applied: EffectiveNetworkConfig | null = effectiveNetworkConfig(settings.list().network);
 	let startFails = false;
 	const restored: TransferRestoreSnapshot[] = [];
+	/** Set to model a lishnet leave that ends only when the node's operations are cancelled. */
+	let stuckLeave: { cancelled: boolean; resolve?: () => void } | null = null;
 	const manager = new NetworkRestartManager({
-		beginMaintenance: async () => {
+		prepareMaintenance: async () => {
 			log.push('maintenance');
-			return () => log.push('release');
+			return {
+				drain: () => (stuckLeave && !stuckLeave.cancelled ? new Promise<void>(resolve => (stuckLeave!.resolve = resolve)) : Promise.resolve()),
+				release: () => void log.push('release'),
+			};
+		},
+		cancelRunOperations: () => {
+			if (!stuckLeave) return;
+			stuckLeave.cancelled = true;
+			stuckLeave.resolve?.();
 		},
 		stopAllNetworks: async () => {
 			log.push('stop');
@@ -65,7 +75,7 @@ async function setup() {
 		applyLimits: () => void log.push('limits'),
 	});
 	settings.setChangeApplier(change => manager.apply(change));
-	return { settings, manager, log, restored, failStart: (fails: boolean) => (startFails = fails) };
+	return { settings, manager, log, restored, failStart: (fails: boolean) => (startFails = fails), holdLeave: () => (stuckLeave = { cancelled: false }) };
 }
 
 describe('settings changes on the running node', () => {
@@ -118,5 +128,13 @@ describe('settings changes on the running node', () => {
 		});
 		await expect(settings.set('network.incomingPort', 30001)).rejects.toThrow('preparation failed');
 		expect(settings.get('network.incomingPort')).not.toBe(30001);
+	});
+
+	it('cancels a stuck leave instead of waiting for it before restarting', async () => {
+		const { settings, log, holdLeave } = await setup();
+		holdLeave();
+		const outcome = await Promise.race([settings.set('network.incomingPort', 29999).then(() => 'done'), Bun.sleep(2000).then(() => 'stuck')]);
+		expect(outcome).toBe('done');
+		expect(log).toContain('start:29999');
 	});
 });
