@@ -472,6 +472,10 @@ export class Downloader {
 			trace(`[DL] doWork returned, state=${this.state}, peers=${this.peerManager.size()}`);
 		}
 		if (this.destroyed) throw new CodedError(ErrorCodes.DOWNLOAD_CANCELLED);
+		// An error set before anyone waited has no one to reject: report it here, or the wait
+		// below would never end.
+		const early = this.getError();
+		if (early) throw new CodedError(early.code as any, early.detail);
 		// Wait until state reaches 'downloaded' — doWork may change state asynchronously
 		if ((this.state as State) !== 'downloaded') {
 			await new Promise<void>((resolve, reject) => {

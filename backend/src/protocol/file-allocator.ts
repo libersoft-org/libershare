@@ -154,12 +154,17 @@ export class FileAllocator {
 			if (current !== file.size) needed += Math.max(0, file.size - current);
 		}
 		if (needed === 0) return;
-		let free: number;
-		try {
-			const stats = await statfs(this.downloadDir);
-			free = stats.bavail * stats.bsize;
-		} catch {
-			return;
+		// The download directory may not exist yet; its nearest existing parent is on the same volume.
+		let free: number | undefined;
+		for (let dir = resolve(this.downloadDir); free === undefined;) {
+			try {
+				const stats = await statfs(dir);
+				free = stats.bavail * stats.bsize;
+			} catch (error: any) {
+				const parent = dirname(dir);
+				if (error?.code !== 'ENOENT' || parent === dir) return;
+				dir = parent;
+			}
 		}
 		if (needed > free) throw new CodedError(ErrorCodes.DISK_FULL, `${formatBytes(needed)} needed, ${formatBytes(free)} free in ${this.downloadDir}`);
 	}

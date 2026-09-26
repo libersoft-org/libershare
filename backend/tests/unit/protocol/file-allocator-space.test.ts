@@ -52,3 +52,51 @@ describe('FileAllocator free space', () => {
 		expect(result).toEqual({ created: 1, skipped: 1 });
 	});
 });
+
+describe('FileAllocator free space for a directory that does not exist yet', () => {
+	const base = mkdtempSync(join(tmpdir(), 'lish-alloc-new-'));
+	afterAll(() => rm(base, { recursive: true, force: true }));
+
+	it('measures the nearest existing parent instead of skipping the check', async () => {
+		const target = join(base, 'not', 'yet', 'there');
+		const abort = new AbortController();
+		const guard = setTimeout(() => abort.abort(), 300);
+		let error: unknown;
+		try {
+			await new FileAllocator(target).allocateStructure({ id: 'x', created: '2026-01-01T00:00:00Z', chunkSize: 4, checksumAlgo: 'sha256', files: [{ path: 'huge.bin', size: 2 ** 50, checksums: [] }] } as IStoredLISH, undefined, abort.signal);
+		} catch (e) {
+			error = e;
+		} finally {
+			clearTimeout(guard);
+		}
+		expect((error as CodedError)?.code).toBe(ErrorCodes.DISK_FULL);
+		expect(existsSync(join(target, 'huge.bin'))).toBe(false);
+	});
+});
+
+describe('Downloader with a dataset larger than the free space', () => {
+	it('rejects download() with DISK_FULL instead of waiting forever', async () => {
+		const { Downloader } = await import('../../../src/protocol/downloader.ts');
+		const { MockNetwork } = await import('../helpers/mock-network.ts');
+		const { MockDataServer, makeLISH, makeMissingChunk } = await import('./downloader-test-helpers.ts');
+		const base = mkdtempSync(join(tmpdir(), 'lish-dl-full-'));
+		try {
+			const ds = new MockDataServer();
+			ds.missingChunks = [makeMissingChunk('c0' as never)];
+			ds.allChunkCount = 1;
+			const dl = new Downloader(join(base, 'target'), new MockNetwork() as never, ds as never, 'net-001');
+			await dl.initFromManifest(makeLISH({ chunkSize: 2 ** 40, files: [{ path: 'huge.bin', size: 2 ** 50, checksums: Array.from({ length: 1024 }, (_, i) => `c${i}`) }] }));
+			const outcome = await Promise.race([
+				dl.download().then(
+					() => 'resolved',
+					(e: unknown) => (e as CodedError).code
+				),
+				Bun.sleep(3000).then(() => 'hung'),
+			]);
+			expect(outcome).toBe(ErrorCodes.DISK_FULL);
+			await dl.destroy();
+		} finally {
+			await rm(base, { recursive: true, force: true });
+		}
+	});
+});
