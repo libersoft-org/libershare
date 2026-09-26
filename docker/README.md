@@ -45,8 +45,10 @@ owned by the user the services run as:
 ```sh
 mkdir -p config storage certs
 chmod 0700 config storage certs
+echo "LISH_TOKEN=$(openssl rand -hex 32)" >> .env
 echo "LISH_UID=$(id -u)" >> .env
 echo "LISH_GID=$(id -g)" >> .env
+chmod 600 .env
 docker compose up -d --build
 ```
 
@@ -145,10 +147,12 @@ below) so the exposed port still requires a shared secret.
 ## Authentication
 
 The API token is required: `docker compose up` refuses to start without it.
-Create `.env` next to `docker-compose.yml` once:
+The first-run commands above put a random `LISH_TOKEN` into `.env` next to
+`docker-compose.yml`. To add one to an existing `.env` without touching its
+other lines:
 
 ```sh
-echo "LISH_TOKEN=$(openssl rand -hex 32)" > .env
+grep -q '^LISH_TOKEN=' .env || echo "LISH_TOKEN=$(openssl rand -hex 32)" >> .env
 chmod 600 .env
 ```
 
