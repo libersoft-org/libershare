@@ -82,3 +82,40 @@ describe('APIServer request gate', () => {
 		expect(sent[1]).toEqual({ id: 1, result: 'done' });
 	});
 });
+
+describe('APIServer.stop', () => {
+	it('closes the gate, aborts pending peer reads and drains them before closing the server', async () => {
+		const log: string[] = [];
+		const server = bareServer({
+			// A peer read that ends only when shutdown aborts it, as a preview of a silent peer does.
+			'peer.read': () =>
+				new Promise((_, reject) => {
+					server.peerReadAbort.signal.addEventListener('abort', () => {
+						log.push('peer-read-aborted');
+						reject(new Error('aborted'));
+					});
+				}),
+			'late.op': async () => 'late',
+		});
+		server.peerReadAbort = new AbortController();
+		server.stopping = null;
+		let cancelledForGood = false;
+		server.networks = { getNetwork: () => ({ cancelRunOperations: (permanent: boolean) => (cancelledForGood = permanent) }) };
+		server.shutdownDeps = recordingDeps(log, { drainAcceptedRequests: () => server.drainAcceptedRequests().then(() => void log.push('requests')) });
+		const sent: any[] = [];
+		const client = { send: (m: string) => sent.push(JSON.parse(m)) };
+		const pending = server.handleMessage(client, JSON.stringify({ id: 1, method: 'peer.read' }));
+
+		const stopping = server.stop();
+		await server.handleMessage(client, JSON.stringify({ id: 2, method: 'late.op' }));
+		const outcome = await Promise.race([stopping.then(() => 'stopped'), Bun.sleep(2000).then(() => 'stuck')]);
+		await Promise.race([pending, Bun.sleep(100)]);
+
+		expect(outcome).toBe('stopped');
+		expect(cancelledForGood).toBe(true);
+		expect(sent.find(m => m.id === 2)).toEqual({ id: 2, error: 'INTERNAL_ERROR', errorDetail: 'Backend is shutting down' });
+		expect(log.indexOf('peer-read-aborted')).toBeLessThan(log.indexOf('requests'));
+		expect(log[log.length - 1]).toBe('server');
+		expect(server.stop()).toBe(stopping);
+	});
+});
