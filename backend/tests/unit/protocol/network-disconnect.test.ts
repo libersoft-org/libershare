@@ -299,6 +299,30 @@ describe('Network.disconnectPeer — a peer claimed while it is being let go', (
 		expect(merges[merges.length - 1]!.tags[KEEP_ALIVE]).toBeUndefined();
 	});
 
+	it('reports a leave cut short by the run ending while connections close as unfinished', async () => {
+		const { network, deleted } = claimable();
+		(network as any).node.getConnections = (): unknown[] => [
+			{
+				close: async (): Promise<void> => {
+					(network as any).runEpoch++;
+				},
+			},
+		];
+
+		expect(await network.disconnectPeer(PEER_ID, NET)).toBe('incomplete');
+		expect(deleted).toEqual([]);
+	});
+
+	it('reports a peer claimed during a failed delete as kept', async () => {
+		const { network, subscribers } = claimable();
+		(network as any).node.peerStore.delete = async (): Promise<void> => {
+			subscribers.push(PEER_ID);
+			throw new Error('disk full');
+		};
+
+		expect(await network.disconnectPeer(PEER_ID, NET)).toBe('kept');
+	});
+
 	it('still tears down a peer nobody claims', async () => {
 		const { network, hungUp, deleted } = claimable();
 

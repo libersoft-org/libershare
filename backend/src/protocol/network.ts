@@ -3406,8 +3406,14 @@ export class Network {
 		// A claim can still land during the purge, and by then the record is gone. What must
 		// not survive is the suppression: it is global, so leaving it in place would make
 		// every maintenance path refuse to dial a peer a joined lishnet is now asking for.
-		if (epoch === this.runEpoch) await this.releaseIfClaimed(node, pid, peerID, networkID, signal);
-		return purged === 'purged' ? 'released' : purged === 'kept' ? 'kept' : 'incomplete';
+		// Read before that recheck awaits: a purge that stopped because this run ended kept
+		// nothing on purpose, and the next start has to finish it.
+		const sameRun = epoch === this.runEpoch;
+		const claimed = sameRun && (await this.releaseIfClaimed(node, pid, peerID, networkID, signal));
+		if (purged === 'purged') return 'released';
+		// A lishnet that claimed the peer during a failed delete needs it: nothing to finish.
+		if (claimed) return 'kept';
+		return purged === 'kept' && sameRun ? 'kept' : 'incomplete';
 	}
 
 	/**
