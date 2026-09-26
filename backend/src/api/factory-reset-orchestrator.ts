@@ -45,6 +45,13 @@ export interface FactoryResetOrchestratorDeps {
 	/** Re-opens transfer admission after the reset barrier is no longer active. */
 	readonly resumeAllTransfers: () => void;
 	/**
+	 * Transfers a failed settings restart tore down and still owes back, if any. The runtime is
+	 * already empty then, so the reset restores these instead of what it finds.
+	 */
+	readonly pendingTransferRestore?: () => TransferRestoreSnapshot | null;
+	/** Tell the owner of that pending restore that the reset has now restored it. */
+	readonly pendingTransferRestored?: () => void;
+	/**
 	 * Broadcasts a WebSocket event to subscribed clients, skipping `except` when given.
 	 */
 	readonly broadcastFn: (event: string, data: any, except?: unknown) => void;
@@ -124,6 +131,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 				await networks.startEnabledNetworks();
 				try {
 					await restoreAllTransfers(enabledDownloads, transferRestoreSnapshot);
+					deps.pendingTransferRestored?.();
 					transferRuntimeSafe = true;
 				} catch (error) {
 					transferRuntimeSafe = false;
@@ -158,7 +166,8 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 							await stopVerifyAll();
 							transferRuntimeSafe = false;
 							try {
-								transferRestoreSnapshot = await clearAllTransfers();
+								const cleared = await clearAllTransfers();
+								transferRestoreSnapshot = deps.pendingTransferRestore?.() ?? cleared;
 							} catch (error) {
 								transferRuntimeSafe = (error as { runtimeRestored?: boolean })?.runtimeRestored === true;
 								throw error;

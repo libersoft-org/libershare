@@ -50,6 +50,19 @@ export class NetworkRestartManager {
 	}
 
 	/**
+	 * The transfers a failed restart tore down, for another node restart (a factory reset) to
+	 * bring back instead of the empty runtime it would otherwise capture.
+	 */
+	pendingRestore(): TransferRestoreSnapshot | null {
+		return this.pendingSnapshot;
+	}
+
+	/** Forget the pending transfers once another restart has restored them. */
+	clearPendingRestore(): void {
+		this.pendingSnapshot = null;
+	}
+
+	/**
 	 * Decide how `change` goes live and commit it. A write that touches no P2P setting is only
 	 * committed. One that does is committed live when the node runs, was built from the same
 	 * values and has nothing left to restore; otherwise the node is restarted around the commit.
