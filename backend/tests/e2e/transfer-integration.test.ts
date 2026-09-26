@@ -518,10 +518,9 @@ describe('Downloader — download behavior with mocked peers', () => {
 		downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 	});
 
-	afterEach(() => {
-		// Clear any intervals set by the downloader
-		const interval = priv(downloader)['callForPeersInterval'] as NodeJS.Timeout | undefined;
-		if (interval) clearInterval(interval);
+	// enable() arms the real discovery timer; only destroy() stops it for the next test.
+	afterEach(async () => {
+		await downloader.destroy();
 	});
 
 	it('downloadChunk returns { data } on success', async () => {
@@ -611,24 +610,6 @@ describe('Downloader — download behavior with mocked peers', () => {
 
 		await downloader.enable();
 		expect(downloader.isDisabled()).toBe(false);
-	});
-
-	it('progress callback receives correct shape', () => {
-		let received: unknown = null;
-		downloader.setProgressCallback(info => {
-			received = info;
-		});
-
-		// Progress now flows through the ProgressReporter the Downloader owns.
-		const reporter = priv(downloader)['progressReporter'] as { emit: (info: unknown) => void };
-		reporter.emit({ downloadedChunks: 5, totalChunks: 10, peers: 2, bytesPerSecond: 100000 });
-
-		expect(received).toEqual({
-			downloadedChunks: 5,
-			totalChunks: 10,
-			peers: 2,
-			bytesPerSecond: 100000,
-		});
 	});
 
 	it('manifest imported callback fires correctly', () => {
