@@ -67,3 +67,60 @@ describe('StorageWriteError', () => {
 		expect(after.published).toBe(true);
 	});
 });
+
+/**
+ * Real writes with an injected I/O failure, each in its own process so the module mock cannot
+ * reach other tests. Before the rename the old file must stay whole; after it the new content
+ * is on disk and the caller is told durability was not confirmed.
+ */
+describe('JSONStorage write failures', () => {
+	async function faultyWrite(fault: 'rename' | 'dirsync'): Promise<{ content: unknown; entries: string[]; error: { name: string; published: boolean; code: string } | null; flushed: string }> {
+		const dir = tempDir();
+		writeFileSync(join(dir, 'settings.json'), JSON.stringify({ audio: { volume: 50 } }));
+		const script = `
+			import { mock } from 'bun:test';
+			const fsp = { ...(await import('node:fs/promises')) };
+			const { resolve } = await import('node:path');
+			const DIR = resolve(${JSON.stringify(dir)});
+			const eio = () => Object.assign(new Error('injected'), { code: 'EIO' });
+			mock.module('node:fs/promises', () => ({
+				...fsp,
+				rename: ${JSON.stringify(fault)} === 'rename' ? async () => { throw eio(); } : fsp.rename,
+				open: async (path, flags, mode) => {
+					const handle = await fsp.open(path, flags, mode);
+					if (${JSON.stringify(fault)} === 'dirsync' && resolve(String(path)) === DIR) return { sync: async () => { throw eio(); }, close: () => handle.close() };
+					return handle;
+				},
+			}));
+			const { JSONStorage } = await import('./src/storage.ts');
+			const storage = await JSONStorage.create(DIR, 'settings.json', { audio: { volume: 1 } });
+			const error = await storage.set('audio.volume', 7).then(() => null, e => ({ name: e.name, published: e.published, code: e.code }));
+			const flushed = await storage.flush().then(() => 'ok', e => e.name);
+			console.log(JSON.stringify({ error, flushed }));
+		`;
+		try {
+			const child = Bun.spawn([process.execPath, '--eval', script], { cwd: join(import.meta.dir, '../..'), stdout: 'pipe', stderr: 'pipe' });
+			const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+			if (code !== 0) throw new Error(`fixture exited ${code}: ${err}`);
+			const result = JSON.parse(out.trim().split(String.fromCharCode(10)).at(-1)!);
+			return { ...result, content: JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')), entries: readdirSync(dir) };
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	}
+
+	it('keeps the old file whole when the write fails before the rename', async () => {
+		const result = await faultyWrite('rename');
+		expect(result.error).toEqual({ name: 'StorageWriteError', published: false, code: 'EIO' });
+		expect(result.content).toEqual({ audio: { volume: 50 } });
+		expect(result.entries).toEqual(['settings.json']);
+		expect(result.flushed).toBe('StorageWriteError');
+	}, 30_000);
+
+	it('reports unconfirmed durability when the directory flush after the rename fails', async () => {
+		const result = await faultyWrite('dirsync');
+		expect(result.error).toEqual({ name: 'StorageWriteError', published: true, code: 'EIO' });
+		expect(result.content).toEqual({ audio: { volume: 7 } });
+		expect(result.flushed).toBe('StorageWriteError');
+	}, 30_000);
+});
