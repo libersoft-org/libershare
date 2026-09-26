@@ -458,7 +458,9 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			try {
 				await access(current);
 				return missing;
-			} catch {
+			} catch (error: any) {
+				// Only a directory that is really absent is one this call creates.
+				if (error?.code !== 'ENOENT') return missing;
 				missing = current;
 			}
 			const parent = dirname(current);
