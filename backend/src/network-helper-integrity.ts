@@ -62,8 +62,13 @@ export class HelperVerificationTimeoutError extends Error {
 export function sha256File(path: string, options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const limit = Math.max(0, Math.min(options.timeoutMs ?? HASH_READ_LIMIT_MS, HASH_READ_LIMIT_MS));
+		// Cancelled before it started: no stream at all, so nothing is left to fail unobserved.
+		if (options.signal?.aborted) return reject(new HelperVerificationTimeoutError());
 		const hash = createHash('sha256');
 		const stream = createReadStream(path);
+		// Listening before anything can destroy the stream: a destroyed stream still reports
+		// its open error, and one without a listener is an uncaught exception.
+		stream.on('error', error => finish(() => reject(error)));
 		let settled = false;
 		const finish = (outcome: () => void): void => {
 			if (settled) return;
@@ -79,9 +84,7 @@ export function sha256File(path: string, options: { signal?: AbortSignal; timeou
 			});
 		const onAbort = (): void => stop();
 		const timer = setTimeout(stop, limit);
-		if (options.signal?.aborted) return stop();
 		options.signal?.addEventListener('abort', onAbort, { once: true });
-		stream.on('error', error => finish(() => reject(error)));
 		stream.on('data', chunk => hash.update(chunk));
 		stream.on('end', () => finish(() => resolve(hash.digest('hex'))));
 	});

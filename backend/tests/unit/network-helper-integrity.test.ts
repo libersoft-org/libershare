@@ -65,3 +65,21 @@ describe('Windows helper verification', () => {
 		expect(await verifyWindowsInstalledHelper(join(dir, 'missing.exe'), process.execPath, 'x'.repeat(64))).toBe(false);
 	});
 });
+
+describe('sha256File cancelled before it starts', () => {
+	it('rejects once and leaves no uncaught stream error behind', async () => {
+		// In a child process: an uncaught error there ends it with a non-zero exit instead of
+		// failing an unrelated test in this runner.
+		const script = `
+			const { sha256File } = await import('./src/network-helper-integrity.ts');
+			const aborted = AbortSignal.abort();
+			const outcome = await sha256File('./no-such-file-' + crypto.randomUUID(), { signal: aborted }).then(() => 'resolved', error => error.name);
+			await new Promise(resolve => setTimeout(resolve, 200));
+			console.log(outcome);
+		`;
+		const child = Bun.spawn([process.execPath, '--eval', script], { cwd: join(import.meta.dir, '../..'), stdout: 'pipe', stderr: 'pipe' });
+		const [code, out] = await Promise.all([child.exited, new Response(child.stdout).text()]);
+		expect(code).toBe(0);
+		expect(out.trim()).toBe('HelperVerificationTimeoutError');
+	});
+});
