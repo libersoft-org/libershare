@@ -55,13 +55,15 @@ describe('manifest validation details', () => {
 	};
 
 	it('bounds a hostile path in every file error', () => {
-		const path = `${'p'.repeat(1_000_000)}${String.fromCharCode(0x2028)}`;
-		for (const file of [
-			{ path, size: -1, checksums: [] },
-			{ path, size: 8, checksums: ['a'] },
-			{ path, size: 4, checksums: [7] },
-		]) {
+		// Under the path byte limit, so each error below is really reached with this path in it.
+		const path = `${String.fromCharCode(0x2028)}${'p'.repeat(3000)}`;
+		for (const [file, reason] of [
+			[{ path, size: -1, checksums: [] }, 'invalid size'],
+			[{ path, size: 8, checksums: ['a'] }, 'expected 2 checksums'],
+			[{ path, size: 4, checksums: [7] }, 'non-string checksum'],
+		] as const) {
 			const d = detail(base([file]));
+			expect(d).toContain(reason);
 			expect(d.length).toBeLessThan(400);
 			expect(d.includes(String.fromCharCode(0x2028))).toBe(false);
 		}
