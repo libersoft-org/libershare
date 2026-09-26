@@ -98,4 +98,18 @@ describe('failed overwrite import', () => {
 		await expect(handlers.importManifest({ ...original, name: 'replacement' } as never, join(base, 'blocker'), { overwrite: true, enableSharing: false, enableDownloading: false })).rejects.toThrow();
 		expect(dataServer.get('kept-record' as never)?.name).toBe('kept-record');
 	});
+
+	it('keeps the old record whole when writing its replacement fails', async () => {
+		const original = { id: 'kept-on-write', name: 'kept-on-write', created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', files: [{ path: 'a.bin', size: 1024, checksums: ['c0'] }], directory: join(base, 'first') } as const;
+		dataServer.add(original as never);
+		// The database refuses the new row itself, after the old one was already deleted.
+		db.run("CREATE TRIGGER refuse_replacement BEFORE INSERT ON lishs WHEN NEW.name = 'replacement' BEGIN SELECT RAISE(ABORT, 'refused'); END");
+		try {
+			await expect(handlers.importManifest({ ...original, name: 'replacement' } as never, base, { overwrite: true, enableSharing: false, enableDownloading: false })).rejects.toThrow('refused');
+			expect(dataServer.get('kept-on-write' as never)?.name).toBe('kept-on-write');
+			expect(dataServer.get('kept-on-write' as never)?.files?.length).toBe(1);
+		} finally {
+			db.run('DROP TRIGGER refuse_replacement');
+		}
+	});
 });
