@@ -109,7 +109,8 @@ describe('macOS save whose helper preparation outlives the budget', () => {
 		const child = Bun.spawn([process.execPath, '--eval', script], { cwd: join(import.meta.dir, '../..'), stdout: 'pipe', stderr: 'pipe' });
 		const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
 		if (code !== 0) throw new Error(`fixture exited ${code}: ${err}`);
-		const result = JSON.parse(out.trim().split(String.fromCharCode(10)).at(-1)!);
+		const lines = out.trim().split(String.fromCharCode(10));
+		const result = JSON.parse(lines[lines.length - 1]!);
 		expect(result.outcome).toBe('error');
 		expect(result.prompted).toBe(false);
 	}, 30_000);
