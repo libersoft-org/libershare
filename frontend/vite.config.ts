@@ -1,10 +1,25 @@
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig, type Plugin } from 'vite';
+import { createLogger, defineConfig, type Logger, type Plugin } from 'vite';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Vite's logger with every `token=` query value blanked out. The proxy logs the URL of a
+ * request it could not forward — `http proxy error: /status?token=…` whenever the backend is
+ * down — and that URL carries the API token.
+ */
+function tokenRedactingLogger(): Logger {
+	const logger = createLogger();
+	const redact = (message: string): string => message.replace(/([?&]token=)[^&#\s]*/gi, '$1***');
+	for (const level of ['info', 'warn', 'warnOnce', 'error'] as const) {
+		const original = logger[level].bind(logger);
+		logger[level] = (message, options) => original(redact(message), options);
+	}
+	return logger;
+}
 
 function getBackendProxyTarget(): string {
 	return process.env['VITE_BACKEND_URL'] || 'ws://localhost:1158';
@@ -65,6 +80,7 @@ function countryFlags(): Plugin {
 }
 
 export default defineConfig({
+	customLogger: tokenRedactingLogger(),
 	cacheDir: path.resolve(process.cwd(), '.vite-cache'),
 	envDir: process.cwd(),
 	plugins: [sveltekit(), countryFlags()],
