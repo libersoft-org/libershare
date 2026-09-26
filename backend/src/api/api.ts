@@ -89,6 +89,9 @@ const MAX_LOGGED_PARAMS = 1000;
 /** Request fields whose values must never reach logs, regardless of nesting. */
 const SENSITIVE_PARAM_NAME = /(?:password|passphrase|token|secret|authorization|api[-_]?key)/i;
 
+/** Reply to a request that reached a closing API. */
+const SHUTTING_DOWN = 'Backend is shutting down';
+
 /**
  * Serialise request params for the log, truncated. Some methods carry a whole
  * file chunk, and a multi-megabyte log line per call is both unreadable and a
@@ -97,9 +100,6 @@ const SENSITIVE_PARAM_NAME = /(?:password|passphrase|token|secret|authorization|
  * always a plain `Uint8Array` (see {@link decodeBinaryRequest}), never a
  * `Buffer`, whose `toJSON` would run before this replacer ever sees it.
  */
-/** Reply to a request that reached a closing API. */
-const SHUTTING_DOWN = 'Backend is shutting down';
-
 export function formatParamsForLog(params: unknown): string {
 	const json =
 		JSON.stringify(params, (key, value) => {
@@ -535,7 +535,7 @@ export class APIServer {
 				if (req.method === 'OPTIONS' && url.pathname === '/status') return self.statusOptionsResponse();
 				if (url.pathname === '/status') return self.statusResponse(url);
 				if (!self.isAuthorized(url)) return self.unauthorizedResponse();
-				if (!self.accepting) return new Response('Backend is shutting down', { status: 503 });
+				if (!self.accepting) return new Response(SHUTTING_DOWN, { status: 503 });
 				const clientIP = server.requestIP(req)?.address ?? '';
 				const upgraded = server.upgrade(req, {
 					data: { subscribedEvents: new Set<string>(), isLocalClient: isLocalClientAddress(clientIP, getLocalAddresses()) },
