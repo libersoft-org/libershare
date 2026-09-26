@@ -67,3 +67,13 @@ describe('elevated time save before launch', () => {
 		).toBe('permission-denied');
 	});
 });
+
+describe('windows trust budget', () => {
+	it('counts reading the files into the budget instead of starting it afterwards', async () => {
+		const { verifyWindowsHelper } = await import('../../src/network-helper-client.ts');
+		// The first reading starts the budget; every later one is past it, as after a stuck stat.
+		let calls = 0;
+		const clock = (): number => (calls++ === 0 ? 0 : 31_000);
+		await expect(verifyWindowsHelper('C:/no-such-dir/lish-network-helper.exe', clock)).rejects.toBeInstanceOf(HelperVerificationTimeoutError);
+	});
+});

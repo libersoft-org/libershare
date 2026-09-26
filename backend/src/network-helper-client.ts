@@ -130,15 +130,40 @@ function rememberedWindowsTrust(identity: string | null, now: number): boolean |
 /** One verification of the same files at a time; a second caller joins it instead of repeating it. */
 let windowsTrustInFlight: { identity: string; answer: Promise<boolean> } | null = null;
 
+/**
+ * `work`, rejected with {@link HelperVerificationTimeoutError} once `deadline` on `now` passes.
+ * The work itself is not stopped, only no longer waited for.
+ */
+function withinDeadline<T>(work: Promise<T>, deadline: number, now: () => number): Promise<T> {
+	work.catch(() => undefined);
+	const left = deadline - now();
+	if (left <= 0) return Promise.reject(new HelperVerificationTimeoutError());
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(() => reject(new HelperVerificationTimeoutError()), left);
+		work.then(
+			value => {
+				clearTimeout(timer);
+				resolve(value);
+			},
+			error => {
+				clearTimeout(timer);
+				reject(error);
+			}
+		);
+	});
+}
+
 export async function verifyWindowsHelper(helper: string, now: () => number = elevationClock): Promise<boolean> {
+	// The budget starts here: reading the files' metadata is part of the verification too.
+	const deadline = now() + SIGNATURE_TIMEOUT_MS;
 	const expectedHash = expectedNetworkHelperHash();
 	const launcher = windowsNetworkLauncherPath();
 	// Before the expensive part: the same three files, unchanged, were already measured.
-	const identity = await windowsTrustIdentity([helper, launcher, process.execPath]);
+	const identity = await withinDeadline(windowsTrustIdentity([helper, launcher, process.execPath]), deadline, now);
 	const remembered = rememberedWindowsTrust(identity, now());
 	if (remembered !== null) return remembered;
 	if (identity !== null && windowsTrustInFlight?.identity === identity) return windowsTrustInFlight.answer;
-	const answer = measureWindowsHelperTrust(helper, launcher, expectedHash, now);
+	const answer = measureWindowsHelperTrust(helper, launcher, expectedHash, deadline, now);
 	if (identity !== null) windowsTrustInFlight = { identity, answer };
 	try {
 		const trusted = await answer;
@@ -170,31 +195,16 @@ export function warmElevationTrust(platform: NodeJS.Platform = process.platform)
  * throws {@link HelperVerificationTimeoutError} rather than answering "untrusted", so the result
  * is not cached as a failure and the next attempt measures again.
  */
-async function measureWindowsHelperTrust(helper: string, launcher: string, expectedHash: string | null, now: () => number = elevationClock): Promise<boolean> {
-	const deadline = now() + SIGNATURE_TIMEOUT_MS;
+async function measureWindowsHelperTrust(helper: string, launcher: string, expectedHash: string | null, deadline: number, now: () => number = elevationClock): Promise<boolean> {
 	const remaining = (): number => {
 		const left = deadline - now();
 		if (left <= 0) throw new HelperVerificationTimeoutError();
 		return left;
 	};
-	// Every step, the file metadata reads included, ends at the one deadline.
-	const bounded = <T>(work: Promise<T>): Promise<T> => {
-		const left = remaining();
-		work.catch(() => undefined);
-		return new Promise<T>((resolve, reject) => {
-			const timer = setTimeout(() => reject(new HelperVerificationTimeoutError()), left);
-			work.then(
-				value => {
-					clearTimeout(timer);
-					resolve(value);
-				},
-				error => {
-					clearTimeout(timer);
-					reject(error);
-				}
-			);
-		});
-	};
+	// Every step ends at the one deadline the caller started before reading any file.
+	const bounded = <T>(work: Promise<T>): Promise<T> => withinDeadline(work, deadline, now);
+	// A budget already spent is a timeout, not an answer to cache.
+	remaining();
 	if (expectedHash === null || !(await bounded(verifyWindowsInstalledHelper(helper, process.execPath, expectedHash, { timeoutMs: remaining() }))) || !(await bounded(verifyWindowsInstalledSibling(launcher, process.execPath)))) return false;
 	const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`;
 	const script = `$ErrorActionPreference='Stop'; $s=@(${[helper, launcher, process.execPath].map(quote).join(',')} | ForEach-Object { Get-AuthenticodeSignature -LiteralPath $_ }); if ($s.Count -ne 3 -or @($s | Where-Object { $_.Status -ne 'Valid' -or -not $_.SignerCertificate }).Count -ne 0 -or @($s.SignerCertificate.Thumbprint | Select-Object -Unique).Count -ne 1) { exit 3 }`;
