@@ -35,7 +35,7 @@ async function run(url: string, token: string | undefined): Promise<{ code: numb
 	if (token !== undefined) env['LISH_TOKEN'] = token;
 	// A CLI that connects waits at its prompt until `quit`; one that refuses the URL exits first,
 	// and writing to the pipe of an exited process blocks on Windows, so it gets no input.
-	const connects = !url.includes('token=a&token=b');
+	const connects = !url.includes('token=a&token=b') && !url.includes('#') && !url.includes('[');
 	const proc = Bun.spawn([process.execPath, CLI, '--url', url], { env, stdout: 'pipe', stderr: 'pipe', stdin: connects ? 'pipe' : 'ignore' });
 	if (connects && proc.stdin) {
 		proc.stdin.write('quit' + String.fromCharCode(10));
@@ -70,4 +70,20 @@ it('refuses two tokens in --url without connecting', async () => {
 	expect(code).toBe(1);
 	expect(output).toContain('more than one token');
 	expect(seen).toEqual([]);
+}, 30_000);
+
+it('refuses a URL with a fragment without printing the token', async () => {
+	seen.length = 0;
+	const { code, output } = await run(`${base}/#fragment`, SECRET);
+	expect(code).toBe(1);
+	expect(output).toContain('fragment');
+	expect(output).not.toContain(SECRET);
+	expect(seen).toEqual([]);
+}, 30_000);
+
+it('hides a token in a --url that cannot be parsed', async () => {
+	const { code, output } = await run(`ws://[bad/?token=${SECRET}`, undefined);
+	expect(code).toBe(1);
+	expect(output).toContain('Invalid --url');
+	expect(output).not.toContain(SECRET);
 }, 30_000);

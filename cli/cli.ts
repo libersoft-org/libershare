@@ -78,8 +78,28 @@ export function withToken(url: string, envToken: string | undefined): string {
 	const parsed = new URL(url);
 	const given = parsed.searchParams.getAll('token');
 	if (given.length > 1) throw new Error('the URL carries more than one token');
+	// A WebSocket URL cannot carry one, and the error that says so would print the token.
+	if (parsed.hash) throw new Error('the URL must not have a fragment');
 	if (given.length === 0 && envToken) parsed.searchParams.set('token', envToken);
 	return parsed.toString();
+}
+
+/**
+ * A message fit for the terminal: every token the CLI knows of — from the environment or the
+ * URL, raw or percent-encoded — and any `token=` query value replaced by `***`. Error messages
+ * from URL parsing and from the WebSocket quote the URL they were given.
+ */
+export function redactTokens(message: string, url: string, envToken: string | undefined): string {
+	const secrets = new Set<string>();
+	if (envToken) secrets.add(envToken);
+	try {
+		for (const token of new URL(url).searchParams.getAll('token')) if (token) secrets.add(token);
+	} catch {}
+	let out = message.replace(/([?&]token=)[^&#\s"']*/gi, '$1***');
+	// A bare token shorter than four characters would blank out ordinary words of the message;
+	// such a token is still caught by the `token=` rule above.
+	for (const secret of secrets) if (secret.length >= 4) for (const form of [secret, encodeURIComponent(secret)]) out = out.split(form).join('***');
+	return out;
 }
 
 /** The URL as shown to the user: no query (it holds the token) and no credentials. */
@@ -96,7 +116,7 @@ async function main(): Promise<void> {
 	try {
 		connectURL = withToken(serverURL, process.env['LISH_TOKEN']);
 	} catch (error: any) {
-		console.error(`Invalid --url: ${error.message}`);
+		console.error(`Invalid --url: ${redactTokens(String(error?.message ?? error), serverURL, process.env['LISH_TOKEN'])}`);
 		process.exit(1);
 	}
 	console.log(`Connecting to ${displayURL(serverURL)}...`);
@@ -104,7 +124,7 @@ async function main(): Promise<void> {
 	try {
 		await client.connect();
 	} catch (error: any) {
-		console.error(`Failed to connect: ${error.message}`);
+		console.error(`Failed to connect: ${redactTokens(String(error?.message ?? error), connectURL, process.env['LISH_TOKEN'])}`);
 		process.exit(1);
 	}
 	console.log('Connected!\n');
