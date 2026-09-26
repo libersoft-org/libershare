@@ -102,7 +102,8 @@ describe('JSONStorage write failures', () => {
 			const child = Bun.spawn([process.execPath, '--eval', script], { cwd: join(import.meta.dir, '../..'), stdout: 'pipe', stderr: 'pipe' });
 			const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
 			if (code !== 0) throw new Error(`fixture exited ${code}: ${err}`);
-			const result = JSON.parse(out.trim().split(String.fromCharCode(10)).at(-1)!);
+			const lines = out.trim().split(String.fromCharCode(10));
+			const result = JSON.parse(lines[lines.length - 1]!);
 			return { ...result, content: JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')), entries: readdirSync(dir) };
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
