@@ -572,6 +572,7 @@ describe('Networks.delete — suppression entries outlive the lishnet that keyed
 			unsubscribeTopic() {},
 			subscribeTopic() {},
 			isBootstrapOrRelayPeer: () => false,
+			isRelayPeer: () => false,
 			async disconnectPeer(): Promise<void> {},
 			pruneConfiguredBootstrapPeer() {},
 			getRunEpoch: () => 0,

@@ -26,6 +26,7 @@ interface MockNet {
 	isRunning(): boolean;
 	subscribeTopic(id: string): boolean;
 	isBootstrapOrRelayPeer(pid: string): boolean;
+	isRelayPeer(pid: string): boolean;
 	disconnectPeer(pid: string, networkID: string, epoch?: number): Promise<void>;
 	/** Epoch each disconnect was bound to, in call order. */
 	disconnectEpochs: Array<number | undefined>;
@@ -87,6 +88,9 @@ function makeMockNet(): MockNet {
 		},
 		isBootstrapOrRelayPeer(pid) {
 			return this.bootstrapOrRelay.has(pid);
+		},
+		isRelayPeer() {
+			return false;
 		},
 		disconnectEpochs: [],
 		disconnectGate: null,
