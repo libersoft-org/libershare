@@ -4,6 +4,7 @@ import { type Settings } from '../settings.ts';
 import { type FactoryResetResponse } from '@shared';
 import { initUploadState } from '../protocol/lish-protocol.ts';
 import { persistAndApplyNetworkLimits } from '../protocol/network-limits.ts';
+import { effectiveNetworkConfig, sameEffectiveNetworkConfig } from '../protocol/network-settings.ts';
 import { runFactoryReset } from './factory-reset.ts';
 import { initDownloadState, type TransferRestoreSnapshot } from './transfer.ts';
 import { Mutex } from 'async-mutex';
@@ -85,15 +86,16 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 			// Wiping only the peerstore (wipePeers) does not require an identity change
 			// but still needs the node stopped so the datastore is not in use.
 			//
-			// Settings belong here too. Part of them is read when the node is BUILT — the
-			// listening port, mDNS, UPnP, relay, peer exchange — so restoring the defaults
-			// without a restart leaves the running node on the old ones while the UI, and
-			// every later read of the settings, already shows the new. The two would only
-			// agree again after some unrelated restart.
+			// Settings belong here when the reset changes what the node is BUILT from — the
+			// listening port, mDNS, UPnP, relay, peer exchange: restoring those defaults without
+			// a restart would leave the running node on the old ones while the UI already shows
+			// the new. A reset that only changes the language or a speed limit needs no restart;
+			// the limits are applied live, the same classification a single settings write uses.
 			// Downloads include data currently served by upload streams. Stopping the node
 			// closes those streams before their database rows are removed; clearing only the
 			// in-memory counters would still leave an in-flight stream using wiped state.
-			const restartNode = wipeDownloads || wipeIdentity || wipeNetworks || wipePeers || wipeSettings;
+			const settingsRebuildNode = wipeSettings && !sameEffectiveNetworkConfig(effectiveNetworkConfig(settings.list().network), effectiveNetworkConfig(settings.getDefaults().network));
+			const restartNode = wipeDownloads || wipeIdentity || wipeNetworks || wipePeers || settingsRebuildNode;
 			// Close lishnet writes now, but do not wait for an older join/leave yet. A stalled
 			// runtime operation is cancelled only after the fallible transfer preparation has
 			// succeeded, so a failed prepare can safely release admission without poisoning the

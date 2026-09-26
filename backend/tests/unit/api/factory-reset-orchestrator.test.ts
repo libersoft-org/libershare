@@ -64,6 +64,10 @@ function makeSettings(overrides: Record<string, () => any> = {}): FactoryResetOr
 		});
 	return {
 		get: overrides['get'] ?? (() => live),
+		// A node-level setting differs from the defaults unless a test says otherwise, so a
+		// settings reset restarts the node as it does for a real changed port.
+		list: overrides['list'] ?? (() => ({ network: { ...live.network, incomingPort: 4001 } })),
+		getDefaults: overrides['getDefaults'] ?? (() => ({ network: { ...live.network, incomingPort: 9090 } })),
 		reset,
 		// The reset takes the settings session before the network lease; its reset is the same one.
 		holdWrites: async () => ({ reset, release: () => {} }),
@@ -1010,5 +1014,23 @@ describe('buildFactoryResetHandler — a restore a failed settings restart still
 
 		expect(restoredWith).toBe(pending);
 		expect(owed).toBeNull();
+	});
+});
+
+describe('buildFactoryResetHandler — a settings reset that touches nothing the node is built from', () => {
+	it('does not stop the node', async () => {
+		const actions: string[] = [];
+		const same = { network: { incomingPort: 9090, maxDownloadSpeed: 0 } };
+		const deps = makeDeps({
+			settingsOverride: { list: () => ({ ...same, network: { ...same.network, maxDownloadSpeed: 500 } }), getDefaults: () => same },
+			networkOverride: {
+				stopAllNetworks: () => {
+					actions.push('stop');
+					return Promise.resolve();
+				},
+			},
+		});
+		await buildFactoryResetHandler(deps)({ settings: true, identity: false, downloads: false, networks: false, peers: false });
+		expect(actions).toEqual([]);
 	});
 });
