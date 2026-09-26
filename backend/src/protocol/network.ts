@@ -333,6 +333,12 @@ interface BootstrapDialClaim {
  * Single shared libp2p node.
  * LISH networks are logical groups represented as pubsub topics on this one node.
  */
+/**
+ * What a lishnet leave did with one peer: removed it for good, kept it on purpose (another
+ * joined lishnet claims it), or could not finish — the record stays for the next start.
+ */
+export type PeerReleaseOutcome = 'released' | 'kept' | 'incomplete';
+
 export class Network {
 	private lifecycle: NetworkLifecycle = 'stopped';
 	/** The projection of the node that is running now; see {@link getAppliedNetworkConfig}. */
@@ -2981,6 +2987,11 @@ export class Network {
 	 * an explicitly configured bootstrap or a relay carrying a circuit connection.
 	 * Discovered bootstraps and peers reached through a relay are ordinary peers.
 	 */
+	/** Whether a circuit connection runs through this peer right now. */
+	isRelayPeer(peerID: string): boolean {
+		return this.isActiveRelayPeer(peerID);
+	}
+
 	isBootstrapOrRelayPeer(peerID: string): boolean {
 		if (this.configuredBootstrapPeerIDs.has(peerID)) return true;
 		return this.isActiveRelayPeer(peerID);
@@ -3337,23 +3348,23 @@ export class Network {
 	 * next leave of that lishnet are what eventually reach them. The alternative is a shutdown
 	 * that never returns at all.
 	 */
-	async disconnectPeer(peerID: string, networkID: string, epoch: number = this.runEpoch): Promise<void> {
+	async disconnectPeer(peerID: string, networkID: string, epoch: number = this.runEpoch): Promise<PeerReleaseOutcome> {
 		const node = this.node;
-		if (!node || epoch !== this.runEpoch) return;
+		if (!node || epoch !== this.runEpoch) return 'incomplete';
 		// Captured beside the node and for the same reason: a controller a later start
 		// installed does not speak for the run this call belongs to.
 		const signal = this.dialAbort.signal;
-		if (signal.aborted) return;
+		if (signal.aborted) return 'incomplete';
 		let pid: PeerID;
 		try {
 			pid = peerIDFromString(peerID);
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: invalid peerID ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
-			return;
+			return 'kept';
 		}
 		if (this.isPeerNeededByJoinedNetwork(peerID)) {
 			trace(`[NET] disconnectPeer: ${peerID.slice(0, 16)} is still claimed by a joined lishnet, leaving it alone`);
-			return;
+			return 'kept';
 		}
 		// Suppression is claimed BEFORE the first await, not after the hangUp. The two
 		// awaits below yield, and a `peer:discovery` event landing in that window used to
@@ -3375,27 +3386,28 @@ export class Network {
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: tag removal failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
-		if (epoch !== this.runEpoch) return;
-		if (await this.releaseIfClaimed(node, pid, peerID, networkID, signal)) return;
+		if (epoch !== this.runEpoch) return 'incomplete';
+		if (await this.releaseIfClaimed(node, pid, peerID, networkID, signal)) return 'kept';
 		// The recheck itself awaits, so the run can end inside it — and a `false` from it is
 		// permission to go on tearing down, which must not be spent on the next node instance.
-		if (epoch !== this.runEpoch) return;
+		if (epoch !== this.runEpoch) return 'incomplete';
 		try {
 			await node.hangUp(pid, { signal });
 			trace(`[NET] disconnectPeer: hung up ${peerID.slice(0, 16)}`);
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: hangUp failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
-		if (epoch !== this.runEpoch) return;
-		if (await this.releaseIfClaimed(node, pid, peerID, networkID, signal)) return;
-		if (epoch !== this.runEpoch || signal.aborted) return;
+		if (epoch !== this.runEpoch) return 'incomplete';
+		if (await this.releaseIfClaimed(node, pid, peerID, networkID, signal)) return 'kept';
+		if (epoch !== this.runEpoch || signal.aborted) return 'incomplete';
 		// Forget the persisted peerStore entry so the disconnect survives a restart —
 		// suppression is in-memory only, but the peerStore is on disk.
-		await this.purgeStalePeer(peerID, 'left-network exclusive peer', epoch);
+		const purged = await this.purgeStalePeer(peerID, 'left-network exclusive peer', epoch);
 		// A claim can still land during the purge, and by then the record is gone. What must
 		// not survive is the suppression: it is global, so leaving it in place would make
 		// every maintenance path refuse to dial a peer a joined lishnet is now asking for.
 		if (epoch === this.runEpoch) await this.releaseIfClaimed(node, pid, peerID, networkID, signal);
+		return purged === 'purged' ? 'released' : purged === 'kept' ? 'kept' : 'incomplete';
 	}
 
 	/**

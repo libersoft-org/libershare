@@ -67,13 +67,22 @@ function makeMockNet() {
 		isBootstrapOrRelayPeer(_peerID?: string): boolean {
 			return false;
 		},
-		async disconnectPeer(pid: string): Promise<void> {
+		/** Per-peer answer of a leave's disconnect; a peer not listed is removed. */
+		disconnectOutcome: new Map<string, 'released' | 'kept' | 'incomplete'>(),
+		/** Peers whose disconnect never finishes, as when the app closes mid-leave. */
+		hangOn: new Set<string>(),
+		async disconnectPeer(pid: string): Promise<'released' | 'kept' | 'incomplete'> {
 			if (this.disconnectGate) await this.disconnectGate;
+			if (this.hangOn.has(pid)) await new Promise<void>(() => {});
 			this.disconnected.push(pid);
+			return this.disconnectOutcome.get(pid) ?? 'released';
+		},
+		isRelayPeer(_peerID?: string): boolean {
+			return false;
 		},
 		/** Bootstrap addresses the running node currently treats as configured. */
 		configured: new Set<string>(),
-		pruneConfiguredBootstrapPeer(): void {},
+		pruneConfiguredBootstrapPeer(_peerID?: string, _networkID?: string): void {},
 		resetBootstrapStatus(): void {},
 		pruneBootstrapAddresses(addresses: string[]): void {
 			for (const address of addresses) this.configured.delete(address);
@@ -907,7 +916,7 @@ describe('persistent peer cleanup of left lishnets', () => {
 	});
 
 	it('never queues a peer the live leave keeps, such as a relay', async () => {
-		net.isBootstrapOrRelayPeer = (pid: string): boolean => pid === P1;
+		net.isRelayPeer = (pid?: string): boolean => pid === P1;
 		const { networks } = makeNetworks(net, db, [NET, OTHER]);
 		await interruptedDisable(networks);
 		expect(pending().some(entry => entry.endsWith(`/${P1}`))).toBe(false);
@@ -1007,6 +1016,62 @@ describe('persistent peer cleanup of left lishnets', () => {
 		const { networks } = makeNetworks(net, db, [NET, OTHER]);
 		networks.recordPeersForCatalogReset();
 		expect(pending().sort()).toEqual([`${NET}/${BOOTSTRAP_ID}`, `${NET}/${P1}`, `${NET}/${P2}`, `${OTHER}/${P2}`].sort());
+	});
+});
+
+describe('peer cleanup decided peer by peer', () => {
+	let db: Database;
+	let net: ReturnType<typeof makeMockNet>;
+	const OTHER = 'net-b';
+	const BOOTSTRAP_ID = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+	const P1 = '12D3KooWQyNzs3o2PqCdxmSAxmn8AG5FDnbmTiSx3QRwsKTXaT3E';
+	const P2 = '12D3KooWEY6ZDNCzJHyfVDQ1VbnvCH3DXcuW1YdB3EkF3kqr8Kw5';
+	const pending = (): string[] => listPeerCleanup(db).map(r => `${r.networkID}/${r.peerID}`);
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		initLISHnetsTables(db);
+		addLISHnet(db, { networkID: NET, name: NET, description: '', bootstrapPeers: [BOOTSTRAP], enabled: true, created: new Date().toISOString() });
+		addLISHnet(db, { networkID: OTHER, name: OTHER, description: '', bootstrapPeers: [], enabled: true, created: new Date().toISOString() });
+		net = makeMockNet();
+		net.topicPeers.set(NET, [P1, P2]);
+		net.topicPeers.set(OTHER, []);
+	});
+
+	it('queues its own bootstrap even while the node still treats it as configured', async () => {
+		// Before the leave prunes it, the node answers "bootstrap" for the leaving lishnet's own peer.
+		const configured = new Set([BOOTSTRAP_ID]);
+		net.isBootstrapOrRelayPeer = (pid: string): boolean => configured.has(pid);
+		net.pruneConfiguredBootstrapPeer = (pid?: string): void => void configured.delete(pid!);
+		net.hangOn.add(BOOTSTRAP_ID);
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		void networks.setEnabled(NET, false);
+		for (let i = 0; i < 200 && !net.unsubscribed.includes(NET); i++) await Bun.sleep(5);
+		expect(pending()).toContain(`${NET}/${BOOTSTRAP_ID}`);
+	});
+
+	it('keeps the rows of a peer whose removal did not finish', async () => {
+		net.disconnectOutcome.set(P1, 'incomplete');
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await networks.setEnabled(NET, false);
+		expect(pending()).toEqual([`${NET}/${P1}`]);
+	});
+
+	it('settles a peer another lishnet took over during the leave, before the leave ends', async () => {
+		// P1 is claimed by a joined lishnet by the time the leave reaches it; P2 then hangs.
+		net.disconnectOutcome.set(P1, 'kept');
+		net.hangOn.add(P2);
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		void networks.setEnabled(NET, false);
+		for (let i = 0; i < 200 && !net.disconnected.includes(P1); i++) await Bun.sleep(5);
+		await Bun.sleep(10);
+		// The app closes here: the next start must not remove P1, which a lishnet now uses.
+		const deleted: string[] = [];
+		const node = { peerStore: { delete: async (peerID: { toString(): string }) => void deleted.push(peerID.toString()) } };
+		const { networks: restarted } = makeNetworks(makeMockNet(), db, []);
+		await (restarted as any).replayPeerCleanup(node);
+		expect(deleted).not.toContain(P1);
+		expect(deleted).toContain(P2);
 	});
 });
 

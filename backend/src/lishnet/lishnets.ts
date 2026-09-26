@@ -1,6 +1,6 @@
 import { type Database } from 'bun:sqlite';
 import { Mutex } from 'async-mutex';
-import { Network, normalizeMultiaddrForCompare, type BootstrapDialResult } from '../protocol/network.ts';
+import { Network, normalizeMultiaddrForCompare, type BootstrapDialResult, type PeerReleaseOutcome } from '../protocol/network.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
@@ -958,11 +958,16 @@ export class Networks {
 
 		const stillConfigured = this.configuredBootstrapPeerIDsElsewhere(id);
 		for (const pid of new Set(Networks.bootstrapPeerIDsOf(outgoing))) {
-			if (stillConfigured.has(pid)) continue;
+			if (stillConfigured.has(pid)) {
+				this.settlePeerCleanup(pid, leaveOperation, 'kept');
+				continue;
+			}
 			this.network.pruneConfiguredBootstrapPeer(pid, id);
-			if (stillJoinedPeers.has(pid)) continue;
-			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
-			await this.releasePeer(pid, id, epoch);
+			if (stillJoinedPeers.has(pid) || this.network.isBootstrapOrRelayPeer(pid)) {
+				this.settlePeerCleanup(pid, leaveOperation, 'kept');
+				continue;
+			}
+			this.settlePeerCleanup(pid, leaveOperation, await this.releasePeer(pid, id, epoch));
 		}
 
 		// Disconnect peers that belonged exclusively to the lishnet we just left.
@@ -973,19 +978,11 @@ export class Networks {
 		// Network.disconnectPeer entry point (which also clears the keep-alive tag
 		// so ReconnectQueue does not immediately re-dial it).
 		for (const pid of leftPeers) {
-			if (stillJoinedPeers.has(pid)) continue;
-			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
-			await this.releasePeer(pid, id, epoch);
-		}
-		// Done live: the rows this leave wrote have served their purpose. Left in place they
-		// would make a later start remove peers another lishnet has come to need since.
-		try {
-			confirmPeerCleanup(
-				this.db,
-				listPeerCleanup(this.db).filter(row => row.operationID === leaveOperation)
-			);
-		} catch (err: any) {
-			console.error(`[Networks] confirming the peer cleanup of ${id} failed:`, err?.message ?? err);
+			if (stillJoinedPeers.has(pid) || this.network.isBootstrapOrRelayPeer(pid)) {
+				this.settlePeerCleanup(pid, leaveOperation, 'kept');
+				continue;
+			}
+			this.settlePeerCleanup(pid, leaveOperation, await this.releasePeer(pid, id, epoch));
 		}
 
 		const net = this.get(id);
@@ -1003,11 +1000,30 @@ export class Networks {
 	 * unsubscribed and nobody left to finish. The peer that failed is logged and the leave
 	 * carries on.
 	 */
-	private async releasePeer(peerID: string, id: string, epoch: number): Promise<void> {
+	private async releasePeer(peerID: string, id: string, epoch: number): Promise<PeerReleaseOutcome> {
 		try {
-			await this.network.disconnectPeer(peerID, id, epoch);
+			return await this.network.disconnectPeer(peerID, id, epoch);
 		} catch (err: any) {
 			console.error(`[Networks] disconnecting ${peerID.slice(0, 16)} while leaving ${id} failed:`, err?.message ?? err);
+			return 'incomplete';
+		}
+	}
+
+	/**
+	 * Settle one peer's queued cleanup the moment the leave has decided on it. Removed, or kept
+	 * on purpose — another lishnet claims it, even one that took it over during this leave — its
+	 * rows of this leave go: a later start must not act on a decision already made live. Only a
+	 * removal that did not finish keeps them, so the next start finishes it.
+	 */
+	private settlePeerCleanup(peerID: string, operationID: string, outcome: PeerReleaseOutcome): void {
+		if (outcome === 'incomplete') return;
+		try {
+			confirmPeerCleanup(
+				this.db,
+				listPeerCleanup(this.db).filter(row => row.peerID === peerID && row.operationID === operationID)
+			);
+		} catch (err: any) {
+			console.error(`[Networks] settling the peer cleanup of ${peerID.slice(0, 16)} failed:`, err?.message ?? err);
 		}
 	}
 
@@ -1512,7 +1528,9 @@ export class Networks {
 			// entered, and a row holding it would fail every later start.
 			// Nor a peer the live leave keeps as well — a relay or a bootstrap another lishnet
 			// relies on: the next start has no live view to tell, and must not remove it.
-			const candidates = new Set([...bootstrapIDs(id), ...members(id)].filter(pid => Networks.isPeerID(pid) && !this.network.isBootstrapOrRelayPeer(pid)));
+			// Nor an active relay, which the live leave keeps as well: the next start has no live
+			// view to tell. A bootstrap of a lishnet that stays is kept by its protecting row.
+			const candidates = new Set([...bootstrapIDs(id), ...members(id)].filter(pid => Networks.isPeerID(pid) && !this.network.isRelayPeer(pid)));
 			if (candidates.size === 0) continue;
 			recordPeerCleanup(this.db, id, candidates, operationID);
 			for (const owner of owners)
