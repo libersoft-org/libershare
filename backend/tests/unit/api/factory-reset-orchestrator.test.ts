@@ -33,6 +33,7 @@ function makeNetworks(overrides: Record<string, () => any> = {}): FactoryResetOr
 					release: () => {},
 				})),
 		stopAllNetworks: overrides['stopAllNetworks'] ?? (() => Promise.resolve()),
+		recordPeersForCatalogReset: overrides['recordPeersForCatalogReset'] ?? (() => {}),
 		startEnabledNetworks: overrides['startEnabledNetworks'] ?? (() => Promise.resolve()),
 		getNetwork: () => network,
 	} as any;
@@ -1031,6 +1032,31 @@ describe('buildFactoryResetHandler — a settings reset that touches nothing the
 			},
 		});
 		await buildFactoryResetHandler(deps)({ settings: true, identity: false, downloads: false, networks: false, peers: false });
+		expect(actions).toEqual([]);
+	});
+});
+
+describe('buildFactoryResetHandler — a catalog reset that keeps the peer store', () => {
+	it('queues the peers while the node still runs, before it is stopped', async () => {
+		const actions: string[] = [];
+		const deps = makeDeps({
+			networkOverride: {
+				recordPeersForCatalogReset: () => void actions.push('queue-peers'),
+				stopAllNetworks: () => {
+					actions.push('stop');
+					return Promise.resolve();
+				},
+			},
+		});
+		await buildFactoryResetHandler(deps)({ networks: true, peers: false, settings: false, identity: false, downloads: false });
+		expect(actions.indexOf('queue-peers')).toBeGreaterThanOrEqual(0);
+		expect(actions.indexOf('queue-peers')).toBeLessThan(actions.indexOf('stop'));
+	});
+
+	it('leaves the queue alone when the peer store is wiped as well', async () => {
+		const actions: string[] = [];
+		const deps = makeDeps({ networkOverride: { recordPeersForCatalogReset: () => void actions.push('queue-peers') } });
+		await buildFactoryResetHandler(deps)({ networks: true, peers: true, settings: false, identity: false, downloads: false });
 		expect(actions).toEqual([]);
 	});
 });

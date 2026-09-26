@@ -902,8 +902,9 @@ export class Networks {
 		// still finishing may have brought more peers since. Recorded now, while the topic
 		// still shows them and before the first hang-up, so a crash mid-leave leaves the next
 		// start their cleanup too. A failed write must not stop the leave itself.
+		const leaveOperation = crypto.randomUUID();
 		try {
-			this.recordLeavingPeers([id], this.enabledIDsWithout([id]), crypto.randomUUID());
+			this.recordLeavingPeers([id], this.enabledIDsWithout([id]), leaveOperation);
 		} catch (err: any) {
 			console.error(`[Networks] recording the peers of the leave of ${id} failed:`, err?.message ?? err);
 		}
@@ -975,6 +976,16 @@ export class Networks {
 			if (stillJoinedPeers.has(pid)) continue;
 			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
 			await this.releasePeer(pid, id, epoch);
+		}
+		// Done live: the rows this leave wrote have served their purpose. Left in place they
+		// would make a later start remove peers another lishnet has come to need since.
+		try {
+			confirmPeerCleanup(
+				this.db,
+				listPeerCleanup(this.db).filter(row => row.operationID === leaveOperation)
+			);
+		} catch (err: any) {
+			console.error(`[Networks] confirming the peer cleanup of ${id} failed:`, err?.message ?? err);
 		}
 
 		const net = this.get(id);
@@ -1163,7 +1174,12 @@ export class Networks {
 		const config: LISHNetworkConfig = { ...definition, enabled };
 		// An upsert can bring a network into existence — see {@link catalogMutex}.
 		const job = await this.inCatalog(() => {
-			upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
+			this.db.transaction(() => {
+				// Switching an existing network off leaves it: queue its peers with the write, as
+				// update and setEnabled do, or an interrupted leave strands them.
+				if (this.get(config.networkID)?.enabled && !config.enabled) this.recordLeavingPeers([config.networkID], this.enabledIDsWithout([config.networkID]), crypto.randomUUID());
+				upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
+			})();
 			return this.reconcileLater(config.networkID);
 		});
 		return { config, outcome: await job };
@@ -1478,6 +1494,15 @@ export class Networks {
 		);
 	}
 
+	/**
+	 * Queue the peers of every joined lishnet for cleanup, none of them protected: for a reset
+	 * that clears the catalog without the peer store. Taken while the node still runs, since
+	 * the membership it needs is gone once the node stops.
+	 */
+	recordPeersForCatalogReset(): void {
+		this.db.transaction(() => this.recordLeavingPeers([...this.joinedNetworks], new Set(), crypto.randomUUID()))();
+	}
+
 	private recordLeavingPeers(leaving: readonly string[], remaining: ReadonlySet<string>, operationID: string): void {
 		const members = (id: string): Set<string> => new Set([...this.network.getTopicPeers(id), ...this.network.getRecentTopicMembers(id)]);
 		const bootstrapIDs = (id: string): Set<string> => new Set([...Networks.bootstrapPeerIDsOf(this.get(id)?.bootstrapPeers ?? []), ...Networks.bootstrapPeerIDsOf(this.appliedBootstrap.get(id)?.addresses ?? [])]);
@@ -1485,7 +1510,9 @@ export class Networks {
 		for (const id of leaving) {
 			// Only real peer IDs: a bootstrap address typed with a bad /p2p/ part is stored as
 			// entered, and a row holding it would fail every later start.
-			const candidates = new Set([...bootstrapIDs(id), ...members(id)].filter(Networks.isPeerID));
+			// Nor a peer the live leave keeps as well — a relay or a bootstrap another lishnet
+			// relies on: the next start has no live view to tell, and must not remove it.
+			const candidates = new Set([...bootstrapIDs(id), ...members(id)].filter(pid => Networks.isPeerID(pid) && !this.network.isBootstrapOrRelayPeer(pid)));
 			if (candidates.size === 0) continue;
 			recordPeerCleanup(this.db, id, candidates, operationID);
 			for (const owner of owners)

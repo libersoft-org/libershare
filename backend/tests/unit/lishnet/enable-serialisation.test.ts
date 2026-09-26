@@ -882,10 +882,35 @@ describe('persistent peer cleanup of left lishnets', () => {
 		net.topicPeers.set(OTHER, [P2]);
 	});
 
+	/**
+	 * Switch NET off with a leave that never finishes: its first hang-up waits forever, as when
+	 * the app is closed mid-leave. Resolves once the leave has recorded its peers and started.
+	 */
+	async function interruptedDisable(networks: Networks): Promise<void> {
+		net.disconnectGate = new Promise<void>(() => {});
+		void networks.setEnabled(NET, false);
+		for (let i = 0; i < 200 && !net.unsubscribed.includes(NET); i++) await Bun.sleep(5);
+		expect(net.unsubscribed).toContain(NET);
+	}
+
 	it('records the leaving peers and the lishnet that still uses one of them', async () => {
 		const { networks } = makeNetworks(net, db, [NET, OTHER]);
-		await networks.setEnabled(NET, false);
+		await interruptedDisable(networks);
 		expect(pending().sort()).toEqual([`${NET}/${BOOTSTRAP_ID}`, `${NET}/${P1}`, `${NET}/${P2}`, `${OTHER}/${P2}`].sort());
+	});
+
+	it('clears its rows once the leave has finished live', async () => {
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await networks.setEnabled(NET, false);
+		// Nothing left for a start to act on — a peer another lishnet needs later stays alone.
+		expect(pending()).toEqual([]);
+	});
+
+	it('never queues a peer the live leave keeps, such as a relay', async () => {
+		net.isBootstrapOrRelayPeer = (pid: string): boolean => pid === P1;
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await interruptedDisable(networks);
+		expect(pending().some(entry => entry.endsWith(`/${P1}`))).toBe(false);
 	});
 
 	it('writes nothing when recording fails: the catalog and the queue go together', async () => {
@@ -897,11 +922,12 @@ describe('persistent peer cleanup of left lishnets', () => {
 
 	it('removes only unprotected peers before the next start, and a later leave frees the rest', async () => {
 		const { networks } = makeNetworks(net, db, [NET, OTHER]);
-		await networks.setEnabled(NET, false);
+		await interruptedDisable(networks);
 		const deleted: string[] = [];
 		const node = { peerStore: { delete: async (peerID: { toString(): string }) => void deleted.push(peerID.toString()) } };
 
-		await (networks as any).replayPeerCleanup(node);
+		const { networks: restartedOnce } = makeNetworks(makeMockNet(), db, []);
+		await (restartedOnce as any).replayPeerCleanup(node);
 		expect(deleted.sort()).toEqual([BOOTSTRAP_ID, P1].sort());
 		// P2 is still used by the enabled OTHER lishnet: kept, rows and all.
 		expect(pending().sort()).toEqual([`${NET}/${P2}`, `${OTHER}/${P2}`].sort());
@@ -922,21 +948,20 @@ describe('persistent peer cleanup of left lishnets', () => {
 		const seen = net.getTopicPeers.bind(net);
 		net.getTopicPeers = (id: string): string[] => (id === NET && reads++ > 0 ? [...seen(id), late] : seen(id));
 		const { networks } = makeNetworks(net, db, [NET, OTHER]);
-		await networks.setEnabled(NET, false);
+		await interruptedDisable(networks);
 		expect(pending()).toContain(`${NET}/${late}`);
 	});
 
 	it('never queues a bootstrap address whose peer part is not a peer ID', async () => {
 		updateLISHnet(db, { ...getLISHnet(db, NET)!, bootstrapPeers: [BOOTSTRAP, '/ip4/192.0.2.9/tcp/4001/p2p/not-a-peer'] });
 		const { networks } = makeNetworks(net, db, [NET, OTHER]);
-		await networks.setEnabled(NET, false);
+		await interruptedDisable(networks);
 		expect(pending().some(entry => entry.endsWith('/not-a-peer'))).toBe(false);
 	});
 
 	it('starts past a queued row that names no peer, and drops it', async () => {
 		recordPeerCleanup(db, NET, ['not-a-peer'], 'old-version');
-		const { networks } = makeNetworks(net, db, [NET, OTHER]);
-		await networks.setEnabled(NET, false);
+		const { networks } = makeNetworks(makeMockNet(), db, []);
 		const deleted: string[] = [];
 		const node = { peerStore: { delete: async (peerID: { toString(): string }) => void deleted.push(peerID.toString()) } };
 		await (networks as any).replayPeerCleanup(node);
@@ -946,7 +971,7 @@ describe('persistent peer cleanup of left lishnets', () => {
 
 	it('keeps the queue when a removal fails', async () => {
 		const { networks } = makeNetworks(net, db, [NET, OTHER]);
-		await networks.setEnabled(NET, false);
+		await interruptedDisable(networks);
 		const node = {
 			peerStore: {
 				delete: async () => {
@@ -954,8 +979,34 @@ describe('persistent peer cleanup of left lishnets', () => {
 				},
 			},
 		};
-		await expect((networks as any).replayPeerCleanup(node)).rejects.toThrow('disk full');
+		const { networks: restarted } = makeNetworks(makeMockNet(), db, []);
+		await expect((restarted as any).replayPeerCleanup(node)).rejects.toThrow('disk full');
 		expect(pending().length).toBe(4);
+	});
+
+	it('queues the peers of a network an import switches off, with the catalog write', async () => {
+		// Only the catalog write sees the members: the queue has to come from it, not the leave.
+		let reads = 0;
+		const seen = net.getTopicPeers.bind(net);
+		net.getTopicPeers = (id: string): string[] => (id === NET && reads++ > 0 ? [] : seen(id));
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		net.disconnectGate = new Promise<void>(() => {});
+		const dir = mkdtempSync(join(tmpdir(), 'lish-import-off-'));
+		try {
+			const file = join(dir, 'net.lishnet');
+			writeFileSync(file, JSON.stringify({ networkID: NET, name: NET, description: '', bootstrapPeers: [BOOTSTRAP], created: new Date().toISOString() }));
+			void networks.importFromFile(file, false);
+			for (let i = 0; i < 200 && !net.unsubscribed.includes(NET); i++) await Bun.sleep(5);
+			expect(pending()).toContain(`${NET}/${P1}`);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('queues every joined network for a reset that clears the catalog but not the peer store', async () => {
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		networks.recordPeersForCatalogReset();
+		expect(pending().sort()).toEqual([`${NET}/${BOOTSTRAP_ID}`, `${NET}/${P1}`, `${NET}/${P2}`, `${OTHER}/${P2}`].sort());
 	});
 });
 

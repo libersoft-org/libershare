@@ -176,6 +176,9 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 							}
 						}
 						if (restartNode) {
+							// The catalog goes but the peer store stays: queue the peers now, while the
+							// running node still knows them, so the restart removes them first.
+							if (wipeNetworks && !wipePeers) networks.recordPeersForCatalogReset();
 							try {
 								networks.getNetwork().cancelRunOperations();
 								await networkMaintenance?.drain();
