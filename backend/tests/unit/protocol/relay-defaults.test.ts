@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, spyOn } from 'bun:test';
+import { generateKeyPair } from '@libp2p/crypto/keys';
+import { defaultLogger } from '@libp2p/logger';
+import { peerIdFromPrivateKey } from '@libp2p/peer-id';
+import { multiaddr } from '@multiformats/multiaddr';
 import { DEFAULT_MAX_RELAY_RESERVATIONS } from '@shared';
 import { buildLibp2pConfig } from '../../../src/protocol/network-config.ts';
 import { Settings } from '../../../src/settings.ts';
@@ -29,6 +33,11 @@ function build(network: Record<string, unknown>): any {
 
 const relayLog = (): string | undefined => logs.find(line => line.includes('Circuit relay server enabled'));
 
+/** The reservation store of the relay server the config really builds. */
+function reservationStore(network: Record<string, unknown>): { maxReservations: number; reserve: (peer: unknown, addr: unknown) => { status: unknown } } {
+	return build({ allowRelay: true, ...network }).services.relay({ logger: defaultLogger() }).reservationStore;
+}
+
 describe('relay server defaults', () => {
 	it('is off for new installations with a finite reservation limit', () => {
 		// getDefaults reads only the built-in defaults, never an instance's saved state.
@@ -44,18 +53,27 @@ describe('relay server defaults', () => {
 	});
 
 	it('keeps an explicit limit and an explicit 0 as unlimited', () => {
-		build({ allowRelay: true, maxRelayReservations: 10 });
+		expect(reservationStore({ maxRelayReservations: 10 }).maxReservations).toBe(10);
 		expect(relayLog()).toContain('maxReservations: 10,');
 		logs.length = 0;
-		build({ allowRelay: true, maxRelayReservations: 0 });
+		expect(reservationStore({ maxRelayReservations: 0 }).maxReservations).toBe(Number.POSITIVE_INFINITY);
 		expect(relayLog()).toContain('maxReservations: unlimited');
 	});
 
 	it('falls back to the finite default for a missing or malformed limit', () => {
 		for (const maxRelayReservations of [undefined, -1, 1.5, '0', '50', Number.NaN, Number.POSITIVE_INFINITY, null]) {
 			logs.length = 0;
-			build({ allowRelay: true, maxRelayReservations });
+			expect(reservationStore({ maxRelayReservations }).maxReservations).toBe(DEFAULT_MAX_RELAY_RESERVATIONS);
 			expect(relayLog()).toContain(`maxReservations: ${DEFAULT_MAX_RELAY_RESERVATIONS},`);
 		}
+	});
+
+	it('refuses the reservation past the limit', async () => {
+		const store = reservationStore({ maxRelayReservations: 2 });
+		const addr = multiaddr('/ip4/192.0.2.1/tcp/4001');
+		const peers = await Promise.all([0, 1, 2].map(async () => peerIdFromPrivateKey(await generateKeyPair('Ed25519'))));
+		const statuses = peers.map(peer => store.reserve(peer, addr).status);
+		expect(statuses[0]).toBe(statuses[1]);
+		expect(statuses[2]).not.toBe(statuses[0]);
 	});
 });
