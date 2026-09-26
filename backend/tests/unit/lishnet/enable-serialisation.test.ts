@@ -80,6 +80,9 @@ function makeMockNet() {
 		isRelayPeer(_peerID?: string): boolean {
 			return false;
 		},
+		isClaimedByJoinedNetwork(_peerID?: string): boolean {
+			return false;
+		},
 		/** Bootstrap addresses the running node currently treats as configured. */
 		configured: new Set<string>(),
 		pruneConfiguredBootstrapPeer(_peerID?: string, _networkID?: string): void {},
@@ -1055,6 +1058,15 @@ describe('peer cleanup decided peer by peer', () => {
 		const { networks } = makeNetworks(net, db, [NET, OTHER]);
 		await networks.setEnabled(NET, false);
 		expect(pending()).toEqual([`${NET}/${P1}`]);
+	});
+
+	it('settles an unfinished removal of a peer a joined lishnet has claimed by then', async () => {
+		// The claim came up after the disconnect last looked, and nothing persists it.
+		net.disconnectOutcome.set(P1, 'incomplete');
+		net.isClaimedByJoinedNetwork = (pid?: string): boolean => pid === P1;
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await networks.setEnabled(NET, false);
+		expect(pending()).toEqual([]);
 	});
 
 	it('settles a peer another lishnet took over during the leave, before the leave ends', async () => {

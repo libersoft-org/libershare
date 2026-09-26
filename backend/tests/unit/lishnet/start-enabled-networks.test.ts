@@ -65,6 +65,7 @@ function makeMockNet(startGate: Promise<void>) {
 		getRecentTopicMembers: (): string[] => [],
 		isBootstrapOrRelayPeer: (): boolean => false,
 		isRelayPeer: (): boolean => false,
+		isClaimedByJoinedNetwork: (): boolean => false,
 		disconnectPeer: async (): Promise<void> => {},
 		pruneConfiguredBootstrapPeer(): void {},
 		resetBootstrapStatus(): void {},

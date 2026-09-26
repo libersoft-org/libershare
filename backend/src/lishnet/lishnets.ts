@@ -1016,7 +1016,10 @@ export class Networks {
 	 * removal that did not finish keeps them, so the next start finishes it.
 	 */
 	private settlePeerCleanup(peerID: string, operationID: string, outcome: PeerReleaseOutcome): void {
-		if (outcome === 'incomplete') return;
+		// Asked here, with no await before the write: a claim that came up after the leave
+		// last looked is not persisted anywhere, and a start acting on the row would remove
+		// a peer a joined lishnet uses.
+		if (outcome === 'incomplete' && !this.network.isClaimedByJoinedNetwork(peerID)) return;
 		try {
 			confirmPeerCleanup(
 				this.db,

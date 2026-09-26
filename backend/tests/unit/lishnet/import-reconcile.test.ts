@@ -29,6 +29,7 @@ function makeMockNet() {
 		getRecentTopicMembers: (): string[] => [],
 		isBootstrapOrRelayPeer: (): boolean => false,
 		isRelayPeer: (): boolean => false,
+		isClaimedByJoinedNetwork: (): boolean => false,
 		async disconnectPeer(): Promise<void> {},
 		pruneConfiguredBootstrapPeer(pid: string): void {
 			this.prunedBootstrap.push(pid);

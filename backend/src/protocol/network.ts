@@ -2992,6 +2992,11 @@ export class Network {
 		return this.isActiveRelayPeer(peerID);
 	}
 
+	/** Whether a lishnet this node is still in claims the peer right now. */
+	isClaimedByJoinedNetwork(peerID: string): boolean {
+		return this.isPeerNeededByJoinedNetwork(peerID, true);
+	}
+
 	isBootstrapOrRelayPeer(peerID: string): boolean {
 		if (this.configuredBootstrapPeerIDs.has(peerID)) return true;
 		return this.isActiveRelayPeer(peerID);
