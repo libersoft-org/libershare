@@ -41,12 +41,14 @@ interface HeldStatus {
 }
 
 const held: HeldStatus[] = [];
+/** Off for a request whose response had already arrived when its attempt was cancelled. */
+let honourAbort = true;
 const realFetch = globalThis.fetch;
 const realWebSocket = globalThis.WebSocket;
 globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
 globalThis.fetch = ((url: string, init?: RequestInit) =>
 	new Promise<Response>((resolve, reject) => {
-		init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+		if (honourAbort) init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
 		held.push({ url: String(url), signal: init?.signal ?? undefined, answer: status => resolve(Response.json({ ok: status === 200, authRequired: true, authenticated: status === 200 }, { status })) });
 	})) as typeof fetch;
 
@@ -79,9 +81,12 @@ test('a stale 401 for the old token does not disturb the new session', async () 
 	await settle();
 	expect(status()).toBe('auth-required');
 
-	// The user enters A; its status request is still in flight when A turns out wrong.
+	// The user enters A; its status request is still in flight when A turns out wrong. Its
+	// response is already on its way, so cancelling the attempt does not stop it arriving.
+	honourAbort = false;
 	client.setBackendToken('token-a');
 	const statusA = held.at(-1)!;
+	honourAbort = true;
 	expect(token(statusA.url)).toBe('token-a');
 
 	// The user enters B before A's status answers. B's socket opens.
@@ -90,7 +95,8 @@ test('a stale 401 for the old token does not disturb the new session', async () 
 	socketB.open();
 	expect(status()).toBe('connected');
 
-	// A's 401 arrives late: it was aborted, and even if delivered it must change nothing.
+	// A's 401 is delivered late, after B took over: it must change nothing.
+	expect(statusA.signal?.aborted).toBe(true);
 	statusA.answer(401);
 	await settle();
 	expect(status()).toBe('connected');
