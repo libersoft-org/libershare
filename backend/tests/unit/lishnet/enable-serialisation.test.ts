@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { Mutex } from 'async-mutex';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { initLISHnetsTables, addLISHnet, getLISHnet, setLISHnetEnabled, updateLISHnet } from '../../../src/db/lishnets.ts';
 import { Networks } from '../../../src/lishnet/lishnets.ts';
 import { listPeerCleanup, recordPeerCleanup } from '../../../src/db/peer-cleanup.ts';
@@ -940,5 +943,27 @@ describe('persistent peer cleanup of left lishnets', () => {
 		};
 		await expect((networks as any).replayPeerCleanup(node)).rejects.toThrow('disk full');
 		expect(pending().length).toBe(4);
+	});
+});
+
+describe('detailed network import', () => {
+	it('reports a network stored but not applied when the node is down', async () => {
+		const db = new Database(':memory:');
+		initLISHnetsTables(db);
+		const net = makeMockNet();
+		net.isRunning = () => false;
+		const { networks } = makeNetworks(net, db, []);
+		const dir = mkdtempSync(join(tmpdir(), 'lish-import-detailed-'));
+		try {
+			const file = join(dir, 'net.lishnet');
+			writeFileSync(file, JSON.stringify({ networkID: 'net-imported', name: 'Imported', description: '', bootstrapPeers: [], created: new Date().toISOString() }));
+			const outcome = await networks.importFromFileDetailed(file, true);
+			expect(outcome.stored).toBe(true);
+			expect(outcome.value.map(n => n.networkID)).toEqual(['net-imported']);
+			expect(outcome.items).toEqual([expect.objectContaining({ networkID: 'net-imported', stored: true, applied: false })]);
+			expect(outcome.applied).toBe(false);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

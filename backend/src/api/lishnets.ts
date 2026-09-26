@@ -25,7 +25,7 @@ interface LISHnetsHandlers {
 	replace: (p: { networks: LISHNetworkConfig[]; detailed?: boolean }) => Promise<boolean | NetworkMutationOutcome<boolean>>;
 	exportToFile: (p: { networkID: string; filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 	exportAllToFile: (p: { filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
-	importFromFile: (p: { path: string; enabled?: boolean }) => Promise<LISHNetworkConfig[]>;
+	importFromFile: (p: { path: string; enabled?: boolean; detailed?: boolean }) => Promise<LISHNetworkConfig[] | NetworkMutationOutcome<LISHNetworkConfig[]>>;
 	parseFromFile: (p: { path: string }) => Promise<LISHNetworkDefinition[]>;
 	parseFromJSON: (p: { json: string }) => LISHNetworkDefinition[];
 	parseFromURL: (p: { url: string }) => Promise<LISHNetworkDefinition[]>;
@@ -162,9 +162,9 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		return { success: true };
 	}
 
-	async function importFromFile(p: { path: string; enabled?: boolean }): Promise<LISHNetworkConfig[]> {
+	async function importFromFile(p: { path: string; enabled?: boolean; detailed?: boolean }): Promise<LISHNetworkConfig[] | NetworkMutationOutcome<LISHNetworkConfig[]>> {
 		assert(p, ['path']);
-		return networks.importFromFile(p.path, p.enabled ?? false);
+		return mutationResponse(p, await networks.importFromFileDetailed(p.path, p.enabled ?? false));
 	}
 	async function parseFromFile(p: { path: string }): Promise<LISHNetworkDefinition[]> {
 		assert(p, ['path']);

@@ -430,6 +430,10 @@ class LISHnetsAPI {
 		return toNetworkMutationResponse<boolean>(await this.client.call<unknown>('lishnets.addIfNotExists', { network, detailed: true }));
 	}
 
+	async importFromFileDetailed(path: string, enabled = false): Promise<NetworkMutationResponse<LISHNetworkConfig[]>> {
+		return toNetworkMutationResponse<LISHNetworkConfig[]>(await this.client.call<unknown>('lishnets.importFromFile', { path, enabled, detailed: true }));
+	}
+
 	async replaceDetailed(networks: LISHNetworkConfig[]): Promise<NetworkMutationResponse<boolean>> {
 		return toNetworkMutationResponse<boolean>(await this.client.call<unknown>('lishnets.replace', { networks, detailed: true }));
 	}

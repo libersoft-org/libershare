@@ -1146,10 +1146,10 @@ export class Networks {
 	}
 
 	async importFromLISHnet(data: ILISHNetwork, enabled: boolean = false): Promise<LISHNetworkConfig> {
-		return await this.inMutation(() => this.importFromLISHnetAdmitted(data, enabled));
+		return (await this.inMutation(() => this.importFromLISHnetAdmitted(data, enabled))).config;
 	}
 
-	private async importFromLISHnetAdmitted(data: ILISHNetwork, enabled: boolean): Promise<LISHNetworkConfig> {
+	private async importFromLISHnetAdmitted(data: ILISHNetwork, enabled: boolean): Promise<{ config: LISHNetworkConfig; outcome: ReconcileOutcome }> {
 		const definition = this.validateNetwork(data);
 		const config: LISHNetworkConfig = { ...definition, enabled };
 		// An upsert can bring a network into existence — see {@link catalogMutex}.
@@ -1157,17 +1157,29 @@ export class Networks {
 			upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
 			return this.reconcileLater(config.networkID);
 		});
-		await job;
-		return config;
+		return { config, outcome: await job };
 	}
 
 	/** Parse and import a file under one mutation admission held from before I/O. */
 	async importFromFile(filePath: string, enabled: boolean = false): Promise<LISHNetworkConfig[]> {
+		return (await this.importFromFileDetailed(filePath, enabled)).value;
+	}
+
+	/**
+	 * {@link importFromFile}, reporting per network whether the running node applied it: an
+	 * enabled network imported while the node is down is stored but not joined.
+	 */
+	async importFromFileDetailed(filePath: string, enabled: boolean = false): Promise<NetworkMutationOutcome<LISHNetworkConfig[]>> {
 		return await this.inMutation(async () => {
 			const definitions = await this.parseFromFile(filePath);
-			const results: LISHNetworkConfig[] = [];
-			for (const definition of definitions) results.push(await this.importFromLISHnetAdmitted(definition as ILISHNetwork, enabled));
-			return results;
+			const configs: LISHNetworkConfig[] = [];
+			const items: Array<NetworkMutationOutcome<null> & { networkID: string }> = [];
+			for (const definition of definitions) {
+				const { config, outcome } = await this.importFromLISHnetAdmitted(definition as ILISHNetwork, enabled);
+				configs.push(config);
+				items.push({ ...Networks.outcomeOf(null, config, outcome), networkID: config.networkID });
+			}
+			return combineNetworkMutations(configs, items);
 		});
 	}
 

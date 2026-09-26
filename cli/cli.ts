@@ -149,8 +149,13 @@ async function main(): Promise<void> {
 						break;
 					}
 					console.log(`Importing network from: ${arg}`);
-					const networks = await api.lishnets.importFromFile(arg, true);
-					for (const n of networks) console.log(`✓ Network imported: ${n.name} (${n.networkID})`);
+					const response = await api.lishnets.importFromFileDetailed(arg, true);
+					const applied = new Map(('legacy' in response ? [] : (response.items ?? [])).map(item => [item.networkID, item.applied]));
+					for (const n of response.value) {
+						if ('legacy' in response) console.log(`✓ Network imported: ${n.name} (${n.networkID}) (the server did not report whether it was applied)`);
+						else if (applied.get(n.networkID) === false) console.log(`! Network imported: ${n.name} (${n.networkID}), but the running node has not applied it yet`);
+						else console.log(`✓ Network imported: ${n.name} (${n.networkID})`);
+					}
 					break;
 				}
 
