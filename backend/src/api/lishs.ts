@@ -1,110 +1,1003 @@
-import { type Database } from 'bun:sqlite';
-import { type IStoredLISH, type LISHid } from '@shared';
-import { getInternalID } from './lishs-schema.ts';
-
-// Schema/DDL + migrations (and the shared getInternalID resolver) live in
-// lishs-schema.ts; re-exported via the barrel below.
-export * from './lishs-schema.ts';
-
-// Chunk operations live in lishs-chunks.ts; re-exported via this barrel.
-export * from './lishs-chunks.ts';
-
-// Verification operations live in lishs-verification.ts; re-exported via this barrel.
-export * from './lishs-verification.ts';
-
-// Read queries and row mappers live in lishs-queries.ts; re-exported via this barrel.
-export * from './lishs-queries.ts';
-
-// -- Public API --
-
-export function lishExists(db: Database, lishID: LISHid): boolean {
-	const row = db.query<{ c: number }, [string]>('SELECT COUNT(*) as c FROM lishs WHERE lish_id = ?').get(lishID);
-	return (row?.c ?? 0) > 0;
+import { type DataServer } from '../lish/data-server.ts';
+import { type ILISH, type IStoredLISH, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, sanitizeFilename, validateLISHStructure, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
+import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, runVerification } from '../lish/lish.ts';
+import { DEFAULT_CHUNK_SIZE } from '@shared';
+import { Utils } from '../utils.ts';
+import { type Settings, DEFAULT_MAX_CHUNK_SIZE } from '../settings.ts';
+import { setBusy, clearBusy } from './busy.ts';
+import { getEnabledUploads, removeUploadState, enableUpload } from '../protocol/lish-protocol.ts';
+import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, markDownloadEnabled, stopRecoveryForLISH } from './transfer.ts';
+import { mkdir, readdir, stat, access, unlink, rmdir, rename, rm } from 'fs/promises';
+import { createReadStream, createWriteStream } from 'fs';
+import { join, dirname, resolve } from 'path';
+const assert = Utils.assertParams;
+type EmitFn = (client: any, event: string, data: any) => void;
+type BroadcastFn = (event: string, data: any) => void;
+interface CreateLISHParams {
+	name?: string;
+	description?: string;
+	dataPath: string;
+	lishFile?: string;
+	addToSharing?: boolean;
+	addToDownloading?: boolean;
+	chunkSize?: number;
+	algorithm?: string;
+	threads?: number;
+	minifyJSON?: boolean;
+	compress?: boolean;
+	compressionAlgorithm?: CompressionAlgorithm;
+}
+interface ImportFromFileParams {
+	filePath: string;
+	downloadPath: string;
+	overwrite?: boolean;
+	enableSharing?: boolean;
+	enableDownloading?: boolean;
+}
+interface ImportFromJSONParams {
+	json: string;
+	downloadPath: string;
+	overwrite?: boolean;
+	enableSharing?: boolean;
+	enableDownloading?: boolean;
+}
+interface ImportFromURLParams {
+	url: string;
+	downloadPath: string;
+	overwrite?: boolean;
+	enableSharing?: boolean;
+	enableDownloading?: boolean;
+}
+interface ExportToFileParams {
+	lishID: string;
+	filePath: string;
+	minifyJSON?: boolean;
+	compress?: boolean;
+	compressionAlgorithm?: CompressionAlgorithm;
+}
+interface ExportAllToFileParams {
+	filePath: string;
+	minifyJSON?: boolean;
+	compress?: boolean;
+	compressionAlgorithm?: CompressionAlgorithm;
+}
+interface MoveParams {
+	lishID: string;
+	newDirectory: string;
+	moveData: boolean;
+	createSubdirectory?: boolean;
+}
+interface LISHsHandlers {
+	list: (p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }) => ILISHListResult;
+	get: (p: { lishID: string }) => ILISHDetail | null;
+	exportToFile: (p: ExportToFileParams) => Promise<SuccessResponse>;
+	exportAllToFile: (p: ExportAllToFileParams) => Promise<SuccessResponse>;
+	backup: () => IStoredLISH[];
+	create: (p: CreateLISHParams, client: any) => Promise<CreateLISHResponse>;
+	delete: (p: { lishID: string; deleteLISH: boolean; deleteData: boolean }) => Promise<boolean>;
+	importFromFile: (p: ImportFromFileParams) => Promise<ImportLISHResponse>;
+	importFromJSON: (p: ImportFromJSONParams) => Promise<ImportLISHResponse>;
+	importFromURL: (p: ImportFromURLParams) => Promise<ImportLISHResponse>;
+	parseFromFile: (p: { filePath: string }) => Promise<ILISH[]>;
+	parseFromJSON: (p: { json: string }) => ILISH[];
+	parseFromURL: (p: { url: string }) => Promise<ILISH[]>;
+	verify: (p: { lishID: string }) => Promise<SuccessResponse>;
+	verifyAll: () => Promise<SuccessResponse>;
+	stopVerify: (p: { lishID: string }) => Promise<SuccessResponse>;
+	stopVerifyAll: () => Promise<SuccessResponse>;
+	stopCreate: (p?: unknown, client?: unknown) => Promise<SuccessResponse>;
+	/** As {@link LISHsHandlers.stopCreate}, but for every creation at once — maintenance only. */
+	stopAllCreates: () => Promise<SuccessResponse>;
+	move: (p: MoveParams) => Promise<SuccessResponse>;
+	startVerification: (lishID: string) => void;
+	finalizeDownload: (lishID: string) => Promise<SuccessResponse>; // Move from temp to final directory after download completes
+	/** Continue finalization for a transfer lifecycle admitted before mutation shutdown. */
+	finalizeDownloadAdmitted: (lishID: string) => Promise<SuccessResponse>;
+	importManifest: (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>; // Shared import entrypoint
+	/** As {@link LISHsHandlers.importManifest}, for a caller that already holds mutation admission. */
+	importManifestAdmitted: (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
+	pauseMutations: () => Promise<void>;
+	resumeMutations: () => void;
+	runMutation: <T>(operation: () => Promise<T>) => Promise<T>;
 }
 
-export function addLISH(db: Database, lish: IStoredLISH): void {
-	const tx = db.transaction(() => {
-		// Upsert main record — preserves upload_enabled/download_enabled on conflict
-		db.run(
-			`INSERT INTO lishs (lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-			 ON CONFLICT(lish_id) DO UPDATE SET
-			   name = excluded.name,
-			   description = excluded.description,
-			   created = excluded.created,
-			   chunk_size = excluded.chunk_size,
-			   checksum_algo = excluded.checksum_algo,
-			   directory = excluded.directory,
-			   final_directory = excluded.final_directory`,
-			[lish.id, lish.name ?? null, lish.description ?? null, lish.created ?? null, lish.chunkSize, lish.checksumAlgo, lish.directory ?? null, lish.finalDirectory ?? null]
-		);
-		const internalID = getInternalID(db, lish.id as LISHid)!;
+/** Synchronous admission gate plus drain barrier for LISH state mutations. */
+export class LISHMutationGate {
+	private closed = false;
+	private active = 0;
+	private readonly drainWaiters = new Set<() => void>();
 
-		// Replace child records only when replacement data is provided (prevents wiping download progress)
-		if (lish.files) {
-			db.run('DELETE FROM lishs_files WHERE id_lishs = ?', [internalID]);
-			const haveChunks = new Set(lish.chunks ?? []);
-			for (const file of lish.files) {
-				const fileResult = db.run(
-					`INSERT INTO lishs_files (id_lishs, path, size, permissions, modified, created)
-					 VALUES (?, ?, ?, ?, ?, ?)`,
-					[internalID, file.path, file.size, file.permissions ?? null, file.modified ?? null, file.created ?? null]
-				);
-				const fileID = Number(fileResult.lastInsertRowid);
-				for (const checksum of file.checksums) db.run('INSERT INTO lishs_chunks (id_lishs_files, checksum, have) VALUES (?, ?, ?)', [fileID, checksum, haveChunks.has(checksum) ? 1 : 0]);
-			}
-		}
+	tryEnter(): (() => void) | null {
+		if (this.closed) return null;
+		this.active++;
+		let left = false;
+		return () => {
+			if (left) return;
+			left = true;
+			this.active--;
+			if (this.active !== 0) return;
+			for (const resolve of this.drainWaiters) resolve();
+			this.drainWaiters.clear();
+		};
+	}
 
-		if (lish.directories) {
-			db.run('DELETE FROM lishs_directories WHERE id_lishs = ?', [internalID]);
-			for (const dir of lish.directories) {
-				db.run(
-					`INSERT INTO lishs_directories (id_lishs, path, permissions, modified, created)
-					 VALUES (?, ?, ?, ?, ?)`,
-					[internalID, dir.path, dir.permissions ?? null, dir.modified ?? null, dir.created ?? null]
-				);
-			}
-		}
+	async closeAndDrain(): Promise<void> {
+		this.closed = true;
+		if (this.active === 0) return;
+		await new Promise<void>(resolve => this.drainWaiters.add(resolve));
+	}
 
-		if (lish.links) {
-			db.run('DELETE FROM lishs_links WHERE id_lishs = ?', [internalID]);
-			for (const link of lish.links) {
-				db.run(
-					`INSERT INTO lishs_links (id_lishs, path, target, hardlink, modified, created)
-					 VALUES (?, ?, ?, ?, ?, ?)`,
-					[internalID, link.path, link.target, link.hardlink ? 1 : 0, link.modified ?? null, link.created ?? null]
-				);
-			}
-		}
-	});
-	tx();
+	open(): void {
+		if (this.active !== 0) throw new Error('Cannot open LISH mutation admission before active operations drain');
+		this.closed = false;
+	}
+
+	get isClosed(): boolean {
+		return this.closed;
+	}
 }
 
 /**
- * Replace a LISH record, children included, in one transaction: if writing the new one fails,
- * the old one is still there, whole.
+ * Delete only the files and empty directories that belong to a LISH structure.
+ * Files not part of the LISH are left untouched.
+ * Directories are removed only if they are empty after file deletion (deepest first).
+ *
+ * Exception: when the LISH is still in its temp download directory (finalDirectory is set),
+ * the whole baseDir is recursively wiped — the temp dir is uniquely allocated per LISH and
+ * may contain partially-allocated files, intermediate parent directories not listed in the
+ * manifest, or other download artifacts. Partial downloads must be fully cleaned up.
  */
-export function replaceLISH(db: Database, lish: IStoredLISH): void {
-	db.transaction(() => {
-		deleteLISH(db, lish.id as LISHid);
-		addLISH(db, lish);
-	})();
+async function deleteLISHData(lish: IStoredLISH): Promise<void> {
+	const baseDir = lish.directory!;
+	// Download in progress — temp dir is unique per LISH, wipe it entirely.
+	if (lish.finalDirectory) {
+		try {
+			await rm(baseDir, { recursive: true, force: true });
+			console.log(`✓ Temp directory removed: ${baseDir}`);
+		} catch (err: any) {
+			console.error(`Failed to remove temp directory: ${baseDir}`, err);
+		}
+		return;
+	}
+	// 1. Delete all files listed in the LISH
+	let deletedFiles = 0;
+	for (const file of lish.files ?? []) {
+		const filePath = join(baseDir, file.path);
+		try {
+			await unlink(filePath);
+			deletedFiles++;
+		} catch (err: any) {
+			if (err.code !== 'ENOENT') console.error(`Failed to delete file: ${filePath}`, err);
+		}
+	}
+	// 2. Delete LISH directories if empty (deepest first)
+	const dirs = (lish.directories ?? []).map(d => d.path).sort((a, b) => b.split('/').length - a.split('/').length || b.localeCompare(a));
+	let deletedDirs = 0;
+	for (const dir of dirs) {
+		const dirPath = join(baseDir, dir);
+		try {
+			await rmdir(dirPath); // Fails if not empty — that's what we want
+			deletedDirs++;
+		} catch (err: any) {
+			if (err.code !== 'ENOENT' && err.code !== 'ENOTEMPTY') console.error(`Failed to delete directory: ${dirPath}`, err);
+		}
+	}
+	console.log(`✓ LISH data deleted: ${deletedFiles} files, ${deletedDirs} directories removed`);
+	// 3. Delete the base directory itself if empty
+	try {
+		await rmdir(baseDir);
+		console.log(`✓ Base directory removed: ${baseDir}`);
+	} catch (err: any) {
+		if (err.code !== 'ENOENT' && err.code !== 'ENOTEMPTY') console.error(`Failed to delete base directory: ${baseDir}`, err);
+	}
 }
 
-export function deleteLISH(db: Database, lishID: LISHid): boolean {
-	const result = db.run('DELETE FROM lishs WHERE lish_id = ?', [lishID]);
-	return result.changes > 0;
-}
+export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcast: BroadcastFn, settings: Settings): LISHsHandlers {
+	/**
+	 * Every creation admitted and not yet finished.
+	 *
+	 * A single slot held the last one only: two creations admitted together left the earlier
+	 * one running after a stop, and whoever was waiting for the mutation gate to drain — a
+	 * factory reset — waited for its whole hashing pass. This set is what maintenance stops.
+	 */
+	const activeCreations = new Set<AbortController>();
 
-export function updateLISHDirectory(db: Database, lishID: LISHid, directory: string): boolean {
-	const result = db.run('UPDATE lishs SET directory = ? WHERE lish_id = ?', [directory, lishID]);
-	return result.changes > 0;
-}
+	/**
+	 * The one creation each client's cancel button refers to — its newest.
+	 *
+	 * The client is part of the bookkeeping because the cancel button belongs to the screen
+	 * that pressed it: picking "the newest creation" across the whole set cancelled whatever
+	 * another window had started last. Searching this client's remaining creations is no good
+	 * either — the progress view sends a cancel on the button and another when it unmounts, so
+	 * once the cancelled one is gone the second call would land on an older creation of the
+	 * same client that nobody asked to stop. An entry is therefore dropped when its creation
+	 * ends, and never replaced by an older one.
+	 */
+	const currentCreation = new Map<unknown, AbortController>();
+	const mutationAdmission = new LISHMutationGate();
 
-export function updateLISHFinalDirectory(db: Database, lishID: LISHid, finalDirectory: string | null): boolean {
-	const result = db.run('UPDATE lishs SET final_directory = ? WHERE lish_id = ?', [finalDirectory, lishID]);
-	return result.changes > 0;
-}
+	async function runMutation<T>(operation: () => Promise<T>): Promise<T> {
+		const leave = mutationAdmission.tryEnter();
+		if (!leave) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'LISH changes are paused during factory reset');
+		try {
+			return await operation();
+		} finally {
+			leave();
+		}
+	}
 
-// Enabled-flag, transfer-stat, and error-state persistence live in lishs-flags.ts; re-exported via this barrel.
-export * from './lishs-flags.ts';
+	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): ILISHListResult {
+		return {
+			items: dataServer.listSummaries(p?.sortBy, p?.sortOrder),
+			verifying: currentVerification?.lishID ?? null,
+			pendingVerification: [...verificationQueue],
+			moving: [...movingLISHs],
+			uploadEnabled: [...getEnabledUploads()],
+			downloadEnabled: [...getDownloadEnabledLishs()],
+		};
+	}
+
+	function get(p: { lishID: string }): ILISHDetail | null {
+		assert(p, ['lishID']);
+		return dataServer.getDetail(p.lishID);
+	}
+
+	async function exportToFile(p: ExportToFileParams): Promise<SuccessResponse> {
+		assert(p, ['lishID', 'filePath']);
+		const lish = dataServer.get(p.lishID);
+		if (!lish) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, p.lishID);
+		// `finalDirectory` goes out with the other node-local state: it is an absolute
+		// path on this machine (it carries the OS user name) and means nothing anywhere else.
+		const { directory, finalDirectory, chunks, ...exportData } = lish;
+		await Utils.writeJSONToFile(exportData, p.filePath, p.minifyJSON, p.compress, p.compressionAlgorithm);
+		console.log(`✓ LISH exported to: ${p.filePath}`);
+		return { success: true };
+	}
+
+	async function exportAllToFile(p: ExportAllToFileParams): Promise<SuccessResponse> {
+		assert(p, ['filePath']);
+		const lishs = dataServer.list();
+		if (lishs.length === 0) throw new CodedError(ErrorCodes.NO_LISHS);
+		const exportData: ILISH[] = lishs.map(lish => {
+			const { directory, finalDirectory, chunks, ...data } = lish;
+			return data;
+		});
+		await Utils.writeJSONToFile(exportData, p.filePath, p.minifyJSON, p.compress, p.compressionAlgorithm);
+		console.log(`✓ All LISHs exported to: ${p.filePath}`);
+		return { success: true };
+	}
+
+	function backup(): IStoredLISH[] {
+		return dataServer.list();
+	}
+
+	async function create(p: CreateLISHParams, client: any): Promise<CreateLISHResponse> {
+		return runMutation(() => createAdmitted(p, client));
+	}
+
+	async function createAdmitted(p: CreateLISHParams, client: any): Promise<CreateLISHResponse> {
+		// Registered before the first await, not next to the hashing call that consumes it.
+		// The path checks below await, and a stop arriving in that window found nothing to
+		// cancel — so the operation kept its mutation permit and whoever was waiting for the
+		// gate to drain (a factory reset) waited for the whole pass anyway.
+		const ac = new AbortController();
+		const owner = client ?? null;
+		activeCreations.add(ac);
+		currentCreation.set(owner, ac);
+		try {
+			return await createWithController(p, client, ac);
+		} finally {
+			activeCreations.delete(ac);
+			if (currentCreation.get(owner) === ac) currentCreation.delete(owner);
+		}
+	}
+
+	async function createWithController(p: CreateLISHParams, client: any, ac: AbortController): Promise<CreateLISHResponse> {
+		assert(p, ['dataPath']);
+		const addToSharing = p.addToSharing ?? false;
+		const addToDownloading = p.addToDownloading ?? false;
+		const algorithm = p.algorithm ?? DEFAULT_ALGO;
+		const chunkSize = p.chunkSize ?? DEFAULT_CHUNK_SIZE;
+		// Reject overly large chunkSize before the (potentially long) hashing pass.
+		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
+		// Match validateLISHStructure's contract (integer chunkSize) so a LISH this
+		// version creates is always one it can also import — a fractional size would
+		// pass creation/export but be rejected on import.
+		if (typeof chunkSize !== 'number' || !Number.isInteger(chunkSize) || chunkSize <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE, String(chunkSize));
+		if (chunkSize > maxChunkSize) throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, formatSizeOverLimit(chunkSize, maxChunkSize));
+		const threads = p.threads ?? 0; // 0 = all CPU threads
+		const minifyJSON = p.minifyJSON ?? false;
+		const compress = p.compress ?? false;
+		const compressionAlgorithm = p.compressionAlgorithm ?? 'gzip';
+		// TODO: check that dataPath is not already in datasets.
+		const dataPath = Utils.expandHome(p.dataPath);
+		// Check that the path exists and is not an empty directory
+		const dataPathStat = await stat(dataPath);
+		// A stop arriving during that stat used to be noticed only further down, after this
+		// function had read the directory anyway — a pointless pass over a large or slow one
+		// that the factory reset, waiting for the mutation gate to drain, waited for.
+		if (ac.signal.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
+		if (dataPathStat.isDirectory()) {
+			const entries = await readdir(dataPath);
+			if (entries.length === 0) throw new CodedError(ErrorCodes.DIRECTORY_EMPTY);
+		}
+		console.log(`Creating LISH from: ${dataPath}, lishFile=${p.lishFile}, addToSharing=${addToSharing}, name=${p.name}, description=${p.description}`);
+		// 1. Create the LISH structure
+		const lish: IStoredLISH = await createLISH(dataPath, p.name, chunkSize, algorithm as any, threads, p.description, info => emit(client, 'lishs.create:progress', info), undefined, ac.signal);
+		// 2. Export to .lish(.gz) file if requested
+		let resultLISHFile: string | undefined;
+		if (p.lishFile) {
+			let lishFilePath = Utils.expandHome(p.lishFile);
+			// If the path is a directory, use [lish-id].lish(.gz) as filename
+			try {
+				const fileStat = await stat(lishFilePath);
+				if (fileStat.isDirectory()) {
+					const ext = compress ? '.lish' + compressionExtension(compressionAlgorithm) : '.lish';
+					let candidate = join(lishFilePath, lish.id + ext);
+					// Handle unlikely collision: append numeric suffix
+					let suffix = 1;
+					while (true) {
+						try {
+							await access(candidate);
+							candidate = join(lishFilePath, lish.id + '-' + suffix + ext);
+							suffix++;
+						} catch {
+							break; // Path doesn't exist — use it
+						}
+					}
+					lishFilePath = candidate;
+				}
+			} catch {
+				// Path doesn't exist yet — treat as a file path
+			}
+			await exportLISHToFile(lish, lishFilePath, minifyJSON, compress, compressionAlgorithm);
+			resultLISHFile = lishFilePath;
+		}
+		// 3. Save to data-server if requested (required for both sharing and downloading)
+		if (addToSharing || addToDownloading) {
+			lish.directory = dataPathStat.isFile() ? dirname(dataPath) : dataPath;
+			await addLISH(lish, { enableSharing: addToSharing, enableDownloading: addToDownloading });
+		}
+		return { lishID: lish.id, lishFile: resultLISHFile };
+	}
+
+	async function del(p: { lishID: string; deleteLISH: boolean; deleteData: boolean }): Promise<boolean> {
+		return runMutation(() => deleteAdmitted(p));
+	}
+
+	async function deleteAdmitted(p: { lishID: string; deleteLISH: boolean; deleteData: boolean }): Promise<boolean> {
+		assert(p, ['lishID']);
+		const lish = dataServer.get(p.lishID);
+		if (!lish) return false;
+		if (p.deleteLISH) {
+			// Full deletion — stop transfers, stop verification, stop recovery, clean up, delete DB row
+			stopRecoveryForLISH(p.lishID);
+			removeUploadState(p.lishID);
+			await removeDownloadState(p.lishID);
+			// Stop any running/queued verification for this LISH
+			if (currentVerification?.lishID === p.lishID) currentVerification.ac.abort();
+			const qIdx = verificationQueue.indexOf(p.lishID);
+			if (qIdx >= 0) verificationQueue.splice(qIdx, 1);
+			clearBusy(p.lishID);
+			if (p.deleteData && lish.directory) await deleteLISHData(lish);
+			const deleted = dataServer.delete(p.lishID);
+			if (deleted) {
+				console.log(`✓ LISH deleted: ${p.lishID}`);
+				broadcast('lishs:remove', { lishID: p.lishID });
+			}
+			return deleted;
+		}
+		// Delete only data — use busy to temporarily block, verify, then restore original state
+		if (p.deleteData && lish.directory) {
+			setBusy(p.lishID, 'deleting');
+			await destroyActiveDownloader(p.lishID);
+			await deleteLISHData(lish);
+			dataServer.resetVerification(p.lishID);
+			// Transition directly from 'deleting' to 'verifying' — no busy gap
+			setBusy(p.lishID, 'verifying');
+			enqueueVerification(p.lishID);
+		}
+		return true;
+	}
+
+	/**
+	 * Single entry point for adding any LISH (locally created, imported from .lish/JSON/URL,
+	 * or received as a manifest from a peer) into the data-server. Validates structure, persists,
+	 * broadcasts, applies sharing/downloading flags, and starts verification.
+	 * Caller must have already resolved `lish.directory` (and optionally `lish.finalDirectory`).
+	 */
+	async function addLISH(lish: IStoredLISH, opts: { enableSharing?: boolean | undefined; enableDownloading?: boolean | undefined; replace?: boolean }): Promise<void> {
+		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
+		validateLISHStructure(lish, maxChunkSize);
+		// An overwrite swaps the old record for the new one in one transaction.
+		if (opts.replace) dataServer.replace(lish);
+		else dataServer.add(lish);
+		console.log(`✓ LISH added: ${lish.id}${lish.finalDirectory ? ` (temp: ${lish.directory} → final: ${lish.finalDirectory})` : ''}`);
+		broadcast('lishs:add', dataServer.getDetail(lish.id));
+		// Set enabled flags BEFORE verification — verify sets busy which blocks triggerEnableDownload.
+		// After verify completes, restartDownloadIfEnabled picks up the enabled flag automatically.
+		if (opts.enableSharing) enableUpload(lish.id);
+		if (opts.enableDownloading) markDownloadEnabled(lish.id);
+		enqueueVerification(lish.id);
+	}
+
+	async function importCommon(lish: ILISH, downloadPath: string, overwrite: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
+		// Validate structure early to fail fast before any disk operations.
+		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
+		validateLISHStructure(lish, maxChunkSize);
+		const existing = dataServer.get(lish.id);
+		if (existing && !overwrite) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
+		const dirName = sanitizeFilename(lish.name || lish.id) || lish.id;
+		const finalBaseDir = join(Utils.expandHome(downloadPath), dirName);
+		let directory: string;
+		let finalDirectory: string | undefined;
+		if (enableDownloading) {
+			// Download mode → allocate + write chunks into temp, move to finalDirectory after completion.
+			const tempPath: string = settings.get('storage.tempPath') ?? `~/${productName}/temp/`;
+			const tempBaseDir = join(Utils.expandHome(tempPath), dirName);
+			directory = await Utils.findUniqueDirectory(tempBaseDir);
+			finalDirectory = finalBaseDir;
+		} else directory = finalBaseDir; // Share-only / metadata-only import → files already live at the target location.
+		// Only directories this call really created are removed again should the import fail
+		// before its record is stored; one that appeared meanwhile, or already stood, is left.
+		const created: string[] = [];
+		try {
+			await makeOwnDirectories(directory, created);
+			return await storeImported(lish, directory, finalDirectory, enableSharing, enableDownloading, !!existing);
+		} catch (error) {
+			if (!dataServer.get(lish.id)) await removeOwnEmptyDirectories(created);
+			throw error;
+		}
+	}
+
+	/**
+	 * Create `dir` and its missing parents one level at a time, without `recursive`, recording in
+	 * `created` each level this call made. A level that exists already (`EEXIST`) is not ours.
+	 */
+	async function makeOwnDirectories(dir: string, created: string[]): Promise<void> {
+		const missing: string[] = [];
+		for (let current = resolve(dir); ;) {
+			try {
+				await access(current);
+				break;
+			} catch (error: any) {
+				if (error?.code !== 'ENOENT') throw error;
+				missing.unshift(current);
+			}
+			const parent = dirname(current);
+			if (parent === current) break;
+			current = parent;
+		}
+		for (const level of missing) {
+			try {
+				await mkdir(level);
+				created.push(level);
+			} catch (error: any) {
+				if (error?.code !== 'EEXIST') throw error;
+			}
+		}
+	}
+
+	/**
+	 * Remove the directories an import created, deepest first, each only while empty.
+	 * Non-recursive: a directory something else has put content in, or a link, stops the walk.
+	 */
+	async function removeOwnEmptyDirectories(created: readonly string[]): Promise<void> {
+		for (const dir of [...created].reverse()) {
+			try {
+				await rmdir(dir);
+			} catch (error: any) {
+				console.warn(`[Import] Kept ${dir} after a failed import: ${error?.code ?? error?.message ?? error}`);
+				return;
+			}
+		}
+	}
+
+	async function storeImported(lish: ILISH, directory: string, finalDirectory: string | undefined, enableSharing: boolean | undefined, enableDownloading: boolean | undefined, replacing: boolean): Promise<ImportLISHResponse> {
+		// Drop the node-local fields that rode in with the imported data before merging: we own
+		// them, and `validateImportedLISH` is a cast, so a hostile .lish / JSON / URL / peer
+		// manifest can carry them. The cast spells out the hazard: `ILISH` has neither field,
+		// yet both can be there at runtime because the import validator only checks the fields
+		// it knows, and `exportToFile` already strips both on the way out.
+		//  - finalDirectory: share-only imports take none of their own, so the attacker's value
+		//    would survive — and deleteLISHData() treats a set finalDirectory as "still in temp"
+		//    and recursively wipes the LISH directory, which for a share-only import is the
+		//    user's own folder with files the LISH never listed.
+		//  - chunks: addLISH() persists `have = TRUE` for every listed checksum, so a manifest
+		//    listing its own checksums makes us claim data we never received — the downloader
+		//    finds nothing missing, isComplete() reports done, and getHaveChunks() advertises
+		//    'all' to peers that then request bytes we cannot serve.
+		const { finalDirectory: _importedFinalDirectory, chunks: _importedChunks, ...manifest } = lish as ILISH & { finalDirectory?: string; chunks?: string[] };
+		const storedLISH: IStoredLISH = {
+			...manifest,
+			directory,
+			...(finalDirectory !== undefined ? { finalDirectory } : {}),
+		};
+		// The record being overwritten is replaced only now, once its successor is ready, and in
+		// one transaction: a failure before or during the write leaves the old record whole.
+		await addLISH(storedLISH, { enableSharing, enableDownloading, replace: replacing });
+		return { lishID: lish.id, directory };
+	}
+
+	async function importFromFile(p: ImportFromFileParams): Promise<ImportLISHResponse> {
+		return runMutation(() => importFromFileAdmitted(p));
+	}
+
+	async function importFromFileAdmitted(p: ImportFromFileParams): Promise<ImportLISHResponse> {
+		assert(p, ['filePath', 'downloadPath']);
+		const lishs = await importLISHFromFile(Utils.expandHome(p.filePath));
+		let lastResponse!: ImportLISHResponse;
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
+		return lastResponse;
+	}
+
+	async function importFromJSON(p: ImportFromJSONParams): Promise<ImportLISHResponse> {
+		return runMutation(() => importFromJSONAdmitted(p));
+	}
+
+	async function importFromJSONAdmitted(p: ImportFromJSONParams): Promise<ImportLISHResponse> {
+		assert(p, ['json', 'downloadPath']);
+		const lishs = parseLISHFromJSON(p.json);
+		let lastResponse!: ImportLISHResponse;
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
+		return lastResponse;
+	}
+
+	async function importFromURL(p: ImportFromURLParams): Promise<ImportLISHResponse> {
+		return runMutation(() => importFromURLAdmitted(p));
+	}
+
+	async function importFromURLAdmitted(p: ImportFromURLParams): Promise<ImportLISHResponse> {
+		assert(p, ['url', 'downloadPath']);
+		const content = await Utils.fetchURL(p.url);
+		const lishs = parseLISHFromJSON(content);
+		let lastResponse!: ImportLISHResponse;
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
+		return lastResponse;
+	}
+
+	async function parseFromFile(p: { filePath: string }): Promise<ILISH[]> {
+		assert(p, ['filePath']);
+		return importLISHFromFile(Utils.expandHome(p.filePath));
+	}
+
+	function parseFromJSON(p: { json: string }): ILISH[] {
+		assert(p, ['json']);
+		return parseLISHFromJSON(p.json);
+	}
+
+	async function parseFromURL(p: { url: string }): Promise<ILISH[]> {
+		assert(p, ['url']);
+		const content = await Utils.fetchURL(p.url);
+		return parseLISHFromJSON(content);
+	}
+
+	// Verification queue — only one verification runs at a time during normal use.
+	// Superseded runs remain tracked until their Promise settles so reset can drain them.
+	interface VerificationRun {
+		lishID: string;
+		ac: AbortController;
+		promise: Promise<void>;
+	}
+	let currentVerification: VerificationRun | null = null;
+	const activeVerificationRuns = new Set<VerificationRun>();
+	const verificationQueue: string[] = [];
+	let stoppingAllVerifications = false;
+
+	// Track LISHs currently being moved
+	const movingLISHs = new Set<string>();
+
+	function enqueueVerification(lishID: string): void {
+		if (currentVerification?.lishID === lishID) return;
+		if (verificationQueue.includes(lishID)) return;
+		setBusy(lishID, 'verifying');
+		verificationQueue.push(lishID);
+		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, queued: true });
+		processVerificationQueue();
+	}
+
+	function processVerificationQueue(): void {
+		if (stoppingAllVerifications || currentVerification || verificationQueue.length === 0) return;
+		const lishID = verificationQueue.shift()!;
+		const ac = new AbortController();
+		const run: VerificationRun = { lishID, ac, promise: Promise.resolve() };
+		currentVerification = run;
+		setBusy(lishID, 'verifying');
+		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, started: true });
+		run.promise = runVerification(dataServer, lishID, progress => broadcast('lishs:verify', progress), ac.signal)
+			.catch(error => console.error(`[Verify] ${lishID.slice(0, 8)} failed:`, error))
+			.finally(() => {
+				activeVerificationRuns.delete(run);
+				const isOwner = currentVerification === run;
+				if (isOwner) {
+					clearBusy(lishID);
+					if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
+					currentVerification = null;
+				}
+				// Resume download if enabled — no-op if download not enabled or LISH deleted.
+				if (isOwner && !ac.signal.aborted && !mutationAdmission.isClosed) restartDownloadIfEnabled(lishID);
+				if (!mutationAdmission.isClosed) processVerificationQueue();
+			});
+		activeVerificationRuns.add(run);
+	}
+
+	function startVerification(lishID: string): void {
+		const leave = mutationAdmission.tryEnter();
+		if (!leave) return;
+		try {
+			enqueueVerification(lishID);
+		} finally {
+			leave();
+		}
+	}
+
+	async function verify(p: { lishID: string }): Promise<SuccessResponse> {
+		return runMutation(() => verifyAdmitted(p));
+	}
+
+	async function verifyAdmitted(p: { lishID: string }): Promise<SuccessResponse> {
+		assert(p, ['lishID']);
+		// Cancel if currently running for this LISH
+		if (currentVerification?.lishID === p.lishID) {
+			currentVerification.ac.abort();
+			currentVerification = null;
+		}
+		// Remove from queue if pending
+		const qIDx = verificationQueue.indexOf(p.lishID);
+		if (qIDx >= 0) verificationQueue.splice(qIDx, 1);
+		broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, started: true });
+		enqueueVerification(p.lishID);
+		return { success: true };
+	}
+
+	async function verifyAll(): Promise<SuccessResponse> {
+		return runMutation(verifyAllAdmitted);
+	}
+
+	async function verifyAllAdmitted(): Promise<SuccessResponse> {
+		const allLISHs = dataServer.listSummaries(undefined, 'desc');
+		for (const lish of allLISHs) {
+			// Skip if already verifying or already in queue
+			if (currentVerification?.lishID === lish.id) continue;
+			if (verificationQueue.includes(lish.id)) continue;
+			broadcast('lishs:verify', { lishID: lish.id, filePath: '', verifiedChunks: 0, started: true });
+			enqueueVerification(lish.id);
+		}
+		return { success: true };
+	}
+
+	async function stopVerify(p: { lishID: string }): Promise<SuccessResponse> {
+		return runMutation(() => stopVerifyAdmitted(p));
+	}
+
+	async function stopVerifyAdmitted(p: { lishID: string }): Promise<SuccessResponse> {
+		assert(p, ['lishID']);
+		clearBusy(p.lishID);
+		// Stop if currently running
+		if (currentVerification?.lishID === p.lishID) currentVerification.ac.abort();
+		// Remove from queue if pending
+		const qIDx = verificationQueue.indexOf(p.lishID);
+		if (qIDx >= 0) {
+			verificationQueue.splice(qIDx, 1);
+			broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, done: true });
+		}
+		return { success: true };
+	}
+
+	async function stopVerifyAll(): Promise<SuccessResponse> {
+		stoppingAllVerifications = true;
+		while (verificationQueue.length > 0) {
+			const lishID = verificationQueue.shift()!;
+			clearBusy(lishID);
+			broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
+		}
+		for (const run of activeVerificationRuns) {
+			clearBusy(run.lishID);
+			run.ac.abort();
+		}
+		while (activeVerificationRuns.size > 0) await Promise.allSettled([...activeVerificationRuns].map(run => run.promise));
+		currentVerification = null;
+		stoppingAllVerifications = false;
+		if (!mutationAdmission.isClosed) processVerificationQueue();
+		return { success: true };
+	}
+
+	async function stopCreate(_p?: unknown, client?: unknown): Promise<SuccessResponse> {
+		// The public cancel button: the creation this client is on, and nothing else. Another
+		// window's work is not this button's to stop, and a repeated cancel — the progress view
+		// sends one on the button and another when it unmounts — finds the entry already gone
+		// rather than falling back to an older creation of the same client. `null` and
+		// `undefined` are the same "no client": a call without one — the CLI, a local caller —
+		// matches the creations started the same way.
+		currentCreation.get(client ?? null)?.abort();
+		return { success: true };
+	}
+
+	async function stopAllCreates(): Promise<SuccessResponse> {
+		// The maintenance hook: a factory reset is about to wipe or restart everything, so it
+		// cancels every creation rather than waiting out their hashing passes.
+		for (const creation of activeCreations) creation.abort();
+		return { success: true };
+	}
+
+	async function move(p: MoveParams): Promise<SuccessResponse> {
+		return runMutation(() => moveAdmitted(p));
+	}
+
+	async function moveAdmitted(p: MoveParams): Promise<SuccessResponse> {
+		assert(p, ['lishID', 'newDirectory']);
+		const lish = dataServer.get(p.lishID);
+		if (!lish) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, p.lishID);
+		let newDir = Utils.expandHome(p.newDirectory);
+		if (p.createSubdirectory !== false) {
+			const subDirName = sanitizeFilename(lish.name || lish.id) || lish.id;
+			newDir = join(newDir, subDirName);
+		}
+		// Stop verification if running for this LISH
+		if (currentVerification?.lishID === p.lishID) {
+			currentVerification.ac.abort();
+			currentVerification = null;
+		}
+		const qIdx = verificationQueue.indexOf(p.lishID);
+		if (qIdx >= 0) {
+			verificationQueue.splice(qIdx, 1);
+			broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, done: true });
+		}
+		movingLISHs.add(p.lishID);
+		setBusy(p.lishID, 'moving');
+		broadcast('lishs:move:status', { lishID: p.lishID, moving: true });
+		try {
+			if (p.moveData && lish.directory) {
+				const oldDir = lish.directory;
+				const allFiles = lish.files ?? [];
+				const allLinks = lish.links ?? [];
+				const totalFiles = allFiles.length + allLinks.length;
+				const totalBytes = allFiles.reduce((s, f) => s + (f.size ?? 0), 0);
+				let completedFiles = 0;
+				let completedBytes = 0;
+				// Broadcast file list to all clients
+				broadcast('lishs:move:progress', {
+					lishID: p.lishID,
+					type: 'file-list',
+					totalFiles,
+					completedFiles: 0,
+					totalBytes,
+					completedBytes: 0,
+					files: allFiles.map(f => ({ path: f.path, size: f.size ?? 0 })),
+				});
+				// Create target directory
+				await mkdir(newDir, { recursive: true });
+				// Copy files with streaming progress
+				const PROGRESS_INTERVAL = 512 * 1024; // Report every 512KB
+				for (const file of allFiles) {
+					const srcPath = join(oldDir, file.path);
+					const dstPath = join(newDir, file.path);
+					await mkdir(dirname(dstPath), { recursive: true });
+					const fileSize = file.size ?? 0;
+					let fileBytes = 0;
+					let lastReported = 0;
+					await new Promise<void>((resolve, reject) => {
+						const rs = createReadStream(srcPath);
+						const ws = createWriteStream(dstPath);
+						rs.on('data', (chunk: string | Buffer) => {
+							fileBytes += chunk.length;
+							if (fileBytes - lastReported >= PROGRESS_INTERVAL) {
+								lastReported = fileBytes;
+								broadcast('lishs:move:progress', {
+									lishID: p.lishID,
+									type: 'chunk',
+									path: file.path,
+									totalFiles,
+									completedFiles,
+									totalBytes,
+									completedBytes: completedBytes + fileBytes,
+									fileBytes,
+									fileSize,
+								});
+							}
+						});
+						rs.on('error', reject);
+						ws.on('error', reject);
+						ws.on('finish', resolve);
+						rs.pipe(ws);
+					});
+					completedFiles++;
+					completedBytes += fileSize;
+					broadcast('lishs:move:progress', { lishID: p.lishID, type: 'file', path: file.path, totalFiles, completedFiles, totalBytes, completedBytes });
+				}
+				// Create directories listed in the LISH
+				for (const dir of lish.directories ?? []) {
+					await mkdir(join(newDir, dir.path), { recursive: true });
+				}
+				// Copy symlinks (small, no streaming needed)
+				for (const link of allLinks) {
+					const srcPath = join(oldDir, link.path);
+					const dstPath = join(newDir, link.path);
+					await mkdir(dirname(dstPath), { recursive: true });
+					await new Promise<void>((resolve, reject) => {
+						const rs = createReadStream(srcPath);
+						const ws = createWriteStream(dstPath);
+						rs.on('error', reject);
+						ws.on('error', reject);
+						ws.on('finish', resolve);
+						rs.pipe(ws);
+					});
+					completedFiles++;
+					broadcast('lishs:move:progress', { lishID: p.lishID, type: 'file', path: link.path, totalFiles, completedFiles, totalBytes, completedBytes });
+				}
+				// Delete old data
+				await deleteLISHData(lish);
+			}
+			// Update directory in DB
+			dataServer.updateDirectory(p.lishID, newDir);
+			console.log(`✓ LISH moved: ${p.lishID} → ${newDir}`);
+			broadcast('lishs:move', { lishID: p.lishID, directory: newDir });
+			return { success: true };
+		} finally {
+			movingLISHs.delete(p.lishID);
+			clearBusy(p.lishID);
+			broadcast('lishs:move:status', { lishID: p.lishID, moving: false });
+		}
+	}
+
+	async function finalizeDownload(lishID: string): Promise<SuccessResponse> {
+		return runMutation(() => finalizeDownloadAdmitted(lishID));
+	}
+
+	async function finalizeDownloadAdmitted(lishID: string): Promise<SuccessResponse> {
+		const lish = dataServer.get(lishID);
+		if (!lish) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, lishID);
+		const finalDir = lish.finalDirectory;
+		if (!finalDir || !lish.directory) return { success: true }; // Nothing to finalize
+		const tempDir = lish.directory;
+		// Conflict check — user asked for fail-on-existing, not auto-suffix
+		try {
+			await access(finalDir);
+			const detail = `final directory already exists: ${finalDir}`;
+			console.warn(`[finalizeDownload] ${lishID.slice(0, 8)}: ${detail}`);
+			broadcast('lishs:finalize:error', { lishID, error: ErrorCodes.LISH_ALREADY_EXISTS, errorDetail: detail });
+			return { success: false };
+		} catch {
+			// Does not exist → OK to move into it
+		}
+		movingLISHs.add(lishID);
+		setBusy(lishID, 'moving');
+		broadcast('lishs:move:status', { lishID, moving: true });
+		try {
+			// Ensure parent directory exists (for both rename and copy fallback)
+			await mkdir(dirname(finalDir), { recursive: true });
+			// Fast path — atomic rename (same filesystem)
+			try {
+				await rename(tempDir, finalDir);
+				dataServer.updateDirectory(lishID, finalDir);
+				dataServer.updateFinalDirectory(lishID, null);
+				console.log(`✓ LISH finalized (rename): ${lishID} → ${finalDir}`);
+				broadcast('lishs:move', { lishID, directory: finalDir });
+				broadcast('lishs:finalize', { lishID, directory: finalDir });
+				return { success: true };
+			} catch (err: any) {
+				if (err.code !== 'EXDEV') throw err;
+				// Cross-device — fall through to copy+verify+delete
+			}
+			// Slow path — copy then delete. During copy, directory still points to tempDir so
+			// uploaders can keep reading from it. Swap only after copy succeeds.
+			const allFiles = lish.files ?? [];
+			const allLinks = lish.links ?? [];
+			const totalFiles = allFiles.length + allLinks.length;
+			const totalBytes = allFiles.reduce((s, f) => s + (f.size ?? 0), 0);
+			let completedFiles = 0;
+			let completedBytes = 0;
+			broadcast('lishs:move:progress', {
+				lishID,
+				type: 'file-list',
+				totalFiles,
+				completedFiles: 0,
+				totalBytes,
+				completedBytes: 0,
+				files: allFiles.map(f => ({ path: f.path, size: f.size ?? 0 })),
+			});
+			await mkdir(finalDir, { recursive: true });
+			const PROGRESS_INTERVAL = 512 * 1024;
+			try {
+				for (const file of allFiles) {
+					const srcPath = join(tempDir, file.path);
+					const dstPath = join(finalDir, file.path);
+					await mkdir(dirname(dstPath), { recursive: true });
+					const fileSize = file.size ?? 0;
+					let fileBytes = 0;
+					let lastReported = 0;
+					await new Promise<void>((resolve, reject) => {
+						const rs = createReadStream(srcPath);
+						const ws = createWriteStream(dstPath);
+						rs.on('data', (chunk: string | Buffer) => {
+							fileBytes += chunk.length;
+							if (fileBytes - lastReported >= PROGRESS_INTERVAL) {
+								lastReported = fileBytes;
+								broadcast('lishs:move:progress', {
+									lishID,
+									type: 'chunk',
+									path: file.path,
+									totalFiles,
+									completedFiles,
+									totalBytes,
+									completedBytes: completedBytes + fileBytes,
+									fileBytes,
+									fileSize,
+								});
+							}
+						});
+						rs.on('error', reject);
+						ws.on('error', reject);
+						ws.on('finish', resolve);
+						rs.pipe(ws);
+					});
+					completedFiles++;
+					completedBytes += fileSize;
+					broadcast('lishs:move:progress', { lishID, type: 'file', path: file.path, totalFiles, completedFiles, totalBytes, completedBytes });
+				}
+				for (const dir of lish.directories ?? []) await mkdir(join(finalDir, dir.path), { recursive: true });
+				for (const link of allLinks) {
+					const srcPath = join(tempDir, link.path);
+					const dstPath = join(finalDir, link.path);
+					await mkdir(dirname(dstPath), { recursive: true });
+					await new Promise<void>((resolve, reject) => {
+						const rs = createReadStream(srcPath);
+						const ws = createWriteStream(dstPath);
+						rs.on('error', reject);
+						ws.on('error', reject);
+						ws.on('finish', resolve);
+						rs.pipe(ws);
+					});
+					completedFiles++;
+					broadcast('lishs:move:progress', { lishID, type: 'file', path: link.path, totalFiles, completedFiles, totalBytes, completedBytes });
+				}
+			} catch (err: any) {
+				// Partial copy failed — clean up the target so user can retry or handle manually
+				console.error(`[finalizeDownload] ${lishID.slice(0, 8)}: copy failed, cleaning partial target: ${finalDir}`, err);
+				try {
+					await deleteLISHData({ ...lish, directory: finalDir });
+				} catch {
+					/* best effort */
+				}
+				const detail = err?.message ?? String(err);
+				broadcast('lishs:finalize:error', { lishID, error: ErrorCodes.IO_NOT_FOUND, errorDetail: detail });
+				return { success: false };
+			}
+			// Copy complete — atomic swap: point directory at the new location before deleting source.
+			dataServer.updateDirectory(lishID, finalDir);
+			dataServer.updateFinalDirectory(lishID, null);
+			// Now remove source files (uploaders will read from finalDir on next request)
+			try {
+				await deleteLISHData({ ...lish, directory: tempDir });
+			} catch (err) {
+				console.warn(`[finalizeDownload] ${lishID.slice(0, 8)}: failed to clean temp ${tempDir}:`, err);
+			}
+			console.log(`✓ LISH finalized (copy): ${lishID} → ${finalDir}`);
+			broadcast('lishs:move', { lishID, directory: finalDir });
+			broadcast('lishs:finalize', { lishID, directory: finalDir });
+			return { success: true };
+		} finally {
+			movingLISHs.delete(lishID);
+			clearBusy(lishID);
+			broadcast('lishs:move:status', { lishID, moving: false });
+		}
+	}
+
+	async function importManifest(lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }): Promise<ImportLISHResponse> {
+		return runMutation(() => importManifestAdmitted(lish, downloadPath, opts));
+	}
+
+	async function importManifestAdmitted(lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }): Promise<ImportLISHResponse> {
+		return importCommon(lish, downloadPath, opts?.overwrite ?? false, opts?.enableSharing, opts?.enableDownloading);
+	}
+
+	async function pauseMutations(): Promise<void> {
+		await mutationAdmission.closeAndDrain();
+	}
+
+	function resumeMutations(): void {
+		mutationAdmission.open();
+	}
+
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, stopAllCreates, move, startVerification, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, resumeMutations, runMutation };
+}
