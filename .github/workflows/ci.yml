@@ -42,3 +42,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Clean backend image build
         run: docker build --no-cache -f docker/Dockerfile -t lish-backend-ci .
+      - name: Start the image and wait for its health check
+        run: |
+          docker run -d --name lish-backend-ci -e LISH_TOKEN=ci-smoke-token -e BACKEND_PORT=1158 lish-backend-ci
+          for attempt in $(seq 1 30); do
+            if docker exec lish-backend-ci /app/lish-backend --healthcheck; then exit 0; fi
+            sleep 2
+          done
+          docker logs lish-backend-ci
+          exit 1
+      - name: Remove the container
+        if: always()
+        run: docker rm -f lish-backend-ci || true

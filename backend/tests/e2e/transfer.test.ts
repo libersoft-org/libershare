@@ -73,7 +73,8 @@ beforeAll(async () => {
 	// the dial filter deliberately refuses 127.0.0.0/8 (a remote peer can never reach it).
 	const network = (bootstrapPeers: string[]) => ({ network: { networkID: NETWORK_ID, name: 'e2e', description: '', bootstrapPeers, created: new Date().toISOString(), enabled: true } });
 	await nodes[0]!.call('lishnets.add', network([]));
-	const isLan = (a: string): boolean => a.startsWith('/ip4/') && !a.startsWith('/ip4/127.') && !a.includes('/p2p-circuit');
+	// The node listens on an OS-chosen port; an announced address can still say /tcp/0.
+	const isLan = (a: string): boolean => a.startsWith('/ip4/') && !a.startsWith('/ip4/127.') && !a.includes('/p2p-circuit') && !/\/tcp\/0(\/|$)/.test(a);
 	const info = await waitFor(
 		'node0 addresses',
 		() => nodes[0]!.call('lishnets.getNodeInfo'),

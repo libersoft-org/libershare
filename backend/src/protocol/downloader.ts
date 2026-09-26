@@ -333,7 +333,9 @@ export class Downloader {
 	}
 
 	async destroy(): Promise<void> {
-		console.debug(`[DL] destroy ${this.lishID.slice(0, 8)}, state=${this.state}, peers=${this.peerManager.size()}`);
+		// destroy() also ends a downloader whose init never ran, which has no LISH ID yet.
+		const shortID = this.lishID?.slice(0, 8) ?? '(uninitialized)';
+		console.debug(`[DL] destroy ${shortID}, state=${this.state}, peers=${this.peerManager.size()}`);
 		this.disabled = true;
 		this.destroyed = true;
 		this.abortController.abort();
@@ -345,13 +347,15 @@ export class Downloader {
 		this.downloadReject = undefined;
 		await this.peerManager.closeAllAwait('destroy', true);
 		while (this.activeLifecyclePromises.size > 0) await Promise.allSettled([...this.activeLifecyclePromises]);
-		// Notify frontend to reset peers/speed immediately
-		const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
-		this.progressReporter.emit({ downloadedChunks: 0, totalChunks: total, peers: 0, bytesPerSecond: 0 });
+		// Notify frontend to reset peers/speed immediately — nothing to reset before init
+		if (this.lishID) {
+			const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
+			this.progressReporter.emit({ downloadedChunks: 0, totalChunks: total, peers: 0, bytesPerSecond: 0 });
+		}
 		this.pauseController.notifyStateChange();
 		this.progressReporter.clearCallback();
 		delete this.onManifestImported;
-		console.log(`[DL] Destroyed ${this.lishID.slice(0, 8)}`);
+		console.log(`[DL] Destroyed ${shortID}`);
 	}
 
 	/**
