@@ -831,6 +831,16 @@ export class Networks {
 	 * Leave a lishnet (unsubscribe from its topic).
 	 */
 	/** Peer IDs (the /p2p/<id> component) of a list of bootstrap multiaddr strings. */
+	/** Whether `value` parses as a libp2p peer ID. */
+	private static isPeerID(value: string): boolean {
+		try {
+			peerIdFromString(value);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
 	private static bootstrapPeerIDsOf(bootstrapPeers: string[]): string[] {
 		const ids: string[] = [];
 		for (const addr of bootstrapPeers) {
@@ -1452,7 +1462,9 @@ export class Networks {
 		const bootstrapIDs = (id: string): Set<string> => new Set([...Networks.bootstrapPeerIDsOf(this.get(id)?.bootstrapPeers ?? []), ...Networks.bootstrapPeerIDsOf(this.appliedBootstrap.get(id)?.addresses ?? [])]);
 		const owners = [...remaining].filter(id => !leaving.includes(id)).map(id => ({ id, peers: new Set([...members(id), ...bootstrapIDs(id)]) }));
 		for (const id of leaving) {
-			const candidates = new Set([...bootstrapIDs(id), ...members(id)]);
+			// Only real peer IDs: a bootstrap address typed with a bad /p2p/ part is stored as
+			// entered, and a row holding it would fail every later start.
+			const candidates = new Set([...bootstrapIDs(id), ...members(id)].filter(Networks.isPeerID));
 			if (candidates.size === 0) continue;
 			recordPeerCleanup(this.db, id, candidates, operationID);
 			for (const owner of owners)
@@ -1481,6 +1493,12 @@ export class Networks {
 		for (const row of rows) byPeer.set(row.peerID, [...(byPeer.get(row.peerID) ?? []), row]);
 		let removed = 0;
 		for (const [peerID, peerRows] of byPeer) {
+			// A row an older version wrote for an address that never named a peer: nothing to
+			// remove, and parsing it must not stop the node from starting.
+			if (!Networks.isPeerID(peerID)) {
+				confirmPeerCleanup(this.db, peerRows);
+				continue;
+			}
 			if (configured.has(peerID) || peerRows.some(row => enabledIDs.has(row.networkID))) continue;
 			await node.peerStore.delete(peerIdFromString(peerID));
 			confirmPeerCleanup(this.db, peerRows);

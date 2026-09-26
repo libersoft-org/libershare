@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { Mutex } from 'async-mutex';
-import { initLISHnetsTables, addLISHnet, getLISHnet, setLISHnetEnabled } from '../../../src/db/lishnets.ts';
+import { initLISHnetsTables, addLISHnet, getLISHnet, setLISHnetEnabled, updateLISHnet } from '../../../src/db/lishnets.ts';
 import { Networks } from '../../../src/lishnet/lishnets.ts';
-import { listPeerCleanup } from '../../../src/db/peer-cleanup.ts';
+import { listPeerCleanup, recordPeerCleanup } from '../../../src/db/peer-cleanup.ts';
 
 /**
  * Enable and disable of one lishnet must produce the state the LAST request asked
@@ -908,6 +908,24 @@ describe('persistent peer cleanup of left lishnets', () => {
 		await (restarted as any).replayPeerCleanup(node);
 		expect(deleted).toEqual([P2]);
 		expect(pending()).toEqual([]);
+	});
+
+	it('never queues a bootstrap address whose peer part is not a peer ID', async () => {
+		updateLISHnet(db, { ...getLISHnet(db, NET)!, bootstrapPeers: [BOOTSTRAP, '/ip4/192.0.2.9/tcp/4001/p2p/not-a-peer'] });
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await networks.setEnabled(NET, false);
+		expect(pending().some(entry => entry.endsWith('/not-a-peer'))).toBe(false);
+	});
+
+	it('starts past a queued row that names no peer, and drops it', async () => {
+		recordPeerCleanup(db, NET, ['not-a-peer'], 'old-version');
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await networks.setEnabled(NET, false);
+		const deleted: string[] = [];
+		const node = { peerStore: { delete: async (peerID: { toString(): string }) => void deleted.push(peerID.toString()) } };
+		await (networks as any).replayPeerCleanup(node);
+		expect(deleted).not.toContain('not-a-peer');
+		expect(pending().some(entry => entry.endsWith('/not-a-peer'))).toBe(false);
 	});
 
 	it('keeps the queue when a removal fails', async () => {
