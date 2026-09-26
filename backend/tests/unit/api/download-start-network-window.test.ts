@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { tmpdir } from 'os';
 import { initTransferHandlers, initDownloadState, getDownloadEnabledLishs, removeDownloadState } from '../../../src/api/transfer.ts';
 import { type Networks } from '../../../src/lishnet/lishnets.ts';
@@ -152,9 +152,23 @@ function makeCompleteDataServer(duringCheck: () => void): DataServer & { forget(
 describe('download start — the lishnet window', () => {
 	let persisted: Array<{ lishID: string; enabled: boolean }> = [];
 
+	// A download a test leaves running fails later in the background (its directory never
+	// exists) and clears the module-wide enabled flag the NEXT test reads. Cancel them all.
+	const started: Downloader[] = [];
+	const originalDownload = Downloader.prototype.download;
+
 	beforeEach(() => {
 		persisted = [];
 		initDownloadState(new Set<string>(), (lishID, enabled) => persisted.push({ lishID, enabled }));
+		Downloader.prototype.download = function (this: Downloader): Promise<void> {
+			started.push(this);
+			return originalDownload.call(this);
+		};
+	});
+
+	afterEach(async () => {
+		Downloader.prototype.download = originalDownload;
+		for (const downloader of started.splice(0)) await downloader.destroy();
 	});
 
 	it('does not resurrect a download the user turned off while its lishnet was left', async () => {
