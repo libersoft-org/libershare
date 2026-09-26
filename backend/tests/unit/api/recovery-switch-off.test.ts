@@ -7,6 +7,8 @@ import { initDownloadState, initTransferHandlers } from '../../../src/api/transf
 import { encode } from '../../../src/protocol/codec.ts';
 import { enableUpload, getEnabledUploads, handleLISHProtocol, resetUploadState } from '../../../src/protocol/lish-protocol.ts';
 import { type DataServer } from '../../../src/lish/data-server.ts';
+import { MockNetwork } from '../helpers/mock-network.ts';
+import { MockDataServer, makeMissingChunk } from '../protocol/downloader-test-helpers.ts';
 import { type Networks } from '../../../src/lishnet/lishnets.ts';
 import { type Settings } from '../../../src/settings.ts';
 
@@ -31,8 +33,19 @@ describe('error recovery and a switch-off during the attempt', () => {
 		setError: (): void => {},
 		resetVerification: (): void => {},
 	} as unknown as DataServer;
+	/** A LISH still missing its chunk: its download runs through a real downloader. */
+	const unfinishedServer = Object.assign(new MockDataServer(), {
+		get: (): any => ({ id: LISH, directory: dir, chunkSize: 4, checksumAlgo: 'sha256', files: [{ path: 'a.bin', size: 4, checksums: ['c0'] }] }),
+		getChunk: async (): Promise<string> => 'file_missing',
+		getTransferStats: () => ({ uploadedBytes: 0, downloadedBytes: 0 }),
+		clearError: (): void => {},
+		setError: (): void => {},
+		resetVerification: (): void => {},
+	});
+	unfinishedServer.missingChunks = [makeMissingChunk('c0' as never)];
+	unfinishedServer.allChunkCount = 1;
 	const networks = {
-		getRunningNetwork: (): any => ({}),
+		getRunningNetwork: (): any => new MockNetwork(),
 		getEnabled: (): any[] => [{ networkID: 'net-a' }],
 		isJoined: (): boolean => true,
 		set onNetworkLeft(_cb: unknown) {},
@@ -41,7 +54,7 @@ describe('error recovery and a switch-off during the attempt', () => {
 	const settings = { get: (): undefined => undefined } as unknown as Settings;
 
 	/** One getChunk request whose backing file has vanished — that starts recovery. */
-	async function missingFileRequest(): Promise<void> {
+	async function missingFileRequest(server: DataServer = dataServer): Promise<void> {
 		const frame = lpEncode.single(encode({ type: 'getChunk', lishID: LISH, chunkID: 'c0' })).subarray();
 		const stream = {
 			status: 'open',
@@ -52,7 +65,7 @@ describe('error recovery and a switch-off during the attempt', () => {
 				yield frame;
 			},
 		};
-		await handleLISHProtocol(stream as any, dataServer, 'peer-a');
+		await handleLISHProtocol(stream as any, server, 'peer-a');
 	}
 
 	async function run(switchOff: boolean): Promise<string[]> {
@@ -90,6 +103,30 @@ describe('error recovery and a switch-off during the attempt', () => {
 
 	it('still brings sharing back when nobody intervened', async () => {
 		const events = await run(false);
+		expect(events).toContain('transfer.recovery:recovered');
+		expect(getEnabledUploads().has(LISH)).toBe(true);
+	}, 20_000);
+
+	it('does not supersede itself when it restarts an unfinished download', async () => {
+		resetUploadState();
+		initDownloadState(new Set([LISH]), () => {});
+		const events: string[] = [];
+		initTransferHandlers(
+			networks,
+			unfinishedServer as unknown as DataServer,
+			tmpdir(),
+			() => {},
+			(event: string) => void events.push(event),
+			settings
+		);
+		enableUpload(LISH);
+		// The startup resume brings the download up first; only then does the upload fail.
+		for (let i = 0; i < 100 && !events.includes('transfer.download:enabled'); i++) await Bun.sleep(50);
+		expect(events).toContain('transfer.download:enabled');
+		await missingFileRequest(unfinishedServer as unknown as DataServer);
+		const deadline = Date.now() + 12_000;
+		while (Date.now() < deadline && !events.includes('transfer.recovery:recovered') && !events.includes('transfer.recovery:exhausted')) await Bun.sleep(50);
+		expect(events).toContain('transfer.recovery:attempting');
 		expect(events).toContain('transfer.recovery:recovered');
 		expect(getEnabledUploads().has(LISH)).toBe(true);
 	}, 20_000);
