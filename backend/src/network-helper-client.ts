@@ -177,11 +177,31 @@ async function measureWindowsHelperTrust(helper: string, launcher: string, expec
 		if (left <= 0) throw new HelperVerificationTimeoutError();
 		return left;
 	};
-	if (expectedHash === null || !(await verifyWindowsInstalledHelper(helper, process.execPath, expectedHash, { timeoutMs: remaining() })) || !(await verifyWindowsInstalledSibling(launcher, process.execPath))) return false;
+	// Every step, the file metadata reads included, ends at the one deadline.
+	const bounded = <T>(work: Promise<T>): Promise<T> => {
+		const left = remaining();
+		work.catch(() => undefined);
+		return new Promise<T>((resolve, reject) => {
+			const timer = setTimeout(() => reject(new HelperVerificationTimeoutError()), left);
+			work.then(
+				value => {
+					clearTimeout(timer);
+					resolve(value);
+				},
+				error => {
+					clearTimeout(timer);
+					reject(error);
+				}
+			);
+		});
+	};
+	if (expectedHash === null || !(await bounded(verifyWindowsInstalledHelper(helper, process.execPath, expectedHash, { timeoutMs: remaining() }))) || !(await bounded(verifyWindowsInstalledSibling(launcher, process.execPath)))) return false;
 	const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`;
 	const script = `$ErrorActionPreference='Stop'; $s=@(${[helper, launcher, process.execPath].map(quote).join(',')} | ForEach-Object { Get-AuthenticodeSignature -LiteralPath $_ }); if ($s.Count -ne 3 -or @($s | Where-Object { $_.Status -ne 'Valid' -or -not $_.SignerCertificate }).Count -ne 0 -or @($s.SignerCertificate.Thumbprint | Select-Object -Unique).Count -ne 1) { exit 3 }`;
+	// Outside the try: a budget already spent is a timeout, not a bad signature to cache.
+	const timeout = Math.max(1, Math.floor(remaining()));
 	try {
-		await execFileAsync(windowsPowerShellPath(), ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: Math.max(1, Math.floor(remaining())), maxBuffer: 1024, windowsHide: true, env: windowsSystemEnvironment() });
+		await execFileAsync(windowsPowerShellPath(), ['-NoProfile', '-NonInteractive', '-Command', script], { timeout, maxBuffer: 1024, windowsHide: true, env: windowsSystemEnvironment() });
 		return true;
 	} catch (error) {
 		// Killed by the timeout is the budget running out, not a bad signature.
@@ -366,11 +386,14 @@ export async function runElevatedSystemTime(changes: SystemTimeChanges, platform
 	let macLaunch: MacHelperLaunch | null = null;
 	if (platform === 'darwin') {
 		try {
-			macLaunch = await prepareMacHelper(helper);
+			macLaunch = await withinSaveBudget(prepareMacHelper(helper));
 		} catch (error) {
 			if (error instanceof HelperVerificationTimeoutError) return notVerifiedInTime();
 			return helperTransportFailure(error);
 		}
+		// The preparation may have used up the save: no authorization prompt after that.
+		const left = remainingSaveBudget();
+		if (left !== null && left <= 0) return notVerifiedInTime();
 	}
 	let response: NetworkHelperResponse;
 	try {
