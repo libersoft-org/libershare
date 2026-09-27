@@ -473,7 +473,7 @@ describe('Networks.update — a changed bootstrap list reaches the running node'
 		initLISHnetsTables(db);
 		addLISHnet(db, { networkID: NET, name: 'A', description: '', bootstrapPeers, enabled, created: '2026-01-01T00:00:00.000Z' });
 		const mock = makeMockNet();
-		const networks = Object.create(Networks.prototype) as Networks;
+		const networks = new Networks(db, '.', {} as never, {} as never);
 		(networks as any).network = mock;
 		(networks as any).db = db;
 		(networks as any).joinedNetworks = new Set(enabled ? [NET] : []);
@@ -609,7 +609,7 @@ describe('Networks — leaving cleans the configuration it is leaving, not the n
 		initLISHnetsTables(db);
 		addLISHnet(db, ROW(bootstrapPeers, true));
 		const mock = makeMockNet();
-		const networks = Object.create(Networks.prototype) as Networks;
+		const networks = new Networks(db, '.', {} as never, {} as never);
 		(networks as any).network = mock;
 		(networks as any).db = db;
 		(networks as any).joinedNetworks = new Set([NET]);

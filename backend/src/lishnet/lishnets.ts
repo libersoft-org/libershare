@@ -1,4 +1,4 @@
-import { configuredPeerIDs, observePeerCleanupClaims, recordLeavingPeerCleanup } from './peer-cleanup.ts';
+import { observePeerCleanupClaims, recordLeavingPeerCleanup, replayPeerCleanup } from './peer-cleanup.ts';
 import { type Database } from 'bun:sqlite';
 import { Mutex } from 'async-mutex';
 import { Network, normalizeMultiaddrForCompare, type BootstrapDialResult, type PeerReleaseOutcome } from '../protocol/network.ts';
@@ -7,8 +7,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type NetworkMutationOutcome, combineNetworkMutations, CodedError, ErrorCodes } from '@shared';
 import { cleanBootstrapList, lishnetExists, getLISHnet, listLISHnets, listEnabledLISHnets, addLISHnet, updateLISHnet, deleteLISHnet, setLISHnetEnabled, addLISHnetIfNotExists, importLISHnets, upsertLISHnet, replaceLISHnets } from '../db/lishnets.ts';
-import { confirmPeerCleanup, listPeerCleanup, type PendingPeerCleanup } from '../db/peer-cleanup.ts';
-import { peerIdFromString } from '@libp2p/peer-id';
+import { confirmPeerCleanup, listPeerCleanup } from '../db/peer-cleanup.ts';
 import { type PeerId } from '@libp2p/interface';
 
 /**
@@ -179,6 +178,7 @@ export class Networks {
 	 * already owns a per-ID lock, so no cycle is possible.
 	 */
 	private readonly catalogMutex = new Mutex();
+	private readonly peerCleanupMutex = new Mutex();
 	/** Lazily initialised because a few focused unit fixtures instantiate the prototype. */
 	private mutationAdmission?: NetworkMutationGate;
 	/**
@@ -339,7 +339,12 @@ export class Networks {
 		// can record which specific peers connected / mismatched / timed out.
 		// (Previous behaviour used a flat preset list that bypassed our tracking.)
 		try {
-			await this.network.start([], { beforeStart: node => this.replayPeerCleanup(node) });
+			const releaseCleanup = await this.peerCleanupMutex.acquire();
+			try {
+				await this.network.start([], { beforeStart: async node => {
+					try { await this.replayPeerCleanup(node); } finally { releaseCleanup(); }
+				} });
+			} finally { releaseCleanup(); }
 
 			// The enabled list is read AFTER the start, not before it. Reading it first meant
 			// startup worked from a snapshot taken before a long await: an API disable or
@@ -496,7 +501,7 @@ export class Networks {
 	}
 
 	/**
-	 * Phase one of every lishnet write: the DATABASE, under {@link catalogMutex} alone.
+	 * Phase one of every lishnet write: the DATABASE, excluding the startup cleanup snapshot.
 	 *
 	 * `body` is synchronous and must not touch the network. The catalog used to be held for
 	 * the runtime phase as well, and that phase is slow — a join awaits a sequential dial of
@@ -506,7 +511,15 @@ export class Networks {
 	 * which presented as a frozen shutdown.
 	 */
 	private async inCatalog<T>(body: () => T): Promise<T> {
-		return await this.catalogMutex.runExclusive(async () => body());
+		for (;;) {
+			const release = await this.catalogMutex.acquire();
+			if (this.peerCleanupMutex.isLocked()) {
+				release();
+				await this.peerCleanupMutex.waitForUnlock();
+				continue;
+			}
+			try { return await body(); } finally { release(); }
+		}
 	}
 
 	private getMutationAdmission(): NetworkMutationGate {
@@ -833,16 +846,6 @@ export class Networks {
 	 * Leave a lishnet (unsubscribe from its topic).
 	 */
 	/** Peer IDs (the /p2p/<id> component) of a list of bootstrap multiaddr strings. */
-	/** Whether `value` parses as a libp2p peer ID. */
-	private static isPeerID(value: string): boolean {
-		try {
-			peerIdFromString(value);
-			return true;
-		} catch {
-			return false;
-		}
-	}
-
 	private static bootstrapPeerIDsOf(bootstrapPeers: string[]): string[] {
 		const ids: string[] = [];
 		for (const addr of bootstrapPeers) {
@@ -1526,27 +1529,7 @@ export class Networks {
 	 * kept, rows and all. A failed removal fails the start and keeps the queue.
 	 */
 	private async replayPeerCleanup(node: { peerStore: { delete(peerID: PeerId): Promise<void> } }): Promise<void> {
-		const rows = listPeerCleanup(this.db);
-		if (rows.length === 0) return;
-		const enabled = this.getEnabled();
-		const enabledIDs = new Set(enabled.map(network => network.networkID));
-		const configured = new Set(enabled.flatMap(network => configuredPeerIDs(network.bootstrapPeers)));
-		const byPeer = new Map<string, PendingPeerCleanup[]>();
-		for (const row of rows) byPeer.set(row.peerID, [...(byPeer.get(row.peerID) ?? []), row]);
-		let removed = 0;
-		for (const [peerID, peerRows] of byPeer) {
-			// A row an older version wrote for an address that never named a peer: nothing to
-			// remove, and parsing it must not stop the node from starting.
-			if (!Networks.isPeerID(peerID)) {
-				confirmPeerCleanup(this.db, peerRows);
-				continue;
-			}
-			if (configured.has(peerID) || peerRows.some(row => enabledIDs.has(row.networkID))) continue;
-			await node.peerStore.delete(peerIdFromString(peerID));
-			confirmPeerCleanup(this.db, peerRows);
-			removed++;
-		}
-		if (removed > 0) console.log(`[Networks] Finished the peer cleanup of left lishnets: ${removed} peer(s) removed before start`);
+		await replayPeerCleanup(this.db, node, () => this.getEnabled());
 	}
 
 	/**

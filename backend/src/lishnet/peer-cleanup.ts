@@ -1,10 +1,11 @@
+import type { PeerId } from '@libp2p/interface';
 import type { Database } from 'bun:sqlite';
 import type { LISHNetworkConfig } from '@shared';
 import { peerIdFromString } from '@libp2p/peer-id';
 import type { Network } from '../protocol/network.ts';
 import { LISH_TOPIC_PREFIX } from '../protocol/constants.ts';
 import { relayPeerIDs } from '../protocol/relay-peer-ids.ts';
-import { listPeerCleanup, recordPeerClaim, recordPeerCleanup } from '../db/peer-cleanup.ts';
+import { confirmPeerCleanup, listPeerCleanup, recordPeerClaim, recordPeerCleanup } from '../db/peer-cleanup.ts';
 
 export function configuredPeerIDs(addresses: readonly string[]): string[] {
 	return addresses.flatMap(address => [...address.matchAll(/\/p2p\/([^/]+)/g)].map(match => match[1]!));
@@ -51,4 +52,28 @@ export function recordLeavingPeerCleanup(db: Database, network: Network, leaving
 		recordPeerCleanup(db, id, candidates, operationID);
 		for (const owner of owners) recordPeerCleanup(db, owner.id, candidates.filter(peer => owner.peers.has(peer)), operationID);
 	}
+}
+
+/** The caller excludes catalog writes until every queued deletion has finished. */
+export async function replayPeerCleanup(db: Database, node: { peerStore: { delete(peerID: PeerId): Promise<void> } }, enabled: () => LISHNetworkConfig[]): Promise<void> {
+	const rows = listPeerCleanup(db);
+	const configs = enabled();
+	const enabledIDs = new Set(configs.map(config => config.networkID));
+	const configured = new Set(configs.flatMap(config => configuredPeerIDs(config.bootstrapPeers)));
+	const byPeer = new Map<string, typeof rows>();
+	for (const row of rows) {
+		const group = byPeer.get(row.peerID);
+		if (group) group.push(row);
+		else byPeer.set(row.peerID, [row]);
+	}
+	let removed = 0;
+	for (const [peer, peerRows] of byPeer) {
+		let id: PeerId;
+		try { id = peerIdFromString(peer); } catch { confirmPeerCleanup(db, peerRows); continue; }
+		if (configured.has(peer) || peerRows.some(row => enabledIDs.has(row.networkID))) continue;
+		await node.peerStore.delete(id);
+		confirmPeerCleanup(db, peerRows);
+		removed++;
+	}
+	if (removed > 0) console.log(`[Networks] Finished the peer cleanup of left lishnets: ${removed} peer(s) removed before start`);
 }

@@ -104,7 +104,7 @@ function makeMockNet() {
 }
 
 function makeNetworks(net: ReturnType<typeof makeMockNet>, db: Database, joined: string[]) {
-	const networks = Object.create(Networks.prototype) as Networks;
+	const networks = new Networks(db, '.', {} as never, {} as never);
 	(networks as any).db = db;
 	(networks as any).network = net;
 	(networks as any).joinedNetworks = new Set(joined);

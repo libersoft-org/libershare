@@ -554,7 +554,7 @@ describe('Networks.delete — suppression entries outlive the lishnet that keyed
 		const db = new Database(':memory:');
 		initLISHnetsTables(db);
 		addLISHnet(db, { networkID: NET, name: 'Test', description: '', enabled: true, bootstrapPeers: [] } as any);
-		const networks = Object.create(Networks.prototype) as Networks;
+		const networks = new Networks(db, '.', {} as never, {} as never);
 		(networks as any).db = db;
 		(networks as any).joinedNetworks = new Set([NET]);
 		// Object.create skips the field initializers, so the write path's locks and its
