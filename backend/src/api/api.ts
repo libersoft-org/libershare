@@ -97,7 +97,7 @@ export function methodForLog(handlers: Record<string, unknown>, method: unknown)
  * request content — a JSON parse error quotes the input, a failed identity import its key.
  */
 export function errorCodeForLog(err: unknown): string {
-	return err instanceof CodedError ? err.code : ErrorCodes.INTERNAL_ERROR;
+	return err instanceof CodedError && (Object.values(ErrorCodes) as string[]).includes(err.code) ? err.code : ErrorCodes.INTERNAL_ERROR;
 }
 
 /** Host network administration requires authenticated API mode on the same machine. */

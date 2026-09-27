@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { APIServer, canAdministerHostNetwork, networkStateForClient } from '../../../src/api/api.ts';
+import { CodedError, ErrorCodes } from '@shared';
 
 /** An APIServer with only the dispatch path, to observe what reaches the log. */
 function bareServer(handlers: Record<string, (p: any) => any>): any {
@@ -22,6 +23,16 @@ async function logsOf(run: () => Promise<void>): Promise<string> {
 
 describe('the RPC dispatcher never logs request content', () => {
 	const secret = 'CAESQK-private-key-material';
+	it('does not log peer-supplied text disguised as an error code', async () => {
+		const injected = `untrusted\nforged-log-line-${secret}`;
+		const server = bareServer({ 'lishnets.getPeerLishs': () => { throw new CodedError(injected as never); } });
+		const sent: string[] = [];
+		const log = await logsOf(() => server.handleMessage({ send: (m: string) => sent.push(m) }, JSON.stringify({ id: 4, method: 'lishnets.getPeerLishs' })));
+		expect(log).not.toContain(injected);
+		expect(log).not.toContain(secret);
+		expect(log).toContain(ErrorCodes.INTERNAL_ERROR);
+		expect(JSON.parse(sent[0]!).error).toBe(injected);
+	});
 
 	it('a successful call logs the method, not its parameters', async () => {
 		const server = bareServer({ 'identity.applyImported': () => true });
