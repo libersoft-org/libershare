@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { startNodes, stopNodes, getNodeURL, TEST_API_TOKEN } from './helpers/node-manager.ts';
 import { TestClient } from './helpers/ws-test-client.ts';
+import { productEnvPrefix } from '@shared';
 
 const REPO = resolve(import.meta.dir, '../../..');
 
@@ -11,13 +12,14 @@ describe('a backend without a token', () => {
 	it('refuses to start and creates no data', async () => {
 		const root = mkdtempSync(join(tmpdir(), 'lish-notoken-'));
 		const dataDir = join(root, 'data');
-		// The default storage paths live under the home directory: pointed into the test root,
-		// a regression of the token check writes there instead of into the user's own.
 		const home = join(root, 'home');
 		try {
-			const env: Record<string, string> = { ...(process.env as Record<string, string>), MEMTRACE: '0', HEAP_TRIGGER: '0', HOME: home, USERPROFILE: home };
-			delete env['LISH_TOKEN'];
-			const proc = Bun.spawn([process.execPath, 'run', 'backend/src/app.ts', '--datadir', dataDir, '--port', '0'], { cwd: REPO, env, stdout: 'pipe', stderr: 'pipe' });
+			const env: Record<string, string> = { MEMTRACE: '0', HEAP_TRIGGER: '0', HOME: home, USERPROFILE: home, STORAGE_ROOT: join(root, 'storage'), TMP: root, TEMP: root, TMPDIR: root };
+			for (const key of ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT']) {
+				if (process.env[key]) env[key] = process.env[key]!;
+			}
+			for (const name of ['DOWNLOAD', 'TEMP', 'LISH', 'LISHNET', 'BACKUP']) env[`${productEnvPrefix}_${name}_PATH`] = join(root, 'storage', name.toLowerCase());
+			const proc = Bun.spawn([process.execPath, 'run', 'backend/tests/e2e/helpers/no-network-startup.ts', '--datadir', dataDir, '--port', '0'], { cwd: REPO, env, stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' });
 			const code = await Promise.race([proc.exited, Bun.sleep(30_000).then(() => 'timeout' as const)]);
 			if (code === 'timeout') {
 				proc.kill(9);
@@ -25,6 +27,7 @@ describe('a backend without a token', () => {
 			}
 			expect(code).toBe(78);
 			expect(existsSync(dataDir) ? readdirSync(dataDir) : []).toEqual([]);
+			expect(existsSync(env['STORAGE_ROOT']!)).toBe(false);
 			// `.bun` is the runtime's own cache, created before any backend code runs.
 			expect((existsSync(home) ? readdirSync(home) : []).filter(entry => entry !== '.bun')).toEqual([]);
 		} finally {
