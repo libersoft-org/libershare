@@ -223,6 +223,40 @@ describe('frontend proxy /status', () => {
 });
 
 describe('frontend websocket proxy', () => {
+	it('closes with 1011 without logging the token when the upstream constructor throws', async () => {
+		const upstream = startUpstream();
+		const script = await stageProxy();
+		const port = deadPort();
+		const child = Bun.spawn([process.execPath, '--eval', `globalThis.WebSocket = class { constructor(url) { throw new Error('constructor failed: ' + url); } }; await import(${JSON.stringify(script)});`], {
+			env: { ...process.env, PORT: String(port), BACKEND_WS_URL: upstream.url }, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
+		});
+		const output = Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+		let client: WebSocket | undefined;
+		try {
+			let ready = false;
+			for (let i = 0; i < 100 && !ready; i++) {
+				ready = await fetch(`http://127.0.0.1:${port}/status`, { method: 'PUT' }).then(response => response.status === 405, () => false);
+				if (!ready) await Bun.sleep(50);
+			}
+			expect(ready).toBe(true);
+			client = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${TOKEN}`);
+			const closed = await new Promise<{ code: number; reason: string }>((resolve, reject) => {
+				const timer = setTimeout(() => reject(new Error('proxy did not close the client')), 3000);
+				client!.onclose = event => { clearTimeout(timer); resolve({ code: event.code, reason: event.reason }); };
+				client!.onerror = () => { clearTimeout(timer); reject(new Error('browser handshake failed')); };
+			});
+			expect(closed).toEqual({ code: 1011, reason: 'upstream connection failed' });
+		} finally {
+			client?.close();
+			child.kill();
+			await child.exited;
+			upstream.stop();
+		}
+		const logs = (await output).join('');
+		expect(logs).not.toContain(TOKEN);
+		expect(logs).not.toContain('constructor failed');
+	}, 15_000);
+
 	it('rejects URL fragments at startup without echoing their content', async () => {
 		const script = await stageProxy();
 		const proc = Bun.spawn([process.execPath, script], { env: { ...process.env, BACKEND_WS_URL: 'ws://127.0.0.1:1/#private-value' }, stdout: 'pipe', stderr: 'pipe' });
