@@ -1,7 +1,7 @@
 import { describe, expect, it, afterAll } from 'bun:test';
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 
 /**
  * The shell gates must fail when a gate fails. Each case copies the real scripts into a
@@ -29,7 +29,9 @@ function scratch(failOn: string | null): { root: string; env: Record<string, str
 	// Records every call and fails the chosen one.
 	writeFileSync(join(bin, 'bun'), `#!/bin/sh\nline="$(basename "$PWD") $*"\necho "$line" >> "${root.split(String.fromCharCode(92)).join('/')}/calls.log"\n[ "$line" = "${failOn ?? '-'}" ] && exit 3\nexit 0\n`);
 	chmodSync(join(bin, 'bun'), 0o755);
-	return { root, env: { ...process.env, PATH: `${bin}${process.platform === 'win32' ? ';' : ':'}${process.env['PATH']}` } as Record<string, string> };
+	// Git's sh needs its matching Unix tools ahead of Windows system32/find.exe.
+	const shellDirectory = dirname(Bun.which('sh')!);
+	return { root, env: { ...process.env, PATH: [bin, shellDirectory, process.env['PATH']].join(delimiter) } as Record<string, string> };
 }
 
 function run(root: string, script: string, env: Record<string, string>): number {
