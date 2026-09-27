@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import type { Database } from 'bun:sqlite';
+import { createDB } from './helpers/transfer-state.ts';
 import type { LISHid, ChunkID, IStoredLISH } from '@shared';
 import { CodedError, ErrorCodes } from '@shared';
-import { initLISHsTables, addLISH, setUploadEnabled, setDownloadEnabled, getUploadEnabledLishs, getDownloadEnabledLishs } from '../../src/db/lishs.ts';
+import { addLISH, setUploadEnabled, setDownloadEnabled, getUploadEnabledLishs, getDownloadEnabledLishs } from '../../src/db/lishs.ts';
 import { initUploadState, disableUpload, enableUpload, isUploadDisabled, isUploadEnabled, getEnabledUploads, getActiveUploads, resetUploadState, setUploadBroadcast } from '../../src/protocol/lish-protocol.ts';
 import { initDownloadState, initTransferHandlers, getDownloadEnabledLishs as getDownloadEnabledLishsRuntime } from '../../src/api/transfer.ts';
 import { setBusy, clearBusy, isBusy, getBusyReason } from '../../src/api/busy.ts';
@@ -20,13 +21,6 @@ const TEST_LISH_ID_2 = 'integ-test-lish-002' as LISHid;
 const CHUNK_A = 'sha256:aaaa0000bbbb1111cccc2222dddd3333eeee4444ffff5555aaaa0000bbbb1111' as ChunkID;
 const CHUNK_B = 'sha256:bbbb1111cccc2222dddd3333eeee4444ffff5555aaaa0000bbbb1111cccc2222' as ChunkID;
 const CHUNK_C = 'sha256:cccc2222dddd3333eeee4444ffff5555aaaa0000bbbb1111cccc2222dddd3333' as ChunkID;
-
-function createDB(): Database {
-	const db = new Database(':memory:');
-	db.run('PRAGMA foreign_keys = ON');
-	initLISHsTables(db);
-	return db;
-}
 
 function createTestLISH(id: LISHid = TEST_LISH_ID, opts: Partial<IStoredLISH> = {}): IStoredLISH {
 	return {
