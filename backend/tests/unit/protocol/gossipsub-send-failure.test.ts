@@ -16,6 +16,66 @@ describe('gossipsub sendRpc on a failing outbound stream', () => {
 		return { GossipSub, OutboundStream };
 	}
 
+	class RawStream extends EventTarget {
+		protocol = '/floodsub/1.0.0';
+		writes = 0;
+		failWrites = false;
+		send(): void {
+			if (this.failWrites) throw new Error('StreamStateError: stream closed');
+			this.writes++;
+		}
+	}
+
+	async function router(): Promise<any> {
+		const { GossipSub } = await load();
+		return Object.assign(Object.create(GossipSub.prototype), {
+			isStarted: () => true,
+			peers: new Map([['peer-a', {}]]),
+			streamsOutbound: new Map(),
+			floodsubPeers: new Set(),
+			subscriptions: new Set(),
+			protocols: ['/floodsub/1.0.0'],
+			opts: {},
+			control: new Map(),
+			gossip: new Map(),
+			log: Object.assign(() => {}, { error() {} }),
+		});
+	}
+
+	it('removes a failed stream on close and sends successfully through its replacement', async () => {
+		const self = await router();
+		const first = new RawStream();
+		await self.createOutboundStream('peer-a', { newStream: async () => first });
+		expect(self.streamsOutbound.size).toBe(1);
+		first.failWrites = true;
+		expect(self.sendRpc('peer-a', { subscriptions: [], messages: [] })).toBe(false);
+		first.dispatchEvent(new Event('close'));
+		expect(self.streamsOutbound.size).toBe(0);
+		expect(self.floodsubPeers.has('peer-a')).toBe(false);
+		const replacement = new RawStream();
+		await self.createOutboundStream('peer-a', { newStream: async () => replacement });
+		expect(self.sendRpc('peer-a', { subscriptions: [], messages: [] })).toBe(true);
+		expect(replacement.writes).toBe(1);
+	});
+
+	it('a delayed close from a removed stream preserves its new replacement', async () => {
+		const self = await router();
+		const first = new RawStream();
+		await self.createOutboundStream('peer-a', { newStream: async () => first });
+		self.streamsOutbound.delete('peer-a');
+		self.floodsubPeers.delete('peer-a');
+		const replacement = new RawStream();
+		await self.createOutboundStream('peer-a', { newStream: async () => replacement });
+		const attached = self.streamsOutbound.get('peer-a');
+		first.dispatchEvent(new Event('close'));
+		expect(self.streamsOutbound.get('peer-a')).toBe(attached);
+		expect(self.floodsubPeers.has('peer-a')).toBe(true);
+		expect(self.sendRpc('peer-a', { subscriptions: [], messages: [] })).toBe(true);
+		expect(replacement.writes).toBe(1);
+		replacement.dispatchEvent(new Event('close'));
+		expect(self.streamsOutbound.size).toBe(0);
+	});
+
 	it('reports the failure, throws nothing and keeps control and gossip for the next send', async () => {
 		const { GossipSub, OutboundStream } = await load();
 		const rawStream = {
