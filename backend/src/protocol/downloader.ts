@@ -9,6 +9,7 @@ import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { type HaveAnnouncement, type HaveChunks, LISH_PROTOCOL, LISHClient, registerHaveAnnouncementHandler } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
+import { withLISHClient } from './lish-client-session.ts';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
 import { trace } from '../logger.ts';
 import { PeerManager } from './peer-manager.ts';
@@ -740,15 +741,9 @@ export class Downloader {
 			}
 			try {
 				trace(`[DL] probing ${peerID.slice(0, 12)}`);
-				const { stream: probeStream } = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
-				if (this.destroyed) {
-					probeStream.abort(new Error('downloader destroyed'));
-					return;
-				}
-				const probeClient = new LISHClient(probeStream);
 				let manifest: import('@shared').IStoredLISH | null = null;
 				try {
-					manifest = await probeClient.requestManifest(this.lishID);
+					manifest = await withLISHClient(this.network, peerID, this.abortController.signal, client => client.requestManifest(this.lishID));
 				} catch (error: any) {
 					// Any manifest error (unreachable, malformed) → drop this peer and let another
 					// serve it, except over-limit which is terminal for the whole LISH — but only
@@ -759,17 +754,13 @@ export class Downloader {
 					if (this.needsManifest && error instanceof CodedError && error.code === ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) {
 						// Same reasoning as the connected-peer loop: a delivered manifest that is over
 						// the limit answers the question for the whole LISH, so stop probing the rest.
-						// close() must not throw past this point — the outer catch would swallow the
-						// verdict, log it as an unreachable peer and let the probe loop carry on.
 						this.peerManager.remove(peerID, 'drop');
-						await probeClient.close().catch(() => {});
 						if (!this.destroyed) this.setError(error.code, error.detail);
 						return;
 					}
 					console.debug(`[DL] probe ${peerID.slice(0, 12)}: manifest error ${error.code ?? error.message?.slice(0, 60) ?? error}`);
 					this.peerManager.remove(peerID, 'drop');
 				}
-				await probeClient.close();
 				if (this.destroyed) return;
 
 				if (!manifest) {
@@ -795,7 +786,7 @@ export class Downloader {
 				}
 				if (this.destroyed) return;
 
-				const { stream: dlStream, connectionType } = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
+				const { stream: dlStream, connectionType } = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL, this.abortController.signal);
 				if (this.destroyed) {
 					dlStream.abort(new Error('downloader destroyed'));
 					return;
@@ -804,7 +795,7 @@ export class Downloader {
 				// tryAdd returns false and we close the duplicate stream. No check-then-act race.
 				const dlClient = new LISHClient(dlStream);
 				if (!this.peerManager.tryAdd(peerID, dlClient, connectionType)) {
-					await dlClient.close().catch((err: any) => trace(`[DL] probe duplicate close: ${err?.message ?? err}`));
+					dlClient.abort(new Error('duplicate peer stream'));
 					trace(`[DL] probe ${peerID.slice(0, 12)}: already connected, closing duplicate`);
 					continue;
 				}
@@ -949,7 +940,7 @@ export class Downloader {
 	private async connectToPeer(peerID: NodeID, multiaddrStrings: string[], chunks: HaveChunks): Promise<void> {
 		const multiaddrs: Multiaddr[] = multiaddrStrings.map(ma => multiaddr(ma));
 		trace(`[DL] dialing ${peerID.slice(0, 12)} via ${multiaddrs.length} addrs`);
-		const { stream, connectionType } = await this.network.dialProtocol(multiaddrs, LISH_PROTOCOL);
+		const { stream, connectionType } = await this.network.dialProtocol(multiaddrs, LISH_PROTOCOL, this.abortController.signal);
 		if (this.destroyed) {
 			stream.abort(new Error('downloader destroyed'));
 			return;
@@ -960,7 +951,7 @@ export class Downloader {
 		// tryAdd returns false; close the duplicate stream to avoid a leak.
 		const client = new LISHClient(stream);
 		if (!this.peerManager.tryAdd(peerID, client, connectionType, havePercent)) {
-			await client.close().catch((err: any) => trace(`[DL] connectToPeer duplicate close: ${err?.message ?? err}`));
+			client.abort(new Error('duplicate peer stream'));
 			trace(`[DL] connectToPeer ${peerID.slice(0, 12)}: already connected, closing duplicate`);
 			return;
 		}
