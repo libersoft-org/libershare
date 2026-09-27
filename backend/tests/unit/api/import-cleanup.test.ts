@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,7 +7,7 @@ import { openDatabase } from '../../../src/db/database.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { Settings } from '../../../src/settings.ts';
 import { initLISHsHandlers } from '../../../src/api/lishs.ts';
-import type { ILISH } from '@shared';
+import { ErrorCodes, type ILISH } from '@shared';
 
 /**
  * An import that fails before its record is stored must not leave the empty directory it made
@@ -108,8 +108,26 @@ describe('failed overwrite import', () => {
 			await expect(handlers.importManifest({ ...original, name: 'replacement' } as never, base, { overwrite: true, enableSharing: false, enableDownloading: false })).rejects.toThrow('refused');
 			expect(dataServer.get('kept-on-write' as never)?.name).toBe('kept-on-write');
 			expect(dataServer.get('kept-on-write' as never)?.files?.length).toBe(1);
+			expect(existsSync(join(base, 'replacement'))).toBe(false);
 		} finally {
 			db.run('DROP TRIGGER refuse_replacement');
 		}
+	});
+
+	it('refuses a regular file as the destination without replacing the old record', async () => {
+		const original = { id: 'kept-file-target', name: 'original', created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', files: [{ path: 'a.bin', size: 1024, checksums: ['c0'] }], directory: join(base, 'original') };
+		dataServer.add(original as never);
+		writeFileSync(join(base, 'file-target'), 'existing data');
+		await expect(handlers.importManifest({ ...original, name: 'file-target' } as never, base, { overwrite: true, enableSharing: false, enableDownloading: false })).rejects.toMatchObject({ code: ErrorCodes.FS_NOT_DIRECTORY });
+		expect(dataServer.get('kept-file-target' as never)?.name).toBe('original');
+		expect(readFileSync(join(base, 'file-target'), 'utf8')).toBe('existing data');
+	});
+
+	it('keeps the committed directory if broadcasting the successful write fails', async () => {
+		const h = initLISHsHandlers(dataServer, () => {}, () => { throw new Error('broadcast failed'); }, await Settings.create(dataDir));
+		const manifest = { id: 'committed', name: 'committed', created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', files: [{ path: 'a.bin', size: 1024, checksums: ['c0'] }] };
+		await expect(h.importManifest(manifest as never, base, { enableSharing: false, enableDownloading: false })).rejects.toThrow('broadcast failed');
+		expect(dataServer.get('committed' as never)?.directory).toBe(join(base, 'committed'));
+		expect(existsSync(join(base, 'committed'))).toBe(true);
 	});
 });

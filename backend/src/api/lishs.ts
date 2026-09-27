@@ -9,7 +9,8 @@ import { getEnabledUploads, removeUploadState, enableUpload } from '../protocol/
 import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, markDownloadEnabled, stopRecoveryForLISH } from './transfer.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir, rename, rm } from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
-import { join, dirname, resolve } from 'path';
+import { makeOwnDirectories, removeOwnEmptyDirectories } from './import-directories.ts';
+import { join, dirname } from 'path';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
 type BroadcastFn = (event: string, data: any) => void;
@@ -406,12 +407,13 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	 * broadcasts, applies sharing/downloading flags, and starts verification.
 	 * Caller must have already resolved `lish.directory` (and optionally `lish.finalDirectory`).
 	 */
-	async function addLISH(lish: IStoredLISH, opts: { enableSharing?: boolean | undefined; enableDownloading?: boolean | undefined; replace?: boolean }): Promise<void> {
+	async function addLISH(lish: IStoredLISH, opts: { enableSharing?: boolean | undefined; enableDownloading?: boolean | undefined; replace?: boolean; onStored?: () => void }): Promise<void> {
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
 		validateLISHStructure(lish, maxChunkSize);
 		// An overwrite swaps the old record for the new one in one transaction.
 		if (opts.replace) dataServer.replace(lish);
 		else dataServer.add(lish);
+		opts.onStored?.();
 		console.log(`✓ LISH added: ${lish.id}${lish.finalDirectory ? ` (temp: ${lish.directory} → final: ${lish.finalDirectory})` : ''}`);
 		broadcast('lishs:add', dataServer.getDetail(lish.id));
 		// Set enabled flags BEFORE verification — verify sets busy which blocks triggerEnableDownload.
@@ -441,59 +443,18 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		// Only directories this call really created are removed again should the import fail
 		// before its record is stored; one that appeared meanwhile, or already stood, is left.
 		const created: string[] = [];
+		let stored = false;
 		try {
 			await makeOwnDirectories(directory, created);
-			return await storeImported(lish, directory, finalDirectory, enableSharing, enableDownloading, !!existing);
+			return await storeImported(lish, directory, finalDirectory, enableSharing, enableDownloading, !!existing, () => { stored = true; });
 		} catch (error) {
-			if (!dataServer.get(lish.id)) await removeOwnEmptyDirectories(created);
+			if (!stored) await removeOwnEmptyDirectories(created);
 			throw error;
 		}
 	}
 
-	/**
-	 * Create `dir` and its missing parents one level at a time, without `recursive`, recording in
-	 * `created` each level this call made. A level that exists already (`EEXIST`) is not ours.
-	 */
-	async function makeOwnDirectories(dir: string, created: string[]): Promise<void> {
-		const missing: string[] = [];
-		for (let current = resolve(dir); ;) {
-			try {
-				await access(current);
-				break;
-			} catch (error: any) {
-				if (error?.code !== 'ENOENT') throw error;
-				missing.unshift(current);
-			}
-			const parent = dirname(current);
-			if (parent === current) break;
-			current = parent;
-		}
-		for (const level of missing) {
-			try {
-				await mkdir(level);
-				created.push(level);
-			} catch (error: any) {
-				if (error?.code !== 'EEXIST') throw error;
-			}
-		}
-	}
 
-	/**
-	 * Remove the directories an import created, deepest first, each only while empty.
-	 * Non-recursive: a directory something else has put content in, or a link, stops the walk.
-	 */
-	async function removeOwnEmptyDirectories(created: readonly string[]): Promise<void> {
-		for (const dir of [...created].reverse()) {
-			try {
-				await rmdir(dir);
-			} catch (error: any) {
-				console.warn(`[Import] Kept ${dir} after a failed import: ${error?.code ?? error?.message ?? error}`);
-				return;
-			}
-		}
-	}
-
-	async function storeImported(lish: ILISH, directory: string, finalDirectory: string | undefined, enableSharing: boolean | undefined, enableDownloading: boolean | undefined, replacing: boolean): Promise<ImportLISHResponse> {
+	async function storeImported(lish: ILISH, directory: string, finalDirectory: string | undefined, enableSharing: boolean | undefined, enableDownloading: boolean | undefined, replacing: boolean, onStored: () => void): Promise<ImportLISHResponse> {
 		// Drop the node-local fields that rode in with the imported data before merging: we own
 		// them, and `validateImportedLISH` is a cast, so a hostile .lish / JSON / URL / peer
 		// manifest can carry them. The cast spells out the hazard: `ILISH` has neither field,
@@ -515,7 +476,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		};
 		// The record being overwritten is replaced only now, once its successor is ready, and in
 		// one transaction: a failure before or during the write leaves the old record whole.
-		await addLISH(storedLISH, { enableSharing, enableDownloading, replace: replacing });
+		await addLISH(storedLISH, { enableSharing, enableDownloading, replace: replacing, onStored });
 		return { lishID: lish.id, directory };
 	}
 
