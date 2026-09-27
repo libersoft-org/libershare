@@ -490,7 +490,10 @@ export class Downloader {
 	}
 
 	async doWork(): Promise<void> {
-		return this.trackLifecycle(this.doWorkInternal());
+		return this.trackLifecycle(this.doWorkInternal().catch(error => {
+			if (!(error instanceof CodedError && error.code === ErrorCodes.DISK_FULL)) throw error;
+			if (!this.destroyed) this.setError(error.code, error.detail);
+		}));
 	}
 
 	private trackLifecycle<T>(operation: Promise<T>): Promise<T> {
@@ -598,14 +601,7 @@ export class Downloader {
 				if (missingBeforeAlloc.length > 0) {
 					console.debug(`[DL] allocating files for ${this.lishID.slice(0, 8)}`);
 					this.progressReporter.emit({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });
-					try {
-						await this.fileAllocator.allocateStructure(this.lish, (p: AllocationProgress) => this.emitAllocProgress(p, totalChunksForProgress), this.abortController.signal);
-					} catch (err) {
-						// Too little space for the declared sizes: same state as a full disk mid-download.
-						if (!(err instanceof CodedError && err.code === ErrorCodes.DISK_FULL)) throw err;
-						if (!this.destroyed) this.setError(err.code, err.detail);
-						return;
-					}
+					await this.fileAllocator.allocateStructure(this.lish, (p: AllocationProgress) => this.emitAllocProgress(p, totalChunksForProgress), this.abortController.signal);
 					if (this.destroyed) return;
 				} else {
 					trace(`[DL] skipping allocation for ${this.lishID.slice(0, 8)} (files exist)`);

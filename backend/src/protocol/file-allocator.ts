@@ -128,12 +128,8 @@ export class FileAllocator {
 		const file = lish.files?.[fileIndex];
 		if (!file) return;
 		if (signal?.aborted) return;
-		const filePath = this.safePath(file.path);
-		await mkdir(dirname(filePath), { recursive: true });
-		const existing = Bun.file(filePath);
-		if ((await existing.exists()) && existing.size === file.size) return;
-		await this.zeroFillFile(filePath, file.size, signal);
-		console.log(`[FA] Re-allocated file: ${file.path} (${file.size} bytes)`);
+		const result = await this.allocateFilesInternal(lish, [fileIndex], undefined, signal);
+		if (result.created > 0) console.log(`[FA] Re-allocated file: ${file.path} (${file.size} bytes)`);
 	}
 
 	// ======== internals ========
@@ -141,8 +137,8 @@ export class FileAllocator {
 	/**
 	 * Refuse with DISK_FULL before writing anything when the declared sizes of the files still to
 	 * allocate do not fit in the space free under the download directory — zero-filling first
-	 * would run the disk full and leave a half-allocated dataset. A file that already exists
-	 * counts only by what it still has to grow. Free space that cannot be read does not block.
+	 * would run the disk full and leave a half-allocated dataset. A replaced file counts in full:
+	 * its logical size does not tell us how many blocks a sparse file occupies. Free space that cannot be read does not block.
 	 */
 	private async ensureSpaceFor(lish: IStoredLISH, fileIndexes: readonly number[]): Promise<void> {
 		let needed = 0;
@@ -151,7 +147,7 @@ export class FileAllocator {
 			if (!file) continue;
 			const existing = Bun.file(this.safePath(file.path));
 			const current = (await existing.exists()) ? existing.size : 0;
-			if (current !== file.size) needed += Math.max(0, file.size - current);
+			if (current !== file.size) needed += file.size;
 		}
 		if (needed === 0) return;
 		// The download directory may not exist yet; its nearest existing parent is on the same volume.
@@ -225,24 +221,5 @@ export class FileAllocator {
 			trace(`[FA] created file: ${file.path} (${file.size}B)`);
 		}
 		return { created, skipped };
-	}
-
-	/**
-	 * Zero-fill a file of the given size. No progress, no yielding — used by
-	 * allocateFile() for the "re-allocate one file" hot path.
-	 */
-	private async zeroFillFile(filePath: string, size: number, signal: AbortSignal | undefined): Promise<void> {
-		const fd = await open(filePath, 'w');
-		try {
-			let remaining = size;
-			while (remaining > 0) {
-				if (signal?.aborted) return;
-				const writeSize = Math.min(remaining, ZERO_BUFFER.length);
-				await fd.write(ZERO_BUFFER.subarray(0, writeSize));
-				remaining -= writeSize;
-			}
-		} finally {
-			await fd.close();
-		}
 	}
 }
