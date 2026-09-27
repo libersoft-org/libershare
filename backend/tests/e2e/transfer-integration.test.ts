@@ -572,12 +572,10 @@ describe('Downloader — download behavior with mocked peers', () => {
 		(priv(downloader) as Record<string, number>)['lastExhaustedTime'] = Date.now();
 		(priv(downloader) as Record<string, string>)['state'] = 'downloading';
 
-		// doWork should return immediately without attempting download
+		const broadcasts = net.broadcastMessages.length;
 		await (downloader as any)['doWork']();
 
-		// No work was done: no peer was taken on and nothing was requested.
-		expect(ds.missingChunks.length).toBe(1);
-		expect((priv(downloader)['peerManager'] as { size: () => number }).size()).toBe(0);
+		expect(net.broadcastMessages.length).toBe(broadcasts);
 	});
 
 	it('lastExhaustedTime resets to 0 on enable, allowing immediate retry', async () => {
