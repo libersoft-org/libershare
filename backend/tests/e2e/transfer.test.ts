@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
-import { startNodes, stopNodes, getNodeURL, getNodeDataDir } from './helpers/node-manager.ts';
+import { startNodes, stopNodes, getNodeURL, getNodeDataDir, getNodeListenAddresses } from './helpers/node-manager.ts';
 import { TestClient } from './helpers/ws-test-client.ts';
 
 /**
@@ -69,25 +69,21 @@ beforeAll(async () => {
 	writeFileSync(join(source, 'payload.bin'), payload);
 	({ lishID } = await nodes[0]!.call('lishs.create', { dataPath: source, name: 'e2e payload', addToSharing: true, chunkSize: CHUNK_SIZE }, 120_000));
 
-	// One private network, bootstrapped from node0's LAN address. Loopback would be simpler, but
+	// One private network, bootstrapped from node0's bound address. Loopback would be simpler, but
 	// the dial filter deliberately refuses 127.0.0.0/8 (a remote peer can never reach it).
 	const network = (bootstrapPeers: string[]) => ({ network: { networkID: NETWORK_ID, name: 'e2e', description: '', bootstrapPeers, created: new Date().toISOString(), enabled: true } });
 	await nodes[0]!.call('lishnets.add', network([]));
-	// The node listens on an OS-chosen port; an announced address can still say /tcp/0.
-	const isLan = (a: string): boolean => a.startsWith('/ip4/') && !a.startsWith('/ip4/127.') && !a.includes('/p2p-circuit') && !/\/tcp\/0(\/|$)/.test(a);
-	const info = await waitFor(
-		'node0 addresses',
-		() => nodes[0]!.call('lishnets.getNodeInfo'),
-		(i: any) => i?.addresses?.some(isLan)
-	);
+	const isDialable = (a: string): boolean => a.startsWith('/ip4/') && !a.startsWith('/ip4/127.') && !a.startsWith('/ip4/0.0.0.0/') && !a.includes('/p2p-circuit') && /\/tcp\/[1-9]\d*(\/|$)/.test(a);
+	const info = await nodes[0]!.call('lishnets.getNodeInfo');
 	seederPeerID = info.peerID;
 	const dialable = async (i: number): Promise<string> => {
-		const nodeInfo = await waitFor(
+		const addresses = await waitFor(
 			`node${i} addresses`,
-			() => nodes[i]!.call('lishnets.getNodeInfo'),
-			(n: any) => n?.addresses?.some(isLan)
+			async () => getNodeListenAddresses(i),
+			addresses => addresses.some(isDialable)
 		);
-		const address: string = nodeInfo.addresses.find(isLan);
+		const nodeInfo = await nodes[i]!.call('lishnets.getNodeInfo');
+		const address = addresses.find(isDialable)!;
 		return address.includes('/p2p/') ? address : `${address}/p2p/${nodeInfo.peerID}`;
 	};
 	// node1 bootstraps from node0; node2 from both, as a network with two bootstrap peers

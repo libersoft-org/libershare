@@ -11,6 +11,7 @@ import { join, resolve } from 'node:path';
  */
 export interface TestNode {
 	readonly dataDir: string;
+	readonly listenAddresses: string[];
 	/** Set once the node reports its API port; empty while it is still starting. */
 	url: string;
 	readonly process: ReturnType<typeof Bun.spawn>;
@@ -91,10 +92,18 @@ export async function startNodes(count: number = 3): Promise<void> {
 			writeFileSync(join(dataDir, 'settings.json'), JSON.stringify(isolatedSettings(dataDir)));
 			const env: Record<string, string> = { ...(process.env as Record<string, string>), MEMTRACE: '0', HEAP_TRIGGER: '0' };
 			env['LISH_TOKEN'] = TEST_API_TOKEN;
-			const proc = Bun.spawn([process.execPath, 'run', 'backend/src/app.ts', '--datadir', dataDir, '--port', '0', '--host', '127.0.0.1'], { cwd: REPO, env, stdout: 'pipe', stderr: 'inherit' });
+			const listenAddresses: string[] = [];
+			const proc = Bun.spawn([process.execPath, 'run', 'backend/tests/e2e/helpers/backend-process.ts', '--datadir', dataDir, '--port', '0', '--host', '127.0.0.1'], {
+				cwd: REPO, env, stdout: 'pipe', stderr: 'inherit',
+				ipc(message: unknown) {
+					const report = message as { type?: string; addresses?: unknown };
+					if (report?.type === 'listening' && Array.isArray(report.addresses) && report.addresses.every(address => typeof address === 'string'))
+						listenAddresses.splice(0, listenAddresses.length, ...report.addresses);
+				},
+			});
 			// Tracked from the spawn, so a node that never gets ready is stopped — and waited
 			// for — like every other one before its directory is removed.
-			const node: TestNode = { dataDir, url: '', process: proc };
+			const node: TestNode = { dataDir, listenAddresses, url: '', process: proc };
 			nodes.push(node);
 			const port = await waitForApiPort(proc, []);
 			node.url = `ws://127.0.0.1:${port}?token=${TEST_API_TOKEN}`;
@@ -143,4 +152,10 @@ export function getNodeDataDir(index: number): string {
 	const node = nodes[index];
 	if (!node) throw new Error(`no test node ${index}`);
 	return node.dataDir;
+}
+
+export function getNodeListenAddresses(index: number): string[] {
+	const node = nodes[index];
+	if (!node) throw new Error(`no test node ${index}`);
+	return [...node.listenAddresses];
 }
