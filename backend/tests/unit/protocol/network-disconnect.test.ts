@@ -323,6 +323,21 @@ describe('Network.disconnectPeer — a peer claimed while it is being let go', (
 		expect(await network.disconnectPeer(PEER_ID, NET)).toBe('kept');
 	});
 
+	it('does not confirm a purge whose tag restoration recreated the peer after deletion', async () => {
+		const { network, subscribers } = claimable();
+		let exists = true;
+		(network as any).node.peerStore.delete = async () => {
+			exists = false;
+			subscribers.push(PEER_ID);
+		};
+		(network as any).node.peerStore.merge = async (_pid: unknown, patch: { tags: Record<string, unknown> }) => {
+			exists = true;
+			if (patch.tags[KEEP_ALIVE] !== undefined) subscribers.length = 0;
+		};
+		expect(await network.disconnectPeer(PEER_ID, NET)).toBe('incomplete');
+		expect(exists).toBe(true);
+	});
+
 	it('reports a purge skipped for a claim that is gone again by the end as unfinished', async () => {
 		const { network, deleted, subscribers } = claimable();
 		// Another lishnet claims the peer while its connections close, so the purge keeps the
