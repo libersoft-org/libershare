@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'bun:test';
+import { afterAll, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { networkInterfaces, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -15,7 +16,22 @@ const repo = resolve(import.meta.dir, '../../..');
 const lan = Object.values(networkInterfaces())
 	.flat()
 	.find(a => a && a.family === 'IPv4' && !a.internal && !a.address.startsWith('169.254.'))!.address;
-const TOKEN = 'e2e-peer-cleanup-token';
+const TOKEN = crypto.randomUUID();
+const processes: ReturnType<typeof Bun.spawn>[] = [];
+const sockets = new Set<WebSocket>();
+const roots = new Set<string>();
+const blockers: Array<{ stop(close: boolean): void }> = [];
+afterAll(async () => {
+	for (const socket of sockets) socket.close();
+	for (const blocker of blockers) blocker.stop(true);
+	for (const proc of processes) {
+		if (proc.exitCode === null) proc.kill();
+		await Promise.race([proc.exited, Bun.sleep(5000)]);
+		if (proc.exitCode === null) proc.kill(9);
+		await proc.exited;
+	}
+	for (const root of roots) await rm(root, { recursive: true, force: true });
+}, 30_000);
 const free = (): number => {
 	const s = Bun.listen({ hostname: '0.0.0.0', port: 0, socket: { data() {} } });
 	const port = s.port;
@@ -26,6 +42,7 @@ const free = (): number => {
 /** A backend process; given `existingRoot` it starts over that node's data as it was left. */
 function node(tag: string, apiPort: number, p2pPort: number, existingRoot?: string) {
 	const root = existingRoot ?? mkdtempSync(join(tmpdir(), `lish-291-${tag}-`));
+	if (!existingRoot) roots.add(root);
 	const storage = (name: string): string => {
 		const dir = join(root, 'storage', name);
 		mkdirSync(dir, { recursive: true });
@@ -33,32 +50,41 @@ function node(tag: string, apiPort: number, p2pPort: number, existingRoot?: stri
 	};
 	if (!existingRoot) writeFileSync(join(root, 'settings.json'), JSON.stringify({ storage: { downloadPath: storage('finished'), tempPath: storage('temp'), lishPath: storage('lish'), lishnetPath: storage('lishnet'), backupPath: storage('backup') }, network: { incomingPort: p2pPort, mdnsEnabled: false, upnpEnabled: false, allowRelay: false, useRelayClients: false, autoConnectNewNetworks: false, peerExchange: { enabled: false } } }));
 	const proc = Bun.spawn([process.execPath, 'run', 'backend/src/app.ts', '--datadir', root, '--port', String(apiPort), '--host', '127.0.0.1', '--token', TOKEN], { cwd: repo, env: { ...process.env, MEMTRACE: '0', HEAP_TRIGGER: '0' } as Record<string, string>, stdout: 'pipe', stderr: 'pipe' });
+	processes.push(proc);
 	let log = '';
-	(async () => {
-		for await (const chunk of proc.stdout as ReadableStream<Uint8Array>) log += new TextDecoder().decode(chunk);
-	})();
-	return { root, proc, log: () => log, apiPort };
+	const drain = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
+		for await (const chunk of stream) log = (log + new TextDecoder().decode(chunk)).slice(-64 * 1024);
+	};
+	void drain(proc.stdout as ReadableStream<Uint8Array>);
+	void drain(proc.stderr as ReadableStream<Uint8Array>);
+	return { root, proc, log: () => log, apiPort, p2pPort };
 }
 
 async function client(apiPort: number) {
 	const ws = new WebSocket(`ws://localhost:${apiPort}?token=${TOKEN}`);
+	sockets.add(ws);
 	await new Promise<void>((ok, fail) => {
-		ws.onopen = () => ok();
-		ws.onerror = () => fail(new Error('no ws'));
+		const timer = setTimeout(() => { ws.close(); fail(new Error('WebSocket connection timeout')); }, 10_000);
+		ws.onopen = () => { clearTimeout(timer); ok(); };
+		ws.onerror = () => { clearTimeout(timer); fail(new Error('WebSocket connection failed')); };
 	});
 	let n = 0;
 	return {
 		call: (method: string, params: Record<string, unknown> = {}): Promise<any> =>
-			new Promise(resolve => {
+			new Promise((resolve, reject) => {
 				const id = `r${++n}`;
+				const cleanup = (): void => { clearTimeout(timer); ws.removeEventListener('message', onMessage); ws.removeEventListener('close', onClose); };
+				const onClose = (): void => { cleanup(); reject(new Error('WebSocket closed during RPC')); };
+				const timer = setTimeout(() => { cleanup(); reject(new Error(`RPC ${method} timed out`)); }, 30_000);
 				const onMessage = (e: MessageEvent): void => {
 					const msg = JSON.parse(String(e.data));
 					if (msg.id === id) {
-						ws.removeEventListener('message', onMessage);
+						cleanup();
 						resolve(msg);
 					}
 				};
 				ws.addEventListener('message', onMessage);
+				ws.addEventListener('close', onClose);
 				ws.send(JSON.stringify({ id, method, params }));
 			}),
 		close: () => ws.close(),
@@ -66,7 +92,8 @@ async function client(apiPort: number) {
 }
 
 async function ready(n: ReturnType<typeof node>): Promise<void> {
-	for (let i = 0; i < 160 && !n.log().includes('WebSocket server listening'); i++) await Bun.sleep(250);
+	for (let i = 0; i < 160 && !n.log().includes('WebSocket server listening') && n.proc.exitCode === null; i++) await Bun.sleep(250);
+	if (!n.log().includes('WebSocket server listening')) throw new Error(`Backend did not start: ${n.log().slice(-2000)}`);
 }
 
 describe('peer cleanup across a process restart', () => {
@@ -78,14 +105,10 @@ describe('peer cleanup across a process restart', () => {
 		await ready(b);
 		const bc = await client(b.apiPort);
 		await bc.call('lishnets.add', network([]));
-		let info: any;
-		for (let i = 0; i < 40; i++) {
-			info = (await bc.call('lishnets.getNodeInfo')).result;
-			if (info?.addresses?.some((a: string) => a.includes(`/ip4/${lan}/`))) break;
-			await Bun.sleep(250);
-		}
-		const bAddress = `${info.addresses.find((a: string) => a.includes(`/ip4/${lan}/`))}`;
-		const bootstrap = bAddress.includes('/p2p/') ? bAddress : `${bAddress}/p2p/${info.peerID}`;
+		const info = (await bc.call('lishnets.getNodeInfo')).result;
+		expect(typeof info?.peerID).toBe('string');
+		// The test chose this bound port; a public address may not be advertised until verified.
+		const bootstrap = `/ip4/${lan}/tcp/${b.p2pPort}/p2p/${info.peerID}`;
 
 		const a = node('a', free(), free());
 		await ready(a);
@@ -105,6 +128,7 @@ describe('peer cleanup across a process restart', () => {
 		// Take A's node down through a failed restart, then switch the lishnet off: its leave cannot run.
 		const taken = free();
 		const blocker = Bun.listen({ hostname: '0.0.0.0', port: taken, socket: { data() {} } });
+		blockers.push(blocker);
 		let reply = await ac.call('settings.set', { path: 'network.incomingPort', value: taken });
 		expect(reply.error).toBe('NETWORK_PORT_IN_USE');
 		reply = await ac.call('lishnets.setEnabled', { networkID: NET, enabled: false });
