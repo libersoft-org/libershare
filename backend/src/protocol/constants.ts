@@ -83,10 +83,10 @@ export function parseAcceptPXThreshold(raw: unknown): IAcceptPXThreshold {
  * known only after it is read, so one cap covers them. Sized for a HAVE snapshot of about
  * 500 000 chunk checksums; a larger announcement is refused by its sender instead of cut.
  */
-export const MAX_INBOUND_MESSAGE_SIZE = 32 * 1024 * 1024;
+export const MAX_INBOUND_MESSAGE_SIZE: number = 32 * 1024 * 1024;
 
 /** Longest reply to a `getLishs` list request. */
-export const MAX_LIST_RESPONSE_SIZE = 4 * 1024 * 1024;
+export const MAX_LIST_RESPONSE_SIZE: number = 4 * 1024 * 1024;
 
 /** Longest acknowledgement of a notification (or error reply to one). */
-export const MAX_ACK_RESPONSE_SIZE = 4 * 1024;
+export const MAX_ACK_RESPONSE_SIZE: number = 4 * 1024;

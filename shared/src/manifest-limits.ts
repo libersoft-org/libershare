@@ -66,7 +66,7 @@ export function checkEntryTree(directories: readonly { path: string }[], leaves:
 		if (path.includes('\\')) throw invalid(`backslash in entry path: ${formatUntrustedValue(path)}`);
 		// '..' too: `a/../b.bin` names the same file as `b.bin` and would slip past the duplicate check.
 		if (path.split('/').some(part => part === '' || part === '.' || part === '..')) throw invalid(`empty, '.' or '..' path component: ${formatUntrustedValue(path)}`);
-		entries.push({ key: path.replaceAll('/', NUL), path, leaf });
+		entries.push({ key: path.split('/').join(NUL), path, leaf });
 	};
 	for (const { path } of directories) add(path, false);
 	for (const { path } of leaves) add(path, true);
