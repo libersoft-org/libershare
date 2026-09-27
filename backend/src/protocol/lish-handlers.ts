@@ -285,12 +285,13 @@ export class LISHServingHandlers {
 			await client.sendSearchResult(data.searchID, matches);
 		} catch (err: any) {
 			trace(`[NET] sendSearchResult to ${fromPeerID.slice(0, 12)} failed: ${err?.message ?? err}`);
-		}
-		try {
-			// Still abortable: a graceful close can wait on the transport, and a stop must not.
-			await client?.close().catch(() => {});
 		} finally {
-			signal?.removeEventListener('abort', onAbort);
+			try {
+				// Keep the abort handler until graceful close has finished.
+				await client?.close().catch(() => {});
+			} finally {
+				signal?.removeEventListener('abort', onAbort);
+			}
 		}
 	}
 }

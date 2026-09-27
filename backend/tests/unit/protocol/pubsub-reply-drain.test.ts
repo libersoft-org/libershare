@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { Network } from '../../../src/protocol/network.ts';
 import { enableUpload, resetUploadState } from '../../../src/protocol/lish-protocol.ts';
+import { getEventListeners } from 'node:events';
+import { LISHServingHandlers } from '../../../src/protocol/lish-handlers.ts';
 
 /**
  * A HAVE reply to a pubsub WANT runs outside the inbound LISH handlers: it dials the asker and
@@ -32,6 +34,34 @@ class SilentPeerStream {
 	async *[Symbol.asyncIterator](): AsyncGenerator<Uint8Array> {
 		await new Promise<void>(resolve => (this.wake = resolve));
 	}
+}
+
+for (const reason of ['access withdrawn', 'aborted during dial']) {
+	it(`releases the cancellation listener when a search is ${reason}`, async () => {
+		const controller = new AbortController();
+		const stream = new SilentPeerStream();
+		let allowed = true;
+		const handlers = new LISHServingHandlers({
+			dataServer: { list: () => [{ id: 'listener-test', name: 'Shared', files: [{ size: 1 }] }] } as never,
+			getNode: () => ({ peerId: { toString: () => 'self' } }) as never,
+			lastWantResponseTime: new Map(), seenSearchIDs: new Map(), wantResponseCooldownMs: 0,
+			isDirectPeer: () => true, isJoinedToLishnet: () => true, canServePubsubRequestTo: () => allowed,
+			dialByPeerId: async () => {
+				if (reason === 'access withdrawn') allowed = false;
+				else controller.abort();
+				return { stream, connectionType: 'DIRECT' } as never;
+			},
+		});
+		enableUpload('listener-test');
+		try {
+			await handlers.handleSearchLishs({ type: 'searchLishs', searchID: 'listener-search', query: 'shared' }, 'net', 'peer', controller.signal);
+			expect(stream.aborted).toBe(true);
+			expect(stream.sent).toHaveLength(0);
+			expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+		} finally {
+			resetUploadState();
+		}
+	});
 }
 
 describe('pubsub WANT replies and the reset drain', () => {
