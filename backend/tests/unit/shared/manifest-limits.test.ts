@@ -20,6 +20,15 @@ describe('manifest field limits', () => {
 	// 2049 two-byte characters: under the limit in UTF-16 units, over it in UTF-8 bytes.
 	const longPath = 'é'.repeat(MAX_MANIFEST_PATH_BYTES / 2 + 1);
 
+	it('rejects Windows path aliases before files can overwrite each other', () => {
+		const file = { path: 'b.bin', size: 4, checksums: ['c1'] };
+		for (const path of ['a\\..\\b.bin', '.\\b.bin', 'folder\\b.bin']) {
+			expect(rejects(base({ files: [file, { ...file, path }] }))).toContain('backslash in entry path');
+			expect(rejects(base({ directories: [{ path }] }))).toContain('backslash in entry path');
+			expect(rejects(base({ links: [{ path, target: 'b.bin' }] }))).toContain('backslash in entry path');
+		}
+	});
+
 	it('accepts fields at their limits', () => {
 		const atLimit = 'é'.repeat(MAX_MANIFEST_PATH_BYTES / 2);
 		expect(() => validateLISHStructure(base({ id: 'i'.repeat(256), name: 'n'.repeat(1024), description: 'd'.repeat(65536), files: [{ path: atLimit, size: 4, checksums: ['c'.repeat(128)] }], directories: [{ path: 'dir' }], links: [{ path: 'l', target: atLimit }] }), 1024)).not.toThrow();
