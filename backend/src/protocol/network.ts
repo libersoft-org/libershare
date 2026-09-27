@@ -1,3 +1,4 @@
+import { relayPeerIDs } from './relay-peer-ids.ts';
 import { createLibp2p } from 'libp2p';
 import { Mutex } from 'async-mutex';
 import { KEEP_ALIVE } from '@libp2p/interface';
@@ -541,6 +542,7 @@ export class Network {
 	 * same reason as {@link peerDisconnectHandlers} — the gossipsub listener that feeds
 	 * them is reinstalled per node, the subscriptions are not.
 	 */
+	onRelayConnection: ((peerID: string, relayIDs: string[]) => void) | null = null;
 	private readonly peerSubscribeHandlers = new Set<(peerID: string, topic: string) => void>();
 
 	/** Handles incoming LISH-serving pubsub messages (want, searchLishs). */
@@ -1160,6 +1162,11 @@ export class Network {
 	}
 
 	private setupEventListeners(): void {
+		this.addListener(this.node!, 'connection:open', (event: any) => {
+			const connection = event.detail;
+			const relays = relayPeerIDs(connection.remoteAddr.toString());
+			if (relays.length > 0) this.onRelayConnection?.(connection.remotePeer.toString(), relays);
+		});
 		this.addListener(this.node!, 'peer:discovery', (evt: any) => {
 			const node = this.node;
 			const epoch = this.runEpoch;
@@ -3013,14 +3020,7 @@ export class Network {
 	private isActiveRelayPeer(peerID: string): boolean {
 		if (!this.node) return false;
 		try {
-			// A relay's ID is the hop right before /p2p-circuit in a circuit address:
-			// /ip4/../tcp/../p2p/<relayID>/p2p-circuit/p2p/<targetID>
-			for (const c of this.node.getConnections()) {
-				if (!Circuit.matches(c.remoteAddr)) continue;
-				const relayPrefix = c.remoteAddr.toString().split('/p2p-circuit')[0]!;
-				if (relayPrefix.endsWith(`/p2p/${peerID}`)) return true;
-			}
-			return false;
+			return this.node.getConnections().some(connection => relayPeerIDs(connection.remoteAddr.toString()).includes(peerID));
 		} catch {
 			return false;
 		}

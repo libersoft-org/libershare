@@ -27,6 +27,14 @@ export function initPeerCleanupTable(db: Database): void {
 			PRIMARY KEY (network_id, peer_id)
 		)
 	`);
+	db.run('CREATE INDEX IF NOT EXISTS pending_peer_cleanup_peer ON pending_peer_cleanup (peer_id)');
+}
+
+/** Protect a queued peer without adding unrelated discovery history to the cleanup table. */
+export function recordPeerClaim(db: Database, networkID: string, peerIDs: Iterable<string>): void {
+	const insert = db.prepare('INSERT INTO pending_peer_cleanup (network_id, peer_id, operation_id) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM pending_peer_cleanup WHERE peer_id = ?) ON CONFLICT(network_id, peer_id) DO UPDATE SET operation_id = excluded.operation_id');
+	const operationID = crypto.randomUUID();
+	for (const peerID of peerIDs) insert.run(networkID, peerID, operationID, peerID);
 }
 
 /**

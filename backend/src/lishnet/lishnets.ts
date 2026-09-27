@@ -1,3 +1,4 @@
+import { configuredPeerIDs, observePeerCleanupClaims, recordLeavingPeerCleanup } from './peer-cleanup.ts';
 import { type Database } from 'bun:sqlite';
 import { Mutex } from 'async-mutex';
 import { Network, normalizeMultiaddrForCompare, type BootstrapDialResult, type PeerReleaseOutcome } from '../protocol/network.ts';
@@ -6,7 +7,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type NetworkMutationOutcome, combineNetworkMutations, CodedError, ErrorCodes } from '@shared';
 import { cleanBootstrapList, lishnetExists, getLISHnet, listLISHnets, listEnabledLISHnets, addLISHnet, updateLISHnet, deleteLISHnet, setLISHnetEnabled, addLISHnetIfNotExists, importLISHnets, upsertLISHnet, replaceLISHnets } from '../db/lishnets.ts';
-import { confirmPeerCleanup, listPeerCleanup, recordPeerCleanup, type PendingPeerCleanup } from '../db/peer-cleanup.ts';
+import { confirmPeerCleanup, listPeerCleanup, type PendingPeerCleanup } from '../db/peer-cleanup.ts';
 import { peerIdFromString } from '@libp2p/peer-id';
 import { type PeerId } from '@libp2p/interface';
 
@@ -264,6 +265,7 @@ export class Networks {
 	constructor(db: Database, dataDir: string, dataServer: DataServer, settings: Settings) {
 		this.db = db;
 		this.network = new Network(dataDir, dataServer, settings);
+		observePeerCleanupClaims(db, this.network, () => this.getEnabled());
 		// Forward peer count changes from the network node
 		this.network.onPeerCountChange = counts => {
 			if (this._onPeerCountChange) this._onPeerCountChange(counts);
@@ -1009,17 +1011,9 @@ export class Networks {
 		}
 	}
 
-	/**
-	 * Settle one peer's queued cleanup the moment the leave has decided on it. Removed, or kept
-	 * on purpose — another lishnet claims it, even one that took it over during this leave — its
-	 * rows of this leave go: a later start must not act on a decision already made live. Only a
-	 * removal that did not finish keeps them, so the next start finishes it.
-	 */
+	/** Keep protection rows until the last owner leaves and deletion actually succeeds. */
 	private settlePeerCleanup(peerID: string, operationID: string, outcome: PeerReleaseOutcome): void {
-		// Asked here, with no await before the write: a claim that came up after the leave
-		// last looked is not persisted anywhere, and a start acting on the row would remove
-		// a peer a joined lishnet uses.
-		if (outcome === 'incomplete' && !this.network.isClaimedByJoinedNetwork(peerID)) return;
+		if (outcome !== 'released' || this.network.isClaimedByJoinedNetwork(peerID)) return;
 		try {
 			confirmPeerCleanup(
 				this.db,
@@ -1522,27 +1516,7 @@ export class Networks {
 	}
 
 	private recordLeavingPeers(leaving: readonly string[], remaining: ReadonlySet<string>, operationID: string): void {
-		const members = (id: string): Set<string> => new Set([...this.network.getTopicPeers(id), ...this.network.getRecentTopicMembers(id)]);
-		const bootstrapIDs = (id: string): Set<string> => new Set([...Networks.bootstrapPeerIDsOf(this.get(id)?.bootstrapPeers ?? []), ...Networks.bootstrapPeerIDsOf(this.appliedBootstrap.get(id)?.addresses ?? [])]);
-		const owners = [...remaining].filter(id => !leaving.includes(id)).map(id => ({ id, peers: new Set([...members(id), ...bootstrapIDs(id)]) }));
-		for (const id of leaving) {
-			// Only real peer IDs: a bootstrap address typed with a bad /p2p/ part is stored as
-			// entered, and a row holding it would fail every later start.
-			// Nor a peer the live leave keeps as well — a relay or a bootstrap another lishnet
-			// relies on: the next start has no live view to tell, and must not remove it.
-			// Nor an active relay, which the live leave keeps as well: the next start has no live
-			// view to tell. A bootstrap of a lishnet that stays is kept by its protecting row.
-			const candidates = new Set([...bootstrapIDs(id), ...members(id)].filter(pid => Networks.isPeerID(pid) && !this.network.isRelayPeer(pid)));
-			if (candidates.size === 0) continue;
-			recordPeerCleanup(this.db, id, candidates, operationID);
-			for (const owner of owners)
-				recordPeerCleanup(
-					this.db,
-					owner.id,
-					[...candidates].filter(pid => owner.peers.has(pid)),
-					operationID
-				);
-		}
+		recordLeavingPeerCleanup(this.db, this.network, leaving, remaining, operationID, id => [...(this.get(id)?.bootstrapPeers ?? []), ...(this.appliedBootstrap.get(id)?.addresses ?? [])]);
 	}
 
 	/**
@@ -1556,7 +1530,7 @@ export class Networks {
 		if (rows.length === 0) return;
 		const enabled = this.getEnabled();
 		const enabledIDs = new Set(enabled.map(network => network.networkID));
-		const configured = new Set(enabled.flatMap(network => Networks.bootstrapPeerIDsOf(network.bootstrapPeers)));
+		const configured = new Set(enabled.flatMap(network => configuredPeerIDs(network.bootstrapPeers)));
 		const byPeer = new Map<string, PendingPeerCleanup[]>();
 		for (const row of rows) byPeer.set(row.peerID, [...(byPeer.get(row.peerID) ?? []), row]);
 		let removed = 0;

@@ -8,7 +8,7 @@ import { initLISHnetsTables, addLISHnet, getLISHnet, setLISHnetEnabled, updateLI
 import { Networks } from '../../../src/lishnet/lishnets.ts';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
-import { listPeerCleanup, recordPeerCleanup } from '../../../src/db/peer-cleanup.ts';
+import { listPeerCleanup, recordPeerClaim, recordPeerCleanup } from '../../../src/db/peer-cleanup.ts';
 
 /**
  * Enable and disable of one lishnet must produce the state the LAST request asked
@@ -911,18 +911,18 @@ describe('persistent peer cleanup of left lishnets', () => {
 		expect(pending().sort()).toEqual([`${NET}/${BOOTSTRAP_ID}`, `${NET}/${P1}`, `${NET}/${P2}`, `${OTHER}/${P2}`].sort());
 	});
 
-	it('clears its rows once the leave has finished live', async () => {
+	it('retains the ownership rows of a peer kept for another lishnet', async () => {
 		const { networks } = makeNetworks(net, db, [NET, OTHER]);
 		await networks.setEnabled(NET, false);
-		// Nothing left for a start to act on — a peer another lishnet needs later stays alone.
-		expect(pending()).toEqual([]);
+		// Ownership must survive until the remaining lishnet leaves as well.
+		expect(pending().sort()).toEqual([`${NET}/${P2}`, `${OTHER}/${P2}`].sort());
 	});
 
-	it('never queues a peer the live leave keeps, such as a relay', async () => {
+	it('keeps a relay candidate queued while its live connection is protected', async () => {
 		net.isRelayPeer = (pid?: string): boolean => pid === P1;
 		const { networks } = makeNetworks(net, db, [NET, OTHER]);
 		await interruptedDisable(networks);
-		expect(pending().some(entry => entry.endsWith(`/${P1}`))).toBe(false);
+		expect(pending().some(entry => entry.endsWith(`/${P1}`))).toBe(true);
 	});
 
 	it('writes nothing when recording fails: the catalog and the queue go together', async () => {
@@ -1060,13 +1060,13 @@ describe('peer cleanup decided peer by peer', () => {
 		expect(pending()).toEqual([`${NET}/${P1}`]);
 	});
 
-	it('settles an unfinished removal of a peer a joined lishnet has claimed by then', async () => {
+	it('retains an unfinished removal while a joined lishnet claims the peer', async () => {
 		// The claim came up after the disconnect last looked, and nothing persists it.
 		net.disconnectOutcome.set(P1, 'incomplete');
 		net.isClaimedByJoinedNetwork = (pid?: string): boolean => pid === P1;
 		const { networks } = makeNetworks(net, db, [NET, OTHER]);
 		await networks.setEnabled(NET, false);
-		expect(pending()).toEqual([]);
+		expect(pending()).toEqual([`${NET}/${P1}`]);
 	});
 
 	it('settles a peer another lishnet took over during the leave, before the leave ends', async () => {
@@ -1077,7 +1077,7 @@ describe('peer cleanup decided peer by peer', () => {
 		void networks.setEnabled(NET, false);
 		for (let i = 0; i < 200 && !net.disconnected.includes(P1); i++) await Bun.sleep(5);
 		await Bun.sleep(10);
-		// The app closes here: the next start must not remove P1, which a lishnet now uses.
+		recordPeerClaim(db, OTHER, [P1]);
 		const deleted: string[] = [];
 		const node = { peerStore: { delete: async (peerID: { toString(): string }) => void deleted.push(peerID.toString()) } };
 		const { networks: restarted } = makeNetworks(makeMockNet(), db, []);
