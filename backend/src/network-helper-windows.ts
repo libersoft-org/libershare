@@ -347,9 +347,12 @@ export async function verifyWindowsInstalledSibling(path: string, executable: st
  */
 export async function verifyWindowsInstalledHelper(path: string, executable: string, expectedHash: string, options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<boolean> {
 	try {
+		const started = elevationClock();
 		const sibling = await windowsInstalledSibling(path, executable);
 		options.signal?.throwIfAborted();
-		return sibling !== null && (await sha256File(sibling.path, options)) === expectedHash;
+		const timeoutMs = options.timeoutMs === undefined ? undefined : options.timeoutMs - (elevationClock() - started);
+		if (timeoutMs !== undefined && timeoutMs <= 0) throw new HelperVerificationTimeoutError();
+		return sibling !== null && (await sha256File(sibling.path, { ...options, ...(timeoutMs === undefined ? {} : { timeoutMs }) })) === expectedHash;
 	} catch (error) {
 		if (error instanceof HelperVerificationTimeoutError) throw error;
 		if (options.signal?.aborted) throw new HelperVerificationTimeoutError();

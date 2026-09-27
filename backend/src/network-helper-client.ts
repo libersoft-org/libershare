@@ -132,14 +132,20 @@ let windowsTrustInFlight: { identity: string; answer: Promise<boolean> } | null 
 
 /**
  * `work`, rejected with {@link HelperVerificationTimeoutError} once `deadline` on `now` passes.
- * The work itself is not stopped, only no longer waited for.
+ * `onTimeout` cancels work that supports it; filesystem metadata reads may still settle later.
  */
-function withinDeadline<T>(work: Promise<T>, deadline: number, now: () => number): Promise<T> {
+function withinDeadline<T>(work: Promise<T>, deadline: number, now: () => number, onTimeout?: () => void): Promise<T> {
 	work.catch(() => undefined);
 	const left = deadline - now();
-	if (left <= 0) return Promise.reject(new HelperVerificationTimeoutError());
+	if (left <= 0) {
+		onTimeout?.();
+		return Promise.reject(new HelperVerificationTimeoutError());
+	}
 	return new Promise<T>((resolve, reject) => {
-		const timer = setTimeout(() => reject(new HelperVerificationTimeoutError()), left);
+		const timer = setTimeout(() => {
+			onTimeout?.();
+			reject(new HelperVerificationTimeoutError());
+		}, left);
 		work.then(
 			value => {
 				clearTimeout(timer);
@@ -202,10 +208,11 @@ async function measureWindowsHelperTrust(helper: string, launcher: string, expec
 		return left;
 	};
 	// Every step ends at the one deadline the caller started before reading any file.
-	const bounded = <T>(work: Promise<T>): Promise<T> => withinDeadline(work, deadline, now);
+	const controller = new AbortController();
+	const bounded = <T>(work: Promise<T>): Promise<T> => withinDeadline(work, deadline, now, () => controller.abort());
 	// A budget already spent is a timeout, not an answer to cache.
 	remaining();
-	if (expectedHash === null || !(await bounded(verifyWindowsInstalledHelper(helper, process.execPath, expectedHash, { timeoutMs: remaining() }))) || !(await bounded(verifyWindowsInstalledSibling(launcher, process.execPath)))) return false;
+	if (expectedHash === null || !(await bounded(verifyWindowsInstalledHelper(helper, process.execPath, expectedHash, { signal: controller.signal, timeoutMs: remaining() }))) || !(await bounded(verifyWindowsInstalledSibling(launcher, process.execPath)))) return false;
 	const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`;
 	const script = `$ErrorActionPreference='Stop'; $s=@(${[helper, launcher, process.execPath].map(quote).join(',')} | ForEach-Object { Get-AuthenticodeSignature -LiteralPath $_ }); if ($s.Count -ne 3 -or @($s | Where-Object { $_.Status -ne 'Valid' -or -not $_.SignerCertificate }).Count -ne 0 -or @($s.SignerCertificate.Thumbprint | Select-Object -Unique).Count -ne 1) { exit 3 }`;
 	// Outside the try: a budget already spent is a timeout, not a bad signature to cache.
