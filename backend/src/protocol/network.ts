@@ -3769,9 +3769,9 @@ export class Network {
 		await connectToPeerFn(this.node, multiaddr);
 	}
 
-	async dialProtocol(multiaddrs: any[], protocol: string): Promise<IDialResult> {
+	async dialProtocol(multiaddrs: any[], protocol: string, signal?: AbortSignal): Promise<IDialResult> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
-		return dialProtocolFn(this.node, this.dcutrPeers, multiaddrs, protocol);
+		return dialProtocolFn(this.node, this.dcutrPeers, multiaddrs, protocol, signal);
 	}
 
 	async dialProtocolByPeerId(peerID: string, protocol: string, signal?: AbortSignal): Promise<IDialResult> {

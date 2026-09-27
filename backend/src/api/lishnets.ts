@@ -3,7 +3,8 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type SetLISHNetworkEnabledResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ManifestProgressEvent, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, type BootstrapStatus, CodedError, ErrorCodes, productName } from '@shared';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { LISHClient, LISH_PROTOCOL } from '../protocol/lish-protocol.ts';
+import { type LISHClient } from '../protocol/lish-protocol.ts';
+import { withLISHClient } from '../protocol/lish-client-session.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 /**
@@ -58,41 +59,8 @@ export function toSetEnabledResponse(result: SetEnabledResult): SetLISHNetworkEn
  * shutdown does not wait out a peer that answered the dial and then never sent the manifest.
  */
 export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void, settings: Settings, importManifestAdmitted: ImportManifestFn, runLISHMutation: RunLISHMutationFn, shutdownSignal: AbortSignal): LISHnetsHandlers {
-	/**
-	 * Dial the peer, open a LISH client and run one request, all cancellable by the shutdown
-	 * signal. The stream is aborted when the signal fires at any point — including between the
-	 * dial returning and the listener being attached — and the close is still awaited in
-	 * cleanup, so the caller's finally really is the end of the work.
-	 */
-	async function withPeerClient<T>(peerID: string, request: (client: LISHClient) => Promise<T>): Promise<T> {
-		shutdownSignal.throwIfAborted();
-		const network = networks.getRunningNetwork();
-		const { stream } = await network.dialProtocolByPeerId(peerID, LISH_PROTOCOL, shutdownSignal);
-		let client: LISHClient;
-		try {
-			client = new LISHClient(stream);
-		} catch (error) {
-			try {
-				stream.abort(error instanceof Error ? error : new Error(String(error)));
-			} catch {}
-			throw error;
-		}
-		const onAbort = (): void => client.abort(shutdownSignal.reason instanceof Error ? shutdownSignal.reason : new Error('Backend is shutting down'));
-		shutdownSignal.addEventListener('abort', onAbort, { once: true });
-		try {
-			// Aborted before the listener was attached: nothing sent, stream torn down now.
-			if (shutdownSignal.aborted) onAbort();
-			shutdownSignal.throwIfAborted();
-			try {
-				return await request(client);
-			} finally {
-				// Close in finally so a throwing request (peer error, validation) cannot leak
-				// the stream; swallow close errors so they never mask the request error.
-				await client.close().catch(() => {});
-			}
-		} finally {
-			shutdownSignal.removeEventListener('abort', onAbort);
-		}
+	function withPeerClient<T>(peerID: string, request: (client: LISHClient) => Promise<T>): Promise<T> {
+		return withLISHClient(networks.getRunningNetwork(), peerID, shutdownSignal, request);
 	}
 
 	function list(): LISHNetworkConfig[] {
