@@ -134,6 +134,10 @@ describe('download from a second seeder, paused and resumed', () => {
 	it(
 		'with node0 not uploading, node2 gets every chunk from node1 across a pause',
 		async () => {
+			const seederReady = nodes[1]!.waitForEvent('transfer.download:complete', (d: any) => d.lishID === lishID, EVENT_TIMEOUT * 2);
+			await nodes[1]!.call('transfer.enableDownload', { lishID });
+			await seederReady;
+			expect(downloadedHash(1)).toBe(payloadHash);
 			// node0 stops serving: whatever node2 receives must come from node1.
 			await nodes[0]!.call('transfer.disableUpload', { lishID });
 			// Slow node1 down so the pause lands in the middle of the transfer.
