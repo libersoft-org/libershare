@@ -45,4 +45,3 @@ export async function removeOwnEmptyDirectories(created: readonly string[]): Pro
 		}
 	}
 }
-
