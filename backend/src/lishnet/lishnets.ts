@@ -619,7 +619,7 @@ export class Networks {
 	private currentState(id: string): ReconcileOutcome {
 		const row = this.get(id);
 		const joined = this.joinedNetworks.has(id);
-		const outcome: ReconcileOutcome = { transitioned: false, joined, applied: joined === (row?.enabled === true), converged: row };
+		const outcome: ReconcileOutcome = { transitioned: false, joined, applied: joined === (row?.enabled === true) && (!joined || !this.reconcileAdmissionClosed), converged: row };
 		if (row) outcome.network = { networkID: row.networkID, name: row.name };
 		return outcome;
 	}
@@ -1514,12 +1514,11 @@ export class Networks {
 	}
 
 	/**
-	 * Queue the peers of every joined lishnet for cleanup, none of them protected: for a reset
-	 * that clears the catalog without the peer store. Taken while the node still runs, since
-	 * the membership it needs is gone once the node stops.
+	 * Queue live members and stored bootstraps before clearing the catalog. Stored rows still
+	 * matter after a failed restart has already emptied joinedNetworks.
 	 */
 	recordPeersForCatalogReset(): void {
-		this.db.transaction(() => this.recordLeavingPeers([...this.joinedNetworks], new Set(), crypto.randomUUID()))();
+		this.db.transaction(() => this.recordLeavingPeers([...new Set([...this.joinedNetworks, ...this.list().map(row => row.networkID)])], new Set(), crypto.randomUUID()))();
 	}
 
 	private recordLeavingPeers(leaving: readonly string[], remaining: ReadonlySet<string>, operationID: string): void {
