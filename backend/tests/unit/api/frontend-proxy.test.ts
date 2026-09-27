@@ -135,6 +135,36 @@ async function withProxy(upstream: Upstream | null, backendUrl: string, run: (pr
 }
 
 describe('frontend proxy /status', () => {
+	it('rejects a legacy unauthenticated backend before the websocket upgrade', async () => {
+		const upstream = startUpstream({ status: () => Response.json({ ok: true, authRequired: false, authenticated: true }) });
+		await withProxy(upstream, upstream.url, async proxy => {
+			for (const path of ['/status', '/ws']) {
+				const response = await fetch(`${proxy.http}${path}`, { headers: { upgrade: 'websocket', connection: 'Upgrade', 'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==', 'sec-websocket-version': '13' } });
+				expect(response.status).toBe(502);
+			}
+			expect(upstream.dials).toBe(0);
+		});
+	});
+
+	it('cancels an oversized status stream before reading the complete response', async () => {
+		let chunks = 0;
+		let cancelled = false;
+		const upstream = startUpstream({ status: () => new Response(new ReadableStream({
+			async pull(controller) {
+				await Bun.sleep(10);
+				if (cancelled) return;
+				controller.enqueue(new Uint8Array(4096).fill(32));
+				if (++chunks === 100) controller.close();
+			},
+			cancel() { cancelled = true; },
+		})) });
+		await withProxy(upstream, upstream.url, async proxy => {
+			expect((await fetch(`${proxy.http}/status`)).status).toBe(502);
+			for (let i = 0; i < 30 && !cancelled; i++) await Bun.sleep(10);
+			expect(cancelled).toBe(true);
+			expect(chunks).toBeLessThan(100);
+		});
+	});
 	it('forwards the backend answer and the raw query, duplicates included', async () => {
 		const upstream = startUpstream();
 		await withProxy(upstream, upstream.url, async proxy => {
@@ -193,6 +223,14 @@ describe('frontend proxy /status', () => {
 });
 
 describe('frontend websocket proxy', () => {
+	it('rejects URL fragments at startup without echoing their content', async () => {
+		const script = await stageProxy();
+		const proc = Bun.spawn([process.execPath, script], { env: { ...process.env, BACKEND_WS_URL: 'ws://127.0.0.1:1/#private-value' }, stdout: 'pipe', stderr: 'pipe' });
+		const [code, out, err] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+		expect(code).not.toBe(0);
+		expect(out + err).not.toContain('private-value');
+		expect(err).toContain('without a fragment');
+	});
 	it('refuses to start with credentials in BACKEND_WS_URL', async () => {
 		const script = await stageProxy();
 		for (const backend of ['ws://user:pass@127.0.0.1:1', 'ws://127.0.0.1:1/?token=x']) {

@@ -11,7 +11,13 @@ const tlsEnabled = Boolean(keyFile && certFile);
 if (!backendWsUrl) throw new Error('BACKEND_WS_URL is required');
 {
 	// The proxy must never hand its own credentials to a client that sent none.
-	const configured = new URL(backendWsUrl);
+	let configured: URL;
+	try {
+		configured = new URL(backendWsUrl);
+	} catch {
+		throw new Error('BACKEND_WS_URL must be a valid WebSocket URL');
+	}
+	if (!['ws:', 'wss:'].includes(configured.protocol) || configured.href.includes('#')) throw new Error('BACKEND_WS_URL must use ws: or wss: without a fragment');
 	if (configured.username || configured.password || configured.searchParams.has('token')) throw new Error('BACKEND_WS_URL must not carry credentials; clients send their own token');
 }
 
@@ -103,8 +109,9 @@ type StatusOutcome = { kind: 'answer'; status: 200 | 401; body: string } | { kin
  */
 async function checkStatus(request: Request, clientUrl: URL): Promise<StatusOutcome> {
 	let response: Response;
+	const controller = new AbortController();
 	try {
-		response = await fetch(statusUrl(clientUrl), { redirect: 'manual', signal: upstreamSignal(request) });
+		response = await fetch(statusUrl(clientUrl), { redirect: 'manual', signal: AbortSignal.any([upstreamSignal(request), controller.signal]) });
 	} catch (error) {
 		return { kind: 'unavailable', status: unavailableStatus(error) };
 	}
@@ -112,13 +119,28 @@ async function checkStatus(request: Request, clientUrl: URL): Promise<StatusOutc
 		await response.body?.cancel().catch(() => {});
 		return { kind: 'unavailable', status: 502 };
 	}
-	let body: string;
+	let body = '';
+	const reader = response.body?.getReader();
+	if (!reader) return { kind: 'unavailable', status: 502 };
 	try {
-		const bytes = new Uint8Array(await response.arrayBuffer());
-		if (bytes.byteLength > MAX_STATUS_BODY_BYTES) return { kind: 'unavailable', status: 502 };
-		body = new TextDecoder().decode(bytes);
+		let received = 0;
+		const decoder = new TextDecoder();
+		for (;;) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			received += value.byteLength;
+			if (received > MAX_STATUS_BODY_BYTES) {
+				controller.abort();
+				await reader.cancel().catch(() => {});
+				return { kind: 'unavailable', status: 502 };
+			}
+			body += decoder.decode(value, { stream: true });
+		}
+		body += decoder.decode();
 	} catch (error) {
 		return { kind: 'unavailable', status: unavailableStatus(error) };
+	} finally {
+		reader.releaseLock();
 	}
 	let parsed: { ok?: unknown; authRequired?: unknown; authenticated?: unknown };
 	try {
@@ -127,7 +149,7 @@ async function checkStatus(request: Request, clientUrl: URL): Promise<StatusOutc
 		return { kind: 'unavailable', status: 502 };
 	}
 	const authenticated = parsed?.ok === true && parsed.authenticated === true;
-	if (typeof parsed?.authRequired !== 'boolean' || authenticated !== (response.status === 200)) return { kind: 'unavailable', status: 502 };
+	if (parsed?.authRequired !== true || authenticated !== (response.status === 200)) return { kind: 'unavailable', status: 502 };
 	return { kind: 'answer', status: response.status, body };
 }
 
@@ -166,7 +188,14 @@ async function forwardPreflight(request: Request, clientUrl: URL): Promise<Respo
  */
 function connectUpstream(ws: import('bun').ServerWebSocket<ClientData>): void {
 	if (ws.data.closed) return;
-	const upstream = new WebSocket(ws.data.upstreamUrl);
+	let upstream: WebSocket;
+	try {
+		upstream = new WebSocket(ws.data.upstreamUrl);
+	} catch {
+		ws.data.pending.length = 0;
+		ws.close(1011, 'upstream connection failed');
+		return;
+	}
 	ws.data.upstream = upstream;
 	let failed = false;
 	const fail = (reason: string): void => {
