@@ -1,4 +1,6 @@
 import type { FactoryResetOrchestratorDeps } from '../../../src/api/factory-reset-orchestrator.ts';
+import { NetworkRestartManager } from '../../../src/api/network-restart.ts';
+import { effectiveNetworkConfig } from '../../../src/protocol/network-settings.ts';
 
 /** Build a stub Networks object with controllable per-method behaviour. */
 function makeNetworks(overrides: Record<string, () => any> = {}): FactoryResetOrchestratorDeps['networks'] {
@@ -81,7 +83,7 @@ export function makeDeps(
 		log?: string[];
 	} = {}
 ): FactoryResetOrchestratorDeps {
-	return {
+	const deps = {
 		networks: makeNetworks(overrides.networkOverride ?? {}),
 		dataServer: makeDataServer(overrides.dataServerOverride ?? {}),
 		settings: makeSettings(overrides.settingsOverride ?? {}),
@@ -90,11 +92,23 @@ export function makeDeps(
 		pauseAllLISHMutations: overrides.pauseAllLISHMutations ?? (() => Promise.resolve()),
 		resumeAllLISHMutations: overrides.resumeAllLISHMutations ?? (() => {}),
 		pauseAllTransfers: overrides.pauseAllTransfers ?? (() => Promise.resolve()),
-		clearAllTransfers: overrides.clearAllTransfers ?? (() => Promise.resolve()),
+		clearAllTransfers: overrides.clearAllTransfers ?? (() => Promise.resolve(new Map())),
 		clearUploadRuntime: overrides.clearUploadRuntime ?? (() => {}),
 		restoreAllTransfers: overrides.restoreAllTransfers ?? (() => Promise.resolve()),
 		resumeAllTransfers: overrides.resumeAllTransfers ?? (() => {}),
 		broadcastFn: overrides.broadcastFn ?? (() => {}),
 	};
+	const restartManager = new NetworkRestartManager({
+		prepareMaintenance: () => deps.networks.prepareMaintenance(),
+		cancelRunOperations: () => deps.networks.getNetwork().cancelRunOperations(),
+		stopAllNetworks: () => deps.networks.stopAllNetworks(),
+		startEnabledNetworks: () => deps.networks.startEnabledNetworks(),
+		isRunning: () => true,
+		appliedNetworkConfig: () => effectiveNetworkConfig(deps.settings.list().network),
+		pauseTransfers: deps.pauseAllTransfers, pauseLISHMutations: deps.pauseAllLISHMutations,
+		resumeLISHMutations: deps.resumeAllLISHMutations, clearTransfers: deps.clearAllTransfers,
+		restoreTransfers: deps.restoreAllTransfers, resumeTransfers: deps.resumeAllTransfers,
+		downloadIntent: () => deps.dataServer.getDownloadEnabledLishs(), applyLimits: () => {},
+	});
+	return { ...deps, restartManager };
 }
-

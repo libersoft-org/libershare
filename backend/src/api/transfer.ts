@@ -1,4 +1,4 @@
-import { destroyAllDownloaders } from './transfer-teardown.ts';
+import { destroyAllDownloaders, TransferTeardownError } from './transfer-teardown.ts';
 export { destroyAllDownloaders, TransferTeardownError } from './transfer-teardown.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
@@ -1173,16 +1173,20 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				suspended: true,
 			});
 		}
-		await destroyAllDownloaders(activeDownloaders, async lishID => {
-			const state = downloaderState.get(lishID);
-			if (!state) throw new Error(`Cannot restore download ${lishID}: reset snapshot is missing`);
-			return startStoredDownloader(lishID, state.networkIDs, state.originalNetworkIDs, state.disabled);
-		});
-		while (pendingDownloadLifecycles.size > 0) await Promise.allSettled([...pendingDownloadLifecycles]);
-		downloadEnabledLishs.clear();
-		networkSuspended.clear();
-		Downloader.resetDownloadSpeedLimiter();
-		await recovery.stopAllAndDrain();
+		try {
+			await destroyAllDownloaders(activeDownloaders, async lishID => {
+				const state = downloaderState.get(lishID);
+				if (!state) throw new Error(`Cannot restore download ${lishID}: reset snapshot is missing`);
+				return startStoredDownloader(lishID, state.networkIDs, state.originalNetworkIDs, state.disabled);
+			});
+			while (pendingDownloadLifecycles.size > 0) await Promise.allSettled([...pendingDownloadLifecycles]);
+			downloadEnabledLishs.clear();
+			networkSuspended.clear();
+			Downloader.resetDownloadSpeedLimiter();
+			await recovery.stopAllAndDrain();
+		} catch (error) {
+			throw new TransferTeardownError([error], error instanceof Error ? error.message : 'Transfer teardown failed', (error as { runtimeRestored?: boolean })?.runtimeRestored === true, downloaderState);
+		}
 		return downloaderState;
 	}
 

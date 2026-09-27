@@ -1,12 +1,15 @@
 import type { Downloader } from '../protocol/downloader.ts';
+import type { TransferRestoreSnapshot } from './transfer.ts';
 
 export class TransferTeardownError extends AggregateError {
 	readonly runtimeRestored: boolean;
+	readonly restoreSnapshot: TransferRestoreSnapshot | undefined;
 
-	constructor(errors: unknown[], message: string, runtimeRestored: boolean) {
+	constructor(errors: unknown[], message: string, runtimeRestored: boolean, restoreSnapshot?: TransferRestoreSnapshot) {
 		super(errors, message);
 		this.name = 'TransferTeardownError';
 		this.runtimeRestored = runtimeRestored;
+		this.restoreSnapshot = restoreSnapshot;
 	}
 }
 
@@ -46,4 +49,3 @@ export async function destroyAllDownloaders<T extends Pick<Downloader, 'destroy'
 	const restoreDetail = restoreErrors.length > 0 ? `; failed to restore ${restoreErrors.length} download(s)` : '';
 	throw new TransferTeardownError([...errors, ...restoreErrors], `Failed to stop ${errors.length} active download(s)${restoreDetail}`, restore !== undefined && restoreErrors.length === 0);
 }
-

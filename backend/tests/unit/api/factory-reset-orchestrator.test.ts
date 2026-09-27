@@ -897,26 +897,17 @@ describe('buildFactoryResetHandler — failed restore through the real transfer 
 describe('buildFactoryResetHandler — a restore a failed settings restart still owes', () => {
 	it('restores the pending transfers, not the empty runtime, and settles them', async () => {
 		const pending = new Map([['lish-x', { networkIDs: ['net-x'], originalNetworkIDs: ['net-x'], disabled: false, suspended: false }]]);
-		let owed: typeof pending | null = pending;
 		let restoredWith: unknown;
-		const deps = {
-			...makeDeps({
-				// The failed restart already tore the runtime down: nothing is left to capture.
-				clearAllTransfers: async () => new Map(),
-				restoreAllTransfers: async (_ids, snapshot) => {
-					restoredWith = snapshot;
-				},
-			}),
-			pendingTransferRestore: () => owed,
-			pendingTransferRestored: () => {
-				owed = null;
-			},
-		};
+		const deps = makeDeps({
+			clearAllTransfers: async () => new Map(),
+			restoreAllTransfers: async (_ids, snapshot) => { restoredWith = snapshot; },
+		});
+		deps.restartManager.retainPendingRestore(pending);
 
 		await buildFactoryResetHandler(deps as never)({ peers: true, identity: false, settings: false, downloads: false, networks: false });
 
 		expect(restoredWith).toBe(pending);
-		expect(owed).toBeNull();
+		expect(deps.restartManager.pendingRestore()).toBeNull();
 	});
 });
 

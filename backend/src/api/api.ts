@@ -387,8 +387,7 @@ export class APIServer {
 			clearUploadRuntime: _transfer.clearUploads,
 			restoreAllTransfers: _transfer.restoreAll,
 			resumeAllTransfers: _transfer.resumeAll,
-			pendingTransferRestore: () => networkRestart.pendingRestore(),
-			pendingTransferRestored: () => networkRestart.clearPendingRestore(),
+			restartManager: networkRestart,
 			broadcastFn: broadcastExceptFn,
 		});
 

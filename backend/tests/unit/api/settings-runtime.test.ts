@@ -116,7 +116,7 @@ describe('settings changes on the running node', () => {
 		// The same port again, once it is free: not a no-op — the node is down.
 		failStart(false);
 		await settings.set('network.incomingPort', 29999);
-		expect(log).toEqual(['maintenance', 'pause', 'stop', 'limits', 'start:29999', 'restore', 'resume', 'release']);
+		expect(log).toEqual(['maintenance', 'pause', 'clear', 'stop', 'limits', 'start:29999', 'restore', 'resume', 'release']);
 		expect(restored).toEqual([SNAPSHOT]);
 		expect(manager.hasPendingRestore()).toBe(false);
 	});

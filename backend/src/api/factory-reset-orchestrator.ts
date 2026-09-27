@@ -4,7 +4,7 @@ import { type Settings } from '../settings.ts';
 import { type FactoryResetResponse } from '@shared';
 import { initUploadState } from '../protocol/lish-protocol.ts';
 import { persistAndApplyNetworkLimits } from '../protocol/network-limits.ts';
-import { effectiveNetworkConfig, sameEffectiveNetworkConfig } from '../protocol/network-settings.ts';
+import type { NetworkRestartManager } from './network-restart.ts';
 import { runFactoryReset } from './factory-reset.ts';
 import { initDownloadState, type TransferRestoreSnapshot } from './transfer.ts';
 import { Mutex } from 'async-mutex';
@@ -45,13 +45,8 @@ export interface FactoryResetOrchestratorDeps {
 	readonly restoreAllTransfers: (lishIDs: Set<string>, snapshot?: TransferRestoreSnapshot) => Promise<void>;
 	/** Re-opens transfer admission after the reset barrier is no longer active. */
 	readonly resumeAllTransfers: () => void;
-	/**
-	 * Transfers a failed settings restart tore down and still owes back, if any. The runtime is
-	 * already empty then, so the reset restores these instead of what it finds.
-	 */
-	readonly pendingTransferRestore?: () => TransferRestoreSnapshot | null;
-	/** Tell the owner of that pending restore that the reset has now restored it. */
-	readonly pendingTransferRestored?: () => void;
+	readonly restartManager: NetworkRestartManager;
+
 	/**
 	 * Broadcasts a WebSocket event to subscribed clients, skipping `except` when given.
 	 */
@@ -94,8 +89,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 			// Downloads include data currently served by upload streams. Stopping the node
 			// closes those streams before their database rows are removed; clearing only the
 			// in-memory counters would still leave an in-flight stream using wiped state.
-			const settingsRebuildNode = wipeSettings && !sameEffectiveNetworkConfig(effectiveNetworkConfig(settings.list().network), effectiveNetworkConfig(settings.getDefaults().network));
-			const restartNode = wipeDownloads || wipeIdentity || wipeNetworks || wipePeers || settingsRebuildNode;
+			let restartNode = wipeDownloads || wipeIdentity || wipeNetworks || wipePeers;
 			// Close lishnet writes now, but do not wait for an older join/leave yet. A stalled
 			// runtime operation is cancelled only after the fallible transfer preparation has
 			// succeeded, so a failed prepare can safely release admission without poisoning the
@@ -105,6 +99,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 			const settingsHold = wipeSettings ? await settings.holdWrites() : undefined;
 			let networkMaintenance: Awaited<ReturnType<typeof networks.prepareMaintenance>> | undefined;
 			try {
+				restartNode ||= wipeSettings && deps.restartManager.needsRestart(settings.getDefaults().network);
 				networkMaintenance = restartNode ? await networks.prepareMaintenance() : undefined;
 			} catch (error) {
 				settingsHold?.release();
@@ -133,7 +128,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 				await networks.startEnabledNetworks();
 				try {
 					await restoreAllTransfers(enabledDownloads, transferRestoreSnapshot);
-					deps.pendingTransferRestored?.();
+					deps.restartManager.clearPendingRestore();
 					transferRuntimeSafe = true;
 				} catch (error) {
 					transferRuntimeSafe = false;
@@ -169,8 +164,9 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 							transferRuntimeSafe = false;
 							try {
 								const cleared = await clearAllTransfers();
-								transferRestoreSnapshot = deps.pendingTransferRestore?.() ?? cleared;
+								transferRestoreSnapshot = deps.restartManager.retainPendingRestore(cleared);
 							} catch (error) {
+								deps.restartManager.rememberFailedPreparation(error);
 								transferRuntimeSafe = (error as { runtimeRestored?: boolean })?.runtimeRestored === true;
 								throw error;
 							}

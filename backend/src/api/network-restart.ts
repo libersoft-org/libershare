@@ -1,6 +1,7 @@
 import { type SettingsChange, type SettingsData } from '../settings.ts';
 import { effectiveNetworkConfig, requestsP2PApply, sameEffectiveNetworkConfig, type EffectiveNetworkConfig } from '../protocol/network-settings.ts';
 import { type TransferRestoreSnapshot } from './transfer.ts';
+import { TransferTeardownError } from './transfer-teardown.ts';
 
 /** What the restart manager drives; the handlers and `Networks` keep owning their state. */
 export interface NetworkRestartDeps {
@@ -39,6 +40,7 @@ export class NetworkRestartManager {
 	private readonly deps: NetworkRestartDeps;
 	/** Transfers torn down by a restart that has not finished restoring them. */
 	private pendingSnapshot: TransferRestoreSnapshot | null = null;
+	private preparationFailed = false;
 
 	constructor(deps: NetworkRestartDeps) {
 		this.deps = deps;
@@ -46,7 +48,7 @@ export class NetworkRestartManager {
 
 	/** Whether a restart left transfers that still have to be restored. */
 	hasPendingRestore(): boolean {
-		return this.pendingSnapshot !== null;
+		return this.pendingSnapshot !== null || this.preparationFailed;
 	}
 
 	/**
@@ -60,6 +62,21 @@ export class NetworkRestartManager {
 	/** Forget the pending transfers once another restart has restored them. */
 	clearPendingRestore(): void {
 		this.pendingSnapshot = null;
+		this.preparationFailed = false;
+	}
+
+	retainPendingRestore(snapshot: TransferRestoreSnapshot): TransferRestoreSnapshot {
+		return this.pendingSnapshot ??= snapshot;
+	}
+
+	rememberFailedPreparation(error: unknown): void {
+		this.preparationFailed = true;
+		if (error instanceof TransferTeardownError && !error.runtimeRestored && error.restoreSnapshot) this.retainPendingRestore(error.restoreSnapshot);
+	}
+
+	needsRestart(network: SettingsData['network']): boolean {
+		const applied = this.deps.isRunning() ? this.deps.appliedNetworkConfig() : null;
+		return this.hasPendingRestore() || applied === null || !sameEffectiveNetworkConfig(applied, effectiveNetworkConfig(network));
 	}
 
 	/**
@@ -72,8 +89,7 @@ export class NetworkRestartManager {
 			await change.commit();
 			return;
 		}
-		const applied = this.deps.isRunning() ? this.deps.appliedNetworkConfig() : null;
-		if (applied !== null && this.pendingSnapshot === null && sameEffectiveNetworkConfig(applied, effectiveNetworkConfig(change.after.network))) {
+		if (!this.needsRestart(change.after.network)) {
 			await change.commit();
 			this.deps.applyLimits(change.after.network);
 			return;
@@ -89,21 +105,23 @@ export class NetworkRestartManager {
 	private async restart(change: SettingsChange): Promise<void> {
 		const lease = await this.deps.prepareMaintenance();
 		try {
-			// Cancel BEFORE draining, as the factory reset and the identity change do: a leave
-			// stuck hanging up an unresponsive peer ends only through this, and the drain would
-			// otherwise wait for it forever with the settings write and every later one behind.
+			await Promise.all([this.deps.pauseTransfers(), this.deps.pauseLISHMutations()]);
+			// Retry also drains remnants of a failed teardown, retaining the original bindings.
+			const snapshot = this.retainPendingRestore(await this.deps.clearTransfers());
+			// A failed preparation must not poison the still-running node. Once prepared,
+			// cancel before draining: a leave can be waiting on an unresponsive peer.
 			this.deps.cancelRunOperations();
 			await lease.drain();
-			await Promise.all([this.deps.pauseTransfers(), this.deps.pauseLISHMutations()]);
-			// A retry keeps the first snapshot: the runtime it would take now is already empty.
-			if (this.pendingSnapshot === null) this.pendingSnapshot = await this.deps.clearTransfers();
 			await this.deps.stopAllNetworks();
 			await change.commit();
 			this.deps.applyLimits(change.after.network);
 			await this.deps.startEnabledNetworks();
-			await this.deps.restoreTransfers(this.deps.downloadIntent(), this.pendingSnapshot);
-			this.pendingSnapshot = null;
+			await this.deps.restoreTransfers(this.deps.downloadIntent(), snapshot);
+			this.clearPendingRestore();
 			this.deps.resumeTransfers();
+		} catch (error) {
+			this.rememberFailedPreparation(error);
+			throw error;
 		} finally {
 			this.deps.resumeLISHMutations();
 			lease.release();
