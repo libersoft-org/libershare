@@ -14,7 +14,7 @@ describe('a backend without a token', () => {
 		const dataDir = join(root, 'data');
 		const home = join(root, 'home');
 		try {
-			const env: Record<string, string> = { MEMTRACE: '0', HEAP_TRIGGER: '0', HOME: home, USERPROFILE: home, STORAGE_ROOT: join(root, 'storage'), TMP: root, TEMP: root, TMPDIR: root };
+			const env: Record<string, string> = { MEMTRACE: '0', HEAP_TRIGGER: '0', HOME: home, USERPROFILE: home, STORAGE_ROOT: join(root, 'storage'), TMP: root, TEMP: root, TMPDIR: root, BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(root, 'runtime-cache') };
 			for (const key of ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT']) {
 				if (process.env[key]) env[key] = process.env[key]!;
 			}
