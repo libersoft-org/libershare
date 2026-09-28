@@ -1,5 +1,7 @@
 import { afterAll, expect, it } from 'bun:test';
 import { join } from 'node:path';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 /**
  * The CLI as a real process against a stand-in server that records each handshake URL. The
@@ -8,6 +10,10 @@ import { join } from 'node:path';
  */
 
 const CLI = join(import.meta.dir, '..', 'cli.ts');
+const MAKELISH = join(import.meta.dir, '..', 'makelish.ts');
+const fixture = mkdtempSync(join(tmpdir(), 'libershare-cli-auth-'));
+const input = join(fixture, 'payload.txt');
+writeFileSync(input, 'CLI authentication fixture');
 const SECRET = `cli-secret-${crypto.randomUUID()}`;
 const seen: string[] = [];
 const server = Bun.serve({
@@ -27,17 +33,18 @@ const server = Bun.serve({
 // Not awaited: after its sockets have closed, the promise from stop() may never settle.
 afterAll(() => {
 	void server.stop(true);
+	rmSync(fixture, { recursive: true });
 });
 
-async function run(url: string, token: string | undefined): Promise<{ code: number; output: string }> {
+async function run(url: string, token: string | undefined, entry: string = CLI): Promise<{ code: number; output: string }> {
 	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
 	delete env['LISH_TOKEN'];
 	if (token !== undefined) env['LISH_TOKEN'] = token;
 	// A CLI that connects waits at its prompt until `quit`; one that refuses the URL exits first,
 	// and writing to the pipe of an exited process blocks on Windows, so it gets no input.
 	const connects = !url.includes('token=a&token=b') && !url.includes('#') && !url.includes('[');
-	const proc = Bun.spawn([process.execPath, CLI, '--url', url], { env, stdout: 'pipe', stderr: 'pipe', stdin: connects ? 'pipe' : 'ignore' });
-	if (connects && proc.stdin) {
+	const proc = Bun.spawn([process.execPath, entry, '--url', url, ...(entry === MAKELISH ? ['--input', input] : [])], { env, stdout: 'pipe', stderr: 'pipe', stdin: connects && entry === CLI ? 'pipe' : 'ignore' });
+	if (connects && entry === CLI && proc.stdin) {
 		proc.stdin.write('quit' + String.fromCharCode(10));
 		proc.stdin.end();
 	}
@@ -86,4 +93,28 @@ it('hides a token in a --url that cannot be parsed', async () => {
 	expect(code).toBe(1);
 	expect(output).toContain('Invalid --url');
 	expect(output).not.toContain(SECRET);
+}, 30_000);
+
+it('authenticates makelish using LISH_TOKEN without printing it', async () => {
+	seen.length = 0;
+	const { output } = await run(base, SECRET, MAKELISH);
+	expect(seen[0]).toBe(`?token=${SECRET}`);
+	expect(output).not.toContain(SECRET);
+}, 30_000);
+
+it('uses the makelish URL token instead of LISH_TOKEN and hides both', async () => {
+	seen.length = 0;
+	const { output } = await run(`${base}/?token=${SECRET}`, 'unused-env-token', MAKELISH);
+	expect(seen[0]).toBe(`?token=${SECRET}`);
+	expect(output).not.toContain(SECRET);
+	expect(output).not.toContain('unused-env-token');
+}, 30_000);
+
+it('rejects a malformed makelish URL without exposing its token', async () => {
+	seen.length = 0;
+	const { code, output } = await run(`ws://[bad/?token=${SECRET}`, undefined, MAKELISH);
+	expect(code).toBe(1);
+	expect(output).toContain('Invalid --url');
+	expect(output).not.toContain(SECRET);
+	expect(seen).toEqual([]);
 }, 30_000);

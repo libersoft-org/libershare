@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import * as readline from 'readline';
 import { join } from 'path';
-import { APIClient } from './api-client';
+import { APIClient, withToken, redactTokens, displayURL } from './api-client';
 import { API, DEFAULT_API_URL } from '@shared';
 
 const HELP = `
@@ -68,47 +68,6 @@ function resolvePath(x: string): string {
 	x = expandHome(x);
 	if (!x.startsWith('/')) x = join(process.cwd(), x);
 	return x;
-}
-
-/**
- * The URL to connect to: a token given in `--url` wins, otherwise `LISH_TOKEN` is added as the
- * single `token` parameter. Two tokens in the URL are refused rather than guessed between.
- */
-export function withToken(url: string, envToken: string | undefined): string {
-	const parsed = new URL(url);
-	const given = parsed.searchParams.getAll('token');
-	if (given.length > 1) throw new Error('the URL carries more than one token');
-	// A WebSocket URL cannot carry one, and the error that says so would print the token.
-	if (parsed.hash) throw new Error('the URL must not have a fragment');
-	if (given.length === 0 && envToken) parsed.searchParams.set('token', envToken);
-	return parsed.toString();
-}
-
-/**
- * A message fit for the terminal: every token the CLI knows of — from the environment or the
- * URL, raw or percent-encoded — and any `token=` query value replaced by `***`. Error messages
- * from URL parsing and from the WebSocket quote the URL they were given.
- */
-export function redactTokens(message: string, url: string, envToken: string | undefined): string {
-	const secrets = new Set<string>();
-	if (envToken) secrets.add(envToken);
-	try {
-		for (const token of new URL(url).searchParams.getAll('token')) if (token) secrets.add(token);
-	} catch {}
-	let out = message.replace(/([?&]token=)[^&#\s"']*/gi, '$1***');
-	// A bare token shorter than four characters would blank out ordinary words of the message;
-	// such a token is still caught by the `token=` rule above.
-	for (const secret of secrets) if (secret.length >= 4) for (const form of [secret, encodeURIComponent(secret)]) out = out.split(form).join('***');
-	return out;
-}
-
-/** The URL as shown to the user: no query (it holds the token) and no credentials. */
-export function displayURL(url: string): string {
-	const parsed = new URL(url);
-	parsed.search = '';
-	parsed.username = '';
-	parsed.password = '';
-	return parsed.toString();
 }
 
 async function main(): Promise<void> {
