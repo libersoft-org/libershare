@@ -3,7 +3,7 @@
  * building block; this module only fixes the order they run in.
  */
 export interface ShutdownDeps {
-	/** Stop searches and the system polling that could still save settings. */
+	/** Stop searches and periodic work before draining accepted requests. */
 	readonly stopBackgroundWork: () => void;
 	/** Signal every LISH creation to stop, without waiting for it. */
 	readonly stopAllCreates: () => Promise<unknown>;

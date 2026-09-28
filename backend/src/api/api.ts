@@ -371,6 +371,7 @@ export class APIServer {
 			stopBackgroundWork: () => {
 				_search.stopAll();
 				_system.stopPolling();
+				_relay.stopPolling();
 			},
 			stopAllCreates: _lishs.stopAllCreates,
 			drainAcceptedRequests: () => this.drainAcceptedRequests(),
