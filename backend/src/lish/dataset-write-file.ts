@@ -1,5 +1,5 @@
 import { open, type FileHandle } from 'node:fs/promises';
-import type { Stats } from 'node:fs';
+import { constants, type Stats } from 'node:fs';
 import { CodedError, ErrorCodes } from '@shared';
 
 /** Check the opened object before truncation or writing, not the pathname seen earlier. */
@@ -15,7 +15,9 @@ export async function assertDatasetWriteTarget(file: Pick<FileHandle, 'stat'>): 
 export async function readDatasetWriteTarget(path: string): Promise<Stats | null> {
 	let file: FileHandle;
 	try {
-		file = await open(path, 'r');
+		// A FIFO must not hold the metadata check waiting for a writer.
+		const flags = process.platform === 'win32' ? 'r' : constants.O_RDONLY | constants.O_NONBLOCK;
+		file = await open(path, flags);
 	} catch (error: any) {
 		if (error.code === 'ENOENT') return null;
 		throw error;
