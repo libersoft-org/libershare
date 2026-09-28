@@ -1,5 +1,6 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type ILISH, type IStoredLISH, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, sanitizeFilename, validateLISHStructure, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
+import { type ILISH, type IStoredLISH, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, validateLISHStructure, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
+import { datasetRootName } from '../lish/dataset-root.ts';
 import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, runVerification } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
@@ -425,8 +426,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		validateLISHStructure(lish, maxChunkSize);
 		const existing = dataServer.get(lish.id);
 		if (existing && !overwrite) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
+		const dirName = datasetRootName(lish);
 		if (existing) dataServer.delete(lish.id);
-		const dirName = sanitizeFilename(lish.name || lish.id) || lish.id;
 		const finalBaseDir = join(Utils.expandHome(downloadPath), dirName);
 		let directory: string;
 		let finalDirectory: string | undefined;
@@ -672,7 +673,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		if (!lish) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, p.lishID);
 		let newDir = Utils.expandHome(p.newDirectory);
 		if (p.createSubdirectory !== false) {
-			const subDirName = sanitizeFilename(lish.name || lish.id) || lish.id;
+			const subDirName = datasetRootName(lish);
 			newDir = join(newDir, subDirName);
 		}
 		// Stop verification if running for this LISH
