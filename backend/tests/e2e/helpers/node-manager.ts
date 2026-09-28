@@ -94,11 +94,13 @@ export async function startNodes(count: number = 3): Promise<void> {
 			env['LISH_TOKEN'] = TEST_API_TOKEN;
 			const listenAddresses: string[] = [];
 			const proc = Bun.spawn([process.execPath, 'run', 'backend/tests/e2e/helpers/backend-process.ts', '--datadir', dataDir, '--port', '0', '--host', '127.0.0.1'], {
-				cwd: REPO, env, stdout: 'pipe', stderr: 'inherit',
+				cwd: REPO,
+				env,
+				stdout: 'pipe',
+				stderr: 'inherit',
 				ipc(message: unknown) {
 					const report = message as { type?: string; addresses?: unknown };
-					if (report?.type === 'listening' && Array.isArray(report.addresses) && report.addresses.every(address => typeof address === 'string'))
-						listenAddresses.splice(0, listenAddresses.length, ...report.addresses);
+					if (report?.type === 'listening' && Array.isArray(report.addresses) && report.addresses.every(address => typeof address === 'string')) listenAddresses.splice(0, listenAddresses.length, ...report.addresses);
 				},
 			});
 			// Tracked from the spawn, so a node that never gets ready is stopped — and waited

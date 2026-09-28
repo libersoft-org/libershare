@@ -42,8 +42,14 @@ export class TestClient {
 				this.waits.delete(fail);
 				this.connectionWaits.delete(ready);
 			};
-			const fail = (error: Error): void => { cleanup(); reject(error); };
-			const ready = (): void => { cleanup(); resolve(); };
+			const fail = (error: Error): void => {
+				cleanup();
+				reject(error);
+			};
+			const ready = (): void => {
+				cleanup();
+				resolve();
+			};
 			const timer = setTimeout(() => {
 				fail(new Error('Connection timeout'));
 				this.destroy();
@@ -120,8 +126,14 @@ export class TestClient {
 				off();
 				this.waits.delete(fail);
 			};
-			const fail = (error: Error): void => { cleanup(); reject(error); };
-			const timer = setTimeout(() => { cleanup(); resolve(collected); }, durationMs);
+			const fail = (error: Error): void => {
+				cleanup();
+				reject(error);
+			};
+			const timer = setTimeout(() => {
+				cleanup();
+				resolve(collected);
+			}, durationMs);
 			this.waits.add(fail);
 		});
 	}
