@@ -21,7 +21,7 @@ export interface ShutdownDeps {
 	/** Wait for API uploads and remove their temporary files. */
 	readonly drainUploads: () => Promise<void>;
 	/** Close client sockets and the server once nothing can answer them any more. */
-	readonly closeServer: () => void;
+	readonly closeServer: () => Promise<void>;
 }
 
 /**
@@ -51,5 +51,5 @@ export async function drainForShutdown(deps: ShutdownDeps): Promise<void> {
 		maintenance.release();
 	}
 	await deps.drainUploads();
-	deps.closeServer();
+	await deps.closeServer();
 }

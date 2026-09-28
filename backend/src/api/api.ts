@@ -618,14 +618,14 @@ export class APIServer {
 	}
 
 	/** Close client sockets and the listener; nothing is left to answer them. */
-	private closeServer(): void {
+	private async closeServer(): Promise<void> {
 		for (const client of this.clients) {
 			try {
 				client.close();
 			} catch {}
 		}
 		if (this.server) {
-			this.server.stop(true);
+			await this.server.stop(true);
 			this.server = null;
 		}
 	}

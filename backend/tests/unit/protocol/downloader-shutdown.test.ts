@@ -72,7 +72,7 @@ for (const phase of ['probe dial', 'manifest read', 'stream close', 'announcemen
 				stopAllNetworks: async () => { log.push('networks'); },
 				clearUploadRuntime() {},
 				drainUploads: async () => {},
-				closeServer() {},
+				async closeServer() {},
 			}),
 			flushSettings: async () => { log.push('settings'); },
 			closeDatabase: () => log.push('database'),

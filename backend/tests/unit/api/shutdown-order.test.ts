@@ -22,7 +22,7 @@ function recordingDeps(log: string[], overrides: Partial<ShutdownDeps> = {}): Sh
 		stopAllNetworks: step('networks'),
 		clearUploadRuntime: () => log.push('upload-runtime'),
 		drainUploads: step('uploads'),
-		closeServer: () => log.push('server'),
+		closeServer: step('server'),
 		...overrides,
 	};
 }
@@ -84,6 +84,85 @@ describe('APIServer request gate', () => {
 });
 
 describe('APIServer.stop', () => {
+	function withListener(listener: { stop: (force?: boolean) => Promise<void> }): any {
+		const server = bareServer({});
+		server.peerReadAbort = new AbortController();
+		server.stopping = null;
+		server.clients = new Set();
+		server.server = listener;
+		server.networks = { getNetwork: () => ({ cancelRunOperations() {} }) };
+		server.shutdownDeps = recordingDeps([], { closeServer: () => server.closeServer() });
+		return server;
+	}
+
+	for (const fail of [false, true]) {
+		it(`waits for listener shutdown and ${fail ? 'propagates its failure' : 'finishes only after it resolves'}`, async () => {
+			let complete!: () => void;
+			let reject!: (error: Error) => void;
+			const closing = new Promise<void>((resolve, rejectClose) => {
+				complete = resolve;
+				reject = rejectClose;
+			});
+			closing.catch(() => undefined);
+			let entered!: () => void;
+			const started = new Promise<void>(resolve => (entered = resolve));
+			let forceClose: boolean | undefined;
+			const server = withListener({
+				stop: force => {
+					forceClose = force;
+					entered();
+					return closing;
+				},
+			});
+			const stopping = server.stop() as Promise<void>;
+			let settled = false;
+			const observed = stopping.then(
+				() => {
+					settled = true;
+					return null;
+				},
+				error => {
+					settled = true;
+					return error;
+				}
+			);
+			try {
+				await started;
+				await Promise.resolve();
+				expect(forceClose).toBe(true);
+				expect(settled).toBe(false);
+				expect(server.stop()).toBe(stopping);
+				if (fail) {
+					const error = new Error('listener close failed');
+					reject(error);
+					expect(await observed).toBe(error);
+				} else {
+					complete();
+					expect(await observed).toBeNull();
+					expect(server.server).toBeNull();
+				}
+			} finally {
+				complete();
+				await observed;
+			}
+		});
+	}
+
+	it('closes a real Bun HTTP listener before completing shutdown', async () => {
+		const listener = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('ready') });
+		const server = withListener(listener);
+		const url = listener.url.toString();
+		try {
+			expect(await (await fetch(url)).text()).toBe('ready');
+			await server.stop();
+			expect(server.server).toBeNull();
+			expect(listener.pendingRequests).toBe(0);
+			await expect(fetch(url)).rejects.toThrow();
+		} finally {
+			await listener.stop(true);
+		}
+	});
+
 	it('closes the gate, aborts pending peer reads and drains them before closing the server', async () => {
 		const log: string[] = [];
 		const server = bareServer({
