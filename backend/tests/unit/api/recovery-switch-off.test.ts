@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'bun:test';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { afterAll, afterEach, describe, expect, it } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { encode as lpEncode } from 'it-length-prefixed';
@@ -23,6 +23,14 @@ import { type Settings } from '../../../src/settings.ts';
 describe('error recovery and a switch-off during the attempt', () => {
 	const LISH = 'lish-recovery-switch-off';
 	const dir = mkdtempSync(join(tmpdir(), 'lish-recovery-'));
+	let activeHandlers: ReturnType<typeof initTransferHandlers> | undefined;
+	afterEach(async () => {
+		await activeHandlers?.clearAll();
+		activeHandlers = undefined;
+		resetUploadState();
+		initDownloadState(new Set(), () => {});
+	});
+	afterAll(() => rmSync(dir, { recursive: true, force: true }));
 	writeFileSync(join(dir, 'a.bin'), new Uint8Array(4));
 	const dataServer = {
 		get: (): any => ({ id: LISH, directory: dir, chunkSize: 4, checksumAlgo: 'sha256', files: [{ path: 'a.bin', size: 4, checksums: ['c0'] }] }),
@@ -45,6 +53,7 @@ describe('error recovery and a switch-off during the attempt', () => {
 	unfinishedServer.missingChunks = [makeMissingChunk('c0' as never)];
 	unfinishedServer.allChunkCount = 1;
 	const networks = {
+		getNetwork: () => ({ pauseLISHProtocolHandlersAndDrain: async () => {} }),
 		getRunningNetwork: (): any => new MockNetwork(),
 		getEnabled: (): any[] => [{ networkID: 'net-a' }],
 		isJoined: (): boolean => true,
@@ -86,6 +95,7 @@ describe('error recovery and a switch-off during the attempt', () => {
 			},
 			settings
 		);
+		activeHandlers = handlers;
 		enableUpload(LISH);
 		await missingFileRequest();
 		const deadline = Date.now() + 12_000;
@@ -111,7 +121,7 @@ describe('error recovery and a switch-off during the attempt', () => {
 		resetUploadState();
 		initDownloadState(new Set([LISH]), () => {});
 		const events: string[] = [];
-		initTransferHandlers(
+		activeHandlers = initTransferHandlers(
 			networks,
 			unfinishedServer as unknown as DataServer,
 			tmpdir(),
