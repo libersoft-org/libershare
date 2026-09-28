@@ -3,6 +3,7 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JSONStorage, StorageWriteError } from '../../src/storage.ts';
+import { itWithFileSymlinks } from '../helpers/file-symlink.ts';
 
 function tempDir(): string {
 	const dir = join(tmpdir(), `lish-atomic-${Math.random().toString(36).slice(2)}`);
@@ -33,16 +34,12 @@ describe('JSONStorage writes settings atomically', () => {
 		}
 	});
 
-	it('refuses to write through a symlinked settings file and keeps both files untouched', async () => {
+	itWithFileSymlinks('refuses to write through a symlinked settings file and keeps both files untouched', async () => {
 		const dir = tempDir();
 		const outside = join(tempDir(), 'elsewhere.json');
 		try {
 			writeFileSync(outside, '{"audio":{"volume":1}}');
-			try {
-				symlinkSync(outside, join(dir, 'settings.json'));
-			} catch {
-				return; // no symlink privilege on this host (unelevated Windows)
-			}
+			symlinkSync(outside, join(dir, 'settings.json'));
 			const storage = await JSONStorage.create(dir, 'settings.json', { audio: { volume: 50 } });
 			const failure = await storage.set('audio.volume', 99).catch((err: unknown) => err);
 			expect(failure).toBeInstanceOf(StorageWriteError);
