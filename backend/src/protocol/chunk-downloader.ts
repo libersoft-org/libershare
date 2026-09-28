@@ -1,5 +1,5 @@
 import { Mutex } from 'async-mutex';
-import { type ChunkID, type IStoredLISH, type LISHid, ErrorCodes, expectedChunkLength } from '@shared';
+import { type ChunkID, type IStoredLISH, type LISHid, CodedError, ErrorCodes, expectedChunkLength } from '@shared';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
 import { LISHClient, type HaveChunks } from './lish-protocol.ts';
 import { downloadLimiter } from './speed-limiter.ts';
@@ -209,7 +209,10 @@ export class ChunkDownloader {
 				await dataServer.writeChunk(downloadDir, lish, c.fileIndex, c.chunkIndex, payload);
 				return;
 			}
-			for (const t of targets) await dataServer.writeChunk(downloadDir, lish, t.fileIndex, t.chunkIndex, payload);
+			for (const t of targets) {
+				if (this.deps.isDestroyed() || this.deps.isDisabled()) return;
+				await dataServer.writeChunk(downloadDir, lish, t.fileIndex, t.chunkIndex, payload);
+			}
 		};
 
 		const writeRetainedChunkToAllSlots = async (c: MissingChunk, payload: Uint8Array): Promise<boolean> => {
@@ -245,6 +248,10 @@ export class ChunkDownloader {
 			// notifications/onSetError report the live cause even if it switches, e.g. EACCES→ENOSPC).
 			// File vanished (ENOENT) → 'requeue' into the existing recovery. Anything else → fail real.
 			const classify = (retryErr: any): 'retry' | 'requeue' | 'abort' => {
+				if (retryErr instanceof CodedError && retryErr.code === ErrorCodes.LISH_UNSAFE_PATH) {
+					this.deps.onSetError(retryErr.code, retryErr.detail);
+					return 'abort';
+				}
 				const rc = retryErr?.code;
 				if (rc === 'ENOSPC' || rc === 'EACCES' || rc === 'EPERM' || rc === 'EROFS') {
 					code = rc === 'ENOSPC' ? ErrorCodes.DISK_FULL : ErrorCodes.DIRECTORY_ACCESS_DENIED;
@@ -508,6 +515,10 @@ export class ChunkDownloader {
 						if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
 					} catch (err: any) {
 						if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
+						if (err instanceof CodedError && err.code === ErrorCodes.LISH_UNSAFE_PATH) {
+							this.deps.onSetError(err.code, err.detail);
+							break;
+						}
 						if (err.code === 'ENOENT') {
 							// File deleted \u2014 pause ALL peers, verify ALL files, re-allocate missing, reset chunks, resume
 							if (this.fileReallocInProgress.size > 0) {
@@ -617,7 +628,7 @@ export class ChunkDownloader {
 								console.log(`[DL] Recovery complete: ${downloadedCount}/${allTotal} verified, ${allMissing.length} to download`);
 							} catch (allocErr: any) {
 								console.error(`[DL] File recovery failed: ${allocErr.message}`);
-								if (allocErr?.code === ErrorCodes.DISK_FULL) this.deps.onSetError(ErrorCodes.DISK_FULL, allocErr.detail);
+								if (allocErr instanceof CodedError && (allocErr.code === ErrorCodes.DISK_FULL || allocErr.code === ErrorCodes.LISH_UNSAFE_PATH)) this.deps.onSetError(allocErr.code, allocErr.detail);
 								else this.deps.onSetError(ErrorCodes.IO_NOT_FOUND, downloadDir);
 								aborted = true;
 								break;
@@ -648,7 +659,7 @@ export class ChunkDownloader {
 							break;
 						}
 					}
-					if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
+					if (this.deps.abortSignal.aborted || this.deps.isDestroyed() || this.deps.isDisabled()) break;
 					dataServer.markChunkDownloaded(lishID, chunk.chunkID);
 					dataServer.incrementDownloadedBytes(lishID, data.length);
 					recordDownloadBytes(lishID, peerID, data.length, lish.files?.[chunk.fileIndex]?.path);

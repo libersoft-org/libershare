@@ -224,6 +224,7 @@ export class Downloader {
 	}
 
 	private setError(code: string, detail?: string): void {
+		if (this.errorCode === ErrorCodes.LISH_UNSAFE_PATH) return;
 		this.transitionTo('error', `setError(${code})`, true);
 		this.disabled = true;
 		this.errorCode = code;
@@ -490,10 +491,12 @@ export class Downloader {
 	}
 
 	async doWork(): Promise<void> {
-		return this.trackLifecycle(this.doWorkInternal().catch(error => {
-			if (!(error instanceof CodedError && error.code === ErrorCodes.DISK_FULL)) throw error;
-			if (!this.destroyed) this.setError(error.code, error.detail);
-		}));
+		return this.trackLifecycle(
+			this.doWorkInternal().catch(error => {
+				if (!(error instanceof CodedError && (error.code === ErrorCodes.DISK_FULL || error.code === ErrorCodes.LISH_UNSAFE_PATH))) throw error;
+				if (!this.destroyed) this.setError(error.code, error.detail);
+			})
+		);
 	}
 
 	private trackLifecycle<T>(operation: Promise<T>): Promise<T> {

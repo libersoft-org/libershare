@@ -388,6 +388,16 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		});
 	}
 
+	it.each([false, true])('preserves an unsafe target error during retained retry: %s', async retained => {
+		const h = harness(0);
+		const unsafe = new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'linked target');
+		h.ds.writeChunkOutcomes = retained ? [Object.assign(new Error('full'), { code: 'ENOSPC' }), unsafe] : [unsafe];
+		await h.cd.run();
+		expect(h.errors).toEqual([{ code: ErrorCodes.LISH_UNSAFE_PATH, detail: 'linked target' }]);
+		expect(h.ds.downloadedChunks.has(h.chunkID)).toBe(false);
+		expect(h.client.requestChunkCalls).toBe(1);
+	});
+
 	it('keeps retrying when the write error changes to EROFS', async () => {
 		const h = harness(0);
 		h.ds.writeChunkOutcomes = [Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }), Object.assign(new Error('EROFS'), { code: 'EROFS' }), null];

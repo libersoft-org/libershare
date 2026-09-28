@@ -1,7 +1,8 @@
-import { mkdir, open, statfs } from 'fs/promises';
+import { mkdir, statfs } from 'fs/promises';
 import { dirname, resolve, sep } from 'path';
 import { type IStoredLISH, CodedError, ErrorCodes, formatBytes } from '@shared';
 import { trace } from '../logger.ts';
+import { openDatasetAllocationTarget, readDatasetWriteTarget } from '../lish/dataset-write-file.ts';
 
 /**
  * Progress event emitted while zero-filling files.
@@ -72,10 +73,9 @@ export class FileAllocator {
 		for (let i = 0; i < lish.files.length; i++) {
 			const file = lish.files[i]!;
 			const filePath = this.safePath(file.path);
-			const f = Bun.file(filePath);
-			const exists = await f.exists();
-			if (!exists || f.size !== file.size) {
-				trace(`[FA] missing: ${file.path} exists=${exists} size=${f.size} expected=${file.size}`);
+			const info = await readDatasetWriteTarget(filePath);
+			if (!info || info.size !== file.size) {
+				trace(`[FA] missing: ${file.path} exists=${info !== null} size=${info?.size} expected=${file.size}`);
 				missing.push(i);
 			}
 		}
@@ -145,8 +145,8 @@ export class FileAllocator {
 		for (const fi of fileIndexes) {
 			const file = lish.files?.[fi];
 			if (!file) continue;
-			const existing = Bun.file(this.safePath(file.path));
-			const current = (await existing.exists()) ? existing.size : 0;
+			const existing = await readDatasetWriteTarget(this.safePath(file.path));
+			const current = existing?.size ?? 0;
 			if (current !== file.size) needed += file.size;
 		}
 		if (needed === 0) return;
@@ -182,23 +182,27 @@ export class FileAllocator {
 			if (!file) continue;
 			const filePath = this.safePath(file.path);
 			await mkdir(dirname(filePath), { recursive: true });
-			const existing = Bun.file(filePath);
-			if ((await existing.exists()) && existing.size === file.size) {
-				totalBytesWritten += file.size;
-				skipped++;
-				continue;
-			}
-			const fd = await open(filePath, 'w');
+			const opened = await openDatasetAllocationTarget(filePath);
+			const fd = opened.file;
 			try {
+				if (signal?.aborted) return { created, skipped };
+				if (!opened.created && (await fd.stat()).size === file.size) {
+					totalBytesWritten += file.size;
+					skipped++;
+					continue;
+				}
+				if (signal?.aborted) return { created, skipped };
+				await fd.truncate(0);
 				let remaining = file.size;
 				let fileBytesWritten = 0;
 				while (remaining > 0) {
 					if (signal?.aborted) return { created, skipped };
 					const writeSize = Math.min(remaining, ZERO_BUFFER.length);
-					await fd.write(ZERO_BUFFER.subarray(0, writeSize));
-					remaining -= writeSize;
-					fileBytesWritten += writeSize;
-					totalBytesWritten += writeSize;
+					const { bytesWritten } = await fd.write(ZERO_BUFFER.subarray(0, writeSize));
+					if (bytesWritten <= 0) throw Object.assign(new Error('File allocation made no progress'), { code: 'EIO' });
+					remaining -= bytesWritten;
+					fileBytesWritten += bytesWritten;
+					totalBytesWritten += bytesWritten;
 					if (totalBytesWritten >= nextProgressAt || remaining === 0) {
 						nextProgressAt = totalBytesWritten + PROGRESS_EMIT_INTERVAL;
 						if (onProgress) {

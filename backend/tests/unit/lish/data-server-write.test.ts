@@ -18,6 +18,7 @@ describe('DataServer.writeChunk', () => {
 		const calls: Array<{ offset: number; length: number; position: number }> = [];
 		let closed = false;
 		const handle = {
+			stat: async () => ({ isFile: () => true, nlink: 1 }),
 			write: async (_data: Uint8Array, offset: number, length: number, position: number) => {
 				calls.push({ offset, length, position });
 				return { bytesWritten: calls.length === 1 ? 3 : length, buffer: _data };
@@ -42,6 +43,7 @@ describe('DataServer.writeChunk', () => {
 		let closed = false;
 		const noSpace = Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
 		const handle = {
+			stat: async () => ({ isFile: () => true, nlink: 1 }),
 			write: async (_data: Uint8Array, _offset: number, length: number) => {
 				calls++;
 				if (calls === 1) return { bytesWritten: Math.min(3, length), buffer: _data };

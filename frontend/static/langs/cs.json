@@ -298,6 +298,7 @@
 		"errorInvalidChunkSize": "Neplatný LISH: chybí nebo neplatná velikost části",
 		"errorChunkSizeTooLarge": "LISH odmítnut: velikost části přesahuje povolený limit ({detail})",
 		"errorInvalidManifest": "Neplatný manifest LISHe: {detail}",
+		"errorUnsafePath": "Do cílového souboru nelze bezpečně zapisovat: {detail}",
 		"errorUnsupportedChecksum": "Neplatný LISH: nepodporovaný hashovací algoritmus: {detail}",
 		"errorUnexpectedArray": "Očekáván jeden LISH objekt, obdrženo pole",
 		"errorPathAccessDenied": "Nelze přistoupit k cestě: {detail}",

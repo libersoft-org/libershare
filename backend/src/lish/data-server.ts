@@ -1,6 +1,7 @@
 import { open } from 'fs/promises';
 import { join, resolve, sep } from 'path';
 import { type Database } from 'bun:sqlite';
+import { assertDatasetWriteTarget } from './dataset-write-file.ts';
 import { clearLishData, clearLishnetData } from '../db/database.ts';
 import { getDownloadEnabledLishs as dbGetDownloadEnabledLishs, getUploadEnabledLishs as dbGetUploadEnabledLishs, setDownloadEnabled as dbSetDownloadEnabled, setUploadEnabled as dbSetUploadEnabled } from '../db/lishs.ts';
 import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHid, type ChunkID, type LISHSortField, type SortOrder, CodedError, ErrorCodes } from '@shared';
@@ -240,6 +241,7 @@ export class DataServer {
 		const offset = chunkIndex * lish.chunkSize;
 		const fd = await this.openFile(filePath, 'r+');
 		try {
+			await assertDatasetWriteTarget(fd);
 			let bytesWritten = 0;
 			while (bytesWritten < data.length) {
 				const result = await fd.write(data, bytesWritten, data.length - bytesWritten, offset + bytesWritten);
