@@ -2,7 +2,7 @@ import { execFile, spawn } from 'node:child_process';
 import { uptime as osUptime } from 'node:os';
 import { existsSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, win32 } from 'node:path';
 import { promisify } from 'node:util';
 import { productIdentifier, type SystemTimeChanges, type SystemTimeResult } from '@shared';
 import { parseSystemTimeExitCode, systemTimeHelperFailure } from './system-time-helper.ts';
@@ -60,11 +60,12 @@ export function linuxNetworkHelperArgs(helperPath: string): string[] {
 
 export function networkHelperPath(platform: NodeJS.Platform = process.platform, executablePath: string = process.execPath): string {
 	if (platform === 'linux') return '/usr/libexec/libershare/lish-network-helper';
-	return join(dirname(executablePath), platform === 'win32' ? 'lish-network-helper.exe' : 'lish-network-helper');
+	if (platform === 'win32') return win32.join(win32.dirname(executablePath), 'lish-network-helper.exe');
+	return join(dirname(executablePath), 'lish-network-helper');
 }
 
 export function windowsNetworkLauncherPath(executablePath: string = process.execPath): string {
-	return join(dirname(executablePath), WINDOWS_LAUNCHER_FILE);
+	return win32.join(win32.dirname(executablePath), WINDOWS_LAUNCHER_FILE);
 }
 
 export function trustedLinuxHelperMetadata(uid: number, mode: number, regularFile: boolean): boolean {
