@@ -58,7 +58,7 @@ export class FileAllocator {
 	 */
 	private safePath(relativePath: string): string {
 		const resolved = resolve(this.downloadDir, relativePath);
-		if (!resolved.startsWith(resolve(this.downloadDir) + sep)) throw new Error(`Path traversal blocked: ${relativePath}`);
+		if (relativePath.includes('\\') || !resolved.startsWith(resolve(this.downloadDir) + sep)) throw new Error(`Path traversal blocked: ${relativePath}`);
 		return resolved;
 	}
 
