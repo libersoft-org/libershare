@@ -291,7 +291,7 @@ resolve_formats_for_os() {
 build_tauri() {
 	_t=$(date +%s)
 	echo "=== Building Tauri app (target: $RUST_TARGET) ==="
-	cd "$SCRIPT_DIR"
+	cd "$SCRIPT_DIR" || return $?
 
 	# LDD wrapper for Linux AppImage builds (Bun binaries fail ldd)
 	if [ "$BUILD_OS" = "linux" ]; then
@@ -326,14 +326,14 @@ LDDWRAPPER
 	esac
 
 	if [ "$BUILD_OS" = "windows" ]; then
-		cargo tauri build --target "$RUST_TARGET" --runner cargo-xwin $PLATFORM_CONFIG $BUNDLE_ARGS
+		cargo tauri build --target "$RUST_TARGET" --runner cargo-xwin $PLATFORM_CONFIG $BUNDLE_ARGS || return $?
 	elif [ "$BUILD_OS" = "macos" ]; then
 		# CI=true makes Tauri bundler skip Finder AppleScript (--skip-jenkins),
 		# preventing DMG volume windows from auto-opening during build.
 		# See: https://github.com/tauri-apps/tauri/issues/592
-		CI=true cargo tauri build --target "$RUST_TARGET" $PLATFORM_CONFIG $BUNDLE_ARGS
+		CI=true cargo tauri build --target "$RUST_TARGET" $PLATFORM_CONFIG $BUNDLE_ARGS || return $?
 	else
-		cargo tauri build --target "$RUST_TARGET" $PLATFORM_CONFIG $BUNDLE_ARGS
+		cargo tauri build --target "$RUST_TARGET" $PLATFORM_CONFIG $BUNDLE_ARGS || return $?
 	fi
 
 	echo "=== Tauri done ($(elapsed_since $_t)) ==="
@@ -378,15 +378,15 @@ run_pkg_job() {
 # ── Utility: create ZIP via staging callback ──
 # Usage: stage_zip <callback_fn>
 # Callback receives $ZIP_STAGING as the staging directory
-stage_zip() {
+stage_zip() (
+	set -e
 	_sz_fn="$1"
 	ZIP_STAGING=$(mktemp -d)
+	trap 'rm -r "$ZIP_STAGING"' EXIT
 	"$_sz_fn"
 	cd "$ZIP_STAGING"
 	zip $ZIP_LEVEL -ry "$FINAL_DIR/${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.zip" .
-	cd "$SCRIPT_DIR"
-	rm -r "$ZIP_STAGING"
-}
+)
 
 # ── Utility: copy debug launch script into $ZIP_STAGING ──
 _copy_debug_script() {
@@ -425,6 +425,8 @@ build_zip() {
 	windows) stage_zip _stage_zip_windows ;;
 	macos) stage_zip _stage_zip_macos ;;
 	esac
+	_zip_status=$?
+	[ "$_zip_status" = "0" ] || return "$_zip_status"
 	echo "=== ZIP done ($(elapsed_since $_t)) ==="
 }
 
