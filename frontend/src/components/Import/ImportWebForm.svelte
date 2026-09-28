@@ -17,6 +17,7 @@
 	interface ConfirmArgs {
 		data: TData;
 		onDone: () => void;
+		onError: (error: unknown) => void;
 	}
 
 	interface Props {
@@ -68,6 +69,11 @@
 		} finally {
 			importing = false;
 		}
+	}
+
+	function handleConfirmError(error: unknown): void {
+		parsedData = null;
+		errorMessage = translateError(error);
 	}
 
 	function handleConfirmDone(): void {
@@ -131,7 +137,7 @@
 </style>
 
 {#if parsedData}
-	{@render confirm({ data: parsedData, onDone: handleConfirmDone })}
+	{@render confirm({ data: parsedData, onDone: handleConfirmDone, onError: handleConfirmError })}
 {:else if downloadPathSubPage.active && showDownloadPath}
 	<FileBrowser {areaID} {position} initialPath={downloadPath ?? ''} directoriesOnly showPath selectDirectoryButton onSelect={handleDownloadPathSelect} onBack={handleDownloadPathBrowseBack} />
 {:else}
