@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { chmod, chown, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, chown, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { unreadableByServiceAccount, writeFileAtomically, type ServiceAccountAccess } from '../../src/system-time-files.ts';
@@ -96,7 +96,7 @@ async function readAsNobody(path: string, denied = false): Promise<string> {
 describe.skipIf(process.platform === 'win32')('POSIX time configuration permissions', () => {
 	let root = '';
 	beforeEach(async () => {
-		root = await mkdtemp(join(tmpdir(), 'lish-time-permissions-'));
+		root = await realpath(await mkdtemp(join(tmpdir(), 'lish-time-permissions-')));
 	});
 	afterEach(async () => {
 		await rm(root, { recursive: true, force: true });
@@ -404,8 +404,8 @@ describe.skipIf(process.platform === 'win32')('POSIX time configuration permissi
 		const file = join(link, '90-libershare.conf');
 		await writeFile(file, '[Time]', 'utf8');
 		await chmod(file, 0o644);
-		// The link itself is world-everything; what matters is the 0700 directory behind it.
-		expect((await lstat(link)).mode & 0o777).toBe(0o777);
+		// Link permissions do not grant access through the target's private directory.
+		expect((await lstat(link)).isSymbolicLink()).toBe(true);
 		expect(await unreadableByServiceAccount(file)).toContain('cannot be entered');
 		await chmod(hidden, 0o755);
 		expect(await unreadableByServiceAccount(file)).toBeNull();
