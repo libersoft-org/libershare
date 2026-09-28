@@ -4,7 +4,7 @@ import { open } from 'node:fs/promises';
  * Errors from a directory flush that mean "there is no such operation here", as opposed
  * to "it was attempted and failed".
  *
- * `EPERM` is Windows, where the directory handle opens and `fsync` on it is then refused;
+ * `EPERM` can occur on Windows when opening or syncing a directory;
  * `EISDIR` is the platforms that refuse the open itself; `EINVAL` and the two "not
  * supported" spellings are filesystems whose `fsync` rejects a directory descriptor.
  * Anything outside this set propagates.
@@ -12,18 +12,15 @@ import { open } from 'node:fs/promises';
 export const DIRECTORY_SYNC_UNSUPPORTED: ReadonlySet<string> = new Set(['EPERM', 'EISDIR', 'EINVAL', 'ENOTSUP', 'EOPNOTSUPP']);
 
 /**
- * Flush a directory's own contents so a name created in it survives a power loss.
+ * Flush directory metadata after replacing a file, where the filesystem supports it.
  *
- * `fsync` on the FILE only commits its data; the entry that gives it its name lives in the
- * directory and is buffered just like everything else. Without this a crash moments after
- * the rename can come back to the old file, or to no file at all — the one outcome the
- * atomic swap exists to rule out.
+ * Syncing the file does not also confirm that its directory entry reached stable storage.
+ * An atomic rename prevents a partially replaced file during normal operation; it does
+ * not by itself guarantee that the latest replacement survives an immediate power loss.
  *
- * A platform that has no such operation refuses here, and that is not a failure: Windows
- * journals the metadata itself, which is the same guarantee by other means. Every OTHER
- * error is a flush that was attempted and did not happen — `EIO` and `ENOSPC` say the
- * metadata is not reliably stored — and swallowing those reported a durability the
- * filesystem had just declined to provide.
+ * Unsupported directory sync is tolerated without confirming metadata durability.
+ * This does not establish an equivalent power-loss guarantee on Windows. Other errors,
+ * including EIO and ENOSPC, propagate to the caller.
  */
 export async function syncDirectory(dir: string): Promise<void> {
 	try {
