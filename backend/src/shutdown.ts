@@ -20,10 +20,10 @@ export interface ProcessShutdown {
 }
 
 /**
- * Build the SIGINT/SIGTERM handler. The database is closed only after the API has drained
- * every operation that could still read or write it and the settings have been flushed; a
- * phase that fails or does not finish before the deadline exits 1 without that close, and
- * never reports a clean shutdown. A second signal while the first is running forces exit 1.
+ * Build the SIGINT/SIGTERM handler. API shutdown failures and expired deadlines exit 1
+ * without closing the database. Once API work has drained, a settings flush failure still
+ * allows the database to close, but exits 1 instead of reporting a clean shutdown.
+ * A second signal while the first is running forces exit 1.
  */
 export function createProcessShutdown(deps: ProcessShutdownDeps): ProcessShutdown {
 	let shuttingDown = false;
