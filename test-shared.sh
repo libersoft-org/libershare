@@ -1,5 +1,4 @@
 #!/bin/sh
-
-cd shared
+set -e
+cd "$(dirname "$0")/shared"
 bun run typecheck
-cd ..

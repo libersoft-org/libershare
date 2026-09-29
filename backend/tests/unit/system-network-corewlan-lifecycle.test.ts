@@ -41,7 +41,8 @@ function scenario(mode: string, ignoreTerminate = false): LifecycleResult {
 			}
 		};
 		const timer = globalThis.setTimeout;
-		globalThis.setTimeout = (callback, delay, ...args) => timer(callback, delay === 20000 || delay === 45000 ? 120 : delay, ...args);
+		const shortenFirstDeadline = !['success', 'error', 'empty-close', 'post-error', 'disconnect-success'].includes(${JSON.stringify(mode)});
+		globalThis.setTimeout = (callback, delay, ...args) => timer(callback, created === 1 && shortenFirstDeadline && (delay === 20000 || delay === 45000) ? 120 : delay, ...args);
 		const { readCoreWlanWifi, associateMacWifi, disconnectCoreWlanWifi, assertMacWifiMutationIdle } = await import(${JSON.stringify(module)});
 		const associate = ${JSON.stringify(mode)} === 'in-flight' || ${JSON.stringify(mode)} === 'late-associate';
 		const started = performance.now();

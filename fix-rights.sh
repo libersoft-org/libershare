@@ -1,6 +1,6 @@
 #!/bin/sh
 
-find . -type f -executable \
+find . -type f \( -perm -100 -o -perm -010 -o -perm -001 \) \
 	-not -path "*/node_modules/*" \
 	-not -path "*/build/*" \
 	-not -path "*/binaries/*" \
