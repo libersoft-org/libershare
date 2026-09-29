@@ -52,13 +52,12 @@ async function runChild(mode: string, expectedExit = 0): Promise<{ exitCode: num
 	}
 }
 
-async function scenario(mode: string, warningName?: string): Promise<Result> {
+async function scenario(mode: string, warns = false): Promise<Result> {
 	const child = await runChild(mode);
 	expect(child.exitCode).toBe(0);
 	const stderr = child.stderr.toString();
-	if (warningName) {
+	if (warns) {
 		expect(stderr).toContain('[WARN] Suppressed transient libp2p error');
-		expect(stderr).toContain(warningName);
 		expect(stderr).not.toContain('[FATAL]');
 	} else expect(stderr).toBe('');
 	const line = child.stdout
@@ -67,6 +66,11 @@ async function scenario(mode: string, warningName?: string): Promise<Result> {
 		.find(value => value.startsWith('RESULT:'));
 	expect(line).toBeDefined();
 	const result: Result = JSON.parse(line!.slice(7));
+	if (warns) {
+		expect(result.uncaught).toHaveLength(1);
+		expect(stderr).toContain(result.uncaught[0]!.name);
+		expect(stderr).toContain(result.uncaught[0]!.message);
+	}
 	expect(result.serverErrors).toEqual([]);
 	return result;
 }
@@ -74,10 +78,17 @@ async function scenario(mode: string, warningName?: string): Promise<Result> {
 describe('real libp2p TCP socket abort lifecycle', () => {
 	it.each(['timeout', 'cancel'])('keeps the process alive and logs the late native socket error after %s', async mode => {
 		const name = mode === 'timeout' ? 'TimeoutError' : 'AbortError';
-		const result = await scenario(mode, name);
+		const result = await scenario(mode, true);
 		expect(result.rejected?.name).toBe('AbortError');
 		expect(result.uncaught).toHaveLength(1);
-		expect(result.uncaught[0]?.message).toContain(name);
+		const nativeError = result.uncaught[0]!;
+		if (nativeError.code === 'ABORT_ERR') {
+			// Bun 1.4 emits the native socket AbortError without wrapping the signal reason.
+			expect(nativeError.name).toBe('AbortError');
+		} else {
+			expect(nativeError.code).toBe('ERR_UNHANDLED_ERROR');
+			expect(nativeError.message).toContain(name);
+		}
 		expect(result.initialSockets).toEqual([{ closed: true, destroyed: true, errorListeners: 0 }]);
 		expect(result.recoveryEcho).toBe('connection after cancellation');
 		expect(result.recoverySocket).toEqual({ closed: true, destroyed: true, errorListeners: 0 });

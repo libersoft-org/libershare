@@ -20,10 +20,13 @@ export class TestClient {
 	private destroyed = false;
 	/** Rejects every wait still open, so destroying the client ends them all. */
 	private readonly waits = new Set<(error: Error) => void>();
+	private readonly connectionWaits = new Set<() => void>();
 
 	constructor(url: string) {
 		this.client = new WsClient(url, (state: { connected: boolean }) => {
 			this.connected = state.connected;
+			if (state.connected) for (const ready of [...this.connectionWaits]) ready();
+			else for (const fail of [...this.waits]) fail(new Error('WebSocket disconnected'));
 		});
 		this.client.on('*', (msg: { event: string; data: any }) => {
 			this.eventHistory.push({ event: msg.event, data: msg.data, time: Date.now() });
@@ -31,12 +34,29 @@ export class TestClient {
 	}
 
 	async waitConnected(timeout: number = 10_000): Promise<void> {
-		const start = Date.now();
-		while (!this.connected && Date.now() - start < timeout) await Bun.sleep(100);
-		if (!this.connected) {
-			this.destroy();
-			throw new Error('Connection timeout');
-		}
+		if (this.destroyed) throw new Error('client destroyed');
+		if (this.connected) return;
+		return new Promise((resolve, reject) => {
+			const cleanup = (): void => {
+				clearTimeout(timer);
+				this.waits.delete(fail);
+				this.connectionWaits.delete(ready);
+			};
+			const fail = (error: Error): void => {
+				cleanup();
+				reject(error);
+			};
+			const ready = (): void => {
+				cleanup();
+				resolve();
+			};
+			const timer = setTimeout(() => {
+				fail(new Error('Connection timeout'));
+				this.destroy();
+			}, timeout);
+			this.waits.add(fail);
+			this.connectionWaits.add(ready);
+		});
 	}
 
 	/**
@@ -72,9 +92,9 @@ export class TestClient {
 
 	/** Resolve with the first matching event, also one already received since the history was last cleared. */
 	waitForEvent(eventName: string, predicate?: (data: any) => boolean, timeout: number = 30_000): Promise<any> {
+		if (this.destroyed) return Promise.reject(new Error(`waiting for '${eventName}' on a destroyed client`));
 		const seen = this.eventHistory.find(e => e.event === eventName && (!predicate || predicate(e.data)));
 		if (seen) return Promise.resolve(seen.data);
-		if (this.destroyed) return Promise.reject(new Error(`waiting for '${eventName}' on a destroyed client`));
 		return new Promise((resolve, reject) => {
 			const finish = (): void => {
 				clearTimeout(timer);
@@ -97,11 +117,25 @@ export class TestClient {
 	}
 
 	async collectEvents(eventName: string, durationMs: number): Promise<any[]> {
-		const collected: any[] = [];
-		const off = this.client.on(eventName, (data: any) => collected.push(data));
-		await Bun.sleep(durationMs);
-		off();
-		return collected;
+		if (this.destroyed) throw new Error('client destroyed');
+		return new Promise((resolve, reject) => {
+			const collected: any[] = [];
+			const off = this.client.on(eventName, (data: any) => collected.push(data));
+			const cleanup = (): void => {
+				clearTimeout(timer);
+				off();
+				this.waits.delete(fail);
+			};
+			const fail = (error: Error): void => {
+				cleanup();
+				reject(error);
+			};
+			const timer = setTimeout(() => {
+				cleanup();
+				resolve(collected);
+			}, durationMs);
+			this.waits.add(fail);
+		});
 	}
 
 	getEventHistory(eventName?: string): EventHistoryEntry[] {
@@ -117,8 +151,9 @@ export class TestClient {
 	destroy(): void {
 		if (this.destroyed) return;
 		this.destroyed = true;
-		this.client.stopReconnect();
+		this.connected = false;
 		for (const fail of [...this.waits]) fail(new Error('client destroyed'));
 		this.waits.clear();
+		this.client.stopReconnect();
 	}
 }

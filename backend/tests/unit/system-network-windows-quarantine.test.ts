@@ -15,17 +15,18 @@ interface GuardResult {
 function attempt(operation: 'apply' | 'scan' | 'join' | 'disconnect', busy: boolean, elevation = false): GuardResult {
 	const script = `
 		import { mock } from 'bun:test';
-		import { promisify } from 'node:util';
 		import { ipv4BaselineOf } from '@shared';
 		const windows = await import('./src/system-network-windows.ts');
 		const helper = await import('./src/network-helper-client.ts');
+		const windowsHost = { ...(await import('./src/network-helper-windows.ts')) };
+		mock.module('./src/network-helper-windows.ts',()=>({...windowsHost,windowsPowerShellPath:()=> 'powershell.exe',windowsSystemEnvironment:()=> ({})}));
 		const childProcess = await import('node:child_process');
 		const calls = {guard:0,apply:0,helper:0,scan:0,join:0,disconnect:0};
 		const iface = {id:'{11111111-2222-3333-4444-555555555555}',name:'Wi-Fi',medium:'wireless',link:'up',defaultRoute:true,mac:null,addresses:[{family:'ipv4',address:'192.0.2.10',prefixLength:24}],ipv4Mode:'static',ipv4Configurable:true,wifiConfigurable:true,gateway:'192.0.2.1',dns:[],wifi:{ssid:null,signal:null,radio:'on'}};
-		const execFile = () => { throw new Error('Unexpected callback command'); };
-		execFile[promisify.custom] = async (_file,args) => {
-			if (args.at(-1) === windows.WINDOWS_STATE_COMMAND) return {stdout:'{}',stderr:''};
-			calls.apply++; throw new Error('direct IPv4 write reached');
+		const execFile = (_file,args,options,callback) => {
+			const done = typeof options === 'function' ? options : callback;
+			if (args[args.length-1] === windows.WINDOWS_STATE_COMMAND) { done(null,{stdout:'{}',stderr:''}); return; }
+			calls.apply++; done(new Error('direct IPv4 write reached'));
 		};
 		mock.module('node:child_process',()=>({...childProcess,execFile}));
 		mock.module('./src/system-network-windows.ts',()=>({
