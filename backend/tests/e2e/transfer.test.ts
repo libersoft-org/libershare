@@ -214,8 +214,12 @@ describe('active transfers', () => {
 			await nodes[2]!.call('transfer.enableDownload', { lishID: uploadID });
 			const activeUploads = () => nodes[0]!.call<Array<{ lishID: string; type: string; peers: number }>>('transfer.getActiveTransfers');
 			await waitFor('active upload', activeUploads, transfers => transfers.some(t => t.lishID === uploadID && t.type === 'uploading' && t.peers > 0));
-			const started = await downloadState(nodes[2]!, uploadID);
-			expect(started.verifiedChunks).toBeGreaterThan(0);
+			const started = await waitFor(
+				'partial download',
+				() => downloadState(nodes[2]!, uploadID),
+				state => state.verifiedChunks > 0,
+				EVENT_TIMEOUT
+			);
 			expect(started.verifiedChunks).toBeLessThan(started.totalChunks);
 
 			await nodes[0]!.call('transfer.disableUpload', { lishID: uploadID });
