@@ -60,9 +60,7 @@ for (const fault of ['rename', 'dirsync']) {
 				}
 				const lines = out.trim().split('\n');
 				const result = JSON.parse(lines[lines.length - 1]!);
-				const detail = fault === 'rename'
-					? 'Settings file was not replaced; in-memory settings may differ from disk (EIO).'
-					: 'Settings file now contains the new settings, but durability could not be confirmed (EIO).';
+				const detail = fault === 'rename' ? 'Settings file was not replaced; in-memory settings may differ from disk (EIO).' : 'Settings file now contains the new settings, but durability could not be confirmed (EIO).';
 				expect(result.sent).toEqual([{ id: 1, error: 'INTERNAL_ERROR', errorDetail: detail }]);
 				const content = JSON.parse(await readFile(join(dir, 'settings.json'), 'utf8'));
 				if (fault === 'rename') expect(content).toEqual(result.previous);
