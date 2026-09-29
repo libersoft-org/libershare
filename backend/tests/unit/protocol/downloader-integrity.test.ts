@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'bun:test';
 import { Downloader } from '../../../src/protocol/downloader.ts';
 import { MockNetwork } from '../helpers/mock-network.ts';
 import { MockDataServer } from './downloader-test-helpers.ts';
+import { resolve } from 'node:path';
 // ---------------------------------------------------------------------------
 // Path traversal protection (safePath)
 // ---------------------------------------------------------------------------
@@ -80,14 +81,15 @@ describe('Downloader – path traversal protection', () => {
 
 	// --- Encoded/obfuscated traversal attempts (must block) ---
 
-	it('blocks backslash traversal on Windows', () => {
+	it('handles backslashes according to the host filesystem', () => {
 		const dl = makeDownloader();
-		expect(() => callSafePath(dl, '..\\evil.txt')).toThrow('Path traversal blocked');
+		if (process.platform === 'win32') expect(() => callSafePath(dl, '..\\evil.txt')).toThrow('Path traversal blocked');
+		else expect(callSafePath(dl, '..\\evil.txt')).toBe(resolve('/tmp/safe-downloads/12345', '..\\evil.txt'));
 	});
 
 	it('blocks mixed slash traversal', () => {
 		const dl = makeDownloader();
-		expect(() => callSafePath(dl, '..\\..\\evil.txt')).toThrow('Path traversal blocked');
+		expect(() => callSafePath(dl, '..\\leaf/../../evil.txt')).toThrow('Path traversal blocked');
 	});
 
 	// --- Boundary: traversal that stays inside (should pass) ---
