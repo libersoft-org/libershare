@@ -1,4 +1,5 @@
 import { Network } from '../../../src/protocol/network.ts';
+import './transfer-probe.ts';
 
 // Discovery cannot verify a public address until another peer connects. The parent
 // needs the actual bound endpoint for that first connection, not advertised addresses.

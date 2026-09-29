@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
-import { startNodes, stopNodes, getNodeURL, getNodeDataDir, getNodeListenAddresses } from './helpers/node-manager.ts';
+import { startNodes, stopNodes, getNodeURL, getNodeDataDir, getNodeListenAddresses, nodeTransferProbe } from './helpers/node-manager.ts';
 import { TestClient } from './helpers/ws-test-client.ts';
 import type { ILISHDetail, ILISHListResult } from '@shared';
 
@@ -50,9 +50,9 @@ async function downloadState(node: TestClient, id: string): Promise<ILISHDetail>
 	return detail;
 }
 
-async function expectStoppedDownload(node: TestClient, id: string): Promise<ILISHDetail> {
-	// A chunk already in flight may finish after the disable reply.
-	await Bun.sleep(1000);
+async function expectStoppedDownload(nodeIndex: number, id: string): Promise<ILISHDetail> {
+	await nodeTransferProbe(nodeIndex, 'drain-downloads');
+	const node = nodes[nodeIndex]!;
 	const paused = await downloadState(node, id);
 	expect(paused.verifiedChunks).toBeGreaterThan(0);
 	expect(paused.verifiedChunks).toBeLessThan(paused.totalChunks);
@@ -164,6 +164,7 @@ describe('download from a second seeder, paused and resumed', () => {
 			await nodes[1]!.call('settings.set', { path: 'network.maxUploadSpeed', value: 128 });
 
 			nodes[2]!.clearHistory();
+			await nodeTransferProbe(2, 'hold-second-write', lishID);
 			await nodes[2]!.call('transfer.enableDownload', { lishID });
 			const started = await waitFor(
 				'partial download',
@@ -172,11 +173,16 @@ describe('download from a second seeder, paused and resumed', () => {
 				EVENT_TIMEOUT
 			);
 			expect(started.verifiedChunks).toBeLessThan(started.totalChunks);
+			await nodeTransferProbe(2, 'wait-write-held', lishID);
 
 			const disabled = nodes[2]!.waitForEvent('transfer.download:disabled', (d: any) => d.lishID === lishID, EVENT_TIMEOUT);
 			await nodes[2]!.call('transfer.disableDownload', { lishID });
 			await disabled;
-			const paused = await expectStoppedDownload(nodes[2]!, lishID);
+			const pauseCheck = expectStoppedDownload(2, lishID);
+			// Keep the second real write pending beyond the former one-second grace period.
+			await Bun.sleep(1500);
+			await nodeTransferProbe(2, 'release-write', lishID);
+			const paused = await pauseCheck;
 
 			// No completion was accepted during the pause; only the resumed transfer may finish.
 			nodes[2]!.clearHistory();
@@ -226,7 +232,7 @@ describe('active transfers', () => {
 			expect((await activeUploads()).filter(t => t.lishID === uploadID && t.type === 'uploading')).toEqual([]);
 			const list = await nodes[0]!.call<ILISHListResult>('lishs.list');
 			expect(list.uploadEnabled).not.toContain(uploadID);
-			await expectStoppedDownload(nodes[2]!, uploadID);
+			await expectStoppedDownload(2, uploadID);
 
 			nodes[2]!.clearHistory();
 			const complete = nodes[2]!.waitForEvent('transfer.download:complete', (d: any) => d.lishID === uploadID, EVENT_TIMEOUT * 2);

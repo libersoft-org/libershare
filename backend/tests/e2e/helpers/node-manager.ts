@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { join, resolve } from 'node:path';
+import type { ProbeCommand, ProbeRequest } from './transfer-probe.ts';
 
 /**
  * Real backend processes for the e2e suite, each fully isolated: its own data directory and
@@ -15,6 +16,7 @@ export interface TestNode {
 	/** Set once the node reports its API port; empty while it is still starting. */
 	url: string;
 	readonly process: ReturnType<typeof Bun.spawn>;
+	readonly probes: Map<number, (error?: string) => void>;
 }
 
 const REPO = resolve(import.meta.dir, '../../../..');
@@ -26,6 +28,7 @@ const nodes: TestNode[] = [];
  */
 export const TEST_API_TOKEN: string = randomBytes(32).toString('hex');
 let root: string | null = null;
+let probeID = 0;
 
 /** Settings written before the first start — nothing may fall back to the defaults. */
 function isolatedSettings(dataDir: string): Record<string, unknown> {
@@ -93,19 +96,24 @@ export async function startNodes(count: number = 3): Promise<void> {
 			const env: Record<string, string> = { ...(process.env as Record<string, string>), MEMTRACE: '0', HEAP_TRIGGER: '0' };
 			env['LISH_TOKEN'] = TEST_API_TOKEN;
 			const listenAddresses: string[] = [];
+			const probes = new Map<number, (error?: string) => void>();
 			const proc = Bun.spawn([process.execPath, 'run', 'backend/tests/e2e/helpers/backend-process.ts', '--datadir', dataDir, '--port', '0', '--host', '127.0.0.1'], {
 				cwd: REPO,
 				env,
 				stdout: 'pipe',
 				stderr: 'inherit',
 				ipc(message: unknown) {
-					const report = message as { type?: string; addresses?: unknown };
+					const report = message as { type?: string; addresses?: unknown; id?: number; error?: string };
 					if (report?.type === 'listening' && Array.isArray(report.addresses) && report.addresses.every(address => typeof address === 'string')) listenAddresses.splice(0, listenAddresses.length, ...report.addresses);
+					if (report?.type === 'transfer-probe' && typeof report.id === 'number') probes.get(report.id)?.(report.error);
 				},
 			});
 			// Tracked from the spawn, so a node that never gets ready is stopped — and waited
 			// for — like every other one before its directory is removed.
-			const node: TestNode = { dataDir, listenAddresses, url: '', process: proc };
+			const node: TestNode = { dataDir, listenAddresses, probes, url: '', process: proc };
+			void proc.exited.then(() => {
+				for (const finish of [...probes.values()]) finish('Backend exited while waiting for transfer probe');
+			});
 			nodes.push(node);
 			const port = await waitForApiPort(proc, []);
 			node.url = `ws://127.0.0.1:${port}?token=${TEST_API_TOKEN}`;
@@ -160,4 +168,26 @@ export function getNodeListenAddresses(index: number): string[] {
 	const node = nodes[index];
 	if (!node) throw new Error(`no test node ${index}`);
 	return [...node.listenAddresses];
+}
+
+export function nodeTransferProbe(index: number, command: ProbeCommand, lishID?: string): Promise<void> {
+	const node = nodes[index];
+	if (!node || node.process.exitCode !== null) return Promise.reject(new Error(`node${index} is not running`));
+	const id = ++probeID;
+	return new Promise((resolve, reject) => {
+		const finish = (error?: string): void => {
+			clearTimeout(timer);
+			node.probes.delete(id);
+			if (error) reject(new Error(error));
+			else resolve();
+		};
+		const timer = setTimeout(() => finish(`node${index} transfer probe ${command} timed out`), 30_000);
+		node.probes.set(id, finish);
+		try {
+			const request: ProbeRequest = { type: 'transfer-probe', id, command, lishID };
+			node.process.send(request);
+		} catch (error) {
+			finish(String(error));
+		}
+	});
 }
