@@ -18,15 +18,15 @@ export function classifyConnection(peerID: string, isRelay: boolean, dcutrPeers:
  * Dial a set of multiaddrs, open a protocol stream, and return the stream
  * together with the resolved connection type.
  */
-export async function dialProtocol(node: any, dcutrPeers: Set<string>, multiaddrs: any[], protocol: string): Promise<IDialResult> {
+export async function dialProtocol(node: any, dcutrPeers: Set<string>, multiaddrs: any[], protocol: string, signal?: AbortSignal): Promise<IDialResult> {
 	trace(`[NET] dial ${protocol} to ${multiaddrs.map((m: any) => m.toString()).join(', ')}`);
-	const connection = await node.dial(multiaddrs);
+	const connection = await node.dial(multiaddrs, signal ? { signal } : {});
 	const peerID = connection.remotePeer.toString();
 	const isRelay = Circuit.matches(connection.remoteAddr);
 	const connectionType = classifyConnection(peerID, isRelay, dcutrPeers);
 	const limited = (connection as any).limits != null;
 	console.debug(`[NET] dial connected: ${peerID.slice(0, 16)} [${connectionType}${limited ? ',LIMITED' : ''}] addr=${connection.remoteAddr.toString().slice(0, 60)}`);
-	const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
+	const stream = await connection.newStream(protocol, { runOnLimitedConnection: true, ...(signal ? { signal } : {}) });
 	trace(`[NET] stream opened: id=${stream.id}, status=${stream.status}`);
 	return { stream, connectionType };
 }

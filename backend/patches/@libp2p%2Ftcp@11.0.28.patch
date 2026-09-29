@@ -1,0 +1,26 @@
+diff --git a/dist/src/listener.js b/dist/src/listener.js
+index b550f5a8fcb496a9214df69a82705257558abeae..e86a636b9eb35f9f37fa15b1f2c8b8f9f3c3561d 100644
+--- a/dist/src/listener.js
++++ b/dist/src/listener.js
+@@ -220,7 +220,7 @@ export class TCPListener extends TypedEventEmitter {
+         // synchronously close any open connections - should be done after closing
+         // the server socket in case new sockets are opened during the shutdown
+         this.sockets.forEach(socket => {
+-            if (socket.readable) {
++            if (!socket.destroyed) {
+                 events.push(pEvent(socket, 'close', options));
+                 socket.destroy();
+             }
+diff --git a/src/listener.ts b/src/listener.ts
+index 9626a3a0c79686f05710169819ac780c2529e8b4..26617dd8016cc7b6187da36a8e41ae66bd58b70d 100644
+--- a/src/listener.ts
++++ b/src/listener.ts
+@@ -281,7 +281,7 @@ export class TCPListener extends TypedEventEmitter<ListenerEvents> implements Li
+     // synchronously close any open connections - should be done after closing
+     // the server socket in case new sockets are opened during the shutdown
+     this.sockets.forEach(socket => {
+-      if (socket.readable) {
++      if (!socket.destroyed) {
+         events.push(pEvent(socket, 'close', options))
+         socket.destroy()
+       }

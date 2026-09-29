@@ -150,6 +150,18 @@ export function restrictNetworkCapabilities(state: NetworkStateInfo, networkAdmi
 
 export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, hasSubscribers: HasSubscribersFn, networkAdminEnabled: boolean): SystemHandlers {
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
+	/**
+	 * Set by stopPolling. Callbacks that were already on their way — the startup volume read,
+	 * a watcher emission, a tick resuming after an await — check it so none of them saves a
+	 * setting or restarts the monitor after shutdown began.
+	 */
+	let pollingStopped = false;
+
+	/** Persist an OS volume change unless polling has stopped; a failed save is only logged. */
+	function persistVolume(volume: number): void {
+		if (pollingStopped) return;
+		settings.set('audio.volume', volume).catch(error => console.error('[system-volume] Could not save volume:', (error as Error).message));
+	}
 	let volumeMonitor: VolumeMonitor | null = null;
 
 	/**
@@ -320,7 +332,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 			lastKnownAvailable = status.available;
 			broadcast('system:volumeChanged', status);
 		},
-		persist: v => void settings.set('audio.volume', v),
+		persist: persistVolume,
 		isBusy: isMixerWriteBusy,
 	});
 
@@ -332,7 +344,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	const startupGeneration = writeGeneration;
 	void getSystemVolumeStatus().then(status => {
 		// Transient read error — leave seeding to the first successful poll.
-		if (status === null) return;
+		if (status === null || pollingStopped) return;
 		// A client write that landed while we were reading is authoritative and has
 		// already seeded the watcher — do not clobber it with a pre-write reading.
 		// The generation check also catches a write that finished (and settled)
@@ -340,7 +352,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		if (isMixerWriteBusy() || writeGeneration !== startupGeneration) return;
 		lastKnownAvailable = status.available;
 		volumeWatcher.remember(status);
-		if (status.available && status.volume !== null) void settings.set('audio.volume', status.volume);
+		if (status.available && status.volume !== null) persistVolume(status.volume);
 		if (!status.available) console.log('[system-volume] No controllable audio device detected; OS volume control disabled.');
 	});
 
@@ -528,6 +540,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 
 	function startPolling(): void {
 		if (pollInterval) return;
+		pollingStopped = false;
 		const generation = ++timePollingGeneration;
 		nextTimeRead = 0;
 		pollInterval = setInterval(async () => {
@@ -548,6 +561,8 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 						networkReadInFlight = false;
 					});
 			}
+			// The storage read above awaited: a stop that landed meanwhile must not respawn anything.
+			if (pollingStopped) return;
 			const volumeWanted = hasSubscribers('system:volumeChanged');
 			// Run the instant push monitor while a client listens and a device is
 			// present; (re)spawn on crash or when a device reappears, stop otherwise.
@@ -572,6 +587,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	}
 
 	function stopPolling(): void {
+		pollingStopped = true;
 		timePollingGeneration++;
 		if (pollInterval) {
 			clearInterval(pollInterval);
