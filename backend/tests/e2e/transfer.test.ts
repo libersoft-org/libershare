@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { startNodes, stopNodes, getNodeURL, getNodeDataDir, getNodeListenAddresses } from './helpers/node-manager.ts';
 import { TestClient } from './helpers/ws-test-client.ts';
+import type { ILISHDetail, ILISHListResult } from '@shared';
 
 /**
  * Real transfers between three isolated backend processes over the public API: node0 creates
@@ -37,10 +38,33 @@ function findFile(dir: string, name: string): string | null {
 	return null;
 }
 
-function downloadedHash(nodeIndex: number): string {
-	const path = findFile(join(getNodeDataDir(nodeIndex), 'storage', 'finished'), 'payload.bin');
-	if (!path) throw new Error(`payload.bin not found on node${nodeIndex}`);
+function downloadedHash(nodeIndex: number, name = 'payload.bin'): string {
+	const path = findFile(join(getNodeDataDir(nodeIndex), 'storage', 'finished'), name);
+	if (!path) throw new Error(`${name} not found on node${nodeIndex}`);
 	return sha256(readFileSync(path));
+}
+
+async function downloadState(node: TestClient, id: string): Promise<ILISHDetail> {
+	const detail = await node.call<ILISHDetail | null>('lishs.get', { lishID: id });
+	if (!detail) throw new Error(`Missing LISH ${id}`);
+	return detail;
+}
+
+async function expectStoppedDownload(node: TestClient, id: string): Promise<ILISHDetail> {
+	// A chunk already in flight may finish after the disable reply.
+	await Bun.sleep(1000);
+	const paused = await downloadState(node, id);
+	expect(paused.verifiedChunks).toBeGreaterThan(0);
+	expect(paused.verifiedChunks).toBeLessThan(paused.totalChunks);
+	const deadline = Date.now() + 3000;
+	do {
+		await Bun.sleep(100);
+		const current = await downloadState(node, id);
+		expect(current.verifiedChunks).toBe(paused.verifiedChunks);
+		expect(current.totalDownloadedBytes).toBe(paused.totalDownloadedBytes);
+		expect(node.getEventHistory('transfer.download:complete').filter(e => e.data.lishID === id)).toEqual([]);
+	} while (Date.now() < deadline);
+	return paused;
 }
 
 async function waitFor<T>(what: string, read: () => Promise<T>, ok: (v: T) => boolean, timeout = 30_000): Promise<T> {
@@ -139,21 +163,30 @@ describe('download from a second seeder, paused and resumed', () => {
 			// Slow node1 down so the pause lands in the middle of the transfer.
 			await nodes[1]!.call('settings.set', { path: 'network.maxUploadSpeed', value: 128 });
 
-			const started = nodes[2]!.waitForEvent('transfer.download:progress', (d: any) => d.lishID === lishID && d.downloadedChunks > 0, EVENT_TIMEOUT);
+			nodes[2]!.clearHistory();
 			await nodes[2]!.call('transfer.enableDownload', { lishID });
-			await started;
+			const started = await waitFor(
+				'partial download',
+				() => downloadState(nodes[2]!, lishID),
+				state => state.verifiedChunks > 0,
+				EVENT_TIMEOUT
+			);
+			expect(started.verifiedChunks).toBeLessThan(started.totalChunks);
 
 			const disabled = nodes[2]!.waitForEvent('transfer.download:disabled', (d: any) => d.lishID === lishID, EVENT_TIMEOUT);
 			await nodes[2]!.call('transfer.disableDownload', { lishID });
 			await disabled;
-			nodes[2]!.clearHistory();
-			const whilePaused = await nodes[2]!.collectEvents('transfer.download:progress', 3000);
-			expect(whilePaused.filter((e: any) => e.lishID === lishID && e.peers > 0)).toEqual([]);
+			const paused = await expectStoppedDownload(nodes[2]!, lishID);
 
-			await nodes[1]!.call('settings.set', { path: 'network.maxUploadSpeed', value: 0 });
+			// No completion was accepted during the pause; only the resumed transfer may finish.
+			nodes[2]!.clearHistory();
 			const complete = nodes[2]!.waitForEvent('transfer.download:complete', (d: any) => d.lishID === lishID, EVENT_TIMEOUT * 2);
 			await nodes[2]!.call('transfer.enableDownload', { lishID });
+			await nodes[1]!.call('settings.set', { path: 'network.maxUploadSpeed', value: 0 });
 			await complete;
+			const finished = await downloadState(nodes[2]!, lishID);
+			expect(finished.verifiedChunks).toBe(finished.totalChunks);
+			expect(finished.verifiedChunks).toBeGreaterThan(paused.verifiedChunks);
 			expect(downloadedHash(2)).toBe(payloadHash);
 			await nodes[0]!.call('transfer.enableUpload', { lishID });
 		},
@@ -162,10 +195,43 @@ describe('download from a second seeder, paused and resumed', () => {
 });
 
 describe('active transfers', () => {
-	it('never reports a disabled upload as uploading', async () => {
-		await nodes[0]!.call('transfer.disableUpload', { lishID });
-		const transfers: Array<{ lishID: string; type: string }> = await nodes[0]!.call('transfer.getActiveTransfers');
-		expect(transfers.filter(t => t.lishID === lishID && t.type === 'uploading')).toEqual([]);
-		await nodes[0]!.call('transfer.enableUpload', { lishID });
-	});
+	it(
+		'changes a running upload to inactive and stops sending chunks',
+		async () => {
+			const source = join(getNodeDataDir(0), 'upload-source');
+			mkdirSync(source);
+			const payload = randomBytes(PAYLOAD_SIZE);
+			writeFileSync(join(source, 'upload.bin'), payload);
+			const { lishID: uploadID } = await nodes[0]!.call('lishs.create', { dataPath: source, name: 'upload pause', addToSharing: true, chunkSize: CHUNK_SIZE });
+			await waitFor(
+				'seeder verification',
+				() => nodes[0]!.call<ILISHListResult>('lishs.list'),
+				list => list.verifying !== uploadID && !list.pendingVerification.includes(uploadID) && list.uploadEnabled.includes(uploadID)
+			);
+			await nodes[0]!.call('settings.set', { path: 'network.maxUploadSpeed', value: 128 });
+			await nodes[2]!.call('lishnets.addPeerLish', { lishID: uploadID, peerID: seederPeerID, networkID: NETWORK_ID });
+			nodes[2]!.clearHistory();
+			await nodes[2]!.call('transfer.enableDownload', { lishID: uploadID });
+			const activeUploads = () => nodes[0]!.call<Array<{ lishID: string; type: string; peers: number }>>('transfer.getActiveTransfers');
+			await waitFor('active upload', activeUploads, transfers => transfers.some(t => t.lishID === uploadID && t.type === 'uploading' && t.peers > 0));
+			const started = await downloadState(nodes[2]!, uploadID);
+			expect(started.verifiedChunks).toBeGreaterThan(0);
+			expect(started.verifiedChunks).toBeLessThan(started.totalChunks);
+
+			await nodes[0]!.call('transfer.disableUpload', { lishID: uploadID });
+			expect((await activeUploads()).filter(t => t.lishID === uploadID && t.type === 'uploading')).toEqual([]);
+			const list = await nodes[0]!.call<ILISHListResult>('lishs.list');
+			expect(list.uploadEnabled).not.toContain(uploadID);
+			await expectStoppedDownload(nodes[2]!, uploadID);
+
+			nodes[2]!.clearHistory();
+			const complete = nodes[2]!.waitForEvent('transfer.download:complete', (d: any) => d.lishID === uploadID, EVENT_TIMEOUT * 2);
+			await nodes[0]!.call('transfer.enableUpload', { lishID: uploadID });
+			await nodes[0]!.call('settings.set', { path: 'network.maxUploadSpeed', value: 0 });
+			await nodes[2]!.call('transfer.findPeers', { lishID: uploadID });
+			await complete;
+			expect(downloadedHash(2, 'upload.bin')).toBe(sha256(payload));
+		},
+		EVENT_TIMEOUT * 3
+	);
 });
