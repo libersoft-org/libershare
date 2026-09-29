@@ -65,7 +65,7 @@ export function networkHelperPath(platform: NodeJS.Platform = process.platform, 
 }
 
 export function windowsNetworkLauncherPath(executablePath: string = process.execPath): string {
-	return join(dirname(executablePath), WINDOWS_LAUNCHER_FILE);
+	return win32.join(win32.dirname(executablePath), WINDOWS_LAUNCHER_FILE);
 }
 
 export function trustedLinuxHelperMetadata(uid: number, mode: number, regularFile: boolean): boolean {
