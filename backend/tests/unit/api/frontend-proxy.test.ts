@@ -149,15 +149,22 @@ describe('frontend proxy /status', () => {
 	it('cancels an oversized status stream before reading the complete response', async () => {
 		let chunks = 0;
 		let cancelled = false;
-		const upstream = startUpstream({ status: () => new Response(new ReadableStream({
-			async pull(controller) {
-				await Bun.sleep(10);
-				if (cancelled) return;
-				controller.enqueue(new Uint8Array(4096).fill(32));
-				if (++chunks === 100) controller.close();
-			},
-			cancel() { cancelled = true; },
-		})) });
+		const upstream = startUpstream({
+			status: () =>
+				new Response(
+					new ReadableStream({
+						async pull(controller) {
+							await Bun.sleep(10);
+							if (cancelled) return;
+							controller.enqueue(new Uint8Array(4096).fill(32));
+							if (++chunks === 100) controller.close();
+						},
+						cancel() {
+							cancelled = true;
+						},
+					})
+				),
+		});
 		await withProxy(upstream, upstream.url, async proxy => {
 			expect((await fetch(`${proxy.http}/status`)).status).toBe(502);
 			for (let i = 0; i < 30 && !cancelled; i++) await Bun.sleep(10);
@@ -228,22 +235,34 @@ describe('frontend websocket proxy', () => {
 		const script = await stageProxy();
 		const port = deadPort();
 		const child = Bun.spawn([process.execPath, '--eval', `globalThis.WebSocket = class { constructor(url) { throw new Error('constructor failed: ' + url); } }; await import(${JSON.stringify(script)});`], {
-			env: { ...process.env, PORT: String(port), BACKEND_WS_URL: upstream.url }, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
+			env: { ...process.env, PORT: String(port), BACKEND_WS_URL: upstream.url },
+			stdin: 'ignore',
+			stdout: 'pipe',
+			stderr: 'pipe',
 		});
 		const output = Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
 		let client: WebSocket | undefined;
 		try {
 			let ready = false;
 			for (let i = 0; i < 100 && !ready; i++) {
-				ready = await fetch(`http://127.0.0.1:${port}/status`, { method: 'PUT' }).then(response => response.status === 405, () => false);
+				ready = await fetch(`http://127.0.0.1:${port}/status`, { method: 'PUT' }).then(
+					response => response.status === 405,
+					() => false
+				);
 				if (!ready) await Bun.sleep(50);
 			}
 			expect(ready).toBe(true);
 			client = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${TOKEN}`);
 			const closed = await new Promise<{ code: number; reason: string }>((resolve, reject) => {
 				const timer = setTimeout(() => reject(new Error('proxy did not close the client')), 3000);
-				client!.onclose = event => { clearTimeout(timer); resolve({ code: event.code, reason: event.reason }); };
-				client!.onerror = () => { clearTimeout(timer); reject(new Error('browser handshake failed')); };
+				client!.onclose = event => {
+					clearTimeout(timer);
+					resolve({ code: event.code, reason: event.reason });
+				};
+				client!.onerror = () => {
+					clearTimeout(timer);
+					reject(new Error('browser handshake failed'));
+				};
 			});
 			expect(closed).toEqual({ code: 1011, reason: 'upstream connection failed' });
 		} finally {

@@ -27,7 +27,11 @@ describe('the RPC dispatcher never logs request content', () => {
 	const secret = 'CAESQK-private-key-material';
 	it('does not log peer-supplied text disguised as an error code', async () => {
 		const injected = `untrusted\nforged-log-line-${secret}`;
-		const server = bareServer({ 'lishnets.getPeerLishs': () => { throw new CodedError(injected as never); } });
+		const server = bareServer({
+			'lishnets.getPeerLishs': () => {
+				throw new CodedError(injected as never);
+			},
+		});
 		const sent: string[] = [];
 		const log = await logsOf(() => server.handleMessage({ send: (m: string) => sent.push(m) }, JSON.stringify({ id: 4, method: 'lishnets.getPeerLishs' })));
 		expect(log).not.toContain(injected);
