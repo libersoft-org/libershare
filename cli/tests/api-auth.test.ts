@@ -2,6 +2,7 @@ import { afterAll, expect, it } from 'bun:test';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { APIClient } from '../api-client';
 
 /**
  * The CLI as a real process against a stand-in server that records each handshake URL. The
@@ -94,6 +95,23 @@ it('hides a token in a --url that cannot be parsed', async () => {
 	expect(output).toContain('Invalid --url');
 	expect(output).not.toContain(SECRET);
 }, 30_000);
+
+for (const entry of [CLI, MAKELISH]) {
+	it(`does not echo a malformed URL with an encoded token parameter in ${entry === CLI ? 'cli' : 'makelish'}`, async () => {
+		seen.length = 0;
+		const url = `ws://[bad/?%74oken=${SECRET}`;
+		const { code, output } = await run(url, undefined, entry);
+		expect(code).toBe(1);
+		expect(output).toContain('Invalid --url: the URL cannot be parsed');
+		expect(output).not.toContain(SECRET);
+		expect(output).not.toContain(url);
+		expect(seen).toEqual([]);
+	}, 30_000);
+}
+
+it('rejects a malformed URL without echoing it from the shared client constructor', () => {
+	expect(() => new APIClient(`ws://[bad/?%74oken=${SECRET}`)).toThrow(/^Invalid --url: the URL cannot be parsed$/);
+});
 
 it('authenticates makelish using LISH_TOKEN without printing it', async () => {
 	seen.length = 0;

@@ -14,7 +14,13 @@ interface Request {
  * single `token` parameter. Two tokens in the URL are refused rather than guessed between.
  */
 export function withToken(url: string, envToken: string | undefined): string {
-	const parsed = new URL(url);
+	let parsed: URL;
+	try {
+		parsed = new URL(url);
+	} catch {
+		// A malformed URL can contain credentials that cannot be safely extracted.
+		throw new Error('the URL cannot be parsed');
+	}
 	const given = parsed.searchParams.getAll('token');
 	if (given.length > 1) throw new Error('the URL carries more than one token');
 	// A WebSocket URL cannot carry one, and the error that says so would print the token.
