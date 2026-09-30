@@ -4,6 +4,7 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { stripVTControlCharacters } from 'node:util';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
@@ -15,7 +16,7 @@ function proxySafeLogger(): Logger {
 	for (const level of ['info', 'warn', 'warnOnce', 'error'] as const) {
 		const original = logger[level].bind(logger);
 		logger[level] = (message, options) => {
-			const proxyError = /\b(?:http proxy error|ws proxy(?: socket)? error):/.test(message);
+			const proxyError = /\b(?:http proxy error|ws proxy(?: socket)? error):/.test(stripVTControlCharacters(message));
 			original(proxyError ? '[proxy] Backend connection failed' : message, options);
 		};
 	}
