@@ -1,0 +1,31 @@
+services:
+  backend:
+    volumes:
+      - type: volume
+        source: existing-config
+        target: /app/config
+        volume:
+          nocopy: true
+      - type: volume
+        source: existing-storage
+        target: /app/storage
+        volume:
+          nocopy: true
+  frontend:
+    volumes:
+      - type: volume
+        source: existing-certs
+        target: /app/certs
+        volume:
+          nocopy: true
+
+volumes:
+  existing-config:
+    external: true
+    name: ${CONFIG_SOURCE:?Set CONFIG_SOURCE to an existing Docker volume}
+  existing-storage:
+    external: true
+    name: ${STORAGE_SOURCE:?Set STORAGE_SOURCE to an existing Docker volume}
+  existing-certs:
+    external: true
+    name: ${TLS_CERT_SOURCE:?Set TLS_CERT_SOURCE to an existing Docker volume}

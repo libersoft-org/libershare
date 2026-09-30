@@ -76,7 +76,10 @@ Fix the owner or `LISH_UID`/`LISH_GID` on the host and start again.
 
 Older images ran as root and re-owned the mounted directories to `0:0`.
 
-1. Stop the services: `docker compose down`.
+If any mount uses a named volume, use [Existing named volumes](#existing-named-volumes)
+below. Do not replace it with an empty directory.
+
+1. Stop the services: `docker compose down` (without `--volumes`).
 2. Back up `config/` completely (settings, `libershare.db` with its `-wal` and
    `-shm` files, and the datastore). A new, empty config means a new peer
    identity.
@@ -125,6 +128,72 @@ docker compose up -d
 When migrating an existing node, keep its old config/datastore/database mounted
 as `/app/config`; otherwise the backend generates a new peer identity and starts
 as a different node.
+
+### Existing named volumes
+
+The default Compose file treats `CONFIG_SOURCE`, `STORAGE_SOURCE` and
+`TLS_CERT_SOURCE` as host directories. A value such as `my-libershare-config`
+does not select a Docker volume with that file alone. Keep existing named
+volumes by adding `docker-compose.named-volumes.yml`; no data copy is needed.
+
+Before stopping the old containers, record their actual mounts:
+
+```sh
+docker inspect --format '{{range .Mounts}}{{println .Destination .Type .Name .Source}}{{end}}' libershare-backend libershare-frontend
+```
+
+Use each volume's exact `Name`, including any Compose project prefix. Stop the
+old services without `--volumes`. Keep the original volumes and do not create
+empty replacements. In `.env`, set the names and the non-root UID/GID chosen
+for the services, for example:
+
+```dotenv
+CONFIG_SOURCE=my-libershare-config
+STORAGE_SOURCE=my-libershare-storage
+TLS_CERT_SOURCE=my-libershare-certs
+LISH_UID=1001
+LISH_GID=1001
+```
+
+Keep or configure the required `LISH_TOKEN` as described under Authentication.
+All three named volumes must already exist. The override marks them `external`
+and disables copying image contents into them; a missing volume stops startup.
+For a new named-volume installation, create the chosen volumes explicitly
+with `docker volume create` before preparing their ownership.
+
+With the old services stopped, back up the full volumes, then prepare their
+ownership once. The following example uses `1001:1001`; replace it with the
+same UID/GID set in `.env`. Backups include the database, datastore and private
+keys, so keep the backup directory private.
+
+```sh
+(
+set -eu
+umask 077
+dc() { docker compose -f docker-compose.yml -f docker-compose.named-volumes.yml "$@"; }
+dc build
+backup_dir="$PWD/volume-backup-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir "$backup_dir"
+dc run --rm --no-deps -T --user 0:0 --cap-add DAC_READ_SEARCH --entrypoint tar backend -cpf - -C /app config storage > "$backup_dir/backend.tar"
+dc run --rm --no-deps -T --user 0:0 --cap-add DAC_READ_SEARCH --entrypoint tar frontend -cpf - -C /app certs > "$backup_dir/certs.tar"
+dc run --rm --no-deps -T --user 0:0 --cap-add CHOWN --cap-add DAC_READ_SEARCH --entrypoint chown backend -R 1001:1001 /app/config /app/storage
+dc run --rm --no-deps -T --user 0:0 --cap-add CHOWN --cap-add DAC_READ_SEARCH --entrypoint chown frontend -R 1001:1001 /app/certs
+dc up -d
+)
+```
+
+Only these one-off backup and ownership commands run as root; they override
+the entrypoint and never start LiberShare. Normal services still run without
+root or extra capabilities. If a backup command fails, stop here and keep the
+old volumes; do not proceed with ownership changes or delete any data. After
+startup, check the original peer ID, settings, file contents and certificate.
+Keep the backups until that check is complete.
+
+Use both `-f` options for subsequent Compose commands. For mixed storage, copy
+the override and keep only the named mount entries and their matching top-level
+volume declarations. Compose matches mounts by target: for example, keeping
+only `/app/config` and `existing-config` leaves storage and certificates as
+the base file's bind mounts. Leave their `*_SOURCE` values as host paths.
 
 ## Ports
 
