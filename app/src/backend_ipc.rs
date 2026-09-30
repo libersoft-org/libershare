@@ -178,7 +178,7 @@ pub fn is_app_url(url: &tauri::Url) -> bool {
 	let local = (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
 		|| (matches!(url.scheme(), "http" | "https") && url.host_str() == Some("tauri.localhost"));
 	local
-		&& matches!(url.path(), "/" | "/index.html")
+		&& matches!(url.path(), "" | "/" | "/index.html")
 		&& url.username().is_empty()
 		&& url.password().is_none()
 		&& url.port().is_none()
@@ -695,6 +695,7 @@ mod tests {
 	#[test]
 	fn only_the_main_application_document_is_local() {
 		for url in [
+			"tauri://localhost",
 			"tauri://localhost/index.html",
 			"http://tauri.localhost/",
 			"https://tauri.localhost/index.html",
