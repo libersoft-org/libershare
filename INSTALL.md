@@ -144,6 +144,14 @@ Changing the host's network settings from the app needs the signed network helpe
 - **Normal mode:** Just launch the application. The backend runs silently in the background.
 - **Debug mode:** Opens a built-in debug console window that shows backend log messages. Also enables the developer console in the webview (F12). Useful for troubleshooting issues.
 
+The native app starts its backend with a private IPC connection: the main window uses Tauri commands, and the native process owns the backend's stdin/stdout pipes. It does not open an administrative HTTP/WebSocket port or put an API token in the window. The separate libp2p ports used to share files still exist.
+
+Closing the main window waits for accepted backend work, uploads and settings writes to finish. The backend has a 30-second shutdown limit; the native parent allows up to 35 seconds before forcing an unsuccessful exit. A remaining debug window does not keep the backend running. If the backend crashes, pending requests fail; close and relaunch the application to start a new backend. Mutating requests are not automatically replayed.
+
+The debug console receives logs only. It cannot open the private API session or receive its replies. Reloading the main window creates a new session and renews its event subscriptions; uploads belonging to the previous session are cleaned up.
+
+The bundled backend cannot be administered by attaching a web browser or CLI to a local API port. For headless, browser or CLI operation, use the standalone mode below with its required token. Do not run a standalone backend against a data directory that the native app is currently using. `--ipc` is an internal mode for the native parent, not an unauthenticated network mode.
+
 **How to launch debug mode:**
 
 | Platform    | Bundle               | How to launch                                                |
