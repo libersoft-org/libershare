@@ -1,33 +1,26 @@
-use std::net::TcpListener;
+mod backend_ipc;
+
+use backend_ipc::{
+	backend_ack, backend_close, backend_open, backend_send, require_main, BackendBridge,
+};
 use std::sync::Mutex;
-use tauri::{Emitter, Manager, RunEvent};
+use tauri::{Manager, RunEvent};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
-struct BackendChild(Mutex<Option<std::process::Child>>);
-
-fn generate_api_token() -> String {
-	let mut bytes = [0u8; 32];
-	getrandom::fill(&mut bytes).expect("Failed to generate API token");
-	let mut token = String::with_capacity(bytes.len() * 2);
-	for byte in bytes {
-		use std::fmt::Write as _;
-		write!(&mut token, "{:02x}", byte).expect("Failed to format API token");
-	}
-	token
+enum HostAction {
+	Restart,
+	Shutdown,
 }
-
-fn find_free_port() -> u16 {
-	let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to find free port");
-	listener.local_addr().unwrap().port()
-}
+struct PendingHostAction(Mutex<Option<HostAction>>);
 
 #[tauri::command]
-fn app_quit(app: tauri::AppHandle) {
+fn app_quit(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+	require_main(&window)?;
 	app.exit(0);
+	Ok(())
 }
 
-#[tauri::command]
-fn app_restart(app: tauri::AppHandle) {
+fn restart_host() {
 	#[cfg(any(target_os = "windows", target_os = "linux"))]
 	let pid = std::process::id();
 	#[cfg(target_os = "windows")]
@@ -62,11 +55,9 @@ fn app_restart(app: tauri::AppHandle) {
 			.args(["-e", "tell application \"System Events\" to restart"])
 			.output();
 	}
-	app.exit(0);
 }
 
-#[tauri::command]
-fn app_shutdown(app: tauri::AppHandle) {
+fn shutdown_host() {
 	#[cfg(any(target_os = "windows", target_os = "linux"))]
 	let pid = std::process::id();
 	#[cfg(target_os = "windows")]
@@ -101,13 +92,38 @@ fn app_shutdown(app: tauri::AppHandle) {
 			.args(["-e", "tell application \"System Events\" to shut down"])
 			.output();
 	}
-	app.exit(0);
 }
 
 #[tauri::command]
-fn app_fullscreen(window: tauri::Window) {
+fn app_restart(
+	app: tauri::AppHandle,
+	window: tauri::WebviewWindow,
+	action: tauri::State<'_, PendingHostAction>,
+) -> Result<(), String> {
+	require_main(&window)?;
+	*action.0.lock().unwrap() = Some(HostAction::Restart);
+	app.exit(0);
+	Ok(())
+}
+
+#[tauri::command]
+fn app_shutdown(
+	app: tauri::AppHandle,
+	window: tauri::WebviewWindow,
+	action: tauri::State<'_, PendingHostAction>,
+) -> Result<(), String> {
+	require_main(&window)?;
+	*action.0.lock().unwrap() = Some(HostAction::Shutdown);
+	app.exit(0);
+	Ok(())
+}
+
+#[tauri::command]
+fn app_fullscreen(window: tauri::WebviewWindow) -> Result<(), String> {
+	require_main(&window)?;
 	let is_fullscreen = window.is_fullscreen().unwrap_or(false);
 	let _ = window.set_fullscreen(!is_fullscreen);
+	Ok(())
 }
 
 /// Ask macOS for Location Services access, which is what unlocks Wi-Fi network names.
@@ -143,16 +159,19 @@ fn request_location_access() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
 	let debug_mode = std::env::args().any(|a| a == "--debug" || a == "/debug");
-	let port = find_free_port();
-	let api_token = generate_api_token();
 
 	let app = tauri::Builder::default()
 		.plugin(tauri_plugin_window_state::Builder::default().build())
+		.manage(PendingHostAction(Mutex::new(None)))
 		.invoke_handler(tauri::generate_handler![
 			app_quit,
 			app_restart,
 			app_shutdown,
-			app_fullscreen
+			app_fullscreen,
+			backend_open,
+			backend_send,
+			backend_close,
+			backend_ack
 		])
 		.setup(move |app| {
 			#[cfg(target_os = "macos")]
@@ -161,20 +180,22 @@ pub fn run() {
 			let data_dir = app.path().app_data_dir()?;
 			std::fs::create_dir_all(&data_dir)?;
 			let data_dir_str = data_dir.to_string_lossy().to_string();
-			let port_str = port.to_string();
-			let api_token_script = format!("{:?}", api_token);
 			let product_name = app.config().product_name.clone().unwrap_or_default();
 
-			// Create main window with backend port in query parameter
 			// .devtools(debug_mode) enables F12/inspector in debug mode, disables in normal mode
 			// Requires "devtools" feature in Cargo.toml for release builds
 			let window =
 				tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
 					.title(&product_name)
-					.initialization_script(&format!(
-						"window.__BACKEND_PORT__ = {}; window.__BACKEND_TOKEN__ = {};",
-						port, api_token_script
-					))
+					.initialization_script("window.__BACKEND_IPC__ = true;")
+					.on_navigation(backend_ipc::is_app_url)
+					.on_page_load(|window, payload| {
+						if payload.event() == tauri::webview::PageLoadEvent::Started {
+							if let Some(bridge) = window.try_state::<BackendBridge>() {
+								bridge.invalidate();
+							}
+						}
+					})
 					.devtools(debug_mode)
 					.visible(false)
 					.build()?;
@@ -241,8 +262,8 @@ pub fn run() {
 					}
 				}
 			}
-			cmd.args(["--datadir", &data_dir_str, "--port", &port_str]);
-			cmd.env("LISH_TOKEN", &api_token);
+			cmd.args(["--datadir", &data_dir_str, "--ipc"]);
+			cmd.env_remove("LISH_TOKEN");
 
 			// AppImage sets LD_LIBRARY_PATH to bundled GTK/WebKit libs which conflict
 			// with Bun standalone binaries, causing SIGSEGV. Restore original env.
@@ -273,70 +294,49 @@ pub fn run() {
 				}
 			}
 
-			if debug_mode {
-				// Pipe stdout/stderr so we can stream them to the debug window
-				cmd.stdin(std::process::Stdio::null());
-				cmd.stdout(std::process::Stdio::piped());
-				cmd.stderr(std::process::Stdio::piped());
-			} else {
-				cmd.stdin(std::process::Stdio::null());
-				cmd.stdout(std::process::Stdio::null());
-				cmd.stderr(std::process::Stdio::null());
-			}
-
 			#[cfg(target_os = "windows")]
-			if !debug_mode {
+			{
 				use std::os::windows::process::CommandExt;
 				cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 			}
 
-			let mut process = cmd.spawn().expect("Failed to spawn backend");
-
-			// Stream backend output to the debug window via Tauri events
-			if debug_mode {
-				let handle = app.handle().clone();
-
-				if let Some(stdout) = process.stdout.take() {
-					let h = handle.clone();
-					std::thread::spawn(move || {
-						use std::io::BufRead;
-						let reader = std::io::BufReader::new(stdout);
-						for line in reader.lines().map_while(Result::ok) {
-							let _ = h.emit("backend-stdout", &line);
-						}
-					});
-				}
-
-				if let Some(stderr) = process.stderr.take() {
-					let h = handle.clone();
-					std::thread::spawn(move || {
-						use std::io::BufRead;
-						let reader = std::io::BufReader::new(stderr);
-						for line in reader.lines().map_while(Result::ok) {
-							let _ = h.emit("backend-stderr", &line);
-						}
-					});
-				}
-			}
-
-			app.manage(BackendChild(Mutex::new(Some(process))));
+			app.manage(BackendBridge::spawn(
+				app.handle().clone(),
+				&mut cmd,
+				debug_mode,
+			)?);
 
 			Ok(())
 		})
 		.build(tauri::generate_context!())
 		.expect("Error while building application");
 
-	app.run(|handle, event| {
-		if let RunEvent::Exit = event {
-			let _ = handle.save_window_state(StateFlags::all());
-			if let Some(state) = handle.try_state::<BackendChild>() {
-				if let Ok(mut guard) = state.0.lock() {
-					if let Some(mut child) = guard.take() {
-						let _ = child.kill();
-						let _ = child.wait();
+	app.run(|handle, event| match event {
+		RunEvent::WindowEvent {
+			label,
+			event: tauri::WindowEvent::CloseRequested { api, .. },
+			..
+		} if label == "main" => {
+			api.prevent_close();
+			handle.exit(0);
+		}
+		RunEvent::ExitRequested { api, .. } => {
+			if let Some(bridge) = handle.try_state::<BackendBridge>() {
+				if !bridge.shutdown_complete() {
+					api.prevent_exit();
+					bridge.shutdown();
+				} else if let Some(action) = handle.try_state::<PendingHostAction>() {
+					match action.0.lock().unwrap().take() {
+						Some(HostAction::Restart) => restart_host(),
+						Some(HostAction::Shutdown) => shutdown_host(),
+						None => {}
 					}
 				}
 			}
 		}
+		RunEvent::Exit => {
+			let _ = handle.save_window_state(StateFlags::all());
+		}
+		_ => {}
 	});
 }
