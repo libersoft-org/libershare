@@ -15,6 +15,11 @@ import { startHeapSnapshotTrigger } from './monitoring/heap-snapshot.ts';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
+const ipc = args.includes('--ipc');
+if (ipc && args.some(arg => ['--healthcheck', '--host', '--port', '--secure', '--privkey', '--pubkey', '--token'].includes(arg))) {
+	console.error('[API] --ipc cannot be combined with HTTP/WebSocket options');
+	process.exit(78);
+}
 // Default dataDir: next to binary if compiled, otherwise ./data (relative to CWD)
 const isCompiledBinary = process.execPath !== Bun.which('bun');
 let dataDir = isCompiledBinary ? join(dirname(process.execPath), 'data') : './data';
@@ -81,16 +86,15 @@ if (args.includes('--healthcheck')) {
 	process.exit(1);
 }
 
-// The API refuses to run without a usable token; checked before the logger, the settings, the
-// database or the network are touched, so a misconfigured start leaves nothing behind.
+// The network API requires a token before initialization. IPC trusts only its inherited pipes.
 try {
-	assertUsableToken(apiToken);
+	if (!ipc) assertUsableToken(apiToken);
 } catch (error) {
 	console.error(`[API] ${(error as Error).message}`);
 	process.exit(78); // sysexits.h EX_CONFIG
 }
 
-setupLogger(logLevel, logFile ?? join(dataDir, `${productName.toLowerCase()}.log`));
+setupLogger(logLevel, logFile ?? join(dataDir, `${productName.toLowerCase()}.log`), ipc);
 const header = `${productName} v${productVersion}`;
 console.log('='.repeat(header.length));
 console.log(header);
@@ -122,6 +126,7 @@ applyNetworkLimits(settings.get().network);
 initUploadState(getUploadEnabledLishs(db), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
 initDownloadState(getDownloadEnabledLishs(db), (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
 
+let ipcFailed = false;
 const apiServer = new APIServer(dataDir, dataServer, networks, settings, {
 	host: apiHost,
 	port: apiPort,
@@ -129,6 +134,11 @@ const apiServer = new APIServer(dataDir, dataServer, networks, settings, {
 	keyFile: apiKeyFile,
 	certFile: apiCertFile,
 	apiToken,
+	ipc,
+	onIpcDisconnect: failed => {
+		ipcFailed ||= failed;
+		if (!isShuttingDown()) void shutdown();
+	},
 });
 
 // Wire upload progress broadcast (after apiServer is created)
@@ -155,7 +165,7 @@ const { shutdown, isShuttingDown } = createProcessShutdown({
 	stopApi: () => apiServer.stop(),
 	flushSettings: () => settings.flush(),
 	closeDatabase: () => db.close(),
-	exit: code => process.exit(code),
+	exit: code => process.exit(ipcFailed && code === 0 ? 1 : code),
 });
 
 process.on('SIGINT', shutdown);
@@ -163,6 +173,7 @@ process.on('SIGTERM', shutdown);
 
 installRuntimeErrorHandlers();
 
+if (ipc) apiServer.prepareIPC();
 await networks.startEnabledNetworks();
 // A signal during the network start has already begun the shutdown: never open the API after it.
 if (!isShuttingDown()) apiServer.start();

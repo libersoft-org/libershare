@@ -1,4 +1,5 @@
-import { type ServerWebSocket } from 'bun';
+import type { APIClient } from './client.ts';
+import { StdioTransport } from './stdio-transport.ts';
 import { Mutex } from 'async-mutex';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
@@ -27,7 +28,7 @@ interface ClientData {
 	subscribedEvents: Set<string>;
 	isLocalClient: boolean;
 }
-type ClientSocket = ServerWebSocket<ClientData>;
+type ClientSocket = APIClient;
 interface Request {
 	id: string;
 	method: string;
@@ -40,6 +41,8 @@ export interface APIServerOptions {
 	keyFile: string | undefined;
 	certFile: string | undefined;
 	apiToken?: string | undefined;
+	ipc?: boolean;
+	onIpcDisconnect?: (failed: boolean) => void;
 }
 
 /**
@@ -261,6 +264,9 @@ export function decodeBinaryRequest(frame: Uint8Array): Request {
 export class APIServer {
 	private clients: Set<ClientSocket> = new Set();
 	private server: ReturnType<typeof Bun.serve<ClientData>> | null = null;
+	private stdio: StdioTransport | null = null;
+	private readonly ipc: boolean;
+	private readonly onIpcDisconnect: (failed: boolean) => void;
 	private readonly settings: Settings;
 	private readonly host: string;
 	private readonly port: number;
@@ -316,8 +322,10 @@ export class APIServer {
 		this.keyFile = options.keyFile;
 		this.certFile = options.certFile;
 		// Before anything else is built: an API without a usable token must not come up at all.
-		assertUsableToken(options.apiToken);
-		this.apiToken = options.apiToken;
+		this.ipc = options.ipc === true;
+		this.onIpcDisconnect = options.onIpcDisconnect ?? (() => {});
+		if (!this.ipc) assertUsableToken(options.apiToken);
+		this.apiToken = this.ipc ? '' : options.apiToken!;
 		const emitTo = (client: ClientSocket, event: string, data: any): void => this.emit(client, event, data);
 		const broadcastFn = (event: string, data: any): void => this.broadcast(event, data);
 		const broadcastExceptFn = (event: string, data: any, except?: unknown): void => this.broadcast(event, data, except as ClientSocket | undefined);
@@ -336,8 +344,8 @@ export class APIServer {
 			}
 			return false;
 		};
-		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers, !!this.apiToken);
-		const networkAdmin = <P, R>(handler: (params: P) => R) => hostNetworkAdminHandler(!!this.apiToken, handler);
+		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers, this.authenticatedTransport);
+		const networkAdmin = <P, R>(handler: (params: P) => R) => hostNetworkAdminHandler(this.authenticatedTransport, handler);
 		_system.startPolling();
 		const _relay = initRelayHandlers(this.networks, broadcastFn, hasSubscribers);
 		_relay.startPolling();
@@ -502,8 +510,8 @@ export class APIServer {
 			'system.cpu': _system.cpu,
 			'system.setVolume': _system.setVolume,
 			'system.getVolume': _system.getVolume,
-			...createTimeApiHandlers(_system, !!this.apiToken),
-			'system.network': async (_params, client) => networkStateForClient(await _system.network(), !!this.apiToken, client.data.isLocalClient),
+			...createTimeApiHandlers(_system, this.authenticatedTransport),
+			'system.network': async (_params, client) => networkStateForClient(await _system.network(), this.authenticatedTransport, client.data.isLocalClient),
 			'system.networkApply': networkAdmin(_system.networkApply),
 			'system.wifiScan': networkAdmin(_system.wifiScan),
 			'system.wifiConnect': networkAdmin(_system.wifiConnect),
@@ -514,7 +522,52 @@ export class APIServer {
 		serialiseImportHandlers(this.handlers, this.importLock, client => this.clients.has(client));
 	}
 
+	private get authenticatedTransport(): boolean {
+		return this.ipc || !!this.apiToken;
+	}
+
+	private openClient(client: ClientSocket): void {
+		if (!this.accepting) {
+			client.close();
+			return;
+		}
+		this.clients.add(client);
+		console.log(`[API] Client connected (${this.clients.size} total)`);
+	}
+
+	private closeClient(client: ClientSocket): void {
+		this.clients.delete(client);
+		unsubscribeAllPeers(client);
+		this._upload.closeClient(client);
+		console.log(`[API] Client disconnected (${this.clients.size} total)`);
+	}
+
+	/** Start reading early enough to observe the parent exiting during network startup. */
+	prepareIPC(): void {
+		if (!this.ipc || this.stdio) return;
+		this._upload.wipe();
+		this.stdio = new StdioTransport({
+			open: client => this.openClient(client),
+			close: client => this.closeClient(client),
+			message: (client, message) => this.handleMessage(client, message),
+			disconnect: failed => this.onIpcDisconnect(failed),
+		});
+		this.stdio.start();
+	}
+
 	start(): void {
+		this.networks.onPeerCountChange = counts => {
+			for (const client of this.clients) this.emit(client, 'peers:count', counts);
+		};
+		this.networks.onBootstrapStatusChange = (networkID, status) => {
+			this.broadcast('lishnets:bootstrapStatus', { networkID, status });
+		};
+		if (this.ipc) {
+			this.prepareIPC();
+			this.stdio!.ready();
+			console.log('[API] Desktop IPC ready');
+			return;
+		}
 		const self = this;
 		// Uploads are client-supplied bytes on our disk, and a transfer interrupted
 		// by a kill leaves one behind with nobody left to abort it.
@@ -548,16 +601,10 @@ export class APIServer {
 				// and is then ignored at runtime.
 				maxPayloadLength: MAX_API_MESSAGE_SIZE,
 				open(ws): void {
-					self.clients.add(ws);
-					console.log(`[API] Client connected (${self.clients.size} total)`);
+					self.openClient(ws);
 				},
 				close(ws): void {
-					self.clients.delete(ws);
-					unsubscribeAllPeers(ws);
-					// A socket that drops mid-transfer leaves a half-written temp
-					// file with nobody able to finish or delete it.
-					self._upload.closeClient(ws);
-					console.log(`[API] Client disconnected (${self.clients.size} total)`);
+					self.closeClient(ws);
 				},
 				async message(ws, message): Promise<void> {
 					// A binary frame must not be run through toString(): it is a
@@ -577,20 +624,6 @@ export class APIServer {
 		this.server = Bun.serve<ClientData>(serverConfig);
 
 		const actualPort = this.server.port;
-
-		// Listen for peer count changes and send to subscribed clients
-		this.networks.onPeerCountChange = counts => {
-			if (this.clients.size === 0) return;
-			for (const client of this.clients) this.emit(client, 'peers:count', counts);
-		};
-
-		// Broadcast per-network bootstrap status updates (per-peer dial outcomes).
-		// Clients use the lishnets:bootstrapStatus event to surface stale-config
-		// warnings (configured peerID does not match actual remote identity) and
-		// offer remediation actions in the LISH networks settings UI.
-		this.networks.onBootstrapStatusChange = (networkID, status) => {
-			this.broadcast('lishnets:bootstrapStatus', { networkID, status });
-		};
 
 		const protocol = this.secure ? 'wss' : 'ws';
 		console.log('[API] Token authentication required');
@@ -616,6 +649,10 @@ export class APIServer {
 
 	/** Close client sockets and the listener; nothing is left to answer them. */
 	private async closeServer(): Promise<void> {
+		if (this.stdio) {
+			await this.stdio.stop();
+			this.stdio = null;
+		}
 		for (const client of this.clients) {
 			try {
 				client.close();
@@ -676,6 +713,7 @@ export class APIServer {
 		let req: Request;
 		try {
 			req = typeof message === 'string' ? JSON.parse(message) : decodeBinaryRequest(message);
+			if (!req || typeof req !== 'object' || Array.isArray(req)) throw new CodedError(ErrorCodes.PARSE_ERROR);
 		} catch (err) {
 			// A frame rejected on a real limit reports that limit rather than a
 			// blanket parse failure, and carries the request id when the decoder got
@@ -771,7 +809,7 @@ export class APIServer {
 			event,
 			client => {
 				if (sharedMessage !== null) return sharedMessage;
-				const state = event === 'system:network' ? networkStateForClient(data as NetworkStateInfo, !!this.apiToken, client.data.isLocalClient) : timeStatusForClient(data as SystemTimeStatus, !!this.apiToken, client.data.isLocalClient);
+				const state = event === 'system:network' ? networkStateForClient(data as NetworkStateInfo, this.authenticatedTransport, client.data.isLocalClient) : timeStatusForClient(data as SystemTimeStatus, this.authenticatedTransport, client.data.isLocalClient);
 				return JSON.stringify({ event, data: state });
 			},
 			except
