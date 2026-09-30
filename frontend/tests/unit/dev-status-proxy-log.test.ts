@@ -1,53 +1,73 @@
-/**
- * With the backend down, the development server's `/status` proxy fails and Vite logs the
- * request it could not forward. That URL carries the API token; the log must not.
- */
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import { join } from 'node:path';
 
-const SECRET = `dev-log-secret-${crypto.randomUUID()}`;
-let vite: ReturnType<typeof Bun.spawn> | null = null;
-let base = '';
-let output = '';
-
-async function collect(stream: ReadableStream<Uint8Array>): Promise<void> {
-	const decoder = new TextDecoder();
-	for await (const chunk of stream) output += decoder.decode(chunk);
-}
-
-beforeAll(async () => {
-	// A port that was just free: nothing answers there, so every proxied request fails.
-	const probe = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { data() {} } });
-	const deadPort = probe.port;
-	probe.stop(true);
-	const port = 30000 + Math.floor(Math.random() * 20000);
-	base = `http://127.0.0.1:${port}`;
-	const env: Record<string, string> = { ...(process.env as Record<string, string>) };
-	delete env['VITE_LISH_TOKEN'];
-	env['VITE_BACKEND_URL'] = `ws://127.0.0.1:${deadPort}`;
+test('Vite proxy errors omit the request URL, including encoded token names', async () => {
+	const secret = 'synthetic-proxy-secret-' + crypto.randomUUID();
+	let broken = false;
+	const upstream = Bun.listen<{ request: string }>({
+		port: 0,
+		hostname: '127.0.0.1',
+		data: { request: '' },
+		socket: {
+			open(socket) {
+				socket.data = { request: '' };
+			},
+			data(socket, chunk) {
+				socket.data.request += new TextDecoder().decode(chunk);
+				if (!socket.data.request.includes('\r\n\r\n')) return;
+				if (broken) {
+					socket.end('invalid HTTP response\r\n\r\n');
+					return;
+				}
+				const path = socket.data.request.split(' ')[1]!;
+				const tokens = new URL(path, 'http://localhost').searchParams.getAll('token');
+				const authenticated = tokens.length === 1 && tokens[0] === secret;
+				const body = JSON.stringify({ ok: authenticated, authRequired: true, authenticated });
+				socket.end(`HTTP/1.1 ${authenticated ? '200 OK' : '401 Unauthorized'}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`);
+			},
+		},
+	});
+	const reservation = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response() });
+	const port = reservation.port;
+	await reservation.stop(true);
 	const root = join(import.meta.dir, '../..');
-	vite = Bun.spawn([process.execPath, '--bun', join(root, 'node_modules/vite/bin/vite.js'), 'dev', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { cwd: root, env, stdout: 'pipe', stderr: 'pipe' });
-	void collect(vite.stdout as ReadableStream<Uint8Array>);
-	void collect(vite.stderr as ReadableStream<Uint8Array>);
-	for (let i = 0; i < 1000; i++) {
-		const up = await fetch(`${base}/@vite/client`, { signal: AbortSignal.timeout(2000) }).then(
-			() => true,
-			() => false
-		);
-		if (up) return;
-		await Bun.sleep(100);
+	const env: Record<string, string | undefined> = { ...process.env, VITE_BACKEND_URL: `ws://127.0.0.1:${upstream.port}` };
+	delete env['VITE_LISH_TOKEN'];
+	delete env['VITE_SSL_KEY'];
+	delete env['VITE_SSL_CERT'];
+	const vite = Bun.spawn([process.execPath, '--bun', join(root, 'node_modules/vite/bin/vite.js'), 'dev', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { cwd: root, env, stdout: 'pipe', stderr: 'pipe' });
+	let output = '';
+	const drains = [vite.stdout, vite.stderr].map(async stream => {
+		for await (const chunk of stream) output += new TextDecoder().decode(chunk);
+	});
+	const base = `http://127.0.0.1:${port}`;
+	try {
+		const deadline = Date.now() + 100_000;
+		for (;;) {
+			if (vite.exitCode !== null) throw new Error('Vite exited before readiness');
+			const ready = await fetch(`${base}/@vite/client`, { signal: AbortSignal.timeout(1000) }).then(
+				() => true,
+				() => false
+			);
+			if (ready) break;
+			if (Date.now() > deadline) throw new Error('Vite readiness timed out');
+			await Bun.sleep(100);
+		}
+		const encoded = await fetch(`${base}/status?%74oken=${secret}`);
+		expect(encoded.status).toBe(200);
+		expect((await encoded.json()).authenticated).toBe(true);
+		broken = true;
+		for (const query of [`token=${secret}`, `%74oken=${secret}`, `%74%6f%6b%65%6e=${secret}`, `private=${secret}`]) {
+			const response = await fetch(`${base}/status?${query}`, { signal: AbortSignal.timeout(5000) });
+			expect(response.status).toBe(502);
+		}
+	} finally {
+		vite.kill();
+		await vite.exited;
+		await upstream.stop(true);
+		await Promise.all(drains);
 	}
-	throw new Error('vite did not start');
+	expect(output).not.toContain(secret);
+	expect(output).not.toContain('/status?');
+	expect(output).toContain('[proxy] Backend connection failed');
 }, 120_000);
-
-afterAll(() => {
-	vite?.kill();
-});
-
-test('a failed /status proxy is logged without the token', async () => {
-	const response = await fetch(`${base}/status?token=${SECRET}`);
-	expect(response.status).toBe(502);
-	for (let i = 0; i < 50 && !output.includes('http proxy error'); i++) await Bun.sleep(100);
-	expect(output).toContain('http proxy error');
-	expect(output).not.toContain(SECRET);
-}, 30_000);

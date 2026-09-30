@@ -7,16 +7,17 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Vite's logger with every `token=` query value blanked out. The proxy logs the URL of a
- * request it could not forward — `http proxy error: /status?token=…` whenever the backend is
- * down — and that URL carries the API token.
+ * Vite proxy errors include the request URL. Omit the whole diagnostic because tokens
+ * can use encoded query names and may also occur in an upstream error message.
  */
-function tokenRedactingLogger(): Logger {
+function proxySafeLogger(): Logger {
 	const logger = createLogger();
-	const redact = (message: string): string => message.replace(/([?&]token=)[^&#\s]*/gi, '$1***');
 	for (const level of ['info', 'warn', 'warnOnce', 'error'] as const) {
 		const original = logger[level].bind(logger);
-		logger[level] = (message, options) => original(redact(message), options);
+		logger[level] = (message, options) => {
+			const proxyError = /\b(?:http proxy error|ws proxy(?: socket)? error):/.test(message);
+			original(proxyError ? '[proxy] Backend connection failed' : message, options);
+		};
 	}
 	return logger;
 }
@@ -80,7 +81,7 @@ function countryFlags(): Plugin {
 }
 
 export default defineConfig({
-	customLogger: tokenRedactingLogger(),
+	customLogger: proxySafeLogger(),
 	cacheDir: path.resolve(process.cwd(), '.vite-cache'),
 	envDir: process.cwd(),
 	plugins: [sveltekit(), countryFlags()],
