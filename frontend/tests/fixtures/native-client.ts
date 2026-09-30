@@ -22,27 +22,29 @@ Object.assign(globalThis, {
 		}
 	},
 });
-host.__TAURI_INTERNALS__ = {
-	invoke: async <T>(command: string, args?: Record<string, unknown> | Uint8Array): Promise<T> => {
-		if (command === 'backend_open') {
-			if (++openAttempts === 1) throw new Error('BACKEND_STARTING');
-			return 7 as T;
-		}
-		if (command === 'backend_send') {
-			assert(args instanceof Uint8Array);
-			assert.equal(new DataView(args.buffer, args.byteOffset).getUint32(1), 7);
-			const payload = args.subarray(5);
-			let request: { id: string; method: string; params: Record<string, unknown> };
-			if (args[0] === IPC_KIND.Text) request = JSON.parse(new TextDecoder().decode(payload));
-			else {
-				assert.equal(args[0], IPC_KIND.Binary);
-				const length = new DataView(payload.buffer, payload.byteOffset).getUint32(0);
-				request = JSON.parse(new TextDecoder().decode(payload.subarray(4, 4 + length)));
-				chunks.push([...payload.subarray(4 + length)]);
+host.__TAURI__ = {
+	core: {
+		invoke: async <T>(command: string, args?: Record<string, unknown> | Uint8Array): Promise<T> => {
+			if (command === 'backend_open') {
+				if (++openAttempts === 1) throw new Error('BACKEND_STARTING');
+				return 7 as T;
 			}
-			if (request.method !== 'never-replies') queueMicrotask(() => host.__LIBERSHARE_IPC_RECEIVE__?.({ session: 7, sequence: ++sequence, type: 'message', data: JSON.stringify({ id: request.id, result: request.method === 'upload.end' ? request.params['uploadID'] : true }) }));
-		}
-		return undefined as T;
+			if (command === 'backend_send') {
+				assert(args instanceof Uint8Array);
+				assert.equal(new DataView(args.buffer, args.byteOffset).getUint32(1), 7);
+				const payload = args.subarray(5);
+				let request: { id: string; method: string; params: Record<string, unknown> };
+				if (args[0] === IPC_KIND.Text) request = JSON.parse(new TextDecoder().decode(payload));
+				else {
+					assert.equal(args[0], IPC_KIND.Binary);
+					const length = new DataView(payload.buffer, payload.byteOffset).getUint32(0);
+					request = JSON.parse(new TextDecoder().decode(payload.subarray(4, 4 + length)));
+					chunks.push([...payload.subarray(4 + length)]);
+				}
+				if (request.method !== 'never-replies') queueMicrotask(() => host.__LIBERSHARE_IPC_RECEIVE__?.({ session: 7, sequence: ++sequence, type: 'message', data: JSON.stringify({ id: request.id, result: request.method === 'upload.end' ? request.params['uploadID'] : true }) }));
+			}
+			return undefined as T;
+		},
 	},
 };
 await import('../../src/scripts/api.ts');

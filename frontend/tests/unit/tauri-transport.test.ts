@@ -8,10 +8,12 @@ function hostFixture(open: () => Promise<number> = () => Promise.resolve(7)) {
 	const calls: Array<{ command: string; args: Record<string, unknown> | Uint8Array | undefined }> = [];
 	const host: TauriHost = {
 		__BACKEND_IPC__: true,
-		__TAURI_INTERNALS__: {
-			invoke: <T>(command: string, args?: Record<string, unknown> | Uint8Array): Promise<T> => {
-				calls.push({ command, args });
-				return (command === 'backend_open' ? open() : Promise.resolve(undefined)) as Promise<T>;
+		__TAURI__: {
+			core: {
+				invoke: <T>(command: string, args?: Record<string, unknown> | Uint8Array): Promise<T> => {
+					calls.push({ command, args });
+					return (command === 'backend_open' ? open() : Promise.resolve(undefined)) as Promise<T>;
+				},
 			},
 		},
 	};

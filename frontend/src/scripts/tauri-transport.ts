@@ -9,7 +9,7 @@ export interface NativeFrame {
 
 export interface TauriHost {
 	__BACKEND_IPC__?: boolean;
-	__TAURI_INTERNALS__?: { invoke<T>(command: string, args?: Record<string, unknown> | Uint8Array): Promise<T> };
+	__TAURI__?: { core: { invoke<T>(command: string, args?: Record<string, unknown> | Uint8Array): Promise<T> } };
 	__LIBERSHARE_IPC_RECEIVE__?: ((frame: NativeFrame) => void) | undefined;
 }
 
@@ -25,7 +25,7 @@ export class TauriTransport implements RpcTransport {
 
 	async connect(handlers: { message: (frame: string) => void; closed: (error?: Error) => void }, signal: AbortSignal): Promise<RpcSession> {
 		if (signal.aborted) throw new Error('Native connection cancelled');
-		const bridge = this.host.__TAURI_INTERNALS__;
+		const bridge = this.host.__TAURI__?.core;
 		if (!bridge) throw new Error('Native backend bridge unavailable');
 		let active = true;
 		let session: number | undefined;
