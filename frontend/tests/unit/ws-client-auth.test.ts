@@ -69,13 +69,18 @@ afterAll(async () => {
 	}
 });
 
-// A separate module instance, so other test files that load ws-client keep theirs.
+const settle = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0));
+
 const instance = '../../src/scripts/ws-client.ts?auth-flow';
 const client: typeof import('../../src/scripts/ws-client.ts') = await import(instance);
-// notifications/settings also load the ordinary singleton while globals are mocked.
+const initialStatus = held.at(-1)!;
+// Other files may mock api.ts, changing whether imports load the ordinary singleton.
+// Keep the isolated client's status request and stop the ordinary singleton's retries.
 const sharedClient = await import('../../src/scripts/ws-client.ts');
+sharedClient.wsClient.stopReconnect();
+for (const request of held) if (request !== initialStatus) request.answer(401);
+await settle();
 
-const settle = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0));
 const lastSocket = (): FakeSocket => FakeSocket.instances.at(-1)!;
 /** The socket WsClient dials for `wanted`; a replaced socket is redialled after its 2 s backoff. */
 async function socketFor(wanted: string): Promise<FakeSocket> {
@@ -91,7 +96,7 @@ const status = (): string => get(client.backendConnectionStatus);
 
 test('a stale 401 for the old token does not disturb the new session', async () => {
 	// Start: no token, the socket fails, status answers 401 → the form asks for a token.
-	held.at(-1)!.answer(401);
+	initialStatus.answer(401);
 	await settle();
 	expect(status()).toBe('auth-required');
 
