@@ -3,7 +3,7 @@ mod backend_ipc;
 use backend_ipc::{
 	backend_ack, backend_close, backend_open, backend_send, require_main, BackendBridge,
 };
-use std::sync::Mutex;
+use std::{cell::Cell, rc::Rc, sync::Mutex};
 use tauri::{Manager, RunEvent};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
@@ -311,7 +311,9 @@ pub fn run() {
 		.build(tauri::generate_context!())
 		.expect("Error while building application");
 
-	app.run(|handle, event| match event {
+	let final_exit = Rc::new(Cell::new(None));
+	let recorded_exit = Rc::clone(&final_exit);
+	let runtime_exit = app.run_return(move |handle, event| match event {
 		RunEvent::WindowEvent {
 			label,
 			event: tauri::WindowEvent::CloseRequested { api, .. },
@@ -322,7 +324,7 @@ pub fn run() {
 		}
 		RunEvent::ExitRequested { api, .. } => {
 			if let Some(bridge) = handle.try_state::<BackendBridge>() {
-				if !bridge.shutdown_complete() {
+				if bridge.shutdown_exit_code().is_none() {
 					api.prevent_exit();
 					bridge.shutdown();
 				} else if let Some(action) = handle.try_state::<PendingHostAction>() {
@@ -336,7 +338,15 @@ pub fn run() {
 		}
 		RunEvent::Exit => {
 			let _ = handle.save_window_state(StateFlags::all());
+			recorded_exit.set(
+				handle
+					.try_state::<BackendBridge>()
+					.and_then(|bridge| bridge.shutdown_exit_code()),
+			);
 		}
 		_ => {}
 	});
+	// Wry 2.11 discards RequestExit's code. Use the completed backend result captured
+	// before Tauri cleanup, which has now run; no Tauri API is called after cleanup.
+	std::process::exit(final_exit.get().unwrap_or(runtime_exit));
 }

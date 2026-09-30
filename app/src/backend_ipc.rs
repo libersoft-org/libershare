@@ -509,9 +509,9 @@ impl BackendBridge {
 		}
 	}
 
-	pub fn shutdown_complete(&self) -> bool {
+	pub fn shutdown_exit_code(&self) -> Option<i32> {
 		let state = self.0.state.lock().unwrap();
-		state.shutdown.is_some() && state.exited
+		(state.shutdown.is_some() && state.exited).then_some(state.exit_code)
 	}
 
 	pub fn shutdown(&self) {
