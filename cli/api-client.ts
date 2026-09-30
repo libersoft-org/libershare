@@ -21,10 +21,11 @@ export function withToken(url: string, envToken: string | undefined): string {
 		// A malformed URL can contain credentials that cannot be safely extracted.
 		throw new Error('the URL cannot be parsed');
 	}
+	if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') throw new Error('the URL must use ws:// or wss://');
 	const given = parsed.searchParams.getAll('token');
 	if (given.length > 1) throw new Error('the URL carries more than one token');
 	// A WebSocket URL cannot carry one, and the error that says so would print the token.
-	if (parsed.hash) throw new Error('the URL must not have a fragment');
+	if (parsed.href.includes('#')) throw new Error('the URL must not have a fragment');
 	if (given.length === 0 && envToken) parsed.searchParams.set('token', envToken);
 	return parsed.toString();
 }
@@ -40,11 +41,29 @@ export function redactTokens(message: string, url: string, envToken: string | un
 	try {
 		for (const token of new URL(url).searchParams.getAll('token')) if (token) secrets.add(token);
 	} catch {}
-	let out = message.replace(/([?&]token=)[^&#\s"']*/gi, '$1***');
-	// A bare token shorter than four characters would blank out ordinary words of the message;
-	// such a token is still caught by the `token=` rule above.
-	for (const secret of secrets) if (secret.length >= 4) for (const form of [secret, encodeURIComponent(secret)]) out = out.split(form).join('***');
-	return out;
+	let out = message;
+	for (const secret of secrets) {
+		// Match partially encoded values too, including percent escapes for unreserved letters.
+		const pattern = Array.from(secret, character => {
+			const literal = character.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			const encoded = [...new TextEncoder().encode(character)]
+				.map(byte => {
+					const hex = byte.toString(16).padStart(2, '0');
+					return '%' + hex.replace(/[a-f]/g, digit => `[${digit}${digit.toUpperCase()}]`);
+				})
+				.join('');
+			return `(?:${literal}|${encoded})`;
+		}).join('');
+		// Short tokens still get redacted when quoted or delimited, without destroying words.
+		const bounded = secret.length < 4 ? `(?<![\\p{L}\\p{N}_])${pattern}(?![\\p{L}\\p{N}_])` : pattern;
+		out = out.replace(new RegExp(bounded, 'gu'), '***');
+	}
+	return out.replace(/([?&])([^=&#\s"']+)=([^&#\s"']*)/g, (field, separator: string, key: string) => {
+		try {
+			if (decodeURIComponent(key.replace(/\+/g, ' ')).toLowerCase() === 'token') return `${separator}${key}=***`;
+		} catch {}
+		return field;
+	});
 }
 
 /** The URL as shown to the user: no query (it holds the token) and no credentials. */
@@ -75,8 +94,9 @@ export class APIClient {
 		return new Promise((resolve, reject) => {
 			try {
 				this.ws = new WebSocket(this.url);
-			} catch (error) {
-				reject(this.error(String(error instanceof Error ? error.message : error)));
+			} catch {
+				// Runtime constructor errors may quote arbitrary URL encodings and credentials.
+				reject(new Error('WebSocket connection could not be created'));
 				return;
 			}
 
