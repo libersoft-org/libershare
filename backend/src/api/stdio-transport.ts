@@ -28,6 +28,10 @@ export class StdioTransport {
 	private queuedBytes = 0;
 	private writing = false;
 	private ended = false;
+	private inputEnded = false;
+	private draining = false;
+	private disconnected = false;
+	private failed = false;
 	private readySent = false;
 	private lastSession = 0;
 	private readonly idleWaiters = new Set<() => void>();
@@ -44,18 +48,18 @@ export class StdioTransport {
 	start(): void {
 		this.input.on('data', this.onData);
 		this.input.once('end', this.onEnd);
-		this.input.once('error', this.onError);
-		this.output.once('error', this.onError);
+		this.input.on('error', this.onError);
+		this.output.on('error', this.onError);
 	}
 
 	ready(): void {
-		if (this.ended || this.readySent) return;
+		if (this.ended || this.inputEnded || this.readySent) return;
 		this.readySent = true;
 		this.enqueue(IPC_KIND.Ready, 0, new Uint8Array([IPC_VERSION]));
 	}
 
 	private readonly onData = (chunk: Buffer): void => {
-		if (this.ended) return;
+		if (this.ended || this.inputEnded) return;
 		try {
 			for (const frame of this.decoder.push(chunk)) this.receive(frame);
 		} catch {
@@ -67,7 +71,8 @@ export class StdioTransport {
 	private readonly onEnd = (): void => {
 		try {
 			this.decoder.finish();
-			this.finish(false);
+			this.beginShutdown();
+			this.notifyDisconnect(false);
 		} catch {
 			console.error('[IPC] Truncated frame at EOF');
 			this.finish(true);
@@ -80,7 +85,7 @@ export class StdioTransport {
 	};
 
 	private receive(frame: IpcFrame): void {
-		if (this.ended) return;
+		if (this.ended || this.inputEnded) return;
 		if (!this.readySent || frame.session === 0) throw new Error('Invalid session');
 		if (frame.kind === IPC_KIND.Open) {
 			if (frame.payload.length || frame.session <= this.lastSession || this.sessions.size >= MAX_SESSIONS) throw new Error('Invalid open');
@@ -91,10 +96,11 @@ export class StdioTransport {
 				pending: 0,
 				data: { subscribedEvents: new Set(), isLocalClient: true },
 				send: message => {
-					if (!client.active) return false;
+					if (!client.active || this.ended) return false;
 					const bytes = Buffer.from(message);
 					if (bytes.length > IPC_MAX_PAYLOAD_SIZE || !this.enqueue(IPC_KIND.Text, client.id, bytes)) {
-						this.closeSession(client);
+						if (this.draining) this.finish(true);
+						else this.closeSession(client);
 						return false;
 					}
 					return true;
@@ -179,24 +185,43 @@ export class StdioTransport {
 		}
 	}
 
-	private finish(failed: boolean): void {
-		if (this.ended) return;
-		this.ended = true;
+	private stopInput(): void {
+		this.inputEnded = true;
 		this.input.off('data', this.onData);
 		this.input.off('end', this.onEnd);
-		this.input.off('error', this.onError);
 		this.input.pause();
-		for (const client of this.sessions.values()) this.closeSession(client, false);
+	}
+
+	/** The API owns the drain; accepted requests keep their session and upload ownership. */
+	beginShutdown(): void {
+		this.draining = true;
+		this.stopInput();
+	}
+
+	private notifyDisconnect(failed: boolean): void {
+		if (this.failed || (this.disconnected && !failed)) return;
+		this.disconnected = true;
+		this.failed ||= failed;
+		this.callbacks.disconnect(failed);
+	}
+
+	private finish(failed: boolean): void {
+		if (this.ended) {
+			this.notifyDisconnect(failed);
+			return;
+		}
+		this.ended = true;
+		this.stopInput();
+		if (!this.draining) for (const client of this.sessions.values()) this.closeSession(client, false);
 		this.queue.length = 0;
 		this.queuedBytes = 0;
 		for (const resolve of this.idleWaiters) resolve();
 		this.idleWaiters.clear();
-		this.callbacks.disconnect(failed);
+		this.notifyDisconnect(failed);
 	}
 
 	async stop(): Promise<void> {
-		this.input.off('data', this.onData);
-		this.input.pause();
+		this.beginShutdown();
 		// The API has drained accepted handlers; deliver their queued replies before Close.
 		if (!this.ended && (this.writing || this.queue.length)) await new Promise<void>(resolve => this.idleWaiters.add(resolve));
 		for (const client of this.sessions.values()) this.closeSession(client);

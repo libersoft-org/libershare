@@ -640,6 +640,7 @@ export class APIServer {
 	stop(): Promise<void> {
 		if (!this.stopping) {
 			this.accepting = false;
+			this.stdio?.beginShutdown();
 			this.peerReadAbort.abort(new Error(SHUTTING_DOWN));
 			this.networks.getNetwork().cancelRunOperations(true);
 			this.stopping = drainForShutdown(this.shutdownDeps);

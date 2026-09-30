@@ -1,5 +1,7 @@
 import { expect, it } from 'bun:test';
 import type { FileSink } from 'bun';
+import { Database } from 'bun:sqlite';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -28,7 +30,7 @@ class IPCProcess {
 	readError: unknown;
 	private nextID = 0;
 
-	constructor() {
+	constructor(importGate = false) {
 		mkdirSync(this.data);
 		const storage: Record<string, string> = {};
 		for (const key of ['downloadPath', 'tempPath', 'lishPath', 'lishnetPath', 'backupPath']) {
@@ -39,7 +41,12 @@ class IPCProcess {
 		const env: Record<string, string> = { HOME: this.root, USERPROFILE: this.root, STORAGE_ROOT: this.root, TMP: this.root, TEMP: this.root, TMPDIR: this.root, MEMTRACE: '0', HEAP_TRIGGER: '0' };
 		for (const key of ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT']) if (process.env[key]) env[key] = process.env[key]!;
 		for (const key of ['DOWNLOAD', 'TEMP', 'LISH', 'LISHNET', 'BACKUP']) env[`${productEnvPrefix}_${key}_PATH`] = join(this.root, key);
-		const proc = Bun.spawn([process.execPath, '--preload', './backend/tests/e2e/helpers/ipc-no-http.ts', './backend/src/app.ts', '--ipc', '--datadir', this.data], { cwd: ROOT, env, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+		if (importGate) {
+			mkdirSync(join(this.root, 'gate'));
+			env['LISH_IPC_IMPORT_GATE_DIR'] = join(this.root, 'gate');
+		}
+		const entry = importGate ? './backend/tests/e2e/helpers/ipc-import-gate.ts' : './backend/src/app.ts';
+		const proc = Bun.spawn([process.execPath, '--preload', './backend/tests/e2e/helpers/ipc-no-http.ts', entry, '--ipc', '--datadir', this.data], { cwd: ROOT, env, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
 		this.proc = proc;
 		const decoder = new IpcFrameDecoder();
 		this.drains = [
@@ -184,3 +191,58 @@ it('observes EOF before readiness without opening HTTP or forcing a second shutd
 		await child.cleanup();
 	}
 }, 45_000);
+
+for (const closing of ['eof', 'eof-output-error', 'session', 'fatal'] as const) {
+	const graceful = closing.startsWith('eof');
+	it(`${closing} ${graceful ? 'persists' : 'cancels'} an accepted mutating import waiting for the real parser lock`, async () => {
+		const child = new IPCProcess(true);
+		const gate = join(child.root, 'gate');
+		try {
+			await child.until(() => child.frames.find(item => item.kind === IPC_KIND.Ready));
+			await child.until(() => (existsSync(join(gate, 'held')) ? true : undefined));
+			await child.open(1);
+			const lishID = randomUUID();
+			const manifest = { id: lishID, name: 'Queued IPC import', created: new Date().toISOString(), chunkSize: 65536, checksumAlgo: 'sha256', files: [{ path: 'payload.bin', size: 1, checksums: [createHash('sha256').update('x').digest('hex')] }] };
+			await child.send(IPC_KIND.Text, 1, Buffer.from(JSON.stringify({ id: 'held-import', method: 'lishs.importFromJSON', params: { json: JSON.stringify(manifest), downloadPath: join(child.root, 'downloadPath'), enableSharing: false, enableDownloading: false } })));
+			await child.until(() => (existsSync(join(gate, 'accepted')) ? true : undefined));
+			expect(JSON.parse(readFileSync(join(gate, 'accepted'), 'utf8'))).toEqual({ id: 'held-import', requests: 1, lockHeld: true });
+			if (closing !== 'session') {
+				if (closing === 'fatal') await child.send(IPC_KIND.Opened, 1);
+				const exited = child.eof();
+				await child.until(() => (existsSync(join(gate, 'stopping')) ? true : undefined));
+				if (closing === 'eof-output-error') {
+					writeFileSync(join(gate, 'fail-output'), 'fail');
+					await child.until(() => (existsSync(join(gate, 'output-failed')) ? true : undefined));
+				}
+				writeFileSync(join(gate, 'release'), 'release');
+				expect(await exited).toBe(closing === 'eof' ? 0 : 1);
+				const db = new Database(join(child.data, 'libershare.db'), { readonly: true });
+				try {
+					expect(db.query('SELECT lish_id FROM lishs WHERE lish_id = ?').get(lishID)).toEqual(graceful ? { lish_id: lishID } : null);
+				} finally {
+					db.close();
+				}
+				if (closing === 'eof') {
+					expect(child.log).not.toContain('CLIENT_DISCONNECTED');
+					expect(child.messages(1).find(message => message.id === 'held-import')?.error).toBeUndefined();
+					expect(child.messages(1).some(message => message.id === 'held-import')).toBe(true);
+				} else if (closing === 'eof-output-error') {
+					expect(child.log).not.toContain('CLIENT_DISCONNECTED');
+					expect(child.log).toContain('[IPC] Pipe failed');
+				} else expect(child.log).toContain('CLIENT_DISCONNECTED');
+			} else {
+				await child.send(IPC_KIND.Close, 1);
+				await child.until(() => child.frames.find(item => item.kind === IPC_KIND.Close && item.session === 1));
+				writeFileSync(join(gate, 'release'), 'release');
+				await child.until(() => (existsSync(join(gate, 'settled')) ? true : undefined));
+				await child.open(2);
+				expect((await child.request(2, 'lishs.get', { lishID })).result).toBeNull();
+				expect(child.messages(1).some(message => message.id === 'held-import')).toBe(false);
+				expect(child.log).toContain('CLIENT_DISCONNECTED');
+			}
+		} finally {
+			writeFileSync(join(gate, 'release'), 'release');
+			await child.cleanup();
+		}
+	}, 45_000);
+}

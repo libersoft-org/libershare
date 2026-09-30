@@ -20,6 +20,84 @@ function harness(message: (client: APIClient, data: string | Buffer) => Promise<
 }
 
 describe('desktop IPC sessions', () => {
+	it('keeps session ownership and writes accepted replies after orderly EOF', async () => {
+		let release!: () => void;
+		const held = new Promise<void>(resolve => {
+			release = resolve;
+		});
+		let completed!: () => void;
+		const done = new Promise<void>(resolve => {
+			completed = resolve;
+		});
+		const h = harness(async client => {
+			await held;
+			client.send('accepted result');
+			completed();
+		});
+		h.input.write(encodeIpcFrame(IPC_KIND.Open, 1));
+		h.input.write(encodeIpcFrame(IPC_KIND.Text, 1, Buffer.from('{}')));
+		h.input.end();
+		await Bun.sleep(0);
+		expect(h.disconnected).toEqual([false]);
+		expect(h.closed).toEqual([]);
+		release();
+		await done;
+		expect(h.closed).toEqual([]);
+		await h.transport.stop();
+		expect(h.frames.filter(frame => frame.kind === IPC_KIND.Text).map(frame => Buffer.from(frame.payload).toString())).toEqual(['accepted result']);
+		expect(h.closed).toEqual([h.clients[0]!]);
+	});
+
+	it('upgrades EOF to failure when stdout fails without cancelling accepted work', async () => {
+		const h = harness();
+		h.input.write(encodeIpcFrame(IPC_KIND.Open, 1));
+		h.input.end();
+		await Bun.sleep(0);
+		h.output.emit('error', new Error('write failed'));
+		h.output.emit('error', new Error('same broken pipe'));
+		expect(h.disconnected).toEqual([false, true]);
+		expect(h.closed).toEqual([]);
+		expect(h.clients[0]!.send('late accepted reply')).toBe(false);
+		expect(h.closed).toEqual([]);
+		await h.transport.stop();
+		expect(h.closed).toEqual([h.clients[0]!]);
+	});
+
+	it('bounds a blocked writer during API drain without closing the accepted session early', async () => {
+		const input = new PassThrough();
+		let release!: () => void;
+		const output = new Writable({
+			write(_chunk, _encoding, done) {
+				release = done;
+			},
+		});
+		let client!: APIClient;
+		const closed: APIClient[] = [],
+			failures: boolean[] = [];
+		const transport = new StdioTransport(
+			{
+				open: value => {
+					client = value;
+				},
+				close: value => closed.push(value),
+				message: async () => {},
+				disconnect: failed => failures.push(failed),
+			},
+			input,
+			output
+		);
+		transport.start();
+		transport.ready();
+		input.write(encodeIpcFrame(IPC_KIND.Open, 1));
+		transport.beginShutdown();
+		for (let i = 0; i < 520; i++) client.send('pending');
+		expect(failures).toEqual([true]);
+		expect(closed).toEqual([]);
+		await transport.stop();
+		expect(closed).toEqual([client]);
+		release();
+	});
+
 	it('closes a session while its request waits and drops its late response', async () => {
 		let complete!: () => void;
 		const waiting = new Promise<void>(resolve => (complete = resolve));
