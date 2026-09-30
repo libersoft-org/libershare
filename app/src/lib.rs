@@ -337,12 +337,17 @@ pub fn run() {
 			}
 		}
 		RunEvent::Exit => {
+			let exit_code = handle
+				.try_state::<BackendBridge>()
+				.map(|bridge| bridge.finish_shutdown());
 			let _ = handle.save_window_state(StateFlags::all());
-			recorded_exit.set(
-				handle
-					.try_state::<BackendBridge>()
-					.and_then(|bridge| bridge.shutdown_exit_code()),
-			);
+			recorded_exit.set(exit_code);
+			#[cfg(target_os = "macos")]
+			{
+				// Cocoa Quit can skip ExitRequested and never return from run_return.
+				handle.cleanup_before_exit();
+				std::process::exit(exit_code.unwrap_or(1));
+			}
 		}
 		_ => {}
 	});

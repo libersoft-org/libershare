@@ -40,6 +40,7 @@ struct BridgeState {
 	exited: bool,
 	failed: bool,
 	shutdown: Option<Instant>,
+	finalizing: bool,
 	exit_code: i32,
 	next_session: u32,
 	session: Option<Session>,
@@ -231,7 +232,7 @@ impl BackendBridge {
 				line.extend_from_slice(&buffer[..keep]);
 				reader.consume(length);
 				if end {
-					if debug {
+					if debug && !logs.0.state.lock().unwrap().finalizing {
 						let _ = logs.0.app.emit_to(
 							"debug",
 							"backend-stderr",
@@ -246,8 +247,9 @@ impl BackendBridge {
 	}
 
 	fn callback(&self, session: u32, sequence: u32, data: Option<&str>) -> Result<(), ()> {
-		let window = self.0.app.get_webview_window("main").ok_or(())?;
-		require_main(&window).map_err(|_| ())?;
+		if self.0.state.lock().unwrap().finalizing {
+			return Ok(());
+		}
 		let envelope = match data {
 			Some(data) => {
 				serde_json::json!({ "session": session, "sequence": sequence, "type": "message", "data": data })
@@ -257,8 +259,30 @@ impl BackendBridge {
 		let argument = serde_json::to_string(&envelope).map_err(|_| ())?;
 		// Native eval targets this WebView directly; Tauri event targets and channel caches
 		// are not an isolation boundary between the main and debug WebViews.
-		window
-			.eval(format!("window.__LIBERSHARE_IPC_RECEIVE__?.({argument});"))
+		// URL inspection must run on the UI thread so shutdown never waits on a
+		// worker that is itself waiting for the event loop.
+		let bridge = self.clone();
+		self
+			.0
+			.app
+			.run_on_main_thread(move || {
+				if bridge.0.state.lock().unwrap().finalizing {
+					return;
+				}
+				let delivered = bridge
+					.0
+					.app
+					.get_webview_window("main")
+					.is_some_and(|window| {
+						require_main(&window).is_ok()
+							&& window
+								.eval(format!("window.__LIBERSHARE_IPC_RECEIVE__?.({argument});"))
+								.is_ok()
+					});
+				if !delivered {
+					bridge.close_session(session);
+				}
+			})
 			.map_err(|_| ())
 	}
 
@@ -494,7 +518,11 @@ impl BackendBridge {
 						};
 						let old = state.invalidate(false);
 						state.fail_queued();
-						(old, state.shutdown.is_some(), state.exit_code)
+						(
+							old,
+							state.shutdown.is_some() && !state.finalizing,
+							state.exit_code,
+						)
 					};
 					self.0.changed.notify_all();
 					if let Some(old) = old {
@@ -512,6 +540,35 @@ impl BackendBridge {
 	pub fn shutdown_exit_code(&self) -> Option<i32> {
 		let state = self.0.state.lock().unwrap();
 		(state.shutdown.is_some() && state.exited).then_some(state.exit_code)
+	}
+
+	pub fn finish_shutdown(&self) -> i32 {
+		let mut state = self.0.state.lock().unwrap();
+		state.finalizing = true;
+		let started = *state.shutdown.get_or_insert_with(Instant::now);
+		state.ready = false;
+		state.session = None;
+		self.0.changed.notify_all();
+		while !state.exited {
+			let remaining = EXIT_TIMEOUT.saturating_sub(started.elapsed());
+			if remaining.is_zero() {
+				state.failed = true;
+				drop(state);
+				{
+					let mut child = self.0.child.lock().unwrap();
+					let _ = child.kill();
+					let _ = child.wait();
+				}
+				state = self.0.state.lock().unwrap();
+				state.exited = true;
+				state.exit_code = 1;
+				state.fail_queued();
+				self.0.changed.notify_all();
+				break;
+			}
+			state = self.0.changed.wait_timeout(state, remaining).unwrap().0;
+		}
+		state.exit_code
 	}
 
 	pub fn shutdown(&self) {
