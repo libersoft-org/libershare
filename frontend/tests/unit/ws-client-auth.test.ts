@@ -52,14 +52,28 @@ globalThis.fetch = ((url: string, init?: RequestInit) =>
 		held.push({ url: String(url), signal: init?.signal ?? undefined, answer: status => resolve(Response.json({ ok: status === 200, authRequired: true, authenticated: status === 200 }, { status })) });
 	})) as typeof fetch;
 
-afterAll(() => {
-	globalThis.fetch = realFetch;
-	globalThis.WebSocket = realWebSocket;
+afterAll(async () => {
+	try {
+		client.wsClient.stopReconnect();
+		sharedClient.wsClient.stopReconnect();
+		for (const socket of FakeSocket.instances) socket.close();
+		for (const request of held) request.answer(503);
+		await settle();
+		const count = FakeSocket.instances.length;
+		await new Promise(resolve => setTimeout(resolve, 2100));
+		expect(FakeSocket.instances.length).toBe(count);
+		expect(FakeSocket.instances.every(socket => socket.readyState === FakeSocket.CLOSED)).toBe(true);
+	} finally {
+		globalThis.fetch = realFetch;
+		globalThis.WebSocket = realWebSocket;
+	}
 });
 
 // A separate module instance, so other test files that load ws-client keep theirs.
 const instance = '../../src/scripts/ws-client.ts?auth-flow';
 const client: typeof import('../../src/scripts/ws-client.ts') = await import(instance);
+// notifications/settings also load the ordinary singleton while globals are mocked.
+const sharedClient = await import('../../src/scripts/ws-client.ts');
 
 const settle = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0));
 const lastSocket = (): FakeSocket => FakeSocket.instances.at(-1)!;
