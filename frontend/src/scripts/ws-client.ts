@@ -1,17 +1,15 @@
 import { get, writable } from 'svelte/store';
-import { WsClient, CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, formatBytes } from '@shared';
+import { RpcClient, WsClient, CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE, formatBytes } from '@shared';
 import { addNotification } from './notifications.ts';
 import { tt } from './language.ts';
 import { getAPIURL } from './api-url.ts';
+import { isNativeBackend, TauriTransport } from './tauri-transport.ts';
 
 export type BackendConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'auth-required' | 'auth-failed';
 
 function getInitialBackendToken(): string {
 	const envToken = import.meta.env['VITE_LISH_TOKEN'];
-	if (typeof envToken === 'string' && envToken) return envToken;
-	if (typeof window === 'undefined') return '';
-	const injected = (window as any).__BACKEND_TOKEN__;
-	return typeof injected === 'string' ? injected : '';
+	return typeof envToken === 'string' ? envToken : '';
 }
 
 function withBackendToken(url: string): string {
@@ -30,12 +28,13 @@ function getStatusURL(): string {
 	return parsed.toString();
 }
 
-export const apiURL = getAPIURL();
+export const nativeBackend = isNativeBackend();
+export const apiURL = nativeBackend ? 'ipc://backend' : getAPIURL();
 export const connected = writable(false);
 export const backendConnectionStatus = writable<BackendConnectionStatus>('connecting');
 
-let backendToken = getInitialBackendToken();
-let authenticatedAPIURL = withBackendToken(apiURL);
+let backendToken = nativeBackend ? '' : getInitialBackendToken();
+let authenticatedAPIURL = nativeBackend ? apiURL : withBackendToken(apiURL);
 /**
  * Login attempt counter. Every `setBackendToken` starts a new attempt — also for the same
  * token — so a status answer for an earlier token can never change the state of a later one.
@@ -60,6 +59,7 @@ function cancelStatusCheck(): void {
  * within the same attempt.
  */
 function checkBackendStatus(): Promise<void> {
+	if (nativeBackend) return Promise.resolve();
 	if (statusCheck?.attempt === attempt) return statusCheck.promise;
 	cancelStatusCheck();
 	const controller = new AbortController();
@@ -92,6 +92,7 @@ function checkBackendStatus(): Promise<void> {
 }
 
 export function setBackendToken(token: string): void {
+	if (nativeBackend) return;
 	attempt++;
 	cancelStatusCheck();
 	backendToken = token.trim();
@@ -102,13 +103,13 @@ export function setBackendToken(token: string): void {
 	if (nextAPIURL === authenticatedAPIURL) wsClient.reconnect();
 	else {
 		authenticatedAPIURL = nextAPIURL;
-		wsClient.setAPIURL(authenticatedAPIURL);
+		webClient!.setAPIURL(authenticatedAPIURL);
 	}
 }
 
 let hasConnectedOnce = false;
 let disconnectTimer: ReturnType<typeof setTimeout> | undefined;
-export const wsClient = new WsClient(authenticatedAPIURL, (state: { connected: boolean }) => {
+function onConnectionChange(state: { connected: boolean }): void {
 	connected.set(state.connected);
 	if (state.connected) {
 		// An open socket answers the question the running status request was asking.
@@ -124,9 +125,9 @@ export const wsClient = new WsClient(authenticatedAPIURL, (state: { connected: b
 	}
 	// The close that follows a refused token must keep the login form, not replace it.
 	if (isAuthState(get(backendConnectionStatus))) return;
-	if (hasConnectedOnce) {
+	if (hasConnectedOnce || nativeBackend) {
 		backendConnectionStatus.set('disconnected');
-		if (!disconnectTimer) {
+		if (hasConnectedOnce && !disconnectTimer) {
 			disconnectTimer = setTimeout(() => {
 				disconnectTimer = undefined;
 				addNotification(tt('common.backendDisconnected'), 'warning');
@@ -136,12 +137,14 @@ export const wsClient = new WsClient(authenticatedAPIURL, (state: { connected: b
 	// The token may have changed while the socket was up (a restarted backend), so every
 	// disconnect asks again.
 	void checkBackendStatus();
-});
+}
+const webClient = nativeBackend ? null : new WsClient(authenticatedAPIURL, onConnectionChange);
+export const wsClient: RpcClient = webClient ?? new RpcClient(new TauriTransport(), onConnectionChange);
 wsClient.onError = () => {
-	if (hasConnectedOnce) addNotification(tt('common.websocketError'), 'error');
+	if (hasConnectedOnce) addNotification(tt(nativeBackend ? 'common.backendDisconnected' : 'common.websocketError'), 'error');
 	if (!isAuthState(get(backendConnectionStatus))) void checkBackendStatus();
 };
-void checkBackendStatus();
+if (!nativeBackend) void checkBackendStatus();
 
 /**
  * Bytes per chunk. Shared with the backend, which enforces it: this is the

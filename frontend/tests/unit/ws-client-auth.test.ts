@@ -112,6 +112,7 @@ test('a stale 401 for the old token does not disturb the new session', async () 
 	client.setBackendToken('token-b');
 	const socketB = await socketFor('token-b');
 	socketB.open();
+	await settle();
 	expect(status()).toBe('connected');
 
 	// A's 401 is delivered late, after B took over: it must change nothing.
@@ -144,6 +145,7 @@ test('an open that cancels a status check, then a proxy close, gets a fresh chec
 	const pending = held.at(-1)!;
 	const socket = await socketFor('token-b');
 	socket.open();
+	await settle();
 	expect(pending.signal?.aborted).toBe(true);
 
 	// The proxy closes with 1011 before the aborted request has run its finally.
@@ -157,6 +159,7 @@ test('an open that cancels a status check, then a proxy close, gets a fresh chec
 	// Submitting another token connects without reloading.
 	client.setBackendToken('token-c');
 	(await socketFor('token-c')).open();
+	await settle();
 	expect(status()).toBe('connected');
 });
 
