@@ -40,9 +40,18 @@ Both services run unprivileged, as `LISH_UID:LISH_GID` (default `1000:1000`),
 with `cap_drop: ALL`, a read-only root filesystem and no extra capabilities.
 Nothing inside the containers changes the owner of mounted data, and Docker
 does not create a missing bind-mount directory. Create the directories first,
-owned by the user the services run as:
+owned by the user the services run as. Run the following block as a non-root
+host account that can write to this directory and use Docker. If you are
+logged in as root, switch to that account first; do not copy root's UID into
+`.env`. The block stops before creating or changing files when run as root.
 
 ```sh
+(
+set -eu
+if [ "$(id -u)" -eq 0 ]; then
+    echo "Run this setup as a non-root account with Docker access; LISH_UID must not be 0." >&2
+    exit 1
+fi
 mkdir -p config storage certs
 chmod 0700 config storage certs
 echo "LISH_TOKEN=$(openssl rand -hex 32)" >> .env
@@ -50,6 +59,7 @@ echo "LISH_UID=$(id -u)" >> .env
 echo "LISH_GID=$(id -g)" >> .env
 chmod 600 .env
 docker compose up -d --build
+)
 ```
 
 A service started as root refuses to run. When the directories are not
