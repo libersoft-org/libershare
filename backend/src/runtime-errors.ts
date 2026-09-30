@@ -1,11 +1,9 @@
 import { errorName, isTransientError } from './transient-errors.ts';
 
-// Rate-limiter for the highest-frequency transient error coming from gossipsub
-// internals (StreamStateError: "Cannot write to a stream that is closed").
-// This is a known issue in @chainsafe/libp2p-gossipsub where sendRpc does not
-// catch sync throws from rawStream.send() on closed streams. Logging each one
-// produces ~5000 warn/hour of pure noise. We keep an occasional summary so the
-// condition is still observable.
+// Rate-limiter for high-frequency transient libp2p errors such as StreamStateError
+// ("Cannot write to a stream that is closed") on peer churn. Logging each one produces
+// thousands of warn lines per hour of pure noise; an occasional summary keeps the
+// condition observable.
 const transientLogState = new Map<string, { count: number; lastLogAt: number }>();
 const TRANSIENT_LOG_INTERVAL_MS = 60_000;
 function logTransientRateLimited(kind: 'error' | 'rejection', name: string, message: string): void {
