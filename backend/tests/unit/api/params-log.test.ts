@@ -6,6 +6,8 @@ import { CodedError, ErrorCodes } from '@shared';
 function bareServer(handlers: Record<string, (p: any) => any>): any {
 	const server: any = Object.create(APIServer.prototype);
 	server.handlers = handlers;
+	server.accepting = true;
+	server.acceptedRequests = new Set();
 	return server;
 }
 

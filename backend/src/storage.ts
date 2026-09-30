@@ -1,4 +1,7 @@
-import { join } from 'path';
+import { randomUUID } from 'node:crypto';
+import { lstat, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { syncDirectory } from './file-durability.ts';
 import { CodedError, ErrorCodes } from '@shared';
 
 /**
@@ -34,6 +37,65 @@ export function fatalStorageMessage(filePath: string, code: FatalStorageCode): s
 }
 
 /**
+ * A settings write that did not complete. `published` says whether the new file had already
+ * been renamed into place: before it the old file is intact, after it the new content is on
+ * disk but its durability was not confirmed. The message is the public contract — it reaches
+ * API clients verbatim — so it names the outcome and never carries setting values.
+ */
+export class StorageWriteError extends Error {
+	readonly code: string | undefined;
+	readonly published: boolean;
+
+	constructor(cause: unknown, published: boolean) {
+		const code = (cause as NodeJS.ErrnoException | null)?.code;
+		const suffix = code ? ` (${code})` : '';
+		super(published ? `Settings file now contains the new settings, but durability could not be confirmed${suffix}.` : `Settings file was not replaced; in-memory settings may differ from disk${suffix}.`, { cause });
+		this.name = 'StorageWriteError';
+		this.code = code;
+		this.published = published;
+	}
+}
+
+/**
+ * A settings file that exists but cannot be used. Carries the I/O code when there is one and
+ * an operator-facing recovery hint; never the file content.
+ */
+export class StorageLoadError extends Error {
+	readonly code: string | undefined;
+
+	constructor(filePath: string, cause: unknown) {
+		const code = (cause as NodeJS.ErrnoException | null)?.code;
+		const kind = code ?? (cause instanceof SyntaxError ? 'invalid JSON' : 'invalid document');
+		super(`Cannot load ${filePath} (${kind}). The file was left untouched: stop the node, restore a verified settings export to this path or fix the file, then start again.`, { cause });
+		this.name = 'StorageLoadError';
+		this.code = code;
+	}
+}
+
+/**
+ * Create `dir` (private mode) and flush the parent of every level that did not exist, so the
+ * new entries survive a power loss together with the file written into them.
+ */
+async function ensureDirectory(dir: string): Promise<void> {
+	const created = await mkdir(dir, { recursive: true, mode: 0o700 });
+	if (created === undefined) return;
+	for (let level = dir; ; level = dirname(level)) {
+		await syncDirectory(dirname(level));
+		if (level === created || dirname(level) === level) break;
+	}
+}
+
+/** Refuse to replace anything but a regular file; a missing target is a first write. */
+async function assertReplaceableTarget(path: string): Promise<void> {
+	try {
+		const info = await lstat(path);
+		if (!info.isFile()) throw Object.assign(new Error(`${path} is not a regular file`), { code: info.isDirectory() ? 'EISDIR' : 'EINVAL' });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+	}
+}
+
+/**
  * Base class for JSON file storage.
  */
 abstract class BaseStorage<T> {
@@ -44,18 +106,25 @@ abstract class BaseStorage<T> {
 		console.log(`[Storage] ${this.filePath}`);
 	}
 
+	/**
+	 * Read the stored document. Only a file that does not exist starts from the defaults;
+	 * anything else — unreadable, a directory, truncated or invalid JSON — is thrown, because
+	 * treating it as "no settings" would overwrite the user's file with defaults on the next
+	 * save. The broken file is left in place for the operator to restore.
+	 */
 	protected async loadFile(defaultValue: T): Promise<T> {
-		const file = Bun.file(this.filePath);
-		if (!(await file.exists())) {
-			// Write default to disk
+		let text: string;
+		try {
+			text = await readFile(this.filePath, 'utf8');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new StorageLoadError(this.filePath, error);
 			await this.saveFile(defaultValue);
 			return defaultValue;
 		}
 		try {
-			return JSON.parse(await file.text());
+			return JSON.parse(text);
 		} catch (error) {
-			console.error(`[Storage] Error loading ${this.filePath}:`, error);
-			return defaultValue;
+			throw new StorageLoadError(this.filePath, error);
 		}
 	}
 
@@ -70,27 +139,71 @@ abstract class BaseStorage<T> {
 	 */
 	protected saveFile(data: T): Promise<void> {
 		const queued = this.saveChain.then(() => this.writeFile(data));
-		this.saveChain = queued.catch(() => {});
+		// The chain itself never rejects, so one failed write does not block the next; the
+		// outcome is kept for flush() until a later write of the whole document succeeds.
+		this.saveChain = queued.then(
+			() => {
+				this.lastWriteError = null;
+			},
+			error => {
+				this.lastWriteError = error;
+			}
+		);
 		return queued;
 	}
 
+	/** The last failed write, cleared by the next successful one. */
+	private lastWriteError: unknown = null;
+
+	/**
+	 * Wait for every write already queued and report whether the document on disk is current.
+	 * Rejects with the last write error if no successful save has replaced it since — applying
+	 * runtime limits after a failed save does not count as saving it.
+	 */
+	async flush(): Promise<void> {
+		await this.saveChain;
+		if (this.lastWriteError) throw this.lastWriteError;
+	}
+
+	/**
+	 * Replace the file atomically: write a unique sibling, flush it, rename it over the target
+	 * and flush the directory. A crash or a full disk mid-write therefore leaves either the old
+	 * or the new document, never a truncated one that the next start would read as a fresh
+	 * install. Never deletes the target first and never falls back to writing it in place.
+	 */
 	private async writeFile(data: T): Promise<void> {
+		const text = JSON.stringify(data, null, '	');
+		const dir = dirname(this.filePath);
+		const staging = `${this.filePath}.${randomUUID()}.tmp`;
+		let published = false;
 		try {
-			await Bun.write(this.filePath, JSON.stringify(data, null, '\t'));
+			await ensureDirectory(dir);
+			await assertReplaceableTarget(this.filePath);
+			const handle = await open(staging, 'wx', 0o600);
+			try {
+				await handle.writeFile(text);
+				await handle.sync();
+			} finally {
+				await handle.close();
+			}
+			await assertReplaceableTarget(this.filePath);
+			await rename(staging, this.filePath);
+			published = true;
+			await syncDirectory(dir);
 		} catch (error) {
-			// Permission / read-only filesystem errors at this layer mean every
-			// subsequent write to settings.json (peer identity, joined networks,
-			// user preferences) would silently disappear and the next restart
-			// would regenerate state from defaults. That is much worse than
-			// crashing — fail fast with an operator-actionable hint instead of
-			// limping along. The most common trigger in container deployments is
-			// `cap_drop: ALL` stripping CAP_DAC_OVERRIDE while the bind-mount on
-			// the host is owned by a non-root user.
+			if (!published) await unlink(staging).catch(() => {});
+			const failure = new StorageWriteError(error, published);
+			console.error(`[Storage] Error saving ${this.filePath}: ${failure.message}`);
+			// Permission / read-only / full-disk errors mean every later write would disappear as
+			// well, and the next restart would come back to stale state. That is worse than
+			// crashing: fail fast with an operator-actionable hint. The most common trigger in
+			// container deployments is `cap_drop: ALL` stripping CAP_DAC_OVERRIDE while the
+			// bind-mount on the host is owned by a non-root user.
 			if (isFatalStorageError(error)) {
 				for (const line of fatalStorageMessage(this.filePath, error.code!)) console.error(line);
 				process.exit(74); // sysexits.h EX_IOERR
 			}
-			console.error(`[Storage] Error saving ${this.filePath}:`, error);
+			throw failure;
 		}
 	}
 }
@@ -110,12 +223,17 @@ export class JSONStorage<T extends Record<string, any>> extends BaseStorage<T> {
 	static async create<T extends Record<string, any>>(dataDir: string, fileName: string, defaults: T): Promise<JSONStorage<T>> {
 		const storage = new JSONStorage(dataDir, fileName, defaults);
 		const loaded = await storage.loadFile(structuredClone(defaults));
+		// A partial object from an older version is fine — the defaults fill it in. A root that
+		// is not an object at all is not a settings document.
+		if (loaded === null || typeof loaded !== 'object' || Array.isArray(loaded)) throw new StorageLoadError(storage.filePath, new Error('root is not an object'));
 		storage.data = storage.deepMerge(defaults, loaded);
 		return storage;
 	}
 
 	private deepMerge<U extends Record<string, any>>(defaults: U, override: Partial<U>): U {
-		const result = { ...defaults };
+		// Deep copy, not a spread: a group missing from the file would otherwise be the defaults'
+		// own object, and the first set() into it would rewrite the value reset() restores.
+		const result = structuredClone(defaults);
 		for (const key in override) {
 			if (override[key] !== undefined) {
 				if (typeof defaults[key] === 'object' && defaults[key] !== null && !Array.isArray(defaults[key])) result[key] = this.deepMerge(defaults[key], override[key] as any);
@@ -172,10 +290,11 @@ export class JSONStorage<T extends Record<string, any>> extends BaseStorage<T> {
 	 * as it was or the finished import, never a mixture.
 	 *
 	 * Not all-or-nothing about validity: a key the storage rejects is reported in `skipped`
-	 * and the rest of the batch still lands. `finalize` runs on the draft, so a correction
-	 * derived from the batch is published together with it.
+	 * and the rest of the batch still lands — unless `onInvalid` is `'throw'`, which rejects
+	 * the whole call before anything is published. `finalize` runs on the draft, so a
+	 * correction derived from the batch is published together with it.
 	 */
-	async setMany(entries: ReadonlyArray<{ path: string; value: any }>, finalize?: (draft: T) => void): Promise<{ applied: number; skipped: string[] }> {
+	async setMany(entries: ReadonlyArray<{ path: string; value: any }>, finalize?: (draft: T) => void, onInvalid: 'skip' | 'throw' = 'skip'): Promise<{ applied: number; skipped: string[] }> {
 		const draft = structuredClone(this.data);
 		const skipped: string[] = [];
 		let applied = 0;
@@ -184,6 +303,7 @@ export class JSONStorage<T extends Record<string, any>> extends BaseStorage<T> {
 				JSONStorage.assign(draft, entry.path, entry.value);
 				applied++;
 			} catch (err) {
+				if (onInvalid === 'throw') throw err;
 				console.warn(`Skipped settings key '${entry.path}':`, (err as Error).message);
 				skipped.push(entry.path);
 			}

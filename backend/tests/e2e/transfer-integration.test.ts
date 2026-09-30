@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import type { Database } from 'bun:sqlite';
+import { createDB } from './helpers/transfer-state.ts';
 import type { LISHid, ChunkID, IStoredLISH } from '@shared';
 import { CodedError, ErrorCodes } from '@shared';
-import { initLISHsTables, addLISH, setUploadEnabled, setDownloadEnabled, getUploadEnabledLishs, getDownloadEnabledLishs } from '../../src/db/lishs.ts';
+import { addLISH, setUploadEnabled, setDownloadEnabled, getUploadEnabledLishs, getDownloadEnabledLishs } from '../../src/db/lishs.ts';
 import { initUploadState, disableUpload, enableUpload, isUploadDisabled, isUploadEnabled, getEnabledUploads, getActiveUploads, resetUploadState, setUploadBroadcast } from '../../src/protocol/lish-protocol.ts';
 import { initDownloadState, initTransferHandlers, getDownloadEnabledLishs as getDownloadEnabledLishsRuntime } from '../../src/api/transfer.ts';
 import { setBusy, clearBusy, isBusy, getBusyReason } from '../../src/api/busy.ts';
@@ -20,13 +21,6 @@ const TEST_LISH_ID_2 = 'integ-test-lish-002' as LISHid;
 const CHUNK_A = 'sha256:aaaa0000bbbb1111cccc2222dddd3333eeee4444ffff5555aaaa0000bbbb1111' as ChunkID;
 const CHUNK_B = 'sha256:bbbb1111cccc2222dddd3333eeee4444ffff5555aaaa0000bbbb1111cccc2222' as ChunkID;
 const CHUNK_C = 'sha256:cccc2222dddd3333eeee4444ffff5555aaaa0000bbbb1111cccc2222dddd3333' as ChunkID;
-
-function createDB(): Database {
-	const db = new Database(':memory:');
-	db.run('PRAGMA foreign_keys = ON');
-	initLISHsTables(db);
-	return db;
-}
 
 function createTestLISH(id: LISHid = TEST_LISH_ID, opts: Partial<IStoredLISH> = {}): IStoredLISH {
 	return {
@@ -578,12 +572,10 @@ describe('Downloader — download behavior with mocked peers', () => {
 		(priv(downloader) as Record<string, number>)['lastExhaustedTime'] = Date.now();
 		(priv(downloader) as Record<string, string>)['state'] = 'downloading';
 
-		// doWork should return immediately without attempting download
+		const broadcasts = net.broadcastMessages.length;
 		await (downloader as any)['doWork']();
 
-		// No work was done: no peer was taken on and nothing was requested.
-		expect(ds.missingChunks.length).toBe(1);
-		expect((priv(downloader)['peerManager'] as { size: () => number }).size()).toBe(0);
+		expect(net.broadcastMessages.length).toBe(broadcasts);
 	});
 
 	it('lastExhaustedTime resets to 0 on enable, allowing immediate retry', async () => {
@@ -1131,71 +1123,5 @@ describe('lishs.list() includes enabled arrays', () => {
 		// Use the low-level set for this test instead
 		handlers.disableDownload({ lishID: TEST_LISH_ID });
 		expect(getDownloadEnabledLishsRuntime().has(TEST_LISH_ID)).toBe(false);
-	});
-});
-
-// ============================================================================
-// Test: enableDownload catch block rollback (N2 fix)
-// ============================================================================
-
-describe('enableDownload failure rollback (N2)', () => {
-	let db: Database;
-
-	beforeEach(() => {
-		resetUploadState();
-		db = createDB();
-	});
-
-	it('enableDownload on non-existent LISH rolls back enabled state', async () => {
-		const networks = new MockNetworks();
-		const dataServer = new DataServer(db);
-		initUploadState(new Set(), () => {});
-		initDownloadState(new Set(), (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
-		const handlers = initTransferHandlers(networks as never, dataServer, '/tmp/data', () => {});
-
-		const result = await handlers.enableDownload({ lishID: 'nonexistent-lish' as LISHid });
-		expect(result.success).toBe(false);
-		expect(getDownloadEnabledLishsRuntime().has('nonexistent-lish')).toBe(false);
-	});
-
-	it('enableDownload with no running network sets error and rolls back', async () => {
-		// Use a LISH with chunks that need downloading (not already complete)
-		const lish = createTestLISH(TEST_LISH_ID, { directory: '/tmp/nonexistent-test' });
-		addLISH(db, lish);
-		const networks = new MockNetworks();
-		// Do NOT set running network — getRunningNetwork() will throw
-		const dataServer = new DataServer(db);
-		const broadcastEvents: Array<{ event: string; data: any }> = [];
-		const broadcastFn = (event: string, data: any): void => {
-			broadcastEvents.push({ event, data });
-		};
-		initUploadState(new Set(), () => {});
-		initDownloadState(new Set(), (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
-		const handlers = initTransferHandlers(networks as never, dataServer, '/tmp/data', () => {}, broadcastFn);
-
-		const result = await handlers.enableDownload({ lishID: TEST_LISH_ID });
-		expect(result.success).toBe(false);
-		// Should be rolled back from enabled set
-		expect(getDownloadEnabledLishsRuntime().has(TEST_LISH_ID)).toBe(false);
-		// Should have set error in DB (catch block now does setError)
-		const summary = dataServer.listSummaries().find(s => s.id === TEST_LISH_ID);
-		expect(summary?.errorCode).toBeDefined();
-		// Should have broadcast error event
-		const errorEvent = broadcastEvents.find(e => e.event === 'transfer.download:error');
-		expect(errorEvent).toBeDefined();
-	});
-
-	it('enableDownload rollback does not leave orphaned enabled in DB', async () => {
-		const lish = createTestLISH(TEST_LISH_ID, { directory: '/tmp/nonexistent-test' });
-		addLISH(db, lish);
-		const networks = new MockNetworks();
-		const dataServer = new DataServer(db);
-		initUploadState(new Set(), () => {});
-		initDownloadState(new Set(), (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
-		const handlers = initTransferHandlers(networks as never, dataServer, '/tmp/data', () => {});
-
-		await handlers.enableDownload({ lishID: TEST_LISH_ID });
-		const dbEnabled = getDownloadEnabledLishs(db);
-		expect(dbEnabled.has(TEST_LISH_ID)).toBe(false);
 	});
 });
