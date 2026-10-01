@@ -476,9 +476,8 @@ export function applySystemTimeSettings(changes: SystemTimeChanges, writers: Sys
 			// serialising them cannot catch it; only the expectation can.
 			// A clock that will be refused must be refused before the zone or NTP server in the same
 			// request is written: otherwise the save fails halfway, with the host already changed.
-			// Skipped when this save switches synchronisation off first — the clock writer checks
-			// again after that step.
-			const checkClock = changes.clock !== undefined && changes.ntpEnabled !== false;
+			// Disabling managed sync cannot release a clock held by another daemon.
+			const checkClock = changes.clock !== undefined;
 			const current = changes.expectedTimezone !== undefined || checkClock ? await readStatus() : null;
 			if (current && changes.expectedTimezone !== undefined) {
 				if (!sameHostZone(process.platform, current.timezone, changes.expectedTimezone)) return result('stale', `the host timezone is now ${current.timezone}, not ${changes.expectedTimezone} as this request was composed against`);
@@ -488,11 +487,15 @@ export function applySystemTimeSettings(changes: SystemTimeChanges, writers: Sys
 				if (changes.expectedOffsetMinutes !== undefined && current.utcOffsetMinutes !== changes.expectedOffsetMinutes) return result('stale', `the host is now ${current.utcOffsetMinutes} minutes from UTC, not ${changes.expectedOffsetMinutes} as this request was composed against`);
 			}
 			if (current && checkClock) {
-				const refusal = await clockRefusal(current, process.platform, readMode);
+				const refusal = changes.ntpEnabled === false ? clockWriteRefusal({ ...current, ntpEnabled: false }) : await clockRefusal(current, process.platform, readMode);
 				if (refusal) return refusal;
 			}
 			const operations: Array<() => Promise<SystemTimeResult>> = [];
-			if (changes.ntpEnabled === false) operations.push(() => writers.setNtpEnabled(false));
+			if (changes.ntpEnabled === false) {
+				operations.push(() => writers.setNtpEnabled(false));
+				// Recheck before changing the server or zone; retain the clock writer's final guard.
+				if (checkClock) operations.push(async () => (await clockRefusal(await readStatus(), process.platform, readMode)) ?? result('ok'));
+			}
 			const ntpServer = changes.ntpServer;
 			const timezone = changes.timezone;
 			const clock = changes.clock;

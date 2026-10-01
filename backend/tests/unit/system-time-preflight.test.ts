@@ -65,9 +65,40 @@ describe('combined time save with a clock', () => {
 		expect(await save(combined, status())).toMatchObject({ outcome: 'ok', calls: ['server:ntp.example.org', `zone:${ZONE}`, 'clock:1'] });
 	});
 
-	it('does not pre-check the clock when the same save switches synchronisation off first', async () => {
-		const result = await save({ ...combined, ntpEnabled: false }, status({ ntpEnabled: true }));
-		expect(result).toMatchObject({ outcome: 'ok', calls: ['ntp:false', 'server:ntp.example.org', `zone:${ZONE}`, 'clock:1'] });
+	it('checks again after switching managed synchronisation off', async () => {
+		const calls: string[] = [];
+		let reads = 0;
+		const result = await applySystemTimeSettings({ ...combined, ntpEnabled: false }, writers(calls), async () => status({ ntpEnabled: reads++ === 0 }), stoppedService);
+		expect(result.outcome).toBe('ok');
+		expect(reads).toBe(2);
+		expect(calls).toEqual(['ntp:false', 'server:ntp.example.org', `zone:${ZONE}`, 'clock:1']);
+	});
+
+	it('refuses known clock blockers before even disabling managed synchronisation', async () => {
+		for (const clockHeldByUnmanagedDaemon of [true, null]) {
+			const refused = await save({ ...combined, ntpEnabled: false }, status({ ntpEnabled: true, clockHeldByUnmanagedDaemon }));
+			expect(refused).toMatchObject({ outcome: clockHeldByUnmanagedDaemon ? 'auto-sync-enabled' : 'error', calls: [] });
+			expect(refused.changed).toBeUndefined();
+		}
+		const refused = await save({ ...combined, ntpEnabled: false }, status({ ntpEnabled: true, capabilities: { setClock: false, setTimezone: true, setNtpServer: true, setNtpEnabled: true } }));
+		expect(refused).toMatchObject({ outcome: 'unsupported', calls: [] });
+	});
+
+	it('leaves the server and zone alone when a clock blocker appears after disabling synchronisation', async () => {
+		for (const after of [status({ clockHeldByUnmanagedDaemon: true }), status({ clockHeldByUnmanagedDaemon: null }), status({ ntpEnabled: true }), status({ ntpEnabled: null })]) {
+			const calls: string[] = [];
+			let reads = 0;
+			const result = await applySystemTimeSettings({ ...combined, ntpEnabled: false }, writers(calls), async () => reads++ === 0 ? status({ ntpEnabled: true }) : after, stoppedService);
+			expect(result).toMatchObject({ success: false, changed: true, stateMayHaveChanged: true });
+			expect(calls).toEqual(['ntp:false']);
+		}
+	});
+
+	it.if(process.platform === 'win32')('refuses a Windows service still changing state after disabling synchronisation', async () => {
+		const calls: string[] = [];
+		const result = await applySystemTimeSettings({ ...combined, ntpEnabled: false }, writers(calls), async () => status(), async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'changing', ntpClientEnabled: true }));
+		expect(result).toMatchObject({ outcome: 'auto-sync-enabled', changed: true, stateMayHaveChanged: true });
+		expect(calls).toEqual(['ntp:false']);
 	});
 
 	it('reports a stale zone before a clock refusal', async () => {

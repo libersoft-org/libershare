@@ -1284,7 +1284,7 @@ describe('applySystemTimeSettings', () => {
 
 	it('applies one save in dependency order under one operation', async () => {
 		const calls: string[] = [];
-		const result = await applySystemTimeSettings({ ntpEnabled: false, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 } }, writers(calls));
+		const result = await applySystemTimeSettings({ ntpEnabled: false, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 } }, writers(calls), async () => statusFixture(), stoppedTimeService);
 		expect(result).toEqual(okResult);
 		expect(calls).toEqual(['ntp:false', 'server:ntp.example.org', 'zone:Europe/Prague', 'clock:1:2:3']);
 	});
@@ -1301,11 +1301,10 @@ describe('applySystemTimeSettings', () => {
 		const result = await applySystemTimeSettings(
 			{ ntpEnabled: false, timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 } },
 			writers(calls, {
-				setTimezone: async timezone => {
-					calls.push(`zone:${timezone}`);
-					return denied;
-				},
-			})
+				setTimezone: async timezone => (calls.push(`zone:${timezone}`), denied),
+			}),
+			async () => statusFixture(),
+			stoppedTimeService
 		);
 		expect(result).toEqual({ ...denied, changed: true, stateMayHaveChanged: true });
 		expect(calls).toEqual(['ntp:false', 'zone:Europe/Prague']);
