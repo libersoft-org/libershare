@@ -681,7 +681,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 				dataServer.relocateDataset(p.lishID, root);
 			};
 			if (p.moveData && lish.directory) {
-				await moveDatasetData(lish, storedRoot(lish), root, commit, progress => broadcast('lishs:move:progress', { lishID: p.lishID, ...progress }));
+				await moveDatasetData(lish, storedRoot(lish), root, commit, progress => broadcast('lishs:move:progress', { lishID: p.lishID, ...progress }), 'source');
 			} else {
 				const target = await openDataset(root, true);
 				try {
@@ -692,6 +692,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 				commit();
 			}
 			broadcast('lishs:move', { lishID: p.lishID, directory: newDir });
+			enqueueVerification(p.lishID);
 			return { success: true };
 		} finally {
 			movingLISHs.delete(p.lishID);

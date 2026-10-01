@@ -66,6 +66,16 @@ test('never replaces an existing destination directory', async () => {
 	expect(await readFile(join(f.source, 'data.bin'), 'utf8')).toBe('abcdefgh');
 });
 
+test.each(['abcd\0\0\0\0', 'abc'])('moves unfinished bytes unchanged when relocating a download: %j', async contents => {
+	const f = await fixture();
+	await writeFile(join(f.source, 'data.bin'), contents);
+	let committed = false;
+	await moveDatasetData(f.manifest, f.root, f.target, () => { committed = true; }, () => {}, 'source');
+	expect(committed).toBe(true);
+	expect(await readFile(join(f.base, 'target/data.bin'), 'utf8')).toBe(contents);
+	expect(await Bun.file(join(f.source, 'data.bin')).exists()).toBe(false);
+});
+
 test('checksum mismatch preserves the source and removes only the incomplete copy', async () => {
 	const f = await fixture();
 	await writeFile(join(f.source, 'data.bin'), 'badbytes');
