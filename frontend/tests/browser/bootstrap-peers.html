@@ -23,7 +23,11 @@
 		const network = { networkID: 'summary-test', name: 'Test network', description: '', created: '2026-01-01T00:00:00Z', enabled: true, bootstrapPeers: peers.map(peer => peer.multiaddr) };
 		await new Promise(resolve => {
 			const unsubscribe = translations.subscribe(value => {
-				if (value.settings?.lishNetwork) queueMicrotask(() => { unsubscribe(); resolve(); });
+				if (value.settings?.lishNetwork)
+					queueMicrotask(() => {
+						unsubscribe();
+						resolve();
+					});
 			});
 		});
 		mount(SettingsLISHNetworkPeers, { target: document.querySelector('#peers'), props: { areaID: 'summary-test', network, status: { networkID: network.networkID, peers } } });
@@ -39,22 +43,32 @@
 				const label = document.querySelector('.summary').title;
 				if (!label.includes('1') || !label.includes('3')) throw new Error('Summary lost the full address counts');
 				results.push({ name, passed: true });
-			} catch (error) { results.push({ name, passed: false, error: error.message }); }
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			}
 		}
 		await check('one connected address and three failures stay partial', () => {}, 4);
-		await check('searching only the connected address preserves the warning', () => {
-			const search = document.querySelector('input');
-			search.value = '192.0.2.1';
-			search.dispatchEvent(new Event('input', { bubbles: true }));
-		}, 1);
-		await check('the problems filter preserves the connected count', () => {
-			const search = document.querySelector('input');
-			search.value = '';
-			search.dispatchEvent(new Event('input', { bubbles: true }));
-			const filter = document.querySelector('select');
-			filter.value = 'problems';
-			filter.dispatchEvent(new Event('change', { bubbles: true }));
-		}, 3);
+		await check(
+			'searching only the connected address preserves the warning',
+			() => {
+				const search = document.querySelector('input');
+				search.value = '192.0.2.1';
+				search.dispatchEvent(new Event('input', { bubbles: true }));
+			},
+			1
+		);
+		await check(
+			'the problems filter preserves the connected count',
+			() => {
+				const search = document.querySelector('input');
+				search.value = '';
+				search.dispatchEvent(new Event('input', { bubbles: true }));
+				const filter = document.querySelector('select');
+				filter.value = 'problems';
+				filter.dispatchEvent(new Event('change', { bubbles: true }));
+			},
+			3
+		);
 		window.bootstrapPeersTestResults = results;
 		document.documentElement.dataset.testStatus = results.every(result => result.passed) ? 'passed' : 'failed';
 		document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
