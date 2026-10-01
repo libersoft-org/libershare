@@ -169,7 +169,7 @@ export async function verifyWindowsHelper(helper: string, now: () => number = el
 	const identity = await withinDeadline(windowsTrustIdentity([helper, launcher, process.execPath]), deadline, now);
 	const remembered = rememberedWindowsTrust(identity, now());
 	if (remembered !== null) return remembered;
-	if (identity !== null && windowsTrustInFlight?.identity === identity) return windowsTrustInFlight.answer;
+	if (identity !== null && windowsTrustInFlight?.identity === identity) return withinDeadline(windowsTrustInFlight.answer, deadline, now);
 	const answer = measureWindowsHelperTrust(helper, launcher, expectedHash, deadline, now);
 	if (identity !== null) windowsTrustInFlight = { identity, answer };
 	try {
