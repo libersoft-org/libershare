@@ -14,6 +14,8 @@ import { DataServer, type MissingChunk } from '../lish/data-server.ts';
 import { trace } from '../logger.ts';
 import { PeerManager } from './peer-manager.ts';
 import { FileAllocator, type AllocationProgress } from './file-allocator.ts';
+import { conservativeDatasetRoot, datasetRootPath } from '../lish/dataset-root.ts';
+import type { DatasetRoot } from '../lish/safe-dataset-files.ts';
 import { PauseController } from './pause-controller.ts';
 import { ProgressReporter, type ProgressCallback } from './progress-reporter.ts';
 import { ChunkDownloader, type RetryInfo } from './chunk-downloader.ts';
@@ -58,6 +60,7 @@ export class Downloader {
 	private readonly dataServer: DataServer;
 	private network: Network;
 	private readonly downloadDir: string;
+	private readonly datasetRoot: DatasetRoot;
 	private networkIDs: string[];
 	// Immutable snapshot of the networks this download was created with. removeNetwork
 	// mutates networkIDs when a lishnet is left; addNetwork consults this to re-attach
@@ -395,14 +398,15 @@ export class Downloader {
 		this.peerManager.remove(peerID, 'disconnect');
 	}
 
-	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkIDs: string | string[], originalNetworkIDs?: string[]) {
-		this.downloadDir = downloadDir;
+	constructor(datasetRoot: DatasetRoot | string, network: Network, dataServer: DataServer, networkIDs: string | string[], originalNetworkIDs?: string[]) {
+		this.datasetRoot = typeof datasetRoot === 'string' ? conservativeDatasetRoot(datasetRoot) : datasetRoot;
+		this.downloadDir = datasetRootPath(this.datasetRoot);
 		this.network = network;
 		this.dataServer = dataServer;
 		const ids = Array.isArray(networkIDs) ? [...networkIDs] : [networkIDs];
 		this.networkIDs = ids;
 		this.originalNetworkIDs = originalNetworkIDs ? [...originalNetworkIDs] : [...ids];
-		this.fileAllocator = new FileAllocator(downloadDir);
+		this.fileAllocator = new FileAllocator(this.datasetRoot);
 	}
 
 	async init(lishPath: string): Promise<void> {
@@ -443,6 +447,7 @@ export class Downloader {
 		return new ChunkDownloader({
 			lishID: this.lishID,
 			downloadDir: this.downloadDir,
+			datasetRoot: this.datasetRoot,
 			abortSignal: this.abortController.signal,
 			dataServer: this.dataServer,
 			peerManager: this.peerManager,

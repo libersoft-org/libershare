@@ -2,7 +2,7 @@ import { type Database } from 'bun:sqlite';
 import { openDataset, type DatasetRoot, type SafeDataset } from './safe-dataset-files.ts';
 import { conservativeDatasetRoot } from './dataset-root.ts';
 import { readDatasetRange } from './dataset-chunk-io.ts';
-import { getDatasetRoot as dbGetDatasetRoot, setDatasetRoot as dbSetDatasetRoot } from '../db/lishs-roots.ts';
+import { getDatasetRoot as dbGetDatasetRoot, setDatasetRoot as dbSetDatasetRoot, addDataset as dbAddDataset, relocateDataset as dbRelocateDataset } from '../db/lishs-roots.ts';
 import { clearLishData, clearLishnetData } from '../db/database.ts';
 import { getDownloadEnabledLishs as dbGetDownloadEnabledLishs, getUploadEnabledLishs as dbGetUploadEnabledLishs, setDownloadEnabled as dbSetDownloadEnabled, setUploadEnabled as dbSetUploadEnabled } from '../db/lishs.ts';
 import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHid, type ChunkID, type LISHSortField, type SortOrder, CodedError, ErrorCodes } from '@shared';
@@ -25,6 +25,14 @@ export class DataServer {
 
 	setDatasetRoot(lishID: LISHid, root: DatasetRoot | null, final = false): void {
 		dbSetDatasetRoot(this.db, lishID, root, final);
+	}
+
+	addDataset(lish: IStoredLISH, root: DatasetRoot, finalRoot?: DatasetRoot): void {
+		dbAddDataset(this.db, lish, root, finalRoot);
+	}
+
+	relocateDataset(lishID: LISHid, root: DatasetRoot, clearFinal = false): void {
+		dbRelocateDataset(this.db, lishID, root, clearFinal);
 	}
 
 	async openDataset(lishID: LISHid): Promise<SafeDataset> {

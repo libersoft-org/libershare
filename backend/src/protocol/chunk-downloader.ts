@@ -9,6 +9,7 @@ import { PeerManager } from './peer-manager.ts';
 import { PauseController } from './pause-controller.ts';
 import { ProgressReporter, type FileProgressEntry } from './progress-reporter.ts';
 import { FileAllocator, type AllocationProgress } from './file-allocator.ts';
+import type { DatasetRoot } from '../lish/safe-dataset-files.ts';
 export interface RetryInfo {
 	errorCode: string;
 	errorDetail?: string;
@@ -25,6 +26,7 @@ export interface RetryInfo {
 export interface ChunkDownloaderDeps {
 	readonly lishID: LISHid;
 	readonly downloadDir: string;
+	readonly datasetRoot?: DatasetRoot | string;
 	/** Aborted on Downloader.destroy() — forwarded to long-running FileAllocator ops. */
 	readonly abortSignal: AbortSignal;
 	readonly dataServer: DataServer;
@@ -206,12 +208,12 @@ export class ChunkDownloader {
 		const writeChunkToAllSlots = async (c: MissingChunk, payload: Uint8Array): Promise<void> => {
 			const targets = dupTargets.get(c.chunkID);
 			if (!targets) {
-				await dataServer.writeChunk(downloadDir, lish, c.fileIndex, c.chunkIndex, payload);
+				await dataServer.writeChunk(this.deps.datasetRoot ?? downloadDir, lish, c.fileIndex, c.chunkIndex, payload);
 				return;
 			}
 			for (const t of targets) {
 				if (this.deps.isDestroyed() || this.deps.isDisabled()) return;
-				await dataServer.writeChunk(downloadDir, lish, t.fileIndex, t.chunkIndex, payload);
+				await dataServer.writeChunk(this.deps.datasetRoot ?? downloadDir, lish, t.fileIndex, t.chunkIndex, payload);
 			}
 		};
 
