@@ -1,6 +1,7 @@
 import { type Database } from 'bun:sqlite';
 import { openDataset, type DatasetRoot, type SafeDataset } from './safe-dataset-files.ts';
 import { conservativeDatasetRoot } from './dataset-root.ts';
+import { DatasetWriteScope } from './dataset-write-scope.ts';
 import { readDatasetRange } from './dataset-chunk-io.ts';
 import { getDatasetRoot as dbGetDatasetRoot, setDatasetRoot as dbSetDatasetRoot, addDataset as dbAddDataset, relocateDataset as dbRelocateDataset } from '../db/lishs-roots.ts';
 import { getDatasetLinkBindings as dbGetDatasetLinkBindings, type DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
@@ -268,15 +269,15 @@ export class DataServer {
 		}
 	}
 
-	public async writeChunk(downloadDir: string | DatasetRoot, lish: ILISH, fileIndex: number, chunkIndex: number, data: Uint8Array): Promise<void> {
+	public async writeChunk(downloadDir: string | DatasetRoot, lish: ILISH, fileIndex: number, chunkIndex: number, data: Uint8Array, scope?: DatasetWriteScope): Promise<void> {
 		if (!Number.isSafeInteger(fileIndex) || fileIndex < 0 || !lish.files || fileIndex >= lish.files.length) throw new CodedError(ErrorCodes.INVALID_FILE_INDEX, String(fileIndex));
 		const file = lish.files[fileIndex]!;
 		const offset = chunkIndex * lish.chunkSize;
 		const length = Math.min(lish.chunkSize, file.size - offset);
 		if (!Number.isSafeInteger(lish.chunkSize) || lish.chunkSize <= 0 || !Number.isSafeInteger(file.size) || file.size < 0 || !Number.isSafeInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= file.checksums.length || !Number.isSafeInteger(offset) || length <= 0 || data.length !== length) throw new CodedError(ErrorCodes.UPLOAD_INVALID_CHUNK);
-		const dataset = await this.openRoot(typeof downloadDir === 'string' ? conservativeDatasetRoot(downloadDir) : downloadDir);
+		const writes = scope ?? new DatasetWriteScope();
 		try {
-			await dataset.prepare(lish);
+			await writes.write(typeof downloadDir === 'string' ? conservativeDatasetRoot(downloadDir) : downloadDir, lish, this.openRoot, async dataset => {
 			const fd = await dataset.openFile(file.path, 'write');
 			try {
 				let bytesWritten = 0;
@@ -288,8 +289,9 @@ export class DataServer {
 			} finally {
 				await fd.close();
 			}
+			});
 		} finally {
-			await dataset.close();
+			if (!scope) await writes.close();
 		}
 	}
 }

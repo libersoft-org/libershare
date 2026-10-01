@@ -10,6 +10,7 @@ import { PauseController } from './pause-controller.ts';
 import { ProgressReporter, type FileProgressEntry } from './progress-reporter.ts';
 import { FileAllocator, type AllocationProgress } from './file-allocator.ts';
 import type { DatasetRoot } from '../lish/safe-dataset-files.ts';
+import { DatasetWriteScope } from '../lish/dataset-write-scope.ts';
 export interface RetryInfo {
 	errorCode: string;
 	errorDetail?: string;
@@ -99,6 +100,15 @@ export class ChunkDownloader {
 	 * orchestrator (doWork) decides what to do on partial completion.
 	 */
 	async run(): Promise<void> {
+		const writes = new DatasetWriteScope();
+		try {
+			await this.runWithWrites(writes);
+		} finally {
+			await writes.close();
+		}
+	}
+
+	private async runWithWrites(writes: DatasetWriteScope): Promise<void> {
 		const { lishID, downloadDir, dataServer, peerManager, pauseController, progressReporter, fileAllocator } = this.deps;
 		// Snapshot lish once per run — manifest is only mutated by the orchestrator in doWork Phase 1 BEFORE run() is called.
 		const lish = this.deps.getLish();
@@ -208,12 +218,12 @@ export class ChunkDownloader {
 		const writeChunkToAllSlots = async (c: MissingChunk, payload: Uint8Array): Promise<void> => {
 			const targets = dupTargets.get(c.chunkID);
 			if (!targets) {
-				await dataServer.writeChunk(this.deps.datasetRoot ?? downloadDir, lish, c.fileIndex, c.chunkIndex, payload);
+				await dataServer.writeChunk(this.deps.datasetRoot ?? downloadDir, lish, c.fileIndex, c.chunkIndex, payload, writes);
 				return;
 			}
 			for (const t of targets) {
 				if (this.deps.isDestroyed() || this.deps.isDisabled()) return;
-				await dataServer.writeChunk(this.deps.datasetRoot ?? downloadDir, lish, t.fileIndex, t.chunkIndex, payload);
+				await dataServer.writeChunk(this.deps.datasetRoot ?? downloadDir, lish, t.fileIndex, t.chunkIndex, payload, writes);
 			}
 		};
 

@@ -28,7 +28,7 @@ describe('DataServer.writeChunk', () => {
 				closed = true;
 			},
 		} as unknown as DatasetFileHandle;
-		const dataServer = new DataServer({} as Database, async () => ({ prepare: async () => {}, openFile: async () => handle, close: async () => {} }) as unknown as SafeDataset);
+		const dataServer = new DataServer({} as Database, async () => ({ statDirectory: async () => ({ identity: 'root' }), prepare: async () => {}, openFile: async () => handle, close: async () => {} }) as unknown as SafeDataset);
 
 		await dataServer.writeChunk('/download', lish, 0, 0, new Uint8Array(8));
 
@@ -54,7 +54,7 @@ describe('DataServer.writeChunk', () => {
 				closed = true;
 			},
 		} as unknown as DatasetFileHandle;
-		const dataServer = new DataServer({} as Database, async () => ({ prepare: async () => {}, openFile: async () => handle, close: async () => {} }) as unknown as SafeDataset);
+		const dataServer = new DataServer({} as Database, async () => ({ statDirectory: async () => ({ identity: 'root' }), prepare: async () => {}, openFile: async () => handle, close: async () => {} }) as unknown as SafeDataset);
 
 		await expect(dataServer.writeChunk('/download', lish, 0, 0, new Uint8Array(8))).rejects.toMatchObject({ code: 'ENOSPC' });
 		expect(calls).toBe(2);
