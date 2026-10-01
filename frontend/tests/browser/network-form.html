@@ -67,7 +67,10 @@
 			}
 			if (method === 'system.wifiConnect') {
 				joinCalls.push(params);
-				if (waitForJoin) await new Promise((resolve, reject) => { pendingJoin = { resolve, reject }; });
+				if (waitForJoin)
+					await new Promise((resolve, reject) => {
+						pendingJoin = { resolve, reject };
+					});
 				if (joinFails) {
 					host.interfaces[0].addresses = [];
 					throw new Error('Test join rejected: check the password');
@@ -76,7 +79,10 @@
 			}
 			if (method === 'system.wifiDisconnect') {
 				disconnectCalls++;
-				if (waitForDisconnect) await new Promise((resolve, reject) => { pendingDisconnect = { resolve, reject }; });
+				if (waitForDisconnect)
+					await new Promise((resolve, reject) => {
+						pendingDisconnect = { resolve, reject };
+					});
 				host.interfaces[0].wifi = { ssid: null, signal: null, radio: 'on' };
 				host.interfaces[0].link = 'down';
 				host.interfaces[0].addresses = [];
@@ -551,10 +557,12 @@
 
 			await test('current connection adopts a newly readable network name without remounting', async () => {
 				host.interfaces[0].wifi = { ssid: null, signal: 74, radio: 'on' };
-				networkState.set(structuredClone(host)); await settle();
+				networkState.set(structuredClone(host));
+				await settle();
 				assert(target.querySelector('.connection h4').textContent === label('settings.network.connectedNameUnavailable'), 'Missing name was treated as disconnected');
 				host.interfaces[0].wifi.ssid = 'Newly visible network';
-				networkState.set(structuredClone(host)); await settle();
+				networkState.set(structuredClone(host));
+				await settle();
 				assert(target.querySelector('.connection h4').textContent === 'Newly visible network', 'New name was not displayed');
 				assert(button(label('settings.network.disconnect')), 'Confirmed connection has no disconnect action');
 			});
@@ -566,28 +574,36 @@
 			]) {
 				await test(`connected controllable adapter can disconnect with ${details.name}`, async () => {
 					host.interfaces[0].wifi = details.wifi;
-					networkState.set(structuredClone(host)); await settle();
+					networkState.set(structuredClone(host));
+					await settle();
 					const disconnect = button(label('settings.network.disconnect'));
 					assert(target.querySelector('.connection h4').textContent === label('settings.network.connectedNameUnavailable'), 'Unavailable name was misreported');
 					waitForDisconnect = true;
-					disconnect.click(); await settle();
+					disconnect.click();
+					await settle();
 					try {
 						assert(disconnectCalls === 1 && pendingDisconnect, 'Nameless adapter did not reach disconnect API');
 						assert(disconnect.classList.contains('disabled') && target.querySelector('.connection .joining[role="status"]'), 'Nameless disconnect has no pending protection');
-						disconnect.click(); await settle();
+						disconnect.click();
+						await settle();
 						assert(disconnectCalls === 1, 'Nameless disconnect was submitted twice');
-						pendingDisconnect.resolve(); await settle();
+						pendingDisconnect.resolve();
+						await settle();
 						assert(target.querySelector('.connection h4').textContent === label('settings.network.notConnected'), 'Host disconnection was not shown');
 						assert(!target.querySelector('.connection [role="button"]'), 'Disconnected adapter still offers disconnect');
 						assert(message() === label('settings.network.disconnected'), 'Nameless disconnect result is missing');
-					} finally { pendingDisconnect?.resolve(); await settle(); }
+					} finally {
+						pendingDisconnect?.resolve();
+						await settle();
+					}
 				});
 			}
 
 			await test('a nameless connected adapter reserves a navigation row before IPv4', async () => {
 				const disconnect = button(label('settings.network.disconnect'));
 				assert(disconnect.classList.contains('selected'), 'Disconnect does not occupy the first navigation row');
-				emit('down'); await settle();
+				emit('down');
+				await settle();
 				assert(target.querySelector('.fields .select-field').classList.contains('selected'), 'Keyboard skipped IPv4 addressing after disconnect');
 				assert(!disconnect.classList.contains('selected'), 'Disconnect collides with IPv4 navigation');
 			});
@@ -610,7 +626,8 @@
 					host.known = state.known ?? true;
 					host.detail = state.detail ?? 'full';
 					networkState.set(structuredClone(host));
-					previousAction.click(); await settle();
+					previousAction.click();
+					await settle();
 					assert(disconnectCalls === 0, 'Stale action bypassed the current disconnect guard');
 					assert(!target.querySelector('.connection [role="button"]'), 'Unavailable adapter offers disconnect');
 				});

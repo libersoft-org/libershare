@@ -7,6 +7,7 @@ import { Settings } from '../../../src/settings.ts';
 import { JSONStorage, StorageWriteError } from '../../../src/storage.ts';
 import { initSettingsHandlers } from '../../../src/api/settings.ts';
 import { downloadLimiter, uploadLimiter } from '../../../src/protocol/speed-limiter.ts';
+import { itWithFileSymlinks } from '../../helpers/file-symlink.ts';
 
 const dirs: string[] = [];
 
@@ -69,15 +70,11 @@ describe('Settings.set writes one normalized document', () => {
 });
 
 describe('settings API reports a failed save instead of success', () => {
-	async function settingsBehindSymlink(): Promise<{ settings: Settings; outside: string } | null> {
+	async function settingsBehindSymlink(): Promise<{ settings: Settings; outside: string }> {
 		const dir = await tempDir();
 		const outside = join(await tempDir(), 'real.json');
 		await writeFile(outside, '{}');
-		try {
-			await symlink(outside, join(dir, 'settings.json'));
-		} catch {
-			return null; // no symlink privilege on this host
-		}
+		await symlink(outside, join(dir, 'settings.json'));
 		return { settings: await Settings.create(dir), outside };
 	}
 
@@ -86,9 +83,8 @@ describe('settings API reports a failed save instead of success', () => {
 		['applyImported', (h: ReturnType<typeof initSettingsHandlers>) => h.applyImported({ data: { audio: { volume: 9 } } })],
 		['reset', (h: ReturnType<typeof initSettingsHandlers>) => h.reset()],
 	] as const) {
-		it(`${name} rejects with the storage message the dispatcher forwards as errorDetail`, async () => {
+		itWithFileSymlinks(`${name} rejects with the storage message the dispatcher forwards as errorDetail`, async () => {
 			const setup = await settingsBehindSymlink();
-			if (!setup) return;
 			const failure = await call(initSettingsHandlers(setup.settings)).then(
 				() => null,
 				(err: unknown) => err
@@ -105,21 +101,16 @@ describe('settings API reports a failed save instead of success', () => {
  * ones on disk, and the limiters are re-applied from them, not from the rejected values.
  */
 describe('transfer limits follow the live settings even when the save fails', () => {
-	async function brokenSettings(): Promise<Settings | null> {
+	async function brokenSettings(): Promise<Settings> {
 		const dir = await tempDir();
 		const outside = join(await tempDir(), 'real.json');
 		await writeFile(outside, '{}');
-		try {
-			await symlink(outside, join(dir, 'settings.json'));
-		} catch {
-			return null;
-		}
+		await symlink(outside, join(dir, 'settings.json'));
 		return await Settings.create(dir);
 	}
 
-	it('set of a rate updates both real limiters before the error is returned', async () => {
+	itWithFileSymlinks('set of a rate updates both real limiters before the error is returned', async () => {
 		const settings = await brokenSettings();
-		if (!settings) return;
 		const handlers = initSettingsHandlers(settings);
 		await expect(handlers.set({ path: 'network.maxDownloadSpeed', value: 321 })).rejects.toBeInstanceOf(StorageWriteError);
 		await expect(handlers.set({ path: 'network', value: { ...settings.get('network'), maxUploadSpeed: 654 } })).rejects.toBeInstanceOf(StorageWriteError);
@@ -128,9 +119,8 @@ describe('transfer limits follow the live settings even when the save fails', ()
 		expect(uploadLimiter.getLimit()).toBe(settings.get('network.maxUploadSpeed') * 1024);
 	});
 
-	it('import and reset re-apply the live rates on failure', async () => {
+	itWithFileSymlinks('import and reset re-apply the live rates on failure', async () => {
 		const settings = await brokenSettings();
-		if (!settings) return;
 		const handlers = initSettingsHandlers(settings);
 		const live = (): number[] => [settings.get('network.maxDownloadSpeed') * 1024, settings.get('network.maxUploadSpeed') * 1024];
 		await expect(handlers.applyImported({ data: { network: { maxDownloadSpeed: 111, maxUploadSpeed: 222 } } })).rejects.toBeInstanceOf(StorageWriteError);
@@ -142,15 +132,11 @@ describe('transfer limits follow the live settings even when the save fails', ()
 });
 
 describe('Settings.flush reports whether the last accepted write reached the disk', () => {
-	it('waits for a queued write and rejects while the last one failed, until a full save succeeds', async () => {
+	itWithFileSymlinks('waits for a queued write and rejects while the last one failed, until a full save succeeds', async () => {
 		const dir = await tempDir();
 		const outside = join(await tempDir(), 'real.json');
 		await writeFile(outside, '{}');
-		try {
-			await symlink(outside, join(dir, 'settings.json'));
-		} catch {
-			return;
-		}
+		await symlink(outside, join(dir, 'settings.json'));
 		const settings = await Settings.create(dir);
 		const failed = settings.set('audio.volume', 5).catch(() => {});
 		await expect(settings.flush()).rejects.toBeInstanceOf(StorageWriteError);

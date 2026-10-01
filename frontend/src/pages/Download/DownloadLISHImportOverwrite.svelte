@@ -84,7 +84,7 @@
 	<Dialog title={$t('common.import')}>
 		<div class="loading">
 			<Spinner size="8vh" />
-			<div class="label">{$t('lish.import.importing')}</div>
+			<div class="label">{$t('import.importing')}</div>
 		</div>
 	</Dialog>
 {:else if currentOverwriteLISH}

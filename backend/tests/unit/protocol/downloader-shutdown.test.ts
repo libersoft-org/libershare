@@ -53,28 +53,31 @@ for (const phase of ['probe dial', 'manifest read', 'stream close', 'announcemen
 		const network = { getTopicPeers: () => ['peer-test'], dialProtocolByPeerId: dial, dialProtocol: dial };
 		const downloader: any = new Downloader('.', network as never, { getAllChunkCount: () => 1 } as never, 'network-test');
 		downloader.lishID = 'lish-test';
-		const probing = phase === 'announcement dial'
-			? downloader.onHaveAnnouncement({ peerID: 'peer-test', lishID: 'lish-test', chunks: 'all', multiaddrs: ['/ip4/192.0.2.1/tcp/1234'] })
-			: downloader.probeTopicPeers();
+		const probing = phase === 'announcement dial' ? downloader.onHaveAnnouncement({ peerID: 'peer-test', lishID: 'lish-test', chunks: 'all', multiaddrs: ['/ip4/192.0.2.1/tcp/1234'] }) : downloader.probeTopicPeers();
 		const { shutdown } = createProcessShutdown({
 			deadlineMs: 1000,
 			stopConnectivityCheck() {},
-			stopApi: () => drainForShutdown({
-				stopBackgroundWork() {},
-				stopAllCreates: async () => {},
-				drainAcceptedRequests: async () => {},
-				prepareMaintenance: async () => ({ drain: async () => {}, release() {} }),
-				pauseAllTransfers: async () => {},
-				pauseAllLISHMutations: async () => {},
-				stopVerifyAll: async () => {},
-				clearAllTransfers: () => downloader.destroy(),
-				cancelRunOperations() {},
-				stopAllNetworks: async () => { log.push('networks'); },
-				clearUploadRuntime() {},
-				drainUploads: async () => {},
-				closeServer() {},
-			}),
-			flushSettings: async () => { log.push('settings'); },
+			stopApi: () =>
+				drainForShutdown({
+					stopBackgroundWork() {},
+					stopAllCreates: async () => {},
+					drainAcceptedRequests: async () => {},
+					prepareMaintenance: async () => ({ drain: async () => {}, release() {} }),
+					pauseAllTransfers: async () => {},
+					pauseAllLISHMutations: async () => {},
+					stopVerifyAll: async () => {},
+					clearAllTransfers: () => downloader.destroy(),
+					cancelRunOperations() {},
+					stopAllNetworks: async () => {
+						log.push('networks');
+					},
+					clearUploadRuntime() {},
+					drainUploads: async () => {},
+					async closeServer() {},
+				}),
+			flushSettings: async () => {
+				log.push('settings');
+			},
 			closeDatabase: () => log.push('database'),
 			exit: code => log.push(`exit ${code}`),
 		});

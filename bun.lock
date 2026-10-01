@@ -6,6 +6,9 @@
       "dependencies": {
         "@prettier/plugin-xml": "^3.4.2",
       },
+      "devDependencies": {
+        "prettier": "3.9.6",
+      },
     },
   },
   "packages": {

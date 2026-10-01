@@ -5,7 +5,7 @@
 import { tcp } from '@libp2p/tcp';
 import { noise, pureJsCrypto } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
-import { gossipsub } from '@chainsafe/libp2p-gossipsub';
+import { gossipsub } from '@libp2p/gossipsub';
 import { identify, identifyPush } from '@libp2p/identify';
 import { bootstrap } from '@libp2p/bootstrap';
 import { mdns } from '@libp2p/mdns';

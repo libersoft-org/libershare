@@ -6,11 +6,6 @@ import type { FileVerificationProgress } from '../../../src/db/lishs-verificatio
 type ChunkResult = Uint8Array | null | Error;
 type ManifestResult = IStoredLISH | null;
 
-export interface ChunkVerifyResult {
-	valid: boolean;
-	actualHash: string;
-}
-
 export class MockLISHClient {
 	requestChunkResult: ChunkResult = new Uint8Array(1024).fill(0xff);
 	requestManifestResult: ManifestResult = null;

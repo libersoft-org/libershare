@@ -3,7 +3,6 @@ export { type WlanSymbol, WLAN_SYMBOLS, openWlanHandleForTest, hasWlanAdapter, l
 export { assertProfileNameWritable, profileSsidHex, withJoinCredentials, windowsWifiProfileXml, assertWindowsWifiKey, type StoredProfile, type StoredProfileResult, readStoredProfile, type ProfileChange, type JoinTarget, openJoinDecision, writeJoinProfile, undoProfileChange } from './system-network-windows-profiles.ts';
 export { parseAvailableNetworks, findScannedNetwork, type AvailableNetwork, wlanScanErrorMessage, scanWindowsWifi, connectWindowsWifi, disconnectWindowsWifi, assertWindowsWifiMutationIdle } from './system-network-windows-wifi.ts';
 
-
 /**
  * Windows host network state.
  *
