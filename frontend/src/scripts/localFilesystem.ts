@@ -1,15 +1,12 @@
 import { writable } from 'svelte/store';
 import { api } from './api.ts';
 import { apiURL } from './ws-client.ts';
+import { isNativeBackend } from './tauri-transport.ts';
 
 export const localFilesystem = writable(true);
 
-function isTauri(): boolean {
-	return typeof window !== 'undefined' && !!(window as any).__BACKEND_PORT__;
-}
-
 export async function detectLocalFilesystem(): Promise<void> {
-	if (isTauri()) {
+	if (isNativeBackend()) {
 		localFilesystem.set(true);
 		return;
 	}

@@ -1,6 +1,9 @@
 // Product info
 export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE } from './product.ts';
 
+// Network defaults
+export { DEFAULT_MAX_RELAY_RESERVATIONS, isRelayReservationLimit, parseRelayReservationLimit } from './network-defaults.ts';
+
 // Utils
 export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End, deriveConnectionStatus, isSelectableInterface, ipv4BaselineOf, sameIPv4Baseline, isIPv4, isIPv6, isValidSSID, isUnambiguousWifiTarget, isValidWifiKey, isWifiHexKey, MAX_DNS_LIST_BYTES, MAX_DNS_SERVERS, canonicalDnsServer, normalizeDnsServers, validateIPv4Config } from './utils.ts';
 
@@ -77,11 +80,12 @@ export function isCompressed(filePath: string): boolean {
 export * from './lish.ts';
 
 // API client
-export { API, type IWsClient } from './api.ts';
+export { API, type IRpcClient, type IWsClient } from './api.ts';
 export type { IdentityBackup } from './api.ts';
 
 // WebSocket client
-export { WsClient } from './client.ts';
+export { WsClient, WebSocketTransport } from './client.ts';
+export { RpcClient, type RpcSession, type RpcState, type RpcTransport } from './rpc-client.ts';
 
 // Error codes
 export { ErrorCodes, CodedError, type ErrorCode } from './errors.ts';
@@ -784,3 +788,5 @@ export interface ConnectionStatus {
 	ssid: string | null;
 	interfaceName: string | null;
 }
+
+export { IPC_KIND, IPC_VERSION, IPC_HEADER_SIZE, IPC_MAX_PAYLOAD_SIZE, encodeIpcBody, encodeIpcFrame, decodeIpcBody, IpcFrameDecoder, type IpcKind, type IpcFrame } from './ipc-frame.ts';

@@ -14,17 +14,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    # Granted back so backend-entrypoint.sh can chown the bind-mounted
-    # config/storage dirs at startup. This makes the deploy independent of
-    # who created the dirs on the host (root vs. an unprivileged user) and
-    # of the mode bits the host user picked (e.g. an opinionated 0700).
-    # CHOWN — change file ownership.
-    # DAC_READ_SEARCH — traverse and read dirs the container does not own,
-    # so chown(2) can reach files inside a 0700 host dir without needing
-    # the broader DAC_OVERRIDE that also bypasses write checks.
-    cap_add:
-      - CHOWN
-      - DAC_READ_SEARCH
+    # Runs unprivileged as the owner of the mounted directories; nothing re-owns them.
+    user: "${LISH_UID:-1000}:${LISH_GID:-1000}"
     command: ["--datadir", "/app/config", "--host", "0.0.0.0", "--port", "${BACKEND_PORT:-1158}"]
     environment:
       MEMTRACE: ${MEMTRACE:-0}
@@ -32,11 +23,10 @@ services:
       # Read by `--healthcheck` self-flag so the probe targets the same port as
       # the live API server when BACKEND_PORT is overridden via .env.
       BACKEND_PORT: ${BACKEND_PORT:-1158}
-      # Optional shared secret. If set, every WebSocket and REST request must
-      # carry `?token=<value>` (the frontend proxy forwards the URL untouched,
-      # so the browser-side WsClient handles it). Empty default preserves the
-      # current "no auth" behaviour for upgraders.
-      LISH_TOKEN: ${LISH_TOKEN:-}
+      # Required shared secret: every WebSocket and `/status` request must carry
+      # `?token=<value>`. There is no unauthenticated mode, so compose refuses
+      # to start without it. Put it in `docker/.env`, e.g. `openssl rand -hex 32`.
+      LISH_TOKEN: ${LISH_TOKEN:?Set LISH_TOKEN in docker/.env, for example the output of openssl rand -hex 32}
     healthcheck:
       test: ["CMD", "/app/lish-backend", "--healthcheck"]
       interval: 10s
@@ -57,9 +47,19 @@ services:
     ports:
       - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-1158}:${BACKEND_PORT:-1158}"
       - "9091:9090"
+    # The directories must exist and belong to LISH_UID/LISH_GID; Docker must not create
+    # a missing one as root.
     volumes:
-      - ${CONFIG_SOURCE:-./config}:/app/config
-      - ${STORAGE_SOURCE:-./storage}:/app/storage
+      - type: bind
+        source: ${CONFIG_SOURCE:-./config}
+        target: /app/config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${STORAGE_SOURCE:-./storage}
+        target: /app/storage
+        bind:
+          create_host_path: false
     tmpfs:
       - /tmp
     networks:
@@ -78,12 +78,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    # Granted back so frontend-entrypoint.sh can chown the bind-mounted
-    # certs dir before openssl writes the self-signed cert/key. Same
-    # rationale (and same minimal cap set) as the backend service above.
-    cap_add:
-      - CHOWN
-      - DAC_READ_SEARCH
+    user: "${LISH_UID:-1000}:${LISH_GID:-1000}"
     environment:
       BACKEND_WS_URL: ws://backend:${BACKEND_PORT:-1158}
       TLS_CERT_DIR: /app/certs
@@ -95,13 +90,20 @@ services:
       options:
         max-size: ${LOG_MAX_SIZE:-10m}
         max-file: ${LOG_MAX_FILE:-3}
+    # The web UI is published on loopback only. Set `FRONTEND_BIND=0.0.0.0` to
+    # reach it from other machines — only over HTTPS with a certificate the
+    # browser trusts, because the token travels in the URL.
     ports:
-      - "6003:6003"
+      - "${FRONTEND_BIND:-127.0.0.1}:6003:6003"
     depends_on:
       backend:
         condition: service_healthy
     volumes:
-      - ${TLS_CERT_SOURCE:-./certs}:/app/certs
+      - type: bind
+        source: ${TLS_CERT_SOURCE:-./certs}
+        target: /app/certs
+        bind:
+          create_host_path: false
     tmpfs:
       - /tmp
     networks:

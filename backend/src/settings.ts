@@ -2,7 +2,7 @@ import { mkdir } from 'fs/promises';
 import { Mutex } from 'async-mutex';
 import { JSONStorage } from './storage.ts';
 import { Utils } from './utils.ts';
-import { productName, productEnvPrefix, minMessageSizeFor, type CompressionAlgorithm } from '@shared';
+import { productName, productEnvPrefix, minMessageSizeFor, DEFAULT_MAX_RELAY_RESERVATIONS, type CompressionAlgorithm } from '@shared';
 // Default upper bound for chunk size accepted by the app (configurable via settings).
 export const DEFAULT_MAX_CHUNK_SIZE: number = 100 * 1024 * 1024;
 // Default upper bound for a single P2P message on the wire (configurable via settings).
@@ -187,8 +187,8 @@ const DEFAULT_SETTINGS: SettingsData = {
 		maxUploadSpeed: 0,
 		maxChunkSize: DEFAULT_MAX_CHUNK_SIZE,
 		maxMessageSize: DEFAULT_MAX_MESSAGE_SIZE,
-		allowRelay: true,
-		maxRelayReservations: 0,
+		allowRelay: false,
+		maxRelayReservations: DEFAULT_MAX_RELAY_RESERVATIONS,
 		useRelayClients: true,
 		maxRelayClients: 5,
 		autoStartSharing: true,

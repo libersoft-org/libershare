@@ -6,7 +6,7 @@
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, storageBackupPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, setStorageBackupPath, incomingPort, maxDownloadPeersPerLISH, maxUploadPeersPerLISH, maxDownloadSpeed, maxUploadSpeed, maxChunkSize, maxMessageSize, allowRelay, maxRelayReservations, useRelayClients, maxRelayClients, autoStartSharing, autoStartDownloading, autoErrorRecovery, autoConnectNewNetworks, mdnsEnabled, mdnsInterval, upnpEnabled, setIncomingPort, setMaxDownloadPeersPerLISH, setMaxUploadPeersPerLISH, setMaxDownloadSpeed, setMaxUploadSpeed, setMaxChunkSize, setMaxMessageSize, setAllowRelay, setMaxRelayReservations, setUseRelayClients, setMaxRelayClients, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, setAutoConnectNewNetworks, setMdnsEnabled, setMdnsInterval, setUpnpEnabled, settingsDefaults } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
-	import { parseBytes, formatBytes } from '@shared';
+	import { parseBytes, formatBytes, parseRelayReservationLimit, DEFAULT_MAX_RELAY_RESERVATIONS } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -116,7 +116,9 @@
 	}
 
 	function saveRelayReservations(): void {
-		setMaxRelayReservations(parseInt(relayReservations) || 100);
+		// An invalid entry keeps the last valid value and sends nothing.
+		const limit = parseRelayReservationLimit(relayReservations);
+		if (limit !== null) setMaxRelayReservations(limit);
 		relayReservations = $maxRelayReservations.toString();
 		setMaxRelayClients(parseInt(relayClients) || 5);
 		relayClients = $maxRelayClients.toString();
@@ -240,7 +242,7 @@
 	}
 
 	function resetRelayReservations(): void {
-		relayReservations = String(settingsDefaults?.network?.maxRelayReservations ?? 0);
+		relayReservations = String(settingsDefaults?.network?.maxRelayReservations ?? DEFAULT_MAX_RELAY_RESERVATIONS);
 	}
 
 	function resetRelayClients(): void {

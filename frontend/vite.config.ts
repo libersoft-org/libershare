@@ -1,13 +1,43 @@
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig, type Plugin } from 'vite';
+import { createLogger, defineConfig, type Logger, type Plugin } from 'vite';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { stripVTControlCharacters } from 'node:util';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Vite proxy errors include the request URL. Omit the whole diagnostic because tokens
+ * can use encoded query names and may also occur in an upstream error message.
+ */
+function proxySafeLogger(): Logger {
+	const logger = createLogger();
+	for (const level of ['info', 'warn', 'warnOnce', 'error'] as const) {
+		const original = logger[level].bind(logger);
+		logger[level] = (message, options) => {
+			const proxyError = /\b(?:http proxy error|ws proxy(?: socket)? error):/.test(stripVTControlCharacters(message));
+			original(proxyError ? '[proxy] Backend connection failed' : message, options);
+		};
+	}
+	return logger;
+}
 
 function getBackendProxyTarget(): string {
 	return process.env['VITE_BACKEND_URL'] || 'ws://localhost:1158';
+}
+
+/**
+ * The backend's HTTP origin for `/status`. Vite appends the request path to the target's path,
+ * so the target is the bare origin — a path here would turn `/status` into `/status/status`.
+ */
+function getBackendStatusTarget(): string {
+	const target = new URL(getBackendProxyTarget());
+	target.protocol = target.protocol === 'wss:' ? 'https:' : 'http:';
+	target.pathname = '/';
+	target.search = '';
+	target.hash = '';
+	return target.toString();
 }
 
 function getCommitHash(): string {
@@ -52,6 +82,7 @@ function countryFlags(): Plugin {
 }
 
 export default defineConfig({
+	customLogger: proxySafeLogger(),
 	cacheDir: path.resolve(process.cwd(), '.vite-cache'),
 	envDir: process.cwd(),
 	plugins: [sveltekit(), countryFlags()],
@@ -71,10 +102,18 @@ export default defineConfig({
 		allowedHosts: true,
 		host: true,
 		port: 6003,
+		// The backend owns CORS for /status; Vite's own middleware would answer the preflight itself.
+		cors: false,
 		proxy: {
 			'/ws': {
 				target: getBackendProxyTarget(),
 				ws: true,
+			},
+			// The query (with the token and any duplicate of it) goes through untouched, so the
+			// backend decides; a redirect is returned to the client, never followed.
+			'^/status($|[?])': {
+				target: getBackendStatusTarget(),
+				followRedirects: false,
 			},
 		},
 		fs: {
