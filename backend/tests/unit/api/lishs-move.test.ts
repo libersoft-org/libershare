@@ -19,11 +19,21 @@ test('moving partial data keeps verification busy until the new location has bee
 	const id = 'partial-move';
 	const hash = (text: string) => new Bun.CryptoHasher('sha256').update(text).digest('hex');
 	data.addDataset({ id, name: 'dataset', created: '2026-01-01', chunkSize: 4, checksumAlgo: 'sha256', directory: source, files: [{ path: 'data.bin', size: 8, checksums: [hash('abcd'), hash('efgh')] }] }, { kind: 'explicit', path: source });
-	const handlers = initLISHsHandlers(data, () => {}, () => {}, await Settings.create(base));
+	const handlers = initLISHsHandlers(
+		data,
+		() => {},
+		() => {},
+		await Settings.create(base)
+	);
 	let release!: () => void;
-	const gate = new Promise<void>(resolve => { release = resolve; });
+	const gate = new Promise<void>(resolve => {
+		release = resolve;
+	});
 	const open = data.openDataset.bind(data);
-	const pendingVerification = spyOn(data, 'openDataset').mockImplementation(async lishID => { await gate; return open(lishID); });
+	const pendingVerification = spyOn(data, 'openDataset').mockImplementation(async lishID => {
+		await gate;
+		return open(lishID);
+	});
 	try {
 		expect(await handlers.move({ lishID: id, newDirectory: join(base, 'finished'), moveData: true })).toEqual({ success: true });
 		expect(getBusyReason(id)).toBe('verifying');
