@@ -543,6 +543,7 @@ export async function runVerification(dataServer: DataServer, lishID: string, on
 				file = await dataset.openFile(fileEntry.path, 'read');
 			} catch (error: any) {
 				if (error.code !== 'ENOENT') throw error;
+				if (signal?.aborted || !dataServer.get(lishID)) return;
 				dataServer.markAllFileChunksFailed(fileEntry.fileInternalID);
 				failed += fileEntry.checksums.length;
 				onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: 0 });
