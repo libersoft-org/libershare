@@ -105,6 +105,7 @@ beforeAll(async () => {
 	writeFileSync(join(source, 'payload.bin'), payload);
 	for (let i = 0; i < SMALL_FILE_COUNT; i++) writeFileSync(join(source, `small-${i}.txt`), `small payload ${i}`);
 	({ lishID } = await nodes[0]!.call('lishs.create', { dataPath: source, name: 'e2e payload', addToSharing: true, chunkSize: CHUNK_SIZE }, 120_000));
+	await waitForVerification(nodes[0]!, lishID);
 
 	// One private network, bootstrapped from node0's bound address. Loopback would be simpler, but
 	// the dial filter deliberately refuses 127.0.0.0/8 (a remote peer can never reach it).
