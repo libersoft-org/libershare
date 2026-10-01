@@ -56,8 +56,13 @@ export class ErrorRecovery {
 
 	start(lishID: string, errorCode: string, prev: { downloadEnabled: boolean; uploadEnabled: boolean }): void {
 		if (!RECOVERABLE_CODES.has(errorCode as any)) return;
-		// Re-entrancy guard: if recovery already active, don't restart (retryCount would reset)
-		if (this.entries.has(lishID)) return;
+		// Independent failures share a retry without losing either direction's intent.
+		const pending = this.entries.get(lishID);
+		if (pending) {
+			pending.downloadWasEnabled ||= prev.downloadEnabled;
+			pending.uploadWasEnabled ||= prev.uploadEnabled;
+			return;
+		}
 		// Check cumulative retry limit (persists across stop/restart cycles)
 		const cumulative = this.cumulativeRetries.get(lishID) ?? 0;
 		if (cumulative >= MAX_RECOVERY_ATTEMPTS) {
@@ -84,6 +89,14 @@ export class ErrorRecovery {
 	stop(lishID: string): void {
 		this.lishGenerations.set(lishID, (this.lishGenerations.get(lishID) ?? 0) + 1);
 		this.removeEntry(lishID);
+	}
+
+	/** Completing one direction must not discard the other direction's pending retry. */
+	completeDirection(lishID: string, direction: 'download' | 'upload'): void {
+		const pending = this.entries.get(lishID);
+		if (!pending) return;
+		const otherPending = direction === 'download' ? pending.uploadWasEnabled : pending.downloadWasEnabled;
+		if (!otherPending) this.stop(lishID);
 	}
 
 	private removeEntry(lishID: string): void {

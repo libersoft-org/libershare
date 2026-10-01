@@ -865,7 +865,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				}
 				const send = broadcast ?? (() => {});
 				networkSuspended.delete(p.lishID);
-				recovery.stop(p.lishID);
+				recovery.completeDirection(p.lishID, 'download');
 				send('transfer.download:enabled', { lishID: p.lishID });
 				return { success: true };
 			}
@@ -975,7 +975,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				return { success: false };
 			}
 			networkSuspended.delete(p.lishID);
-			recovery.stop(p.lishID);
+			recovery.completeDirection(p.lishID, 'download');
 			const send = broadcast ?? (() => {});
 			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };
@@ -1066,7 +1066,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		if (transferAdmission.isClosed) return { success: false };
 		if (!dataServer.get(p.lishID)) return { success: false };
 		if (isBusy(p.lishID)) return { success: false };
-		recovery.stop(p.lishID);
+		recovery.completeDirection(p.lishID, 'upload');
 		dataServer.clearError(p.lishID);
 		enableUpload(p.lishID);
 		return { success: true };
@@ -1239,7 +1239,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			accept: async (lishID, downloader) => {
 				networkSuspended.delete(lishID);
 				downloadEnabledLishs.add(lishID);
-				recovery.stop(lishID);
+				recovery.completeDirection(lishID, 'download');
 				await launchPreparedDownloader(lishID, downloader, false);
 				broadcast?.('transfer.download:enabled', { lishID });
 			},
