@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { type Database } from 'bun:sqlite';
-import { type FileHandle } from 'fs/promises';
+import type { DatasetFileHandle } from '../../../src/lish/safe-dataset-types.ts';
+import type { SafeDataset } from '../../../src/lish/safe-dataset-files.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { type ILISH } from '@shared';
 
@@ -15,25 +16,25 @@ const lish: ILISH = {
 
 describe('DataServer.writeChunk', () => {
 	it('continues after a partial write until the entire chunk is stored', async () => {
-		const calls: Array<{ offset: number; length: number; position: number }> = [];
+		const calls: Array<{ length: number; position: number }> = [];
 		let closed = false;
 		const handle = {
-			stat: async () => ({ isFile: () => true, nlink: 1 }),
-			write: async (_data: Uint8Array, offset: number, length: number, position: number) => {
-				calls.push({ offset, length, position });
-				return { bytesWritten: calls.length === 1 ? 3 : length, buffer: _data };
+			stat: async () => ({ kind: 'file', size: 8, links: 1, identity: 'test-file' }),
+			write: async (data: Uint8Array, position: number) => {
+				calls.push({ length: data.length, position });
+				return calls.length === 1 ? 3 : data.length;
 			},
 			close: async () => {
 				closed = true;
 			},
-		} as unknown as FileHandle;
-		const dataServer = new DataServer({} as Database, async () => handle);
+		} as unknown as DatasetFileHandle;
+		const dataServer = new DataServer({} as Database, async () => ({ prepare: async () => {}, openFile: async () => handle, close: async () => {} }) as unknown as SafeDataset);
 
 		await dataServer.writeChunk('/download', lish, 0, 0, new Uint8Array(8));
 
 		expect(calls).toEqual([
-			{ offset: 0, length: 8, position: 0 },
-			{ offset: 3, length: 5, position: 3 },
+			{ length: 8, position: 0 },
+			{ length: 5, position: 3 },
 		]);
 		expect(closed).toBe(true);
 	});
@@ -43,17 +44,17 @@ describe('DataServer.writeChunk', () => {
 		let closed = false;
 		const noSpace = Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
 		const handle = {
-			stat: async () => ({ isFile: () => true, nlink: 1 }),
-			write: async (_data: Uint8Array, _offset: number, length: number) => {
+			stat: async () => ({ kind: 'file', size: 8, links: 1, identity: 'test-file' }),
+			write: async (data: Uint8Array) => {
 				calls++;
-				if (calls === 1) return { bytesWritten: Math.min(3, length), buffer: _data };
+				if (calls === 1) return Math.min(3, data.length);
 				throw noSpace;
 			},
 			close: async () => {
 				closed = true;
 			},
-		} as unknown as FileHandle;
-		const dataServer = new DataServer({} as Database, async () => handle);
+		} as unknown as DatasetFileHandle;
+		const dataServer = new DataServer({} as Database, async () => ({ prepare: async () => {}, openFile: async () => handle, close: async () => {} }) as unknown as SafeDataset);
 
 		await expect(dataServer.writeChunk('/download', lish, 0, 0, new Uint8Array(8))).rejects.toMatchObject({ code: 'ENOSPC' });
 		expect(calls).toBe(2);
