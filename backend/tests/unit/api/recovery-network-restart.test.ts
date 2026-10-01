@@ -134,29 +134,30 @@ async function pendingUpload(f: Awaited<ReturnType<typeof fixture>>): Promise<vo
 	expect(getEnabledUploads().has(f.id)).toBe(false);
 }
 
-for (const failedFirst of [false, true]) test(`restoring a download retains the pending upload retry, failedFirst=${failedFirst}`, async () => {
-	const f = await fixture();
-	await pendingUpload(f);
-	const port = f.settings.list().network.incomingPort + 1;
-	if (failedFirst) {
-		f.failStart(true);
-		await expect(f.settings.set('network.incomingPort', port)).rejects.toThrow('port unavailable');
+for (const failedFirst of [false, true])
+	test(`restoring a download retains the pending upload retry, failedFirst=${failedFirst}`, async () => {
+		const f = await fixture();
+		await pendingUpload(f);
+		const port = f.settings.list().network.incomingPort + 1;
+		if (failedFirst) {
+			f.failStart(true);
+			await expect(f.settings.set('network.incomingPort', port)).rejects.toThrow('port unavailable');
+			expect(f.recovery.getState(f.id)?.uploadWasEnabled).toBe(true);
+			f.failStart(false);
+		}
+		await f.settings.set('network.incomingPort', port);
+		expect(getDownloadEnabledLishs(f.db).has(f.id)).toBe(true);
 		expect(f.recovery.getState(f.id)?.uploadWasEnabled).toBe(true);
-		f.failStart(false);
-	}
-	await f.settings.set('network.incomingPort', port);
-	expect(getDownloadEnabledLishs(f.db).has(f.id)).toBe(true);
-	expect(f.recovery.getState(f.id)?.uploadWasEnabled).toBe(true);
-	expect(getEnabledUploads().has(f.id)).toBe(false);
-	await f.recovery.pauseAllAndDrain();
-	const state = f.recovery.getState(f.id)!;
-	state.scheduledAt = Date.now() - state.nextRetryDelay;
-	f.recovery.resumeAll();
-	const deadline = Date.now() + 2000;
-	while (!getEnabledUploads().has(f.id) && Date.now() < deadline) await Bun.sleep(10);
-	expect(getEnabledUploads().has(f.id)).toBe(true);
-	expect(getUploadEnabledLishs(f.db).has(f.id)).toBe(true);
-});
+		expect(getEnabledUploads().has(f.id)).toBe(false);
+		await f.recovery.pauseAllAndDrain();
+		const state = f.recovery.getState(f.id)!;
+		state.scheduledAt = Date.now() - state.nextRetryDelay;
+		f.recovery.resumeAll();
+		const deadline = Date.now() + 2000;
+		while (!getEnabledUploads().has(f.id) && Date.now() < deadline) await Bun.sleep(10);
+		expect(getEnabledUploads().has(f.id)).toBe(true);
+		expect(getUploadEnabledLishs(f.db).has(f.id)).toBe(true);
+	});
 
 test('manually disabling upload cancels its retained retry across another restart', async () => {
 	const f = await fixture();
@@ -194,7 +195,9 @@ test('a failed download retry retains the original upload intent in its replacem
 			attempted.resolve();
 			return false;
 		},
-		broadcast() {}, getLISH: id => ({ id, directory: tmpdir() }), checkAccess: async () => {},
+		broadcast() {},
+		getLISH: id => ({ id, directory: tmpdir() }),
+		checkAccess: async () => {},
 	});
 	try {
 		recovery.start('nested-retry', ErrorCodes.DISK_FULL, { downloadEnabled: true, uploadEnabled: true });
@@ -205,7 +208,9 @@ test('a failed download retry retains the original upload intent in its replacem
 		await attempted.promise;
 		await recovery.pauseAllAndDrain();
 		expect(recovery.getState('nested-retry')).toMatchObject({ downloadWasEnabled: true, uploadWasEnabled: true, errorCode: ErrorCodes.IO_NOT_FOUND, retryCount: 1 });
-	} finally { await recovery.stopAllAndDrain(); }
+	} finally {
+		await recovery.stopAllAndDrain();
+	}
 });
 
 test('an overdue recovery waits for verification without consuming its retry allowance', async () => {
