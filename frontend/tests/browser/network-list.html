@@ -139,7 +139,10 @@
 				networkState.set(unavailable);
 				await settle();
 				const message = get(t)('settings.network.ipv4ProfilesUnavailable');
-				assert([...root.querySelectorAll('[role="status"]')].some(item => item.textContent === message), 'Read-only overview hides the reason profiles could not be read');
+				assert(
+					[...root.querySelectorAll('[role="status"]')].some(item => item.textContent === message),
+					'Read-only overview hides the reason profiles could not be read'
+				);
 				assert(![...root.querySelectorAll('.button')].some(item => item.textContent.trim() === get(t)('settings.network.configure')), 'Unreadable profiles still allow opening configuration');
 				networkState.set({ ...structuredClone(host), ipv4ProfilesUnavailable: false });
 				await settle();
