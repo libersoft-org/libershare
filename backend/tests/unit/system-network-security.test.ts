@@ -44,7 +44,10 @@ function attempt(scenario: Scenario): { mutations: number; scans: number; code?:
 	const result = Bun.spawnSync([process.execPath, '--eval', script], { cwd: resolve(import.meta.dir, '../..'), timeout: 10_000 });
 	expect(result.exitCode).toBe(0);
 	expect(result.stderr.toString()).toBe('');
-	const output = result.stdout.toString().split(/\r?\n/).find(line => line.startsWith('RESULT:'));
+	const output = result.stdout
+		.toString()
+		.split(/\r?\n/)
+		.find(line => line.startsWith('RESULT:'));
 	expect(output).toBeDefined();
 	return JSON.parse(output!.slice('RESULT:'.length));
 }

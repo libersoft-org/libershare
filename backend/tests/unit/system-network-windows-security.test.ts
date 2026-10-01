@@ -146,7 +146,10 @@ function attempt(scenario: Scenario): Result {
 	const result = Bun.spawnSync([process.execPath, '--eval', script], { cwd: resolve(import.meta.dir, '../..'), timeout: 10_000 });
 	if (result.exitCode !== 0) throw new Error(result.stderr.toString());
 	expect(result.stderr.toString()).toBe('');
-	const output = result.stdout.toString().split(/\r?\n/).find(line => line.startsWith('RESULT:'));
+	const output = result.stdout
+		.toString()
+		.split(/\r?\n/)
+		.find(line => line.startsWith('RESULT:'));
 	expect(output).toBeDefined();
 	return JSON.parse(output!.slice('RESULT:'.length));
 }
@@ -156,8 +159,7 @@ const wpa3: NetworkFields = { ...wpa2, auth: 9 };
 const open: NetworkFields = { ...wpa2, auth: 1, cipher: 0, secured: false };
 
 describe('Windows profile selection across duplicate scan records', () => {
-	const storedProfile = windowsWifiProfileXml('Saved connection', new TextEncoder().encode('Example'), 'previous-password')
-		.replace('<connectionMode>manual</connectionMode>', '<connectionMode>auto</connectionMode>');
+	const storedProfile = windowsWifiProfileXml('Saved connection', new TextEncoder().encode('Example'), 'previous-password').replace('<connectionMode>manual</connectionMode>', '<connectionMode>auto</connectionMode>');
 	const named = { ...wpa2, profileName: 'Saved connection' };
 	const unnamed = { ...wpa2, profileName: '' };
 
@@ -185,7 +187,10 @@ describe('Windows profile selection across duplicate scan records', () => {
 	});
 
 	it.each([false, true])('preserves the stored profile refusal (reversed=%s)', reversed => {
-		const second = [{ ...unnamed, signal: 95 }, { ...named, connectable: false }];
+		const second = [
+			{ ...unnamed, signal: 95 },
+			{ ...named, connectable: false },
+		];
 		const result = attempt({ selected: 'WPA2', first: [wpa2], second: reversed ? second.reverse() : second, storedProfile });
 		expect(result).toMatchObject({ writes: 0, connections: 0, code: 'NETCONFIG_FAILED', profiles: { 'Saved connection': storedProfile } });
 	});

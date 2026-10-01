@@ -1,6 +1,193 @@
-// Stub — real implementation needed for e2e transfer tests
-export async function startNodes(): Promise<void> {}
-export async function stopNodes(): Promise<void> {}
-export function getNodeURL(_index: number): string {
-	return '';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { randomBytes } from 'node:crypto';
+import { join, resolve } from 'node:path';
+import type { ProbeCommand, ProbeRequest } from './transfer-probe.ts';
+
+/**
+ * Real backend processes for the e2e suite, each fully isolated: its own data directory and
+ * storage paths, API and P2P ports chosen by the OS, and every discovery or relay mechanism
+ * switched off before the node is built — so two runs on one machine never see each other,
+ * the user's own node or the internet.
+ */
+export interface TestNode {
+	readonly dataDir: string;
+	readonly listenAddresses: string[];
+	/** Set once the node reports its API port; empty while it is still starting. */
+	url: string;
+	readonly process: ReturnType<typeof Bun.spawn>;
+	readonly probes: Map<number, (error?: string) => void>;
+}
+
+const REPO = resolve(import.meta.dir, '../../../..');
+const READY_TIMEOUT_MS = 60_000;
+const nodes: TestNode[] = [];
+/**
+ * One random API token per run. Without it the nodes' API — file access included — would be
+ * open to every other process on the machine for as long as the suite runs.
+ */
+export const TEST_API_TOKEN: string = randomBytes(32).toString('hex');
+let root: string | null = null;
+let probeID = 0;
+
+/** Settings written before the first start — nothing may fall back to the defaults. */
+function isolatedSettings(dataDir: string): Record<string, unknown> {
+	const storage = (name: string): string => {
+		const dir = join(dataDir, 'storage', name);
+		mkdirSync(dir, { recursive: true });
+		return dir;
+	};
+	return {
+		storage: { downloadPath: storage('finished'), tempPath: storage('temp'), lishPath: storage('lish'), lishnetPath: storage('lishnet'), backupPath: storage('backup') },
+		network: {
+			incomingPort: 0,
+			mdnsEnabled: false,
+			upnpEnabled: false,
+			allowRelay: false,
+			useRelayClients: false,
+			autoStartSharing: true,
+			autoStartDownloading: false,
+			autoConnectNewNetworks: false,
+			peerExchange: { enabled: false },
+		},
+	};
+}
+
+/** Resolve with the API port once the process logs it; reject if it exits or never does. */
+async function waitForApiPort(proc: ReturnType<typeof Bun.spawn>, log: string[]): Promise<number> {
+	const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+	const decoder = new TextDecoder();
+	let buffer = '';
+	const deadline = Date.now() + READY_TIMEOUT_MS;
+	const exited = proc.exited.then(code => ({ exited: code }));
+	while (Date.now() < deadline) {
+		const next = await Promise.race([reader.read(), exited, Bun.sleep(deadline - Date.now()).then(() => ({ timeout: true }))]);
+		if ('exited' in next) throw new Error(`backend exited with ${next.exited} before it was ready:\n${log.slice(-20).join('\n')}`);
+		if ('timeout' in next || next.done) break;
+		buffer += decoder.decode(next.value, { stream: true });
+		const lines = buffer.split('\n');
+		buffer = lines.pop() ?? '';
+		for (const line of lines) {
+			log.push(line);
+			const match = /WebSocket server listening on wss?:\/\/[^\s]*:(\d+)/.exec(line);
+			if (match) {
+				// Keep draining stdout so a full pipe can never stall the node.
+				void (async () => {
+					for (;;) {
+						const rest = await reader.read().catch(() => ({ done: true, value: undefined }));
+						if (rest.done) return;
+					}
+				})();
+				return Number(match[1]);
+			}
+		}
+	}
+	throw new Error(`backend was not ready within ${READY_TIMEOUT_MS} ms:\n${log.slice(-20).join('\n')}`);
+}
+
+/** Start `count` isolated backends; on any failure the ones already started are stopped. */
+export async function startNodes(count: number = 3): Promise<void> {
+	root = mkdtempSync(join(tmpdir(), 'lish-e2e-'));
+	try {
+		for (let i = 0; i < count; i++) {
+			const dataDir = join(root, `node${i}`);
+			mkdirSync(dataDir, { recursive: true });
+			writeFileSync(join(dataDir, 'settings.json'), JSON.stringify(isolatedSettings(dataDir)));
+			const env: Record<string, string> = { ...(process.env as Record<string, string>), MEMTRACE: '0', HEAP_TRIGGER: '0' };
+			env['LISH_TOKEN'] = TEST_API_TOKEN;
+			const listenAddresses: string[] = [];
+			const probes = new Map<number, (error?: string) => void>();
+			const proc = Bun.spawn([process.execPath, 'run', 'backend/tests/e2e/helpers/backend-process.ts', '--datadir', dataDir, '--port', '0', '--host', '127.0.0.1'], {
+				cwd: REPO,
+				env,
+				stdout: 'pipe',
+				stderr: 'inherit',
+				ipc(message: unknown) {
+					const report = message as { type?: string; addresses?: unknown; id?: number; error?: string };
+					if (report?.type === 'listening' && Array.isArray(report.addresses) && report.addresses.every(address => typeof address === 'string')) listenAddresses.splice(0, listenAddresses.length, ...report.addresses);
+					if (report?.type === 'transfer-probe' && typeof report.id === 'number') probes.get(report.id)?.(report.error);
+				},
+			});
+			// Tracked from the spawn, so a node that never gets ready is stopped — and waited
+			// for — like every other one before its directory is removed.
+			const node: TestNode = { dataDir, listenAddresses, probes, url: '', process: proc };
+			void proc.exited.then(() => {
+				for (const finish of [...probes.values()]) finish('Backend exited while waiting for transfer probe');
+			});
+			nodes.push(node);
+			const port = await waitForApiPort(proc, []);
+			node.url = `ws://127.0.0.1:${port}?token=${TEST_API_TOKEN}`;
+		}
+	} catch (error) {
+		await stopNodes();
+		throw error;
+	}
+}
+
+/** Stop every node this module started and remove their data, waiting for each exit. */
+export async function stopNodes(): Promise<void> {
+	for (const node of nodes.splice(0)) {
+		node.process.kill();
+		await Promise.race([node.process.exited, Bun.sleep(10_000)]);
+		if (node.process.exitCode === null) node.process.kill(9);
+		await node.process.exited;
+	}
+	if (root && process.env['LISH_E2E_KEEP']) {
+		// Debugging aid: keep the data directories (each has the node's own log file).
+		console.log(`[e2e] test node data kept in ${root}`);
+		root = null;
+	}
+	if (root) {
+		// Windows keeps handles for a moment after exit; retry briefly, then report.
+		for (let attempt = 0; ; attempt++) {
+			try {
+				rmSync(root, { recursive: true, force: true });
+				break;
+			} catch (error) {
+				if (attempt >= 20) throw error;
+				await Bun.sleep(250);
+			}
+		}
+		root = null;
+	}
+}
+
+export function getNodeURL(index: number): string {
+	const node = nodes[index];
+	if (!node) throw new Error(`no test node ${index}`);
+	return node.url;
+}
+
+export function getNodeDataDir(index: number): string {
+	const node = nodes[index];
+	if (!node) throw new Error(`no test node ${index}`);
+	return node.dataDir;
+}
+
+export function getNodeListenAddresses(index: number): string[] {
+	const node = nodes[index];
+	if (!node) throw new Error(`no test node ${index}`);
+	return [...node.listenAddresses];
+}
+
+export function nodeTransferProbe(index: number, command: ProbeCommand, lishID?: string): Promise<void> {
+	const node = nodes[index];
+	if (!node || node.process.exitCode !== null) return Promise.reject(new Error(`node${index} is not running`));
+	const id = ++probeID;
+	return new Promise((resolve, reject) => {
+		const finish = (error?: string): void => {
+			clearTimeout(timer);
+			node.probes.delete(id);
+			if (error) reject(new Error(error));
+			else resolve();
+		};
+		const timer = setTimeout(() => finish(`node${index} transfer probe ${command} timed out`), 30_000);
+		node.probes.set(id, finish);
+		try {
+			const request: ProbeRequest = { type: 'transfer-probe', id, command, lishID };
+			node.process.send(request);
+		} catch (error) {
+			finish(String(error));
+		}
+	});
 }

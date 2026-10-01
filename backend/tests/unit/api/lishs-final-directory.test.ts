@@ -25,6 +25,7 @@ import { openDatabase } from '../../../src/db/database.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { Settings } from '../../../src/settings.ts';
 import { initLISHsHandlers } from '../../../src/api/lishs.ts';
+import { initUploadState, resetUploadState } from '../../../src/protocol/lish-protocol.ts';
 import type { IStoredLISH } from '@shared';
 
 const IMPORT_ID = 'import-strip-test';
@@ -64,6 +65,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+	await handlers.stopVerifyAll();
+	initUploadState(new Set(), () => {});
+	resetUploadState();
 	db.close();
 	for (const d of [dataDir, downloadDir, outDir]) await rm(d, { recursive: true, force: true });
 });

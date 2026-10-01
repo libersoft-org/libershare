@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { BaseDatastore } from 'datastore-core';
 import { Key } from 'interface-datastore';
+import { NotFoundError } from '@libp2p/interface';
 import { dirname } from 'path';
 import { mkdirSync } from 'fs';
 /**
@@ -95,7 +96,9 @@ export class SqliteDatastore extends _BaseDatastore {
 		this.ensureOpen();
 		const row = this.stmtGet.get(key.toString()) as { value: Buffer } | null;
 		if (row == null) {
-			const err = new Error(`Key not found: ${key.toString()}`);
+			// libp2p tells a missing record from a failure by the error NAME: peerStore.has/get
+			// rethrow anything that is not a NotFoundError. `code` stays for local callers.
+			const err = new NotFoundError(`Key not found: ${key.toString()}`);
 			(err as any).code = 'ERR_NOT_FOUND';
 			throw err;
 		}

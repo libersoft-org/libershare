@@ -59,7 +59,10 @@ class FakeDataServer {
 	markChunkDownloaded(_l: LISHid, c: ChunkID): void {
 		this.downloadedChunks.add(c);
 	}
-	async writeChunk(_dir: string, _lish: IStoredLISH, _fi: number, _ci: number, _data: Uint8Array): Promise<void> {
+	/** Every payload that reached the disk boundary, so a test can assert what was written. */
+	written: Array<{ chunkIndex: number; data: Uint8Array }> = [];
+	async writeChunk(_dir: string, _lish: IStoredLISH, _fi: number, ci: number, data: Uint8Array): Promise<void> {
+		this.written.push({ chunkIndex: ci, data: data.slice() });
 		await this.writeChunkHook?.();
 	}
 	incrementDownloadedBytes(_l: LISHid, _n: number): void {}
@@ -253,6 +256,67 @@ describe('ChunkDownloader peerLoop — partial seeder behavior', () => {
 
 		expect(ds.downloadedChunks.has(onlyID)).toBe(true);
 		expect(logs.some(l => l.includes('Rejected chunk') && l.includes('wrong length'))).toBe(true);
+	}, 15000);
+
+	it('rejects a chunk of the right length with one flipped bit — only the hash can catch it', async () => {
+		// Same length as the original, so the length check passes: rejecting it proves the
+		// hash comparison runs. The corrupt bytes must never reach the disk, and the healthy
+		// peer must still supply the original.
+		const { missing, data } = makeChunks(1);
+		const onlyID = missing[0]!.chunkID;
+		const original = data.get(onlyID)!;
+		const flipped = original.slice();
+		flipped[100]! ^= 0x01;
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const bad = new ScriptedClient(new Map<ChunkID, Reply>([[onlyID, flipped]]));
+		const good = new ScriptedClient(new Map<ChunkID, Reply>([[onlyID, original]]), 100);
+		const cd = makeDownloader(ds, pm, 1);
+		pm.tryAdd('peer-bad-hash000', bad as never, 'DIRECT');
+		pm.tryAdd('peer-good-00001', good as never, 'DIRECT');
+
+		const logs: string[] = [];
+		const origLog = console.log;
+		console.log = (...args: unknown[]) => logs.push(args.join(' '));
+		try {
+			await cd.run();
+		} finally {
+			console.log = origLog;
+		}
+
+		expect(ds.downloadedChunks.has(onlyID)).toBe(true);
+		expect(logs.some(l => l.includes('Rejected chunk') && l.includes('bad hash'))).toBe(true);
+		expect(ds.written.length).toBe(1);
+		expect(Buffer.from(ds.written[0]!.data).equals(Buffer.from(original))).toBe(true);
+	}, 15000);
+
+	it('bans a peer that keeps serving same-length corrupt chunks', async () => {
+		const { missing, data } = makeChunks(4);
+		const replies = new Map<ChunkID, Reply>();
+		for (const c of missing) {
+			const corrupt = data.get(c.chunkID)!.slice();
+			corrupt[0]! ^= 0xff;
+			replies.set(c.chunkID, corrupt);
+		}
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const bad = new ScriptedClient(replies);
+		const cd = makeDownloader(ds, pm, 4);
+		pm.tryAdd('peer-corrupt000', bad as never, 'DIRECT');
+
+		const logs: string[] = [];
+		const origLog = console.log;
+		console.log = (...args: unknown[]) => logs.push(args.join(' '));
+		try {
+			await cd.run();
+		} finally {
+			console.log = origLog;
+		}
+
+		expect(ds.downloadedChunks.size).toBe(0);
+		expect(ds.written.length).toBe(0);
+		expect(logs.some(l => l.includes('banned') && l.includes('bad chunks'))).toBe(true);
+		expect(bad.requests.length).toBe(3);
 	}, 15000);
 
 	it('bans a peer that keeps serving wrong-length chunks', async () => {

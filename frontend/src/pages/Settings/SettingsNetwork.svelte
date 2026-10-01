@@ -117,11 +117,25 @@
 		min-width: 0;
 	}
 
-	.iface :global(.row) { flex-wrap: nowrap; }
-	.iface :global(.button), .settings > :global(.button-bar .button) { transform: none !important; box-shadow: none !important; }
-	.footer-choice { margin-top: 1vh; }
-	.footer-choice .note { margin-top: 0.8vh; }
-	.section-label { margin: 0 0 0.8vh; font-size: clamp(13px, 1.8vh, 17px); font-weight: 600; }
+	.iface :global(.row) {
+		flex-wrap: nowrap;
+	}
+	.iface :global(.button),
+	.settings > :global(.button-bar .button) {
+		transform: none !important;
+		box-shadow: none !important;
+	}
+	.footer-choice {
+		margin-top: 1vh;
+	}
+	.footer-choice .note {
+		margin-top: 0.8vh;
+	}
+	.section-label {
+		margin: 0 0 0.8vh;
+		font-size: clamp(13px, 1.8vh, 17px);
+		font-weight: 600;
+	}
 
 	.detail {
 		display: flex;
@@ -131,12 +145,23 @@
 		color: var(--disabled-foreground);
 		line-height: 1.45;
 	}
-	.detail span { overflow-wrap: anywhere; }
-	.link-up { color: var(--color-success, var(--primary-foreground)); }
-	.empty { padding: 3vh 1.5vh; text-align: center; }
+	.detail span {
+		overflow-wrap: anywhere;
+	}
+	.link-up {
+		color: var(--color-success, var(--primary-foreground));
+	}
+	.empty {
+		padding: 3vh 1.5vh;
+		text-align: center;
+	}
 	@media (max-width: 620px) {
-		.iface :global(.row) { flex-wrap: wrap; }
-		.iface :global(.switch-row) { flex-basis: 100%; }
+		.iface :global(.row) {
+			flex-wrap: wrap;
+		}
+		.iface :global(.switch-row) {
+			flex-basis: 100%;
+		}
 	}
 </style>
 
@@ -160,7 +185,9 @@
 						<SwitchRow label={iface.name} icon={iconFor(iface)} padding="1.2vh 1.5vh" checked={selectedPrimary === iface.id} position={[0, index + 1]} disabled={primaryBusy} onToggle={() => void pick(iface.id)}>
 							{#snippet children()}
 								{#if iface.description || iface.virtual}
-									<div class="detail">{#if iface.virtual}<span>{$t('settings.network.virtualAdapter')}</span>{/if}{#if iface.description}<span>{iface.description}</span>{/if}</div>
+									<div class="detail">
+										{#if iface.virtual}<span>{$t('settings.network.virtualAdapter')}</span>{/if}{#if iface.description}<span>{iface.description}</span>{/if}
+									</div>
 								{/if}
 								<div class="detail">
 									<span class:link-up={iface.link === 'up'}>{linkLabel(iface)}</span>
@@ -174,7 +201,7 @@
 										{#if iface.dns.length}<span>{$t('settings.network.dns')}: {iface.dns.join(', ')}</span>{/if}
 									</div>
 								{/if}
-								{/snippet}
+							{/snippet}
 							{#snippet actions()}
 								{#if canOpenNetworkConfig(iface, $networkState.capabilities, $networkState.detail, $networkState.known)}
 									<Button icon="/img/edit.svg" label={$t('settings.network.configure')} padding="1vh 1.5vh" position={[1, index + 1]} onConfirm={() => (editing = iface.id)} />

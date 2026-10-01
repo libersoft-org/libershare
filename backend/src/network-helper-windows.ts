@@ -410,7 +410,7 @@ export const WINDOWS_ELEVATION_WAIT_MS = 60_000;
  * step that does need longer is better refused with an account of what already ran than
  * killed without one.
  */
-export const WINDOWS_ELEVATION_HELPER_BUDGET_MS = WINDOWS_ELEVATION_WAIT_MS - 15_000;
+export const WINDOWS_ELEVATION_HELPER_BUDGET_MS: number = WINDOWS_ELEVATION_WAIT_MS - 15_000;
 
 /**
  * The same wait for a NETWORK change, which is a longer piece of work.
