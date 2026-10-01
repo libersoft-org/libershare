@@ -11,8 +11,9 @@ async function fixture(run: (directory: DatasetDirectoryHandle, path: string) =>
 	const path = join(sandbox, 'dataset');
 	await mkdir(path);
 	const directory = await openPosixDatasetDirectory(path);
-	try { await run(directory, path); }
-	finally {
+	try {
+		await run(directory, path);
+	} finally {
 		await directory.close();
 		await rm(sandbox, { recursive: true, force: true });
 	}
@@ -24,8 +25,11 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
 			await (await directory.openFile('private', 'create')).close();
 			expect((await stat(join(path, 'private'))).mode & 0o777).toBe(0o600 & ~process.umask());
 			const reopened = await directory.openFile('private', 'write');
-			try { expect(await reopened.write(Buffer.from('x'), 0)).toBe(1); }
-			finally { await reopened.close(); }
+			try {
+				expect(await reopened.write(Buffer.from('x'), 0)).toBe(1);
+			} finally {
+				await reopened.close();
+			}
 		});
 	});
 
@@ -49,7 +53,10 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
 				expect(await file.write(Buffer.from('Z'), 0)).toBe(1);
 				expect(await readFile(join(path, 'child', 'data'), 'utf8')).toBe('replacement');
 				expect(await readFile(join(path, 'child', 'renamed'), 'utf8')).toBe('ZXY');
-			} finally { await file.close(); await child.close(); }
+			} finally {
+				await file.close();
+				await child.close();
+			}
 		});
 	});
 
@@ -77,8 +84,11 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
 			await expect(directory.openFile('leaf-link', 'write')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 			await expect(directory.removeFile('leaf-link')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 			const selected = await openPosixDatasetDirectory(join(path, 'parent-link'));
-			try { expect((await selected.stat()).kind).toBe('directory'); }
-			finally { await selected.close(); }
+			try {
+				expect((await selected.stat()).kind).toBe('directory');
+			} finally {
+				await selected.close();
+			}
 			expect(await readFile(join(outside, 'data'), 'utf8')).toBe('unchanged');
 		});
 	});
@@ -93,11 +103,16 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
 				await rename(join(path, 'child'), join(path, 'original'));
 				await symlink(outside, join(path, 'child'));
 				const file = await child.openFile('data', 'create');
-				try { await file.write(Buffer.from('inside'), 0); }
-				finally { await file.close(); }
+				try {
+					await file.write(Buffer.from('inside'), 0);
+				} finally {
+					await file.close();
+				}
 				expect(await readFile(join(path, 'original', 'data'), 'utf8')).toBe('inside');
 				expect(await readFile(join(outside, 'data'), 'utf8')).toBe('unchanged');
-			} finally { await child.close(); }
+			} finally {
+				await child.close();
+			}
 		});
 	});
 
@@ -119,8 +134,11 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
 			await writeFile(join(path, 'data'), 'content');
 			await link(join(path, 'data'), join(path, 'alias'));
 			const file = await directory.openFile('data', 'read');
-			try { expect((await file.stat()).links).toBe(2); }
-			finally { await file.close(); }
+			try {
+				expect((await file.stat()).links).toBe(2);
+			} finally {
+				await file.close();
+			}
 		});
 	});
 

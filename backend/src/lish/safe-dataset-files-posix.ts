@@ -17,22 +17,18 @@ function loadNative() {
 	const library = process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6';
 	const api = dlopen(library, {
 		mkdirat: { args: [FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
-		unlinkat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 }
+		unlinkat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
 	});
 	// Darwin's public openat is variadic: arm64 takes mode from the stack. The
 	// fixed-argument syscall entry avoids passing mode with the wrong ABI.
-	const openat = process.platform === 'darwin'
-		? dlopen(library, { __openat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.u32], returns: FFIType.i32 } }).symbols.__openat
-		: dlopen(library, { openat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.u32], returns: FFIType.i32 } }).symbols.openat;
-	const errno = process.platform === 'darwin'
-		? dlopen(library, { __error: { args: [], returns: FFIType.ptr } }).symbols.__error
-		: dlopen(library, { __errno_location: { args: [], returns: FFIType.ptr } }).symbols.__errno_location;
+	const openat = process.platform === 'darwin' ? dlopen(library, { __openat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.u32], returns: FFIType.i32 } }).symbols.__openat : dlopen(library, { openat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.u32], returns: FFIType.i32 } }).symbols.openat;
+	const errno = process.platform === 'darwin' ? dlopen(library, { __error: { args: [], returns: FFIType.ptr } }).symbols.__error : dlopen(library, { __errno_location: { args: [], returns: FFIType.ptr } }).symbols.__errno_location;
 	return { api, openat, errno };
 }
 
 let native: ReturnType<typeof loadNative> | undefined;
 function nativeApi(): ReturnType<typeof loadNative> {
-	return native ??= loadNative();
+	return (native ??= loadNative());
 }
 
 function syscall(result: number): number {
@@ -52,7 +48,10 @@ function openAt(fd: number, name: Buffer, flags: number): number {
 function statFd(fd: number): Promise<DatasetEntryInfo> {
 	return new Promise((resolve, reject) => {
 		fstat(fd, { bigint: true }, (error, info) => {
-			if (error) { reject(error); return; }
+			if (error) {
+				reject(error);
+				return;
+			}
 			if (info.size < 0n || info.size > BigInt(Number.MAX_SAFE_INTEGER)) {
 				reject(failure('LISH_UNSAFE_PATH', 'Dataset entry size is outside the supported range'));
 				return;
@@ -63,27 +62,34 @@ function statFd(fd: number): Promise<DatasetEntryInfo> {
 }
 
 function closeFd(fd: number): Promise<void> {
-	return new Promise((resolve, reject) => close(fd, error => error ? reject(error) : resolve()));
+	return new Promise((resolve, reject) => close(fd, error => (error ? reject(error) : resolve())));
 }
 
 class Descriptor {
 	private readonly fd: number;
 	private closing: Promise<void> | undefined;
 	private readonly pending = new Set<Promise<unknown>>();
-	constructor(fd: number) { this.fd = fd; }
+	constructor(fd: number) {
+		this.fd = fd;
+	}
 
 	protected async use<T>(operation: (fd: number) => Promise<T>): Promise<T> {
 		if (this.closing) throw failure('EBADF', 'Dataset handle is closed');
 		const result = operation(this.fd);
 		this.pending.add(result);
-		try { return await result; }
-		finally { this.pending.delete(result); }
+		try {
+			return await result;
+		} finally {
+			this.pending.delete(result);
+		}
 	}
 
-	stat(): Promise<DatasetEntryInfo> { return this.use(statFd); }
+	stat(): Promise<DatasetEntryInfo> {
+		return this.use(statFd);
+	}
 
 	close(): Promise<void> {
-		return this.closing ??= Promise.allSettled([...this.pending]).then(() => closeFd(this.fd));
+		return (this.closing ??= Promise.allSettled([...this.pending]).then(() => closeFd(this.fd)));
 	}
 }
 
@@ -94,17 +100,17 @@ function offset(value: number): void {
 class FileHandle extends Descriptor implements DatasetFileHandle {
 	read(buffer: Uint8Array, position: number): Promise<number> {
 		offset(position);
-		return this.use(fd => new Promise((resolve, reject) => readFile(fd, buffer, 0, buffer.byteLength, position, (error, count) => error ? reject(error) : resolve(count))));
+		return this.use(fd => new Promise((resolve, reject) => readFile(fd, buffer, 0, buffer.byteLength, position, (error, count) => (error ? reject(error) : resolve(count)))));
 	}
 
 	write(buffer: Uint8Array, position: number): Promise<number> {
 		offset(position);
-		return this.use(fd => new Promise((resolve, reject) => write(fd, buffer, 0, buffer.byteLength, position, (error, count) => error ? reject(error) : resolve(count))));
+		return this.use(fd => new Promise((resolve, reject) => write(fd, buffer, 0, buffer.byteLength, position, (error, count) => (error ? reject(error) : resolve(count)))));
 	}
 
 	truncate(size: number): Promise<void> {
 		offset(size);
-		return this.use(fd => new Promise((resolve, reject) => ftruncate(fd, size, error => error ? reject(error) : resolve())));
+		return this.use(fd => new Promise((resolve, reject) => ftruncate(fd, size, error => (error ? reject(error) : resolve()))));
 	}
 }
 
@@ -142,8 +148,11 @@ class DirectoryHandle extends Descriptor implements DatasetDirectoryHandle {
 		const path = component(name);
 		return this.use(async fd => {
 			const file = await checked(new FileHandle(openAt(fd, path, constants.O_RDONLY | constants.O_NOFOLLOW)), 'file');
-			try { syscall(nativeApi().api.symbols.unlinkat(fd, ptr(path), 0)); }
-			finally { await file.close(); }
+			try {
+				syscall(nativeApi().api.symbols.unlinkat(fd, ptr(path), 0));
+			} finally {
+				await file.close();
+			}
 		});
 	}
 
@@ -151,8 +160,11 @@ class DirectoryHandle extends Descriptor implements DatasetDirectoryHandle {
 		const path = component(name);
 		return this.use(async fd => {
 			const directory = await checked(new DirectoryHandle(openAt(fd, path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)), 'directory');
-			try { syscall(nativeApi().api.symbols.unlinkat(fd, ptr(path), process.platform === 'darwin' ? 0x80 : 0x200)); }
-			finally { await directory.close(); }
+			try {
+				syscall(nativeApi().api.symbols.unlinkat(fd, ptr(path), process.platform === 'darwin' ? 0x80 : 0x200));
+			} finally {
+				await directory.close();
+			}
 		});
 	}
 }

@@ -5,7 +5,9 @@ import { addLISH, deleteLISH, getLISH } from '../../../src/db/lishs.ts';
 import { createTestDB, createTestLISH, TEST_LISH_ID } from '../helpers/fixtures.ts';
 
 const databases: ReturnType<typeof createTestDB>[] = [];
-afterEach(() => { for (const db of databases.splice(0)) db.close(); });
+afterEach(() => {
+	for (const db of databases.splice(0)) db.close();
+});
 
 function fixture() {
 	const db = createTestDB();

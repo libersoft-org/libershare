@@ -335,7 +335,12 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		if (p.deleteData && lish.directory) {
 			await stopDatasetWork(p.lishID);
 			setBusy(p.lishID, 'deleting');
-			try { await deleteDatasetData(lish, storedRoot(lish)); } catch (error) { clearBusy(p.lishID); throw error; }
+			try {
+				await deleteDatasetData(lish, storedRoot(lish));
+			} catch (error) {
+				clearBusy(p.lishID);
+				throw error;
+			}
 			dataServer.resetVerification(p.lishID);
 			// Transition directly from 'deleting' to 'verifying' — no busy gap
 			setBusy(p.lishID, 'verifying');
@@ -354,7 +359,11 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
 		validateLISHStructure(lish, maxChunkSize);
 		const dataset = await openDataset(opts.root);
-		try { await dataset.prepare(lish, { reserve: false, writable: !!opts.enableDownloading }); } finally { await dataset.close(); }
+		try {
+			await dataset.prepare(lish, { reserve: false, writable: !!opts.enableDownloading });
+		} finally {
+			await dataset.close();
+		}
 		dataServer.addDataset(lish, opts.root, opts.finalRoot);
 		stopRecoveryForLISH(lish.id);
 		dataServer.setUploadEnabled(lish.id, false);
@@ -387,8 +396,13 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			await tempBase.close();
 			for (let suffix = 0; ; suffix++) {
 				root = { kind: 'derived', base, component: suffix ? `${dirName} (${suffix})` : dirName };
-				try { const created = await createDataset(root); await created.close(); break; }
-				catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+				try {
+					const created = await createDataset(root);
+					await created.close();
+					break;
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+				}
 			}
 		} else {
 			const created = await openDataset(root, true);
@@ -397,9 +411,15 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const directory = datasetRootPath(root);
 		// Construct local state explicitly; imported root choices never grant authority.
 		const storedLISH: IStoredLISH = {
-			id: lish.id, name: lish.name, description: lish.description, created: lish.created,
-			chunkSize: lish.chunkSize, checksumAlgo: lish.checksumAlgo,
-			files: lish.files ?? [], directories: lish.directories ?? [], links: lish.links ?? [],
+			id: lish.id,
+			name: lish.name,
+			description: lish.description,
+			created: lish.created,
+			chunkSize: lish.chunkSize,
+			checksumAlgo: lish.checksumAlgo,
+			files: lish.files ?? [],
+			directories: lish.directories ?? [],
+			links: lish.links ?? [],
 			directory,
 			...(enableDownloading ? { finalDirectory: datasetRootPath(finalRoot) } : {}),
 		};
@@ -664,7 +684,11 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 				await moveDatasetData(lish, storedRoot(lish), root, commit, progress => broadcast('lishs:move:progress', { lishID: p.lishID, ...progress }));
 			} else {
 				const target = await openDataset(root, true);
-				try { await target.prepare(lish, { reserve: false, writable: true }); } finally { await target.close(); }
+				try {
+					await target.prepare(lish, { reserve: false, writable: true });
+				} finally {
+					await target.close();
+				}
 				commit();
 			}
 			broadcast('lishs:move', { lishID: p.lishID, directory: newDir });
@@ -691,9 +715,15 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		setBusy(lishID, 'moving');
 		broadcast('lishs:move:status', { lishID, moving: true });
 		try {
-			await moveDatasetData(lish, storedRoot(lish), targetRoot, () => {
-				dataServer.relocateDataset(lishID, targetRoot, true);
-			}, progress => broadcast('lishs:move:progress', { lishID, ...progress }));
+			await moveDatasetData(
+				lish,
+				storedRoot(lish),
+				targetRoot,
+				() => {
+					dataServer.relocateDataset(lishID, targetRoot, true);
+				},
+				progress => broadcast('lishs:move:progress', { lishID, ...progress })
+			);
 			broadcast('lishs:move', { lishID, directory: finalDir });
 			broadcast('lishs:finalize', { lishID, directory: finalDir });
 			return { success: true };

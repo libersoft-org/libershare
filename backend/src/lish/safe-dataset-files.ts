@@ -14,18 +14,24 @@ export interface DatasetPreparation {
 	signal?: AbortSignal;
 }
 
-function unsafe(detail: string): never { throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, detail); }
+function unsafe(detail: string): never {
+	throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, detail);
+}
 function normalized(error: unknown): unknown {
 	return code(error) === ErrorCodes.LISH_UNSAFE_PATH && !(error instanceof CodedError) ? new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'Unsafe dataset filesystem object') : error;
 }
-function code(error: unknown): string | undefined { return (error as NodeJS.ErrnoException | undefined)?.code; }
+function code(error: unknown): string | undefined {
+	return (error as NodeJS.ErrnoException | undefined)?.code;
+}
 function components(path: string): string[] {
 	if (/^[a-z]:/iu.test(path)) unsafe('Unsafe dataset-relative path');
 	const parts = path.split('/');
 	if (parts.some(part => !part || part === '.' || part === '..' || /[\\\0]/u.test(part))) unsafe('Unsafe dataset-relative path');
 	return parts;
 }
-function abort(signal?: AbortSignal): void { signal?.throwIfAborted(); }
+function abort(signal?: AbortSignal): void {
+	signal?.throwIfAborted();
+}
 function writable(info: DatasetEntryInfo): void {
 	if (info.kind !== 'file' || info.links !== 1) unsafe('The target must be a regular file with one link');
 }
@@ -54,7 +60,9 @@ function namespace(manifest: DatasetNamespace): { files: Set<string>; sortedDirs
 	return { files, sortedDirs };
 }
 
-export function validateDatasetNamespace(manifest: DatasetNamespace): void { namespace(manifest); }
+export function validateDatasetNamespace(manifest: DatasetNamespace): void {
+	namespace(manifest);
+}
 
 export function datasetPath(root: DatasetRoot | string): string {
 	if (typeof root === 'string') return root;
@@ -62,9 +70,7 @@ export function datasetPath(root: DatasetRoot | string): string {
 }
 
 async function nativeRoot(path: string): Promise<DatasetDirectoryHandle> {
-	return process.platform === 'win32'
-		? (await import('./safe-dataset-files-windows.ts')).openWindowsDatasetDirectory(path)
-		: (await import('./safe-dataset-files-posix.ts')).openPosixDatasetDirectory(path);
+	return process.platform === 'win32' ? (await import('./safe-dataset-files-windows.ts')).openWindowsDatasetDirectory(path) : (await import('./safe-dataset-files-posix.ts')).openPosixDatasetDirectory(path);
 }
 
 /** Each traversal is relative to held handles; recorded identities must still match on reopening. */
@@ -84,7 +90,9 @@ export class SafeDataset {
 		this.owner = owner;
 	}
 
-	private active(): void { if (this.closed) throw Object.assign(new Error('Dataset is closed'), { code: 'EBADF' }); }
+	private active(): void {
+		if (this.closed) throw Object.assign(new Error('Dataset is closed'), { code: 'EBADF' });
+	}
 
 	private remember(path: string, info: DatasetEntryInfo, allowFileAliases = false): void {
 		const prior = this.entries.get(path);
@@ -106,23 +114,35 @@ export class SafeDataset {
 				path = path ? `${path}/${part}` : part;
 				let child: DatasetDirectoryHandle;
 				let made = false;
-				try { child = await current.openDirectory(part); }
-				catch (error) {
+				try {
+					child = await current.openDirectory(part);
+				} catch (error) {
 					if (!create || code(error) !== 'ENOENT') throw error;
-					try { child = await current.createDirectory(part); made = true; }
-					catch (creation) { if (code(creation) !== 'EEXIST') throw creation; child = await current.openDirectory(part); }
+					try {
+						child = await current.createDirectory(part);
+						made = true;
+					} catch (creation) {
+						if (code(creation) !== 'EEXIST') throw creation;
+						child = await current.openDirectory(part);
+					}
 				}
 				try {
 					const info = await child.stat();
 					this.remember(path, info);
 					if (made && this.reserving) this.created.push({ path, info });
-				} catch (error) { await child.close(); throw error; }
+				} catch (error) {
+					await child.close();
+					throw error;
+				}
 				if (owned) await current.close();
 				current = child;
 				owned = true;
 			}
 			return { handle: current, owned };
-		} catch (error) { if (owned) await current.close(); throw normalized(error); }
+		} catch (error) {
+			if (owned) await current.close();
+			throw normalized(error);
+		}
 	}
 
 	async ensureDirectory(path: string): Promise<void> {
@@ -132,10 +152,17 @@ export class SafeDataset {
 
 	async statDirectory(path = ''): Promise<DatasetEntryInfo | null> {
 		let directory;
-		try { directory = await this.directory(path ? components(path) : [], false); }
-		catch (error) { if (code(error) === 'ENOENT') return null; throw error; }
-		try { return await directory.handle.stat(); }
-		finally { if (directory.owned) await directory.handle.close(); }
+		try {
+			directory = await this.directory(path ? components(path) : [], false);
+		} catch (error) {
+			if (code(error) === 'ENOENT') return null;
+			throw error;
+		}
+		try {
+			return await directory.handle.stat();
+		} finally {
+			if (directory.owned) await directory.handle.close();
+		}
 	}
 
 	private async file(path: string, mode: 'read' | 'write' | 'create', allowAliases: boolean): Promise<DatasetFileHandle> {
@@ -150,9 +177,15 @@ export class SafeDataset {
 				this.remember(path, info, allowAliases);
 				if (mode === 'create' && this.reserving) this.created.push({ path, info });
 				return file;
-			} catch (error) { await file.close(); throw normalized(error); }
-		} catch (error) { throw normalized(error); }
-		finally { if (parent.owned) await parent.handle.close(); }
+			} catch (error) {
+				await file.close();
+				throw normalized(error);
+			}
+		} catch (error) {
+			throw normalized(error);
+		} finally {
+			if (parent.owned) await parent.handle.close();
+		}
 	}
 
 	async openFile(path: string, mode: 'read' | 'write' | 'create'): Promise<DatasetFileHandle> {
@@ -162,13 +195,19 @@ export class SafeDataset {
 
 	async statFile(path: string): Promise<DatasetEntryInfo | null> {
 		let file: DatasetFileHandle;
-		try { file = await this.file(path, 'read', !this.writePrepared); }
-		catch (error) { if (code(error) === 'ENOENT') return null; throw error; }
+		try {
+			file = await this.file(path, 'read', !this.writePrepared);
+		} catch (error) {
+			if (code(error) === 'ENOENT') return null;
+			throw error;
+		}
 		try {
 			const info = await file.stat();
 			if (this.writePrepared) writable(info);
 			return info;
-		} finally { await file.close(); }
+		} finally {
+			await file.close();
+		}
 	}
 
 	/** Validate every path and existing object before reserving any missing targets. No contents are changed. */
@@ -179,26 +218,44 @@ export class SafeDataset {
 		if (options.reserve && !forWrite) unsafe('Read-only preparation cannot reserve files');
 		const { files, sortedDirs } = namespace(manifest);
 		try {
-			for (const path of sortedDirs) { abort(options.signal); await this.statDirectory(path); }
+			for (const path of sortedDirs) {
+				abort(options.signal);
+				await this.statDirectory(path);
+			}
 			for (const path of files) {
 				abort(options.signal);
 				let file: DatasetFileHandle;
-				try { file = await this.file(path, 'read', !forWrite); }
-				catch (error) { if (code(error) === 'ENOENT') continue; throw error; }
-				try { if (forWrite) writable(await file.stat()); }
-				finally { await file.close(); }
+				try {
+					file = await this.file(path, 'read', !forWrite);
+				} catch (error) {
+					if (code(error) === 'ENOENT') continue;
+					throw error;
+				}
+				try {
+					if (forWrite) writable(await file.stat());
+				} finally {
+					await file.close();
+				}
 			}
 			if (options.reserve) {
 				this.reserving = true;
-				for (const path of sortedDirs) { abort(options.signal); await this.ensureDirectory(path); }
+				for (const path of sortedDirs) {
+					abort(options.signal);
+					await this.ensureDirectory(path);
+				}
 				for (const path of files) {
 					abort(options.signal);
 					let file: DatasetFileHandle;
-					try { file = await this.file(path, 'write', false); }
-					catch (error) {
+					try {
+						file = await this.file(path, 'write', false);
+					} catch (error) {
 						if (code(error) !== 'ENOENT') throw error;
-						try { file = await this.file(path, 'create', false); }
-						catch (creation) { if (code(creation) !== 'EEXIST') throw creation; file = await this.file(path, 'write', false); }
+						try {
+							file = await this.file(path, 'create', false);
+						} catch (creation) {
+							if (code(creation) !== 'EEXIST') throw creation;
+							file = await this.file(path, 'write', false);
+						}
 					}
 					await file.close();
 				}
@@ -210,7 +267,9 @@ export class SafeDataset {
 		} catch (error) {
 			await this.rollbackReservations();
 			throw normalized(error);
-		} finally { this.reserving = false; }
+		} finally {
+			this.reserving = false;
+		}
 	}
 
 	private async rollbackReservations(): Promise<void> {
@@ -218,7 +277,9 @@ export class SafeDataset {
 			try {
 				if (entry.info.kind === 'directory') await this.removeDirectory(entry.path, entry.info.identity);
 				else await this.removeFile(entry.path, entry.info.identity);
-			} catch { /* A replaced or no longer empty object is not ours to remove. */ }
+			} catch {
+				/* A replaced or no longer empty object is not ours to remove. */
+			}
 		}
 	}
 
@@ -229,9 +290,15 @@ export class SafeDataset {
 		const parts = components(path);
 		const name = parts.pop()!;
 		const parent = await this.directory(parts, false);
-		try { await parent.handle.removeFile(name); this.entries.delete(path); this.identities.delete(info.identity); }
-		catch (error) { throw normalized(error); }
-		finally { if (parent.owned) await parent.handle.close(); }
+		try {
+			await parent.handle.removeFile(name);
+			this.entries.delete(path);
+			this.identities.delete(info.identity);
+		} catch (error) {
+			throw normalized(error);
+		} finally {
+			if (parent.owned) await parent.handle.close();
+		}
 	}
 
 	async removeDirectory(path: string, expectedIdentity: string): Promise<void> {
@@ -242,30 +309,44 @@ export class SafeDataset {
 			if (!this.owner) unsafe('An explicit dataset root cannot be removed');
 			await this.root.close();
 			this.closed = true;
-			try { await this.owner.handle.removeDirectory(this.owner.name); }
-			catch (error) { throw normalized(error); }
+			try {
+				await this.owner.handle.removeDirectory(this.owner.name);
+			} catch (error) {
+				throw normalized(error);
+			}
 			return;
 		}
 		const parts = components(path);
 		const name = parts.pop()!;
 		const parent = await this.directory(parts, false);
-		try { await parent.handle.removeDirectory(name); this.entries.delete(path); this.identities.delete(info.identity); }
-		catch (error) { throw normalized(error); }
-		finally { if (parent.owned) await parent.handle.close(); }
+		try {
+			await parent.handle.removeDirectory(name);
+			this.entries.delete(path);
+			this.identities.delete(info.identity);
+		} catch (error) {
+			throw normalized(error);
+		} finally {
+			if (parent.owned) await parent.handle.close();
+		}
 	}
 
 	async close(): Promise<void> {
 		this.closed = true;
-		try { await this.root.close(); }
-		finally { await this.owner?.handle.close(); }
+		try {
+			await this.root.close();
+		} finally {
+			await this.owner?.handle.close();
+		}
 	}
 }
 
 async function open(root: DatasetRoot | string, create: boolean, exclusive: boolean): Promise<SafeDataset> {
 	const chosen: DatasetRoot = typeof root === 'string' ? { kind: 'explicit', path: root } : root;
 	if (chosen.kind === 'explicit') {
-		if (exclusive) { await mkdir(dirname(chosen.path), { recursive: true }); await mkdir(chosen.path); }
-		else if (create) await mkdir(chosen.path, { recursive: true });
+		if (exclusive) {
+			await mkdir(dirname(chosen.path), { recursive: true });
+			await mkdir(chosen.path);
+		} else if (create) await mkdir(chosen.path, { recursive: true });
 		return new SafeDataset(await nativeRoot(chosen.path));
 	}
 	const parts = components(chosen.component);
@@ -275,16 +356,36 @@ async function open(root: DatasetRoot | string, create: boolean, exclusive: bool
 		let child: DatasetDirectoryHandle;
 		if (exclusive) child = await base.createDirectory(chosen.component);
 		else {
-			try { child = await base.openDirectory(chosen.component); }
-			catch (error) {
+			try {
+				child = await base.openDirectory(chosen.component);
+			} catch (error) {
 				if (!create || code(error) !== 'ENOENT') throw error;
-				try { child = await base.createDirectory(chosen.component); }
-				catch (creation) { if (code(creation) !== 'EEXIST') throw creation; child = await base.openDirectory(chosen.component); }
+				try {
+					child = await base.createDirectory(chosen.component);
+				} catch (creation) {
+					if (code(creation) !== 'EEXIST') throw creation;
+					child = await base.openDirectory(chosen.component);
+				}
 			}
 		}
 		return new SafeDataset(child, { handle: base, name: chosen.component });
-	} catch (error) { await base.close(); throw error; }
+	} catch (error) {
+		await base.close();
+		throw error;
+	}
 }
 
-export async function openDataset(root: DatasetRoot | string, create = false): Promise<SafeDataset> { try { return await open(root, create, false); } catch (error) { throw normalized(error); } }
-export async function createDataset(root: DatasetRoot | string): Promise<SafeDataset> { try { return await open(root, true, true); } catch (error) { throw normalized(error); } }
+export async function openDataset(root: DatasetRoot | string, create = false): Promise<SafeDataset> {
+	try {
+		return await open(root, create, false);
+	} catch (error) {
+		throw normalized(error);
+	}
+}
+export async function createDataset(root: DatasetRoot | string): Promise<SafeDataset> {
+	try {
+		return await open(root, true, true);
+	} catch (error) {
+		throw normalized(error);
+	}
+}

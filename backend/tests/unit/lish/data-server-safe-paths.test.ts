@@ -83,7 +83,14 @@ describe('dataset data paths', () => {
 	test('rejects invalid chunk bounds without touching the target', async () => {
 		await fixture(async (data, manifest, directory) => {
 			await writeFile(join(directory, 'file.bin'), 'ZERO');
-			for (const [fileIndex, chunkIndex, length] of [[-1, 0, 4], [0, -1, 4], [0, 0.5, 4], [0, 1, 4], [0, 0, 3], [0, 0, 5]] as const) {
+			for (const [fileIndex, chunkIndex, length] of [
+				[-1, 0, 4],
+				[0, -1, 4],
+				[0, 0.5, 4],
+				[0, 1, 4],
+				[0, 0, 3],
+				[0, 0, 5],
+			] as const) {
 				await expect(data.writeChunk(directory, manifest, fileIndex, chunkIndex, new Uint8Array(length))).rejects.toBeDefined();
 			}
 			expect(await readFile(join(directory, 'file.bin'), 'utf8')).toBe('ZERO');
@@ -110,7 +117,15 @@ describe('dataset data paths', () => {
 			const controller = new AbortController();
 			const progress: VerifyFileProgress[] = [];
 			data.resetVerification(manifest.id);
-			await runVerification(data, manifest.id, event => { progress.push(event); controller.abort(); }, controller.signal);
+			await runVerification(
+				data,
+				manifest.id,
+				event => {
+					progress.push(event);
+					controller.abort();
+				},
+				controller.signal
+			);
 			expect(progress).toHaveLength(1);
 			expect(progress[0]?.done).toBeUndefined();
 			expect(data.isVerified(manifest.id)).toBe(false);

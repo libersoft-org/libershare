@@ -63,8 +63,12 @@ export class FileAllocator {
 		if (!lish.files || lish.files.length === 0) return [];
 		validateDatasetNamespace(lish);
 		let dataset: SafeDataset;
-		try { dataset = await openDataset(this.root); }
-		catch (error: any) { if (error?.code === 'ENOENT') return lish.files.map((_, index) => index); throw error; }
+		try {
+			dataset = await openDataset(this.root);
+		} catch (error: any) {
+			if (error?.code === 'ENOENT') return lish.files.map((_, index) => index);
+			throw error;
+		}
 		try {
 			await dataset.prepare(lish);
 			const missing: number[] = [];
@@ -77,7 +81,9 @@ export class FileAllocator {
 				}
 			}
 			return missing;
-		} finally { await dataset.close(); }
+		} finally {
+			await dataset.close();
+		}
 	}
 
 	/**
@@ -161,69 +167,71 @@ export class FileAllocator {
 		validateDatasetNamespace(lish);
 		const dataset = await openDataset(this.root, true);
 		try {
-		await dataset.prepare(lish, signal ? { signal } : {});
-		// Aggregate totals across the requested subset — allows per-batch progress
-		// percentage irrespective of how many files the caller picked.
-		let totalBytes = 0;
-		for (const fi of fileIndexes) totalBytes += lish.files?.[fi]?.size ?? 0;
-		await this.ensureSpaceFor(dataset, lish, fileIndexes);
-		const present = new Set<string>();
-		for (const fi of fileIndexes) {
-			const file = lish.files?.[fi];
-			if (file && await dataset.statFile(file.path)) present.add(file.path);
-		}
-		await dataset.prepare(lish, signal ? { reserve: true, signal } : { reserve: true });
-		let totalBytesWritten = 0;
-		let nextProgressAt = PROGRESS_EMIT_INTERVAL;
-		for (const fi of fileIndexes) {
-			if (signal?.aborted) return { created, skipped };
-			const file = lish.files?.[fi];
-			if (!file) continue;
-			const fd = await dataset.openFile(file.path, 'write');
-			try {
+			await dataset.prepare(lish, signal ? { signal } : {});
+			// Aggregate totals across the requested subset — allows per-batch progress
+			// percentage irrespective of how many files the caller picked.
+			let totalBytes = 0;
+			for (const fi of fileIndexes) totalBytes += lish.files?.[fi]?.size ?? 0;
+			await this.ensureSpaceFor(dataset, lish, fileIndexes);
+			const present = new Set<string>();
+			for (const fi of fileIndexes) {
+				const file = lish.files?.[fi];
+				if (file && (await dataset.statFile(file.path))) present.add(file.path);
+			}
+			await dataset.prepare(lish, signal ? { reserve: true, signal } : { reserve: true });
+			let totalBytesWritten = 0;
+			let nextProgressAt = PROGRESS_EMIT_INTERVAL;
+			for (const fi of fileIndexes) {
 				if (signal?.aborted) return { created, skipped };
-				if (present.has(file.path) && (await fd.stat()).size === file.size) {
-					totalBytesWritten += file.size;
-					skipped++;
-					continue;
-				}
-				if (signal?.aborted) return { created, skipped };
-				await fd.truncate(0);
-				let remaining = file.size;
-				let fileBytesWritten = 0;
-				while (remaining > 0) {
+				const file = lish.files?.[fi];
+				if (!file) continue;
+				const fd = await dataset.openFile(file.path, 'write');
+				try {
 					if (signal?.aborted) return { created, skipped };
-					const writeSize = Math.min(remaining, ZERO_BUFFER.length);
-					const bytesWritten = await fd.write(ZERO_BUFFER.subarray(0, writeSize), fileBytesWritten);
-					if (bytesWritten <= 0) throw Object.assign(new Error('File allocation made no progress'), { code: 'EIO' });
-					remaining -= bytesWritten;
-					fileBytesWritten += bytesWritten;
-					totalBytesWritten += bytesWritten;
-					if (totalBytesWritten >= nextProgressAt || remaining === 0) {
-						nextProgressAt = totalBytesWritten + PROGRESS_EMIT_INTERVAL;
-						if (onProgress) {
-							onProgress({
-								filePath: file.path,
-								fileBytesWritten,
-								fileSize: file.size,
-								totalBytesWritten,
-								totalBytes,
-							});
-							// Yield to the event loop so concurrent peerLoops (or UI) can run
-							await new Promise(r => setTimeout(r, 0));
+					if (present.has(file.path) && (await fd.stat()).size === file.size) {
+						totalBytesWritten += file.size;
+						skipped++;
+						continue;
+					}
+					if (signal?.aborted) return { created, skipped };
+					await fd.truncate(0);
+					let remaining = file.size;
+					let fileBytesWritten = 0;
+					while (remaining > 0) {
+						if (signal?.aborted) return { created, skipped };
+						const writeSize = Math.min(remaining, ZERO_BUFFER.length);
+						const bytesWritten = await fd.write(ZERO_BUFFER.subarray(0, writeSize), fileBytesWritten);
+						if (bytesWritten <= 0) throw Object.assign(new Error('File allocation made no progress'), { code: 'EIO' });
+						remaining -= bytesWritten;
+						fileBytesWritten += bytesWritten;
+						totalBytesWritten += bytesWritten;
+						if (totalBytesWritten >= nextProgressAt || remaining === 0) {
+							nextProgressAt = totalBytesWritten + PROGRESS_EMIT_INTERVAL;
+							if (onProgress) {
+								onProgress({
+									filePath: file.path,
+									fileBytesWritten,
+									fileSize: file.size,
+									totalBytesWritten,
+									totalBytes,
+								});
+								// Yield to the event loop so concurrent peerLoops (or UI) can run
+								await new Promise(r => setTimeout(r, 0));
+							}
 						}
 					}
+				} finally {
+					await fd.close();
 				}
-			} finally {
-				await fd.close();
+				created++;
+				trace(`[FA] created file: ${file.path} (${file.size}B)`);
 			}
-			created++;
-			trace(`[FA] created file: ${file.path} (${file.size}B)`);
-		}
-		return { created, skipped };
+			return { created, skipped };
 		} catch (error) {
 			if (signal?.aborted) return { created, skipped };
 			throw error;
-		} finally { await dataset.close(); }
+		} finally {
+			await dataset.close();
+		}
 	}
 }

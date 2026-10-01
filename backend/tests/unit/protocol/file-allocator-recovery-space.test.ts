@@ -53,9 +53,14 @@ for (const phase of ['before transfer', 'after transfer']) {
 		dl.state = 'downloading';
 		dl.missingChunks = phase === 'before transfer' ? [] : [makeMissingChunk('c' as never)];
 		dl.fileAllocator.findMissingFiles = async () => [0];
-		dl.fileAllocator.allocateFile = async () => { throw new CodedError(ErrorCodes.DISK_FULL, 'insufficient space'); };
+		dl.fileAllocator.allocateFile = async () => {
+			throw new CodedError(ErrorCodes.DISK_FULL, 'insufficient space');
+		};
 		let resets = 0;
-		ds.resetFileChunks = () => { resets++; return 0; };
+		ds.resetFileChunks = () => {
+			resets++;
+			return 0;
+		};
 		if (phase === 'after transfer') {
 			dl.peerManager.size = () => 1;
 			dl.chunkDownloader.run = async () => {};

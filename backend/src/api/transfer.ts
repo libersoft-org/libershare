@@ -913,27 +913,27 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			return { success: false };
 		}
 		try {
-		const missing = dataServer.getMissingChunks(p.lishID);
-		if (missing.length === 0 && dataServer.getAllChunkCount(p.lishID) > 0) {
-			// DB says complete — but verify files actually exist on disk
-			if (lish.files && lish.directory) {
-				const diskOk = await storedDatasetFilesPresent(dataServer, lish);
-				if (!diskOk) {
-					// Files missing on disk — reset ALL chunks and start fresh download
-					console.warn(`[Transfer] ${p.lishID.slice(0, 8)}: DB says complete but files missing on disk, resetting for re-download`);
-					dataServer.resetVerification(p.lishID);
-					// Fall through to start download — verify in ENOENT recovery will set accurate per-file state
+			const missing = dataServer.getMissingChunks(p.lishID);
+			if (missing.length === 0 && dataServer.getAllChunkCount(p.lishID) > 0) {
+				// DB says complete — but verify files actually exist on disk
+				if (lish.files && lish.directory) {
+					const diskOk = await storedDatasetFilesPresent(dataServer, lish);
+					if (!diskOk) {
+						// Files missing on disk — reset ALL chunks and start fresh download
+						console.warn(`[Transfer] ${p.lishID.slice(0, 8)}: DB says complete but files missing on disk, resetting for re-download`);
+						dataServer.resetVerification(p.lishID);
+						// Fall through to start download — verify in ENOENT recovery will set accurate per-file state
+					} else {
+						const send = broadcast ?? (() => {});
+						send('transfer.download:enabled', { lishID: p.lishID });
+						return { success: true };
+					}
 				} else {
 					const send = broadcast ?? (() => {});
 					send('transfer.download:enabled', { lishID: p.lishID });
 					return { success: true };
 				}
-			} else {
-				const send = broadcast ?? (() => {});
-				send('transfer.download:enabled', { lishID: p.lishID });
-				return { success: true };
 			}
-		}
 			let joinedNetworks = getJoinedEnabledNetworkIDs(networks);
 			let originalNetworkIDs = joinedNetworks;
 			const suspendedNetworkIDs = networkSuspended.get(p.lishID);
