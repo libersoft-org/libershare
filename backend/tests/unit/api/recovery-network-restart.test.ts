@@ -50,6 +50,8 @@ async function fixture() {
 	cleanup.push(async () => {
 		await handlers.clearAll();
 		capture.mockRestore();
+		initUploadState(new Set(), () => {});
+		initDownloadState(new Set(), () => {});
 		db.close();
 		await rm(dir, { recursive: true, force: true });
 	});
