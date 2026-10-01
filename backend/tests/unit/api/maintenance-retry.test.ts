@@ -28,42 +28,66 @@ async function fixture() {
 	let cleared = false;
 	const log: string[] = [];
 	const restored: TransferRestoreSnapshot[] = [];
-	const deps = { ...makeDeps({
-		networkOverride: {
-			cancelRunOperations: () => log.push('cancel'),
-			stopAllNetworks: async () => { log.push('stop'); running = false; applied = null; },
-			startEnabledNetworks: async () => {
-				log.push(`start:${settings.list().network.incomingPort}`);
-				if (failStart) throw new Error('port unavailable');
-				running = true;
-				applied = effectiveNetworkConfig(settings.list().network);
+	const deps = {
+		...makeDeps({
+			networkOverride: {
+				cancelRunOperations: () => log.push('cancel'),
+				stopAllNetworks: async () => {
+					log.push('stop');
+					running = false;
+					applied = null;
+				},
+				startEnabledNetworks: async () => {
+					log.push(`start:${settings.list().network.incomingPort}`);
+					if (failStart) throw new Error('port unavailable');
+					running = true;
+					applied = effectiveNetworkConfig(settings.list().network);
+				},
 			},
-		},
-		clearAllTransfers: async () => {
-			log.push('clear');
-			if (failClear) throw failClear;
-			const result = cleared ? new Map() : snapshot;
-			cleared = true;
-			return result;
-		},
-		restoreAllTransfers: async (_ids, state) => { restored.push(state as TransferRestoreSnapshot); },
-		resumeAllTransfers: () => log.push('resume'),
-	}), settings };
+			clearAllTransfers: async () => {
+				log.push('clear');
+				if (failClear) throw failClear;
+				const result = cleared ? new Map() : snapshot;
+				cleared = true;
+				return result;
+			},
+			restoreAllTransfers: async (_ids, state) => {
+				restored.push(state as TransferRestoreSnapshot);
+			},
+			resumeAllTransfers: () => log.push('resume'),
+		}),
+		settings,
+	};
 	const manager = new NetworkRestartManager({
 		prepareMaintenance: () => deps.networks.prepareMaintenance(),
 		cancelRunOperations: () => deps.networks.getNetwork().cancelRunOperations(),
-		stopAllNetworks: () => deps.networks.stopAllNetworks(), startEnabledNetworks: () => deps.networks.startEnabledNetworks(),
-		isRunning: () => running, appliedNetworkConfig: () => applied,
-		pauseTransfers: deps.pauseAllTransfers, pauseLISHMutations: deps.pauseAllLISHMutations, resumeLISHMutations: deps.resumeAllLISHMutations,
-		clearTransfers: deps.clearAllTransfers, restoreTransfers: deps.restoreAllTransfers, resumeTransfers: deps.resumeAllTransfers,
-		downloadIntent: () => new Set(['lish-x']), applyLimits: () => {},
+		stopAllNetworks: () => deps.networks.stopAllNetworks(),
+		startEnabledNetworks: () => deps.networks.startEnabledNetworks(),
+		isRunning: () => running,
+		appliedNetworkConfig: () => applied,
+		pauseTransfers: deps.pauseAllTransfers,
+		pauseLISHMutations: deps.pauseAllLISHMutations,
+		resumeLISHMutations: deps.resumeAllLISHMutations,
+		clearTransfers: deps.clearAllTransfers,
+		restoreTransfers: deps.restoreAllTransfers,
+		resumeTransfers: deps.resumeAllTransfers,
+		downloadIntent: () => new Set(['lish-x']),
+		applyLimits: () => {},
 	});
 	settings.setChangeApplier(change => manager.apply(change));
 	return {
-		settings, manager, reset: buildFactoryResetHandler({ ...deps, restartManager: manager }), log, restored,
+		settings,
+		manager,
+		reset: buildFactoryResetHandler({ ...deps, restartManager: manager }),
+		log,
+		restored,
 		applied: () => applied,
-		failStart: (value: boolean) => { failStart = value; },
-		failClear: (value: Error | null) => { failClear = value; },
+		failStart: (value: boolean) => {
+			failStart = value;
+		},
+		failClear: (value: Error | null) => {
+			failClear = value;
+		},
 	};
 }
 

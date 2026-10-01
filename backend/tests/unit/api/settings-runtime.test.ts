@@ -81,19 +81,29 @@ async function setup(overrides: Partial<NetworkRestartDeps> = {}) {
 
 describe('settings changes on the running node', () => {
 	it('waits for verification draining after transfer pause fails', async () => {
-		const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+		const entered = Promise.withResolvers<void>(),
+			release = Promise.withResolvers<void>();
 		let reopened = false;
 		const { settings } = await setup({
-			pauseTransfers: async () => { throw new Error('pause failed'); },
-			pauseLISHMutations: async () => { entered.resolve(); await release.promise; },
-			resumeLISHMutations: () => { reopened = true; },
+			pauseTransfers: async () => {
+				throw new Error('pause failed');
+			},
+			pauseLISHMutations: async () => {
+				entered.resolve();
+				await release.promise;
+			},
+			resumeLISHMutations: () => {
+				reopened = true;
+			},
 		});
 		const changing = settings.set('network.incomingPort', 29999).catch(error => error);
 		try {
 			await entered.promise;
 			await Bun.sleep(0);
 			expect(reopened).toBe(false);
-		} finally { release.resolve(); }
+		} finally {
+			release.resolve();
+		}
 		expect((await changing).message).toBe('pause failed');
 		expect(reopened).toBe(true);
 	});

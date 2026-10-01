@@ -900,7 +900,9 @@ describe('buildFactoryResetHandler — a restore a failed settings restart still
 		let restoredWith: unknown;
 		const deps = makeDeps({
 			clearAllTransfers: async () => new Map(),
-			restoreAllTransfers: async (_ids, snapshot) => { restoredWith = snapshot; },
+			restoreAllTransfers: async (_ids, snapshot) => {
+				restoredWith = snapshot;
+			},
 		});
 		deps.restartManager.retainPendingRestore(pending);
 

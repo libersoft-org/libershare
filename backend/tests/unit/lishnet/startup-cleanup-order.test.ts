@@ -8,7 +8,9 @@ import { recordPeerCleanup } from '../../../src/db/peer-cleanup.ts';
 const peer = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
 function deferred() {
 	let resolve!: () => void;
-	const promise = new Promise<void>(r => { resolve = r; });
+	const promise = new Promise<void>(r => {
+		resolve = r;
+	});
 	return { promise, resolve };
 }
 
@@ -18,18 +20,36 @@ for (const stopDuringCleanup of [false, true]) {
 		initLISHnetsTables(db);
 		addLISHnet(db, { networkID: 'remaining', name: 'Remaining', description: '', created: '2026-01-01T00:00:00Z', enabled: false, bootstrapPeers: [`/ip4/192.0.2.1/tcp/9090/p2p/${peer}`] });
 		recordPeerCleanup(db, 'left', [peer], 'leave');
-		const deleting = deferred(), finishDelete = deferred();
+		const deleting = deferred(),
+			finishDelete = deferred();
 		const lifecycle = new Mutex();
 		let running = false;
 		const net = {
-			start: async (_peers: string[], options: any) => lifecycle.runExclusive(async () => {
-				await options.beforeStart({ peerStore: { delete: async () => { deleting.resolve(); await finishDelete.promise; } } });
-				running = true;
-			}),
-			stop: async () => lifecycle.runExclusive(() => { running = false; }),
-			isRunning: () => running, isStopTerminal: () => false, getRunEpoch: () => 1,
-			cancelRunOperations() {}, subscribeTopic: () => true, clearRedialSuppressionForNetwork() {},
-			addBootstrapPeers: async () => 'completed', getTopicPeers: () => [], getRecentTopicMembers: () => [],
+			start: async (_peers: string[], options: any) =>
+				lifecycle.runExclusive(async () => {
+					await options.beforeStart({
+						peerStore: {
+							delete: async () => {
+								deleting.resolve();
+								await finishDelete.promise;
+							},
+						},
+					});
+					running = true;
+				}),
+			stop: async () =>
+				lifecycle.runExclusive(() => {
+					running = false;
+				}),
+			isRunning: () => running,
+			isStopTerminal: () => false,
+			getRunEpoch: () => 1,
+			cancelRunOperations() {},
+			subscribeTopic: () => true,
+			clearRedialSuppressionForNetwork() {},
+			addBootstrapPeers: async () => 'completed',
+			getTopicPeers: () => [],
+			getRecentTopicMembers: () => [],
 		};
 		const networks = new Networks(db, '.', {} as never, {} as never);
 		(networks as any).network = net;
@@ -46,7 +66,9 @@ for (const stopDuringCleanup of [false, true]) {
 			try {
 				expect(await Promise.race([settled.then(() => 'settled'), Bun.sleep(2000).then(() => 'deadlock')])).toBe('settled');
 				expect(networks.get('remaining')?.enabled).toBe(true);
-			} finally { db.close(); }
+			} finally {
+				db.close();
+			}
 		}
 	});
 }

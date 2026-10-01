@@ -105,10 +105,14 @@ export function makeDeps(
 		startEnabledNetworks: () => deps.networks.startEnabledNetworks(),
 		isRunning: () => true,
 		appliedNetworkConfig: () => effectiveNetworkConfig(deps.settings.list().network),
-		pauseTransfers: deps.pauseAllTransfers, pauseLISHMutations: deps.pauseAllLISHMutations,
-		resumeLISHMutations: deps.resumeAllLISHMutations, clearTransfers: deps.clearAllTransfers,
-		restoreTransfers: deps.restoreAllTransfers, resumeTransfers: deps.resumeAllTransfers,
-		downloadIntent: () => deps.dataServer.getDownloadEnabledLishs(), applyLimits: () => {},
+		pauseTransfers: deps.pauseAllTransfers,
+		pauseLISHMutations: deps.pauseAllLISHMutations,
+		resumeLISHMutations: deps.resumeAllLISHMutations,
+		clearTransfers: deps.clearAllTransfers,
+		restoreTransfers: deps.restoreAllTransfers,
+		resumeTransfers: deps.resumeAllTransfers,
+		downloadIntent: () => deps.dataServer.getDownloadEnabledLishs(),
+		applyLimits: () => {},
 	});
 	return { ...deps, restartManager };
 }

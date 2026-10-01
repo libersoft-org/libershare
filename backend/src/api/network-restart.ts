@@ -66,7 +66,7 @@ export class NetworkRestartManager {
 	}
 
 	retainPendingRestore(snapshot: TransferRestoreSnapshot): TransferRestoreSnapshot {
-		return this.pendingSnapshot ??= snapshot;
+		return (this.pendingSnapshot ??= snapshot);
 	}
 
 	rememberFailedPreparation(error: unknown): void {

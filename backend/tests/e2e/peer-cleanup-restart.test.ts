@@ -64,18 +64,37 @@ async function client(apiPort: number) {
 	const ws = new WebSocket(`ws://localhost:${apiPort}?token=${TOKEN}`);
 	sockets.add(ws);
 	await new Promise<void>((ok, fail) => {
-		const timer = setTimeout(() => { ws.close(); fail(new Error('WebSocket connection timeout')); }, 10_000);
-		ws.onopen = () => { clearTimeout(timer); ok(); };
-		ws.onerror = () => { clearTimeout(timer); fail(new Error('WebSocket connection failed')); };
+		const timer = setTimeout(() => {
+			ws.close();
+			fail(new Error('WebSocket connection timeout'));
+		}, 10_000);
+		ws.onopen = () => {
+			clearTimeout(timer);
+			ok();
+		};
+		ws.onerror = () => {
+			clearTimeout(timer);
+			fail(new Error('WebSocket connection failed'));
+		};
 	});
 	let n = 0;
 	return {
 		call: (method: string, params: Record<string, unknown> = {}): Promise<any> =>
 			new Promise((resolve, reject) => {
 				const id = `r${++n}`;
-				const cleanup = (): void => { clearTimeout(timer); ws.removeEventListener('message', onMessage); ws.removeEventListener('close', onClose); };
-				const onClose = (): void => { cleanup(); reject(new Error('WebSocket closed during RPC')); };
-				const timer = setTimeout(() => { cleanup(); reject(new Error(`RPC ${method} timed out`)); }, 30_000);
+				const cleanup = (): void => {
+					clearTimeout(timer);
+					ws.removeEventListener('message', onMessage);
+					ws.removeEventListener('close', onClose);
+				};
+				const onClose = (): void => {
+					cleanup();
+					reject(new Error('WebSocket closed during RPC'));
+				};
+				const timer = setTimeout(() => {
+					cleanup();
+					reject(new Error(`RPC ${method} timed out`));
+				}, 30_000);
 				const onMessage = (e: MessageEvent): void => {
 					const msg = JSON.parse(String(e.data));
 					if (msg.id === id) {
