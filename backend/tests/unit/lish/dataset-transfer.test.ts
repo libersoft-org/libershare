@@ -210,35 +210,54 @@ test('a failed database commit retains both verified copies', async () => {
 	expect(await readFile(join(f.base, 'target/data.bin'), 'utf8')).toBe('abcdefgh');
 });
 
-
 test('a close failure after commit is a warning and still closes the other dataset', async () => {
- const f = await fixture();
- let committed = false;
- let postCommitCloses = 0;
- const close = SafeDataset.prototype.close;
- const closing = spyOn(SafeDataset.prototype, 'close').mockImplementation(async function(this: SafeDataset) {
-  await close.call(this);
-  if (committed && ++postCommitCloses === 1) throw Object.assign(new Error('close failed'), {code: 'EIO'});
- });
- try {
-  const result = await moveDatasetData(f.manifest, f.root, f.target, () => { committed = true; }, () => {});
-  expect(result.cleanupWarnings).toContainEqual({stage: 'target-close', code: 'EIO'});
-  expect(postCommitCloses).toBe(2);
-  expect(await readFile(join(f.base, 'target/data.bin'), 'utf8')).toBe('abcdefgh');
- } finally { closing.mockRestore(); }
+	const f = await fixture();
+	let committed = false;
+	let postCommitCloses = 0;
+	const close = SafeDataset.prototype.close;
+	const closing = spyOn(SafeDataset.prototype, 'close').mockImplementation(async function (this: SafeDataset) {
+		await close.call(this);
+		if (committed && ++postCommitCloses === 1) throw Object.assign(new Error('close failed'), { code: 'EIO' });
+	});
+	try {
+		const result = await moveDatasetData(
+			f.manifest,
+			f.root,
+			f.target,
+			() => {
+				committed = true;
+			},
+			() => {}
+		);
+		expect(result.cleanupWarnings).toContainEqual({ stage: 'target-close', code: 'EIO' });
+		expect(postCommitCloses).toBe(2);
+		expect(await readFile(join(f.base, 'target/data.bin'), 'utf8')).toBe('abcdefgh');
+	} finally {
+		closing.mockRestore();
+	}
 });
 
 test('a precommit native error remains the result when closing also fails', async () => {
- const f = await fixture();
- await mkdir(join(f.base, 'target'));
- const close = SafeDataset.prototype.close;
- let closed = 0;
- const closing = spyOn(SafeDataset.prototype, 'close').mockImplementation(async function(this: SafeDataset) {
-  await close.call(this);
-  if (++closed > 1) throw Object.assign(new Error('close failed'), {code: 'EIO'});
- });
- try {
-  await expect(moveDatasetData(f.manifest, f.root, f.target, () => {}, () => {})).rejects.toMatchObject({code: 'EEXIST'});
-  expect(await readFile(join(f.source, 'data.bin'), 'utf8')).toBe('abcdefgh');
- } finally { closing.mockRestore(); }
+	const f = await fixture();
+	await mkdir(join(f.base, 'target'));
+	const close = SafeDataset.prototype.close;
+	let closed = 0;
+	const closing = spyOn(SafeDataset.prototype, 'close').mockImplementation(async function (this: SafeDataset) {
+		await close.call(this);
+		if (++closed > 1) throw Object.assign(new Error('close failed'), { code: 'EIO' });
+	});
+	try {
+		await expect(
+			moveDatasetData(
+				f.manifest,
+				f.root,
+				f.target,
+				() => {},
+				() => {}
+			)
+		).rejects.toMatchObject({ code: 'EEXIST' });
+		expect(await readFile(join(f.source, 'data.bin'), 'utf8')).toBe('abcdefgh');
+	} finally {
+		closing.mockRestore();
+	}
 });

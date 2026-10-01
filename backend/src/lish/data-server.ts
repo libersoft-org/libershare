@@ -278,17 +278,17 @@ export class DataServer {
 		const writes = scope ?? new DatasetWriteScope();
 		try {
 			await writes.write(typeof downloadDir === 'string' ? conservativeDatasetRoot(downloadDir) : downloadDir, lish, this.openRoot, async dataset => {
-			const fd = await dataset.openFile(file.path, 'write');
-			try {
-				let bytesWritten = 0;
-				while (bytesWritten < data.length) {
-					const count = await fd.write(data.subarray(bytesWritten), offset + bytesWritten);
-					if (!Number.isInteger(count) || count <= 0 || count > data.length - bytesWritten) throw Object.assign(new Error('File write made no progress'), { code: 'EIO' });
-					bytesWritten += count;
+				const fd = await dataset.openFile(file.path, 'write');
+				try {
+					let bytesWritten = 0;
+					while (bytesWritten < data.length) {
+						const count = await fd.write(data.subarray(bytesWritten), offset + bytesWritten);
+						if (!Number.isInteger(count) || count <= 0 || count > data.length - bytesWritten) throw Object.assign(new Error('File write made no progress'), { code: 'EIO' });
+						bytesWritten += count;
+					}
+				} finally {
+					await fd.close();
 				}
-			} finally {
-				await fd.close();
-			}
 			});
 		} finally {
 			if (!scope) await writes.close();

@@ -37,7 +37,10 @@ test('prepares 200 actual files once for 20 concurrent block writes', async () =
 		roots++;
 		const root = await (process.platform === 'win32' ? openWindowsDatasetDirectory(f.directory) : openPosixDatasetDirectory(f.directory));
 		const openFile = root.openFile.bind(root);
-		root.openFile = (name, mode) => { files.push(name); return openFile(name, mode); };
+		root.openFile = (name, mode) => {
+			files.push(name);
+			return openFile(name, mode);
+		};
 		return new SafeDataset(root);
 	};
 	const server = new DataServer({} as Database, open);
@@ -48,13 +51,18 @@ test('prepares 200 actual files once for 20 concurrent block writes', async () =
 		expect(files).toHaveLength(220);
 		expect(files.filter(name => name === 'file-199.bin')).toHaveLength(1);
 		expect(await readFile(join(f.directory, 'file-0.bin'))).toEqual(Buffer.from(Array.from({ length: 20 }, (_, i) => i + 1)));
-	} finally { await scope.close(); }
+	} finally {
+		await scope.close();
+	}
 });
 
 test('rechecks the written file and refuses an identity replacement without preparing again', async () => {
 	const f = await fixture();
 	let preparations = 0;
-	const server = new DataServer({} as Database, async root => { preparations++; return openDataset(root); });
+	const server = new DataServer({} as Database, async root => {
+		preparations++;
+		return openDataset(root);
+	});
 	const scope = new DatasetWriteScope();
 	try {
 		await server.writeChunk(f.root, f.manifest, 0, 0, new Uint8Array([1]), scope);
@@ -63,13 +71,18 @@ test('rechecks the written file and refuses an identity replacement without prep
 		await expect(server.writeChunk(f.root, f.manifest, 0, 1, new Uint8Array([2]), scope)).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 		expect(await readFile(join(f.directory, 'file-0.bin'), 'utf8')).toBe('keep');
 		expect(preparations).toBe(1);
-	} finally { await scope.close(); }
+	} finally {
+		await scope.close();
+	}
 });
 
 test('reprepares after missing-file recovery but refuses a link inserted before retry', async () => {
 	const f = await fixture();
 	let preparations = 0;
-	const server = new DataServer({} as Database, async root => { preparations++; return openDataset(root); });
+	const server = new DataServer({} as Database, async root => {
+		preparations++;
+		return openDataset(root);
+	});
 	const scope = new DatasetWriteScope();
 	try {
 		await server.writeChunk(f.root, f.manifest, 0, 0, new Uint8Array([1]), scope);
@@ -84,7 +97,9 @@ test('reprepares after missing-file recovery but refuses a link inserted before 
 		await symlink(join(f.base, 'outside'), join(f.directory, 'file-0.bin'), 'file');
 		await expect(server.writeChunk(f.root, f.manifest, 0, 2, new Uint8Array([3]), scope)).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 		expect(await readFile(join(f.base, 'outside'), 'utf8')).toBe('keep');
-	} finally { await scope.close(); }
+	} finally {
+		await scope.close();
+	}
 });
 
 test('close drains a held write and rejects later writes and a changed manifest', async () => {
@@ -94,14 +109,21 @@ test('close drains a held write and rejects later writes and a changed manifest'
 	const release = Promise.withResolvers<void>();
 	const operation = scope.write(f.root, f.manifest, openDataset, async dataset => {
 		const file = await dataset.openFile('file-0.bin', 'write');
-		try { entered.resolve(); await release.promise; await file.write(new Uint8Array([7]), 0); }
-		finally { await file.close(); }
+		try {
+			entered.resolve();
+			await release.promise;
+			await file.write(new Uint8Array([7]), 0);
+		} finally {
+			await file.close();
+		}
 	});
 	try {
 		await entered.promise;
 		await expect(scope.write(f.root, { ...f.manifest }, openDataset, async () => {})).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 		let closed = false;
-		const closing = scope.close().then(() => { closed = true; });
+		const closing = scope.close().then(() => {
+			closed = true;
+		});
 		await Promise.resolve();
 		expect(closed).toBe(false);
 		await expect(scope.write(f.root, f.manifest, openDataset, async () => {})).rejects.toMatchObject({ code: 'EBADF' });
@@ -109,7 +131,11 @@ test('close drains a held write and rejects later writes and a changed manifest'
 		await operation;
 		await closing;
 		expect((await readFile(join(f.directory, 'file-0.bin')))[0]).toBe(7);
-	} finally { release.resolve(); await operation; await scope.close(); }
+	} finally {
+		release.resolve();
+		await operation;
+		await scope.close();
+	}
 });
 
 test('does not follow a replaced parent between blocks', async () => {
@@ -127,7 +153,9 @@ test('does not follow a replaced parent between blocks', async () => {
 		await symlink(join(f.base, 'outside'), join(f.directory, 'sub'), process.platform === 'win32' ? 'junction' : 'dir');
 		await expect(server.writeChunk(f.root, f.manifest, 0, 1, new Uint8Array([2]), scope)).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 		expect(await readFile(join(f.base, 'outside/file.bin'), 'utf8')).toBe('keep');
-	} finally { await scope.close(); }
+	} finally {
+		await scope.close();
+	}
 });
 
 test('does not accept a different root after missing-file recovery', async () => {
@@ -144,7 +172,9 @@ test('does not accept a different root after missing-file recovery', async () =>
 		await symlink(join(f.base, 'outside'), f.directory, process.platform === 'win32' ? 'junction' : 'dir');
 		await expect(server.writeChunk(f.root, f.manifest, 0, 1, new Uint8Array([2]), scope)).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 		expect(await readFile(join(f.base, 'outside/file-0.bin'), 'utf8')).toBe('keep');
-	} finally { await scope.close(); }
+	} finally {
+		await scope.close();
+	}
 });
 
 test.each(['open', 'prepare'])('retries a transient permission failure during %s', async phase => {
@@ -155,7 +185,10 @@ test.each(['open', 'prepare'])('retries a transient permission failure during %s
 		opens++;
 		if (phase === 'open' && opens === 1) throw denied;
 		const dataset = await openDataset(root);
-		if (phase === 'prepare' && opens === 1) dataset.prepare = async () => { throw denied; };
+		if (phase === 'prepare' && opens === 1)
+			dataset.prepare = async () => {
+				throw denied;
+			};
 		return dataset;
 	});
 	const scope = new DatasetWriteScope();
@@ -164,5 +197,7 @@ test.each(['open', 'prepare'])('retries a transient permission failure during %s
 		await server.writeChunk(f.root, f.manifest, 0, 0, new Uint8Array([1]), scope);
 		expect(opens).toBe(2);
 		expect((await readFile(join(f.directory, 'file-0.bin')))[0]).toBe(1);
-	} finally { await scope.close(); }
+	} finally {
+		await scope.close();
+	}
 });

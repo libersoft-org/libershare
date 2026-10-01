@@ -65,19 +65,27 @@ export class DatasetWriteScope {
 			}
 		})();
 		this.pending.add(pending);
-		void pending.then(() => this.pending.delete(pending), () => this.pending.delete(pending));
+		void pending.then(
+			() => this.pending.delete(pending),
+			() => this.pending.delete(pending)
+		);
 		return pending;
 	}
 
 	private dispose(preparation: Preparation): Promise<void> {
-		return preparation.closing ??= preparation.dataset.then(dataset => dataset.close(), () => {}).finally(() => this.preparations.delete(preparation));
+		return (preparation.closing ??= preparation.dataset
+			.then(
+				dataset => dataset.close(),
+				() => {}
+			)
+			.finally(() => this.preparations.delete(preparation)));
 	}
 
 	close(): Promise<void> {
 		this.closed = true;
-		return this.closing ??= (async () => {
+		return (this.closing ??= (async () => {
 			await Promise.allSettled([...this.pending]);
 			await Promise.all([...this.preparations].map(preparation => this.dispose(preparation)));
-		})();
+		})());
 	}
 }

@@ -6,12 +6,12 @@ import type { DatasetFileHandle } from './safe-dataset-types.ts';
 import type { DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 
 export interface DatasetMoveResult {
- cleanupWarnings: { stage: 'source-cleanup' | 'target-close' | 'source-close'; code: string }[];
+	cleanupWarnings: { stage: 'source-cleanup' | 'target-close' | 'source-close'; code: string }[];
 }
 
 function cleanupCode(error: unknown): string {
- const code = (error as NodeJS.ErrnoException | null)?.code;
- return typeof code === 'string' && /^[A-Z_]{1,64}$/.test(code) ? code : 'IO_ERROR';
+	const code = (error as NodeJS.ErrnoException | null)?.code;
+	return typeof code === 'string' && /^[A-Z_]{1,64}$/.test(code) ? code : 'IO_ERROR';
 }
 
 export interface DatasetMoveProgress {
@@ -41,9 +41,11 @@ function materializedFiles(manifest: ILISH, root: DatasetRoot, bindings: readonl
 	for (const link of manifest.links ?? []) {
 		const binding = bindings.find(entry => entry.path === link.path);
 		if (binding && (binding.target !== link.target || binding.hardlink !== (link.hardlink === true))) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'The local link association no longer matches the manifest');
-		const path = binding?.source ?? relative(datasetRootPath(root), resolve(datasetRootPath(root), link.target))
-			.split('\\')
-			.join('/');
+		const path =
+			binding?.source ??
+			relative(datasetRootPath(root), resolve(datasetRootPath(root), link.target))
+				.split('\\')
+				.join('/');
 		const target = files.find(file => file.path === path);
 		if (!target || isAbsolute(path) || path.startsWith('../')) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'The link target is not a declared dataset file');
 		entries.push({ source: target.path, file: { ...target, path: link.path } });
@@ -206,8 +208,9 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 		committed = true;
 		try {
 			if (await removeContents(source, manifest, sourceIdentities, sourceRoot.kind === 'derived')) result.cleanupWarnings.push({ stage: 'source-cleanup', code: 'ENOTEMPTY' });
+		} catch (error) {
+			result.cleanupWarnings.push({ stage: 'source-cleanup', code: cleanupCode(error) });
 		}
-		catch (error) { result.cleanupWarnings.push({ stage: 'source-cleanup', code: cleanupCode(error) }); }
 	} catch (error) {
 		if (target && !commitStarted) {
 			try {
@@ -219,12 +222,19 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 		failure = error;
 		failed = true;
 	} finally {
-		for (const [dataset, stage] of [[target, 'target-close'], [source, 'source-close']] as const) {
+		for (const [dataset, stage] of [
+			[target, 'target-close'],
+			[source, 'source-close'],
+		] as const) {
 			if (!dataset) continue;
-			try { await dataset.close(); }
-			catch (error) {
+			try {
+				await dataset.close();
+			} catch (error) {
 				if (committed) result.cleanupWarnings.push({ stage, code: cleanupCode(error) });
-				else if (!failed) { failure = error; failed = true; }
+				else if (!failed) {
+					failure = error;
+					failed = true;
+				}
 			}
 		}
 	}
