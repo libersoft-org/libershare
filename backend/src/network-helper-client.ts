@@ -407,7 +407,7 @@ export async function runElevatedSystemTime(changes: SystemTimeChanges, platform
 			macLaunch = await withinSaveBudget(prepareMacHelper(helper));
 		} catch (error) {
 			if (error instanceof HelperVerificationTimeoutError) return notVerifiedInTime();
-			return helperTransportFailure(error);
+			return systemTimeHelperFailure('error', failureText(error));
 		}
 		// The preparation may have used up the save: no authorization prompt after that.
 		const left = remainingSaveBudget();
