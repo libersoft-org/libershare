@@ -20,6 +20,7 @@ function normalized(error: unknown): unknown {
 }
 function code(error: unknown): string | undefined { return (error as NodeJS.ErrnoException | undefined)?.code; }
 function components(path: string): string[] {
+	if (/^[a-z]:/iu.test(path)) unsafe('Unsafe dataset-relative path');
 	const parts = path.split('/');
 	if (parts.some(part => !part || part === '.' || part === '..' || /[\\\0]/u.test(part))) unsafe('Unsafe dataset-relative path');
 	return parts;

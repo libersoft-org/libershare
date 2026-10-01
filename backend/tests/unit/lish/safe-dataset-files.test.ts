@@ -20,6 +20,15 @@ function manifest(files: { path: string; size: number }[], directories: string[]
 }
 
 describe('safe dataset namespace', () => {
+	test('rejects absolute and traversal paths independently of the host platform', async () => {
+		await fixture(async (dataset, path) => {
+			for (const entry of ['C:/outside', 'C:outside', '/absolute', '../outside', 'a\\b', 'a//b']) {
+				await expect(dataset.prepare(manifest([{ path: entry, size: 1 }]), { reserve: true })).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			}
+			expect(await readdir(path)).toEqual([]);
+		});
+	});
+
 	test('reserves nested files and explicit empty directories before content writes', async () => {
 		await fixture(async (dataset, path) => {
 			await dataset.prepare(manifest([{ path: 'a/data', size: 3 }], ['empty']), { reserve: true });
