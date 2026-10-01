@@ -227,6 +227,7 @@
 		"createSubdirectory": "V cílovém adresáři vytvořit podadresář s názvem LISHe",
 		"move": "Přesunout",
 		"moveSuccess": "Data LISHe \"{name}\" byla přesunuta",
+		"moveCleanupWarning": "Data LISHe \"{name}\" byla přesunuta, ale úklid se nedokončil. Některé původní soubory mohou zůstat na místě.",
 		"moveProgress": {
 			"title": "Přesouvání",
 			"moving": "Přesouvání dat ...",

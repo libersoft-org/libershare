@@ -227,6 +227,7 @@
 		"createSubdirectory": "Create a subdirectory with LISH name in target directory",
 		"move": "Move",
 		"moveSuccess": "LISH \"{name}\" data was moved",
+		"moveCleanupWarning": "LISH \"{name}\" was moved, but cleanup did not finish. Some original files may remain.",
 		"moveProgress": {
 			"title": "Moving",
 			"moving": "Moving data ...",
