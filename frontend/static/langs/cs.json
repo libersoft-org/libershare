@@ -459,6 +459,7 @@
 			"networkAdded": "Síť LISH \"{name}\" byla přidána",
 			"savedNotApplied": "Uloženo; změna se v běžícím uzlu zatím neprojevila.",
 			"savedUnconfirmed": "Uloženo; server nepotvrdil, že se změna použila.",
+			"changeUnconfirmed": "Server nepotvrdil výsledek změny.",
 			"networkUpdated": "Síť LISH \"{name}\" byla upravena",
 			"networkConnected": "Síť LISH \"{name}\" připojena",
 			"networkDisconnected": "Síť LISH \"{name}\" odpojena",

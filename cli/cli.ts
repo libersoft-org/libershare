@@ -78,6 +78,7 @@ function describeMutation(response: NetworkMutationResponse<unknown>, done: stri
 }
 
 function describeEnabled(response: SetLISHNetworkEnabledResponse, done: string): string {
+	if (response.stored === undefined && !(response.success && response.applied)) return `! Network change to ${done} was not confirmed by the server`;
 	if (response.stored === false) return '✗ Network not found';
 	return response.applied ? `✓ Network ${done}` : `! Network saved as ${done}, but the running node has not applied it yet`;
 }

@@ -38,9 +38,13 @@ export async function replaceNetworks(networks: LISHNetworkConfig[]): Promise<bo
 	return reportMutation(await api.lishnets.replaceDetailed(networks), null);
 }
 
-/** Switch a network on or off; warns when the change was saved but the node has not applied it. */
+/** Switch a network on or off; distinguish saved changes from unconfirmed older replies. */
 export async function setNetworkEnabled(networkID: string, enabled: boolean): Promise<boolean> {
 	const result = await api.lishnets.setEnabled(networkID, enabled);
+	if (result.stored === undefined && !(result.success && result.applied)) {
+		addNotification(tt('settings.lishNetwork.changeUnconfirmed'), 'warning');
+		return false;
+	}
 	if (result.stored === false) return false;
 	if (!result.applied) addNotification(tt('settings.lishNetwork.savedNotApplied'), 'warning');
 	return true;
