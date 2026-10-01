@@ -2,7 +2,6 @@ import { ptr, toArrayBuffer, type Pointer } from 'bun:ffi';
 import { isWifiHexKey } from '@shared';
 import { type WlanApi, type WlanHandle, utf16z, readUtf16z, withWlanHandle, wlanErrorMessage, describeProfileFailure, ERROR_NOT_FOUND, ERROR_FILE_NOT_FOUND, ERROR_ALREADY_EXISTS, WLAN_PROFILE_GROUP_POLICY, WLAN_PROFILE_USER } from './system-network-windows-wlan.ts';
 
-
 /**
  * Control characters an XML 1.0 document cannot carry, even escaped.
  *

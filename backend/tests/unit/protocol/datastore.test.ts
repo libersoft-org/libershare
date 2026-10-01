@@ -6,6 +6,13 @@ import { join } from 'path';
 import { Key } from 'interface-datastore';
 import { SqliteDatastore } from '../../../src/protocol/datastore.ts';
 import { clearIdentityKey } from '../../../src/protocol/identity-store.ts';
+import { generateKeyPair } from '@libp2p/crypto/keys';
+import { peerIdFromPrivateKey } from '@libp2p/peer-id';
+import { persistentPeerStore } from '@libp2p/peer-store';
+import { PeerRecord, RecordEnvelope } from '@libp2p/peer-record';
+import { multiaddr } from '@multiformats/multiaddr';
+import { defaultLogger } from '@libp2p/logger';
+import { TypedEventEmitter } from 'main-event';
 
 // SqliteDatastore is tested by directly exercising its SQL statements against
 // an in-memory database so no filesystem cleanup is needed.
@@ -196,5 +203,73 @@ describe('SqliteDatastore.clearPeerstore (real class, on-disk DB)', () => {
 		expect(reopened.has(peer)).toBe(true);
 		expect(Array.from(reopened.get(peer))).toEqual([4, 5, 6]);
 		cleanup(reopened, dir);
+	});
+});
+
+/**
+ * The libp2p peer store tells "no such record" from a failure by the error name: `has()` and
+ * `get()` rethrow anything that is not a `NotFoundError`. Exercised through the real
+ * persistent peer store over the real SQLite datastore.
+ */
+describe('SqliteDatastore under the libp2p peer store', () => {
+	it('accepts a signed record for a new peer and persists its certified address', async () => {
+		const dir = mkdtempSync(join(tmpdir(), 'lish-ds-record-'));
+		const path = join(dir, 'datastore');
+		let ds = new SqliteDatastore(path);
+		ds.open();
+		try {
+			const self = peerIdFromPrivateKey(await generateKeyPair('Ed25519'));
+			const privateKey = await generateKeyPair('Ed25519');
+			const peer = peerIdFromPrivateKey(privateKey);
+			const address = multiaddr('/ip4/192.0.2.10/tcp/4001');
+			const record = new PeerRecord({ peerId: peer, multiaddrs: [address] });
+			const envelope = (await RecordEnvelope.seal(record, privateKey)).marshal();
+			const store = persistentPeerStore({ peerId: self, datastore: ds as any, events: new TypedEventEmitter() as any, logger: defaultLogger() });
+
+			expect(await store.has(peer)).toBe(false);
+			expect(await store.consumePeerRecord(envelope)).toBe(true);
+			const accepted = await store.get(peer);
+			expect(accepted.addresses.map(entry => ({ address: entry.multiaddr.toString(), certified: entry.isCertified }))).toEqual([{ address: address.toString(), certified: true }]);
+			expect(accepted.peerRecordEnvelope).toEqual(envelope);
+
+			ds.close();
+			ds = new SqliteDatastore(path);
+			ds.open();
+			const reloadedStore = persistentPeerStore({ peerId: self, datastore: ds as any, events: new TypedEventEmitter() as any, logger: defaultLogger() });
+			const persisted = await reloadedStore.get(peer);
+			expect(persisted.addresses.map(entry => ({ address: entry.multiaddr.toString(), certified: entry.isCertified }))).toEqual([{ address: address.toString(), certified: true }]);
+			expect(persisted.peerRecordEnvelope).toEqual(envelope);
+		} finally {
+			ds.close();
+			try {
+				rmSync(dir, { recursive: true, force: true });
+			} catch (error) {
+				// Windows may retain the closed SQLite file briefly.
+				if (process.platform !== 'win32' || (error as NodeJS.ErrnoException).code !== 'EBUSY') throw error;
+			}
+		}
+	});
+
+	it('lets the peer store tell a missing peer from a failure', async () => {
+		const dir = mkdtempSync(join(tmpdir(), 'lish-ds-ps-'));
+		const ds = new SqliteDatastore(join(dir, 'datastore'));
+		ds.open();
+		try {
+			const self = peerIdFromPrivateKey(await generateKeyPair('Ed25519'));
+			const stranger = peerIdFromPrivateKey(await generateKeyPair('Ed25519'));
+			const store = persistentPeerStore({ peerId: self, datastore: ds as any, events: new TypedEventEmitter() as any, logger: defaultLogger() });
+			expect(await store.has(stranger)).toBe(false);
+			const missing = await store.get(stranger).catch(error => error);
+			expect(missing.name).toBe('NotFoundError');
+			expect(ds.has(new Key('/absent') as any)).toBe(false);
+			expect(() => ds.get(new Key('/absent') as any)).toThrow(expect.objectContaining({ name: 'NotFoundError', code: 'ERR_NOT_FOUND' }));
+		} finally {
+			ds.close();
+			try {
+				rmSync(dir, { recursive: true, force: true });
+			} catch {
+				/* Windows may still hold the WAL briefly */
+			}
+		}
 	});
 });

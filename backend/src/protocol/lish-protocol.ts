@@ -160,6 +160,7 @@ function summarizeManifestID(value: unknown): string {
 // Client-side stream wrapper that can send multiple requests
 export class LISHClient {
 	private stream: Stream;
+	private readonly closeAbort = new AbortController();
 	private decoder: AsyncGenerator<Uint8Array | Uint8ArrayList>;
 	// Per-call progress hooks, set only for the duration of a request that opts into progress
 	// (currently requestManifest). The decoder is shared across requests, so scoping the hooks
@@ -322,7 +323,7 @@ export class LISHClient {
 	// Close the stream when done
 	async close(): Promise<void> {
 		try {
-			await this.stream.close();
+			await this.stream.close({ signal: this.closeAbort.signal });
 		} catch (error) {
 			// Ignore errors on close
 		}
@@ -336,6 +337,7 @@ export class LISHClient {
 	 * disabling a download — waiting on the remote is exactly wrong.
 	 */
 	abort(reason?: Error): void {
+		this.closeAbort.abort(reason ?? new Error('client aborted'));
 		try {
 			this.stream.abort(reason ?? new Error('client aborted'));
 		} catch {
@@ -776,7 +778,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			}
 		}
 		// Stream closed by remote, close our end
-		if (!abortSignal?.aborted) await stream.close();
+		if (!abortSignal?.aborted) await stream.close(abortSignal ? { signal: abortSignal } : undefined);
 	} catch (error: any) {
 		console.debug(`[PROTO] stream error from ${remotePeer} after ${requestCount} reqs: ${error.message?.slice(0, 120) ?? error}`);
 		stream.abort(error instanceof Error ? error : new Error(String(error)));
