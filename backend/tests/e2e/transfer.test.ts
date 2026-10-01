@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { startNodes, stopNodes, getNodeURL, getNodeDataDir, getNodeListenAddresses, nodeTransferProbe } from './helpers/node-manager.ts';
 import { TestClient } from './helpers/ws-test-client.ts';
@@ -15,6 +15,7 @@ import type { ILISHDetail, ILISHListResult, SuccessResponse } from '@shared';
 const EVENT_TIMEOUT = 60_000;
 const PAYLOAD_SIZE = 2 * 1024 * 1024;
 const CHUNK_SIZE = 64 * 1024;
+const SMALL_FILE_COUNT = 200;
 const NETWORK_ID = crypto.randomUUID();
 
 let nodes: TestClient[] = [];
@@ -41,6 +42,9 @@ function findFile(dir: string, name: string): string | null {
 function downloadedHash(nodeIndex: number, name = 'payload.bin'): string {
 	const path = findFile(join(getNodeDataDir(nodeIndex), 'storage', 'finished'), name);
 	if (!path) throw new Error(`${name} not found on node${nodeIndex}`);
+	if (name === 'payload.bin') {
+		for (let i = 0; i < SMALL_FILE_COUNT; i++) expect(readFileSync(join(dirname(path), `small-${i}.txt`), 'utf8')).toBe(`small payload ${i}`);
+	}
 	return sha256(readFileSync(path));
 }
 
@@ -99,6 +103,7 @@ beforeAll(async () => {
 	const payload = randomBytes(PAYLOAD_SIZE);
 	payloadHash = sha256(payload);
 	writeFileSync(join(source, 'payload.bin'), payload);
+	for (let i = 0; i < SMALL_FILE_COUNT; i++) writeFileSync(join(source, `small-${i}.txt`), `small payload ${i}`);
 	({ lishID } = await nodes[0]!.call('lishs.create', { dataPath: source, name: 'e2e payload', addToSharing: true, chunkSize: CHUNK_SIZE }, 120_000));
 
 	// One private network, bootstrapped from node0's bound address. Loopback would be simpler, but
@@ -151,7 +156,7 @@ describe('download from one seeder', () => {
 			const complete = nodes[1]!.waitForEvent('transfer.download:complete', (d: any) => d.lishID === lishID, EVENT_TIMEOUT * 2);
 			expect(await nodes[1]!.call<SuccessResponse>('transfer.enableDownload', { lishID })).toEqual({ success: true });
 			const first = await progress;
-			expect(first.totalChunks).toBe(PAYLOAD_SIZE / CHUNK_SIZE);
+			expect(first.totalChunks).toBe(PAYLOAD_SIZE / CHUNK_SIZE + SMALL_FILE_COUNT);
 			await complete;
 			expect(downloadedHash(1)).toBe(payloadHash);
 		},
