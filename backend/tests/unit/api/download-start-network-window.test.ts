@@ -103,6 +103,7 @@ function makeDataServer(duringInit: () => void = () => {}, directory: string | n
 		// the pre-flight and `Downloader.enable()` do their access check, which is the await
 		// a switch-off has to be able to land inside.
 		get: (): any => ({ id: LISH_ID, name: 'x', directory, files: [] }),
+		getDatasetRoot: (): null => null,
 		getAllChunkCount: (): number => 4,
 		isCompleteLISH: (): boolean => false,
 		getMissingChunks: (): string[] => {
@@ -136,6 +137,7 @@ function makeCompleteDataServer(duringCheck: () => void): DataServer & { forget(
 		// An empty file list keeps the on-disk check trivially satisfied: the branch under
 		// test is the one that answers "complete", not the one that re-verifies bytes.
 		get: (): any => (present ? { id: LISH_ID, name: 'x', directory: tmpdir(), files: [] } : null),
+		getDatasetRoot: () => ({ kind: 'explicit', path: tmpdir() }),
 		getAllChunkCount: (): number => 4,
 		isCompleteLISH: (): boolean => true,
 		getMissingChunks: (): string[] => {
