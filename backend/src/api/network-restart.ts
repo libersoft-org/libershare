@@ -2,6 +2,14 @@ import { type SettingsChange, type SettingsData } from '../settings.ts';
 import { effectiveNetworkConfig, requestsP2PApply, sameEffectiveNetworkConfig, type EffectiveNetworkConfig } from '../protocol/network-settings.ts';
 import { type TransferRestoreSnapshot } from './transfer.ts';
 import { TransferTeardownError } from './transfer-teardown.ts';
+import { CodedError, ErrorCodes } from '@shared';
+
+/** The settings commit succeeded before a later runtime step failed. */
+export class SettingsCommittedError extends CodedError {
+	constructor(error: unknown) {
+		super(error instanceof CodedError ? error.code : ErrorCodes.INTERNAL_ERROR, error instanceof CodedError ? error.detail : error instanceof Error ? error.message : undefined);
+	}
+}
 
 /** What the restart manager drives; the handlers and `Networks` keep owning their state. */
 export interface NetworkRestartDeps {
@@ -85,16 +93,29 @@ export class NetworkRestartManager {
 	 * values and has nothing left to restore; otherwise the node is restarted around the commit.
 	 */
 	async apply(change: SettingsChange): Promise<void> {
-		if (!requestsP2PApply(change.scope.paths)) {
-			await change.commit();
-			return;
+		let committed = false;
+		const commit = change.commit;
+		change = {
+			...change,
+			commit: async () => {
+				await commit();
+				committed = true;
+			},
+		};
+		try {
+			if (!requestsP2PApply(change.scope.paths)) {
+				await change.commit();
+				return;
+			}
+			if (!this.needsRestart(change.after.network)) {
+				await change.commit();
+				this.deps.applyLimits(change.after.network);
+				return;
+			}
+			await this.restart(change);
+		} catch (error) {
+			throw committed ? new SettingsCommittedError(error) : error;
 		}
-		if (!this.needsRestart(change.after.network)) {
-			await change.commit();
-			this.deps.applyLimits(change.after.network);
-			return;
-		}
-		await this.restart(change);
 	}
 
 	/**

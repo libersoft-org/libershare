@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NetworkRestartManager, type NetworkRestartDeps } from '../../../src/api/network-restart.ts';
+import { NetworkRestartManager, SettingsCommittedError, type NetworkRestartDeps } from '../../../src/api/network-restart.ts';
+import { initSettingsHandlers } from '../../../src/api/settings.ts';
+import { StorageWriteError } from '../../../src/storage.ts';
+import { CodedError, ErrorCodes } from '@shared';
 import { Settings } from '../../../src/settings.ts';
 import { effectiveNetworkConfig, type EffectiveNetworkConfig } from '../../../src/protocol/network-settings.ts';
 import type { TransferRestoreSnapshot } from '../../../src/api/transfer.ts';
@@ -76,10 +79,62 @@ async function setup(overrides: Partial<NetworkRestartDeps> = {}) {
 		...overrides,
 	});
 	settings.setChangeApplier(change => manager.apply(change));
-	return { settings, manager, log, restored, failStart: (fails: boolean) => (startFails = fails), holdLeave: () => (stuckLeave = { cancelled: false }) };
+	return { dir, settings, manager, log, restored, failStart: (fails: boolean) => (startFails = fails), holdLeave: () => (stuckLeave = { cancelled: false }) };
 }
 
 describe('settings changes on the running node', () => {
+	it('does not infer a committed import from matching values after preparation fails', async () => {
+		const failure = new CodedError(ErrorCodes.NETWORK_NOT_RUNNING);
+		const { settings, dir } = await setup({
+			isRunning: () => false,
+			pauseTransfers: async () => {
+				throw failure;
+			},
+		});
+		const previous = readFileSync(join(dir, 'settings.json'), 'utf8');
+		const incomingPort = settings.get('network.incomingPort');
+		await expect(initSettingsHandlers(settings).applyImported({ data: { network: { incomingPort } } })).rejects.toBe(failure);
+		expect(readFileSync(join(dir, 'settings.json'), 'utf8')).toBe(previous);
+	});
+
+	it('marks committed imports while preserving the original settings.set error code and detail', async () => {
+		const failure = new CodedError(ErrorCodes.NETWORK_PORT_IN_USE, '29999');
+		const { settings, dir } = await setup({
+			startEnabledNetworks: async () => {
+				throw failure;
+			},
+		});
+		const single = await settings.set('network.incomingPort', 29999).catch(error => error);
+		expect(single).toBeInstanceOf(SettingsCommittedError);
+		expect(single).toMatchObject({ code: failure.code, detail: failure.detail });
+		const imported = await initSettingsHandlers(settings)
+			.applyImported({ data: { network: { incomingPort: 29999 }, audio: { volume: 37 } } })
+			.catch(error => error);
+		expect(imported).toMatchObject({ code: ErrorCodes.SETTINGS_SAVED_NOT_APPLIED, detail: JSON.stringify({ code: ErrorCodes.NETWORK_PORT_IN_USE, detail: '29999' }) });
+		expect(JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))).toMatchObject({ network: { incomingPort: 29999 }, audio: { volume: 37 } });
+	});
+
+	it('marks a failed live apply only after its settings commit has completed', async () => {
+		const { settings, manager } = await setup({
+			applyLimits: () => {
+				throw new Error('private runtime detail');
+			},
+		});
+		const handlers = initSettingsHandlers(settings);
+		await expect(handlers.applyImported({ data: { network: { maxUploadSpeed: 123 } } })).rejects.toMatchObject({ code: ErrorCodes.SETTINGS_SAVED_NOT_APPLIED, detail: JSON.stringify({ code: ErrorCodes.INTERNAL_ERROR }) });
+		expect(settings.get('network.maxUploadSpeed')).toBe(123);
+		const failure = new StorageWriteError(new Error('save failed'), true);
+		settings.setChangeApplier(change =>
+			manager.apply({
+				...change,
+				commit: async () => {
+					throw failure;
+				},
+			})
+		);
+		await expect(handlers.applyImported({ data: { network: { maxUploadSpeed: 456 } } })).rejects.toBe(failure);
+	});
+
 	it('waits for verification draining after transfer pause fails', async () => {
 		const entered = Promise.withResolvers<void>(),
 			release = Promise.withResolvers<void>();

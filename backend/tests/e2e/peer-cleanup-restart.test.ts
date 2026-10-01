@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { networkInterfaces, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -116,6 +116,33 @@ async function ready(n: ReturnType<typeof node>): Promise<void> {
 }
 
 describe('peer cleanup across a process restart', () => {
+	it('reports a saved import when its new port is occupied and retries after it is freed', async () => {
+		const a = node('import-settings', free(), free());
+		await ready(a);
+		const ac = await client(a.apiPort);
+		const peerID = (await ac.call('lishnets.getNodeInfo')).result.peerID;
+		const taken = free();
+		const blocker = Bun.listen({ hostname: '0.0.0.0', port: taken, socket: { data() {} } });
+		blockers.push(blocker);
+		const data = { network: { incomingPort: taken }, ui: { cursorSize: 'large' } };
+		try {
+			const failed = await ac.call('settings.applyImported', { data });
+			expect(failed).toMatchObject({ error: 'SETTINGS_SAVED_NOT_APPLIED' });
+			expect(JSON.parse(failed.errorDetail)).toMatchObject({ code: 'NETWORK_PORT_IN_USE', detail: String(taken) });
+			expect(failed.result).toBeUndefined();
+			expect((await ac.call('settings.list')).result).toMatchObject(data);
+			expect(JSON.parse(readFileSync(join(a.root, 'settings.json'), 'utf8'))).toMatchObject(data);
+			expect((await ac.call('lishnets.getNodeInfo')).result).toBeNull();
+			blocker.stop(true);
+			expect((await ac.call('settings.applyImported', { data })).result).toMatchObject({ applied: 2, skipped: [] });
+			expect((await ac.call('lishnets.getNodeInfo')).result.peerID).toBe(peerID);
+		} finally {
+			ac.close();
+			a.proc.kill();
+			await a.proc.exited;
+		}
+	}, 120_000);
+
 	it('retries a failed port change without restarting for unrelated settings', async () => {
 		const a = node('settings', free(), free());
 		await ready(a);
