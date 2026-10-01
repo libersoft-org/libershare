@@ -46,6 +46,7 @@ describe('host network administration trust boundary', () => {
 			primaryID: null,
 			detail: 'full' as const,
 			known: true,
+			ipv4ProfilesUnavailable: false,
 			capabilities: { ipv4: true, wifi: true, staticGatewayRequired: false },
 		};
 		expect(networkStateForClient(state, true, true).capabilities).toEqual(state.capabilities);

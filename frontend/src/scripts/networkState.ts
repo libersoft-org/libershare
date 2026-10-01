@@ -8,7 +8,7 @@ import { deriveConnectionStatus, type ConnectionStatus, type NetIPv4Baseline, ty
  * `known: false` until the first read arrives, so consumers can render an
  * honest "unknown" instead of a placeholder that looks like real data.
  */
-export const networkState = writable<NetworkStateInfo>({ interfaces: [], primaryID: null, detail: 'full', known: false, capabilities: { ipv4: false, wifi: false, staticGatewayRequired: false } });
+export const networkState = writable<NetworkStateInfo>({ interfaces: [], primaryID: null, detail: 'full', known: false, capabilities: { ipv4: false, wifi: false, staticGatewayRequired: false }, ipv4ProfilesUnavailable: false });
 export const networkSubscriptionActive = writable(false);
 
 /** The footer connection widget's input, projected from {@link networkState}. */

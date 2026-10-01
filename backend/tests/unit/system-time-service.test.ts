@@ -331,7 +331,7 @@ describe('the budget along the real save path', () => {
 			seen.push(remainingSaveBudget());
 			return { success: true, outcome: 'ok' as const, message: null };
 		};
-		const answer = await applySystemTimeSettings({ ntpEnabled: false, ntpServer: 'ntp.example.org', timezone: 'UTC', clock: { hours: 1, minutes: 2, seconds: 3 } }, { setNtpEnabled: operation, setNtpServer: operation, setTimezone: operation, setClock: operation }, readStatus);
+		const answer = await applySystemTimeSettings({ ntpEnabled: false, ntpServer: 'ntp.example.org', timezone: 'UTC', clock: { hours: 1, minutes: 2, seconds: 3 } }, { setNtpEnabled: operation, setNtpServer: operation, setTimezone: operation, setClock: operation }, readStatus, mode);
 		expect(answer.success).toBe(true);
 		// Four operations, each of which sees a budget, and all of them the SAME one: it only
 		// ever shrinks. Four independent budgets would each start at the full figure.

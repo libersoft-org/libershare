@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { assertMacIPv4Applied, hasMacWritePrivilege, macApplyArgs, macRestoreRequiresLease, withMacRollback, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseScopedDns, parseHardwarePorts, parseIfconfig, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
+import { assertMacIPv4Applied, hasMacWritePrivilege, macApplyArgs, macRestoreRequiresLease, withMacRollback, macDbmToQuality, netmaskFromPrefix, parseAirport, parseDefaultRoute, parseDefaultRoutes, parseDhcpDns, parseScopedDns, parseHardwarePorts, parseIfconfig, parseIPv6DefaultRoutes, parseMacNetworkState, parseServiceBindings, parseServiceDns, parseServiceGateway, parseServiceIPv4, parseServiceInfo, parseServiceOrder, prefixFromHexMask } from '../../src/system-network-macos.ts';
 
 /**
  * Every fixture below is real output captured from a macOS 15.7.4 host, with the
@@ -291,6 +291,59 @@ describe('parseMacNetworkState', () => {
 		// A host with no IPv6 default route prints an error instead of a block, and
 		// the parser finds no interface in it.
 		expect(parseMacNetworkState({ ...sources, route: '', routes: '', route6: 'route: writing to routing socket: not in table' }).some(item => item.defaultRoute)).toBe(false);
+	});
+
+	/**
+	 * A VPN that installs only interface-scoped IPv6 defaults: `route get` on either family finds
+	 * nothing, and the table lists one scoped route per tunnel. Same column layout as the IPv4
+	 * table captured above.
+	 */
+	const TUNNELS = `${IFCONFIG}utun1: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380
+	inet6 fe80::1%utun1 prefixlen 64 scopeid 0x13
+utun0: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380
+	inet6 fe80::2%utun0 prefixlen 64 scopeid 0x12
+`;
+	const SCOPED6 = `Routing tables
+
+Internet6:
+Destination                             Gateway                                 Flags               Netif Expire
+default                                 fe80::%utun1                            UGcIg               utun1
+default                                 fe80::%utun0                            UGcIg               utun0
+::1                                     ::1                                     UHL                   lo0
+fe80::%lo0/64                           fe80::1%lo0                             UcI                   lo0
+`;
+	const noDefault = { ...sources, ifconfig: TUNNELS, route: '', routes: '', route6: 'route: writing to routing socket: not in table' };
+
+	it('falls back to a scoped IPv6 default route, choosing a stable tunnel', () => {
+		const state = parseMacNetworkState({ ...noDefault, routes6: SCOPED6 });
+		expect(state.filter(item => item.defaultRoute).map(item => item.id)).toEqual(['utun0']);
+		expect(state.find(item => item.id === 'utun0')?.gateway).toBeNull();
+		expect(parseMacNetworkState(noDefault).some(item => item.defaultRoute)).toBe(false);
+	});
+
+	it('prefers a global IPv6 route in the table, and never overrides route get', () => {
+		const global = SCOPED6.replace('fe80::%utun1                            UGcIg               utun1', 'fe80::1%en0                             UGc                 en0');
+		expect(parseMacNetworkState({ ...noDefault, routes6: global }).find(item => item.defaultRoute)?.id).toBe('en0');
+		expect(parseMacNetworkState({ ...sources, ifconfig: TUNNELS, routes6: SCOPED6 }).find(item => item.defaultRoute)?.id).toBe('en0');
+	});
+
+	it('skips loopback, missing, inactive, rejected and unusable routes', () => {
+		const table = `Destination Gateway Flags Netif Expire
+default fe80::%lo0 UGcIg lo0
+default fe80::%utun7 UGcIg utun7
+default fe80::%bridge0 UGcIg bridge0
+default fe80::%utun0 UGRcIg utun0
+default fe80::%utun1 GcIg utun1
+`;
+		expect(parseMacNetworkState({ ...noDefault, routes6: table }).some(item => item.defaultRoute)).toBe(false);
+	});
+
+	it('reads nothing from a table without a recognisable header', () => {
+		expect(parseIPv6DefaultRoutes('default fe80::%utun0 UGcIg utun0\n')).toEqual([]);
+		expect(parseIPv6DefaultRoutes(SCOPED6)).toEqual([
+			{ device: 'utun1', scoped: true },
+			{ device: 'utun0', scoped: true },
+		]);
 	});
 
 	it('builds the Wi-Fi interface from every source at once', () => {

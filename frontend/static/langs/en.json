@@ -377,6 +377,7 @@
 			"addressing": "Addressing",
 			"applying": "Applying…",
 			"applied": "Configuration applied.",
+			"ipv4ProfilesUnavailable": "Network profiles could not be read, IPv4 editing is disabled. It will be retried on the next refresh.",
 			"applyWarning": "Changing the network settings may interrupt the connection. If you get it wrong you may lose access to this machine over the network.",
 			"invalidField": "Check the {field} field.",
 			"field": {

@@ -20,7 +20,7 @@ function attempt(scenario: Scenario): { mutations: number; scans: number; code?:
 		mock.module('./src/system-network-linux.ts', () => ({
 			...platform,
 			readLinuxCapabilities: async () => ({ ipv4: true, wifi: true, staticGatewayRequired: false }),
-			readLinuxNetworkState: async () => [iface],
+			readLinuxNetworkState: async () => ({ interfaces: [iface], ipv4ProfilesUnavailable: false }),
 			scanLinuxWifi: async () => {
 				scans++;
 				return [{ ssid: 'Example', bssid: null, signal: 70, security: input.security, secured: input.security !== '', supported: true, active: false }];

@@ -688,6 +688,12 @@ export interface NetworkStateInfo {
 	known: boolean;
 	/** What this host actually lets the app change. Both false on a read-only platform. */
 	capabilities: NetCapabilities;
+	/**
+	 * True when NetworkManager manages this host's devices but their profiles could not be read
+	 * completely, so IPv4 editing is switched off until a later read succeeds. Always false on
+	 * a host without NetworkManager and on other platforms.
+	 */
+	ipv4ProfilesUnavailable: boolean;
 }
 
 /**
