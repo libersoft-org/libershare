@@ -147,6 +147,7 @@ interface InstalledBootstrap {
 export class Networks {
 	private db: Database;
 	private network: Network;
+	private readonly flushPeerCleanupClaims: () => void;
 
 	// Track which lishnets are currently joined (subscribed)
 	private joinedNetworks: Set<string> = new Set();
@@ -265,7 +266,7 @@ export class Networks {
 	constructor(db: Database, dataDir: string, dataServer: DataServer, settings: Settings) {
 		this.db = db;
 		this.network = new Network(dataDir, dataServer, settings);
-		observePeerCleanupClaims(db, this.network, () => this.getEnabled());
+		this.flushPeerCleanupClaims = observePeerCleanupClaims(db, this.network, () => this.getEnabled());
 		// Forward peer count changes from the network node
 		this.network.onPeerCountChange = counts => {
 			if (this._onPeerCountChange) this._onPeerCountChange(counts);
@@ -1523,24 +1524,23 @@ export class Networks {
 	}
 
 	/**
-	 * Queue live members and stored bootstraps before clearing the catalog. Stored rows still
-	 * matter after a failed restart has already emptied joinedNetworks.
+	 * Queue live members and stored bootstraps even after a failed restart.
 	 */
 	recordPeersForCatalogReset(): void {
 		this.db.transaction(() => this.recordLeavingPeers([...new Set([...this.joinedNetworks, ...this.list().map(row => row.networkID)])], new Set(), crypto.randomUUID()))();
 	}
 
 	private recordLeavingPeers(leaving: readonly string[], remaining: ReadonlySet<string>, operationID: string): void {
+		this.flushPeerCleanupClaims();
 		recordLeavingPeerCleanup(this.db, this.network, leaving, remaining, operationID, id => [...(this.get(id)?.bootstrapPeers ?? []), ...(this.appliedBootstrap.get(id)?.addresses ?? [])]);
 	}
 
 	/**
-	 * Before the node starts, finish the peer cleanup a previous run left behind: remove from the
-	 * peer store every recorded peer that no enabled lishnet still protects, then drop its rows.
-	 * A peer an enabled lishnet protects — by a recorded row or as its configured bootstrap — is
-	 * kept, rows and all. A failed removal fails the start and keeps the queue.
+	 * Before autodial, remove queued peers without an enabled owner. Failed writes or
+	 * deletions fail startup and retain the queue.
 	 */
 	private async replayPeerCleanup(node: { peerStore: { delete(peerID: PeerId): Promise<void> } }): Promise<void> {
+		this.flushPeerCleanupClaims();
 		await replayPeerCleanup(this.db, node, () => this.getEnabled());
 	}
 

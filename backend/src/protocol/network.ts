@@ -537,11 +537,9 @@ export class Network {
 	 */
 	private readonly peerDisconnectHandlers = new Set<(peerID: string) => void>();
 
-	/**
-	 * Handlers subscribed via {@link onPeerSubscribe}. Held at Network level for the
-	 * same reason as {@link peerDisconnectHandlers} — the gossipsub listener that feeds
-	 * them is reinstalled per node, the subscriptions are not.
-	 */
+	/** Synchronous cleanup protection; a failed write must precede any cache publication. */
+	onPeerMembership: ((peerID: string, topic: string) => void) | null = null;
+	beforePeerCleanup: (() => void) | null = null;
 	onRelayConnection: ((peerID: string, relayIDs: string[]) => void) | null = null;
 	private readonly peerSubscribeHandlers = new Set<(peerID: string, topic: string) => void>();
 
@@ -653,6 +651,9 @@ export class Network {
 		// Lets the discovered-row cap keep live participants and drop dead addresses first.
 		this.bootstrapTracker.setMembersProvider((networkID): Set<string> => new Set(this.getTopicPeers(networkID)));
 		this.peerAnnounce = new PeerAnnounceManager({
+			beforeMemberConfirmed: (topic, peerID): void => {
+				this.onPeerMembership?.(peerID, topic);
+			},
 			getNode: (): Libp2p | null => this.node,
 			getPubsub: (): any => this.pubsub,
 			broadcast: (topic, msg, pubsub): Promise<void> => Network.publishOn(pubsub, topic, msg),
@@ -1162,10 +1163,17 @@ export class Network {
 	}
 
 	private setupEventListeners(): void {
-		this.addListener(this.node!, 'connection:open', (event: any) => {
+		const node = this.node!;
+		const epoch = this.runEpoch;
+		this.addListener(node, 'connection:open', (event: any) => {
 			const connection = event.detail;
+			if (this.node !== node || this.runEpoch !== epoch || !node.getConnections().includes(connection)) return;
 			const relays = relayPeerIDs(connection.remoteAddr.toString());
-			if (relays.length > 0) this.onRelayConnection?.(connection.remotePeer.toString(), relays);
+			try {
+				if (relays.length > 0) this.onRelayConnection?.(connection.remotePeer.toString(), relays);
+			} catch (err: any) {
+				trace(`[NET] relay cleanup claim failed: ${err?.message ?? err}`);
+			}
 		});
 		this.addListener(this.node!, 'peer:discovery', (evt: any) => {
 			const node = this.node;
@@ -2738,19 +2746,13 @@ export class Network {
 	 * suffix claimed). Removing the entry stops libp2p ReconnectQueue / autodial
 	 * from re-attempting the dead identity.
 	 *
-	 * Best-effort: a peerStore.delete failure is logged at debug but does not throw —
-	 * the same peer will be re-purged next cycle if libp2p keeps trying it.
-	 *
-	 * `epoch` binds the call to the node instance it was started for. This is the most
-	 * destructive path there is — it closes connections and deletes peerStore entries —
-	 * and it awaits in the middle, so a stop()/start() landing between those awaits
-	 * would otherwise let it finish against the NEXT node and evict a peer that
-	 * instance never had a problem with. The node reference is captured once for the
-	 * same reason: re-reading `this.node` after an await can hand back a different node.
+	 * Deletion errors leave cleanup pending. The captured node and epoch prevent a
+	 * delayed close from deleting records belonging to a later run.
 	 */
 	async purgeStalePeer(peerID: string, reason: string, epoch: number = this.runEpoch): Promise<'purged' | 'kept' | 'failed'> {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return 'kept';
+		this.beforePeerCleanup?.();
 		// A purge is scheduled from stale evidence, but a joined lishnet can claim the
 		// peer before this call gets its turn. Configuration ownership is recorded
 		// synchronously before any dial or peerStore write, so it is the authoritative
@@ -2781,6 +2783,7 @@ export class Network {
 			// peer while they were closing; do not let stale cleanup delete the record
 			// that the new owner is about to merge into.
 			if (this.isPeerNeededByJoinedNetwork(peerID, true)) return 'kept';
+			this.beforePeerCleanup?.();
 			await node.peerStore.delete(pid);
 			console.log(`[NET] purged stale peerStore entry ${peerID.slice(0, 16)}… (reason: ${reason})`);
 			if (epoch !== this.runEpoch) return 'purged';
@@ -3070,7 +3073,12 @@ export class Network {
 				continue;
 			}
 			if (!joinedTopics.has(topic)) continue;
-			this.peerAnnounce.noteMember(topic, peerId);
+			try {
+				this.peerAnnounce.noteMember(topic, peerId);
+			} catch (err: any) {
+				trace(`[NET] membership cleanup claim failed: ${err?.message ?? err}`);
+				continue;
+			}
 			for (const h of this.peerSubscribeHandlers) {
 				try {
 					h(peerId, topic);
@@ -3356,6 +3364,7 @@ export class Network {
 	async disconnectPeer(peerID: string, networkID: string, epoch: number = this.runEpoch): Promise<PeerReleaseOutcome> {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return 'incomplete';
+		this.beforePeerCleanup?.();
 		// Captured beside the node and for the same reason: a controller a later start
 		// installed does not speak for the run this call belongs to.
 		const signal = this.dialAbort.signal;
@@ -3371,21 +3380,9 @@ export class Network {
 			trace(`[NET] disconnectPeer: ${peerID.slice(0, 16)} is still claimed by a joined lishnet, leaving it alone`);
 			return 'kept';
 		}
-		// Suppression is claimed BEFORE the first await, not after the hangUp. The two
-		// awaits below yield, and a `peer:discovery` event landing in that window used to
-		// read "not suppressed", start a dial, and have it complete after the hangUp had
-		// already searched for connections and found none — leaving the peer connected
-		// with the leave apparently finished. Recording the intent up front makes the
-		// window harmless: the dial that lands late sees the suppression and closes itself.
+		// Suppress before yielding so a concurrent discovery cannot undo this leave.
 		this.addRedialSuppression(networkID, peerID);
-		// Remove the keep-alive tags FIRST so the imminent hangUp does not race
-		// the ReconnectQueue back into a re-dial. Both tags matter: the custom
-		// 'keep-alive-fleet' tag (peer-announce intake) and the native KEEP_ALIVE
-		// tag (stamped by addBootstrapPeers on every successfully dialed entry,
-		// including discovered ones) — libp2p itself re-dials any peer carrying a
-		// keep-alive tag, which would silently undo this disconnect. Passing
-		// undefined as the tag value removes it (per @libp2p/interface PeerStore
-		// merge semantics).
+		// Remove both keep-alive tags before hangUp to stop ReconnectQueue redialling.
 		try {
 			await node.peerStore.merge(pid, { tags: { 'keep-alive-fleet': undefined, [KEEP_ALIVE]: undefined } }, { signal });
 		} catch (err: any) {

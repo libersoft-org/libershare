@@ -24,19 +24,44 @@ function withRelays(network: Network, peers: Iterable<string>): Set<string> {
 }
 
 /** Observe new ownership before an interrupted leave can lose it across a restart. */
-export function observePeerCleanupClaims(db: Database, network: Network, enabled: () => LISHNetworkConfig[]): void {
-	network.onPeerSubscribe((peerID, topic) => {
+export function observePeerCleanupClaims(db: Database, network: Network, enabled: () => LISHNetworkConfig[]): () => void {
+	const pending = new Map<string, Set<string>>();
+	const flush = (): void => {
+		for (const [networkID, peers] of pending) {
+			recordPeerClaim(db, networkID, peers);
+			// An enclosing catalog transaction can still roll back this write.
+			if (!db.inTransaction) pending.delete(networkID);
+		}
+	};
+	const claim = (networkID: string, peers: Iterable<string>): void => {
+		const queued = new Set(listPeerCleanup(db).map(row => row.peerID));
+		const claims = pending.get(networkID) ?? new Set<string>();
+		for (const peer of peers) if (queued.has(peer)) claims.add(peer);
+		if (claims.size > 0) pending.set(networkID, claims);
+		flush();
+	};
+	network.beforePeerCleanup = flush;
+	network.onPeerMembership = (peerID, topic) => {
 		if (!topic.startsWith(LISH_TOPIC_PREFIX)) return;
 		const networkID = topic.slice(LISH_TOPIC_PREFIX.length);
 		if (!enabled().some(row => row.networkID === networkID)) return;
-		recordPeerClaim(db, networkID, withRelays(network, [peerID]));
-	});
+		claim(networkID, withRelays(network, [peerID]));
+	};
 	network.onRelayConnection = (peerID, relays) => {
 		const rows = listPeerCleanup(db);
+		const failures: unknown[] = [];
 		for (const config of enabled()) {
-			if (rows.some(row => row.networkID === config.networkID && row.peerID === peerID) || network.getTopicPeers(config.networkID).includes(peerID) || network.getRecentTopicMembers(config.networkID).includes(peerID) || configuredPeerIDs(config.bootstrapPeers).includes(peerID)) recordPeerClaim(db, config.networkID, relays);
+			if (rows.some(row => row.networkID === config.networkID && row.peerID === peerID) || network.getTopicPeers(config.networkID).includes(peerID) || network.getRecentTopicMembers(config.networkID).includes(peerID) || configuredPeerIDs(config.bootstrapPeers).includes(peerID)) {
+				try {
+					claim(config.networkID, relays);
+				} catch (error) {
+					failures.push(error);
+				}
+			}
 		}
+		if (failures.length > 0) throw new AggregateError(failures, 'Could not save relay cleanup claims');
 	};
+	return flush;
 }
 
 /** Candidates and all current owners are written in the catalog transaction. */
