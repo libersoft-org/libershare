@@ -95,8 +95,12 @@ export class ErrorRecovery {
 	completeDirection(lishID: string, direction: 'download' | 'upload'): void {
 		const pending = this.entries.get(lishID);
 		if (!pending) return;
-		const otherPending = direction === 'download' ? pending.uploadWasEnabled : pending.downloadWasEnabled;
-		if (!otherPending) this.stop(lishID);
+		if (direction === 'download') pending.downloadWasEnabled = false;
+		else pending.uploadWasEnabled = false;
+		if (!pending.downloadWasEnabled && !pending.uploadWasEnabled) {
+			this.stop(lishID);
+			this.cumulativeRetries.delete(lishID);
+		}
 	}
 
 	private removeEntry(lishID: string): void {

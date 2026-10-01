@@ -108,3 +108,54 @@ test('a pause near the retry limit preserves earlier failures and permits the ne
 		await f.close();
 	}
 });
+
+for (const first of ['download', 'upload'] as const)
+	for (const failures of [0, 4])
+		test(`completing both directions cancels recovery: ${first} first, ${failures} failures`, async () => {
+			const f = fixture();
+			const second = first === 'download' ? 'upload' : 'download';
+			try {
+				for (let failure = 0; failure < failures; failure++) {
+					await f.begin();
+					f.finish(true);
+					await until(() => f.recovery.getState(f.id)?.timer != null);
+				}
+				await f.recovery.pauseAllAndDrain();
+				const state = f.recovery.getState(f.id)!;
+				state.scheduledAt = Date.now() - state.nextRetryDelay;
+				f.recovery.resumeAll();
+				const timer = state.timer;
+				f.recovery.completeDirection(f.id, first);
+				expect(f.recovery.getState(f.id)?.[`${first}WasEnabled`]).toBe(false);
+				expect(f.recovery.getState(f.id)?.[`${second}WasEnabled`]).toBe(true);
+				expect(f.recovery.getState(f.id)?.timer).toBe(timer);
+				expect(f.recovery.getState(f.id)?.retryCount).toBe(failures);
+				f.recovery.completeDirection(f.id, second);
+				expect(f.recovery.getState(f.id)).toBeUndefined();
+				await Bun.sleep(20);
+				expect(f.attempts()).toBe(0);
+				expect(f.events).not.toContain('transfer.recovery:exhausted');
+				f.recovery.start(f.id, ErrorCodes.DISK_FULL, { downloadEnabled: true, uploadEnabled: true });
+				expect(f.recovery.getState(f.id)?.retryCount).toBe(0);
+			} finally {
+				await f.close();
+			}
+		});
+
+test('a new failure re-arms a completed direction while the other still waits', async () => {
+	const f = fixture();
+	try {
+		f.recovery.completeDirection(f.id, 'download');
+		expect(f.recovery.getState(f.id)?.downloadWasEnabled).toBe(false);
+		f.recovery.start(f.id, ErrorCodes.DISK_FULL, { downloadEnabled: true, uploadEnabled: false });
+		f.recovery.completeDirection(f.id, 'upload');
+		expect(f.recovery.getState(f.id)?.downloadWasEnabled).toBe(true);
+		expect(f.recovery.getState(f.id)?.uploadWasEnabled).toBe(false);
+		await f.begin();
+		f.finish();
+		await until(() => f.attempts() === 1);
+		expect(f.events).toContain('transfer.recovery:recovered');
+	} finally {
+		await f.close();
+	}
+});
