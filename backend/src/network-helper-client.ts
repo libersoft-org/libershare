@@ -476,12 +476,15 @@ function withinSaveBudget<T>(work: Promise<T>): Promise<T> {
  * "not authorized"; `osascript` reports a cancelled `with administrator privileges`
  * dialog as error -128. Both mean the helper was never started.
  */
-const AUTHORIZATION_DECLINED_RE = /\bexited with 12[67]\b|-128|User canceled|not authorized/i;
+const AUTHORIZATION_DECLINED_RE = /\bexited with 12[67]\b|\(-128\)\s*$|User canceled|not authorized/i;
 
 export function helperTransportFailure(error: unknown): SystemTimeResult {
 	const message = failureText(error);
+	const stderr = (error as { stderr?: unknown } | null)?.stderr;
+	const diagnostic = typeof stderr === 'string' ? stderr : stderr instanceof Uint8Array ? new TextDecoder().decode(stderr) : error instanceof Error ? error.message : String(error);
 	// The person said no, which is not the same as this process being unable to ask.
-	if (AUTHORIZATION_DECLINED_RE.test(message)) return systemTimeHelperFailure('elevation-declined', message);
+	// execFile prefixes long commands to the diagnostic; classify it before limiting UI text.
+	if (AUTHORIZATION_DECLINED_RE.test(diagnostic)) return systemTimeHelperFailure('elevation-declined', failureText(diagnostic));
 	return { ...systemTimeHelperFailure('error', message), stateMayHaveChanged: true };
 }
 
