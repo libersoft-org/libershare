@@ -3,6 +3,7 @@ import { createDataset, openDataset, type DatasetRoot, type SafeDataset } from '
 import { resolve, relative, isAbsolute } from 'node:path';
 import { datasetRootPath, conservativeDatasetRoot } from './dataset-root.ts';
 import type { DatasetFileHandle } from './safe-dataset-types.ts';
+import type { DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 
 export interface DatasetMoveResult {
  cleanupWarnings: { stage: 'source-cleanup' | 'target-close' | 'source-close'; code: string }[];
@@ -34,11 +35,13 @@ function directoriesOf(manifest: ILISH): string[] {
 	return [...paths].sort((a, b) => b.split('/').length - a.split('/').length || b.localeCompare(a));
 }
 
-function materializedFiles(manifest: ILISH, root: DatasetRoot): { source: string; file: NonNullable<ILISH['files']>[number] }[] {
+function materializedFiles(manifest: ILISH, root: DatasetRoot, bindings: readonly DatasetLinkBinding[]): { source: string; file: NonNullable<ILISH['files']>[number] }[] {
 	const files = manifest.files ?? [];
 	const entries = files.map(file => ({ source: file.path, file }));
 	for (const link of manifest.links ?? []) {
-		const path = relative(datasetRootPath(root), resolve(datasetRootPath(root), link.target))
+		const binding = bindings.find(entry => entry.path === link.path);
+		if (binding && (binding.target !== link.target || binding.hardlink !== (link.hardlink === true))) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'The local link association no longer matches the manifest');
+		const path = binding?.source ?? relative(datasetRootPath(root), resolve(datasetRootPath(root), link.target))
 			.split('\\')
 			.join('/');
 		const target = files.find(file => file.path === path);
@@ -144,9 +147,10 @@ async function copyFile(source: DatasetFileHandle, target: DatasetFileHandle, fi
 }
 
 /** The destination is exclusively created; the original survives any failure before commit. */
-export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, targetRoot: DatasetRoot, commit: () => void, progress: (event: DatasetMoveProgress) => void, verification: 'manifest' | 'source' = 'manifest'): Promise<DatasetMoveResult> {
+export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, targetRoot: DatasetRoot, commit: (bindings: DatasetLinkBinding[]) => void, progress: (event: DatasetMoveProgress) => void, verification: 'manifest' | 'source' = 'manifest', bindings: readonly DatasetLinkBinding[] = []): Promise<DatasetMoveResult> {
 	validateLISHStructure(manifest, Number.MAX_SAFE_INTEGER);
-	const copies = materializedFiles(manifest, sourceRoot);
+	const copies = materializedFiles(manifest, sourceRoot, bindings);
+	const nextBindings = (manifest.links ?? []).map(link => ({ path: link.path, target: link.target, hardlink: link.hardlink === true, source: copies.find(entry => entry.file.path === link.path)!.source }));
 	const copiedManifest = { ...manifest, files: copies.map(entry => entry.file), links: [] };
 	const source = await openDataset(sourceRoot);
 	let target: SafeDataset | undefined;
@@ -198,7 +202,7 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 		}
 		await target.prepare(copiedManifest, { reserve: false, writable: true });
 		commitStarted = true;
-		commit();
+		commit(nextBindings);
 		committed = true;
 		try {
 			if (await removeContents(source, manifest, sourceIdentities, sourceRoot.kind === 'derived')) result.cleanupWarnings.push({ stage: 'source-cleanup', code: 'ENOTEMPTY' });

@@ -4,6 +4,7 @@ import type { DatasetRoot } from '../lish/safe-dataset-files.ts';
 import { isAbsolute } from 'node:path';
 import { datasetRootPath } from '../lish/dataset-root.ts';
 import { addLISH } from './lishs.ts';
+import { replaceDatasetLinkBindings, type DatasetLinkBinding } from './lishs-link-bindings.ts';
 
 function validatedRoot(value: unknown): DatasetRoot {
 	if (value && typeof value === 'object') {
@@ -39,18 +40,20 @@ export function getDatasetRoot(db: Database, lishID: string, final = false): Dat
 export function addDataset(db: Database, lish: IStoredLISH, root: DatasetRoot, finalRoot?: DatasetRoot): void {
 	db.transaction(() => {
 		addLISH(db, lish);
+		replaceDatasetLinkBindings(db, lish.id, []);
 		setDatasetRoot(db, lish.id, root);
 		setDatasetRoot(db, lish.id, finalRoot ?? null, true);
 	})();
 }
 
 /** Directory and authority move together, so failed commits can safely discard the copy. */
-export function relocateDataset(db: Database, lishID: string, root: DatasetRoot, clearFinal = false): void {
+export function relocateDataset(db: Database, lishID: string, root: DatasetRoot, clearFinal = false, bindings?: readonly DatasetLinkBinding[]): void {
 	const checked = validatedRoot(root);
 	db.transaction(() => {
 		const result = db.run('UPDATE lishs SET directory = ? WHERE lish_id = ?', [datasetRootPath(checked), lishID]);
 		if (!result.changes) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, lishID);
 		setDatasetRoot(db, lishID, checked);
+		if (bindings !== undefined) replaceDatasetLinkBindings(db, lishID, bindings);
 		if (clearFinal) {
 			db.run('UPDATE lishs SET final_directory = NULL WHERE lish_id = ?', [lishID]);
 			setDatasetRoot(db, lishID, null, true);

@@ -107,6 +107,15 @@ function createLISHsSchema(db: Database): void {
 	db.run('CREATE INDEX IF NOT EXISTS idx_lishs_chunks_checksum ON lishs_chunks(checksum)');
 	db.run('CREATE INDEX IF NOT EXISTS idx_lishs_directories_id_lishs ON lishs_directories(id_lishs)');
 	db.run('CREATE INDEX IF NOT EXISTS idx_lishs_links_id_lishs ON lishs_links(id_lishs)');
+	db.run(`CREATE TABLE IF NOT EXISTS lishs_link_bindings (
+		lish_id TEXT NOT NULL REFERENCES lishs(lish_id) ON DELETE CASCADE,
+		path TEXT NOT NULL,
+		target TEXT NOT NULL,
+		source TEXT NOT NULL,
+		hardlink INTEGER NOT NULL CHECK (hardlink IN (0, 1)),
+		PRIMARY KEY (lish_id, path)
+	)`);
+
 	db.run(`CREATE TABLE IF NOT EXISTS lishs_roots (
 		lish_id TEXT NOT NULL REFERENCES lishs(lish_id) ON DELETE CASCADE,
 		is_final INTEGER NOT NULL CHECK (is_final IN (0, 1)),

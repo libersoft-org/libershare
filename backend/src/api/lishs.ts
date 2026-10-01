@@ -11,6 +11,7 @@ import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, 
 import { readdir, stat, access } from 'fs/promises';
 import { join, dirname, resolve } from 'path';
 import { openDataset, createDataset, type DatasetRoot } from '../lish/safe-dataset-files.ts';
+import type { DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 import { deleteDatasetData, moveDatasetData, type DatasetMoveResult } from '../lish/dataset-transfer.ts';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
@@ -683,11 +684,11 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			await stopDatasetWork(p.lishID);
 			setBusy(p.lishID, 'moving');
 			broadcast('lishs:move:status', { lishID: p.lishID, moving: true });
-			const commit = (): void => {
-				dataServer.relocateDataset(p.lishID, root);
+			const commit = (bindings?: readonly DatasetLinkBinding[]): void => {
+				dataServer.relocateDataset(p.lishID, root, false, bindings);
 			};
 			if (p.moveData && lish.directory) {
-				const result = await moveDatasetData(lish, storedRoot(lish), root, commit, progress => broadcast('lishs:move:progress', { lishID: p.lishID, ...progress }), 'source');
+				const result = await moveDatasetData(lish, storedRoot(lish), root, commit, progress => broadcast('lishs:move:progress', { lishID: p.lishID, ...progress }), 'source', dataServer.getDatasetLinkBindings(p.lishID));
 				reportMoveCleanup(p.lishID, newDir, result);
 			} else {
 				const target = await openDataset(root, true);
@@ -727,10 +728,12 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 				lish,
 				storedRoot(lish),
 				targetRoot,
-				() => {
-					dataServer.relocateDataset(lishID, targetRoot, true);
+				bindings => {
+					dataServer.relocateDataset(lishID, targetRoot, true, bindings);
 				},
-				progress => broadcast('lishs:move:progress', { lishID, ...progress })
+				progress => broadcast('lishs:move:progress', { lishID, ...progress }),
+				'manifest',
+				dataServer.getDatasetLinkBindings(lishID)
 			);
 			reportMoveCleanup(lishID, finalDir, result);
 			broadcast('lishs:move', { lishID, directory: finalDir });

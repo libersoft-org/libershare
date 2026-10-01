@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { resolve } from 'node:path';
 import { getDatasetRoot, setDatasetRoot, relocateDataset, addDataset } from '../../../src/db/lishs-roots.ts';
+import { getDatasetLinkBindings } from '../../../src/db/lishs-link-bindings.ts';
 import { addLISH, deleteLISH, getLISH } from '../../../src/db/lishs.ts';
 import { createTestDB, createTestLISH, TEST_LISH_ID } from '../helpers/fixtures.ts';
 
@@ -55,4 +56,35 @@ describe('local dataset roots', () => {
 		expect(getLISH(db, TEST_LISH_ID)?.files).toHaveLength(2);
 		expect(getLISH(db, TEST_LISH_ID)?.directory).toBe(root.path);
 	});
+});
+
+
+it('stores link associations atomically with relocation and resets them on import', () => {
+ const db = fixture();
+ const before = {kind: 'explicit' as const, path: resolve('before')};
+ const after = {kind: 'explicit' as const, path: resolve('after')};
+ const binding = {path: 'copy.bin', target: resolve('original/data.bin'), source: 'data.bin', hardlink: false};
+ addDataset(db, {...createTestLISH(TEST_LISH_ID), directory: before.path}, before);
+ relocateDataset(db, TEST_LISH_ID, after, false, [binding]);
+ expect(getDatasetLinkBindings(db, TEST_LISH_ID)).toEqual([binding]);
+ expect(getLISH(db, TEST_LISH_ID)).not.toHaveProperty('linkBindings');
+ db.run("CREATE TRIGGER refuse_binding BEFORE INSERT ON lishs_link_bindings BEGIN SELECT RAISE(ABORT, 'binding write rejected'); END");
+ expect(() => relocateDataset(db, TEST_LISH_ID, before, true, [{...binding, source: 'another.bin'}])).toThrow('binding write rejected');
+ expect(getDatasetRoot(db, TEST_LISH_ID)).toEqual(after);
+ expect(getLISH(db, TEST_LISH_ID)?.directory).toBe(after.path);
+ expect(getDatasetLinkBindings(db, TEST_LISH_ID)).toEqual([binding]);
+ addDataset(db, {...createTestLISH(TEST_LISH_ID), directory: before.path}, before);
+ expect(getDatasetLinkBindings(db, TEST_LISH_ID)).toEqual([]);
+});
+
+it('keeps local link associations when an overwrite rolls back', () => {
+ const db = fixture();
+ const root = {kind: 'explicit' as const, path: resolve('before')};
+ const binding = {path: 'copy.bin', target: resolve('original/data.bin'), source: 'data.bin', hardlink: false};
+ relocateDataset(db, TEST_LISH_ID, root, false, [binding]);
+ db.run("CREATE TRIGGER refuse_root BEFORE UPDATE ON lishs_roots BEGIN SELECT RAISE(ABORT, 'root rejected'); END");
+ expect(() => addDataset(db, {...createTestLISH(TEST_LISH_ID), files: []}, root)).toThrow('root rejected');
+ expect(getDatasetLinkBindings(db, TEST_LISH_ID)).toEqual([binding]);
+ deleteLISH(db, TEST_LISH_ID);
+ expect(getDatasetLinkBindings(db, TEST_LISH_ID)).toEqual([]);
 });
