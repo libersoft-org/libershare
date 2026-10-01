@@ -97,6 +97,39 @@ async function ready(n: ReturnType<typeof node>): Promise<void> {
 }
 
 describe('peer cleanup across a process restart', () => {
+	it('retries a failed port change without restarting for unrelated settings', async () => {
+		const a = node('settings', free(), free());
+		await ready(a);
+		const ac = await client(a.apiPort);
+		const networkID = crypto.randomUUID();
+		expect((await ac.call('lishnets.add', { network: { networkID, name: 'Settings test', description: '', bootstrapPeers: [], created: new Date().toISOString(), enabled: true } })).error).toBeUndefined();
+		const originalIdentity = (await ac.call('lishnets.getNodeInfo')).result.peerID;
+		const starts = () => a.log().split('Node started').length - 1;
+		const before = starts();
+		expect(before).toBeGreaterThan(0);
+		expect((await ac.call('settings.set', { path: 'network.maxDownloadSpeed', value: 64 })).error).toBeUndefined();
+		expect(starts()).toBe(before);
+		const taken = free();
+		const blocker = Bun.listen({ hostname: '0.0.0.0', port: taken, socket: { data() {} } });
+		blockers.push(blocker);
+		expect((await ac.call('settings.set', { path: 'network.incomingPort', value: taken })).error).toBe('NETWORK_PORT_IN_USE');
+		const deferred = await ac.call('lishnets.updateBootstrapPeers', { networkID, bootstrapPeers: [], detailed: true });
+		expect(deferred.result).toMatchObject({ stored: true, applied: false });
+		blocker.stop(true);
+		expect((await ac.call('settings.set', { path: 'audio.volume', value: 37 })).error).toBeUndefined();
+		expect(starts()).toBe(before);
+		expect((await ac.call('settings.set', { path: 'network.incomingPort', value: taken })).error).toBeUndefined();
+		const info = (await ac.call('lishnets.getNodeInfo')).result;
+		expect(info.peerID).toBe(originalIdentity);
+		expect(starts()).toBe(before + 1);
+		expect((await ac.call('lishnets.setEnabled', { networkID, enabled: true })).result).toMatchObject({ applied: true, joined: true, transitioned: false });
+		expect((await ac.call('settings.set', { path: 'network.incomingPort', value: taken })).error).toBeUndefined();
+		expect(starts()).toBe(before + 1);
+		ac.close();
+		a.proc.kill();
+		await a.proc.exited;
+	}, 120_000);
+
 	it('removes the peers of a lishnet whose leave never ran before the node starts again', async () => {
 		const NET = crypto.randomUUID();
 		const network = (bootstrapPeers: string[]) => ({ network: { networkID: NET, name: 'live-291', description: '', bootstrapPeers, created: new Date().toISOString(), enabled: true } });
