@@ -692,13 +692,13 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 				commit();
 			}
 			broadcast('lishs:move', { lishID: p.lishID, directory: newDir });
-			enqueueVerification(p.lishID);
-			return { success: true };
 		} finally {
 			movingLISHs.delete(p.lishID);
 			clearBusy(p.lishID);
 			broadcast('lishs:move:status', { lishID: p.lishID, moving: false });
 		}
+		enqueueVerification(p.lishID);
+		return { success: true };
 	}
 
 	async function finalizeDownload(lishID: string): Promise<SuccessResponse> {
