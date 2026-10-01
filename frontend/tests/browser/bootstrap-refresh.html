@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>Bootstrap refresh notification regression</title>
+	<pre id="results">Running...</pre>
+	<div id="peers"></div>
+	<script type="module">
+		import '/src/app.css';
+		import { mount, unmount, tick } from 'svelte';
+		import { get } from 'svelte/store';
+		import { api } from '/src/scripts/api.ts';
+		import { translations, t } from '/src/scripts/language.ts';
+		import { notifications } from '/src/scripts/notifications.ts';
+		import { notificationTimeout } from '/src/scripts/settings.ts';
+		import SettingsLISHNetworkPeers from '/src/pages/Settings/SettingsLISHNetworkPeers.svelte';
+
+		const root = document.querySelector('#peers');
+		const results = [];
+		const originalParse = api.lishnets.parseFromURL;
+		const originalUpdate = api.lishnets.updateBootstrapPeersDetailed;
+		const originalTimeout = get(notificationTimeout);
+		const network = { networkID: 'refresh-test', name: 'Test network', description: '', created: '2026-01-01T00:00:00Z', enabled: true, bootstrapPeers: ['/dns4/old.example.test/tcp/9090'] };
+		const next = { ...network, bootstrapPeers: ['/dns4/new.example.test/tcp/9090'] };
+		let component;
+		function assert(value, message) {
+			if (!value) throw new Error(message);
+		}
+		async function settle() {
+			await tick();
+			await new Promise(resolve => setTimeout(resolve, 0));
+			await tick();
+		}
+		async function check(name, response, expectedType, messageKey, stored) {
+			const updates = [];
+			let writes = 0;
+			try {
+				notifications.set([]);
+				api.lishnets.updateBootstrapPeersDetailed = async (networkID, peers) => {
+					writes++;
+					assert(networkID === network.networkID, 'Refresh wrote the wrong network');
+					assert(JSON.stringify(peers) === JSON.stringify(next.bootstrapPeers), 'Refresh did not use the public bootstrap list');
+					return structuredClone(response);
+				};
+				component = mount(SettingsLISHNetworkPeers, {
+					target: root,
+					props: { areaID: 'refresh-test', network: structuredClone(network), status: undefined, onUpdated: value => updates.push(value) },
+				});
+				await settle();
+				const button = [...root.querySelectorAll('.button')].find(item => item.textContent.trim() === get(t)('settings.lishNetwork.bootstrap.refreshFromList'));
+				assert(button, 'Refresh button is missing');
+				button.click();
+				await settle();
+				assert(writes === 1, 'Refresh did not submit exactly one write');
+				const notices = get(notifications);
+				assert(notices.length === (expectedType ? 1 : 0), `Expected ${expectedType ?? 'no'} notification, got ${notices.map(item => item.type).join(', ')}`);
+				if (expectedType) {
+					assert(notices[0].type === expectedType, 'Refresh reported the wrong outcome');
+					assert(notices[0].text === get(t)(messageKey), 'Refresh reported the wrong message');
+				}
+				assert(updates.length === (stored ? 1 : 0), 'Stored configuration was not handed back correctly');
+				if (stored) assert(JSON.stringify(updates[0]) === JSON.stringify(next), 'Updated bootstrap configuration was lost');
+				results.push({ name, passed: true });
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			} finally {
+				if (component) await unmount(component);
+				component = undefined;
+			}
+		}
+		try {
+			await new Promise(resolve => {
+				const unsubscribe = translations.subscribe(value => {
+					if (value.settings?.lishNetwork)
+						queueMicrotask(() => {
+							unsubscribe();
+							resolve();
+						});
+				});
+			});
+			notificationTimeout.set(0);
+			api.lishnets.parseFromURL = async () => [structuredClone(next)];
+			await check('stored but unapplied refresh only warns', { stored: true, applied: false, transitioned: false, value: next }, 'warning', 'settings.lishNetwork.savedNotApplied', true);
+			await check('applied refresh only reports success', { stored: true, applied: true, transitioned: false, value: next }, 'success', 'settings.lishNetwork.bootstrap.refreshSuccess', true);
+			await check('legacy refresh only warns that application is unconfirmed', { legacy: true, value: next }, 'warning', 'settings.lishNetwork.savedUnconfirmed', true);
+			await check('a rejected write does not report success or update the configuration', { stored: false, applied: false, transitioned: false, value: next }, null, null, false);
+		} catch (error) {
+			results.push({ name: 'fixture setup', passed: false, error: error.message });
+		} finally {
+			api.lishnets.parseFromURL = originalParse;
+			api.lishnets.updateBootstrapPeersDetailed = originalUpdate;
+			notificationTimeout.set(originalTimeout);
+			notifications.set([]);
+			window.bootstrapRefreshTestResults = results;
+			document.documentElement.dataset.testStatus = results.length === 4 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+		}
+	</script>
+</html>

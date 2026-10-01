@@ -158,11 +158,10 @@
 				addNotification($t('settings.lishNetwork.bootstrap.refreshNoMatch'), 'warning');
 				return;
 			}
-			const next = await updateNetworkBootstrapPeers(network.networkID, match.bootstrapPeers);
+			const next = await updateNetworkBootstrapPeers(network.networkID, match.bootstrapPeers, $t('settings.lishNetwork.bootstrap.refreshSuccess'));
 			if (!next) return;
 			onUpdated?.(next);
 			network = next;
-			addNotification($t('settings.lishNetwork.bootstrap.refreshSuccess'), 'success');
 		} catch (e) {
 			addNotification(translateError(e), 'error');
 		} finally {

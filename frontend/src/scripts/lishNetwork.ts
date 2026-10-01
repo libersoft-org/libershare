@@ -50,9 +50,9 @@ export async function setNetworkEnabled(networkID: string, enabled: boolean): Pr
  * Save a network's bootstrap list and hand back the stored config — also when the node has not
  * applied it yet, which is then said in a warning.
  */
-export async function updateNetworkBootstrapPeers(networkID: string, bootstrapPeers: string[]): Promise<LISHNetworkConfig | null> {
+export async function updateNetworkBootstrapPeers(networkID: string, bootstrapPeers: string[], success: string | null = null): Promise<LISHNetworkConfig | null> {
 	const response = await api.lishnets.updateBootstrapPeersDetailed(networkID, bootstrapPeers);
-	return reportMutation(response, null) ? response.value : null;
+	return reportMutation(response, success) ? response.value : null;
 }
 
 /**
