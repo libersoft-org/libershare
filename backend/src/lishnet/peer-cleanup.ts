@@ -34,8 +34,7 @@ export function observePeerCleanupClaims(db: Database, network: Network, enabled
 	network.onRelayConnection = (peerID, relays) => {
 		const rows = listPeerCleanup(db);
 		for (const config of enabled()) {
-			if (rows.some(row => row.networkID === config.networkID && row.peerID === peerID) || network.getTopicPeers(config.networkID).includes(peerID) || network.getRecentTopicMembers(config.networkID).includes(peerID) || configuredPeerIDs(config.bootstrapPeers).includes(peerID))
-				recordPeerClaim(db, config.networkID, relays);
+			if (rows.some(row => row.networkID === config.networkID && row.peerID === peerID) || network.getTopicPeers(config.networkID).includes(peerID) || network.getRecentTopicMembers(config.networkID).includes(peerID) || configuredPeerIDs(config.bootstrapPeers).includes(peerID)) recordPeerClaim(db, config.networkID, relays);
 		}
 	};
 }
@@ -47,10 +46,21 @@ export function recordLeavingPeerCleanup(db: Database, network: Network, leaving
 	const owners = [...remaining].filter(id => !leaving.includes(id)).map(id => ({ id, peers: peers(id) }));
 	for (const id of leaving) {
 		const candidates = [...peers(id)].filter(peer => {
-			try { peerIdFromString(peer); return true; } catch { return false; }
+			try {
+				peerIdFromString(peer);
+				return true;
+			} catch {
+				return false;
+			}
 		});
 		recordPeerCleanup(db, id, candidates, operationID);
-		for (const owner of owners) recordPeerCleanup(db, owner.id, candidates.filter(peer => owner.peers.has(peer)), operationID);
+		for (const owner of owners)
+			recordPeerCleanup(
+				db,
+				owner.id,
+				candidates.filter(peer => owner.peers.has(peer)),
+				operationID
+			);
 	}
 }
 
@@ -69,7 +79,12 @@ export async function replayPeerCleanup(db: Database, node: { peerStore: { delet
 	let removed = 0;
 	for (const [peer, peerRows] of byPeer) {
 		let id: PeerId;
-		try { id = peerIdFromString(peer); } catch { confirmPeerCleanup(db, peerRows); continue; }
+		try {
+			id = peerIdFromString(peer);
+		} catch {
+			confirmPeerCleanup(db, peerRows);
+			continue;
+		}
 		if (configured.has(peer) || peerRows.some(row => enabledIDs.has(row.networkID))) continue;
 		await node.peerStore.delete(id);
 		confirmPeerCleanup(db, peerRows);

@@ -341,10 +341,18 @@ export class Networks {
 		try {
 			const releaseCleanup = await this.peerCleanupMutex.acquire();
 			try {
-				await this.network.start([], { beforeStart: async node => {
-					try { await this.replayPeerCleanup(node); } finally { releaseCleanup(); }
-				} });
-			} finally { releaseCleanup(); }
+				await this.network.start([], {
+					beforeStart: async node => {
+						try {
+							await this.replayPeerCleanup(node);
+						} finally {
+							releaseCleanup();
+						}
+					},
+				});
+			} finally {
+				releaseCleanup();
+			}
 
 			// The enabled list is read AFTER the start, not before it. Reading it first meant
 			// startup worked from a snapshot taken before a long await: an API disable or
@@ -518,7 +526,11 @@ export class Networks {
 				await this.peerCleanupMutex.waitForUnlock();
 				continue;
 			}
-			try { return await body(); } finally { release(); }
+			try {
+				return await body();
+			} finally {
+				release();
+			}
 		}
 	}
 

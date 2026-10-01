@@ -8,7 +8,9 @@ import { listPeerCleanup, recordPeerCleanup } from '../../../src/db/peer-cleanup
 const peer = '12D3KooWQyNzs3o2PqCdxmSAxmn8AG5FDnbmTiSx3QRwsKTXaT3E';
 const relay = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
 const databases: Database[] = [];
-afterEach(() => { for (const db of databases.splice(0)) db.close(); });
+afterEach(() => {
+	for (const db of databases.splice(0)) db.close();
+});
 
 function fixture() {
 	const db = new Database(':memory:');
@@ -31,10 +33,21 @@ test('a new owner during a pending leave protects its peer and relay across rest
 	recordPeerCleanup(f.db, 'left', [peer, relay], 'leave');
 	f.liveConnections.push(f.connection);
 	f.subscribe();
-	expect(listPeerCleanup(f.db).filter(row => row.networkID === 'remaining').map(row => row.peerID).sort()).toEqual([peer, relay].sort());
+	expect(
+		listPeerCleanup(f.db)
+			.filter(row => row.networkID === 'remaining')
+			.map(row => row.peerID)
+			.sort()
+	).toEqual([peer, relay].sort());
 	const restarted = new Networks(f.db, '.', {} as never, {} as never) as any;
 	const deleted: string[] = [];
-	const node = { peerStore: { delete: async (id: { toString(): string }) => { deleted.push(id.toString()); } } };
+	const node = {
+		peerStore: {
+			delete: async (id: { toString(): string }) => {
+				deleted.push(id.toString());
+			},
+		},
+	};
 	await restarted.replayPeerCleanup(node);
 	expect(deleted).toEqual([]);
 	setLISHnetEnabled(f.db, 'remaining', false);
@@ -47,7 +60,11 @@ test('a new circuit after membership was recorded protects the queued relay sync
 	const f = fixture();
 	recordPeerCleanup(f.db, 'left', [peer, relay], 'leave');
 	f.subscribe();
-	expect(listPeerCleanup(f.db).filter(row => row.networkID === 'remaining').map(row => row.peerID)).toEqual([peer]);
+	expect(
+		listPeerCleanup(f.db)
+			.filter(row => row.networkID === 'remaining')
+			.map(row => row.peerID)
+	).toEqual([peer]);
 	f.network.setupEventListeners();
 	f.liveConnections.push(f.connection);
 	f.node.dispatchEvent(new CustomEvent('connection:open', { detail: f.connection }));
@@ -65,7 +82,13 @@ test('a newly configured circuit protects its relay before the first connection 
 	recordPeerCleanup(f.db, 'left', [relay], 'leave');
 	updateLISHnet(f.db, { ...f.networks.get('remaining')!, bootstrapPeers: [f.connection.remoteAddr.toString()] });
 	const deleted: string[] = [];
-	await (f.networks as any).replayPeerCleanup({ peerStore: { delete: async (id: { toString(): string }) => { deleted.push(id.toString()); } } });
+	await (f.networks as any).replayPeerCleanup({
+		peerStore: {
+			delete: async (id: { toString(): string }) => {
+				deleted.push(id.toString());
+			},
+		},
+	});
 	expect(deleted).toEqual([]);
 	expect(listPeerCleanup(f.db)).toHaveLength(1);
 });
@@ -73,7 +96,11 @@ test('a newly configured circuit protects its relay before the first connection 
 test('catalog reset records active relays as candidates instead of silently excluding them', () => {
 	const f = fixture();
 	f.liveConnections.push(f.connection);
-	f.network.getTopicPeers = (id: string) => id === 'remaining' ? [peer] : [];
+	f.network.getTopicPeers = (id: string) => (id === 'remaining' ? [peer] : []);
 	f.networks.recordPeersForCatalogReset();
-	expect(listPeerCleanup(f.db).map(row => row.peerID).sort()).toEqual([peer, relay].sort());
+	expect(
+		listPeerCleanup(f.db)
+			.map(row => row.peerID)
+			.sort()
+	).toEqual([peer, relay].sort());
 });
