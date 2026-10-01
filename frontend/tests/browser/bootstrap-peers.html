@@ -55,7 +55,8 @@
 			filter.value = 'problems';
 			filter.dispatchEvent(new Event('change', { bubbles: true }));
 		}, 3);
-		window.testResults = results;
+		window.bootstrapPeersTestResults = results;
+		document.documentElement.dataset.testStatus = results.every(result => result.passed) ? 'passed' : 'failed';
 		document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 	</script>
 </html>
