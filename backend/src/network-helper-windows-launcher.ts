@@ -1,8 +1,9 @@
 import { dirname, join } from 'node:path';
+import { uptime } from 'node:os';
 import { productName } from '@shared';
-import { expectedNetworkHelperHash, HelperVerificationTimeoutError } from './network-helper-integrity.ts';
-import { decodeNetworkHelperRequest } from './network-helper-protocol.ts';
-import { systemTimeExitCode } from './system-time-helper.ts';
+import { expectedNetworkHelperHash, HASH_READ_LIMIT_MS, HelperVerificationTimeoutError } from './network-helper-integrity.ts';
+import { decodeNetworkHelperRequest, type NetworkHelperRequest } from './network-helper-protocol.ts';
+import { elevatedSaveBudget, systemTimeExitCode } from './system-time-helper.ts';
 import { runElevatedWindowsProcess, verifyWindowsInstalledHelper, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_NETWORK_ELEVATION_WAIT_MS, WINDOWS_LAUNCHER_EXIT, windowsCurrentProcessIdentity, windowsHelperParameters, windowsLocalAppDataPath, windowsRequestFileName, writeWindowsRequestFile } from './network-helper-windows.ts';
 
 /**
@@ -28,12 +29,13 @@ function elevationWaitFor(request: string): number {
 	}
 }
 
-/** True for a well-formed system-time request; decided without writing a request file. */
-function isSystemTimeRequest(encoded: string): boolean {
+/** Read the time deadline before verification or creating a request file. */
+function systemTimeRequest(encoded: string): Extract<NetworkHelperRequest, { operation: 'applySystemTime' }> | null {
 	try {
-		return decodeNetworkHelperRequest(encoded).operation === 'applySystemTime';
+		const request = decodeNetworkHelperRequest(encoded);
+		return request.operation === 'applySystemTime' ? request : null;
 	} catch {
-		return false;
+		return null;
 	}
 }
 
@@ -42,18 +44,25 @@ async function elevate(args: string[]): Promise<number> {
 	const helper = join(dirname(process.execPath), 'lish-network-helper.exe');
 	const expectedHash = expectedNetworkHelperHash();
 	const decoded = Buffer.from(args[1]!, 'base64url').toString('utf8');
+	const timeRequest = systemTimeRequest(args[1]!);
+	const remaining = (): number | null => (timeRequest ? elevatedSaveBudget(timeRequest.deadlineUptime, HASH_READ_LIMIT_MS, uptime()) : HASH_READ_LIMIT_MS);
+	const timeFailure = systemTimeExitCode({ success: false, outcome: 'error', message: null });
+	const timeoutMs = remaining();
+	if (timeoutMs === null) return timeFailure;
 	let trusted: boolean;
 	try {
-		trusted = !!expectedHash && (await verifyWindowsInstalledHelper(helper, process.execPath, expectedHash));
+		trusted = !!expectedHash && (await verifyWindowsInstalledHelper(helper, process.execPath, expectedHash, { timeoutMs }));
 	} catch (error) {
 		if (!(error instanceof HelperVerificationTimeoutError)) throw error;
 		// Not verified in time, and nothing elevated: a time save gets its own "error" outcome,
 		// which carries no change flag; anything else keeps the plain failure.
-		return isSystemTimeRequest(args[1]!) ? systemTimeExitCode({ success: false, outcome: 'error', message: null }) : 1;
+		return timeRequest ? timeFailure : 1;
 	}
 	if (!trusted) return WINDOWS_LAUNCHER_EXIT.untrusted;
+	if (remaining() === null) return timeFailure;
 	const request = writeWindowsRequestFile(join(windowsLocalAppDataPath(), productName, windowsRequestFileName(windowsCurrentProcessIdentity())), decoded);
 	try {
+		if (remaining() === null) return timeFailure;
 		const outcome = await runElevatedWindowsProcess(helper, windowsHelperParameters(request.path), elevationWaitFor(decoded));
 		if (outcome.kind === 'cancelled') return WINDOWS_LAUNCHER_EXIT.cancelled;
 		if (outcome.kind === 'denied') return WINDOWS_LAUNCHER_EXIT.denied;
