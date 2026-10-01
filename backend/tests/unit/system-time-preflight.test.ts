@@ -88,7 +88,7 @@ describe('combined time save with a clock', () => {
 		for (const after of [status({ clockHeldByUnmanagedDaemon: true }), status({ clockHeldByUnmanagedDaemon: null }), status({ ntpEnabled: true }), status({ ntpEnabled: null })]) {
 			const calls: string[] = [];
 			let reads = 0;
-			const result = await applySystemTimeSettings({ ...combined, ntpEnabled: false }, writers(calls), async () => reads++ === 0 ? status({ ntpEnabled: true }) : after, stoppedService);
+			const result = await applySystemTimeSettings({ ...combined, ntpEnabled: false }, writers(calls), async () => (reads++ === 0 ? status({ ntpEnabled: true }) : after), stoppedService);
 			expect(result).toMatchObject({ success: false, changed: true, stateMayHaveChanged: true });
 			expect(calls).toEqual(['ntp:false']);
 		}
@@ -96,7 +96,12 @@ describe('combined time save with a clock', () => {
 
 	it.if(process.platform === 'win32')('refuses a Windows service still changing state after disabling synchronisation', async () => {
 		const calls: string[] = [];
-		const result = await applySystemTimeSettings({ ...combined, ntpEnabled: false }, writers(calls), async () => status(), async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'changing', ntpClientEnabled: true }));
+		const result = await applySystemTimeSettings(
+			{ ...combined, ntpEnabled: false },
+			writers(calls),
+			async () => status(),
+			async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'changing', ntpClientEnabled: true })
+		);
 		expect(result).toMatchObject({ outcome: 'auto-sync-enabled', changed: true, stateMayHaveChanged: true });
 		expect(calls).toEqual(['ntp:false']);
 	});
