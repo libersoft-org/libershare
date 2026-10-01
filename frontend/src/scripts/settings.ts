@@ -90,7 +90,7 @@ async function updateSetting<T>(store: Writable<T>, path: string, value: T): Pro
 }
 
 // Load all settings from backend
-export async function loadSettings(): Promise<void> {
+export async function loadSettings(options: { throwOnError?: boolean } = {}): Promise<void> {
 	try {
 		const [settings, defaults] = await Promise.all([api.settings.list(), api.settings.getDefaults()]);
 		settingsDefaults = defaults;
@@ -171,6 +171,7 @@ export async function loadSettings(): Promise<void> {
 		gamepadDeadzone.set(settings.input.gamepadDeadzone);
 	} catch (error) {
 		console.error('[Settings] Error loading settings:', error);
+		if (options.throwOnError) throw error;
 	}
 }
 

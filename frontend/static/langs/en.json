@@ -542,6 +542,8 @@
 			"confirmRestore": "Restore settings? Keys present in the backup will overwrite current values.",
 			"exported": "Settings were exported",
 			"restored": "Settings restored ({count} values)",
+			"savedNotApplied": "Settings were saved, but could not be fully applied. The network or transfers may be stopped: {detail}",
+			"reloadFailed": "Could not reload the current settings. Displayed values may be outdated: {detail}",
 			"restartHint": "Some changes will only take effect after restarting the application.",
 			"errorInvalidFormat": "Invalid backup file format"
 		},
