@@ -7,7 +7,7 @@ import { Downloader } from '../protocol/downloader.ts';
 import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads, setUploadRecoveryHooks, clearAllUploads } from '../protocol/lish-protocol.ts';
 import { join, dirname } from 'path';
 import { access, constants } from 'fs/promises';
-import { isBusy } from './busy.ts';
+import { isBusy, getBusyReason } from './busy.ts';
 import { restoreTransferBatch } from './transfer-restore.ts';
 import { ErrorRecovery } from './error-recovery.ts';
 import type { Settings } from '../settings.ts';
@@ -47,7 +47,7 @@ interface TransferHandlers {
 	/** Close transfer admission and wait for handlers already past the gate. */
 	pauseAll: () => Promise<void>;
 	/** Tear down all in-memory transfer state (factory reset). Not a WS endpoint. */
-	clearAll: () => Promise<TransferRestoreSnapshot>;
+	clearAll: (options?: { preserveRecovery?: boolean }) => Promise<TransferRestoreSnapshot>;
 	/** Clear upload runtime after inbound protocol handlers and the node are stopped. */
 	clearUploads: () => void;
 	/** Restore persisted downloads while public transfer admission remains closed. */
@@ -360,14 +360,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		);
 	}
 
-	// LISHs whose download was suspended because their last joined lishnet was left,
-	// mapped to the lishnets they were bound to. Their DB enabled flag stays on (see
-	// onNetworkLeft), so onNetworkJoined resumes them — but only when a BOUND lishnet
-	// re-joins, never rebinding to an unrelated one. An empty bound set means "no known
-	// binding" (startup with no joined lishnet, where the fresh downloader would bind
-	// to whatever is enabled at resume time) → resume on any join. Cleared when the
-	// user explicitly enables/disables the download so a rejoin never overrides a
-	// deliberate user action.
+	// Preserve source bindings while waiting for a lishnet or for verification after
+	// restart. Empty means no known binding; otherwise resume only on a bound network.
+	// Explicit disable removes the claim so a later rejoin cannot override the user.
 	const networkSuspended = new Map<string, Set<string>>();
 	setNetworkSuspendedRef(networkSuspended);
 
@@ -446,14 +441,15 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	// Error recovery: auto-retry when IO conditions clear
 	const recovery = new ErrorRecovery({
-		attemptRecover: async (lishID, downloadWasEnabled, uploadWasEnabled): Promise<boolean> => {
+		attemptRecover: async (lishID, downloadWasEnabled, uploadWasEnabled): Promise<boolean | 'deferred'> => {
+			if (isBusy(lishID)) return 'deferred';
 			let ok = true;
 			if (downloadWasEnabled) {
 				const result = await enableDownload({ lishID }, undefined, false);
 				if (!result.success) ok = false;
 			}
 			if (uploadWasEnabled && ok) ok = enableUploadHandler({ lishID }).success;
-			return ok;
+			return !ok && isBusy(lishID) ? 'deferred' : ok;
 		},
 		broadcast: (event, data): void => {
 			broadcast?.(event, data);
@@ -1145,6 +1141,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 */
 	async function pauseAllTransfers(): Promise<void> {
 		const network = networks.getNetwork();
+		// An admitted retry restores download and upload before this gate can close.
+		await recovery.pauseAllAndDrain();
 		await Promise.all([transferAdmission.closeAndDrain(), network.pauseLISHProtocolHandlersAndDrain()]);
 		if (pendingDownloaderCleanups.size > 0) await Promise.allSettled([...pendingDownloaderCleanups]);
 	}
@@ -1153,7 +1151,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * Tear down downloader and recovery runtime before the node is stopped. Upload
 	 * state is cleared separately only after inbound handlers and libp2p are down.
 	 */
-	async function clearAllTransfers(): Promise<TransferRestoreSnapshot> {
+	async function clearAllTransfers(options: { preserveRecovery?: boolean } = {}): Promise<TransferRestoreSnapshot> {
 		await pauseAllTransfers();
 		const downloaderState: TransferRestoreSnapshot = new Map();
 		for (const [lishID, downloader] of activeDownloaders) {
@@ -1177,13 +1175,13 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			await destroyAllDownloaders(activeDownloaders, async lishID => {
 				const state = downloaderState.get(lishID);
 				if (!state) throw new Error(`Cannot restore download ${lishID}: reset snapshot is missing`);
-				return startStoredDownloader(lishID, state.networkIDs, state.originalNetworkIDs, state.disabled);
+				return startStoredDownloader(lishID, state.networkIDs, state.originalNetworkIDs, state.disabled || getBusyReason(lishID) === 'verifying');
 			});
 			while (pendingDownloadLifecycles.size > 0) await Promise.allSettled([...pendingDownloadLifecycles]);
 			downloadEnabledLishs.clear();
 			networkSuspended.clear();
 			Downloader.resetDownloadSpeedLimiter();
-			await recovery.stopAllAndDrain();
+			if (!options.preserveRecovery) await recovery.stopAllAndDrain();
 		} catch (error) {
 			throw new TransferTeardownError([error], error instanceof Error ? error.message : 'Transfer teardown failed', (error as { runtimeRestored?: boolean })?.runtimeRestored === true, downloaderState);
 		}
@@ -1194,17 +1192,14 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		clearAllUploads();
 	}
 
-	/**
-	 * Bring back the downloads a network restart tore down, all or none: see
-	 * {@link restoreTransferBatch}. Never writes the stored "download enabled" intent; a
-	 * download with no snapshot binds to the lishnets joined now, as a first enable would.
-	 */
+	/** Restore a batch without rewriting saved intent; retain bindings from its snapshot. */
 	async function restoreAllTransfers(lishIDs: Set<string>, snapshot: TransferRestoreSnapshot = new Map()): Promise<void> {
 		const isJoined = (networkID: string): boolean => networks.isJoined(networkID);
 		await restoreTransferBatch<Downloader>([...lishIDs], {
 			activeCount: () => activeDownloaders.size,
 			plan: async lishID => {
 				const state = snapshot.get(lishID);
+				if (getBusyReason(lishID) === 'verifying') return { kind: 'suspend', networkIDs: state ? (state.originalNetworkIDs.length > 0 ? state.originalNetworkIDs : state.networkIDs) : getJoinedEnabledNetworkIDs(networks) };
 				if (state) {
 					const restore = planDownloadRestore(state, isJoined);
 					if (restore.kind === 'suspend') return { kind: 'suspend', networkIDs: restore.networkIDs };
@@ -1249,7 +1244,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				broadcast?.('transfer.download:enabled', { lishID });
 			},
 			suspend: (lishID, networkIDs) => {
-				downloadEnabledLishs.delete(lishID);
+				if (getBusyReason(lishID) === 'verifying') downloadEnabledLishs.add(lishID);
+				else downloadEnabledLishs.delete(lishID);
 				networkSuspended.set(lishID, new Set(networkIDs));
 			},
 			complete: lishID => {
@@ -1262,6 +1258,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	function resumeAllTransfers(): void {
 		networks.getNetwork().resumeLISHProtocolHandlers();
 		transferAdmission.open();
+		recovery.resumeAll();
 	}
 
 	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers, subscribePeers: subscribePeersHandler, unsubscribePeers: unsubscribePeersHandler, debugPeers: debugPeersHandler, findPeers: findPeersHandler, pauseAll: pauseAllTransfers, clearAll: clearAllTransfers, clearUploads: clearUploadRuntime, restoreAll: restoreAllTransfers, resumeAll: resumeAllTransfers };

@@ -105,7 +105,8 @@ export class NetworkRestartManager {
 	private async restart(change: SettingsChange): Promise<void> {
 		const lease = await this.deps.prepareMaintenance();
 		try {
-			await Promise.all([this.deps.pauseTransfers(), this.deps.pauseLISHMutations()]);
+			const paused = await Promise.allSettled([this.deps.pauseTransfers(), this.deps.pauseLISHMutations()]);
+			for (const result of paused) if (result.status === 'rejected') throw result.reason;
 			// Retry also drains remnants of a failed teardown, retaining the original bindings.
 			const snapshot = this.retainPendingRestore(await this.deps.clearTransfers());
 			// A failed preparation must not poison the still-running node. Once prepared,

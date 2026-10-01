@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NetworkRestartManager } from '../../../src/api/network-restart.ts';
+import { NetworkRestartManager, type NetworkRestartDeps } from '../../../src/api/network-restart.ts';
 import { Settings } from '../../../src/settings.ts';
 import { effectiveNetworkConfig, type EffectiveNetworkConfig } from '../../../src/protocol/network-settings.ts';
 import type { TransferRestoreSnapshot } from '../../../src/api/transfer.ts';
@@ -22,7 +22,7 @@ afterEach(() => {
 
 const SNAPSHOT: TransferRestoreSnapshot = new Map([['lish-a', { networkIDs: ['net'], originalNetworkIDs: ['net'], disabled: false, suspended: false }]]);
 
-async function setup() {
+async function setup(overrides: Partial<NetworkRestartDeps> = {}) {
 	const dir = mkdtempSync(join(tmpdir(), 'lish-settings-runtime-'));
 	dirs.push(dir);
 	const settings = await Settings.create(dir);
@@ -73,12 +73,31 @@ async function setup() {
 		resumeTransfers: () => void log.push('resume'),
 		downloadIntent: () => new Set(['lish-a']),
 		applyLimits: () => void log.push('limits'),
+		...overrides,
 	});
 	settings.setChangeApplier(change => manager.apply(change));
 	return { settings, manager, log, restored, failStart: (fails: boolean) => (startFails = fails), holdLeave: () => (stuckLeave = { cancelled: false }) };
 }
 
 describe('settings changes on the running node', () => {
+	it('waits for verification draining after transfer pause fails', async () => {
+		const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+		let reopened = false;
+		const { settings } = await setup({
+			pauseTransfers: async () => { throw new Error('pause failed'); },
+			pauseLISHMutations: async () => { entered.resolve(); await release.promise; },
+			resumeLISHMutations: () => { reopened = true; },
+		});
+		const changing = settings.set('network.incomingPort', 29999).catch(error => error);
+		try {
+			await entered.promise;
+			await Bun.sleep(0);
+			expect(reopened).toBe(false);
+		} finally { release.resolve(); }
+		expect((await changing).message).toBe('pause failed');
+		expect(reopened).toBe(true);
+	});
+
 	it('only saves a write that touches no P2P setting', async () => {
 		const { settings, log } = await setup();
 		await settings.set('audio.volume', 40);

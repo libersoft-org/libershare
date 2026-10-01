@@ -17,7 +17,7 @@ interface RecoveryLISHRef {
 }
 
 interface RecoveryDeps {
-	attemptRecover: (lishID: string, downloadWasEnabled: boolean, uploadWasEnabled: boolean) => Promise<boolean>;
+	attemptRecover: (lishID: string, downloadWasEnabled: boolean, uploadWasEnabled: boolean) => Promise<boolean | 'deferred'>;
 	broadcast: (event: string, data: any) => void;
 	getLISH: (lishID: string) => RecoveryLISHRef | null;
 	checkAccess: (path: string) => Promise<void>;
@@ -41,6 +41,7 @@ export class ErrorRecovery {
 	private readonly cumulativeRetries = new Map<string, number>(); // persists across stop/restart cycles
 	private readonly lishGenerations = new Map<string, number>();
 	private generation = 0;
+	private paused = false;
 	private readonly inFlightAttempts = new Set<Promise<void>>();
 	private readonly deps: RecoveryDeps;
 
@@ -104,6 +105,23 @@ export class ErrorRecovery {
 		while (this.inFlightAttempts.size > 0) await Promise.allSettled([...this.inFlightAttempts]);
 	}
 
+	/** Retain retry intent while network maintenance drains admitted attempts. */
+	async pauseAllAndDrain(): Promise<void> {
+		this.paused = true;
+		for (const entry of this.entries.values()) {
+			if (entry.timer) clearTimeout(entry.timer);
+			entry.timer = null;
+		}
+		while (this.inFlightAttempts.size > 0) await Promise.allSettled([...this.inFlightAttempts]);
+	}
+
+	/** Restart retained timers only after transfer admission opens again. */
+	resumeAll(): void {
+		if (!this.paused) return;
+		this.paused = false;
+		for (const [lishID, entry] of this.entries) this.schedule(lishID, Math.max(0, entry.nextRetryDelay - (Date.now() - entry.scheduledAt)));
+	}
+
 	getState(lishID: string): RecoveryState | undefined {
 		return this.entries.get(lishID);
 	}
@@ -113,6 +131,7 @@ export class ErrorRecovery {
 		if (!entry) return;
 		entry.scheduledAt = Date.now();
 		entry.nextRetryDelay = delay;
+		if (this.paused) return;
 		const generation = this.generation;
 		const lishGeneration = this.lishGenerations.get(lishID) ?? 0;
 		entry.timer = setTimeout(() => this.launchAttempt(lishID, generation, lishGeneration), delay);
@@ -133,7 +152,7 @@ export class ErrorRecovery {
 	}
 
 	private async attempt(lishID: string, generation: number, lishGeneration: number): Promise<void> {
-		if (!this.isCurrent(lishID, generation, lishGeneration)) return;
+		if (this.paused || !this.isCurrent(lishID, generation, lishGeneration)) return;
 		const entry = this.entries.get(lishID);
 		if (!entry) return;
 		entry.retryCount++;
@@ -178,6 +197,7 @@ export class ErrorRecovery {
 		}
 		if (!this.isCurrent(lishID, generation, lishGeneration)) return;
 
+		if (this.paused) return;
 		// Directory accessible — attempt re-enable
 		console.debug(`[Recovery] ${lishID.slice(0, 8)}: directory accessible, attempting recovery (attempt ${entry.retryCount}/${MAX_RECOVERY_ATTEMPTS})`);
 		this.deps.broadcast('transfer.recovery:attempting', { lishID, retryCount: entry.retryCount });
@@ -189,12 +209,14 @@ export class ErrorRecovery {
 
 		const success = await this.deps.attemptRecover(lishID, downloadWasEnabled, uploadWasEnabled);
 		if (!this.isCurrent(lishID, generation, lishGeneration)) return;
-		if (success) {
+		if (success === true) {
 			this.cumulativeRetries.delete(lishID);
 			console.log(`[Recovery] ${lishID.slice(0, 8)}: recovered successfully`);
 			this.deps.broadcast('transfer.recovery:recovered', { lishID });
 		} else {
-			console.warn(`[Recovery] ${lishID.slice(0, 8)}: re-enable failed (attempt will restart via error handler)`);
+			// Verification is temporary contention, not another failed disk recovery.
+			if (success === 'deferred') this.cumulativeRetries.set(lishID, Math.max(0, entry.retryCount - 1));
+			this.start(lishID, entry.errorCode, { downloadEnabled: downloadWasEnabled, uploadEnabled: uploadWasEnabled });
 		}
 	}
 }
