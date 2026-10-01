@@ -11,7 +11,7 @@ import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, 
 import { readdir, stat, access } from 'fs/promises';
 import { join, dirname, resolve } from 'path';
 import { openDataset, createDataset, type DatasetRoot } from '../lish/safe-dataset-files.ts';
-import { deleteDatasetData, moveDatasetData } from '../lish/dataset-transfer.ts';
+import { deleteDatasetData, moveDatasetData, type DatasetMoveResult } from '../lish/dataset-transfer.ts';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
 type BroadcastFn = (event: string, data: any) => void;
@@ -664,6 +664,12 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		await destroyActiveDownloader(lishID);
 	}
 
+	function reportMoveCleanup(lishID: string, directory: string, result: DatasetMoveResult): void {
+		if (result.cleanupWarnings.length === 0) return;
+		console.warn('Dataset move completed with cleanup warnings:', result.cleanupWarnings);
+		broadcast('lishs:move:cleanup', { lishID, directory, warnings: result.cleanupWarnings });
+	}
+
 	async function moveAdmitted(p: MoveParams): Promise<SuccessResponse> {
 		assert(p, ['lishID', 'newDirectory']);
 		const lish = dataServer.get(p.lishID);
@@ -681,7 +687,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 				dataServer.relocateDataset(p.lishID, root);
 			};
 			if (p.moveData && lish.directory) {
-				await moveDatasetData(lish, storedRoot(lish), root, commit, progress => broadcast('lishs:move:progress', { lishID: p.lishID, ...progress }), 'source');
+				const result = await moveDatasetData(lish, storedRoot(lish), root, commit, progress => broadcast('lishs:move:progress', { lishID: p.lishID, ...progress }), 'source');
+				reportMoveCleanup(p.lishID, newDir, result);
 			} else {
 				const target = await openDataset(root, true);
 				try {
@@ -716,7 +723,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		setBusy(lishID, 'moving');
 		broadcast('lishs:move:status', { lishID, moving: true });
 		try {
-			await moveDatasetData(
+			const result = await moveDatasetData(
 				lish,
 				storedRoot(lish),
 				targetRoot,
@@ -725,6 +732,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 				},
 				progress => broadcast('lishs:move:progress', { lishID, ...progress })
 			);
+			reportMoveCleanup(lishID, finalDir, result);
 			broadcast('lishs:move', { lishID, directory: finalDir });
 			broadcast('lishs:finalize', { lishID, directory: finalDir });
 			return { success: true };

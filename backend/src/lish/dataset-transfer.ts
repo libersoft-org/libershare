@@ -4,6 +4,15 @@ import { resolve, relative, isAbsolute } from 'node:path';
 import { datasetRootPath, conservativeDatasetRoot } from './dataset-root.ts';
 import type { DatasetFileHandle } from './safe-dataset-types.ts';
 
+export interface DatasetMoveResult {
+ cleanupWarnings: { stage: 'source-cleanup' | 'target-close' | 'source-close'; code: string }[];
+}
+
+function cleanupCode(error: unknown): string {
+ const code = (error as NodeJS.ErrnoException | null)?.code;
+ return typeof code === 'string' && /^[A-Z_]{1,64}$/.test(code) ? code : 'IO_ERROR';
+}
+
 export interface DatasetMoveProgress {
 	type: 'file-list' | 'chunk' | 'file';
 	totalFiles: number;
@@ -52,7 +61,8 @@ async function snapshot(dataset: SafeDataset, manifest: ILISH): Promise<Map<stri
 	return identities;
 }
 
-async function removeContents(dataset: SafeDataset, manifest: ILISH, identities: Map<string, string>, removeRoot: boolean): Promise<void> {
+async function removeContents(dataset: SafeDataset, manifest: ILISH, identities: Map<string, string>, removeRoot: boolean): Promise<boolean> {
+	let retained = false;
 	for (const file of manifest.files ?? []) {
 		const identity = identities.get(file.path);
 		if (identity) await dataset.removeFile(file.path, identity);
@@ -64,9 +74,10 @@ async function removeContents(dataset: SafeDataset, manifest: ILISH, identities:
 			await dataset.removeDirectory(path, identity);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== 'ENOTEMPTY') throw error;
-			console.warn('Dataset directory retained because it still contains files or links');
+			retained = true;
 		}
 	}
+	return retained;
 }
 
 export async function deleteDatasetData(manifest: ILISH, root: DatasetRoot): Promise<void> {
@@ -133,13 +144,17 @@ async function copyFile(source: DatasetFileHandle, target: DatasetFileHandle, fi
 }
 
 /** The destination is exclusively created; the original survives any failure before commit. */
-export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, targetRoot: DatasetRoot, commit: () => void, progress: (event: DatasetMoveProgress) => void, verification: 'manifest' | 'source' = 'manifest'): Promise<void> {
+export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, targetRoot: DatasetRoot, commit: () => void, progress: (event: DatasetMoveProgress) => void, verification: 'manifest' | 'source' = 'manifest'): Promise<DatasetMoveResult> {
 	validateLISHStructure(manifest, Number.MAX_SAFE_INTEGER);
 	const copies = materializedFiles(manifest, sourceRoot);
 	const copiedManifest = { ...manifest, files: copies.map(entry => entry.file), links: [] };
 	const source = await openDataset(sourceRoot);
 	let target: SafeDataset | undefined;
 	let commitStarted = false;
+	let committed = false;
+	let failure: unknown;
+	let failed = false;
+	const result: DatasetMoveResult = { cleanupWarnings: [] };
 	let targetIdentities = new Map<string, string>();
 	try {
 		await source.prepare(manifest, { reserve: false, writable: false });
@@ -184,7 +199,11 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 		await target.prepare(copiedManifest, { reserve: false, writable: true });
 		commitStarted = true;
 		commit();
-		await removeContents(source, manifest, sourceIdentities, sourceRoot.kind === 'derived');
+		committed = true;
+		try {
+			if (await removeContents(source, manifest, sourceIdentities, sourceRoot.kind === 'derived')) result.cleanupWarnings.push({ stage: 'source-cleanup', code: 'ENOTEMPTY' });
+		}
+		catch (error) { result.cleanupWarnings.push({ stage: 'source-cleanup', code: cleanupCode(error) }); }
 	} catch (error) {
 		if (target && !commitStarted) {
 			try {
@@ -193,9 +212,18 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 				console.warn('The incomplete copy could not be removed safely:', cleanupError);
 			}
 		}
-		throw error;
+		failure = error;
+		failed = true;
 	} finally {
-		if (target) await target.close();
-		await source.close();
+		for (const [dataset, stage] of [[target, 'target-close'], [source, 'source-close']] as const) {
+			if (!dataset) continue;
+			try { await dataset.close(); }
+			catch (error) {
+				if (committed) result.cleanupWarnings.push({ stage, code: cleanupCode(error) });
+				else if (!failed) { failure = error; failed = true; }
+			}
+		}
 	}
+	if (failed) throw failure;
+	return result;
 }

@@ -6,6 +6,7 @@ import { openDatabase } from '../../../src/db/database.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { Settings } from '../../../src/settings.ts';
 import { initLISHsHandlers } from '../../../src/api/lishs.ts';
+import { SafeDataset } from '../../../src/lish/safe-dataset-files.ts';
 import { getBusyReason } from '../../../src/api/busy.ts';
 
 test('moving partial data keeps verification busy until the new location has been checked', async () => {
@@ -51,3 +52,46 @@ test('moving partial data keeps verification busy until the new location has bee
 		await rm(base, { recursive: true, force: true });
 	}
 });
+
+
+async function completeDataset(withLink = false) {
+ const base = await mkdtemp(join(tmpdir(), 'lish-move-review-'));
+ const source = join(base, 'source');
+ await mkdir(source);
+ await writeFile(join(source, 'data.bin'), 'abcd');
+ const db = openDatabase(base);
+ const data = new DataServer(db);
+ const id = 'move-review';
+ const manifest = { id, name: 'dataset', created: '2026-01-01', chunkSize: 4, checksumAlgo: 'sha256' as const, directory: source, files: [{ path: 'data.bin', size: 4, checksums: [new Bun.CryptoHasher('sha256').update('abcd').digest('hex')] }], ...(withLink ? {links: [{path: 'copy.bin', target: join(source, 'data.bin')}]} : {}) };
+ data.addDataset(manifest, {kind: 'derived', base, component: 'source'});
+ const events: {event: string; data: any}[] = [];
+ const handlers = initLISHsHandlers(data, () => {}, (event, payload) => events.push({event, data: payload}), await Settings.create(base));
+ return {base, source, db, data, id, manifest, events, handlers, async close() { await handlers.stopVerifyAll(); db.close(); await rm(base, {recursive: true, force: true}); }};
+}
+
+for (const operation of ['move', 'finalize'] as const) {
+ test(`${operation} commits successfully despite source cleanup permission errors`, async () => {
+  const f = await completeDataset();
+  const destination = join(f.base, 'target');
+  if (operation === 'finalize') {
+   f.data.updateFinalDirectory(f.id, destination);
+   f.data.setDatasetRoot(f.id, {kind: 'derived', base: f.base, component: 'target'}, true);
+  }
+  const cleanup = spyOn(SafeDataset.prototype, 'removeFile').mockRejectedValue(Object.assign(new Error('Cleanup refused'), {code: 'EACCES'}));
+  try {
+   const response = operation === 'move' ? await f.handlers.move({lishID: f.id, newDirectory: destination, moveData: true, createSubdirectory: false}) : await f.handlers.finalizeDownload(f.id);
+   expect(response).toEqual({success: true});
+   expect(f.data.get(f.id)?.directory).toBe(destination);
+   expect(await readFile(join(destination, 'data.bin'), 'utf8')).toBe('abcd');
+   expect(await readFile(join(f.source, 'data.bin'), 'utf8')).toBe('abcd');
+   expect(f.events.some(item => item.event === 'lishs:move')).toBe(true);
+   expect(f.events.some(item => item.event === 'lishs:move:cleanup' && item.data.warnings[0]?.code === 'EACCES')).toBe(true);
+   expect(f.events.some(item => item.event === 'lishs:finalize:error')).toBe(false);
+   if (operation === 'move') expect(f.events.some(item => item.event === 'lishs:verify' && item.data.started)).toBe(true);
+   else {
+    expect(f.data.get(f.id)?.finalDirectory).toBeUndefined();
+    expect(f.events.some(item => item.event === 'lishs:finalize')).toBe(true);
+   }
+  } finally { cleanup.mockRestore(); await f.close(); }
+ });
+}
