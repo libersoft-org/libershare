@@ -134,6 +134,17 @@
 				}
 				assert(reachedBack, 'Keyboard could not reach Back');
 			});
+			await test('unreadable profiles explain the read-only view and clear after a good refresh', async () => {
+				const unavailable = { ...structuredClone(host), ipv4ProfilesUnavailable: true, capabilities: { ipv4: false, wifi: false, staticGatewayRequired: false } };
+				networkState.set(unavailable);
+				await settle();
+				const message = get(t)('settings.network.ipv4ProfilesUnavailable');
+				assert([...root.querySelectorAll('[role="status"]')].some(item => item.textContent === message), 'Read-only overview hides the reason profiles could not be read');
+				assert(![...root.querySelectorAll('.button')].some(item => item.textContent.trim() === get(t)('settings.network.configure')), 'Unreadable profiles still allow opening configuration');
+				networkState.set({ ...structuredClone(host), ipv4ProfilesUnavailable: false });
+				await settle();
+				assert(!root.textContent.includes(message), 'Successful refresh leaves the old failure notice visible');
+			});
 		} finally {
 			finishWrite?.();
 			if (component) await unmount(component);
@@ -141,7 +152,7 @@
 			api.settings.set = originalSet;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.networkListTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 5 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 6 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>
