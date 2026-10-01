@@ -155,6 +155,7 @@ export class ErrorRecovery {
 		if (this.paused || !this.isCurrent(lishID, generation, lishGeneration)) return;
 		const entry = this.entries.get(lishID);
 		if (!entry) return;
+		const retriesBeforeAttempt = entry.retryCount;
 		entry.retryCount++;
 		this.cumulativeRetries.set(lishID, entry.retryCount);
 		entry.timer = null;
@@ -184,20 +185,26 @@ export class ErrorRecovery {
 			if (!this.isCurrent(lishID, generation, lishGeneration)) return;
 		}
 
-		// Check if directory is accessible
+		let accessFailed = false;
 		try {
 			await this.deps.checkAccess(lish.directory);
 		} catch {
-			if (!this.isCurrent(lishID, generation, lishGeneration)) return;
+			accessFailed = true;
+		}
+		if (!this.isCurrent(lishID, generation, lishGeneration)) return;
+		if (this.paused) {
+			// Maintenance interrupted this attempt before it could restore any work.
+			entry.retryCount = retriesBeforeAttempt;
+			this.cumulativeRetries.set(lishID, retriesBeforeAttempt);
+			return;
+		}
+		if (accessFailed) {
 			const nextDelay = getDelay(entry.errorCode, entry.retryCount);
 			console.warn(`[Recovery] ${lishID.slice(0, 8)}: still inaccessible (attempt ${entry.retryCount}/${MAX_RECOVERY_ATTEMPTS}), retry in ${Math.round(nextDelay / 1000)}s`);
 			this.deps.broadcast('transfer.recovery:scheduled', { lishID, delayMs: nextDelay, retryCount: entry.retryCount });
 			this.schedule(lishID, nextDelay);
 			return;
 		}
-		if (!this.isCurrent(lishID, generation, lishGeneration)) return;
-
-		if (this.paused) return;
 		// Directory accessible — attempt re-enable
 		console.debug(`[Recovery] ${lishID.slice(0, 8)}: directory accessible, attempting recovery (attempt ${entry.retryCount}/${MAX_RECOVERY_ATTEMPTS})`);
 		this.deps.broadcast('transfer.recovery:attempting', { lishID, retryCount: entry.retryCount });
