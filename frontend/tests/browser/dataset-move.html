@@ -1,110 +1,119 @@
 <!doctype html>
 <html lang="en">
- <meta charset="utf-8" />
- <link rel="icon" href="data:," />
- <title>Dataset move browser regressions</title>
- <pre id="results">Running...</pre>
- <div id="toasts"></div>
- <script>
-  // This fixture has no backend. Vite's own websocket remains available.
-  const NativeSocket = window.WebSocket;
-  window.WebSocket = class extends EventTarget {
-   static CONNECTING = 0;
-   static OPEN = 1;
-   static CLOSING = 2;
-   static CLOSED = 3;
-   readyState = 0;
-   constructor(url, protocols) {
-    super();
-    if (new URL(url).pathname !== '/ws') return new NativeSocket(url, protocols);
-   }
-   send() { throw new Error('Unexpected backend websocket request'); }
-   close() { this.readyState = 3; }
-  };
-  const nativeFetch = window.fetch.bind(window);
-  window.fetch = (input, options) => new URL(input, location.href).pathname === '/status'
-   ? Promise.resolve(Response.json({ok: true, authRequired: false, authenticated: true}))
-   : nativeFetch(input, options);
- </script>
- <script type="module">
-  import { mount, unmount, tick } from 'svelte';
-  import { get } from 'svelte/store';
-  import NotificationContainer from '/src/components/Notification/NotificationContainer.svelte';
-  import { api } from '/src/scripts/api.ts';
-  import { downloads, initDownloads } from '/src/scripts/downloads.ts';
-  import { notifications } from '/src/scripts/notifications.ts';
-  import { notificationTimeout } from '/src/scripts/settings.ts';
-  import { currentLanguage, translations } from '/src/scripts/language.ts';
-  const lang = new URLSearchParams(location.search).get('lang') === 'cs' ? 'cs' : 'en';
-  document.documentElement.lang = lang;
-  const callbacks = new Map();
-  const subscriptions = new Set();
-  const detail = {id: 'move-browser', name: 'Dataset A', directory: '/original/dataset', created: '2026-01-01', chunkSize: 4, checksumAlgo: 'sha256', totalSize: 4, fileCount: 1, directoryCount: 0, verifiedChunks: 1, totalChunks: 1, files: [{path: 'data.bin', size: 4, totalChunks: 1, verifiedChunks: 1}], directories: [], links: [], totalUploadedBytes: 0, totalDownloadedBytes: 4};
-  const originals = {on: api.on, subscribe: api.subscribe, call: api.call, list: api.lishs.list, get: api.lishs.get};
-  api.on = (event, callback) => callbacks.set(event, callback);
-  api.subscribe = event => subscriptions.add(event);
-  api.call = async method => {
-   if (method === 'transfer.getActiveTransfers') return [];
-   throw new Error(`Unexpected API request: ${method}`);
-  };
-  api.lishs.list = async () => ({items: [{id: detail.id}], verifying: null, pendingVerification: [], moving: [], downloadEnabled: [], uploadEnabled: []});
-  api.lishs.get = async () => structuredClone(detail);
-  const results = [];
-  function assert(condition, message) { if (!condition) throw new Error(message); }
-  async function test(name, action) {
-   try { await action(); results.push({name, passed: true}); }
-   catch (error) { results.push({name, passed: false, error: error.message}); }
-  }
-  const container = document.querySelector('#toasts');
-  let component;
-  try {
-   const dictionary = await (await fetch(`/langs/${lang}.json`)).json();
-   currentLanguage.set(lang);
-   const deadline = Date.now() + 3000;
-   while (get(translations).downloads?.moveSuccess !== dictionary.downloads.moveSuccess && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
-   assert(get(translations).downloads?.moveCleanupWarning === dictionary.downloads.moveCleanupWarning, 'Language did not load');
-   notificationTimeout.set(0);
-   await initDownloads();
-   component = mount(NotificationContainer, {target: container});
-   await test('cleanup warning is translated and leaves the download state unchanged', async () => {
-    assert(subscriptions.has('lishs:move:cleanup'), 'Cleanup event was not subscribed');
-    callbacks.get('lishs:move:status')({lishID: detail.id, moving: true});
-    const before = JSON.stringify(get(downloads));
-    callbacks.get('lishs:move:cleanup')({lishID: detail.id, directory: '/new/dataset', warnings: [{stage: 'source-cleanup', code: 'EACCES'}]});
-    await tick();
-    assert(JSON.stringify(get(downloads)) === before, 'Cleanup warning modified download status or error');
-    const expected = dictionary.downloads.moveCleanupWarning.replace('{name}', detail.name);
-    assert(container.querySelector('.notification.warning')?.textContent.includes(expected), 'Translated warning toast is missing');
-    assert(!container.querySelector('.notification.error'), 'Cleanup warning became an error toast');
-   });
-   await test('normal move completion updates the directory and preserves the success toast', async () => {
-    callbacks.get('lishs:move')({lishID: detail.id, directory: '/new/dataset'});
-    callbacks.get('lishs:move:status')({lishID: detail.id, moving: false});
-    await tick();
-    const moved = get(downloads).find(item => item.id === detail.id);
-    assert(moved?.directory === '/new/dataset', 'New directory was not applied');
-    assert(moved.status === 'idling' && !moved.errorCode && !moved.errorMessage, 'Move ended in an error state');
-    const expected = dictionary.downloads.moveSuccess.replace('{name}', detail.name);
-    assert(container.querySelector('.notification.success')?.textContent.includes(expected), 'Success toast was lost');
-    assert(container.querySelector('.notification.warning'), 'Cleanup warning disappeared');
-   });
-   await test('a late cleanup warning does not undo the completed move', async () => {
-    notifications.set([]);
-    callbacks.get('lishs:move:cleanup')({lishID: detail.id, warnings: [{stage: 'source-close', code: 'EIO'}]});
-    await tick();
-    const moved = get(downloads)[0];
-    assert(moved.directory === '/new/dataset' && moved.status === 'idling' && !moved.errorCode, 'Late warning changed successful state');
-    assert(get(notifications).length === 1 && get(notifications)[0].type === 'warning', 'Late warning used the wrong notification type');
-   });
-  } catch (error) { results.push({name: 'fixture setup', passed: false, error: error.message}); }
-  finally {
-   if (component) await unmount(component);
-   Object.assign(api, {on: originals.on, subscribe: originals.subscribe, call: originals.call});
-   api.lishs.list = originals.list;
-   api.lishs.get = originals.get;
-   document.querySelector('#results').textContent = JSON.stringify({lang, results}, null, 2);
-   window.datasetMoveTestResults = {lang, results};
-   document.documentElement.dataset.testStatus = results.length === 3 && results.every(result => result.passed) ? 'passed' : 'failed';
-  }
- </script>
+	<meta charset="utf-8" />
+	<link rel="icon" href="data:," />
+	<title>Dataset move browser regressions</title>
+	<pre id="results">Running...</pre>
+	<div id="toasts"></div>
+	<script>
+		// This fixture has no backend. Vite's own websocket remains available.
+		const NativeSocket = window.WebSocket;
+		window.WebSocket = class extends EventTarget {
+			static CONNECTING = 0;
+			static OPEN = 1;
+			static CLOSING = 2;
+			static CLOSED = 3;
+			readyState = 0;
+			constructor(url, protocols) {
+				super();
+				if (new URL(url).pathname !== '/ws') return new NativeSocket(url, protocols);
+			}
+			send() {
+				throw new Error('Unexpected backend websocket request');
+			}
+			close() {
+				this.readyState = 3;
+			}
+		};
+		const nativeFetch = window.fetch.bind(window);
+		window.fetch = (input, options) => (new URL(input, location.href).pathname === '/status' ? Promise.resolve(Response.json({ ok: true, authRequired: false, authenticated: true })) : nativeFetch(input, options));
+	</script>
+	<script type="module">
+		import { mount, unmount, tick } from 'svelte';
+		import { get } from 'svelte/store';
+		import NotificationContainer from '/src/components/Notification/NotificationContainer.svelte';
+		import { api } from '/src/scripts/api.ts';
+		import { downloads, initDownloads } from '/src/scripts/downloads.ts';
+		import { notifications } from '/src/scripts/notifications.ts';
+		import { notificationTimeout } from '/src/scripts/settings.ts';
+		import { currentLanguage, translations } from '/src/scripts/language.ts';
+		const lang = new URLSearchParams(location.search).get('lang') === 'cs' ? 'cs' : 'en';
+		document.documentElement.lang = lang;
+		const callbacks = new Map();
+		const subscriptions = new Set();
+		const detail = { id: 'move-browser', name: 'Dataset A', directory: '/original/dataset', created: '2026-01-01', chunkSize: 4, checksumAlgo: 'sha256', totalSize: 4, fileCount: 1, directoryCount: 0, verifiedChunks: 1, totalChunks: 1, files: [{ path: 'data.bin', size: 4, totalChunks: 1, verifiedChunks: 1 }], directories: [], links: [], totalUploadedBytes: 0, totalDownloadedBytes: 4 };
+		const originals = { on: api.on, subscribe: api.subscribe, call: api.call, list: api.lishs.list, get: api.lishs.get };
+		api.on = (event, callback) => callbacks.set(event, callback);
+		api.subscribe = event => subscriptions.add(event);
+		api.call = async method => {
+			if (method === 'transfer.getActiveTransfers') return [];
+			throw new Error(`Unexpected API request: ${method}`);
+		};
+		api.lishs.list = async () => ({ items: [{ id: detail.id }], verifying: null, pendingVerification: [], moving: [], downloadEnabled: [], uploadEnabled: [] });
+		api.lishs.get = async () => structuredClone(detail);
+		const results = [];
+		function assert(condition, message) {
+			if (!condition) throw new Error(message);
+		}
+		async function test(name, action) {
+			try {
+				await action();
+				results.push({ name, passed: true });
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			}
+		}
+		const container = document.querySelector('#toasts');
+		let component;
+		try {
+			const dictionary = await (await fetch(`/langs/${lang}.json`)).json();
+			currentLanguage.set(lang);
+			const deadline = Date.now() + 3000;
+			while (get(translations).downloads?.moveSuccess !== dictionary.downloads.moveSuccess && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+			assert(get(translations).downloads?.moveCleanupWarning === dictionary.downloads.moveCleanupWarning, 'Language did not load');
+			notificationTimeout.set(0);
+			await initDownloads();
+			component = mount(NotificationContainer, { target: container });
+			await test('cleanup warning is translated and leaves the download state unchanged', async () => {
+				assert(subscriptions.has('lishs:move:cleanup'), 'Cleanup event was not subscribed');
+				callbacks.get('lishs:move:status')({ lishID: detail.id, moving: true });
+				const before = JSON.stringify(get(downloads));
+				callbacks.get('lishs:move:cleanup')({ lishID: detail.id, directory: '/new/dataset', warnings: [{ stage: 'source-cleanup', code: 'EACCES' }] });
+				await tick();
+				assert(JSON.stringify(get(downloads)) === before, 'Cleanup warning modified download status or error');
+				const expected = dictionary.downloads.moveCleanupWarning.replace('{name}', detail.name);
+				assert(container.querySelector('.notification.warning')?.textContent.includes(expected), 'Translated warning toast is missing');
+				assert(!container.querySelector('.notification.error'), 'Cleanup warning became an error toast');
+			});
+			await test('normal move completion updates the directory and preserves the success toast', async () => {
+				callbacks.get('lishs:move')({ lishID: detail.id, directory: '/new/dataset' });
+				callbacks.get('lishs:move:status')({ lishID: detail.id, moving: false });
+				await tick();
+				const moved = get(downloads).find(item => item.id === detail.id);
+				assert(moved?.directory === '/new/dataset', 'New directory was not applied');
+				assert(moved.status === 'idling' && !moved.errorCode && !moved.errorMessage, 'Move ended in an error state');
+				const expected = dictionary.downloads.moveSuccess.replace('{name}', detail.name);
+				assert(container.querySelector('.notification.success')?.textContent.includes(expected), 'Success toast was lost');
+				assert(container.querySelector('.notification.warning'), 'Cleanup warning disappeared');
+			});
+			await test('a late cleanup warning does not undo the completed move', async () => {
+				notifications.set([]);
+				callbacks.get('lishs:move:cleanup')({ lishID: detail.id, warnings: [{ stage: 'source-close', code: 'EIO' }] });
+				await tick();
+				const moved = get(downloads)[0];
+				assert(moved.directory === '/new/dataset' && moved.status === 'idling' && !moved.errorCode, 'Late warning changed successful state');
+				assert(get(notifications).length === 1 && get(notifications)[0].type === 'warning', 'Late warning used the wrong notification type');
+			});
+		} catch (error) {
+			results.push({ name: 'fixture setup', passed: false, error: error.message });
+		} finally {
+			if (component) await unmount(component);
+			Object.assign(api, { on: originals.on, subscribe: originals.subscribe, call: originals.call });
+			api.lishs.list = originals.list;
+			api.lishs.get = originals.get;
+			document.querySelector('#results').textContent = JSON.stringify({ lang, results }, null, 2);
+			window.datasetMoveTestResults = { lang, results };
+			document.documentElement.dataset.testStatus = results.length === 3 && results.every(result => result.passed) ? 'passed' : 'failed';
+		}
+	</script>
 </html>
