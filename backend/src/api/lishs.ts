@@ -356,6 +356,11 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const dataset = await openDataset(opts.root);
 		try { await dataset.prepare(lish, { reserve: false, writable: !!opts.enableDownloading }); } finally { await dataset.close(); }
 		dataServer.addDataset(lish, opts.root, opts.finalRoot);
+		stopRecoveryForLISH(lish.id);
+		dataServer.setUploadEnabled(lish.id, false);
+		dataServer.setDownloadEnabled(lish.id, false);
+		removeUploadState(lish.id);
+		await forceDisableDownload(lish.id);
 		console.log(`✓ LISH added: ${lish.id}${lish.finalDirectory ? ` (temp: ${lish.directory} → final: ${lish.finalDirectory})` : ''}`);
 		broadcast('lishs:add', dataServer.getDetail(lish.id));
 		// Set enabled flags BEFORE verification — verify sets busy which blocks triggerEnableDownload.

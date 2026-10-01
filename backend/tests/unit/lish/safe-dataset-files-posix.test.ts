@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile, link } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile, link, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -19,6 +19,16 @@ async function fixture(run: (directory: DatasetDirectoryHandle, path: string) =>
 }
 
 describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('POSIX dataset handles', () => {
+	test('creates files with private readable and writable permissions', async () => {
+		await fixture(async (directory, path) => {
+			await (await directory.openFile('private', 'create')).close();
+			expect((await stat(join(path, 'private'))).mode & 0o777).toBe(0o600 & ~process.umask());
+			const reopened = await directory.openFile('private', 'write');
+			try { expect(await reopened.write(Buffer.from('x'), 0)).toBe(1); }
+			finally { await reopened.close(); }
+		});
+	});
+
 	test('positioned reads and writes, truncate and inode identity use the opened file', async () => {
 		await fixture(async (directory, path) => {
 			const child = await directory.createDirectory('child');

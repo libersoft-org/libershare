@@ -16,14 +16,18 @@ function loadNative() {
 	if (process.platform !== 'linux' && process.platform !== 'darwin') throw failure('ENOTSUP', 'POSIX dataset access is unavailable');
 	const library = process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6';
 	const api = dlopen(library, {
-		openat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.u32], returns: FFIType.i32 },
 		mkdirat: { args: [FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
 		unlinkat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 }
 	});
+	// Darwin's public openat is variadic: arm64 takes mode from the stack. The
+	// fixed-argument syscall entry avoids passing mode with the wrong ABI.
+	const openat = process.platform === 'darwin'
+		? dlopen(library, { __openat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.u32], returns: FFIType.i32 } }).symbols.__openat
+		: dlopen(library, { openat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.u32], returns: FFIType.i32 } }).symbols.openat;
 	const errno = process.platform === 'darwin'
 		? dlopen(library, { __error: { args: [], returns: FFIType.ptr } }).symbols.__error
 		: dlopen(library, { __errno_location: { args: [], returns: FFIType.ptr } }).symbols.__errno_location;
-	return { api, errno };
+	return { api, openat, errno };
 }
 
 let native: ReturnType<typeof loadNative> | undefined;
@@ -42,7 +46,7 @@ function syscall(result: number): number {
 function openAt(fd: number, name: Buffer, flags: number): number {
 	// Node does not expose O_CLOEXEC. These are the native Linux and Darwin flags.
 	const cloexec = process.platform === 'darwin' ? 0x1000000 : 0x80000;
-	return syscall(nativeApi().api.symbols.openat(fd, ptr(name), flags | cloexec | constants.O_NONBLOCK, 0o600));
+	return syscall(nativeApi().openat(fd, ptr(name), flags | cloexec | constants.O_NONBLOCK, 0o600));
 }
 
 function statFd(fd: number): Promise<DatasetEntryInfo> {

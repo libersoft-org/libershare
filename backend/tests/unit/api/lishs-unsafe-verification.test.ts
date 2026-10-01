@@ -67,3 +67,26 @@ test('import refuses a linked derived root without deleting the overwritten reco
   expect(await readFile(join(outside, 'sentinel'), 'utf8')).toBe('safe');
  } finally { await handlers.stopVerifyAll(); db.close(); await rm(base, { recursive: true, force: true }); }
 });
+
+
+test('overwrite uses the new transfer choices rather than restoring previous enabled flags', async () => {
+ const base = await mkdtemp(join(tmpdir(), 'import-flags-'));
+ const db = openDatabase(base);
+ const data = new DataServer(db);
+ const id = 'overwrite-flags';
+ const old = { id, name: 'Dataset', created: '2026-01-01', chunkSize: 4, checksumAlgo: 'sha256' as const };
+ data.add(old); data.setUploadEnabled(id, true); data.setDownloadEnabled(id, true);
+ initUploadState(new Set([id]), (id, enabled) => data.setUploadEnabled(id, enabled));
+ initDownloadState(new Set([id]), (id, enabled) => data.setDownloadEnabled(id, enabled));
+ const handlers = initLISHsHandlers(data, () => {}, () => {}, await Settings.create(base));
+ try {
+  await handlers.importFromJSON({ json: JSON.stringify(old), downloadPath: base, overwrite: true, enableSharing: false, enableDownloading: false });
+  expect(getEnabledUploads().has(id)).toBe(false);
+  expect(getDownloadEnabledLishs().has(id)).toBe(false);
+  expect(data.getUploadEnabledLishs().has(id)).toBe(false);
+  expect(data.getDownloadEnabledLishs().has(id)).toBe(false);
+ } finally {
+  await handlers.stopVerifyAll(); initDownloadState(new Set(), () => {}); initUploadState(new Set(), () => {}); resetUploadState();
+  db.close(); await rm(base, { recursive: true, force: true });
+ }
+});
