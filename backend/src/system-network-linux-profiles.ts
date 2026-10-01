@@ -20,7 +20,7 @@ const IPV4_FIELDS = NMCLI_PROFILE_FIELDS.filter(field => field.startsWith('ipv4.
 export const MAX_PROFILES_PER_READ = 256;
 
 /** Connection types NetworkManager gives no IP configuration at all. */
-const TYPES_WITHOUT_IP = new Set(['wpan', '6lowpan']);
+const TYPES_WITHOUT_IP = new Set(['wpan', '6lowpan', 'ovs-bridge']);
 /** Port types whose profile carries no IP configuration; the controller owns it. */
 const PORT_TYPES_WITHOUT_IP = new Set(['bridge', 'bond', 'team', 'ovs-bridge', 'ovs-port']);
 
@@ -89,7 +89,7 @@ export function parseNmcliProfileBlocks(text: string, requested: readonly string
 }
 
 /**
- * True for a profile NetworkManager configures no IPv4 on: a WPAN type, or a port of a
+ * True for a profile NetworkManager configures no IPv4 on: a WPAN type, an OVS bridge, or a port of a
  * bridge/bond/team/OVS controller. An `ovs-interface` and a VRF port carry IP, so they do not
  * qualify; neither does a device name or a missing method on its own.
  */
