@@ -1,6 +1,7 @@
 import { dlopen, FFIType, ptr } from 'bun:ffi';
 import { realpath } from 'node:fs/promises';
 import type { DatasetDirectoryHandle, DatasetEntryInfo, DatasetFileHandle } from './safe-dataset-types.ts';
+import { windowsDatasetError } from './windows-dataset-error.ts';
 
 const READ_ATTRIBUTES = 0x80;
 const SYNCHRONIZE = 0x100000;
@@ -43,8 +44,7 @@ function fail(code: string, message: string): never {
 }
 
 function windowsError(operation: string, number = native().kernel.symbols.GetLastError()): never {
-	const code = number === 2 || number === 3 ? 'ENOENT' : number === 80 || number === 183 ? 'EEXIST' : number === 5 || number === 32 ? 'EACCES' : number === 145 ? 'ENOTEMPTY' : 'EIO';
-	fail(code, `${operation} failed (Windows error ${number})`);
+	throw windowsDatasetError(operation, number);
 }
 
 function component(name: string): void {
