@@ -186,10 +186,11 @@ class WindowsDirectory extends WindowsHandle implements DatasetDirectoryHandle {
 		return child;
 	}
 
-	private async remove(name: string, kind: 'file' | 'directory'): Promise<void> {
+	private async remove(name: string, kind: 'file' | 'directory', expectedIdentity: string): Promise<void> {
 		const child = new WindowsHandle(this.openChild(name, DELETE, false, kind === 'directory'), this);
-		await child.requireKind(kind);
 		try {
+			const info = await child.stat();
+			if (info.kind !== kind || info.identity !== expectedIdentity) fail('LISH_UNSAFE_PATH', 'Dataset object was replaced before removal');
 			const disposition = new Uint8Array([1]);
 			if (!native().kernel.symbols.SetFileInformationByHandle(child.value(), 4, ptr(disposition), disposition.length)) windowsError('Delete dataset child');
 		} finally {
@@ -197,12 +198,12 @@ class WindowsDirectory extends WindowsHandle implements DatasetDirectoryHandle {
 		}
 	}
 
-	async removeFile(name: string): Promise<void> {
-		await this.remove(name, 'file');
+	async removeFile(name: string, expectedIdentity: string): Promise<void> {
+		await this.remove(name, 'file', expectedIdentity);
 	}
 
-	async removeDirectory(name: string): Promise<void> {
-		await this.remove(name, 'directory');
+	async removeDirectory(name: string, expectedIdentity: string): Promise<void> {
+		await this.remove(name, 'directory', expectedIdentity);
 	}
 }
 
