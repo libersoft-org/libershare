@@ -6,12 +6,18 @@ import type { DatasetFileHandle } from './safe-dataset-types.ts';
 import type { DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 
 export interface DatasetMoveResult {
-	cleanupWarnings: { stage: 'source-cleanup' | 'target-close' | 'source-close'; code: string }[];
+	cleanupWarnings: { stage: 'source-cleanup' | 'target-close' | 'source-close'; code: string; retainedDirectory?: string }[];
 }
 
 function cleanupCode(error: unknown): string {
 	const code = (error as NodeJS.ErrnoException | null)?.code;
 	return typeof code === 'string' && /^[A-Z_]{1,64}$/.test(code) ? code : 'IO_ERROR';
+}
+
+function cleanupWarning(stage: DatasetMoveResult['cleanupWarnings'][number]['stage'], error: unknown): DatasetMoveResult['cleanupWarnings'][number] {
+	const detail = error instanceof CodedError ? error.detail : undefined;
+	const retainedDirectory = detail?.match(/^Removal stopped; data preserved in (\.lish-remove-[a-f0-9-]{36})\/entry$/u)?.[1];
+	return { stage, code: cleanupCode(error), ...(retainedDirectory ? { retainedDirectory } : {}) };
 }
 
 export interface DatasetMoveProgress {
@@ -116,6 +122,7 @@ export async function deleteDatasetData(manifest: ILISH, root: DatasetRoot, bind
 		await dataset.prepare(contents, { reserve: false, writable: false });
 		const identities = await snapshot(dataset, contents);
 		checkMaterializedIdentities(identities, bindings);
+		await dataset.assertPathBinding();
 		await removeContents(dataset, contents, identities, root.kind === 'derived');
 	} finally {
 		await dataset.close();
@@ -229,13 +236,15 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 			if (!materializedIdentity) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'Missing materialized file identity');
 			return { path: link.path, target: link.target, hardlink: link.hardlink === true, source: copies.find(entry => entry.file.path === link.path)!.source, materializedIdentity };
 		});
+		await target.assertPathBinding();
 		commitStarted = true;
 		commit(nextBindings);
 		committed = true;
 		try {
+			await source.assertPathBinding();
 			if (await removeContents(source, sourceContents, sourceIdentities, sourceRoot.kind === 'derived')) result.cleanupWarnings.push({ stage: 'source-cleanup', code: 'ENOTEMPTY' });
 		} catch (error) {
-			result.cleanupWarnings.push({ stage: 'source-cleanup', code: cleanupCode(error) });
+			result.cleanupWarnings.push(cleanupWarning('source-cleanup', error));
 		}
 	} catch (error) {
 		if (target && !commitStarted) {
@@ -256,7 +265,7 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 			try {
 				await dataset.close();
 			} catch (error) {
-				if (committed) result.cleanupWarnings.push({ stage, code: cleanupCode(error) });
+				if (committed) result.cleanupWarnings.push(cleanupWarning(stage, error));
 				else if (!failed) {
 					failure = error;
 					failed = true;

@@ -214,10 +214,19 @@ test('a close failure after commit is a warning and still closes the other datas
 	const f = await fixture();
 	let committed = false;
 	let postCommitCloses = 0;
+	let target: SafeDataset | undefined;
+	const participants = new Set<SafeDataset>();
+	const prepare = SafeDataset.prototype.prepare;
+	const preparing = spyOn(SafeDataset.prototype, 'prepare').mockImplementation(async function (this: SafeDataset, manifest, options) {
+		participants.add(this);
+		if (options?.reserve) target = this;
+		await prepare.call(this, manifest, options);
+	});
 	const close = SafeDataset.prototype.close;
 	const closing = spyOn(SafeDataset.prototype, 'close').mockImplementation(async function (this: SafeDataset) {
 		await close.call(this);
-		if (committed && ++postCommitCloses === 1) throw Object.assign(new Error('close failed'), { code: 'EIO' });
+		if (committed && participants.has(this)) postCommitCloses++;
+		if (committed && this === target) throw Object.assign(new Error('close failed'), { code: 'EIO' });
 	});
 	try {
 		const result = await moveDatasetData(
@@ -234,6 +243,7 @@ test('a close failure after commit is a warning and still closes the other datas
 		expect(await readFile(join(f.base, 'target/data.bin'), 'utf8')).toBe('abcdefgh');
 	} finally {
 		closing.mockRestore();
+		preparing.mockRestore();
 	}
 });
 

@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { mkdtemp, mkdir, writeFile, readFile, stat, rm, rename } from 'node:fs/promises';
+import { renameSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ILISH } from '@shared';
@@ -50,4 +51,20 @@ test('refuses deletion when a recorded materialized copy has been replaced', asy
 	await expect(deleteDatasetData(f.manifest, f.root('first'), bindings)).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 	expect(await readFile(join(f.base, 'first/copy.bin'), 'utf8')).toBe('foreign');
 	expect(await readFile(join(f.base, 'first/data.bin'), 'utf8')).toBe('data');
+});
+
+test.skipIf(process.platform === 'win32')('does not commit a renamed destination or remove the source', async () => {
+	const f = await fixture();
+	let replaced = false;
+	let committed = false;
+	await expect(moveDatasetData(f.manifest, f.root('source'), f.root('target'), () => { committed = true; }, progress => {
+		if (progress.type !== 'file' || replaced) return;
+		replaced = true;
+		renameSync(join(f.base, 'target'), join(f.base, 'moved-target'));
+		mkdirSync(join(f.base, 'target'));
+	})).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+	expect(replaced).toBe(true);
+	expect(committed).toBe(false);
+	expect(await readFile(join(f.source, 'data.bin'), 'utf8')).toBe('data');
+	expect((await stat(join(f.base, 'target'))).isDirectory()).toBe(true);
 });
