@@ -568,22 +568,34 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		return true;
 	}
 
-	/**
-	 * `requireEnabled` is the caller stating that it entered with the download switched ON,
-	 * so a flag that has gone by the time the downloader is ready means the user withdrew
-	 * it mid-start. A restore never sets that flag — it starts downloaders on behalf of the
-	 * stored intent — so it must not be judged by it.
-	 */
+	type PreparedStoredDownloader = { downloader: Downloader; scheduledAt: number; requireEnabled: boolean; destroy(): Promise<void> };
+
+	function storedStartRefusal(lishID: string, prepared: PreparedStoredDownloader, disabled: boolean): string | undefined {
+		// Withdrawal takes precedence over suspension, which would otherwise revive a deleted download.
+		if ((requestEpoch.get(lishID) ?? 0) !== prepared.scheduledAt || (prepared.requireEnabled && !downloadEnabledLishs.has(lishID))) return 'download withdrawn while starting';
+		if (disabled) return undefined;
+		const networkIDs = prepared.downloader.getNetworkIDs();
+		if (!networkIDs.some(id => networks.isJoined(id))) {
+			const original = prepared.downloader.getOriginalNetworkIDs();
+			downloadEnabledLishs.delete(lishID);
+			claimSuspension(lishID, original.length > 0 ? original : networkIDs, prepared.scheduledAt);
+			return 'lishnet left while starting';
+		}
+		for (const id of networkIDs) if (!networks.isJoined(id)) prepared.downloader.removeNetwork(id);
+		return undefined;
+	}
+
+	async function abandonStoredDownload(lishID: string, prepared: PreparedStoredDownloader, reason: string): Promise<never> {
+		await prepared.destroy();
+		throw new DownloadStartAbandoned(lishID, reason);
+	}
+
 	async function startStoredDownloader(lishID: string, networkIDs: string[], originalNetworkIDs: string[], disabled: boolean, client?: any, requireEnabled = false, scheduledAt = requestEpoch.get(lishID) ?? 0): Promise<Downloader> {
 		return launchPreparedDownloader(lishID, await prepareStoredDownloader(lishID, networkIDs, originalNetworkIDs, disabled, requireEnabled, scheduledAt), disabled, client);
 	}
 
-	/**
-	 * Build and initialise a downloader for a stored LISH without starting it: no map entry, no
-	 * callbacks, no `download()`. A failure after `initFromManifest` destroys the instance, whose
-	 * init already registered a disconnect listener; the caller owns it on success.
-	 */
-	async function prepareStoredDownloader(lishID: string, networkIDs: string[], originalNetworkIDs: string[], disabled: boolean, requireEnabled = false, scheduledAt = requestEpoch.get(lishID) ?? 0): Promise<Downloader> {
+	/** Prepared candidates retain the request epoch across the handoff and batch preparation. */
+	async function prepareStoredDownloader(lishID: string, networkIDs: string[], originalNetworkIDs: string[], disabled: boolean, requireEnabled = false, scheduledAt = requestEpoch.get(lishID) ?? 0): Promise<PreparedStoredDownloader> {
 		const lish = dataServer.get(lishID);
 		if (!lish) throw new Error(`Cannot restore download ${lishID}: LISH is missing`);
 		const downloadDir = lish.directory ?? join(dataDir, 'downloads', Date.now().toString());
@@ -594,49 +606,18 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 		const downloader = new Downloader(downloadDir, networks.getRunningNetwork(), dataServer, networkIDs, originalNetworkIDs);
 		await downloader.initFromManifest(lish);
-		// `networkIDs` and the enabled flag were both read before the awaits above, and this
-		// downloader is not in `activeDownloaders` yet — onNetworkLeft, disableDownload and
-		// removeDownloadState all only walk that map, so a leave or a withdrawal landing in
-		// this window reaches neither. Unchecked, the download starts on a lishnet we have
-		// already left, or for a LISH the user just turned off or deleted. A downloader
-		// restored in the disabled state starts nothing and is exempt.
-		if (!disabled) {
-			// The user's own withdrawal is asked FIRST. A disable or a delete clears the
-			// resume claim on its way out, so filing a new one for a lishnet that was left
-			// in the same window would resurrect a download the user just switched off:
-			// the next rejoin reads networkSuspended and turns it back on.
-			if (requireEnabled && !downloadEnabledLishs.has(lishID)) {
-				await downloader.destroy();
-				throw new DownloadStartAbandoned(lishID, 'download withdrawn while starting');
-			}
-			if (!networkIDs.some(id => networks.isJoined(id))) {
-				// File the resume claim BEFORE tearing the downloader down: destroy() yields,
-				// and a re-join landing in that window walks networkSuspended to decide what to
-				// resume — an entry inserted afterwards misses the event entirely and the
-				// download stays suspended until the next manual toggle.
-				//
-				// Claimed against the ORIGINAL binding, never the subset this attempt was
-				// started with. A download bound to A and B that resumed through A alone would
-				// otherwise record only A, and a later join of B — a lishnet it is entitled to
-				// download from — would no longer look like a reason to resume it.
-				downloadEnabledLishs.delete(lishID);
-				claimSuspension(lishID, originalNetworkIDs.length > 0 ? originalNetworkIDs : networkIDs, scheduledAt);
-				await downloader.destroy();
-				throw new DownloadStartAbandoned(lishID, 'lishnet left while starting');
-			}
-			// Some of the lishnets survived, so the download goes ahead — but only on those.
-			// The ones left during startup have to leave the ACTIVE set, or the download keeps
-			// publishing WANTs on a topic we are no longer in: `broadcast()` and `publishOn()`
-			// take the network they are handed and do not re-check membership. The original
-			// binding is immutable and keeps them, so a legitimate rejoin still resumes there.
-			for (const id of networkIDs) if (!networks.isJoined(id)) downloader.removeNetwork(id);
-		}
-		return downloader;
+		const prepared = { downloader, requireEnabled, scheduledAt, destroy: () => downloader.destroy() };
+		const refusal = storedStartRefusal(lishID, prepared, disabled);
+		if (refusal) return abandonStoredDownload(lishID, prepared, refusal);
+		return prepared;
 	}
 
-	/** Register a prepared downloader, wire its callbacks and start it. */
-	async function launchPreparedDownloader(lishID: string, downloader: Downloader, disabled: boolean, client?: any): Promise<Downloader> {
+	/** No await between the final validity check and synchronous registration in claimActiveDownloader. */
+	async function launchPreparedDownloader(lishID: string, prepared: PreparedStoredDownloader, disabled: boolean, client?: any): Promise<Downloader> {
+		const downloader = prepared.downloader;
 		const downloadDir = downloader.getDownloadDirectory();
+		const refusal = storedStartRefusal(lishID, prepared, disabled);
+		if (refusal) return abandonStoredDownload(lishID, prepared, refusal);
 		const claim = await claimActiveDownloader(activeDownloaders, lishID, downloader);
 		if (!claim.claimed) return claim.downloader;
 		const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
@@ -1195,7 +1176,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	/** Restore a batch without rewriting saved intent; retain bindings from its snapshot. */
 	async function restoreAllTransfers(lishIDs: Set<string>, snapshot: TransferRestoreSnapshot = new Map()): Promise<void> {
 		const isJoined = (networkID: string): boolean => networks.isJoined(networkID);
-		await restoreTransferBatch<Downloader>([...lishIDs], {
+		await restoreTransferBatch<PreparedStoredDownloader>([...lishIDs], {
 			activeCount: () => activeDownloaders.size,
 			plan: async lishID => {
 				const state = snapshot.get(lishID);
@@ -1236,12 +1217,18 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 					throw err;
 				}
 			},
-			accept: async (lishID, downloader) => {
-				networkSuspended.delete(lishID);
-				downloadEnabledLishs.add(lishID);
-				recovery.completeDirection(lishID, 'download');
-				await launchPreparedDownloader(lishID, downloader, false);
-				broadcast?.('transfer.download:enabled', { lishID });
+			accept: async (lishID, prepared) => {
+				try {
+					const refusal = storedStartRefusal(lishID, prepared, false);
+					if (refusal) await abandonStoredDownload(lishID, prepared, refusal);
+					networkSuspended.delete(lishID);
+					downloadEnabledLishs.add(lishID);
+					recovery.completeDirection(lishID, 'download');
+					await launchPreparedDownloader(lishID, prepared, false);
+					broadcast?.('transfer.download:enabled', { lishID });
+				} catch (error) {
+					if (!(error instanceof DownloadStartAbandoned)) throw error;
+				}
 			},
 			suspend: (lishID, networkIDs) => {
 				if (getBusyReason(lishID) === 'verifying') downloadEnabledLishs.add(lishID);
