@@ -140,6 +140,7 @@
 		"errorLishNotShared": "Peer does not share this LISH",
 		"errorChunkNotFound": "Peer does not have this chunk",
 		"errorBusy": "Peer is busy, try again later",
+		"errorFileChanged": "The file changed during the operation. Its source copy was not removed.",
 		"errorIO": "Peer encountered an I/O error",
 		"errorInvalidRequest": "Peer rejected the request as invalid",
 		"errorSearchQueryTooLong": "The search text is too long",

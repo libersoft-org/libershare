@@ -1,7 +1,7 @@
 import { dlopen, FFIType, ptr, read } from 'bun:ffi';
-import { close, constants, fstat, ftruncate, read as readFile, write } from 'node:fs';
+import { close, constants, fstat, fstatSync, ftruncate, read as readFile, write } from 'node:fs';
 import { getSystemErrorName } from 'node:util';
-import type { DatasetDirectoryHandle, DatasetEntryInfo, DatasetFileHandle } from './safe-dataset-types';
+import type { DatasetDirectoryHandle, DatasetEntryInfo, DatasetFileHandle, DatasetContentGuard } from './safe-dataset-types';
 
 function failure(code: string, message: string): NodeJS.ErrnoException {
 	return Object.assign(new Error(message), { code });
@@ -70,7 +70,7 @@ function directoryRemovalFlag(): number {
 }
 
 /** Capture a name before checking it. Never unlink whatever later appears at the original name. */
-async function removeCaptured(parent: number, name: Buffer, kind: 'file' | 'directory', expectedIdentity: string): Promise<void> {
+async function removeCaptured(parent: number, name: Buffer, kind: 'file' | 'directory', expectedIdentity: string, guard?: DatasetContentGuard): Promise<void> {
 	renamer ??= loadRenamer();
 	const workspaceName = `.lish-remove-${crypto.randomUUID()}`;
 	const workspace = component(workspaceName);
@@ -83,14 +83,30 @@ async function removeCaptured(parent: number, name: Buffer, kind: 'file' | 'dire
 		renameNoReplace(parent, name, directory, item);
 		captured = true;
 		const fd = openAt(directory, item, constants.O_RDONLY | constants.O_NOFOLLOW | (kind === 'directory' ? constants.O_DIRECTORY : 0));
+		const file = new FileHandle(fd);
 		try {
-			const info = await statFd(fd);
+			const info = await file.stat();
 			if (info.kind !== kind || info.identity !== expectedIdentity) throw failure('LISH_UNSAFE_PATH', 'Dataset entry changed before removal');
+			if (guard) {
+				if (info.size !== guard.size || info.modified !== guard.modified) throw failure('FS_FILE_CHANGED', 'Source file changed');
+				const hash = new Bun.CryptoHasher('sha256');
+				const buffer = new Uint8Array(256 * 1024);
+				let position = 0;
+				while (position < info.size) {
+					const count = await file.read(buffer.subarray(0, Math.min(buffer.length, info.size - position)), position);
+					if (!count) throw failure('FS_FILE_CHANGED', 'Source file changed');
+					hash.update(buffer.subarray(0, count)); position += count;
+				}
+				if (hash.digest('hex') !== guard.checksum) throw failure('FS_FILE_CHANGED', 'Source file changed');
+				// No JS yield between the final check and unlink. POSIX still permits writes through an existing descriptor.
+				const final = fstatSync(fd, { bigint: true });
+				if (final.size !== BigInt(info.size) || final.mtimeNs.toString() !== info.modified || final.ctimeNs.toString() !== info.changed) throw failure('FS_FILE_CHANGED', 'Source file changed');
+			}
+			syscall(nativeApi().api.symbols.unlinkat(directory, ptr(item), kind === 'directory' ? directoryRemovalFlag() : 0));
+			captured = false;
 		} finally {
-			await closeFd(fd);
+			await file.close();
 		}
-		syscall(nativeApi().api.symbols.unlinkat(directory, ptr(item), kind === 'directory' ? directoryRemovalFlag() : 0));
-		captured = false;
 	} catch (error) {
 		if (captured && directory !== undefined) {
 			try {
@@ -119,7 +135,7 @@ function statFd(fd: number): Promise<DatasetEntryInfo> {
 				reject(failure('LISH_UNSAFE_PATH', 'Dataset entry size is outside the supported range'));
 				return;
 			}
-			resolve({ identity: `${info.dev}:${info.ino}`, kind: info.isFile() ? 'file' : info.isDirectory() ? 'directory' : 'other', size: Number(info.size), links: Number(info.nlink) });
+			resolve({ identity: `${info.dev}:${info.ino}`, kind: info.isFile() ? 'file' : info.isDirectory() ? 'directory' : 'other', size: Number(info.size), links: Number(info.nlink), modified: info.mtimeNs.toString(), changed: info.ctimeNs.toString() });
 		});
 	});
 }
@@ -207,9 +223,9 @@ class DirectoryHandle extends Descriptor implements DatasetDirectoryHandle {
 		return this.use(async fd => checked(new FileHandle(openAt(fd, path, flags | constants.O_NOFOLLOW)), 'file'));
 	}
 
-	removeFile(name: string, expectedIdentity: string): Promise<void> {
+	removeFile(name: string, expectedIdentity: string, guard?: DatasetContentGuard): Promise<void> {
 		const path = component(name);
-		return this.use(fd => removeCaptured(fd, path, 'file', expectedIdentity));
+		return this.use(fd => removeCaptured(fd, path, 'file', expectedIdentity, guard));
 	}
 
 	removeDirectory(name: string, expectedIdentity: string): Promise<void> {

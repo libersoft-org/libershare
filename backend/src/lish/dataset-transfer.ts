@@ -3,7 +3,7 @@ import { CodedError, ErrorCodes, validateLISHStructure, type ILISH } from '@shar
 import { createDataset, openDataset, type DatasetRoot, type SafeDataset } from './safe-dataset-files.ts';
 import { resolve, relative, isAbsolute } from 'node:path';
 import { datasetRootPath, conservativeDatasetRoot } from './dataset-root.ts';
-import type { DatasetFileHandle } from './safe-dataset-types.ts';
+import type { DatasetFileHandle, DatasetContentGuard } from './safe-dataset-types.ts';
 import type { DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 import { checkDatasetCopySpace } from './dataset-space.ts';
 
@@ -102,11 +102,11 @@ function checkMaterializedIdentities(identities: ReadonlyMap<string, string>, bi
 	}
 }
 
-async function removeContents(dataset: SafeDataset, manifest: ILISH, identities: Map<string, string>, removeRoot: boolean): Promise<boolean> {
+async function removeContents(dataset: SafeDataset, manifest: ILISH, identities: Map<string, string>, removeRoot: boolean, guards?: ReadonlyMap<string, DatasetContentGuard>): Promise<boolean> {
 	let retained = false;
 	for (const file of manifest.files ?? []) {
 		const identity = identities.get(file.path);
-		if (identity) await dataset.removeFile(file.path, identity);
+		if (identity) await dataset.removeFile(file.path, identity, guards?.get(file.path));
 	}
 	for (const path of [...directoriesOf(manifest), ...(removeRoot ? [''] : [])]) {
 		const identity = identities.get(path);
@@ -141,8 +141,10 @@ export async function deleteDatasetData(manifest: ILISH, root: DatasetRoot, bind
 	}
 }
 
-async function copyFile(source: DatasetFileHandle, target: DatasetFileHandle, file: NonNullable<ILISH['files']>[number], manifest: ILISH, verification: 'manifest' | 'source', progress: (bytes: number) => void): Promise<number> {
+async function copyFile(source: DatasetFileHandle, target: DatasetFileHandle, file: NonNullable<ILISH['files']>[number], manifest: ILISH, verification: 'manifest' | 'source', progress: (bytes: number) => void): Promise<DatasetContentGuard> {
 	const info = await source.stat();
+	if (info.modified === undefined || info.changed === undefined) throw new CodedError(ErrorCodes.FS_FILE_CHANGED);
+	const contentHash = new Bun.CryptoHasher('sha256');
 	if (verification === 'manifest' && info.size !== file.size) throw new CodedError(ErrorCodes.IO_NOT_FOUND, 'Source file size changed');
 	const buffer = new Uint8Array(Math.min(256 * 1024, manifest.chunkSize));
 	const copiedChecksums: string[] = [];
@@ -157,6 +159,7 @@ async function copyFile(source: DatasetFileHandle, target: DatasetFileHandle, fi
 			if (received === 0) throw new CodedError(ErrorCodes.IO_NOT_FOUND, 'Source file ended during copy');
 			const bytes = requested.subarray(0, received);
 			hasher.update(bytes);
+			contentHash.update(bytes);
 			let written = 0;
 			while (written < received) {
 				const count = await target.write(bytes.subarray(written), position + written);
@@ -184,7 +187,9 @@ async function copyFile(source: DatasetFileHandle, target: DatasetFileHandle, fi
 		}
 		if (hasher.digest('hex') !== checksum) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'Copied file verification failed');
 	}
-	return info.size;
+	const current = await source.stat();
+	if (current.size !== info.size || current.modified !== info.modified || current.changed !== info.changed) throw new CodedError(ErrorCodes.FS_FILE_CHANGED);
+	return { size: info.size, modified: info.modified, changed: info.changed, checksum: contentHash.digest('hex') };
 }
 
 /** New files are created exclusively, including inside an explicitly selected empty destination. */
@@ -207,6 +212,7 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 		const sourceIdentities = await snapshot(source, sourceContents);
 		checkMaterializedIdentities(sourceIdentities, bindings);
 		const sizes = new Map<string, number>();
+		const sourceGuards = new Map<string, DatasetContentGuard>();
 		for (const { file, source: path } of copies) {
 			const info = await source.statFile(path);
 			if (!info) throw new CodedError(ErrorCodes.IO_NOT_FOUND, 'Source file is missing');
@@ -245,8 +251,11 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 			try {
 				const output = await target.openFile(file.path, 'write');
 				try {
-					const copiedBytes = await copyFile(input, output, file, manifest, verification, fileBytes => progress({ type: 'chunk', path: file.path, totalFiles, completedFiles, totalBytes, completedBytes: completedBytes + fileBytes, fileBytes, fileSize: sizes.get(file.path)! }));
-					completedBytes += copiedBytes;
+					const guard = await copyFile(input, output, file, manifest, verification, fileBytes => progress({ type: 'chunk', path: file.path, totalFiles, completedFiles, totalBytes, completedBytes: completedBytes + fileBytes, fileBytes, fileSize: sizes.get(file.path)! }));
+					const previous = sourceGuards.get(sourcePath);
+					if (previous && (previous.size !== guard.size || previous.modified !== guard.modified || previous.changed !== guard.changed || previous.checksum !== guard.checksum)) throw new CodedError(ErrorCodes.FS_FILE_CHANGED);
+					sourceGuards.set(sourcePath, guard);
+					completedBytes += guard.size;
 				} finally {
 					await output.close();
 				}
@@ -263,13 +272,17 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 			if (!materializedIdentity) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'Missing materialized file identity');
 			return { path: link.path, target: link.target, hardlink: link.hardlink === true, source: copiesByPath.get(link.path)!.declaredSource, materializedIdentity };
 		});
+		for (const [path, guard] of sourceGuards) {
+			const info = await source.statFile(path);
+			if (!info || info.size !== guard.size || info.modified !== guard.modified || info.changed !== guard.changed) throw new CodedError(ErrorCodes.FS_FILE_CHANGED);
+		}
 		await target.assertPathBinding();
 		commitStarted = true;
 		commit(nextBindings);
 		committed = true;
 		try {
 			await source.assertPathBinding();
-			if (await removeContents(source, sourceContents, sourceIdentities, sourceRoot.kind === 'derived')) result.cleanupWarnings.push({ stage: 'source-cleanup', code: 'ENOTEMPTY' });
+			if (await removeContents(source, sourceContents, sourceIdentities, sourceRoot.kind === 'derived', sourceGuards)) result.cleanupWarnings.push({ stage: 'source-cleanup', code: 'ENOTEMPTY' });
 		} catch (error) {
 			result.cleanupWarnings.push(cleanupWarning('source-cleanup', error));
 		}

@@ -83,9 +83,11 @@ class WindowsHandle {
 		if (!kernel.GetFileInformationByHandleEx(handle, 1, ptr(standard), standard.length)) windowsError('Read file metadata');
 		const identity = Buffer.alloc(24);
 		if (!kernel.GetFileInformationByHandleEx(handle, 18, ptr(identity), identity.length)) windowsError('Read file identity');
+		const times = Buffer.alloc(40);
+		if (!kernel.GetFileInformationByHandleEx(handle, 0, ptr(times), times.length)) windowsError('Read file timestamps');
 		const size = standard.readBigInt64LE(8);
 		if (size < 0n || size > BigInt(Number.MAX_SAFE_INTEGER)) fail('EFBIG', 'Dataset file is too large');
-		return { identity: identity.toString('hex'), kind: standard[21] ? 'directory' : 'file', size: Number(size), links: standard.readUInt32LE(16) };
+		return { identity: identity.toString('hex'), kind: standard[21] ? 'directory' : 'file', size: Number(size), links: standard.readUInt32LE(16), modified: times.readBigInt64LE(16).toString(), changed: times.readBigInt64LE(24).toString() };
 	}
 	async requireKind(kind) {
 		try {
@@ -124,7 +126,7 @@ class WindowsFile extends WindowsHandle {
 	}
 }
 class WindowsDirectory extends WindowsHandle {
-	openChild(name, access, create, directory) {
+	openChild(name, access, create, directory, share = SHARE_READ_WRITE) {
 		component(name);
 		const nameBytes = Buffer.from(name, 'utf16le');
 		const unicode = Buffer.alloc(16);
@@ -141,7 +143,7 @@ class WindowsDirectory extends WindowsHandle {
 		const { nt } = native();
 		// Omit type flags when opening existing children so reparse points reach our check.
 		const options = OPEN_REPARSE_POINT | SYNCHRONOUS_IO_NONALERT | (create ? (directory ? 1 : 0x40) : 0);
-		const status = nt.symbols.NtCreateFile(ptr(output), access | READ_ATTRIBUTES | SYNCHRONIZE, ptr(attributes), ptr(io), null, 0x80, SHARE_READ_WRITE, create ? 2 : 1, options, null, 0);
+		const status = nt.symbols.NtCreateFile(ptr(output), access | READ_ATTRIBUTES | SYNCHRONIZE, ptr(attributes), ptr(io), null, 0x80, share, create ? 2 : 1, options, null, 0);
 		if (status < 0) windowsError('Open dataset child', nt.symbols.RtlNtStatusToDosError(status));
 		return output.readBigUInt64LE(0);
 	}
@@ -160,19 +162,33 @@ class WindowsDirectory extends WindowsHandle {
 		await child.requireKind('file');
 		return child;
 	}
-	async remove(name, kind, expectedIdentity) {
-		const child = new WindowsHandle(this.openChild(name, DELETE, false, kind === 'directory'), this);
+	async remove(name, kind, expectedIdentity, guard) {
+		// A guarded delete refuses existing writers and new write opens through any hardlink.
+		const child = new WindowsFile(this.openChild(name, DELETE | (guard ? 1 : 0), false, kind === 'directory', guard ? 1 : SHARE_READ_WRITE), this);
 		try {
 			const info = await child.stat();
 			if (info.kind !== kind || info.identity !== expectedIdentity) fail('LISH_UNSAFE_PATH', 'Dataset object was replaced before removal');
+			if (guard) {
+				if (info.size !== guard.size || info.modified !== guard.modified) fail('FS_FILE_CHANGED', 'Source file changed');
+				const hash = new Bun.CryptoHasher('sha256');
+				const buffer = new Uint8Array(256 * 1024);
+				let position = 0;
+				while (position < info.size) {
+					const count = await child.read(buffer.subarray(0, Math.min(buffer.length, info.size - position)), position);
+					if (!count) fail('FS_FILE_CHANGED', 'Source file changed');
+					hash.update(buffer.subarray(0, count)); position += count;
+				}
+				const after = await child.stat();
+				if (hash.digest('hex') !== guard.checksum || after.size !== info.size || after.modified !== info.modified || after.changed !== info.changed) fail('FS_FILE_CHANGED', 'Source file changed');
+			}
 			const disposition = new Uint8Array([1]);
 			if (!native().kernel.symbols.SetFileInformationByHandle(child.value(), 4, ptr(disposition), disposition.length)) windowsError('Delete dataset child');
 		} finally {
 			await child.close();
 		}
 	}
-	async removeFile(name, expectedIdentity) {
-		await this.remove(name, 'file', expectedIdentity);
+	async removeFile(name, expectedIdentity, guard) {
+		await this.remove(name, 'file', expectedIdentity, guard);
 	}
 	async removeDirectory(name, expectedIdentity) {
 		await this.remove(name, 'directory', expectedIdentity);
@@ -223,7 +239,7 @@ async function dispatch(request) {
 		case 'truncate':
 			return handle.truncate(request.size);
 		case 'removeFile':
-			return handle.removeFile(request.name, request.identity);
+			return handle.removeFile(request.name, request.identity, request.guard);
 		case 'removeDirectory':
 			return handle.removeDirectory(request.name, request.identity);
 		case 'close':

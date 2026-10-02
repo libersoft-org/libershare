@@ -78,6 +78,7 @@ const errorCodes = [
 	'FS_IS_DIRECTORY',
 	'FS_NOT_DIRECTORY',
 	'FS_BUSY',
+	'FS_FILE_CHANGED',
 	'FS_NO_SPACE',
 	'FS_READ_ONLY',
 	'FS_NAME_TOO_LONG',

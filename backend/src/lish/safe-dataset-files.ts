@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { CodedError, ErrorCodes } from '@shared';
-import type { DatasetDirectoryHandle, DatasetEntryInfo, DatasetFileHandle } from './safe-dataset-types.ts';
+import type { DatasetDirectoryHandle, DatasetEntryInfo, DatasetFileHandle, DatasetContentGuard } from './safe-dataset-types.ts';
 
 export type DatasetRoot = { kind: 'explicit'; path: string } | { kind: 'derived'; base: string; component: string };
 export interface DatasetNamespace {
@@ -19,6 +19,7 @@ function unsafe(detail: string): never {
 	throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, detail);
 }
 function normalized(error: unknown): unknown {
+	if (code(error) === ErrorCodes.FS_FILE_CHANGED) return new CodedError(ErrorCodes.FS_FILE_CHANGED);
 	if (code(error) !== ErrorCodes.LISH_UNSAFE_PATH || error instanceof CodedError) return error;
 	const retained = (error as { retainedDirectory?: unknown }).retainedDirectory;
 	const detail = typeof retained === 'string' && /^\.lish-remove-[a-f0-9-]{36}$/u.test(retained) ? `Removal stopped; data preserved in ${retained}/entry` : 'Unsafe dataset filesystem object';
@@ -318,7 +319,7 @@ export class SafeDataset {
 		}
 	}
 
-	async removeFile(path: string, expectedIdentity: string): Promise<void> {
+	async removeFile(path: string, expectedIdentity: string, guard?: DatasetContentGuard): Promise<void> {
 		const info = await this.statFile(path);
 		if (!info) return;
 		if (info.identity !== expectedIdentity) unsafe('Dataset file was replaced before removal');
@@ -326,7 +327,7 @@ export class SafeDataset {
 		const name = parts.pop()!;
 		const parent = await this.directory(parts, false);
 		try {
-			await parent.handle.removeFile(name, expectedIdentity);
+			await parent.handle.removeFile(name, expectedIdentity, guard);
 			this.entries.delete(path);
 			this.identities.delete(info.identity);
 		} catch (error) {

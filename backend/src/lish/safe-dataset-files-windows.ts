@@ -1,9 +1,9 @@
 // @ts-expect-error Bun embeds this self-contained JavaScript worker as a file asset.
 import workerPath from './safe-dataset-windows-worker.js' with { type: 'file' };
-import type { DatasetDirectoryHandle, DatasetEntryInfo, DatasetFileHandle } from './safe-dataset-types.ts';
+import type { DatasetDirectoryHandle, DatasetEntryInfo, DatasetFileHandle, DatasetContentGuard } from './safe-dataset-types.ts';
 import { windowsDatasetError } from './windows-dataset-error.ts';
 
-type Request = { operation: 'openRoot'; path: string } | { operation: 'stat' | 'close'; handle: number } | { operation: 'openDirectory' | 'createDirectory'; handle: number; name: string } | { operation: 'openFile'; handle: number; name: string; mode: 'read' | 'write' | 'create' } | { operation: 'removeFile' | 'removeDirectory'; handle: number; name: string; identity: string } | { operation: 'read'; handle: number; length: number; position: number } | { operation: 'write'; handle: number; bytes: Uint8Array; position: number } | { operation: 'truncate'; handle: number; size: number };
+type Request = { operation: 'openRoot'; path: string } | { operation: 'stat' | 'close'; handle: number } | { operation: 'openDirectory' | 'createDirectory'; handle: number; name: string } | { operation: 'openFile'; handle: number; name: string; mode: 'read' | 'write' | 'create' } | { operation: 'removeFile' | 'removeDirectory'; handle: number; name: string; identity: string; guard?: DatasetContentGuard } | { operation: 'read'; handle: number; length: number; position: number } | { operation: 'write'; handle: number; bytes: Uint8Array; position: number } | { operation: 'truncate'; handle: number; size: number };
 
 type Reply = { id: number; value?: unknown; error?: { message: string; code?: string; operation?: string; number?: number } };
 
@@ -116,9 +116,9 @@ class WindowsDirectory extends WindowsHandle implements DatasetDirectoryHandle {
 		return new WindowsFile(this.io, await this.io.call({ operation: 'openFile', handle: this.handle, name, mode }));
 	}
 
-	async removeFile(name: string, expectedIdentity: string): Promise<void> {
+	async removeFile(name: string, expectedIdentity: string, guard?: DatasetContentGuard): Promise<void> {
 		this.active();
-		await this.io.call({ operation: 'removeFile', handle: this.handle, name, identity: expectedIdentity });
+		await this.io.call({ operation: 'removeFile', handle: this.handle, name, identity: expectedIdentity, ...(guard ? { guard } : {}) });
 	}
 
 	async removeDirectory(name: string, expectedIdentity: string): Promise<void> {

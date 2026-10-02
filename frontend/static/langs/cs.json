@@ -140,6 +140,7 @@
 		"errorLishNotShared": "Účastník tento LISH nesdílí",
 		"errorChunkNotFound": "Účastník tuto část nemá",
 		"errorBusy": "Účastník je zaneprázdněný, zkus to později",
+		"errorFileChanged": "Soubor se během operace změnil. Jeho původní kopie nebyla odstraněna.",
 		"errorIO": "U účastníka došlo k I/O chybě",
 		"errorInvalidRequest": "Účastník odmítl požadavek jako neplatný",
 		"errorSearchQueryTooLong": "Hledaný text je příliš dlouhý",

@@ -1,9 +1,18 @@
+export interface DatasetContentGuard {
+ size: number;
+ modified: string;
+ changed: string;
+ checksum: string;
+}
+
 /** Identity is compared within one filesystem; sizes must remain safe JavaScript integers. */
 export interface DatasetEntryInfo {
 	identity: string;
 	kind: 'file' | 'directory' | 'other';
 	size: number;
 	links: number;
+	modified?: string;
+	changed?: string;
 }
 
 /** An opened file stays attached to the object checked by the caller, not its pathname. */
@@ -21,7 +30,7 @@ export interface DatasetDirectoryHandle {
 	openDirectory(name: string): Promise<DatasetDirectoryHandle>;
 	createDirectory(name: string): Promise<DatasetDirectoryHandle>;
 	openFile(name: string, mode: 'read' | 'write' | 'create'): Promise<DatasetFileHandle>;
-	removeFile(name: string, expectedIdentity: string): Promise<void>;
+	removeFile(name: string, expectedIdentity: string, guard?: DatasetContentGuard): Promise<void>;
 	removeDirectory(name: string, expectedIdentity: string): Promise<void>;
 	close(): Promise<void>;
 }
