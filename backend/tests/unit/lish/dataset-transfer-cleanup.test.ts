@@ -107,7 +107,7 @@ test.skipIf(process.platform === 'win32')('does not commit a renamed destination
 	expect((await stat(join(f.base, 'target'))).isDirectory()).toBe(true);
 });
 
-test.each(['edit', 'xy'])('manual moves preserve edited materialized bytes across second and third moves: %j', async contents => {
+test.each(['edit', 'xy', 'more data'])('manual moves preserve edited materialized bytes across second and third moves: %j', async contents => {
 	const f = await fixture();
 	f.manifest.links = [{ path: 'copy.bin', target: join(f.source, 'data.bin') }];
 	let bindings: DatasetLinkBinding[] = [];
@@ -180,7 +180,7 @@ test('finalization refuses edited materialized bytes before committing or deleti
 	await expect(stat(join(f.base, 'final'))).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
-test('a grown materialized copy is retained when relocation refuses its size', async () => {
+test('finalization retains a grown materialized copy and refuses its size', async () => {
 	const f = await fixture();
 	f.manifest.links = [{ path: 'copy.bin', target: 'data.bin' }];
 	let bindings: DatasetLinkBinding[] = [];
@@ -204,7 +204,7 @@ test('a grown materialized copy is retained when relocation refuses its size', a
 				committed = true;
 			},
 			() => {},
-			'source',
+			'manifest',
 			bindings
 		)
 	).rejects.toMatchObject({ code: 'IO_NOT_FOUND' });

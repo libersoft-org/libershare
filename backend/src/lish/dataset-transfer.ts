@@ -137,7 +137,7 @@ export async function deleteDatasetData(manifest: ILISH, root: DatasetRoot, bind
 
 async function copyFile(source: DatasetFileHandle, target: DatasetFileHandle, file: NonNullable<ILISH['files']>[number], manifest: ILISH, verification: 'manifest' | 'source', progress: (bytes: number) => void): Promise<number> {
 	const info = await source.stat();
-	if (info.size > file.size || (verification === 'manifest' && info.size !== file.size)) throw new CodedError(ErrorCodes.IO_NOT_FOUND, 'Source file size changed');
+	if (verification === 'manifest' && info.size !== file.size) throw new CodedError(ErrorCodes.IO_NOT_FOUND, 'Source file size changed');
 	const buffer = new Uint8Array(Math.min(256 * 1024, manifest.chunkSize));
 	const copiedChecksums: string[] = [];
 	let position = 0;
