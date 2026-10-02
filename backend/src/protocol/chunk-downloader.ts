@@ -640,7 +640,7 @@ export class ChunkDownloader {
 								console.log(`[DL] Recovery complete: ${downloadedCount}/${allTotal} verified, ${allMissing.length} to download`);
 							} catch (allocErr: any) {
 								console.error(`[DL] File recovery failed: ${allocErr.message}`);
-								if (allocErr instanceof CodedError && (allocErr.code === ErrorCodes.DISK_FULL || allocErr.code === ErrorCodes.LISH_UNSAFE_PATH)) this.deps.onSetError(allocErr.code, allocErr.detail);
+								if (allocErr instanceof CodedError && (allocErr.code === ErrorCodes.DISK_FULL || allocErr.code === ErrorCodes.DISK_SPACE_UNAVAILABLE || allocErr.code === ErrorCodes.LISH_UNSAFE_PATH)) this.deps.onSetError(allocErr.code, allocErr.detail);
 								else this.deps.onSetError(ErrorCodes.IO_NOT_FOUND, downloadDir);
 								aborted = true;
 								break;

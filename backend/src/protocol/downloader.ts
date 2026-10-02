@@ -406,7 +406,7 @@ export class Downloader {
 		const ids = Array.isArray(networkIDs) ? [...networkIDs] : [networkIDs];
 		this.networkIDs = ids;
 		this.originalNetworkIDs = originalNetworkIDs ? [...originalNetworkIDs] : [...ids];
-		this.fileAllocator = new FileAllocator(this.datasetRoot);
+		this.fileAllocator = new FileAllocator(this.datasetRoot, () => this.dataServer.getDatasetLinkBindings(this.lishID));
 	}
 
 	async init(lishPath: string): Promise<void> {
@@ -503,7 +503,7 @@ export class Downloader {
 	async doWork(): Promise<void> {
 		return this.trackLifecycle(
 			this.doWorkInternal().catch(error => {
-				if (!(error instanceof CodedError && (error.code === ErrorCodes.DISK_FULL || error.code === ErrorCodes.LISH_UNSAFE_PATH))) throw error;
+				if (!(error instanceof CodedError && (error.code === ErrorCodes.DISK_FULL || error.code === ErrorCodes.DISK_SPACE_UNAVAILABLE || error.code === ErrorCodes.LISH_UNSAFE_PATH))) throw error;
 				if (!this.destroyed) this.setError(error.code, error.detail);
 			})
 		);

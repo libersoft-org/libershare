@@ -1,8 +1,9 @@
-import { statfs } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
-import { type IStoredLISH, CodedError, ErrorCodes, formatBytes } from '@shared';
+import { type IStoredLISH } from '@shared';
 import { trace } from '../logger.ts';
 import { openDataset, datasetPath, validateDatasetNamespace, type DatasetRoot, type SafeDataset } from '../lish/safe-dataset-files.ts';
+import { checkDatasetSpace } from '../lish/dataset-space.ts';
+import { datasetCopyBytes } from '../lish/dataset-transfer.ts';
+import type { DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 
 /**
  * Progress event emitted while zero-filling files.
@@ -49,10 +50,12 @@ const PROGRESS_EMIT_INTERVAL = 50 * 1024 * 1024; // emit progress every 50MB
 export class FileAllocator {
 	private readonly downloadDir: string;
 	private readonly root: DatasetRoot | string;
+	private readonly linkBindings: () => readonly DatasetLinkBinding[];
 
-	constructor(root: DatasetRoot | string) {
+	constructor(root: DatasetRoot | string, linkBindings: () => readonly DatasetLinkBinding[] = () => []) {
 		this.root = root;
 		this.downloadDir = datasetPath(root);
+		this.linkBindings = linkBindings;
 	}
 
 	/**
@@ -71,6 +74,7 @@ export class FileAllocator {
 		}
 		try {
 			await dataset.prepare(lish);
+			await this.ensureSpaceFor(dataset, lish, []);
 			const missing: number[] = [];
 			for (let i = 0; i < lish.files.length; i++) {
 				const file = lish.files[i]!;
@@ -133,31 +137,20 @@ export class FileAllocator {
 	 * Refuse with DISK_FULL before writing anything when the declared sizes of the files still to
 	 * allocate do not fit in the space free under the download directory — zero-filling first
 	 * would run the disk full and leave a half-allocated dataset. A replaced file counts in full:
-	 * its logical size does not tell us how many blocks a sparse file occupies. Free space that cannot be read does not block.
+	 * its logical size does not tell us how many blocks a sparse file occupies. Completion must also fit.
 	 */
 	private async ensureSpaceFor(dataset: SafeDataset, lish: IStoredLISH, fileIndexes: readonly number[]): Promise<void> {
-		let needed = 0;
+		let needed = 0n;
 		for (const fi of fileIndexes) {
 			const file = lish.files?.[fi];
 			if (!file) continue;
 			const existing = await dataset.statFile(file.path);
 			const current = existing?.size ?? 0;
-			if (current !== file.size) needed += file.size;
+			if (current !== file.size) needed += BigInt(file.size);
 		}
-		if (needed === 0) return;
-		// The download directory may not exist yet; its nearest existing parent is on the same volume.
-		let free: number | undefined;
-		for (let dir = resolve(this.downloadDir); free === undefined;) {
-			try {
-				const stats = await statfs(dir);
-				free = stats.bavail * stats.bsize;
-			} catch (error: any) {
-				const parent = dirname(dir);
-				if (error?.code !== 'ENOENT' || parent === dir) return;
-				dir = parent;
-			}
-		}
-		if (needed > free) throw new CodedError(ErrorCodes.DISK_FULL, `${formatBytes(needed)} needed, ${formatBytes(free)} free in ${this.downloadDir}`);
+		const root: DatasetRoot = typeof this.root === 'string' ? { kind: 'explicit', path: this.downloadDir } : this.root;
+		const completion = lish.finalDirectory ? { path: lish.finalDirectory, bytes: datasetCopyBytes(lish, root, this.linkBindings()) } : undefined;
+		await checkDatasetSpace(this.downloadDir, needed, completion);
 	}
 
 	private async allocateFilesInternal(lish: IStoredLISH, fileIndexes: readonly number[], onProgress: ((p: AllocationProgress) => void) | undefined, signal: AbortSignal | undefined): Promise<IAllocationResult> {

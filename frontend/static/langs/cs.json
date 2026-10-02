@@ -143,7 +143,8 @@
 		"errorIO": "U účastníka došlo k I/O chybě",
 		"errorInvalidRequest": "Účastník odmítl požadavek jako neplatný",
 		"errorSearchQueryTooLong": "Hledaný text je příliš dlouhý",
-		"errorListingNotAuthorized": "Seznam nelze zobrazit: nebylo potvrzeno členství ve společné síti"
+		"errorListingNotAuthorized": "Seznam nelze zobrazit: nebylo potvrzeno členství ve společné síti",
+		"errorListTooLarge": "Seznam sdílených položek překračuje limit přenosu. Upřesněte hledání nebo aktualizujte protistranu na verzi podporující stránkování seznamu."
 	},
 	"localStorage": {
 		"title": "Místní úložiště",
@@ -306,6 +307,7 @@
 		"errorInvalidFileIndex": "Neplatný index souboru: {detail}",
 		"errorIONotFound": "Soubor nebo adresář nenalezen: {detail}",
 		"errorDiskFull": "Disk plný: {detail}",
+		"errorDiskSpaceUnavailable": "Nelze zjistit volné místo na disku. Zkontrolujte přístup k pracovní a cílové složce a zkuste to znovu.",
 		"errorDirectoryAccessDenied": "Přístup zamítnut: {detail}",
 		"errorDownloaderNotInitialized": "Stahovač nebyl inicializován",
 		"errorDownload": "Stahování selhalo: {detail}"
@@ -410,6 +412,7 @@
 		"download": {
 			"directoryDownload": "Adresář pro dokončená stahování",
 			"directoryTemp": "Adresář pro nedokončená stahování",
+			"completionCopyNotice": "Dokončení stahování vytvoří a ověří další kopii, než odstraní dočasné soubory. Na stejném disku je potřeba místo pro obě kopie. Při použití různých disků musí mít každý místo pro svou kopii.",
 			"directoryLISH": "Výchozí adresář pro LISH soubory",
 			"directoryLISHnet": "Výchozí adresář pro LISHNET soubory",
 			"directoryBackup": "Adresář pro zálohy nastavení",

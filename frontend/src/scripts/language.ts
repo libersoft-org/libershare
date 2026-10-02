@@ -121,6 +121,7 @@ const errorCodeKeys: Record<string, string> = {
 	INVALID_FILE_INDEX: 'lish.errorInvalidFileIndex',
 	IO_NOT_FOUND: 'lish.errorIONotFound',
 	DISK_FULL: 'lish.errorDiskFull',
+	DISK_SPACE_UNAVAILABLE: 'lish.errorDiskSpaceUnavailable',
 	DIRECTORY_ACCESS_DENIED: 'lish.errorDirectoryAccessDenied',
 	DOWNLOADER_NOT_INITIALIZED: 'lish.errorDownloaderNotInitialized',
 	DOWNLOAD_ERROR: 'lish.errorDownload',
@@ -146,6 +147,7 @@ const errorCodeKeys: Record<string, string> = {
 	PEER_INVALID_REQUEST: 'network.errorInvalidRequest',
 	SEARCH_QUERY_TOO_LONG: 'network.errorSearchQueryTooLong',
 	PEER_LISTING_NOT_AUTHORIZED: 'network.errorListingNotAuthorized',
+	PEER_LIST_TOO_LARGE: 'network.errorListTooLarge',
 	// Server → common
 	PARSE_ERROR: 'common.errorParseError',
 	METHOD_REQUIRED: 'common.errorMethodRequired',

@@ -59,6 +59,7 @@ const errorCodes = [
 	// empty listing on purpose: "I have nothing for you" is final, this one is a state
 	// both sides are still converging on, so the caller may ask again.
 	'PEER_LISTING_NOT_AUTHORIZED',
+	'PEER_LIST_TOO_LARGE',
 
 	// Downloader
 	'DOWNLOADER_NOT_INITIALIZED',
@@ -66,6 +67,7 @@ const errorCodes = [
 	'IO_NOT_FOUND',
 	'DIRECTORY_ACCESS_DENIED',
 	'DISK_FULL',
+	'DISK_SPACE_UNAVAILABLE',
 
 	// Filesystem (FileBrowser)
 	'FS_NOT_FOUND',

@@ -4,6 +4,7 @@ import { resolve, relative, isAbsolute } from 'node:path';
 import { datasetRootPath, conservativeDatasetRoot } from './dataset-root.ts';
 import type { DatasetFileHandle } from './safe-dataset-types.ts';
 import type { DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
+import { checkDatasetCopySpace } from './dataset-space.ts';
 
 export interface DatasetMoveResult {
 	cleanupWarnings: { stage: 'source-cleanup' | 'target-close' | 'source-close'; code: string; retainedDirectory?: string }[];
@@ -58,6 +59,10 @@ function materializedFiles(manifest: ILISH, root: DatasetRoot, bindings: readonl
 		entries.push({ source: binding?.materializedIdentity ? binding.path : target.path, declaredSource: target.path, file: { ...target, path: link.path } });
 	}
 	return entries;
+}
+
+export function datasetCopyBytes(manifest: ILISH, root: DatasetRoot, bindings: readonly DatasetLinkBinding[] = []): bigint {
+	return materializedFiles(manifest, root, bindings).reduce((bytes, entry) => bytes + BigInt(entry.file.size), 0n);
 }
 
 async function snapshot(dataset: SafeDataset, manifest: ILISH): Promise<Map<string, string>> {
@@ -201,6 +206,7 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 			sizes.set(file.path, info.size);
 		}
 		const destination = targetRoot.kind === 'derived' ? targetRoot : conservativeDatasetRoot(datasetRootPath(targetRoot));
+		await checkDatasetCopySpace(datasetRootPath(destination), [...sizes.values()].reduce((total, size) => total + BigInt(size), 0n));
 		if (destination.kind !== 'derived') throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'Copy destination needs a parent directory');
 		const base = await openDataset({ kind: 'explicit', path: destination.base }, true);
 		await base.close();

@@ -143,7 +143,8 @@
 		"errorIO": "Peer encountered an I/O error",
 		"errorInvalidRequest": "Peer rejected the request as invalid",
 		"errorSearchQueryTooLong": "The search text is too long",
-		"errorListingNotAuthorized": "Listing unavailable: membership of a shared network was not confirmed"
+		"errorListingNotAuthorized": "Listing unavailable: membership of a shared network was not confirmed",
+		"errorListTooLarge": "The shared-item list exceeds the transfer limit. Narrow your search or update the peer to a version that supports list pages."
 	},
 	"localStorage": {
 		"title": "Local storage",
@@ -306,6 +307,7 @@
 		"errorInvalidFileIndex": "Invalid file index: {detail}",
 		"errorIONotFound": "File or directory not found: {detail}",
 		"errorDiskFull": "Disk full: {detail}",
+		"errorDiskSpaceUnavailable": "Cannot check available disk space. Check access to the download and destination folders, then try again.",
 		"errorDirectoryAccessDenied": "Access denied: {detail}",
 		"errorDownloaderNotInitialized": "Downloader not initialized",
 		"errorDownload": "Download failed: {detail}"
@@ -410,6 +412,7 @@
 		"download": {
 			"directoryDownload": "Finished download directory",
 			"directoryTemp": "Unfinished downloads directory",
+			"completionCopyNotice": "Finishing a download creates and verifies another copy before removing the temporary files. On the same disk, allow space for both copies. With different disks, each needs space for its own copy.",
 			"directoryLISH": "Default LISH files directory",
 			"directoryLISHnet": "Default LISHNET files directory",
 			"directoryBackup": "Settings backup directory",
