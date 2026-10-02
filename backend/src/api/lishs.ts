@@ -325,7 +325,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			await removeDownloadState(p.lishID);
 			await stopDatasetWork(p.lishID);
 			clearBusy(p.lishID);
-			if (p.deleteData && lish.directory) await deleteDatasetData(lish, storedRoot(lish));
+			if (p.deleteData && lish.directory) await deleteDatasetData(lish, storedRoot(lish), dataServer.getDatasetLinkBindings(p.lishID));
 			const deleted = dataServer.delete(p.lishID);
 			if (deleted) {
 				console.log(`✓ LISH deleted: ${p.lishID}`);
@@ -338,7 +338,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			await stopDatasetWork(p.lishID);
 			setBusy(p.lishID, 'deleting');
 			try {
-				await deleteDatasetData(lish, storedRoot(lish));
+				await deleteDatasetData(lish, storedRoot(lish), dataServer.getDatasetLinkBindings(p.lishID));
 			} catch (error) {
 				clearBusy(p.lishID);
 				throw error;

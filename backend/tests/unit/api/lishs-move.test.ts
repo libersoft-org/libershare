@@ -125,7 +125,8 @@ for (const operation of ['move', 'finalize'] as const) {
 		try {
 			expect(await f.handlers.move({ lishID: f.id, newDirectory: first, moveData: true, createSubdirectory: false })).toEqual({ success: true });
 			await f.handlers.stopVerifyAll();
-			expect(f.data.getDatasetLinkBindings(f.id)).toEqual([{ path: 'copy.bin', target: join(f.source, 'data.bin'), source: 'data.bin', hardlink: false }]);
+			expect(f.data.getDatasetLinkBindings(f.id)).toMatchObject([{ path: 'copy.bin', target: join(f.source, 'data.bin'), source: 'data.bin', hardlink: false }]);
+			expect(typeof f.data.getDatasetLinkBindings(f.id)[0]?.materializedIdentity).toBe('string');
 			if (operation === 'finalize') {
 				f.data.updateFinalDirectory(f.id, second);
 				f.data.setDatasetRoot(f.id, { kind: 'derived', base: f.base, component: 'second' }, true);
