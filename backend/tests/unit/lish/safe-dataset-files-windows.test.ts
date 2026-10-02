@@ -114,30 +114,29 @@ windows('Windows anchored dataset files', () => {
 		}
 	});
 
-
- test('orders concurrent writes and closes without detaching caller buffers', async () => {
-  const path = await mkdtemp(join(tmpdir(), 'lish-queued-io-'));
-  const root = await openWindowsDatasetDirectory(path);
-  const file = await root.openFile('data.bin', 'create');
-  try {
-   const first = Buffer.from('abcd');
-   const second = Buffer.from('EFGH');
-   const writes = [file.write(first, 0), file.write(second, 4)];
-   await root.close();
-   const closing = file.close();
-   expect(file.close()).toBe(closing);
-   expect(await Promise.all(writes)).toEqual([4, 4]);
-   await closing;
-   expect(first.toString()).toBe('abcd');
-   expect(second.toString()).toBe('EFGH');
-   expect(await readFile(join(path, 'data.bin'), 'utf8')).toBe('abcdEFGH');
-   await expect(file.read(Buffer.alloc(4), 0)).rejects.toMatchObject({ code: 'EBADF' });
-  } finally {
-   await file.close();
-   await root.close();
-   await rm(path, { recursive: true, force: true });
-  }
- });
+	test('orders concurrent writes and closes without detaching caller buffers', async () => {
+		const path = await mkdtemp(join(tmpdir(), 'lish-queued-io-'));
+		const root = await openWindowsDatasetDirectory(path);
+		const file = await root.openFile('data.bin', 'create');
+		try {
+			const first = Buffer.from('abcd');
+			const second = Buffer.from('EFGH');
+			const writes = [file.write(first, 0), file.write(second, 4)];
+			await root.close();
+			const closing = file.close();
+			expect(file.close()).toBe(closing);
+			expect(await Promise.all(writes)).toEqual([4, 4]);
+			await closing;
+			expect(first.toString()).toBe('abcd');
+			expect(second.toString()).toBe('EFGH');
+			expect(await readFile(join(path, 'data.bin'), 'utf8')).toBe('abcdEFGH');
+			await expect(file.read(Buffer.alloc(4), 0)).rejects.toMatchObject({ code: 'EBADF' });
+		} finally {
+			await file.close();
+			await root.close();
+			await rm(path, { recursive: true, force: true });
+		}
+	});
 
 	test('returns the same exact file identity and link count for hardlinks', async () => {
 		const path = await mkdtemp(join(tmpdir(), 'lish-handles-'));

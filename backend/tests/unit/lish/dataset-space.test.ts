@@ -112,15 +112,25 @@ test('reports unavailable capacity as a terminal download error without allocati
 	}
 });
 
-
 test('checks the actual grown source size before a manual copy', async () => {
- const f = await fixture();
- const bytes = Buffer.alloc(60, 7);
- await fs.writeFile(join(f.source, 'data.bin'), bytes);
- capacity(55n);
- let committed = false;
- await expect(moveDatasetData(f.lish, { kind: 'explicit', path: f.source }, { kind: 'derived', base: f.base, component: 'destination' }, () => { committed = true; }, () => {}, 'source')).rejects.toMatchObject({ code: 'DISK_FULL' });
- expect(committed).toBe(false);
- expect(await fs.readFile(join(f.source, 'data.bin'))).toEqual(bytes);
- await expect(fs.stat(f.target)).rejects.toMatchObject({ code: 'ENOENT' });
+	const f = await fixture();
+	const bytes = Buffer.alloc(60, 7);
+	await fs.writeFile(join(f.source, 'data.bin'), bytes);
+	capacity(55n);
+	let committed = false;
+	await expect(
+		moveDatasetData(
+			f.lish,
+			{ kind: 'explicit', path: f.source },
+			{ kind: 'derived', base: f.base, component: 'destination' },
+			() => {
+				committed = true;
+			},
+			() => {},
+			'source'
+		)
+	).rejects.toMatchObject({ code: 'DISK_FULL' });
+	expect(committed).toBe(false);
+	expect(await fs.readFile(join(f.source, 'data.bin'))).toEqual(bytes);
+	await expect(fs.stat(f.target)).rejects.toMatchObject({ code: 'ENOENT' });
 });
