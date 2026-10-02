@@ -517,56 +517,38 @@ describe('writeFileAtomically', () => {
 	 * restore the SNAPSHOT - which it does by rebuilding, the path taken when no usable link
 	 * is held.
 	 */
-	/**
-	 * The backup link is taken BEFORE the original is read - which is what keeps the guard
-	 * meaning "the file as this call first looked at it" - so the two can end up being
-	 * different files. An administrator REPLACING the path in that window (a rename, so a new
-	 * inode) leaves the backup naming the old one, and renaming it back puts a configuration
-	 * this call never read over the newer one it did, while reporting a clean undo.
-	 *
-	 * That window is one await between two syscalls, so it is raced rather than scheduled: the
-	 * replacement runs alongside the write and the assertion is the invariant, not the timing.
-	 * Whatever the interleaving, a rollback that REPORTS the original back has to leave the
-	 * content this call read. Kept deliberately small - it hammers the filesystem, and at a
-	 * few hundred attempts it starved a clock-sampling test in a neighbouring suite - and
-	 * checked against the unfixed code at this size: the stale backup is caught every run.
-	 */
-	it('never restores a configuration it did not read, whatever lands between the link and the read', async () => {
+	// Replace the original after linking its backup, before the snapshot reads it.
+	it('restores the version read after the backup link became stale', async () => {
 		const path = join(dir, '90-libershare.conf');
-		let restores = 0;
-		for (let attempt = 0; attempt < 50; attempt++) {
-			await writeFile(path, 'first\n', 'utf8');
-			const replacement = join(dir, 'administrator.tmp');
-			await writeFile(replacement, 'second\n', 'utf8');
-			// Every call is recorded, because the rollback reads as well - the one that matters
-			// is the FIRST, which is the original this write is replacing.
-			const reads: string[] = [];
-			const swap = rename(replacement, path).catch(() => {});
-			let rollback;
-			try {
-				rollback = await writeFileAtomically(path, 'ours\n', async file => {
-					const seen = await readFile(file, 'utf8');
-					reads.push(seen);
-					return seen;
-				});
-			} catch {
-				// Refused because the replacement landed inside the read itself: the safe answer.
-				await swap;
-				await rm(replacement, { force: true });
-				continue;
+		const replacement = join(dir, 'administrator.tmp');
+		await writeFile(path, 'first\n', 'utf8');
+		await writeFile(replacement, 'second\n', 'utf8');
+		let replaced = false;
+		const linkFile = async (from: string, to: string): Promise<void> => {
+			await link(from, to);
+			if (!replaced) {
+				replaced = true;
+				await rename(replacement, path);
 			}
-			await swap;
-			await rm(replacement, { force: true });
-			const restored = await rollback();
-			// A refused rollback leaves whatever is there and says so; it is the REPORTED
-			// restores that have to be truthful.
-			if (restored.state === 'not-restored') continue;
-			restores++;
-			expect(reads.length).toBeGreaterThan(0);
-			expect(await readFile(path, 'utf8')).toBe(reads[0]!);
-		}
-		// Not vacuous: the un-raced interleaving alone reaches a reported restore every time.
-		expect(restores).toBeGreaterThan(0);
+		};
+		const reads: string[] = [];
+		const rollback = await writeFileAtomically(
+			path,
+			'ours\n',
+			async file => {
+				const seen = await readFile(file, 'utf8');
+				reads.push(seen);
+				return seen;
+			},
+			syncDirectory,
+			linkFile
+		);
+		expect(replaced).toBe(true);
+		expect(reads[0]).toBe('second\n');
+		expect(await readFile(path, 'utf8')).toBe('ours\n');
+		const restored = await rollback();
+		expect(restored.state).not.toBe('not-restored');
+		expect(await readFile(path, 'utf8')).toBe('second\n');
 	});
 
 	/**

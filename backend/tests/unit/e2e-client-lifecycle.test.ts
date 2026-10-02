@@ -60,7 +60,7 @@ for (const cause of ['destroy', 'disconnect']) {
 			expect(await event).toBe(error);
 			expect(await collection).toBe(error);
 			expect((client as any).waits.size).toBe(0);
-			expect((client as any).client.eventListeners.get('tick')?.size ?? 0).toBe(0);
+			expect((client as any).client.listeners.get('tick')?.size ?? 0).toBe(0);
 			client.destroy();
 			expect(await outcome(client.collectEvents('tick', 0))).toBe('client destroyed');
 		} finally {

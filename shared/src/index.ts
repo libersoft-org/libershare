@@ -5,6 +5,9 @@ export { productName, productVersion, productIdentifier, productWebsite, product
 export { formatUntrustedValue, boundDetail, MAX_VALIDATION_DETAIL } from './untrusted-value.ts';
 export { MAX_MANIFEST_PATH_BYTES, MAX_MANIFEST_ID_BYTES, MAX_MANIFEST_NAME_BYTES, MAX_MANIFEST_DESCRIPTION_BYTES, MAX_CHECKSUM_LENGTH } from './manifest-limits.ts';
 
+// Network defaults
+export { DEFAULT_MAX_RELAY_RESERVATIONS, isRelayReservationLimit, parseRelayReservationLimit } from './network-defaults.ts';
+
 // Utils
 export { formatBytes, parseBytes, sanitizeFilename, truncateUTF8End, deriveConnectionStatus, isSelectableInterface, ipv4BaselineOf, sameIPv4Baseline, isIPv4, isIPv6, isValidSSID, isUnambiguousWifiTarget, isValidWifiKey, isWifiHexKey, MAX_DNS_LIST_BYTES, MAX_DNS_SERVERS, canonicalDnsServer, normalizeDnsServers, validateIPv4Config } from './utils.ts';
 
@@ -81,11 +84,12 @@ export function isCompressed(filePath: string): boolean {
 export * from './lish.ts';
 
 // API client
-export { API, type IWsClient } from './api.ts';
+export { API, type IRpcClient, type IWsClient } from './api.ts';
 export type { IdentityBackup } from './api.ts';
 
 // WebSocket client
-export { WsClient } from './client.ts';
+export { WsClient, WebSocketTransport } from './client.ts';
+export { RpcClient, type RpcSession, type RpcState, type RpcTransport } from './rpc-client.ts';
 
 // Error codes
 export { ErrorCodes, CodedError, type ErrorCode } from './errors.ts';
@@ -692,6 +696,12 @@ export interface NetworkStateInfo {
 	known: boolean;
 	/** What this host actually lets the app change. Both false on a read-only platform. */
 	capabilities: NetCapabilities;
+	/**
+	 * True when NetworkManager manages this host's devices but their profiles could not be read
+	 * completely, so IPv4 editing is switched off until a later read succeeds. Always false on
+	 * a host without NetworkManager and on other platforms.
+	 */
+	ipv4ProfilesUnavailable: boolean;
 }
 
 /**
@@ -782,3 +792,5 @@ export interface ConnectionStatus {
 	ssid: string | null;
 	interfaceName: string | null;
 }
+
+export { IPC_KIND, IPC_VERSION, IPC_HEADER_SIZE, IPC_MAX_PAYLOAD_SIZE, encodeIpcBody, encodeIpcFrame, decodeIpcBody, IpcFrameDecoder, type IpcKind, type IpcFrame } from './ipc-frame.ts';

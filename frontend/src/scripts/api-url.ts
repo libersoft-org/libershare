@@ -6,7 +6,7 @@ type ApiWindow = {
 		host: string;
 		search: string;
 	};
-	__BACKEND_PORT__?: number | string;
+	__BACKEND_IPC__?: boolean;
 };
 
 type ApiUrlOptions = {
@@ -29,13 +29,12 @@ export function getAPIURL(options: ApiUrlOptions = {}): string {
 	const isDev = options.dev ?? viteDev();
 
 	if (browserWindow) {
+		if (browserWindow.__BACKEND_IPC__ === true) return 'ipc://backend';
 		// URL param override for multi-node dev testing (e.g. ?backend=ws://localhost:1159)
 		if (isDev) {
 			const param = new URLSearchParams(browserWindow.location.search).get('backend');
 			if (param) return param;
 		}
-		// When running inside Tauri, the backend port is passed via initialization script.
-		if (browserWindow.__BACKEND_PORT__) return `ws://localhost:${browserWindow.__BACKEND_PORT__}`;
 		if (!configuredBackendUrl) {
 			const protocol = browserWindow.location.protocol === 'https:' ? 'wss:' : 'ws:';
 			return `${protocol}//${browserWindow.location.host}/ws`;

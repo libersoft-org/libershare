@@ -9,22 +9,99 @@ interface Request {
 	params?: Record<string, any> | undefined;
 }
 
+/**
+ * The URL to connect to: a token given in `--url` wins, otherwise `LISH_TOKEN` is added as the
+ * single `token` parameter. Two tokens in the URL are refused rather than guessed between.
+ */
+export function withToken(url: string, envToken: string | undefined): string {
+	let parsed: URL;
+	try {
+		parsed = new URL(url);
+	} catch {
+		// A malformed URL can contain credentials that cannot be safely extracted.
+		throw new Error('the URL cannot be parsed');
+	}
+	if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') throw new Error('the URL must use ws:// or wss://');
+	const given = parsed.searchParams.getAll('token');
+	if (given.length > 1) throw new Error('the URL carries more than one token');
+	// A WebSocket URL cannot carry one, and the error that says so would print the token.
+	if (parsed.href.includes('#')) throw new Error('the URL must not have a fragment');
+	if (given.length === 0 && envToken) parsed.searchParams.set('token', envToken);
+	return parsed.toString();
+}
+
+/**
+ * A message fit for the terminal: every token the CLI knows of — from the environment or the
+ * URL, raw or percent-encoded — and any `token=` query value replaced by `***`. Error messages
+ * from URL parsing and from the WebSocket quote the URL they were given.
+ */
+export function redactTokens(message: string, url: string, envToken: string | undefined): string {
+	const secrets = new Set<string>();
+	if (envToken) secrets.add(envToken);
+	try {
+		for (const token of new URL(url).searchParams.getAll('token')) if (token) secrets.add(token);
+	} catch {}
+	let out = message;
+	for (const secret of secrets) {
+		// Match partially encoded values too, including percent escapes for unreserved letters.
+		const pattern = Array.from(secret, character => {
+			const literal = character.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			const encoded = [...new TextEncoder().encode(character)]
+				.map(byte => {
+					const hex = byte.toString(16).padStart(2, '0');
+					return '%' + hex.replace(/[a-f]/g, digit => `[${digit}${digit.toUpperCase()}]`);
+				})
+				.join('');
+			return `(?:${literal}|${encoded})`;
+		}).join('');
+		// Short tokens still get redacted when quoted or delimited, without destroying words.
+		const bounded = secret.length < 4 ? `(?<![\\p{L}\\p{N}_])${pattern}(?![\\p{L}\\p{N}_])` : pattern;
+		out = out.replace(new RegExp(bounded, 'gu'), '***');
+	}
+	return out.replace(/([?&])([^=&#\s"']+)=([^&#\s"']*)/g, (field, separator: string, key: string) => {
+		try {
+			if (decodeURIComponent(key.replace(/\+/g, ' ')).toLowerCase() === 'token') return `${separator}${key}=***`;
+		} catch {}
+		return field;
+	});
+}
+
+/** The URL as shown to the user: no query (it holds the token) and no credentials. */
+export function displayURL(url: string): string {
+	const parsed = new URL(url);
+	parsed.search = '';
+	parsed.username = '';
+	parsed.password = '';
+	return parsed.toString();
+}
+
 export class APIClient {
 	private readonly url: string;
+	private readonly envToken = process.env['LISH_TOKEN'];
 	private ws: WebSocket | null = null;
 	private pending = new Map<string, { resolve: (value: any) => void; reject: (error: Error) => void }>();
 	private eventHandlers = new Map<string, ((data: any) => void)[]>();
 
 	constructor(url: string) {
-		this.url = url;
+		try {
+			this.url = withToken(url, this.envToken);
+		} catch (error) {
+			throw new Error('Invalid --url: ' + redactTokens(String(error instanceof Error ? error.message : error), url, this.envToken));
+		}
 	}
 
 	async connect(): Promise<void> {
 		return new Promise((resolve, reject) => {
-			this.ws = new WebSocket(this.url);
+			try {
+				this.ws = new WebSocket(this.url);
+			} catch {
+				// Runtime constructor errors may quote arbitrary URL encodings and credentials.
+				reject(new Error('WebSocket connection could not be created'));
+				return;
+			}
 
 			this.ws.onopen = () => resolve();
-			this.ws.onerror = err => reject(new Error(`WebSocket error: ${err}`));
+			this.ws.onerror = err => reject(this.error(`WebSocket error: ${err}`));
 
 			this.ws.onmessage = event => {
 				const msg = JSON.parse(event.data as string);
@@ -34,7 +111,7 @@ export class APIClient {
 					const pending = this.pending.get(msg.id);
 					if (pending) {
 						this.pending.delete(msg.id);
-						if (msg.error) pending.reject(new Error(msg.error));
+						if (msg.error) pending.reject(this.error(String(msg.error)));
 						else pending.resolve(msg.result);
 					}
 				} else if (msg.event) {
@@ -50,6 +127,10 @@ export class APIClient {
 				this.pending.clear();
 			};
 		});
+	}
+
+	private error(message: string): Error {
+		return new Error(redactTokens(message, this.url, this.envToken));
 	}
 
 	async call<T = any>(method: string, params?: Record<string, any>): Promise<T> {

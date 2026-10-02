@@ -1,5 +1,5 @@
 import { get, writable, type Writable } from 'svelte/store';
-import { minMessageSizeFor, type CompressionAlgorithm } from '@shared';
+import { minMessageSizeFor, DEFAULT_MAX_RELAY_RESERVATIONS, isRelayReservationLimit, type CompressionAlgorithm } from '@shared';
 import { api } from './api.ts';
 import { defaultWidgetVisibility, type FooterPosition, type FooterWidget } from './footerWidgets.ts';
 import { currentLanguage, languages } from './language.ts';
@@ -42,8 +42,8 @@ export const maxDownloadSpeed = writable(0);
 export const maxUploadSpeed = writable(0);
 export const maxChunkSize = writable(0);
 export const maxMessageSize = writable(0);
-export const allowRelay = writable(true);
-export const maxRelayReservations = writable(0);
+export const allowRelay = writable(false);
+export const maxRelayReservations = writable(DEFAULT_MAX_RELAY_RESERVATIONS);
 export const useRelayClients = writable(true);
 export const maxRelayClients = writable(5);
 export const autoStartSharing = writable(true);
@@ -267,9 +267,10 @@ export function setAllowRelay(enabled: boolean): void {
 	updateSetting(allowRelay, 'network.allowRelay', enabled);
 }
 
+/** Store a reservation limit. Anything but a non-negative integer is ignored: 0 means unlimited, so a bad value must never become 0. */
 export function setMaxRelayReservations(value: number): void {
-	const clampedValue = Math.max(0, value || 0);
-	updateSetting(maxRelayReservations, 'network.maxRelayReservations', clampedValue);
+	if (!isRelayReservationLimit(value)) return;
+	updateSetting(maxRelayReservations, 'network.maxRelayReservations', value);
 }
 
 export function setUseRelayClients(enabled: boolean): void {

@@ -1,5 +1,5 @@
 import { SUPPORTED_ALGOS, type HashAlgorithm, COMPRESSION_ALGORITHMS, type CompressionAlgorithm, DEFAULT_ALGO, DEFAULT_CHUNK_SIZE, DEFAULT_API_URL, formatBytes, parseBytes, API } from '@shared';
-import { APIClient } from './api-client.ts';
+import { APIClient, displayURL } from './api-client.ts';
 interface IArgs {
 	input?: string;
 	name?: string;
@@ -30,7 +30,7 @@ function showHelp(): void {
 	console.log('                          Examples: 512K, 5M, 1G, 2T or raw bytes: 5242880');
 	console.log('  --algo <algorithm>      Hash algorithm (optional, default: sha256)');
 	console.log('  --threads <number>      Number of worker threads (optional, default: 0 = auto detect by CPU cores)');
-	console.log('  --url <url>             Backend WebSocket URL (optional, default: ' + DEFAULT_API_URL + ')');
+	console.log('  --url <url>             Backend WebSocket URL (default: ' + DEFAULT_API_URL + '); reads LISH_TOKEN');
 	console.log('  --add-to-sharing        Add to sharing after creation (default: false)');
 	console.log('  --minify-json           Minify JSON output (default: false)');
 	console.log('  --compress              Compress LISH file (default algorithm: gzip)');
@@ -149,6 +149,7 @@ async function makeLISH(args: IArgs): Promise<void> {
 	const description = args.description;
 	const threads = args.threads !== undefined ? args.threads : 0;
 	const serverURL = args.url || DEFAULT_API_URL;
+	const client = new APIClient(serverURL);
 	const addToSharing = args.addToSharing || false;
 	const minifyJSON = args.minifyJSON || false;
 	const compress = args.compress || false;
@@ -165,15 +166,14 @@ async function makeLISH(args: IArgs): Promise<void> {
 	console.log('\x1b[33mChunk size:\x1b[0m           ' + formatBytes(chunkSize));
 	console.log('\x1b[33mChecksum algorithm:\x1b[0m   ' + algo);
 	console.log('\x1b[33mThreads:\x1b[0m              ' + threads + (threads === 0 ? ' (auto detect)' : ''));
-	console.log('\x1b[33mServer:\x1b[0m               ' + serverURL);
+	console.log('\x1b[33mServer:\x1b[0m               ' + displayURL(serverURL));
 	if (addToSharing) console.log('\x1b[33mAdd to sharing:\x1b[0m       yes');
 	if (minifyJSON) console.log('\x1b[33mMinify JSON:\x1b[0m          yes');
 	if (compress) console.log('\x1b[33mCompress:\x1b[0m              ' + compressionAlgorithm);
 	console.log('');
 
 	// Connect to backend via WebSocket
-	console.log('Connecting to ' + serverURL + '...');
-	const client = new APIClient(serverURL);
+	console.log('Connecting to ' + displayURL(serverURL) + '...');
 	await client.connect();
 	const api = new API(client);
 	console.log('Connected.');
@@ -240,4 +240,7 @@ async function makeLISH(args: IArgs): Promise<void> {
 	}
 }
 
-main();
+main().catch(error => {
+	console.error('Error: ' + (error instanceof Error ? error.message : String(error)));
+	process.exitCode = 1;
+});
