@@ -11,13 +11,22 @@ class Channel {
 	private values: Uint8Array[] = [];
 	private wake: (() => void) | undefined;
 	private ended = false;
-	push(value: Uint8Array): void { this.values.push(value); this.wake?.(); }
-	end(): void { this.ended = true; this.wake?.(); }
+	push(value: Uint8Array): void {
+		this.values.push(value);
+		this.wake?.();
+	}
+	end(): void {
+		this.ended = true;
+		this.wake?.();
+	}
 	async *[Symbol.asyncIterator](): AsyncGenerator<Uint8Array> {
 		while (!this.ended || this.values.length) {
 			const value = this.values.shift();
 			if (value) yield value;
-			else await new Promise<void>(resolve => { this.wake = resolve; });
+			else
+				await new Promise<void>(resolve => {
+					this.wake = resolve;
+				});
 		}
 	}
 }
@@ -29,24 +38,44 @@ function framePayload(frame: Uint8Array): Uint8Array {
 }
 
 function duplex(onResponse?: (response: any) => void) {
-	const left = new Channel(), right = new Channel();
+	const left = new Channel(),
+		right = new Channel();
 	const responses: Uint8Array[] = [];
 	const requests: any[] = [];
-	const endpoint = (source: Channel, target: Channel, server: boolean): Stream => ({
-		status: 'open', id: server ? 'server' : 'client',
-		[Symbol.asyncIterator]: source[Symbol.asyncIterator].bind(source),
-		send(frame: Uint8Array | Uint8ArrayList) {
-			const bytes = Uint8Array.from(frame instanceof Uint8ArrayList ? frame.subarray() : frame);
-			const payload = framePayload(bytes);
-			if (server) { responses.push(payload); onResponse?.(decode(payload)); }
-			else requests.push(decode(payload));
-			target.push(bytes);
-			return true;
+	const endpoint = (source: Channel, target: Channel, server: boolean): Stream =>
+		({
+			status: 'open',
+			id: server ? 'server' : 'client',
+			[Symbol.asyncIterator]: source[Symbol.asyncIterator].bind(source),
+			send(frame: Uint8Array | Uint8ArrayList) {
+				const bytes = Uint8Array.from(frame instanceof Uint8ArrayList ? frame.subarray() : frame);
+				const payload = framePayload(bytes);
+				if (server) {
+					responses.push(payload);
+					onResponse?.(decode(payload));
+				} else requests.push(decode(payload));
+				target.push(bytes);
+				return true;
+			},
+			async close() {
+				left.end();
+				right.end();
+			},
+			abort() {
+				left.end();
+				right.end();
+			},
+		}) as unknown as Stream;
+	return {
+		client: endpoint(left, right, false),
+		server: endpoint(right, left, true),
+		responses,
+		requests,
+		close: () => {
+			left.end();
+			right.end();
 		},
-		async close() { left.end(); right.end(); },
-		abort() { left.end(); right.end(); },
-	}) as unknown as Stream;
-	return { client: endpoint(left, right, false), server: endpoint(right, left, true), responses, requests, close: () => { left.end(); right.end(); } };
+	};
 }
 
 function shares(count: number): IStoredLISH[] {
@@ -58,7 +87,18 @@ test.each([900, 1200])('the real handler and client return all %i shares exactly
 	for (const item of list) enableUpload(item.id);
 	let snapshots = 0;
 	const wire = duplex();
-	const serving = handleLISHProtocol(wire.server, { list: () => { snapshots++; return list; } } as never, 'remote', 'DIRECT', () => true);
+	const serving = handleLISHProtocol(
+		wire.server,
+		{
+			list: () => {
+				snapshots++;
+				return list;
+			},
+		} as never,
+		'remote',
+		'DIRECT',
+		() => true
+	);
 	try {
 		const result = await new LISHClient(wire.client).requestList();
 		expect(result.map(item => item.id)).toEqual(list.map(item => item.id).reverse());
@@ -66,7 +106,10 @@ test.each([900, 1200])('the real handler and client return all %i shares exactly
 		expect(snapshots).toBe(1);
 		expect(wire.responses.every(page => page.byteLength <= MAX_LIST_RESPONSE_SIZE)).toBe(true);
 		expect(wire.responses.length).toBe(count === 900 ? 1 : 2);
-	} finally { wire.close(); await serving; }
+	} finally {
+		wire.close();
+		await serving;
+	}
 });
 
 test('snapshot pagination keeps order while filtering withdrawn shares, and a fresh query refreshes it', async () => {
@@ -81,7 +124,18 @@ test('snapshot pagination keeps order while filtering withdrawn shares, and a fr
 			list = [...list, added];
 		}
 	});
-	const serving = handleLISHProtocol(wire.server, { list: () => { snapshots++; return list; } } as never, 'remote', 'DIRECT', () => true);
+	const serving = handleLISHProtocol(
+		wire.server,
+		{
+			list: () => {
+				snapshots++;
+				return list;
+			},
+		} as never,
+		'remote',
+		'DIRECT',
+		() => true
+	);
 	try {
 		const client = new LISHClient(wire.client);
 		const all = await client.requestList();
@@ -89,7 +143,10 @@ test('snapshot pagination keeps order while filtering withdrawn shares, and a fr
 		expect(all.some(item => item.id === 'new-share' || item.id === 'share-0')).toBe(false);
 		expect((await client.requestList('new-share')).map(item => item.id)).toEqual(['new-share']);
 		expect(snapshots).toBe(2);
-	} finally { wire.close(); await serving; }
+	} finally {
+		wire.close();
+		await serving;
+	}
 });
 
 test('authorization is checked before the snapshot and on every continuation', async () => {
@@ -97,17 +154,48 @@ test('authorization is checked before the snapshot and on every continuation', a
 	for (const item of list) enableUpload(item.id);
 	let authorized = true;
 	let reads = 0;
-	const wire = duplex(response => { if (response.nextCursor) authorized = false; });
-	const serving = handleLISHProtocol(wire.server, { list: () => { reads++; return list; } } as never, 'remote', 'DIRECT', () => true, () => authorized);
+	const wire = duplex(response => {
+		if (response.nextCursor) authorized = false;
+	});
+	const serving = handleLISHProtocol(
+		wire.server,
+		{
+			list: () => {
+				reads++;
+				return list;
+			},
+		} as never,
+		'remote',
+		'DIRECT',
+		() => true,
+		() => authorized
+	);
 	try {
 		await expect(new LISHClient(wire.client).requestList()).rejects.toMatchObject({ code: ErrorCodes.PEER_LISTING_NOT_AUTHORIZED });
 		expect(reads).toBe(1);
 		expect(decode<Record<string, unknown>>(wire.responses[1]!)).toEqual({ type: 'getLishs-result', error: ErrorCodes.PEER_LISTING_NOT_AUTHORIZED });
-	} finally { wire.close(); await serving; }
+	} finally {
+		wire.close();
+		await serving;
+	}
 	const denied = duplex();
-	const rejected = handleLISHProtocol(denied.server, { list: () => { throw new Error('unauthorized snapshot'); } } as never, 'remote', 'DIRECT', () => false);
-	try { await expect(new LISHClient(denied.client).requestList()).rejects.toMatchObject({ code: ErrorCodes.PEER_LISTING_NOT_AUTHORIZED }); }
-	finally { denied.close(); await rejected; }
+	const rejected = handleLISHProtocol(
+		denied.server,
+		{
+			list: () => {
+				throw new Error('unauthorized snapshot');
+			},
+		} as never,
+		'remote',
+		'DIRECT',
+		() => false
+	);
+	try {
+		await expect(new LISHClient(denied.client).requestList()).rejects.toMatchObject({ code: ErrorCodes.PEER_LISTING_NOT_AUTHORIZED });
+	} finally {
+		denied.close();
+		await rejected;
+	}
 });
 
 test('legacy requests get a complete small response or an explicit error, never a truncated list', async () => {
@@ -125,7 +213,10 @@ test('legacy requests get a complete small response or an explicit error, never 
 			if (count === 2) expect(reply.lishs.map((entry: any) => entry.id)).toEqual(['share-1', 'share-0']);
 			else expect(reply).toEqual({ type: 'getLishs-result', error: 'PEER_LIST_TOO_LARGE' });
 			expect(wire.responses[0]!.byteLength).toBeLessThanOrEqual(MAX_LIST_RESPONSE_SIZE);
-		} finally { wire.close(); await serving; }
+		} finally {
+			wire.close();
+			await serving;
+		}
 	}
 });
 

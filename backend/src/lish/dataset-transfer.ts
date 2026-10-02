@@ -206,7 +206,10 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 			sizes.set(file.path, info.size);
 		}
 		const destination = targetRoot.kind === 'derived' ? targetRoot : conservativeDatasetRoot(datasetRootPath(targetRoot));
-		await checkDatasetCopySpace(datasetRootPath(destination), [...sizes.values()].reduce((total, size) => total + BigInt(size), 0n));
+		await checkDatasetCopySpace(
+			datasetRootPath(destination),
+			[...sizes.values()].reduce((total, size) => total + BigInt(size), 0n)
+		);
 		if (destination.kind !== 'derived') throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'Copy destination needs a parent directory');
 		const base = await openDataset({ kind: 'explicit', path: destination.base }, true);
 		await base.close();

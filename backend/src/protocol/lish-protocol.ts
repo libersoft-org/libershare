@@ -602,7 +602,10 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					continue;
 				}
 				try {
-					sendLengthPrefixed(stream, listPages.respond(request, () => dataServer.list(), isUploadAdvertisable, Math.min(MAX_LIST_RESPONSE_SIZE, getMaxMessageSize())));
+					sendLengthPrefixed(
+						stream,
+						listPages.respond(request, () => dataServer.list(), isUploadAdvertisable, Math.min(MAX_LIST_RESPONSE_SIZE, getMaxMessageSize()))
+					);
 				} catch (error) {
 					listPages.clear();
 					if (!(error instanceof CodedError)) throw error;

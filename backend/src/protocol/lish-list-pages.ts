@@ -33,11 +33,14 @@ function invalid(): CodedError {
 
 function entries(list: readonly IStoredLISH[], query: string | undefined, advertised: (id: string) => boolean): LISHListEntry[] {
 	const q = query?.toLowerCase();
-	return list.filter(lish => advertised(lish.id) && (!q || lish.id.toLowerCase().includes(q) || lish.name?.toLowerCase().includes(q))).reverse().map(lish => ({
-		id: lish.id,
-		...(lish.name !== undefined ? { name: lish.name } : {}),
-		totalSize: (lish.files ?? []).reduce((sum, file) => sum + file.size, 0),
-	}));
+	return list
+		.filter(lish => advertised(lish.id) && (!q || lish.id.toLowerCase().includes(q) || lish.name?.toLowerCase().includes(q)))
+		.reverse()
+		.map(lish => ({
+			id: lish.id,
+			...(lish.name !== undefined ? { name: lish.name } : {}),
+			totalSize: (lish.files ?? []).reduce((sum, file) => sum + file.size, 0),
+		}));
 }
 
 /** Only the current listing on this stream owns a cursor; a fresh query replaces it. */
@@ -75,10 +78,16 @@ export class LISHListPages {
 		let size = encode({ type: 'getLishs-result', lishs: [], page: true, offset: Number.MAX_SAFE_INTEGER, nextCursor: `${selected.id}:${Number.MAX_SAFE_INTEGER}` }).byteLength + 4;
 		while (selected.next < selected.entries.length) {
 			const entry = selected.entries[selected.next]!;
-			if (!advertised(entry.id)) { selected.next++; continue; }
+			if (!advertised(entry.id)) {
+				selected.next++;
+				continue;
+			}
 			const bytes = encode(entry).byteLength;
 			if (size + bytes > frameLimit) {
-				if (page.length === 0) { this.clear(); throw new CodedError(ErrorCodes.PEER_LIST_TOO_LARGE); }
+				if (page.length === 0) {
+					this.clear();
+					throw new CodedError(ErrorCodes.PEER_LIST_TOO_LARGE);
+				}
 				break;
 			}
 			page.push(entry);
@@ -87,7 +96,10 @@ export class LISHListPages {
 		}
 		const nextCursor = selected.next < selected.entries.length ? `${selected.id}:${selected.next}` : undefined;
 		const reply = encode({ type: 'getLishs-result', lishs: page, page: true, offset, ...(nextCursor ? { nextCursor } : {}) });
-		if (reply.byteLength > frameLimit) { this.clear(); throw new CodedError(ErrorCodes.PEER_LIST_TOO_LARGE); }
+		if (reply.byteLength > frameLimit) {
+			this.clear();
+			throw new CodedError(ErrorCodes.PEER_LIST_TOO_LARGE);
+		}
 		if (!nextCursor) this.clear();
 		return reply;
 	}
@@ -109,8 +121,11 @@ async function abortable<T>(pending: Promise<T>, signal?: AbortSignal): Promise<
 		signal.addEventListener('abort', onAbort, { once: true });
 		if (signal.aborted) onAbort();
 	});
-	try { return await Promise.race([pending, aborted]); }
-	finally { if (onAbort) signal.removeEventListener('abort', onAbort); }
+	try {
+		return await Promise.race([pending, aborted]);
+	} finally {
+		if (onAbort) signal.removeEventListener('abort', onAbort);
+	}
 }
 
 /** No partial list escapes on malformed, cancelled or over-budget multi-page replies. */

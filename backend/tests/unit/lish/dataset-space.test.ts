@@ -79,24 +79,35 @@ test('rechecks copy space before creating a destination and keeps the complete s
 	f.lish.files![0]!.checksums = [new Bun.CryptoHasher('sha256').update(bytes).digest('hex')];
 	capacity(10n);
 	let committed = false;
-	await expect(moveDatasetData(f.lish, { kind: 'explicit', path: f.source }, { kind: 'derived', base: f.base, component: 'destination' }, () => { committed = true; }, () => {})).rejects.toMatchObject({ code: 'DISK_FULL' });
+	await expect(
+		moveDatasetData(
+			f.lish,
+			{ kind: 'explicit', path: f.source },
+			{ kind: 'derived', base: f.base, component: 'destination' },
+			() => {
+				committed = true;
+			},
+			() => {}
+		)
+	).rejects.toMatchObject({ code: 'DISK_FULL' });
 	expect(committed).toBe(false);
 	expect(await fs.readFile(join(f.source, 'data.bin'))).toEqual(bytes);
 	await expect(fs.stat(f.target)).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
-
 test('reports unavailable capacity as a terminal download error without allocating files', async () => {
- const f = await fixture();
- const data = Object.assign(new MockDataServer(), { getDatasetLinkBindings: () => [] });
- data.allChunkCount = 1;
- data.missingChunks = [makeMissingChunk('chunk' as never)];
- spies.push(spyOn(fs, 'statfs').mockRejectedValue(Object.assign(new Error('Capacity read failed'), { code: 'EIO' })));
- const downloader = new Downloader(f.source, new MockNetwork() as never, data as never, 'test-network');
- try {
-  await downloader.initFromManifest(f.lish);
-  await expect(downloader.download()).rejects.toMatchObject({ code: 'DISK_SPACE_UNAVAILABLE' });
-  expect(downloader.getError()?.code).toBe('DISK_SPACE_UNAVAILABLE');
-  await expect(fs.stat(join(f.source, 'data.bin'))).rejects.toMatchObject({ code: 'ENOENT' });
- } finally { await downloader.destroy(); }
+	const f = await fixture();
+	const data = Object.assign(new MockDataServer(), { getDatasetLinkBindings: () => [] });
+	data.allChunkCount = 1;
+	data.missingChunks = [makeMissingChunk('chunk' as never)];
+	spies.push(spyOn(fs, 'statfs').mockRejectedValue(Object.assign(new Error('Capacity read failed'), { code: 'EIO' })));
+	const downloader = new Downloader(f.source, new MockNetwork() as never, data as never, 'test-network');
+	try {
+		await downloader.initFromManifest(f.lish);
+		await expect(downloader.download()).rejects.toMatchObject({ code: 'DISK_SPACE_UNAVAILABLE' });
+		expect(downloader.getError()?.code).toBe('DISK_SPACE_UNAVAILABLE');
+		await expect(fs.stat(join(f.source, 'data.bin'))).rejects.toMatchObject({ code: 'ENOENT' });
+	} finally {
+		await downloader.destroy();
+	}
 });
