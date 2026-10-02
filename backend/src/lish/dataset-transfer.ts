@@ -44,16 +44,19 @@ function directoriesOf(manifest: ILISH): string[] {
 
 function materializedFiles(manifest: ILISH, root: DatasetRoot, bindings: readonly DatasetLinkBinding[]): { source: string; declaredSource: string; file: NonNullable<ILISH['files']>[number] }[] {
 	const files = manifest.files ?? [];
+	const filesByPath = new Map(files.map(file => [file.path, file]));
+	const bindingsByPath = new Map(bindings.map(binding => [binding.path, binding]));
+	const rootPath = datasetRootPath(root);
 	const entries = files.map(file => ({ source: file.path, declaredSource: file.path, file }));
 	for (const link of manifest.links ?? []) {
-		const binding = bindings.find(entry => entry.path === link.path);
+		const binding = bindingsByPath.get(link.path);
 		if (binding && (binding.target !== link.target || binding.hardlink !== (link.hardlink === true))) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'The local link association no longer matches the manifest');
 		const path =
 			binding?.source ??
-			relative(datasetRootPath(root), resolve(datasetRootPath(root), link.target))
+			relative(rootPath, resolve(rootPath, link.target))
 				.split('\\')
 				.join('/');
-		const target = files.find(file => file.path === path);
+		const target = filesByPath.get(path);
 		if (!target || isAbsolute(path) || path.startsWith('../')) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'The link target is not a declared dataset file');
 		// After materialization the local copy can be edited independently of its original target.
 		entries.push({ source: binding?.materializedIdentity ? binding.path : target.path, declaredSource: target.path, file: { ...target, path: link.path } });
@@ -80,9 +83,11 @@ async function snapshot(dataset: SafeDataset, manifest: ILISH): Promise<Map<stri
 
 function cleanupManifest(manifest: ILISH, bindings: readonly DatasetLinkBinding[]): ILISH {
 	const files = [...(manifest.files ?? [])];
+	const filesByPath = new Map(files.map(file => [file.path, file]));
+	const linksByPath = new Map((manifest.links ?? []).map(link => [link.path, link]));
 	for (const binding of bindings) {
-		const link = manifest.links?.find(link => link.path === binding.path);
-		const source = manifest.files?.find(file => file.path === binding.source);
+		const link = linksByPath.get(binding.path);
+		const source = filesByPath.get(binding.source);
 		if (!link || !source || link.target !== binding.target || (link.hardlink === true) !== binding.hardlink) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'The materialized file no longer matches the manifest');
 		files.push({ ...source, path: binding.path });
 	}
@@ -241,10 +246,11 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 			progress({ type: 'file', path: file.path, totalFiles, completedFiles, totalBytes, completedBytes });
 		}
 		await target.prepare(copiedManifest, { reserve: false, writable: true });
+		const copiesByPath = new Map(copies.map(copy => [copy.file.path, copy]));
 		const nextBindings = (manifest.links ?? []).map(link => {
 			const materializedIdentity = targetIdentities.get(link.path);
 			if (!materializedIdentity) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'Missing materialized file identity');
-			return { path: link.path, target: link.target, hardlink: link.hardlink === true, source: copies.find(entry => entry.file.path === link.path)!.declaredSource, materializedIdentity };
+			return { path: link.path, target: link.target, hardlink: link.hardlink === true, source: copiesByPath.get(link.path)!.declaredSource, materializedIdentity };
 		});
 		await target.assertPathBinding();
 		commitStarted = true;
