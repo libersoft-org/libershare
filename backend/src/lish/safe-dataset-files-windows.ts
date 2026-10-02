@@ -1,220 +1,135 @@
-import { dlopen, FFIType, ptr } from 'bun:ffi';
-import { realpath } from 'node:fs/promises';
+// @ts-expect-error Bun embeds this self-contained JavaScript worker as a file asset.
+import workerPath from './safe-dataset-windows-worker.js' with { type: 'file' };
 import type { DatasetDirectoryHandle, DatasetEntryInfo, DatasetFileHandle } from './safe-dataset-types.ts';
 import { windowsDatasetError } from './windows-dataset-error.ts';
 
-const READ_ATTRIBUTES = 0x80;
-const SYNCHRONIZE = 0x100000;
-const DELETE = 0x10000;
-const OPEN_REPARSE_POINT = 0x200000;
-const SYNCHRONOUS_IO_NONALERT = 0x20;
-const SHARE_READ_WRITE = 3;
-const INVALID_HANDLE = 0xffffffffffffffffn;
+type Request =
+ | { operation: 'openRoot'; path: string }
+ | { operation: 'stat' | 'close'; handle: number }
+ | { operation: 'openDirectory' | 'createDirectory'; handle: number; name: string }
+ | { operation: 'openFile'; handle: number; name: string; mode: 'read' | 'write' | 'create' }
+ | { operation: 'removeFile' | 'removeDirectory'; handle: number; name: string; identity: string }
+ | { operation: 'read'; handle: number; length: number; position: number }
+ | { operation: 'write'; handle: number; bytes: Uint8Array; position: number }
+ | { operation: 'truncate'; handle: number; size: number };
 
-function nativeLibraries() {
-	return {
-		kernel: dlopen('kernel32.dll', {
-			CreateFileW: { args: [FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.u64], returns: FFIType.u64 },
-			CloseHandle: { args: [FFIType.u64], returns: FFIType.i32 },
-			GetLastError: { args: [], returns: FFIType.u32 },
-			GetFileType: { args: [FFIType.u64], returns: FFIType.u32 },
-			GetFileInformationByHandleEx: { args: [FFIType.u64, FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
-			SetFileInformationByHandle: { args: [FFIType.u64, FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
-			SetFilePointerEx: { args: [FFIType.u64, FFIType.i64, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
-			ReadFile: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-			WriteFile: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-		}),
-		nt: dlopen('ntdll.dll', {
-			NtCreateFile: { args: [FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
-			RtlNtStatusToDosError: { args: [FFIType.i32], returns: FFIType.u32 },
-		}),
-	};
+type Reply = { id: number; value?: unknown; error?: { message: string; code?: string; operation?: string; number?: number } };
+
+class WindowsIO {
+ private readonly worker = new Worker(workerPath);
+ private readonly pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
+ private nextID = 1;
+ private failure: Error | undefined;
+
+ constructor() {
+  this.worker.unref();
+  this.worker.onmessage = (event: MessageEvent<Reply>) => {
+   const { id, value, error } = event.data;
+   const request = this.pending.get(id);
+   if (!request) return;
+   this.pending.delete(id);
+   if (this.pending.size === 0) this.worker.unref();
+   if (error) request.reject(error.number !== undefined && error.operation ? windowsDatasetError(error.operation, error.number) : Object.assign(new Error(error.message), { code: error.code }));
+   else request.resolve(value);
+  };
+  const fail = (): void => {
+   this.failure = Object.assign(new Error('Windows dataset worker stopped'), { code: 'EIO' });
+   for (const request of this.pending.values()) request.reject(this.failure);
+   this.pending.clear();
+   this.worker.unref();
+  };
+  this.worker.onerror = event => { event.preventDefault(); fail(); };
+  this.worker.addEventListener('close', fail);
+ }
+
+ async call<T>(request: Request): Promise<T> {
+  if (this.failure) throw this.failure;
+  const id = this.nextID++;
+  return new Promise((resolve, reject) => {
+   this.pending.set(id, { resolve: value => resolve(value as T), reject });
+   this.worker.ref();
+   try { this.worker.postMessage({ id, request }, request.operation === 'write' ? [request.bytes.buffer as ArrayBuffer] : []); }
+   catch (error) {
+    this.pending.delete(id);
+    if (this.pending.size === 0) this.worker.unref();
+    reject(error);
+   }
+  });
+ }
 }
 
-type NativeLibraries = ReturnType<typeof nativeLibraries>;
-let libraries: NativeLibraries | undefined;
-
-function native(): NativeLibraries {
-	if (process.platform !== 'win32' || !['x64', 'arm64'].includes(process.arch)) throw new Error('Windows dataset handles require 64-bit Windows');
-	return (libraries ??= nativeLibraries());
-}
-
-function fail(code: string, message: string): never {
-	throw Object.assign(new Error(message), { code });
-}
-
-function windowsError(operation: string, number = native().kernel.symbols.GetLastError()): never {
-	throw windowsDatasetError(operation, number);
-}
-
-function component(name: string): void {
-	if (!name || name === '.' || name === '..' || /[\x00-\x1f\\/:*?"<>|]/u.test(name) || /[. ]$/u.test(name) || /^(?:CON|PRN|AUX|NUL|CLOCK\$|CONIN\$|CONOUT\$|COM[1-9\u00b9\u00b2\u00b3]|LPT[1-9\u00b9\u00b2\u00b3])(?:\.|$)/iu.test(name)) {
-		fail('LISH_UNSAFE_PATH', 'Unsafe dataset path component');
-	}
-	if (Buffer.byteLength(name, 'utf16le') > 65532) fail('LISH_UNSAFE_PATH', 'Dataset path component is too long');
-}
-
-function offset(value: number): void {
-	if (!Number.isSafeInteger(value) || value < 0) fail('EINVAL', 'Invalid dataset file offset');
-}
+let io: WindowsIO | undefined;
 
 class WindowsHandle {
-	private references = 1;
-	private closed = false;
-	private readonly handle: bigint;
-	private readonly parent: WindowsHandle | undefined;
+ protected readonly io: WindowsIO;
+ protected readonly handle: number;
+ private closing: Promise<void> | undefined;
 
-	constructor(handle: bigint, parent?: WindowsHandle) {
-		this.handle = handle;
-		this.parent = parent;
-		if (parent) parent.references++;
-	}
+ constructor(io: WindowsIO, handle: number) { this.io = io; this.handle = handle; }
 
-	value(): bigint {
-		if (this.closed) fail('EBADF', 'Dataset handle is closed');
-		return this.handle;
-	}
+ protected active(): void {
+  if (this.closing) throw Object.assign(new Error('Dataset handle is closed'), { code: 'EBADF' });
+ }
 
-	private release(): void {
-		if (--this.references !== 0) return;
-		const result = native().kernel.symbols.CloseHandle(this.handle);
-		this.parent?.release();
-		if (!result) windowsError('CloseHandle');
-	}
+ async stat(): Promise<DatasetEntryInfo> {
+  this.active();
+  return this.io.call({ operation: 'stat', handle: this.handle });
+ }
 
-	async close(): Promise<void> {
-		if (this.closed) return;
-		this.closed = true;
-		this.release();
-	}
-
-	async stat(): Promise<DatasetEntryInfo> {
-		const handle = this.value();
-		const kernel = native().kernel.symbols;
-		const attributes = Buffer.alloc(8);
-		if (!kernel.GetFileInformationByHandleEx(handle, 9, ptr(attributes), attributes.length)) windowsError('Read file attributes');
-		if (attributes.readUInt32LE(0) & 0x400) fail('LISH_UNSAFE_PATH', 'Dataset child is a reparse point');
-		if (kernel.GetFileType(handle) !== 1) fail('LISH_UNSAFE_PATH', 'Dataset object is not a disk file');
-		const standard = Buffer.alloc(24);
-		if (!kernel.GetFileInformationByHandleEx(handle, 1, ptr(standard), standard.length)) windowsError('Read file metadata');
-		const identity = Buffer.alloc(24);
-		if (!kernel.GetFileInformationByHandleEx(handle, 18, ptr(identity), identity.length)) windowsError('Read file identity');
-		const size = standard.readBigInt64LE(8);
-		if (size < 0n || size > BigInt(Number.MAX_SAFE_INTEGER)) fail('EFBIG', 'Dataset file is too large');
-		return { identity: identity.toString('hex'), kind: standard[21] ? 'directory' : 'file', size: Number(size), links: standard.readUInt32LE(16) };
-	}
-
-	async requireKind(kind: 'file' | 'directory'): Promise<void> {
-		try {
-			if ((await this.stat()).kind !== kind) fail('LISH_UNSAFE_PATH', `Dataset object is not a ${kind}`);
-		} catch (error) {
-			await this.close();
-			throw error;
-		}
-	}
+ close(): Promise<void> {
+  return this.closing ??= this.io.call({ operation: 'close', handle: this.handle });
+ }
 }
 
 class WindowsFile extends WindowsHandle implements DatasetFileHandle {
-	private transfer(buffer: Uint8Array, position: number, write: boolean): number {
-		offset(position);
-		const handle = this.value();
-		if (!buffer.byteLength) return 0;
-		if (buffer.byteLength > 0xffffffff) fail('EINVAL', 'Dataset IO buffer is too large');
-		const kernel = native().kernel.symbols;
-		// Synchronous calls do not yield between moving the pointer and doing the IO.
-		if (!kernel.SetFilePointerEx(handle, BigInt(position), null, 0)) windowsError('Set file position');
-		const count = Buffer.alloc(4);
-		const operation = write ? kernel.WriteFile : kernel.ReadFile;
-		if (!operation(handle, ptr(buffer), buffer.byteLength, ptr(count), null)) windowsError(write ? 'Write file' : 'Read file');
-		return count.readUInt32LE(0);
-	}
+ async read(buffer: Uint8Array, position: number): Promise<number> {
+  this.active();
+  const bytes = await this.io.call<Uint8Array>({ operation: 'read', handle: this.handle, length: buffer.byteLength, position });
+  buffer.set(bytes);
+  return bytes.byteLength;
+ }
 
-	async read(buffer: Uint8Array, position: number): Promise<number> {
-		return this.transfer(buffer, position, false);
-	}
+ async write(buffer: Uint8Array, position: number): Promise<number> {
+  this.active();
+  // Transfer a private copy; the caller may reuse its buffer after this operation.
+  return this.io.call({ operation: 'write', handle: this.handle, bytes: new Uint8Array(buffer), position });
+ }
 
-	async write(buffer: Uint8Array, position: number): Promise<number> {
-		return this.transfer(buffer, position, true);
-	}
-
-	async truncate(size: number): Promise<void> {
-		offset(size);
-		const info = Buffer.alloc(8);
-		info.writeBigInt64LE(BigInt(size));
-		if (!native().kernel.symbols.SetFileInformationByHandle(this.value(), 6, ptr(info), info.length)) windowsError('Truncate file');
-	}
+ async truncate(size: number): Promise<void> {
+  this.active();
+  await this.io.call({ operation: 'truncate', handle: this.handle, size });
+ }
 }
 
 class WindowsDirectory extends WindowsHandle implements DatasetDirectoryHandle {
-	private openChild(name: string, access: number, create: boolean, directory: boolean): bigint {
-		component(name);
-		const nameBytes = Buffer.from(name, 'utf16le');
-		const unicode = Buffer.alloc(16);
-		unicode.writeUInt16LE(nameBytes.length, 0);
-		unicode.writeUInt16LE(nameBytes.length, 2);
-		unicode.writeBigUInt64LE(BigInt(ptr(nameBytes)), 8);
-		const attributes = Buffer.alloc(48);
-		attributes.writeUInt32LE(attributes.length, 0);
-		attributes.writeBigUInt64LE(this.value(), 8);
-		attributes.writeBigUInt64LE(BigInt(ptr(unicode)), 16);
-		attributes.writeUInt32LE(0x40, 24); // OBJ_CASE_INSENSITIVE
-		const output = Buffer.alloc(8);
-		const io = Buffer.alloc(16);
-		const { nt } = native();
-		// Omit type flags when opening existing children so reparse points reach our check.
-		const options = OPEN_REPARSE_POINT | SYNCHRONOUS_IO_NONALERT | (create ? (directory ? 1 : 0x40) : 0);
-		const status = nt.symbols.NtCreateFile(ptr(output), access | READ_ATTRIBUTES | SYNCHRONIZE, ptr(attributes), ptr(io), null, 0x80, SHARE_READ_WRITE, create ? 2 : 1, options, null, 0);
-		if (status < 0) windowsError('Open dataset child', nt.symbols.RtlNtStatusToDosError(status));
-		return output.readBigUInt64LE(0);
-	}
+ async openDirectory(name: string): Promise<DatasetDirectoryHandle> {
+  this.active();
+  return new WindowsDirectory(this.io, await this.io.call({ operation: 'openDirectory', handle: this.handle, name }));
+ }
 
-	async openDirectory(name: string): Promise<DatasetDirectoryHandle> {
-		const child = new WindowsDirectory(this.openChild(name, 0x21, false, true), this);
-		await child.requireKind('directory');
-		return child;
-	}
+ async createDirectory(name: string): Promise<DatasetDirectoryHandle> {
+  this.active();
+  return new WindowsDirectory(this.io, await this.io.call({ operation: 'createDirectory', handle: this.handle, name }));
+ }
 
-	async createDirectory(name: string): Promise<DatasetDirectoryHandle> {
-		const child = new WindowsDirectory(this.openChild(name, 0x21, true, true), this);
-		await child.requireKind('directory');
-		return child;
-	}
+ async openFile(name: string, mode: 'read' | 'write' | 'create'): Promise<DatasetFileHandle> {
+  this.active();
+  return new WindowsFile(this.io, await this.io.call({ operation: 'openFile', handle: this.handle, name, mode }));
+ }
 
-	async openFile(name: string, mode: 'read' | 'write' | 'create'): Promise<DatasetFileHandle> {
-		const child = new WindowsFile(this.openChild(name, mode === 'read' ? 1 : 3, mode === 'create', false), this);
-		await child.requireKind('file');
-		return child;
-	}
+ async removeFile(name: string, expectedIdentity: string): Promise<void> {
+  this.active();
+  await this.io.call({ operation: 'removeFile', handle: this.handle, name, identity: expectedIdentity });
+ }
 
-	private async remove(name: string, kind: 'file' | 'directory', expectedIdentity: string): Promise<void> {
-		const child = new WindowsHandle(this.openChild(name, DELETE, false, kind === 'directory'), this);
-		try {
-			const info = await child.stat();
-			if (info.kind !== kind || info.identity !== expectedIdentity) fail('LISH_UNSAFE_PATH', 'Dataset object was replaced before removal');
-			const disposition = new Uint8Array([1]);
-			if (!native().kernel.symbols.SetFileInformationByHandle(child.value(), 4, ptr(disposition), disposition.length)) windowsError('Delete dataset child');
-		} finally {
-			await child.close();
-		}
-	}
-
-	async removeFile(name: string, expectedIdentity: string): Promise<void> {
-		await this.remove(name, 'file', expectedIdentity);
-	}
-
-	async removeDirectory(name: string, expectedIdentity: string): Promise<void> {
-		await this.remove(name, 'directory', expectedIdentity);
-	}
+ async removeDirectory(name: string, expectedIdentity: string): Promise<void> {
+  this.active();
+  await this.io.call({ operation: 'removeDirectory', handle: this.handle, name, identity: expectedIdentity });
+ }
 }
 
 export async function openWindowsDatasetDirectory(path: string): Promise<DatasetDirectoryHandle> {
-	const resolved = await realpath(path);
-	const extended = resolved.startsWith('\\\\?\\') ? resolved : resolved.startsWith('\\\\') ? `\\\\?\\UNC\\${resolved.slice(2)}` : `\\\\?\\${resolved}`;
-	const encoded = Buffer.from(`${extended}\0`, 'utf16le');
-	// The explicitly selected root may resolve a link once; children never do.
-	const handle = BigInt(native().kernel.symbols.CreateFileW(ptr(encoded), 0x21 | READ_ATTRIBUTES | SYNCHRONIZE, SHARE_READ_WRITE, null, 3, 0x02000000 | 0x00200000, 0n));
-	if (handle === INVALID_HANDLE) windowsError('Open dataset root');
-	const root = new WindowsDirectory(handle);
-	await root.requireKind('directory');
-	return root;
+ if (process.platform !== 'win32' || !['x64', 'arm64'].includes(process.arch)) throw new Error('Windows dataset handles require 64-bit Windows');
+ const worker = io ??= new WindowsIO();
+ return new WindowsDirectory(worker, await worker.call({ operation: 'openRoot', path }));
 }
