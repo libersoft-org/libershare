@@ -5,7 +5,7 @@ import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, ru
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { type Settings, DEFAULT_MAX_CHUNK_SIZE } from '../settings.ts';
-import { setBusy, clearBusy } from './busy.ts';
+import { setBusy, clearBusy, getBusyReason } from './busy.ts';
 import { getEnabledUploads, removeUploadState, enableUpload, disableUpload } from '../protocol/lish-protocol.ts';
 import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, markDownloadEnabled, stopRecoveryForLISH, forceDisableDownload } from './transfer.ts';
 import { readdir, stat, access } from 'fs/promises';
@@ -691,14 +691,20 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		let stopped = false;
 		let committed = false;
 		let recover = false;
+		let verifyMovedData = false;
 		moveRecoveryTokens.set(p.lishID, recoveryToken);
 		movingLISHs.add(p.lishID);
+		const assertOwner = (): void => {
+			if (moveRecoveryTokens.get(p.lishID) !== recoveryToken || dataServer.get(p.lishID)?.directory !== lish.directory) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Dataset changed while its move was in progress');
+		};
 		try {
 			await stopDatasetWork(p.lishID);
 			stopped = true;
+			assertOwner();
 			setBusy(p.lishID, 'moving');
 			broadcast('lishs:move:status', { lishID: p.lishID, moving: true });
 			const commit = (bindings?: readonly DatasetLinkBinding[]): void => {
+				assertOwner();
 				dataServer.relocateDataset(p.lishID, root, false, bindings);
 				committed = true;
 			};
@@ -729,12 +735,15 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			throw error;
 		} finally {
 			movingLISHs.delete(p.lishID);
-			clearBusy(p.lishID);
-			broadcast('lishs:move:status', { lishID: p.lishID, moving: false });
+			if (getBusyReason(p.lishID) === 'moving') {
+				clearBusy(p.lishID);
+				broadcast('lishs:move:status', { lishID: p.lishID, moving: false });
+			}
 			if (recover && !mutationAdmission.isClosed && moveRecoveryTokens.get(p.lishID) === recoveryToken) enqueueVerification(p.lishID);
+			verifyMovedData = committed && !mutationAdmission.isClosed && moveRecoveryTokens.get(p.lishID) === recoveryToken;
 			if (moveRecoveryTokens.get(p.lishID) === recoveryToken) moveRecoveryTokens.delete(p.lishID);
 		}
-		enqueueVerification(p.lishID);
+		if (verifyMovedData) enqueueVerification(p.lishID);
 		return { success: true };
 	}
 

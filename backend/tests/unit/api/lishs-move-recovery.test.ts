@@ -8,6 +8,8 @@ import { Settings } from '../../../src/settings.ts';
 import { initLISHsHandlers } from '../../../src/api/lishs.ts';
 import { initDownloadState, getDownloadEnabledLishs, setActiveDownloadersRef, setEnableDownloadFn, forceDisableDownload } from '../../../src/api/transfer.ts';
 import { initUploadState, getEnabledUploads, resetUploadState } from '../../../src/protocol/lish-protocol.ts';
+import { SafeDataset } from '../../../src/lish/safe-dataset-files.ts';
+import { getBusyReason } from '../../../src/api/busy.ts';
 
 function gate() {
 	let release!: () => void;
@@ -16,6 +18,53 @@ function gate() {
 	});
 	return { promise, release };
 }
+
+test.each([true, false])('an old move cannot clear a replacement import verification (existing target: %s)', async existingTarget => {
+	const f = await fixture();
+	if (!existingTarget) await rm(f.target, { recursive: true });
+	const sourceEntered = gate();
+	const releaseSource = gate();
+	const verifyEntered = gate();
+	const releaseVerify = gate();
+	const originalPrepare = SafeDataset.prototype.prepare;
+	let sourceHeld = false;
+	const prepare = spyOn(SafeDataset.prototype, 'prepare').mockImplementation(async function (this: SafeDataset, manifest, options) {
+		await originalPrepare.call(this, manifest, options);
+		if (!sourceHeld && options?.writable === false) {
+			sourceHeld = true;
+			sourceEntered.release();
+			await releaseSource.promise;
+		}
+	});
+	const open = f.data.openDataset.bind(f.data);
+	const verifying = spyOn(f.data, 'openDataset').mockImplementation(async id => {
+		verifyEntered.release();
+		await releaseVerify.promise;
+		return open(id);
+	});
+	let moved: ReturnType<typeof f.start> | undefined;
+	try {
+		moved = f.start();
+		await f.stopping.promise;
+		f.stopped.release();
+		await sourceEntered.promise;
+		const imported = await f.handlers.importFromJSON({ json: JSON.stringify(f.data.get(f.id)), downloadPath: join(f.base, 'replacement'), overwrite: true, enableDownloading: false, enableSharing: false });
+		await verifyEntered.promise;
+		expect(getBusyReason(f.id)).toBe('verifying');
+		releaseSource.release();
+		const result = await moved;
+		expect(result).toBeInstanceOf(Error);
+		expect(getBusyReason(f.id)).toBe('verifying');
+		expect(f.data.get(f.id)?.directory).toBe(imported.directory);
+		expect(await readFile(join(f.source, 'folder/data.bin'), 'utf8')).toBe('abcd');
+		expect(f.resumes()).toBe(0);
+	} finally {
+		releaseSource.release(); releaseVerify.release(); f.stopped.release();
+		await moved;
+		prepare.mockRestore(); verifying.mockRestore();
+		await f.close();
+	}
+});
 
 async function fixture() {
 	const base = await mkdtemp(join(tmpdir(), 'move-recovery-'));
@@ -163,7 +212,7 @@ test('deletion during a failed move does not revive the removed dataset', async 
 		await f.stopping.promise;
 		const deleted = f.handlers.delete({ lishID: f.id, deleteLISH: true, deleteData: false });
 		f.stopped.release();
-		expect(await moved).toMatchObject({ code: 'EEXIST' });
+		expect(await moved).toMatchObject({ code: 'INTERNAL_ERROR', detail: 'Dataset changed while its move was in progress' });
 		await deleted;
 		await f.settled();
 		expect(f.resumes()).toBe(0);
@@ -230,7 +279,7 @@ test('a verification cancellation during a move revokes recovery', async () => {
 		await f.stopping.promise;
 		await f.handlers.stopVerify({ lishID: f.id });
 		f.stopped.release();
-		expect(await moved).toMatchObject({ code: 'EEXIST' });
+		expect(await moved).toMatchObject({ code: 'INTERNAL_ERROR', detail: 'Dataset changed while its move was in progress' });
 		await f.settled();
 		expect(f.resumes()).toBe(0);
 		expect(f.events.some(item => item.event === 'lishs:verify' && item.data.started)).toBe(false);
