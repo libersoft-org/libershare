@@ -2,12 +2,12 @@ import { execFile, spawn } from 'node:child_process';
 import { uptime as osUptime } from 'node:os';
 import { existsSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, win32 } from 'node:path';
 import { promisify } from 'node:util';
 import { productIdentifier, type SystemTimeChanges, type SystemTimeResult } from '@shared';
 import { parseSystemTimeExitCode, systemTimeHelperFailure } from './system-time-helper.ts';
 import { remainingSaveBudget } from './system-time-common.ts';
-import { expectedNetworkHelperHash, sha256File, trustIdentity } from './network-helper-integrity.ts';
+import { expectedNetworkHelperHash, HelperVerificationTimeoutError, sha256File, trustIdentity } from './network-helper-integrity.ts';
 import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from './system-network-linux.ts';
 import { encodeNetworkHelperRequest, NETWORK_HELPER_EXIT, parseNetworkHelperResponse, type NetworkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
 import { elevationClock, verifyWindowsInstalledHelper, verifyWindowsInstalledSibling, WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_NETWORK_ELEVATION_WAIT_MS, WINDOWS_LAUNCHER_EXIT, WINDOWS_LAUNCHER_FILE, windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
@@ -60,11 +60,12 @@ export function linuxNetworkHelperArgs(helperPath: string): string[] {
 
 export function networkHelperPath(platform: NodeJS.Platform = process.platform, executablePath: string = process.execPath): string {
 	if (platform === 'linux') return '/usr/libexec/libershare/lish-network-helper';
-	return join(dirname(executablePath), platform === 'win32' ? 'lish-network-helper.exe' : 'lish-network-helper');
+	if (platform === 'win32') return win32.join(win32.dirname(executablePath), 'lish-network-helper.exe');
+	return join(dirname(executablePath), 'lish-network-helper');
 }
 
 export function windowsNetworkLauncherPath(executablePath: string = process.execPath): string {
-	return join(dirname(executablePath), WINDOWS_LAUNCHER_FILE);
+	return win32.join(win32.dirname(executablePath), WINDOWS_LAUNCHER_FILE);
 }
 
 export function trustedLinuxHelperMetadata(uid: number, mode: number, regularFile: boolean): boolean {
@@ -86,7 +87,9 @@ async function verifyLinuxHelper(helper: string): Promise<boolean> {
 		const expectedHash = expectedNetworkHelperHash();
 		if (!expectedHash || (await sha256File(helper)) !== expectedHash) return false;
 		return (await trustedUnixPath('/usr/libexec', false)) && (await trustedUnixPath('/usr/libexec/libershare', false)) && (await trustedUnixPath(helper, true));
-	} catch {
+	} catch (error) {
+		// Out of time is not a verdict about the helper; the caller reports it as such.
+		if (error instanceof HelperVerificationTimeoutError) throw error;
 		return false;
 	}
 }
@@ -128,15 +131,46 @@ function rememberedWindowsTrust(identity: string | null, now: number): boolean |
 /** One verification of the same files at a time; a second caller joins it instead of repeating it. */
 let windowsTrustInFlight: { identity: string; answer: Promise<boolean> } | null = null;
 
+/**
+ * `work`, rejected with {@link HelperVerificationTimeoutError} once `deadline` on `now` passes.
+ * `onTimeout` cancels work that supports it; filesystem metadata reads may still settle later.
+ */
+function withinDeadline<T>(work: Promise<T>, deadline: number, now: () => number, onTimeout?: () => void): Promise<T> {
+	work.catch(() => undefined);
+	const left = deadline - now();
+	if (left <= 0) {
+		onTimeout?.();
+		return Promise.reject(new HelperVerificationTimeoutError());
+	}
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(() => {
+			onTimeout?.();
+			reject(new HelperVerificationTimeoutError());
+		}, left);
+		work.then(
+			value => {
+				clearTimeout(timer);
+				resolve(value);
+			},
+			error => {
+				clearTimeout(timer);
+				reject(error);
+			}
+		);
+	});
+}
+
 export async function verifyWindowsHelper(helper: string, now: () => number = elevationClock): Promise<boolean> {
+	// The budget starts here: reading the files' metadata is part of the verification too.
+	const deadline = now() + SIGNATURE_TIMEOUT_MS;
 	const expectedHash = expectedNetworkHelperHash();
 	const launcher = windowsNetworkLauncherPath();
 	// Before the expensive part: the same three files, unchanged, were already measured.
-	const identity = await windowsTrustIdentity([helper, launcher, process.execPath]);
+	const identity = await withinDeadline(windowsTrustIdentity([helper, launcher, process.execPath]), deadline, now);
 	const remembered = rememberedWindowsTrust(identity, now());
 	if (remembered !== null) return remembered;
-	if (identity !== null && windowsTrustInFlight?.identity === identity) return windowsTrustInFlight.answer;
-	const answer = measureWindowsHelperTrust(helper, launcher, expectedHash);
+	if (identity !== null && windowsTrustInFlight?.identity === identity) return withinDeadline(windowsTrustInFlight.answer, deadline, now);
+	const answer = measureWindowsHelperTrust(helper, launcher, expectedHash, deadline, now);
 	if (identity !== null) windowsTrustInFlight = { identity, answer };
 	try {
 		const trusted = await answer;
@@ -161,14 +195,35 @@ export function warmElevationTrust(platform: NodeJS.Platform = process.platform)
 	void networkHelperAvailable(platform).catch(() => undefined);
 }
 
-async function measureWindowsHelperTrust(helper: string, launcher: string, expectedHash: string | null): Promise<boolean> {
-	if (expectedHash === null || !(await verifyWindowsInstalledHelper(helper, process.execPath, expectedHash)) || !(await verifyWindowsInstalledSibling(launcher, process.execPath))) return false;
+/**
+ * One Windows trust measurement: hash, location, then signatures, all inside a single
+ * {@link SIGNATURE_TIMEOUT_MS} budget measured on the monotonic {@link elevationClock}. The hash
+ * gets at most its own limit and the signature check only what is left. Running out of budget
+ * throws {@link HelperVerificationTimeoutError} rather than answering "untrusted", so the result
+ * is not cached as a failure and the next attempt measures again.
+ */
+async function measureWindowsHelperTrust(helper: string, launcher: string, expectedHash: string | null, deadline: number, now: () => number = elevationClock): Promise<boolean> {
+	const remaining = (): number => {
+		const left = deadline - now();
+		if (left <= 0) throw new HelperVerificationTimeoutError();
+		return left;
+	};
+	// Every step ends at the one deadline the caller started before reading any file.
+	const controller = new AbortController();
+	const bounded = <T>(work: Promise<T>): Promise<T> => withinDeadline(work, deadline, now, () => controller.abort());
+	// A budget already spent is a timeout, not an answer to cache.
+	remaining();
+	if (expectedHash === null || !(await bounded(verifyWindowsInstalledHelper(helper, process.execPath, expectedHash, { signal: controller.signal, timeoutMs: remaining() }))) || !(await bounded(verifyWindowsInstalledSibling(launcher, process.execPath)))) return false;
 	const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`;
 	const script = `$ErrorActionPreference='Stop'; $s=@(${[helper, launcher, process.execPath].map(quote).join(',')} | ForEach-Object { Get-AuthenticodeSignature -LiteralPath $_ }); if ($s.Count -ne 3 -or @($s | Where-Object { $_.Status -ne 'Valid' -or -not $_.SignerCertificate }).Count -ne 0 -or @($s.SignerCertificate.Thumbprint | Select-Object -Unique).Count -ne 1) { exit 3 }`;
+	// Outside the try: a budget already spent is a timeout, not a bad signature to cache.
+	const timeout = Math.max(1, Math.floor(remaining()));
 	try {
-		await execFileAsync(windowsPowerShellPath(), ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: SIGNATURE_TIMEOUT_MS, maxBuffer: 1024, windowsHide: true, env: windowsSystemEnvironment() });
+		await execFileAsync(windowsPowerShellPath(), ['-NoProfile', '-NonInteractive', '-Command', script], { timeout, maxBuffer: 1024, windowsHide: true, env: windowsSystemEnvironment() });
 		return true;
-	} catch {
+	} catch (error) {
+		// Killed by the timeout is the budget running out, not a bad signature.
+		if ((error as { killed?: boolean }).killed) throw new HelperVerificationTimeoutError();
 		return false;
 	}
 }
@@ -250,11 +305,29 @@ async function runWindowsHelper(encoded: string): Promise<NetworkHelperResponse>
 	}
 }
 
-async function runMacHelper(helper: string, encoded: string): Promise<string> {
+/** What the macOS helper launch needs, measured before anything is started. */
+interface MacHelperLaunch {
+	team: string;
+	expectedHash: string;
+}
+
+/**
+ * Everything the macOS launch needs before `osascript` runs. A failure here — including a hash
+ * read that ran out of time ({@link HelperVerificationTimeoutError}) — means nothing was started.
+ */
+async function prepareMacHelper(helper: string): Promise<MacHelperLaunch> {
 	const [backend, expectedHash] = await Promise.all([macCodeIdentity(process.execPath), sha256File(helper)]);
 	if (!backend) throw new Error('privileged network helper signature is unavailable');
-	const { stdout } = await execFileAsync('/usr/bin/osascript', ['-e', macNetworkHelperScript(), '--', helper, encoded, backend.team, expectedHash, `${productIdentifier}.network-helper`, MAC_HELPER_SHELL], { timeout: HELPER_TIMEOUT_MS, maxBuffer: MAX_HELPER_OUTPUT_BYTES });
+	return { team: backend.team, expectedHash };
+}
+
+async function launchMacHelper(helper: string, encoded: string, launch: MacHelperLaunch): Promise<string> {
+	const { stdout } = await execFileAsync('/usr/bin/osascript', ['-e', macNetworkHelperScript(), '--', helper, encoded, launch.team, launch.expectedHash, `${productIdentifier}.network-helper`, MAC_HELPER_SHELL], { timeout: HELPER_TIMEOUT_MS, maxBuffer: MAX_HELPER_OUTPUT_BYTES });
 	return stdout;
+}
+
+async function runMacHelper(helper: string, encoded: string): Promise<string> {
+	return launchMacHelper(helper, encoded, await prepareMacHelper(helper));
 }
 
 async function collectBounded(stream: NodeJS.ReadableStream): Promise<string> {
@@ -307,19 +380,42 @@ async function runLinuxHelper(helper: string, request: NetworkHelperRequest): Pr
  * network path, a non-zero status is the NORMAL case here (`ok` is 32, not 0), which
  * is why this does not reuse `runWindowsHelper`.
  */
-export async function runElevatedSystemTime(changes: SystemTimeChanges, platform: NodeJS.Platform = process.platform, uptime: () => number = osUptime): Promise<SystemTimeResult> {
+export async function runElevatedSystemTime(changes: SystemTimeChanges, platform: NodeJS.Platform = process.platform, uptime: () => number = osUptime, available: (platform: NodeJS.Platform) => Promise<boolean> = networkHelperAvailable): Promise<SystemTimeResult> {
 	const helper = networkHelperPath(platform);
-	if (!(await networkHelperAvailable(platform))) return systemTimeHelperFailure('permission-denied', 'the privileged helper is not available or not trusted, so the change needs an elevated application');
+	// Nothing has been started when the check runs out of time, so the result carries neither
+	// change flag and no helper is launched afterwards.
+	const notVerifiedInTime = (): SystemTimeResult => systemTimeHelperFailure('error', 'the privileged helper could not be verified in time, so nothing was changed');
+	let trusted: boolean;
+	try {
+		trusted = await withinSaveBudget(available(platform));
+	} catch (error) {
+		if (error instanceof HelperVerificationTimeoutError) return notVerifiedInTime();
+		throw error;
+	}
+	if (!trusted) return systemTimeHelperFailure('permission-denied', 'the privileged helper is not available or not trusted, so the change needs an elevated application');
 	// The caller's deadline goes with the request. Expressed as the host uptime it expires
 	// at, because that is the one clock the elevated process can compare against: a remaining
 	// count would be measured before the consent prompt and read after it, and the wall clock
 	// is what this very operation changes.
 	const remaining = remainingSaveBudget();
+	if (remaining !== null && remaining <= 0) return notVerifiedInTime();
 	const request: NetworkHelperRequest = { version: 1, operation: 'applySystemTime', changes, ...(remaining === null ? {} : { deadlineUptime: uptime() + remaining / 1000 }) };
 	if (platform === 'win32') return runWindowsSystemTime(encodeNetworkHelperRequest(request));
+	let macLaunch: MacHelperLaunch | null = null;
+	if (platform === 'darwin') {
+		try {
+			macLaunch = await withinSaveBudget(prepareMacHelper(helper));
+		} catch (error) {
+			if (error instanceof HelperVerificationTimeoutError) return notVerifiedInTime();
+			return systemTimeHelperFailure('error', failureText(error));
+		}
+		// The preparation may have used up the save: no authorization prompt after that.
+		const left = remainingSaveBudget();
+		if (left !== null && left <= 0) return notVerifiedInTime();
+	}
 	let response: NetworkHelperResponse;
 	try {
-		response = parseNetworkHelperResponse(platform === 'darwin' ? await runMacHelper(helper, encodeNetworkHelperRequest(request)) : await runLinuxHelper(helper, request));
+		response = parseNetworkHelperResponse(macLaunch ? await launchMacHelper(helper, encodeNetworkHelperRequest(request), macLaunch) : await runLinuxHelper(helper, request));
 	} catch (error) {
 		// "We never got an answer" is not "nothing happened". A declined authorization is the
 		// one failure that proves the helper never ran; everything else here - a killed
@@ -349,18 +445,46 @@ function failureText(error: unknown): string {
 }
 
 /**
+ * Wait for `work` no longer than the running save has left. The work itself is not cancelled:
+ * a shared trust measurement may still finish for another caller. Only this wait ends, with
+ * {@link HelperVerificationTimeoutError}, so the expired save goes no further.
+ */
+function withinSaveBudget<T>(work: Promise<T>): Promise<T> {
+	const remaining = remainingSaveBudget();
+	if (remaining === null) return work;
+	work.catch(() => undefined);
+	if (remaining <= 0) return Promise.reject(new HelperVerificationTimeoutError());
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(() => reject(new HelperVerificationTimeoutError()), remaining);
+		work.then(
+			value => {
+				clearTimeout(timer);
+				resolve(value);
+			},
+			error => {
+				clearTimeout(timer);
+				reject(error);
+			}
+		);
+	});
+}
+
+/**
  * A declined authorization, matched on what the two tools say when the person says no.
  *
  * `pkexec` documents exit 126 for "the authentication dialog was dismissed" and 127 for
  * "not authorized"; `osascript` reports a cancelled `with administrator privileges`
  * dialog as error -128. Both mean the helper was never started.
  */
-const AUTHORIZATION_DECLINED_RE = /\bexited with 12[67]\b|-128|User canceled|not authorized/i;
+const AUTHORIZATION_DECLINED_RE = /\bexited with 12[67]\b|\(-128\)\s*$|User canceled|not authorized/i;
 
 export function helperTransportFailure(error: unknown): SystemTimeResult {
 	const message = failureText(error);
+	const stderr = (error as { stderr?: unknown } | null)?.stderr;
+	const diagnostic = typeof stderr === 'string' ? stderr : stderr instanceof Uint8Array ? new TextDecoder().decode(stderr) : error instanceof Error ? error.message : String(error);
 	// The person said no, which is not the same as this process being unable to ask.
-	if (AUTHORIZATION_DECLINED_RE.test(message)) return systemTimeHelperFailure('elevation-declined', message);
+	// execFile prefixes long commands to the diagnostic; classify it before limiting UI text.
+	if (AUTHORIZATION_DECLINED_RE.test(diagnostic)) return systemTimeHelperFailure('elevation-declined', failureText(diagnostic));
 	return { ...systemTimeHelperFailure('error', message), stateMayHaveChanged: true };
 }
 

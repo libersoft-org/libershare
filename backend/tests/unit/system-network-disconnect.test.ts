@@ -5,7 +5,10 @@ import { hostNetworkAdminHandler } from '../../src/api/api.ts';
 function subprocess(script: string): any {
 	const result = Bun.spawnSync([process.execPath, '--eval', script], { cwd: resolve(import.meta.dir, '../..'), timeout: 15000 });
 	if (result.exitCode !== 0) throw new Error(result.stderr.toString());
-	const line = result.stdout.toString().split(/\r?\n/).find(line => line.startsWith('RESULT:'));
+	const line = result.stdout
+		.toString()
+		.split(/\r?\n/)
+		.find(line => line.startsWith('RESULT:'));
 	expect(line).toBeDefined();
 	return JSON.parse(line!.slice(7));
 }
@@ -32,7 +35,10 @@ function windowsDisconnect(states: Array<boolean | string>, error = 0): any {
 }
 
 describe('Wi-Fi disconnect authorization', () => {
-	it.each([{ token: false, local: true }, { token: true, local: false }])('refuses unauthorized requests before any action: %j', ({ token, local }) => {
+	it.each([
+		{ token: false, local: true },
+		{ token: true, local: false },
+	])('refuses unauthorized requests before any action: %j', ({ token, local }) => {
 		let mutations = 0;
 		const guarded = hostNetworkAdminHandler(token, () => mutations++);
 		expect(() => guarded({}, { data: { isLocalClient: local, subscribedEvents: new Set() } })).toThrow('authenticated client on this machine');
@@ -103,7 +109,7 @@ it('serializes the RPC disconnect through its readback and publishes the resulti
 		let active = true; const order = [];
 		mock.module('./src/system-network-linux.ts', () => ({ ...platform,
 			readLinuxCapabilities: async () => ({ipv4:true,wifi:true,staticGatewayRequired:false}),
-			readLinuxNetworkState: async () => { order.push(active ? 'read-before' : 'read-after'); return [{...iface,link:active?'up':'down',wifi:{...iface.wifi,ssid:active?'Example':null}}]; },
+			readLinuxNetworkState: async () => { order.push(active ? 'read-before' : 'read-after'); return { interfaces: [{...iface,link:active?'up':'down',wifi:{...iface.wifi,ssid:active?'Example':null}}], ipv4ProfilesUnavailable: false }; },
 			disconnectLinuxWifi: async () => { order.push('disconnect'); active = false; },
 		}));
 		mock.module('./src/system-volume.ts', () => ({...volume,getSystemVolumeStatus:async()=>null}));
@@ -119,7 +125,7 @@ it('serializes the RPC disconnect through its readback and publishes the resulti
 	expect(result).toEqual({ order: ['read-before', 'disconnect', 'read-after', 'published:down', 'next-mutation'], link: 'down', ssid: null });
 });
 
- it.each([1, 4, 5, 7])('reads native interface state %i without treating transitional states as disconnected', state => {
+it.each([1, 4, 5, 7])('reads native interface state %i without treating transitional states as disconnected', state => {
 	const result = subprocess(`
 		import { mock } from 'bun:test';
 		const ffi = await import('bun:ffi');
@@ -135,5 +141,5 @@ it('serializes the RPC disconnect through its readback and publishes the resulti
 		const {isWindowsWifiDisconnected}=await import('./src/system-network-windows-wlan.ts');
 		console.log('RESULT:'+JSON.stringify({disconnected:isWindowsWifiDisconnected('{11111111-2222-3333-4444-555555555555}'),freed}));
 	`);
-	expect(result).toEqual({disconnected:state===4,freed:1});
+	expect(result).toEqual({ disconnected: state === 4, freed: 1 });
 });

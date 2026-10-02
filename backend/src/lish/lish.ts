@@ -1,5 +1,4 @@
 import * as fsPromises from 'node:fs/promises';
-import { type Stats } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes } from '@shared';
 import { type CompressionAlgorithm } from '@shared';
@@ -44,14 +43,48 @@ function getPermissions(mode: number): string {
 	return perms.toString(8); // Convert to octal string
 }
 
+/**
+ * The metadata a LISH is built from, read with exact 64-bit inode and device numbers.
+ *
+ * A plain `stat` returns them as JS numbers, which are exact only up to 2^53. NTFS file IDs
+ * routinely exceed that (the sequence number lives in the top bits), so two different files
+ * could round to the same `dev:ino` and the second one was recorded as a hard link of the
+ * first — shipped without its own content or checksums. The key is built from the bigint
+ * values; `identity` is null when the filesystem reports no inode (0), so nothing is deduped.
+ */
+interface FileStats {
+	isFile(): boolean;
+	isDirectory(): boolean;
+	size: number;
+	mode: number;
+	mtime: Date;
+	birthtime: Date;
+	identity: string | null;
+}
+
+/** Convert a bigint size to a number, refusing one a JS number cannot hold exactly. */
+function exactSize(size: bigint, fullPath: string): number {
+	if (size < 0n || size > BigInt(Number.MAX_SAFE_INTEGER)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `${fullPath}: file size ${size} is not supported`);
+	return Number(size);
+}
+
 // Helper to get file/directory stats
-async function getStats(fullPath: string): Promise<Stats> {
+async function getStats(fullPath: string): Promise<FileStats> {
+	let stat: import('node:fs').BigIntStats;
 	try {
-		const stat = await Bun.file(fullPath).stat();
-		return stat;
+		stat = await fsPromises.stat(fullPath, { bigint: true });
 	} catch (e) {
 		throw new CodedError(ErrorCodes.PATH_ACCESS_DENIED, fullPath);
 	}
+	return {
+		isFile: () => stat.isFile(),
+		isDirectory: () => stat.isDirectory(),
+		size: stat.isFile() ? exactSize(stat.size, fullPath) : 0,
+		mode: Number(stat.mode & 0o7777n),
+		mtime: stat.mtime,
+		birthtime: stat.birthtime,
+		identity: stat.ino === 0n ? null : `${stat.dev}:${stat.ino}`,
+	};
 }
 
 // Calculate checksums sequentially (single-threaded, no worker overhead)
@@ -183,7 +216,7 @@ async function scanFiles(dirPath: string, basePath: string, chunkSize: number, i
 		// gate to drain — waited for exactly the work it had cancelled.
 		if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 		const fullPath = `${dirPath}/${entry}`;
-		let stat: Stats;
+		let stat: FileStats;
 		try {
 			stat = await getStats(fullPath);
 		} catch {
@@ -200,10 +233,10 @@ async function scanFiles(dirPath: string, basePath: string, chunkSize: number, i
 			const subFiles = await scanFiles(fullPath, basePath, chunkSize, inodeMap, signal);
 			result.push(...subFiles);
 		} else if (stat.isFile()) {
-			const inodeKey = `${stat.dev}:${stat.ino}`;
+			const inodeKey = stat.identity;
 			// Skip hard links (already seen inode)
-			if (stat.ino > 0 && inodeMap[inodeKey]) continue;
-			if (stat.ino > 0) inodeMap[inodeKey] = true;
+			if (inodeKey && inodeMap[inodeKey]) continue;
+			if (inodeKey) inodeMap[inodeKey] = true;
 			const relativePath = getRelativePath(fullPath, basePath);
 			const totalChunks = Math.ceil(stat.size / chunkSize);
 			result.push({ path: relativePath, size: stat.size, chunks: totalChunks });
@@ -271,11 +304,11 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 			// Recursively process subdirectory
 			await processDirectory(fullPath, basePath, chunkSize, algo, maxWorkers, directories, files, links, inodeMap, onProgress, signal);
 		} else if (stat.isFile()) {
-			const inodeKey = `${stat.dev}:${stat.ino}`;
+			const inodeKey = stat.identity;
 			const relativePath = getRelativePath(fullPath, basePath);
 			// Check if this is a hard link to an already processed file
 			// Only consider it a hard link if inode is valid (non-zero) and already seen
-			if (stat.ino > 0 && inodeMap[inodeKey]) {
+			if (inodeKey && inodeMap[inodeKey]) {
 				// This is a hard link
 				links.push({
 					path: relativePath,
@@ -286,7 +319,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 				});
 			} else {
 				// First occurrence of this inode - process as regular file
-				if (stat.ino > 0) inodeMap[inodeKey] = relativePath;
+				if (inodeKey) inodeMap[inodeKey] = relativePath;
 				// Calculate checksums in parallel with progress tracking
 				const totalChunks = Math.ceil(stat.size / chunkSize);
 				// Progress feedback - file start

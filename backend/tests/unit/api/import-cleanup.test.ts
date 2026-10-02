@@ -124,7 +124,14 @@ describe('failed overwrite import', () => {
 	});
 
 	it('keeps the committed directory if broadcasting the successful write fails', async () => {
-		const h = initLISHsHandlers(dataServer, () => {}, () => { throw new Error('broadcast failed'); }, await Settings.create(dataDir));
+		const h = initLISHsHandlers(
+			dataServer,
+			() => {},
+			() => {
+				throw new Error('broadcast failed');
+			},
+			await Settings.create(dataDir)
+		);
 		const manifest = { id: 'committed', name: 'committed', created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', files: [{ path: 'a.bin', size: 1024, checksums: ['c0'] }] };
 		await expect(h.importManifest(manifest as never, base, { enableSharing: false, enableDownloading: false })).rejects.toThrow('broadcast failed');
 		expect(dataServer.get('committed' as never)?.directory).toBe(join(base, 'committed'));

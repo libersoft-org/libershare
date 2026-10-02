@@ -16,12 +16,6 @@ import { languages } from '../../src/scripts/languages.ts';
  * Literal keys only: a computed key cannot be checked here and is skipped on purpose.
  */
 
-/**
- * Known gaps that predate this change, in files it does not touch. Listed rather than
- * fixed so the guard can go in without dragging unrelated work along; each one is on the
- * board. Anything NEW must not be added here — fix the key instead.
- */
-const PRE_EXISTING_GAPS = new Set(['lish.import.importing']);
 // `fileURLToPath`, not `.pathname`: on Windows the latter yields a leading-slash path.
 const SRC = fileURLToPath(new URL('../../src/', import.meta.url));
 
@@ -61,7 +55,6 @@ for (const { id: langID } of languages) {
 		const table = await Bun.file(new URL(`../../static/langs/${langID}.json`, import.meta.url)).json();
 		const missing: string[] = [];
 		for (const [key, files] of usedKeys()) {
-			if (PRE_EXISTING_GAPS.has(key)) continue;
 			const value = lookup(table, key);
 			// Non-empty string: an entry emptied by a bad edit renders as nothing, which the
 			// screen cannot tell from a message that was never meant to show.

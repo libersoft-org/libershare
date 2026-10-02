@@ -5,7 +5,7 @@
 import { tcp } from '@libp2p/tcp';
 import { noise, pureJsCrypto } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
-import { gossipsub } from '@chainsafe/libp2p-gossipsub';
+import { gossipsub } from '@libp2p/gossipsub';
 import { identify, identifyPush } from '@libp2p/identify';
 import { bootstrap } from '@libp2p/bootstrap';
 import { mdns } from '@libp2p/mdns';
@@ -20,6 +20,7 @@ import { dcutr } from '@libp2p/dcutr';
 import { networkInterfaces } from 'os';
 import { isLinkLocalIp } from '@libp2p/utils';
 import { type PrivateKey } from '@libp2p/interface';
+import { DEFAULT_MAX_RELAY_RESERVATIONS, isRelayReservationLimit } from '@shared';
 import { type SettingsData } from '../settings.ts';
 import { trace } from '../logger.ts';
 import { normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
@@ -398,9 +399,12 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			// maintenance. clientMode option deprecated by removing service.
 		},
 	};
-	// Add relay server service if enabled
-	if (allSettings.network?.allowRelay) {
-		const maxReservationsRaw = allSettings.network?.maxRelayReservations ?? 0;
+	// Serving relay is opt-in: only an explicit `true` turns it on. A stored limit that is not a
+	// non-negative integer falls back to the finite default instead of becoming unlimited;
+	// 0 stays the operator's explicit choice of "unlimited".
+	if (allSettings.network?.allowRelay === true) {
+		const storedLimit = allSettings.network?.maxRelayReservations;
+		const maxReservationsRaw = isRelayReservationLimit(storedLimit) ? storedLimit : DEFAULT_MAX_RELAY_RESERVATIONS;
 		const maxReservations = maxReservationsRaw === 0 ? Infinity : maxReservationsRaw;
 		config.services.relay = circuitRelayServer({
 			reservations: {
@@ -418,7 +422,8 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	console.log('✓ AutoNAT v2 + DCUtR enabled');
 	// UPnP-NAT asks the local router (via IGD) to open the incoming port and
 	// maps it back to this host, easing inbound reachability behind a NAT.
-	// Gated behind an opt-in flag because it mutates router state — default OFF.
+	// It changes router state, so it has its own switch; it is on by default so
+	// that nodes behind a home router are reachable without manual forwarding.
 	if (allSettings.network?.upnpEnabled) {
 		config.services.upnpNAT = uPnPNAT();
 		console.log('✓ UPnP-NAT port forwarding enabled');

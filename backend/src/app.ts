@@ -7,12 +7,19 @@ import { Networks } from './lishnet/lishnets.ts';
 import { DataServer } from './lish/data-server.ts';
 import { openDatabase } from './db/database.ts';
 import { APIServer } from './api/api.ts';
+import { assertUsableToken } from './api/access-policy.ts';
 import { Settings } from './settings.ts';
+import { createProcessShutdown } from './shutdown.ts';
 import { startMemoryTrace } from './monitoring/memory-trace.ts';
 import { startHeapSnapshotTrigger } from './monitoring/heap-snapshot.ts';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
+const ipc = args.includes('--ipc');
+if (ipc && args.some(arg => ['--healthcheck', '--host', '--port', '--secure', '--privkey', '--pubkey', '--token'].includes(arg))) {
+	console.error('[API] --ipc cannot be combined with HTTP/WebSocket options');
+	process.exit(78);
+}
 // Default dataDir: next to binary if compiled, otherwise ./data (relative to CWD)
 const isCompiledBinary = process.execPath !== Bun.which('bun');
 let dataDir = isCompiledBinary ? join(dirname(process.execPath), 'data') : './data';
@@ -79,13 +86,29 @@ if (args.includes('--healthcheck')) {
 	process.exit(1);
 }
 
-setupLogger(logLevel, logFile ?? join(dataDir, `${productName.toLowerCase()}.log`));
+// The network API requires a token before initialization. IPC trusts only its inherited pipes.
+try {
+	if (!ipc) assertUsableToken(apiToken);
+} catch (error) {
+	console.error(`[API] ${(error as Error).message}`);
+	process.exit(78); // sysexits.h EX_CONFIG
+}
+
+setupLogger(logLevel, logFile ?? join(dataDir, `${productName.toLowerCase()}.log`), ipc);
 const header = `${productName} v${productVersion}`;
 console.log('='.repeat(header.length));
 console.log(header);
 console.log('='.repeat(header.length));
 console.log(`Data directory: ${dataDir}`);
-const settings = await Settings.create(dataDir);
+// Before anything touches the storage directories, the database or the network: a settings
+// file that exists but cannot be read must stop the node, not be replaced with defaults.
+let settings: Settings;
+try {
+	settings = await Settings.create(dataDir);
+} catch (error) {
+	console.error(`[Settings] ${(error as Error).message}`);
+	process.exit(74); // sysexits.h EX_IOERR
+}
 await settings.ensureStorageDirs();
 const db = openDatabase(dataDir);
 const dataServer = new DataServer(db);
@@ -103,6 +126,7 @@ applyNetworkLimits(settings.get().network);
 initUploadState(getUploadEnabledLishs(db), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
 initDownloadState(getDownloadEnabledLishs(db), (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
 
+let ipcFailed = false;
 const apiServer = new APIServer(dataDir, dataServer, networks, settings, {
 	host: apiHost,
 	port: apiPort,
@@ -110,6 +134,11 @@ const apiServer = new APIServer(dataDir, dataServer, networks, settings, {
 	keyFile: apiKeyFile,
 	certFile: apiCertFile,
 	apiToken,
+	ipc,
+	onIpcDisconnect: failed => {
+		ipcFailed ||= failed;
+		if (!isShuttingDown()) void shutdown();
+	},
 });
 
 // Wire upload progress broadcast (after apiServer is created)
@@ -131,34 +160,20 @@ if (process.env['MEMTRACE'] !== '0') {
 // Heap snapshot on-demand: touch <dataDir>/trigger-heap OR kill -USR2 <pid>
 if (process.env['HEAP_TRIGGER'] !== '0') startHeapSnapshotTrigger(dataDir);
 
-let shuttingDown = false;
-async function shutdown(): Promise<void> {
-	if (shuttingDown) {
-		// Second Ctrl+C → hard kill
-		process.exit(1);
-	}
-	shuttingDown = true;
-	console.log('Shutting down...');
-	// Stop accepting new work (sync)
-	stopConnectivityCheck();
-	apiServer.stop();
-	// Flush SQLite (bun:sqlite is synchronous, so all committed writes are already on disk —
-	// close() finalizes any open statements and the WAL).
-	try {
-		db.close();
-	} catch (err) {
-		console.error('DB close error:', err);
-	}
-	// Give a short grace for any in-flight fs writes (download chunks, uploads) to drain.
-	// We do NOT wait for libp2p node.stop() — peers get a TCP FIN from OS when the process exits.
-	await new Promise(resolve => setTimeout(resolve, 200));
-	process.exit(0);
-}
+const { shutdown, isShuttingDown } = createProcessShutdown({
+	stopConnectivityCheck,
+	stopApi: () => apiServer.stop(),
+	flushSettings: () => settings.flush(),
+	closeDatabase: () => db.close(),
+	exit: code => process.exit(ipcFailed && code === 0 ? 1 : code),
+});
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
 installRuntimeErrorHandlers();
 
+if (ipc) apiServer.prepareIPC();
 await networks.startEnabledNetworks();
-apiServer.start();
+// A signal during the network start has already begun the shutdown: never open the API after it.
+if (!isShuttingDown()) apiServer.start();

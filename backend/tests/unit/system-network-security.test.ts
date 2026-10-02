@@ -20,7 +20,7 @@ function attempt(scenario: Scenario): { mutations: number; scans: number; code?:
 		mock.module('./src/system-network-linux.ts', () => ({
 			...platform,
 			readLinuxCapabilities: async () => ({ ipv4: true, wifi: true, staticGatewayRequired: false }),
-			readLinuxNetworkState: async () => [iface],
+			readLinuxNetworkState: async () => ({ interfaces: [iface], ipv4ProfilesUnavailable: false }),
 			scanLinuxWifi: async () => {
 				scans++;
 				return [{ ssid: 'Example', bssid: null, signal: 70, security: input.security, secured: input.security !== '', supported: true, active: false }];
@@ -44,7 +44,10 @@ function attempt(scenario: Scenario): { mutations: number; scans: number; code?:
 	const result = Bun.spawnSync([process.execPath, '--eval', script], { cwd: resolve(import.meta.dir, '../..'), timeout: 10_000 });
 	expect(result.exitCode).toBe(0);
 	expect(result.stderr.toString()).toBe('');
-	const output = result.stdout.toString().split(/\r?\n/).find(line => line.startsWith('RESULT:'));
+	const output = result.stdout
+		.toString()
+		.split(/\r?\n/)
+		.find(line => line.startsWith('RESULT:'));
 	expect(output).toBeDefined();
 	return JSON.parse(output!.slice('RESULT:'.length));
 }

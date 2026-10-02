@@ -53,7 +53,7 @@ const levelColors: Record<string, string> = {
 };
 const RESET = '\x1b[0m';
 
-function createPreciseReporter(): ConsolaReporter {
+function createPreciseReporter(stderrOnly: boolean): ConsolaReporter {
 	return {
 		log(logObj: LogObject): void {
 			const timestamp = formatTimestamp(logObj.date);
@@ -63,7 +63,7 @@ function createPreciseReporter(): ConsolaReporter {
 			const color = levelColors[levelName] || '';
 			const levelTag = color ? `${color}[${levelName}]${RESET}` : `[${levelName}]`;
 			const output = `${prefix}[${timestamp}] ${levelTag} ${args}`;
-			if (logObj.level <= LogLevels.error) process.stderr.write(output + '\n');
+			if (stderrOnly || logObj.level <= LogLevels.error) process.stderr.write(output + '\n');
 			else process.stdout.write(output + '\n');
 		},
 	};
@@ -109,8 +109,8 @@ function createFileReporter(filePath: string): ConsolaReporter {
 
 let _consola: ReturnType<typeof createConsola> | null = null;
 
-export function setupLogger(level: LogLevel = 'info', logFile?: string): ReturnType<typeof createConsola> {
-	const reporters: ConsolaReporter[] = [createPreciseReporter()];
+export function setupLogger(level: LogLevel = 'info', logFile?: string, stderrOnly = false): ReturnType<typeof createConsola> {
+	const reporters: ConsolaReporter[] = [createPreciseReporter(stderrOnly)];
 	if (logFile) reporters.push(createFileReporter(logFile));
 	_consola = createConsola({
 		level: levelMap[level],

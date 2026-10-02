@@ -801,3 +801,11 @@ describe('Downloader – peer-fault manifest failures are not terminal', () => {
 		expect(priv(dl)['errorCode']).toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
 	});
 });
+
+describe('Downloader – destroy before init', () => {
+	it('ends a downloader whose init never ran', async () => {
+		const dl = new Downloader('/tmp/dl', new MockNetwork() as never, new MockDataServer() as never, 'net-001');
+		await dl.destroy();
+		expect(priv(dl)['destroyed']).toBe(true);
+	});
+});

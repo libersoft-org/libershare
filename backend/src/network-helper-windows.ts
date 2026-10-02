@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { dirname, join, win32 } from 'node:path';
-import { sha256File } from './network-helper-integrity.ts';
+import { HASH_READ_LIMIT_MS, HelperVerificationTimeoutError, sha256File } from './network-helper-integrity.ts';
 
 const SHELLEXECUTEINFO_SIZE = 112;
 const PROCESS_HANDLE_OFFSET = 104;
@@ -340,12 +340,45 @@ export async function verifyWindowsInstalledSibling(path: string, executable: st
 	}
 }
 
-export async function verifyWindowsInstalledHelper(path: string, executable: string, expectedHash: string): Promise<boolean> {
+/**
+ * True when the helper beside `executable` is installed and hashes to `expectedHash`. Running
+ * out of time is not a verdict: {@link HelperVerificationTimeoutError} propagates so the caller
+ * can say "not verified in time" instead of "untrusted".
+ */
+export async function verifyWindowsInstalledHelper(path: string, executable: string, expectedHash: string, options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<boolean> {
+	const limit = Math.min(options.timeoutMs ?? HASH_READ_LIMIT_MS, HASH_READ_LIMIT_MS);
+	if (options.signal?.aborted || limit <= 0) throw new HelperVerificationTimeoutError();
+	const started = elevationClock();
+	const controller = new AbortController();
+	let timer: ReturnType<typeof setTimeout>;
+	let stop: () => void;
+	const cancelled = new Promise<never>((_resolve, reject) => {
+		stop = () => {
+			controller.abort();
+			reject(new HelperVerificationTimeoutError());
+		};
+		timer = setTimeout(stop, limit);
+		options.signal?.addEventListener('abort', stop, { once: true });
+	});
 	try {
-		const sibling = await windowsInstalledSibling(path, executable);
-		return sibling !== null && (await sha256File(sibling.path)) === expectedHash;
-	} catch {
+		return await Promise.race([
+			cancelled,
+			(async () => {
+				const sibling = await windowsInstalledSibling(path, executable);
+				// realpath cannot be cancelled; a late answer must not start a hash read.
+				controller.signal.throwIfAborted();
+				const timeoutMs = limit - (elevationClock() - started);
+				if (timeoutMs <= 0) throw new HelperVerificationTimeoutError();
+				return sibling !== null && (await sha256File(sibling.path, { signal: controller.signal, timeoutMs })) === expectedHash;
+			})(),
+		]);
+	} catch (error) {
+		if (error instanceof HelperVerificationTimeoutError) throw error;
+		if (controller.signal.aborted) throw new HelperVerificationTimeoutError();
 		return false;
+	} finally {
+		clearTimeout(timer!);
+		options.signal?.removeEventListener('abort', stop!);
 	}
 }
 
@@ -410,7 +443,7 @@ export const WINDOWS_ELEVATION_WAIT_MS = 60_000;
  * step that does need longer is better refused with an account of what already ran than
  * killed without one.
  */
-export const WINDOWS_ELEVATION_HELPER_BUDGET_MS = WINDOWS_ELEVATION_WAIT_MS - 15_000;
+export const WINDOWS_ELEVATION_HELPER_BUDGET_MS: number = WINDOWS_ELEVATION_WAIT_MS - 15_000;
 
 /**
  * The same wait for a NETWORK change, which is a longer piece of work.

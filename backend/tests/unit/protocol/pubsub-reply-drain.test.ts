@@ -44,8 +44,12 @@ for (const reason of ['access withdrawn', 'aborted during dial']) {
 		const handlers = new LISHServingHandlers({
 			dataServer: { list: () => [{ id: 'listener-test', name: 'Shared', files: [{ size: 1 }] }] } as never,
 			getNode: () => ({ peerId: { toString: () => 'self' } }) as never,
-			lastWantResponseTime: new Map(), seenSearchIDs: new Map(), wantResponseCooldownMs: 0,
-			isDirectPeer: () => true, isJoinedToLishnet: () => true, canServePubsubRequestTo: () => allowed,
+			lastWantResponseTime: new Map(),
+			seenSearchIDs: new Map(),
+			wantResponseCooldownMs: 0,
+			isDirectPeer: () => true,
+			isJoinedToLishnet: () => true,
+			canServePubsubRequestTo: () => allowed,
 			dialByPeerId: async () => {
 				if (reason === 'access withdrawn') allowed = false;
 				else controller.abort();

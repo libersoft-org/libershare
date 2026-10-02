@@ -51,9 +51,9 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 name = "app"
 version = "0.0.1"
 dependencies = [
- "getrandom 0.3.4",
  "objc2",
  "objc2-core-location",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-window-state",

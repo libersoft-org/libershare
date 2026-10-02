@@ -19,8 +19,8 @@ import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
 import { canonicalMultiaddr, extractDestinationPeerID } from './multiaddr-utils.ts';
 import { CodedError, ErrorCodes, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
-import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
-import { type MeshPeer, type SubscriptionChangeData } from '@chainsafe/libp2p-gossipsub';
+import { createTopicScoreParams } from '@libp2p/gossipsub/score';
+import { type MeshPeer, type SubscriptionChangeData } from '@libp2p/gossipsub';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
 import { applyGossipsubPatches } from './gossipsub-patches.ts';
 import { BootstrapStatusTracker } from './bootstrap-status.ts';
@@ -384,6 +384,8 @@ export class Network {
 	 * the run it was raised for and must not refuse the next run's first dial.
 	 */
 	private dialAbort = new AbortController();
+	/** Set by a permanent {@link cancelRunOperations}; every later run starts already cancelled. */
+	private runOperationsCancelledForGood = false;
 	/**
 	 * Admission and drain state for inbound LISH protocol handlers. libp2p closes
 	 * streams during stop(), but it does not await the application Promise that is
@@ -816,6 +818,7 @@ export class Network {
 			// A fresh one per run — an abort raised for the previous shutdown would otherwise
 			// refuse this run's dials before it made any. See {@link dialAbort}.
 			this.dialAbort = new AbortController();
+			if (this.runOperationsCancelledForGood) this.dialAbort.abort();
 			// Kept separate from admission: a factory-reset restart builds the node while
 			// the external gate is still closed, then opens it only after runtime restore.
 			this.lishProtocolAbort = new AbortController();
@@ -915,16 +918,10 @@ export class Network {
 
 		this.pubsub = this.node.services['pubsub'] as PubSub;
 
-		// Runtime patch for @chainsafe/libp2p-gossipsub OutboundStream.push():
-		// Upstream declares `async push(data)` but the body is synchronous. Any throw
-		// from rawStream.send() (e.g. StreamStateError when peer disconnect closes the
-		// yamux stream between gossipsub's map lookup and the actual write) becomes
-		// a rejected Promise that sendRpc's try/catch cannot catch (catch handles sync
-		// throws only). Those rejections are exactly the ~180/h StreamStateError noise
-		// we see in unhandledRejection. Fix by attaching a .catch() to the Promise
-		// returned by push() at every call site — intercept via prototype override
-		// on the first OutboundStream instance we observe (all instances share one
-		// prototype).
+		// Only the PX ingress filter is patched in. @libp2p/gossipsub's OutboundStream.push()
+		// is synchronous, so sendRpc's own try/catch already handles a write to a closed
+		// stream (and re-attaches the control and gossip it piggybacked); the old wrapper
+		// for the async push of @chainsafe/libp2p-gossipsub would now swallow that error.
 		applyGossipsubPatches(this.pubsub, { settings: this.settings, getConfiguredBootstrapPeerIDs: (): Set<string> => this.configuredBootstrapPeerIDs, pxIngressLogKeys: this.pxIngressLogKeys }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
 
 		// Register lish protocol handler
@@ -1195,7 +1192,7 @@ export class Network {
 			this.peerAnnounce.touchKnownMember(peerID);
 			// Fix C: clear per-peer state on disconnect to prevent unbounded growth
 			this.dcutrPeers.delete(peerID);
-			// `@chainsafe/libp2p-gossipsub` v14 removes the peer from `this.mesh`
+			// gossipsub removes the peer from `this.mesh`
 			// directly inside `removePeer()` on disconnect — without emitting a
 			// `gossipsub:prune` event (verified in node_modules/.../gossipsub.js:
 			// `removePeer` block deletes from `this.mesh` then `this.fanout`,
@@ -2167,9 +2164,14 @@ export class Network {
 	 * awaits a `hangUp` and peerStore writes that have no deadline at all — so a single
 	 * unresponsive peer used to hold the shutdown, and the catalog behind it, indefinitely.
 	 *
-	 * Idempotent, and only ever the current run: {@link start} installs a fresh controller.
+	 * Idempotent. Without `permanent` it is only the current run: {@link start} installs a
+	 * fresh controller. A process shutdown passes `permanent`, which also aborts every
+	 * controller a later start creates — a factory reset accepted before the shutdown may
+	 * still restart the node, and that run must not open new bootstrap dials or hangUps the
+	 * shutdown would then have to wait for. The flag lives as long as this instance.
 	 */
-	cancelRunOperations(): void {
+	cancelRunOperations(permanent: boolean = false): void {
+		if (permanent) this.runOperationsCancelledForGood = true;
 		this.dialAbort.abort();
 	}
 
@@ -3761,9 +3763,9 @@ export class Network {
 		await connectToPeerFn(this.node, multiaddr);
 	}
 
-	async dialProtocol(multiaddrs: any[], protocol: string): Promise<IDialResult> {
+	async dialProtocol(multiaddrs: any[], protocol: string, signal?: AbortSignal): Promise<IDialResult> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
-		return dialProtocolFn(this.node, this.dcutrPeers, multiaddrs, protocol);
+		return dialProtocolFn(this.node, this.dcutrPeers, multiaddrs, protocol, signal);
 	}
 
 	async dialProtocolByPeerId(peerID: string, protocol: string, signal?: AbortSignal): Promise<IDialResult> {

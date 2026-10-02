@@ -446,13 +446,14 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		let stored = false;
 		try {
 			await makeOwnDirectories(directory, created);
-			return await storeImported(lish, directory, finalDirectory, enableSharing, enableDownloading, !!existing, () => { stored = true; });
+			return await storeImported(lish, directory, finalDirectory, enableSharing, enableDownloading, !!existing, () => {
+				stored = true;
+			});
 		} catch (error) {
 			if (!stored) await removeOwnEmptyDirectories(created);
 			throw error;
 		}
 	}
-
 
 	async function storeImported(lish: ILISH, directory: string, finalDirectory: string | undefined, enableSharing: boolean | undefined, enableDownloading: boolean | undefined, replacing: boolean, onStored: () => void): Promise<ImportLISHResponse> {
 		// Drop the node-local fields that rode in with the imported data before merging: we own
