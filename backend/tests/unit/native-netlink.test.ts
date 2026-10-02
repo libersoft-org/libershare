@@ -121,11 +121,31 @@ describe('synthetic malformed kernel responses', () => {
 });
 
 describe('synthetic nl80211 messages', () => {
+	const interfaces = (type: number) => [{ type: 30, flags: 0, body: Buffer.concat([Buffer.alloc(4), encodeAttribute(5, u32(type)), encodeAttribute(52, Buffer.from('Demo'))]) }];
+	const station = (mac: string, signal: number) => ({ type: 30, flags: 2, body: Buffer.concat([Buffer.alloc(4), encodeAttribute(6, Buffer.from(mac, 'hex')), encodeAttribute(21, encodeAttribute(7, Buffer.from([signal & 0xff])))]) });
+	const scan = (mac = '020000000001', status = 1) => decodeNl80211Scan([{ type: 30, flags: 2, body: Buffer.concat([Buffer.alloc(4), encodeAttribute(47, Buffer.concat([encodeAttribute(1, Buffer.from(mac, 'hex')), encodeAttribute(6, Buffer.from([0, 4, 68, 101, 109, 111])), encodeAttribute(9, u32(status))]))]) }]);
 	test('decodes SSID and signed station signal without NetworkManager', () => {
-		const interfaces = [{ type: 30, flags: 0, body: Buffer.concat([Buffer.alloc(4), encodeAttribute(52, Buffer.from('Demo Wi-Fi'))]) }];
-		const stations = [{ type: 30, flags: 2, body: Buffer.concat([Buffer.alloc(4), encodeAttribute(6, Buffer.from('020000000001', 'hex')), encodeAttribute(21, encodeAttribute(7, Buffer.from([218])))]) }];
-		expect(decodeNl80211Link(interfaces, stations)).toEqual({ ssid: 'Demo Wi-Fi', bssid: '02:00:00:00:00:01', signal: -38 });
-		expect(decodeNl80211Link([{ type: 30, flags: 0, body: Buffer.alloc(4) }], [])).toEqual({ ssid: null, bssid: null, signal: null });
+		expect(decodeNl80211Link(interfaces(2), scan(), [station('020000000001', -38)])).toEqual({ ssid: 'Demo', bssid: '02:00:00:00:00:01', signal: -38 });
+		expect(decodeNl80211Link(interfaces(2), [], [])).toEqual({ ssid: null, bssid: null, signal: null });
+	});
+	test('AP and P2P GO modes never expose connected clients as the upstream AP', () => {
+		for (const mode of [3, 9]) expect(decodeNl80211Link(interfaces(mode), scan(), [station('020000000001', -38)])).toEqual({ ssid: null, bssid: null, signal: null });
+	});
+	test('selects the associated AP independently of TDLS station dump ordering', () => {
+		const ap = station('020000000001', -38);
+		const tdls = station('020000000002', -70);
+		const nearby = scan('020000000002', 0);
+		for (const stations of [
+			[tdls, ap],
+			[ap, tdls],
+		]) {
+			expect(decodeNl80211Link(interfaces(2), [...nearby, ...scan()], stations)).toEqual({ ssid: 'Demo', bssid: '02:00:00:00:00:01', signal: -38 });
+		}
+	});
+	test('requires one associated BSS and its matching station', () => {
+		expect(() => decodeNl80211Link(interfaces(2), [...scan(), ...scan('020000000002')], [])).toThrow('Ambiguous wireless association');
+		expect(() => decodeNl80211Link(interfaces(2), scan(), [station('020000000002', -70)])).toThrow('associated station');
+		expect(decodeNl80211Link(interfaces(2), scan('020000000002', 0), [station('020000000002', -70)])).toEqual({ ssid: null, bssid: null, signal: null });
 	});
 	test('scan cache contains BSSID, frequency, dBm, association and raw security IEs', () => {
 		const signal = Buffer.alloc(4);
