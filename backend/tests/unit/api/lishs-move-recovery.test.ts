@@ -59,9 +59,12 @@ test.each([true, false])('an old move cannot clear a replacement import verifica
 		expect(await readFile(join(f.source, 'folder/data.bin'), 'utf8')).toBe('abcd');
 		expect(f.resumes()).toBe(0);
 	} finally {
-		releaseSource.release(); releaseVerify.release(); f.stopped.release();
+		releaseSource.release();
+		releaseVerify.release();
+		f.stopped.release();
 		await moved;
-		prepare.mockRestore(); verifying.mockRestore();
+		prepare.mockRestore();
+		verifying.mockRestore();
 		await f.close();
 	}
 });
