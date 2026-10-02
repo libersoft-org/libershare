@@ -226,6 +226,8 @@
 		"moveData": "Přesunout data",
 		"moveDataFromOriginal": "Přesunout data z původního adresáře",
 		"createSubdirectory": "V cílovém adresáři vytvořit podadresář s názvem LISHe",
+		"moveTargetNew": "Podsložka s názvem sdílení musí být nová. Existující soubory se nepřepisují.",
+		"moveTargetEmpty": "Bez vytvoření podsložky vyberte prázdnou cílovou složku. Existující soubory se nepřepisují.",
 		"move": "Přesunout",
 		"moveSuccess": "Data LISHe \"{name}\" byla přesunuta",
 		"moveCleanupWarning": "Data LISHe \"{name}\" byla přesunuta, ale úklid se nedokončil. Některé původní soubory mohou zůstat na místě.",

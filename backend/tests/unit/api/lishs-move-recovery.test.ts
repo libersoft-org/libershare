@@ -153,14 +153,14 @@ async function fixture() {
 	};
 }
 
-test('a destination collision restores enabled work on the original dataset and preserves EEXIST', async () => {
+test('a destination collision restores enabled work on the original dataset and reports the destination collision', async () => {
 	const f = await fixture();
 	try {
 		const moved = f.start();
 		await f.stopping.promise;
 		expect(f.destroys()).toBe(1);
 		f.stopped.release();
-		expect(await moved).toMatchObject({ code: 'EEXIST' });
+		expect(await moved).toMatchObject({ code: 'FS_ALREADY_EXISTS' });
 		await f.settled();
 		expect(f.resumes()).toBe(1);
 		expect(f.active.has(f.id)).toBe(true);
@@ -182,7 +182,7 @@ test('manual disable while stopping a move is not undone after collision', async
 		const disabled = forceDisableDownload(f.id);
 		f.stopped.release();
 		await disabled;
-		expect(await moved).toMatchObject({ code: 'EEXIST' });
+		expect(await moved).toMatchObject({ code: 'FS_ALREADY_EXISTS' });
 		await f.settled();
 		expect(f.resumes()).toBe(0);
 		expect(getDownloadEnabledLishs().has(f.id)).toBe(false);
@@ -199,7 +199,7 @@ test('a reset closing admission prevents restoration after a failed move', async
 		await f.stopping.promise;
 		const paused = f.handlers.pauseMutations();
 		f.stopped.release();
-		expect(await moved).toMatchObject({ code: 'EEXIST' });
+		expect(await moved).toMatchObject({ code: 'FS_ALREADY_EXISTS' });
 		await paused;
 		expect(f.resumes()).toBe(0);
 		expect(f.events.some(item => item.event === 'lishs:verify' && item.data.started)).toBe(false);
@@ -260,7 +260,7 @@ test('a disable during recovery verification prevents the later download restart
 		const moved = f.start();
 		await f.stopping.promise;
 		f.stopped.release();
-		expect(await moved).toMatchObject({ code: 'EEXIST' });
+		expect(await moved).toMatchObject({ code: 'FS_ALREADY_EXISTS' });
 		await checking.promise;
 		await forceDisableDownload(f.id);
 		checked.release();

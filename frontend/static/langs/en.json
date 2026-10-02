@@ -226,6 +226,8 @@
 		"moveData": "Move data",
 		"moveDataFromOriginal": "Move data from original directory",
 		"createSubdirectory": "Create a subdirectory with LISH name in target directory",
+		"moveTargetNew": "The subdirectory named after the share must be new. Existing files are never overwritten.",
+		"moveTargetEmpty": "Without a subdirectory, select an empty destination folder. Existing files are never overwritten.",
 		"move": "Move",
 		"moveSuccess": "LISH \"{name}\" data was moved",
 		"moveCleanupWarning": "LISH \"{name}\" was moved, but cleanup did not finish. Some original files may remain.",

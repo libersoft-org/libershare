@@ -732,6 +732,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 					await forceDisableDownload(p.lishID);
 				} else recover = wasVerifying || (wasDownloading && getDownloadEnabledLishs().has(p.lishID)) || (wasUploading && getEnabledUploads().has(p.lishID));
 			}
+			if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new CodedError(ErrorCodes.FS_ALREADY_EXISTS, newDir);
 			throw error;
 		} finally {
 			movingLISHs.delete(p.lishID);

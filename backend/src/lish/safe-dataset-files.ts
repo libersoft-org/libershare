@@ -9,6 +9,7 @@ export interface DatasetNamespace {
 	directories?: readonly { path: string }[];
 }
 export interface DatasetPreparation {
+	exclusive?: boolean;
 	writable?: boolean;
 	reserve?: boolean;
 	signal?: AbortSignal;
@@ -86,6 +87,7 @@ export class SafeDataset {
 	private preparedFiles: Set<string> | undefined;
 	private writePrepared = false;
 	private reserving = false;
+	private reservingExclusive = false;
 	private closed = false;
 	private readonly created: { path: string; info: DatasetEntryInfo }[] = [];
 
@@ -139,13 +141,17 @@ export class SafeDataset {
 				let made = false;
 				try {
 					child = await current.openDirectory(part);
+					if (create && this.reservingExclusive && !this.entries.has(path)) {
+						await child.close();
+						throw Object.assign(new Error('Copy destination already exists'), { code: 'EEXIST' });
+					}
 				} catch (error) {
 					if (!create || code(error) !== 'ENOENT') throw error;
 					try {
 						child = await current.createDirectory(part);
 						made = true;
 					} catch (creation) {
-						if (code(creation) !== 'EEXIST') throw creation;
+						if (this.reservingExclusive || code(creation) !== 'EEXIST') throw creation;
 						child = await current.openDirectory(part);
 					}
 				}
@@ -239,11 +245,12 @@ export class SafeDataset {
 		this.writePrepared = false;
 		const forWrite = options.writable ?? true;
 		if (options.reserve && !forWrite) unsafe('Read-only preparation cannot reserve files');
+		if (options.exclusive && !options.reserve) unsafe('Exclusive preparation must reserve files');
 		const { files, sortedDirs } = namespace(manifest);
 		try {
 			for (const path of sortedDirs) {
 				abort(options.signal);
-				await this.statDirectory(path);
+				if ((await this.statDirectory(path)) && options.exclusive) throw Object.assign(new Error('Copy destination already exists'), { code: 'EEXIST' });
 			}
 			for (const path of files) {
 				abort(options.signal);
@@ -255,6 +262,7 @@ export class SafeDataset {
 					throw error;
 				}
 				try {
+					if (options.exclusive) throw Object.assign(new Error('Copy destination already exists'), { code: 'EEXIST' });
 					if (forWrite) writable(await file.stat());
 				} finally {
 					await file.close();
@@ -262,6 +270,7 @@ export class SafeDataset {
 			}
 			if (options.reserve) {
 				this.reserving = true;
+				this.reservingExclusive = options.exclusive ?? false;
 				for (const path of sortedDirs) {
 					abort(options.signal);
 					await this.ensureDirectory(path);
@@ -269,7 +278,9 @@ export class SafeDataset {
 				for (const path of files) {
 					abort(options.signal);
 					let file: DatasetFileHandle;
-					try {
+					if (options.exclusive) {
+						file = await this.file(path, 'create', false);
+					} else try {
 						file = await this.file(path, 'write', false);
 					} catch (error) {
 						if (code(error) !== 'ENOENT') throw error;
@@ -292,6 +303,7 @@ export class SafeDataset {
 			throw normalized(error);
 		} finally {
 			this.reserving = false;
+			this.reservingExclusive = false;
 		}
 	}
 

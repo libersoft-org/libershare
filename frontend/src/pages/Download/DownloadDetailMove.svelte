@@ -103,6 +103,9 @@
 			</div>
 			<SwitchRow label={$t('downloads.moveDataFromOriginal')} checked={moveData} position={[0, 1]} onToggle={() => (moveData = !moveData)} />
 			<SwitchRow label={$t('downloads.createSubdirectory')} checked={createSubdirectory} position={[0, 2]} onToggle={() => (createSubdirectory = !createSubdirectory)} />
+			{#if moveData}
+				<Alert message={$t(createSubdirectory ? 'downloads.moveTargetNew' : 'downloads.moveTargetEmpty')} />
+			{/if}
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}

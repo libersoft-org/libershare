@@ -1,3 +1,4 @@
+import { readdir } from 'node:fs/promises';
 import { CodedError, ErrorCodes, validateLISHStructure, type ILISH } from '@shared';
 import { createDataset, openDataset, type DatasetRoot, type SafeDataset } from './safe-dataset-files.ts';
 import { resolve, relative, isAbsolute } from 'node:path';
@@ -186,7 +187,7 @@ async function copyFile(source: DatasetFileHandle, target: DatasetFileHandle, fi
 	return info.size;
 }
 
-/** The destination is exclusively created; the original survives any failure before commit. */
+/** New files are created exclusively, including inside an explicitly selected empty destination. */
 export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, targetRoot: DatasetRoot, commit: (bindings: DatasetLinkBinding[]) => void, progress: (event: DatasetMoveProgress) => void, verification: 'manifest' | 'source' = 'manifest', bindings: readonly DatasetLinkBinding[] = []): Promise<DatasetMoveResult> {
 	validateLISHStructure(manifest, Number.MAX_SAFE_INTEGER);
 	const copies = materializedFiles(manifest, sourceRoot, bindings);
@@ -194,6 +195,7 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 	const copiedManifest = { ...manifest, files: copies.map(entry => entry.file), links: [] };
 	const source = await openDataset(sourceRoot);
 	let target: SafeDataset | undefined;
+	let targetCreated = false;
 	let commitStarted = false;
 	let committed = false;
 	let failure: unknown;
@@ -218,10 +220,19 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 		if (destination.kind !== 'derived') throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'Copy destination needs a parent directory');
 		const base = await openDataset({ kind: 'explicit', path: destination.base }, true);
 		await base.close();
-		target = await createDataset(destination);
+		if (targetRoot.kind === 'explicit') {
+			try { target = await openDataset(targetRoot); }
+			catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+			if (target) {
+				if ((await readdir(datasetRootPath(targetRoot))).length) throw Object.assign(new Error('Selected directory is not empty'), { code: 'EEXIST' });
+				await target.assertPathBinding();
+			}
+		}
+		if (!target) { target = await createDataset(destination); targetCreated = true; }
 		const rootInfo = await target.statDirectory();
+		if (rootInfo?.identity === sourceIdentities.get('')) throw Object.assign(new Error('Destination is the source directory'), { code: 'EEXIST' });
 		if (rootInfo) targetIdentities.set('', rootInfo.identity);
-		await target.prepare(copiedManifest, { reserve: true, writable: true });
+		await target.prepare(copiedManifest, { reserve: true, writable: true, exclusive: true });
 		targetIdentities = await snapshot(target, copiedManifest);
 		const files = copiedManifest.files;
 		const totalFiles = files.length;
@@ -265,7 +276,7 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 	} catch (error) {
 		if (target && !commitStarted) {
 			try {
-				await removeContents(target, copiedManifest, targetIdentities, true);
+				await removeContents(target, copiedManifest, targetIdentities, targetCreated);
 			} catch (cleanupError) {
 				console.warn('The incomplete copy could not be removed safely:', cleanupError);
 			}
