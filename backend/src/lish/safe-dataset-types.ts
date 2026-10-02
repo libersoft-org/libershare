@@ -21,7 +21,7 @@ export interface DatasetDirectoryHandle {
 	openDirectory(name: string): Promise<DatasetDirectoryHandle>;
 	createDirectory(name: string): Promise<DatasetDirectoryHandle>;
 	openFile(name: string, mode: 'read' | 'write' | 'create'): Promise<DatasetFileHandle>;
-	removeFile(name: string): Promise<void>;
-	removeDirectory(name: string): Promise<void>;
+	removeFile(name: string, expectedIdentity: string): Promise<void>;
+	removeDirectory(name: string, expectedIdentity: string): Promise<void>;
 	close(): Promise<void>;
 }

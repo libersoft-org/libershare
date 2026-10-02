@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile, link, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, writeFile, link, stat } from 'node:fs/promises';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -62,13 +63,17 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
 
 	test('exclusive creation preserves existing entries and missing opens stay ENOENT', async () => {
 		await fixture(async directory => {
-			await (await directory.createDirectory('child')).close();
-			await (await directory.openFile('data', 'create')).close();
+			const child = await directory.createDirectory('child');
+			const childIdentity = (await child.stat()).identity;
+			await child.close();
+			const data = await directory.openFile('data', 'create');
+			const dataIdentity = (await data.stat()).identity;
+			await data.close();
 			await expect(directory.createDirectory('child')).rejects.toMatchObject({ code: 'EEXIST' });
 			await expect(directory.openFile('data', 'create')).rejects.toMatchObject({ code: 'EEXIST' });
 			await expect(directory.openFile('missing', 'write')).rejects.toMatchObject({ code: 'ENOENT' });
-			await directory.removeFile('data');
-			await directory.removeDirectory('child');
+			await directory.removeFile('data', dataIdentity);
+			await directory.removeDirectory('child', childIdentity);
 			await expect(directory.openDirectory('child')).rejects.toMatchObject({ code: 'ENOENT' });
 		});
 	});
@@ -82,7 +87,7 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
 			await symlink(join(outside, 'data'), join(path, 'leaf-link'));
 			await expect(directory.openDirectory('parent-link')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 			await expect(directory.openFile('leaf-link', 'write')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
-			await expect(directory.removeFile('leaf-link')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			await expect(directory.removeFile('leaf-link', 'unused')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 			const selected = await openPosixDatasetDirectory(join(path, 'parent-link'));
 			try {
 				expect((await selected.stat()).kind).toBe('directory');
@@ -90,6 +95,76 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
 				await selected.close();
 			}
 			expect(await readFile(join(outside, 'data'), 'utf8')).toBe('unchanged');
+		});
+	});
+
+	test('restores a replacement captured after the caller checked the original identity', async () => {
+		await fixture(async (directory, path) => {
+			await writeFile(join(path, 'data'), 'original');
+			const original = await directory.openFile('data', 'read');
+			const identity = (await original.stat()).identity;
+			await original.close();
+			await rename(join(path, 'data'), join(path, 'saved'));
+			await writeFile(join(path, 'data'), 'replacement');
+			await expect(directory.removeFile('data', identity)).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			expect(await readFile(join(path, 'data'), 'utf8')).toBe('replacement');
+			expect(await readFile(join(path, 'saved'), 'utf8')).toBe('original');
+			expect((await readdir(path)).sort()).toEqual(['data', 'saved']);
+		});
+	});
+
+	test('deletes only the captured file when a replacement arrives during its inspection', async () => {
+		await fixture(async (directory, path) => {
+			const file = await directory.openFile('data', 'create');
+			const identity = (await file.stat()).identity;
+			await file.close();
+			const removal = directory.removeFile('data', identity);
+			// Capture is synchronous; fstat yields before the captured name is removed.
+			writeFileSync(join(path, 'data'), 'replacement');
+			await removal;
+			expect(await readFile(join(path, 'data'), 'utf8')).toBe('replacement');
+			expect(await readdir(path)).toEqual(['data']);
+		});
+	});
+
+	test('preserves captured data if restoring a mismatched identity would overwrite a new name', async () => {
+		await fixture(async (directory, path) => {
+			await writeFile(join(path, 'data'), 'captured replacement');
+			const removal = directory.removeFile('data', 'old-identity');
+			writeFileSync(join(path, 'data'), 'new arrival');
+			await expect(removal).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			const retained = (await readdir(path)).find(name => name.startsWith('.lish-remove-'))!;
+			expect(typeof retained).toBe('string');
+			expect((await stat(join(path, retained))).mode & 0o777).toBe(0o700 & ~process.umask());
+			expect(await readFile(join(path, retained, 'entry'), 'utf8')).toBe('captured replacement');
+			expect(await readFile(join(path, 'data'), 'utf8')).toBe('new arrival');
+		});
+	});
+
+	test('directory removal checks captured identity and preserves a new directory at the old name', async () => {
+		await fixture(async (directory, path) => {
+			const child = await directory.createDirectory('child');
+			const identity = (await child.stat()).identity;
+			await child.close();
+			const removal = directory.removeDirectory('child', identity);
+			mkdirSync(join(path, 'child'));
+			writeFileSync(join(path, 'child', 'keep'), 'untouched');
+			await removal;
+			expect(await readFile(join(path, 'child', 'keep'), 'utf8')).toBe('untouched');
+			await expect(directory.removeDirectory('child', identity)).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			expect(await readFile(join(path, 'child', 'keep'), 'utf8')).toBe('untouched');
+		});
+	});
+
+	test('restores a nonempty directory after its removal is refused', async () => {
+		await fixture(async (directory, path) => {
+			const child = await directory.createDirectory('child');
+			const identity = (await child.stat()).identity;
+			await child.close();
+			await writeFile(join(path, 'child', 'keep'), 'untouched');
+			await expect(directory.removeDirectory('child', identity)).rejects.toMatchObject({ code: 'ENOTEMPTY' });
+			expect(await readFile(join(path, 'child', 'keep'), 'utf8')).toBe('untouched');
+			expect(await readdir(path)).toEqual(['child']);
 		});
 	});
 

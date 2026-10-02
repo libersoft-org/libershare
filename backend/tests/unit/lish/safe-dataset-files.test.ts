@@ -24,6 +24,45 @@ function manifest(files: { path: string; size: number }[], directories: string[]
 }
 
 describe('safe dataset namespace', () => {
+	test('retains an immutable root choice for the binding check', async () => {
+		await fixture(async (_dataset, path, outer) => {
+			const choice = { kind: 'explicit' as const, path };
+			const dataset = await openDataset(choice);
+			try {
+				choice.path = join(outer, 'missing');
+				await dataset.assertPathBinding();
+			} finally { await dataset.close(); }
+		});
+	});
+
+	for (const kind of ['explicit', 'derived'] as const) {
+		test.skipIf(process.platform === 'win32')(`${kind} root binding detects a renamed ancestor with a replacement at the original choice`, async () => {
+			await fixture(async (_fixtureDataset, _path, outer) => {
+				const base = join(outer, 'base');
+				await mkdir(join(base, 'root'), { recursive: true });
+				const dataset = await openDataset(kind === 'explicit' ? { kind, path: join(base, 'root') } : { kind, base, component: 'root' });
+				try {
+					await dataset.assertPathBinding();
+					await rename(base, join(outer, 'renamed'));
+					await mkdir(join(base, 'root'), { recursive: true });
+					await expect(dataset.assertPathBinding()).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+				} finally { await dataset.close(); }
+			});
+		});
+	}
+
+	test.skipIf(process.platform === 'win32')('root binding refuses a vanished original path', async () => {
+		await fixture(async (_dataset, _path, outer) => {
+			const root = join(outer, 'source');
+			await mkdir(root);
+			const dataset = await openDataset(root);
+			try {
+				await rename(root, join(outer, 'renamed'));
+				await expect(dataset.assertPathBinding()).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			} finally { await dataset.close(); }
+		});
+	});
+
 	test('rejects absolute and traversal paths independently of the host platform', async () => {
 		await fixture(async (dataset, path) => {
 			for (const entry of ['C:/outside', 'C:outside', '/absolute', '../outside', 'a\\b', 'a//b']) {

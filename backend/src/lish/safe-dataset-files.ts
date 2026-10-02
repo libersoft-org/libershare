@@ -1,5 +1,5 @@
 import { mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { CodedError, ErrorCodes } from '@shared';
 import type { DatasetDirectoryHandle, DatasetEntryInfo, DatasetFileHandle } from './safe-dataset-types.ts';
 
@@ -18,7 +18,10 @@ function unsafe(detail: string): never {
 	throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, detail);
 }
 function normalized(error: unknown): unknown {
-	return code(error) === ErrorCodes.LISH_UNSAFE_PATH && !(error instanceof CodedError) ? new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'Unsafe dataset filesystem object') : error;
+	if (code(error) !== ErrorCodes.LISH_UNSAFE_PATH || error instanceof CodedError) return error;
+	const retained = (error as { retainedDirectory?: unknown }).retainedDirectory;
+	const detail = typeof retained === 'string' && /^\.lish-remove-[a-f0-9-]{36}$/u.test(retained) ? `Removal stopped; data preserved in ${retained}/entry` : 'Unsafe dataset filesystem object';
+	return new CodedError(ErrorCodes.LISH_UNSAFE_PATH, detail);
 }
 function code(error: unknown): string | undefined {
 	return (error as NodeJS.ErrnoException | undefined)?.code;
@@ -77,6 +80,7 @@ async function nativeRoot(path: string): Promise<DatasetDirectoryHandle> {
 export class SafeDataset {
 	private readonly root: DatasetDirectoryHandle;
 	private readonly owner: { handle: DatasetDirectoryHandle; name: string } | undefined;
+	private readonly selection: DatasetRoot | undefined;
 	private readonly entries = new Map<string, DatasetEntryInfo>();
 	private readonly identities = new Map<string, string>();
 	private preparedFiles: Set<string> | undefined;
@@ -85,9 +89,25 @@ export class SafeDataset {
 	private closed = false;
 	private readonly created: { path: string; info: DatasetEntryInfo }[] = [];
 
-	constructor(root: DatasetDirectoryHandle, owner?: { handle: DatasetDirectoryHandle; name: string }) {
+	constructor(root: DatasetDirectoryHandle, owner?: { handle: DatasetDirectoryHandle; name: string }, selection?: DatasetRoot) {
 		this.root = root;
 		this.owner = owner;
+		this.selection = selection ? { ...selection } : undefined;
+	}
+
+	/** Check the original complete choice again; an open parent alone cannot detect a renamed ancestor. */
+	async assertPathBinding(): Promise<void> {
+		this.active();
+		if (!this.selection) unsafe('The dataset has no recorded root choice');
+		let reopened: SafeDataset;
+		try { reopened = await openDataset(this.selection); }
+		catch (error) {
+			if (code(error) === 'ENOENT') unsafe('Dataset root no longer exists at the chosen path');
+			throw normalized(error);
+		}
+		try {
+			if ((await this.root.stat()).identity !== (await reopened.root.stat()).identity) unsafe('Dataset root was replaced at the chosen path');
+		} finally { await reopened.close(); }
 	}
 
 	private active(): void {
@@ -291,7 +311,7 @@ export class SafeDataset {
 		const name = parts.pop()!;
 		const parent = await this.directory(parts, false);
 		try {
-			await parent.handle.removeFile(name);
+			await parent.handle.removeFile(name, expectedIdentity);
 			this.entries.delete(path);
 			this.identities.delete(info.identity);
 		} catch (error) {
@@ -310,7 +330,7 @@ export class SafeDataset {
 			await this.root.close();
 			this.closed = true;
 			try {
-				await this.owner.handle.removeDirectory(this.owner.name);
+				await this.owner.handle.removeDirectory(this.owner.name, expectedIdentity);
 			} catch (error) {
 				throw normalized(error);
 			}
@@ -320,7 +340,7 @@ export class SafeDataset {
 		const name = parts.pop()!;
 		const parent = await this.directory(parts, false);
 		try {
-			await parent.handle.removeDirectory(name);
+			await parent.handle.removeDirectory(name, expectedIdentity);
 			this.entries.delete(path);
 			this.identities.delete(info.identity);
 		} catch (error) {
@@ -341,13 +361,13 @@ export class SafeDataset {
 }
 
 async function open(root: DatasetRoot | string, create: boolean, exclusive: boolean): Promise<SafeDataset> {
-	const chosen: DatasetRoot = typeof root === 'string' ? { kind: 'explicit', path: root } : root;
+	const chosen: DatasetRoot = typeof root === 'string' ? { kind: 'explicit', path: resolve(root) } : root.kind === 'explicit' ? { kind: 'explicit', path: resolve(root.path) } : { kind: 'derived', base: resolve(root.base), component: root.component };
 	if (chosen.kind === 'explicit') {
 		if (exclusive) {
 			await mkdir(dirname(chosen.path), { recursive: true });
 			await mkdir(chosen.path);
 		} else if (create) await mkdir(chosen.path, { recursive: true });
-		return new SafeDataset(await nativeRoot(chosen.path));
+		return new SafeDataset(await nativeRoot(chosen.path), undefined, chosen);
 	}
 	const parts = components(chosen.component);
 	if (parts.length !== 1) unsafe('Derived dataset root must be one path component');
@@ -368,7 +388,7 @@ async function open(root: DatasetRoot | string, create: boolean, exclusive: bool
 				}
 			}
 		}
-		return new SafeDataset(child, { handle: base, name: chosen.component });
+		return new SafeDataset(child, { handle: base, name: chosen.component }, chosen);
 	} catch (error) {
 		await base.close();
 		throw error;
