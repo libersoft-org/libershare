@@ -36,7 +36,7 @@
 		import { downloads, initDownloads } from '/src/scripts/downloads.ts';
 		import { notifications } from '/src/scripts/notifications.ts';
 		import { notificationTimeout } from '/src/scripts/settings.ts';
-		import { currentLanguage, translations } from '/src/scripts/language.ts';
+		import { currentLanguage, translations, translateError } from '/src/scripts/language.ts';
 		const lang = new URLSearchParams(location.search).get('lang') === 'cs' ? 'cs' : 'en';
 		document.documentElement.lang = lang;
 		const callbacks = new Map();
@@ -74,6 +74,13 @@
 			notificationTimeout.set(0);
 			await initDownloads();
 			component = mount(NotificationContainer, { target: container });
+			await test('move refusal codes produce localized explanations', async () => {
+				const expected = lang === 'cs' ? ['Soubor se během operace změnil.', 'Systém zde neumí zajistit bezpečné odstranění'] : ['The file changed during the operation.', 'The system cannot safely remove'];
+				for (const [index, code] of ['FS_FILE_CHANGED', 'FS_MOVE_UNSUPPORTED'].entries()) {
+					const message = translateError(Object.assign(new Error(code), { code }));
+					assert(message.startsWith(expected[index]), `${code} was not translated: ${message}`);
+				}
+			});
 			await test('cleanup warning is translated and leaves the download state unchanged', async () => {
 				assert(subscriptions.has('lishs:move:cleanup'), 'Cleanup event was not subscribed');
 				callbacks.get('lishs:move:status')({ lishID: detail.id, moving: true });
@@ -104,6 +111,17 @@
 				assert(moved.directory === '/new/dataset' && moved.status === 'idling' && !moved.errorCode, 'Late warning changed successful state');
 				assert(get(notifications).length === 1 && get(notifications)[0].type === 'warning', 'Late warning used the wrong notification type');
 			});
+			await test('cleanup warning shows the full retained path as plain text', async () => {
+				notifications.set([]);
+				const retainedDirectory = '.lish-remove-12345678-1234-1234-1234-123456789abc';
+				const retainedPath = `/original/dataset/deep/<photos>/${retainedDirectory}/entry`;
+				callbacks.get('lishs:move:cleanup')({ lishID: detail.id, warnings: [{ stage: 'source-cleanup', code: 'LISH_UNSAFE_PATH', retainedDirectory, retainedPath }] });
+				await tick();
+				const text = container.querySelector('.notification.warning')?.textContent ?? '';
+				assert(text.includes(retainedPath), 'The recovery path is missing from the visible notification');
+				assert(text.includes(lang === 'cs' ? 'Zachovaná data najdete zde:' : 'Preserved data can be found at:'), 'The recovery explanation was not translated');
+				assert(!container.querySelector('photos'), 'A filename was interpreted as markup');
+			});
 		} catch (error) {
 			results.push({ name: 'fixture setup', passed: false, error: error.message });
 		} finally {
@@ -113,7 +131,7 @@
 			api.lishs.get = originals.get;
 			document.querySelector('#results').textContent = JSON.stringify({ lang, results }, null, 2);
 			window.datasetMoveTestResults = { lang, results };
-			document.documentElement.dataset.testStatus = results.length === 3 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 5 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

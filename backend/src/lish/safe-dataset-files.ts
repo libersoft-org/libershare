@@ -18,13 +18,15 @@ export interface DatasetPreparation {
 function unsafe(detail: string): never {
 	throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, detail);
 }
-function normalized(error: unknown): unknown {
+function normalized(error: unknown, removalPath?: string): unknown {
 	const errorCode = code(error);
 	if (errorCode === ErrorCodes.FS_FILE_CHANGED || errorCode === ErrorCodes.FS_MOVE_UNSUPPORTED || errorCode === ErrorCodes.FS_BUSY) return new CodedError(errorCode);
 	if (code(error) !== ErrorCodes.LISH_UNSAFE_PATH || error instanceof CodedError) return error;
 	const retained = (error as { retainedDirectory?: unknown }).retainedDirectory;
-	const detail = typeof retained === 'string' && /^\.lish-remove-[a-f0-9-]{36}$/u.test(retained) ? `Removal stopped; data preserved in ${retained}/entry` : 'Unsafe dataset filesystem object';
-	return new CodedError(ErrorCodes.LISH_UNSAFE_PATH, detail);
+	if (typeof retained === 'string' && /^\.lish-remove-[a-f0-9-]{36}$/u.test(retained)) {
+		return Object.assign(new CodedError(ErrorCodes.LISH_UNSAFE_PATH, `Removal stopped; data preserved in ${retained}/entry`), { retainedPath: removalPath ? join(dirname(removalPath), retained, 'entry') : undefined });
+	}
+	return new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'Unsafe dataset filesystem object');
 }
 function code(error: unknown): string | undefined {
 	return (error as NodeJS.ErrnoException | undefined)?.code;
@@ -369,7 +371,7 @@ export class SafeDataset {
 			this.entries.delete(path);
 			this.identities.delete(info.identity);
 		} catch (error) {
-			throw normalized(error);
+			throw normalized(error, this.selection ? join(datasetPath(this.selection), path) : undefined);
 		} finally {
 			if (parent.owned) await parent.handle.close();
 		}
@@ -386,7 +388,7 @@ export class SafeDataset {
 			try {
 				await this.owner.handle.removeDirectory(this.owner.name, expectedIdentity);
 			} catch (error) {
-				throw normalized(error);
+				throw normalized(error, this.selection ? datasetPath(this.selection) : undefined);
 			}
 			return;
 		}
@@ -398,7 +400,7 @@ export class SafeDataset {
 			this.entries.delete(path);
 			this.identities.delete(info.identity);
 		} catch (error) {
-			throw normalized(error);
+			throw normalized(error, this.selection ? join(datasetPath(this.selection), path) : undefined);
 		} finally {
 			if (parent.owned) await parent.handle.close();
 		}

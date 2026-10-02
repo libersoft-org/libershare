@@ -8,7 +8,7 @@ import type { DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 import { checkDatasetCopySpace } from './dataset-space.ts';
 
 export interface DatasetMoveResult {
-	cleanupWarnings: { stage: 'source-cleanup' | 'target-close' | 'source-close'; code: string; retainedDirectory?: string }[];
+	cleanupWarnings: { stage: 'source-cleanup' | 'target-close' | 'source-close'; code: string; retainedDirectory?: string; retainedPath?: string }[];
 }
 
 function cleanupCode(error: unknown): string {
@@ -19,7 +19,8 @@ function cleanupCode(error: unknown): string {
 function cleanupWarning(stage: DatasetMoveResult['cleanupWarnings'][number]['stage'], error: unknown): DatasetMoveResult['cleanupWarnings'][number] {
 	const detail = error instanceof CodedError ? error.detail : undefined;
 	const retainedDirectory = detail?.match(/^Removal stopped; data preserved in (\.lish-remove-[a-f0-9-]{36})\/entry$/u)?.[1];
-	return { stage, code: cleanupCode(error), ...(retainedDirectory ? { retainedDirectory } : {}) };
+	const retainedPath = (error as { retainedPath?: unknown } | null)?.retainedPath;
+	return { stage, code: cleanupCode(error), ...(retainedDirectory ? { retainedDirectory, ...(typeof retainedPath === 'string' ? { retainedPath } : {}) } : {}) };
 }
 
 export interface DatasetMoveProgress {

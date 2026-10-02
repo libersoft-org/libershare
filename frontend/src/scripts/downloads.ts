@@ -371,9 +371,12 @@ export async function initDownloads(): Promise<void> {
 		});
 
 		// Cleanup failure does not invalidate the committed destination.
-		api.on('lishs:move:cleanup', (data: { lishID: string }) => {
+		api.on('lishs:move:cleanup', (data: { lishID: string; warnings?: { retainedPath?: string }[] }) => {
 			const lish = get(downloads).find(d => d.id === data.lishID);
-			if (lish) addNotification(tt('downloads.moveCleanupWarning', { name: lish.name }), 'warning');
+			if (!lish) return;
+			const paths = [...new Set((data.warnings ?? []).map(warning => warning.retainedPath).filter((path): path is string => typeof path === 'string' && path.length > 0))];
+			const message = [tt('downloads.moveCleanupWarning', { name: lish.name }), ...paths.map(path => tt('downloads.moveRetainedPath', { path }))].join('\n');
+			addNotification(message, 'warning');
 		});
 
 		api.on('lishs:move', (data: { lishID: string; directory: string }) => {
