@@ -31,7 +31,7 @@ function capacity(free: bigint): void {
 	spies.push(spyOn(fs, 'statfs').mockResolvedValue({ bavail: free, bsize: 1n } as any));
 }
 
-test('refuses a download that fits alone but cannot coexist with its completion copy', async () => {
+test.skipIf(process.platform !== 'win32')('refuses a download that fits alone but cannot coexist with its completion copy', async () => {
 	const f = await fixture();
 	capacity(60n);
 	await expect(new FileAllocator(f.source).allocateStructure(f.lish)).rejects.toMatchObject({ code: 'DISK_FULL' });
@@ -46,7 +46,7 @@ test('allocates when both copies fit on the same filesystem', async () => {
 	expect((await fs.stat(join(f.source, 'data.bin'))).size).toBe(50);
 });
 
-test('checks the completion reserve again when resuming fully allocated files', async () => {
+test.skipIf(process.platform !== 'win32')('checks the completion reserve again when resuming fully allocated files', async () => {
 	const f = await fixture();
 	await fs.writeFile(join(f.source, 'data.bin'), Buffer.alloc(50));
 	capacity(10n);
@@ -57,7 +57,7 @@ test('checks the completion reserve again when resuming fully allocated files', 
 test('counts the additional files materialized from links', async () => {
 	const f = await fixture();
 	f.lish.links = [{ path: 'copy.bin', target: 'data.bin' }];
-	capacity(120n);
+	capacity(90n);
 	await expect(new FileAllocator(f.source).allocateStructure(f.lish)).rejects.toMatchObject({ code: 'DISK_FULL' });
 	await expect(fs.stat(join(f.source, 'data.bin'))).rejects.toMatchObject({ code: 'ENOENT' });
 });
@@ -67,12 +67,12 @@ test('checks separate filesystems independently and still refuses a full destina
 	spies.push(spyOn(fs, 'stat').mockImplementation((async (path: unknown) => ({ dev: String(path).includes('destination') ? 2n : 1n })) as any));
 	const available = spyOn(fs, 'statfs').mockResolvedValue({ bavail: 60n, bsize: 1n } as any);
 	spies.push(available);
-	await checkDatasetSpace(f.source, 50n, { path: f.target, bytes: 50n });
+	await checkDatasetSpace(f.source, 50n, { path: f.target, bytes: 50n, sameFilesystemBytes: 0n });
 	available.mockImplementation((async (path: unknown) => ({ bavail: String(path).includes('destination') ? 40n : 60n, bsize: 1n })) as any);
-	await expect(checkDatasetSpace(f.source, 50n, { path: f.target, bytes: 50n })).rejects.toMatchObject({ code: 'DISK_FULL' });
+	await expect(checkDatasetSpace(f.source, 50n, { path: f.target, bytes: 50n, sameFilesystemBytes: 0n })).rejects.toMatchObject({ code: 'DISK_FULL' });
 });
 
-test('rechecks copy space before creating a destination and keeps the complete source', async () => {
+test.skipIf(process.platform !== 'win32')('rechecks copy space before creating a destination and keeps the complete source', async () => {
 	const f = await fixture();
 	const bytes = Buffer.alloc(50, 7);
 	await fs.writeFile(join(f.source, 'data.bin'), bytes);
@@ -112,7 +112,7 @@ test('reports unavailable capacity as a terminal download error without allocati
 	}
 });
 
-test('checks the actual grown source size before a manual copy', async () => {
+test.skipIf(process.platform !== 'win32')('checks the actual grown source size before a manual copy', async () => {
 	const f = await fixture();
 	const bytes = Buffer.alloc(60, 7);
 	await fs.writeFile(join(f.source, 'data.bin'), bytes);
@@ -133,4 +133,14 @@ test('checks the actual grown source size before a manual copy', async () => {
 	expect(committed).toBe(false);
 	expect(await fs.readFile(join(f.source, 'data.bin'))).toEqual(bytes);
 	await expect(fs.stat(f.target)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+test.skipIf(process.platform === 'win32')('a local link move needs space for one payload and resumes without a second copy', async () => {
+	const f = await fixture();
+	const available = spyOn(fs, 'statfs').mockResolvedValue({ bavail: 60n, bsize: 1n } as any);
+	spies.push(available);
+	expect(await new FileAllocator(f.source).allocateStructure(f.lish)).toEqual({ created: 1, skipped: 0 });
+	available.mockResolvedValue({ bavail: 0n, bsize: 1n } as any);
+	expect(await new FileAllocator(f.source).findMissingFiles(f.lish)).toEqual([]);
+	expect((await fs.stat(join(f.source, 'data.bin'))).size).toBe(50);
 });

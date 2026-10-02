@@ -149,7 +149,8 @@ export class FileAllocator {
 			if (current !== file.size) needed += BigInt(file.size);
 		}
 		const root: DatasetRoot = typeof this.root === 'string' ? { kind: 'explicit', path: this.downloadDir } : this.root;
-		const completion = lish.finalDirectory ? { path: lish.finalDirectory, bytes: datasetCopyBytes(lish, root, this.linkBindings()) } : undefined;
+		const bindings = lish.finalDirectory ? this.linkBindings() : [];
+		const completion = lish.finalDirectory ? { path: lish.finalDirectory, bytes: datasetCopyBytes(lish, root, bindings), ...(process.platform !== 'win32' ? { sameFilesystemBytes: datasetCopyBytes(lish, root, bindings, true) } : {}) } : undefined;
 		await checkDatasetSpace(this.downloadDir, needed, completion);
 	}
 

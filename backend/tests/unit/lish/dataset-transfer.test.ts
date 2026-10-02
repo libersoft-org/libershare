@@ -108,6 +108,7 @@ test('checksum mismatch preserves the source and removes only the incomplete cop
 test('a replaced copy target is neither written nor deleted by cleanup', async () => {
 	const f = await fixture();
 	let committed = false;
+	let replaced = false;
 	await expect(
 		moveDatasetData(
 			f.manifest,
@@ -117,7 +118,8 @@ test('a replaced copy target is neither written nor deleted by cleanup', async (
 				committed = true;
 			},
 			event => {
-				if (event.type !== 'file-list') return;
+				if (event.type !== (process.platform === 'win32' ? 'file-list' : 'chunk') || replaced) return;
+				replaced = true;
 				renameSync(join(f.base, 'target/data.bin'), join(f.base, 'reserved-file'));
 				writeFileSync(join(f.base, 'target/data.bin'), 'replacement');
 			}

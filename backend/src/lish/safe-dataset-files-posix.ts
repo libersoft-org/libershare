@@ -1,3 +1,4 @@
+import { acquireMoveLease } from './dataset-move-lease.ts';
 import { dlopen, FFIType, ptr, read } from 'bun:ffi';
 import { close, constants, fstat, fstatSync, ftruncate, read as readFile, write } from 'node:fs';
 import { getSystemErrorName } from 'node:util';
@@ -17,6 +18,7 @@ function loadNative() {
 	const library = process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6';
 	const api = dlopen(library, {
 		mkdirat: { args: [FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
+		linkat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
 		unlinkat: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
 	});
 	// Darwin's public openat is variadic: arm64 takes mode from the stack. The
@@ -84,10 +86,12 @@ async function removeCaptured(parent: number, name: Buffer, kind: 'file' | 'dire
 		captured = true;
 		const fd = openAt(directory, item, constants.O_RDONLY | constants.O_NOFOLLOW | (kind === 'directory' ? constants.O_DIRECTORY : 0));
 		const file = new FileHandle(fd);
+		let lease: ReturnType<typeof acquireMoveLease> | undefined;
 		try {
 			const info = await file.stat();
 			if (info.kind !== kind || info.identity !== expectedIdentity) throw failure('LISH_UNSAFE_PATH', 'Dataset entry changed before removal');
 			if (guard) {
+				if (process.platform === 'linux') lease = acquireMoveLease(fd, info.links);
 				if (info.size !== guard.size || info.modified !== guard.modified) throw failure('FS_FILE_CHANGED', 'Source file changed');
 				const hash = new Bun.CryptoHasher('sha256');
 				const buffer = new Uint8Array(256 * 1024);
@@ -99,13 +103,15 @@ async function removeCaptured(parent: number, name: Buffer, kind: 'file' | 'dire
 					position += count;
 				}
 				if (hash.digest('hex') !== guard.checksum) throw failure('FS_FILE_CHANGED', 'Source file changed');
-				// No JS yield between the final check and unlink. POSIX still permits writes through an existing descriptor.
+				// Linux holds a lease here. macOS copy moves require other programs to leave the source unchanged.
 				const final = fstatSync(fd, { bigint: true });
 				if (final.size !== BigInt(info.size) || final.mtimeNs.toString() !== info.modified || final.ctimeNs.toString() !== info.changed) throw failure('FS_FILE_CHANGED', 'Source file changed');
 			}
+			lease?.check();
 			syscall(nativeApi().api.symbols.unlinkat(directory, ptr(item), kind === 'directory' ? directoryRemovalFlag() : 0));
 			captured = false;
 		} finally {
+			lease?.close();
 			await file.close();
 		}
 	} catch (error) {
@@ -136,7 +142,7 @@ function statFd(fd: number): Promise<DatasetEntryInfo> {
 				reject(failure('LISH_UNSAFE_PATH', 'Dataset entry size is outside the supported range'));
 				return;
 			}
-			resolve({ identity: `${info.dev}:${info.ino}`, kind: info.isFile() ? 'file' : info.isDirectory() ? 'directory' : 'other', size: Number(info.size), links: Number(info.nlink), modified: info.mtimeNs.toString(), changed: info.ctimeNs.toString() });
+			resolve({ identity: `${info.dev}:${info.ino}`, device: info.dev.toString(), kind: info.isFile() ? 'file' : info.isDirectory() ? 'directory' : 'other', size: Number(info.size), links: Number(info.nlink), modified: info.mtimeNs.toString(), changed: info.ctimeNs.toString() });
 		});
 	});
 }
@@ -222,6 +228,44 @@ class DirectoryHandle extends Descriptor implements DatasetDirectoryHandle {
 		const path = component(name);
 		const flags = mode === 'read' ? constants.O_RDONLY : constants.O_RDWR | (mode === 'create' ? constants.O_CREAT | constants.O_EXCL : 0);
 		return this.use(async fd => checked(new FileHandle(openAt(fd, path, flags | constants.O_NOFOLLOW)), 'file'));
+	}
+
+	linkFileTo(name: string, destination: DatasetDirectoryHandle, expectedIdentity: string): Promise<void> {
+		if (!(destination instanceof DirectoryHandle)) return Promise.reject(failure('EXDEV', 'Different dataset adapters'));
+		const path = component(name);
+		return this.use(parent =>
+			destination.use(async target => {
+				try {
+					syscall(nativeApi().api.symbols.linkat(parent, ptr(path), target, ptr(path), 0));
+				} catch (error) {
+					if (['EXDEV', 'ENOTSUP', 'EOPNOTSUPP', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw failure('FS_MOVE_UNSUPPORTED', 'The filesystem cannot preserve the source object');
+					throw error;
+				}
+				const file = await checked(new FileHandle(openAt(target, path, constants.O_RDONLY | constants.O_NOFOLLOW)), 'file');
+				try {
+					if ((await file.stat()).identity !== expectedIdentity) throw failure('LISH_UNSAFE_PATH', 'Linked source was replaced');
+				} finally {
+					await file.close();
+				}
+			})
+		);
+	}
+
+	checkFileForCopyMove(name: string, expectedIdentity: string): Promise<void> {
+		const path = component(name);
+		return this.use(async parent => {
+			const fd = openAt(parent, path, constants.O_RDONLY | constants.O_NOFOLLOW);
+			try {
+				const info = await statFd(fd);
+				if (info.kind !== 'file' || info.identity !== expectedIdentity) throw failure('LISH_UNSAFE_PATH', 'Source file was replaced');
+				if (process.platform === 'linux') {
+					const lease = acquireMoveLease(fd, info.links);
+					lease.close();
+				}
+			} finally {
+				await closeFd(fd);
+			}
+		});
 	}
 
 	removeFile(name: string, expectedIdentity: string, guard?: DatasetContentGuard): Promise<void> {

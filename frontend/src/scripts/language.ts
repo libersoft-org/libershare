@@ -187,6 +187,7 @@ const errorCodeKeys: Record<string, string> = {
 	FS_NOT_DIRECTORY: 'fileBrowser.errorNotDirectory',
 	FS_BUSY: 'fileBrowser.errorBusy',
 	FS_FILE_CHANGED: 'fileBrowser.errorFileChanged',
+	FS_MOVE_UNSUPPORTED: 'fileBrowser.errorMoveUnsupported',
 	FS_NO_SPACE: 'fileBrowser.errorNoSpace',
 	FS_READ_ONLY: 'fileBrowser.errorReadOnly',
 	FS_NAME_TOO_LONG: 'fileBrowser.errorNameTooLong',

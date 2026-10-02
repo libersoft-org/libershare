@@ -21,8 +21,8 @@ function requireSpace(required: bigint, free: bigint, purpose: string): void {
 	if (required > free) throw new CodedError(ErrorCodes.DISK_FULL, `${formatBytes(Number(required))} required for ${purpose}; ${formatBytes(Number(free))} free`);
 }
 
-/** The completion copy coexists with the download, including on the same filesystem. */
-export async function checkDatasetSpace(downloadPath: string, allocationBytes: bigint, completion?: { path: string; bytes: bigint }): Promise<void> {
+/** Budget payload copies separately from moves that preserve the original file objects. */
+export async function checkDatasetSpace(downloadPath: string, allocationBytes: bigint, completion?: { path: string; bytes: bigint; sameFilesystemBytes?: bigint }): Promise<void> {
 	if (allocationBytes === 0n && (!completion || completion.bytes === 0n)) return;
 	const download = await spaceAt(downloadPath);
 	if (!completion) {
@@ -31,7 +31,7 @@ export async function checkDatasetSpace(downloadPath: string, allocationBytes: b
 	}
 	const target = await spaceAt(completion.path);
 	if (download.device === target.device) {
-		requireSpace(allocationBytes + completion.bytes, download.free < target.free ? download.free : target.free, 'the download and its completion copy on the same filesystem');
+		requireSpace(allocationBytes + (completion.sameFilesystemBytes ?? completion.bytes), download.free < target.free ? download.free : target.free, 'the download and its completion copy on the same filesystem');
 	} else {
 		requireSpace(allocationBytes, download.free, 'file allocation');
 		requireSpace(completion.bytes, target.free, 'the completion copy on the destination filesystem');

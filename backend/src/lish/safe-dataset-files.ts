@@ -11,7 +11,7 @@ export interface DatasetNamespace {
 export interface DatasetPreparation {
 	exclusive?: boolean;
 	writable?: boolean;
-	reserve?: boolean;
+	reserve?: boolean | 'directories';
 	signal?: AbortSignal;
 }
 
@@ -19,7 +19,8 @@ function unsafe(detail: string): never {
 	throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, detail);
 }
 function normalized(error: unknown): unknown {
-	if (code(error) === ErrorCodes.FS_FILE_CHANGED) return new CodedError(ErrorCodes.FS_FILE_CHANGED);
+	const errorCode = code(error);
+	if (errorCode === ErrorCodes.FS_FILE_CHANGED || errorCode === ErrorCodes.FS_MOVE_UNSUPPORTED || errorCode === ErrorCodes.FS_BUSY) return new CodedError(errorCode);
 	if (code(error) !== ErrorCodes.LISH_UNSAFE_PATH || error instanceof CodedError) return error;
 	const retained = (error as { retainedDirectory?: unknown }).retainedDirectory;
 	const detail = typeof retained === 'string' && /^\.lish-remove-[a-f0-9-]{36}$/u.test(retained) ? `Removal stopped; data preserved in ${retained}/entry` : 'Unsafe dataset filesystem object';
@@ -276,7 +277,7 @@ export class SafeDataset {
 					abort(options.signal);
 					await this.ensureDirectory(path);
 				}
-				for (const path of files) {
+				for (const path of options.reserve === 'directories' ? [] : files) {
 					abort(options.signal);
 					let file: DatasetFileHandle;
 					if (options.exclusive) {
@@ -317,6 +318,42 @@ export class SafeDataset {
 			} catch {
 				/* A replaced or no longer empty object is not ours to remove. */
 			}
+		}
+	}
+
+	async linkFileTo(path: string, destination: SafeDataset, expectedIdentity: string): Promise<void> {
+		destination.active();
+		if (!destination.preparedFiles?.has(path)) unsafe('Prepare the complete destination before linking files');
+		const info = await this.statFile(path);
+		if (!info || info.identity !== expectedIdentity) unsafe('Move source was replaced');
+		const parts = components(path),
+			name = parts.pop()!;
+		const sourceParent = await this.directory(parts, false);
+		let targetParent: { handle: DatasetDirectoryHandle; owned: boolean } | undefined;
+		try {
+			targetParent = await destination.directory(parts, false);
+			if (!sourceParent.handle.linkFileTo) throw new CodedError(ErrorCodes.FS_MOVE_UNSUPPORTED);
+			await sourceParent.handle.linkFileTo(name, targetParent.handle, expectedIdentity);
+			destination.remember(path, info, true);
+		} catch (error) {
+			throw normalized(error);
+		} finally {
+			if (sourceParent.owned) await sourceParent.handle.close();
+			if (targetParent?.owned) await targetParent.handle.close();
+		}
+	}
+
+	async checkFileForCopyMove(path: string, expectedIdentity: string): Promise<void> {
+		const parts = components(path),
+			name = parts.pop()!;
+		const parent = await this.directory(parts, false);
+		try {
+			if (!parent.handle.checkFileForCopyMove) throw new CodedError(ErrorCodes.FS_MOVE_UNSUPPORTED);
+			await parent.handle.checkFileForCopyMove(name, expectedIdentity);
+		} catch (error) {
+			throw normalized(error);
+		} finally {
+			if (parent.owned) await parent.handle.close();
 		}
 	}
 

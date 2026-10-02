@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { moveDatasetData } from '../../../src/lish/dataset-transfer.ts';
 import type { ILISH } from '@shared';
 
-test.each(['append', 'same-size'])('retains a source changed after commit, before cleanup: %s', async change => {
+test.each(['append', 'same-size'])('preserves bytes changed after commit, before cleanup: %s', async change => {
 	const base = await mkdtemp(join(tmpdir(), 'lish-source-change-'));
 	const source = join(base, 'source');
 	await mkdir(source);
@@ -24,9 +24,15 @@ test.each(['append', 'same-size'])('retains a source changed after commit, befor
 			},
 			() => {}
 		);
-		expect(await readFile(path, 'utf8')).toBe(change === 'append' ? 'abcd-NEW-DATA' : 'WXYZ');
-		expect(await readFile(join(base, 'target/data.bin'), 'utf8')).toBe('abcd');
-		expect(result.cleanupWarnings.length).toBeGreaterThan(0);
+		if (process.platform === 'win32') {
+			expect(await readFile(path, 'utf8')).toBe(change === 'append' ? 'abcd-NEW-DATA' : 'WXYZ');
+			expect(await readFile(join(base, 'target/data.bin'), 'utf8')).toBe('abcd');
+			expect(result.cleanupWarnings.length).toBeGreaterThan(0);
+		} else {
+			expect(await readFile(join(base, 'target/data.bin'), 'utf8')).toBe(change === 'append' ? 'abcd-NEW-DATA' : 'WXYZ');
+			await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' });
+			expect(result.cleanupWarnings).toEqual([]);
+		}
 	} finally {
 		await rm(base, { recursive: true, force: true });
 	}

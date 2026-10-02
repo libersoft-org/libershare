@@ -3,7 +3,7 @@ import { CodedError, ErrorCodes, validateLISHStructure, type ILISH } from '@shar
 import { createDataset, openDataset, type DatasetRoot, type SafeDataset } from './safe-dataset-files.ts';
 import { resolve, relative, isAbsolute } from 'node:path';
 import { datasetRootPath, conservativeDatasetRoot } from './dataset-root.ts';
-import type { DatasetFileHandle, DatasetContentGuard } from './safe-dataset-types.ts';
+import type { DatasetFileHandle, DatasetContentGuard, DatasetEntryInfo } from './safe-dataset-types.ts';
 import type { DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 import { checkDatasetCopySpace } from './dataset-space.ts';
 
@@ -61,8 +61,8 @@ function materializedFiles(manifest: ILISH, root: DatasetRoot, bindings: readonl
 	return entries;
 }
 
-export function datasetCopyBytes(manifest: ILISH, root: DatasetRoot, bindings: readonly DatasetLinkBinding[] = []): bigint {
-	return materializedFiles(manifest, root, bindings).reduce((bytes, entry) => bytes + BigInt(entry.file.size), 0n);
+export function datasetCopyBytes(manifest: ILISH, root: DatasetRoot, bindings: readonly DatasetLinkBinding[] = [], preserveFileObjects = false): bigint {
+	return materializedFiles(manifest, root, bindings).reduce((bytes, entry) => bytes + (preserveFileObjects && entry.source === entry.file.path ? 0n : BigInt(entry.file.size)), 0n);
 }
 
 async function snapshot(dataset: SafeDataset, manifest: ILISH): Promise<Map<string, string>> {
@@ -188,16 +188,47 @@ async function copyFile(source: DatasetFileHandle, target: DatasetFileHandle, fi
 	return { size: info.size, modified: info.modified, changed: info.changed, checksum: contentHash.digest('hex') };
 }
 
+async function verifyLinkedFile(handle: DatasetFileHandle, file: NonNullable<ILISH['files']>[number], manifest: ILISH, progress: (bytes: number) => void): Promise<DatasetEntryInfo> {
+	const before = await handle.stat();
+	if (before.size !== file.size) throw new CodedError(ErrorCodes.IO_NOT_FOUND, 'Source file size changed');
+	const buffer = new Uint8Array(Math.min(256 * 1024, manifest.chunkSize));
+	let position = 0;
+	for (const checksum of file.checksums) {
+		const end = Math.min(position + manifest.chunkSize, file.size);
+		const hasher = new Bun.CryptoHasher(manifest.checksumAlgo as any);
+		while (position < end) {
+			const count = await handle.read(buffer.subarray(0, Math.min(buffer.length, end - position)), position);
+			if (!count) throw new CodedError(ErrorCodes.FS_FILE_CHANGED);
+			hasher.update(buffer.subarray(0, count));
+			position += count;
+			progress(position);
+		}
+		if (hasher.digest('hex') !== checksum) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST);
+	}
+	const after = await handle.stat();
+	if (after.size !== before.size || after.modified !== before.modified || after.changed !== before.changed) throw new CodedError(ErrorCodes.FS_FILE_CHANGED);
+	return after;
+}
+
+async function checkCopySources(source: SafeDataset, contents: ILISH, identities: ReadonlyMap<string, string>): Promise<void> {
+	for (const file of contents.files ?? []) {
+		const identity = identities.get(file.path);
+		if (identity) await source.checkFileForCopyMove(file.path, identity);
+	}
+}
+
 /** New files are created exclusively, including inside an explicitly selected empty destination. */
 export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, targetRoot: DatasetRoot, commit: (bindings: DatasetLinkBinding[]) => void, progress: (event: DatasetMoveProgress) => void, verification: 'manifest' | 'source' = 'manifest', bindings: readonly DatasetLinkBinding[] = []): Promise<DatasetMoveResult> {
 	validateLISHStructure(manifest, Number.MAX_SAFE_INTEGER);
 	const copies = materializedFiles(manifest, sourceRoot, bindings);
-	const sourceContents = cleanupManifest(manifest, bindings);
+	let sourceContents = cleanupManifest(manifest, bindings);
 	const copiedManifest = { ...manifest, files: copies.map(entry => entry.file), links: [] };
 	const source = await openDataset(sourceRoot);
 	let target: SafeDataset | undefined;
 	let targetCreated = false;
 	let commitStarted = false;
+	let linkedMove = false;
+	const linkedPaths = new Set<string>();
 	let committed = false;
 	let failure: unknown;
 	let failed = false;
@@ -209,16 +240,42 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 		checkMaterializedIdentities(sourceIdentities, bindings);
 		const sizes = new Map<string, number>();
 		const sourceGuards = new Map<string, DatasetContentGuard>();
+		const sourceDevices = new Set<string>();
+		let uniqueSources = true;
+		const sourceInfos = new Map<string, DatasetEntryInfo>();
+		const copiesByPath = new Map(copies.map(copy => [copy.file.path, copy]));
 		for (const { file, source: path } of copies) {
-			const info = await source.statFile(path);
+			const info = sourceInfos.get(path) ?? (await source.statFile(path));
 			if (!info) throw new CodedError(ErrorCodes.IO_NOT_FOUND, 'Source file is missing');
 			sizes.set(file.path, info.size);
+			if (info.device) sourceDevices.add(info.device);
+			else uniqueSources = false;
+			sourceInfos.set(path, info);
 		}
+		const cleanupFiles = [...(sourceContents.files ?? [])];
+		for (const link of manifest.links ?? []) {
+			if (!link.hardlink || sourceIdentities.has(link.path)) continue;
+			const info = await source.statFile(link.path);
+			if (!info) continue;
+			const copy = copiesByPath.get(link.path)!;
+			if (info.identity !== sourceIdentities.get(copy.source)) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'Hardlink source association changed');
+			cleanupFiles.push({ ...copy.file });
+			sourceIdentities.set(link.path, info.identity);
+		}
+		sourceContents = { ...sourceContents, files: cleanupFiles };
+		const ownedCounts = new Map<string, number>();
+		for (const file of sourceContents.files ?? []) {
+			const id = sourceIdentities.get(file.path);
+			if (id) ownedCounts.set(id, (ownedCounts.get(id) ?? 0) + 1);
+		}
+		const directIDs = new Set<string>();
+		for (const copy of copies)
+			if (copy.source === copy.file.path) {
+				const info = sourceInfos.get(copy.source)!;
+				if (directIDs.has(info.identity) || info.links !== ownedCounts.get(info.identity)) uniqueSources = false;
+				directIDs.add(info.identity);
+			}
 		const destination = targetRoot.kind === 'derived' ? targetRoot : conservativeDatasetRoot(datasetRootPath(targetRoot));
-		await checkDatasetCopySpace(
-			datasetRootPath(destination),
-			[...sizes.values()].reduce((total, size) => total + BigInt(size), 0n)
-		);
 		if (destination.kind !== 'derived') throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'Copy destination needs a parent directory');
 		const base = await openDataset({ kind: 'explicit', path: destination.base }, true);
 		await base.close();
@@ -240,7 +297,27 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 		const rootInfo = await target.statDirectory();
 		if (rootInfo?.identity === sourceIdentities.get('')) throw Object.assign(new Error('Destination is the source directory'), { code: 'EEXIST' });
 		if (rootInfo) targetIdentities.set('', rootInfo.identity);
-		await target.prepare(copiedManifest, { reserve: true, writable: true, exclusive: true });
+		linkedMove = process.platform !== 'win32' && uniqueSources && rootInfo?.device !== undefined && sourceDevices.size === 1 && sourceDevices.has(rootInfo.device);
+		if (!linkedMove && process.platform !== 'win32') await checkCopySources(source, sourceContents, sourceIdentities);
+		await checkDatasetCopySpace(
+			datasetRootPath(destination),
+			copies.reduce((bytes, entry) => bytes + (linkedMove && entry.source === entry.file.path ? 0n : BigInt(sizes.get(entry.file.path)!)), 0n)
+		);
+		if (linkedMove && verification === 'manifest') {
+			const verifiedPaths = new Set<string>();
+			for (const entry of copies) {
+				if (verifiedPaths.has(entry.source)) continue;
+				const handle = await source.openFile(entry.source, 'read');
+				try {
+					await verifyLinkedFile(handle, entry.file, manifest, () => {});
+				} finally {
+					await handle.close();
+				}
+				verifiedPaths.add(entry.source);
+			}
+		}
+		const createTargetsIndividually = linkedMove;
+		await target.prepare(copiedManifest, { reserve: linkedMove ? 'directories' : true, writable: true, exclusive: true });
 		targetIdentities = await snapshot(target, copiedManifest);
 		const files = copiedManifest.files;
 		const totalFiles = files.length;
@@ -248,10 +325,51 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 		let completedFiles = 0;
 		let completedBytes = 0;
 		progress({ type: 'file-list', totalFiles, completedFiles, totalBytes, completedBytes, files: files.map(({ path }) => ({ path, size: sizes.get(path)! })) });
-		for (const { file, source: sourcePath } of copies) {
+		const orderedCopies = linkedMove ? [...copies.filter(entry => entry.source !== entry.file.path), ...copies.filter(entry => entry.source === entry.file.path)] : copies;
+		let linkPhase = false;
+		const linkedVersions = new Map<string, DatasetEntryInfo>();
+		for (const { file, source: sourcePath } of orderedCopies) {
+			if (linkedMove && sourcePath === file.path) {
+				if (!linkPhase) {
+					await target.prepare(copiedManifest, { reserve: false, writable: false });
+					linkPhase = true;
+				}
+				try {
+					await source.linkFileTo(file.path, target, sourceIdentities.get(sourcePath)!);
+				} catch (error) {
+					if (!(error instanceof CodedError) || error.code !== ErrorCodes.FS_MOVE_UNSUPPORTED || linkedPaths.size !== 0) throw error;
+					await checkCopySources(source, sourceContents, sourceIdentities);
+					await checkDatasetCopySpace(
+						datasetRootPath(destination),
+						copies.reduce((bytes, entry) => bytes + (entry.source === entry.file.path ? BigInt(sizes.get(entry.file.path)!) : 0n), 0n)
+					);
+					await target.prepare(copiedManifest, { reserve: false, writable: true });
+					linkedMove = false;
+				}
+				if (linkedMove) {
+					linkedPaths.add(file.path);
+					targetIdentities.set(file.path, sourceIdentities.get(sourcePath)!);
+					if (verification === 'manifest') {
+						const fileHandle = await target.openFile(file.path, 'read');
+						try {
+							linkedVersions.set(file.path, await verifyLinkedFile(fileHandle, file, manifest, bytes => progress({ type: 'chunk', path: file.path, totalFiles, completedFiles, totalBytes, completedBytes: completedBytes + bytes, fileBytes: bytes, fileSize: sizes.get(file.path)! })));
+						} catch (error) {
+							if ((await target.statFile(file.path))?.identity !== sourceIdentities.get(sourcePath)) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'Linked destination was replaced');
+							throw error;
+						} finally {
+							await fileHandle.close();
+						}
+					}
+					completedBytes += sizes.get(file.path)!;
+					completedFiles++;
+					progress({ type: 'file', path: file.path, totalFiles, completedFiles, totalBytes, completedBytes });
+					continue;
+				}
+			}
 			const input = await source.openFile(sourcePath, 'read');
 			try {
-				const output = await target.openFile(file.path, 'write');
+				const output = await target.openFile(file.path, createTargetsIndividually ? 'create' : 'write');
+				targetIdentities.set(file.path, (await output.stat()).identity);
 				try {
 					const guard = await copyFile(input, output, file, manifest, verification, fileBytes => progress({ type: 'chunk', path: file.path, totalFiles, completedFiles, totalBytes, completedBytes: completedBytes + fileBytes, fileBytes, fileSize: sizes.get(file.path)! }));
 					const previous = sourceGuards.get(sourcePath);
@@ -267,16 +385,35 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 			completedFiles++;
 			progress({ type: 'file', path: file.path, totalFiles, completedFiles, totalBytes, completedBytes });
 		}
-		await target.prepare(copiedManifest, { reserve: false, writable: true });
-		const copiesByPath = new Map(copies.map(copy => [copy.file.path, copy]));
+		await target.prepare(copiedManifest, { reserve: false, writable: !linkedMove });
 		const nextBindings = (manifest.links ?? []).map(link => {
 			const materializedIdentity = targetIdentities.get(link.path);
 			if (!materializedIdentity) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'Missing materialized file identity');
 			return { path: link.path, target: link.target, hardlink: link.hardlink === true, source: copiesByPath.get(link.path)!.declaredSource, materializedIdentity };
 		});
-		for (const [path, guard] of sourceGuards) {
+		if (!linkedMove) {
+			const guardsByIdentity = new Map<string, DatasetContentGuard>();
+			for (const [path, guard] of sourceGuards) {
+				const identity = sourceIdentities.get(path)!;
+				const prior = guardsByIdentity.get(identity);
+				if (prior && (prior.checksum !== guard.checksum || prior.modified !== guard.modified || prior.changed !== guard.changed)) throw new CodedError(ErrorCodes.FS_FILE_CHANGED);
+				guardsByIdentity.set(identity, guard);
+			}
+			for (const file of sourceContents.files ?? []) {
+				const identity = sourceIdentities.get(file.path);
+				if (!identity) continue;
+				const guard = guardsByIdentity.get(identity);
+				if (!guard) throw new CodedError(ErrorCodes.FS_FILE_CHANGED);
+				sourceGuards.set(file.path, guard);
+			}
+		}
+		for (const [path, guard] of linkedMove ? [] : sourceGuards) {
 			const info = await source.statFile(path);
 			if (!info || info.size !== guard.size || info.modified !== guard.modified || info.changed !== guard.changed) throw new CodedError(ErrorCodes.FS_FILE_CHANGED);
+		}
+		for (const [path, version] of linkedVersions) {
+			const current = await target.statFile(path);
+			if (!current || current.size !== version.size || current.modified !== version.modified || current.changed !== version.changed) throw new CodedError(ErrorCodes.FS_FILE_CHANGED);
 		}
 		await target.assertPathBinding();
 		commitStarted = true;
@@ -284,14 +421,20 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 		committed = true;
 		try {
 			await source.assertPathBinding();
-			if (await removeContents(source, sourceContents, sourceIdentities, sourceRoot.kind === 'derived', sourceGuards)) result.cleanupWarnings.push({ stage: 'source-cleanup', code: 'ENOTEMPTY' });
+			if (linkedMove) {
+				for (const path of linkedPaths) if ((await target.statFile(path))?.identity !== sourceIdentities.get(path)) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'Linked destination was replaced');
+			}
+			if (await removeContents(source, sourceContents, sourceIdentities, sourceRoot.kind === 'derived', linkedMove ? undefined : sourceGuards)) result.cleanupWarnings.push({ stage: 'source-cleanup', code: 'ENOTEMPTY' });
 		} catch (error) {
 			result.cleanupWarnings.push(cleanupWarning('source-cleanup', error));
 		}
 	} catch (error) {
 		if (target && !commitStarted) {
 			try {
-				await removeContents(target, copiedManifest, targetIdentities, targetCreated);
+				const rollbackIdentities = new Map(targetIdentities);
+				// Failed link moves retain both names rather than risk removing the last surviving one.
+				for (const path of linkedPaths) rollbackIdentities.delete(path);
+				await removeContents(target, copiedManifest, rollbackIdentities, targetCreated);
 			} catch (cleanupError) {
 				console.warn('The incomplete copy could not be removed safely:', cleanupError);
 			}

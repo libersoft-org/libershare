@@ -8,6 +8,7 @@ export interface DatasetContentGuard {
 /** Identity is compared within one filesystem; sizes must remain safe JavaScript integers. */
 export interface DatasetEntryInfo {
 	identity: string;
+	device?: string;
 	kind: 'file' | 'directory' | 'other';
 	size: number;
 	links: number;
@@ -30,6 +31,8 @@ export interface DatasetDirectoryHandle {
 	openDirectory(name: string): Promise<DatasetDirectoryHandle>;
 	createDirectory(name: string): Promise<DatasetDirectoryHandle>;
 	openFile(name: string, mode: 'read' | 'write' | 'create'): Promise<DatasetFileHandle>;
+	linkFileTo?(name: string, destination: DatasetDirectoryHandle, expectedIdentity: string): Promise<void>;
+	checkFileForCopyMove?(name: string, expectedIdentity: string): Promise<void>;
 	removeFile(name: string, expectedIdentity: string, guard?: DatasetContentGuard): Promise<void>;
 	removeDirectory(name: string, expectedIdentity: string): Promise<void>;
 	close(): Promise<void>;
