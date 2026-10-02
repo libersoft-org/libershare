@@ -87,11 +87,10 @@ test('a duplicate entry on a forward-moving page is rejected', async () => {
 
 test('all pages share the original request deadline', async () => {
 	let now = 1000;
-	const clock = spyOn(Date, 'now').mockImplementation(() => now);
+	const clock = spyOn(performance, 'now').mockImplementation(() => now);
 	let calls = 0;
 	try {
 		await expect(receiveLISHList(undefined, async () => { calls++; now += 15001; return encode({ type: 'getLishs-result', page: true, offset: 0, nextCursor: `${crypto.randomUUID()}:1`, lishs: [{ id: 'x' }] }); }, 10000)).rejects.toMatchObject({ code: ErrorCodes.PEER_UNREACHABLE });
 		expect(calls).toBe(1);
 	} finally { clock.mockRestore(); }
 });
-

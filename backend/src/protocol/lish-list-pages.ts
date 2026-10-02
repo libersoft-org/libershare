@@ -62,9 +62,9 @@ export class LISHListPages {
 		}
 		let snapshot = this.snapshot;
 		if (request.cursor === undefined) {
-			snapshot = { id: crypto.randomUUID(), query: request.query, entries: entries(list(), request.query, advertised), next: 0, deadline: Date.now() + LIST_TIMEOUT_MS };
+			snapshot = { id: crypto.randomUUID(), query: request.query, entries: entries(list(), request.query, advertised), next: 0, deadline: performance.now() + LIST_TIMEOUT_MS };
 			this.snapshot = snapshot;
-		} else if (!snapshot || Date.now() >= snapshot.deadline || request.query !== snapshot.query || request.cursor !== `${snapshot.id}:${snapshot.next}`) {
+		} else if (!snapshot || performance.now() >= snapshot.deadline || request.query !== snapshot.query || request.cursor !== `${snapshot.id}:${snapshot.next}`) {
 			this.clear();
 			throw invalid();
 		}
@@ -96,7 +96,7 @@ export class LISHListPages {
 function listEntries(value: unknown): LISHListEntry[] {
 	if (!Array.isArray(value)) throw invalid();
 	for (const entry of value) {
-		if (!entry || typeof entry !== 'object' || Array.isArray(entry) || ArrayBuffer.isView(entry) || typeof entry.id !== 'string' || entry.id.length === 0 || (entry.name !== undefined && typeof entry.name !== 'string') || (entry.totalSize !== undefined && (!Number.isSafeInteger(entry.totalSize) || entry.totalSize < 0))) throw invalid();
+		if (!entry || typeof entry !== 'object' || Array.isArray(entry) || ArrayBuffer.isView(entry) || (Object.getPrototypeOf(entry) !== Object.prototype && Object.getPrototypeOf(entry) !== null) || !Object.prototype.hasOwnProperty.call(entry, 'id') || typeof entry.id !== 'string' || entry.id.length === 0 || (entry.name !== undefined && typeof entry.name !== 'string') || (entry.totalSize !== undefined && (!Number.isSafeInteger(entry.totalSize) || entry.totalSize < 0))) throw invalid();
 	}
 	return value as LISHListEntry[];
 }
@@ -115,7 +115,7 @@ async function abortable<T>(pending: Promise<T>, signal?: AbortSignal): Promise<
 
 /** No partial list escapes on malformed, cancelled or over-budget multi-page replies. */
 export async function receiveLISHList(query: string | undefined, exchange: (request: LISHListRequest, timeoutMs: number) => Promise<Uint8Array>, maxBytes: number, signal?: AbortSignal): Promise<LISHListEntry[]> {
-	const deadline = Date.now() + LIST_TIMEOUT_MS;
+	const deadline = performance.now() + LIST_TIMEOUT_MS;
 	const result: LISHListEntry[] = [];
 	const ids = new Set<string>();
 	let received = 0;
@@ -124,7 +124,7 @@ export async function receiveLISHList(query: string | undefined, exchange: (requ
 	let expectedOffset = 0;
 	for (;;) {
 		if (signal?.aborted) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, 'getLishs: cancelled');
-		const remaining = deadline - Date.now();
+		const remaining = deadline - performance.now();
 		if (remaining <= 0) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, 'getLishs: timeout');
 		const raw = await abortable(exchange({ type: 'getLishs', page: true, ...(query !== undefined ? { query } : {}), ...(cursor ? { cursor } : {}) }, remaining), signal);
 		received += raw.byteLength;

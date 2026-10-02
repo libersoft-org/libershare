@@ -123,7 +123,7 @@ Request / response messages over a libp2p stream. Every message is a MessagePack
 Frame size is checked on the length prefix, before the body is read, and depends on the direction:
 
 - Everything a peer sends unasked — requests and the unicast `announceHave` / `searchResult` notifications — shares one inbound cap of 32 MiB (never more than the configured maximum message size). The kind of a message is known only after it is decoded, so the cap is common. A sender whose notification would exceed it gets a local `MESSAGE_TOO_LARGE` error and sends nothing; a larger frame makes the receiver drop the stream
-- A reply is bounded by the request it answers: a manifest by the configured maximum message size (reference implementation default: 128 MiB), a `getLishs` list by 4 MiB, a chunk by the chunk-size limit plus encoding overhead, and an acknowledgement or error by 4 KiB. A reply over its bound, a read timeout, or a broken frame aborts the stream, so no late bytes are taken for the answer to a later request
+- A reply is bounded by the request it answers: a manifest by the configured maximum message size (reference implementation default: 128 MiB), a `getLishs` page by 4 MiB, a chunk by the chunk-size limit plus encoding overhead, and an acknowledgement or error by 4 KiB. A reply over its bound, a read timeout, or a broken frame aborts the stream, so no late bytes are taken for the answer to a later request
 - Before MessagePack is turned into objects, the receiver walks its tokens: at most 2,000,000 values, nesting at most 16 deep, no container declaring more values than bytes remain, no extension types other than the encoder's `undefined` (0) and timestamp (-1), and no bytes after the value
 
 Requests are discriminated by a `type` field. Undecodable MessagePack, `null`, a primitive payload, or an unknown explicit request type is answered with `PEER_INVALID_REQUEST`, and the stream stays open for further messages. A decoded object-like payload without `type` is handled as the legacy `getChunk` request form. Version 0.0.1 does not apply one uniform runtime schema to the required fields of every known request type; operation-specific validation is described below.
@@ -140,7 +140,9 @@ Requests the list of LISHs the peer currently shares.
 // Request
 {
 	type: 'getLishs',
-	query?: string // Optional case-insensitive substring filter on LISH ID and name
+	query?: string, // Optional case-insensitive substring filter on LISH ID and name
+	page?: true,    // Opt into bounded pages on this stream
+	cursor?: string // Continuation returned by the preceding page
 }
 
 // Response
@@ -150,7 +152,10 @@ Requests the list of LISHs the peer currently shares.
 		id: string,        // LISH identifier
 		name?: string,     // LISH name, if set
 		totalSize?: number // Total size of all files in bytes
-	}>
+	}>,
+	page?: true,        // Present on a paginated response
+	offset?: number,    // Start position in the stream's snapshot
+	nextCursor?: string // Omitted on the last page
 }
 // or
 { type: 'getLishs-result', error: string }
@@ -160,7 +165,12 @@ Requests the list of LISHs the peer currently shares.
 
 - Upload-enabled LISHs that are not busy are listed with those most recently added to the responder's local database first. This ordering does not use the manifest's `created` timestamp. Listing does not prove that the data directory still exists or that the peer has a verified chunk; the subsequent `want`, manifest, and chunk paths apply their own checks
 - With `query`, the responder applies the same case-insensitive substring filter as `searchLishs` — this is the unicast fallback used to search freshly discovered peers that are not yet visible in the gossipsub subscriber set
-- A peer outside the shared-lishnet or 30-second propagation window receives an empty list
+- A peer outside the shared-lishnet or 30-second propagation window receives `PEER_LISTING_NOT_AUTHORIZED`. This check runs before creating a snapshot and again for every page
+- Every encoded response is at most 4 MiB. Without `page: true`, the responder returns the complete legacy list or `PEER_LIST_TOO_LARGE`; it never returns a silent first-page subset
+- A paginated request without a cursor creates a snapshot of the filtered list for this stream. The next request repeats the same query and supplies the returned cursor, formatted as `<snapshot UUID>:<next offset>`. A fresh first-page request replaces the snapshot. Cursors from another query, another stream, an earlier snapshot, a completed listing, or after 15 seconds are rejected with `PEER_INVALID_REQUEST`
+- Entries that stop being advertised are omitted from later pages. Offsets may therefore have gaps. Entries added during the operation appear only in a new snapshot. A page with a continuation must make progress and contain at least one entry
+- New requesters also accept a complete legacy response from an older peer. They reject malformed pages, repeated entries, stale offsets and cursor loops. The reference client applies one 15-second deadline to the whole listing and bounds the sum of encoded response bytes by the existing configured maximum message size. Exceeding that byte budget returns `PEER_LIST_TOO_LARGE`, without partial results; it is not an entry-count limit
+- If one entry cannot fit in a page, the responder returns `PEER_LIST_TOO_LARGE`. Cancellation or a failed multi-page read aborts the stream so late replies cannot answer another request
 
 ### getLish — fetch manifest
 
@@ -278,7 +288,7 @@ Wire error codes returned in the `error` field:
 | `PEER_BUSY`            | Transient rejection, returned for chunk requests only — verification, data move, deletion, or upload peer capacity reached; retry later                            |
 | `PEER_IO_ERROR`        | The peer hit another I/O failure while reading a known chunk from disk                                                                                             |
 
-A requester accepts an error reply only as a plain object whose own `error` is one of the codes the operation can really produce — `getChunk`: `PEER_INVALID_REQUEST`, `PEER_LISH_NOT_SHARED`, `PEER_BUSY`, `PEER_CHUNK_NOT_FOUND`, `PEER_IO_ERROR`; `getLish`: `PEER_INVALID_REQUEST`, `PEER_LISH_NOT_SHARED`; `getLishs`: `PEER_INVALID_REQUEST`, `PEER_LISTING_NOT_AUTHORIZED`; `announceHave` and `searchResult`: `PEER_INVALID_REQUEST` — and that carries no result field (`manifest`, `data`, `lishs`, `ok`) next to it. Anything else, including a local code such as `LISH_CHUNK_SIZE_TOO_LARGE` sent over the wire, is treated as `PEER_INVALID_REQUEST`, and nothing of the peer's reply is copied into the local error detail.
+A requester accepts an error reply only as a plain object whose own `error` is one of the codes the operation can really produce — `getChunk`: `PEER_INVALID_REQUEST`, `PEER_LISH_NOT_SHARED`, `PEER_BUSY`, `PEER_CHUNK_NOT_FOUND`, `PEER_IO_ERROR`; `getLish`: `PEER_INVALID_REQUEST`, `PEER_LISH_NOT_SHARED`; `getLishs`: `PEER_INVALID_REQUEST`, `PEER_LISTING_NOT_AUTHORIZED`, `PEER_LIST_TOO_LARGE`; `announceHave` and `searchResult`: `PEER_INVALID_REQUEST` — and that carries no result field (`manifest`, `data`, `lishs`, `ok`) next to it. Anything else, including a local code such as `LISH_CHUNK_SIZE_TOO_LARGE` sent over the wire, is treated as `PEER_INVALID_REQUEST`, and nothing of the peer's reply is copied into the local error detail.
 
 ## Transfer flow
 

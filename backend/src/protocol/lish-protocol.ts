@@ -12,6 +12,8 @@ import { registerUploadPeer, unregisterUploadPeer, recordUploadBytes, type Conne
 import { encode as codecEncode, decode as codecDecode } from './codec.ts';
 import { MAX_ACK_RESPONSE_SIZE, MAX_INBOUND_MESSAGE_SIZE, MAX_LIST_RESPONSE_SIZE, MAX_SEARCH_QUERY_LENGTH } from './constants.ts';
 import { readRemoteError, type LISHOperation } from './lish-response.ts';
+import { LISHListPages, receiveLISHList, type LISHListEntry, type LISHListRequest } from './lish-list-pages.ts';
+export type { LISHListEntry } from './lish-list-pages.ts';
 export const LISH_PROTOCOL = '/lish/0.0.1';
 
 /**
@@ -61,6 +63,8 @@ export interface LISHGetLishsRequest {
 	 * to a freshly-discovered peer (e.g. one just dialed via mDNS).
 	 */
 	query?: string;
+	page?: true;
+	cursor?: string;
 }
 /**
  * Unicast "I have this LISH" announcement — response to a pubsub `want`.
@@ -79,11 +83,7 @@ export interface LISHAnnounceHaveRequest {
  * Empty `lishs` is allowed (peer matched nothing — sender can use it to count "no result" responses).
  */
 /** Public-safe LISH listing entry (id plus optional name/totalSize) exchanged with peers. */
-export interface LISHListEntry {
-	id: string;
-	name?: string;
-	totalSize?: number;
-}
+
 export interface LISHSearchResultRequest {
 	type: 'searchResult';
 	searchID: string;
@@ -94,7 +94,7 @@ export type LISHGetChunkResponse =
 	| { data: Uint8Array } // raw binary chunk data (msgpack native bin type, no base64)
 	| { error: ErrorCode };
 export type LISHGetLishResponse = { manifest: import('@shared').IStoredLISH } | { error: ErrorCode };
-export type LISHGetLishsResponse = { type: 'getLishs-result'; lishs: Array<{ id: string; name?: string; totalSize?: number }> } | { type: 'getLishs-result'; error: ErrorCode };
+export type LISHGetLishsResponse = { type: 'getLishs-result'; lishs: LISHListEntry[]; page?: true; offset?: number; nextCursor?: string } | { type: 'getLishs-result'; error: ErrorCode };
 export type LISHAnnounceHaveResponse = { ok: true } | { error: ErrorCode };
 export type LISHSearchResultResponse = { ok: true } | { error: ErrorCode };
 export type HaveChunks = 'all' | ChunkID[];
@@ -310,15 +310,17 @@ export class LISHClient {
 	// Request list of shared LISHs from peer. `query` is an optional
 	// case-insensitive substring filter the peer applies server-side; omit it
 	// to retrieve the full list.
-	async requestList(query?: string): Promise<LISHListEntry[]> {
-		const request: LISHGetLishsRequest = { type: 'getLishs', ...(query !== undefined ? { query } : {}) };
-		if (!sendLengthPrefixed(this.stream, codecEncode(request))) {
-			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `getLishs: stream ${this.stream.status}`);
+	async requestList(query?: string, signal?: AbortSignal): Promise<LISHListEntry[]> {
+		const exchange = async (request: LISHListRequest, timeoutMs: number): Promise<Uint8Array> => {
+			if (!sendLengthPrefixed(this.stream, codecEncode(request))) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `getLishs: stream ${this.stream.status}`);
+			return this.readResponse(Math.min(MAX_LIST_RESPONSE_SIZE, getMaxMessageSize()), timeoutMs, 'getLishs');
+		};
+		try {
+			return await receiveLISHList(query, exchange, getMaxMessageSize(), signal ? AbortSignal.any([signal, this.closeAbort.signal]) : this.closeAbort.signal);
+		} catch (error) {
+			this.abort(error instanceof Error ? error : new Error('getLishs failed'));
+			throw error;
 		}
-		const responseData = await this.readResponse(MAX_LIST_RESPONSE_SIZE, 15000, 'getLishs');
-		const response = this.parseResponse<LISHGetLishsResponse>(responseData, 'getLishs', 'getLishs');
-		if (!('lishs' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, 'getLishs: missing lishs');
-		return response.lishs;
 	}
 
 	// Request a single chunk (can be called multiple times on same stream)
@@ -523,6 +525,7 @@ export function toManifest(lish: import('@shared').IStoredLISH): import('@shared
 
 export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType, sharesNetworkWith?: (peerID: string) => boolean, canListShares?: (peerID: string) => boolean, abortSignal?: AbortSignal): Promise<void> {
 	const servedLishIDs = new Set<string>();
+	const listPages = new LISHListPages();
 	const ioErrorCounts = new Map<string, number>(); // per-LISH consecutive I/O error counter
 	const remotePeer = remotePeerID?.slice(0, 12) ?? 'unknown';
 	const fullRemotePeer = remotePeerID ?? 'unknown';
@@ -583,6 +586,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					// tell "nothing matched" from "not yet", so it had to guess from the order
 					// of unrelated events. It leaks nothing the caller does not already know:
 					// it just asked us and it knows whether it shares a lishnet with us.
+					listPages.clear();
 					const gated: LISHGetLishsResponse = { type: 'getLishs-result', error: ErrorCodes.PEER_LISTING_NOT_AUTHORIZED };
 					sendLengthPrefixed(stream, codecEncode(gated));
 					continue;
@@ -592,31 +596,19 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				// a query the pubsub path refuses must not buy that work over unicast.
 				if (typeof request.query === 'string' && request.query.length > MAX_SEARCH_QUERY_LENGTH) {
 					trace(`[PROTO] getLishs from ${remotePeer} refused: query too long (${request.query.length})`);
+					listPages.clear();
 					const rejected: LISHGetLishsResponse = { type: 'getLishs-result', lishs: [] };
 					sendLengthPrefixed(stream, codecEncode(rejected));
 					continue;
 				}
-				// Return list of all shared (upload_enabled) LISHs — id and name only.
-				// Newest first — matches the order shown locally in "Download and Sharing".
-				const allLishs = dataServer.list();
-				const q = typeof request.query === 'string' && request.query.length > 0 ? request.query.toLowerCase() : null;
-				const matches = (l: import('@shared').IStoredLISH): boolean => {
-					if (!q) return true;
-					if (l.id.toLowerCase().includes(q)) return true;
-					const name = l.name?.toLowerCase() ?? '';
-					return name.includes(q);
-				};
-				const shared = allLishs.filter(l => isUploadAdvertisable(l.id) && matches(l)).reverse();
-				const response: LISHGetLishsResponse = {
-					type: 'getLishs-result',
-					lishs: shared.map(l => {
-						const totalSize = (l.files ?? []).reduce((sum, f) => sum + f.size, 0);
-						const entry: { id: string; name?: string; totalSize?: number } = { id: l.id, totalSize };
-						if (l.name !== undefined) entry.name = l.name;
-						return entry;
-					}),
-				};
-				sendLengthPrefixed(stream, codecEncode(response));
+				try {
+					sendLengthPrefixed(stream, listPages.respond(request, () => dataServer.list(), isUploadAdvertisable, Math.min(MAX_LIST_RESPONSE_SIZE, getMaxMessageSize())));
+				} catch (error) {
+					listPages.clear();
+					if (!(error instanceof CodedError)) throw error;
+					const response: LISHGetLishsResponse = { type: 'getLishs-result', error: error.code === ErrorCodes.PEER_LIST_TOO_LARGE ? error.code : ErrorCodes.PEER_INVALID_REQUEST };
+					sendLengthPrefixed(stream, codecEncode(response));
+				}
 			} else if (request.type === 'getLish') {
 				// Only return manifest for LISHs with upload enabled — and only to
 				// peers we share a joined lishnet with (same gate as getLishs).
