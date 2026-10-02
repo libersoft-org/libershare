@@ -6,7 +6,7 @@ import type { SdBusSymbols } from '../../src/native/linux/dbus-native.ts';
 
 function fakeBus(): {
 	sd: SdBusSymbols;
-	state: { destination: string; timeout: bigint; slots: number; released: number; calls: number; delivered: boolean; signalReady: boolean; rule: string; failProcess: boolean; failSend: boolean; insideCallback: boolean; sender: string; errorName: string | null; events: string[] };
+	state: { destination: string; timeout: bigint; slots: number; released: number; calls: number; delivered: boolean; signalReady: boolean; rule: string; failProcess: boolean; sendError: number; insideCallback: boolean; sender: string; errorName: string | null; events: string[] };
 } {
 	const buffers: Buffer[] = [];
 	const allocate = (value: string | number): Pointer => {
@@ -17,7 +17,7 @@ function fakeBus(): {
 	const write = (address: Pointer, value: bigint): void => {
 		new DataView(toArrayBuffer(address, 0, 8)).setBigUint64(0, value, true);
 	};
-	const state = { destination: '', timeout: 0n, slots: 0, released: 0, calls: 0, delivered: false, signalReady: false, rule: '', failProcess: false, failSend: false, insideCallback: false, sender: ':1.42', errorName: null as string | null, events: [] as string[] };
+	const state = { destination: '', timeout: 0n, slots: 0, released: 0, calls: 0, delivered: false, signalReady: false, rule: '', failProcess: false, sendError: 0, insideCallback: false, sender: ':1.42', errorName: null as string | null, events: [] as string[] };
 	const bus = allocate(8),
 		message = allocate(8),
 		slot = allocate(8);
@@ -39,7 +39,7 @@ function fakeBus(): {
 		sd_bus_call_async: (_bus: Pointer, out: Pointer, _message: Pointer, callbackAddress: Pointer, _data: Pointer, timeout: bigint) => {
 			state.calls++;
 			state.timeout = timeout;
-			if (state.failSend) return -5;
+			if (state.sendError) return -state.sendError;
 			write(out, BigInt(slot));
 			state.slots++;
 			const invoke = CFunction({ ptr: callbackAddress, args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 });
@@ -230,7 +230,7 @@ describe('sd-bus call lifetime', () => {
 		const { sd, state } = fakeBus();
 		const bus = new SystemBus({}, sd);
 		try {
-			await expect(bus.call({ ...method, kind: 'mutation', destination: 'org.example.Service' })).rejects.toMatchObject({ stage: 'before-send', mayHaveBeenSent: false });
+			for (const destination of ['org.example.Service', ':missingDot', ':1.42\0', `:1.${'x'.repeat(253)}`]) await expect(bus.call({ ...method, kind: 'mutation', destination })).rejects.toMatchObject({ stage: 'before-send', mayHaveBeenSent: false });
 			await expect(bus.call({ ...method, timeoutUsec: 0n })).rejects.toMatchObject({ stage: 'before-send' });
 			await expect(bus.call({ ...method, timeoutUsec: 0xffffffffffffffffn })).rejects.toMatchObject({ stage: 'before-send' });
 			expect(state.calls).toBe(0);
@@ -283,16 +283,25 @@ describe('sd-bus call lifetime', () => {
 			bus.close();
 		}
 	});
-	test('a failed send rejects and is never retried', async () => {
-		const { sd, state } = fakeBus();
-		state.failSend = true;
-		const bus = new SystemBus({}, sd);
-		try {
-			await expect(bus.call(method)).rejects.toBeInstanceOf(DBusTransportError);
-			expect(state.calls).toBe(1);
-			expect(state.slots).toBe(0);
-		} finally {
-			bus.close();
+	test('negative call_async returns reject unsent mutations and release callbacks without retry', async () => {
+		// ENOTCONN and ECONNRESET are unsent here; process-time ECONNRESET remains uncertain above.
+		for (const errno of [107, 104]) {
+			const { sd, state } = fakeBus();
+			state.sendError = errno;
+			const bus = new SystemBus({}, sd);
+			const callbackClose = spyOn(JSCallback.prototype, 'close');
+			try {
+				const call = bus.call({ ...method, kind: 'mutation' });
+				await expect(call).rejects.toBeInstanceOf(DBusTransportError);
+				await expect(call).rejects.toMatchObject({ stage: 'before-send', mayHaveBeenSent: false, errno });
+				expect(state.calls).toBe(1);
+				expect(state.slots).toBe(0);
+				expect(state.released).toBe(0);
+				expect(callbackClose).toHaveBeenCalledTimes(1);
+			} finally {
+				bus.close();
+				callbackClose.mockRestore();
+			}
 		}
 	});
 });

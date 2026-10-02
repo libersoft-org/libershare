@@ -4,6 +4,10 @@ import { checkSdBus, loadSdBus, nativePointer, type SdBusSymbols } from './dbus-
 
 export { variant, type DBusValue, type DBusVariant } from './dbus-codec.ts';
 
+export function isUniqueDBusName(value: unknown): value is string {
+	return typeof value === 'string' && value.length <= 255 && /^:[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+$/.test(value);
+}
+
 interface MethodCall {
 	readonly destination: string;
 	readonly path: string;
@@ -129,7 +133,7 @@ export class SystemBus {
 			let enteredSend = false;
 			try {
 				if (!this.bus || this.closeRequested) throw new DBusTransportError('D-Bus connection is closed', 'before-send', false);
-				if (request.kind === 'mutation' && !/^:[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+$/.test(request.destination)) throw new DBusTransportError('A mutation requires the recorded unique destination', 'before-send', false);
+				if (request.kind === 'mutation' && !isUniqueDBusName(request.destination)) throw new DBusTransportError('A mutation requires the recorded unique destination', 'before-send', false);
 				const signal = request.kind === 'read' ? request.signal : undefined;
 				if (signal?.aborted) throw new DBusTransportError('D-Bus read cancelled before send', 'before-send', false);
 				const timeout = request.kind === 'mutation' ? 0xffffffffffffffffn : (request.timeoutUsec ?? 25_000_000n);
@@ -165,7 +169,8 @@ export class SystemBus {
 				this.pending.add(pending);
 				enteredSend = true;
 				const sent = this.sd.sd_bus_call_async(this.bus, ptr(pending.slotOut), message, callback.ptr, null, timeout);
-				if (sent < 0) throw new DBusTransportError(`D-Bus send failed: errno ${-sent}`, 'send', true, -sent);
+				// sd_bus_send queues partial writes and returns success; a negative call_async return queued no message.
+				if (sent < 0) throw new DBusTransportError(`D-Bus send failed: errno ${-sent}`, 'before-send', false, -sent);
 				signal?.addEventListener('abort', pending.abort, { once: true });
 				this.schedule();
 			} catch (error) {
