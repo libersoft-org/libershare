@@ -1,9 +1,10 @@
+import { loadSystemLibrary } from './native/library.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { win32, isAbsolute } from 'node:path';
 import { isIP } from 'node:net';
-import { dlopen, FFIType, ptr } from 'bun:ffi';
+import { FFIType, ptr } from 'bun:ffi';
 import { SYSTEM_TIME_READ_TIMEOUT_MS, type SystemTimeOutcome, type SystemTimezoneSource, type SystemTimeResult, type SystemTimeStep, type SystemTimeCapabilities, type SystemTimeStatus } from '@shared';
 
 const execFileAsync = promisify(execFile);
@@ -203,11 +204,7 @@ export function resolveSystemExecutable(platform: string, command: string, syste
 	return platform === 'linux' ? (LINUX_EXECUTABLES[command] ?? null) : null;
 }
 
-/** Address a Windows system DLL directly so an elevated process never searches for it. */
-export function windowsSystemLibraryPath(name: string, systemRoot: string | undefined = process.env['SystemRoot']): string {
-	const root = systemRoot && win32.isAbsolute(systemRoot) ? systemRoot : 'C:\\Windows';
-	return win32.join(root, 'System32', name);
-}
+export { windowsSystemLibraryPath } from './native/library.ts';
 
 interface ConsoleTextApi {
 	GetConsoleOutputCP: () => number;
@@ -221,7 +218,7 @@ let consoleText: ConsoleTextApi | null | undefined;
 function getConsoleText(): ConsoleTextApi | null {
 	if (consoleText === undefined) {
 		try {
-			consoleText = dlopen(windowsSystemLibraryPath('kernel32.dll'), {
+			consoleText = loadSystemLibrary('kernel32.dll', {
 				GetConsoleOutputCP: { args: [], returns: FFIType.u32 },
 				GetOEMCP: { args: [], returns: FFIType.u32 },
 				MultiByteToWideChar: { args: [FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },

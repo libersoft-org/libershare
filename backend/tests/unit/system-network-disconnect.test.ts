@@ -132,7 +132,8 @@ it.each([1, 4, 5, 7])('reads native interface state %i without treating transiti
 		const memory = new Uint8Array(540); const view = new DataView(memory.buffer);
 		view.setUint32(0,1,true); memory.set([0x11,0x11,0x11,0x11,0x22,0x22,0x33,0x33,0x44,0x44,0x55,0x55,0x55,0x55,0x55,0x55],8); view.setUint32(536,${state},true);
 		let freed=0;
-		mock.module('bun:ffi',()=>({...ffi,dlopen:()=>({symbols:{
+		const library=await import('./src/native/library.ts');
+		mock.module('./src/native/library.ts',()=>({...library,loadSystemLibrary:()=>({symbols:{
 			WlanOpenHandle:(_v,_r,_n,handle)=>{new BigUint64Array(ffi.toArrayBuffer(handle,0,8))[0]=1n;return 0;},
 			WlanCloseHandle:()=>0,
 			WlanEnumInterfaces:(_h,_r,out)=>{new BigUint64Array(ffi.toArrayBuffer(out,0,8))[0]=BigInt(ffi.ptr(memory));return 0;},

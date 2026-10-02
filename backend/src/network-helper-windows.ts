@@ -1,4 +1,5 @@
-import { dlopen, FFIType, ptr, read, type Pointer } from 'bun:ffi';
+import { loadSystemLibrary, windowsSystemDirectory } from './native/library.ts';
+import { FFIType, ptr, read, type Pointer } from 'bun:ffi';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
@@ -81,7 +82,7 @@ function processCreationTime(kernel: { symbols: { GetProcessTimes: (handle: bigi
 /** This process, as the launcher names itself in the request file it writes. */
 export function windowsCurrentProcessIdentity(): WindowsProcessIdentity {
 	if (process.platform !== 'win32') throw new Error('Windows process identities are unavailable');
-	const kernel = dlopen('kernel32.dll', {
+	const kernel = loadSystemLibrary('kernel32.dll', {
 		GetCurrentProcess: { args: [], returns: FFIType.u64 },
 		GetProcessTimes: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
 	});
@@ -100,7 +101,7 @@ export function windowsCurrentProcessIdentity(): WindowsProcessIdentity {
  */
 export function windowsProcessImagePath(identity: WindowsProcessIdentity): string | null {
 	if (process.platform !== 'win32') throw new Error('Windows process identities are unavailable');
-	const kernel = dlopen('kernel32.dll', {
+	const kernel = loadSystemLibrary('kernel32.dll', {
 		OpenProcess: { args: [FFIType.u32, FFIType.i32, FFIType.u32], returns: FFIType.u64 },
 		GetProcessTimes: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
 		QueryFullProcessImageNameW: { args: [FFIType.u64, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
@@ -195,7 +196,7 @@ export function writeWindowsRequestFile(path: string, content: string): WindowsR
 		}
 	}
 	writeFileSync(path, content, 'utf8');
-	const kernel = dlopen('kernel32.dll', {
+	const kernel = loadSystemLibrary('kernel32.dll', {
 		CreateFileW: { args: [FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr], returns: FFIType.u64 },
 		CloseHandle: { args: [FFIType.u64], returns: FFIType.i32 },
 	});
@@ -228,7 +229,7 @@ export function writeWindowsRequestFile(path: string, content: string): WindowsR
  */
 export function windowsRequestFileHeld(path: string): boolean {
 	if (process.platform !== 'win32') throw new Error('Windows request files are unavailable');
-	const kernel = dlopen('kernel32.dll', {
+	const kernel = loadSystemLibrary('kernel32.dll', {
 		CreateFileW: { args: [FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr], returns: FFIType.u64 },
 		CloseHandle: { args: [FFIType.u64], returns: FFIType.i32 },
 		GetLastError: { args: [], returns: FFIType.u32 },
@@ -245,10 +246,10 @@ export function windowsRequestFileHeld(path: string): boolean {
 
 function windowsKnownFolderPath(folder: Buffer): string {
 	if (process.platform !== 'win32') throw new Error('Windows known folders are unavailable');
-	const shell = dlopen('shell32.dll', {
+	const shell = loadSystemLibrary('shell32.dll', {
 		SHGetKnownFolderPath: { args: [FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
 	});
-	const ole = dlopen('ole32.dll', {
+	const ole = loadSystemLibrary('ole32.dll', {
 		CoTaskMemFree: { args: [FFIType.ptr], returns: FFIType.void },
 	});
 	const out = new BigUint64Array(1);
@@ -280,21 +281,6 @@ export function windowsProgramFilesPath(): string {
 /** The launching user's local profile data folder, where the request file for the helper lives. */
 export function windowsLocalAppDataPath(): string {
 	return windowsKnownFolderPath(FOLDERID_LOCAL_APP_DATA);
-}
-
-function windowsSystemDirectory(): string {
-	if (process.platform !== 'win32') throw new Error('Windows system directory is unavailable');
-	const kernel = dlopen('kernel32.dll', {
-		GetSystemDirectoryW: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.u32 },
-	});
-	const buffer = new Uint16Array(32 * 1024);
-	try {
-		const length = kernel.symbols.GetSystemDirectoryW(ptr(buffer), buffer.length);
-		if (length === 0 || length >= buffer.length) throw new Error('GetSystemDirectoryW failed');
-		return Buffer.from(buffer.buffer, buffer.byteOffset, length * 2).toString('utf16le');
-	} finally {
-		kernel.close();
-	}
 }
 
 export function windowsPowerShellPath(): string {
@@ -473,10 +459,10 @@ export type WindowsElevationOutcome = { kind: 'exited'; code: number } | { kind:
 
 export async function runElevatedWindowsProcess(file: string, parameters: string, timeoutMs: number, now: () => number = elevationClock): Promise<WindowsElevationOutcome> {
 	if (process.platform !== 'win32') throw new Error('Windows elevation is unavailable');
-	const shell = dlopen('shell32.dll', {
+	const shell = loadSystemLibrary('shell32.dll', {
 		ShellExecuteExW: { args: [FFIType.ptr], returns: FFIType.i32 },
 	});
-	const kernel = dlopen('kernel32.dll', {
+	const kernel = loadSystemLibrary('kernel32.dll', {
 		WaitForSingleObject: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.u32 },
 		GetExitCodeProcess: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
 		TerminateProcess: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.i32 },

@@ -57,13 +57,15 @@ describe('SCM read handle lifetime', () => {
 		async mode => {
 			const script = `
 			import {mock} from 'bun:test';
+			Object.defineProperty(process,'platform',{value:'win32'});
 			const ffi=await import('bun:ffi');const calls=[];
 			mock.module('bun:ffi',()=>({...ffi,dlopen:()=>({symbols:{
+				GetSystemDirectoryW:(buffer)=>{const bytes=Buffer.from('C:/Windows/System32\\0','utf16le');new Uint8Array(ffi.toArrayBuffer(buffer,0,bytes.length)).set(bytes);return bytes.length/2-1;},
 				OpenSCManagerW:(_machine,_database,access)=>{calls.push(['manager',access]);return 1n;},
 				OpenServiceW:(_manager,_name,access)=>{calls.push(['service',access]);return ${JSON.stringify(mode)}==='open-failed'?0n:2n;},
 				QueryServiceStatusEx:(_service,level,buffer,size)=>{calls.push(['query',level,size]);new DataView(ffi.toArrayBuffer(buffer,0,size)).setUint32(4,${JSON.stringify(mode)}==='running'?4:1,true);return ${JSON.stringify(mode)}==='query-failed'?0:1;},
 				CloseServiceHandle:handle=>{calls.push(['close',Number(handle)]);return 1;},
-			}})}));
+			},close:()=>{}})}));
 			const {readWindowsTimeServiceRunning}=await import('./src/system-time-windows.ts');
 			console.log(JSON.stringify({running:readWindowsTimeServiceRunning(),calls}));
 		`;

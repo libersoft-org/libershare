@@ -44,9 +44,17 @@ describe('trusted system executables', () => {
 		expect(resolveSystemExecutable('win32', 'cmd', 'C:\\Windows')).toBeNull();
 	});
 
-	it('loads Windows DLLs from System32 rather than the DLL search path', () => {
-		expect(windowsSystemLibraryPath('icu.dll', 'D:\\Windows')).toBe('D:\\Windows\\System32\\icu.dll');
-		expect(windowsSystemLibraryPath('advapi32.dll', 'D:\\Windows')).toBe('D:\\Windows\\System32\\advapi32.dll');
+	it.skipIf(process.platform !== 'win32')('ignores SystemRoot when locating Windows DLLs', () => {
+		const expected = windowsSystemLibraryPath('icu.dll');
+		const old = process.env['SystemRoot'];
+		try {
+			process.env['SystemRoot'] = 'Z:\\untrusted-windows';
+			expect(windowsSystemLibraryPath('icu.dll')).toBe(expected);
+			expect(windowsSystemLibraryPath('advapi32.dll')).not.toStartWith('Z:');
+		} finally {
+			if (old === undefined) delete process.env['SystemRoot'];
+			else process.env['SystemRoot'] = old;
+		}
 	});
 });
 

@@ -1,4 +1,5 @@
-import { CFunction, dlopen, FFIType, ptr, read, type Pointer } from 'bun:ffi';
+import { loadSystemLibrary } from './native/library.ts';
+import { CFunction, FFIType, ptr, read, type Pointer } from 'bun:ffi';
 import type { MixerResult } from './system-volume.ts';
 
 /**
@@ -74,7 +75,7 @@ let ole32: Ole32 | null = null;
 /** Load ole32 and initialize COM once, lazily — importing this module has no side effects on any platform. */
 function getOle32(): Ole32 {
 	if (!ole32) {
-		const lib = dlopen('ole32.dll', {
+		const lib = loadSystemLibrary('ole32.dll', {
 			CoInitializeEx: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
 			CoCreateInstance: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
 		});

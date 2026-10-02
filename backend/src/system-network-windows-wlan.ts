@@ -1,4 +1,5 @@
-import { dlopen, FFIType, ptr, read, toArrayBuffer, type Pointer } from 'bun:ffi';
+import { loadSystemLibrary } from './native/library.ts';
+import { FFIType, ptr, read, toArrayBuffer, type Pointer } from 'bun:ffi';
 import type { NetWifiInfo } from '@shared';
 
 // ---------------------------------------------------------------------------
@@ -107,7 +108,7 @@ function getWlanApi(): WlanApi | null {
 	if (wlanUnavailable) return null;
 	if (!wlanApi) {
 		try {
-			wlanApi = dlopen('wlanapi.dll', WLAN_SYMBOLS).symbols as unknown as WlanApi;
+			wlanApi = loadSystemLibrary('wlanapi.dll', WLAN_SYMBOLS).symbols as unknown as WlanApi;
 		} catch {
 			wlanUnavailable = true;
 			return null;

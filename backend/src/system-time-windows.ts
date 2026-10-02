@@ -1,6 +1,7 @@
+import { loadSystemLibrary } from './native/library.ts';
 import { type SystemCommand, processTimezone, listSystemTimezones, tryRead, type PlatformStatus, windowsSystemLibraryPath } from './system-time-common.ts';
 
-import { dlopen, FFIType, ptr } from 'bun:ffi';
+import { FFIType, ptr } from 'bun:ffi';
 
 /**
  * Windows time policy and native readers. ICU, registry, SCM and timezone APIs avoid
@@ -49,7 +50,7 @@ let icu: Icu | null | undefined;
 function getIcu(): Icu | null {
 	if (icu === undefined) {
 		try {
-			const lib = dlopen(windowsSystemLibraryPath('icu.dll'), {
+			const lib = loadSystemLibrary('icu.dll', {
 				ucal_getWindowsTimeZoneID: { args: [FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.ptr], returns: FFIType.i32 },
 			});
 			icu = lib.symbols as unknown as Icu;
@@ -135,7 +136,7 @@ let advapi32: Advapi32 | null | undefined;
 function getAdvapi32(): Advapi32 | null {
 	if (advapi32 === undefined) {
 		try {
-			const lib = dlopen(windowsSystemLibraryPath('advapi32.dll'), {
+			const lib = loadSystemLibrary('advapi32.dll', {
 				OpenProcessToken: { args: [FFIType.u64, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
 				GetTokenInformation: { args: [FFIType.u64, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
 				RegOpenKeyExW: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
@@ -279,7 +280,7 @@ let kernel32Handles: Kernel32Handles | null | undefined;
 function getKernel32Handles(): Kernel32Handles | null {
 	if (kernel32Handles === undefined) {
 		try {
-			kernel32Handles = dlopen(windowsSystemLibraryPath('kernel32.dll'), {
+			kernel32Handles = loadSystemLibrary('kernel32.dll', {
 				CloseHandle: { args: [FFIType.u64], returns: FFIType.i32 },
 				GetCurrentProcess: { args: [], returns: FFIType.u64 },
 			}).symbols as unknown as Kernel32Handles;
@@ -337,7 +338,7 @@ let netapi32: Netapi32 | null | undefined;
 function getNetapi32(): Netapi32 | null {
 	if (netapi32 === undefined) {
 		try {
-			const lib = dlopen(windowsSystemLibraryPath('netapi32.dll'), {
+			const lib = loadSystemLibrary('netapi32.dll', {
 				NetGetJoinInformation: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
 				NetApiBufferFree: { args: [FFIType.u64], returns: FFIType.i32 },
 			});
@@ -908,7 +909,7 @@ let timezoneApi: WindowsTimezoneApi | null | undefined;
 export function readWindowsTimeZone(): WindowsTimeZoneState | null {
 	if (timezoneApi === undefined) {
 		try {
-			timezoneApi = dlopen(windowsSystemLibraryPath('kernel32.dll'), {
+			timezoneApi = loadSystemLibrary('kernel32.dll', {
 				GetDynamicTimeZoneInformation: { args: [FFIType.ptr], returns: FFIType.u32 },
 			}).symbols as unknown as WindowsTimezoneApi;
 		} catch {
