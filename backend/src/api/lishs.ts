@@ -317,6 +317,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['lishID']);
 		const lish = dataServer.get(p.lishID);
 		if (!lish) return false;
+		if (p.deleteLISH || p.deleteData) moveRecoveryTokens.delete(p.lishID);
 		if (p.deleteLISH) {
 			// Full deletion — stop transfers, stop verification, stop recovery, clean up, delete DB row
 			stopRecoveryForLISH(p.lishID);
@@ -366,6 +367,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			await dataset.close();
 		}
 		dataServer.addDataset(lish, opts.root, opts.finalRoot);
+		moveRecoveryTokens.delete(lish.id);
 		stopRecoveryForLISH(lish.id);
 		dataServer.setUploadEnabled(lish.id, false);
 		dataServer.setDownloadEnabled(lish.id, false);
@@ -498,6 +500,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 
 	// Track LISHs currently being moved
 	const movingLISHs = new Set<string>();
+	const moveRecoveryTokens = new Map<string, object>();
 
 	function enqueueVerification(lishID: string): void {
 		if (currentVerification?.lishID === lishID) return;
@@ -598,6 +601,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 
 	async function stopVerifyAdmitted(p: { lishID: string }): Promise<SuccessResponse> {
 		assert(p, ['lishID']);
+		moveRecoveryTokens.delete(p.lishID);
 		clearBusy(p.lishID);
 		// Stop if currently running
 		if (currentVerification?.lishID === p.lishID) currentVerification.ac.abort();
@@ -611,6 +615,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function stopVerifyAll(): Promise<SuccessResponse> {
+		moveRecoveryTokens.clear();
 		stoppingAllVerifications = true;
 		while (verificationQueue.length > 0) {
 			const lishID = verificationQueue.shift()!;
@@ -679,13 +684,23 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const base = resolve(Utils.expandHome(p.newDirectory));
 		const root: DatasetRoot = p.createSubdirectory === false ? { kind: 'explicit', path: base } : { kind: 'derived', base, component: datasetRootName(lish) };
 		const newDir = datasetRootPath(root);
+		const recoveryToken = {};
+		const wasDownloading = getDownloadEnabledLishs().has(p.lishID);
+		const wasUploading = getEnabledUploads().has(p.lishID);
+		const wasVerifying = currentVerification?.lishID === p.lishID || verificationQueue.includes(p.lishID);
+		let stopped = false;
+		let committed = false;
+		let recover = false;
+		moveRecoveryTokens.set(p.lishID, recoveryToken);
 		movingLISHs.add(p.lishID);
 		try {
 			await stopDatasetWork(p.lishID);
+			stopped = true;
 			setBusy(p.lishID, 'moving');
 			broadcast('lishs:move:status', { lishID: p.lishID, moving: true });
 			const commit = (bindings?: readonly DatasetLinkBinding[]): void => {
 				dataServer.relocateDataset(p.lishID, root, false, bindings);
+				committed = true;
 			};
 			if (p.moveData && lish.directory) {
 				const result = await moveDatasetData(lish, storedRoot(lish), root, commit, progress => broadcast('lishs:move:progress', { lishID: p.lishID, ...progress }), 'source', dataServer.getDatasetLinkBindings(p.lishID));
@@ -700,10 +715,24 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 				commit();
 			}
 			broadcast('lishs:move', { lishID: p.lishID, directory: newDir });
+		} catch (error) {
+			if (!committed && stopped && moveRecoveryTokens.get(p.lishID) === recoveryToken && dataServer.get(p.lishID)?.directory === lish.directory) {
+				if (error instanceof CodedError && error.code === ErrorCodes.LISH_UNSAFE_PATH) {
+					stopRecoveryForLISH(p.lishID);
+					disableUpload(p.lishID);
+					dataServer.setUploadEnabled(p.lishID, false);
+					dataServer.setDownloadEnabled(p.lishID, false);
+					dataServer.setError(p.lishID, error.code, error.detail);
+					await forceDisableDownload(p.lishID);
+				} else recover = wasVerifying || (wasDownloading && getDownloadEnabledLishs().has(p.lishID)) || (wasUploading && getEnabledUploads().has(p.lishID));
+			}
+			throw error;
 		} finally {
 			movingLISHs.delete(p.lishID);
 			clearBusy(p.lishID);
 			broadcast('lishs:move:status', { lishID: p.lishID, moving: false });
+			if (recover && !mutationAdmission.isClosed && moveRecoveryTokens.get(p.lishID) === recoveryToken) enqueueVerification(p.lishID);
+			if (moveRecoveryTokens.get(p.lishID) === recoveryToken) moveRecoveryTokens.delete(p.lishID);
 		}
 		enqueueVerification(p.lishID);
 		return { success: true };
