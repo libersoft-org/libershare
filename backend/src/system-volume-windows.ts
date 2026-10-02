@@ -1,5 +1,6 @@
 import { loadSystemLibrary } from './native/library.ts';
-import { CFunction, FFIType, ptr, read, type Pointer } from 'bun:ffi';
+import { comCall, guidBytes, releaseCom } from './native/win32/com.ts';
+import { FFIType, ptr, type Pointer } from 'bun:ffi';
 import type { MixerResult } from './system-volume.ts';
 
 /**
@@ -39,7 +40,6 @@ const DATAFLOW_RENDER = 0;
 const ROLE_MULTIMEDIA = 1;
 
 // vtable slots (IUnknown = slots 0–2 on every COM interface)
-const SLOT_RELEASE = 2;
 /** IMMDeviceEnumerator: QI, AddRef, Release, EnumAudioEndpoints, GetDefaultAudioEndpoint */
 const SLOT_GET_DEFAULT_AUDIO_ENDPOINT = 4;
 /** IMMDevice: QI, AddRef, Release, Activate */
@@ -48,18 +48,6 @@ const SLOT_ACTIVATE = 3;
 const SLOT_SET_MASTER_VOLUME_SCALAR = 7;
 /** IAudioEndpointVolume: ..., 8 GetMasterVolumeLevel, 9 GetMasterVolumeLevelScalar */
 const SLOT_GET_MASTER_VOLUME_SCALAR = 9;
-
-/** Encode a canonical GUID string into its 16-byte little-endian memory layout. */
-function guidBytes(guid: string): Uint8Array {
-	const hex = guid.replace(/-/g, '');
-	const bytes = new Uint8Array(16);
-	const view = new DataView(bytes.buffer);
-	view.setUint32(0, parseInt(hex.slice(0, 8), 16), true);
-	view.setUint16(4, parseInt(hex.slice(8, 12), 16), true);
-	view.setUint16(6, parseInt(hex.slice(12, 16), 16), true);
-	for (let i = 0; i < 8; i++) bytes[8 + i] = parseInt(hex.slice(16 + i * 2, 18 + i * 2), 16);
-	return bytes;
-}
 
 const CLSID_MMDeviceEnumerator = guidBytes('BCDE0395-E52F-467C-8E3D-C4579291692E');
 const IID_IMMDeviceEnumerator = guidBytes('A95664D2-9614-4F35-A746-DE8DB63617E6');
@@ -85,26 +73,6 @@ function getOle32(): Ole32 {
 		ole32.CoInitializeEx(null, 0);
 	}
 	return ole32;
-}
-
-// COM vtables are static per class, so trampolines are cached by their actual
-// function-pointer address and never freed (the set is tiny and stable).
-const trampolines = new Map<Pointer, (...args: unknown[]) => number>();
-
-/** Call a COM method through the object's vtable. `argTypes`/`argValues` exclude the implicit `this`. */
-function comCall(obj: Pointer, slot: number, argTypes: FFIType[], argValues: unknown[]): number {
-	const vtable = read.ptr(obj, 0) as Pointer;
-	const fnPtr = read.ptr(vtable, slot * 8) as Pointer;
-	let fn = trampolines.get(fnPtr);
-	if (!fn) {
-		fn = CFunction({ ptr: fnPtr, returns: FFIType.i32, args: [FFIType.ptr, ...argTypes] }) as unknown as (...args: unknown[]) => number;
-		trampolines.set(fnPtr, fn);
-	}
-	return fn(obj, ...argValues);
-}
-
-function release(obj: Pointer): void {
-	comCall(obj, SLOT_RELEASE, [], []);
 }
 
 /** Map a COM HRESULT to the three-state mixer outcome (`0` = ok, ELEMENT_NOT_FOUND = no-device, anything else = transient error). */
@@ -140,13 +108,13 @@ function withEndpointVolume(fn: (endpoint: Pointer) => MixerResult): MixerResult
 			try {
 				return fn(endpoint);
 			} finally {
-				release(endpoint);
+				releaseCom(endpoint);
 			}
 		} finally {
-			release(device);
+			releaseCom(device);
 		}
 	} finally {
-		release(enumerator);
+		releaseCom(enumerator);
 	}
 }
 
