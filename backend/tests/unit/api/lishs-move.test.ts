@@ -160,15 +160,16 @@ test('a changed absolute link target cannot reuse a prior local association', as
 	}
 });
 
-
 test('the dialog can move directly into an existing empty folder', async () => {
- const f = await completeDataset();
- const target = join(f.base, 'selected');
- await mkdir(target);
- try {
-  expect(await f.handlers.move({lishID:f.id,newDirectory:target,moveData:true,createSubdirectory:false})).toEqual({success:true});
-  expect(f.data.get(f.id)?.directory).toBe(target);
-  expect(await readFile(join(target,'data.bin'),'utf8')).toBe('abcd');
-  expect(f.events.some(event=>event.event==='lishs:move' && event.data.directory===target)).toBe(true);
- } finally {await f.close();}
+	const f = await completeDataset();
+	const target = join(f.base, 'selected');
+	await mkdir(target);
+	try {
+		expect(await f.handlers.move({ lishID: f.id, newDirectory: target, moveData: true, createSubdirectory: false })).toEqual({ success: true });
+		expect(f.data.get(f.id)?.directory).toBe(target);
+		expect(await readFile(join(target, 'data.bin'), 'utf8')).toBe('abcd');
+		expect(f.events.some(event => event.event === 'lishs:move' && event.data.directory === target)).toBe(true);
+	} finally {
+		await f.close();
+	}
 });

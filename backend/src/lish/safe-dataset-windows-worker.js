@@ -176,7 +176,8 @@ class WindowsDirectory extends WindowsHandle {
 				while (position < info.size) {
 					const count = await child.read(buffer.subarray(0, Math.min(buffer.length, info.size - position)), position);
 					if (!count) fail('FS_FILE_CHANGED', 'Source file changed');
-					hash.update(buffer.subarray(0, count)); position += count;
+					hash.update(buffer.subarray(0, count));
+					position += count;
 				}
 				const after = await child.stat();
 				if (hash.digest('hex') !== guard.checksum || after.size !== info.size || after.modified !== info.modified || after.changed !== info.changed) fail('FS_FILE_CHANGED', 'Source file changed');

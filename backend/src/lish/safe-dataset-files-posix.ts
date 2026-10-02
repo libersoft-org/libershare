@@ -95,7 +95,8 @@ async function removeCaptured(parent: number, name: Buffer, kind: 'file' | 'dire
 				while (position < info.size) {
 					const count = await file.read(buffer.subarray(0, Math.min(buffer.length, info.size - position)), position);
 					if (!count) throw failure('FS_FILE_CHANGED', 'Source file changed');
-					hash.update(buffer.subarray(0, count)); position += count;
+					hash.update(buffer.subarray(0, count));
+					position += count;
 				}
 				if (hash.digest('hex') !== guard.checksum) throw failure('FS_FILE_CHANGED', 'Source file changed');
 				// No JS yield between the final check and unlink. POSIX still permits writes through an existing descriptor.

@@ -52,11 +52,7 @@ function materializedFiles(manifest: ILISH, root: DatasetRoot, bindings: readonl
 	for (const link of manifest.links ?? []) {
 		const binding = bindingsByPath.get(link.path);
 		if (binding && (binding.target !== link.target || binding.hardlink !== (link.hardlink === true))) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'The local link association no longer matches the manifest');
-		const path =
-			binding?.source ??
-			relative(rootPath, resolve(rootPath, link.target))
-				.split('\\')
-				.join('/');
+		const path = binding?.source ?? relative(rootPath, resolve(rootPath, link.target)).split('\\').join('/');
 		const target = filesByPath.get(path);
 		if (!target || isAbsolute(path) || path.startsWith('../')) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'The link target is not a declared dataset file');
 		// After materialization the local copy can be edited independently of its original target.
@@ -227,14 +223,20 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 		const base = await openDataset({ kind: 'explicit', path: destination.base }, true);
 		await base.close();
 		if (targetRoot.kind === 'explicit') {
-			try { target = await openDataset(targetRoot); }
-			catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+			try {
+				target = await openDataset(targetRoot);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+			}
 			if (target) {
 				if ((await readdir(datasetRootPath(targetRoot))).length) throw Object.assign(new Error('Selected directory is not empty'), { code: 'EEXIST' });
 				await target.assertPathBinding();
 			}
 		}
-		if (!target) { target = await createDataset(destination); targetCreated = true; }
+		if (!target) {
+			target = await createDataset(destination);
+			targetCreated = true;
+		}
 		const rootInfo = await target.statDirectory();
 		if (rootInfo?.identity === sourceIdentities.get('')) throw Object.assign(new Error('Destination is the source directory'), { code: 'EEXIST' });
 		if (rootInfo) targetIdentities.set('', rootInfo.identity);

@@ -281,17 +281,18 @@ export class SafeDataset {
 					let file: DatasetFileHandle;
 					if (options.exclusive) {
 						file = await this.file(path, 'create', false);
-					} else try {
-						file = await this.file(path, 'write', false);
-					} catch (error) {
-						if (code(error) !== 'ENOENT') throw error;
+					} else
 						try {
-							file = await this.file(path, 'create', false);
-						} catch (creation) {
-							if (code(creation) !== 'EEXIST') throw creation;
 							file = await this.file(path, 'write', false);
+						} catch (error) {
+							if (code(error) !== 'ENOENT') throw error;
+							try {
+								file = await this.file(path, 'create', false);
+							} catch (creation) {
+								if (code(creation) !== 'EEXIST') throw creation;
+								file = await this.file(path, 'write', false);
+							}
 						}
-					}
 					await file.close();
 				}
 			}

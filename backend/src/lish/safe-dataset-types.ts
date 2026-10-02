@@ -1,8 +1,8 @@
 export interface DatasetContentGuard {
- size: number;
- modified: string;
- changed: string;
- checksum: string;
+	size: number;
+	modified: string;
+	changed: string;
+	checksum: string;
 }
 
 /** Identity is compared within one filesystem; sizes must remain safe JavaScript integers. */
