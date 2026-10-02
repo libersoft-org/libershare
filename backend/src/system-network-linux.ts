@@ -2,7 +2,8 @@ import { splitNmcliFields, parseNmcliWifiList, assertLinuxWifiConnected, nmcliWi
 export { splitNmcliFields, parseNmcliWifiList, assertLinuxWifiConnected, nmcliWifiConnectArgs } from './system-network-linux-wifi.ts';
 import { readNmcliProfileBlocks } from './system-network-linux-profiles.ts';
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { NativeWorkerChannel } from './native/worker-host.ts';
+import type { NativeNetworkSources } from './native/linux/network-reader.ts';
 import { promisify } from 'node:util';
 import { CodedError, ErrorCodes, isIPv4, isIPv6, validateIPv4Config } from '@shared';
 import type { NetAddress, NetCapabilities, NetInterfaceInfo, NetIPv4Config, NetLink, NetWifiInfo, NetWifiNetwork } from '@shared';
@@ -22,25 +23,11 @@ const execFileAsync = promisify(execFile);
  */
 export const C_LOCALE_ENV: NodeJS.ProcessEnv = { ...process.env, LC_ALL: 'C', LANG: 'C' };
 
-/**
- * Linux host network state, read entirely through `ip -j` (iproute2's JSON
- * output) plus two sysfs/procfs reads.
- *
- * `ip` is used for READING rather than a stack-specific tool because it reports
- * the kernel's actual state — the same answer whether the box is driven by
- * ifupdown, systemd-networkd, NetworkManager or netplan.
- *
- * WRITING is the opposite: it has to go through the stack that owns the device,
- * so the apply half of this module speaks to NetworkManager through nmcli and
- * D-Bus, and refuses to act on a host it does not own. See
- * {@link readLinuxCapabilities}.
- */
-
 /** Hard cap on how long any `ip`/`iw` child process may run before we give up. */
 const EXEC_TIMEOUT_MS = 5000;
 /** `ip` lives in sbin, which is not on a service account's PATH on every distro. */
 const IP_CANDIDATES = ['/usr/sbin/ip', '/sbin/ip', 'ip'];
-const IW_CANDIDATES = ['/usr/sbin/iw', '/sbin/iw', 'iw'];
+const networkReader = new NativeWorkerChannel('read');
 /** IFA_F_PERMANENT lifetime sentinel — a manually configured address never expires. */
 const LIFETIME_PERMANENT = 4294967295;
 
@@ -90,6 +77,8 @@ export interface LinuxNetworkSources {
 	wireless?: Set<string>;
 	/** Per-interface `iw dev <if> link` output, when `iw` is installed. */
 	iwLinks?: Map<string, string>;
+	/** Native association with signal in dBm. */
+	nativeWifi?: Map<string, { ssid: string | null; signal: number | null }>;
 	/** Signal quality per interface from `/proc/net/wireless`. Used when `iw` reported none. */
 	procSignals?: Map<string, number>;
 	/** Resolver addresses from /etc/resolv.conf. Attributed to the default-route interface only. */
@@ -284,7 +273,8 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 		};
 		if (wireless) {
 			const iw = sources.iwLinks?.get(entry.ifname);
-			const parsed: NetWifiInfo = iw ? { ...parseIwLink(iw), radio: 'unknown' } : { ssid: null, signal: null, radio: 'unknown' };
+			const native = sources.nativeWifi?.get(entry.ifname);
+			const parsed: NetWifiInfo = native ? { ssid: native.ssid, signal: native.signal === null ? null : dbmToQuality(native.signal), radio: 'unknown' } : iw ? { ...parseIwLink(iw), radio: 'unknown' } : { ssid: null, signal: null, radio: 'unknown' };
 			// `iw` gives both the name and the level, but it is not installed
 			// everywhere; the kernel's own file always is, so it backfills the level
 			// on a host that has no `iw`. The SSID has no such fallback and stays null.
@@ -354,32 +344,6 @@ async function runFirstWithInput(candidates: string[], args: string[], input: st
 	throw lastError;
 }
 
-/** True when the kernel exposes an 802.11 phy for this interface — no userspace tool required. */
-function isWireless(ifname: string): boolean {
-	return existsSync(`/sys/class/net/${ifname}/phy80211`);
-}
-
-/** Signal levels straight from the kernel. Empty when no wireless driver is loaded. */
-function readProcSignals(): Map<string, number> {
-	try {
-		return parseProcNetWireless(readFileSync('/proc/net/wireless', 'utf8'));
-	} catch {
-		return new Map();
-	}
-}
-
-/** Nameserver addresses from /etc/resolv.conf. Empty when the file is missing or has none. */
-function readResolvers(): string[] {
-	try {
-		return readFileSync('/etc/resolv.conf', 'utf8')
-			.split('\n')
-			.map(line => line.match(/^\s*nameserver\s+(\S+)/)?.[1])
-			.filter((v): v is string => !!v);
-	} catch {
-		return [];
-	}
-}
-
 /** A Linux read: the interfaces, and whether NetworkManager's profiles could not be read. */
 export interface LinuxNetworkRead {
 	interfaces: NetInterfaceInfo[];
@@ -387,23 +351,10 @@ export interface LinuxNetworkRead {
 	ipv4ProfilesUnavailable: boolean;
 }
 
-/** Read the live Linux network state. Throws when `ip` is absent or fails — the caller degrades to the address-only reader. */
+/** Reads native state in a worker; a failed kernel dump rejects the whole read. */
 export async function readLinuxNetworkState(): Promise<LinuxNetworkRead> {
-	const [addr, link, route, route6] = await Promise.all([runFirst(IP_CANDIDATES, ['-j', 'addr']), runFirst(IP_CANDIDATES, ['-j', '-d', 'link']), runFirst(IP_CANDIDATES, ['-j', 'route', 'show', 'default']), runFirst(IP_CANDIDATES, ['-j', '-6', 'route', 'show', 'default']).catch(() => '[]')]);
-	const names = (JSON.parse(addr) as IpAddrEntry[]).map(e => e.ifname);
-	const wireless = new Set(names.filter(isWireless));
-	const iwLinks = new Map<string, string>();
-	for (const name of wireless) {
-		try {
-			iwLinks.set(name, await runFirst(IW_CANDIDATES, ['dev', name, 'link']));
-		} catch {
-			// `iw` is not installed (or refused) — the SSID and signal stay null
-			// rather than being guessed from anything else.
-		}
-	}
-	const [nmDevices, profiles] = await Promise.all([readNetworkManagerDevices(), readNetworkManagerProfiles()]);
-	const interfaces = parseLinuxNetworkState({ addr, link, route, route6, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: nmDevices?.dns, activeConnections: profiles?.connections, ipv4Profiles: profiles?.ipv4Profiles, managedDevices: nmDevices?.managedDevices });
-	return { interfaces, ipv4ProfilesUnavailable: profiles === undefined && (nmDevices?.managedDevices.size ?? 0) > 0 };
+	const { sources, ipv4ProfilesUnavailable } = await networkReader.call<NativeNetworkSources>({ method: 'linux.network.snapshot', args: { timeoutMs: EXEC_TIMEOUT_MS } }, EXEC_TIMEOUT_MS);
+	return { interfaces: parseLinuxNetworkState(sources), ipv4ProfilesUnavailable };
 }
 
 /**
@@ -486,27 +437,9 @@ export function parseNmcliPermission(text: string, permission: string): string |
 /** Probe address and Wi-Fi rights separately; custom polkit policies may differ. */
 export async function readLinuxCapabilities(): Promise<NetCapabilities> {
 	try {
-		if (!(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'RUNNING', 'general'])).trim().startsWith('running')) return { ipv4: false, wifi: false, staticGatewayRequired: false };
-		await runFirst(BUSCTL_CANDIDATES, ['--version']);
-		return parseLinuxCapabilities(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'PERMISSION,VALUE', 'general', 'permissions']));
+		return await networkReader.call<NetCapabilities>({ method: 'linux.network.capabilities', args: { timeoutMs: EXEC_TIMEOUT_MS } }, EXEC_TIMEOUT_MS);
 	} catch {
 		return { ipv4: false, wifi: false, staticGatewayRequired: false };
-	}
-}
-
-/**
- * Per-interface resolvers from NetworkManager, including IPv4 and IPv6.
- *
- * Returns undefined — not an empty map — when NetworkManager is absent or fails,
- * so the caller can tell "NM says this link has no resolvers" apart from "there
- * is no NM to ask" and fall back to /etc/resolv.conf only in the latter case.
- */
-async function readNetworkManagerDevices(): Promise<{ dns: Map<string, string[]>; managedDevices: Set<string> } | undefined> {
-	try {
-		const text = await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'GENERAL.DEVICE,GENERAL.NM-MANAGED,IP4.DNS,IP6.DNS', 'device', 'show']);
-		return { dns: parseNmcliDns(text), managedDevices: parseNmcliManagedDevices(text) };
-	} catch {
-		return undefined;
 	}
 }
 
@@ -633,25 +566,6 @@ async function readNmcliIPv4Profile(uuid: string, device: string, activeInstance
 	const block = (await readProfileBlocks([uuid])).get(uuid);
 	if (block === undefined) throw new Error(`NetworkManager profile ${uuid} could not be read`);
 	return parseNmcliIPv4Profile(block, device, activeInstances);
-}
-
-/** Active profiles and their exact IPv4 method. Any incomplete read stays read-only. */
-async function readNetworkManagerProfiles(): Promise<{ connections: Map<string, string>; ipv4Profiles: Map<string, NmcliIPv4Profile> } | undefined> {
-	try {
-		const connections = await activeConnections();
-		const activeCounts = new Map<string, number>();
-		for (const uuid of connections.values()) activeCounts.set(uuid, (activeCounts.get(uuid) ?? 0) + 1);
-		const blocks = await readProfileBlocks([...activeCounts.keys()]);
-		const ipv4Profiles = new Map<string, NmcliIPv4Profile>();
-		for (const [device, uuid] of connections) ipv4Profiles.set(device, parseNmcliIPv4Profile(blocks.get(uuid) ?? '', device, activeCounts.get(uuid) ?? 0));
-		return { connections, ipv4Profiles };
-	} catch (err) {
-		// Said once per read, and only the cause: a timeout, an exit code or which check an
-		// incomplete batch failed — never the profiles themselves.
-		const failure = err as NodeJS.ErrnoException & { killed?: boolean; code?: string | number };
-		console.warn(`[system-network] NetworkManager profiles unavailable, IPv4 editing disabled: ${failure.killed ? 'timed out' : failure.name === 'IncompleteProfileReadError' ? failure.message : `nmcli failed (${failure.code ?? failure.name})`}`);
-		return undefined;
-	}
 }
 
 /** Fresh active-profile lookup shared by the read and apply paths. */
@@ -893,7 +807,7 @@ export function assertLinuxDnsApplied(config: NetIPv4Config, profileText: string
 
 /** Scan for Wi-Fi networks reachable from one device. */
 export async function scanLinuxWifi(device: string): Promise<NetWifiNetwork[]> {
-	return parseNmcliWifiList(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'SSID,BSSID,SIGNAL,SECURITY,IN-USE', 'device', 'wifi', 'list', 'ifname', device, '--rescan', 'yes'], WIFI_SCAN_TIMEOUT_MS));
+	return networkReader.call<NetWifiNetwork[]>({ method: 'linux.network.scan', args: { device, timeoutMs: WIFI_SCAN_TIMEOUT_MS } }, WIFI_SCAN_TIMEOUT_MS);
 }
 
 /** Map NetworkManager's three independent policy decisions to real capabilities. */
