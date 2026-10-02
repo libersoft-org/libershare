@@ -12,13 +12,13 @@ export type LISHOperation = 'getChunk' | 'getLish' | 'getLishs' | 'announceHave'
 const REMOTE_ERRORS: Readonly<Record<LISHOperation, ReadonlySet<ErrorCode>>> = {
 	getChunk: new Set([ErrorCodes.PEER_INVALID_REQUEST, ErrorCodes.PEER_LISH_NOT_SHARED, ErrorCodes.PEER_BUSY, ErrorCodes.PEER_CHUNK_NOT_FOUND, ErrorCodes.PEER_IO_ERROR]),
 	getLish: new Set([ErrorCodes.PEER_INVALID_REQUEST, ErrorCodes.PEER_LISH_NOT_SHARED]),
-	getLishs: new Set([ErrorCodes.PEER_INVALID_REQUEST, ErrorCodes.PEER_LISTING_NOT_AUTHORIZED]),
+	getLishs: new Set([ErrorCodes.PEER_INVALID_REQUEST, ErrorCodes.PEER_LISTING_NOT_AUTHORIZED, ErrorCodes.PEER_LIST_TOO_LARGE]),
 	announceHave: new Set([ErrorCodes.PEER_INVALID_REQUEST]),
 	searchResult: new Set([ErrorCodes.PEER_INVALID_REQUEST]),
 };
 
 /** Success fields; an envelope carrying one of them next to `error` is ambiguous. */
-const SUCCESS_FIELDS = ['manifest', 'data', 'lishs', 'ok', 'ready'] as const;
+const SUCCESS_FIELDS = ['manifest', 'data', 'lishs', 'ok', 'ready', 'page', 'offset', 'nextCursor'] as const;
 
 const MAX_ERROR_CODE_LENGTH = 64;
 
