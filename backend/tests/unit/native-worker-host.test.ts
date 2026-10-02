@@ -1,0 +1,84 @@
+import { expectWorkerRejection } from '../helpers/worker-rejection.ts';
+import { expect, test } from 'bun:test';
+import { NativeSnapshotReader, NativeWorkerChannel, NativeWorkerFailure } from '../../src/native/worker-host.ts';
+
+const entry = new URL('../helpers/native-blocking-worker.ts', import.meta.url).href;
+
+async function waitForStart(marker: Int32Array): Promise<void> {
+	const deadline = performance.now() + 3000;
+	while (!Atomics.load(marker, 0)) {
+		if (performance.now() >= deadline) throw new Error('Worker did not enter the native call');
+		await Bun.sleep(5);
+	}
+}
+
+test('a native blocking mutation keeps running while an independent reader responds', async () => {
+	const mutation = new NativeWorkerChannel('mutation', entry);
+	const read = new NativeWorkerChannel('read', entry);
+	const marker = new Int32Array(new SharedArrayBuffer(8));
+	try {
+		await read.call({ method: 'read', args: { value: 1 } }, 3000);
+		const changing = mutation.call({ method: 'block', args: { marker, milliseconds: 400, value: 2 } });
+		await waitForStart(marker);
+		expect(mutation.close()).toBe(false);
+		const started = performance.now();
+		expect(await read.call<number>({ method: 'read', args: { value: 3 } }, 1000)).toBe(3);
+		expect(performance.now() - started).toBeLessThan(100);
+		expect(Atomics.load(marker, 1)).toBe(0);
+		expect(await changing).toBe(2);
+		expect(Atomics.load(marker, 1)).toBe(1);
+	} finally {
+		read.close();
+		mutation.close();
+	}
+});
+
+test('a timed out reader returns its last snapshot without affecting a mutation', async () => {
+	const channel = new NativeWorkerChannel('read', entry);
+	const reader = new NativeSnapshotReader<number>(channel);
+	try {
+		expect(await reader.read({ method: 'read', args: { value: 7 } }, 3000)).toEqual({ value: 7, stale: false });
+		expect(await reader.read({ method: 'block', args: { milliseconds: 200, value: 8 } }, 20)).toEqual({ value: 7, stale: true });
+		expect(await reader.read({ method: 'read', args: { value: 9 } }, 3000)).toEqual({ value: 9, stale: false });
+	} finally {
+		channel.close();
+	}
+});
+
+test('worker exit before reply is uncertain and the mutation channel cannot retry', async () => {
+	const channel = new NativeWorkerChannel('mutation', entry);
+	try {
+		const error = await channel.call({ method: 'exit', args: {} }).catch(value => value);
+		expect(error).toBeInstanceOf(NativeWorkerFailure);
+		expect((error as NativeWorkerFailure).mayHaveRun).toBe(true);
+		const retry = await channel.call({ method: 'read', args: {} }).catch(value => value);
+		expect((retry as NativeWorkerFailure).mayHaveRun).toBe(false);
+	} finally {
+		channel.close();
+	}
+});
+
+test('mutation timeouts and unbounded reads are rejected before dispatch', async () => {
+	const read = new NativeWorkerChannel('read', entry);
+	const mutation = new NativeWorkerChannel('mutation', entry);
+	try {
+		await expectWorkerRejection(read.call({ method: 'read' }), 'finite positive timeout');
+		await expectWorkerRejection(mutation.call({ method: 'read' }, 20), 'cannot have a transport timeout');
+	} finally {
+		read.close();
+		mutation.close();
+	}
+});
+
+test('the production read worker rejects durable writes and returns real process identity', async () => {
+	const channel = new NativeWorkerChannel('read');
+	try {
+		const identity = await channel.call<{ executor: { pid: number; started: string } }>({ method: 'identity.current' }, 3000);
+		expect(identity.executor.pid).toBe(process.pid);
+		expect(identity.executor.started.length).toBeGreaterThan(0);
+		await expectWorkerRejection(channel.call({ method: 'journal.begin', args: {} }, 3000), 'cannot execute mutations');
+		await expectWorkerRejection(channel.call({ method: 'linux.dbus', args: { request: { kind: 'mutation' } } }, 3000), 'cannot execute mutations');
+	} finally {
+		channel.close();
+	}
+});

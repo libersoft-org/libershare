@@ -44,6 +44,16 @@ export function currentNativeProcessIdentity(backend: NativeIdentityBackend = pl
 	return { pid: process.pid, started: result.started };
 }
 
+export function nativeProcessIdentity(pid: number, backend: NativeIdentityBackend = platformBackend()): NativeProcessIdentity | null {
+	if (!Number.isInteger(pid) || pid <= 0 || pid > 0x7fffffff) return null;
+	try {
+		const result = backend.process(pid);
+		return result.state === 'running' ? { pid, started: result.started } : null;
+	} catch {
+		return null;
+	}
+}
+
 export function observeNativeProcess(identity: NativeProcessIdentity, backend: NativeIdentityBackend = platformBackend()): NativeProcessObservation {
 	const value = identity.started.slice(backend.prefix.length);
 	if (!Number.isInteger(identity.pid) || identity.pid <= 0 || identity.pid > 0x7fffffff || !backend.prefix || !identity.started.startsWith(backend.prefix) || !/^(0|[1-9]\d{0,19})$/.test(value)) return { identity, state: 'unknown' };
