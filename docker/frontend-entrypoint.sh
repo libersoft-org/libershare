@@ -8,16 +8,13 @@ cert_days="${TLS_CERT_DAYS:-3650}"
 cert_subject="${TLS_CERT_SUBJECT:-/CN=libershare.local}"
 cert_san="${TLS_CERT_SAN:-DNS:localhost,IP:127.0.0.1}"
 
-# Repair ownership of the bind-mounted certs dir so openssl below can write
-# the freshly generated private key and certificate. Without this, a host
-# `mkdir ./certs` performed by an unprivileged user (UID != 0) would fail
-# with EACCES inside the container — the `cap_drop: ALL` setup strips
-# CAP_DAC_OVERRIDE, so root inside the container cannot bypass DAC. The
-# CAP_CHOWN granted back via compose lets this chown succeed without
-# re-introducing CAP_DAC_OVERRIDE.
-if [ -d "$cert_dir" ]; then
-	chown -R 0:0 "$cert_dir" 2>/dev/null || true
+# The mounted certificate directory keeps its host owner: run as that UID/GID
+# (LISH_UID/LISH_GID in compose) instead of changing ownership here.
+if [ "$(id -u)" = 0 ]; then
+	echo "Refusing to run as root. Set LISH_UID/LISH_GID to the owner of the mounted directories." >&2
+	exit 1
 fi
+umask 077
 
 if [ ! -s "$key_file" ] || [ ! -s "$cert_file" ]; then
 	mkdir -p "$cert_dir"

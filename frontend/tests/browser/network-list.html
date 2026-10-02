@@ -37,8 +37,9 @@
 				{ ...base, id: 'hidden-active', name: 'Active tunnel', medium: 'other', hidden: true },
 			],
 		};
+		let reportedHost = host;
 		api.call = async method => {
-			if (method === 'system.network') return structuredClone(host);
+			if (method === 'system.network') return structuredClone(reportedHost);
 			if (method === 'system.wifiScan') return [];
 			throw new Error(`Unexpected API: ${method}`);
 		};
@@ -134,6 +135,35 @@
 				}
 				assert(reachedBack, 'Keyboard could not reach Back');
 			});
+			await test('unreadable profiles explain the read-only view and clear after a good refresh', async () => {
+				const unavailable = { ...structuredClone(host), ipv4ProfilesUnavailable: true, capabilities: { ipv4: true, wifi: false, staticGatewayRequired: false } };
+				networkState.set(unavailable);
+				tab(get(t)('settings.network.wired')).click();
+				await settle();
+				assert(root.textContent.includes('Wired adapter'), 'The non-configurable IPv4 adapter is not visible');
+				const message = get(t)('settings.network.ipv4ProfilesUnavailable');
+				assert(
+					[...root.querySelectorAll('[role="status"]')].some(item => item.textContent === message),
+					'Read-only overview hides the reason profiles could not be read'
+				);
+				assert(![...root.querySelectorAll('.button')].some(item => item.textContent.trim() === get(t)('settings.network.configure')), 'Unreadable profiles still allow opening configuration');
+				networkState.set({ ...structuredClone(host), ipv4ProfilesUnavailable: false });
+				await settle();
+				assert(!root.textContent.includes(message), 'Successful refresh leaves the old failure notice visible');
+			});
+			await test('unreadable IPv4 profiles leave supported Wi-Fi configuration available', async () => {
+				reportedHost = { ...structuredClone(host), ipv4ProfilesUnavailable: true, capabilities: { ipv4: true, wifi: true, staticGatewayRequired: false } };
+				networkState.set(reportedHost);
+				tab(get(t)('settings.network.wifi')).click();
+				await settle();
+				const configure = [...root.querySelectorAll('.button')].find(item => item.textContent.trim() === get(t)('settings.network.configure'));
+				assert(configure, 'Unreadable IPv4 profiles disabled the independent Wi-Fi configuration');
+				configure.click();
+				await settle();
+				assert(root.querySelector('section[aria-label="' + get(t)('settings.network.availableNetworks') + '"]'), 'Wi-Fi configuration did not open');
+				assert(!root.querySelector('section[aria-label="IPv4"]'), 'Unsafe IPv4 profile became editable inside the Wi-Fi form');
+				assert(root.textContent.includes(get(t)('settings.network.ipv4ProfilesUnavailable')), 'The form does not explain the unavailable IPv4 profile');
+			});
 		} finally {
 			finishWrite?.();
 			if (component) await unmount(component);
@@ -141,7 +171,7 @@
 			api.settings.set = originalSet;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.networkListTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 5 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 7 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

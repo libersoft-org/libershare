@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_RELAY_RESERVATIONS, isRelayReservationLimit } from '@shared';
 import { type SettingsData } from '../settings.ts';
 import { normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
 
@@ -36,7 +37,7 @@ export function effectiveNetworkConfig(network: Partial<SettingsData['network']>
 		announceAddresses: [...(network?.announceAddresses ?? [])],
 		mdnsInterval: mdnsEnabled ? (network?.mdnsInterval ?? 30000) : null,
 		upnp: !!network?.upnpEnabled,
-		relayReservations: network?.allowRelay ? (network?.maxRelayReservations ?? 0) : null,
+		relayReservations: network?.allowRelay === true ? (isRelayReservationLimit(network.maxRelayReservations) ? network.maxRelayReservations : DEFAULT_MAX_RELAY_RESERVATIONS) : null,
 		relayClientSlots: useRelayClients ? (typeof rawMaxRelayClients === 'number' && rawMaxRelayClients > 0 ? Math.min(rawMaxRelayClients, 20) : 5) : 0,
 		peerExchange: {
 			enabled: peerExchange?.enabled === true,

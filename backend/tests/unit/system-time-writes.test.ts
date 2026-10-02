@@ -1207,6 +1207,8 @@ describe('the write lock covers every writer', () => {
 });
 
 describe('applySystemTimeSettings', () => {
+	/** A Windows time service that is not touching the clock, so a clock write is not refused off the host running the tests. */
+	const stoppedTimeService = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped', ntpClientEnabled: true });
 	const okResult = { success: true, outcome: 'ok' as const, message: null };
 
 	function writers(calls: string[], overrides: Partial<SystemTimeWriters> = {}): SystemTimeWriters {
@@ -1282,7 +1284,7 @@ describe('applySystemTimeSettings', () => {
 
 	it('applies one save in dependency order under one operation', async () => {
 		const calls: string[] = [];
-		const result = await applySystemTimeSettings({ ntpEnabled: false, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 } }, writers(calls));
+		const result = await applySystemTimeSettings({ ntpEnabled: false, ntpServer: 'ntp.example.org', timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 } }, writers(calls), async () => statusFixture(), stoppedTimeService);
 		expect(result).toEqual(okResult);
 		expect(calls).toEqual(['ntp:false', 'server:ntp.example.org', 'zone:Europe/Prague', 'clock:1:2:3']);
 	});
@@ -1299,11 +1301,10 @@ describe('applySystemTimeSettings', () => {
 		const result = await applySystemTimeSettings(
 			{ ntpEnabled: false, timezone: 'Europe/Prague', clock: { hours: 1, minutes: 2, seconds: 3 } },
 			writers(calls, {
-				setTimezone: async timezone => {
-					calls.push(`zone:${timezone}`);
-					return denied;
-				},
-			})
+				setTimezone: async timezone => (calls.push(`zone:${timezone}`), denied),
+			}),
+			async () => statusFixture(),
+			stoppedTimeService
 		);
 		expect(result).toEqual({ ...denied, changed: true, stateMayHaveChanged: true });
 		expect(calls).toEqual(['ntp:false', 'zone:Europe/Prague']);
@@ -1343,7 +1344,7 @@ describe('applySystemTimeSettings', () => {
 
 	it('applies the clock when the expectation still holds', async () => {
 		const calls: string[] = [];
-		const result = await applySystemTimeSettings({ clock: { hours: 12, minutes: 15, seconds: 0 }, expectedTimezone: 'Europe/Prague', expectedOffsetMinutes: 120 }, writers(calls), async () => statusFixture({ timezone: 'Europe/Prague', utcOffsetMinutes: 120 }));
+		const result = await applySystemTimeSettings({ clock: { hours: 12, minutes: 15, seconds: 0 }, expectedTimezone: 'Europe/Prague', expectedOffsetMinutes: 120 }, writers(calls), async () => statusFixture({ timezone: 'Europe/Prague', utcOffsetMinutes: 120 }), stoppedTimeService);
 		expect(result).toEqual(okResult);
 		expect(calls).toEqual(['clock:12:15:0']);
 	});
@@ -1351,7 +1352,7 @@ describe('applySystemTimeSettings', () => {
 	/** A save that also moves the zone carries the zone it was composed under, not the new one. */
 	it('checks the expectation before applying a timezone change in the same save', async () => {
 		const calls: string[] = [];
-		const result = await applySystemTimeSettings({ timezone: 'UTC', clock: { hours: 12, minutes: 15, seconds: 0 }, expectedTimezone: 'Europe/Prague' }, writers(calls), async () => statusFixture({ timezone: 'Europe/Prague' }));
+		const result = await applySystemTimeSettings({ timezone: 'UTC', clock: { hours: 12, minutes: 15, seconds: 0 }, expectedTimezone: 'Europe/Prague' }, writers(calls), async () => statusFixture({ timezone: 'Europe/Prague' }), stoppedTimeService);
 		expect(result).toEqual(okResult);
 		expect(calls).toEqual(['zone:UTC', 'clock:12:15:0']);
 	});

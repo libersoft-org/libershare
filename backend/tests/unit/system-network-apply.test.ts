@@ -233,7 +233,7 @@ describe('assertAppliedIPv4State', () => {
 		gateway: '192.0.2.1',
 		dns: ['2001:db8::53', '192.0.2.53'],
 	};
-	const state: NetworkStateInfo = { interfaces: [iface], primaryID: 'lan0', detail: 'full', known: true, capabilities: { ipv4: true, wifi: false, staticGatewayRequired: false } };
+	const state: NetworkStateInfo = { interfaces: [iface], primaryID: 'lan0', detail: 'full', known: true, capabilities: { ipv4: true, wifi: false, staticGatewayRequired: false }, ipv4ProfilesUnavailable: false };
 
 	it('accepts the exact address, route and normalized DNS result', () => {
 		expect(() => assertAppliedIPv4State(state, 'lan0', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53', '2001:DB8::53'] })).not.toThrow();

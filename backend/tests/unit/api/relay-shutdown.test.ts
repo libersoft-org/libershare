@@ -30,7 +30,7 @@ it('stops relay polling before waiting for accepted API requests', async () => {
 			stopAllNetworks: async () => {},
 		};
 		const server = new APIServer(${JSON.stringify(dir)}, {}, networks, settings, {
-			host: '127.0.0.1', port: 0, secure: false, keyFile: undefined, certFile: undefined,
+			host: '127.0.0.1', port: 0, secure: false, keyFile: undefined, certFile: undefined, apiToken: 'relay-shutdown-test-token',
 		});
 		const events = [];
 		let tickingTimer;

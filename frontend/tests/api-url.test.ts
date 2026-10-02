@@ -20,8 +20,8 @@ describe('getAPIURL', () => {
 		expect(getAPIURL({ window: browserWindow('http:', 'localhost:6003') })).toBe('ws://localhost:6003/ws');
 	});
 
-	test('uses the Tauri injected backend port before static fallback', () => {
-		expect(getAPIURL({ window: { ...browserWindow('https:', 'app.local:6003'), __BACKEND_PORT__: 23145 } })).toBe('ws://localhost:23145');
+	test('uses native IPC before any configured network endpoint', () => {
+		expect(getAPIURL({ window: { ...browserWindow('https:', 'app.local:6003'), __BACKEND_IPC__: true }, viteBackendUrl: 'ws://example.test' })).toBe('ipc://backend');
 	});
 
 	test('keeps the dev backend query override', () => {

@@ -4,17 +4,18 @@ import { toNetworkMutationResponse, type NetworkMutationResponse } from './netwo
 type EventCallback = (data: any) => void;
 
 /**
- * Interface for the underlying WebSocket client.
- * Both browser and CLI clients must implement this interface.
+ * RPC surface used by browser, native and CLI clients.
  */
-export interface IWsClient {
+export interface IRpcClient {
 	call<T = any>(method: string, params?: Record<string, any>, timeoutMs?: number): Promise<T>;
 	on(event: string, callback: EventCallback): (() => void) | void;
 	off(event: string, callback: EventCallback): void;
 }
 
+export type IWsClient = IRpcClient;
+
 /**
- * High-level API client that wraps a WebSocket client.
+ * High-level API client independent of the underlying transport.
  * Can be used in both browser and CLI environments.
  */
 export class API {

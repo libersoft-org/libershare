@@ -12,8 +12,9 @@ Run commands from this `docker/` directory.
 - Compose project name: `libershare`
 - Backend API/WebSocket: `127.0.0.1:${BACKEND_PORT:-1158}` (host-bound to loopback by default)
 - libp2p TCP: `9091:9090` (LAN-bound — peers must reach it externally)
-- Frontend HTTPS: `6003:6003`
-- Browser URL: `https://<docker-host>:6003/`
+- Frontend HTTPS: `127.0.0.1:6003` (host-bound to loopback by default, see `FRONTEND_BIND`)
+- Browser URL: `https://localhost:6003/`
+- API token: required, `LISH_TOKEN` in `.env`
 - Docker network: `libershare-net`, created automatically by compose
 
 The frontend container reaches the backend over the internal Docker network
@@ -35,28 +36,62 @@ finished downloads, temp files, LISH files, LISH network files, and backups.
 
 ## First-run permissions
 
-Both services run with `cap_drop: ALL` and `read_only: true` rootfs, but each
-keeps `cap_add: CHOWN` so its entrypoint can re-own the bind-mounted state
-directories (`/app/config`, `/app/storage`, `/app/certs`) to UID 0 at startup.
-The deploy is therefore independent of who runs `mkdir` on the host:
+Both services run unprivileged, as `LISH_UID:LISH_GID` (default `1000:1000`),
+with `cap_drop: ALL`, a read-only root filesystem and no extra capabilities.
+Nothing inside the containers changes the owner of mounted data, and Docker
+does not create a missing bind-mount directory. Create the directories first,
+owned by the user the services run as. Run the following block as a non-root
+host account that can write to this directory and use Docker. If you are
+logged in as root, switch to that account first; do not copy root's UID into
+`.env`. The block stops before creating or changing files when run as root.
 
 ```sh
+(
+set -eu
+if [ "$(id -u)" -eq 0 ]; then
+    echo "Run this setup as a non-root account with Docker access; LISH_UID must not be 0." >&2
+    exit 1
+fi
 mkdir -p config storage certs
+chmod 0700 config storage certs
+echo "LISH_TOKEN=$(openssl rand -hex 32)" >> .env
+echo "LISH_UID=$(id -u)" >> .env
+echo "LISH_GID=$(id -g)" >> .env
+chmod 600 .env
 docker compose up -d --build
+)
 ```
 
-If the entrypoints are bypassed (e.g. somebody removes `cap_add: CHOWN`) the
-backend still fails fast with an actionable message instead of silently
-losing writes:
+A service started as root refuses to run. When the directories are not
+writable for the service user, the backend stops with a message such as:
 
 ```
 [Storage] FATAL: cannot persist /app/config/settings.json (EACCES).
-[Storage] Fix on the host: chown 0:0 <mounted-dir> && chmod 0700 <mounted-dir>, then restart.
+[Storage] The service user cannot write here. In Docker the service runs as LISH_UID/LISH_GID
 ```
 
-Docker named volumes (`CONFIG_SOURCE=my-libershare-config`) work
-out of the box without any host-side `mkdir` — the daemon creates the volume
-root-owned.
+Fix the owner or `LISH_UID`/`LISH_GID` on the host and start again.
+
+### Upgrading from a root-run version
+
+Older images ran as root and re-owned the mounted directories to `0:0`.
+
+If any mount uses a named volume, use [Existing named volumes](#existing-named-volumes)
+below. Do not replace it with an empty directory.
+
+1. Stop the services: `docker compose down` (without `--volumes`).
+2. Back up `config/` completely (settings, `libershare.db` with its `-wal` and
+   `-shm` files, and the datastore). A new, empty config means a new peer
+   identity.
+3. Choose the UID/GID the services will run as and give exactly the three
+   mounted directories to it, for example
+   `sudo chown -R 1000:1000 config storage certs`.
+4. Set `LISH_UID`/`LISH_GID` in `.env` if they differ from `1000:1000`, then
+   start again.
+
+On Docker Desktop for Windows or macOS, ownership of mounted folders is also
+governed by the host's file sharing; check that the containers can write and
+that the host keeps its access.
 
 ## Start
 
@@ -84,22 +119,81 @@ To put config and storage on specific host disks:
 
 ```sh
 mkdir -p /mnt/ssd/libershare-config /mnt/big/libershare-storage
+chown 1000:1000 /mnt/ssd/libershare-config /mnt/big/libershare-storage   # LISH_UID:LISH_GID
 CONFIG_SOURCE=/mnt/ssd/libershare-config \
 STORAGE_SOURCE=/mnt/big/libershare-storage \
-docker compose up -d
-```
-
-To use Docker named volumes instead of local directories:
-
-```sh
-CONFIG_SOURCE=my-libershare-config \
-STORAGE_SOURCE=my-libershare-storage \
 docker compose up -d
 ```
 
 When migrating an existing node, keep its old config/datastore/database mounted
 as `/app/config`; otherwise the backend generates a new peer identity and starts
 as a different node.
+
+### Existing named volumes
+
+The default Compose file treats `CONFIG_SOURCE`, `STORAGE_SOURCE` and
+`TLS_CERT_SOURCE` as host directories. A value such as `my-libershare-config`
+does not select a Docker volume with that file alone. Keep existing named
+volumes by adding `docker-compose.named-volumes.yml`; no data copy is needed.
+
+Before stopping the old containers, record their actual mounts:
+
+```sh
+docker inspect --format '{{range .Mounts}}{{println .Destination .Type .Name .Source}}{{end}}' libershare-backend libershare-frontend
+```
+
+Use each volume's exact `Name`, including any Compose project prefix. Stop the
+old services without `--volumes`. Keep the original volumes and do not create
+empty replacements. In `.env`, set the names and the non-root UID/GID chosen
+for the services, for example:
+
+```dotenv
+CONFIG_SOURCE=my-libershare-config
+STORAGE_SOURCE=my-libershare-storage
+TLS_CERT_SOURCE=my-libershare-certs
+LISH_UID=1001
+LISH_GID=1001
+```
+
+Keep or configure the required `LISH_TOKEN` as described under Authentication.
+All three named volumes must already exist. The override marks them `external`
+and disables copying image contents into them; a missing volume stops startup.
+For a new named-volume installation, create the chosen volumes explicitly
+with `docker volume create` before preparing their ownership.
+
+With the old services stopped, back up the full volumes, then prepare their
+ownership once. The following example uses `1001:1001`; replace it with the
+same UID/GID set in `.env`. Backups include the database, datastore and private
+keys, so keep the backup directory private.
+
+```sh
+(
+set -eu
+umask 077
+dc() { docker compose -f docker-compose.yml -f docker-compose.named-volumes.yml "$@"; }
+dc build
+backup_dir="$PWD/volume-backup-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir "$backup_dir"
+dc run --rm --no-deps -T --user 0:0 --cap-add DAC_READ_SEARCH --entrypoint tar backend -cpf - -C /app config storage > "$backup_dir/backend.tar"
+dc run --rm --no-deps -T --user 0:0 --cap-add DAC_READ_SEARCH --entrypoint tar frontend -cpf - -C /app certs > "$backup_dir/certs.tar"
+dc run --rm --no-deps -T --user 0:0 --cap-add CHOWN --cap-add DAC_READ_SEARCH --entrypoint chown backend -R 1001:1001 /app/config /app/storage
+dc run --rm --no-deps -T --user 0:0 --cap-add CHOWN --cap-add DAC_READ_SEARCH --entrypoint chown frontend -R 1001:1001 /app/certs
+dc up -d
+)
+```
+
+Only these one-off backup and ownership commands run as root; they override
+the entrypoint and never start LiberShare. Normal services still run without
+root or extra capabilities. If a backup command fails, stop here and keep the
+old volumes; do not proceed with ownership changes or delete any data. After
+startup, check the original peer ID, settings, file contents and certificate.
+Keep the backups until that check is complete.
+
+Use both `-f` options for subsequent Compose commands. For mixed storage, copy
+the override and keep only the named mount entries and their matching top-level
+volume declarations. Compose matches mounts by target: for example, keeping
+only `/app/config` and `existing-config` leaves storage and certificates as
+the base file's bind mounts. Leave their `*_SOURCE` values as host paths.
 
 ## Ports
 
@@ -131,32 +225,43 @@ below) so the exposed port still requires a shared secret.
 
 ## Authentication
 
-The backend reads `LISH_TOKEN` from the environment. Set it in `.env` next
-to `docker-compose.yml`:
+The API token is required: `docker compose up` refuses to start without it.
+The first-run commands above put a random `LISH_TOKEN` into `.env` next to
+`docker-compose.yml`. To add one to an existing `.env` without touching its
+other lines:
 
 ```sh
-LISH_TOKEN=$(openssl rand -hex 32)
+grep -q '^LISH_TOKEN=' .env || echo "LISH_TOKEN=$(openssl rand -hex 32)" >> .env
+chmod 600 .env
 ```
 
-When `LISH_TOKEN` is non-empty, every WebSocket and REST request must carry
-the same value as `?token=<value>` in the URL — the only exceptions are the
-liveness probe `/health` and the auth-state endpoint `/status`, which stay
-public so orchestrators and the frontend can detect the auth state without
-already knowing the token.
+Every WebSocket and `/status` request must carry the token as `?token=<value>`.
+Only the liveness probe `/health` is public. `/status` without the token
+answers `401` with `authRequired: true`, which is how the web UI knows to show
+its login form.
 
-Browser side: the SvelteKit frontend stores the token (set on the auth
-prompt or injected as `__BACKEND_TOKEN__` by the Tauri shell) and passes it
-on every WebSocket reconnect. The Docker frontend proxy forwards URLs as-is,
-so the same `?token=` query string is preserved when the browser connects to
-same-origin `/ws`.
+Open `https://localhost:6003/`, paste the value of `LISH_TOKEN` into the login
+form and clear the clipboard afterwards. After changing the token, restart the
+backend (`docker compose up -d backend`) and enter the new value in the same
+form — no page reload is needed. The frontend proxy checks the token with the
+backend before it opens the WebSocket, forwards the query unchanged and never
+logs it.
 
-CLI / curl:
+CLI / curl on the Docker host:
 
 ```sh
 curl -fsS "http://localhost:${BACKEND_PORT:-1158}/status?token=$LISH_TOKEN"
 ```
 
-Leave `LISH_TOKEN` unset (the default) to disable authentication entirely.
+### Access from other machines
+
+The token travels in the URL, so anything beyond loopback must be encrypted:
+
+- UI: set `FRONTEND_BIND=0.0.0.0` only together with a certificate the browser
+  trusts (see *TLS*), and open `https://<host>:6003/`.
+- API: set `BACKEND_BIND=0.0.0.0` only behind a TLS-terminating reverse proxy
+  or another encrypted channel (VPN, SSH tunnel); the backend itself speaks
+  plain `ws://`.
 
 ## TLS
 
@@ -251,19 +356,20 @@ the endpoint manually with:
 curl -fsS http://localhost:${BACKEND_PORT:-1158}/health
 ```
 
-## WebSocket proxy resilience
+## WebSocket proxy behaviour
 
 The frontend container terminates the browser WebSocket and forwards it to
-`ws://backend:$BACKEND_PORT`. If the backend goes away (rolling restart,
-crash) the proxy keeps the browser-side socket alive while it reconnects the
-upstream with exponential backoff (250 ms → 5 s, capped). It buffers up to
-1 MiB of in-flight messages during the outage; if that ceiling is exceeded
-the client is closed with code 1011 to force a fresh handshake instead of
-silently dropping subscribe messages.
+`ws://backend:$BACKEND_PORT`. Before the upgrade it asks the backend's
+`/status` with the client's query; a wrong token is answered `401` and no
+socket is opened. `/status` answers `503` when the backend is unreachable and
+`504` when it does not answer within 2.5 s.
 
-A single warning is logged after 10 consecutive reconnect attempts; further
-retries continue silently to avoid filling the proxy log when a tab is left
-open across a long backend outage.
+Each browser socket gets exactly one upstream connection. If that connection
+cannot be opened within 2.5 s, is refused (for example because the backend
+restarted with a new token), or drops later, the browser socket is closed with
+code 1011. The web UI then checks `/status` again and either reconnects or
+shows the login form. Messages sent before the upstream opens are buffered up
+to 1 MiB; beyond that the client is closed with 1011 as well.
 
 ## Verification
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import * as readline from 'readline';
 import { join } from 'path';
-import { APIClient } from './api-client';
+import { APIClient, withToken, redactTokens, displayURL } from './api-client';
 import { API, DEFAULT_API_URL, type NetworkMutationResponse, type SetLISHNetworkEnabledResponse } from '@shared';
 
 const HELP = `
@@ -52,7 +52,7 @@ CLI - Connect to a running server
 Usage: bun cli.ts [options]
 
 Options:
-  -u, --url <url>   Server WebSocket URL (default: ${DEFAULT_API_URL})
+  -u, --url <url>   Server WebSocket URL (default: ${DEFAULT_API_URL}); the API token is read from LISH_TOKEN
   -h, --help        Show this help message
 ${HELP}`);
 		process.exit(0);
@@ -84,12 +84,19 @@ function describeEnabled(response: SetLISHNetworkEnabledResponse, done: string):
 }
 
 async function main(): Promise<void> {
-	console.log(`Connecting to ${serverURL}...`);
-	const client = new APIClient(serverURL);
+	let connectURL: string;
+	try {
+		connectURL = withToken(serverURL, process.env['LISH_TOKEN']);
+	} catch (error: any) {
+		console.error(`Invalid --url: ${redactTokens(String(error?.message ?? error), serverURL, process.env['LISH_TOKEN'])}`);
+		process.exit(1);
+	}
+	console.log(`Connecting to ${displayURL(serverURL)}...`);
+	const client = new APIClient(connectURL);
 	try {
 		await client.connect();
 	} catch (error: any) {
-		console.error(`Failed to connect: ${error.message}`);
+		console.error(`Failed to connect: ${redactTokens(String(error?.message ?? error), connectURL, process.env['LISH_TOKEN'])}`);
 		process.exit(1);
 	}
 	console.log('Connected!\n');

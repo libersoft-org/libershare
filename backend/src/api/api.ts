@@ -1,4 +1,5 @@
-import { type ServerWebSocket } from 'bun';
+import type { APIClient } from './client.ts';
+import { StdioTransport } from './stdio-transport.ts';
 import { Mutex } from 'async-mutex';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
@@ -11,6 +12,7 @@ import { initLISHnetsHandlers } from './lishnets.ts';
 import { initIdentityHandlers } from './identity.ts';
 import { initDatasetsHandlers } from './datasets.ts';
 import { initFsHandlers } from './fs.ts';
+import { assertUsableToken, requestHasToken } from './access-policy.ts';
 import { drainForShutdown, type ShutdownDeps } from './shutdown.ts';
 import { initUploadHandlers } from './upload.ts';
 import { initLISHsHandlers } from './lishs.ts';
@@ -28,7 +30,7 @@ interface ClientData {
 	subscribedEvents: Set<string>;
 	isLocalClient: boolean;
 }
-type ClientSocket = ServerWebSocket<ClientData>;
+type ClientSocket = APIClient;
 interface Request {
 	id: string;
 	method: string;
@@ -41,6 +43,8 @@ export interface APIServerOptions {
 	keyFile: string | undefined;
 	certFile: string | undefined;
 	apiToken?: string | undefined;
+	ipc?: boolean;
+	onIpcDisconnect?: (failed: boolean) => void;
 }
 
 /**
@@ -86,29 +90,23 @@ export function fanOutEvent<T extends BroadcastTarget>(clients: Iterable<T>, eve
 	return sent;
 }
 
-/** Longest params blob written to the log; enough to identify a call, short of dumping a file upload. */
-const MAX_LOGGED_PARAMS = 1000;
-/** Request fields whose values must never reach logs, regardless of nesting. */
-const SENSITIVE_PARAM_NAME = /(?:password|passphrase|token|secret|authorization|api[-_]?key)/i;
+/**
+ * The method name to put in a log line: only a name the dispatch table actually has, so a
+ * client cannot make the server print arbitrary text through this field.
+ */
+export function methodForLog(handlers: Record<string, unknown>, method: unknown): string {
+	return typeof method === 'string' && Object.prototype.hasOwnProperty.call(handlers, method) ? method : 'unknown';
+}
 
 /** Reply to a request that reached a closing API. */
 const SHUTTING_DOWN = 'Backend is shutting down';
 
 /**
- * Serialise request params for the log, truncated. Some methods carry a whole
- * file chunk, and a multi-megabyte log line per call is both unreadable and a
- * measurable write cost — the truncation alone would not help, because the
- * megabytes are spent building the string before it is cut. A binary payload is
- * always a plain `Uint8Array` (see {@link decodeBinaryRequest}), never a
- * `Buffer`, whose `toJSON` would run before this replacer ever sees it.
+ * The error to put in a log line: a known error code, never the message. Messages can carry
+ * request content — a JSON parse error quotes the input, a failed identity import its key.
  */
-export function formatParamsForLog(params: unknown): string {
-	const json =
-		JSON.stringify(params, (key, value) => {
-			if (key && SENSITIVE_PARAM_NAME.test(key)) return '[REDACTED]';
-			return value instanceof Uint8Array ? `<${value.byteLength} bytes>` : value;
-		}) ?? String(params);
-	return json.length <= MAX_LOGGED_PARAMS ? json : json.slice(0, MAX_LOGGED_PARAMS) + `…(${json.length} chars)`;
+export function errorCodeForLog(err: unknown): string {
+	return err instanceof CodedError && (Object.values(ErrorCodes) as string[]).includes(err.code) ? err.code : ErrorCodes.INTERNAL_ERROR;
 }
 
 /** Host network administration requires authenticated API mode on the same machine. */
@@ -268,13 +266,16 @@ export function decodeBinaryRequest(frame: Uint8Array): Request {
 export class APIServer {
 	private clients: Set<ClientSocket> = new Set();
 	private server: ReturnType<typeof Bun.serve<ClientData>> | null = null;
+	private stdio: StdioTransport | null = null;
+	private readonly ipc: boolean;
+	private readonly onIpcDisconnect: (failed: boolean) => void;
 	private readonly settings: Settings;
 	private readonly host: string;
 	private readonly port: number;
 	private readonly secure: boolean;
 	private readonly keyFile?: string | undefined;
 	private readonly certFile?: string | undefined;
-	private readonly apiToken?: string | undefined;
+	private readonly apiToken: string;
 	private readonly dataDir: string;
 	private readonly dataServer: DataServer;
 	private readonly networks: Networks;
@@ -322,7 +323,11 @@ export class APIServer {
 		this.secure = options.secure;
 		this.keyFile = options.keyFile;
 		this.certFile = options.certFile;
-		this.apiToken = options.apiToken || undefined;
+		// Before anything else is built: an API without a usable token must not come up at all.
+		this.ipc = options.ipc === true;
+		this.onIpcDisconnect = options.onIpcDisconnect ?? (() => {});
+		if (!this.ipc) assertUsableToken(options.apiToken);
+		this.apiToken = this.ipc ? '' : options.apiToken!;
 		const emitTo = (client: ClientSocket, event: string, data: any): void => this.emit(client, event, data);
 		const broadcastFn = (event: string, data: any): void => this.broadcast(event, data);
 		const broadcastExceptFn = (event: string, data: any, except?: unknown): void => this.broadcast(event, data, except as ClientSocket | undefined);
@@ -341,8 +346,8 @@ export class APIServer {
 			}
 			return false;
 		};
-		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers, !!this.apiToken);
-		const networkAdmin = <P, R>(handler: (params: P) => R) => hostNetworkAdminHandler(!!this.apiToken, handler);
+		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers, this.authenticatedTransport);
+		const networkAdmin = <P, R>(handler: (params: P) => R) => hostNetworkAdminHandler(this.authenticatedTransport, handler);
 		_system.startPolling();
 		const _relay = initRelayHandlers(this.networks, broadcastFn, hasSubscribers);
 		_relay.startPolling();
@@ -529,8 +534,8 @@ export class APIServer {
 			'system.cpu': _system.cpu,
 			'system.setVolume': _system.setVolume,
 			'system.getVolume': _system.getVolume,
-			...createTimeApiHandlers(_system, !!this.apiToken),
-			'system.network': async (_params, client) => networkStateForClient(await _system.network(), !!this.apiToken, client.data.isLocalClient),
+			...createTimeApiHandlers(_system, this.authenticatedTransport),
+			'system.network': async (_params, client) => networkStateForClient(await _system.network(), this.authenticatedTransport, client.data.isLocalClient),
 			'system.networkApply': networkAdmin(_system.networkApply),
 			'system.wifiScan': networkAdmin(_system.wifiScan),
 			'system.wifiConnect': networkAdmin(_system.wifiConnect),
@@ -541,7 +546,52 @@ export class APIServer {
 		serialiseImportHandlers(this.handlers, this.importLock, client => this.clients.has(client));
 	}
 
+	private get authenticatedTransport(): boolean {
+		return this.ipc || !!this.apiToken;
+	}
+
+	private openClient(client: ClientSocket): void {
+		if (!this.accepting) {
+			client.close();
+			return;
+		}
+		this.clients.add(client);
+		console.log(`[API] Client connected (${this.clients.size} total)`);
+	}
+
+	private closeClient(client: ClientSocket): void {
+		this.clients.delete(client);
+		unsubscribeAllPeers(client);
+		this._upload.closeClient(client);
+		console.log(`[API] Client disconnected (${this.clients.size} total)`);
+	}
+
+	/** Start reading early enough to observe the parent exiting during network startup. */
+	prepareIPC(): void {
+		if (!this.ipc || this.stdio) return;
+		this._upload.wipe();
+		this.stdio = new StdioTransport({
+			open: client => this.openClient(client),
+			close: client => this.closeClient(client),
+			message: (client, message) => this.handleMessage(client, message),
+			disconnect: failed => this.onIpcDisconnect(failed),
+		});
+		this.stdio.start();
+	}
+
 	start(): void {
+		this.networks.onPeerCountChange = counts => {
+			for (const client of this.clients) this.emit(client, 'peers:count', counts);
+		};
+		this.networks.onBootstrapStatusChange = (networkID, status) => {
+			this.broadcast('lishnets:bootstrapStatus', { networkID, status });
+		};
+		if (this.ipc) {
+			this.prepareIPC();
+			this.stdio!.ready();
+			console.log('[API] Desktop IPC ready');
+			return;
+		}
 		const self = this;
 		// Uploads are client-supplied bytes on our disk, and a transfer interrupted
 		// by a kill leaves one behind with nobody left to abort it.
@@ -575,16 +625,10 @@ export class APIServer {
 				// and is then ignored at runtime.
 				maxPayloadLength: MAX_API_MESSAGE_SIZE,
 				open(ws): void {
-					self.clients.add(ws);
-					console.log(`[API] Client connected (${self.clients.size} total)`);
+					self.openClient(ws);
 				},
 				close(ws): void {
-					self.clients.delete(ws);
-					unsubscribeAllPeers(ws);
-					// A socket that drops mid-transfer leaves a half-written temp
-					// file with nobody able to finish or delete it.
-					self._upload.closeClient(ws);
-					console.log(`[API] Client disconnected (${self.clients.size} total)`);
+					self.closeClient(ws);
 				},
 				async message(ws, message): Promise<void> {
 					// A binary frame must not be run through toString(): it is a
@@ -605,22 +649,8 @@ export class APIServer {
 
 		const actualPort = this.server.port;
 
-		// Listen for peer count changes and send to subscribed clients
-		this.networks.onPeerCountChange = counts => {
-			if (this.clients.size === 0) return;
-			for (const client of this.clients) this.emit(client, 'peers:count', counts);
-		};
-
-		// Broadcast per-network bootstrap status updates (per-peer dial outcomes).
-		// Clients use the lishnets:bootstrapStatus event to surface stale-config
-		// warnings (configured peerID does not match actual remote identity) and
-		// offer remediation actions in the LISH networks settings UI.
-		this.networks.onBootstrapStatusChange = (networkID, status) => {
-			this.broadcast('lishnets:bootstrapStatus', { networkID, status });
-		};
-
 		const protocol = this.secure ? 'wss' : 'ws';
-		console.log(`[API] Token authentication ${this.apiToken ? 'enabled' : 'disabled'}`);
+		console.log('[API] Token authentication required');
 		console.log(`[API] WebSocket server listening on ${protocol}://${this.host}:${actualPort}`);
 	}
 
@@ -634,6 +664,7 @@ export class APIServer {
 	stop(): Promise<void> {
 		if (!this.stopping) {
 			this.accepting = false;
+			this.stdio?.beginShutdown();
 			this.peerReadAbort.abort(new Error(SHUTTING_DOWN));
 			this.networks.getNetwork().cancelRunOperations(true);
 			this.stopping = drainForShutdown(this.shutdownDeps);
@@ -643,6 +674,10 @@ export class APIServer {
 
 	/** Close client sockets and the listener; nothing is left to answer them. */
 	private async closeServer(): Promise<void> {
+		if (this.stdio) {
+			await this.stdio.stop();
+			this.stdio = null;
+		}
 		for (const client of this.clients) {
 			try {
 				client.close();
@@ -655,8 +690,7 @@ export class APIServer {
 	}
 
 	private isAuthorized(url: URL): boolean {
-		if (!this.apiToken) return true;
-		return url.searchParams.get('token') === this.apiToken;
+		return requestHasToken(url, this.apiToken);
 	}
 
 	private jsonResponse(data: unknown, status: number = 200): Response {
@@ -665,6 +699,7 @@ export class APIServer {
 			headers: {
 				'content-type': 'application/json; charset=utf-8',
 				'access-control-allow-origin': '*',
+				'cache-control': 'no-store',
 			},
 		});
 	}
@@ -676,6 +711,7 @@ export class APIServer {
 				'access-control-allow-origin': '*',
 				'access-control-allow-methods': 'GET, OPTIONS',
 				'access-control-allow-headers': 'content-type',
+				'cache-control': 'no-store',
 			},
 		});
 	}
@@ -702,6 +738,7 @@ export class APIServer {
 		let req: Request;
 		try {
 			req = typeof message === 'string' ? JSON.parse(message) : decodeBinaryRequest(message);
+			if (!req || typeof req !== 'object' || Array.isArray(req)) throw new CodedError(ErrorCodes.PARSE_ERROR);
 		} catch (err) {
 			// A frame rejected on a real limit reports that limit rather than a
 			// blanket parse failure, and carries the request id when the decoder got
@@ -738,7 +775,9 @@ export class APIServer {
 			const result = await this.execute(client, req.method, req.params || {});
 			client.send(JSON.stringify({ id: req.id, result }));
 		} catch (err: any) {
-			console.error(`[API] Error executing ${req.method}, params=${formatParamsForLog(req.params)}: ${err.message}`);
+			// Request parameters and error text are never logged: either can carry a private key,
+			// a password or file content.
+			console.error(`[API] Error executing ${methodForLog(this.handlers, req.method)}: ${errorCodeForLog(err)}`);
 			if (err instanceof CodedError) client.send(JSON.stringify({ id: req.id, error: err.code, ...(err.detail !== undefined && { errorDetail: err.detail }) }));
 			else client.send(JSON.stringify({ id: req.id, error: ErrorCodes.INTERNAL_ERROR, errorDetail: err.message }));
 		}
@@ -753,7 +792,7 @@ export class APIServer {
 	private handlers!: Record<string, (params: any, client: ClientSocket) => any>;
 
 	private async execute(client: ClientSocket, method: string, params: Record<string, any>): Promise<any> {
-		console.log(`[API] Executing method: ${method}, params: ${formatParamsForLog(params)}`);
+		console.log(`[API] Executing method: ${methodForLog(this.handlers, method)}`);
 		const handler = this.handlers[method];
 		if (!handler) throw new CodedError(ErrorCodes.UNKNOWN_METHOD, method);
 		return handler.call(this, params, client);
@@ -795,7 +834,7 @@ export class APIServer {
 			event,
 			client => {
 				if (sharedMessage !== null) return sharedMessage;
-				const state = event === 'system:network' ? networkStateForClient(data as NetworkStateInfo, !!this.apiToken, client.data.isLocalClient) : timeStatusForClient(data as SystemTimeStatus, !!this.apiToken, client.data.isLocalClient);
+				const state = event === 'system:network' ? networkStateForClient(data as NetworkStateInfo, this.authenticatedTransport, client.data.isLocalClient) : timeStatusForClient(data as SystemTimeStatus, this.authenticatedTransport, client.data.isLocalClient);
 				return JSON.stringify({ event, data: state });
 			},
 			except
