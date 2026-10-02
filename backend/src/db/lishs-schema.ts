@@ -113,8 +113,11 @@ function createLISHsSchema(db: Database): void {
 		target TEXT NOT NULL,
 		source TEXT NOT NULL,
 		hardlink INTEGER NOT NULL CHECK (hardlink IN (0, 1)),
+		materialized_identity TEXT,
 		PRIMARY KEY (lish_id, path)
 	)`);
+	const bindingColumns = db.query<{ name: string }, []>('PRAGMA table_info(lishs_link_bindings)').all();
+	if (!bindingColumns.some(column => column.name === 'materialized_identity')) db.run('ALTER TABLE lishs_link_bindings ADD COLUMN materialized_identity TEXT');
 
 	db.run(`CREATE TABLE IF NOT EXISTS lishs_roots (
 		lish_id TEXT NOT NULL REFERENCES lishs(lish_id) ON DELETE CASCADE,

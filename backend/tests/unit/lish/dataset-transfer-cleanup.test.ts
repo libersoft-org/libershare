@@ -1,0 +1,53 @@
+import { afterEach, expect, test } from 'bun:test';
+import { mkdtemp, mkdir, writeFile, readFile, stat, rm, rename } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { ILISH } from '@shared';
+import type { DatasetLinkBinding } from '../../../src/db/lishs-link-bindings.ts';
+import { moveDatasetData, deleteDatasetData } from '../../../src/lish/dataset-transfer.ts';
+import type { DatasetRoot } from '../../../src/lish/safe-dataset-files.ts';
+
+const scratch: string[] = [];
+afterEach(async () => { for (const path of scratch.splice(0)) await rm(path, { recursive: true, force: true }); });
+
+async function fixture() {
+	const base = await mkdtemp(join(tmpdir(), 'dataset-cleanup-'));
+	scratch.push(base);
+	const source = join(base, 'source');
+	await mkdir(source);
+	await writeFile(join(source, 'data.bin'), 'data');
+	const manifest: ILISH = { id: 'cleanup', created: '2026-01-01', chunkSize: 4, checksumAlgo: 'sha256', files: [{ path: 'data.bin', size: 4, checksums: [new Bun.CryptoHasher('sha256').update('data').digest('hex')] }] };
+	const root = (component: string): DatasetRoot => ({ kind: 'derived', base, component });
+	return { base, source, manifest, root };
+}
+
+test('removes only recorded materialized copies after repeated moves and deletion', async () => {
+	const f = await fixture();
+	f.manifest.links = [{ path: 'copy.bin', target: join(f.source, 'data.bin') }];
+	let bindings: DatasetLinkBinding[] = [];
+	await moveDatasetData(f.manifest, f.root('source'), f.root('first'), value => { bindings = value; }, () => {});
+	expect(bindings[0]?.materializedIdentity).toBeString();
+	await writeFile(join(f.base, 'first/unrelated.txt'), 'keep');
+	const first = await moveDatasetData(f.manifest, f.root('first'), f.root('second'), value => { bindings = value; }, () => {}, 'source', bindings);
+	expect(first.cleanupWarnings).toEqual([{ stage: 'source-cleanup', code: 'ENOTEMPTY' }]);
+	await expect(stat(join(f.base, 'first/copy.bin'))).rejects.toMatchObject({ code: 'ENOENT' });
+	await expect(stat(join(f.base, 'first/data.bin'))).rejects.toMatchObject({ code: 'ENOENT' });
+	expect(await readFile(join(f.base, 'first/unrelated.txt'), 'utf8')).toBe('keep');
+	await writeFile(join(f.base, 'second/unrelated.txt'), 'keep too');
+	await deleteDatasetData(f.manifest, f.root('second'), bindings);
+	await expect(stat(join(f.base, 'second/copy.bin'))).rejects.toMatchObject({ code: 'ENOENT' });
+	await expect(stat(join(f.base, 'second/data.bin'))).rejects.toMatchObject({ code: 'ENOENT' });
+	expect(await readFile(join(f.base, 'second/unrelated.txt'), 'utf8')).toBe('keep too');
+});
+
+test('refuses deletion when a recorded materialized copy has been replaced', async () => {
+	const f = await fixture();
+	f.manifest.links = [{ path: 'copy.bin', target: 'data.bin' }];
+	let bindings: DatasetLinkBinding[] = [];
+	await moveDatasetData(f.manifest, f.root('source'), f.root('first'), value => { bindings = value; }, () => {});
+	await rename(join(f.base, 'first/copy.bin'), join(f.base, 'first/original-copy.bin'));
+	await writeFile(join(f.base, 'first/copy.bin'), 'foreign');
+	await expect(deleteDatasetData(f.manifest, f.root('first'), bindings)).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+	expect(await readFile(join(f.base, 'first/copy.bin'), 'utf8')).toBe('foreign');
+	expect(await readFile(join(f.base, 'first/data.bin'), 'utf8')).toBe('data');
+});

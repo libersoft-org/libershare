@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { resolve } from 'node:path';
 import { getDatasetRoot, setDatasetRoot, relocateDataset, addDataset } from '../../../src/db/lishs-roots.ts';
 import { getDatasetLinkBindings } from '../../../src/db/lishs-link-bindings.ts';
-import { addLISH, deleteLISH, getLISH } from '../../../src/db/lishs.ts';
+import { addLISH, deleteLISH, getLISH, initLISHsTables } from '../../../src/db/lishs.ts';
 import { createTestDB, createTestLISH, TEST_LISH_ID } from '../helpers/fixtures.ts';
 
 const databases: ReturnType<typeof createTestDB>[] = [];
@@ -86,4 +86,17 @@ it('keeps local link associations when an overwrite rolls back', () => {
 	expect(getDatasetLinkBindings(db, TEST_LISH_ID)).toEqual([binding]);
 	deleteLISH(db, TEST_LISH_ID);
 	expect(getDatasetLinkBindings(db, TEST_LISH_ID)).toEqual([]);
+});
+
+it('migrates old link associations without inventing ownership of an existing file', () => {
+	const db = fixture();
+	const root = { kind: 'explicit' as const, path: resolve('before') };
+	const binding = { path: 'copy.bin', target: 'data.bin', source: 'data.bin', hardlink: false };
+	relocateDataset(db, TEST_LISH_ID, root, false, [binding]);
+	db.run('ALTER TABLE lishs_link_bindings DROP COLUMN materialized_identity');
+	initLISHsTables(db);
+	expect(getDatasetLinkBindings(db, TEST_LISH_ID)).toEqual([binding]);
+	relocateDataset(db, TEST_LISH_ID, root, false, [{ ...binding, materializedIdentity: 'volume:file' }]);
+	initLISHsTables(db);
+	expect(getDatasetLinkBindings(db, TEST_LISH_ID)[0]?.materializedIdentity).toBe('volume:file');
 });

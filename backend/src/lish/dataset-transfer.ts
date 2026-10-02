@@ -66,6 +66,24 @@ async function snapshot(dataset: SafeDataset, manifest: ILISH): Promise<Map<stri
 	return identities;
 }
 
+function cleanupManifest(manifest: ILISH, bindings: readonly DatasetLinkBinding[]): ILISH {
+	const files = [...(manifest.files ?? [])];
+	for (const binding of bindings) {
+		const link = manifest.links?.find(link => link.path === binding.path);
+		const source = manifest.files?.find(file => file.path === binding.source);
+		if (!link || !source || link.target !== binding.target || (link.hardlink === true) !== binding.hardlink) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'The materialized file no longer matches the manifest');
+		files.push({ ...source, path: binding.path });
+	}
+	return { ...manifest, files };
+}
+
+function checkMaterializedIdentities(identities: ReadonlyMap<string, string>, bindings: readonly DatasetLinkBinding[]): void {
+	for (const binding of bindings) {
+		const actual = identities.get(binding.path);
+		if (actual && actual !== binding.materializedIdentity) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'The materialized file was replaced or its identity is unknown');
+	}
+}
+
 async function removeContents(dataset: SafeDataset, manifest: ILISH, identities: Map<string, string>, removeRoot: boolean): Promise<boolean> {
 	let retained = false;
 	for (const file of manifest.files ?? []) {
@@ -85,7 +103,8 @@ async function removeContents(dataset: SafeDataset, manifest: ILISH, identities:
 	return retained;
 }
 
-export async function deleteDatasetData(manifest: ILISH, root: DatasetRoot): Promise<void> {
+export async function deleteDatasetData(manifest: ILISH, root: DatasetRoot, bindings: readonly DatasetLinkBinding[] = []): Promise<void> {
+	const contents = cleanupManifest(manifest, bindings);
 	let dataset: SafeDataset;
 	try {
 		dataset = await openDataset(root);
@@ -94,9 +113,10 @@ export async function deleteDatasetData(manifest: ILISH, root: DatasetRoot): Pro
 		throw error;
 	}
 	try {
-		await dataset.prepare(manifest, { reserve: false, writable: false });
-		const identities = await snapshot(dataset, manifest);
-		await removeContents(dataset, manifest, identities, root.kind === 'derived');
+		await dataset.prepare(contents, { reserve: false, writable: false });
+		const identities = await snapshot(dataset, contents);
+		checkMaterializedIdentities(identities, bindings);
+		await removeContents(dataset, contents, identities, root.kind === 'derived');
 	} finally {
 		await dataset.close();
 	}
@@ -152,7 +172,7 @@ async function copyFile(source: DatasetFileHandle, target: DatasetFileHandle, fi
 export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, targetRoot: DatasetRoot, commit: (bindings: DatasetLinkBinding[]) => void, progress: (event: DatasetMoveProgress) => void, verification: 'manifest' | 'source' = 'manifest', bindings: readonly DatasetLinkBinding[] = []): Promise<DatasetMoveResult> {
 	validateLISHStructure(manifest, Number.MAX_SAFE_INTEGER);
 	const copies = materializedFiles(manifest, sourceRoot, bindings);
-	const nextBindings = (manifest.links ?? []).map(link => ({ path: link.path, target: link.target, hardlink: link.hardlink === true, source: copies.find(entry => entry.file.path === link.path)!.source }));
+	const sourceContents = cleanupManifest(manifest, bindings);
 	const copiedManifest = { ...manifest, files: copies.map(entry => entry.file), links: [] };
 	const source = await openDataset(sourceRoot);
 	let target: SafeDataset | undefined;
@@ -163,8 +183,9 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 	const result: DatasetMoveResult = { cleanupWarnings: [] };
 	let targetIdentities = new Map<string, string>();
 	try {
-		await source.prepare(manifest, { reserve: false, writable: false });
-		const sourceIdentities = await snapshot(source, manifest);
+		await source.prepare(sourceContents, { reserve: false, writable: false });
+		const sourceIdentities = await snapshot(source, sourceContents);
+		checkMaterializedIdentities(sourceIdentities, bindings);
 		const sizes = new Map<string, number>();
 		for (const { file, source: path } of copies) {
 			const info = await source.statFile(path);
@@ -203,11 +224,16 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 			progress({ type: 'file', path: file.path, totalFiles, completedFiles, totalBytes, completedBytes });
 		}
 		await target.prepare(copiedManifest, { reserve: false, writable: true });
+		const nextBindings = (manifest.links ?? []).map(link => {
+			const materializedIdentity = targetIdentities.get(link.path);
+			if (!materializedIdentity) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'Missing materialized file identity');
+			return { path: link.path, target: link.target, hardlink: link.hardlink === true, source: copies.find(entry => entry.file.path === link.path)!.source, materializedIdentity };
+		});
 		commitStarted = true;
 		commit(nextBindings);
 		committed = true;
 		try {
-			if (await removeContents(source, manifest, sourceIdentities, sourceRoot.kind === 'derived')) result.cleanupWarnings.push({ stage: 'source-cleanup', code: 'ENOTEMPTY' });
+			if (await removeContents(source, sourceContents, sourceIdentities, sourceRoot.kind === 'derived')) result.cleanupWarnings.push({ stage: 'source-cleanup', code: 'ENOTEMPTY' });
 		} catch (error) {
 			result.cleanupWarnings.push({ stage: 'source-cleanup', code: cleanupCode(error) });
 		}
