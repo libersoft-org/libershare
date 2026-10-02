@@ -81,7 +81,7 @@ describe('safe dataset namespace', () => {
 	test('reserves nested files and explicit empty directories before content writes', async () => {
 		await fixture(async (dataset, path) => {
 			await dataset.prepare(manifest([{ path: 'a/data', size: 3 }], ['empty']), { reserve: true });
-			expect(await readdir(path)).toEqual(['a', 'empty']);
+			expect((await readdir(path)).sort()).toEqual(['a', 'empty']);
 			const file = await dataset.openFile('a/data', 'write');
 			try {
 				expect(await file.write(Buffer.from('abc'), 0)).toBe(3);
