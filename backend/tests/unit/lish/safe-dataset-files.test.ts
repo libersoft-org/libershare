@@ -31,7 +31,9 @@ describe('safe dataset namespace', () => {
 			try {
 				choice.path = join(outer, 'missing');
 				await dataset.assertPathBinding();
-			} finally { await dataset.close(); }
+			} finally {
+				await dataset.close();
+			}
 		});
 	});
 
@@ -46,7 +48,9 @@ describe('safe dataset namespace', () => {
 					await rename(base, join(outer, 'renamed'));
 					await mkdir(join(base, 'root'), { recursive: true });
 					await expect(dataset.assertPathBinding()).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
-				} finally { await dataset.close(); }
+				} finally {
+					await dataset.close();
+				}
 			});
 		});
 	}
@@ -59,7 +63,9 @@ describe('safe dataset namespace', () => {
 			try {
 				await rename(root, join(outer, 'renamed'));
 				await expect(dataset.assertPathBinding()).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
-			} finally { await dataset.close(); }
+			} finally {
+				await dataset.close();
+			}
 		});
 	});
 

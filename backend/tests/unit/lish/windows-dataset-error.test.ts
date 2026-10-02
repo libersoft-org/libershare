@@ -47,7 +47,10 @@ test.each([39, 112])('Windows error %i retains and retries the chunk after disk 
 	const peers = new PeerManager();
 	peers.setLishID(manifest.id);
 	peers.tryAdd('test-peer', client as never, 'DIRECT');
-	const pause = new PauseController(() => disabled, () => false);
+	const pause = new PauseController(
+		() => disabled,
+		() => false
+	);
 	const progress = new ProgressReporter();
 	const retries: RetryInfo[] = [];
 	const errors: string[] = [];
@@ -65,8 +68,14 @@ test.each([39, 112])('Windows error %i retains and retries the chunk after disk 
 		getLish: () => manifest,
 		isDestroyed: () => false,
 		isDisabled: () => disabled,
-		onSetError: code => { errors.push(code); disabled = true; },
-		onRetry: info => { retries.push(info); if (!info.resolved) spaceAvailable = true; },
+		onSetError: code => {
+			errors.push(code);
+			disabled = true;
+		},
+		onRetry: info => {
+			retries.push(info);
+			if (!info.resolved) spaceAvailable = true;
+		},
 		emitAllocProgress: () => {},
 	});
 	const timing = ChunkDownloader as unknown as { WRITE_RETRY_DELAY: number };

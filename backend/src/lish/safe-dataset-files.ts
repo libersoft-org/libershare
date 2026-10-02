@@ -100,14 +100,17 @@ export class SafeDataset {
 		this.active();
 		if (!this.selection) unsafe('The dataset has no recorded root choice');
 		let reopened: SafeDataset;
-		try { reopened = await openDataset(this.selection); }
-		catch (error) {
+		try {
+			reopened = await openDataset(this.selection);
+		} catch (error) {
 			if (code(error) === 'ENOENT') unsafe('Dataset root no longer exists at the chosen path');
 			throw normalized(error);
 		}
 		try {
 			if ((await this.root.stat()).identity !== (await reopened.root.stat()).identity) unsafe('Dataset root was replaced at the chosen path');
-		} finally { await reopened.close(); }
+		} finally {
+			await reopened.close();
+		}
 	}
 
 	private active(): void {

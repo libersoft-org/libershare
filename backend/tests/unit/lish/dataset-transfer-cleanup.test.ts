@@ -9,7 +9,9 @@ import { moveDatasetData, deleteDatasetData } from '../../../src/lish/dataset-tr
 import type { DatasetRoot } from '../../../src/lish/safe-dataset-files.ts';
 
 const scratch: string[] = [];
-afterEach(async () => { for (const path of scratch.splice(0)) await rm(path, { recursive: true, force: true }); });
+afterEach(async () => {
+	for (const path of scratch.splice(0)) await rm(path, { recursive: true, force: true });
+});
 
 async function fixture() {
 	const base = await mkdtemp(join(tmpdir(), 'dataset-cleanup-'));
@@ -26,10 +28,28 @@ test('removes only recorded materialized copies after repeated moves and deletio
 	const f = await fixture();
 	f.manifest.links = [{ path: 'copy.bin', target: join(f.source, 'data.bin') }];
 	let bindings: DatasetLinkBinding[] = [];
-	await moveDatasetData(f.manifest, f.root('source'), f.root('first'), value => { bindings = value; }, () => {});
+	await moveDatasetData(
+		f.manifest,
+		f.root('source'),
+		f.root('first'),
+		value => {
+			bindings = value;
+		},
+		() => {}
+	);
 	expect(bindings[0]?.materializedIdentity).toBeString();
 	await writeFile(join(f.base, 'first/unrelated.txt'), 'keep');
-	const first = await moveDatasetData(f.manifest, f.root('first'), f.root('second'), value => { bindings = value; }, () => {}, 'source', bindings);
+	const first = await moveDatasetData(
+		f.manifest,
+		f.root('first'),
+		f.root('second'),
+		value => {
+			bindings = value;
+		},
+		() => {},
+		'source',
+		bindings
+	);
 	expect(first.cleanupWarnings).toEqual([{ stage: 'source-cleanup', code: 'ENOTEMPTY' }]);
 	await expect(stat(join(f.base, 'first/copy.bin'))).rejects.toMatchObject({ code: 'ENOENT' });
 	await expect(stat(join(f.base, 'first/data.bin'))).rejects.toMatchObject({ code: 'ENOENT' });
@@ -45,7 +65,15 @@ test('refuses deletion when a recorded materialized copy has been replaced', asy
 	const f = await fixture();
 	f.manifest.links = [{ path: 'copy.bin', target: 'data.bin' }];
 	let bindings: DatasetLinkBinding[] = [];
-	await moveDatasetData(f.manifest, f.root('source'), f.root('first'), value => { bindings = value; }, () => {});
+	await moveDatasetData(
+		f.manifest,
+		f.root('source'),
+		f.root('first'),
+		value => {
+			bindings = value;
+		},
+		() => {}
+	);
 	await rename(join(f.base, 'first/copy.bin'), join(f.base, 'first/original-copy.bin'));
 	await writeFile(join(f.base, 'first/copy.bin'), 'foreign');
 	await expect(deleteDatasetData(f.manifest, f.root('first'), bindings)).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
@@ -57,12 +85,22 @@ test.skipIf(process.platform === 'win32')('does not commit a renamed destination
 	const f = await fixture();
 	let replaced = false;
 	let committed = false;
-	await expect(moveDatasetData(f.manifest, f.root('source'), f.root('target'), () => { committed = true; }, progress => {
-		if (progress.type !== 'file' || replaced) return;
-		replaced = true;
-		renameSync(join(f.base, 'target'), join(f.base, 'moved-target'));
-		mkdirSync(join(f.base, 'target'));
-	})).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+	await expect(
+		moveDatasetData(
+			f.manifest,
+			f.root('source'),
+			f.root('target'),
+			() => {
+				committed = true;
+			},
+			progress => {
+				if (progress.type !== 'file' || replaced) return;
+				replaced = true;
+				renameSync(join(f.base, 'target'), join(f.base, 'moved-target'));
+				mkdirSync(join(f.base, 'target'));
+			}
+		)
+	).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 	expect(replaced).toBe(true);
 	expect(committed).toBe(false);
 	expect(await readFile(join(f.source, 'data.bin'), 'utf8')).toBe('data');

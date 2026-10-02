@@ -48,23 +48,26 @@ function openAt(fd: number, name: Buffer, flags: number): number {
 function loadRenamer() {
 	const signature = { args: [FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 } as const;
 	try {
-		return process.platform === 'darwin'
-			? dlopen('/usr/lib/libSystem.B.dylib', { renameatx_np: signature }).symbols.renameatx_np
-			: dlopen('libc.so.6', { renameat2: signature }).symbols.renameat2;
-	} catch { throw failure('LISH_UNSAFE_PATH', 'Atomic no-replace rename is unavailable'); }
+		return process.platform === 'darwin' ? dlopen('/usr/lib/libSystem.B.dylib', { renameatx_np: signature }).symbols.renameatx_np : dlopen('libc.so.6', { renameat2: signature }).symbols.renameat2;
+	} catch {
+		throw failure('LISH_UNSAFE_PATH', 'Atomic no-replace rename is unavailable');
+	}
 }
 
 let renamer: ReturnType<typeof loadRenamer> | undefined;
 function renameNoReplace(fromFd: number, from: Buffer, toFd: number, to: Buffer): void {
 	// Darwin RENAME_EXCL and Linux RENAME_NOREPLACE both refuse an existing target.
-	try { syscall((renamer ??= loadRenamer())(fromFd, ptr(from), toFd, ptr(to), process.platform === 'darwin' ? 0x4 : 0x1)); }
-	catch (error) {
+	try {
+		syscall((renamer ??= loadRenamer())(fromFd, ptr(from), toFd, ptr(to), process.platform === 'darwin' ? 0x4 : 0x1));
+	} catch (error) {
 		if (['ENOSYS', 'ENOTSUP', 'EOPNOTSUPP', 'EINVAL'].includes((error as NodeJS.ErrnoException).code ?? '')) throw failure('LISH_UNSAFE_PATH', 'Atomic no-replace rename is unavailable');
 		throw error;
 	}
 }
 
-function directoryRemovalFlag(): number { return process.platform === 'darwin' ? 0x80 : 0x200; }
+function directoryRemovalFlag(): number {
+	return process.platform === 'darwin' ? 0x80 : 0x200;
+}
 
 /** Capture a name before checking it. Never unlink whatever later appears at the original name. */
 async function removeCaptured(parent: number, name: Buffer, kind: 'file' | 'directory', expectedIdentity: string): Promise<void> {
@@ -83,13 +86,17 @@ async function removeCaptured(parent: number, name: Buffer, kind: 'file' | 'dire
 		try {
 			const info = await statFd(fd);
 			if (info.kind !== kind || info.identity !== expectedIdentity) throw failure('LISH_UNSAFE_PATH', 'Dataset entry changed before removal');
-		} finally { await closeFd(fd); }
+		} finally {
+			await closeFd(fd);
+		}
 		syscall(nativeApi().api.symbols.unlinkat(directory, ptr(item), kind === 'directory' ? directoryRemovalFlag() : 0));
 		captured = false;
 	} catch (error) {
 		if (captured && directory !== undefined) {
-			try { renameNoReplace(directory, item, parent, name); captured = false; }
-			catch {
+			try {
+				renameNoReplace(directory, item, parent, name);
+				captured = false;
+			} catch {
 				// The private directory protects ordinary pathname races, not malicious code with the same UID.
 				throw Object.assign(failure('LISH_UNSAFE_PATH', 'Removal stopped; captured data was preserved'), { retainedDirectory: workspaceName });
 			}
