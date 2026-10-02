@@ -41,9 +41,9 @@ function directoriesOf(manifest: ILISH): string[] {
 	return [...paths].sort((a, b) => b.split('/').length - a.split('/').length || b.localeCompare(a));
 }
 
-function materializedFiles(manifest: ILISH, root: DatasetRoot, bindings: readonly DatasetLinkBinding[]): { source: string; file: NonNullable<ILISH['files']>[number] }[] {
+function materializedFiles(manifest: ILISH, root: DatasetRoot, bindings: readonly DatasetLinkBinding[]): { source: string; declaredSource: string; file: NonNullable<ILISH['files']>[number] }[] {
 	const files = manifest.files ?? [];
-	const entries = files.map(file => ({ source: file.path, file }));
+	const entries = files.map(file => ({ source: file.path, declaredSource: file.path, file }));
 	for (const link of manifest.links ?? []) {
 		const binding = bindings.find(entry => entry.path === link.path);
 		if (binding && (binding.target !== link.target || binding.hardlink !== (link.hardlink === true))) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'The local link association no longer matches the manifest');
@@ -54,7 +54,8 @@ function materializedFiles(manifest: ILISH, root: DatasetRoot, bindings: readonl
 				.join('/');
 		const target = files.find(file => file.path === path);
 		if (!target || isAbsolute(path) || path.startsWith('../')) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'The link target is not a declared dataset file');
-		entries.push({ source: target.path, file: { ...target, path: link.path } });
+		// After materialization the local copy can be edited independently of its original target.
+		entries.push({ source: binding?.materializedIdentity ? binding.path : target.path, declaredSource: target.path, file: { ...target, path: link.path } });
 	}
 	return entries;
 }
@@ -234,7 +235,7 @@ export async function moveDatasetData(manifest: ILISH, sourceRoot: DatasetRoot, 
 		const nextBindings = (manifest.links ?? []).map(link => {
 			const materializedIdentity = targetIdentities.get(link.path);
 			if (!materializedIdentity) throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'Missing materialized file identity');
-			return { path: link.path, target: link.target, hardlink: link.hardlink === true, source: copies.find(entry => entry.file.path === link.path)!.source, materializedIdentity };
+			return { path: link.path, target: link.target, hardlink: link.hardlink === true, source: copies.find(entry => entry.file.path === link.path)!.declaredSource, materializedIdentity };
 		});
 		await target.assertPathBinding();
 		commitStarted = true;

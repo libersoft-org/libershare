@@ -106,3 +106,49 @@ test.skipIf(process.platform === 'win32')('does not commit a renamed destination
 	expect(await readFile(join(f.source, 'data.bin'), 'utf8')).toBe('data');
 	expect((await stat(join(f.base, 'target'))).isDirectory()).toBe(true);
 });
+
+
+test.each(['edit', 'xy'])('manual moves preserve edited materialized bytes across second and third moves: %j', async contents => {
+ const f = await fixture();
+ f.manifest.links = [{path: 'copy.bin', target: join(f.source, 'data.bin')}];
+ let bindings: DatasetLinkBinding[] = [];
+ await moveDatasetData(f.manifest, f.root('source'), f.root('first'), value => { bindings = value; }, () => {});
+ const originalIdentity = (await stat(join(f.base, 'first/copy.bin'), {bigint: true})).ino;
+ await writeFile(join(f.base, 'first/copy.bin'), contents);
+ expect((await stat(join(f.base, 'first/copy.bin'), {bigint: true})).ino).toBe(originalIdentity);
+ for (const [source, target] of [['first', 'second'], ['second', 'third']] as const) {
+  await moveDatasetData(f.manifest, f.root(source), f.root(target), value => { bindings = value; }, () => {}, 'source', bindings);
+  expect(await readFile(join(f.base, target, 'copy.bin'), 'utf8')).toBe(contents);
+  expect(await readFile(join(f.base, target, 'data.bin'), 'utf8')).toBe('data');
+  expect(bindings[0]?.source).toBe('data.bin');
+  expect(bindings[0]?.target).toBe(join(f.source, 'data.bin'));
+  await expect(stat(join(f.base, source))).rejects.toMatchObject({code: 'ENOENT'});
+ }
+});
+
+test('finalization refuses edited materialized bytes before committing or deleting the source', async () => {
+ const f = await fixture();
+ f.manifest.links = [{path: 'copy.bin', target: join(f.source, 'data.bin')}];
+ let bindings: DatasetLinkBinding[] = [];
+ await moveDatasetData(f.manifest, f.root('source'), f.root('first'), value => { bindings = value; }, () => {});
+ await writeFile(join(f.base, 'first/copy.bin'), 'edit');
+ let committed = false;
+ await expect(moveDatasetData(f.manifest, f.root('first'), f.root('final'), () => { committed = true; }, () => {}, 'manifest', bindings)).rejects.toMatchObject({code: 'LISH_INVALID_MANIFEST'});
+ expect(committed).toBe(false);
+ expect(await readFile(join(f.base, 'first/copy.bin'), 'utf8')).toBe('edit');
+ expect(await readFile(join(f.base, 'first/data.bin'), 'utf8')).toBe('data');
+ await expect(stat(join(f.base, 'final'))).rejects.toMatchObject({code: 'ENOENT'});
+});
+
+test('a grown materialized copy is retained when relocation refuses its size', async () => {
+ const f = await fixture();
+ f.manifest.links = [{path: 'copy.bin', target: 'data.bin'}];
+ let bindings: DatasetLinkBinding[] = [];
+ await moveDatasetData(f.manifest, f.root('source'), f.root('first'), value => { bindings = value; }, () => {});
+ await writeFile(join(f.base, 'first/copy.bin'), 'more data');
+ let committed = false;
+ await expect(moveDatasetData(f.manifest, f.root('first'), f.root('next'), () => { committed = true; }, () => {}, 'source', bindings)).rejects.toMatchObject({code: 'IO_NOT_FOUND'});
+ expect(committed).toBe(false);
+ expect(await readFile(join(f.base, 'first/copy.bin'), 'utf8')).toBe('more data');
+ expect(await readFile(join(f.base, 'first/data.bin'), 'utf8')).toBe('data');
+});
