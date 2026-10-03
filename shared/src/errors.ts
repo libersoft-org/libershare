@@ -45,6 +45,8 @@ const errorCodes = [
 	'NETCONFIG_UNSUPPORTED',
 	'NETCONFIG_FAILED',
 	'NETCONFIG_STALE',
+	'NETCONFIG_BUSY',
+	'SYSTEM_TIME_BUSY',
 
 	// Peers — codes prefixed PEER_ are remote-peer-scoped; the frontend peer
 	// fallback (peerFallback.ts) treats them as retryable on the next peer.

@@ -4,7 +4,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { applyInterfaceConfig, disconnectWifiNetwork, joinWifiNetwork, networkState, refreshNetworkState, scanWifiNetworks } from '../../scripts/networkState.ts';
+	import { acknowledgeNetworkMutation, applyInterfaceConfig, disconnectWifiNetwork, joinWifiNetwork, networkState, refreshNetworkState, scanWifiNetworks } from '../../scripts/networkState.ts';
 	import { networkConfigFormFrom, networkConfigFromForm, networkFormMessage, networkFormUpdate, validateNetworkConfigForm, type DnsUpdateMode, type NetworkConfigForm } from '../../scripts/networkConfig.ts';
 	import { ipv4BaselineOf, isUnambiguousWifiTarget, type NetAddressMode, type NetInterfaceInfo, type NetIPv4Baseline, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -39,6 +39,9 @@
 	let dnsMode = $state<DnsUpdateMode>('unchanged');
 	let dns = $state('');
 	let busy = $state(false);
+	let acknowledging = $state(false);
+	let refreshing = $state(false);
+	let writeBlocked = $derived(!!$networkState.mutation || $networkState.stale === true || acknowledging);
 	let joiningSSID = $state<string | null>(null);
 	let disconnecting = $state(false);
 	let disconnectFeedback = $state(false);
@@ -123,6 +126,34 @@
 		reported = false;
 	}
 
+	async function refreshState(): Promise<void> {
+		if (refreshing) return;
+		refreshing = true;
+		try {
+			await refreshNetworkState();
+		} catch (error) {
+			failed = true;
+			message = translateError(error);
+		} finally {
+			refreshing = false;
+		}
+	}
+
+	async function acknowledgeMutation(): Promise<void> {
+		if ($networkState.mutation?.state !== 'interrupted' || $networkState.stale || busy || acknowledging) return;
+		acknowledging = true;
+		try {
+			await acknowledgeNetworkMutation();
+			seedCurrentInterface();
+			clearMessage();
+		} catch (error) {
+			failed = true;
+			message = translateError(error);
+		} finally {
+			acknowledging = false;
+		}
+	}
+
 	function seedCurrentInterface(): void {
 		const current = get(networkState).interfaces.find(item => item.id === interfaceID);
 		if (current) seedFrom(current);
@@ -159,7 +190,7 @@
 	}
 
 	async function save(): Promise<void> {
-		if (busy || scanning || stale || !baseline) return;
+		if (busy || writeBlocked || scanning || stale || !baseline) return;
 		const expected = baseline;
 		const form = currentForm();
 		const invalid = validateNetworkConfigForm(form, $networkState.capabilities);
@@ -176,6 +207,7 @@
 		reported = false;
 		try {
 			await applyInterfaceConfig(interfaceID, config, expected);
+			if (get(networkState).mutation) return;
 			seedCurrentInterface();
 			failed = false;
 			message = $t('settings.network.applied');
@@ -221,7 +253,7 @@
 	}
 
 	function selectNetwork(network: NetWifiNetwork): void {
-		if (!joinable(network)) return;
+		if (busy || writeBlocked || !joinable(network)) return;
 		clearMessage();
 		// An open network takes no key, and asking for one would invite the user to
 		// type a password that cannot be used.
@@ -236,7 +268,7 @@
 
 	async function join(network?: NetWifiNetwork): Promise<void> {
 		const target = network ?? selectedNetwork;
-		if (!target || !joinable(target) || busy || scanning) return;
+		if (!target || !joinable(target) || busy || writeBlocked || scanning) return;
 		const { ssid, bssid } = target;
 		joiningSSID = ssid;
 		disconnectFeedback = false;
@@ -247,6 +279,7 @@
 		try {
 			const state = await joinWifiNetwork(interfaceID, ssid, bssid, password, target.security, target.ssidHex);
 			await syncAfterWifiMutation(state);
+			if (get(networkState).mutation) return;
 			failed = false;
 			message = $t('settings.network.joined', { ssid });
 			selection = null;
@@ -265,13 +298,14 @@
 	}
 
 	async function disconnect(): Promise<void> {
-		if (busy || scanning || !canDisconnect) return;
+		if (busy || writeBlocked || scanning || !canDisconnect) return;
 		clearMessage();
 		busy = true;
 		disconnecting = true;
 		disconnectFeedback = true;
 		try {
 			await disconnectWifiNetwork(interfaceID);
+			if (get(networkState).mutation) return;
 			selection = null;
 			password = '';
 			failed = false;
@@ -629,10 +663,10 @@
 		<div class="join-panel">
 			{#if wifiFeedback && selection && sameNetwork(wifiFeedback, selection)}{@render wifiStatus()}{/if}
 			<div role="group" data-mouse-activate-area={areaID}>
-				<Input bind:value={password} onchange={clearMessage} label={$t('settings.network.passwordFor', { ssid: selection.ssid })} type="password" position={[0, rowY]} disabled={busy} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.85vh 1.2vh" flex />
+				<Input bind:value={password} onchange={clearMessage} label={$t('settings.network.passwordFor', { ssid: selection.ssid })} type="password" position={[0, rowY]} disabled={busy || writeBlocked} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.85vh 1.2vh" flex />
 			</div>
 			<ButtonBar justify="flex-end" basePosition={[0, rowY + 1]}>
-				<Button icon="/img/check.svg" label={joiningSSID !== null ? $t('settings.network.joining') : $t('settings.network.join')} position={[0, rowY + 1]} padding="0.9vh 1.4vh" fontSize="clamp(14px, 1.8vh, 18px)" disabled={busy || scanning || !selectedNetwork || !joinable(selectedNetwork)} onConfirm={join} />
+				<Button icon="/img/check.svg" label={joiningSSID !== null ? $t('settings.network.joining') : $t('settings.network.join')} position={[0, rowY + 1]} padding="0.9vh 1.4vh" fontSize="clamp(14px, 1.8vh, 18px)" disabled={busy || writeBlocked || scanning || !selectedNetwork || !joinable(selectedNetwork)} onConfirm={join} />
 			</ButtonBar>
 			{#if !selectedNetwork}
 				<div class="note">{$t('settings.network.selectionChanged')}</div>
@@ -650,6 +684,11 @@
 			</div>
 		</header>
 
+		{#if $networkState.mutation}
+			<div class="message" role="status" aria-live="polite">{$t('settings.systemMutation.' + $networkState.mutation.state)}</div>
+		{/if}
+		{#if $networkState.stale}<p class="note warning" role="status">{$t('settings.systemMutation.stale')}</p>{/if}
+
 		{#if iface?.medium === 'wireless'}
 			<section class="connection" aria-label={$t('settings.network.currentConnection')}>
 				<div class="connection-main">
@@ -663,7 +702,7 @@
 					</div>
 					{#if canDisconnect}
 						<ButtonBar basePosition={[0, 0]}>
-							<Button icon="/img/cross.svg" label={disconnecting ? $t('settings.network.disconnecting') : $t('settings.network.disconnect')} position={[0, 0]} padding="0.9vh 1.4vh" fontSize="clamp(14px, 1.8vh, 18px)" disabled={busy || scanning} onConfirm={disconnect} />
+							<Button icon="/img/cross.svg" label={disconnecting ? $t('settings.network.disconnecting') : $t('settings.network.disconnect')} position={[0, 0]} padding="0.9vh 1.4vh" fontSize="clamp(14px, 1.8vh, 18px)" disabled={busy || writeBlocked || scanning} onConfirm={disconnect} />
 						</ButtonBar>
 					{/if}
 				</div>
@@ -681,33 +720,33 @@
 				<p class="note warning">{$t('settings.network.applyWarning')}</p>
 				<div class="fields">
 					<div role="group" data-mouse-activate-area={areaID}>
-						<Select bind:value={mode} onchange={clearMessage} label={$t('settings.network.addressing')} position={[0, ipv4BaseY]} disabled={busy} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.85vh 1.2vh" flex>
+						<Select bind:value={mode} onchange={clearMessage} label={$t('settings.network.addressing')} position={[0, ipv4BaseY]} disabled={busy || writeBlocked} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.85vh 1.2vh" flex>
 							<SelectOption value="dhcp" label={$t('settings.network.dhcp')} />
 							<SelectOption value="static" label={$t('settings.network.static')} />
 						</Select>
 					</div>
 					{#if mode === 'static'}
 						<div class="static-fields" role="group" data-mouse-activate-area={areaID}>
-							<Input bind:value={address} onchange={clearMessage} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, ipv4BaseY + 1]} disabled={busy} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.85vh 1.2vh" flex />
-							<Input bind:value={prefix} onchange={clearMessage} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, ipv4BaseY + 2]} disabled={busy} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.85vh 1.2vh" flex />
-							<Input bind:value={gateway} onchange={clearMessage} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, ipv4BaseY + 3]} disabled={busy} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.85vh 1.2vh" flex />
+							<Input bind:value={address} onchange={clearMessage} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, ipv4BaseY + 1]} disabled={busy || writeBlocked} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.85vh 1.2vh" flex />
+							<Input bind:value={prefix} onchange={clearMessage} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, ipv4BaseY + 2]} disabled={busy || writeBlocked} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.85vh 1.2vh" flex />
+							<Input bind:value={gateway} onchange={clearMessage} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, ipv4BaseY + 3]} disabled={busy || writeBlocked} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.85vh 1.2vh" flex />
 						</div>
 					{/if}
 					<div role="group" data-mouse-activate-area={areaID}>
-						<Select bind:value={dnsMode} onchange={clearMessage} label={$t('settings.network.dnsPolicy')} position={[0, ipv4BaseY + 1 + staticRows]} disabled={busy} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.85vh 1.2vh" flex>
+						<Select bind:value={dnsMode} onchange={clearMessage} label={$t('settings.network.dnsPolicy')} position={[0, ipv4BaseY + 1 + staticRows]} disabled={busy || writeBlocked} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.85vh 1.2vh" flex>
 							<SelectOption value="unchanged" label={$t('settings.network.dnsUnchanged')} />
 							<SelectOption value="automatic" label={$t('settings.network.dnsAutomatic')} />
 							<SelectOption value="custom" label={$t('settings.network.dnsCustom')} />
 						</Select>
 						{#if dnsMode === 'custom'}
-							<Input bind:value={dns} onchange={clearMessage} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 2001:db8::53" position={[0, ipv4BaseY + 2 + staticRows]} disabled={busy} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.85vh 1.2vh" flex />
+							<Input bind:value={dns} onchange={clearMessage} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 2001:db8::53" position={[0, ipv4BaseY + 2 + staticRows]} disabled={busy || writeBlocked} fontSize="clamp(14px, 1.8vh, 18px)" padding="0.85vh 1.2vh" flex />
 						{/if}
 					</div>
 				</div>
 				<ButtonBar justify="flex-end" basePosition={[0, saveY]} gap="1vh">
-					<Button icon="/img/check.svg" label={busy && joiningSSID === null && !disconnecting ? $t('settings.network.applying') : $t('common.save')} position={[0, saveY]} padding="0.9vh 1.4vh" fontSize="clamp(14px, 1.8vh, 18px)" disabled={busy || scanning || stale} onConfirm={save} />
+					<Button icon="/img/check.svg" label={busy && joiningSSID === null && !disconnecting ? $t('settings.network.applying') : $t('common.save')} position={[0, saveY]} padding="0.9vh 1.4vh" fontSize="clamp(14px, 1.8vh, 18px)" disabled={busy || writeBlocked || scanning || stale} onConfirm={save} />
 					{#if stale}
-						<Button icon="/img/back.svg" label={$t('settings.network.reloadForm')} position={[1, saveY]} padding="0.9vh 1.4vh" fontSize="clamp(14px, 1.8vh, 18px)" disabled={busy || scanning} onConfirm={reloadForm} />
+						<Button icon="/img/back.svg" label={$t('settings.network.reloadForm')} position={[1, saveY]} padding="0.9vh 1.4vh" fontSize="clamp(14px, 1.8vh, 18px)" disabled={busy || writeBlocked || scanning} onConfirm={reloadForm} />
 					{/if}
 				</ButtonBar>
 			</section>
@@ -736,7 +775,7 @@
 				<div class="wifi-list">
 					{#each networks as network, index (`${network.ssid}:${network.bssid ?? ''}:${network.security}:${network.ssidHex ?? ''}`)}
 						<div class="wifi-row" class:chosen={index === selectionIndex} role="group" data-mouse-activate-area={areaID}>
-							<Button label="{networkLabel(network)}{network.active ? ' ✓' : ''}" icon="/img/wifi.svg" iconSize="2.5vh" width="100%" padding="1vh 1.4vh" position={[0, wifiRowY(index)]} onConfirm={() => selectNetwork(network)} disabled={busy || scanning || !joinable(network)}>
+							<Button label="{networkLabel(network)}{network.active ? ' ✓' : ''}" icon="/img/wifi.svg" iconSize="2.5vh" width="100%" padding="1vh 1.4vh" position={[0, wifiRowY(index)]} onConfirm={() => selectNetwork(network)} disabled={busy || writeBlocked || scanning || !joinable(network)}>
 								<div class="network">
 									<div class="network-copy">
 										<span class="network-name">{networkLabel(network)}{network.active ? ' ✓' : ''}</span>
@@ -760,6 +799,10 @@
 		{#if stale && message !== $t('settings.network.changedOutside')}<p class="note reload-note">{$t('settings.network.reloadRequired')}</p>{/if}
 	</div>
 	<ButtonBar justify="center" basePosition={[0, buttonsY + 1]}>
+		<Button icon="/img/network.svg" label={$t('settings.systemMutation.refresh')} position={[1, buttonsY + 1]} padding="1vh 1.6vh" disabled={refreshing} onConfirm={refreshState} />
+		{#if $networkState.mutation?.state === 'interrupted'}
+			<Button icon="/img/check.svg" label={$t('settings.systemMutation.acknowledge')} position={[2, buttonsY + 1]} padding="1vh 1.6vh" disabled={busy || acknowledging || $networkState.stale === true} onConfirm={acknowledgeMutation} />
+		{/if}
 		<Button icon="/img/back.svg" label={$t('common.back')} position={[0, buttonsY + 1]} padding="1vh 1.6vh" fontSize="clamp(14px, 1.8vh, 18px)" onConfirm={onBack} />
 	</ButtonBar>
 </div>

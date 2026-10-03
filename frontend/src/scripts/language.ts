@@ -137,6 +137,8 @@ const errorCodeKeys: Record<string, string> = {
 	NETCONFIG_UNSUPPORTED: 'settings.network.errorUnsupported',
 	NETCONFIG_FAILED: 'settings.network.errorFailed',
 	NETCONFIG_STALE: 'settings.network.errorStale',
+	NETCONFIG_BUSY: 'settings.systemMutation.busy',
+	SYSTEM_TIME_BUSY: 'settings.systemMutation.busy',
 	PEER_UNREACHABLE: 'network.errorUnreachable',
 	PEER_LISH_NOT_SHARED: 'network.errorLishNotShared',
 	PEER_CHUNK_NOT_FOUND: 'network.errorChunkNotFound',

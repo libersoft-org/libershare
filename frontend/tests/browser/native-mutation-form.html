@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>Native mutation form regressions</title>
+	<pre id="results">Running...</pre>
+	<div id="form"></div>
+	<script type="module">
+		import '/src/app.css';
+		import { mount, unmount, tick } from 'svelte';
+		import { get } from 'svelte/store';
+		import SettingsNetworkEdit from '/src/pages/Settings/SettingsNetworkEdit.svelte';
+		import SettingsTime from '/src/pages/Settings/SettingsTime.svelte';
+		import { api } from '/src/scripts/api.ts';
+		import { networkState, networkSubscriptionActive } from '/src/scripts/networkState.ts';
+		import { connected } from '/src/scripts/ws-client.ts';
+		import { translations, t, translateError } from '/src/scripts/language.ts';
+
+		const target = document.querySelector('#form');
+		const output = document.querySelector('#results');
+		const results = [];
+		const original = { call: api.call, on: api.on, subscribe: api.subscribe, unsubscribe: api.unsubscribe };
+		let component, host, changed, domain, calls, rejectAcknowledgement, pendingWrite, timeWrite;
+		const label = key => get(t)(key);
+		const assert = (condition, message) => {
+			if (!condition) throw new Error(message);
+		};
+		const buttons = () => [...target.querySelectorAll('[role="button"]')];
+		const button = key => buttons().find(el => (el.getAttribute('aria-label') ?? el.textContent.trim()) === label(key));
+		const disabled = el => el?.classList.contains('disabled');
+		const settle = async () => {
+			await tick();
+			await new Promise(resolve => setTimeout(resolve, 0));
+			await tick();
+		};
+		const mutation = state => ({ state, since: Date.now(), operation: 'test-change' });
+		const writes = () => calls.filter(method => ['system.networkApply', 'system.wifiConnect', 'system.wifiDisconnect', 'system.applyTimeSettings'].includes(method));
+
+		api.subscribe = async () => {};
+		api.unsubscribe = async () => {};
+		api.on = (event, listener) => {
+			if (event === 'system:timeChanged') changed = listener;
+			return () => {};
+		};
+		api.call = async method => {
+			calls.push(method);
+			if (method === 'system.network' || method === 'system.getTime') return structuredClone(host);
+			if (method === 'system.listTimezones') return ['UTC'];
+			if (method === 'system.wifiScan') return [{ ssid: 'Demo Wi-Fi', bssid: '02:00:00:00:00:02', signal: 75, security: '', secured: false, supported: true, active: false }];
+			if (pendingWrite && method === 'system.networkApply') {
+				host.mutation = mutation('pending');
+				return structuredClone(host);
+			}
+			if (timeWrite && method === 'system.applyTimeSettings') return timeWrite;
+			if (method === `system.${domain}.acknowledgeInterrupted`) {
+				if (rejectAcknowledgement) throw Object.assign(new Error('Busy'), { code: domain === 'network' ? 'NETCONFIG_BUSY' : 'SYSTEM_TIME_BUSY' });
+				delete host.mutation;
+				return structuredClone(host);
+			}
+			throw new Error(`Unexpected write: ${method}`);
+		};
+
+		async function publish() {
+			if (domain === 'network') networkState.set(structuredClone(host));
+			else changed(structuredClone(host));
+			await settle();
+		}
+
+		async function reset(nextDomain, state, stale = false) {
+			if (component) await unmount(component);
+			domain = nextDomain;
+			calls = [];
+			rejectAcknowledgement = false;
+			pendingWrite = false;
+			timeWrite = undefined;
+			host = domain === 'network' ? { known: true, detail: 'full', primaryID: 'wifi0', ipv4ProfilesUnavailable: false, capabilities: { ipv4: true, wifi: true, staticGatewayRequired: false }, interfaces: [{ id: 'wifi0', name: 'Demo adapter', medium: 'wireless', link: 'up', defaultRoute: true, mac: null, addresses: [{ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 }], ipv4Mode: 'static', ipv4Configurable: true, wifiConfigurable: true, gateway: '192.0.2.1', dns: [], wifi: { ssid: 'Connected Wi-Fi', signal: 80, radio: 'on' } }] } : { supported: true, nowMs: Date.UTC(2026, 0, 1), timezone: 'UTC', utcOffsetMinutes: 0, timezoneSource: 'intl', ntpEnabled: false, ntpSynchronized: false, ntpServer: 'time.example.org', clockHeldByUnmanagedDaemon: false, capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: true } };
+			if (state) host.mutation = mutation(state);
+			host.stale = stale;
+			networkSubscriptionActive.set(true);
+			connected.set(true);
+			if (domain === 'network') networkState.set(structuredClone(host));
+			component = mount(domain === 'network' ? SettingsNetworkEdit : SettingsTime, { target, props: { areaID: `mutation-${domain}`, ...(domain === 'network' ? { interfaceID: 'wifi0' } : {}) } });
+			await settle();
+		}
+
+		async function test(name, nextDomain, state, run, stale = false) {
+			try {
+				await reset(nextDomain, state, stale);
+				await run();
+				results.push({ name, passed: true });
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			}
+			output.textContent = JSON.stringify(results, null, 2);
+		}
+
+		try {
+			await new Promise(resolve => {
+				const off = translations.subscribe(value => {
+					if (value.settings?.systemMutation)
+						queueMicrotask(() => {
+							off();
+							resolve();
+						});
+				});
+			});
+			for (const nextDomain of ['network', 'time']) {
+				for (const phase of ['pending', 'settling', 'interrupted']) {
+					await test(`${nextDomain}: ${phase} blocks writes and keeps reads available`, nextDomain, phase, async () => {
+						assert(target.textContent.includes(label(`settings.systemMutation.${phase}`)), 'Missing mutation explanation');
+						assert(
+							[...target.querySelectorAll('input,select')].every(el => el.disabled),
+							'A mutation leaves an editable field'
+						);
+						assert(disabled(button('common.save')), 'Save is enabled');
+						button('common.save').click();
+						if (domain === 'network') {
+							assert(disabled(button('settings.network.disconnect')), 'Disconnect is enabled');
+							button('settings.network.disconnect').click();
+							button('settings.network.scan').click();
+							await settle();
+							const join = buttons().find(el => el.getAttribute('aria-label') === 'Demo Wi-Fi');
+							assert(disabled(join), 'Joining Wi-Fi is enabled');
+							join.click();
+						}
+						const refresh = button(domain === 'network' ? 'settings.systemMutation.refresh' : 'settings.time.reload');
+						assert(!disabled(refresh), 'Refresh is disabled');
+						refresh.click();
+						await settle();
+						assert(calls.includes(domain === 'network' ? 'system.network' : 'system.getTime'), 'Refresh did not read state');
+						assert(writes().length === 0, 'A disabled control wrote settings');
+						const acknowledge = button('settings.systemMutation.acknowledge');
+						assert(!!acknowledge === (phase === 'interrupted'), 'Acknowledgement is offered in the wrong phase');
+						if (acknowledge) {
+							acknowledge.click();
+							await settle();
+							assert(calls.filter(method => method === `system.${domain}.acknowledgeInterrupted`).length === 1, 'Acknowledgement called the wrong RPC');
+							assert(!button('settings.systemMutation.acknowledge'), 'Confirmed mutation is still shown');
+							assert(
+								[...target.querySelectorAll('input')].some(el => !el.disabled),
+								'Confirmed mutation did not unlock fields'
+							);
+						}
+					});
+				}
+				await test(`${nextDomain}: failed acknowledgement preserves the lock`, nextDomain, 'interrupted', async () => {
+					rejectAcknowledgement = true;
+					button('settings.systemMutation.acknowledge').click();
+					await settle();
+					assert(target.textContent.includes(label('settings.systemMutation.busy')), 'Busy error is not localized');
+					assert(disabled(button('common.save')) && button('settings.systemMutation.acknowledge'), 'Failed acknowledgement removed the lock');
+				});
+				await test(
+					`${nextDomain}: stale values are labelled and cannot be acknowledged`,
+					nextDomain,
+					'interrupted',
+					async () => {
+						assert(target.textContent.includes(label('settings.systemMutation.stale')), 'Missing stale notice');
+						assert(disabled(button('settings.systemMutation.acknowledge')), 'Stale state can be accepted');
+						if (domain === 'time') assert(target.textContent.includes(label('settings.time.lastKnownTime')), 'Stale clock is labelled current');
+						host.stale = false;
+						await publish();
+						assert(!disabled(button('settings.systemMutation.acknowledge')), 'Fresh read did not enable acknowledgement');
+					},
+					true
+				);
+				await test(`${nextDomain}: live mutation updates block an open draft without polling`, nextDomain, undefined, async () => {
+					const field = target.querySelector('input[type="text"]:not([role="combobox"])');
+					field.value = domain === 'network' ? '192.0.2.20' : 'new.example.org';
+					field.dispatchEvent(new Event('input', { bubbles: true }));
+					await settle();
+					const value = field.value;
+					host.mutation = mutation('pending');
+					await publish();
+					assert(field.value === value && field.disabled && disabled(button('common.save')), 'Live mutation discarded a draft or left it writable');
+					const count = calls.length;
+					await new Promise(resolve => setTimeout(resolve, 40));
+					assert(calls.length === count, 'Mutation state started automatic polling');
+				});
+			}
+			await test('network: a pending response is not reported as applied', 'network', undefined, async () => {
+				pendingWrite = true;
+				button('common.save').click();
+				await settle();
+				assert(writes().length === 1, 'Save did not reach the API');
+				assert(target.textContent.includes(label('settings.systemMutation.pending')), 'Pending response is not explained');
+				assert(!target.textContent.includes(label('settings.network.applied')), 'Pending change is reported as applied');
+				assert(disabled(button('common.save')), 'Pending response unlocked Save');
+			});
+			await test('time: mutation broadcasts permit readback during a pending save', 'time', undefined, async () => {
+				let finish;
+				timeWrite = new Promise(resolve => {
+					finish = resolve;
+				});
+				const field = target.querySelector('input[type="text"]:not([role="combobox"])');
+				field.value = 'new.example.org';
+				field.dispatchEvent(new Event('input', { bubbles: true }));
+				await settle();
+				button('common.save').click();
+				await settle();
+				try {
+					assert(writes().length === 1, 'Save did not reach the API');
+					host.mutation = mutation('pending');
+					await publish();
+					assert(target.textContent.includes(label('settings.systemMutation.pending')), 'Busy form ignored mutation broadcast');
+					const reload = button('settings.time.reload');
+					assert(!disabled(reload), 'Pending save blocks readback');
+					reload.click();
+					await settle();
+					assert(!disabled(button('settings.time.reload')), 'Readback remained loading');
+					assert(writes().length === 1, 'Readback submitted another write');
+				} finally {
+					finish({ success: false, outcome: 'error', changed: false, stateMayHaveChanged: true, message: null });
+					await settle();
+				}
+			});
+			assert(translateError(Object.assign(new Error('Busy'), { code: 'NETCONFIG_BUSY' })) === label('settings.systemMutation.busy'), 'Network busy translation missing');
+			assert(translateError(Object.assign(new Error('Busy'), { code: 'SYSTEM_TIME_BUSY' })) === label('settings.systemMutation.busy'), 'Time busy translation missing');
+		} finally {
+			if (component) await unmount(component);
+			Object.assign(api, original);
+			window.nativeMutationTestResults = results;
+			document.documentElement.dataset.testStatus = results.length === 14 && results.every(result => result.passed) ? 'passed' : 'failed';
+		}
+	</script>
+</html>

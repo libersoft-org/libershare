@@ -572,6 +572,15 @@
 			"errorInvalidFormat": "Neplatný formát souboru identity"
 		},
 		"language": "Jazyk",
+		"systemMutation": {
+			"pending": "Změna ještě není dokončená. Do ověření jejího konce jsou další změny zablokované. Může být nutný restart počítače.",
+			"settling": "Změna skončila. Ověřujeme aktuální nastavení.",
+			"interrupted": "Změna skončila, ale nastavení neodpovídá původnímu ani požadovanému stavu. Zkontrolujte aktuální údaje a potvrďte, zda je chcete ponechat.",
+			"stale": "Aktuální nastavení se nepodařilo načíst. Zobrazené údaje jsou poslední známý stav.",
+			"acknowledge": "Ponechat současné nastavení",
+			"refresh": "Obnovit stav",
+			"busy": "Jiná změna ještě není dokončená. Počkejte na její dokončení nebo zkontrolujte přerušenou změnu."
+		},
 		"time": {
 			"label": "Čas",
 			"format": "Formát času",

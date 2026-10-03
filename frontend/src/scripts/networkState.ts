@@ -82,6 +82,10 @@ export async function refreshNetworkState(): Promise<NetworkStateInfo> {
 	return get(networkState);
 }
 
+export async function acknowledgeNetworkMutation(): Promise<void> {
+	storeSnapshot(await api.call<NetworkStateInfo>('system.network.acknowledgeInterrupted'));
+}
+
 /**
  * Apply an IPv4 configuration to one interface.
  *
