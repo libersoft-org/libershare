@@ -8,6 +8,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { syncDirectory } from './system-time-files.ts';
 import { executeTimesyncdDropIn } from './native/linux/time-mutation-dropin.ts';
 import { runLinuxTimeOperation } from './native/linux/time-mutation.ts';
+import { runWindowsTimeOperation } from './native/win32/time-mutation.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -305,10 +306,12 @@ function readPlatformStatus(platform: SystemPlatform): Promise<PlatformStatus> {
  * The clock comes from Date.now(); the timezone and NTP settings come from the OS,
  * with the process timezone used only when the host timezone cannot be read.
  */
+const lastTimeStatus = new WeakMap<PlatformStatusReader, { platform: string; status: PlatformStatus }>();
 export async function getSystemTimeStatus(readPlatform: PlatformStatusReader = readPlatformStatus): Promise<SystemTimeStatus> {
 	const platform = process.platform;
 	const supported = isSupportedPlatform(platform);
 	let specific: PlatformStatus = UNREADABLE_STATUS;
+	let stale = false;
 	if (supported) {
 		try {
 			// Under one budget for the whole read. Each child had its own limit and their total
@@ -316,7 +319,11 @@ export async function getSystemTimeStatus(readPlatform: PlatformStatusReader = r
 			// screen was waiting for - and it reported a failed read for a host that was only
 			// slow. Inside a save this joins that save's remaining time instead.
 			specific = await withReadBudget(() => readPlatform(platform));
+			lastTimeStatus.set(readPlatform, { platform, status: structuredClone(specific) });
 		} catch (err) {
+			stale = true;
+			const previous = lastTimeStatus.get(readPlatform);
+			if (previous?.platform === platform) specific = structuredClone(previous.status);
 			console.warn('[system-time] Failed to read time status:', (err as Error).message);
 		}
 	}
@@ -332,6 +339,7 @@ export async function getSystemTimeStatus(readPlatform: PlatformStatusReader = r
 	const { timezone: _osZone, ...rest } = specific;
 	return {
 		...rest,
+		...(stale ? { stale: true } : {}),
 		supported,
 		nowMs,
 		timezone,
@@ -529,7 +537,6 @@ export function applySystemTimeSettings(changes: SystemTimeChanges, writers: Sys
 	);
 }
 
-
 /** Why a host whose time source somebody else owns is left alone. */
 const NOT_OURS_MESSAGE = 'time synchronisation here is not ours to switch: this host has no such service, it belongs to a domain, or its time source is managed by group policy';
 
@@ -621,6 +628,7 @@ export async function setSystemClock(hours: number, minutes: number, seconds: nu
 		// Only the time of day is sent. Every platform resolves "today" at the moment of the
 		// write - systemd for a bare `HH:MM:SS`, `systemsetup -settime`, and `Get-Date` inside
 		// the PowerShell command - so no date computed here can be stale by the time it lands.
+		if (exec === runWrite && platform === 'win32') return runWindowsTimeOperation(api => api.clock({ hours, minutes, seconds }));
 		return platform === 'linux' && exec === runWrite ? runLinuxTimeOperation(api => api.clock({ hours, minutes, seconds })) : runAll(platform, buildSetClockCommands(platform, { hours, minutes, seconds }), exec);
 	});
 }
@@ -658,7 +666,7 @@ export async function setSystemTimezone(timezone: string, exec: CommandRunner = 
 	return withSystemTimeLock(async () => {
 		const currentZone = platform === 'win32' ? readWindowsZone() : null;
 		if (platform === 'win32' && currentZone === null) return result('error', 'cannot read the Windows daylight saving preference, so the timezone was left unchanged');
-		const r = platform === 'linux' && exec === runWrite ? await runLinuxTimeOperation(api => api.timezone(timezone)) : await runAll(platform, buildSetTimezoneCommands(platform, timezone, windowsId, currentZone?.daylightDisabled ?? false), exec);
+		const r = platform === 'win32' && exec === runWrite ? await runWindowsTimeOperation(api => api.timezone(timezone)) : platform === 'linux' && exec === runWrite ? await runLinuxTimeOperation(api => api.timezone(timezone)) : await runAll(platform, buildSetTimezoneCommands(platform, timezone, windowsId, currentZone?.daylightDisabled ?? false), exec);
 		// Only so this process FORMATS in the new zone: writing the OS timezone does not
 		// invalidate a running process's ICU cache. What the status reports is read back
 		// from the OS, so an inherited or stale TZ can no longer misrepresent the host.
@@ -692,6 +700,7 @@ export async function setSystemNtpServer(server: string, readStatus: () => Promi
 		if (platform === 'win32') {
 			const state = await checkWindowsWritable(readMode);
 			if (state.refusal) return state.refusal;
+			if (exec === runWrite) return runWindowsTimeOperation(api => api.server(server));
 			// The service's RUNNING state is deliberately not consulted. It cannot be read
 			// reliably - a service that is starting or stopping reads as neither, and an
 			// unprivileged caller cannot read it at all - and the only thing it used to decide
@@ -772,6 +781,7 @@ export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Pr
 			if (enabled && !clientEnabled && probeNtpClientKey() === 'denied') return result('permission-denied', 'the NTP client provider is switched off and this application may not write it; the change needs administrator rights');
 		}
 		if (platform === 'linux' && exec === runWrite) return runLinuxTimeOperation(api => api.ntpEnabled(enabled));
+		if (platform === 'win32' && exec === runWrite) return runWindowsTimeOperation(api => api.ntpEnabled(enabled));
 		const commands = buildSetNtpEnabledCommands(platform, enabled, mode, clientEnabled);
 		if (platform !== 'win32') {
 			const outcome = await runAll(platform, commands, exec);

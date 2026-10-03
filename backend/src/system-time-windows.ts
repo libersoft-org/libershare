@@ -1,7 +1,9 @@
 import { loadSystemLibrary } from './native/library.ts';
-import { type SystemCommand, processTimezone, listSystemTimezones, tryRead, type PlatformStatus, windowsSystemLibraryPath } from './system-time-common.ts';
+import { type SystemCommand, processTimezone, listSystemTimezones, type PlatformStatus, windowsSystemLibraryPath } from './system-time-common.ts';
 
 import { FFIType, ptr } from 'bun:ffi';
+import { readWindowsTimeSnapshotAsync } from './native/win32/time-reader.ts';
+import type { WindowsTimeSnapshot } from './native/win32/time-state.ts';
 
 /**
  * Windows time policy and native readers. ICU, registry, SCM and timezone APIs avoid
@@ -385,12 +387,6 @@ export function probeDomainMembership(): DomainMembership {
 	}
 }
 
-/** Registry key holding the Windows Time service configuration (NTP peers and sync type). */
-const W32TIME_PARAMS_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters';
-
-/** The service key itself, whose `Start` value is the start type (`sc qc` localizes its output). */
-const W32TIME_SERVICE_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time';
-
 /**
  * The NTP client provider's own on/off switch, which Windows keeps SEPARATELY from the
  * service and from `Type`. A host can be `Type=NTP` with the service running and still not
@@ -724,16 +720,7 @@ export type WindowsModeReader = () => Promise<WindowsModeState>;
  * source at all, which is not something it can infer from the requested value.
  */
 export async function readWindowsMode(): Promise<WindowsModeState> {
-	const type = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'Type']);
-	const start = await tryRead('reg', ['query', W32TIME_SERVICE_KEY, '/v', 'Start']);
-	// Its own switch, not derivable from Type or from the service: a host can be Type=NTP
-	// with the service up and still not synchronise because this provider is off.
-	const client = await tryRead('reg', ['query', W32TIME_NTP_CLIENT_KEY, '/v', 'Enabled']);
-	const policyManaged = readWindowsPolicyManaged();
-	// Read here rather than by the caller so a write's safety check gets the join state
-	// from the same read it gets the mode from, inside the same lock.
-	const membership = probeDomainMembership();
-	return { mode: parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policyManaged), start: parseWindowsStartMode(start), membership, service: readWindowsTimeServiceState(), ntpClientEnabled: parseWindowsNtpClientEnabled(client) };
+	return (await readWindowsTimeSnapshotAsync()).mode;
 }
 
 /**
@@ -773,13 +760,10 @@ export function windowsClockRefusal(state: WindowsModeState): string | null {
 }
 
 /** Read the Windows (W32Time) part of the status. */
-export async function readWindowsStatus(readZone: () => WindowsTimeZoneState | null = readWindowsTimeZone, readMode: WindowsModeReader = readWindowsMode): Promise<PlatformStatus> {
-	// Registry names establish policy; SCM and timezone APIs supply actual runtime state.
-	const params = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'NtpServer']);
-	const status = await tryRead('w32tm', ['/query', '/status']);
-	const { mode, start, membership, ntpClientEnabled } = await readMode();
-	// Sample the native offset after asynchronous reads, near the final clock sample.
-	const zone = readZone();
+export async function readWindowsStatus(readZone: () => WindowsTimeZoneState | null = readWindowsTimeZone, readMode: WindowsModeReader = readWindowsMode, readSnapshot: () => Promise<WindowsTimeSnapshot> = () => readWindowsTimeSnapshotAsync({ synchronization: true })): Promise<PlatformStatus> {
+	const snapshot = await readSnapshot();
+	const { mode, start, membership, ntpClientEnabled } = readMode === readWindowsMode ? snapshot.mode : await readMode();
+	const zone = readZone === readWindowsTimeZone ? snapshot.zone : readZone();
 	// A time source an administrator owns is read-only here, so the UI disables the
 	// controls instead of offering a change that would detach the host from its domain.
 	const ours = windowsSyncIsOurs(mode, membership);
@@ -787,8 +771,8 @@ export async function readWindowsStatus(readZone: () => WindowsTimeZoneState | n
 		timezone: zone?.windowsId ? windowsToIanaTimezone(zone.windowsId) : null,
 		...(zone ? { utcOffsetMinutes: zone.utcOffsetMinutes, timezoneOffsetMode: 'fixed' as const } : {}),
 		ntpEnabled: windowsSyncEnabled(mode, start, ntpClientEnabled),
-		ntpSynchronized: status === null ? null : parseWindowsSyncStatus(status),
-		ntpServer: mode === 'manual' || mode === 'none' ? parseWindowsNtpServer(params === null ? null : parseRegValue(params, 'NtpServer')) : null,
+		ntpSynchronized: snapshot.synchronized,
+		ntpServer: mode === 'manual' || mode === 'none' ? parseWindowsNtpServer(snapshot.registry.server) : null,
 		// The CAPABILITY is only "does this host have the facility", which on Windows is the
 		// timezone API answering at all. Whether the clock may be set RIGHT NOW - the sync
 		// service is up, or in motion - is a refusal with its own reason, decided by

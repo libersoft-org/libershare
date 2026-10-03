@@ -29,7 +29,7 @@ it('reports only confirmed Windows settings while preserving policy write protec
 		const results=[];
 		for(const input of ${JSON.stringify(cases)}){
 			const readMode=async()=>({mode:windows.parseWindowsSyncMode(input.type,windows.readWindowsPolicyManaged(()=>input.policy)),start:input.start,membership:input.membership??'standalone',running:false});
-			const platform=await windows.readWindowsStatus(()=>({windowsId:'UTC',utcOffsetMinutes:0,daylightDisabled:false}),readMode);
+			const platform=await windows.readWindowsStatus(()=>({windowsId:'UTC',utcOffsetMinutes:0,daylightDisabled:false}),readMode,async()=>({registry:{server:'local.example.org,0x8'},synchronized:true}));
 			const status=await time.getSystemTimeStatus(async()=>platform);
 			let writes=0;
 			const exec=async()=>{writes++;return {kind:'ok',output:''};};

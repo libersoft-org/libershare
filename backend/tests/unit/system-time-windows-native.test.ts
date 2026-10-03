@@ -3,6 +3,9 @@ import { resolve } from 'node:path';
 import { setTimeout as scheduleTimeout, clearTimeout as cancelTimeout } from 'node:timers';
 import { getSystemTimeStatus, setSystemClock } from '../../src/system-time.ts';
 import { parseWindowsServiceRunning, parseWindowsServiceState, parseWindowsTimeZone, readWindowsTimeServiceRunning, readWindowsTimeZone, readWindowsStatus, windowsClockRefusal, windowsServiceRunning, type WindowsModeState } from '../../src/system-time-windows.ts';
+import type { WindowsTimeSnapshot } from '../../src/native/win32/time-state.ts';
+
+const statusSnapshot = async (): Promise<WindowsTimeSnapshot> => ({ registry: { server: null }, synchronized: null }) as WindowsTimeSnapshot;
 
 function zoneBuffer(disabled = false): Uint8Array {
 	const bytes = new Uint8Array(432);
@@ -105,7 +108,8 @@ describe('SCM read handle lifetime', () => {
 it('does not offer clock or timezone writes when the native timezone read failed', async () => {
 	const status = await readWindowsStatus(
 		() => null,
-		async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped' })
+		async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped' }),
+		statusSnapshot
 	);
 	expect(status.capabilities.setClock).toBe(false);
 	expect(status.capabilities.setTimezone).toBe(false);
@@ -135,7 +139,8 @@ it('does not offer clock or timezone writes when the native timezone read failed
 it('still offers the clock when the service state could not be read', async () => {
 	const status = await readWindowsStatus(
 		() => ({ windowsId: 'UTC', utcOffsetMinutes: 0, daylightDisabled: true }),
-		async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'automatic', membership: 'standalone', service: 'unreadable' })
+		async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'automatic', membership: 'standalone', service: 'unreadable' }),
+		statusSnapshot
 	);
 	expect(status.capabilities.setClock).toBe(true);
 });
@@ -148,7 +153,7 @@ it('still offers the clock when the service state could not be read', async () =
  */
 it('offers the clock facility but refuses the write while a disabled-policy service still runs', async () => {
 	const mode = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'running' });
-	const status = await readWindowsStatus(() => ({ windowsId: 'UTC', utcOffsetMinutes: 0, daylightDisabled: true }), mode);
+	const status = await readWindowsStatus(() => ({ windowsId: 'UTC', utcOffsetMinutes: 0, daylightDisabled: true }), mode, statusSnapshot);
 	expect(status.ntpEnabled).toBe(false);
 	expect(status.capabilities.setClock).toBe(true);
 	expect(windowsClockRefusal(await mode())).toContain('would overwrite a hand-set clock');
