@@ -1,13 +1,11 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { NativeWorkerChannel } from './native/worker-host.ts';
 import { readWindowsVolume, writeWindowsVolume } from './system-volume-windows.ts';
 
-const execFileAsync = promisify(execFile);
-
-/** Hard cap on how long any volume child process may run before we give up. */
+/** Read deadline for the native volume worker. */
 const EXEC_TIMEOUT_MS = 5000;
 const linuxVolumeReader = new NativeWorkerChannel('read');
+const macVolumeReader = new NativeWorkerChannel('read');
+const macVolumeWriter = new NativeWorkerChannel('mutation');
 const linuxVolumeWriter = new NativeWorkerChannel('mutation');
 
 /**
@@ -57,44 +55,10 @@ export function classifyMixerReadings(outputs: Array<string | null>): MixerResul
 	return { kind: 'no-device' };
 }
 
-/** Run a binary with args, returning trimmed stdout. Throws on missing binary or non-zero exit. */
-async function run(cmd: string, args: string[]): Promise<string> {
-	// SIGKILL: the promise settles only after the child actually exits, so a wedged
-	// helper ignoring the default SIGTERM would hang the poll loop forever.
-	const { stdout } = await execFileAsync(cmd, args, { timeout: EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true });
-	return stdout.toString();
-}
-
-/**
- * Run a binary, returning its stdout, or null when the binary is missing or
- * exits non-zero — both definitive "this mixer path yields nothing" answers
- * (e.g. pactl's `Failure: No such entity` on a sink-less host). A TIMEOUT kill
- * is different: the helper exists and may just be wedged, so it is rethrown and
- * the caller's catch classifies it as a transient `error` (indeterminate), never
- * as `no-device` — see the getSystemVolumeStatus contract.
- */
-async function tryRun(cmd: string, args: string[]): Promise<string | null> {
-	try {
-		return await run(cmd, args);
-	} catch (err) {
-		const e = err as { killed?: boolean; signal?: string | null };
-		if (e?.killed || e?.signal) throw err;
-		return null;
-	}
-}
-
 async function readMixer(): Promise<MixerResult> {
 	try {
 		if (process.platform === 'win32') return readWindowsVolume();
-		if (process.platform === 'darwin') {
-			// macOS has no clean "no device" signal — treat a failing osascript as
-			// unavailable (documented on getSystemVolumeStatus). A timeout is
-			// rethrown by tryRun and lands in the transient-error catch below.
-			const out = await tryRun('osascript', ['-e', 'output volume of (get volume settings)']);
-			if (out === null) return { kind: 'no-device' };
-			const v = parseMacVolume(out);
-			return v === null ? { kind: 'no-device' } : { kind: 'ok', volume: v };
-		}
+		if (process.platform === 'darwin') return await macVolumeReader.call<MixerResult>({ method: 'darwin.volume.read' }, EXEC_TIMEOUT_MS);
 		return await linuxVolumeReader.call<MixerResult>({ method: 'linux.volume.read', args: { timeoutMs: EXEC_TIMEOUT_MS - 100 } }, EXEC_TIMEOUT_MS);
 	} catch {
 		return { kind: 'error' };
@@ -104,9 +68,7 @@ async function readMixer(): Promise<MixerResult> {
 async function writeMixer(pct: number): Promise<MixerResult> {
 	try {
 		if (process.platform === 'win32') return writeWindowsVolume(pct);
-		if (process.platform === 'darwin') {
-			return (await tryRun('osascript', ['-e', `set volume output volume ${pct}`])) === null ? { kind: 'no-device' } : { kind: 'ok', volume: null };
-		}
+		if (process.platform === 'darwin') return await macVolumeWriter.call<MixerResult>({ method: 'darwin.volume.write', args: { percent: pct } });
 		return await linuxVolumeWriter.call<MixerResult>({ method: 'linux.volume.write', args: { percent: pct, timeoutMs: EXEC_TIMEOUT_MS } });
 	} catch {
 		return { kind: 'error' };
@@ -119,7 +81,7 @@ async function writeMixer(pct: number): Promise<MixerResult> {
  * - `{ available: false, volume: null }` — the OS confirms there is NO
  *   controllable device (verified absence): a headless box, no ALSA/PulseAudio
  *   mixer, a Windows host whose `GetDefaultAudioEndpoint` returns
- *   ELEMENT_NOT_FOUND, or a macOS `osascript` read that fails.
+ *   ELEMENT_NOT_FOUND, or no default macOS audio output.
  * - `null` — a transient failure (a CLI helper timing out, a passing CoreAudio
  *   error): availability is INDETERMINATE, the device likely still exists.
  *   Callers MUST keep their last known availability instead of treating this as
@@ -244,8 +206,7 @@ export function isMixerWriteBusy(): boolean {
 
 /**
  * Set the OS master output volume. `percent` is clamped to 0–100. Applied via
- * built-in OS facilities only (no shipped native addons): Windows CoreAudio COM
- * in-process via FFI, macOS `osascript`, Linux `pactl` with an `amixer` fallback.
+ * Windows CoreAudio COM, macOS AudioToolbox, or Linux PulseAudio/ALSA.
  *
  * A single node process owns the OS mixer, so writes are serialized latest-wins
  * (see {@link createSerializedWriter}): concurrent calls never overlap and the
