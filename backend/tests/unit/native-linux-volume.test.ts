@@ -4,6 +4,23 @@ import { linuxVolume, type LinuxVolumeBackends } from '../../src/native/linux/pu
 import { PulseSession, PulseTimeout, closeAllPulseSessions } from '../../src/native/linux/pulse.ts';
 import type { PulseSymbols } from '../../src/native/linux/pulse-native.ts';
 
+it('does not let libpulse start an external audio daemon', () => {
+	const fixture = pulseFixture();
+	let flags = 0;
+	const session = new PulseSession({
+		...fixture.api,
+		pa_context_connect: (_context: unknown, _server: unknown, options: number) => {
+			flags = options;
+			return 0;
+		},
+	} as unknown as PulseSymbols);
+	try {
+		expect(flags & 1).toBe(1);
+	} finally {
+		session.close();
+	}
+});
+
 function pulseFixture(state = 4, success = true, advance = true): { api: PulseSymbols; calls: string[]; fire: (event: number) => void } {
 	const calls: string[] = [];
 	const name = Buffer.from('default-sink\0');

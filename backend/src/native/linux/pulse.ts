@@ -29,7 +29,8 @@ export class PulseSession {
 			if (!this.loop) throw new Error('Pulse mainloop unavailable');
 			const name = Buffer.from('LiberShare\0');
 			this.context = (Number(api.pa_context_new(api.pa_mainloop_get_api(this.loop), ptr(name))) as Pointer) || null;
-			if (!this.context || api.pa_context_connect(this.context, null, 0, null) < 0) throw new Error('Pulse connection failed');
+			// PA_CONTEXT_NOAUTOSPAWN keeps an absent server on the ALSA fallback path.
+			if (!this.context || api.pa_context_connect(this.context, null, 1, null) < 0) throw new Error('Pulse connection failed');
 		} catch (error) {
 			this.close();
 			throw error;
