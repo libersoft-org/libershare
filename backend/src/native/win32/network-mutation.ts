@@ -19,16 +19,15 @@ export interface WindowsIPv4MutationDeps {
 	sleep(ms: number): Promise<void>;
 	close(): void;
 }
+const reader = new NativeWorkerChannel('read');
 function dependencies(): WindowsIPv4MutationDeps {
-	const reader = new NativeWorkerChannel('read'),
-		writer = new NativeWorkerChannel('mutation');
+	const writer = new NativeWorkerChannel('mutation');
 	return {
 		read: (guid, timeoutMs) => reader.call({ method: 'win32.network.ipv4.read', args: { guid } }, timeoutMs),
 		write: request => writer.call({ method: 'win32.network.ipv4.write', args: request }),
 		now: () => performance.now(),
 		sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
 		close: () => {
-			reader.close();
 			writer.close();
 		},
 	};
