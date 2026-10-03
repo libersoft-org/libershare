@@ -3,15 +3,12 @@ import { displayEnvironment } from '../native/linux/gio.ts';
 import { readdir, stat, access, unlink, mkdir as fsMkdirNode, rename as fsRenameNode } from 'fs/promises';
 import { join, sep, dirname, resolve } from 'path';
 import { homedir, platform } from 'os';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import { Utils } from '../utils.ts';
 import { CodedError, ErrorCodes, type ErrorCode, type FsInfo, type FsEntry, type FsListResult, type IPathExistsResult, type SuccessResponse, type CompressionAlgorithm } from '@shared';
 import { isContainer } from '../container.ts';
 const assert = Utils.assertParams;
 const isWindows = platform() === 'win32';
-const execFileAsync = promisify(execFile);
-const linuxOpenWorker = new NativeWorkerChannel('read');
+const nativeOpenWorker = new NativeWorkerChannel('read');
 
 // Map Node.js errno codes → CodedError codes for the frontend.
 const ERRNO_MAP: Record<string, ErrorCode> = {
@@ -183,24 +180,17 @@ export function initFsHandlers(containerCheck: () => Promise<boolean> = isContai
 	async function open(p: { path: string }): Promise<void> {
 		assert(p, ['path']);
 		return fsCall(p.path, async () => {
-			// execFile (no shell) — the path is passed as an argument, never parsed by a shell.
-			// resolve() also neutralizes a leading "-" being read as an option by open/xdg-open.
+			// The native API receives a file path without shell parsing.
 			const target = resolve(p.path);
-			if (isWindows) {
-				// cmd's `start` parses metacharacters (&, ^) even via execFile, so use PowerShell.
-				// Single-quoted PS strings have no escapes except '' — and " is illegal in Windows paths.
-				const psPath = target.replace(/'/g, "''");
-				await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', `Invoke-Item -LiteralPath '${psPath}'`]);
-			} else if (platform() === 'darwin') await execFileAsync('open', [target]);
-			else {
-				const environment = displayEnvironment(process.env);
-				if (!environment['DISPLAY'] && !environment['WAYLAND_DISPLAY']) throw new CodedError(ErrorCodes.FS_NOT_SUPPORTED, 'Opening local files requires a graphical session');
-				try {
-					await linuxOpenWorker.call({ method: 'linux.open', args: { path: target, environment, timeoutMs: 10000 } }, 10000);
-				} catch (error) {
-					if (error instanceof NativeWorkerFailure && error.message === 'Native read timed out') throw new CodedError(ErrorCodes.FS_TIMEOUT, 'The file handler did not respond in time; it may still open the file');
-					throw error;
-				}
+			const os = platform();
+			const environment = displayEnvironment(process.env);
+			if (os === 'linux' && !environment['DISPLAY'] && !environment['WAYLAND_DISPLAY']) throw new CodedError(ErrorCodes.FS_NOT_SUPPORTED, 'Opening local files requires a graphical session');
+			const method = os === 'win32' ? 'win32.open' : os === 'darwin' ? 'darwin.open' : 'linux.open';
+			try {
+				await nativeOpenWorker.call({ method, args: { path: target, environment, timeoutMs: 10000 } }, 10000);
+			} catch (error) {
+				if (error instanceof NativeWorkerFailure && error.message === 'Native read timed out') throw new CodedError(ErrorCodes.FS_TIMEOUT, 'The file handler did not respond in time; it may still open the file');
+				throw error;
 			}
 		});
 	}
