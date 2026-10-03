@@ -5,7 +5,8 @@
 # Can cross-compile to Windows via cargo-xwin.
 # No QEMU emulation needed.
 
-FROM debian:trixie
+# Debian 12 is the oldest supported glibc baseline.
+FROM debian:bookworm
 
 ARG DEBIAN_FRONTEND=noninteractive
 
