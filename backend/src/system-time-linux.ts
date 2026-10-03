@@ -1,8 +1,7 @@
-import { parseTimedatectlShow, type CommandRunner, run, type PlatformStatus, tryRead, UNREADABLE_STATUS, parseYesNo, isValidNtpServer, HOST_OFFSET_COMMAND, parseUtcOffsetMinutes } from './system-time-common.ts';
+import { type CommandRunner, type PlatformStatus, UNREADABLE_STATUS, isValidNtpServer, READ_BUDGET_MS, remainingSaveBudget } from './system-time-common.ts';
+import { NativeWorkerChannel } from './native/worker-host.ts';
 import { readdir, readFile } from 'node:fs/promises';
 
-/** `systemctl show` separates its per-unit blocks with a blank line. */
-const NEWLINE = '\n';
 import { join } from 'node:path';
 
 /**
@@ -20,7 +19,7 @@ export const TIMESYNCD_DROPIN_PATH = '/etc/systemd/timesyncd.conf.d/90-libershar
 /** systemd unit that reads {@link TIMESYNCD_DROPIN_PATH}. */
 export const TIMESYNCD_UNIT = 'systemd-timesyncd.service';
 
-/** Read the ordered files emitted by systemd-analyze, without guessing directory precedence. */
+/** Parse the ordered files with explicit source boundaries. */
 function parseTimesyncServerLists(output: string): Record<'NTP' | 'FallbackNTP', string[]> | null {
 	if (output.includes('\0')) return null;
 	const servers: Record<'NTP' | 'FallbackNTP', string[]> = { NTP: [], FallbackNTP: [] };
@@ -88,9 +87,9 @@ export function parseTimesyncConfig(output: string): string | null {
 }
 
 /** A single-server write must survive later overrides before any daemon restart. */
-export async function verifyTimesyncdServer(server: string, exec: CommandRunner = run): Promise<string | null> {
+export async function verifyTimesyncdServer(server: string, exec?: CommandRunner): Promise<string | null> {
 	try {
-		const configuration = await exec('systemd-analyze', ['--no-pager', 'cat-config', 'systemd/timesyncd.conf']);
+		const configuration = exec ? await exec('systemd-analyze', ['--no-pager', 'cat-config', 'systemd/timesyncd.conf']) : { kind: 'ok' as const, output: await nativeTimeRead<string>('linux.time.configuration') };
 		if (configuration.kind !== 'ok') return 'the effective systemd-timesyncd configuration could not be read';
 		const servers = parseTimesyncServerLists(configuration.output);
 		if (servers === null) return 'the effective systemd-timesyncd configuration could not be interpreted safely';
@@ -498,7 +497,8 @@ function splitAssignment(word: string): [string, string] | null {
  * the directory ordering as authoritative, and nothing anywhere would say we had asked about
  * a unit that is not there. Anything but `loaded` is an environment we did not read.
  */
-export async function readTimedatedEnvironment(exec: CommandRunner = run): Promise<Record<string, string> | null> {
+export async function readTimedatedEnvironment(exec?: CommandRunner): Promise<Record<string, string> | null> {
+	if (!exec) return nativeTimeRead<Record<string, string> | null>('linux.time.environment').catch(() => null);
 	const manager = await exec('systemctl', ['show-environment']);
 	if (manager.kind !== 'ok') return null;
 	const unit = await exec('systemctl', ['show', '-p', 'LoadState', '-p', 'Environment', '-p', 'EnvironmentFiles', '-p', 'PassEnvironment', '-p', 'UnsetEnvironment', TIMEDATED_UNIT]);
@@ -519,30 +519,35 @@ export async function readTimedatedEnvironment(exec: CommandRunner = run): Promi
 		if (read.error) malformed = true;
 		return read.words;
 	};
+	const managerWords = words(manager.output);
+	const environment = words(props.get('Environment') ?? '');
+	const pass = words(props.get('PassEnvironment') ?? '');
+	const unset = words(props.get('UnsetEnvironment') ?? '');
+	return malformed ? null : mergeTimedatedEnvironment(managerWords, environment, pass, unset);
+}
+
+/** System services inherit only PassEnvironment; UnsetEnvironment is applied last. */
+export function mergeTimedatedEnvironment(manager: readonly string[], environment: readonly string[], pass: readonly string[], unset: readonly string[]): Record<string, string> {
 	const inherited = new Map<string, string>();
-	for (const word of words(manager.output)) {
+	for (const word of manager) {
 		const pair = splitAssignment(word);
 		if (pair) inherited.set(pair[0], pair[1]);
 	}
 	const env: Record<string, string> = {};
-	// Phase 1: the manager's value, but only for a name the unit asks to be passed.
-	for (const name of words(props.get('PassEnvironment') ?? '')) {
+	for (const name of pass) {
 		const value = inherited.get(name);
 		if (value !== undefined) env[name] = value;
 	}
-	// Phase 2: the unit's own `Environment=`, which wins over what was passed in.
-	for (const word of words(props.get('Environment') ?? '')) {
+	for (const word of environment) {
 		const pair = splitAssignment(word);
 		if (pair) env[pair[0]] = pair[1];
 	}
-	// Phase 3: `UnsetEnvironment=`. A bare name removes the variable; a `NAME=value` entry
-	// removes it only when the value matches, which is systemd's own rule.
-	for (const word of words(props.get('UnsetEnvironment') ?? '')) {
+	for (const word of unset) {
 		const pair = splitAssignment(word);
 		if (!pair) delete env[word];
 		else if (env[pair[0]] === pair[1]) delete env[pair[0]];
 	}
-	return malformed ? null : env;
+	return env;
 }
 
 /**
@@ -663,93 +668,20 @@ export function buildTimesyncdDropIn(server: string): string {
 	return `[Time]\nNTP=\nNTP=${server}\n`;
 }
 
-/** Read the Linux (systemd-timedated) part of the status. */
+let nativeReader: NativeWorkerChannel | undefined;
+
+function nativeTimeRead<T>(method: string): Promise<T> {
+	const timeoutMs = Math.min(READ_BUDGET_MS, remainingSaveBudget() ?? READ_BUDGET_MS);
+	if (timeoutMs <= 0) return Promise.reject(new Error('Time read budget expired'));
+	nativeReader ??= new NativeWorkerChannel('read');
+	return nativeReader.call<T>({ method, args: { timeoutMs } }, timeoutMs);
+}
+
+/** The independent read worker stays responsive while a mutation waits. */
 export async function readLinuxStatus(): Promise<PlatformStatus> {
-	// These two answer independently, so they are asked together: everything below depends on
-	// `timedatectl show`, and one fewer round of waiting is one fewer chance for a slow host to
-	// spend the read's budget before the interesting fields are reached.
-	const [show, rawOffset] = await Promise.all([tryRead('timedatectl', ['show']), tryRead(HOST_OFFSET_COMMAND.linux, ['+%z'])]);
-	if (show === null) {
-		// ponytail: no systemd-timedated means no supported backend here. The
-		// `date -s` / `/etc/localtime` symlink fallback is deliberately not
-		// implemented — the hosts that lack timedatectl are containers, which have
-		// no CAP_SYS_TIME and cannot set the clock at all. Add it if a non-systemd
-		// bare-metal target ever appears.
+	try {
+		return await nativeTimeRead<PlatformStatus>('linux.time.status');
+	} catch {
 		return UNREADABLE_STATUS;
 	}
-	const map = parseTimedatectlShow(show);
-	const canNtp = parseYesNo(map['CanNTP']) ?? false;
-	// Only timesyncd's configuration file is written by us, so the capability is "would
-	// this host's timedated actually use timesyncd" — a chrony host ignores the drop-in.
-	// That is decided by the provider ordering timedated itself reads, checked against each
-	// unit's `LoadState`, which is the property timedated selects on: `show-timesync` would
-	// only answer while the daemon runs, and the UI turns synchronisation off before writing
-	// a server.
-	// `Names` comes along because an entry of the ordering may be an alias, and systemd
-	// answers for an alias under the aliased unit's `Id` — with only `Id` asked for, the
-	// name we looked the state up by was in no answer at all.
-	// `--` because those names come off the host's own files and a valid unit name may begin
-	// with a dash: without the separator systemctl reads it as an option instead.
-	const ordered = canNtp ? await readNtpUnitsList(await readTimedatedEnvironment()) : [];
-	const unit = canNtp ? await tryRead('systemctl', ['show', '-p', 'Id', '-p', 'Names', '-p', 'LoadState', '--', ...(ordered !== null && ordered.length > 0 ? ordered : [TIMESYNCD_UNIT])]) : null;
-	// timedated manages several NTP implementations; a host where chrony is the active
-	// one would ignore our drop-in entirely (see canConfigureTimesyncdServer). The units to
-	// ask about come from the host's own ordering as well as the known names, so a provider
-	// nobody hardcoded is still seen — with the aliases resolved, or timesyncd under another
-	// name would be counted as a daemon competing with itself.
-	const states = unit === null ? null : parseUnitLoadStates(unit);
-	// NOT behind `canNtp`. "Is another NTP daemon running here" is a question about the host,
-	// not about whether timedated can manage one - and the two come apart exactly where it
-	// matters. Measured on Debian 12: installing chrony made `timedatectl show` answer
-	// `CanNTP=no` AND `NTP=no`, so this read was skipped, nothing noticed chrony, and a
-	// hand-set clock went through while `chronyc tracking` showed it synchronised to a stratum
-	// 3 peer. One extra `systemctl show` on such a host, inside the read's own budget.
-	//
-	// One read for two decisions, hence `Id` alongside the state: the drop-in question asks
-	// about units OTHER than timesyncd, the clock question also asks about timesyncd itself
-	// when the ordering does not account for it. `--value` cannot attribute two properties to
-	// their unit, so the block form is read instead.
-	const steering = clockSteeringUnits(ordered, states);
-	// `Names` as well, for the same reason as in the load-state read above: the answer for an
-	// alias comes back under the aliased unit's `Id`, and the lookups below are by the names
-	// asked about.
-	const activity = await tryRead('systemctl', ['show', '-p', 'Id', '-p', 'Names', '-p', 'ActiveState', '--', ...steering]);
-	const active = activity === null ? null : parseActiveUnits(activity);
-	// What `canConfigureTimesyncdServer` expects: a plain per-line state list of the competing
-	// units only, rebuilt from the one read rather than fetched again.
-	const competingUnits = new Set(competingNtpUnits(ordered, states).map(unit => canonicalUnitName(states, unit)));
-	const competing = active === null ? null : [...competingUnits].map(unit => (active.has(unit) ? 'active' : 'inactive')).join(NEWLINE);
-	const configurable = canConfigureTimesyncdServer(ordered, unit, competing);
-	// The same answer, for the other question it decides. `canConfigureTimesyncdServer` uses it
-	// to refuse writing a drop-in nobody would read; a daemon outside timedated's own list
-	// holds the CLOCK just as surely, and `timedatectl show` reports `NTP=no` for it because
-	// it is not a provider timedated manages. Without carrying it here, the status said
-	// "synchronisation off, clock settable" while chronyd was running, and a hand-set clock was
-	// stepped back within the minute - the one outcome a definite `false` is supposed to rule
-	// out.
-	//
-	// `!== true` rather than `=== false`: an UNREADABLE `NTP` field is not permission to ignore
-	// a daemon that is demonstrably running. `NTP=yes` is the one case skipped, because the
-	// existing refusal already covers it with a message that fits better.
-	// Tri-state on purpose. A read that FAILED is not "nothing is running": collapsing it to
-	// false turned an unknown into permission to overwrite a clock, which is the same mistake
-	// as reading an unreadable `NTP` field as off. `null` here makes the refusal say so.
-	const heldElsewhere = parseYesNo(map['NTP']) === true ? false : active === null ? null : [...steering].some(unit => active.has(canonicalUnitName(states, unit)));
-	// The editable field must reflect the effective saved NTP= list even while another peer is active.
-	const configuration = configurable ? await tryRead('systemd-analyze', ['--no-pager', 'cat-config', 'systemd/timesyncd.conf']) : null;
-	const ntpServer = configuration === null ? null : parseTimesyncConfig(configuration);
-	// The host's own arithmetic rather than this process's: see parseUtcOffsetMinutes. Left
-	// out when `date` is unavailable or answers something unexpected, which puts the shared
-	// status back on its existing fallback.
-	const offset = parseUtcOffsetMinutes(rawOffset);
-	return {
-		// `timedatectl show` was read above and already carries it — no extra probe.
-		timezone: map['Timezone'] ?? null,
-		...(offset === null ? {} : { utcOffsetMinutes: offset }),
-		ntpEnabled: parseYesNo(map['NTP']),
-		...(heldElsewhere === false ? {} : { clockHeldByUnmanagedDaemon: heldElsewhere }),
-		ntpSynchronized: parseYesNo(map['NTPSynchronized']),
-		ntpServer,
-		capabilities: { setClock: true, setTimezone: true, setNtpEnabled: canNtp, setNtpServer: configurable },
-	};
 }
