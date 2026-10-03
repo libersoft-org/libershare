@@ -9,7 +9,6 @@ import { getEnabledUploads, removeUploadState, enableUpload } from '../protocol/
 import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, markDownloadEnabled, stopRecoveryForLISH } from './transfer.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir, rename, rm } from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
-import { makeOwnDirectories, removeOwnEmptyDirectories, type CreatedDirectory } from './import-directories.ts';
 import { join, dirname } from 'path';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
@@ -407,13 +406,12 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	 * broadcasts, applies sharing/downloading flags, and starts verification.
 	 * Caller must have already resolved `lish.directory` (and optionally `lish.finalDirectory`).
 	 */
-	async function addLISH(lish: IStoredLISH, opts: { enableSharing?: boolean | undefined; enableDownloading?: boolean | undefined; replace?: boolean; onStored?: () => void }): Promise<void> {
+	async function addLISH(lish: IStoredLISH, opts: { enableSharing?: boolean | undefined; enableDownloading?: boolean | undefined; replace?: boolean }): Promise<void> {
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
 		validateLISHStructure(lish, maxChunkSize);
 		// An overwrite swaps the old record for the new one in one transaction.
 		if (opts.replace) dataServer.replace(lish);
 		else dataServer.add(lish);
-		opts.onStored?.();
 		console.log(`✓ LISH added: ${lish.id}${lish.finalDirectory ? ` (temp: ${lish.directory} → final: ${lish.finalDirectory})` : ''}`);
 		broadcast('lishs:add', dataServer.getDetail(lish.id));
 		// Set enabled flags BEFORE verification — verify sets busy which blocks triggerEnableDownload.
@@ -440,22 +438,19 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			directory = await Utils.findUniqueDirectory(tempBaseDir);
 			finalDirectory = finalBaseDir;
 		} else directory = finalBaseDir; // Share-only / metadata-only import → files already live at the target location.
-		// Only directories this call really created are removed again should the import fail
-		// before its record is stored; one that appeared meanwhile, or already stood, is left.
-		const created: CreatedDirectory[] = [];
-		let stored = false;
+		// ponytail: a failed import leaves the directories it created. Removing them safely needs
+		// descriptor-anchored mkdirat/unlinkat; by path, a directory swapped in meanwhile — or put
+		// back after being parked — would be the one removed or overwritten.
 		try {
-			await makeOwnDirectories(directory, created);
-			return await storeImported(lish, directory, finalDirectory, enableSharing, enableDownloading, !!existing, () => {
-				stored = true;
-			});
-		} catch (error) {
-			if (!stored) await removeOwnEmptyDirectories(created);
-			throw error;
+			await mkdir(directory, { recursive: true });
+		} catch (error: any) {
+			if (error?.code !== 'EEXIST') throw error;
 		}
+		if (!(await stat(directory)).isDirectory()) throw new CodedError(ErrorCodes.FS_NOT_DIRECTORY, directory);
+		return await storeImported(lish, directory, finalDirectory, enableSharing, enableDownloading, !!existing);
 	}
 
-	async function storeImported(lish: ILISH, directory: string, finalDirectory: string | undefined, enableSharing: boolean | undefined, enableDownloading: boolean | undefined, replacing: boolean, onStored: () => void): Promise<ImportLISHResponse> {
+	async function storeImported(lish: ILISH, directory: string, finalDirectory: string | undefined, enableSharing: boolean | undefined, enableDownloading: boolean | undefined, replacing: boolean): Promise<ImportLISHResponse> {
 		// Drop the node-local fields that rode in with the imported data before merging: we own
 		// them, and `validateImportedLISH` is a cast, so a hostile .lish / JSON / URL / peer
 		// manifest can carry them. The cast spells out the hazard: `ILISH` has neither field,
@@ -477,7 +472,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		};
 		// The record being overwritten is replaced only now, once its successor is ready, and in
 		// one transaction: a failure before or during the write leaves the old record whole.
-		await addLISH(storedLISH, { enableSharing, enableDownloading, replace: replacing, onStored });
+		await addLISH(storedLISH, { enableSharing, enableDownloading, replace: replacing });
 		return { lishID: lish.id, directory };
 	}
 

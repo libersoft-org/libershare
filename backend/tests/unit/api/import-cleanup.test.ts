@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,14 +7,13 @@ import { openDatabase } from '../../../src/db/database.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { Settings } from '../../../src/settings.ts';
 import { initLISHsHandlers } from '../../../src/api/lishs.ts';
-import { makeOwnDirectories, removeOwnEmptyDirectories, type CreatedDirectory } from '../../../src/api/import-directories.ts';
 import { ErrorCodes, type ILISH } from '@shared';
 
 /**
- * An import that fails before its record is stored must not leave the empty directory it made
- * for the data behind — and must never remove one that was already there.
+ * A failed import removes nothing: by path it cannot prove a directory is still the one it made,
+ * so it leaves its own empty directories rather than risk one that took their place.
  */
-describe('failed import cleanup', () => {
+describe('failed import directories', () => {
 	let dataDir: string;
 	let base: string;
 	let db: ReturnType<typeof openDatabase>;
@@ -45,68 +44,16 @@ describe('failed import cleanup', () => {
 
 	const manifest = (id: string): ILISH => ({ id, name: id, created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', files: [{ path: 'a.bin', size: 1024, checksums: ['c0'] }] });
 
-	it('removes the directories it created, parents included', async () => {
+	it('leaves the directories it created, parents included', async () => {
 		const downloadPath = join(base, 'new-parent', 'nested');
 		await expect(handlers.importManifest(manifest('fresh'), downloadPath, { enableSharing: false, enableDownloading: false })).rejects.toThrow('disk refused the write');
-		expect(existsSync(join(base, 'new-parent'))).toBe(false);
-		expect(existsSync(base)).toBe(true);
+		expect(existsSync(join(downloadPath, 'fresh'))).toBe(true);
 	});
 
 	it('keeps a directory that already existed', async () => {
 		mkdirSync(join(base, 'kept'), { recursive: true });
 		await expect(handlers.importManifest(manifest('kept'), base, { enableSharing: false, enableDownloading: false })).rejects.toThrow('disk refused the write');
 		expect(existsSync(join(base, 'kept'))).toBe(true);
-	});
-
-	it('keeps an existing parent and removes only the new leaf', async () => {
-		mkdirSync(join(base, 'parent'), { recursive: true });
-		await expect(handlers.importManifest(manifest('leaf'), join(base, 'parent'), { enableSharing: false, enableDownloading: false })).rejects.toThrow('disk refused the write');
-		expect(existsSync(join(base, 'parent', 'leaf'))).toBe(false);
-		expect(existsSync(join(base, 'parent'))).toBe(true);
-	});
-});
-
-describe('cleanup of directories swapped after creation', () => {
-	let base: string;
-
-	beforeAll(async () => {
-		base = await mkdtemp(join(tmpdir(), 'lish-import-swap-'));
-	});
-
-	afterAll(async () => {
-		await rm(base, { recursive: true, force: true });
-	});
-
-	it('keeps an empty directory put in place of the one it created', async () => {
-		const created: CreatedDirectory[] = [];
-		await makeOwnDirectories(join(base, 'film'), created);
-		renameSync(join(base, 'film'), join(base, 'film-moved'));
-		mkdirSync(join(base, 'film'));
-		await removeOwnEmptyDirectories(created);
-		expect(existsSync(join(base, 'film'))).toBe(true);
-		expect(existsSync(join(base, 'film-moved'))).toBe(true);
-		expect(readdirSync(base).filter(name => name.endsWith('.removing'))).toEqual([]);
-	});
-
-	it('keeps an empty directory reached through a parent swapped for a link', async () => {
-		const created: CreatedDirectory[] = [];
-		await makeOwnDirectories(join(base, 'parent', 'leaf'), created);
-		renameSync(join(base, 'parent'), join(base, 'parent-moved'));
-		mkdirSync(join(base, 'elsewhere', 'leaf'), { recursive: true });
-		symlinkSync(join(base, 'elsewhere'), join(base, 'parent'), 'junction');
-		await removeOwnEmptyDirectories(created);
-		expect(existsSync(join(base, 'elsewhere', 'leaf'))).toBe(true);
-		expect(readdirSync(join(base, 'elsewhere'))).toEqual(['leaf']);
-		expect(existsSync(join(base, 'parent-moved', 'leaf'))).toBe(true);
-	});
-
-	it('keeps its own directory under its name once something was put in it', async () => {
-		const created: CreatedDirectory[] = [];
-		await makeOwnDirectories(join(base, 'filled'), created);
-		writeFileSync(join(base, 'filled', 'user.txt'), 'data');
-		await removeOwnEmptyDirectories(created);
-		expect(readFileSync(join(base, 'filled', 'user.txt'), 'utf8')).toBe('data');
-		expect(readdirSync(base).filter(name => name.endsWith('.removing'))).toEqual([]);
 	});
 });
 
@@ -153,7 +100,6 @@ describe('failed overwrite import', () => {
 			await expect(handlers.importManifest({ ...original, name: 'replacement' } as never, base, { overwrite: true, enableSharing: false, enableDownloading: false })).rejects.toThrow('refused');
 			expect(dataServer.get('kept-on-write' as never)?.name).toBe('kept-on-write');
 			expect(dataServer.get('kept-on-write' as never)?.files?.length).toBe(1);
-			expect(existsSync(join(base, 'replacement'))).toBe(false);
 		} finally {
 			db.run('DROP TRIGGER refuse_replacement');
 		}
