@@ -95,7 +95,7 @@ async function readMixer(): Promise<MixerResult> {
 			const v = parseMacVolume(out);
 			return v === null ? { kind: 'no-device' } : { kind: 'ok', volume: v };
 		}
-		return await linuxVolumeReader.call<MixerResult>({ method: 'linux.volume.read', args: { timeoutMs: EXEC_TIMEOUT_MS } }, EXEC_TIMEOUT_MS);
+		return await linuxVolumeReader.call<MixerResult>({ method: 'linux.volume.read', args: { timeoutMs: EXEC_TIMEOUT_MS - 100 } }, EXEC_TIMEOUT_MS);
 	} catch {
 		return { kind: 'error' };
 	}

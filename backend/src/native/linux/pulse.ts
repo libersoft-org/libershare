@@ -1,6 +1,11 @@
 import { CString, FFIType, JSCallback, ptr, read, type Pointer } from 'bun:ffi';
 import { loadPulse, type PulseSymbols } from './pulse-native.ts';
 
+const sessions = new Set<PulseSession>();
+export function closeAllPulseSessions(): void {
+	for (const session of sessions) session.close();
+}
+
 export class PulseTimeout extends Error {}
 export interface PulseSink {
 	name: string;
@@ -18,6 +23,7 @@ export class PulseSession {
 	private stopped = false;
 	constructor(api: PulseSymbols = loadPulse()) {
 		this.api = api;
+		sessions.add(this);
 		try {
 			this.loop = (Number(api.pa_mainloop_new()) as Pointer) || null;
 			if (!this.loop) throw new Error('Pulse mainloop unavailable');
@@ -159,6 +165,7 @@ export class PulseSession {
 	close(): void {
 		if (this.stopped) return;
 		this.stopped = true;
+		sessions.delete(this);
 		if (this.context) {
 			this.api.pa_context_set_state_callback(this.context, null, null);
 			this.api.pa_context_set_subscribe_callback(this.context, null, null);

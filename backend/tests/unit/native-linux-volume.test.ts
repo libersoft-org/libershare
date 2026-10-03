@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { CFunction, FFIType, ptr, type Pointer } from 'bun:ffi';
 import { linuxVolume, type LinuxVolumeBackends } from '../../src/native/linux/pulse-volume.ts';
-import { PulseSession, PulseTimeout } from '../../src/native/linux/pulse.ts';
+import { PulseSession, PulseTimeout, closeAllPulseSessions } from '../../src/native/linux/pulse.ts';
 import type { PulseSymbols } from '../../src/native/linux/pulse-native.ts';
 
 function pulseFixture(state = 4, success = true, advance = true): { api: PulseSymbols; calls: string[]; fire: (event: number) => void } {
@@ -103,6 +103,16 @@ function pulseFixture(state = 4, success = true, advance = true): { api: PulseSy
 }
 
 describe('native Linux volume', () => {
+	it('releases every registered session once on cooperative worker shutdown', () => {
+		const first = pulseFixture(),
+			second = pulseFixture();
+		new PulseSession(first.api);
+		new PulseSession(second.api);
+		closeAllPulseSessions();
+		closeAllPulseSessions();
+		expect(first.calls.filter(x => x === 'free-loop')).toHaveLength(1);
+		expect(second.calls.filter(x => x === 'free-loop')).toHaveLength(1);
+	});
 	it('reads first channel rather than average and awaits a successful write callback', async () => {
 		const fixture = pulseFixture(4, false),
 			session = new PulseSession(fixture.api);
