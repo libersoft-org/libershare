@@ -75,31 +75,44 @@ try {
 	assert.equal(windowsIPv4Fingerprint(await read()), windowsIPv4Fingerprint(original));
 	assert.deepEqual(oracle(), originalOracle);
 	console.log('Native CIM DNS automatic policy reset verified');
+	await apply(['192.0.2.53']);
+	const mixed = await read();
+	const mixedOracle = oracle();
+	assert.equal(mixed.dns.find(policy => policy.family === 2)?.automatic, false);
+	assert.equal(mixed.dns.find(policy => policy.family === 23)?.automatic, true);
+	assert.deepEqual(mixedOracle.dns.find(policy => policy.family === 2)?.servers, ['192.0.2.53']);
 	let refused = false;
-	let successfulWrites = 0;
+	const successfulWrites: { family: number; reset: boolean }[] = [];
 	await assert.rejects(
 		apply(['198.51.100.53', '2001:db8::54'], {
 			...deps,
 			write: async request => {
 				if (!refused && request.step.kind === 'dns' && request.step.policy.family === 23) {
-					assert.equal(successfulWrites, 1);
+					assert.equal(successfulWrites.length, 1);
 					assert.deepEqual(oracle().dns.find(policy => policy.family === 2)?.servers, ['198.51.100.53']);
 					refused = true;
 					return { sent: false, error: 'Injected second-family pre-dispatch refusal' };
 				}
 				const result: WindowsIPv4WriteResult = await deps.write(request);
-				if (result.sent && 'result' in result && result.result.outcome === 'ok') successfulWrites++;
+				if (request.step.kind === 'dns' && result.sent && 'result' in result && result.result.outcome === 'ok') successfulWrites.push({ family: request.step.policy.family, reset: request.step.servers === null });
 				return result;
 			},
 		}),
 		/Injected second-family pre-dispatch refusal/
 	);
 	assert.equal(refused, true);
-	assert.equal(successfulWrites, 3);
+	assert.deepEqual(successfulWrites, [
+		{ family: 2, reset: false },
+		{ family: 2, reset: true },
+		{ family: 2, reset: false },
+	]);
+	assert.equal(windowsIPv4Fingerprint(await read()), windowsIPv4Fingerprint(mixed));
+	assert.deepEqual(oracle(), mixedOracle);
+	await apply([]);
 	assert.equal(windowsIPv4Fingerprint(await read()), windowsIPv4Fingerprint(original));
 	assert.deepEqual(oracle(), originalOracle);
 	assert.equal(await host.state('network'), undefined);
-	console.log(JSON.stringify({ platform: process.platform, arch: process.arch, bun: Bun.version, dnsWrite: true, dnsReset: true, partialWriteRollback: true, journalSettled: true }));
+	console.log(JSON.stringify({ platform: process.platform, arch: process.arch, bun: Bun.version, dnsWrite: true, dnsReset: true, partialWriteRollback: true, mixedPolicyRestored: true, journalSettled: true }));
 } finally {
 	reader.close();
 	writer.close();

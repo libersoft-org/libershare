@@ -12,7 +12,7 @@ test('an omitted DNS family is preserved while an empty list resets both familie
 	expect(windowsDnsChanges(policies, undefined)).toEqual([]);
 	expect(windowsDnsChanges(policies, ['192.0.2.53'])).toEqual([{ policy: policies[0]!, servers: ['192.0.2.53'] }]);
 	expect(windowsDnsChanges(policies, ['2001:db8::53'])).toEqual([{ policy: policies[1]!, servers: ['2001:db8::53'] }]);
-	expect(windowsDnsChanges(policies, [])).toEqual(policies.map(policy => ({ policy, servers: null })));
+	expect(windowsDnsChanges(policies, [])).toEqual([{ policy: policies[0]!, servers: null }]);
 });
 
 test('all sixteen manual and automatic DNS transitions follow the cmdlet family rule', () => {
@@ -24,10 +24,8 @@ test('all sixteen manual and automatic DNS transitions follow the cmdlet family 
 			];
 			for (const requested of [[], ['198.51.100.53'], ['2001:db8::53'], ['198.51.100.53', '2001:db8::53']]) {
 				const changes = windowsDnsChanges(before, requested);
-				const actual = before.map(policy => {
-					const change = changes.find(value => value.policy.family === policy.family);
-					return change ? { ...policy, automatic: change.servers === null, servers: change.servers ?? [] } : policy;
-				});
+				let actual = before;
+				for (const change of changes) actual = actual.map(policy => (change.servers === null ? { ...policy, automatic: true, servers: [] } : policy.family === change.policy.family ? { ...policy, automatic: false, servers: [...change.servers] } : policy));
 				for (const policy of actual) {
 					const familyServers = requested.filter(server => server.includes(':') === (policy.family === 23));
 					if (!requested.length) expect(policy.automatic).toBe(true);
@@ -38,7 +36,7 @@ test('all sixteen manual and automatic DNS transitions follow the cmdlet family 
 		}
 });
 
-test('DNS mutation uses family-specific instances and typed CIM operation options', () => {
+test('DNS mutation uses typed CIM options for manual servers and a global reset', () => {
 	const calls: unknown[] = [];
 	const connection = {
 		put: (...args: unknown[]) => {

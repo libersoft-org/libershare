@@ -1,7 +1,7 @@
 import { validateIPv4Config, type NetIPv4Config } from '@shared';
 import { NativeMutationStopped, NativeMutationUnknown, type NativeMutationContext } from '../mutation-host.ts';
 import { NativeWorkerChannel, NativeWorkerFailure } from '../worker-host.ts';
-import { windowsDnsChanges } from './dns.ts';
+import { windowsDnsChanges, windowsDnsRestoreChanges } from './dns.ts';
 import { assertRestorableWindowsIPv4, assertWindowsIPv4Target, isWindowsIPv4Recovery, sameWindowsInterface, usableWindowsAddress, windowsIPv4Fingerprint, type WindowsIPv4Recovery, type WindowsIPv4Snapshot } from './network-mutation-state.ts';
 import type { WindowsIPv4Write, WindowsIPv4WriteResult } from './network-mutation-worker.ts';
 
@@ -157,7 +157,7 @@ export async function applyNativeWindowsIPv4(context: NativeMutationContext, gui
 						await createStatic(address.address, address.prefixLength, route?.gateway, route?.metric);
 					}
 				}
-				if (dnsWritten) for (const policy of snapshot.dns) await write({ kind: 'dns', policy, servers: policy.automatic ? null : policy.servers });
+				if (dnsWritten) for (const change of windowsDnsRestoreChanges(snapshot.dns)) await write({ kind: 'dns', ...change });
 				if ((addressingWritten || dnsWritten) && !matchesOriginal(await read(), saved)) throw new Error('IPv4 rollback did not restore the original policy');
 			} catch (rollbackError) {
 				if (rollbackError instanceof NativeMutationUnknown || rollbackError instanceof NativeMutationStopped) throw rollbackError;

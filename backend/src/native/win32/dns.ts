@@ -26,7 +26,7 @@ export function readWindowsDnsPolicy(connection: Pick<WmiConnection, 'query'>, i
 	});
 }
 
-/** The DnsClient CDXML uses ModifyInstance with these operation options. */
+/** CIM resets both families for null, regardless of the selected instance. */
 export function writeWindowsDnsPolicy(connection: Pick<WmiConnection, 'put'>, policy: WindowsDnsPolicy, servers: readonly string[] | null): WmiMutationResult {
 	if (servers !== null && (!servers.length || servers.some(server => isIP(server) !== (policy.family === 2 ? 4 : 6)))) throw Object.assign(new Error('DNS server family does not match the target'), { mayHaveRun: false });
 	return connection.put(policy.path, {}, servers === null ? { ResetServerAddresses: true } : { ServerAddresses: servers, Validate: false });
@@ -35,9 +35,14 @@ export function writeWindowsDnsPolicy(connection: Pick<WmiConnection, 'put'>, po
 export function windowsDnsChanges(policies: readonly WindowsDnsPolicy[], requested: readonly string[] | undefined): { policy: WindowsDnsPolicy; servers: readonly string[] | null }[] {
 	if (requested === undefined) return [];
 	if (requested.some(server => !isIP(server))) throw new Error('Invalid DNS server');
-	if (!requested.length) return policies.map(policy => ({ policy, servers: null }));
+	if (!requested.length) return policies.slice(0, 1).map(policy => ({ policy, servers: null }));
 	return policies.flatMap(policy => {
 		const servers = requested.filter(value => isIP(value) === (policy.family === 2 ? 4 : 6));
 		return servers.length ? [{ policy, servers }] : [];
 	});
+}
+
+export function windowsDnsRestoreChanges(policies: readonly WindowsDnsPolicy[]): ReturnType<typeof windowsDnsChanges> {
+	const reset = policies.some(policy => policy.automatic) ? windowsDnsChanges(policies, []) : [];
+	return [...reset, ...policies.filter(policy => !policy.automatic).map(policy => ({ policy, servers: policy.servers }))];
 }

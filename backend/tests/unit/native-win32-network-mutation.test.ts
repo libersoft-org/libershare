@@ -82,7 +82,7 @@ function fixture(start = initial()) {
 				for (const store of Object.values(current.stores)) store.routes.push({ path: `route:${step.gateway}`, gateway: step.gateway, metric: step.metric ?? 256, protocol: 3, publish: 0, validLifetime: WINDOWS_INFINITE_LIFETIME });
 			} else {
 				const policy = current.dns.find(policy => policy.family === step.policy.family)!;
-				current.dns = current.dns.map(row => (row !== policy ? row : { ...row, automatic: step.servers === null, servers: step.servers ? [...step.servers] : [] }));
+				current.dns = current.dns.map(row => (step.servers === null ? { ...row, automatic: true, servers: [] } : row === policy ? { ...row, automatic: false, servers: [...step.servers] } : row));
 			}
 			return { sent: true, result: { outcome: 'ok', hresult: 0, returnValue: null } };
 		},
@@ -189,9 +189,22 @@ describe('native Windows IPv4 transaction', () => {
 		const f = fixture();
 		let writes = 0;
 		f.fail(request => (request.step.kind === 'dns' && ++writes === 2 ? { sent: true, result: { hresult: 0, returnValue: 5, outcome: 'failed' } } : undefined));
-		await expect(applyNativeWindowsIPv4(f.context, guid, { ...staticConfig, dns: [] }, { addressingChanged: false, requireLease: true }, f.deps)).rejects.toThrow('ReturnValue 5');
+		await expect(applyNativeWindowsIPv4(f.context, guid, { ...staticConfig, dns: ['198.51.100.53', '2001:db8::54'] }, { addressingChanged: false, requireLease: true }, f.deps)).rejects.toThrow('ReturnValue 5');
 		expect(f.current()).toEqual(initial());
 		expect(f.calls.every(call => call.step.kind === 'dns')).toBe(true);
+	});
+	test.each([2, 23])('rollback restores manual family %i after the global automatic reset', async manualFamily => {
+		const start = initial();
+		start.dns = start.dns.map(policy => (policy.family === manualFamily ? policy : { ...policy, automatic: true, servers: [] }));
+		const f = fixture(start);
+		let writes = 0;
+		f.fail(request => (request.step.kind === 'dns' && ++writes === 2 ? { sent: true, result: { hresult: 0, returnValue: 5, outcome: 'failed' } } : undefined));
+		await expect(applyNativeWindowsIPv4(f.context, guid, { ...staticConfig, dns: ['198.51.100.53', '2001:db8::54'] }, { addressingChanged: false, requireLease: true }, f.deps)).rejects.toThrow('ReturnValue 5');
+		expect(f.current()).toEqual(start);
+		expect(f.calls.slice(-2).map(call => call.step)).toEqual([
+			{ kind: 'dns', policy: start.dns[0]!, servers: null },
+			{ kind: 'dns', policy: start.dns.find(policy => policy.family === manualFamily)!, servers: start.dns.find(policy => policy.family === manualFamily)!.servers },
+		]);
 	});
 	test('an incomplete snapshot is refused before destructive writes', async () => {
 		const start = initial();
