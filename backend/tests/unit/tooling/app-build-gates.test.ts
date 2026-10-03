@@ -5,6 +5,22 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 
 const repo = resolve(import.meta.dir, '../../../..');
 const roots: string[] = [];
+
+it('every app and helper compilation embeds both native workers', () => {
+	for (const path of ['backend/build.sh', 'backend/build.bat', 'app/build-steps.sh', 'app/build.bat', 'docker/Dockerfile']) {
+		const commands = readFileSync(join(repo, path), 'utf8')
+			.replace(/\\\r?\n/g, ' ')
+			.split(/\r?\n/)
+			.filter(line => /bun build .*src\/(?:app|network-helper)\.ts(?:\s|$)/.test(line));
+		expect(commands.length, path).toBeGreaterThan(0);
+		for (const command of commands) {
+			expect(command, path).toContain('src/native/worker-runtime.ts');
+			expect(command, path).toContain('src/system-network-corewlan-worker.js');
+			expect(command, path).toContain('LISH_NATIVE_WORKER_ENTRY=');
+			expect(command, path).toContain('LISH_COREWLAN_WORKER_ENTRY=');
+		}
+	}
+});
 afterAll(() => {
 	for (const root of roots) rmSync(root, { recursive: true, force: true });
 });

@@ -53,8 +53,8 @@ build_backend() {
 		cp build/lish-network-helper "$LIPO_TMP/lish-network-helper-arm64"
 		lipo -create "$LIPO_TMP/lish-network-helper-x64" "$LIPO_TMP/lish-network-helper-arm64" -output build/lish-network-helper
 		HELPER_HASH=$(shasum -a 256 build/lish-network-helper | awk '{print $1}')
-		bun build --compile --target bun-darwin-x64 src/app.ts --outfile "$LIPO_TMP/lish-backend-x64" --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
-		bun build --compile --target bun-darwin-arm64 src/app.ts --outfile "$LIPO_TMP/lish-backend-arm64" --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
+		bun build --compile --target bun-darwin-x64 src/app.ts src/native/worker-runtime.ts src/system-network-corewlan-worker.js --define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' --define 'LISH_COREWLAN_WORKER_ENTRY="./system-network-corewlan-worker.js"' --outfile "$LIPO_TMP/lish-backend-x64" --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
+		bun build --compile --target bun-darwin-arm64 src/app.ts src/native/worker-runtime.ts src/system-network-corewlan-worker.js --define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' --define 'LISH_COREWLAN_WORKER_ENTRY="./system-network-corewlan-worker.js"' --outfile "$LIPO_TMP/lish-backend-arm64" --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
 		lipo -create "$LIPO_TMP/lish-backend-x64" "$LIPO_TMP/lish-backend-arm64" -output build/lish-backend
 		rm -r "$LIPO_TMP"
 		echo "=== Universal backend done ($(elapsed_since $_t)) ==="

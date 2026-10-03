@@ -147,6 +147,16 @@ Changing the host's network settings from the app needs the signed network helpe
 
 #### Running the native app
 
+Síť, Wi-Fi, čas, hlasitost a otevírání souborů používají knihovny operačního systému. Backend už kvůli těmto funkcím nespouští `nmcli`, `ip`, `systemsetup`, PowerShell ani další systémové nástroje. Zůstávají jen tyto výjimky:
+
+- Vlastní Windows launcher a pomocník pro získání oprávnění přes UAC.
+- `pkexec` s vlastním pomocníkem na Linuxu.
+- `osascript` s ověřovacím skriptem a vlastním pomocníkem na macOS. Skript používá `sh`, `mktemp`, `cp`, `codesign`, `shasum`, `awk`, `rm` a `rmdir` pro ověření a úklid privilegované kopie.
+- Vlastní program v režimu `--access-probe`, který na Linuxu ověřuje přístup účtu časové služby.
+- Vlastní program v režimu `--clock-probe`, pokud na macOS zděděné `TZ` ovlivňuje převod času v knihovně C. Tento krátký proces pouze počítá čas a má prostředí bez `TZ`; systémové hodiny nemění.
+
+Výchozí aplikaci při otevření souboru spouští operační systém. Pokud se výsledek změny sítě nebo času nedá potvrdit, další zápisy zůstanou zablokované i po restartu backendu. Čtení zůstává dostupné; nepotvrzený stav se označí v rozhraní.
+
 - **Normal mode:** Just launch the application. The backend runs silently in the background.
 - **Debug mode:** Opens a built-in debug console window that shows backend log messages. Also enables the developer console in the webview (F12). Useful for troubleshooting issues.
 
