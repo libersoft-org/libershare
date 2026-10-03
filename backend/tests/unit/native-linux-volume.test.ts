@@ -4,7 +4,7 @@ import { linuxVolume, type LinuxVolumeBackends } from '../../src/native/linux/pu
 import { PulseSession, PulseTimeout } from '../../src/native/linux/pulse.ts';
 import type { PulseSymbols } from '../../src/native/linux/pulse-native.ts';
 
-function pulseFixture(state = 4, success = true): { api: PulseSymbols; calls: string[]; fire: (event: number) => void } {
+function pulseFixture(state = 4, success = true, advance = true): { api: PulseSymbols; calls: string[]; fire: (event: number) => void } {
 	const calls: string[] = [];
 	const name = Buffer.from('default-sink\0');
 	const info = Buffer.alloc(320);
@@ -30,7 +30,7 @@ function pulseFixture(state = 4, success = true): { api: PulseSymbols; calls: st
 		pa_context_connect: () => 0,
 		pa_context_get_state: () => state,
 		pa_mainloop_iterate: () => {
-			queue.shift()?.();
+			if (advance) queue.shift()?.();
 			return 0;
 		},
 		pa_context_get_server_info: (_c: unknown, cb: Pointer) => {
@@ -137,8 +137,7 @@ describe('native Linux volume', () => {
 		expect(fixture.calls).toEqual(['unset-state', 'unset-subscribe', 'disconnect', 'unref-context', 'free-loop']);
 	});
 	it('unregisters and cancels outstanding operations before freeing a stopped context', async () => {
-		const fixture = pulseFixture();
-		fixture.api.pa_mainloop_iterate = (() => 0) as typeof fixture.api.pa_mainloop_iterate;
+		const fixture = pulseFixture(4, true, false);
 		const session = new PulseSession(fixture.api);
 		const read = session.sink(performance.now() + 1000);
 		session.close();
