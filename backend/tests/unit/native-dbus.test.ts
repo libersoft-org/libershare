@@ -211,16 +211,27 @@ describe('D-Bus signatures', () => {
 
 describe('sd-bus call lifetime', () => {
 	test('one trampoline routes reverse replies across calls and connections', async () => {
-		const first = fakeBus(), second = fakeBus();
-		const firstBus = new SystemBus({}, first.sd), secondBus = new SystemBus({}, second.sd);
+		const first = fakeBus(),
+			second = fakeBus();
+		const firstBus = new SystemBus({}, first.sd),
+			secondBus = new SystemBus({}, second.sd);
 		const order: string[] = [];
 		try {
 			first.state.sender = ':1.41';
-			const a = firstBus.call(method).then(reply => { expect(reply.sender).toBe(':1.41'); order.push('a'); });
+			const a = firstBus.call(method).then(reply => {
+				expect(reply.sender).toBe(':1.41');
+				order.push('a');
+			});
 			first.state.sender = ':1.42';
-			const b = firstBus.call(method).then(reply => { expect(reply.sender).toBe(':1.42'); order.push('b'); });
+			const b = firstBus.call(method).then(reply => {
+				expect(reply.sender).toBe(':1.42');
+				order.push('b');
+			});
 			second.state.sender = ':1.43';
-			const c = secondBus.call(method).then(reply => { expect(reply.sender).toBe(':1.43'); order.push('c'); });
+			const c = secondBus.call(method).then(reply => {
+				expect(reply.sender).toBe(':1.43');
+				order.push('c');
+			});
 			expect(new Set([...first.state.callbacks, ...second.state.callbacks]).size).toBe(1);
 			expect(new Set([...first.state.userdata, ...second.state.userdata]).size).toBe(3);
 			second.state.delivered = true;
@@ -233,7 +244,8 @@ describe('sd-bus call lifetime', () => {
 			expect(first.state.released).toBe(2);
 			expect(second.state.released).toBe(1);
 		} finally {
-			firstBus.close(); secondBus.close();
+			firstBus.close();
+			secondBus.close();
 		}
 	});
 	test('cancellation removes only its userdata while other calls remain pending', async () => {
@@ -243,7 +255,9 @@ describe('sd-bus call lifetime', () => {
 		let completed = false;
 		try {
 			const cancelled = bus.call({ ...method, signal: controller.signal });
-			const pending = bus.call(method).then(() => { completed = true; });
+			const pending = bus.call(method).then(() => {
+				completed = true;
+			});
 			controller.abort();
 			await expect(cancelled).rejects.toMatchObject({ stage: 'cancelled', mayHaveBeenSent: true });
 			expect(state.slots).toBe(1);
@@ -253,17 +267,28 @@ describe('sd-bus call lifetime', () => {
 			state.delivered = true;
 			await pending;
 			expect(state.slots).toBe(0);
-		} finally { bus.close(); }
+		} finally {
+			bus.close();
+		}
 	});
 	test('closed connections and subscriptions keep reusing the worker trampoline', async () => {
 		const addresses = new Set<Pointer>();
 		for (let i = 0; i < 20; i++) {
 			const { sd, state } = fakeBus();
 			const bus = new SystemBus({}, sd);
-			bus.subscribe(match, () => {}, error => { throw error; });
+			bus.subscribe(
+				match,
+				() => {},
+				error => {
+					throw error;
+				}
+			);
 			state.delivered = true;
-			try { await bus.call(method); }
-			finally { bus.close(); }
+			try {
+				await bus.call(method);
+			} finally {
+				bus.close();
+			}
 			for (const address of state.callbacks) addresses.add(address);
 			expect(state.slots).toBe(0);
 		}

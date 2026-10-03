@@ -146,12 +146,10 @@ export class SystemBus {
 				checkSdBus(created, 'new method call');
 				if (!message) throw new Error('D-Bus did not create a message');
 				encodeDBus(this.sd, message, request.signature ?? '', request.args ?? []);
-				const callback = retainDBusCallback(
-					(replyAddress: Pointer) => {
-						// sd_bus_process owns the borrowed reply. Never release the callback on this stack.
-						if (pending && !pending.result) pending.result = this.copyReply(replyAddress);
-					}
-				);
+				const callback = retainDBusCallback((replyAddress: Pointer) => {
+					// sd_bus_process owns the borrowed reply. Never release the callback on this stack.
+					if (pending && !pending.result) pending.result = this.copyReply(replyAddress);
+				});
 				pending = {
 					callback,
 					slotOut: new BigUint64Array(1),
@@ -199,25 +197,23 @@ export class SystemBus {
 		if (fields.length !== 4 || fields.some(([key, value]) => !['sender', 'path', 'interface', 'member'].includes(key) || !value || !/^[A-Za-z0-9_.:/-]+$/.test(value))) throw new Error('Invalid D-Bus signal match');
 		const rule = dbusCString(`type='signal',${fields.map(([key, value]) => `${key}='${value}'`).join(',')}`);
 		let subscription: SignalSubscription;
-		const callback = retainDBusCallback(
-			(message: Pointer) => {
-				let value: DBusSignal | Error;
-				try {
-					value = {
-						type: 'signal',
-						sender: copyDBusString(this.sd.sd_bus_message_get_sender(message), 255) ?? '',
-						path: copyDBusString(this.sd.sd_bus_message_get_path(message)) ?? '',
-						interface: copyDBusString(this.sd.sd_bus_message_get_interface(message), 255) ?? '',
-						member: copyDBusString(this.sd.sd_bus_message_get_member(message), 255) ?? '',
-						signature: copyDBusString(this.sd.sd_bus_message_get_signature(message, 1), 255) ?? '',
-						values: decodeDBus(this.sd, message),
-					};
-				} catch (error) {
-					value = new DBusTransportError(`Cannot decode D-Bus signal: ${String(error)}`, 'decode', true);
-				}
-				this.signalQueue.push({ subscription, value });
+		const callback = retainDBusCallback((message: Pointer) => {
+			let value: DBusSignal | Error;
+			try {
+				value = {
+					type: 'signal',
+					sender: copyDBusString(this.sd.sd_bus_message_get_sender(message), 255) ?? '',
+					path: copyDBusString(this.sd.sd_bus_message_get_path(message)) ?? '',
+					interface: copyDBusString(this.sd.sd_bus_message_get_interface(message), 255) ?? '',
+					member: copyDBusString(this.sd.sd_bus_message_get_member(message), 255) ?? '',
+					signature: copyDBusString(this.sd.sd_bus_message_get_signature(message, 1), 255) ?? '',
+					values: decodeDBus(this.sd, message),
+				};
+			} catch (error) {
+				value = new DBusTransportError(`Cannot decode D-Bus signal: ${String(error)}`, 'decode', true);
 			}
-		);
+			this.signalQueue.push({ subscription, value });
+		});
 		subscription = { callback, slotOut: new BigUint64Array(1), listener, onError };
 		this.subscriptions.add(subscription);
 		try {

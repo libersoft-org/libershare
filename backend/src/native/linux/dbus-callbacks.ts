@@ -26,5 +26,11 @@ export function retainDBusCallback(receive: (message: Pointer) => void): DBusCal
 	const token = new Uint8Array(1);
 	const userdata = ptr(token);
 	targets.set(userdata, { token, receive });
-	return { ptr: trampoline.ptr!, userdata, close: () => { targets.delete(userdata); } };
+	return {
+		ptr: trampoline.ptr!,
+		userdata,
+		close: () => {
+			targets.delete(userdata);
+		},
+	};
 }
