@@ -99,7 +99,7 @@ PKGINFO_EOF
 		--format=mtree \
 		--options='!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link' \
 		.
-	bsdtar --uid 0 --gid 0 -cf - -C "$WORK" .PKGINFO .MTREE -C "$PKG_STAGING" . |
+	bsdtar --uid 0 --gid 0 -cf - -C "$WORK" .PKGINFO .MTREE -C "$PKG_STAGING" usr |
 		xz $XZ_FLAGS >"$FINAL_DIR/${PRODUCT_NAME_LOWER}-${PRODUCT_VERSION}-1-${PKG_PACMAN_ARCH}.pkg.tar.xz"
 }
 

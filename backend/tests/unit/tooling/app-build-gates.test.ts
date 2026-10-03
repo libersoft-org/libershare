@@ -21,6 +21,26 @@ it('every app and helper compilation embeds both native workers', () => {
 		}
 	}
 });
+
+it.skipIf(!Bun.which('bsdtar') || !Bun.which('xz'))('Pacman payload paths do not start with the metadata dot prefix', () => {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), 'lish-pacman-gate-')));
+	roots.push(root);
+	const staging = join(root, 'staging'), work = join(root, 'work'), output = join(root, 'output');
+	for (const path of [join(staging, 'usr/bin'), work, output]) mkdirSync(path, { recursive: true });
+	writeFileSync(join(staging, 'usr/bin/demo'), 'payload');
+	const result = Bun.spawnSync(['sh', '-c', '. "$1"; _build_pacman', 'sh', join(repo, 'app/build-packages.sh')], {
+		env: { ...process.env, PKG_STAGING: staging, WORK: work, FINAL_DIR: output, PRODUCT_NAME_LOWER: 'demo', PRODUCT_NAME: 'Demo', PRODUCT_VERSION: '0.0.1', PRODUCT_WEBSITE: 'https://example.invalid', PKG_PACMAN_ARCH: 'x86_64', XZ_FLAGS: '-0' },
+		stdout: 'pipe', stderr: 'pipe',
+	});
+	expect(result.exitCode, result.stderr.toString()).toBe(0);
+	const archive = Bun.spawnSync(['bsdtar', '-tf', join(output, 'demo-0.0.1-1-x86_64.pkg.tar.xz')], { stdout: 'pipe', stderr: 'pipe' });
+	expect(archive.exitCode, archive.stderr.toString()).toBe(0);
+	const entries = archive.stdout.toString().trim().split('\n');
+	expect(entries).toContain('.PKGINFO');
+	expect(entries).toContain('.MTREE');
+	expect(entries).toContain('usr/bin/demo');
+	expect(entries.some(path => path.startsWith('./'))).toBe(false);
+});
 afterAll(() => {
 	for (const root of roots) rmSync(root, { recursive: true, force: true });
 });
