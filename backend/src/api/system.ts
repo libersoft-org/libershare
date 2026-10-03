@@ -13,15 +13,15 @@ import { NativeMutationHost, type NativeMutationState } from '../native/mutation
 import type { NativeMutationDomain } from '../native/mutation-journal.ts';
 import { NativeNetworkChanges } from '../native/network-changes.ts';
 import { NativeTimeChanges } from '../native/time-changes.ts';
+import { closeCoreWlanReads } from '../system-network-corewlan.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
 const POLL_INTERVAL_MS = 5000;
 const TIME_POLL_INTERVAL_MS = 15000;
 /**
- * Broadcast the network state on every Nth poll tick (5 s × 2 = 10 s). A read
- * costs a PowerShell spawn on Windows and link state does not change faster than
- * a user notices, so the slower cadence is deliberate.
+ * Broadcast the network state on every Nth poll tick (5 s × 2 = 10 s).
+ * Native enumeration keeps the existing network polling cadence.
  */
 const NETWORK_POLL_EVERY_N_TICKS = 2;
 /**
@@ -665,6 +665,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	async function close(): Promise<void> {
 		stopPolling();
 		await Promise.all([nativeNetwork?.close(), nativeTime?.close()]);
+		await closeCoreWlanReads();
 		if (nativeHost && !(await nativeHost.closeAndDrain())) throw new Error('Native system changes are still running');
 	}
 
