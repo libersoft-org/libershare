@@ -1,3 +1,5 @@
+import { NativeWorkerChannel, NativeWorkerFailure } from '../native/worker-host.ts';
+import { displayEnvironment } from '../native/linux/gio.ts';
 import { readdir, stat, access, unlink, mkdir as fsMkdirNode, rename as fsRenameNode } from 'fs/promises';
 import { join, sep, dirname, resolve } from 'path';
 import { homedir, platform } from 'os';
@@ -9,6 +11,7 @@ import { isContainer } from '../container.ts';
 const assert = Utils.assertParams;
 const isWindows = platform() === 'win32';
 const execFileAsync = promisify(execFile);
+const linuxOpenWorker = new NativeWorkerChannel('read');
 
 // Map Node.js errno codes → CodedError codes for the frontend.
 const ERRNO_MAP: Record<string, ErrorCode> = {
@@ -189,7 +192,16 @@ export function initFsHandlers(containerCheck: () => Promise<boolean> = isContai
 				const psPath = target.replace(/'/g, "''");
 				await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', `Invoke-Item -LiteralPath '${psPath}'`]);
 			} else if (platform() === 'darwin') await execFileAsync('open', [target]);
-			else await execFileAsync('xdg-open', [target]);
+			else {
+				const environment = displayEnvironment(process.env);
+				if (!environment['DISPLAY'] && !environment['WAYLAND_DISPLAY']) throw new CodedError(ErrorCodes.FS_NOT_SUPPORTED, 'Opening local files requires a graphical session');
+				try {
+					await linuxOpenWorker.call({ method: 'linux.open', args: { path: target, environment, timeoutMs: 10000 } }, 10000);
+				} catch (error) {
+					if (error instanceof NativeWorkerFailure && error.message === 'Native read timed out') throw new CodedError(ErrorCodes.FS_TIMEOUT, 'The file handler did not respond in time; it may still open the file');
+					throw error;
+				}
+			}
 		});
 	}
 
