@@ -37,8 +37,15 @@ function oracle(): { instance: string; dns: { family: number; servers: string[] 
 
 async function apply(dns: string[], supplied = deps): Promise<void> {
 	const result = await host.run(
-		{ domain: 'network', operation: 'isolated-dns-smoke', requestHash: 'd'.repeat(64), recoveryData: null, timeoutMs: 60000 },
-		context => applyNativeWindowsIPv4(context, guid!, { mode: 'dhcp', dns }, { addressingChanged: false, requireLease: false }, supplied),
+		{ domain: 'network', operation: 'isolated-dns-smoke', requestHash: 'd'.repeat(64), recoveryData: {}, timeoutMs: 60000 },
+		async context => {
+			try {
+				await applyNativeWindowsIPv4(context, guid!, { mode: 'dhcp', dns }, { addressingChanged: false, requireLease: false }, supplied);
+			} catch (error) {
+				console.error('DNS action:', error);
+				throw error;
+			}
+		},
 		async record => {
 			assert.ok(record.recoveryData && typeof record.recoveryData === 'object' && !Array.isArray(record.recoveryData));
 			const saved = record.recoveryData['windowsIPv4'];
