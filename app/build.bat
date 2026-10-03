@@ -736,6 +736,8 @@ set "_be_start=0"
 call :get_timestamp _be_start
 echo === Building backend ^(target: !BUN_TGT!^) ===
 cd /d "!ROOT_DIR!\backend"
+call bun scripts\check-native-runtime.ts "!BUN_TGT!"
+if errorlevel 1 ( endlocal & exit /b 1 )
 if exist build rmdir /s /q build
 call bun i --frozen-lockfile
 if errorlevel 1 ( endlocal & exit /b 1 )

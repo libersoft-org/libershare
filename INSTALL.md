@@ -40,6 +40,8 @@ cd libershare
 
 The native application bundles the frontend and backend into a single installable application. The build system uses Docker for Linux/Windows cross-compilation and can target multiple OS/architecture combinations from a single host. macOS builds require a macOS host (Docker cannot be used due to Apple SDK licensing).
 
+Windows ARM64 vyžaduje Bun 1.4.0 nebo novější. Starší verze na této platformě nemají podporu `bun:ffi`. Toto minimum platí i při sestavení Windows ARM64 na Linuxu nebo Windows x64.
+
 #### Běhové knihovny na Linuxu
 
 Balíčky DEB, RPM a Pacman instalují knihovny systemd, ALSA a GLib/GIO. Zachovávají také závislost na `pkexec` nebo `polkit` pro správu sítě. DEB používá alternativy `libasound2t64 | libasound2` a `libglib2.0-0t64 | libglib2.0-0`, takže podporuje Debian 12 i Ubuntu 24.04.

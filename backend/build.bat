@@ -1,4 +1,6 @@
 @echo off
+call bun scripts\check-native-runtime.ts
+if errorlevel 1 exit /b 1
 if exist build rmdir /s /q build
 call bun i --frozen-lockfile
 if errorlevel 1 exit /b 1

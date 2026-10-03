@@ -22,6 +22,7 @@ for arg in "$@"; do
 	esac
 done
 
+bun scripts/check-native-runtime.ts "$BUN_TARGET"
 [ -d "./build/" ] && rm -r build
 mkdir -p build
 bun i --frozen-lockfile
