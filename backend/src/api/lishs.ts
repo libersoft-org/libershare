@@ -9,7 +9,7 @@ import { getEnabledUploads, removeUploadState, enableUpload } from '../protocol/
 import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, markDownloadEnabled, stopRecoveryForLISH } from './transfer.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir, rename, rm } from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
-import { makeOwnDirectories, removeOwnEmptyDirectories } from './import-directories.ts';
+import { makeOwnDirectories, removeOwnEmptyDirectories, type CreatedDirectory } from './import-directories.ts';
 import { join, dirname } from 'path';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
@@ -442,7 +442,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		} else directory = finalBaseDir; // Share-only / metadata-only import → files already live at the target location.
 		// Only directories this call really created are removed again should the import fail
 		// before its record is stored; one that appeared meanwhile, or already stood, is left.
-		const created: string[] = [];
+		const created: CreatedDirectory[] = [];
 		let stored = false;
 		try {
 			await makeOwnDirectories(directory, created);

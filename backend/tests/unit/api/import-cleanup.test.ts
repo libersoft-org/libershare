@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,6 +7,7 @@ import { openDatabase } from '../../../src/db/database.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { Settings } from '../../../src/settings.ts';
 import { initLISHsHandlers } from '../../../src/api/lishs.ts';
+import { makeOwnDirectories, removeOwnEmptyDirectories, type CreatedDirectory } from '../../../src/api/import-directories.ts';
 import { ErrorCodes, type ILISH } from '@shared';
 
 /**
@@ -62,6 +63,50 @@ describe('failed import cleanup', () => {
 		await expect(handlers.importManifest(manifest('leaf'), join(base, 'parent'), { enableSharing: false, enableDownloading: false })).rejects.toThrow('disk refused the write');
 		expect(existsSync(join(base, 'parent', 'leaf'))).toBe(false);
 		expect(existsSync(join(base, 'parent'))).toBe(true);
+	});
+});
+
+describe('cleanup of directories swapped after creation', () => {
+	let base: string;
+
+	beforeAll(async () => {
+		base = await mkdtemp(join(tmpdir(), 'lish-import-swap-'));
+	});
+
+	afterAll(async () => {
+		await rm(base, { recursive: true, force: true });
+	});
+
+	it('keeps an empty directory put in place of the one it created', async () => {
+		const created: CreatedDirectory[] = [];
+		await makeOwnDirectories(join(base, 'film'), created);
+		renameSync(join(base, 'film'), join(base, 'film-moved'));
+		mkdirSync(join(base, 'film'));
+		await removeOwnEmptyDirectories(created);
+		expect(existsSync(join(base, 'film'))).toBe(true);
+		expect(existsSync(join(base, 'film-moved'))).toBe(true);
+		expect(readdirSync(base).filter(name => name.endsWith('.removing'))).toEqual([]);
+	});
+
+	it('keeps an empty directory reached through a parent swapped for a link', async () => {
+		const created: CreatedDirectory[] = [];
+		await makeOwnDirectories(join(base, 'parent', 'leaf'), created);
+		renameSync(join(base, 'parent'), join(base, 'parent-moved'));
+		mkdirSync(join(base, 'elsewhere', 'leaf'), { recursive: true });
+		symlinkSync(join(base, 'elsewhere'), join(base, 'parent'), 'junction');
+		await removeOwnEmptyDirectories(created);
+		expect(existsSync(join(base, 'elsewhere', 'leaf'))).toBe(true);
+		expect(readdirSync(join(base, 'elsewhere'))).toEqual(['leaf']);
+		expect(existsSync(join(base, 'parent-moved', 'leaf'))).toBe(true);
+	});
+
+	it('keeps its own directory under its name once something was put in it', async () => {
+		const created: CreatedDirectory[] = [];
+		await makeOwnDirectories(join(base, 'filled'), created);
+		writeFileSync(join(base, 'filled', 'user.txt'), 'data');
+		await removeOwnEmptyDirectories(created);
+		expect(readFileSync(join(base, 'filled', 'user.txt'), 'utf8')).toBe('data');
+		expect(readdirSync(base).filter(name => name.endsWith('.removing'))).toEqual([]);
 	});
 });
 
