@@ -37,6 +37,38 @@ jobs:
           ./test-shared.sh
           ./test-cli.sh
 
+  windows-arm64-native:
+    runs-on: windows-11-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.13
+          bun-download-url: https://github.com/oven-sh/bun/releases/download/bun-v1.3.13/bun-windows-aarch64.zip
+      - name: Require native Windows ARM64
+        run: bun -e "if (process.platform !== 'win32' || process.arch !== 'arm64') throw new Error('Native Windows ARM64 is required'); console.log(process.platform, process.arch, Bun.version)"
+      - name: Install backend dependencies
+        working-directory: backend
+        run: bun install --frozen-lockfile
+      - name: Exercise native Windows APIs
+        working-directory: backend
+        run: >-
+          bun test tests/unit/native-library.test.ts
+          tests/unit/native-win32-com.test.ts
+          tests/unit/native-win32-wmi.test.ts
+          tests/unit/native-win32-wmi-values.test.ts
+          tests/unit/native-win32-network-reader.test.ts
+          tests/unit/native-win32-authenticode.test.ts
+          tests/unit/native-win32-time.test.ts
+          tests/unit/native-process-identity.test.ts
+      - name: Compile and run embedded native workers
+        working-directory: backend
+        shell: bash
+        run: |
+          bun build --compile tests/helpers/native-worker-compiled.ts src/native/worker-runtime.ts --define 'LISH_NATIVE_WORKER_ENTRY="./src/native/worker-runtime.ts"' --outfile worker-smoke.exe
+          ./worker-smoke.exe
+
   docker:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
