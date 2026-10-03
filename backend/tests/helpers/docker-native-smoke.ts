@@ -4,7 +4,8 @@ import type { NetworkStateInfo, SystemTimeResult, SystemTimeStatus } from '@shar
 interface Reply {
 	id: string;
 	result?: unknown;
-	error?: { code: string; message: string };
+	error?: string;
+	errorDetail?: string;
 }
 
 assert.equal(process.platform, 'linux');
@@ -70,7 +71,7 @@ try {
 		expected: { mode: target.ipv4Mode, address: address?.address ?? null, prefixLength: address?.prefixLength ?? null, gateway: target.gateway ?? null, dns: target.dns },
 	});
 	assert.ok(networkWrite.error, 'A valid network write must be refused by the container');
-	assert.equal(networkWrite.error.code, network.detail === 'addressesOnly' ? 'NETCONFIG_STALE' : 'NETCONFIG_UNSUPPORTED');
+	assert.equal(networkWrite.error, network.detail === 'addressesOnly' ? 'NETCONFIG_STALE' : 'NETCONFIG_UNSUPPORTED');
 	const timeReply = await rpc('system.getTime');
 	assert.equal(timeReply.error, undefined);
 	const time = timeReply.result as SystemTimeStatus;
@@ -86,7 +87,7 @@ try {
 	assert.equal(afterReply.error, undefined);
 	assert.deepEqual((afterReply.result as NetworkStateInfo).interfaces, network.interfaces);
 	assert.equal((afterReply.result as NetworkStateInfo).mutation, undefined);
-	console.log(JSON.stringify({ platform: process.platform, arch: process.arch, networkRead: true, timeRead: true, networkWriteRefused: networkWrite.error.code, timeWriteRefused: refused.outcome, networkUnchanged: true }));
+	console.log(JSON.stringify({ platform: process.platform, arch: process.arch, networkRead: true, timeRead: true, networkWriteRefused: networkWrite.error, timeWriteRefused: refused.outcome, networkUnchanged: true }));
 } finally {
 	socket.close();
 }
