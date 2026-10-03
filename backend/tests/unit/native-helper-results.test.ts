@@ -329,6 +329,32 @@ describe('helper handoff and recovery', () => {
 		expect(receipt?.executorReturned).toBe(false);
 		expect((await observeHelperOperation(rule(f.input), { ...f.obs, process: identity => ({ identity, state: 'running' }) })).state).toBe('pending');
 	});
+	test('a preparation failure before any tracked write leaves the next request free to run', async () => {
+		for (const fail of [async (): Promise<never> => Promise.reject(new Error('read failed')), async () => ({ ok: false as const, error: 'read failed' })]) {
+			const f = await fixture();
+			await executeRecordedHelper(f.input, helperRequestHash(f.input), fail, 10000, f.deps, true).catch(() => {});
+			expect((await f.store.read(f.input.operationId))?.result?.outcome).toBe('known');
+			const next = { ...f.input, operationId: randomUUID() };
+			expect(await executeRecordedHelper(next, helperRequestHash(next), async () => ({ ok: true }), 10000, f.deps, true)).toEqual({ ok: true });
+		}
+	});
+	test('a lost reply stays unknown even when every write is tracked', async () => {
+		const f = await fixture();
+		await executeRecordedHelper(
+			f.input,
+			helperRequestHash(f.input),
+			async () => {
+				await requireNativeMutationContext().call({ kind: 'executor' }, async () => {
+					throw new NativeWorkerFailure('lost response', true);
+				});
+				return { ok: true };
+			},
+			10000,
+			f.deps,
+			true
+		);
+		expect((await f.store.read(f.input.operationId))?.result?.outcome).toBe('unknown');
+	});
 	test('untracked legacy work records boot-only recovery before it starts', async () => {
 		const f = await fixture();
 		await executeRecordedHelper(

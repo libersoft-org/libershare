@@ -55,7 +55,13 @@ function knownRefusal(response: NetworkHelperResponse): boolean {
 	return 'time' in response && !response.time.success && !response.time.changed && !response.time.stateMayHaveChanged;
 }
 
-export async function executeRecordedHelper(request: NetworkHelperRequest, requestHash: string, execute: () => Promise<NetworkHelperResponse>, budgetMs: number, supplied?: HelperExecutorDeps): Promise<NetworkHelperResponse> {
+/**
+ * Run one privileged request and persist its outcome. `allWritesTracked` is the caller's promise
+ * that `execute` changes the system only through `context.call`: then an end with no tracked call
+ * provably sent nothing, so a failed preparation stays a known refusal instead of locking the
+ * domain until reboot. Without that promise any untracked end remains unknown.
+ */
+export async function executeRecordedHelper(request: NetworkHelperRequest, requestHash: string, execute: () => Promise<NetworkHelperResponse>, budgetMs: number, supplied?: HelperExecutorDeps, allWritesTracked = false): Promise<NetworkHelperResponse> {
 	const deps = supplied ?? executorDeps(),
 		store = deps.store,
 		identity = deps.identity(),
@@ -154,11 +160,11 @@ export async function executeRecordedHelper(request: NetworkHelperRequest, reque
 			try {
 				response = await withNativeMutationContext(context, execute);
 			} catch (error) {
-				unknown = unknown || !(error instanceof NativeMutationStopped);
+				unknown = unknown || !(error instanceof NativeMutationStopped || (allWritesTracked && !tracked));
 				response = networkHelperFailure(error);
 			}
-			// Legacy command paths do not yet carry evidence that their downstream service finished.
-			if (!tracked && !knownRefusal(response)) {
+			// Untracked work may have forwarded something whose downstream end left no evidence.
+			if (!tracked && !allWritesTracked && !knownRefusal(response)) {
 				unknown = true;
 			}
 			await persist(current => ({ phase: 'finished', executorReturned: unknown ? current.executorReturned : true, result: unknown ? { outcome: 'unknown' } : { outcome: 'known', response } }));

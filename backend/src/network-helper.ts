@@ -87,7 +87,10 @@ try {
 				(interfaceID, config, expected) => applyIPv4(interfaceID, config, '', false, expected),
 				changes => runElevatedSave(changes, deadline, budgetCap(), uptime(), applySystemTimeSettings)
 			),
-		incoming.operation === 'applySystemTime' ? budgetCap() : NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS * 1000 + 15000
+		incoming.operation === 'applySystemTime' ? budgetCap() : NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS * 1000 + 15000,
+		undefined,
+		// Every network and time write in the helper goes through a native context call.
+		true
 	);
 } catch (error) {
 	response = networkHelperFailure(error);
