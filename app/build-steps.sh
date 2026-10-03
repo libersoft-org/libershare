@@ -22,9 +22,9 @@ build_icons() {
 		fi
 	done
 	if [ "$HAS_RSVG" = "1" ]; then
-		rsvg-convert -w 256 -h 256 "$SVG" | $CONVERT png:- "$ICONS_DIR/icon.ico"
+		rsvg-convert -w 256 -h 256 "$SVG" | $CONVERT png:- -define png:color-type=6 "$ICONS_DIR/icon.ico"
 	else
-		$CONVERT -background none -resize "256x256" "$SVG" "$ICONS_DIR/icon.ico"
+		$CONVERT -background none -resize "256x256" "$SVG" -define png:color-type=6 "$ICONS_DIR/icon.ico"
 	fi
 	echo "=== Icons done ($(elapsed_since $_t)) ==="
 }
